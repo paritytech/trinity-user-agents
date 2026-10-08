@@ -1398,7 +1398,7 @@ async fn product_subtree_public_key<H: AccountHolder>(
         normalize_product_identifier(product_id).map_err(|reason| v01::GenericError {
             reason: reason.to_string(),
         })?;
-    let Some(operation) = accounts.current_operation() else {
+    let Some(authority_session) = accounts.current_session() else {
         return Ok(None);
     };
     let timeout = timeout_ms
@@ -1410,7 +1410,7 @@ async fn product_subtree_public_key<H: AccountHolder>(
     let product = product_context(&product_id)?;
     let call = accounts
         .product_subtree_public_key(
-            &operation,
+            &authority_session,
             &cx,
             AccountCaller::Local {
                 product: &product,

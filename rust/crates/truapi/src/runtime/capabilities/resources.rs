@@ -24,7 +24,7 @@ impl<H: AccountHolder> ResourceAllocation for ProductRuntimeHost<H> {
     ) -> Result<HostRequestResourceAllocationResponse, CallError<HostRequestResourceAllocationError>>
     {
         let HostRequestResourceAllocationRequest::V1(inner) = request;
-        let Some(operation) = self.accounts.current_operation() else {
+        let Some(authority_session) = self.accounts.current_session() else {
             return Err(CallError::Domain(HostRequestResourceAllocationError::V1(
                 v01::ResourceAllocationError::Unknown {
                     reason: "No active session".to_string(),
@@ -33,7 +33,7 @@ impl<H: AccountHolder> ResourceAllocation for ProductRuntimeHost<H> {
         };
 
         self.accounts
-            .allocate_resources(cx, &operation, &self.connection.product, inner)
+            .allocate_resources(cx, &authority_session, &self.connection.product, inner)
             .await
             .map(HostRequestResourceAllocationResponse::V1)
             .map_err(|error| match error {
@@ -58,7 +58,7 @@ impl<H: AccountHolder> Entropy for ProductRuntimeHost<H> {
         request: HostDeriveEntropyRequest,
     ) -> Result<HostDeriveEntropyResponse, CallError<HostDeriveEntropyError>> {
         let HostDeriveEntropyRequest::V1(v01::HostDeriveEntropyRequest { context }) = request;
-        let Some(operation) = self.accounts.current_operation() else {
+        let Some(authority_session) = self.accounts.current_session() else {
             return Err(CallError::Domain(HostDeriveEntropyError::V1(
                 v01::HostDeriveEntropyError::Unknown {
                     reason: "Not connected".to_string(),
@@ -67,11 +67,7 @@ impl<H: AccountHolder> Entropy for ProductRuntimeHost<H> {
         };
         let entropy = self
             .accounts
-            .require_current_operation(&operation)
-            .and_then(|()| {
-                self.accounts
-                    .derive_entropy(&operation, &self.connection.product_id(), &context)
-            })
+            .derive_entropy(&authority_session, &self.connection.product_id(), &context)
             .map_err(|err| {
                 CallError::Domain(HostDeriveEntropyError::V1(
                     v01::HostDeriveEntropyError::Unknown {

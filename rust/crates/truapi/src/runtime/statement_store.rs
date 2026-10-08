@@ -6,7 +6,7 @@ use core::task::{Context, Poll};
 
 use futures::StreamExt as _;
 
-use super::authority::{AuthorityError, HostOperation, StatementStoreAllowanceKey};
+use super::authority::{AuthorityError, AuthoritySession, StatementStoreAllowanceKey};
 use super::statement_store_rpc::{self, StatementStoreRpc};
 use super::{
     PERMISSION_DENIED_REASON, ProductConnection, ProductRuntimeHost, remote_authority_context,
@@ -66,7 +66,7 @@ impl<H: super::AccountHolder> StatementStore for ProductRuntimeHost<H> {
                     latest::RemoteStatementStoreCreateProofError::UnknownAccount,
                 ))
             })?;
-        let operation = self.accounts.current_operation();
+        let authority_session = self.accounts.current_session();
         let Some(owner) = self
             .connection
             .authorized_product_account(&inner.product_account_id.dot_ns_identifier, cx)
@@ -77,13 +77,13 @@ impl<H: super::AccountHolder> StatementStore for ProductRuntimeHost<H> {
             )));
         };
         inner.product_account_id.dot_ns_identifier = owner;
-        let operation = operation
+        let authority_session = authority_session
             .ok_or(StatementProofFailure::NoSession)
             .map_err(statement_proof_error)?;
         let proof = self
             .create_product_statement_proof(
                 cx,
-                &operation,
+                &authority_session,
                 inner.product_account_id,
                 inner.statement,
             )
@@ -352,7 +352,7 @@ impl<H: super::AccountHolder> ProductRuntimeHost<H> {
     async fn create_product_statement_proof(
         &self,
         cx: &CallContext,
-        operation: &HostOperation,
+        authority_session: &AuthoritySession,
         product_account_id: latest::ProductAccountId,
         statement: latest::Statement,
     ) -> Result<latest::StatementProof, StatementProofFailure> {
@@ -360,7 +360,7 @@ impl<H: super::AccountHolder> ProductRuntimeHost<H> {
             .accounts
             .product_account_public_key(
                 cx,
-                operation,
+                authority_session,
                 &self.connection.product,
                 &product_account_id,
                 None,
@@ -372,19 +372,17 @@ impl<H: super::AccountHolder> ProductRuntimeHost<H> {
         let payload = unsigned_statement_signing_payload(fields)
             .map_err(StatementProofFailure::UnableToSign)?;
         let signature = self
-            .account_call(
-                operation,
-                self.accounts.sign_statement_store_product_payload(
-                    operation,
-                    cx,
-                    crate::runtime::authority::AccountCaller::Local {
-                        product: &self.connection.product,
-                        authorization: None,
-                        outbound_review: None,
-                    },
-                    product_account_id,
-                    payload,
-                ),
+            .accounts
+            .sign_statement_store_product_payload(
+                authority_session,
+                cx,
+                crate::runtime::authority::AccountCaller::Local {
+                    product: &self.connection.product,
+                    authorization: None,
+                    outbound_review: None,
+                },
+                product_account_id,
+                payload,
             )
             .await
             .map_err(statement_authority_failure)?;
@@ -396,21 +394,18 @@ impl<H: super::AccountHolder> ProductRuntimeHost<H> {
         cx: &CallContext,
         statement: latest::Statement,
     ) -> Result<latest::StatementProof, StatementProofFailure> {
-        let operation = self
+        let authority_session = self
             .accounts
-            .current_operation()
+            .current_session()
             .ok_or(StatementProofFailure::NoSession)?;
         let cx = remote_authority_context(cx);
         super::remote_authority_call(
             &cx,
-            operation.run(
-                self.accounts.as_ref(),
-                self.accounts.create_authorized_statement_proof(
-                    &cx,
-                    &operation,
-                    self.connection.product_id(),
-                    statement,
-                ),
+            self.accounts.create_authorized_statement_proof(
+                &cx,
+                &authority_session,
+                self.connection.product_id(),
+                statement,
             ),
         )
         .await

@@ -21,7 +21,7 @@ use crate::runtime::bulletin_rpc::BulletinSubmitError;
 use crate::runtime::{
     PERMISSION_DENIED_REASON, PREIMAGE_REMOTE_AUTHORITY_RESPONSE_TIMEOUT, PREIMAGE_SUBMIT_TIMEOUT,
     ProductRuntimeHost, bulletin_allowance_error_reason, preimage_submit_error,
-    remote_authority_context_until, until_cancelled,
+    remote_authority_call, remote_authority_context_until, until_cancelled,
 };
 
 #[truapi::async_trait]
@@ -100,7 +100,7 @@ impl<H: crate::runtime::AccountHolder> Preimage for ProductRuntimeHost<H> {
         request: RemotePreimageSubmitRequest,
     ) -> Result<RemotePreimageSubmitResponse, CallError<RemotePreimageSubmitError>> {
         let RemotePreimageSubmitRequest::V1(value) = request;
-        let Some(operation) = self.accounts.current_operation() else {
+        let Some(authority_session) = self.accounts.current_session() else {
             return Err(preimage_submit_error("No active session".to_string()));
         };
         let bulletin = &self.connection.services.bulletin;
@@ -135,18 +135,16 @@ impl<H: crate::runtime::AccountHolder> Preimage for ProductRuntimeHost<H> {
             PREIMAGE_REMOTE_AUTHORITY_RESPONSE_TIMEOUT,
             submission_deadline,
         );
-        let allowance = self
-            .account_operation(
-                &operation,
+        let allowance = remote_authority_call(
+            &authority_cx,
+            self.accounts.bulletin_allowance_key(
                 &authority_cx,
-                self.accounts.bulletin_allowance_key(
-                    &authority_cx,
-                    &operation,
-                    self.connection.product_id(),
-                ),
-            )
-            .await
-            .map_err(|err| preimage_submit_error(bulletin_allowance_error_reason(err)))?;
+                &authority_session,
+                self.connection.product_id(),
+            ),
+        )
+        .await
+        .map_err(|err| preimage_submit_error(bulletin_allowance_error_reason(err)))?;
 
         // A test host's allowance was never authorized on chain, so a Bulletin
         // `store` signed with it would always be refused. The value is kept in
@@ -164,7 +162,7 @@ impl<H: crate::runtime::AccountHolder> Preimage for ProductRuntimeHost<H> {
                 cx,
                 submission_deadline,
                 self.accounts.as_ref(),
-                &operation,
+                &authority_session,
                 &allowance,
                 &value,
             )
@@ -180,24 +178,22 @@ impl<H: crate::runtime::AccountHolder> Preimage for ProductRuntimeHost<H> {
                     PREIMAGE_REMOTE_AUTHORITY_RESPONSE_TIMEOUT,
                     submission_deadline,
                 );
-                let allowance = self
-                    .account_operation(
-                        &operation,
+                let allowance = remote_authority_call(
+                    &authority_cx,
+                    self.accounts.refresh_bulletin_allowance_key(
                         &authority_cx,
-                        self.accounts.refresh_bulletin_allowance_key(
-                            &authority_cx,
-                            &operation,
-                            self.connection.product_id(),
-                        ),
-                    )
-                    .await
-                    .map_err(|err| preimage_submit_error(bulletin_allowance_error_reason(err)))?;
+                        &authority_session,
+                        self.connection.product_id(),
+                    ),
+                )
+                .await
+                .map_err(|err| preimage_submit_error(bulletin_allowance_error_reason(err)))?;
                 bulletin
                     .submit_preimage(
                         cx,
                         submission_deadline,
                         self.accounts.as_ref(),
-                        &operation,
+                        &authority_session,
                         &allowance,
                         &value,
                     )

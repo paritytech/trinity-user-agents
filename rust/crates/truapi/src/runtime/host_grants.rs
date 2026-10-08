@@ -2,7 +2,7 @@
 
 use super::allowances::{self, AllowanceCacheKey, AllowanceResource, GrantScope};
 use super::authority::{
-    AuthorityError, AuthoritySession, AutoSigningKey, BulletinAllowanceKey, HostOperation,
+    AuthorityError, AuthoritySession, AutoSigningKey, BulletinAllowanceKey,
     StatementStoreAllowanceKey,
 };
 use super::product_subtree;
@@ -890,13 +890,14 @@ impl HostGrantGuard<'_> {
     pub fn retain_wallet_authorization(
         &mut self,
         session_state: &Arc<SessionState>,
-        operation: &HostOperation,
+        authority_session: &AuthoritySession,
+        revision: u64,
         product_id: &str,
         authorization: super::WalletAuthorization,
     ) -> Result<(), AuthorityError> {
-        self.require(operation)?;
+        self.require_revision(revision)?;
         if !authorization.issuer.ptr_eq(&Arc::downgrade(session_state))
-            || authorization.validation_id != operation.session.validation_id
+            || authorization.validation_id != authority_session.validation_id
             || authorization.product_id != product_id
         {
             return Err(AuthorityError::Rejected);
@@ -907,14 +908,9 @@ impl HostGrantGuard<'_> {
         Ok(())
     }
 
-    /// Permission retained for the calling product under the held revision.
-    pub fn wallet_authorization(
-        &self,
-        operation: &HostOperation,
-        product_id: &str,
-    ) -> Result<Option<super::WalletAuthorization>, AuthorityError> {
-        self.require(operation)?;
-        Ok(self.state.wallet_authorizations.get(product_id).cloned())
+    /// Permission retained for the calling product in this activation.
+    pub fn wallet_authorization(&self, product_id: &str) -> Option<super::WalletAuthorization> {
+        self.state.wallet_authorizations.get(product_id).cloned()
     }
 
     /// Invalidate one product without touching another product's wallet permission.
@@ -971,14 +967,12 @@ impl HostGrantGuard<'_> {
         self.state.revision
     }
 
-    /// Bind a selected wallet session to this host's revision.
-    pub fn capture(&self, session: AuthoritySession) -> HostOperation {
-        HostOperation::new(session, self.state.revision)
-    }
-
-    /// Reject work selected before host grants were invalidated.
-    pub fn require(&self, operation: &HostOperation) -> Result<(), AuthorityError> {
-        operation.require_revision(self.state.revision)
+    /// Reject grant work that began before revocation.
+    pub fn require_revision(&self, revision: u64) -> Result<(), AuthorityError> {
+        if self.state.revision != revision {
+            return Err(AuthorityError::Disconnected);
+        }
+        Ok(())
     }
 
     /// Preserve cleanup intent across failed or dropped session writes.

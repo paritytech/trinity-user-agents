@@ -15,7 +15,7 @@ use web_time::{Duration, Instant};
 use crate::chain_runtime::{ChainRuntime, RuntimeFailure};
 use crate::host_internal::bulletin::{STORE_PALLET_NAME, preimage_key};
 use crate::runtime::{
-    AccountHolder, AuthorityError, BulletinAllowanceKey, HostAccounts, HostOperation,
+    AccountHolder, AuthorityError, AuthoritySession, BulletinAllowanceKey, HostAccounts,
 };
 use futures::{FutureExt, pin_mut};
 use subxt::OnlineClient;
@@ -289,15 +289,13 @@ impl BulletinRpc {
         cx: &CallContext,
         deadline: Instant,
         accounts: &HostAccounts<H>,
-        operation: &HostOperation,
+        authority_session: &AuthoritySession,
         allowance: &BulletinAllowanceKey,
         value: &[u8],
     ) -> Result<Vec<u8>, BulletinSubmitError> {
-        operation
-            .run(accounts, async {
-                // Serialize submissions, keeping the lock wait cancellable.
-                let lock = self.submit_lock.lock().fuse();
-                let lock_cancelled = cx.cancel().cancelled().fuse();
+        // Serialize submissions, keeping the lock wait cancellable.
+        let lock = self.submit_lock.lock().fuse();
+        let lock_cancelled = cx.cancel().cancelled().fuse();
         pin_mut!(lock, lock_cancelled);
         let _guard = futures::select! {
             guard = lock => guard,
@@ -316,12 +314,12 @@ impl BulletinRpc {
                     phase: self.current_phase(),
                 });
             };
-                    let flow = self
-                        .submit_flow(accounts, operation, allowance, value)
-                        .fuse();
-                    let timeout = futures_timer::Delay::new(remaining).fuse();
-                    let cancelled = cx.cancel().cancelled().fuse();
-                    pin_mut!(flow, timeout, cancelled);
+            let flow = self
+                .submit_flow(accounts, authority_session, allowance, value)
+                .fuse();
+            let timeout = futures_timer::Delay::new(remaining).fuse();
+            let cancelled = cx.cancel().cancelled().fuse();
+            pin_mut!(flow, timeout, cancelled);
             let result = futures::select! {
                 result = flow => result,
                 () = timeout => Err(BulletinSubmitError::Timeout { phase: self.current_phase() }),
@@ -337,15 +335,13 @@ impl BulletinRpc {
                 }
                 result => return result,
             }
-                }
-            })
-            .await
+        }
     }
 
     async fn submit_flow<H: AccountHolder>(
         &self,
         accounts: &HostAccounts<H>,
-        operation: &HostOperation,
+        authority_session: &AuthoritySession,
         allowance: &BulletinAllowanceKey,
         value: &[u8],
     ) -> Result<Vec<u8>, BulletinSubmitError> {
@@ -369,7 +365,7 @@ impl BulletinRpc {
                 &mut best_blocks,
                 head,
                 accounts,
-                operation,
+                authority_session,
                 allowance,
                 value,
             )
@@ -435,7 +431,7 @@ impl BulletinRpc {
         best_blocks: &mut Blocks<SubstrateConfig>,
         head: Block<SubstrateConfig>,
         accounts: &HostAccounts<H>,
-        operation: &HostOperation,
+        authority_session: &AuthoritySession,
         allowance: &BulletinAllowanceKey,
         value: &[u8],
     ) -> Result<SignedStore, BulletinSubmitError> {
@@ -449,7 +445,7 @@ impl BulletinRpc {
                 .await
                 .map_err(|error| BulletinSubmitError::Subxt(Box::new(error.into())))?;
             let signed = accounts
-                .build_bulletin_transaction(operation, allowance, &at_block, value)
+                .build_bulletin_transaction(authority_session, allowance, &at_block, value)
                 .await?;
 
             self.enter_phase(SubmissionPhase::DryRun);
@@ -1421,7 +1417,7 @@ mod tests {
         struct SubmissionFixture {
             rpc: BulletinRpc,
             host: Arc<SigningHostRole>,
-            operation: HostOperation,
+            authority_session: AuthoritySession,
         }
 
         impl SubmissionFixture {
@@ -1435,7 +1431,7 @@ mod tests {
                         &CallContext::default(),
                         Instant::now() + budget,
                         self.host.accounts(),
-                        &self.operation,
+                        &self.authority_session,
                         &allowance_fixture(),
                         value,
                     )
@@ -1459,7 +1455,7 @@ mod tests {
             );
             let host = SigningHostRole::new(services, "paseo".to_string());
             futures::executor::block_on(host.activate_local_session(ENTROPY.to_vec())).unwrap();
-            let operation = host.accounts().current_operation().unwrap();
+            let authority_session = host.accounts().current_session().unwrap();
             let rpc = BulletinRpc::new(
                 ChainRuntime::new(provider, thread_per_subscription_spawner()),
                 [0x42; 32],
@@ -1468,7 +1464,7 @@ mod tests {
             SubmissionFixture {
                 rpc,
                 host,
-                operation,
+                authority_session,
             }
         }
 

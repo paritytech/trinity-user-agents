@@ -220,57 +220,6 @@ impl AuthoritySession {
     }
 }
 
-/// A product operation bound to its account session and host grants.
-#[derive(Clone, Debug)]
-pub struct HostOperation {
-    /// Account activation selected before product approval.
-    pub session: AuthoritySession,
-    revision: u64,
-}
-
-impl HostOperation {
-    /// Capture while holding the host's grant lifecycle lock.
-    pub fn new(session: AuthoritySession, revision: u64) -> Self {
-        Self { session, revision }
-    }
-
-    /// Stop work invalidated by account selection or a host grant reset.
-    pub async fn run<H: AccountHolder, T, E, F>(
-        &self,
-        accounts: &super::HostAccounts<H>,
-        call: F,
-    ) -> Result<T, E>
-    where
-        F: core::future::Future<Output = Result<T, E>>,
-        E: From<AuthorityError>,
-    {
-        futures::pin_mut!(call);
-        futures::future::poll_fn(|context| {
-            if let Err(error) = accounts.require_current_operation(self) {
-                return core::task::Poll::Ready(Err(error.into()));
-            }
-            match call.as_mut().poll(context) {
-                core::task::Poll::Ready(Ok(value)) => core::task::Poll::Ready(
-                    accounts
-                        .require_current_operation(self)
-                        .map(|()| value)
-                        .map_err(Into::into),
-                ),
-                outcome => outcome,
-            }
-        })
-        .await
-    }
-
-    /// Reject work whose host grants were reset after it began.
-    pub fn require_revision(&self, revision: u64) -> Result<(), AuthorityError> {
-        if self.revision != revision {
-            return Err(AuthorityError::Disconnected);
-        }
-        Ok(())
-    }
-}
-
 /// Typed account-authority failure before it is mapped to an API-specific error.
 #[derive(Debug, Clone, PartialEq, Eq, derive_more::Display, derive_more::Error)]
 pub enum AuthorityError {

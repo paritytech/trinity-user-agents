@@ -4,8 +4,8 @@ use super::allowances::{AllowanceResource, GrantScope};
 use super::authority::{
     AccountCaller, AccountGrant, AccountGrantOutcome, AccountHolder, AccountInvocation,
     AuthorityError, AuthoritySession, AutoSigningKey, BulletinAllowanceKey,
-    CreateTransactionAuthorityRequest, HostOperation, SignPayloadAuthorityRequest,
-    SignRawAuthorityRequest, StatementStoreAllowanceKey,
+    CreateTransactionAuthorityRequest, SignPayloadAuthorityRequest, SignRawAuthorityRequest,
+    StatementStoreAllowanceKey,
 };
 use super::host_grants::{HostGrantGuard, HostGrantStore};
 use super::ring_vrf_registry::{RingVrfRegistryStore, validate_owner_listing};
@@ -119,30 +119,30 @@ impl<H: AccountHolder> HostAccounts<H> {
         self.holder.current_session()
     }
 
-    /// Capture both account identity and host grants before approval.
-    pub fn current_operation(&self) -> Option<HostOperation> {
-        let lifecycle = self.grants.lifecycle();
-        self.current_session()
-            .map(|session| lifecycle.capture(session))
-    }
-
-    fn hold_operation(
+    fn hold_session(
         &self,
-        operation: &HostOperation,
+        session: &AuthoritySession,
     ) -> Result<HostGrantGuard<'_>, AuthorityError> {
         let lifecycle = self.grants.lifecycle();
-        lifecycle.require(operation)?;
-        self.holder.require_current_session(&operation.session)?;
+        self.holder.require_current_session(session)?;
         Ok(lifecycle)
     }
 
-    fn operation_session(
+    fn hold_grant(
         &self,
-        operation: &HostOperation,
+        session: &AuthoritySession,
+        revision: u64,
+    ) -> Result<HostGrantGuard<'_>, AuthorityError> {
+        let lifecycle = self.hold_session(session)?;
+        lifecycle.require_revision(revision)?;
+        Ok(lifecycle)
+    }
+
+    fn grant_session(
+        &self,
+        session: &AuthoritySession,
     ) -> Result<(SessionInfo, u64), AuthorityError> {
-        let lifecycle = self.grants.lifecycle();
-        lifecycle.require(operation)?;
-        self.holder.require_current_session(&operation.session)?;
+        let lifecycle = self.hold_session(session)?;
         let session = self
             .session_state
             .current()
@@ -150,22 +150,15 @@ impl<H: AccountHolder> HostAccounts<H> {
         Ok((session, lifecycle.revision()))
     }
 
-    /// Reject work invalidated by account selection or a host grant reset.
-    pub fn require_current_operation(
-        &self,
-        operation: &HostOperation,
-    ) -> Result<(), AuthorityError> {
-        self.hold_operation(operation).map(|_| ())
-    }
-
     /// Wallet permission retained for this product and activation.
     pub fn wallet_authorization(
         &self,
-        operation: &HostOperation,
+        authority_session: &AuthoritySession,
         product: &ProductContext,
     ) -> Result<Option<super::WalletAuthorization>, AuthorityError> {
-        self.hold_operation(operation)?
-            .wallet_authorization(operation, &product.product_id)
+        Ok(self
+            .hold_session(authority_session)?
+            .wallet_authorization(&product.product_id))
     }
 
     /// Disclose an account only after the calling product may access it.
@@ -178,8 +171,8 @@ impl<H: AccountHolder> HostAccounts<H> {
     ) -> Result<[u8; 32], CallError<api::HostAccountGetError>> {
         account.dot_ns_identifier = normalize_product_identifier(&account.dot_ns_identifier)
             .map_err(|_| CallError::Domain(api::HostAccountGetError::DomainNotValid))?;
-        let operation = self
-            .current_operation()
+        let authority_session = self
+            .current_session()
             .ok_or(CallError::Domain(api::HostAccountGetError::NotConnected))?;
         if account.dot_ns_identifier != product.product_id {
             match super::account_access_authorization(
@@ -208,33 +201,36 @@ impl<H: AccountHolder> HostAccounts<H> {
                 product_id: account.dot_ns_identifier.clone(),
             })
         });
-        self.product_account_public_key(cx, &operation, product, &account, outbound_review.as_ref())
-            .await
-            .map_err(super::account_get_authority_error)
+        self.product_account_public_key(
+            cx,
+            &authority_session,
+            product,
+            &account,
+            outbound_review.as_ref(),
+        )
+        .await
+        .map_err(super::account_get_authority_error)
     }
 
     /// Derive an account beneath a subtree selected by an already authorized operation.
     pub async fn product_account_public_key(
         &self,
         cx: &CallContext,
-        operation: &HostOperation,
+        authority_session: &AuthoritySession,
         product: &ProductContext,
         product_account_id: &api::ProductAccountId,
         outbound_review: Option<&UserConfirmationReview>,
     ) -> Result<[u8; 32], AuthorityError> {
-        let subtree = operation
-            .run(
-                self,
-                self.product_subtree_public_key(
-                    operation,
-                    cx,
-                    AccountCaller::Local {
-                        product,
-                        authorization: None,
-                        outbound_review,
-                    },
-                    product_account_id.dot_ns_identifier.clone(),
-                ),
+        let subtree = self
+            .product_subtree_public_key(
+                authority_session,
+                cx,
+                AccountCaller::Local {
+                    product,
+                    authorization: None,
+                    outbound_review,
+                },
+                product_account_id.dot_ns_identifier.clone(),
             )
             .await?;
         derive_product_public_key(
@@ -249,25 +245,25 @@ impl<H: AccountHolder> HostAccounts<H> {
     /// Resolve a retained subtree before asking the holder to review and resolve it.
     pub async fn product_subtree_public_key(
         &self,
-        operation: &HostOperation,
+        authority_session: &AuthoritySession,
         cx: &CallContext,
         caller: AccountCaller<'_>,
         product_id: String,
     ) -> Result<[u8; 32], AuthorityError> {
-        self.require_current_operation(operation)?;
+        self.holder.require_current_session(authority_session)?;
         let invocation = AccountInvocation {
             call: cx,
-            session: &operation.session,
+            session: authority_session,
             caller,
         };
-        let (session, revision) = self.operation_session(operation)?;
+        let (session, revision) = self.grant_session(authority_session)?;
         let cache_key = (GrantScope::from_session(&session), product_id.clone());
         if let Some(key) = self
             .grants
             .known_product_subtree(&self.session_state, &session, cache_key.clone())
             .await
         {
-            self.require_current_operation(operation)?;
+            self.holder.require_current_session(authority_session)?;
             return Ok(key);
         }
         let resolution = self
@@ -275,39 +271,36 @@ impl<H: AccountHolder> HostAccounts<H> {
             .product_subtree_public_key(invocation, product_id)
             .await?;
         let cx = super::remote_authority_context(invocation.call);
-        super::remote_authority_call(
-            &cx,
-            operation.run(self, async {
-                let key = resolution.await?;
-                self.require_current_operation(operation)?;
-                if !self
-                    .grants
-                    .persist_product_subtree_if_current(
-                        &self.session_state,
-                        &session,
-                        revision,
-                        cache_key,
-                        key,
-                    )
-                    .await
-                {
-                    return Err(AuthorityError::Disconnected);
-                }
-                Ok(key)
-            }),
-        )
+        super::remote_authority_call(&cx, async {
+            let key = resolution.await?;
+            self.holder.require_current_session(authority_session)?;
+            if !self
+                .grants
+                .persist_product_subtree_if_current(
+                    &self.session_state,
+                    &session,
+                    revision,
+                    cache_key,
+                    key,
+                )
+                .await
+            {
+                return Err(AuthorityError::Disconnected);
+            }
+            Ok(key)
+        })
         .await
     }
 
-    /// Review one allocation, then retain each issued capability under its original operation.
+    /// Review one allocation, then retain each issued capability for the selected wallet.
     pub async fn allocate_resources(
         &self,
         cx: &CallContext,
-        operation: &HostOperation,
+        authority_session: &AuthoritySession,
         product: &ProductContext,
         request: api::HostRequestResourceAllocationRequest,
     ) -> Result<api::HostRequestResourceAllocationResponse, AuthorityError> {
-        self.require_current_operation(operation)?;
+        let revision = self.hold_session(authority_session)?.revision();
         let review =
             UserConfirmationReview::ResourceAllocation(crate::platform::ResourceAllocationReview {
                 calling_product_id: product.product_id.clone(),
@@ -320,7 +313,7 @@ impl<H: AccountHolder> HostAccounts<H> {
             .allocate_grants(
                 AccountInvocation {
                     call: cx,
-                    session: &operation.session,
+                    session: authority_session,
                     caller: AccountCaller::Local {
                         product,
                         authorization: None,
@@ -341,7 +334,8 @@ impl<H: AccountHolder> HostAccounts<H> {
             cx,
             super::RESOURCE_ALLOCATION_REMOTE_AUTHORITY_RESPONSE_TIMEOUT,
         );
-        super::remote_authority_call(&cx, operation.run(self, async {
+        super::remote_authority_call(&cx, async {
+            self.hold_grant(authority_session, revision)?;
             #[cfg(feature = "test-host")]
             if self.resource_controls.grants_allowances_unchecked() {
                 drop(grants);
@@ -349,12 +343,12 @@ impl<H: AccountHolder> HostAccounts<H> {
             }
             let mut outcomes = Vec::new();
             loop {
-                self.require_current_operation(operation)?;
+                self.hold_grant(authority_session, revision)?;
                 let Some(outcome) = grants.next().await else { break; };
-                self.require_current_operation(operation)?;
+                self.hold_grant(authority_session, revision)?;
                 outcomes.push(match outcome? {
                     AccountGrantOutcome::Allocated(grant) => {
-                        self.retain_grant(&cx, operation, product, grant).await?;
+                        self.retain_grant(&cx, authority_session, revision, product, grant).await?;
                         api::AllocationOutcome::Allocated
                     },
                     AccountGrantOutcome::Rejected => api::AllocationOutcome::Rejected,
@@ -365,17 +359,19 @@ impl<H: AccountHolder> HostAccounts<H> {
                 });
             }
             Ok(api::HostRequestResourceAllocationResponse { outcomes })
-        })).await
+        }).await
     }
 
     async fn retain_grant(
         &self,
         cx: &CallContext,
-        operation: &HostOperation,
+        authority_session: &AuthoritySession,
+        revision: u64,
         product: &ProductContext,
         grant: AccountGrant,
     ) -> Result<(), AuthorityError> {
-        let (session, revision) = self.operation_session(operation)?;
+        let (session, _) = self.grant_session(authority_session)?;
+        self.hold_grant(authority_session, revision)?;
         match grant {
             AccountGrant::StatementStore { key, period } => {
                 self.grants
@@ -401,17 +397,18 @@ impl<H: AccountHolder> HostAccounts<H> {
                     .await?;
             }
             AccountGrant::WalletAuthorization(authorization) => self
-                .hold_operation(operation)?
+                .hold_session(authority_session)?
                 .retain_wallet_authorization(
                     &self.session_state,
-                    operation,
+                    authority_session,
+                    revision,
                     &product.product_id,
                     authorization,
                 )?,
             AccountGrant::AutoSigning(key) => {
                 let expected = self
                     .product_subtree_public_key(
-                        operation,
+                        authority_session,
                         cx,
                         AccountCaller::Local {
                             product,
@@ -434,17 +431,17 @@ impl<H: AccountHolder> HostAccounts<H> {
             }
             AccountGrant::SmartContract => {}
         }
-        self.require_current_operation(operation)
+        self.holder.require_current_session(authority_session)
     }
 
     /// Acquire a statement key, renewing only grants whose actual allocation period is known.
     async fn statement_store_allowance_key(
         &self,
         cx: &CallContext,
-        operation: &HostOperation,
+        authority_session: &AuthoritySession,
         product_id: String,
     ) -> Result<StatementStoreAllowanceKey, AuthorityError> {
-        let (session, revision) = self.operation_session(operation)?;
+        let (session, revision) = self.grant_session(authority_session)?;
         #[cfg(feature = "test-host")]
         self.resource_controls
             .refuse_withheld(&api::AllocatableResource::StatementStoreAllowance)?;
@@ -465,7 +462,7 @@ impl<H: AccountHolder> HostAccounts<H> {
                 })
                 .transpose()?;
             if period.is_none() || period == current {
-                self.require_current_operation(operation)?;
+                self.holder.require_current_session(authority_session)?;
                 return Ok(key);
             }
         }
@@ -474,27 +471,25 @@ impl<H: AccountHolder> HostAccounts<H> {
                 reason: error.to_string(),
             }
         })?;
-        let grant = operation
-            .run(
-                self,
-                self.holder.ensure_allowance(
-                    AccountInvocation {
-                        call: cx,
-                        session: &operation.session,
-                        caller: AccountCaller::Local {
-                            product: &product,
-                            authorization: None,
-                            outbound_review: None,
-                        },
+        let grant = self
+            .holder
+            .ensure_allowance(
+                AccountInvocation {
+                    call: cx,
+                    session: authority_session,
+                    caller: AccountCaller::Local {
+                        product: &product,
+                        authorization: None,
+                        outbound_review: None,
                     },
-                    AllowanceResource::StatementStore,
-                    OnExistingAllowancePolicy::Ignore,
-                ),
+                },
+                AllowanceResource::StatementStore,
+                OnExistingAllowancePolicy::Ignore,
             )
             .await?;
         match grant {
             AccountGrant::StatementStore { key, period } => {
-                self.require_current_operation(operation)?;
+                self.holder.require_current_session(authority_session)?;
                 self.grants
                     .cache_statement_store_allowance_key(
                         &self.session_state,
@@ -523,10 +518,10 @@ impl<H: AccountHolder> HostAccounts<H> {
     pub async fn bulletin_allowance_key(
         &self,
         cx: &CallContext,
-        operation: &HostOperation,
+        authority_session: &AuthoritySession,
         product_id: String,
     ) -> Result<BulletinAllowanceKey, AuthorityError> {
-        let (session, revision) = self.operation_session(operation)?;
+        let (session, revision) = self.grant_session(authority_session)?;
         #[cfg(feature = "test-host")]
         self.resource_controls
             .refuse_withheld(&api::AllocatableResource::BulletinAllowance)?;
@@ -535,12 +530,12 @@ impl<H: AccountHolder> HostAccounts<H> {
             .cached_bulletin_allowance_key(&self.session_state, &session, revision, &product_id)
             .await?
         {
-            self.require_current_operation(operation)?;
+            self.holder.require_current_session(authority_session)?;
             return Ok(key);
         }
         self.allocate_bulletin_allowance_key(
             cx,
-            operation,
+            authority_session,
             product_id,
             OnExistingAllowancePolicy::Ignore,
         )
@@ -551,10 +546,10 @@ impl<H: AccountHolder> HostAccounts<H> {
     pub async fn refresh_bulletin_allowance_key(
         &self,
         cx: &CallContext,
-        operation: &HostOperation,
+        authority_session: &AuthoritySession,
         product_id: String,
     ) -> Result<BulletinAllowanceKey, AuthorityError> {
-        let (session, revision) = self.operation_session(operation)?;
+        let (session, revision) = self.grant_session(authority_session)?;
         #[cfg(feature = "test-host")]
         self.resource_controls
             .refuse_withheld(&api::AllocatableResource::BulletinAllowance)?;
@@ -563,7 +558,7 @@ impl<H: AccountHolder> HostAccounts<H> {
             .await?;
         self.allocate_bulletin_allowance_key(
             cx,
-            operation,
+            authority_session,
             product_id,
             OnExistingAllowancePolicy::Increase,
         )
@@ -573,37 +568,35 @@ impl<H: AccountHolder> HostAccounts<H> {
     async fn allocate_bulletin_allowance_key(
         &self,
         cx: &CallContext,
-        operation: &HostOperation,
+        authority_session: &AuthoritySession,
         product_id: String,
         policy: OnExistingAllowancePolicy,
     ) -> Result<BulletinAllowanceKey, AuthorityError> {
-        let (session, revision) = self.operation_session(operation)?;
+        let (session, revision) = self.grant_session(authority_session)?;
         let product = ProductContext::new(product_id.clone()).map_err(|error| {
             AuthorityError::Unavailable {
                 reason: error.to_string(),
             }
         })?;
-        let grant = operation
-            .run(
-                self,
-                self.holder.ensure_allowance(
-                    AccountInvocation {
-                        call: cx,
-                        session: &operation.session,
-                        caller: AccountCaller::Local {
-                            product: &product,
-                            authorization: None,
-                            outbound_review: None,
-                        },
+        let grant = self
+            .holder
+            .ensure_allowance(
+                AccountInvocation {
+                    call: cx,
+                    session: authority_session,
+                    caller: AccountCaller::Local {
+                        product: &product,
+                        authorization: None,
+                        outbound_review: None,
                     },
-                    AllowanceResource::Bulletin,
-                    policy,
-                ),
+                },
+                AllowanceResource::Bulletin,
+                policy,
             )
             .await?;
         match grant {
             AccountGrant::Bulletin(key) => {
-                self.require_current_operation(operation)?;
+                self.holder.require_current_session(authority_session)?;
                 self.grants
                     .cache_bulletin_allowance_key(
                         &self.session_state,
@@ -623,22 +616,20 @@ impl<H: AccountHolder> HostAccounts<H> {
     /// Derive entropy while the original host selection remains locked.
     pub fn derive_entropy(
         &self,
-        operation: &HostOperation,
+        authority_session: &AuthoritySession,
         product_id: &str,
         context: &[u8],
     ) -> Result<[u8; 32], AuthorityError> {
-        let _lifecycle = self.hold_operation(operation)?;
         self.holder
-            .derive_entropy(&operation.session, product_id, context)
+            .derive_entropy(authority_session, product_id, context)
     }
 
     /// Mint contact handles under the selected account holder.
     pub fn contacts_handle_key(
         &self,
-        operation: &HostOperation,
+        authority_session: &AuthoritySession,
     ) -> Result<[u8; 32], AuthorityError> {
-        let _lifecycle = self.hold_operation(operation)?;
-        self.holder.contacts_handle_key(&operation.session)
+        self.holder.contacts_handle_key(authority_session)
     }
 
     /// Retained grants exercised by lifecycle tests.
@@ -663,7 +654,7 @@ impl<H: AccountHolder> HostAccounts<H> {
 impl<H: AccountHolder> HostAccounts<H> {
     async fn product_signing_grant(
         &self,
-        operation: &HostOperation,
+        authority_session: &AuthoritySession,
         caller: AccountCaller<'_>,
         account: &api::ProductAccountId,
     ) -> Result<Option<AutoSigningKey>, AuthorityError> {
@@ -671,12 +662,12 @@ impl<H: AccountHolder> HostAccounts<H> {
         {
             return Ok(None);
         }
-        let (session, _) = self.operation_session(operation)?;
+        let (session, _) = self.grant_session(authority_session)?;
         let grant = self
             .grants
             .auto_signing_key(&session, &account.dot_ns_identifier)
             .await?;
-        self.require_current_operation(operation)?;
+        self.holder.require_current_session(authority_session)?;
         Ok(grant)
     }
 
@@ -696,53 +687,51 @@ impl<H: AccountHolder> HostAccounts<H> {
     /// Sign with a retained product key or obtain the holder's independent consent.
     pub async fn sign_payload(
         &self,
-        operation: &HostOperation,
+        authority_session: &AuthoritySession,
         cx: &CallContext,
         caller: AccountCaller<'_>,
         request: SignPayloadAuthorityRequest,
     ) -> Result<api::HostSignPayloadResponse, AuthorityError> {
-        self.require_current_operation(operation)?;
+        let revision = self.grants.lifecycle().revision();
+        self.holder.require_current_session(authority_session)?;
         let invocation = AccountInvocation {
             call: cx,
-            session: &operation.session,
+            session: authority_session,
             caller,
         };
         if let SignPayloadAuthorityRequest::Product(payload) = &request
             && let Some(grant) = self
-                .product_signing_grant(operation, invocation.caller, &payload.account)
+                .product_signing_grant(authority_session, invocation.caller, &payload.account)
                 .await?
         {
             let cx = super::remote_authority_context(invocation.call);
             return super::remote_authority_call(&cx, async {
-                let _lifecycle = self.hold_operation(operation)?;
+                let _lifecycle = self.hold_grant(authority_session, revision)?;
                 let keypair = Self::grant_keypair(&grant, &payload.account)?;
                 Ok(sign_extrinsic_payload(&keypair, payload.payload.clone())?)
             })
             .await;
         }
         let review = request.review(invocation.caller);
-        operation
-            .run(
-                self,
-                self.holder
-                    .sign_payload(invocation.with_outbound_review(&review), request),
-            )
+        self.holder
+            .sign_payload(invocation.with_outbound_review(&review), request)
             .await
     }
 
     /// Preserve legacy review even when a retained product key can sign locally.
     pub async fn sign_raw(
         &self,
-        operation: &HostOperation,
+        authority_session: &AuthoritySession,
         cx: &CallContext,
         caller: AccountCaller<'_>,
         request: SignRawAuthorityRequest,
         watermarked: bool,
     ) -> Result<api::HostSignPayloadResponse, AuthorityError> {
-        self.require_current_operation(operation)?;
+        let revision = self.grants.lifecycle().revision();
+        self.holder.require_current_session(authority_session)?;
         let invocation = AccountInvocation {
             call: cx,
-            session: &operation.session,
+            session: authority_session,
             caller,
         };
         let account = match &request {
@@ -753,14 +742,14 @@ impl<H: AccountHolder> HostAccounts<H> {
             SignRawAuthorityRequest::IdentityAccount { .. } => None,
         };
         let grant = if watermarked && let Some(account) = account {
-            self.product_signing_grant(operation, invocation.caller, account)
+            self.product_signing_grant(authority_session, invocation.caller, account)
                 .await
         } else {
             Ok(None)
         };
         let review = request.review(invocation.caller, watermarked);
         if !matches!(request, SignRawAuthorityRequest::Product(_)) && !matches!(&grant, Ok(None)) {
-            self.require_current_operation(operation)?;
+            self.holder.require_current_session(authority_session)?;
             invocation
                 .confirm(self.services.platform.as_ref(), review.clone())
                 .await?;
@@ -774,7 +763,7 @@ impl<H: AccountHolder> HostAccounts<H> {
             let message = raw_payload_bytes(payload.clone(), watermarked)?;
             let cx = super::remote_authority_context(invocation.call);
             return super::remote_authority_call(&cx, async {
-                let _lifecycle = self.hold_operation(operation)?;
+                let _lifecycle = self.hold_grant(authority_session, revision)?;
                 let keypair = Self::grant_keypair(&grant, account)?;
                 Ok(api::HostSignPayloadResponse {
                     signature: keypair
@@ -787,36 +776,34 @@ impl<H: AccountHolder> HostAccounts<H> {
             })
             .await;
         }
-        operation
-            .run(
-                self,
-                self.holder.sign_raw(
-                    invocation.with_outbound_review(&review),
-                    request,
-                    watermarked,
-                ),
+        self.holder
+            .sign_raw(
+                invocation.with_outbound_review(&review),
+                request,
+                watermarked,
             )
             .await
     }
 
-    /// Prepare chain metadata before using a retained key under its operation guard.
+    /// Prepare chain metadata before using a retained key with the selected grant.
     pub async fn create_transaction(
         &self,
-        operation: &HostOperation,
+        authority_session: &AuthoritySession,
         cx: &CallContext,
         caller: AccountCaller<'_>,
         request: CreateTransactionAuthorityRequest,
     ) -> Result<api::HostCreateTransactionResponse, AuthorityError> {
-        self.require_current_operation(operation)?;
+        let revision = self.grants.lifecycle().revision();
+        self.holder.require_current_session(authority_session)?;
         let invocation = AccountInvocation {
             call: cx,
-            session: &operation.session,
+            session: authority_session,
             caller,
         };
         let review = request.review(invocation.caller);
         if let CreateTransactionAuthorityRequest::Product(payload) = &request
             && let Some(grant) = self
-                .product_signing_grant(operation, invocation.caller, &payload.signer)
+                .product_signing_grant(authority_session, invocation.caller, &payload.signer)
                 .await?
         {
             if !payload.contacts.is_empty() {
@@ -825,56 +812,49 @@ impl<H: AccountHolder> HostAccounts<H> {
                     .await?;
             }
             let cx = super::remote_authority_context(invocation.call);
-            return super::remote_authority_call(
-                &cx,
-                operation.run(self, async {
-                    let metadata =
-                        local_transaction_metadata(&self.services.chain, payload.genesis_hash)
-                            .await?;
-                    let _lifecycle = self.hold_operation(operation)?;
-                    let keypair = Self::grant_keypair(&grant, &payload.signer)?;
-                    Ok(api::HostCreateTransactionResponse {
-                        transaction: build_signed_transaction(
-                            &Sr25519Signer::from_keypair(&keypair),
-                            payload.genesis_hash,
-                            &payload.call_data,
-                            &payload.extensions,
-                            payload.tx_ext_version,
-                            metadata,
-                        )?,
-                    })
-                }),
-            )
+            return super::remote_authority_call(&cx, async {
+                let metadata =
+                    local_transaction_metadata(&self.services.chain, payload.genesis_hash).await?;
+                let _lifecycle = self.hold_grant(authority_session, revision)?;
+                let keypair = Self::grant_keypair(&grant, &payload.signer)?;
+                Ok(api::HostCreateTransactionResponse {
+                    transaction: build_signed_transaction(
+                        &Sr25519Signer::from_keypair(&keypair),
+                        payload.genesis_hash,
+                        &payload.call_data,
+                        &payload.extensions,
+                        payload.tx_ext_version,
+                        metadata,
+                    )?,
+                })
+            })
             .await;
         }
-        operation
-            .run(
-                self,
-                self.holder
-                    .create_transaction(invocation.with_outbound_review(&review), request),
-            )
+        self.holder
+            .create_transaction(invocation.with_outbound_review(&review), request)
             .await
     }
 
     /// Keep retained VRF signing restricted to this host's bound product caller.
     pub async fn sign_vrf(
         &self,
-        operation: &HostOperation,
+        authority_session: &AuthoritySession,
         cx: &CallContext,
         caller: AccountCaller<'_>,
         request: api::HostAccountSignVrfRequest,
     ) -> Result<api::VrfSignature, AuthorityError> {
-        self.require_current_operation(operation)?;
+        let revision = self.grants.lifecycle().revision();
+        self.holder.require_current_session(authority_session)?;
         let invocation = AccountInvocation {
             call: cx,
-            session: &operation.session,
+            session: authority_session,
             caller,
         };
         if let Some(grant) = self
-            .product_signing_grant(operation, invocation.caller, &request.account)
+            .product_signing_grant(authority_session, invocation.caller, &request.account)
             .await?
         {
-            let _lifecycle = self.hold_operation(operation)?;
+            let _lifecycle = self.hold_grant(authority_session, revision)?;
             let keypair = Self::grant_keypair(&grant, &request.account)?;
             let (pre_output, proof) = crate::dynamic_vrf::sign_dynamic_vrf(
                 &keypair,
@@ -902,31 +882,30 @@ impl<H: AccountHolder> HostAccounts<H> {
         } else {
             invocation.with_outbound_review(&review)
         };
-        operation
-            .run(self, self.holder.sign_vrf(invocation, request))
-            .await
+        self.holder.sign_vrf(invocation, request).await
     }
 
     /// Sign exact proof bytes, without using a raw-signing wire message as a substitute.
     pub async fn sign_statement_store_product_payload(
         &self,
-        operation: &HostOperation,
+        authority_session: &AuthoritySession,
         cx: &CallContext,
         caller: AccountCaller<'_>,
         account: api::ProductAccountId,
         payload: Vec<u8>,
     ) -> Result<[u8; 64], AuthorityError> {
-        self.require_current_operation(operation)?;
+        let revision = self.grants.lifecycle().revision();
+        self.holder.require_current_session(authority_session)?;
         let invocation = AccountInvocation {
             call: cx,
-            session: &operation.session,
+            session: authority_session,
             caller,
         };
         if let Some(grant) = self
-            .product_signing_grant(operation, invocation.caller, &account)
+            .product_signing_grant(authority_session, invocation.caller, &account)
             .await?
         {
-            let _lifecycle = self.hold_operation(operation)?;
+            let _lifecycle = self.hold_grant(authority_session, revision)?;
             let keypair = Self::grant_keypair(&grant, &account)?;
             return Ok(keypair
                 .secret
@@ -946,12 +925,8 @@ impl<H: AccountHolder> HostAccounts<H> {
         } else {
             invocation.with_outbound_review(&review)
         };
-        operation
-            .run(
-                self,
-                self.holder
-                    .sign_statement_store_product_payload(invocation, account, payload),
-            )
+        self.holder
+            .sign_statement_store_product_payload(invocation, account, payload)
             .await
     }
 }
@@ -962,14 +937,12 @@ impl<H: AccountHolder + 'static> HostAccounts<H> {
         &self,
         ring: &api::RingLocation,
     ) -> Result<Vec<api::ProductAccountId>, RingVrfError> {
-        let operation = self
-            .current_operation()
-            .ok_or(AuthorityError::Disconnected)?;
+        let authority_session = self.current_session().ok_or(AuthorityError::Disconnected)?;
         let entries = self
             .ring_vrf_registry
-            .providers(operation.session.public_key, ring)
+            .providers(authority_session.public_key, ring)
             .await?;
-        self.require_current_operation(&operation)?;
+        self.holder.require_current_session(&authority_session)?;
         Ok(entries)
     }
 
@@ -978,14 +951,12 @@ impl<H: AccountHolder + 'static> HostAccounts<H> {
         &self,
         ring: &api::RingLocation,
     ) -> Result<Option<api::ProductAccountId>, RingVrfError> {
-        let operation = self
-            .current_operation()
-            .ok_or(AuthorityError::Disconnected)?;
+        let authority_session = self.current_session().ok_or(AuthorityError::Disconnected)?;
         let provider = self
             .ring_vrf_registry
-            .selected_provider(operation.session.public_key, ring)
+            .selected_provider(authority_session.public_key, ring)
             .await?;
-        self.require_current_operation(&operation)?;
+        self.holder.require_current_session(&authority_session)?;
         Ok(provider)
     }
 
@@ -995,22 +966,16 @@ impl<H: AccountHolder + 'static> HostAccounts<H> {
         ring: api::RingLocation,
         handle: api::ProductAccountId,
     ) -> Result<(), RingVrfError> {
-        let operation = self
-            .current_operation()
-            .ok_or(AuthorityError::Disconnected)?;
-        operation
-            .run(self, async {
-                let mut update = self
-                    .ring_vrf_registry
-                    .prepare_update(operation.session.public_key)
-                    .await?;
-                {
-                    let _lifecycle = self.hold_operation(&operation)?;
-                    update.select_provider(ring, handle)?;
-                }
-                update.persist().await
-            })
-            .await
+        let authority_session = self.current_session().ok_or(AuthorityError::Disconnected)?;
+        let mut update = self
+            .ring_vrf_registry
+            .prepare_update(authority_session.public_key)
+            .await?;
+        {
+            let _lifecycle = self.hold_session(&authority_session)?;
+            update.select_provider(ring, handle)?;
+        }
+        update.persist().await
     }
 
     /// Register fixture material in the actual durable registry.
@@ -1056,7 +1021,7 @@ impl<H: AccountHolder + 'static> HostAccounts<H> {
 
     async fn local_ring_vrf_entropy(
         &self,
-        operation: &HostOperation,
+        authority_session: &AuthoritySession,
         caller: AccountCaller<'_>,
         handle: &api::ProductAccountId,
         ring: Option<&api::RingLocation>,
@@ -1064,7 +1029,7 @@ impl<H: AccountHolder + 'static> HostAccounts<H> {
         if !matches!(caller, AccountCaller::Local { .. }) {
             return Ok(None);
         }
-        let (session, _) = self.operation_session(operation)?;
+        let (session, revision) = self.grant_session(authority_session)?;
         let Some(grant) = self
             .grants
             .auto_signing_key(&session, &handle.dot_ns_identifier)
@@ -1081,7 +1046,7 @@ impl<H: AccountHolder + 'static> HostAccounts<H> {
             return Err(RingVrfError::KeyNotInRing);
         }
         let vrf = vrf::load().await?;
-        let _lifecycle = self.hold_operation(operation)?;
+        let _lifecycle = self.hold_grant(authority_session, revision)?;
         let entropy = Zeroizing::new(derive_ring_vrf_entropy_from_domain(
             grant.ring_vrf_domain_entropy(),
             &handle.derivation_index,
@@ -1098,21 +1063,22 @@ impl<H: AccountHolder + 'static> HostAccounts<H> {
     /// Own aliases can use retained material after validating the registered ring.
     pub async fn account_alias(
         &self,
-        operation: &HostOperation,
+        authority_session: &AuthoritySession,
         cx: &CallContext,
         caller: AccountCaller<'_>,
         request: api::HostAccountGetAliasRequest,
     ) -> Result<api::ContextualAlias, RingVrfError> {
-        self.require_current_operation(operation)?;
+        let revision = self.grants.lifecycle().revision();
+        self.holder.require_current_session(authority_session)?;
         let invocation = AccountInvocation {
             call: cx,
-            session: &operation.session,
+            session: authority_session,
             caller,
         };
         if invocation.caller.product_id() == Some(&request.key_handle.dot_ns_identifier)
             && let Some((entropy, vrf)) = self
                 .local_ring_vrf_entropy(
-                    operation,
+                    authority_session,
                     invocation.caller,
                     &request.key_handle,
                     Some(&request.ring_location),
@@ -1120,30 +1086,29 @@ impl<H: AccountHolder + 'static> HostAccounts<H> {
                 .await?
         {
             self.ring_resolver.validate(&request.ring_location).await?;
-            let _lifecycle = self.hold_operation(operation)?;
+            let _lifecycle = self.hold_grant(authority_session, revision)?;
             let context = development_context_bytes(&request.context);
             return Ok(api::ContextualAlias {
                 alias: vrf.alias(&entropy, &context)?.to_vec(),
                 context,
             });
         }
-        operation
-            .run(self, self.holder.account_alias(invocation, request))
-            .await
+        self.holder.account_alias(invocation, request).await
     }
 
     /// Resolve the ring before the final guarded proof computation.
     pub async fn create_proof(
         &self,
-        operation: &HostOperation,
+        authority_session: &AuthoritySession,
         cx: &CallContext,
         caller: AccountCaller<'_>,
         request: api::HostAccountCreateProofRequest,
     ) -> Result<api::HostAccountCreateProofResponse, RingVrfError> {
-        self.require_current_operation(operation)?;
+        let revision = self.grants.lifecycle().revision();
+        self.holder.require_current_session(authority_session)?;
         let invocation = AccountInvocation {
             call: cx,
-            session: &operation.session,
+            session: authority_session,
             caller,
         };
         let (handle, access) = self
@@ -1152,7 +1117,7 @@ impl<H: AccountHolder + 'static> HostAccounts<H> {
         super::product_manifest::require_own_context(&access, &request.context)?;
         if let Some((entropy, vrf)) = self
             .local_ring_vrf_entropy(
-                operation,
+                authority_session,
                 invocation.caller,
                 &handle,
                 Some(&request.ring_location),
@@ -1160,14 +1125,14 @@ impl<H: AccountHolder + 'static> HostAccounts<H> {
             .await?
         {
             let member = {
-                let _lifecycle = self.hold_operation(operation)?;
+                let _lifecycle = self.hold_grant(authority_session, revision)?;
                 vrf.member(&entropy)?
             };
             let resolved = self
                 .ring_resolver
                 .resolve(&request.ring_location, &[MemberCandidate { member }])
                 .await?;
-            let _lifecycle = self.hold_operation(operation)?;
+            let _lifecycle = self.hold_grant(authority_session, revision)?;
             let context = development_context_bytes(&request.context);
             let (proof, alias) =
                 create_proof(&vrf, &entropy, &resolved, &context, &request.message)?;
@@ -1181,23 +1146,21 @@ impl<H: AccountHolder + 'static> HostAccounts<H> {
                 ring_revision: resolved.ring_revision,
             });
         }
-        operation
-            .run(self, self.holder.create_proof(invocation, request))
-            .await
+        self.holder.create_proof(invocation, request).await
     }
 
     /// Retain and mirror registrations under the account selected before any awaits.
     pub async fn register_ring_vrf_key(
         &self,
-        operation: &HostOperation,
+        authority_session: &AuthoritySession,
         cx: &CallContext,
         caller: AccountCaller<'_>,
         request: api::HostAccountRegisterRingVrfKeyRequest,
     ) -> Result<[u8; 32], RingVrfError> {
-        self.require_current_operation(operation)?;
+        self.holder.require_current_session(authority_session)?;
         let invocation = AccountInvocation {
             call: cx,
-            session: &operation.session,
+            session: authority_session,
             caller,
         };
         let caller = invocation
@@ -1212,7 +1175,7 @@ impl<H: AccountHolder + 'static> HostAccounts<H> {
             })?,
             derivation_index: request.index.clone(),
         };
-        let (session, _) = self.operation_session(operation)?;
+        let (session, revision) = self.grant_session(authority_session)?;
         let grant = if matches!(invocation.caller, AccountCaller::Local { .. }) {
             self.grants
                 .auto_signing_key(&session, &handle.dot_ns_identifier)
@@ -1223,40 +1186,32 @@ impl<H: AccountHolder + 'static> HostAccounts<H> {
         let public_key = if let Some(grant) = &grant {
             self.ring_resolver.validate(&request.ring).await?;
             let vrf = vrf::load().await?;
-            let _lifecycle = self.hold_operation(operation)?;
+            let _lifecycle = self.hold_grant(authority_session, revision)?;
             let entropy = Zeroizing::new(derive_ring_vrf_entropy_from_domain(
                 grant.ring_vrf_domain_entropy(),
                 &request.index,
             ));
             vrf.member(&entropy)?
         } else {
-            operation
-                .run(
-                    self,
-                    self.holder
-                        .register_ring_vrf_key(invocation, request.clone()),
-                )
+            self.holder
+                .register_ring_vrf_key(invocation, request.clone())
                 .await?
         };
-        operation
-            .run(self, async {
-                let mut update = self
-                    .ring_vrf_registry
-                    .prepare_update(session.public_key)
-                    .await?;
-                {
-                    let _lifecycle = self.hold_operation(operation)?;
-                    update.register(handle, request.ring.clone(), public_key)?;
-                }
-                update.persist().await
-            })
+        let mut update = self
+            .ring_vrf_registry
+            .prepare_update(session.public_key)
             .await?;
+        {
+            let _lifecycle = self.hold_grant(authority_session, revision)?;
+            update.register(handle, request.ring.clone(), public_key)?;
+        }
+        update.persist().await?;
         if grant.is_some()
             && let AccountCaller::Local { product, .. } = invocation.caller
         {
             let holder = Arc::downgrade(&self.holder);
             let grants = Arc::downgrade(&self.grants);
-            let operation = operation.clone();
+            let authority_session = authority_session.clone();
             let product = product.clone();
             (self.services.spawner)(Box::pin(async move {
                 let (Some(holder), Some(grants)) = (holder.upgrade(), grants.upgrade()) else {
@@ -1265,8 +1220,8 @@ impl<H: AccountHolder + 'static> HostAccounts<H> {
                 let result = async {
                     {
                         let lifecycle = grants.lifecycle();
-                        lifecycle.require(&operation)?;
-                        holder.require_current_session(&operation.session)?;
+                        lifecycle.require_revision(revision)?;
+                        holder.require_current_session(&authority_session)?;
                     }
                     let cx = CallContext::with_request_id(format!(
                         "ring-vrf-registration-mirror:{}",
@@ -1276,7 +1231,7 @@ impl<H: AccountHolder + 'static> HostAccounts<H> {
                         .register_ring_vrf_key(
                             AccountInvocation {
                                 call: &cx,
-                                session: &operation.session,
+                                session: &authority_session,
                                 caller: AccountCaller::Local {
                                     product: &product,
                                     authorization: None,
@@ -1299,15 +1254,15 @@ impl<H: AccountHolder + 'static> HostAccounts<H> {
     /// Merge complete owner listings without discarding accepted local registrations.
     pub async fn list_ring_vrf_keys(
         &self,
-        operation: &HostOperation,
+        authority_session: &AuthoritySession,
         cx: &CallContext,
         caller: AccountCaller<'_>,
         mut request: api::HostAccountListRingVrfKeysRequest,
     ) -> Result<Vec<api::RegisteredRingVrfKey>, RingVrfError> {
-        self.require_current_operation(operation)?;
+        self.holder.require_current_session(authority_session)?;
         let invocation = AccountInvocation {
             call: cx,
-            session: &operation.session,
+            session: authority_session,
             caller,
         };
         let owner = normalize_product_identifier(&request.owner).map_err(|error| {
@@ -1319,10 +1274,10 @@ impl<H: AccountHolder + 'static> HostAccounts<H> {
         if own
             && let Some(mut entries) = self
                 .ring_vrf_registry
-                .complete_owner_entries(operation.session.public_key, &owner)
+                .complete_owner_entries(authority_session.public_key, &owner)
                 .await?
         {
-            self.require_current_operation(operation)?;
+            self.holder.require_current_session(authority_session)?;
             apply_ring_vrf_disclosure(&mut entries, request.disclosure);
             return Ok(entries);
         }
@@ -1330,27 +1285,20 @@ impl<H: AccountHolder + 'static> HostAccounts<H> {
         if own {
             request.disclosure = api::RingVrfKeyDisclosure::PublicKey;
         }
-        let mut entries = operation
-            .run(self, self.holder.list_ring_vrf_keys(invocation, request))
-            .await?;
+        let mut entries = self.holder.list_ring_vrf_keys(invocation, request).await?;
         validate_owner_listing(&owner, &entries)?;
         if entries.iter().all(|entry| entry.public_key.is_some()) {
-            entries = operation
-                .run(self, async {
-                    let mut update = self
-                        .ring_vrf_registry
-                        .prepare_update(operation.session.public_key)
-                        .await?;
-                    let entries = {
-                        let _lifecycle = self.hold_operation(operation)?;
-                        update.reconcile_owner(&owner, entries)?
-                    };
-                    update.persist().await?;
-                    Ok::<_, RingVrfError>(entries)
-                })
+            let mut update = self
+                .ring_vrf_registry
+                .prepare_update(authority_session.public_key)
                 .await?;
+            entries = {
+                let _lifecycle = self.hold_session(authority_session)?;
+                update.reconcile_owner(&owner, entries)?
+            };
+            update.persist().await?;
         }
-        self.require_current_operation(operation)?;
+        self.holder.require_current_session(authority_session)?;
         apply_ring_vrf_disclosure(&mut entries, disclosure);
         Ok(entries)
     }
@@ -1358,30 +1306,29 @@ impl<H: AccountHolder + 'static> HostAccounts<H> {
     /// Sign registered-key bytes only while the retained capability remains selected.
     pub async fn ring_vrf_sign(
         &self,
-        operation: &HostOperation,
+        authority_session: &AuthoritySession,
         cx: &CallContext,
         caller: AccountCaller<'_>,
         request: api::HostAccountRingVrfSignRequest,
     ) -> Result<Vec<u8>, RingVrfError> {
-        self.require_current_operation(operation)?;
+        let revision = self.grants.lifecycle().revision();
+        self.holder.require_current_session(authority_session)?;
         let invocation = AccountInvocation {
             call: cx,
-            session: &operation.session,
+            session: authority_session,
             caller,
         };
         let (handle, _) = self
             .require_ring_vrf_key_access(invocation.caller, &request.key_handle)
             .await?;
         if let Some((entropy, vrf)) = self
-            .local_ring_vrf_entropy(operation, invocation.caller, &handle, None)
+            .local_ring_vrf_entropy(authority_session, invocation.caller, &handle, None)
             .await?
         {
-            let _lifecycle = self.hold_operation(operation)?;
+            let _lifecycle = self.hold_grant(authority_session, revision)?;
             return vrf.sign(&entropy, &request.message);
         }
-        operation
-            .run(self, self.holder.ring_vrf_sign(invocation, request))
-            .await
+        self.holder.ring_vrf_sign(invocation, request).await
     }
 }
 
@@ -1402,7 +1349,7 @@ impl<H: AccountHolder> HostAccounts<H> {
         C: subxt::client::OnlineClientAtBlockT<subxt::config::substrate::SubstrateConfig>,
     >(
         &self,
-        operation: &HostOperation,
+        authority_session: &AuthoritySession,
         allowance: &BulletinAllowanceKey,
         client: &subxt::client::ClientAtBlock<subxt::config::substrate::SubstrateConfig, C>,
         data: &[u8],
@@ -1415,8 +1362,9 @@ impl<H: AccountHolder> HostAccounts<H> {
             MORTAL_PERIOD_BLOCKS, allowance_signer, store_transaction_payload,
         };
         use subxt::tx::Signer;
+        let revision = self.grants.lifecycle().revision();
         let account_id = {
-            let _lifecycle = self.hold_operation(operation)?;
+            let _lifecycle = self.hold_grant(authority_session, revision)?;
             allowance_signer(allowance)
                 .map_err(BulletinSubmitError::InvalidAllowanceKey)?
                 .account_id()
@@ -1432,7 +1380,7 @@ impl<H: AccountHolder> HostAccounts<H> {
             .create_signable(&payload, &account_id, params)
             .await
             .map_err(|error| BulletinSubmitError::Subxt(Box::new(error.into())))?;
-        let _lifecycle = self.hold_operation(operation)?;
+        let _lifecycle = self.hold_grant(authority_session, revision)?;
         let signer =
             allowance_signer(allowance).map_err(BulletinSubmitError::InvalidAllowanceKey)?;
         let bytes = prepared
@@ -1447,19 +1395,17 @@ impl<H: AccountHolder> HostAccounts<H> {
     pub async fn create_authorized_statement_proof(
         &self,
         cx: &CallContext,
-        operation: &HostOperation,
+        authority_session: &AuthoritySession,
         product_id: String,
         statement: api::Statement,
     ) -> Result<api::StatementProof, super::statement_store::StatementProofFailure> {
-        let allowance = operation
-            .run(
-                self,
-                self.statement_store_allowance_key(cx, operation, product_id),
-            )
+        let revision = self.grants.lifecycle().revision();
+        let allowance = self
+            .statement_store_allowance_key(cx, authority_session, product_id)
             .await
             .map_err(super::statement_store::statement_authority_failure)?;
         let _lifecycle = self
-            .hold_operation(operation)
+            .hold_grant(authority_session, revision)
             .map_err(super::statement_store::statement_authority_failure)?;
         super::statement_store::create_statement_proof_with_key(statement, &allowance)
     }
