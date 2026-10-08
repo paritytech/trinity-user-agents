@@ -8320,10 +8320,11 @@ fn a_session_settles_from_the_top_up_the_provider_started() {
     )));
     let engine = Arc::new(RecordingTopUpPlatform::default());
     assert!(services.install_top_up_platform(engine.clone()));
+    offer_provider(&services, "ramp.dot", RAMP_MANIFEST);
     let intent = futures::executor::block_on(services.open_funding(None, v01::FundingDirection::In, Some(1_000)))
         .expect("opened")
         .intent;
-    assert!(futures::executor::block_on(services.select_funding_provider(&intent, "ramp.dot")).expect("selected"));
+    assert!(futures::executor::block_on(services.select_funding_provider(&intent, "ramp.dot", None)).expect("selected"));
     let worker = provider_worker(&services, "ramp.dot");
     first_served(&worker);
     top_up(&worker, product_account_source()).expect("top-up accepted");
