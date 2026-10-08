@@ -2,8 +2,8 @@ import Products
 import UIKit
 @testable import polkadot_app
 
-/// The card and the screen size the tests of an opened card share, so a face
-/// sized against one is never checked against another.
+// The card and the screen size the tests of an opened card share, so a face
+// sized against one is never checked against another.
 
 let loyaltyCard = PocketCardViewModel(
     key: PocketCardKey(productId: "game.paseo", cardId: PocketCardId(value: "loyalty")),

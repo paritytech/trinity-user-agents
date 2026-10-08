@@ -165,6 +165,36 @@ struct PocketCardHostsTests {
 
         #expect(opens.presented == ["after"])
     }
+
+    /// Letting go of a card the collection no longer holds is not the session
+    /// ending: the card the user is opening meanwhile must still open.
+    @Test
+    func keepsAnOpenWhenTheCollectionDropsAnotherCard() async {
+        let hosts = PocketCardHosts()
+        let opens = PresentedOpens()
+        let (started, signalStarted) = AsyncStream<Void>.makeStream()
+        let (lookedUp, signalLookedUp) = AsyncStream<Void>.makeStream()
+        _ = hosts.product(for: trophy) { _ in StubSPAView() }
+
+        let pending = Task {
+            await hosts.openIfIdle {
+                signalStarted.yield()
+                for await _ in lookedUp {
+                    break
+                }
+            } then: {
+                opens.presented.append("pending")
+            }
+        }
+        for await _ in started {
+            break
+        }
+        hosts.keepOnly { _ in false }
+        signalLookedUp.yield()
+        await pending.value
+
+        #expect(opens.presented == ["pending"])
+    }
 }
 
 // MARK: - Fixtures
