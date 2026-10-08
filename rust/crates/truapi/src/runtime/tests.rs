@@ -8,8 +8,8 @@ use crate::platform::{
 };
 use parity_scale_codec::{Encode, OptionBool};
 use truapi::api::{
-    Account, Chain, Entropy, Game, LocalStorage, Notifications, Permissions, Preimage,
-    ResourceAllocation, Scanner, Signing, StatementStore, System, Theme, Worker,
+    Account, Chain, Entropy, ExpandedCard, Game, LocalStorage, Notifications, Permissions,
+    Preimage, ResourceAllocation, Scanner, Signing, StatementStore, System, Theme, Worker,
 };
 use truapi::v02;
 use truapi::versioned::account::{
@@ -28,6 +28,7 @@ use truapi::versioned::chain::{
 use truapi::versioned::entropy::{
     HostDeriveEntropyError, HostDeriveEntropyRequest, HostDeriveEntropyResponse,
 };
+use truapi::versioned::expanded_card::HostExpandedCardSetFaceShownRequest;
 use truapi::versioned::game::{
     HostCancelNextGameError, HostCancelNextGameRequest, HostCancelNextGameResponse,
     HostRemindNextGameError, HostRemindNextGameRequest, HostRemindNextGameResponse,
@@ -2216,6 +2217,23 @@ fn pocket_list_subscribe_forwards_the_host_list_and_interrupts_on_stream_errors(
         Some(Err(CallError::HostFailure { .. }))
     ));
     assert!(futures::executor::block_on(items.next()).is_none());
+}
+
+/// A product detects "no expanded cards here" by `Unsupported`; a
+/// `HostFailure` would read as a real failure.
+#[test]
+fn expanded_card_set_face_shown_is_unsupported_until_a_host_implements_it() {
+    let host = pocket_host(crate::platform::ProductExecutionKind::Widget, None, false);
+
+    let result = futures::executor::block_on(ExpandedCard::set_face_shown(
+        &host,
+        &CallContext::default(),
+        HostExpandedCardSetFaceShownRequest::V1(v01::HostExpandedCardSetFaceShownRequest {
+            shown: false,
+        }),
+    ));
+
+    assert!(matches!(result, Err(CallError::Unsupported)));
 }
 
 #[test]
