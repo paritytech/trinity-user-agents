@@ -2181,6 +2181,8 @@ ended. This preserves the child status but bypasses later Rust destructors.
 | `FORCE_COLOR` | Force battery reporter color in non-TTY output. |
 | `TRUAPI_BATTERY_REPORT_PATH` | Override battery report destination. |
 | `TRUAPI_APPROVALS_LOG` | Append one line per decided confirmation to this file. |
+| `TRUAPI_DECISIONS_DIR` | Without `--auto-accept`, publish each confirmation as `<id>.request.json` (`{"id","action","kind","detail","at"}`) in this directory and wait for `<id>.decision`, whose text is the answer the terminal prompt takes (`y`/`n`, or `o`/`a`/`n` for a permission); then write `<id>.decided.json` and remove both. One request at a time. Refused at startup on a preset that is not a test network (both shipped presets are). |
+| `TRUAPI_DECISIONS_TIMEOUT_MS` | Bound on one `TRUAPI_DECISIONS_DIR` wait, in milliseconds (default 600000); a request not answered in time is denied. |
 
 ## 22. Current v0.1 operational constraints
 
