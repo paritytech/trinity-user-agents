@@ -407,12 +407,14 @@ AutoSigning without approval. Legacy-account signing still asks the user.
   `set_funding_callbacks` (the overlay), `open_funding`,
   `funding_session`, `funding_sessions`, `cancel_funding` and
   `acknowledge_funding_session`. Amounts cross the FFI as decimal strings.
-  `funding_sessions` lists sessions in flight first, then ended ones, each
-  newest first. An ended session is handed to the host through
-  `funding_session_changed` each time funding resumes until the host calls
-  `acknowledge_funding_session`, so its history writes every outcome once;
-  the core keeps the 50 newest recorded sessions and every unrecorded one
-  within the 200 newest ended.
+  The host owns the funding history. A session is stored only once the user
+  starts it in the overlay. `funding_sessions` lists sessions in flight first,
+  then ended ones the host has not recorded, each newest first. An ended
+  session is handed to the host through `funding_session_changed` each time
+  funding resumes until the host calls `acknowledge_funding_session`, after
+  which the core drops it, so the host's history writes every outcome once.
+  The core keeps at most the 200 newest unrecorded sessions. Products see a
+  session in flight as `InProgress`.
 - `ContactsPlatform`: resolve the handles a transaction names to contacts, and
   render the picker that selects one. `contacts` is the only required method; `pick_contact`
   defaults to `Unsupported`, so a host serving no picker says so rather than

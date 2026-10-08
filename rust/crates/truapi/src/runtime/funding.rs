@@ -9,7 +9,7 @@
 //! writes so persisted snapshots land in order, persists before anyone hears of
 //! the change, and then notifies subscribers and the host.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, Weak};
 
@@ -176,7 +176,10 @@ impl FundingRegistry {
                 .collect();
         }
         *loaded = true;
-        // Still under the write lock, so notifications arrive in commit order.
+        // Still under the write lock, so notifications arrive in commit order,
+        // each session once even when an edit and its expiry both name it.
+        let mut announced = HashSet::new();
+        changed.retain(|intent| announced.insert(intent.clone()));
         for intent in changed {
             if let Some(session) = self.get(&intent) {
                 self.fan_out(&session);
@@ -286,6 +289,11 @@ pub enum OpenFundingError {
     Present(GenericError),
 }
 
+/// First wait before retrying a failed load of the sessions on resume.
+const RESUME_RETRY_FIRST: Duration = Duration::from_secs(1);
+/// Longest wait between retries of that load.
+const RESUME_RETRY_LONGEST: Duration = Duration::from_secs(60);
+
 impl RuntimeServices {
     /// Load persisted sessions and arm expiry for them, so sessions from
     /// before a restart end on time and the host hears of them.
@@ -293,25 +301,35 @@ impl RuntimeServices {
         let services = self.clone();
         (self.spawner)(Box::pin(async move {
             let registry = services.funding();
-            let loaded = registry
-                .commit(
-                    services.platform.as_ref(),
-                    current_unix_millis(),
-                    |sessions| {
-                        // Ended sessions the host has not recorded are handed
-                        // over again, so its history gets every outcome.
-                        let pending = sessions
-                            .values()
-                            .filter(|session| session.needs_handoff())
-                            .map(|session| session.intent.clone())
-                            .collect();
-                        ((), pending)
-                    },
-                )
-                .await;
-            match loaded {
-                Ok(()) => registry.keep_expiring(&services),
-                Err(error) => tracing::warn!(%error, "loading funding sessions failed"),
+            // The host's session views read what the core has loaded, so a
+            // failed load is retried until the sessions are in.
+            let mut retry_in = RESUME_RETRY_FIRST;
+            loop {
+                let loaded = registry
+                    .commit(
+                        services.platform.as_ref(),
+                        current_unix_millis(),
+                        |sessions| {
+                            // Ended sessions the host has not recorded are
+                            // handed over again, so its history gets every
+                            // outcome.
+                            let pending = sessions
+                                .values()
+                                .filter(|session| session.needs_handoff())
+                                .map(|session| session.intent.clone())
+                                .collect();
+                            ((), pending)
+                        },
+                    )
+                    .await;
+                match loaded {
+                    Ok(()) => break registry.keep_expiring(&services),
+                    Err(error) => {
+                        tracing::warn!(%error, ?retry_in, "loading funding sessions failed");
+                        futures_timer::Delay::new(retry_in).await;
+                        retry_in = (retry_in * 2).min(RESUME_RETRY_LONGEST);
+                    }
+                }
             }
         }));
     }
@@ -374,17 +392,8 @@ impl RuntimeServices {
             amount,
             now_ms,
         );
-        let storage = self.platform.as_ref();
-        let opened = session.clone();
-        registry
-            .commit(storage, now_ms, move |sessions| {
-                sessions.insert(opened.intent.clone(), opened);
-                ((), Vec::new())
-            })
-            .await
-            .map_err(OpenFundingError::Session)?;
-        registry.keep_expiring(self);
-
+        // Nothing is stored until the user starts the session, so an overlay
+        // the app is killed under leaves no session behind.
         let presented = platform
             .present_funding(
                 product,
@@ -397,32 +406,20 @@ impl RuntimeServices {
             .await;
         match presented {
             Ok(FundingPresentOutcome::Started) => {
-                // The host hears of a session only once the user has started it.
-                let intent = session.intent.clone();
-                let announced = registry
-                    .commit(storage, current_unix_millis(), move |_| ((), vec![intent]))
-                    .await;
-                if let Err(error) = announced {
-                    tracing::warn!(%error, "announcing a started funding session failed");
-                }
+                let started = session.clone();
+                registry
+                    .commit(self.platform.as_ref(), current_unix_millis(), move |sessions| {
+                        let intent = started.intent.clone();
+                        sessions.insert(intent.clone(), started);
+                        ((), vec![intent])
+                    })
+                    .await
+                    .map_err(OpenFundingError::Session)?;
+                registry.keep_expiring(self);
                 Ok(session)
             }
-            outcome => {
-                let intent = session.intent.clone();
-                let discarded = registry
-                    .commit(storage, current_unix_millis(), move |sessions| {
-                        sessions.remove(&intent);
-                        ((), Vec::new())
-                    })
-                    .await;
-                if let Err(error) = discarded {
-                    tracing::warn!(%error, "discarding an unstarted funding session failed");
-                }
-                Err(match outcome {
-                    Ok(_) => OpenFundingError::Dismissed,
-                    Err(error) => OpenFundingError::Present(error),
-                })
-            }
+            Ok(_) => Err(OpenFundingError::Dismissed),
+            Err(error) => Err(OpenFundingError::Present(error)),
         }
     }
 }
@@ -488,7 +485,7 @@ mod tests {
         assert_eq!(
             block_on(stream.collect::<Vec<_>>()),
             vec![
-                HostFundingStatusSubscribeItem::AwaitingDeposit {
+                HostFundingStatusSubscribeItem::InProgress {
                     expires_at: Some(NOW + DAY_MS),
                 },
                 HostFundingStatusSubscribeItem::Failed {

@@ -186,8 +186,7 @@ impl FundingPlatform for CliFundingHost {
 
     fn funding_session_changed(&self, intent: String, status: HostFundingStatusSubscribeItem) {
         let (tag, amount) = match status {
-            HostFundingStatusSubscribeItem::AwaitingDeposit { .. } => ("AwaitingDeposit", None),
-            HostFundingStatusSubscribeItem::AwaitingRelease => ("AwaitingRelease", None),
+            HostFundingStatusSubscribeItem::InProgress { .. } => ("InProgress", None),
             HostFundingStatusSubscribeItem::Delivered { credited } => ("Delivered", Some(credited)),
             HostFundingStatusSubscribeItem::Released { debited } => ("Released", Some(debited)),
             HostFundingStatusSubscribeItem::Failed { .. } => ("Failed", None),
