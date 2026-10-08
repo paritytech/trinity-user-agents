@@ -23,7 +23,7 @@ final class PocketCardScreenViewController: UIViewController {
     private let scrollView = UIScrollView()
     private var productHeight: Constraint?
 
-    private var requestedFaceShown: Bool
+    private var openingFaceShown: Bool
     private var openingFaceApplied = false
     private var userOwnsFace = false
     private var pageMoveTarget: CGPoint?
@@ -37,7 +37,7 @@ final class PocketCardScreenViewController: UIViewController {
         self.card = card
         self.product = product
         self.surface = surface
-        requestedFaceShown = faceShown
+        openingFaceShown = faceShown
         let face = UIHostingController(rootView: PocketOpenedCardView(card: card))
         face.view.backgroundColor = .clear
         face.safeAreaRegions = []
@@ -70,7 +70,7 @@ final class PocketCardScreenViewController: UIViewController {
         guard !openingFaceApplied, scrollView.bounds.height > 0 else { return }
 
         openingFaceApplied = true
-        moveFace(shown: requestedFaceShown, animated: false)
+        moveFace(shown: openingFaceShown, animated: false)
     }
 
     override func viewDidDisappear(_ animated: Bool) {
@@ -100,10 +100,10 @@ final class PocketCardScreenViewController: UIViewController {
     func setFaceShown(_ shown: Bool, animated: Bool) -> ExpandedCardFaceOutcome {
         guard !userOwnsFace else { return .userMoving }
 
-        requestedFaceShown = shown
-
         if openingFaceApplied {
             moveFace(shown: shown, animated: animated)
+        } else {
+            openingFaceShown = shown
         }
 
         return .applied
