@@ -22,7 +22,9 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.launch
 import timber.log.Timber
 import javax.inject.Inject
 import io.paritytech.polkadotapp.common.R as RCommon
@@ -66,6 +68,20 @@ class TransactionSignViewModel @Inject constructor(
         .inBackground()
         .stateIn(this, SharingStarted.Eagerly, LoadingState.Loading)
 
+    // Set once this sheet has nothing left to do; one that was not on top then closes when it is next shown
+    private var finished = false
+
+    private val withdrawalWatch = launch {
+        signingContext.awaitWithdrawal()
+        // A decision being delivered settles first: an approval closes the sheet itself, a failed one is closed here
+        signing.first { !it }
+        close()
+    }
+
+    fun onResume() = launchUnit {
+        if (finished) close()
+    }
+
     override fun onApproveClicked() = launchUnit {
         if (signing.value) return@launchUnit
 
@@ -77,7 +93,8 @@ class TransactionSignViewModel @Inject constructor(
             .onSuccess {
                 showMessage(RCommon.string.sign_transaction_signed)
 
-                router.back()
+                withdrawalWatch.cancel()
+                close()
             }
             .onFailure { showPresentationError(SigningFailedPresentationError(it)) }
 
@@ -85,6 +102,7 @@ class TransactionSignViewModel @Inject constructor(
     }
 
     override fun onRejectClicked() = launchUnit {
+        withdrawalWatch.cancel()
         signing.value = true
 
         Timber.d("Reject clicked for ${signingContext.requesterName}")
@@ -92,9 +110,14 @@ class TransactionSignViewModel @Inject constructor(
         signingContext.deliverRejection()
             .onFailure { showPresentationError(UnexpectedPresentationError(it)) }
 
-        router.back()
+        close()
 
         signing.value = false
+    }
+
+    private suspend fun close() {
+        finished = true
+        router.closeSignTransaction(signingContext.id)
     }
 
     override fun onDetailsClicked() {

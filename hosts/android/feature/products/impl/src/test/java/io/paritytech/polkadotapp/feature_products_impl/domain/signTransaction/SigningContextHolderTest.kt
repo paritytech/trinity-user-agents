@@ -39,6 +39,7 @@ class SigningContextHolderTest {
     }
 
     private fun signingContext(): SigningContext = object : SigningContext {
+        override val id = "request"
         override val requesterName = "product.dot"
         override val requesterIconUrl = ""
         override val signingRequestBody = SigningRequestBody.SignVrf(

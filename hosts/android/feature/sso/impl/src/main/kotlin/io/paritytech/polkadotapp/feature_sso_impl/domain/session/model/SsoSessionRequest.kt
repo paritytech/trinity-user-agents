@@ -76,5 +76,7 @@ class SsoSessionRequest(
         ) : Content()
 
         class ProductSubtreeRequest(val productId: ProductId) : Content()
+
+        class Cancel(val messageId: SsoSessionRequestId) : Content()
     }
 }

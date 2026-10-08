@@ -1,9 +1,10 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.crossProductProof
 
 import io.paritytech.polkadotapp.common.domain.model.DataByteArray
+import io.paritytech.polkadotapp.common.utils.WithdrawableAnswer
 import io.paritytech.polkadotapp.feature_account_api.domain.derivation.DerivationIndex32
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
-import kotlinx.coroutines.CompletableDeferred
+import java.util.UUID
 
 class CrossProductProofContext(
     val callingProduct: ProductId,
@@ -16,15 +17,21 @@ class CrossProductProofContext(
         data object Rejected : Decision
     }
 
-    private val decision = CompletableDeferred<Decision>()
+    val id: String = UUID.randomUUID().toString()
+    private val decision = WithdrawableAnswer<Decision>()
+
+    val isWithdrawn: Boolean
+        get() = decision.isWithdrawn
 
     fun deliverApproved() {
-        decision.complete(Decision.Approved)
+        decision.deliver(Decision.Approved)
     }
 
     fun deliverRejected() {
-        decision.complete(Decision.Rejected)
+        decision.deliver(Decision.Rejected)
     }
 
-    suspend fun awaitDecision(): Decision = decision.await()
+    suspend fun awaitDecision(open: suspend () -> Unit): Decision = decision.await(open)
+
+    suspend fun awaitWithdrawal() = decision.awaitWithdrawal()
 }

@@ -169,6 +169,7 @@ private fun SsoMessageContent.toRequestContent(tld: DotNsTld): SsoSessionRequest
             message = message.value,
         )
         is SsoMessageContent.RingVrfSignResponse -> error("RingVrfSignResponse is a response-only message type")
+        is SsoMessageContent.Cancel -> SsoSessionRequest.Content.Cancel(withdrawal.messageId)
     }
 }
 
@@ -225,6 +226,7 @@ private fun SsoSessionRequest.Content.toMessageContent(): SsoMessageContent {
             keyHandle = keyHandle.toScale(),
             message = message.toDataByteArray(),
         )
+        is SsoSessionRequest.Content.Cancel -> SsoMessageContent.Cancel(SsoWithdrawalScale(messageId))
     }
 }
 

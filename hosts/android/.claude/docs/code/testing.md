@@ -8,9 +8,11 @@ The patterns below are the result of repeated correction during recent reviews. 
 
 ## Stack
 
-- **Mockito 5** (`org.mockito:mockito-core` — inline mock-maker is the default, final classes including `data class` work without `open`). **Not MockK.**
+- **Mockito 5** (`org.mockito:mockito-core` — inline mock-maker is the default, final classes including `data class` work without `open`). The default for plain stubs and `verify(...)`.
+- **MockK** (`libs.mockk`, added per module as `testImplementation`) when a stub has to suspend: `coEvery { … } coAnswers { awaitCancellation() }` for a prompt that only cancellation ends, or a stub on a `context(...)` function. Mockito can't hold a caller suspended and still see it cancelled. Don't mix both libraries in one test class.
 - **JUnit 4**.
-- **`kotlinx.coroutines.runBlocking`** for suspend-fn driving. **Not** `runTest` — the project's existing tests use plain `runBlocking`; match that.
+- **`kotlinx.coroutines.runBlocking`** for suspend-fn driving when the test doesn't need to control time or ordering.
+- **`kotlinx.coroutines.test.runTest`** with a `StandardTestDispatcher` when it does: withdrawal and cancellation, a queue's serving order, anything that would otherwise need a real `delay`. Step it with `runCurrent()` / `advanceUntilIdle()`, run collectors that never finish in `backgroundScope`, and hand code that switches context `TestScope.testDispatchers()` from `test-shared`. ViewModel tests also need `Dispatchers.setMain(testDispatcher)` and `runTest(testDispatcher)`.
 - Test infrastructure (matchers, `whenever`, common helpers) lives in `test-shared/.../MockitoHelpers.kt`. Don't reinvent locally.
 
 ```kotlin
@@ -31,7 +33,7 @@ Add helpers to `test-shared` when you reach for a new matcher / fixture more tha
 
 2. **Value-class arg matchers go through `test-shared` helpers.** Use `anyUInt()` / `anyLong()` from `MockitoHelpers.kt`. `Mockito.any<UInt>()` NPEs because Mockito returns `null` cast to `UInt` and the JVM unboxes that.
 
-3. **`runBlocking<Unit>` in `@Test` and `@Before`.** A `verify(...)` call (or any non-Unit terminal expression) makes the `runBlocking` block's inferred type non-Unit, which JUnit rejects with `InvalidTestClassError`. Always pin to `Unit`:
+3. **`runBlocking<Unit>` in `@Test` and `@Before`** (`runTest` returns `TestResult`, so it needs no pin). A `verify(...)` call (or any non-Unit terminal expression) makes the `runBlocking` block's inferred type non-Unit, which JUnit rejects with `InvalidTestClassError`. Always pin to `Unit`:
    ```kotlin
    @Test fun `foo`() = runBlocking<Unit> { ... }
    ```
@@ -224,4 +226,5 @@ Current contents (`test-shared/src/main/java/io/paritytech/polkadotapp/test_shar
 
 - `feature/statement-store/impl/src/test/.../RealStatementStoreSlotAllocatorTest.kt` — Mockito mocks + named helpers + `@Before` for truly-universal setup; covers the full allocator behavior contract.
 - `feature/statement-store/impl/src/test/.../RealStatementStoreSlotRenewerTest.kt` — mixes pure-logic comparator tests with end-to-end Mockito-based renewer flow tests.
+- `feature/sso/impl/src/test/.../SsoRequestQueueTest.kt` and `SsoServiceWithdrawalTest.kt` — `runTest` + `backgroundScope` collectors + `runCurrent()` stepping; MockK stubs that suspend until cancelled.
 - `feature/coinage/impl/src/test/.../TransferPlannerTest.kt` — older `runBlocking` + Mockito style; some patterns predate this doc and don't follow every rule.

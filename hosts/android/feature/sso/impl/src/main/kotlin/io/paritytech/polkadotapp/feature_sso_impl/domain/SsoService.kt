@@ -2,6 +2,7 @@ package io.paritytech.polkadotapp.feature_sso_impl.domain
 
 import io.paritytech.polkadotapp.common.domain.model.toDataByteArray
 import io.paritytech.polkadotapp.common.utils.flowOfAll
+import io.paritytech.polkadotapp.common.utils.runCancellableCatching
 import io.paritytech.polkadotapp.feature_products_api.domain.ProductAccountIdProvider
 import io.paritytech.polkadotapp.feature_products_api.domain.ProductRequestAccountResolver
 import io.paritytech.polkadotapp.feature_products_api.domain.accountsProtocol.AccountsProtocol
@@ -20,12 +21,13 @@ import io.paritytech.polkadotapp.feature_sso_impl.domain.model.SsoSessionData
 import io.paritytech.polkadotapp.feature_sso_impl.domain.session.SsoSessionManager
 import io.paritytech.polkadotapp.feature_sso_impl.domain.session.model.SsoSessionId
 import io.paritytech.polkadotapp.feature_sso_impl.domain.session.model.SsoSessionRequest
+import io.paritytech.polkadotapp.feature_sso_impl.domain.session.model.SsoSessionRequestId
 import io.paritytech.polkadotapp.feature_sso_impl.domain.session.model.SsoSessionResponse
 import io.paritytech.polkadotapp.feature_sso_impl.domain.session.model.SsoSessionResponse.Companion.responseWith
 import io.paritytech.polkadotapp.feature_sso_impl.domain.signTransaction.SsoSigningContext
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.onEach
 import timber.log.Timber
+import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -39,13 +41,24 @@ class SsoService @Inject constructor(
     private val productRequestAccountResolver: ProductRequestAccountResolver,
     private val productAccountIdProvider: ProductAccountIdProvider,
 ) {
-    fun watchSsoEvents(): Flow<SsoSessionRequest> {
-        return flowOfAll {
-            ssoSessionManager.init()
+    private val requestQueue = SsoRequestQueue(
+        serve = ::handleRequest,
+        onWithdrawn = ::handleWithdrawn,
+        onCancel = ::withdrawSigning,
+        isHandled = ssoHandledRequestRepository::wasHandled,
+    )
 
-            ssoSessionManager.allMessages
-        }
-            .onEach { request -> handleRequest(request) }
+    // Every SSO signing sheet still open, so a Cancel reaches its own even after another sheet took the holder
+    private val openSigning = ConcurrentHashMap<Pair<SsoSessionId, SsoSessionRequestId>, SsoSigningContext>()
+
+    fun watchSsoEvents(): Flow<SsoSessionRequest> {
+        return requestQueue.process(
+            flowOfAll {
+                ssoSessionManager.init()
+
+                ssoSessionManager.allMessages
+            }
+        )
     }
 
     suspend fun disconnectSession(sessionId: SsoSessionId) {
@@ -87,9 +100,29 @@ class SsoService @Inject constructor(
             is SsoSessionRequest.Content.SignVrfRequest -> handleSignVrfRequest(request, content, sessionName)
             is SsoSessionRequest.Content.ResourceAllocationRequest -> handleResourceAllocationRequest(request, content, sessionName)
             is SsoSessionRequest.Content.ProductSubtreeRequest -> handleProductSubtreeRequest(request, content, sessionName)
+            is SsoSessionRequest.Content.Cancel -> {
+                Timber.w("Cancel ${request.requestId} reached the request handler instead of SsoRequestQueue")
+                return
+            }
         }
 
         ssoHandledRequestRepository.markHandled(request)
+    }
+
+    // A withdrawn request is recorded as handled so that a redelivery does not revive it
+    private suspend fun handleWithdrawn(request: SsoSessionRequest) {
+        Timber.d("SSO request ${request.requestId} withdrawn by its sender")
+        ssoHandledRequestRepository.markHandled(request)
+    }
+
+    private fun withdrawSigning(sessionId: SsoSessionId, requestId: SsoSessionRequestId) {
+        val signingContext = openSigning.remove(sessionId to requestId) ?: return
+        Timber.d("SSO signing request $requestId withdrawn by its sender")
+        signingContext.withdraw()
+    }
+
+    internal fun signingSheetClosed(signingContext: SsoSigningContext) {
+        openSigning.remove(signingContext.request.sessionId to signingContext.request.requestId, signingContext)
     }
 
     private suspend fun handleDisconnected(request: SsoSessionRequest, sessionName: String) {
@@ -152,8 +185,9 @@ class SsoService @Inject constructor(
             signingAccount = signingAccount,
         )
 
+        openSigning[request.sessionId to request.requestId] = signingContext
         signingContextHolder.set(signingContext)
-        signingRouter.openSignTransaction()
+        signingRouter.openSignTransaction(signingContext.id)
     }
 
     private suspend fun handleAliasRequest(
@@ -299,7 +333,7 @@ class SsoService @Inject constructor(
     ) {
         Timber.d("ResourceAllocationRequest received from $sessionName for ${content.callingProduct}")
 
-        val responseContent = runCatching {
+        val responseContent = runCancellableCatching {
             accountsProtocol.requestResourceAllocation(
                 callingProduct = content.callingProduct,
                 resources = content.resources,

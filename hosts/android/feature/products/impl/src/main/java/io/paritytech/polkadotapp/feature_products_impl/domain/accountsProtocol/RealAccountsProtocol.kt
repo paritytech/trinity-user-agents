@@ -246,8 +246,7 @@ class RealAccountsProtocol @Inject constructor(
             message = message.toDataByteArray(),
         )
         crossProductProofContextHolder.set(proofContext)
-        productsRouter.openCrossProductProofPrompt()
-        return proofContext.awaitDecision() is CrossProductProofContext.Decision.Approved
+        return proofContext.awaitDecision { productsRouter.openCrossProductProofPrompt(proofContext.id) } is CrossProductProofContext.Decision.Approved
     }
 
     private suspend fun MemberSource.contextualAlias(context: BandersnatchContext): ContextualAlias = when (this) {
@@ -344,9 +343,8 @@ class RealAccountsProtocol @Inject constructor(
             onExisting = onExisting,
         )
         contextHolder.set(context)
-        productsRouter.openResourceAllocationRequestPrompt()
 
-        return context.awaitOutcomes()
+        return context.awaitOutcomes { productsRouter.openResourceAllocationRequestPrompt(context.id) }
     }
 }
 

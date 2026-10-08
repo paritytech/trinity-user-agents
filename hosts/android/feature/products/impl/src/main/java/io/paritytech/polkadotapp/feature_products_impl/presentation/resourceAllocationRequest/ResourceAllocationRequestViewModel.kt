@@ -20,6 +20,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.launch
 import javax.inject.Inject
 import io.paritytech.polkadotapp.common.R as RCommon
 
@@ -48,30 +49,49 @@ class ResourceAllocationRequestViewModel @Inject constructor(
         .inBackground()
         .stateIn(this, SharingStarted.Eagerly, LoadingState.Loading)
 
+    // Set once this sheet has nothing left to do; one that was not on top then closes when it is next shown
+    private var finished = false
+
+    private val withdrawalWatch = launch {
+        context.awaitWithdrawal()
+        // An allocation under way closes the prompt itself once the steps it already submitted end
+        if (!allocating.value) close()
+    }
+
+    fun onResume() = launchUnit {
+        if (finished) close()
+    }
+
     override fun onApproveClicked() {
         if (allocating.value) return
         allocating.value = true
 
         launchWithDiagnostics(stalenessReport) {
-            interactor.allocateAll(context.productId, context.resources, context.onExisting)
+            interactor.allocateAll(context.productId, context.resources, context.onExisting, context::isWithdrawn)
                 .onSuccess(context::deliver)
                 // The product is waiting on this prompt alone, so an unexpected failure still has to answer it
                 .onFailure { context.deliverAll(ApAllocationOutcome.NotAvailable) }
 
-            router.back()
+            close()
         }
     }
 
     override fun onRejectClicked() = launchUnit {
+        withdrawalWatch.cancel()
         context.deliverAll(ApAllocationOutcome.Rejected)
-        router.back()
+        close()
+    }
+
+    private suspend fun close() {
+        finished = true
+        router.closeResourceAllocationRequestPrompt(context.id)
     }
 
     override fun onCleared() {
         super.onCleared()
         // This prompt owns the allocation, so once it is gone nobody else is left to answer the product
         context.deliverAll(ApAllocationOutcome.NotAvailable)
-        holder.clear()
+        holder.clear(context)
     }
 }
 

@@ -13,7 +13,10 @@ class CrossProductProofContextHolder @Inject constructor() {
 
     fun get(): CrossProductProofContext? = context
 
-    fun clear() {
-        context = null
+    // Owner-guarded: a sheet is cleared after its dismiss animation, when the holder may carry the next prompt
+    fun clear(owner: CrossProductProofContext) {
+        if (context === owner) {
+            context = null
+        }
     }
 }

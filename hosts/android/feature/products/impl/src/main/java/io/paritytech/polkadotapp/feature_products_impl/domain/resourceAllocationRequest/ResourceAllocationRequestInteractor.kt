@@ -44,11 +44,12 @@ class ResourceAllocationRequestInteractor @Inject constructor(
         callingProduct: ProductId,
         resources: List<ApAllocatableResource>,
         onExisting: OnExistingAllowancePolicy,
+        isWithdrawn: () -> Boolean,
     ): Result<List<ApAllocationOutcome>> = runCancellableCatching {
         // The prompt drives this from `viewModelScope`, so the alias derivations below must not land on the main thread
         withContext(coroutineDispatchers.computation) {
             resources.mapAsync { resource ->
-                allocate(callingProduct, resource, onExisting)
+                allocate(callingProduct, resource, onExisting, isWithdrawn)
                     .logFailure("Failed to allocate $resource for $callingProduct")
                     .getOrElse { ApAllocationOutcome.NotAvailable }
             }
@@ -60,31 +61,46 @@ class ResourceAllocationRequestInteractor @Inject constructor(
         callingProduct: ProductId,
         resource: ApAllocatableResource,
         onExisting: OnExistingAllowancePolicy,
+        isWithdrawn: () -> Boolean,
     ): Result<ApAllocationOutcome> = when (resource) {
         ApAllocatableResource.BulletInAllowance ->
             allowanceAccountDerivation.deriveSlotKey(AllowanceSystem.BULLETIN, callingProduct)
                 .flatMap { key ->
-                    transactionStorageSlotAllocator.allocate(key.deriveAccountId(), onExisting.toTransactionStorageStrategy())
-                        .map { ApAllocationOutcome.Allocated(ApAllocatedResource.BulletInAllowance(key)) }
+                    unlessWithdrawn(isWithdrawn) {
+                        transactionStorageSlotAllocator.allocate(key.deriveAccountId(), onExisting.toTransactionStorageStrategy())
+                            .map { ApAllocationOutcome.Allocated(ApAllocatedResource.BulletInAllowance(key)) }
+                    }
                 }
 
         ApAllocatableResource.StatementStoreAllowance ->
             allowanceAccountDerivation.deriveSlotKey(AllowanceSystem.STATEMENT_STORE, callingProduct)
                 .flatMap { key ->
-                    statementStoreSlotAllocator.allocate(key.deriveAccountId(), onExisting.toStatementStoreStrategy(), SlotPriority.Normal)
-                        .map { ApAllocationOutcome.Allocated(ApAllocatedResource.StatementStoreAllowance(key)) }
+                    unlessWithdrawn(isWithdrawn) {
+                        statementStoreSlotAllocator.allocate(key.deriveAccountId(), onExisting.toStatementStoreStrategy(), SlotPriority.Normal)
+                            .map { ApAllocationOutcome.Allocated(ApAllocatedResource.StatementStoreAllowance(key)) }
+                    }
                 }
 
         is ApAllocatableResource.SmartContractAllowance -> {
             val productAccountId = ProductAccountId(callingProduct.value, resource.dest)
             productAccountDerivationUseCase.deriveAccountId(productAccountId)
-                .flatMap { pgasClaimer.claim(it, onExisting.toPgasStrategy()) }
-                .map { ApAllocationOutcome.Allocated(ApAllocatedResource.SmartContractAllowance) }
+                .flatMap { accountId ->
+                    unlessWithdrawn(isWithdrawn) {
+                        pgasClaimer.claim(accountId, onExisting.toPgasStrategy())
+                            .map { ApAllocationOutcome.Allocated(ApAllocatedResource.SmartContractAllowance) }
+                    }
+                }
         }
 
         ApAllocatableResource.AutoSigning -> Result.success(ApAllocationOutcome.NotAvailable)
     }
 }
+
+// Checked just before each submission: a withdrawal never abandons one already submitted
+private inline fun unlessWithdrawn(
+    isWithdrawn: () -> Boolean,
+    allocate: () -> Result<ApAllocationOutcome>,
+): Result<ApAllocationOutcome> = if (isWithdrawn()) Result.success(ApAllocationOutcome.NotAvailable) else allocate()
 
 private fun OnExistingAllowancePolicy.toTransactionStorageStrategy(): TransactionStorageOnExistingAllocationStrategy = when (this) {
     OnExistingAllowancePolicy.IGNORE -> TransactionStorageOnExistingAllocationStrategy.IGNORE

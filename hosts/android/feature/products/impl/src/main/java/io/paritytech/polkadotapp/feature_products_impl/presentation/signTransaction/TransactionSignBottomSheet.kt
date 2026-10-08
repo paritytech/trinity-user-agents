@@ -17,6 +17,15 @@ class TransactionSignBottomSheet : BaseComposeBottomSheet<TransactionSignViewMod
         bottomSheetBehavior?.isDraggable = false
     }
 
+    override fun onResume() {
+        super.onResume()
+        viewModel.onResume()
+    }
+
     @Composable
     override fun Screen() = TransactionSignScreen(viewModel)
+
+    companion object {
+        const val REQUEST_ID = "signingRequestId"
+    }
 }

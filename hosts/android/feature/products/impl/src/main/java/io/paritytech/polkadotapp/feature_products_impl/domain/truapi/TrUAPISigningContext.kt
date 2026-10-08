@@ -5,6 +5,7 @@ import io.paritytech.polkadotapp.feature_products_api.model.signing.SigningAccou
 import io.paritytech.polkadotapp.feature_products_api.model.signing.SigningContext
 import io.paritytech.polkadotapp.feature_products_api.model.signing.SigningRequestBody
 import kotlinx.coroutines.CompletableDeferred
+import java.util.UUID
 
 /**
  * A core signing request, presented on the app's own signing sheet.
@@ -21,6 +22,8 @@ class TrUAPISigningContext(
 ) : SigningContext {
     // Matches the native host, which has no icon for a product either.
     override val requesterIconUrl: String = ""
+
+    override val id: String = UUID.randomUUID().toString()
 
     private val decision = CompletableDeferred<Boolean>()
 

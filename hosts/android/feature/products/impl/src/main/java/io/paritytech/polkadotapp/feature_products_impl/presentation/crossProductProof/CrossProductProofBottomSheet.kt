@@ -22,4 +22,13 @@ class CrossProductProofBottomSheet : BaseComposeBottomSheet<CrossProductProofVie
     override fun Screen() {
         CrossProductProofScreen(viewModel)
     }
+
+    override fun onResume() {
+        super.onResume()
+        viewModel.onResume()
+    }
+
+    companion object {
+        const val REQUEST_ID = "crossProductProofRequestId"
+    }
 }

@@ -22,4 +22,13 @@ class ResourceAllocationRequestBottomSheet : BaseComposeBottomSheet<ResourceAllo
     override fun Screen() {
         ResourceAllocationRequestScreen(viewModel)
     }
+
+    override fun onResume() {
+        super.onResume()
+        viewModel.onResume()
+    }
+
+    companion object {
+        const val REQUEST_ID = "resourceAllocationRequestId"
+    }
 }

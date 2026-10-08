@@ -30,8 +30,7 @@ class ProductSigningScreenLauncher @Inject constructor(
         )
 
         signingContextHolder.set(context)
-        productsRouter.openSignTransaction()
 
-        return context.awaitResult()
+        return context.awaitResult { productsRouter.openSignTransaction(context.id) }
     }
 }

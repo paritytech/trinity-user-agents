@@ -1,5 +1,6 @@
 package io.paritytech.polkadotapp.feature_sso_impl.domain.signTransaction
 
+import io.paritytech.polkadotapp.common.utils.WithdrawnByCaller
 import io.paritytech.polkadotapp.common.utils.flatMap
 import io.paritytech.polkadotapp.feature_products_api.model.signing.SignedTransaction
 import io.paritytech.polkadotapp.feature_products_api.model.signing.SigningAccount
@@ -10,22 +11,38 @@ import io.paritytech.polkadotapp.feature_sso_impl.domain.model.SsoSessionData
 import io.paritytech.polkadotapp.feature_sso_impl.domain.session.model.SsoSessionRequest
 import io.paritytech.polkadotapp.feature_sso_impl.domain.session.model.SsoSessionResponse
 import io.paritytech.polkadotapp.feature_sso_impl.domain.session.model.SsoSessionResponse.Companion.responseWith
+import kotlinx.coroutines.CompletableDeferred
 import timber.log.Timber
+import java.util.UUID
 
 class SsoSigningContext(
     sessionData: SsoSessionData,
-    private val request: SsoSessionRequest,
+    internal val request: SsoSessionRequest,
     private val ssoService: SsoService,
     override val signingRequestBody: SigningRequestBody,
     override val signingAccount: SigningAccount,
 ) : SigningContext {
     override val requesterName: String = sessionData.name
     override val requesterIconUrl: String = sessionData.icon
+    override val id: String = UUID.randomUUID().toString()
 
-    override suspend fun approve(sign: suspend () -> Result<SignedTransaction>): Result<Unit> =
-        sign().flatMap { signedTransaction -> deliverSignedResult(signedTransaction) }
+    private val withdrawal = CompletableDeferred<Unit>()
+
+    fun withdraw() {
+        withdrawal.complete(Unit)
+    }
+
+    override suspend fun awaitWithdrawal() = withdrawal.await()
+
+    override suspend fun approve(sign: suspend () -> Result<SignedTransaction>): Result<Unit> {
+        if (withdrawal.isCompleted) return Result.failure(WithdrawnByCaller())
+
+        return sign().flatMap { signedTransaction -> deliverSignedResult(signedTransaction) }
+    }
 
     private suspend fun deliverSignedResult(signedTransaction: SignedTransaction): Result<Unit> {
+        if (withdrawal.isCompleted) return Result.failure(WithdrawnByCaller())
+
         Timber.d("Delivering signed result to $requesterName")
         val responseContent = when (signedTransaction) {
             is SignedTransaction.GeneralTransaction -> SsoSessionResponse.Content.SignedGeneralTransaction(signedTransaction.signedTx)
@@ -47,6 +64,8 @@ class SsoSigningContext(
     }
 
     override suspend fun deliverRejection(): Result<Unit> {
+        if (withdrawal.isCompleted) return Result.success(Unit)
+
         Timber.d("Delivering rejection to $requesterName")
         val responseContent = when (signingRequestBody) {
             is SigningRequestBody.Transaction, is SigningRequestBody.Raw -> SsoSessionResponse.Content.FailedToSignTransaction("Rejected")
@@ -63,5 +82,9 @@ class SsoSigningContext(
         return ssoService.sendResponse(response)
             .onSuccess { Timber.d("Rejection delivered to $requesterName") }
             .onFailure { Timber.e(it, "Failed to deliver rejection to $requesterName") }
+    }
+
+    override fun onAbandoned() {
+        ssoService.signingSheetClosed(this)
     }
 }

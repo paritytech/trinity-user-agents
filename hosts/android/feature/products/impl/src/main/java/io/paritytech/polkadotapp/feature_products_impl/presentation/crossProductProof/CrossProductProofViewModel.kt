@@ -10,6 +10,7 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.crossProductProof.
 import io.paritytech.polkadotapp.feature_products_impl.presentation.productBotManagement.ProductsRouter
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.launch
 import javax.inject.Inject
 
 @HiltViewModel
@@ -28,19 +29,40 @@ class CrossProductProofViewModel @Inject constructor(
             )
         )
 
+    // Set once this sheet has nothing left to do; one that was not on top then closes when it is next shown
+    private var finished = false
+
+    private val withdrawalWatch = launch {
+        context.awaitWithdrawal()
+        close()
+    }
+
+    fun onResume() = launchUnit {
+        if (finished) close()
+    }
+
     fun onApproveClicked() = launchUnit {
+        withdrawalWatch.cancel()
         context.deliverApproved()
-        router.back()
+        close()
     }
 
     fun onRejectClicked() = launchUnit {
+        withdrawalWatch.cancel()
         context.deliverRejected()
-        router.back()
+        close()
+    }
+
+    private suspend fun close() {
+        finished = true
+        router.closeCrossProductProofPrompt(context.id)
     }
 
     override fun onCleared() {
         super.onCleared()
-        holder.clear()
+        // A sheet that goes without an answer must not leave its caller waiting; a no-op once answered
+        context.deliverRejected()
+        holder.clear(context)
     }
 }
 

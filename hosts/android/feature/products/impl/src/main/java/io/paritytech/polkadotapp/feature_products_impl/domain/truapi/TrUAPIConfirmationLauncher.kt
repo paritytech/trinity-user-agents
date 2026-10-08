@@ -89,7 +89,7 @@ class TrUAPIConfirmationLauncher @Inject constructor(
             signingAccount = confirmation.request.signingAccount(),
         )
         signingContextHolder.set(context)
-        productsRouter.openSignTransaction()
+        productsRouter.openSignTransaction(context.id)
         return context.await()
     }
 

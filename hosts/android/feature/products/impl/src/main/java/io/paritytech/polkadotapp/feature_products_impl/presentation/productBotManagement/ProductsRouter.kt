@@ -19,8 +19,11 @@ interface ProductsRouter : ReturnableRouter, SigningRouter {
     suspend fun closePermissionPrompt(requestId: String?)
     suspend fun openPaymentRequestPrompt()
     suspend fun openTopUpRequestPrompt()
-    suspend fun openResourceAllocationRequestPrompt()
-    suspend fun openCrossProductProofPrompt()
+    suspend fun openResourceAllocationRequestPrompt(requestId: String)
+    suspend fun closeResourceAllocationRequestPrompt(requestId: String)
+    suspend fun openCrossProductProofPrompt(requestId: String)
+    suspend fun closeCrossProductProofPrompt(requestId: String)
+    suspend fun closeSignTransaction(requestId: String)
 
     /** Confirmation prompt for an action the TrUAPI Rust core is about to take. */
     suspend fun openTrUAPIConfirmation()

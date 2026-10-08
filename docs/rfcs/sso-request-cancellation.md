@@ -39,7 +39,8 @@ and reads the next message only after the current one is answered.
 - **Reading it in time.** The Rust responder reads statements while it serves a request and applies a `Cancel` at
   once. Requests are still served one at a time, reading pauses once 64 are queued (a page already read is queued
   whole), and `Disconnected` keeps its place in the queue. A native wallet passes `Cancel` to `handle_sso_request`,
-  which returns at once, and must do so as the message arrives rather than behind the request it withdraws.
+  which returns at once, and must do so as the message arrives rather than behind the request it withdraws. Android
+  decodes SSO in Kotlin and keeps the same rules in its own queue, closing the withdrawn request's prompt.
 - **What it stops.** A running request has its token fired and posts no response. A request not yet started never
   runs, and the responder's replay ledger records it as handled so redelivery does not revive it. A `Cancel` for a
   request not yet seen is remembered, up to 64 of them; one pushed out by a newer one is logged, and its request is
@@ -67,8 +68,6 @@ and reads the next message only after the current one is answered.
 
 1. iOS queues every SSO message behind the one it is serving, so a `Cancel` reaches `handle_sso_request` only after its
    target has finished. Its dispatcher needs to pass `Cancel` through at once.
-2. Android decodes SSO in Kotlin and does not use the core's responder. It needs its own `Cancel` handling and prompt
-   dismissal.
 
 [cancel]: request-cancellation.md
 [478]: https://github.com/paritytech/trinity-user-agents/issues/478

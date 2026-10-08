@@ -180,4 +180,11 @@ sealed class SsoMessageContent {
         val respondingTo: SsoSessionRequestId,
         val payload: BSResult<DataByteArray, SsoRingVrfErrorScale>,
     ) : SsoMessageContent()
+
+    @Serializable
+    @EnumIndex(24)
+    class Cancel(val withdrawal: SsoWithdrawalScale) : SsoMessageContent()
 }
+
+@Serializable
+class SsoWithdrawalScale(val messageId: SsoSessionRequestId)
