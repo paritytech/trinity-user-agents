@@ -200,9 +200,6 @@ impl<'a> SsoPairingFlow<'a> {
         ))
     }
 
-    /// Everything between the `Pairing` emission and a terminal outcome.
-    /// Every error returned here maps to `AuthState::LoginFailed` at the
-    /// single exit in [`Self::request_login`].
     async fn run_pairing_flow(
         &self,
         bootstrap: &PairingBootstrap,

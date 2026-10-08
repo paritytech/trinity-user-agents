@@ -464,7 +464,6 @@ impl SsoRequestService {
         }
     }
 
-    /// Persist and install the selected login under the storage guard.
     async fn commit_login_session(
         &self,
         session: &SessionInfo,
@@ -523,7 +522,6 @@ impl SsoRequestService {
         Ok(false)
     }
 
-    /// Finish durable cleanup left by a cancelled login write.
     async fn discard_login_session(&self) {
         let persistence = self.grants.persistence().await;
         if let Err(reason) = self.drain_session_deletions(&persistence).await {
