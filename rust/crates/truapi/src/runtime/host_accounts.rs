@@ -274,26 +274,14 @@ impl<H: AccountHolder> HostAccounts<H> {
     ) -> Result<(), AuthorityError> {
         let (session, revision) = self.operation_session(operation)?;
         match grant {
-            AccountGrant::StatementStore { key, period } => {
+            grant @ (AccountGrant::StatementStore { .. } | AccountGrant::Bulletin(_)) => {
                 self.grants
-                    .cache_statement_store_allowance_key(
+                    .retain_allowance(
                         &self.session_state,
                         &session,
                         revision,
                         &product.product_id,
-                        key,
-                        period,
-                    )
-                    .await?;
-            }
-            AccountGrant::Bulletin(key) => {
-                self.grants
-                    .cache_bulletin_allowance_key(
-                        &self.session_state,
-                        &session,
-                        revision,
-                        &product.product_id,
-                        key,
+                        &grant,
                     )
                     .await?;
             }
@@ -345,13 +333,14 @@ impl<H: AccountHolder> HostAccounts<H> {
         #[cfg(feature = "test-host")]
         self.resource_controls
             .refuse_withheld(&api::AllocatableResource::StatementStoreAllowance)?;
-        if let Some((period, key)) = self
+        if let Some(AccountGrant::StatementStore { key, period }) = self
             .grants
-            .cached_statement_store_allowance_key(
+            .cached_allowance(
                 &self.session_state,
                 &session,
                 revision,
                 &product_id,
+                AllowanceResource::StatementStore,
             )
             .await?
         {
@@ -390,18 +379,12 @@ impl<H: AccountHolder> HostAccounts<H> {
             )
             .await?;
         match grant {
-            AccountGrant::StatementStore { key, period } => {
+            AccountGrant::StatementStore { ref key, .. } => {
                 self.require_current_operation(operation)?;
                 self.grants
-                    .cache_statement_store_allowance_key(
-                        &self.session_state,
-                        &session,
-                        revision,
-                        &product_id,
-                        key,
-                        period,
-                    )
-                    .await
+                    .retain_allowance(&self.session_state, &session, revision, &product_id, &grant)
+                    .await?;
+                Ok(key.clone())
             }
             _ => Err(AuthorityError::Unknown {
                 reason: "Unexpected statement-store allowance response resource".to_string(),
@@ -423,21 +406,23 @@ impl<H: AccountHolder> HostAccounts<H> {
             }
             let allowance = self
                 .grants
-                .cached_statement_store_allowance_key(
+                .cached_allowance(
                     &self.session_state,
                     &session,
                     revision,
                     product_id,
+                    AllowanceResource::StatementStore,
                 )
                 .await?;
             self.require_current_operation(operation)?;
-            Ok(allowance.and_then(|(period, key)| {
-                if key.public_key == public_key {
+            Ok(match allowance {
+                Some(AccountGrant::StatementStore { key, period })
+                    if key.public_key == public_key =>
+                {
                     period
-                } else {
-                    None
                 }
-            }))
+                _ => None,
+            })
         }
         .await;
         match snapshot {
@@ -487,9 +472,15 @@ impl<H: AccountHolder> HostAccounts<H> {
         #[cfg(feature = "test-host")]
         self.resource_controls
             .refuse_withheld(&api::AllocatableResource::BulletinAllowance)?;
-        if let Some(key) = self
+        if let Some(AccountGrant::Bulletin(key)) = self
             .grants
-            .cached_bulletin_allowance_key(&self.session_state, &session, revision, &product_id)
+            .cached_allowance(
+                &self.session_state,
+                &session,
+                revision,
+                &product_id,
+                AllowanceResource::Bulletin,
+            )
             .await?
         {
             self.require_current_operation(operation)?;
@@ -559,17 +550,12 @@ impl<H: AccountHolder> HostAccounts<H> {
             )
             .await?;
         match grant {
-            AccountGrant::Bulletin(key) => {
+            AccountGrant::Bulletin(ref key) => {
                 self.require_current_operation(operation)?;
                 self.grants
-                    .cache_bulletin_allowance_key(
-                        &self.session_state,
-                        &session,
-                        revision,
-                        &product_id,
-                        key,
-                    )
-                    .await
+                    .retain_allowance(&self.session_state, &session, revision, &product_id, &grant)
+                    .await?;
+                Ok(key.clone())
             }
             _ => Err(AuthorityError::Unknown {
                 reason: "Unexpected bulletin allowance response resource".to_string(),

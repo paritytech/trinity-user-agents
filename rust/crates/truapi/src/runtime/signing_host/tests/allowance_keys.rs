@@ -1,5 +1,7 @@
 use super::*;
 
+use crate::runtime::allowances::AllowanceResource;
+use crate::runtime::authority::AccountGrant;
 use futures::FutureExt;
 use parity_scale_codec::Encode;
 use truapi::api::StatementStore;
@@ -68,10 +70,7 @@ fn chain_with_allocated_slot() -> Arc<StubPlatform> {
                 "state_getStorage",
                 format!(r#""0x{}""#, hex::encode(TEST_NETWORK_SUFFIX.encode())),
             ),
-            (
-                "state_queryStorageAt",
-                people_row,
-            ),
+            ("state_queryStorageAt", people_row),
             // The LitePeople row, read alongside People's, is empty.
             (
                 "state_queryStorageAt",
@@ -134,13 +133,15 @@ fn remember(signing_host: &SigningHostRole, product_id: &str, period: u32) {
     let state = signing_host.session_state();
     let session = state.current().unwrap();
     let revision = signing_host.grants.lifecycle().revision();
-    futures::executor::block_on(signing_host.grants.cache_statement_store_allowance_key(
+    futures::executor::block_on(signing_host.grants.retain_allowance(
         &state,
         &session,
         revision,
         product_id,
-        secret_key(),
-        Some(period),
+        &AccountGrant::StatementStore {
+            key: secret_key(),
+            period: Some(period),
+        },
     ))
     .unwrap();
 }
@@ -149,13 +150,18 @@ fn remembered(signing_host: &SigningHostRole, product_id: &str) -> Option<[u8; 6
     let state = signing_host.session_state();
     let session = state.current().unwrap();
     let revision = signing_host.grants.lifecycle().revision();
-    futures::executor::block_on(
-        signing_host
-            .grants
-            .cached_statement_store_allowance_key(&state, &session, revision, product_id),
-    )
+    futures::executor::block_on(signing_host.grants.cached_allowance(
+        &state,
+        &session,
+        revision,
+        product_id,
+        AllowanceResource::StatementStore,
+    ))
     .unwrap()
-    .map(|(_, key)| key.secret)
+    .map(|grant| match grant {
+        AccountGrant::StatementStore { key, .. } => key.secret,
+        _ => panic!("expected statement-store grant"),
+    })
 }
 
 #[test]
@@ -206,18 +212,23 @@ fn a_new_session_reuses_the_same_wallet_allowance() {
     let state = restarted.session_state();
     let session = state.current().unwrap();
     let revision = restarted.grants.lifecycle().revision();
-    let restored = futures::executor::block_on(
-        restarted
-            .grants
-            .cached_statement_store_allowance_key(&state, &session, revision, PRODUCT_ID),
-    )
+    let restored = futures::executor::block_on(restarted.grants.cached_allowance(
+        &state,
+        &session,
+        revision,
+        PRODUCT_ID,
+        AllowanceResource::StatementStore,
+    ))
     .unwrap();
     futures::executor::block_on(restarted.activate_local_session(vec![0xAC; 16])).unwrap();
 
     assert_eq!(
         (
             after_lock,
-            restored.map(|(period, key)| (period, key.secret)),
+            restored.map(|grant| match grant {
+                AccountGrant::StatementStore { key, period } => (period, key.secret),
+                _ => panic!("expected statement-store grant"),
+            }),
             remembered(&restarted, PRODUCT_ID)
         ),
         (Some(SECRET), Some((Some(PERIOD), SECRET)), None),
@@ -289,15 +300,16 @@ fn a_key_allocated_under_a_replaced_session_is_not_remembered() {
     futures::executor::block_on(signing_host.activate_local_session(ENTROPY.to_vec()))
         .expect("re-activation succeeds");
 
-    let remembered_stale =
-        futures::executor::block_on(signing_host.grants.cache_statement_store_allowance_key(
-            &state,
-            &session,
-            revision,
-            PRODUCT_ID,
-            secret_key(),
-            Some(PERIOD),
-        ));
+    let remembered_stale = futures::executor::block_on(signing_host.grants.retain_allowance(
+        &state,
+        &session,
+        revision,
+        PRODUCT_ID,
+        &AccountGrant::StatementStore {
+            key: secret_key(),
+            period: Some(PERIOD),
+        },
+    ));
     assert_eq!(
         (
             remembered_stale.map(|_| ()),
@@ -482,12 +494,14 @@ fn native_bulletin_reuses_its_retained_key_until_refresh() {
     let revision = host.grants.lifecycle().revision();
     let result = futures::executor::block_on(async {
         host.grants
-            .cache_bulletin_allowance_key(
+            .retain_allowance(
                 &state,
                 &session,
                 revision,
                 PRODUCT_ID,
-                BulletinAllowanceKey::from_secret_bytes(retained.to_vec()).unwrap(),
+                &AccountGrant::Bulletin(
+                    BulletinAllowanceKey::from_secret_bytes(retained.to_vec()).unwrap(),
+                ),
             )
             .await
             .unwrap();
@@ -507,13 +521,22 @@ fn native_bulletin_reuses_its_retained_key_until_refresh() {
             .unwrap();
         let cached = host
             .grants
-            .cached_bulletin_allowance_key(&state, &session, revision, PRODUCT_ID)
+            .cached_allowance(
+                &state,
+                &session,
+                revision,
+                PRODUCT_ID,
+                AllowanceResource::Bulletin,
+            )
             .await
             .unwrap();
         (
             *warm.as_secret_bytes(),
             *refreshed.as_secret_bytes(),
-            cached.map(|key| *key.as_secret_bytes()),
+            cached.map(|grant| match grant {
+                AccountGrant::Bulletin(key) => *key.as_secret_bytes(),
+                _ => panic!("expected Bulletin grant"),
+            }),
         )
     });
 
@@ -554,14 +577,19 @@ fn late_rejection_preserves_a_new_period_for_the_same_statement_key() {
     let state = restarted.session_state();
     let session = state.current().unwrap();
     let revision = restarted.grants.lifecycle().revision();
-    let retained = futures::executor::block_on(
-        restarted
-            .grants
-            .cached_statement_store_allowance_key(&state, &session, revision, PRODUCT_ID),
-    )
+    let retained = futures::executor::block_on(restarted.grants.cached_allowance(
+        &state,
+        &session,
+        revision,
+        PRODUCT_ID,
+        AllowanceResource::StatementStore,
+    ))
     .unwrap();
     assert_eq!(
-        retained.map(|(period, key)| (period, key.secret)),
+        retained.map(|grant| match grant {
+            AccountGrant::StatementStore { key, period } => (period, key.secret),
+            _ => panic!("expected statement-store grant"),
+        }),
         Some((Some(PERIOD + 1), SECRET))
     );
 }
@@ -577,14 +605,14 @@ fn started_native_writes_survive_lock_but_not_an_interrupted_product_reset() {
         let revision = host.grants.lifecycle().revision();
         let (release, gate) = futures::channel::oneshot::channel();
         *platform.core_storage_write_gate.lock().unwrap() = Some(gate);
-        let mut write = Box::pin(host.grants.cache_statement_store_allowance_key(
-            &state,
-            &session,
-            revision,
-            PRODUCT_ID,
-            secret_key(),
-            Some(PERIOD),
-        ));
+        let grant = AccountGrant::StatementStore {
+            key: secret_key(),
+            period: Some(PERIOD),
+        };
+        let mut write = Box::pin(
+            host.grants
+                .retain_allowance(&state, &session, revision, PRODUCT_ID, &grant),
+        );
         assert!(write.as_mut().now_or_never().is_none());
         if change == "lock" {
             futures::executor::block_on(host.disconnect());
