@@ -46,6 +46,8 @@ pub enum FundingFailure {
     /// The user abandoned the flow, or declined to authorize an outbound
     /// release.
     Cancelled,
+    /// The provider returned the user's payment instead of crediting it.
+    Refunded,
     /// Outcome not covered above. Clients render the message and treat the
     /// code as opaque.
     Other {
