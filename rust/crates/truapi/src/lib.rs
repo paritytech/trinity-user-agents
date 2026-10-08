@@ -98,14 +98,15 @@ pub mod latest {
         ChatMessageContent, ChatReaction, ChatRichText, ChatRoom, ChatRoomParticipation,
         ChatRoomRegistrationStatus, CodeFormat, ColorToken, ColumnProps, ContactHandle,
         ContactPickOutcome, ContentAlignment, ContextualAlias, DerivationIndex, Dimensions, Effect,
-        EffectProps, FundingAssignment, FundingDirection, FundingFailure, FundingFrameOutcome,
-        FundingUpdate, GenericError, HorizontalAlignment, HostAccountCreateProofRequest,
-        HostAccountGetAliasRequest, HostAccountListRingVrfKeysRequest,
-        HostAccountRegisterRingVrfKeyRequest, HostAccountRingVrfSignRequest,
-        HostAccountSignVrfError, HostAccountSignVrfRequest, HostPlatform, HostSignPayloadData,
-        HostWorkerOperationError, ImageFit, ImageProps, ImageSource, Modifier,
-        OperationStartedResult, PaymentTopUpSource, PocketCard, ProductAccountId,
-        ProductProofContext, RawPayload, RegisteredRingVrfKey, RemotePermission,
+        EffectProps, FundingAssignment, FundingDeposit, FundingDirection, FundingFailure,
+        FundingFrameOutcome, FundingQuote, FundingQuoteAnswer, FundingQuoteAsk,
+        FundingQuoteRefusal, FundingRail, FundingReceived, FundingUpdate, GenericError,
+        HorizontalAlignment, HostAccountCreateProofRequest, HostAccountGetAliasRequest,
+        HostAccountListRingVrfKeysRequest, HostAccountRegisterRingVrfKeyRequest,
+        HostAccountRingVrfSignRequest, HostAccountSignVrfError, HostAccountSignVrfRequest,
+        HostPlatform, HostSignPayloadData, HostWorkerOperationError, ImageFit, ImageProps,
+        ImageSource, Modifier, OperationStartedResult, PaymentTopUpSource, PocketCard,
+        ProductAccountId, ProductProofContext, RawPayload, RegisteredRingVrfKey, RemotePermission,
         RemoteStatementStoreCreateProofError, RemoteStatementStoreCreateProofRequest,
         RemoteStatementStoreCreateProofResponse, RemoteStatementStoreSubscribeItem,
         RemoteStatementStoreSubscribeRequest, RenderContext, RendererNode, RingLocation,
@@ -244,6 +245,16 @@ pub mod latest {
         LatestOf<versioned::funding_provider::HostFundingReportRequest>;
     /// Failure reporting progress.
     pub type HostFundingReportError = LatestOf<versioned::funding_provider::HostFundingReportError>;
+    /// A provider's answer to a quote ask.
+    pub type HostFundingAnswerQuoteRequest =
+        LatestOf<versioned::funding_provider::HostFundingAnswerQuoteRequest>;
+    /// Failure answering a quote ask.
+    pub type HostFundingAnswerQuoteError =
+        LatestOf<versioned::funding_provider::HostFundingAnswerQuoteError>;
+    /// A provider's state saved for a session.
+    pub type HostFundingSaveRequest = LatestOf<versioned::funding_provider::HostFundingSaveRequest>;
+    /// Failure saving a provider's state.
+    pub type HostFundingSaveError = LatestOf<versioned::funding_provider::HostFundingSaveError>;
     /// Request to show a provider screen.
     pub type HostFundingPresentFrameRequest =
         LatestOf<versioned::funding_provider::HostFundingPresentFrameRequest>;
@@ -697,7 +708,9 @@ runtime_items! {
     pub use runtime::StatementRenewalTarget;
     pub use runtime::contacts::contact_handle;
     pub use runtime::login_failure::reports_exhausted_period;
-    pub use runtime::product_manifest::{encode_cached_root_manifest, manifest_cache_key};
+    pub use runtime::product_manifest::{
+        encode_cached_root_manifest, manifest_cache_key, worker_manifest_cache_key,
+    };
     pub use runtime::statement_allowance;
     pub use runtime::{
         AnnouncedPairing, DevicePairingObserver, MAX_PAIRING_METADATA_CHARS, PairedSsoPeer,

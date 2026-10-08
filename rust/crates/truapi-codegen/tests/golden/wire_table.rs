@@ -42,7 +42,7 @@ pub enum WireKind {
 /// `TRUAPI_WIRE_SCHEMA_HASH`. A host stamps it on each debug envelope so
 /// the debugger refuses to decode a frame whose contract differs from
 /// its own, even when the coarse handshake codec version is unchanged.
-pub const TRUAPI_WIRE_SCHEMA_HASH: &str = "6eb45e246b61dfbc";
+pub const TRUAPI_WIRE_SCHEMA_HASH: &str = "691270eb579bbfda";
 
 /// Wire discriminants for `system_handshake`.
 pub const SYSTEM_HANDSHAKE: MethodIds = MethodIds {
@@ -590,6 +590,18 @@ pub const FUNDING_PROVIDER_PRESENT_FRAME: MethodIds = MethodIds {
     method_id: 2,
 };
 
+/// Wire discriminants for `funding_provider_answer_quote`.
+pub const FUNDING_PROVIDER_ANSWER_QUOTE: MethodIds = MethodIds {
+    trait_id: 24,
+    method_id: 3,
+};
+
+/// Wire discriminants for `funding_provider_save`.
+pub const FUNDING_PROVIDER_SAVE: MethodIds = MethodIds {
+    trait_id: 24,
+    method_id: 4,
+};
+
 /// Wire discriminants for `scanner_scan`.
 pub const SCANNER_SCAN: MethodIds = MethodIds {
     trait_id: 25,
@@ -963,6 +975,14 @@ pub const WIRE_TABLE: &[WireEntry] = &[
     WireEntry {
         method: "funding_provider_present_frame",
         kind: WireKind::Request(FUNDING_PROVIDER_PRESENT_FRAME),
+    },
+    WireEntry {
+        method: "funding_provider_answer_quote",
+        kind: WireKind::Request(FUNDING_PROVIDER_ANSWER_QUOTE),
+    },
+    WireEntry {
+        method: "funding_provider_save",
+        kind: WireKind::Request(FUNDING_PROVIDER_SAVE),
     },
     WireEntry {
         method: "scanner_scan",

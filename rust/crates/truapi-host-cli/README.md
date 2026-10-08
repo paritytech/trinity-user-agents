@@ -777,12 +777,13 @@ Scripts under `js/scripts/` include:
   (`deliver:900,release:500,fail,dismiss,provide,provide,provide-cancel`). A
   `deliver`, `release` or `fail` session is settled through the core's test
   hook with no chain behind it. A `provide` session is handed to the product
-  that asked, which runs as a Worker and serves it as the provider: it reports
+  that asked, which `TRUAPI_FUNDING_PROVIDERS` offers as a provider with a
+  scripted Worker manifest seeded into the core's cache, which runs as a Worker and serves it as the provider: it reports
   progress, starts top-ups and payment requests, which scripted engines
   complete in full and record in `TRUAPI_FUNDING_LEDGER`, and the core settles
   the session from them. `provide-cancel` also cancels it. The phase runs the
   host twice on the same storage, so the provider resumes an inbound session
-  after a restart. Every overlay request and session change is recorded in
+  after a restart with the state it saved. Every overlay request and session change is recorded in
   `TRUAPI_FUNDING_LOG`, which the cases read. CI runs this phase on every
   change to the core, the CLI or the client, with a fixed development signer
   in `HOST_CLI_SIGNER_MNEMONIC` so the host needs no account provisioned on

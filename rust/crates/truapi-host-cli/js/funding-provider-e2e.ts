@@ -50,10 +50,18 @@ class Served {
   private failure: unknown;
   private readonly subscription: { unsubscribe(): void };
 
-  constructor(stream: ObservableLike<HostFundingServeSubscribeItem>) {
+  /** Every quote ask is answered with a price, as a provider whose API
+   *  quotes the amount one to one would. */
+  constructor(
+    stream: ObservableLike<HostFundingServeSubscribeItem>,
+    answer: (askId: string, amount: bigint) => void,
+  ) {
     this.subscription = stream.subscribe({
       next: (item) => {
         this.items.push(item);
+        if (item.tag === "Quote") {
+          answer(item.value.askId, item.value.ask.amount);
+        }
       },
       error: (reason: unknown) => {
         this.failure = reason;
@@ -84,6 +92,31 @@ class Served {
   close() {
     this.subscription.unsubscribe();
   }
+}
+
+/** Open the provider's serve stream, answering every quote ask. */
+function serve(client: TrUApiClient): Served {
+  return new Served(
+    client.fundingProvider.serveSubscribe(),
+    (askId, amount) => {
+      void client.fundingProvider.answerQuote({
+        askId,
+        answer: {
+          tag: "Quoted",
+          value: {
+            quote: {
+              quoteId: `q-${askId}`,
+              sendAmount: amount,
+              receiveAmount: amount,
+              providerFee: 0n,
+              networkFee: 0n,
+              etaSecs: 60n,
+            },
+          },
+        },
+      });
+    },
+  );
 }
 
 const assignedTo = (intent: string) => (item: HostFundingServeSubscribeItem) =>
@@ -154,7 +187,7 @@ export async function runProviderStart(
 ): Promise<{ rows: DiagnosisRow[]; state?: ProviderState }> {
   const rows: DiagnosisRow[] = [];
   const check = rowFactory(rows);
-  const served = new Served(client.fundingProvider.serveSubscribe());
+  const served = serve(client);
   let inbound = "";
   let state: ProviderState | undefined;
 
@@ -165,15 +198,34 @@ export async function runProviderStart(
       `the session ${inbound}`,
     );
     if (item.tag !== "Assigned") throw new Error(stringify(item));
-    const { direction, amount, lastUpdate } = item.value.session;
+    const { direction, amount, lastUpdate, quote } = item.value.session;
     if (
       direction !== "In" ||
       amount !== IN_AMOUNT ||
-      lastUpdate !== undefined
+      lastUpdate !== undefined ||
+      !quote?.quoteId.startsWith("q-")
     ) {
       throw new Error(`unexpected assignment ${stringify(item)}`);
     }
-    return "the provider's worker was handed the session it was chosen for";
+    await waitForTranscript(
+      fundingLogPath,
+      (line) =>
+        line.kind === "quotes" &&
+        line.intent === inbound &&
+        (line.rows ?? []).some(
+          (row) => row.state === `Quoted:${quote.quoteId}`,
+        ),
+      `the quote list for ${inbound}`,
+    );
+    await waitForTranscript(
+      fundingLogPath,
+      (line) =>
+        line.kind === "candidates" &&
+        line.intent === inbound &&
+        (line.providers ?? []).length > 0,
+      `the provider list for ${inbound}`,
+    );
+    return "the host listed the provider, its worker quoted, and it was handed the session on that quote";
   });
 
   await check("provider_present_frame", async () => {
@@ -198,8 +250,26 @@ export async function runProviderStart(
   await check("provider_reports_forward_only", async () => {
     await report(client, inbound, { tag: "AwaitingPayment" });
     await report(client, inbound, {
+      tag: "Deposit",
+      value: {
+        deposit: {
+          tag: "Crypto",
+          value: {
+            address: "0x0000000000000000000000000000000000000001",
+            network: "Ethereum",
+            asset: "USDT",
+            amount: 1_000n,
+            decimals: 6,
+            exact: true,
+            uri: undefined,
+            expiresAt: undefined,
+          },
+        },
+      },
+    });
+    await report(client, inbound, {
       tag: "PaymentReceived",
-      value: { finalized: true },
+      value: { finalized: true, mismatch: undefined },
     });
     await report(client, inbound, { tag: "Converting" });
     const backwards = await client.fundingProvider.report({
@@ -235,6 +305,22 @@ export async function runProviderStart(
     });
     state = { intent: inbound, topUpId, amount: IN_AMOUNT.toString() };
     return "the top-up was started and named in a Crediting report";
+  });
+
+  await check("provider_saves_its_state", async () => {
+    if (!state) throw new Error("no session in flight");
+    await report(client, state.intent, {
+      tag: "Details",
+      value: { transactionId: `tx-${state.intent}`, reference: undefined },
+    });
+    const saved = await client.fundingProvider.save({
+      intent: state.intent,
+      state: state.topUpId,
+    });
+    if (saved.isErr()) {
+      throw new Error(`save failed: ${stringify(saved.error)}`);
+    }
+    return "the provider's references and its own state were kept while funds moved";
   });
 
   await check("provider_out_released", async () => {
@@ -297,7 +383,7 @@ export async function runProviderResume(
     });
     return rows;
   }
-  const served = new Served(client.fundingProvider.serveSubscribe());
+  const served = serve(client);
 
   await check("provider_resumes_after_restart", async () => {
     const item = await served.next(
@@ -306,10 +392,16 @@ export async function runProviderResume(
     );
     const last =
       item.tag === "Assigned" ? item.value.session.lastUpdate : undefined;
-    if (last?.tag !== "Crediting" || last.value.topUpId !== state.topUpId) {
+    const saved =
+      item.tag === "Assigned" ? item.value.session.saved : undefined;
+    if (
+      last?.tag !== "Crediting" ||
+      last.value.topUpId !== state.topUpId ||
+      saved !== state.topUpId
+    ) {
       throw new Error(`replayed ${stringify(item)}`);
     }
-    return "the restarted worker was handed the session with its last update";
+    return "the restarted worker was handed the session with its last update and saved state";
   });
 
   await check("provider_in_delivered", async () => {
