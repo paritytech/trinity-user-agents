@@ -266,6 +266,47 @@ struct ProductManifestParserTests {
         #expect(worker.pocketCards.isEmpty)
     }
 
+    /// Every card published before a card could ask for anything else opens
+    /// with its face shown, and must go on doing so.
+    @Test func opensACardWithItsFaceShownWhenItSaysNothing() throws {
+        let worker = try #require(parsedWorker(Fixtures.worker(pocket: "true", cards: Fixtures.cards())))
+
+        #expect(worker.pocketCards.map(\.faceShown) == [true, true])
+    }
+
+    /// The request is the card's own, so one card asking for its face away
+    /// leaves its sibling opening as it always has.
+    @Test func opensOnlyTheCardThatAsksWithItsFaceAway() throws {
+        let cards = """
+        [{"id":"loyalty","title":"Loyalty","preview":"faces/loyalty.json","faceShown":false},
+         {"id":"trophy","title":"Trophy","preview":"faces/trophy.json"}]
+        """
+        let worker = try #require(parsedWorker(Fixtures.worker(pocket: "true", cards: cards)))
+
+        #expect(worker.pocketCards.map(\.faceShown) == [false, true])
+    }
+
+    /// Android reads a null as the field left out, and both hosts must open the
+    /// same manifest the same way.
+    @Test func readsANullFaceShownAsLeftOut() throws {
+        let cards = #"[{"id":"loyalty","title":"Loyalty","preview":"faces/loyalty.json","faceShown":null}]"#
+        let worker = try #require(parsedWorker(Fixtures.worker(pocket: "true", cards: cards)))
+
+        #expect(worker.pocketCards.map(\.faceShown) == [true])
+    }
+
+    /// Guessing what a value that is not a boolean meant would open a card in
+    /// a way its publisher never tested, and Android refuses it too, so it is a
+    /// card defect like any other: the product loses its cards, not its worker.
+    @Test(arguments: [#""no""#, "0"])
+    func publishesNoCardsWhenFaceShownIsNotABoolean(_ faceShown: String) throws {
+        let cards = #"[{"id":"loyalty","title":"Loyalty","preview":"faces/loyalty.json","faceShown":\#(faceShown)}]"#
+        let worker = try #require(parsedWorker(Fixtures.worker(pocket: "true", cards: cards)))
+
+        #expect(worker.serves(.chat))
+        #expect(worker.pocketCards.isEmpty)
+    }
+
     /// Two cards under one id would make the card a product hands out ambiguous,
     /// so the whole set is refused rather than one of them picked.
     @Test func publishesNoCardsWhenIdsRepeat() throws {

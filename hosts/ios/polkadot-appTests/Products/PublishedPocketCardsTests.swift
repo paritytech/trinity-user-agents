@@ -142,6 +142,42 @@ struct PublishedPocketCardsTests {
             try await cards.find(productId: "game.paseo", cardId: PocketCardId(value: "trophy"))
         }
     }
+
+    // MARK: - The face a card opens with
+
+    @Test
+    func opensACardWithItsFaceAwayWhenItsProductPublishesItSo() async {
+        let cards = PublishedPocketCards(products: gameResolver(worker: workerPublishing([faceAwayLoyalty])))
+
+        let faceShown = await PocketCardFaceOnOpen.faceShown(for: loyaltyKey, cards: cards)
+
+        #expect(!faceShown)
+    }
+
+    /// Nothing asks for the face away of a card its product does not publish,
+    /// and a face hidden by mistake is not one the user knows to pull back.
+    @Test
+    func opensACardItsProductDoesNotPublishWithItsFace() async {
+        let cards = PublishedPocketCards(products: gameResolver(worker: workerPublishing([faceAwayLoyalty])))
+        let trophy = PocketCardKey(productId: "game.paseo", cardId: PocketCardId(value: "trophy"))
+
+        let faceShown = await PocketCardFaceOnOpen.faceShown(for: trophy, cards: cards)
+
+        #expect(faceShown)
+    }
+
+    /// The user is waiting on the card they tapped, so a chain read that hangs
+    /// must not hold it closed: the card opens with its face after the timeout.
+    @Test
+    func opensWithItsFaceWhenTheProductDoesNotAnswerInTime() async {
+        let cards = PublishedPocketCards(products: HangingProductResolver())
+        let started = ContinuousClock.now
+
+        let faceShown = await PocketCardFaceOnOpen.faceShown(for: loyaltyKey, cards: cards, timeout: .milliseconds(10))
+
+        #expect(faceShown)
+        #expect(ContinuousClock.now - started < .seconds(5))
+    }
 }
 
 // MARK: - Fixtures
@@ -151,6 +187,15 @@ private let loyalty = PocketCardDefinition(
     title: "Loyalty",
     preview: .archive(path: "faces/loyalty.json")
 )
+
+private let faceAwayLoyalty = PocketCardDefinition(
+    id: PocketCardId(value: "loyalty"),
+    title: "Loyalty",
+    preview: .archive(path: "faces/loyalty.json"),
+    faceShown: false
+)
+
+private let loyaltyKey = PocketCardKey(productId: "game.paseo", cardId: PocketCardId(value: "loyalty"))
 
 private let debugLoyalty = PocketCardDefinition(
     id: PocketCardId(value: "loyalty"),

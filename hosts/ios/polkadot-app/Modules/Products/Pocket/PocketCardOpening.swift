@@ -1,5 +1,6 @@
 import Foundation
 import Products
+import StructuredConcurrency
 import UIKit
 
 /// Opens the card's product, at the page the card names, on a screen the card
@@ -21,24 +22,36 @@ enum PocketCardOpening {
             let page = flowState.hostProvider.page(url: url)
         else { return }
 
-        let product = pocket.cardHosts.product(for: card.key) { surface in
-            let configuration = SPAConfiguration(
-                title: card.title,
-                isRootScreen: false,
-                showMoreButton: false,
-                page: page,
-                executable: .widget,
-                cardSurface: surface
+        Task { @MainActor in
+            let faceShown = await PocketCardFaceOnOpen.faceShown(
+                for: card.key,
+                cards: PublishedPocketCards.makeDefault(products: flowState.productResolver)
             )
 
-            return SPAViewFactory.createView(configuration: configuration, flowState: flowState)
+            let product = pocket.cardHosts.product(for: card.key) { surface in
+                let configuration = SPAConfiguration(
+                    title: card.title,
+                    isRootScreen: false,
+                    showMoreButton: false,
+                    page: page,
+                    executable: .widget,
+                    cardSurface: surface
+                )
+
+                return SPAViewFactory.createView(configuration: configuration, flowState: flowState)
+            }
+
+            guard let product else { return }
+
+            navigator.presentFullScreen(
+                PocketCardScreenViewController(
+                    card: card,
+                    product: product.view,
+                    surface: product.surface,
+                    faceShown: faceShown
+                )
+            )
         }
-
-        guard let product else { return }
-
-        navigator.presentFullScreen(
-            PocketCardScreenViewController(card: card, product: product.view, surface: product.surface)
-        )
     }
 
     /// A link may name a card the Pocket does not hold, which is the one case
@@ -59,5 +72,22 @@ enum PocketCardOpening {
 
             open(card, flowState: flowState, navigator: navigator, pocket: pocket)
         }
+    }
+}
+
+/// Whether a card opens with its face shown, as its product published it.
+enum PocketCardFaceOnOpen {
+    /// A card whose product cannot be asked in time opens with its face shown,
+    /// since a face hidden by mistake is not one the user knows to pull back.
+    static func faceShown(
+        for key: PocketCardKey,
+        cards: any PublishedPocketCardsResolving,
+        timeout: Duration = .milliseconds(500)
+    ) async -> Bool {
+        let published = try? await withTimeout(timeout) {
+            try await cards.find(productId: key.productId, cardId: key.cardId).definition.faceShown
+        }
+
+        return published ?? true
     }
 }
