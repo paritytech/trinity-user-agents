@@ -27,19 +27,6 @@ struct ProductImageResolver: Sendable {
         self.ipfsUrl = ipfsUrl
     }
 
-    init(
-        contentId: @escaping @Sendable () async -> ProductId?,
-        dotNsResolver: any DotNsResolverProtocol,
-        ipfsBaseURL: URL
-    ) {
-        let converter = HexToCIDConverter(ipfsBaseURL: ipfsBaseURL)
-        self.init(
-            contentId: contentId,
-            archive: ProductWorkerArchive(dotNsResolver: dotNsResolver),
-            ipfsUrl: { converter.ipfsURL(cid: $0) }
-        )
-    }
-
     func resolve(_ source: CustomMessageWidgetNode.ImageSource) async -> URL? {
         switch source {
         case let .bulletin(cid): ipfsUrl(cid)
@@ -53,5 +40,22 @@ struct ProductImageResolver: Sendable {
         guard let contentId = await contentId() else { return nil }
 
         return await archive.url(contentId: contentId, path: path)
+    }
+}
+
+/// Where every product's images live: its downloaded archives, and the IPFS
+/// gateway those archives are fetched through, so a Bulletin CID is read from
+/// the same gateway.
+struct ProductImageSources {
+    let dotNsResolver: any DotNsResolverProtocol
+    let ipfsGatewayBaseUrl: URL
+
+    func resolver(contentId: @escaping @Sendable () async -> ProductId?) -> ProductImageResolver {
+        let converter = HexToCIDConverter(ipfsBaseURL: ipfsGatewayBaseUrl)
+        return ProductImageResolver(
+            contentId: contentId,
+            archive: ProductWorkerArchive(dotNsResolver: dotNsResolver),
+            ipfsUrl: { converter.ipfsURL(cid: $0) }
+        )
     }
 }

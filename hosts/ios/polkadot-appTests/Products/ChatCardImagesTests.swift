@@ -48,8 +48,7 @@ struct ChatCardImagesTests {
             runtimeProvider: NoRuntime(),
             workers: { nil },
             workerManager: NoWorkers(),
-            dotNsResolver: dotNsResolver,
-            ipfsBaseURL: gateway
+            productImages: ProductImageSources(dotNsResolver: dotNsResolver, ipfsGatewayBaseUrl: gateway)
         )
         let bot = try #require(factory.create(resolved: gameProduct()))
         let decoder = try #require(bot.customDecoders.first as? ProductMessageDecoder)

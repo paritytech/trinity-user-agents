@@ -77,14 +77,14 @@ struct ProductImageResolverTests {
     }
 
     /// Pocket and chat name the same archive reader and the same gateway, so
-    /// both build the resolver from a dotNS resolver and a gateway base.
+    /// both build the resolver from the one set of product image sources.
     @Test
     func resolvesABulletinImageUnderTheGatewayItIsGiven() async throws {
-        let resolver = ProductImageResolver(
-            contentId: { "worker.game.paseo" },
+        let sources = ProductImageSources(
             dotNsResolver: FailingResolver(),
-            ipfsBaseURL: URL(string: "https://gateway.invalid/ipfs/")!
+            ipfsGatewayBaseUrl: URL(string: "https://gateway.invalid/ipfs/")!
         )
+        let resolver = sources.resolver(contentId: { "worker.game.paseo" })
 
         let url = try #require(await resolver.resolve(.bulletin(cid: "bafyimage")))
 

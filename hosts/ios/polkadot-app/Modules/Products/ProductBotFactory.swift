@@ -16,8 +16,7 @@ final class ProductBotFactory {
     private let runtimeProvider: TrUAPIHostRuntimeProviding
     private let workers: @Sendable () -> (any TrUAPIWorkerManaging)?
     private let workerManager: ProductWorkerManaging
-    private let dotNsResolver: any DotNsResolverProtocol
-    private let ipfsBaseURL: URL
+    private let productImages: ProductImageSources
     private let logger: LoggerProtocol
 
     init(
@@ -25,8 +24,7 @@ final class ProductBotFactory {
         runtimeProvider: TrUAPIHostRuntimeProviding,
         workers: @Sendable @escaping () -> (any TrUAPIWorkerManaging)?,
         workerManager: ProductWorkerManaging,
-        dotNsResolver: any DotNsResolverProtocol,
-        ipfsBaseURL: URL,
+        productImages: ProductImageSources,
         settingsManager: SettingsManagerProtocol = SettingsManager.shared,
         logger: LoggerProtocol = Logger.shared
     ) {
@@ -35,8 +33,7 @@ final class ProductBotFactory {
         self.runtimeProvider = runtimeProvider
         self.workers = workers
         self.workerManager = workerManager
-        self.dotNsResolver = dotNsResolver
-        self.ipfsBaseURL = ipfsBaseURL
+        self.productImages = productImages
         self.logger = logger
     }
 
@@ -44,11 +41,7 @@ final class ProductBotFactory {
         guard servesChat(resolved) else { return nil }
 
         let product = resolved.product
-        let images = ProductImageResolver(
-            contentId: { resolved.contentId(for: .worker) },
-            dotNsResolver: dotNsResolver,
-            ipfsBaseURL: ipfsBaseURL
-        )
+        let images = productImages.resolver(contentId: { resolved.contentId(for: .worker) })
         let resolveImage = WidgetImageResolver.cached { await images.resolve($0) }
 
         if settingsManager.isTrUAPIRuntimeEnabled, let workers = workers() {

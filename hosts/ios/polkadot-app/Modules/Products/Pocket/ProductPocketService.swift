@@ -39,8 +39,7 @@ final class ProductPocketService: @unchecked Sendable {
     private struct Drawing {
         let faces: any PocketFaceSourcing
         let products: any ProductResolving
-        let dotNsResolver: any DotNsResolverProtocol
-        let ipfsBaseURL: URL
+        let productImages: ProductImageSources
     }
 
     init(collection: any PocketCardStore, logger: LoggerProtocol = Logger.shared) {
@@ -114,11 +113,7 @@ final class ProductPocketService: @unchecked Sendable {
             published: { try? await drawing.products.resolve(productId).contentId(for: .worker) }
         )
 
-        return ProductImageResolver(
-            contentId: { await name.resolve() },
-            dotNsResolver: drawing.dotNsResolver,
-            ipfsBaseURL: drawing.ipfsBaseURL
-        )
+        return drawing.productImages.resolver(contentId: { await name.resolve() })
     }
 
     /// Starts the worker manager the core runs on, then follows the collection:
@@ -175,8 +170,7 @@ final class ProductPocketService: @unchecked Sendable {
                 logger: logger
             ),
             products: flowState.productResolver,
-            dotNsResolver: flowState.dotNsResolver,
-            ipfsBaseURL: flowState.ipfsGatewayBaseUrl
+            productImages: flowState.productImages
         )
 
         install(manager: manager, drawing: drawing, handlers: handlers)

@@ -44,8 +44,7 @@ extension ServiceCoordinator {
             runtimeProvider: truapiRuntimeProvider,
             workers: { pocket?.workers },
             workerManager: workerFacade.manager,
-            dotNsResolver: spaFlowState.dotNsResolver,
-            ipfsBaseURL: spaFlowState.ipfsGatewayBaseUrl
+            productImages: spaFlowState.productImages
         )
 
         let productBotProvider = ProductBotProvider(
