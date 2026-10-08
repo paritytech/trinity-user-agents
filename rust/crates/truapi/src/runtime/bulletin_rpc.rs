@@ -518,11 +518,15 @@ impl BulletinRpc {
 /// replay window; falling back to the finalized block is safe for cold starts.
 /// The deadline is absolute so a continuously advancing best-block stream
 /// cannot keep initialization alive forever.
+///
+/// A replayed block whose header cannot be read is skipped rather than
+/// failing the submission: the replay starts with every finalized block the
+/// follow was initialized with, and the head is the newest of them or a best
+/// block after them.
 async fn initial_best_block(
     blocks: &mut Blocks<SubstrateConfig>,
 ) -> Result<Block<SubstrateConfig>, BulletinSubmitError> {
-    let mut block =
-        next_best_block(blocks, INITIALIZATION_TIMEOUT, SubmissionPhase::Connect).await?;
+    let mut block = first_readable_block(blocks).await?;
     let replay_deadline = futures_timer::Delay::new(BEST_BLOCK_TIMEOUT).fuse();
     pin_mut!(replay_deadline);
     loop {
@@ -532,11 +536,44 @@ async fn initial_best_block(
             item = next => match item {
                 Some(Ok(newer)) => block = newer,
                 Some(Err(error)) => {
-                    return Err(BulletinSubmitError::Subxt(Box::new(error.into())));
+                    warn!(%error, "Bulletin best-block replay skipped an unreadable block");
                 }
                 None => return Err(BulletinSubmitError::BestBlockStreamEnded),
             },
             () = replay_deadline => return Ok(block),
+        }
+    }
+}
+
+/// The first block of the replay whose header the node serves. When none
+/// arrives within [`INITIALIZATION_TIMEOUT`], the last read error is reported,
+/// or a connect timeout if there was none.
+async fn first_readable_block(
+    blocks: &mut Blocks<SubstrateConfig>,
+) -> Result<Block<SubstrateConfig>, BulletinSubmitError> {
+    let deadline = futures_timer::Delay::new(INITIALIZATION_TIMEOUT).fuse();
+    pin_mut!(deadline);
+    let mut skipped = None;
+    loop {
+        let next = blocks.next().fuse();
+        pin_mut!(next);
+        futures::select! {
+            item = next => match item {
+                Some(Ok(block)) => return Ok(block),
+                Some(Err(error)) => {
+                    warn!(%error, "Bulletin best-block replay skipped an unreadable block");
+                    skipped = Some(error);
+                }
+                None => return Err(BulletinSubmitError::BestBlockStreamEnded),
+            },
+            () = deadline => {
+                return Err(skipped.map_or(
+                    BulletinSubmitError::Timeout {
+                        phase: SubmissionPhase::Connect,
+                    },
+                    |error| BulletinSubmitError::Subxt(Box::new(error.into())),
+                ));
+            }
         }
     }
 }
@@ -938,6 +975,8 @@ mod tests {
             "0x1111111111111111111111111111111111111111111111111111111111111111";
         const INCLUDED_HASH: &str =
             "0x2222222222222222222222222222222222222222222222222222222222222222";
+        const RELEASED_HASH: &str =
+            "0x3333333333333333333333333333333333333333333333333333333333333333";
 
         #[derive(Clone, Copy)]
         enum TransactionOutcome {
@@ -965,6 +1004,7 @@ mod tests {
             current_best_hash: String,
             advance_best_block_after_rejection: bool,
             stall_headers: bool,
+            initialize_with_released_block: bool,
             last_transaction: Option<String>,
             omit_transaction_from_next_body: bool,
         }
@@ -997,6 +1037,7 @@ mod tests {
                         current_best_hash: BLOCK_HASH.to_string(),
                         advance_best_block_after_rejection: false,
                         stall_headers,
+                        initialize_with_released_block: false,
                         last_transaction: None,
                         omit_transaction_from_next_body: false,
                     })),
@@ -1005,6 +1046,13 @@ mod tests {
                     receiver: Mutex::new(Some(receiver)),
                     events: format!("0x{}", hex::encode(success_events())),
                 }
+            }
+
+            /// The follow is initialized with an older finalized block ahead
+            /// of the current one, whose header the node no longer serves.
+            fn with_released_finalized_block(self) -> Self {
+                self.state.lock().unwrap().initialize_with_released_block = true;
+                self
             }
 
             fn with_failed_events(mut self) -> Self {
@@ -1154,15 +1202,30 @@ mod tests {
             };
 
             match method {
-                "chainHead_v1_follow" => vec![
-                    response(json!(FOLLOW_ID)),
-                    follow_event(json!({
-                        "event": "initialized",
-                        "finalizedBlockHashes": [BLOCK_HASH],
-                        "finalizedBlockRuntime": null
-                    })),
-                ],
+                "chainHead_v1_follow" => {
+                    let finalized_block_hashes = if state.initialize_with_released_block {
+                        vec![RELEASED_HASH, BLOCK_HASH]
+                    } else {
+                        vec![BLOCK_HASH]
+                    };
+                    vec![
+                        response(json!(FOLLOW_ID)),
+                        follow_event(json!({
+                            "event": "initialized",
+                            "finalizedBlockHashes": finalized_block_hashes,
+                            "finalizedBlockRuntime": null
+                        })),
+                    ]
+                }
                 "chainHead_v1_header" if state.stall_headers => Vec::new(),
+                "chainHead_v1_header" if request["params"][1] == RELEASED_HASH => {
+                    vec![json!({
+                        "jsonrpc": "2.0",
+                        "id": id,
+                        "error": {"code": -32801, "message": "Invalid block hash"}
+                    })
+                    .to_string()]
+                }
                 "chainHead_v1_header" => vec![response(json!(encoded_header()))],
                 "chainHead_v1_call" => {
                     state.next_operation += 1;
@@ -1403,6 +1466,34 @@ mod tests {
                 1
             );
             assert_eq!(provider.method_count("chainHead_v1_storage"), 1);
+        }
+
+        /// A host sharing one upstream follow can release a finalized block
+        /// the follow was initialized with before the submission reads it.
+        /// That block is older than the head, so the submission builds on the
+        /// newest readable block instead of failing.
+        #[test]
+        fn submit_preimage_skips_a_replayed_block_the_node_released() {
+            let provider = Arc::new(
+                BulletinScriptedProvider::new([TransactionOutcome::Included])
+                    .with_released_finalized_block(),
+            );
+            let value = b"scripted bulletin released replay block";
+            let result = futures::executor::block_on(rpc(provider.clone()).submit_preimage(
+                &CallContext::default(),
+                Instant::now() + Duration::from_secs(2),
+                &allowance_fixture(),
+                value,
+            ))
+            .unwrap();
+
+            assert_eq!(result, preimage_key(value));
+            assert!(
+                provider.sent.lock().unwrap().iter().any(|request| {
+                    request.contains("chainHead_v1_header") && request.contains(RELEASED_HASH)
+                }),
+                "the replay asked for the released block",
+            );
         }
 
         #[test]
