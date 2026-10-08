@@ -51,8 +51,9 @@ pub enum HostDevicePermissionRequest {
 
 /// One remote-operation permission requested by the product (RFC 0002).
 ///
-/// `ChainSubmit`, `PreimageSubmit`, and `StatementSubmit` are also triggered
-/// implicitly by the corresponding business calls when not yet granted.
+/// `ChainSubmit`, `PreimageSubmit`, `StatementSubmit` and `BalanceAccess`
+/// are also triggered implicitly by the corresponding business calls when not
+/// yet granted.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode, Display)]
 #[cfg_attr(
     all(feature = "runtime", not(target_arch = "wasm32")),
@@ -88,6 +89,11 @@ pub enum RemotePermission {
     /// Submitting statements on behalf of the user via `remote_statement_store_submit`.
     #[display("submit statements")]
     StatementSubmit,
+    /// Seeing the user's payment balance through `payment.balanceSubscribe`,
+    /// and learning that a payment request was refused for the balance rather
+    /// than by the user.
+    #[display("see your balance")]
+    BalanceAccess,
 }
 
 /// remote-permission request (RFC 0002).

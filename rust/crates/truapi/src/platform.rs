@@ -3280,15 +3280,14 @@ pub trait ChatPlatform: Send + Sync {
     ) -> BoxStream<'static, Result<HostChatListSubscribeItem, GenericError>>;
 }
 
-/// Host-implemented balance view: the user's spendable payment balance.
-/// Optional: a host that omits it leaves balance subscriptions answered
-/// `Unsupported`.
+/// Host-implemented balance view: what a payment request can spend right now,
+/// the figure the host checks a payment against. Optional: a host that omits
+/// it leaves balance subscriptions answered `Unsupported`.
 ///
-/// The host decides whether `product` may see the balance, asking the user
-/// if it needs to.
+/// The core asks for the product's balance access before calling here.
 pub trait BalancePlatform: Send + Sync {
     /// Emit the balance of `purse` (`None` for the main purse) now and on
-    /// every change, or `PermissionDenied` when the user does not share it.
+    /// every change.
     fn subscribe_balance(
         &self,
         product: &ProductContext,
