@@ -405,8 +405,8 @@ AutoSigning without approval. Legacy-account signing still asks the user.
   overlay is installed.
   Native hosts reach this through `NativeTrUApiHostRuntime`:
   `set_funding_callbacks` (the overlay), `open_funding`,
-  `funding_session`, `funding_sessions`, `cancel_funding` and
-  `acknowledge_funding_session`. Amounts cross the FFI as decimal strings.
+  `funding_session`, `funding_sessions`, `select_funding_provider`,
+  `cancel_funding` and `acknowledge_funding_session`. Amounts cross the FFI as decimal strings.
   The host owns the funding history. A session is stored only once the user
   starts it in the overlay. `funding_sessions` lists sessions in flight first,
   then ended ones the host has not recorded, each newest first. An ended
@@ -415,6 +415,42 @@ AutoSigning without approval. Legacy-account signing still asks the user.
   which the core drops it, so the host's history writes every outcome once.
   The core keeps at most the 200 newest unrecorded sessions. Products see a
   session in flight as `InProgress`.
+  `select_funding_provider` hands a session to the provider the user chose.
+  That provider's worker runs it through the `FundingProvider` trait:
+  `serveSubscribe` replays its sessions in flight and then streams new ones
+  and cancel requests, `report` stores each update on the session (only from
+  the assigned provider, only forward), and `presentFrame` asks the host to
+  show one of its screens through `present_provider_frame`. The core holds the
+  provider's worker while a session is assigned and open. It ends a session as
+  `Delivered` or `Released` itself, from the claims of the top-ups the
+  provider named (`Crediting`, then `Delivered`) or the completion of the
+  payment request it named (`Collecting`); once funds move, the provider can
+  no longer fail the session. Only a session with no provider expires: once
+  assigned, it waits for its provider or a cancel. A cancel ends
+  an unassigned session, asks the provider of an assigned one, and is refused
+  once the provider has seen the user's payment.
+- `BalancePlatform`: stream what a payment request can spend right now, the
+  current value first and then each change. Installed with
+  `set_balance_platform`; native hosts use `set_balance_callbacks` with
+  `notify_balance`. The core requires a session and the product's
+  `BalanceAccess` remote permission, asking for it on the first subscription
+  and answering `PermissionDenied` when the user refuses. A host
+  `InsufficientBalance` reaches a product without that permission as
+  `Rejected`. Without a balance view, `balanceSubscribe` answers
+  `Unsupported`.
+- `PaymentPlatform`: pay from the user's balance to an account once the user
+  approves, and stream each payment's status by its caller-chosen id.
+  Installed with `set_payment_platform`; native hosts use
+  `set_payment_callbacks` with `notify_payment_status`. The core requires a
+  session. Without it, `request` and
+  `statusSubscribe` answer `Unsupported`.
+- `TopUpPlatform`: claim a top-up source's funds into the user's balance and
+  stream each top-up's status. Installed with `set_top_up_platform`; native
+  hosts use `set_top_up_callbacks` with `notify_top_up_status`. The core
+  requires a session and checks the source keys; a `ProductAccount` source is
+  passed through for the host to derive. The host owns claiming, retries,
+  partial claims, persistence and scoping ids to the product. Without it,
+  `topUp` and `topUpStatusSubscribe` answer `Unsupported`.
 - `ContactsPlatform`: resolve the handles a transaction names to contacts, and
   render the picker that selects one. `contacts` is the only required method; `pick_contact`
   defaults to `Unsupported`, so a host serving no picker says so rather than

@@ -41,6 +41,7 @@ pub mod coin_payment;
 pub mod contacts;
 pub mod entropy;
 pub mod funding;
+pub mod funding_provider;
 pub mod game;
 pub mod local_storage;
 pub mod locale;

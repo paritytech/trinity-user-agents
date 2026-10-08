@@ -1767,6 +1767,7 @@ mod tests {
             RemotePermission::ChainSubmit,
             RemotePermission::PreimageSubmit,
             RemotePermission::StatementSubmit,
+            RemotePermission::BalanceAccess,
         ]
     }
 
@@ -1965,14 +1966,15 @@ mod tests {
     #[test]
     fn an_untrusted_product_still_prompts_for_every_remote_permission() {
         let storage = MemStorage::default();
-        let prompt = ScriptedPrompt::new(vec![], vec![true; 5]);
+        let permissions = every_remote_permission();
+        let prompt = ScriptedPrompt::new(vec![], vec![true; permissions.len()]);
         let service = PermissionsService::new(&storage, &prompt, &PRODUCT);
 
-        for permission in every_remote_permission() {
+        for permission in permissions.iter().cloned() {
             futures::executor::block_on(service.check_or_prompt_remote(remote(permission)))
                 .unwrap();
         }
-        assert_eq!(prompt.remote_calls.load(Ordering::SeqCst), 5);
+        assert_eq!(prompt.remote_calls.load(Ordering::SeqCst), permissions.len());
     }
 
     #[test]

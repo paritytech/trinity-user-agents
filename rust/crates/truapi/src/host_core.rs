@@ -15,8 +15,8 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use crate::platform::{
-    ChatPlatform, ContactsPlatform, FundingPlatform, GamePlatform, PermissionStatusHost,
-    PocketPlatform,
+    BalancePlatform, ChatPlatform, ContactsPlatform, FundingPlatform, GamePlatform,
+    PaymentPlatform, PermissionStatusHost, PocketPlatform, TopUpPlatform,
 };
 use crate::platform::{
     CoreAdmin, PairingHostAdmin, PairingHostConfig, PermissionAuthorizationRequest,
@@ -31,7 +31,6 @@ use tracing::{instrument, warn};
 use truapi::v01;
 use truapi::{CallContext, CancellationReason};
 
-use crate::truapi_core::TrUApiCore;
 use crate::frame::ProtocolMessage;
 use crate::host_internal::sso_messages::{RemoteMessage, SsoRequestOutcome};
 use crate::host_logic::worker::WorkerLedger;
@@ -45,6 +44,7 @@ use crate::runtime::{
 };
 use crate::subscription::{HostInitiatedSubscriptionManager, Spawner};
 use crate::transport::Transport;
+use crate::truapi_core::TrUApiCore;
 
 /// Outgoing frame sink owned by a host adapter.
 ///
@@ -316,6 +316,29 @@ impl PairingHostRuntime {
     #[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.set_game_platform"))]
     pub fn set_game_platform(&self, platform: Arc<dyn GamePlatform>) -> bool {
         self.services.install_game_platform(platform)
+    }
+
+    /// Install the host's [`TopUpPlatform`], which claims funds into the
+    /// balance. Set-once. Returns whether this call installed it.
+    #[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.set_top_up_platform"))]
+    pub fn set_top_up_platform(&self, platform: Arc<dyn TopUpPlatform>) -> bool {
+        self.services.install_top_up_platform(platform)
+    }
+
+    /// Install the host's [`PaymentPlatform`], which pays from the user's
+    /// balance once the user approves. Set-once; returns whether this call
+    /// installed it.
+    #[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.set_payment_platform"))]
+    pub fn set_payment_platform(&self, platform: Arc<dyn PaymentPlatform>) -> bool {
+        self.services.install_payment_platform(platform)
+    }
+
+    /// Install the host's [`BalancePlatform`], which shares the user's
+    /// balance with products. Set-once; returns whether this call installed
+    /// it.
+    #[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.set_balance_platform"))]
+    pub fn set_balance_platform(&self, platform: Arc<dyn BalancePlatform>) -> bool {
+        self.services.install_balance_platform(platform)
     }
 
     /// Install the host's [`ContactsPlatform`], which owns the contact list and
@@ -792,7 +815,10 @@ impl SigningHostRuntime {
     /// the full record with `funding_session`. Call it outside that
     /// callback, which runs while the core holds its session lock.
     #[instrument(skip_all, fields(runtime.method = "signing_host_runtime.acknowledge_funding_session"))]
-    pub async fn acknowledge_funding_session(&self, intent: &str) -> Result<bool, v01::GenericError> {
+    pub async fn acknowledge_funding_session(
+        &self,
+        intent: &str,
+    ) -> Result<bool, v01::GenericError> {
         self.services
             .acknowledge_funding_session(intent)
             .await
@@ -801,12 +827,29 @@ impl SigningHostRuntime {
             })
     }
 
-    /// Cancel open funding session `intent`. Returns whether it was still
-    /// open.
+    /// Cancel funding session `intent` at the user's request: it ends if no
+    /// provider serves it, otherwise its provider is asked to stop. Returns
+    /// whether the cancel was taken.
     #[instrument(skip_all, fields(runtime.method = "signing_host_runtime.cancel_funding"))]
     pub async fn cancel_funding(&self, intent: &str) -> Result<bool, v01::GenericError> {
         self.services
             .cancel_funding(intent)
+            .await
+            .map_err(|err| v01::GenericError {
+                reason: err.to_string(),
+            })
+    }
+
+    /// Hand open funding session `intent` to the provider the user chose,
+    /// by product id. Returns whether it was open and not yet assigned.
+    #[instrument(skip_all, fields(runtime.method = "signing_host_runtime.select_funding_provider"))]
+    pub async fn select_funding_provider(
+        &self,
+        intent: &str,
+        provider_id: &str,
+    ) -> Result<bool, v01::GenericError> {
+        self.services
+            .select_funding_provider(intent, provider_id)
             .await
             .map_err(|err| v01::GenericError {
                 reason: err.to_string(),
@@ -849,6 +892,29 @@ impl SigningHostRuntime {
     #[instrument(skip_all, fields(runtime.method = "signing_host_runtime.set_game_platform"))]
     pub fn set_game_platform(&self, platform: Arc<dyn GamePlatform>) -> bool {
         self.services.install_game_platform(platform)
+    }
+
+    /// Install the host's [`TopUpPlatform`], which claims funds into the
+    /// balance. Set-once. Returns whether this call installed it.
+    #[instrument(skip_all, fields(runtime.method = "signing_host_runtime.set_top_up_platform"))]
+    pub fn set_top_up_platform(&self, platform: Arc<dyn TopUpPlatform>) -> bool {
+        self.services.install_top_up_platform(platform)
+    }
+
+    /// Install the host's [`PaymentPlatform`], which pays from the user's
+    /// balance once the user approves. Set-once; returns whether this call
+    /// installed it.
+    #[instrument(skip_all, fields(runtime.method = "signing_host_runtime.set_payment_platform"))]
+    pub fn set_payment_platform(&self, platform: Arc<dyn PaymentPlatform>) -> bool {
+        self.services.install_payment_platform(platform)
+    }
+
+    /// Install the host's [`BalancePlatform`], which shares the user's
+    /// balance with products. Set-once; returns whether this call installed
+    /// it.
+    #[instrument(skip_all, fields(runtime.method = "signing_host_runtime.set_balance_platform"))]
+    pub fn set_balance_platform(&self, platform: Arc<dyn BalancePlatform>) -> bool {
+        self.services.install_balance_platform(platform)
     }
 
     /// Install the host's [`ContactsPlatform`], which owns the contact list and
@@ -1140,10 +1206,7 @@ impl SigningHostRuntime {
     /// even while that request is still being answered by another call, and a
     /// withdrawn request is answered `Ignored`.
     #[instrument(skip_all, fields(runtime.method = "signing_host_runtime.answer_sso_request"))]
-    pub async fn answer_sso_request(
-        &self,
-        message: RemoteMessage,
-    ) -> SsoRequestOutcome {
+    pub async fn answer_sso_request(&self, message: RemoteMessage) -> SsoRequestOutcome {
         let service = SigningHostSsoService::new(self.signing_host.clone());
         match service.answer(message).await {
             Dispatch::Response(answer) => SsoRequestOutcome::Response {
@@ -3666,9 +3729,9 @@ mod tests {
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn the_core_database_is_installed_once_and_reports_when_missing() {
+        use crate::platform::{HostInfo, PlatformInfo, SigningHostConfig};
         use crate::store::{Db, DbConfig, DbError, DbLocation};
         use futures::executor::block_on;
-        use crate::platform::{HostInfo, PlatformInfo, SigningHostConfig};
 
         let config = SigningHostConfig::new(
             HostInfo {
@@ -3701,7 +3764,10 @@ mod tests {
         assert!(runtime.set_core_db(installed));
         assert!(!runtime.set_core_db(other));
 
-        let db = runtime.services.core_db().expect("installed database is served");
+        let db = runtime
+            .services
+            .core_db()
+            .expect("installed database is served");
         let answer: i64 =
             block_on(db.write(|tx| Ok(tx.query_row("SELECT 42", [], |row| row.get(0))?)))
                 .expect("installed database serves writes");

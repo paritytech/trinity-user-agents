@@ -26,6 +26,7 @@ import {
 } from "@parity/truapi";
 
 import type {
+  FundingFrameOutcome,
   GenericError,
   HostChatCreateRoomRequest,
   HostChatCreateRoomResponse,
@@ -39,6 +40,14 @@ import type {
   HostFundingStatusSubscribeItem,
   HostLocalStorageChangeItem,
   HostLocaleSubscribeItem,
+  HostPaymentBalanceSubscribeError,
+  HostPaymentBalanceSubscribeItem,
+  HostPaymentRequest,
+  HostPaymentStatusSubscribeError,
+  HostPaymentStatusSubscribeItem,
+  HostPaymentTopUpRequest,
+  HostPaymentTopUpStatusSubscribeError,
+  HostPaymentTopUpStatusSubscribeItem,
   HostPocketListSubscribeItem,
   HostPocketRemoveCardRequest,
   HostPushNotificationRequest,
@@ -1157,6 +1166,26 @@ export interface AuthPresenter {
 }
 
 /**
+ * Host-implemented balance view: what a payment request can spend right now,
+ * the figure the host checks a payment against. Optional: a host that omits
+ * it leaves balance subscriptions answered `Unsupported`.
+ *
+ * The core asks for the product's balance access before calling here.
+ */
+export interface BalancePlatform {
+  /**
+   * Emit the balance of `purse` (``undefined`` for the main purse) now and on
+   * every change.
+   */
+  subscribeBalance(
+    product: ProductContext,
+    purse: number | undefined,
+  ): AsyncIterable<
+    Result<HostPaymentBalanceSubscribeItem, HostPaymentBalanceSubscribeError>
+  >;
+}
+
+/**
  * JSON-RPC provider factory for chain access.
  *
  * The platform provides a way to get a JSON-RPC connection for a given chain.
@@ -1456,6 +1485,16 @@ export interface FundingPlatform {
   ): Promise<FundingPresentOutcome>;
 
   /**
+   * Show `provider`'s screen at `route` for session `intent`, such as its
+   * KYC or card entry, in a frame the host owns, and answer once it closes.
+   */
+  presentProviderFrame(
+    provider: ProductContext,
+    intent: string,
+    route: string,
+  ): Promise<FundingFrameOutcome>;
+
+  /**
    * Observe a session's status change, for host UI such as the in-flight
    * pill.
    */
@@ -1578,6 +1617,38 @@ export interface PairingHostAdmin {
    * decoding that blob into live `SessionState` / `AuthState`.
    */
   notifySessionStoreChanged(): void;
+}
+
+/**
+ * Host-implemented payment engine: pays from the user's balance to an
+ * account, once the user approves. Optional: a host that omits it leaves
+ * payment requests answered `Unsupported`.
+ *
+ * The core hashes the product into the id before calling, so ids never
+ * collide across products. The host owns the approval sheet, the transfer
+ * and its persistence.
+ */
+export interface PaymentPlatform {
+  /**
+   * Ask the user to approve `request`. Returns once the user has decided:
+   * `Ok` when they authorized it and the host took it on; the payment's
+   * outcome arrives through its status.
+   */
+  requestPayment(
+    product: ProductContext,
+    request: HostPaymentRequest,
+  ): Promise<void>;
+
+  /**
+   * Emit a payment's current status and every later one, ending after a
+   * terminal status.
+   */
+  subscribePaymentStatus(
+    product: ProductContext,
+    id: Uint8Array,
+  ): AsyncIterable<
+    Result<HostPaymentStatusSubscribeItem, HostPaymentStatusSubscribeError>
+  >;
 }
 
 /**
@@ -1752,6 +1823,39 @@ export interface ThemeHost {
    * named themes report `ThemeName::Default`.
    */
   subscribeTheme(): AsyncIterable<Result<HostThemeSubscribeItem, GenericError>>;
+}
+
+/**
+ * Host-implemented top-up engine: claims a source's funds into the user's
+ * balance through the host's coinage onboarding. Optional: a host that omits
+ * it leaves top-ups answered `Unsupported`.
+ *
+ * The core validates the source keys and hashes the product into the id
+ * before calling, so ids never collide across products. The host owns
+ * retries, partial claims and persistence.
+ */
+export interface TopUpPlatform {
+  /**
+   * Start a top-up. Returns once the host has accepted it.
+   */
+  topUp(
+    product: ProductContext,
+    request: HostPaymentTopUpRequest,
+  ): Promise<void>;
+
+  /**
+   * Emit a top-up's current status and every later one, ending after a
+   * terminal status.
+   */
+  subscribeTopUpStatus(
+    product: ProductContext,
+    id: Uint8Array,
+  ): AsyncIterable<
+    Result<
+      HostPaymentTopUpStatusSubscribeItem,
+      HostPaymentTopUpStatusSubscribeError
+    >
+  >;
 }
 
 /**
