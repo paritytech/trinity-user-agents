@@ -40,6 +40,13 @@ class PocketCardThemeTest {
         ),
     )
 
+    private val mainSurfaceGround = JsWidget.Box(
+        modifiers = listOf(
+            JsModifier.Size(width = 40, height = 40),
+            JsModifier.Background(color = JsColor.BG_SURFACE_MAIN),
+        ),
+    )
+
     private val faceUsingThemeDefaults = JsWidget.Column(
         children = listOf(
             JsWidget.Text(text = "Loyalty"),
@@ -50,19 +57,22 @@ class PocketCardThemeTest {
     )
 
     @Test
-    fun aCardFaceIsDrawnInTheDefaultTheme() {
-        draw(primaryGround) { face -> PocketCardTheme(content = face) }
+    fun aCardFaceGetsTheBerlinNightColoursTheRfcPromisesProductAuthors() {
+        val bothGrounds = JsWidget.Row(children = listOf(primaryGround, mainSurfaceGround))
+        draw(bothGrounds) { face -> PocketCardTheme(content = face) }
 
-        assertEquals(PolkadotAppTheme.DEFAULT.colors().fg.primary, captureFace().centre())
+        val pixels = captureFace().toPixelMap()
+        assertEquals(Color(0xFFF4F4F5), pixels[pixels.width / 4, pixels.height / 2])
+        assertEquals(Color(0xFF0B0C0F), pixels[pixels.width * 3 / 4, pixels.height / 2])
     }
 
     @Test
     fun aCardFaceLooksTheSameWhateverThemeTheUserPicked() {
         draw(faceUsingThemeDefaults) { face -> PocketCardTheme(content = face) }
 
-        val inDefaultTheme = drawnUnder(PolkadotAppTheme.DEFAULT)
+        val inBerlinNight = drawnUnder(PolkadotAppTheme.BerlinNight)
         PolkadotAppTheme.entries.forEach { theme ->
-            assertArrayEquals(theme.name, inDefaultTheme, drawnUnder(theme))
+            assertArrayEquals(theme.name, inBerlinNight, drawnUnder(theme))
         }
     }
 
@@ -70,14 +80,18 @@ class PocketCardThemeTest {
     fun aWidgetOutsideAPocketCardFollowsThePickedTheme() {
         draw(faceUsingThemeDefaults) { face -> face() }
 
-        assertFalse(drawnUnder(PolkadotAppTheme.DEFAULT).contentEquals(drawnUnder(PolkadotAppTheme.Lisbon)))
+        assertFalse(drawnUnder(PolkadotAppTheme.BerlinNight).contentEquals(drawnUnder(PolkadotAppTheme.Lisbon)))
     }
 
     private fun draw(widget: JsWidget, surface: @Composable (face: @Composable () -> Unit) -> Unit) {
         compose.setContent {
             PolkadotTheme(theme = pickedTheme) {
                 surface {
-                    JsWidgetRenderer(widget = widget, modifier = Modifier.testTag(FACE_TAG), jsEventHandler = { _, _ -> })
+                    JsWidgetRenderer(
+                        widget = widget,
+                        modifier = Modifier.testTag(FACE_TAG),
+                        jsEventHandler = { _, _ -> },
+                    )
                 }
             }
         }
@@ -91,8 +105,6 @@ class PocketCardThemeTest {
     private fun captureFace(): ImageBitmap = compose.onNodeWithTag(FACE_TAG).captureToImage()
 
     private fun ImageBitmap.pixels(): IntArray = IntArray(width * height).also { readPixels(it) }
-
-    private fun ImageBitmap.centre(): Color = toPixelMap()[width / 2, height / 2]
 
     private companion object {
         const val FACE_TAG = "face"

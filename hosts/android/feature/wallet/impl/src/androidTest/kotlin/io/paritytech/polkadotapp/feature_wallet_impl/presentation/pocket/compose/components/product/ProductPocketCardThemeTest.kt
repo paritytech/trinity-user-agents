@@ -31,7 +31,7 @@ class ProductPocketCardThemeTest {
     @get:Rule
     val compose = createComposeRule()
 
-    private var pickedTheme by mutableStateOf(PolkadotAppTheme.DEFAULT)
+    private var pickedTheme by mutableStateOf(PolkadotAppTheme.BerlinNight)
 
     private val faceUsingThemeDefaults = JsWidget.Column(
         children = listOf(
@@ -68,9 +68,9 @@ class ProductPocketCardThemeTest {
             }
         }
 
-        val inDefaultTheme = drawnUnder(PolkadotAppTheme.DEFAULT)
+        val inBerlinNight = drawnUnder(PolkadotAppTheme.BerlinNight)
         PolkadotAppTheme.entries.forEach { theme ->
-            assertArrayEquals(theme.name, inDefaultTheme, drawnUnder(theme))
+            assertArrayEquals(theme.name, inBerlinNight, drawnUnder(theme))
         }
     }
 

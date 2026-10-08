@@ -86,6 +86,7 @@ fun PolkadotTheme(
     }
     val colorScheme = remember(colors) { colors.toMaterialColorScheme() }
     val materialTypography = remember(typography) { typography.toMaterialTypography() }
+    val indication = remember(colors) { ripple(color = colors.fg.primary) }
 
     MaterialTheme(
         colorScheme = colorScheme,
@@ -99,7 +100,7 @@ fun PolkadotTheme(
             LocalPolkadotRadii provides radii,
             LocalPolkadotShapes provides shapes,
             LocalPolkadotBorders provides borders,
-            LocalIndication provides ripple(color = colors.fg.primary),
+            LocalIndication provides indication,
             LocalContentColor provides colors.fg.primary,
             LocalTextStyle provides typography.body.medium,
             LocalTextSelectionColors provides textSelectionColors
