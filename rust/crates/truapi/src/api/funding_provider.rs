@@ -16,7 +16,7 @@ use crate::{wire, wire_trait};
 /// The provider's worker runs each session it is assigned and reports its
 /// progress. The host stores every report, and decides `Delivered` and
 /// `Released` itself from the top-ups and payments the provider names.
-#[wire_trait(id = 23)]
+#[wire_trait(id = 24)]
 #[crate::service(required_execution = Worker)]
 #[crate::async_trait]
 pub trait FundingProvider: Send + Sync {

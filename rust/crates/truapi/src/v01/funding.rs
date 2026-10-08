@@ -8,10 +8,10 @@ use parity_scale_codec::{Decode, Encode};
     derive(uniffi::Enum)
 )]
 pub enum FundingDirection {
-    /// Value moves in. The host confirms arrival by observing the chain.
+    /// Value moves in, credited to the user's balance.
     In,
-    /// Value moves out. The host confirms only that funds left under the
-    /// user's authorization; the off-chain leg is the provider's obligation.
+    /// Value moves out of the user's balance under the user's authorization;
+    /// the off-chain leg is the provider's obligation.
     Out,
 }
 
@@ -96,28 +96,28 @@ pub struct HostFundingStatusSubscribeRequest {
 
 /// Progress of a funding session, ending in exactly one terminal item.
 ///
-/// `Delivered` means the host saw the funds arrive on chain. `Released` means
-/// the host saw them leave under the user's authorization, and says nothing
-/// about the off-chain leg: no host can verify that cash reached a bank.
+/// `Delivered` means the funds reached the user's balance. `Released` means
+/// they left it under the user's authorization, and says nothing about the
+/// off-chain leg: no host can verify that cash reached a bank.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 #[cfg_attr(
     all(feature = "runtime", not(target_arch = "wasm32")),
     derive(uniffi::Enum)
 )]
 pub enum HostFundingStatusSubscribeItem {
-    /// Inbound: awaiting the user's deposit.
-    AwaitingDeposit {
-        /// When the deposit window closes, in Unix milliseconds.
+    /// In flight. The host draws its steps; a product only waits for the end.
+    InProgress {
+        /// When the session expires unless funds are already moving, in Unix
+        /// milliseconds. `None` once it no longer expires.
         expires_at: Option<u64>,
     },
-    /// Outbound: awaiting the user's authorization to release funds.
-    AwaitingRelease,
-    /// Inbound terminal success. Funds observed on chain by the host.
+    /// Inbound terminal success. Funds credited to the user's balance.
     Delivered {
         /// Amount credited, which may differ from the amount requested.
         credited: u128,
     },
-    /// Outbound terminal success. Funds left under the user's authorization.
+    /// Outbound terminal success. Funds left the user's balance under the
+    /// user's authorization.
     Released {
         /// Amount debited.
         debited: u128,
