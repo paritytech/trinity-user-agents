@@ -23,11 +23,11 @@ enum PocketCardOpening {
 
         Task { @MainActor in
             await pocket.cardHosts.openIfIdle {
-                let faceShown = await PocketCardFaceOnOpen.faceShown(
+                await PocketCardFaceOnOpen.faceShown(
                     for: card.key,
                     cards: PublishedPocketCards.makeDefault(products: flowState.productResolver)
                 )
-
+            } then: { faceShown in
                 let product = pocket.cardHosts.product(for: card.key) { surface in
                     makeView(for: card, page: page, surface: surface, flowState: flowState)
                 }

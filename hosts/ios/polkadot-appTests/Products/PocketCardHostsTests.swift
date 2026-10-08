@@ -119,18 +119,51 @@ struct PocketCardHostsTests {
                 for await _ in lookedUp {
                     break
                 }
+            } then: {
                 opens.presented.append("first")
             }
         }
         for await _ in started {
             break
         }
-        await hosts.openIfIdle { opens.presented.append("second") }
+        await hosts.openIfIdle {} then: { opens.presented.append("second") }
         signalLookedUp.yield()
         await first.value
-        await hosts.openIfIdle { opens.presented.append("after") }
+        await hosts.openIfIdle {} then: { opens.presented.append("after") }
 
         #expect(opens.presented == ["first", "after"])
+    }
+
+    /// An open waits on its card's manifest before it builds anything, and the
+    /// product it would build is wired to the session that started it. One the
+    /// session ended under would hand the next session a page talking to the
+    /// last one's core.
+    @Test
+    func dropsAnOpenTheSessionEndedUnder() async {
+        let hosts = PocketCardHosts()
+        let opens = PresentedOpens()
+        let (started, signalStarted) = AsyncStream<Void>.makeStream()
+        let (lookedUp, signalLookedUp) = AsyncStream<Void>.makeStream()
+
+        let pending = Task {
+            await hosts.openIfIdle {
+                signalStarted.yield()
+                for await _ in lookedUp {
+                    break
+                }
+            } then: {
+                opens.presented.append("pending")
+            }
+        }
+        for await _ in started {
+            break
+        }
+        hosts.release()
+        signalLookedUp.yield()
+        await pending.value
+        await hosts.openIfIdle {} then: { opens.presented.append("after") }
+
+        #expect(opens.presented == ["after"])
     }
 }
 
