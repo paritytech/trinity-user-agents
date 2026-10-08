@@ -8264,6 +8264,38 @@ fn a_provider_worker_delivers_a_session_across_a_restart() {
     );
 }
 
+// The core follows a provider's top-up under the id the host received it
+// with, so delivery is decided from the top-up the provider actually started.
+#[test]
+fn a_session_settles_from_the_top_up_the_provider_started() {
+    let services = funding_services();
+    assert!(services.funding().install_platform(RecordingFundingPlatform::answering(
+        crate::platform::FundingPresentOutcome::Started,
+    )));
+    let engine = Arc::new(RecordingTopUpPlatform::default());
+    assert!(services.install_top_up_platform(engine.clone()));
+    let intent = futures::executor::block_on(services.open_funding(None, v01::FundingDirection::In, Some(1_000)))
+        .expect("opened")
+        .intent;
+    assert!(futures::executor::block_on(services.select_funding_provider(&intent, "ramp.dot")).expect("selected"));
+    let worker = provider_worker(&services, "ramp.dot");
+    first_served(&worker);
+    top_up(&worker, product_account_source()).expect("top-up accepted");
+    report_funding(&worker, &intent, v01::FundingUpdate::Crediting { top_up_id: [7; 32], amount: 1_000 })
+        .expect("crediting");
+    report_funding(&worker, &intent, v01::FundingUpdate::Delivered).expect("delivered");
+
+    let stage = wait_for_stage(&services, &intent);
+    let started_id = engine.started.lock().expect("started mutex poisoned")[0].1.id;
+    assert_eq!(
+        (stage, engine.followed.lock().expect("followed mutex poisoned").clone()),
+        (
+            Some(v01::HostFundingStatusSubscribeItem::Delivered { credited: 1_000 }),
+            vec![("ramp.dot".to_string(), started_id)],
+        )
+    );
+}
+
 // Only the assigned provider's worker may serve or report on a session.
 #[test]
 fn only_the_assigned_provider_worker_reports() {
