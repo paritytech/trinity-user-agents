@@ -10,20 +10,18 @@ import UIKit
 /// rather than wait on a screen that is gone.
 @MainActor
 struct PocketCardSurfaceTests {
+    /// A screen never built, or built but not in a window, is not something
+    /// the user is looking at.
     @Test
-    func answersNotPresentedWithNoScreen() {
-        #expect(PocketCardSurface().setFaceShown(false) == .notPresented)
-    }
-
-    /// A screen that was built but never shown, or one already taken off
-    /// screen, is not something the user is looking at.
-    @Test
-    func answersNotPresentedForAScreenOutsideAWindow() {
+    func answersNotPresentedWithNoScreenOnDisplay() {
         let surface = PocketCardSurface()
+        let withoutScreen = surface.setFaceShown(false)
         let screen = PocketCardScreenViewController(card: loyaltyCard, product: StubSPAView(), surface: surface)
         screen.loadViewIfNeeded()
 
-        #expect(surface.setFaceShown(false) == .notPresented)
+        withExtendedLifetime(screen) {
+            #expect([withoutScreen, surface.setFaceShown(false)] == [.notPresented, .notPresented])
+        }
     }
 
     @Test
@@ -36,29 +34,21 @@ struct PocketCardSurfaceTests {
         }
     }
 
-    /// The surface outlives the screen, so a screen that handed its product
-    /// back must stop answering for the card.
+    /// The surface outlives its screens, and the same card reopened gets a new
+    /// screen before the old one is torn down, so only the screen the surface
+    /// points at may let go of it.
     @Test
-    func forgetsAScreenThatHandedItsProductBack() throws {
-        let surface = PocketCardSurface()
-        let screen = PocketCardScreenViewController(card: loyaltyCard, product: StubSPAView(), surface: surface)
-        try #require(surface.screen === screen)
-
-        screen.handBackProduct()
-
-        #expect(surface.screen == nil)
-    }
-
-    /// The same card reopened gets a new screen before the old one is torn
-    /// down, and the old one letting go must not take the new one's place.
-    @Test
-    func keepsTheNewerScreenWhenAnOlderOneHandsBack() {
+    func forgetsOnlyTheScreenItPointsAtWhenThatScreenHandsBack() {
         let surface = PocketCardSurface()
         let older = PocketCardScreenViewController(card: loyaltyCard, product: StubSPAView(), surface: surface)
         let newer = PocketCardScreenViewController(card: loyaltyCard, product: StubSPAView(), surface: surface)
 
         older.handBackProduct()
-
         #expect(surface.screen === newer)
+
+        newer.handBackProduct()
+        withExtendedLifetime(newer) {
+            #expect(surface.screen == nil)
+        }
     }
 }
