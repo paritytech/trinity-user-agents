@@ -75,12 +75,18 @@ impl<Item: Send + 'static> ActionChannel<Item> {
     }
 
     /// Publish one item, buffering it until the product subscribes.
-    pub fn publish(&self, mut item: Item) -> Result<(), ProductRuntimeError> {
+    pub fn publish(&self, item: Item) -> Result<(), ProductRuntimeError> {
+        self.deliver(item)?;
+        self.last_published_secs
+            .store(crate::unix_time::current_unix_secs(), Ordering::Release);
+        Ok(())
+    }
+
+    fn deliver(&self, mut item: Item) -> Result<(), ProductRuntimeError> {
         let mut state = self.state.lock().expect("action channel mutex poisoned");
         if state.closed {
             return Err(ProductRuntimeError::Closed);
         }
-        self.note_published_at(crate::unix_time::current_unix_secs());
         if let Some(sender) = state.subscriber.as_ref() {
             match sender.unbounded_send(item) {
                 Ok(()) => return Ok(()),
@@ -102,7 +108,8 @@ impl<Item: Send + 'static> ActionChannel<Item> {
             && crate::unix_time::current_unix_secs().saturating_sub(published_at) <= window_secs
     }
 
-    /// Record that the host published an item at `unix_secs`.
+    /// Backdate the last publish to `unix_secs`.
+    #[cfg(test)]
     pub fn note_published_at(&self, unix_secs: u64) {
         self.last_published_secs.store(unix_secs, Ordering::Release);
     }

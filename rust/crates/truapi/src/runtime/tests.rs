@@ -7750,20 +7750,14 @@ impl crate::platform::ScannerPlatform for StubScannerPlatform {
 /// A runtime for `greenmarket.dot` with no session, and `scanner` installed
 /// when given.
 fn scanner_host(scanner: Option<Arc<StubScannerPlatform>>) -> ProductRuntimeHost {
-    scanner_host_for(ProductExecutionKind::App, scanner).0
+    scanner_host_for(ProductExecutionKind::App, scanner)
 }
 
-/// [`scanner_host`] for an execution of `kind`, with the renderer action
-/// channel its execution shares across connections.
+/// [`scanner_host`] for an execution of `kind`.
 fn scanner_host_for(
     kind: ProductExecutionKind,
     scanner: Option<Arc<StubScannerPlatform>>,
-) -> (
-    ProductRuntimeHost,
-    Arc<
-        crate::runtime::ActionChannel<truapi::versioned::renderer::HostRendererActionSubscribeItem>,
-    >,
-) {
+) -> ProductRuntimeHost {
     let (host_config, mut product) = runtime_config("greenmarket.dot");
     product.execution_kind = kind;
     let services = RuntimeServices::with_chat_platform(
@@ -7780,11 +7774,7 @@ fn scanner_host_for(
     }
     let pairing_host = PairingHost::new(services.clone(), host_config);
     let adapters = crate::host_core::ConnectionAdapters::from_services(&services);
-    let renderer = adapters.renderer.clone();
-    (
-        ProductRuntimeHost::from_services(services, adapters, pairing_host, product),
-        renderer,
-    )
+    ProductRuntimeHost::from_services(services, adapters, pairing_host, product)
 }
 
 fn receipt_request() -> truapi::latest::HostScannerScanRequest {
@@ -7842,18 +7832,16 @@ fn a_worker_scans_only_shortly_after_the_user_taps_its_card() {
     // A Worker has no screen of its own. Without a recent tap, the viewfinder
     // would open over whatever the user is doing.
     let scanner = StubScannerPlatform::answering(HostScan::Dismissed);
-    let (host, renderer) = scanner_host_for(ProductExecutionKind::Worker, Some(scanner.clone()));
+    let host = scanner_host_for(ProductExecutionKind::Worker, Some(scanner.clone()));
     let not_visible = Err(CallError::Domain(v01::HostScannerScanError::NotVisible));
     assert_eq!(scan(&host), not_visible);
 
-    renderer
+    host.renderer
         .note_published_at(crate::unix_time::current_unix_secs() - super::USER_TAP_WINDOW_SECS - 1);
     assert_eq!(scan(&host), not_visible);
     assert!(scanner.asked().is_empty());
 
-    // Native executions publish taps straight to the channel they share with
-    // every connection, not through the connection.
-    renderer.publish(card_tap()).unwrap();
+    host.publish_renderer_action(card_tap()).unwrap();
     assert_eq!(scan(&host), Ok(v01::ScanOutcome::Dismissed));
 }
 
