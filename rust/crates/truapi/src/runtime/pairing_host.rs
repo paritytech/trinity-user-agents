@@ -244,7 +244,7 @@ impl PairingHost {
         let access = crate::runtime::product_manifest::ring_vrf_key_access_granted(
             &self.services,
             self.platform.as_ref(),
-            caller,
+            caller.product_id().ok_or(RingVrfError::NotAllowlisted)?,
             handle,
         )
         .await?;
@@ -776,8 +776,8 @@ impl ProductAuthority for PairingHost {
         .await?
         .map_err(AuthorityError::ConfirmationFailed)?;
         if !confirmed {
-            return Err(AuthorityError::Unknown {
-                reason: "User rejected resource allocation".to_string(),
+            return Ok(latest::HostRequestResourceAllocationResponse {
+                outcomes: vec![latest::AllocationOutcome::Rejected; request.resources.len()],
             });
         }
         let cx = super::remote_authority_context_with_default(

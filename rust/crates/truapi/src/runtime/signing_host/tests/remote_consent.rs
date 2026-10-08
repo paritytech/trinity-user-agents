@@ -1,7 +1,7 @@
 use super::*;
 use crate::host_internal::permissions::set_account_access_status;
 use crate::host_internal::sso_messages::{RemoteMessage, RemoteMessageData, v1};
-use crate::platform::{PermissionAuthorizationStatus, SignRawReview};
+use crate::platform::{PermissionAuthorizationStatus, PermissionDecision, SignRawReview};
 use crate::runtime::SsoAccountHolderService;
 use crate::runtime::sso_service::Dispatch;
 use truapi::latest::{HostAccountListRingVrfKeysRequest, RingVrfKeyDisclosure};
@@ -126,17 +126,44 @@ fn remote_vrf_cannot_reuse_a_native_auto_signing_grant() {
 }
 
 #[test]
-fn remote_account_access_neither_reuses_nor_changes_native_permissions() {
+fn remote_account_access_reuses_shared_decisions_and_preserves_their_lifetime() {
     for operation in ["alias", "list"] {
-        for (stored, confirmed, storage_error) in [
-            (Some(PermissionAuthorizationStatus::Authorized), false, None),
-            (Some(PermissionAuthorizationStatus::Denied), true, None),
-            (None, true, None),
-            (None, true, Some("permission storage unavailable")),
+        for (stored, decision, expected_status, prompts) in [
+            (
+                Some(PermissionAuthorizationStatus::Authorized),
+                PermissionDecision::Deny,
+                PermissionAuthorizationStatus::Authorized,
+                0,
+            ),
+            (
+                Some(PermissionAuthorizationStatus::Denied),
+                PermissionDecision::AllowAlways,
+                PermissionAuthorizationStatus::Denied,
+                0,
+            ),
+            (
+                None,
+                PermissionDecision::AllowAlways,
+                PermissionAuthorizationStatus::Authorized,
+                1,
+            ),
+            (
+                None,
+                PermissionDecision::AllowOnce,
+                PermissionAuthorizationStatus::NotDetermined,
+                2,
+            ),
+            (
+                None,
+                PermissionDecision::Deny,
+                PermissionAuthorizationStatus::Denied,
+                1,
+            ),
         ] {
             let platform = Arc::new(StubPlatform {
-                account_access_confirmed: confirmed,
-                permission_storage_error: storage_error,
+                permission_confirmation_decisions: std::sync::Mutex::new(
+                    [decision, decision].into(),
+                ),
                 ..StubPlatform::default()
             });
             cache_grant(&platform, "peopl.dot", "{}");
@@ -160,7 +187,6 @@ fn remote_account_access_neither_reuses_nor_changes_native_permissions() {
                 ))
                 .unwrap();
             }
-            let storage_before = platform.local_storage.lock().unwrap().clone();
             let service = SsoAccountHolderService::new(
                 authority.account_holder().clone(),
                 authority.account_holder().current_session().unwrap(),
@@ -209,26 +235,33 @@ fn remote_account_access_neither_reuses_nor_changes_native_permissions() {
                     _ => panic!("unexpected account response"),
                 });
             }
-            let expected = if confirmed {
-                Ok(())
-            } else {
+            let expected = if expected_status == PermissionAuthorizationStatus::Denied {
                 Err(RingVrfError::Rejected)
+            } else {
+                Ok(())
             };
             assert_eq!(
                 (
                     outcomes,
                     platform.account_access_reviews.lock().unwrap().len(),
-                    platform.local_storage.lock().unwrap().clone(),
+                    futures::executor::block_on(
+                        crate::host_internal::permissions::account_access_status(
+                            platform.as_ref(),
+                            "myapp",
+                            owner
+                        )
+                    )
+                    .unwrap(),
                 ),
-                (vec![expected.clone(), expected], 2, storage_before),
-                "{operation}, native decision {stored:?}",
+                (vec![expected.clone(), expected], prompts, expected_status),
+                "{operation}, stored decision {stored:?}, answer {decision:?}",
             );
         }
     }
 }
 
 #[test]
-fn remote_published_access_is_independent_of_native_refusals() {
+fn shared_denials_override_published_access_for_local_and_remote_callers() {
     for storage_error in [None, Some("permission storage unavailable")] {
         let platform = Arc::new(StubPlatform {
             permission_storage_error: storage_error,
@@ -282,7 +315,11 @@ fn remote_published_access_is_independent_of_native_refusals() {
                 response.payload.map(|_| ()),
                 platform.account_access_reviews.lock().unwrap().len(),
             ),
-            (Err(RingVrfError::NotAllowlisted), Ok(()), 0),
+            (
+                Err(RingVrfError::NotAllowlisted),
+                Err(RingVrfError::NotAllowlisted),
+                0
+            ),
             "{storage_error:?}",
         );
     }
