@@ -303,6 +303,60 @@ public protocol ContactsHostBridge: AnyObject, Sendable {
     func pickContact(productId: String) async throws -> HostContactPick
 }
 
+/// Host-implemented top-up engine: claims a source's funds into the user's
+/// balance.
+///
+/// Installed once on the runtime with ``TrUAPIHostRuntime/setTopUp(_:)``.
+/// The core has already checked the session and the source keys; a
+/// `productAccount` source arrives as its derivation index for the host to
+/// derive. The host owns claiming, retries, partial claims, persistence and
+/// scoping ids to the product. A runtime without one answers `topUp` and
+/// `topUpStatusSubscribe` with `Unsupported`.
+public protocol TopUpHostBridge: AnyObject, Sendable {
+    /// Start `request` for `productId`, returning once the host has accepted
+    /// it. Throw a `HostPaymentTopUpError` to answer with its code; anything
+    /// else reaches the product as `Unknown`.
+    func topUp(productId: String, request: HostPaymentTopUpRequest) async throws
+
+    /// The current status of `productId`'s top-up `id`, or `nil` when the
+    /// host holds none. Report every later status with
+    /// ``TrUAPIHostRuntime/notifyTopUpStatus(productId:id:status:)``.
+    func topUpStatus(productId: String, id: Data) throws -> HostPaymentTopUpStatusSubscribeItem?
+}
+
+/// Host-implemented payment engine: pays from the user's balance to an
+/// account once the user approves.
+///
+/// Installed once on the runtime with ``TrUAPIHostRuntime/setPayments(_:)``.
+/// Answer `InsufficientBalance` whenever the balance is short: the core turns
+/// it into `Rejected` for a product without balance access. A runtime without
+/// one answers `request` and `statusSubscribe` with `Unsupported`.
+public protocol PaymentHostBridge: AnyObject, Sendable {
+    /// Ask the user to approve `request` for `productId`, returning once the
+    /// user authorized it and the host took it on. Throw a `HostPaymentError`
+    /// to answer with its code; anything else reaches the product as
+    /// `Unknown`.
+    func requestPayment(productId: String, request: HostPaymentRequest) async throws
+
+    /// The current status of `productId`'s payment `id`, or `nil` when the
+    /// host holds none. Report every later status with
+    /// ``TrUAPIHostRuntime/notifyPaymentStatus(productId:id:status:)``.
+    func paymentStatus(productId: String, id: Data) throws -> HostPaymentStatusSubscribeItem?
+}
+
+/// Host-implemented balance view: what a payment request can spend right now.
+///
+/// Installed once on the runtime with ``TrUAPIHostRuntime/setBalance(_:)``.
+/// The core checks the product's balance access itself, so never prompt for
+/// it here. A runtime without one answers `balanceSubscribe` with
+/// `Unsupported`.
+public protocol BalanceHostBridge: AnyObject, Sendable {
+    /// The current balance of `purse` (`nil` for the main purse), a decimal
+    /// string of CASH units. Report every change with
+    /// ``TrUAPIHostRuntime/notifyBalance(purse:available:)``.
+    func balance(productId: String, purse: UInt32?) async throws -> U128
+}
+
 public extension HostBridge {
     /// Default no-op logger. Override to plumb into your logging framework.
     func onCoreLog(marker: String, detail: String) {}
@@ -493,6 +547,86 @@ private final class ContactsCallbackAdapter: NativeContactsCallbacks, @unchecked
             throw error
         } catch {
             throw HostRejection.Rejected(reason: hostRejectionReason(error))
+        }
+    }
+}
+
+/// Adapter that bridges the public `TopUpHostBridge` to the generated UniFFI
+/// `NativeTopUpCallbacks` protocol.
+private final class TopUpCallbackAdapter: NativeTopUpCallbacks, @unchecked Sendable {
+    private let bridge: TopUpHostBridge
+
+    init(bridge: TopUpHostBridge) {
+        self.bridge = bridge
+    }
+
+    func topUp(productId: String, request: HostPaymentTopUpRequest) async throws {
+        do {
+            try await bridge.topUp(productId: productId, request: request)
+        } catch let error as HostPaymentTopUpError {
+            throw error
+        } catch {
+            throw HostPaymentTopUpError.Unknown(reason: hostRejectionReason(error))
+        }
+    }
+
+    func topUpStatus(productId: String, id: Bytes32) throws -> HostPaymentTopUpStatusSubscribeItem? {
+        do {
+            return try bridge.topUpStatus(productId: productId, id: id)
+        } catch let error as HostRejection {
+            throw error
+        } catch {
+            throw HostRejection.Rejected(reason: hostRejectionReason(error))
+        }
+    }
+}
+
+/// Adapter that bridges the public `PaymentHostBridge` to the generated UniFFI
+/// `NativePaymentCallbacks` protocol.
+private final class PaymentCallbackAdapter: NativePaymentCallbacks, @unchecked Sendable {
+    private let bridge: PaymentHostBridge
+
+    init(bridge: PaymentHostBridge) {
+        self.bridge = bridge
+    }
+
+    func requestPayment(productId: String, request: HostPaymentRequest) async throws {
+        do {
+            try await bridge.requestPayment(productId: productId, request: request)
+        } catch let error as HostPaymentError {
+            throw error
+        } catch {
+            throw HostPaymentError.Unknown(reason: hostRejectionReason(error))
+        }
+    }
+
+    func paymentStatus(productId: String, id: Bytes32) throws -> HostPaymentStatusSubscribeItem? {
+        do {
+            return try bridge.paymentStatus(productId: productId, id: id)
+        } catch let error as HostRejection {
+            throw error
+        } catch {
+            throw HostRejection.Rejected(reason: hostRejectionReason(error))
+        }
+    }
+}
+
+/// Adapter that bridges the public `BalanceHostBridge` to the generated UniFFI
+/// `NativeBalanceCallbacks` protocol.
+private final class BalanceCallbackAdapter: NativeBalanceCallbacks, @unchecked Sendable {
+    private let bridge: BalanceHostBridge
+
+    init(bridge: BalanceHostBridge) {
+        self.bridge = bridge
+    }
+
+    func balance(productId: String, purse: UInt32?) async throws -> U128 {
+        do {
+            return try await bridge.balance(productId: productId, purse: purse)
+        } catch let error as HostPaymentBalanceSubscribeError {
+            throw error
+        } catch {
+            throw HostPaymentBalanceSubscribeError.Unknown(reason: hostRejectionReason(error))
         }
     }
 }
@@ -740,6 +874,9 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
     private let notificationCenter: NotificationCenter
     private let foregroundObserver: NSObjectProtocol
     private var contactsRetainer: NativeContactsCallbacks?
+    private var topUpRetainer: NativeTopUpCallbacks?
+    private var paymentsRetainer: NativePaymentCallbacks?
+    private var balanceRetainer: NativeBalanceCallbacks?
 
     public convenience init(bridge: HostBridge, runtimeConfig: HostRuntimeConfig) throws {
         try self.init(bridge: bridge, runtimeConfig: runtimeConfig, notificationCenter: .default)
@@ -793,6 +930,51 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
     /// resolving.
     public func notifyContactsChanged() {
         inner.notifyContactsChanged()
+    }
+
+    /// Install the host's top-up engine. Set-once; answers whether this call
+    /// installed it. Call it before opening any product execution.
+    @discardableResult
+    public func setTopUp(_ topUp: TopUpHostBridge) -> Bool {
+        let adapter = TopUpCallbackAdapter(bridge: topUp)
+        topUpRetainer = adapter
+        return inner.setTopUpCallbacks(callbacks: adapter)
+    }
+
+    /// Report a later status of `productId`'s top-up `id` to the products
+    /// following it. A terminal status ends their streams.
+    public func notifyTopUpStatus(productId: String, id: Data, status: HostPaymentTopUpStatusSubscribeItem) {
+        inner.notifyTopUpStatus(productId: productId, id: id, status: status)
+    }
+
+    /// Install the host's payment engine. Set-once; answers whether this call
+    /// installed it. Call it before opening any product execution.
+    @discardableResult
+    public func setPayments(_ payments: PaymentHostBridge) -> Bool {
+        let adapter = PaymentCallbackAdapter(bridge: payments)
+        paymentsRetainer = adapter
+        return inner.setPaymentCallbacks(callbacks: adapter)
+    }
+
+    /// Report a later status of `productId`'s payment `id` to the products
+    /// following it. A terminal status ends their streams.
+    public func notifyPaymentStatus(productId: String, id: Data, status: HostPaymentStatusSubscribeItem) {
+        inner.notifyPaymentStatus(productId: productId, id: id, status: status)
+    }
+
+    /// Install the host's balance view. Set-once; answers whether this call
+    /// installed it. Call it before opening any product execution.
+    @discardableResult
+    public func setBalance(_ balance: BalanceHostBridge) -> Bool {
+        let adapter = BalanceCallbackAdapter(bridge: balance)
+        balanceRetainer = adapter
+        return inner.setBalanceCallbacks(callbacks: adapter)
+    }
+
+    /// Report the new balance of `purse` (`nil` for the main purse), a decimal
+    /// string of CASH units, to the products following it.
+    public func notifyBalance(purse: UInt32?, available: U128) {
+        inner.notifyBalance(purse: purse, available: available)
     }
 
     /// Open one executable connection with a host-assigned immutable context.

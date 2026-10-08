@@ -323,6 +323,35 @@ the user's calendar, keeps the reminder across app kill and device reboot, and
 drops it once the game has started. A `scheduleReminder` that throws reaches
 the product as a host failure carrying its reason.
 
+## Payments
+
+A host with a wallet serves top-ups, payments and the spendable balance by
+installing `TopUpHostBridge`, `PaymentHostBridge` and `BalanceHostBridge` once
+on the runtime, before any product opens. A runtime without one answers the
+matching calls `Unsupported`.
+
+```swift
+runtime.setTopUp(wallet)
+runtime.setPayments(wallet)
+runtime.setBalance(wallet)
+
+// Later, from the wallet's own status and balance streams:
+runtime.notifyTopUpStatus(productId: productId, id: id, status: .claiming)
+runtime.notifyPaymentStatus(productId: productId, id: id, status: .completed)
+runtime.notifyBalance(purse: nil, available: "1500000000")
+```
+
+The core checks the session, the source keys, a positive amount and the
+product's balance access, so the host never prompts for balance access. A
+payment the balance cannot cover throws `HostPaymentError.InsufficientBalance`,
+which the core turns into `Rejected` for a product without balance access. The
+balance is what a payment can spend now, as a decimal string of CASH units.
+
+`topUpStatus` and `paymentStatus` answer the current status of an id inline,
+or `nil` when the host holds none. Every later status goes through
+`notifyTopUpStatus` and `notifyPaymentStatus`, ending with a terminal one; the
+core relays each to the products following that id.
+
 ## Architecture
 
 ```text
