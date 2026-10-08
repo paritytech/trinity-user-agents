@@ -436,8 +436,13 @@ AutoSigning without approval. Legacy-account signing still asks the user.
   quote or an out-of-range amount: served; a refused country: not served
   there) is stored under `FundingSupport` and folded into `funding_candidates`
   for 12 hours, as routes the manifest did not declare and as `unsupported`
-  entries the host can filter by the user's country. Natively the rows arrive
-  through `funding_quote_changed`.
+  entries the host can filter by the user's country. A crypto ask names the
+  `network` it moves on, one a route's `networks` declares, and the networks
+  quotes confirmed join the candidate's routes. A refusal of only the amount
+  is kept as the candidate's `limits` (minimum and maximum per rail, asset
+  and network), so the host can show them before quoting; a later quote for
+  the same ask keeps them. Natively the rows arrive through
+  `funding_quote_changed`.
   `select_funding_provider` hands a session to the provider the user chose,
   which must be one of those candidates, on the quote it was chosen by, which
   must be one core offered for the session and not yet expired; the provider
@@ -455,6 +460,12 @@ AutoSigning without approval. Legacy-account signing still asks the user.
   with the reference), and what arrived when a `PaymentReceived` reports a
   short or wrong-asset payment. `Deposit` is inbound only and allowed until
   funds move, so a provider can ask for the rest of a short payment.
+  It is `retrying` once the provider names a second top-up after a partial
+  claim. A provider whose payout fails after an outbound session was
+  released reports `Payout { PaidOut | Failed }` once, while the host has not
+  recorded the session; it shows as the session's `payout`, beside the
+  `Released` outcome. An inbound payment the provider returned ends as
+  `Failed { Refunded }`.
   That provider's worker runs it through the `FundingProvider` trait:
   `serveSubscribe` replays its sessions in flight and then streams new ones
   and cancel requests, `report` stores each update on the session (only from
