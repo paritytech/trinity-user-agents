@@ -4,12 +4,12 @@ import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCard
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardKey
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketRemoval
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketRemoveError
-import io.paritytech.polkadotapp.feature_products_api.model.JsWidget
 import io.paritytech.polkadotapp.feature_products_impl.data.pocket.PocketCardRepository
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.map
+import uniffi.truapi.RendererNode
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -45,10 +45,10 @@ class RealPocketCollection @Inject constructor(
     }
 
     /** The newest face the product drew, else the one bundled with a pinned card for its first run. */
-    override suspend fun cachedFace(key: PocketCardKey): JsWidget? =
+    override suspend fun cachedFace(key: PocketCardKey): RendererNode? =
         repository.face(key) ?: pinnedPocketCards.pinned(key)?.face
 
     // One write against the face alone: a face landing while the card is being removed can no longer
     // put the card back, and the card list does not change every time a product redraws.
-    override suspend fun cacheFace(key: PocketCardKey, face: JsWidget) = repository.saveFace(key, face)
+    override suspend fun cacheFace(key: PocketCardKey, face: RendererNode) = repository.saveFace(key, face)
 }

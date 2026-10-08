@@ -3,19 +3,19 @@ package io.paritytech.polkadotapp.feature_products_impl.domain.pocket
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCard
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardId
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardKey
-import io.paritytech.polkadotapp.feature_products_api.model.JsWidget
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_impl.data.pocket.PocketCardRepository
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
+import uniffi.truapi.RendererNode
 
 internal val gameProduct = ProductId.fromStoredValue("game.dot")
 internal val personhoodProduct = ProductId.fromStoredValue("peopl.dot")
 
 internal fun cardKey(productId: ProductId, cardId: String) = PocketCardKey(productId, PocketCardId(cardId))
 
-internal fun faceOf(text: String): JsWidget = JsWidget.Text(text = text)
+internal fun faceOf(text: String): RendererNode = RendererNode.String(text)
 
 internal fun pinnedCard(productId: ProductId, cardId: String) = CachedPocketCard(
     card = PocketCard(cardKey(productId, cardId), title = cardId, privileged = true),
@@ -43,7 +43,7 @@ internal class FakePinnedPocketCards(
 
 internal class InMemoryPocketCardRepository : PocketCardRepository {
     private val cards = MutableStateFlow<List<PocketCard>>(emptyList())
-    private val faces = mutableMapOf<PocketCardKey, JsWidget>()
+    private val faces = mutableMapOf<PocketCardKey, RendererNode>()
 
     override fun observeCards(): Flow<List<PocketCard>> = cards
 
@@ -59,9 +59,9 @@ internal class InMemoryPocketCardRepository : PocketCardRepository {
         return held
     }
 
-    override suspend fun face(key: PocketCardKey): JsWidget? = faces[key]
+    override suspend fun face(key: PocketCardKey): RendererNode? = faces[key]
 
-    override suspend fun saveFace(key: PocketCardKey, face: JsWidget) {
+    override suspend fun saveFace(key: PocketCardKey, face: RendererNode) {
         faces[key] = face
     }
 }

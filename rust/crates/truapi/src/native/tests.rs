@@ -3012,3 +3012,129 @@ fn a_native_status_read_follows_the_os_gate() {
         )
     );
 }
+
+/// A face kept and read back is the same face, so a card draws at a cold
+/// start exactly as its product last drew it.
+#[test]
+fn a_kept_face_reads_back_as_itself() {
+    let json = std::fs::read_to_string(format!(
+        "{}/tests/fixtures/pocket_faces/devicehood.json",
+        env!("CARGO_MANIFEST_DIR")
+    ))
+    .expect("fixture");
+    let face = parse_renderer_node_json(json).expect("fixture reads");
+
+    let kept = encode_renderer_node(face.clone());
+
+    assert_eq!(decode_renderer_node(kept).expect("reads back"), face);
+}
+
+/// A face a real product ships, kept here as well as in the iOS host so the
+/// reader is measured against the protocol shape rather than against what
+/// this code happens to accept. One is enough for that, and the hosts keep
+/// the rest of the conformance set.
+#[test]
+fn reads_the_card_faces_the_hosts_conform_to() {
+    let json = std::fs::read_to_string(format!(
+        "{}/tests/fixtures/pocket_faces/devicehood.json",
+        env!("CARGO_MANIFEST_DIR")
+    ))
+    .expect("fixture");
+
+    let node = parse_renderer_node_json(json).expect("devicehood must read as a renderer tree");
+
+    assert!(matches!(node, latest::RendererNode::Column { .. }));
+}
+
+/// `depth` boxes around an empty node, three brackets per box.
+fn nested_boxes(depth: usize) -> String {
+    let mut json = String::new();
+    for _ in 0..depth {
+        json.push_str(r#"{"tag":"Box","value":{"modifiers":[],"props":{},"children":["#);
+    }
+    json.push_str(r#"{"tag":"Nil"}"#);
+    for _ in 0..depth {
+        json.push_str("]}}");
+    }
+    json
+}
+
+/// A face deeper than the core will carry is refused rather than half-read,
+/// so no host draws one it could not read back.
+#[test]
+fn refuses_a_face_deeper_than_the_core_carries() {
+    assert!(parse_renderer_node_json(nested_boxes(MAX_FACE_DEPTH as usize - 1)).is_ok());
+    assert!(matches!(
+        parse_renderer_node_json(nested_boxes(MAX_FACE_DEPTH as usize + 1)),
+        Err(NativeRendererError::TooDeep { .. })
+    ));
+}
+
+/// A product chooses how deep its preview nests, and a host reads it before
+/// the user approved anything, on whatever thread it happens to be on. The
+/// deepest face the bracket bound lets through is refused on a thread with
+/// less stack than any host gives one, rather than overflowing it and taking
+/// the app down.
+#[test]
+fn a_face_at_the_nesting_bound_is_refused_on_a_small_host_stack() {
+    let json = nested_boxes(MAX_FACE_JSON_NESTING as usize / 3);
+
+    let read = std::thread::Builder::new()
+        .stack_size(256 * 1024)
+        .spawn(move || parse_renderer_node_json(json))
+        .expect("host thread starts")
+        .join()
+        .expect("host thread survives the read");
+
+    assert!(matches!(read, Err(NativeRendererError::TooDeep { .. })));
+}
+
+/// A host that cannot start the reader's thread, short of memory or of
+/// threads, gets an error it can show, not a panic, which a release build
+/// turns into an abort of the whole app.
+#[cfg(target_pointer_width = "64")]
+#[test]
+fn a_face_reader_that_cannot_start_is_an_error_not_a_crash() {
+    let no_thread_has_this_much_stack = 1 << 47;
+
+    assert!(matches!(
+        read_face_on_stack(nested_boxes(1), no_thread_has_this_much_stack),
+        Err(NativeRendererError::ReaderUnavailable { .. })
+    ));
+}
+
+/// A kept face is read back only if it is exactly what was kept: bytes past
+/// the tree mean the row is not a face this host wrote, and drawing its
+/// prefix would show a card nobody drew.
+#[test]
+fn a_kept_face_with_bytes_past_its_tree_does_not_read_back() {
+    let mut kept = encode_renderer_node(latest::RendererNode::Nil);
+    kept.push(0);
+
+    assert!(matches!(
+        decode_renderer_node(kept),
+        Err(NativeRendererError::Malformed { .. })
+    ));
+}
+
+/// A title is drawn and an id is addressed, so they cannot share one rule:
+/// the emoji below carries a variation selector, which an id may not.
+#[test]
+fn a_card_title_accepts_what_a_card_id_refuses() {
+    assert_eq!(
+        screen_pocket_card_title("\u{2615}\u{fe0f} Coffee".to_string()).unwrap(),
+        "\u{2615}\u{fe0f} Coffee"
+    );
+    assert!(screen_pocket_card_id("\u{2615}\u{fe0f} Coffee".to_string()).is_err());
+}
+
+/// Both sides NFC-normalize, so a host that compares raw bytes against what
+/// the core stored would miss a card it holds.
+#[test]
+fn screening_normalizes_and_trims() {
+    assert_eq!(
+        screen_pocket_card_id("  cafe\u{301}  ".to_string()).unwrap(),
+        "caf\u{e9}"
+    );
+    assert!(screen_pocket_card_id("   ".to_string()).is_err());
+}
