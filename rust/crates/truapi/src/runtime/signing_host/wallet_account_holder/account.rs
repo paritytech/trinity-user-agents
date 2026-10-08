@@ -9,8 +9,8 @@ use crate::host_logic::features::genesis_for;
 use crate::host_logic::product_account::{SR25519_SIGNING_CONTEXT, personhood_product_id};
 use crate::host_logic::raw_signing::raw_payload_bytes;
 use crate::platform::{
-    AccountAccessReview, PermissionAuthorizationStatus, SignVrfReview,
-    StatementStoreProductSignReview, UserConfirmationReview, normalize_product_identifier,
+    PermissionAuthorizationStatus, SignVrfReview, StatementStoreProductSignReview,
+    UserConfirmationReview, normalize_product_identifier,
 };
 use crate::runtime::authority::{
     AccountCaller, AccountHolder, AccountInvocation, AuthorityError, AuthoritySession,
@@ -233,7 +233,7 @@ impl WalletAccountHolder {
         let access = crate::runtime::product_manifest::ring_vrf_key_access_granted(
             &self.services,
             self.services.platform.as_ref(),
-            caller,
+            caller.product_id().ok_or(RingVrfError::NotAllowlisted)?,
             handle,
         )
         .await?;
@@ -252,34 +252,19 @@ impl WalletAccountHolder {
         requester: &str,
         owner: &str,
     ) -> Result<(), RingVrfError> {
-        let authorized =
-            match invocation.caller {
-                AccountCaller::Local { .. } => crate::runtime::account_access_authorization(
-                    self.services.platform.as_ref(),
-                    requester,
-                    owner,
-                )
-                .await
-                .map(|status| status == PermissionAuthorizationStatus::Authorized)
-                .map_err(|error| RingVrfError::Unknown {
-                    reason: error.to_string(),
-                })?,
-                AccountCaller::Remote { .. } => until_cancelled(
-                    invocation.call,
-                    self.services.platform.confirm_user_action(
-                        UserConfirmationReview::AccountAccess(AccountAccessReview {
-                            requesting_product_id: requester.to_string(),
-                            target_product_id: owner.to_string(),
-                        }),
-                    ),
-                )
-                .await?
-                .map_err(|error| RingVrfError::Unknown {
-                    reason: crate::runtime::AccountAccessAuthorizationError::Confirmation(error)
-                        .to_string(),
-                })?,
-            };
-        if authorized {
+        let status = until_cancelled(
+            invocation.call,
+            crate::runtime::account_access_authorization(
+                self.services.platform.as_ref(),
+                requester,
+                owner,
+            ),
+        )
+        .await?
+        .map_err(|error| RingVrfError::Unknown {
+            reason: error.to_string(),
+        })?;
+        if status == PermissionAuthorizationStatus::Authorized {
             Ok(())
         } else {
             Err(RingVrfError::Rejected)

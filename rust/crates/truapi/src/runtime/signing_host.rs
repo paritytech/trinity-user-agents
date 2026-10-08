@@ -382,7 +382,8 @@ impl ProductAuthority for SigningHost {
             .revision;
         #[cfg(feature = "test-host")]
         let resources = request.resources.clone();
-        let mut grants = wallet_account_holder::allocate_grants(
+        let resource_count = request.resources.len();
+        let mut grants = match wallet_account_holder::allocate_grants(
             &self.wallet,
             AccountInvocation {
                 call: cx,
@@ -396,12 +397,15 @@ impl ProductAuthority for SigningHost {
             OnExistingAllowancePolicy::Increase,
         )
         .await
-        .map_err(|error| match error {
-            AuthorityError::Rejected => AuthorityError::Unknown {
-                reason: "User rejected resource allocation".to_string(),
-            },
-            other => other,
-        })?;
+        {
+            Ok(grants) => grants,
+            Err(AuthorityError::Rejected) => {
+                return Ok(latest::HostRequestResourceAllocationResponse {
+                    outcomes: vec![latest::AllocationOutcome::Rejected; resource_count],
+                });
+            }
+            Err(error) => return Err(error),
+        };
         let cx = super::remote_authority_context_with_default(
             cx,
             super::RESOURCE_ALLOCATION_REMOTE_AUTHORITY_RESPONSE_TIMEOUT,
