@@ -23,27 +23,26 @@ let worker = WasmWorker::new(env, &wasm)?;
 worker.run().await?;
 ```
 
-`WasmEnv` maps each import name to a typed call on `host`. For `Account`, `#[wasm_env]` generates:
+A call goes through three steps, joined by the import name:
 
-```rust
-self.request("account_get_user_id", |host, cx, request| {
-    Box::pin(async move { Account::get_user_id(&*host, &cx, request).await })
-});
-```
+1. **Building the env.** `#[wasm_env]` registers one `Method` per import name. A `Method` takes the request bytes and returns the events to send back: it decodes the versioned request, runs the typed call, and encodes the result in the caller's protocol version.
 
-`WasmEnv::request` wraps it so it decodes the versioned request, runs the call, and encodes the result in the caller's protocol version.
+   ```rust
+   self.request("account_get_user_id", |host, cx, request| {
+       Box::pin(async move { Account::get_user_id(&*host, &cx, request).await })
+   });
+   ```
 
-`WasmWorker::new` then links each import the module declares into wasmi. A method import only copies the request out of guest memory and queues the call, because wasm imports are synchronous:
+2. **Loading the module.** For each import the module declares, `WasmWorker::new` looks up the `Method` of that name and links it into wasmi. A name the env lacks rejects the module. Since a wasm import cannot wait, the linked closure only queues the call and returns a handle:
 
-```rust
-let method = env.methods.get(name).ok_or_else(unknown_import)?.clone();
-linker.func_wrap("truapi", name, move |caller: Caller<'_, GuestState>, ptr: u32, len: u32| {
-    // Reads the request, hands out the next handle, queues the call for the host loop.
-    start_call(caller, method.clone(), ptr, len)
-})?;
-```
+   ```rust
+   let method = env.methods.get(name).ok_or_else(unknown_import)?.clone();
+   linker.func_wrap("truapi", name, move |caller: Caller<'_, GuestState>, ptr: u32, len: u32| {
+       start_call(caller, method.clone(), ptr, len) // queues Start { method, request }
+   })?;
+   ```
 
-A module that imports a name the table lacks is rejected before it runs.
+3. **Running.** `WasmWorker::run` takes each queued call, runs `method(cx, request)`, and delivers the events it yields to the guest.
 
 ## A call, end to end
 
