@@ -1,8 +1,9 @@
 //! Shared resource controls for the test host.
 
 use super::authority::AuthorityError;
+use core::sync::atomic::{AtomicBool, Ordering};
 use std::collections::HashSet;
-use std::sync::{Mutex, atomic::AtomicBool};
+use std::sync::Mutex;
 
 /// Test-host allocation behavior shared by its wallet and product host.
 #[derive(Default)]
@@ -14,13 +15,12 @@ pub struct TestResourceControls {
 impl TestResourceControls {
     /// Whether allocation is answered as granted without performing it.
     pub fn grants_allowances_unchecked(&self) -> bool {
-        self.unchecked.load(std::sync::atomic::Ordering::Relaxed)
+        self.unchecked.load(Ordering::Relaxed)
     }
 
     /// Answer resource allocation as granted without performing it.
     pub fn set_grant_allowances_unchecked(&self, granted: bool) {
-        self.unchecked
-            .store(granted, std::sync::atomic::Ordering::Relaxed);
+        self.unchecked.store(granted, Ordering::Relaxed);
     }
 
     /// Replace refused resource tags; SmartContractAllowance covers every index.
