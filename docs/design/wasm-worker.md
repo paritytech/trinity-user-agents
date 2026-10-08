@@ -14,10 +14,13 @@ A product can ship its worker as a Rust crate compiled to `wasm32-unknown-unknow
 The host serves a worker with the same per-product object an iframe product talks to: [`ProductRuntimeHost`](../../rust/crates/truapi/src/runtime.rs), which implements every service trait for one product (the implementations are in [`runtime/capabilities`](../../rust/crates/truapi/src/runtime/capabilities)).
 
 ```rust
-let host = runtime.product_admin(product).product_runtime().clone(); // product runs as Worker
-let env = WasmEnv::for_product(host);      // import name -> typed call on `host`
-let worker = WasmWorker::new(env, &wasm)?; // load the module, link the imports it declares
-worker.run().await?;                       // start it, answer its calls until it returns
+// `product` carries the Worker execution kind.
+let host = runtime.product_admin(product).product_runtime().clone();
+// Maps each import name to a typed call on `host`.
+let env = WasmEnv::for_product(host);
+// Fails if the module imports a name `env` does not provide.
+let worker = WasmWorker::new(env, &wasm)?;
+worker.run().await?;
 ```
 
 `WasmEnv` maps each import name, such as `account_get_user_id`, to a closure that decodes the request, calls `Account::get_user_id` on `host`, and encodes the result. `WasmWorker::new` rejects a module that imports a name the table lacks.
