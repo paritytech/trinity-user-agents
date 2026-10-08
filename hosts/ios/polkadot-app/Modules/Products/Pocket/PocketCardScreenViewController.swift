@@ -200,6 +200,7 @@ private extension PocketCardScreenViewController {
         guard target != pageMoveTarget else { return }
 
         guard animated, pageMoveTarget != nil || scrollView.contentOffset != target else {
+            pageMoveTarget = nil
             scrollView.contentOffset = target
             fitProduct()
             return
