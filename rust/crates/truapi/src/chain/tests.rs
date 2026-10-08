@@ -19,7 +19,7 @@ use crate::host_internal::extrinsic::tests::{
     bulletin_chain_state, bulletin_runtime_call, system_events,
 };
 use crate::test_support::{
-    ScriptedProvider, notification_sender, test_spawner, wait_for_sent, wait_until,
+    ScriptedProvider, notification_sender, test_spawner, wait_for_sent,
 };
 
 const GENESIS: H256 = H256([0xab; 32]);
@@ -710,12 +710,8 @@ fn try_build(chain: &ChainRuntime) -> Result<(), String> {
     let (sender, receiver) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
         let outcome = block_on(async {
-            let client = chain
-                .online_client(GENESIS.as_bytes())
-                .await
-                .map_err(|error| format!("{error:?}"))?;
-            client
-                .at_current_block()
+            chain
+                .client_at_current_block(GENESIS.as_bytes())
                 .await
                 .map_err(|error| format!("{error:?}"))?;
             Ok(())
@@ -743,8 +739,8 @@ fn transactions_build_again_once_the_socket_is_back() {
     try_build(&chain).expect_err("the host answers the follow with nothing");
 
     node.lock().unwrap().silent_follow = false;
-    wait_until(
-        || try_build(&chain).is_ok(),
-        "transactions never built again once the socket was back",
-    );
+    // The very next build, not some later one: a bundle whose follow has
+    // ended is rebuilt by the build itself, so a product sees one failure
+    // rather than a run of them.
+    try_build(&chain).expect("transactions never built again once the socket was back");
 }

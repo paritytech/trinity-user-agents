@@ -42,6 +42,7 @@ use parking_lot::Mutex as ParkingMutex;
 use serde::de::{Deserializer, Error as DeError};
 use serde_json::Value;
 use subxt::OnlineClient;
+use subxt::client::OnlineClientAtBlock;
 use subxt::backend::{ChainHeadBackend, LegacyBackend};
 use subxt::config::RpcConfigFor;
 use subxt::config::substrate::{SubstrateConfig, SubstrateConfigBuilder};
@@ -68,6 +69,8 @@ use crate::subscription::Spawner;
 const FOLLOW_METHOD: &str = "remote_chain_head_follow";
 /// Method tag for failures building or using the legacy Subxt client.
 const LEGACY_CONNECTION: &str = "legacy_connection";
+/// Method tag for failures selecting the block a Subxt client reads at.
+const AT_CURRENT_BLOCK: &str = "client_at_current_block";
 
 struct TruapiRpcConfig;
 
@@ -733,7 +736,22 @@ impl ChainRuntime {
         let connection = self
             .connection_for("subxt_connection", genesis_hash)
             .await?;
-        connection.subxt_connection().await
+        Ok(connection.subxt_connection().await?.1)
+    }
+
+    /// Genesis-pinned Subxt client positioned at the current block.
+    ///
+    /// Prefer this over [`Self::online_client`] followed by
+    /// `at_current_block`: it rebuilds the cached bundle once when the
+    /// chainHead follow behind it has already ended, which is what a chain
+    /// socket that dropped and came back leaves behind.
+    #[instrument(skip_all, fields(runtime.method = "chain_runtime.client_at_current_block"))]
+    pub async fn client_at_current_block(
+        &self,
+        genesis_hash: &[u8],
+    ) -> Result<OnlineClientAtBlock<SubstrateConfig>, RuntimeFailure> {
+        let connection = self.connection_for(AT_CURRENT_BLOCK, genesis_hash).await?;
+        connection.client_at_current_block().await
     }
 
     #[instrument(skip_all, fields(runtime.method = "chain_runtime.connection_for", method = method))]
@@ -993,7 +1011,9 @@ impl ChainConnection {
     /// connection's transport. The chain config pins the host-configured
     /// genesis hash, so Subxt never reads a provider-echoed one, and the
     /// backend follow started here is shared by every user of this connection.
-    async fn subxt_connection(self: &Arc<Self>) -> Result<SubxtConnection, RuntimeFailure> {
+    async fn subxt_connection(
+        self: &Arc<Self>,
+    ) -> Result<(u64, SubxtConnection), RuntimeFailure> {
         let (generation, setup) = {
             let mut slot = self.subxt_connection_setup.lock().unwrap();
             if let Some(existing) = slot.clone() {
@@ -1017,7 +1037,33 @@ impl ChainConnection {
         if result.is_err() {
             self.invalidate_subxt_connection(generation);
         }
-        result
+        Ok((generation, result?))
+    }
+
+    /// Subxt client positioned at the current block, rebuilding the cached
+    /// bundle once if the first attempt fails.
+    ///
+    /// The bundle is dropped when its backend driver exits, and that runs as
+    /// its own task, so a caller reaching the dead follow first is handed the
+    /// bundle the driver has already abandoned. Every such caller fails with
+    /// a dropped subscription until the drop is recorded, which is what a
+    /// product sees as a run of identical failures within a few seconds.
+    /// Rebuilding here ends that run at the first one. Selecting a block
+    /// submits nothing, so retrying it cannot repeat an extrinsic.
+    async fn client_at_current_block(
+        self: &Arc<Self>,
+    ) -> Result<OnlineClientAtBlock<SubstrateConfig>, RuntimeFailure> {
+        let (generation, connection) = self.subxt_connection().await?;
+        if let Ok(at_block) = connection.client.at_current_block().await {
+            return Ok(at_block);
+        }
+        self.invalidate_subxt_connection(generation);
+        let (_, connection) = self.subxt_connection().await?;
+        connection
+            .client
+            .at_current_block()
+            .await
+            .map_err(|error| RuntimeFailure::host_failure(AT_CURRENT_BLOCK, error.to_string()))
     }
 
     /// Drop the cached Subxt setup if it still belongs to `generation`;
@@ -1051,9 +1097,12 @@ impl ChainConnection {
             async move {
                 while let Some(result) = driver.next().await {
                     if let Err(error) = result {
-                        tracing::debug!(target: "subxt", "chainHead backend error={error}");
+                        warn!(target: "subxt", "chainHead backend error={error}");
                     }
                 }
+                // Reaches the host's own log, because every chain read fails
+                // until the next caller rebuilds.
+                warn!(target: "subxt", "chainHead follow ended; rebuilding on next use");
                 // The backend can make no further progress; drop the cached
                 // Subxt bundle so the next caller rebuilds instead of hitting
                 // a permanently dead backend.
@@ -2531,8 +2580,8 @@ mod tests {
         // With the config pin, construction never asks the provider for the
         // genesis hash. The scripted provider answers nothing, so a fetch
         // would have hung instead of returning.
-        assert_eq!(first.client.genesis_hash(), H256([0xab; 32]));
-        assert_eq!(second.client.genesis_hash(), H256([0xab; 32]));
+        assert_eq!(first.1.client.genesis_hash(), H256([0xab; 32]));
+        assert_eq!(second.1.client.genesis_hash(), H256([0xab; 32]));
         let sent = provider.sent.lock().unwrap().clone();
         assert!(
             !sent

@@ -2393,7 +2393,7 @@ mod tests {
         // the runtime metadata.
         let error = response.payload.expect_err("fixture has no chain metadata");
         assert!(
-            format!("{error:?}").contains("cannot load chain metadata"),
+            format!("{error:?}").contains("cannot select a metadata block"),
             "{error:?}"
         );
     }

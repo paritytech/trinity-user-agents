@@ -325,12 +325,14 @@ pub async fn build_local_transaction(
     extensions: &[TxPayloadExtension],
     tx_ext_version: u8,
 ) -> Result<HostCreateTransactionResponse, LocalTransactionError> {
-    let client = chain.online_client(&genesis_hash).await.map_err(|error| {
-        LocalTransactionError::ChainUnavailable(format!("cannot load chain metadata: {error}"))
-    })?;
-    let at_block = client.at_current_block().await.map_err(|error| {
-        LocalTransactionError::ChainUnavailable(format!("cannot select a metadata block: {error}"))
-    })?;
+    let at_block = chain
+        .client_at_current_block(&genesis_hash)
+        .await
+        .map_err(|error| {
+            LocalTransactionError::ChainUnavailable(format!(
+                "cannot select a metadata block: {error}"
+            ))
+        })?;
     let transaction = build_signed_transaction(
         &Sr25519Signer::from_keypair(keypair),
         genesis_hash,

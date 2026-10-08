@@ -3779,7 +3779,7 @@ mod tests {
         ))
         .expect_err("fixture cannot resolve metadata");
         assert!(
-            matches!(err, AuthorityError::Unavailable { reason } if reason.contains("cannot load chain metadata")),
+            matches!(err, AuthorityError::Unavailable { reason } if reason.contains("cannot select a metadata block")),
             "choosing the extrinsic format reads the runtime metadata"
         );
     }
