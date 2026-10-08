@@ -61,6 +61,7 @@ final class SearchAccountViewController: UIViewController, ViewHolder {
         configureLocalization()
         configureActions()
         configureTableView()
+        installOutsidePocketRow()
         presenter.viewDidLoad()
     }
 

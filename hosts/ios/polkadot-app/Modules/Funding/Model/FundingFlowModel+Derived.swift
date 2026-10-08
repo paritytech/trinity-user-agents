@@ -139,7 +139,7 @@ extension FundingFlowModel {
         quotedProviders
             .compactMap(\.quote.expiresAt)
             .min()
-            .map { Date(timeIntervalSince1970: TimeInterval($0) / 1000) }
+            .map { Date(timeIntervalSince1970: TimeInterval($0) / 1_000) }
     }
 
     /// What every provider said when none would quote, for the summary screen.

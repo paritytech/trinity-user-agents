@@ -195,7 +195,7 @@ extension FundingFlowModel {
         let quoteId = rows[providerId]?.quote?.quoteId
 
         Task {
-            let selected = (try? await runtime.selectFundingProvider(
+            let selected = await (try? runtime.selectFundingProvider(
                 intent: intent,
                 providerId: providerId,
                 quoteId: quoteId

@@ -103,45 +103,53 @@ private extension FundingSummaryView {
     }
 
     var countryRow: some View {
-        FundingValueRow(title: String(localized: .Funding.summaryCountry), action: { model.path.append(.country) }) {
-            if let country = model.country {
-                HStack(spacing: DSSpacings.extraSmall) {
-                    Text(verbatim: country.flag)
-                    Text(verbatim: country.name)
+        FundingValueRow(
+            title: String(localized: .Funding.summaryCountry),
+            action: { model.path.append(.country) },
+            value: {
+                if let country = model.country {
+                    HStack(spacing: DSSpacings.extraSmall) {
+                        Text(verbatim: country.flag)
+                        Text(verbatim: country.name)
+                            .typography(.bodyLargeEmphasized)
+                            .foregroundStyle(.fgPrimary)
+                    }
+                } else {
+                    Text(.Funding.summaryCountryChoose)
                         .typography(.bodyLargeEmphasized)
                         .foregroundStyle(.fgPrimary)
                 }
-            } else {
-                Text(.Funding.summaryCountryChoose)
-                    .typography(.bodyLargeEmphasized)
-                    .foregroundStyle(.fgPrimary)
             }
-        }
+        )
     }
 
     var providerRow: some View {
-        FundingValueRow(title: String(localized: .Funding.summaryProvider), action: { model.path.append(.providers) }) {
-            if let providerId = model.selectedProviderId {
-                let brand = model.brand(for: providerId)
-                HStack(spacing: DSSpacings.extraSmall) {
-                    FundingProviderLogo(brand: brand, size: 20)
-                    Text(verbatim: brand.name)
-                        .typography(.bodyLargeEmphasized)
-                        .foregroundStyle(.fgPrimary)
+        FundingValueRow(
+            title: String(localized: .Funding.summaryProvider),
+            action: { model.path.append(.providers) },
+            value: {
+                if let providerId = model.selectedProviderId {
+                    let brand = model.brand(for: providerId)
+                    HStack(spacing: DSSpacings.extraSmall) {
+                        FundingProviderLogo(brand: brand, size: 20)
+                        Text(verbatim: brand.name)
+                            .typography(.bodyLargeEmphasized)
+                            .foregroundStyle(.fgPrimary)
+                    }
+                } else {
+                    FundingSkeleton()
                 }
-            } else {
-                FundingSkeleton()
             }
-        }
+        )
     }
 
     var payoutRow: some View {
-        let title: String
-        if model.direction == .in {
-            title = String(localized: .Funding.summaryMinPayout)
-        } else {
-            title = String(localized: .Funding.summaryYouSend)
-        }
+        let title =
+            if model.direction == .in {
+                String(localized: .Funding.summaryMinPayout)
+            } else {
+                String(localized: .Funding.summaryYouSend)
+            }
 
         return FundingValueRow(title: title) {
             if let quote = model.selectedQuote {

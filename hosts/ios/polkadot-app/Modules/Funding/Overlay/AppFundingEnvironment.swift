@@ -19,10 +19,7 @@ final class AppFundingEnvironment: FundingOverlayEnvironment {
     }
 
     var cash: FundingCash {
-        FundingCash(
-            symbol: PaymentAssetBranding.shared.current.symbol,
-            precision: PaymentRequestViewFactory.mainChainAsset()?.asset.decimalPrecision ?? 6
-        )
+        .current
     }
 
     var spendable: Decimal? {
@@ -81,5 +78,15 @@ actor ManifestFundingProviderBranding: FundingProviderBranding {
         )
         resolved[providerId] = brand
         return brand
+    }
+}
+
+extension FundingCash {
+    /// The app's payment asset.
+    @MainActor static var current: FundingCash {
+        FundingCash(
+            symbol: PaymentAssetBranding.shared.current.symbol,
+            precision: PaymentRequestViewFactory.mainChainAsset()?.asset.decimalPrecision ?? 6
+        )
     }
 }

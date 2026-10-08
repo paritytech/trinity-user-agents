@@ -128,18 +128,18 @@ private extension FundingProviderListView {
     func unavailableText(_ reason: FundingQuoteUnavailable) -> String {
         switch reason {
         case .timeout:
-            return String(localized: .Funding.providersUnavailable)
+            String(localized: .Funding.providersUnavailable)
         case let .refused(refusal):
             switch refusal {
             case let .belowMinimum(min):
-                return String(localized: .Funding.errorMinimum(amount: model.cash.label(model.cash.decimal(min))))
+                String(localized: .Funding.errorMinimum(amount: model.cash.label(model.cash.decimal(min))))
             case let .aboveMaximum(max):
-                return String(localized: .Funding.errorMaximum(amount: model.cash.label(model.cash.decimal(max))))
+                String(localized: .Funding.errorMaximum(amount: model.cash.label(model.cash.decimal(max))))
             case .countryUnsupported:
-                return String(localized: .Funding.providersCountryUnsupported)
+                String(localized: .Funding.providersCountryUnsupported)
             case .unavailable,
                  .other:
-                return String(localized: .Funding.providersUnavailable)
+                String(localized: .Funding.providersUnavailable)
             }
         }
     }

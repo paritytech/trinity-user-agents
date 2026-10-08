@@ -69,6 +69,6 @@ extension Decimal {
     }
 }
 
-private extension Optional where Wrapped == String {
+private extension String? {
     var orEmpty: String { self ?? "" }
 }

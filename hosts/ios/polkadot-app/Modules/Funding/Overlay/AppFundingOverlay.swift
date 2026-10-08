@@ -138,7 +138,10 @@ final class FundingOverlayCoordinator {
         let rail = flows[intent]?.rail ?? runtime?.fundingSession(intent: intent)?.choice?.rail ?? .card
 
         return await withCheckedContinuation { continuation in
-            let frame = FundingProviderFrameController(page: page, showsSentFunds: rail == .bank) { [weak self] outcome in
+            let frame = FundingProviderFrameController(
+                page: page,
+                showsSentFunds: rail == .bank
+            ) { [weak self] outcome in
                 self?.frames[intent] = nil
                 continuation.resume(returning: outcome)
             }
