@@ -357,47 +357,7 @@ impl ProductConnection {
         self.product.execution_kind
     }
 
-    /// Canonical account owner allowed by this product's manifest grants.
-    async fn authorized_product_account(
-        &self,
-        dot_ns_identifier: &str,
-        cx: &CallContext,
-    ) -> Option<String> {
-        let product_id = self.product_id();
-        // Admission already restricts localhost products to development hosts.
-        if crate::platform::is_localhost_product_identifier(&product_id) {
-            return normalize_product_identifier(dot_ns_identifier).ok();
-        }
-        let cx = remote_authority_context(cx);
-        self.bounded_cross_product_scope_target(dot_ns_identifier, Granted::Context, &cx)
-            .await
-    }
 
-    /// Resolve access before authority execution; timeout and cancellation answer
-    /// the same refusal as a missing grant, without revealing cached targets.
-    async fn bounded_cross_product_scope_target(
-        &self,
-        target: &str,
-        scope: Granted,
-        cx: &CallContext,
-    ) -> Option<String> {
-        let lookup = self.cross_product_scope_target(target, scope).fuse();
-        let cancelled = cx.cancel().cancelled().fuse();
-        pin_mut!(lookup, cancelled);
-        let Some(budget) = cx.timeout() else {
-            return futures::select! {
-                resolved = lookup => resolved,
-                _ = cancelled => None,
-            };
-        };
-        let deadline = futures_timer::Delay::new(budget).fuse();
-        pin_mut!(deadline);
-        futures::select! {
-            resolved = lookup => resolved,
-            _ = cancelled => None,
-            () = deadline => None,
-        }
-    }
 
     /// Canonical target whose manifest grants this caller the requested scope.
     async fn cross_product_scope_target(&self, target: &str, scope: Granted) -> Option<String> {

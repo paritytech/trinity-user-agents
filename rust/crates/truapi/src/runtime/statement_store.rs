@@ -68,8 +68,12 @@ impl<H: super::AccountHolder> StatementStore for ProductRuntimeHost<H> {
             })?;
         let authority_session = self.accounts.current_session();
         let Some(owner) = self
-            .connection
-            .authorized_product_account(&inner.product_account_id.dot_ns_identifier, cx)
+            .accounts
+            .authorized_product_account(
+                &self.connection.product,
+                &inner.product_account_id.dot_ns_identifier,
+                cx,
+            )
             .await
         else {
             return Err(CallError::Domain(RemoteStatementStoreCreateProofError::V1(

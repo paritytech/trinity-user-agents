@@ -23,7 +23,6 @@ use truapi::versioned::account::{
 };
 use truapi::{CallContext, CallError, Subscription, latest, v01};
 
-use crate::host_internal::product_manifest::Granted;
 use crate::runtime::{
     AccountCaller, AccountHolder, ProductRuntimeHost, remote_authority_call,
     remote_authority_context, ring_vrf_alias_error, ring_vrf_list_error, ring_vrf_proof_error,
@@ -119,60 +118,15 @@ impl<H: AccountHolder> Account for ProductRuntimeHost<H> {
                     },
                 ))
             })?;
-        // The session is consulted before the grant, matching `ring_vrf_sign`.
-        // The other order makes the pair of refusals a probe for who granted
-        // whom: with no session a granting target answers `Rejected` and a
-        // non-granting one `NotAllowlisted`, which is exactly what the uniform
-        // cross-product refusal exists to prevent.
         let Some(authority_session) = self.accounts.current_session() else {
             return Err(CallError::Domain(HostAccountCreateProofError::V1(
                 v01::HostAccountCreateProofError::Rejected,
             )));
         };
 
-        let calling_product_id = self.connection.product_id();
         let cx = remote_authority_context(cx);
-        // The grant lookup runs *before* `remote_authority_call`, under a bound of
-        // its own. It can reach dotNS on the Asset Hub, several sequential chain
-        // operations each bounded only by `OPERATION_TIMEOUT`, so it needs a
-        // deadline either way. Running it inside would arm two timers on one
-        // budget, and whichever fired first would decide whether the caller sees
-        // the uniform refusal or a transport error naming a reason, making the
-        // refusal shape depend on scheduling. Decided here instead, a lookup that
-        // runs out of time answers `NotAllowlisted` like every other refusal on
-        // this path. The stages are bounded separately, so a caller asking for
-        // one second can wait up to two.
-        //
-        // The gate returns the normalized owner it decided about and the handle
-        // is rebuilt from it, so authorization and key derivation agree by
-        // construction rather than by a registry lookup happening to miss.
-        let Some(owner) = self
-            .connection
-            .bounded_cross_product_scope_target(
-                &request.key_handle.dot_ns_identifier,
-                Granted::Context,
-                &cx,
-            )
-            .await
-        else {
-            // Recorded here, because this door answers without reaching the
-            // authority. Without this line a product probing which handles
-            // exist on the device leaves no trace, while every success is
-            // logged. The wire answers one refusal for every
-            // reason; this is the operator's copy.
-            tracing::info!(
-                caller = %calling_product_id,
-                owner = %request.key_handle.dot_ns_identifier,
-                "cross-product ring-VRF access refused at the runtime frontend"
-            );
-            return Err(CallError::Domain(HostAccountCreateProofError::V1(
-                v01::HostAccountCreateProofError::NotAllowlisted,
-            )));
-        };
-        request.key_handle.dot_ns_identifier = owner;
-        remote_authority_call(
-            &cx,
-            self.accounts.create_proof(
+        self.accounts
+            .create_proof(
                 &authority_session,
                 &cx,
                 AccountCaller::Local {
@@ -181,13 +135,12 @@ impl<H: AccountHolder> Account for ProductRuntimeHost<H> {
                     outbound_review: None,
                 },
                 request,
-            ),
-        )
-        .await
-        .map(HostAccountCreateProofResponse::V1)
-        .map_err(|err| {
-            CallError::Domain(HostAccountCreateProofError::V1(ring_vrf_proof_error(err)))
-        })
+            )
+            .await
+            .map(HostAccountCreateProofResponse::V1)
+            .map_err(|err| {
+                CallError::Domain(HostAccountCreateProofError::V1(ring_vrf_proof_error(err)))
+            })
     }
 
     #[instrument(skip_all, fields(runtime.method = "account.register_ring_vrf_key"))]
@@ -289,38 +242,9 @@ impl<H: AccountHolder> Account for ProductRuntimeHost<H> {
                 v01::HostAccountRingVrfSignError::NotConnected,
             )));
         };
-        let calling_product_id = self.connection.product_id();
         let cx = remote_authority_context(cx);
-        // As in `create_account_proof`: the lookup is bounded before the authority
-        // call rather than inside it, and the handle carried on is the normalized
-        // owner the gate decided about rather than the spelling the caller sent.
-        let Some(owner) = self
-            .connection
-            .bounded_cross_product_scope_target(
-                &request.key_handle.dot_ns_identifier,
-                Granted::Context,
-                &cx,
-            )
-            .await
-        else {
-            // Recorded here, because this door answers without reaching the
-            // authority. Without this line a product probing which handles
-            // exist on the device leaves no trace, while every success is
-            // logged. The wire answers one refusal for every
-            // reason; this is the operator's copy.
-            tracing::info!(
-                caller = %calling_product_id,
-                owner = %request.key_handle.dot_ns_identifier,
-                "cross-product ring-VRF access refused at the runtime frontend"
-            );
-            return Err(CallError::Domain(HostAccountRingVrfSignError::V1(
-                v01::HostAccountRingVrfSignError::NotAllowlisted,
-            )));
-        };
-        request.key_handle.dot_ns_identifier = owner;
-        remote_authority_call(
-            &cx,
-            self.accounts.ring_vrf_sign(
+        self.accounts
+            .ring_vrf_sign(
                 &authority_session,
                 &cx,
                 AccountCaller::Local {
@@ -329,11 +253,12 @@ impl<H: AccountHolder> Account for ProductRuntimeHost<H> {
                     outbound_review: None,
                 },
                 request,
-            ),
-        )
-        .await
-        .map(HostAccountRingVrfSignResponse::V1)
-        .map_err(|err| CallError::Domain(HostAccountRingVrfSignError::V1(ring_vrf_sign_error(err))))
+            )
+            .await
+            .map(HostAccountRingVrfSignResponse::V1)
+            .map_err(|err| {
+                CallError::Domain(HostAccountRingVrfSignError::V1(ring_vrf_sign_error(err)))
+            })
     }
 
     #[instrument(skip_all, fields(runtime.method = "account.sign_vrf"))]

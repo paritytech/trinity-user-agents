@@ -187,7 +187,7 @@ path. Web hosts do not compile the store.
 ### The two roles
 
 - Native execution uses `HostAccounts<WalletAccountHolder>`; paired execution uses `HostAccounts<SsoAccountHolderClient>`. Both share the same grant acquisition, retention and delegated signing policy.
-- `WalletAccountHolder` owns entropy, wallet consent, derivation, issuance and renewal. Incoming `SsoAccountHolderService` calls it directly and cannot inherit native permissions or populate native grants.
+- `WalletAccountHolder` owns entropy, wallet consent, derivation, issuance and renewal. Incoming `SsoAccountHolderService` calls it directly and shares stored account-access decisions but cannot inherit native AutoSigning or populate native grants.
 - `AccountInvocation` carries the selected wallet activation and trusted caller origin. Local callers may carry a wallet-issued authorization; remote signing always requires wallet approval. Local and remote account access share stored decisions, including refusals.
 - Product calls keep the selected `AuthoritySession` across review. The account holder validates that activation before wallet execution. `HostAccounts` checks grant revisions when retaining or using delegated keys; product reset clears grants without changing the wallet activation. It does not cancel an independent wallet approval already in progress.
 - `AccountHolder::allocate_grants` returns a lazy, ordered stream. The host retains each success before continuing; recoverable item failures and whole-operation failures remain distinct.

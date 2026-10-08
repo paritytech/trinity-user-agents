@@ -165,6 +165,35 @@ impl<H: AccountHolder> HostAccounts<H> {
             .wallet_authorization(&product.product_id))
     }
 
+    /// Canonical account owner authorized by the calling product's manifest grants.
+    pub async fn authorized_product_account(
+        &self,
+        product: &ProductContext,
+        dot_ns_identifier: &str,
+        cx: &CallContext,
+    ) -> Option<String> {
+        let owner = normalize_product_identifier(dot_ns_identifier).ok()?;
+        if owner == product.product_id
+            || crate::platform::is_localhost_product_identifier(&product.product_id)
+        {
+            return Some(owner);
+        }
+        let cx = super::remote_authority_context(cx);
+        super::until_cancelled(
+            &cx,
+            super::product_manifest::grants_scope(
+                &self.services,
+                self.services.platform.as_ref(),
+                &product.product_id,
+                &owner,
+                crate::host_internal::product_manifest::Granted::Context,
+            ),
+        )
+        .await
+        .ok()?
+        .then_some(owner)
+    }
+
     /// Disclose an account only after the calling product may access it.
     pub async fn get_account(
         &self,
@@ -999,6 +1028,7 @@ impl<H: AccountHolder + 'static> HostAccounts<H> {
 
     async fn require_ring_vrf_key_access(
         &self,
+        cx: &CallContext,
         caller: AccountCaller<'_>,
         handle: &api::ProductAccountId,
     ) -> Result<
@@ -1008,13 +1038,17 @@ impl<H: AccountHolder + 'static> HostAccounts<H> {
         ),
         RingVrfError,
     > {
-        let access = super::product_manifest::ring_vrf_key_access_granted(
-            &self.services,
-            self.services.platform.as_ref(),
-            caller.product_id().ok_or(RingVrfError::Rejected)?,
-            handle,
+        let access = super::until_cancelled(
+            cx,
+            super::product_manifest::ring_vrf_key_access_granted(
+                &self.services,
+                self.services.platform.as_ref(),
+                caller.product_id().ok_or(RingVrfError::Rejected)?,
+                handle,
+            ),
         )
-        .await?;
+        .await
+        .map_err(|_| RingVrfError::NotAllowlisted)??;
         Ok((
             api::ProductAccountId {
                 dot_ns_identifier: access.owner.clone(),
@@ -1117,41 +1151,44 @@ impl<H: AccountHolder + 'static> HostAccounts<H> {
             caller,
         };
         let (handle, access) = self
-            .require_ring_vrf_key_access(invocation.caller, &request.key_handle)
+            .require_ring_vrf_key_access(cx, invocation.caller, &request.key_handle)
             .await?;
-        super::product_manifest::require_own_context(&access, &request.context)?;
-        if let Some((entropy, vrf)) = self
-            .local_ring_vrf_entropy(
-                authority_session,
-                invocation.caller,
-                &handle,
-                Some(&request.ring_location),
-            )
-            .await?
-        {
-            let member = {
+        super::remote_authority_call(cx, async {
+            super::product_manifest::require_own_context(&access, &request.context)?;
+            if let Some((entropy, vrf)) = self
+                .local_ring_vrf_entropy(
+                    authority_session,
+                    invocation.caller,
+                    &handle,
+                    Some(&request.ring_location),
+                )
+                .await?
+            {
+                let member = {
+                    let _lifecycle = self.hold_grant(authority_session, revision)?;
+                    vrf.member(&entropy)?
+                };
+                let resolved = self
+                    .ring_resolver
+                    .resolve(&request.ring_location, &[MemberCandidate { member }])
+                    .await?;
                 let _lifecycle = self.hold_grant(authority_session, revision)?;
-                vrf.member(&entropy)?
-            };
-            let resolved = self
-                .ring_resolver
-                .resolve(&request.ring_location, &[MemberCandidate { member }])
-                .await?;
-            let _lifecycle = self.hold_grant(authority_session, revision)?;
-            let context = development_context_bytes(&request.context);
-            let (proof, alias) =
-                create_proof(&vrf, &entropy, &resolved, &context, &request.message)?;
-            return Ok(api::HostAccountCreateProofResponse {
-                proof,
-                contextual_alias: api::ContextualAlias {
-                    context,
-                    alias: alias.to_vec(),
-                },
-                ring_index: resolved.ring_index,
-                ring_revision: resolved.ring_revision,
-            });
-        }
-        self.holder.create_proof(invocation, request).await
+                let context = development_context_bytes(&request.context);
+                let (proof, alias) =
+                    create_proof(&vrf, &entropy, &resolved, &context, &request.message)?;
+                return Ok(api::HostAccountCreateProofResponse {
+                    proof,
+                    contextual_alias: api::ContextualAlias {
+                        context,
+                        alias: alias.to_vec(),
+                    },
+                    ring_index: resolved.ring_index,
+                    ring_revision: resolved.ring_revision,
+                });
+            }
+            self.holder.create_proof(invocation, request).await
+        })
+        .await
     }
 
     /// Retain and mirror registrations under the account selected before any awaits.
@@ -1324,16 +1361,19 @@ impl<H: AccountHolder + 'static> HostAccounts<H> {
             caller,
         };
         let (handle, _) = self
-            .require_ring_vrf_key_access(invocation.caller, &request.key_handle)
+            .require_ring_vrf_key_access(cx, invocation.caller, &request.key_handle)
             .await?;
-        if let Some((entropy, vrf)) = self
-            .local_ring_vrf_entropy(authority_session, invocation.caller, &handle, None)
-            .await?
-        {
-            let _lifecycle = self.hold_grant(authority_session, revision)?;
-            return vrf.sign(&entropy, &request.message);
-        }
-        self.holder.ring_vrf_sign(invocation, request).await
+        super::remote_authority_call(cx, async {
+            if let Some((entropy, vrf)) = self
+                .local_ring_vrf_entropy(authority_session, invocation.caller, &handle, None)
+                .await?
+            {
+                let _lifecycle = self.hold_grant(authority_session, revision)?;
+                return vrf.sign(&entropy, &request.message);
+            }
+            self.holder.ring_vrf_sign(invocation, request).await
+        })
+        .await
     }
 }
 

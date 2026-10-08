@@ -399,10 +399,11 @@ fn account_target(
     host: &ProductRuntimeHost<SsoAccountHolderClient>,
     target: &str,
 ) -> Option<String> {
-    futures::executor::block_on(
-        host.connection
-            .authorized_product_account(target, &CallContext::default()),
-    )
+    futures::executor::block_on(host.accounts.authorized_product_account(
+        &host.connection.product,
+        target,
+        &CallContext::default(),
+    ))
 }
 
 #[test]
@@ -2733,10 +2734,11 @@ fn bare_localhost_product_allows_dev_product_accounts() {
         ProductRuntimeHost::new(stub_platform(), runtime_config("localhost"), test_spawner());
 
     assert_eq!(
-        futures::executor::block_on(
-            host.connection
-                .authorized_product_account("myapp.dot", &CallContext::default())
-        )
+        futures::executor::block_on(host.accounts.authorized_product_account(
+            &host.connection.product,
+            "myapp.dot",
+            &CallContext::default(),
+        ))
         .as_deref(),
         Some("myapp.dot")
     );
