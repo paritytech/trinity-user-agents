@@ -30,18 +30,36 @@ worker.run().await?;
 
 A call goes through three steps, joined by the import name:
 
-1. **Building the env.** `#[wasm_env]` registers one `Method` per import name. A `Method` takes the request bytes and returns the events to send back: it decodes the versioned request, runs the typed call, and encodes the result in the caller's protocol version.
+1. **Building the env.** `WasmEnv::for_product(host)` calls one `link_<trait>` per service trait. `#[wasm_env]` generates each of them, with one line per method naming the trait method to call:
 
    ```rust
-   // A request: its `Method` yields one `Response` event.
-   self.request("account_get_user_id", |host, cx, request| {
-       Box::pin(async move { Account::get_user_id(&*host, &cx, request).await })
-   });
-   // A subscription: its `Method` yields one `Item` event per item, then one `End` event.
-   self.subscription("preimage_lookup_subscribe", |host, cx, request| {
-       Box::pin(async move { Preimage::lookup_subscribe(&*host, &cx, request).await })
-   });
+   impl<H: Account + 'static> WasmEnv<H> {
+       pub fn link_account(&mut self) {
+           // `host` is the product's `ProductRuntimeHost`, `cx` carries the call id and its
+           // cancellation token, `request` is the decoded typed request.
+           self.request("account_get_user_id", |host, cx, request| {
+               Box::pin(async move { Account::get_user_id(&*host, &cx, request).await })
+           });
+           // ...one line per Account method
+       }
+   }
    ```
+
+   `WasmEnv::request` and `WasmEnv::subscription` hold the shared work, written once for every method. Each stores a `Method` under the import name: given the request bytes, it decodes them, runs the line above, and encodes the result in the caller's protocol version. In outline:
+
+   ```rust
+   fn request(&mut self, name: &'static str, call: impl Fn(Arc<H>, CallContext, Request) -> Future<Result<..>>) {
+       let host = self.host.clone();
+       self.methods.insert(name, |cx, bytes| {
+           let request = Request::decode(bytes);   // versioned request
+           let version = request.version();
+           let result = call(host, cx, request).await;
+           one_event(Response, result.in_version(version).encode())
+       });
+   }
+   ```
+
+   `subscription` is the same, except the trait method returns a stream: each item becomes an `Item` event and its end an `End` event. These mirror `Dispatcher::on_request` and `Dispatcher::on_subscription` on the frame path, keyed by import name instead of `(trait, method)` ids.
 
 2. **Loading the module.** For each import the module declares, `WasmWorker::new` looks up the `Method` of that name and links it into wasmi. A name the env lacks rejects the module. Since a wasm import cannot wait, the linked closure only queues the call and returns a handle:
 
