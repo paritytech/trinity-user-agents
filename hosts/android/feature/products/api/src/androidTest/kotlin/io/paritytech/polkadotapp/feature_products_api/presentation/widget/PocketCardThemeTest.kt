@@ -70,7 +70,7 @@ class PocketCardThemeTest {
     fun aWidgetOutsideAPocketCardFollowsThePickedTheme() {
         draw(faceUsingThemeDefaults) { face -> face() }
 
-        assertFalse(drawnUnder(PolkadotAppTheme.Lisbon).contentEquals(drawnUnder(PolkadotAppTheme.BerlinDay)))
+        assertFalse(drawnUnder(PolkadotAppTheme.DEFAULT).contentEquals(drawnUnder(PolkadotAppTheme.Lisbon)))
     }
 
     private fun draw(widget: JsWidget, surface: @Composable (face: @Composable () -> Unit) -> Unit) {
