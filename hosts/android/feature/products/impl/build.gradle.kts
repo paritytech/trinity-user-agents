@@ -75,7 +75,6 @@ dependencies {
 
     implementation(project(":common"))
     implementation(project(":tools:ipfs:api"))
-    implementation(project(":tools:remoteconfig:api"))
     implementation(project(":design"))
     implementation(project(":database"))
     implementation(project(":chains"))
