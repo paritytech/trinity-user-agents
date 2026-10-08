@@ -9,7 +9,7 @@ use crate::platform::{
 use parity_scale_codec::Encode;
 use truapi::api::{
     Account, Chain, Entropy, Game, LocalStorage, Notifications, Permissions, Preimage,
-    ResourceAllocation, Signing, StatementStore, System, Theme, Worker,
+    ResourceAllocation, Scanner, Signing, StatementStore, System, Theme, Worker,
 };
 use truapi::v02;
 use truapi::versioned::account::{
@@ -50,6 +50,7 @@ use truapi::versioned::resource_allocation::{
     HostRequestResourceAllocationError, HostRequestResourceAllocationRequest,
     HostRequestResourceAllocationResponse,
 };
+use truapi::versioned::scanner::HostScannerScanRequest;
 use truapi::versioned::signing::{
     HostCreateTransactionError, HostCreateTransactionRequest, HostCreateTransactionResponse,
     HostCreateTransactionWithLegacyAccountError, HostCreateTransactionWithLegacyAccountRequest,
@@ -7681,4 +7682,80 @@ fn an_internal_cancellation_never_becomes_the_cancelled_variant() {
             transaction_call_error(HostCreateTransactionError::V1, cancelled()),
         );
     }
+}
+
+/// A product tells "no scanner here" by `Unsupported` and falls back to its own
+/// camera code; a `HostFailure` would read as a real failure.
+#[test]
+fn scanner_scan_is_unsupported_until_a_host_implements_it() {
+    let host = ProductRuntimeHost::new_compat(stub_platform(), test_spawner());
+
+    let result = futures::executor::block_on(Scanner::scan(
+        &host,
+        &CallContext::default(),
+        HostScannerScanRequest::V1(v01::HostScannerScanRequest {
+            formats: vec![v01::CodeFormat::Qr],
+            prefix: None,
+            hint: None,
+        }),
+    ));
+
+    assert!(matches!(result, Err(CallError::Unsupported)));
+}
+
+/// A pairing test host, whose wallet answered the Bulletin allowance in-page,
+/// keeps the submission in the core once told to and serves it back, so a
+/// product's submit-then-lookup round trip works without the chain.
+#[cfg(feature = "test-host")]
+#[test]
+fn a_pairing_test_host_keeps_a_submitted_preimage_and_serves_it_back() {
+    use crate::host_internal::bulletin::preimage_key;
+    use truapi::versioned::preimage::RemotePreimageSubmitResponse;
+
+    let session = sso_session_info();
+    let platform = Arc::new(StubPlatform::default());
+    let (host_config, product) = runtime_config("myapp.dot");
+    let (host, pairing_host) = ProductRuntimeHost::new_pairing_for_tests(
+        platform,
+        host_config,
+        product,
+        test_spawner(),
+    );
+    install_pairing_session(&host, session.clone());
+    let lifecycle_epoch = pairing_host.current_session_lifecycle_epoch();
+    futures::executor::block_on(pairing_host.cache_bulletin_allowance_key(
+        &session,
+        lifecycle_epoch,
+        "myapp.dot",
+        [0x42; 64].to_vec(),
+    ))
+    .expect("the wallet's allowance is cached");
+    pairing_host.set_submit_preimages_locally(true);
+    let value = b"pairing test host preimage".to_vec();
+    let cx = CallContext::default();
+
+    // No Bulletin client is configured, so reaching the chain would fail here.
+    let response = futures::executor::block_on(Preimage::submit(
+        &host,
+        &cx,
+        RemotePreimageSubmitRequest::V1(value.clone()),
+    ))
+    .expect("the submission stays in the core");
+    assert_eq!(
+        response,
+        RemotePreimageSubmitResponse::V1(preimage_key(&value).to_vec())
+    );
+
+    let mut lookup = futures::executor::block_on(host.lookup_subscribe(
+        &cx,
+        RemotePreimageLookupSubscribeRequest::V1(v01::RemotePreimageLookupSubscribeRequest {
+            key: preimage_key(&value).to_vec(),
+        }),
+    ));
+    assert_eq!(
+        futures::executor::block_on(lookup.next()).expect("a lookup item"),
+        Ok(RemotePreimageLookupSubscribeItem::V1(
+            v01::RemotePreimageLookupSubscribeItem { value: Some(value) }
+        ))
+    );
 }

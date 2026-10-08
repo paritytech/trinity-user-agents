@@ -1,5 +1,6 @@
 package io.paritytech.polkadotapp.tools_push_notifications_impl
 
+import io.paritytech.polkadotapp.common.data.os.OperatingSystem
 import io.paritytech.polkadotapp.common.utils.flowOf
 import io.paritytech.polkadotapp.tools_push_notifications_api.PushNotificationsHelper
 import io.paritytech.polkadotapp.tools_push_notifications_api.PushRule
@@ -18,6 +19,7 @@ class RealVanillaPushNotificationHelper @Inject constructor() : PushNotification
 
     override suspend fun sendNotify(
         platformToken: String,
+        operatingSystem: OperatingSystem,
         pushId: ByteArray,
         encryptedMessage: ByteArray,
         isVoIP: Boolean

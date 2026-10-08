@@ -29,6 +29,7 @@ use truapi::api::{
     Preimage,
     Renderer,
     ResourceAllocation,
+    Scanner,
     Signing,
     StatementStore,
     System,
@@ -67,6 +68,7 @@ where
     register_preimage(dispatcher, host.clone());
     register_renderer(dispatcher, host.clone());
     register_resource_allocation(dispatcher, host.clone());
+    register_scanner(dispatcher, host.clone());
     register_signing(dispatcher, host.clone());
     register_statement_store(dispatcher, host.clone());
     register_system(dispatcher, host.clone());
@@ -2072,6 +2074,40 @@ where
                 let result: Result<versioned::resource_allocation::HostRequestResourceAllocationResponse, truapi::CallError<versioned::resource_allocation::HostRequestResourceAllocationError>> =
                     match host.request(&cx, request).await {
                         Ok(response) => Ok(<versioned::resource_allocation::HostRequestResourceAllocationResponse as truapi::versioned::FromLatest>::from_latest(
+                            truapi::versioned::IntoLatest::into_latest(response),
+                            target_version,
+                        )),
+                        Err(err) => Err(downgrade_call_error(err, target_version)),
+                    };
+                result.encode()
+            })
+        });
+    }
+}
+
+fn register_scanner<P>(dispatcher: &mut Dispatcher, host: Arc<P>)
+where
+    P: Scanner + Send + Sync + 'static,
+{
+    {
+        let host = host;
+        dispatcher.on_request(wire_table::SCANNER_SCAN, move |request_id: String, bytes: Vec<u8>, cancel: truapi::CancellationToken| {
+            let host = host.clone();
+            Box::pin(async move {
+                let request: versioned::scanner::HostScannerScanRequest = match DecodeAll::decode_all(&mut &bytes[..]) {
+                    Ok(request) => request,
+                    Err(err) => {
+                        let error: truapi::CallError<versioned::scanner::HostScannerScanError> =
+                            truapi::CallError::MalformedFrame { reason: err.to_string() };
+                        let result: Result<versioned::scanner::HostScannerScanResponse, truapi::CallError<versioned::scanner::HostScannerScanError>> = Err(error);
+                        return result.encode();
+                    }
+                };
+                let target_version = request.version();
+                let cx = CallContext::with_parts(request_id, cancel);
+                let result: Result<versioned::scanner::HostScannerScanResponse, truapi::CallError<versioned::scanner::HostScannerScanError>> =
+                    match host.scan(&cx, request).await {
+                        Ok(response) => Ok(<versioned::scanner::HostScannerScanResponse as truapi::versioned::FromLatest>::from_latest(
                             truapi::versioned::IntoLatest::into_latest(response),
                             target_version,
                         )),

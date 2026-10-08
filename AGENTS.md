@@ -33,7 +33,7 @@ js/packages/
                           via `make wasm`: `web/` is the production browser host
                           and `testing/` adds the `wasm-signing-host` and
                           `test-host` Cargo features the test host needs
-  truapi-debugger/        @parity/truapi-debugger (published to npm): the debugger.
+  truapi-debugger/        @parity/truapi-debugger (private, never published): the debugger.
                           Owns all decoding of the wire frames the Rust host tap
                           (truapi's DebugSink) streams out, and decodes
                           every frame by default (no denylist, no reveal toggle).

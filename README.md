@@ -340,6 +340,11 @@ roles still install an in-memory `CliGameHost` that never rings anything. The
 withdrawn before it reaches the host, the absence of any permission prompt, and
 host failures.
 
+`Scanner` (`scan`) opens the host's own QR and barcode viewfinder (RFC
+"Host-drawn scanner"). No host serves it yet, so the runtime
+answers `Unsupported`, and the battery and the playground's Diagnosis both skip
+the service.
+
 To run the playground locally in a plain browser tab, against a signing host on
 your own machine:
 
@@ -574,7 +579,10 @@ Variables: `APPLICATION_ID`, `APPLICATION_NAME`, `CURRENCY_SYMBOL`,
 `LOG_COLLECTION_EMAIL`, `PRIVACY_POLICY_URL`, `TERMS_OF_USE_URL`,
 `SENTRY_ORG`, `SENTRY_PROJECT`, `GAME_RESULTS_FALLBACK_URL`,
 `REFERRAL_WEB_HOST`, `CONTACT_EMAIL`, `ANDROID_FIREBASE_GROUP`,
-`ANDROID_FIREBASE_DEBUG_GROUP`.
+`ANDROID_FIREBASE_DEBUG_GROUP`, and optionally `IOS_BUNDLE_ID`, the iOS app's
+bundle id the Android app names as the APNs topic for chat pushes to iOS
+contacts. It defaults to `io.parity.polkadotapp`, matching the iOS nightly;
+debug builds append `.develop` and safetynet `.safety`, as the iOS builds do.
 
 `GOOGLE_PROJECT_ID` carries an `L` suffix. It is interpolated into a Java
 `long` literal, and a twelve digit project number overflows an `int` without

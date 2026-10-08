@@ -6,10 +6,8 @@ import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTld
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardId
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardKey
-import io.paritytech.polkadotapp.feature_products_api.model.JsWidget
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_api.model.derivation.ReservedProductIds
-import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.renderer.RendererNodeJsonDecoder
 import io.paritytech.polkadotapp.test_shared.whenever
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
@@ -18,6 +16,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.mockito.ArgumentMatchers.anyInt
 import org.mockito.Mockito.mock
+import uniffi.truapi.RendererNode
 import java.io.File
 
 class AssetPinnedPocketCardsTest {
@@ -36,7 +35,7 @@ class AssetPinnedPocketCardsTest {
         whenever(context.getString(anyInt())).thenReturn("Humanity")
         whenever(tldProvider.getTld()).thenReturn(Result.success(tld))
 
-        return AssetPinnedPocketCards(context, tldProvider, PocketFaceJsonDecoder(RendererNodeJsonDecoder())).cards()
+        return AssetPinnedPocketCards(context, tldProvider).cards()
     }
 
     // Balance and Scarcity were dropped: the products behind them publish no Pocket cards, so pinning
@@ -59,7 +58,7 @@ class AssetPinnedPocketCardsTest {
     fun `the face bundled for Humanity decodes against the vocabulary the app ships`() = runBlocking {
         assertTrue("missing $bundledHumanityFace", bundledHumanityFace.exists())
 
-        assertTrue(pinnedCards().single().face is JsWidget.Column)
+        assertTrue(pinnedCards().single().face is RendererNode.Column)
     }
 
     // The key already says which network its product is on, so naming a pinned card needs no chain
@@ -72,7 +71,7 @@ class AssetPinnedPocketCardsTest {
         val neverAnswers: DotNsTldProvider = mock()
         val pinnedKey = PocketCardKey(ReservedProductIds.personhood(tld), PocketCardId("humanity"))
 
-        val cards = AssetPinnedPocketCards(context, neverAnswers, PocketFaceJsonDecoder(RendererNodeJsonDecoder()))
+        val cards = AssetPinnedPocketCards(context, neverAnswers)
 
         assertEquals(pinnedKey, cards.pinned(pinnedKey)?.card?.key)
         assertNull(cards.pinned(PocketCardKey(ProductId.fromStoredValue("game.testnet"), PocketCardId("humanity"))))
