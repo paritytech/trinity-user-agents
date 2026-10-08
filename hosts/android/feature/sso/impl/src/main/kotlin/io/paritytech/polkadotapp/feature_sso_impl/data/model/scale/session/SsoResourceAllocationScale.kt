@@ -43,7 +43,7 @@ sealed class SsoApAllocatedResourceScale {
     data object SmartContractAllowance : SsoApAllocatedResourceScale()
 
     // RFC-0022 secret key of //product//{productId} and the entropy of the product's ring-VRF
-    // domain. Shape only — nothing allocates this yet.
+    // domain. Shape only, nothing allocates this yet.
     @Serializable
     @EnumIndex(3)
     class AutoSigning(

@@ -137,7 +137,7 @@ extension AllocatedResource: ScaleCodable {
 
 extension AutoSigningSecrets: ScaleCodable {
     public init(scaleDecoder: any ScaleDecoding) throws {
-        // `[u8; 64]` and `[u8; 32]` on the wire — raw bytes, no length prefix.
+        // `[u8; 64]` and `[u8; 32]` on the wire as raw bytes, no length prefix.
         let key = try scaleDecoder.readAndConfirm(count: Self.privateKeyLength)
         let entropy = try scaleDecoder.readAndConfirm(count: Self.ringVrfDomainEntropyLength)
         try self.init(productRootPrivateKey: key, ringVrfDomainEntropy: entropy)

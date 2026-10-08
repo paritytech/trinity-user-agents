@@ -31,7 +31,7 @@ sealed interface ApAllocatedResource {
 
     /**
      * RFC-0022: secret key of `//product//{productId}`. The hard product junction is what makes handing
-     * this out safe — it exposes that product's subtree and nothing above it. [ringVrfDomainEntropy] is
+     * this out safe: it exposes that product's subtree and nothing above it. [ringVrfDomainEntropy] is
      * the 32-byte entropy of the product's ring-VRF domain.
      *
      * Shape only for now: nothing produces this variant until AutoSigning allocation ships.
