@@ -3,7 +3,6 @@
 //! Payment returns typed domain errors; CoinPayment returns Unsupported.
 
 use futures::StreamExt;
-use parity_scale_codec::Encode;
 use tracing::instrument;
 use truapi::api::{CoinPayment, Payment};
 use truapi::versioned::coin_payment::{
@@ -32,6 +31,7 @@ use truapi::{CallContext, CallError, Subscription, v01};
 
 use crate::host_internal::extrinsic::sr25519_secret_from_bytes;
 use crate::runtime::ProductRuntimeHost;
+use crate::runtime::payment_id::host_payment_id;
 
 #[truapi::async_trait]
 impl CoinPayment for ProductRuntimeHost {
@@ -178,7 +178,7 @@ impl Payment for ProductRuntimeHost {
         if self.authority.current_session().is_none() {
             return Err(CallError::Denied);
         }
-        request.id = self.host_payment_id(request.id);
+        request.id = host_payment_id(&self.product, request.id);
         match platform.request_payment(&self.product, request).await {
             Ok(()) => Ok(HostPaymentResponse::V1),
             // Only a product the user lets see the balance may learn that the
@@ -210,7 +210,7 @@ impl Payment for ProductRuntimeHost {
         }
         Subscription::new(Box::pin(
             platform
-                .subscribe_payment_status(&self.product, self.host_payment_id(request.id))
+                .subscribe_payment_status(&self.product, host_payment_id(&self.product, request.id))
                 .map(|item| {
                     item.map(HostPaymentStatusSubscribeItem::V1).map_err(|error| {
                         CallError::Domain(HostPaymentStatusSubscribeError::V1(error))
@@ -242,7 +242,7 @@ impl Payment for ProductRuntimeHost {
         if !source_keys_are_valid(&request.source) {
             return Err(domain(v01::HostPaymentTopUpError::InvalidSource));
         }
-        request.id = self.host_payment_id(request.id);
+        request.id = host_payment_id(&self.product, request.id);
         platform
             .top_up(&self.product, request)
             .await
@@ -268,7 +268,7 @@ impl Payment for ProductRuntimeHost {
         }
         Subscription::new(Box::pin(
             platform
-                .subscribe_top_up_status(&self.product, self.host_payment_id(request.id))
+                .subscribe_top_up_status(&self.product, host_payment_id(&self.product, request.id))
                 .map(|item| {
                     item.map(HostPaymentTopUpStatusSubscribeItem::V1).map_err(|error| {
                         CallError::Domain(HostPaymentTopUpStatusSubscribeError::V1(error))
@@ -288,14 +288,6 @@ impl ProductRuntimeHost {
                 })
                 .await,
             Ok(crate::platform::PermissionAuthorizationStatus::Authorized)
-        )
-    }
-
-    /// The id the host sees for a top-up or payment id this product chose.
-    /// Hashing in the product means no product can name another's.
-    fn host_payment_id(&self, id: [u8; 32]) -> [u8; 32] {
-        sp_crypto_hashing::blake2_256(
-            &(b"truapi/payment-id", self.product.product_id.as_str(), id).encode(),
         )
     }
 }
