@@ -2,7 +2,6 @@
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 
 use futures::executor::block_on;
@@ -14,14 +13,14 @@ use truapi::versioned::preimage::{
     RemotePreimageLookupSubscribeRequest, RemotePreimageSubmitError, RemotePreimageSubmitRequest,
     RemotePreimageSubmitResponse,
 };
-use truapi::{CallContext, CallError, Subscription, WasmEnv, WasmWorker, v01};
+use truapi::{CallContext, CallError, CancellationToken, Subscription, WasmEnv, WasmWorker, v01};
 
 #[derive(Default)]
 struct TestHost {
     signed_out: bool,
     preimages: Mutex<Vec<Vec<u8>>>,
-    lookup_stopped: Arc<AtomicBool>,
-    lookup_stopped_when_user_id_asked: Mutex<Option<bool>>,
+    lookup_cancel: Mutex<Option<CancellationToken>>,
+    lookup_cancelled_when_user_id_asked: Mutex<Option<bool>>,
 }
 
 #[truapi::async_trait]
@@ -31,8 +30,9 @@ impl Account for TestHost {
         _cx: &CallContext,
         _request: HostGetUserIdRequest,
     ) -> Result<HostGetUserIdResponse, CallError<HostGetUserIdError>> {
-        *self.lookup_stopped_when_user_id_asked.lock().unwrap() =
-            Some(self.lookup_stopped.load(Ordering::SeqCst));
+        let lookup_cancel = self.lookup_cancel.lock().unwrap();
+        *self.lookup_cancelled_when_user_id_asked.lock().unwrap() =
+            lookup_cancel.as_ref().map(CancellationToken::is_cancelled);
         if self.signed_out {
             return Err(CallError::Domain(HostGetUserIdError::V1(
                 v01::HostGetUserIdError::NotConnected,
@@ -41,15 +41,6 @@ impl Account for TestHost {
         Ok(HostGetUserIdResponse::V1(v01::HostGetUserIdResponse {
             primary_username: "alice.dot".to_string(),
         }))
-    }
-}
-
-/// Sets its flag when dropped, which is how the host sees a stopped stream.
-struct DropFlag(Arc<AtomicBool>);
-
-impl Drop for DropFlag {
-    fn drop(&mut self) {
-        self.0.store(true, Ordering::SeqCst);
     }
 }
 
@@ -65,46 +56,46 @@ impl Preimage for TestHost {
         Ok(RemotePreimageSubmitResponse::V1(b"key".to_vec()))
     }
 
-    /// Unknown first, then resolved, then never ends on its own.
+    /// Unknown first, then resolved, then open until cancelled.
     async fn lookup_subscribe(
         &self,
-        _cx: &CallContext,
+        cx: &CallContext,
         _request: RemotePreimageLookupSubscribeRequest,
     ) -> Subscription<
         RemotePreimageLookupSubscribeItem,
         CallError<RemotePreimageLookupSubscribeError>,
     > {
         let value = self.preimages.lock().unwrap().last().cloned();
-        let guard = DropFlag(self.lookup_stopped.clone());
+        *self.lookup_cancel.lock().unwrap() = Some(cx.cancel().clone());
         let items = [None, value].map(|value| {
             Ok(RemotePreimageLookupSubscribeItem::V1(
                 v01::RemotePreimageLookupSubscribeItem { value },
             ))
         });
-        Subscription::new(stream::iter(items).chain(stream::poll_fn(move |_| {
-            let _ = &guard;
-            std::task::Poll::Pending
-        })))
+        let cancelled = cx.cancel().cancelled();
+        Subscription::new(
+            stream::iter(items)
+                .chain(stream::pending())
+                .take_until(cancelled),
+        )
     }
 }
 
 fn guest(name: &str) -> Vec<u8> {
     static BUILT: OnceLock<PathBuf> = OnceLock::new();
     let target = BUILT.get_or_init(|| {
-        let workspace = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../guests");
+        let manifest = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../guests/Cargo.toml");
+        let target_dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("guests");
         let status = Command::new(env!("CARGO"))
-            .args([
-                "build",
-                "--release",
-                "--target",
-                "wasm32-unknown-unknown",
-                "--manifest-path",
-            ])
-            .arg(workspace.join("Cargo.toml"))
+            .args(["build", "--release", "--target", "wasm32-unknown-unknown"])
+            .arg("--manifest-path")
+            .arg(manifest)
+            .arg("--target-dir")
+            .arg(&target_dir)
             .status()
             .expect("cargo runs");
         assert!(status.success(), "guest workers failed to build");
-        workspace.join("target/wasm32-unknown-unknown/release")
+        target_dir.join("wasm32-unknown-unknown/release")
     });
     std::fs::read(target.join(format!("{name}_guest.wasm"))).expect("guest worker was built")
 }
@@ -155,14 +146,14 @@ fn a_worker_streams_a_subscription_until_it_has_what_it_waits_for() {
 }
 
 #[test]
-fn dropping_a_subscription_in_the_worker_stops_it_on_the_host_at_once() {
+fn dropping_a_subscription_in_the_worker_cancels_it_on_the_host_at_once() {
     let host = Arc::new(TestHost::default());
     let worker = WasmWorker::new(env(host.clone()), &guest("early_stop")).unwrap();
 
     let outcome = block_on(worker.run()).map_err(|error| error.to_string());
 
-    let stopped_by_next_call = *host.lookup_stopped_when_user_id_asked.lock().unwrap();
-    assert_eq!((outcome, stopped_by_next_call), (Ok(()), Some(true)));
+    let cancelled_by_next_call = *host.lookup_cancelled_when_user_id_asked.lock().unwrap();
+    assert_eq!((outcome, cancelled_by_next_call), (Ok(()), Some(true)));
 }
 
 #[test]

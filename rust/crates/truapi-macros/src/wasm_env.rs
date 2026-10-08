@@ -222,7 +222,7 @@ fn expand_guest(item_trait: &ItemTrait, bindings: &[Binding]) -> TokenStream2 {
         }
     });
     quote! {
-        #[cfg(feature = "guest")]
+        #[cfg(all(feature = "guest", target_arch = "wasm32"))]
         #[doc = #doc]
         pub mod guest {
             use super::*;

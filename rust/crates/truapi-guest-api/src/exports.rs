@@ -1,11 +1,14 @@
 //! What the exports [`main!`](crate::main) defines run: a single-task
-//! executor that polls the entry point once at start and again after every
-//! event the host delivers.
+//! executor that polls the entry point at start and after every event the
+//! host delivers, for as long as the entry point keeps waking itself.
 
 use core::cell::RefCell;
 use core::future::Future;
 use core::pin::Pin;
-use core::task::{Context, Poll, Waker};
+use core::sync::atomic::{AtomicBool, Ordering};
+use core::task::{Context, Waker};
+use std::sync::Arc;
+use std::task::Wake;
 
 use truapi::guest::deliver;
 use truapi::wasm_abi::EventKind;
@@ -16,6 +19,16 @@ type Entry = Pin<Box<dyn Future<Output = ()>>>;
 
 thread_local! {
     static ENTRY: RefCell<Option<Entry>> = const { RefCell::new(None) };
+}
+
+static WOKEN: AtomicBool = AtomicBool::new(false);
+
+struct EntryWaker;
+
+impl Wake for EntryWaker {
+    fn wake(self: Arc<Self>) {
+        WOKEN.store(true, Ordering::Relaxed);
+    }
 }
 
 /// Run `entry` until its first pending call, reporting its outcome to the
@@ -39,10 +52,15 @@ pub fn alloc(len: u32) -> *mut u8 {
 
 /// Hand one host event to the call it belongs to, then resume the entry
 /// point.
-pub fn on_event(handle: u32, kind: u32, payload: *mut u8, len: u32) {
+///
+/// # Safety
+///
+/// `payload` must be a buffer [`alloc`] returned for `len`, not yet passed
+/// here.
+#[allow(unsafe_code)]
+pub unsafe fn on_event(handle: u32, kind: u32, payload: *mut u8, len: u32) {
     let kind = EventKind::try_from(kind).expect("host sent an unknown event kind");
-    #[allow(unsafe_code)]
-    // SAFETY: the host passes back, unchanged, a buffer `alloc` returned for `len`.
+    // SAFETY: the caller guarantees `alloc` returned this buffer for `len`.
     let payload =
         unsafe { Box::from_raw(core::ptr::slice_from_raw_parts_mut(payload, len as usize)) };
     deliver(handle, kind, payload.into_vec());
@@ -50,15 +68,19 @@ pub fn on_event(handle: u32, kind: u32, payload: *mut u8, len: u32) {
 }
 
 fn poll_entry() {
+    let waker = Waker::from(Arc::new(EntryWaker));
     ENTRY.with_borrow_mut(|entry| {
-        let Some(future) = entry else {
-            return;
-        };
-        if let Poll::Ready(()) = future
-            .as_mut()
-            .poll(&mut Context::from_waker(Waker::noop()))
-        {
-            *entry = None;
+        while let Some(future) = entry {
+            WOKEN.store(false, Ordering::Relaxed);
+            if future
+                .as_mut()
+                .poll(&mut Context::from_waker(&waker))
+                .is_ready()
+            {
+                *entry = None;
+            } else if !WOKEN.load(Ordering::Relaxed) {
+                return;
+            }
         }
     });
 }

@@ -7,7 +7,7 @@
 //! protocol are in [`crate::wasm_abi`].
 
 use core::task::{Context, Poll};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
 use futures::future::BoxFuture;
@@ -26,13 +26,20 @@ use crate::wasm_abi::{
     ALLOC_EXPORT, EventKind, FINISH_IMPORT, IMPORT_MODULE, LOG_IMPORT, ON_EVENT_EXPORT,
     RELEASE_IMPORT, START_EXPORT,
 };
-use crate::{CallContext, CallError, Subscription};
+use crate::{CallContext, CallError, CancellationToken, Subscription};
 
 /// Instructions a worker may run per entry from the host before it traps.
 const FUEL_PER_ENTRY: u64 = 1_000_000_000;
 
 /// Linear memory a worker may grow to.
 const MEMORY_LIMIT: usize = 64 * 1024 * 1024;
+
+/// Largest request or log line a worker may pass, matching the frame cap of
+/// the native WebSocket bridge.
+const MAX_PAYLOAD_BYTES: u32 = 8 << 20;
+
+/// Calls a worker may hold open at once.
+const MAX_CALLS_IN_FLIGHT: usize = 1024;
 
 /// Linear memory export every worker declares.
 const MEMORY_EXPORT: &str = "memory";
@@ -271,6 +278,7 @@ struct GuestState {
     limits: StoreLimits,
     log: Box<dyn Fn(&str) + Send + Sync>,
     next_handle: u32,
+    calls_in_flight: usize,
     commands: Vec<Command>,
     finished: Option<Result<(), String>>,
 }
@@ -282,12 +290,22 @@ struct Exports {
     on_event: TypedFunc<(u32, u32, u32, u32), ()>,
 }
 
+struct Call {
+    events: BoxStream<'static, Event>,
+    cancel: CancellationToken,
+    /// The guest no longer awaits the call; it runs until it settles and its
+    /// events are dropped.
+    released: bool,
+}
+
 /// A loaded wasm worker. [`Self::run`] drives it until its entry point
-/// returns.
+/// returns. Dropping it cancels every call still in flight.
 pub struct WasmWorker {
     store: Store<GuestState>,
     exports: Exports,
-    calls: HashMap<u32, BoxStream<'static, Event>>,
+    calls: BTreeMap<u32, Call>,
+    /// Handle polling starts from, so one busy call cannot starve the rest.
+    cursor: u32,
 }
 
 impl WasmWorker {
@@ -307,11 +325,13 @@ impl WasmWorker {
             limits: StoreLimitsBuilder::new().memory_size(MEMORY_LIMIT).build(),
             log: Box::new(|line| tracing::info!(target: "truapi::wasm_worker", "{line}")),
             next_handle: 0,
+            calls_in_flight: 0,
             commands: Vec::new(),
             finished: None,
         };
         let mut store = Store::new(&engine, state);
         store.limiter(|state| &mut state.limits);
+        store.set_fuel(FUEL_PER_ENTRY)?;
         let instance = linker
             .instantiate(&mut store, &module)
             .and_then(|instance| instance.start(&mut store))
@@ -333,7 +353,8 @@ impl WasmWorker {
         Ok(Self {
             store,
             exports,
-            calls: HashMap::new(),
+            calls: BTreeMap::new(),
+            cursor: 0,
         })
     }
 
@@ -352,7 +373,7 @@ impl WasmWorker {
             if let Some(outcome) = self.store.data_mut().finished.take() {
                 return outcome.map_err(|message| WasmWorkerError::Failed { message });
             }
-            if self.calls.is_empty() {
+            if self.calls.values().all(|call| call.released) {
                 return Err(WasmWorkerError::Stalled);
             }
             let (handle, event) =
@@ -361,39 +382,67 @@ impl WasmWorker {
         }
     }
 
-    /// The next event of any call in flight, forgetting the call once its
-    /// terminal event is out.
+    /// The next event of a call the guest still awaits. Each call is polled
+    /// once per round, starting after the last one that delivered.
     fn poll_calls(&mut self, context: &mut Context<'_>) -> Poll<(u32, Event)> {
-        let ready = self.calls.iter_mut().find_map(|(handle, events)| {
-            match events.poll_next_unpin(context) {
-                Poll::Ready(event) => Some((*handle, event)),
-                Poll::Pending => None,
+        let handles: Vec<u32> = self
+            .calls
+            .range(self.cursor..)
+            .chain(self.calls.range(..self.cursor))
+            .map(|(handle, _)| *handle)
+            .collect();
+        let mut discarded = false;
+        for handle in handles {
+            let call = self.calls.get_mut(&handle).expect("listed above");
+            let Poll::Ready(event) = call.events.poll_next_unpin(context) else {
+                continue;
+            };
+            let released = call.released;
+            let event =
+                event.expect("a call is forgotten at its terminal event, before its stream ends");
+            if event.kind != EventKind::Item {
+                self.forget(handle);
             }
-        });
-        let Some((handle, event)) = ready else {
-            return Poll::Pending;
-        };
-        let event =
-            event.expect("a call is forgotten at its terminal event, before its stream ends");
-        if event.kind != EventKind::Item {
-            self.calls.remove(&handle);
+            if !released {
+                self.cursor = handle.wrapping_add(1);
+                return Poll::Ready((handle, event));
+            }
+            discarded = true;
         }
-        Poll::Ready((handle, event))
+        if discarded {
+            context.waker().wake_by_ref();
+        }
+        Poll::Pending
+    }
+
+    fn forget(&mut self, handle: u32) {
+        if self.calls.remove(&handle).is_some() {
+            self.store.data_mut().calls_in_flight -= 1;
+        }
     }
 
     fn apply_commands(&mut self) {
-        for command in std::mem::take(&mut self.store.data_mut().commands) {
+        for command in core::mem::take(&mut self.store.data_mut().commands) {
             match command {
                 Command::Start {
                     handle,
                     method,
                     request,
                 } => {
-                    let cx = CallContext::with_request_id(format!("wasm-{handle}"));
-                    self.calls.insert(handle, method(cx, request));
+                    let cancel = CancellationToken::default();
+                    let cx = CallContext::with_parts(format!("wasm-{handle}"), cancel.clone());
+                    let call = Call {
+                        events: method(cx, request),
+                        cancel,
+                        released: false,
+                    };
+                    self.calls.insert(handle, call);
                 }
                 Command::Release { handle } => {
-                    self.calls.remove(&handle);
+                    if let Some(call) = self.calls.get_mut(&handle) {
+                        call.cancel.cancel();
+                        call.released = true;
+                    }
                 }
             }
         }
@@ -414,6 +463,14 @@ impl WasmWorker {
             (handle, event.kind as u32, pointer, length),
         )?;
         Ok(())
+    }
+}
+
+impl Drop for WasmWorker {
+    fn drop(&mut self) {
+        for call in self.calls.values() {
+            call.cancel.cancel();
+        }
     }
 }
 
@@ -475,6 +532,10 @@ fn start_call(
 ) -> Result<u32, wasmi::Error> {
     let request = read_guest(&caller, pointer, length)?;
     let state = caller.data_mut();
+    if state.calls_in_flight >= MAX_CALLS_IN_FLIGHT {
+        return Err(wasmi::Error::new("too many calls in flight"));
+    }
+    state.calls_in_flight += 1;
     let handle = state.next_handle;
     state.next_handle = handle
         .checked_add(1)
@@ -517,15 +578,19 @@ fn read_guest(
     pointer: u32,
     length: u32,
 ) -> Result<Vec<u8>, wasmi::Error> {
+    if length > MAX_PAYLOAD_BYTES {
+        return Err(wasmi::Error::new("payload too large"));
+    }
     let memory = caller
         .get_export(MEMORY_EXPORT)
         .and_then(Extern::into_memory)
         .ok_or_else(|| wasmi::Error::new("worker exports no memory"))?;
-    let mut bytes = vec![0; length as usize];
+    let start = pointer as usize;
     memory
-        .read(caller, pointer as usize, &mut bytes)
-        .map_err(|error| wasmi::Error::new(error.to_string()))?;
-    Ok(bytes)
+        .data(caller)
+        .get(start..start + length as usize)
+        .map(<[u8]>::to_vec)
+        .ok_or_else(|| wasmi::Error::new("payload outside worker memory"))
 }
 
 fn read_guest_text(

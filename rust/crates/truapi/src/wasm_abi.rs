@@ -4,6 +4,9 @@
 //! returns a call handle. The host answers later by calling the guest's
 //! [`ON_EVENT_EXPORT`] once per [`EventKind`], with the payload written into
 //! memory the guest handed out through [`ALLOC_EXPORT`].
+//!
+//! The host only ever reads guest memory behind a pointer an import passes,
+//! within the given length, which is why guests declare those imports safe.
 
 /// Import module of every host function.
 pub const IMPORT_MODULE: &str = "truapi";

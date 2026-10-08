@@ -96,7 +96,12 @@ and run against a CLI host with `/worker <wasm-path>`, as the selected product.
 ## Limits
 
 - A worker gets a fixed amount of fuel for each entry from the host and 64 MiB of
-  linear memory. The values are placeholders.
+  linear memory, may pass at most 8 MiB per request or log line, and may hold
+  1024 calls open. The values are placeholders.
+- Releasing a call fires its cancellation token, as a `Cancel` frame does, and
+  the host keeps polling it until it settles, dropping its events.
+- Wasm runs synchronously on the task that drives the worker, so a long entry
+  blocks that thread until it returns or runs out of fuel.
 - A module that imports anything the host does not link is rejected before it
   runs.
 - The worker runs as the `Worker` execution kind, so Worker-only services such as

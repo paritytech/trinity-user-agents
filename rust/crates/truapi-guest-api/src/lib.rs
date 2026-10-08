@@ -15,7 +15,12 @@
 //!     Ok(())
 //! }
 //! ```
+//!
+//! The crate is empty on targets other than wasm32.
 
+#![cfg(target_arch = "wasm32")]
+
+#[doc(hidden)]
 pub mod exports;
 
 pub use truapi::api::account::guest as account;
@@ -92,9 +97,18 @@ macro_rules! main {
             $crate::exports::alloc(len)
         }
 
+        /// # Safety
+        ///
+        /// Only the host calls this, with a buffer `truapi_alloc` returned for `len`.
         #[unsafe(no_mangle)]
-        pub extern "C" fn truapi_on_event(handle: u32, kind: u32, payload: *mut u8, len: u32) {
-            $crate::exports::on_event(handle, kind, payload, len);
+        pub unsafe extern "C" fn truapi_on_event(
+            handle: u32,
+            kind: u32,
+            payload: *mut u8,
+            len: u32,
+        ) {
+            // SAFETY: forwarded unchanged from the host, under the same contract.
+            unsafe { $crate::exports::on_event(handle, kind, payload, len) };
         }
     };
 }

@@ -75,7 +75,7 @@ pub fn wire_trait(args: TokenStream, item: TokenStream) -> TokenStream {
 ///
 /// - under the `wasm-worker` feature, `WasmEnv::link_<trait>`, which links
 ///   each import to a typed call on the product's trait implementation;
-/// - under the `guest` feature, a `guest` module beside the trait with the
+/// - under the `guest` feature on wasm32, a `guest` module beside the trait with the
 ///   import declarations and one typed wrapper per method.
 ///
 /// Only works inside `truapi`.

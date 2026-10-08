@@ -52,7 +52,7 @@ pub mod v02;
 pub mod versioned;
 pub mod wasm_abi;
 
-#[cfg(feature = "guest")]
+#[cfg(all(feature = "guest", target_arch = "wasm32"))]
 pub mod guest;
 
 /// A 32-byte value, passed as plain bytes on FFI surfaces. Version-neutral:
