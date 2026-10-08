@@ -50,8 +50,12 @@ impl<H: AccountHolder> Signing for ProductRuntimeHost<H> {
             )));
         };
         let Some(owner) = self
-            .connection
-            .authorized_product_account(&inner.account.dot_ns_identifier, cx)
+            .accounts
+            .authorized_product_account(
+                &self.connection.product,
+                &inner.account.dot_ns_identifier,
+                cx,
+            )
             .await
         else {
             return Err(CallError::Domain(HostSignPayloadError::V1(
@@ -125,8 +129,12 @@ impl<H: AccountHolder> Signing for ProductRuntimeHost<H> {
             )));
         };
         let Some(owner) = self
-            .connection
-            .authorized_product_account(&inner.signer.dot_ns_identifier, cx)
+            .accounts
+            .authorized_product_account(
+                &self.connection.product,
+                &inner.signer.dot_ns_identifier,
+                cx,
+            )
             .await
         else {
             return Err(CallError::Domain(HostCreateTransactionError::V1(
@@ -351,8 +359,12 @@ impl<H: AccountHolder> ProductRuntimeHost<H> {
             )));
         };
         let Some(owner) = self
-            .connection
-            .authorized_product_account(&inner.account.dot_ns_identifier, cx)
+            .accounts
+            .authorized_product_account(
+                &self.connection.product,
+                &inner.account.dot_ns_identifier,
+                cx,
+            )
             .await
         else {
             return Err(CallError::Domain(HostSignRawError::V1(
