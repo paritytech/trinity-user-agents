@@ -10,20 +10,16 @@ enum PocketCardFaceOnOpen {
         cards: any PublishedPocketCardsResolving,
         timeout: Duration = .milliseconds(500)
     ) async -> Bool {
-        let lookup = Task { try? await cards.find(productId: key.productId, cardId: key.cardId).definition.faceShown }
-        let deadline = Task { try? await Task.sleep(for: timeout) }
-        defer {
-            lookup.cancel()
-            deadline.cancel()
-        }
-
         // Raced through a continuation rather than a task group, which would wait
         // out a resolver that ignores cancellation.
         let published = await withCheckedContinuation { continuation in
             let first = FirstAnswer(continuation)
-            Task { await first.give(lookup.value) }
             Task {
-                await deadline.value
+                let card = try? await cards.find(productId: key.productId, cardId: key.cardId)
+                await first.give(card?.definition.faceShown)
+            }
+            Task {
+                try? await Task.sleep(for: timeout)
                 await first.give(nil)
             }
         }
