@@ -169,13 +169,10 @@ pub struct ChatMessageRecord {
 /// How the mock's chain connection behaves.
 #[derive(Debug, Clone, Default)]
 pub enum ChainBehavior {
-    /// Record outbound requests, never answer. Whether a flow parks turns on
-    /// what it needs from the chain rather than on whether it signs:
-    /// `sign_raw` completes hermetically, while `create_transaction` and
-    /// `sign_payload` park because `build_local_transaction` needs chain
-    /// metadata. Login and the statement store park for the same reason. Drive
-    /// any test that reaches a parking flow under a timeout; use
-    /// [`ChainBehavior::Closed`] to make a disconnect observable instead.
+    /// Record outbound requests without replying. Local transaction creation
+    /// needs chain metadata; login and statement-store operations also wait
+    /// for chain replies. Run those flows under a timeout or use
+    /// [`ChainBehavior::Closed`] to observe a disconnect.
     #[default]
     Silent,
     /// Record outbound requests and replay these response frames in order,
