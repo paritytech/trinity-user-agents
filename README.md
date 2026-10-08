@@ -107,9 +107,11 @@ rust/crates/
                          host runtime (feature `runtime`): dispatcher, typed SCALE logic,
                          chain signing, WASM surface, host syscall traits
   truapi-codegen/        rustdoc JSON to TypeScript client + Rust dispatcher
+  truapi-guest-api/      Experimental: TrUAPI for a product worker compiled to wasm
   truapi-macros/         TrUAPI wire annotations and inter-host SSO proc macros
   truapi-provider/       Network provider backends (WebSocket RPC or smoldot light-client) and chain-access traits
   truapi-verifiable/     Ring-VRF operations over `verifiable`; a lazily loaded WASM module in the browser
+rust/guests/             Example wasm product workers; a separate workspace built for wasm32
 js/packages/
   truapi/                  @parity/truapi TypeScript client
   truapi-host/            @parity/truapi-host: WASM-backed host runtime; entries `.`
