@@ -261,6 +261,48 @@ struct PocketCardScreenTests {
         withExtendedLifetime(window) {}
     }
 
+    /// A page can change its mind before the face has started to move. The
+    /// face must end where the last request put it, since that request was
+    /// answered `.applied`.
+    @Test
+    func endsWhereTheLastRequestPutTheFaceWhenAskedTwiceInOneFrame() throws {
+        let product = StubSPAView()
+        let screen = PocketCardScreenViewController(card: loyaltyCard, product: product, surface: PocketCardSurface())
+        let window = showing(screen)
+        let scrollView = try #require(screen.scrollView)
+        let visibleHeight = scrollView.bounds.height
+
+        #expect(screen.setFaceShown(false, animated: true) == .applied)
+        #expect(screen.setFaceShown(true, animated: true) == .applied)
+        letMotionSettle(on: screen)
+
+        #expect(scrollView.contentOffset.y == 0)
+        #expect(product.controller.view.frame.height == visibleHeight - faceHeight)
+        withExtendedLifetime(window) {}
+    }
+
+    /// A drag takes the face away from a move the page started, so once the
+    /// user lets go, the page asking for that place again must be obeyed
+    /// rather than taken as a move already under way.
+    @Test
+    func honoursARepeatedRequestAfterADragCutsThePageMoveShort() throws {
+        let screen = PocketCardScreenViewController(
+            card: loyaltyCard,
+            product: StubSPAView(),
+            surface: PocketCardSurface()
+        )
+        let window = showing(screen)
+        let scrollView = try #require(screen.scrollView)
+        _ = screen.setFaceShown(false, animated: true)
+        scrollView.delegate?.scrollViewWillBeginDragging?(scrollView)
+        scrollView.delegate?.scrollViewDidEndDragging?(scrollView, willDecelerate: false)
+
+        #expect(screen.setFaceShown(false, animated: false) == .applied)
+
+        #expect(scrollView.contentOffset.y == faceHeight)
+        withExtendedLifetime(window) {}
+    }
+
     /// A product page that fits its screenful has nothing to scroll, and its
     /// own rubber-banding would swallow the gesture meant for the card.
     @Test
@@ -349,6 +391,14 @@ private func waitUntil(on screen: UIViewController, _ condition: () -> Bool) -> 
     }
 
     return false
+}
+
+/// Runs long enough for any move of the face to finish, for a check that
+/// cannot name the end state it waits for.
+@MainActor
+private func letMotionSettle(on screen: UIViewController) {
+    RunLoop.main.run(until: Date().addingTimeInterval(1))
+    screen.view.layoutIfNeeded()
 }
 
 private extension PocketCardScreenViewController {

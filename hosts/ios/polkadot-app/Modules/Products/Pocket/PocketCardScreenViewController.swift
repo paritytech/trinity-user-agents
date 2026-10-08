@@ -26,6 +26,7 @@ final class PocketCardScreenViewController: UIViewController {
     private var requestedFaceShown: Bool
     private var openingFaceApplied = false
     private var userOwnsFace = false
+    private var pageMoveTarget: CGPoint?
 
     init(
         card: PocketCardViewModel,
@@ -114,6 +115,7 @@ final class PocketCardScreenViewController: UIViewController {
 extension PocketCardScreenViewController: UIScrollViewDelegate {
     func scrollViewWillBeginDragging(_: UIScrollView) {
         userOwnsFace = true
+        pageMoveTarget = nil
         growProduct()
     }
 
@@ -130,6 +132,8 @@ extension PocketCardScreenViewController: UIScrollViewDelegate {
     }
 
     func scrollViewDidEndScrollingAnimation(_: UIScrollView) {
+        pageMoveTarget = nil
+
         guard !userOwnsFace else { return }
 
         fitProduct()
@@ -192,17 +196,22 @@ private extension PocketCardScreenViewController {
 
     /// An animated move is fitted when its animation ends. A move made at
     /// once, or to where the face already is, gets no such callback, so it is
-    /// fitted here; nothing moves in between, so the page need not grow.
+    /// fitted here; nothing moves in between, so the page need not grow. A
+    /// move under way is judged by where it is going, since the offset only
+    /// follows from its first frame.
     func moveFace(shown: Bool, animated: Bool) {
         let target = CGPoint(x: 0, y: shown ? 0 : PocketOpenedCardView.height)
 
-        guard animated, scrollView.contentOffset != target else {
+        guard target != pageMoveTarget else { return }
+
+        guard animated, pageMoveTarget != nil || scrollView.contentOffset != target else {
             scrollView.contentOffset = target
             fitProduct()
             return
         }
 
         growProduct()
+        pageMoveTarget = target
         scrollView.setContentOffset(target, animated: true)
     }
 
