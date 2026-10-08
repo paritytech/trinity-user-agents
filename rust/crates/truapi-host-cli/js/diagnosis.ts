@@ -19,7 +19,7 @@ const UNARY_TIMEOUT_MS = 10_000;
 const REMOTE_RESPONSE_TIMEOUT_MS = 190_000;
 const LIVE_ALLOCATION_TIMEOUT_MS = 420_000;
 const APP_SERVICES = servicesForExecution(services, "App");
-const UNWIRED_SERVICES = ["Coin Payment", "Payment"];
+const UNWIRED_SERVICES = ["Coin Payment", "Payment", "Scanner"];
 const SKIPPED_SERVICES = new Map<string, string>([
   ...UNWIRED_SERVICES.map(
     (name) => [name, `${name} service not yet wired up by hosts`] as const,

@@ -9,7 +9,7 @@ use crate::platform::{
 use parity_scale_codec::Encode;
 use truapi::api::{
     Account, Chain, Entropy, Game, LocalStorage, Notifications, Permissions, Preimage,
-    ResourceAllocation, Signing, StatementStore, System, Theme, Worker,
+    ResourceAllocation, Scanner, Signing, StatementStore, System, Theme, Worker,
 };
 use truapi::v02;
 use truapi::versioned::account::{
@@ -50,6 +50,7 @@ use truapi::versioned::resource_allocation::{
     HostRequestResourceAllocationError, HostRequestResourceAllocationRequest,
     HostRequestResourceAllocationResponse,
 };
+use truapi::versioned::scanner::HostScannerScanRequest;
 use truapi::versioned::signing::{
     HostCreateTransactionError, HostCreateTransactionRequest, HostCreateTransactionResponse,
     HostCreateTransactionWithLegacyAccountError, HostCreateTransactionWithLegacyAccountRequest,
@@ -7681,6 +7682,25 @@ fn an_internal_cancellation_never_becomes_the_cancelled_variant() {
             transaction_call_error(HostCreateTransactionError::V1, cancelled()),
         );
     }
+}
+
+/// A product tells "no scanner here" by `Unsupported` and falls back to its own
+/// camera code; a `HostFailure` would read as a real failure.
+#[test]
+fn scanner_scan_is_unsupported_until_a_host_implements_it() {
+    let host = ProductRuntimeHost::new_compat(stub_platform(), test_spawner());
+
+    let result = futures::executor::block_on(Scanner::scan(
+        &host,
+        &CallContext::default(),
+        HostScannerScanRequest::V1(v01::HostScannerScanRequest {
+            formats: vec![v01::CodeFormat::Qr],
+            prefix: None,
+            hint: None,
+        }),
+    ));
+
+    assert!(matches!(result, Err(CallError::Unsupported)));
 }
 
 /// A pairing test host, whose wallet answered the Bulletin allowance in-page,
