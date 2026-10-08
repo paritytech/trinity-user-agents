@@ -73,7 +73,7 @@ const TEST_NETWORK_SUFFIX: &str = "dot";
 use crate::platform::Platform;
 use crate::platform::{ProductContext, normalize_product_identifier};
 use truapi::versioned::account::{HostRequestLoginError, HostRequestLoginResponse};
-use truapi::{CallContext, CallError, v01};
+use truapi::{CallContext, CallError, latest};
 
 #[derive(Default)]
 struct LocalGrantState {
@@ -374,8 +374,8 @@ impl ProductAuthority for SigningHost {
         cx: &CallContext,
         operation: &HostOperation,
         product: &ProductContext,
-        request: v01::HostRequestResourceAllocationRequest,
-    ) -> Result<v01::HostRequestResourceAllocationResponse, AuthorityError> {
+        request: latest::HostRequestResourceAllocationRequest,
+    ) -> Result<latest::HostRequestResourceAllocationResponse, AuthorityError> {
         use futures::StreamExt;
 
         self.require_current_operation(operation)?;
@@ -409,14 +409,14 @@ impl ProductAuthority for SigningHost {
             #[cfg(feature = "test-host")]
             if wallet_account_holder::grants_allowances_unchecked(&self.wallet) {
                 drop(grants);
-                return Ok(v01::HostRequestResourceAllocationResponse {
+                return Ok(latest::HostRequestResourceAllocationResponse {
                     outcomes: resources
                         .iter()
                         .map(|resource| {
                             if wallet_account_holder::withholds(&self.wallet, resource) {
-                                v01::AllocationOutcome::Rejected
+                                latest::AllocationOutcome::Rejected
                             } else {
-                                v01::AllocationOutcome::Allocated
+                                latest::AllocationOutcome::Allocated
                             }
                         })
                         .collect(),
@@ -443,16 +443,16 @@ impl ProductAuthority for SigningHost {
                     }
                 });
                 outcomes.push(match outcome {
-                    Ok(()) => v01::AllocationOutcome::Allocated,
+                    Ok(()) => latest::AllocationOutcome::Allocated,
                     Err(AllowanceAllocationError::Authority(error @ (AuthorityError::Disconnected | AuthorityError::Cancelled(_)))) => return Err(error),
-                    Err(AllowanceAllocationError::Authority(AuthorityError::Rejected)) => v01::AllocationOutcome::Rejected,
+                    Err(AllowanceAllocationError::Authority(AuthorityError::Rejected)) => latest::AllocationOutcome::Rejected,
                     Err(reason) => {
                         tracing::warn!(%product_id, %reason, "direct resource allocation item failed");
-                        v01::AllocationOutcome::NotAvailable
+                        latest::AllocationOutcome::NotAvailable
                     }
                 });
             }
-            Ok(v01::HostRequestResourceAllocationResponse { outcomes })
+            Ok(latest::HostRequestResourceAllocationResponse { outcomes })
         };
         super::remote_authority_call(&cx, operation.run(self, allocation)).await
     }
@@ -469,12 +469,12 @@ impl ProductAuthority for SigningHost {
             self.auth_state
                 .connected(&connected_session_ui_info(&session));
             Ok(HostRequestLoginResponse::V1(
-                v01::HostRequestLoginResponse::AlreadyConnected,
+                latest::HostRequestLoginResponse::AlreadyConnected,
             ))
         } else {
             // Wallet unlock and session activation are platform-owned.
             Ok(HostRequestLoginResponse::V1(
-                v01::HostRequestLoginResponse::Rejected,
+                latest::HostRequestLoginResponse::Rejected,
             ))
         }
     }
@@ -517,7 +517,7 @@ impl ProductAuthority for SigningHost {
         #[cfg(feature = "test-host")]
         wallet_account_holder::refuse_withheld(
             &self.wallet,
-            &v01::AllocatableResource::StatementStoreAllowance,
+            &latest::AllocatableResource::StatementStoreAllowance,
         )?;
         let period = statement_allowance::slot::current_period(
             current_unix_secs().map_err(AllowanceAllocationError::into_authority_error)?,
@@ -574,7 +574,7 @@ impl ProductAuthority for SigningHost {
         #[cfg(feature = "test-host")]
         wallet_account_holder::refuse_withheld(
             &self.wallet,
-            &v01::AllocatableResource::BulletinAllowance,
+            &latest::AllocatableResource::BulletinAllowance,
         )?;
         let secret = operation
             .run(
@@ -603,7 +603,7 @@ impl ProductAuthority for SigningHost {
         #[cfg(feature = "test-host")]
         wallet_account_holder::refuse_withheld(
             &self.wallet,
-            &v01::AllocatableResource::BulletinAllowance,
+            &latest::AllocatableResource::BulletinAllowance,
         )?;
         let secret = operation
             .run(
