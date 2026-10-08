@@ -62,7 +62,7 @@ struct PocketCardScreenTests {
     @Test
     func keepsThePageFittedWhenAskedForTheFaceWhereItIs() throws {
         let product = StubSPAView()
-        let screen = PocketCardScreenViewController(card: loyalty, product: product, surface: PocketCardSurface())
+        let screen = PocketCardScreenViewController(card: loyaltyCard, product: product, surface: PocketCardSurface())
         let window = showing(screen)
         let scrollView = try #require(screen.scrollView)
 
@@ -90,7 +90,7 @@ struct PocketCardScreenTests {
     @Test
     func appliesARequestMadeBeforeTheScreenIsLaidOut() {
         let product = StubSPAView()
-        let screen = PocketCardScreenViewController(card: loyalty, product: product, surface: PocketCardSurface())
+        let screen = PocketCardScreenViewController(card: loyaltyCard, product: product, surface: PocketCardSurface())
 
         let outcome = screen.setFaceShown(false, animated: true)
         layOut(screen)
@@ -106,7 +106,7 @@ struct PocketCardScreenTests {
     func waitsForItsSizeToPlaceTheOpeningFace() {
         let product = StubSPAView()
         let screen = PocketCardScreenViewController(
-            card: loyalty,
+            card: loyaltyCard,
             product: product,
             surface: PocketCardSurface(),
             faceShown: false
@@ -237,7 +237,7 @@ struct PocketCardScreenTests {
     @Test
     func fitsThePageOnlyOnceTheFaceItMovedComesToRest() throws {
         let product = StubSPAView()
-        let screen = PocketCardScreenViewController(card: loyalty, product: product, surface: PocketCardSurface())
+        let screen = PocketCardScreenViewController(card: loyaltyCard, product: product, surface: PocketCardSurface())
         let window = showing(screen)
         let scrollView = try #require(screen.scrollView)
         let visibleHeight = scrollView.bounds.height
@@ -275,7 +275,11 @@ struct PocketCardScreenTests {
     /// the card rather than to whatever the product later calls itself.
     @Test
     func takesItsTitleFromTheCard() {
-        let screen = PocketCardScreenViewController(card: loyalty, product: StubSPAView(), surface: PocketCardSurface())
+        let screen = PocketCardScreenViewController(
+            card: loyaltyCard,
+            product: StubSPAView(),
+            surface: PocketCardSurface()
+        )
 
         screen.loadViewIfNeeded()
 
@@ -298,21 +302,12 @@ struct PocketCardScreenTests {
 
 // MARK: - Fixtures
 
-private let screenSize = CGSize(width: 393, height: 800)
-
-private let loyalty = PocketCardViewModel(
-    key: PocketCardKey(productId: "game.paseo", cardId: PocketCardId(value: "loyalty")),
-    title: "Loyalty",
-    privileged: false,
-    face: nil
-)
-
 private let faceHeight = PocketOpenedCardView.height
 
 @MainActor
 private func laidOutScreen(product: SPAViewProtocol, faceShown: Bool = true) -> PocketCardScreenViewController {
     let screen = PocketCardScreenViewController(
-        card: loyalty,
+        card: loyaltyCard,
         product: product,
         surface: PocketCardSurface(),
         faceShown: faceShown
@@ -326,15 +321,6 @@ private func laidOutScreen(product: SPAViewProtocol, faceShown: Bool = true) -> 
 private func layOut(_ screen: PocketCardScreenViewController) {
     screen.view.frame = CGRect(origin: .zero, size: screenSize)
     screen.view.layoutIfNeeded()
-}
-
-@MainActor
-private func showing(_ screen: UIViewController) -> UIWindow {
-    let window = UIWindow(frame: CGRect(origin: .zero, size: screenSize))
-    window.rootViewController = screen
-    window.isHidden = false
-    window.layoutIfNeeded()
-    return window
 }
 
 @MainActor

@@ -20,7 +20,7 @@ struct PocketCardSurfaceTests {
     @Test
     func answersNotPresentedForAScreenOutsideAWindow() {
         let surface = PocketCardSurface()
-        let screen = PocketCardScreenViewController(card: loyalty, product: StubSPAView(), surface: surface)
+        let screen = PocketCardScreenViewController(card: loyaltyCard, product: StubSPAView(), surface: surface)
         screen.loadViewIfNeeded()
 
         #expect(surface.setFaceShown(false) == .notPresented)
@@ -29,7 +29,7 @@ struct PocketCardSurfaceTests {
     @Test
     func handsTheRequestToTheScreenOnDisplay() {
         let surface = PocketCardSurface()
-        let screen = PocketCardScreenViewController(card: loyalty, product: StubSPAView(), surface: surface)
+        let screen = PocketCardScreenViewController(card: loyaltyCard, product: StubSPAView(), surface: surface)
 
         withExtendedLifetime(showing(screen)) {
             #expect(surface.setFaceShown(false) == .applied)
@@ -41,7 +41,7 @@ struct PocketCardSurfaceTests {
     @Test
     func forgetsAScreenThatHandedItsProductBack() throws {
         let surface = PocketCardSurface()
-        let screen = PocketCardScreenViewController(card: loyalty, product: StubSPAView(), surface: surface)
+        let screen = PocketCardScreenViewController(card: loyaltyCard, product: StubSPAView(), surface: surface)
         try #require(surface.screen === screen)
 
         screen.handBackProduct()
@@ -54,29 +54,11 @@ struct PocketCardSurfaceTests {
     @Test
     func keepsTheNewerScreenWhenAnOlderOneHandsBack() {
         let surface = PocketCardSurface()
-        let older = PocketCardScreenViewController(card: loyalty, product: StubSPAView(), surface: surface)
-        let newer = PocketCardScreenViewController(card: loyalty, product: StubSPAView(), surface: surface)
+        let older = PocketCardScreenViewController(card: loyaltyCard, product: StubSPAView(), surface: surface)
+        let newer = PocketCardScreenViewController(card: loyaltyCard, product: StubSPAView(), surface: surface)
 
         older.handBackProduct()
 
         #expect(surface.screen === newer)
     }
-}
-
-// MARK: - Fixtures
-
-private let loyalty = PocketCardViewModel(
-    key: PocketCardKey(productId: "game.paseo", cardId: PocketCardId(value: "loyalty")),
-    title: "Loyalty",
-    privileged: false,
-    face: nil
-)
-
-@MainActor
-private func showing(_ screen: UIViewController) -> UIWindow {
-    let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 393, height: 800))
-    window.rootViewController = screen
-    window.isHidden = false
-    window.layoutIfNeeded()
-    return window
 }

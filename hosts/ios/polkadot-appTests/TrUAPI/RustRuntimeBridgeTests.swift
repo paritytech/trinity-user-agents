@@ -32,13 +32,6 @@ private func makeTestDefaults() -> UserDefaults {
     UserDefaults(suiteName: "io.polkadotapp.tests.truapi-bridge") ?? .standard
 }
 
-private let cardFixture = PocketCardViewModel(
-    key: PocketCardKey(productId: "game.paseo", cardId: PocketCardId(value: "loyalty")),
-    title: "Loyalty",
-    privileged: false,
-    face: nil
-)
-
 // MARK: - Stubs
 
 private struct StubHostProvider: ProductHostProviding {
@@ -580,10 +573,8 @@ struct RustRuntimeBridgeTests {
     /// would lose to the default and answer `.unsupported`.
     @Test func expandedCardFaceReachesTheCardsScreen() async throws {
         let surface = PocketCardSurface()
-        let screen = PocketCardScreenViewController(card: cardFixture, product: StubSPAView(), surface: surface)
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 393, height: 800))
-        window.rootViewController = screen
-        window.isHidden = false
+        let screen = PocketCardScreenViewController(card: loyaltyCard, product: StubSPAView(), surface: surface)
+        let window = showing(screen)
         let bridge: HostBridge = makeBridge(cardSurface: surface)
 
         #expect(try await bridge.setExpandedCardFaceShown(shown: false) == .applied)
