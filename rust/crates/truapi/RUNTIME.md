@@ -226,8 +226,8 @@ path. Web hosts do not compile the store.
 `AccountHolder` provides wallet account derivation, signing and proofs. `SigningHost` selects its shared `WalletAccountHolder`; `PairingHost` implements account operations using cached keys and SSO. Product runtimes use `ProductAuthority` for host lifecycle, grant acquisition and retention.
 
 - `WalletAccountHolder` owns active entropy, wallet approval, account derivation, resource issuance and renewal. It validates the selected activation before private-key use and renewal-record mutation.
-- `AccountInvocation` carries the original call, wallet activation and trusted caller origin. Local calls can carry wallet-issued authorization. Remote requests require independent consent and cannot inherit native AutoSigning permission.
-- `SigningHost` owns retained grants. `HostOperation` rejects results invalidated by wallet changes or host reset. Resetting a product does not invalidate independent incoming SSO wallet work.
+- `AccountInvocation` carries the original call, wallet activation and trusted caller origin. Local calls can carry wallet-issued authorization. Remote signing requires wallet approval and cannot inherit native AutoSigning permission. Account-access decisions are shared by local and remote callers.
+- `SigningHost` owns retained grants. Wallet activation checks reject private-key use after a lock or wallet change; the grant owner rejects retention after a reset. Resetting a product does not invalidate independent incoming SSO wallet work.
 - Resource approval returns a lazy, ordered stream of wallet receipts. The host retains each successful grant before issuing the next resource; recoverable item failures do not stop later resources.
 
 - **`PairingHost`** (seedless): the user's keys live in an external wallet, so
