@@ -4,10 +4,8 @@ import SwiftUI
 /// publishes a manifest.
 ///
 /// A card named here is only offered for a product with **no published
-/// worker**: a published one always wins. A widget URL is the exception: it
-/// opens in place of the product's widget even when the product publishes
-/// its own, which is how a published widget is worked on locally. Delete the
-/// card to see the published widget again.
+/// worker**: a published one always wins. Its widget URL is the exception and
+/// opens even over a published widget.
 struct DebugPocketCardsView: View {
     @State var viewModel = DebugPocketCardsViewModel()
 

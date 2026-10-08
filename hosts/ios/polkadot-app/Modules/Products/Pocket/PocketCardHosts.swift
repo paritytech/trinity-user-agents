@@ -49,13 +49,11 @@ final class PocketCardHosts {
         self.held = nil
     }
 
-    /// Runs `prepare`, then `present` with what it found, unless an earlier open
-    /// is still under way. A screen claims its product's surface when it is built,
-    /// so one built while another waits to present would take the surface, and the
-    /// page, from the screen the user sees.
-    ///
-    /// An open the session ends under while it prepares is dropped, since what it
-    /// would present belongs to the session that ended.
+    /// Runs `prepare`, then `present` with what it found. Ignored while an earlier
+    /// open is under way, since a screen claims its product's surface when built
+    /// and would take the page from the screen the user sees. Dropped when the
+    /// session ends while it prepares, since what it would present belongs to that
+    /// session.
     func openIfIdle<Prepared>(
         preparing prepare: @MainActor () async -> Prepared,
         then present: @MainActor (Prepared) -> Void

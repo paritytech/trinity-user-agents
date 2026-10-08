@@ -94,8 +94,6 @@ final class PocketCardScreenViewController: UIViewController {
         }
     }
 
-    /// Shows or hides the face at the page's request, unless the user is
-    /// moving it. A request before the first layout is kept for that layout.
     func setFaceShown(_ shown: Bool, animated: Bool) -> ExpandedCardFaceOutcome {
         guard !userOwnsFace else { return .userMoving }
 
@@ -193,11 +191,9 @@ private extension PocketCardScreenViewController {
         child.didMove(toParent: self)
     }
 
-    /// An animated move is fitted when its animation ends. A move made at
-    /// once, or to where the face already is, gets no such callback, so it is
-    /// fitted here; nothing moves in between, so the page need not grow. A
-    /// move under way is judged by where it is going, since the offset only
-    /// follows from its first frame.
+    /// A move made at once, or to where the face already is, gets no
+    /// end-of-animation callback, so it is fitted here. A move under way is
+    /// judged by its target, since the offset only follows from its first frame.
     func moveFace(shown: Bool, animated: Bool) {
         let target = CGPoint(x: 0, y: shown ? 0 : PocketOpenedCardView.height)
 

@@ -91,8 +91,6 @@ private extension PocketCardOpening {
             : SPAViewFactory.createRustView(configuration: configuration, flowState: flowState)
     }
 
-    /// A page typed into the debug menu, which is how a product with no
-    /// published widget is worked on from the developer's machine.
     static func debugWidgetURL(for key: PocketCardKey) -> URL? {
         #if DEBUG
             return DebugPocketCards().widgetURL(for: key)

@@ -4,7 +4,7 @@ import Products
 import TrUAPIHost
 
 /// A Pocket card supplied by hand, for a product that publishes no worker
-/// manifest. Its widget URL also stands in for a published product's widget.
+/// manifest.
 ///
 /// This is the only path that produces a ``PocketCardPreview/url(_:)``: a
 /// published manifest can never name an address the host then fetches, and
@@ -14,10 +14,8 @@ struct DebugPocketCard: Codable, Equatable, Swift.Identifiable {
     let cardId: String
     let title: String
     let faceUrl: String
-    /// The page the card opens instead of the product's published widget,
-    /// typically one served from the developer's machine.
+    /// The page the card opens instead of its product's widget, even a published one.
     let widgetUrl: String?
-    /// Nil opens the card with its face shown.
     let faceShown: Bool?
 
     var id: String { "\(productId)/\(cardId)" }

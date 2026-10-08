@@ -8,10 +8,8 @@ import UIKit
 /// already loaded under it must find that one.
 @MainActor
 final class PocketCardSurface: ExpandedCardFaceShowing {
-    /// The screen showing the card now, if any.
     weak var screen: PocketCardScreenViewController?
 
-    /// Asks the screen to move the face, or answers `.notPresented` when no card is on display.
     func setFaceShown(_ shown: Bool) -> ExpandedCardFaceOutcome {
         guard let screen, screen.viewIfLoaded?.window != nil else { return .notPresented }
 
