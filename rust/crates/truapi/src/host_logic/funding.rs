@@ -10,7 +10,7 @@
 use parity_scale_codec::{Decode, Encode};
 use tracing::warn;
 use truapi::latest::{
-    FundingAssignment, FundingDirection, FundingFailure, FundingDeposit, FundingQuote, FundingRail, FundingReceived, FundingUpdate,
+    FundingAssignment, FundingDeposit, FundingDirection, FundingFailure, FundingPayout, FundingQuote, FundingRail, FundingReceived, FundingUpdate,
     HostFundingStatusSubscribeItem,
 };
 
@@ -107,6 +107,12 @@ pub struct FundingProgress {
     /// What arrived when it differs from what was asked, from the latest
     /// `PaymentReceived`.
     pub mismatch: Option<FundingReceived>,
+    /// Whether the provider is retrying: it named another top-up after a
+    /// first one claimed only part of the amount.
+    pub retrying: bool,
+    /// How the payout went, once the provider reported it on a released
+    /// outbound session.
+    pub payout: Option<FundingPayout>,
 }
 
 /// One step of a session's progress.
@@ -393,6 +399,8 @@ impl FundingSession {
                     _ => None,
                 })
                 .flatten(),
+            retrying: !self.is_terminal() && self.top_ups().len() > 1,
+            payout: self.payout().cloned(),
         }
     }
 
@@ -403,7 +411,13 @@ impl FundingSession {
         update: FundingUpdate,
         now_ms: u64,
     ) -> Result<(), ReportRefusal> {
-        if self.is_terminal() || self.provider_id.as_deref() != Some(provider_id) {
+        if self.provider_id.as_deref() != Some(provider_id) {
+            return Err(ReportRefusal::NotFound);
+        }
+        if matches!(update, FundingUpdate::Payout { .. }) {
+            return self.report_payout(update, now_ms);
+        }
+        if self.is_terminal() {
             return Err(ReportRefusal::NotFound);
         }
         if !self.follows(&update) {
@@ -432,6 +446,31 @@ impl FundingSession {
         }
         self.saved = Some(state);
         Ok(())
+    }
+
+    /// Store the provider's payout outcome on a released outbound session the
+    /// host has not recorded yet. Only one is kept.
+    fn report_payout(&mut self, update: FundingUpdate, now_ms: u64) -> Result<(), ReportRefusal> {
+        let released = matches!(self.stage, FundingStage::Released { .. });
+        if !released || self.acknowledged {
+            return Err(ReportRefusal::NotFound);
+        }
+        if self.payout().is_some() {
+            return Err(ReportRefusal::OutOfOrder);
+        }
+        self.updates.push(FundingUpdateRecord {
+            update,
+            at_ms: now_ms,
+        });
+        Ok(())
+    }
+
+    /// The provider's payout outcome, once it reported one.
+    pub fn payout(&self) -> Option<&FundingPayout> {
+        self.updates.iter().find_map(|record| match &record.update {
+            FundingUpdate::Payout { outcome } => Some(outcome),
+            _ => None,
+        })
     }
 
     /// Whether `update` may come next. Updates only move forward, a session
@@ -652,7 +691,9 @@ fn update_rank(update: &FundingUpdate) -> Option<u8> {
         FundingUpdate::Crediting { .. } | FundingUpdate::Collecting { .. } => 4,
         FundingUpdate::Delivered => 5,
         FundingUpdate::Failed { .. } => 6,
-        FundingUpdate::Deposit { .. } | FundingUpdate::Details { .. } => return None,
+        FundingUpdate::Deposit { .. }
+        | FundingUpdate::Details { .. }
+        | FundingUpdate::Payout { .. } => return None,
     })
 }
 
@@ -1068,6 +1109,48 @@ mod tests {
                 Err(ReportRefusal::OutOfOrder),
             )
         );
+    }
+
+    // The user's CASH has already left when a payout fails, so the session
+    // stays Released and the provider's payout outcome is kept beside it, once,
+    // and only until the host records the session.
+    #[test]
+    fn a_released_session_takes_one_payout_outcome_until_recorded() {
+        let mut released = served(FundingDirection::Out);
+        reported(&mut released, &[FundingUpdate::Collecting { payment_id: [3; 32], amount: 100 }]);
+        assert!(released.settle(100, NOW + 1));
+        let failed = FundingPayout::Failed { reason: "bank rejected the transfer".to_string() };
+        let first = released.report(PROVIDER, FundingUpdate::Payout { outcome: failed.clone() }, NOW + 2);
+        let second = released.report(PROVIDER, FundingUpdate::Payout { outcome: FundingPayout::PaidOut }, NOW + 3);
+        let mut in_flight = served(FundingDirection::Out);
+        let too_early = in_flight.report(PROVIDER, FundingUpdate::Payout { outcome: FundingPayout::PaidOut }, NOW);
+        let mut recorded = released.clone();
+        recorded.acknowledged = true;
+        recorded.updates.retain(|record| !matches!(record.update, FundingUpdate::Payout { .. }));
+        let after_recording = recorded.report(PROVIDER, FundingUpdate::Payout { outcome: FundingPayout::PaidOut }, NOW + 4);
+
+        assert_eq!(
+            (first, second, too_early, after_recording, released.progress().payout),
+            (
+                Ok(()),
+                Err(ReportRefusal::OutOfOrder),
+                Err(ReportRefusal::NotFound),
+                Err(ReportRefusal::NotFound),
+                Some(failed),
+            )
+        );
+    }
+
+    // A second top-up after a partial claim is the provider retrying, which
+    // the host shows as "Retrying your payment"; one top-up is not.
+    #[test]
+    fn a_second_top_up_reads_as_retrying() {
+        let mut session = served(FundingDirection::In);
+        reported(&mut session, &[FundingUpdate::Crediting { top_up_id: [1; 32], amount: 60 }]);
+        let after_one = session.progress().retrying;
+        reported(&mut session, &[FundingUpdate::Crediting { top_up_id: [2; 32], amount: 40 }]);
+
+        assert_eq!((after_one, session.progress().retrying), (false, true));
     }
 
     // A partial claim is retried with a new top-up, as getcash does in up to
