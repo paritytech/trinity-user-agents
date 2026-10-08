@@ -325,3 +325,27 @@ pub trait NativeContactsCallbacks: Send + Sync {
         product_id: String,
     ) -> Result<crate::platform::HostContactPick, HostRejection>;
 }
+
+/// Native funding overlay. A host with a funding modality passes an
+/// implementation to [`NativeTrUApiHostRuntime::set_funding_callbacks`];
+/// without one, funding requests answer `Unsupported`.
+///
+/// [`NativeTrUApiHostRuntime::set_funding_callbacks`]: super::NativeTrUApiHostRuntime::set_funding_callbacks
+#[uniffi::export(rust, foreign)]
+#[async_trait::async_trait]
+pub trait NativeFundingCallbacks: Send + Sync {
+    /// Show the funding overlay for session `intent`, which `product_id`
+    /// opened, or the host itself when `None`, on the screen `direction`
+    /// names, and report whether the user started or dismissed it. `amount`
+    /// is a decimal string of CASH units.
+    async fn present_funding(
+        &self,
+        product_id: Option<String>,
+        intent: String,
+        direction: v01::FundingDirection,
+        amount: Option<u128>,
+    ) -> Result<crate::platform::FundingPresentOutcome, HostRejection>;
+
+    /// A session's status changed, for host UI such as the in-flight pill.
+    fn funding_session_changed(&self, intent: String, status: v01::HostFundingStatusSubscribeItem);
+}

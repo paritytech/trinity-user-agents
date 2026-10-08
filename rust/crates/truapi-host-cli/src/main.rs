@@ -21,6 +21,8 @@ mod chat;
 mod contacts;
 mod dotns_read;
 mod frame_server;
+#[cfg(feature = "test-host")]
+mod funding_host;
 mod game;
 mod network;
 mod platform;
@@ -1818,6 +1820,8 @@ fn build_signing_runtime(
     if let Some(pocket) = pocket {
         runtime.set_pocket_platform(pocket);
     }
+    #[cfg(feature = "test-host")]
+    funding_host::CliFundingHost::install_from_env(&runtime);
     runtime.set_game_platform(Arc::new(game::CliGameHost));
     runtime.set_core_db(core_db);
     runtime.start_statement_allowance_renewal();
