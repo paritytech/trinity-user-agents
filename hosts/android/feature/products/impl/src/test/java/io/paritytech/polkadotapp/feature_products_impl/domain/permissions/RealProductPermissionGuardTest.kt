@@ -97,6 +97,22 @@ class RealProductPermissionGuardTest {
     }
 
     @Test
+    fun `JAM networks sharing a display prefix are prompted and granted separately`() = runBlocking<Unit> {
+        withNotGranted()
+        withBatchedDecision(PermissionDecision.AllowAlways)
+        val first = RemotePermission.JamPeersAccess("0x10c123f0" + "ab".repeat(28))
+        val second = RemotePermission.JamPeersAccess("0x10c123f0" + "cd".repeat(28))
+
+        assertTrue(guard.requestPermissionsBatched(productId, listOf(first, second)))
+
+        verify(requester).promptBatched(productId, listOf(first, second))
+        verify(repository).grant(productId, first)
+        verify(repository).grant(productId, second)
+        assertEquals(first, ProductPermission.fromLocal(first.typeName, first.key))
+        assertEquals(second, ProductPermission.fromLocal(second.typeName, second.key))
+    }
+
+    @Test
     fun `consumePermission consumes a grant issued while waiting for the lock without prompting`() = runBlocking<Unit> {
         withOneTimeGrantIssuedWhileWaiting()
 

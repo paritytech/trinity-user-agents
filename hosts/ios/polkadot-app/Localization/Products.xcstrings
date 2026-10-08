@@ -436,7 +436,7 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Read-only peer access to this network's validators, with no accounts or signing."
+            "value": "Send and receive messages with peers selected by this app, with no access to your accounts or signing keys."
           }
         }
       }
@@ -711,7 +711,7 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Connect to JAM network %1$(shortGenesis)@"
+            "value": "Connect to JAM network %1$(genesis)@"
           }
         }
       }

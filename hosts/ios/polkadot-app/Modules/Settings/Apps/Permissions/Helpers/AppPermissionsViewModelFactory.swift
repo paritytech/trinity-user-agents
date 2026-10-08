@@ -82,7 +82,7 @@ private extension AppPermissionsViewModelFactory {
                 String(localized: .Products.appPermissionJamPeersTitle),
                 String(
                     localized: .Products.permissionLabelJamPeers(
-                        shortGenesis: ProductPermission.shortGenesis(genesis)
+                        genesis: genesis
                     )
                 )
             )

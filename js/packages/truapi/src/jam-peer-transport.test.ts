@@ -16,6 +16,7 @@ import {
   createJamPeerTransportSession,
   frameTraitId,
   peerUrl,
+  JAM_PEER_TRANSPORT_MAX_BUFFERED_BYTES_PER_CONNECTION,
   JAM_PEER_TRANSPORT_MAX_MESSAGE_BYTES,
   type JamPeerTransportSession,
   type WebTransportBidirectionalStreamLike,
@@ -45,16 +46,24 @@ interface FakeTransport extends WebTransportLike {
   peerClose(): void;
 }
 
-function fakeStream(): FakeStream {
+function fakeStream(write?: (chunk: Uint8Array) => Promise<void>): FakeStream {
   const sent: Uint8Array[] = [];
-  let peerController!: ReadableStreamDefaultController<Uint8Array>;
-  const readable = new ReadableStream<Uint8Array>({ start: (c) => (peerController = c) });
-  const writable = new WritableStream<Uint8Array>({ write: (chunk) => void sent.push(chunk) });
+  let peerController!: ReadableByteStreamController;
+  const readable = new ReadableStream({ type: "bytes", start: (c) => (peerController = c) });
+  const writable = new WritableStream<Uint8Array>({
+    write: (chunk) => {
+      sent.push(chunk);
+      return write?.(chunk);
+    },
+  });
   return {
     local: { readable, writable },
     sent,
     peerWrite: (bytes) => peerController.enqueue(bytes),
-    peerFin: () => peerController.close(),
+    peerFin: () => {
+      peerController.close();
+      peerController.byobRequest?.respond(0);
+    },
   };
 }
 
@@ -178,6 +187,86 @@ describe("peerUrl", () => {
 });
 
 describe("authorization", () => {
+  const LIMIT = { success: false, value: { tag: "Domain", value: { tag: "V1", value: "Limit" } } };
+
+  test("permission waits consume connection slots and cancellation releases them before a retry", async () => {
+    const pending = Promise.withResolvers<boolean>();
+    const asked: string[] = [];
+    const { session, transports } = await negotiated({
+      authorize: (genesis) => {
+        asked.push(genesis);
+        return genesis === GENESIS ? pending.promise : Promise.resolve(false);
+      },
+    });
+    const dials = Array.from({ length: 8 }, (_, i) =>
+      session.handleFrame(frame(JAM_PEER_TRANSPORT_DIAL, dialRequest(), `permission-${i}`)));
+    expect(await call(session, JAM_PEER_TRANSPORT_DIAL, dialRequest({ genesis: OTHER_GENESIS }), dialCodec)).toEqual(LIMIT);
+    expect(asked).toEqual([GENESIS]);
+    expect(transports).toHaveLength(0);
+    await session.handleFrame(frame(JAM_PEER_TRANSPORT_DIAL, new Uint8Array(), "permission-0", MESSAGE_TYPE_CANCEL));
+    expect(decodeReply(await dials[0]!, dialCodec)).toEqual({ success: false, value: { tag: "Cancelled" } });
+    expect(await call(session, JAM_PEER_TRANSPORT_DIAL, dialRequest({ genesis: OTHER_GENESIS }), dialCodec)).toEqual(NOT_GRANTED);
+    expect(asked).toEqual([GENESIS, OTHER_GENESIS]);
+    pending.resolve(true);
+    expect((await Promise.all(dials.slice(1))).every((bytes) => decodeReply(bytes, dialCodec).success)).toBe(true);
+    expect((await call(session, JAM_PEER_TRANSPORT_DIAL, dialRequest(), dialCodec)).success).toBe(true);
+    expect(await call(session, JAM_PEER_TRANSPORT_DIAL, dialRequest(), dialCodec)).toEqual(LIMIT);
+    expect(transports).toHaveLength(8);
+    session.close();
+  });
+
+  test("denied and failed distinct-genesis decisions fill the lifetime budget without eviction", async () => {
+    const asked: string[] = [];
+    const { session, transports } = await negotiated({
+      authorize: async (genesis) => {
+        asked.push(genesis);
+        if (asked.length % 2 === 0) throw new Error("dismissed");
+        return false;
+      },
+    });
+    const networks = Array.from({ length: 9 }, (_, i) => `0x${i.toString(16).padStart(2, "0").repeat(32)}` as const);
+    for (const genesis of networks.slice(0, 8)) {
+      expect(await call(session, JAM_PEER_TRANSPORT_DIAL, dialRequest({ genesis }), dialCodec)).toEqual(NOT_GRANTED);
+    }
+    expect(await call(session, JAM_PEER_TRANSPORT_DIAL, dialRequest({ genesis: networks[8]! }), dialCodec)).toEqual(LIMIT);
+    expect(await call(session, JAM_PEER_TRANSPORT_DIAL, dialRequest({ genesis: networks[0]! }), dialCodec)).toEqual(NOT_GRANTED);
+    expect(asked).toEqual(networks.slice(0, 8));
+    expect(transports).toHaveLength(0);
+    session.close();
+  });
+
+  test("cancelled distinct-network prompts stay bounded and close withdraws repeated waiters", async () => {
+    const pending = Promise.withResolvers<boolean>();
+    const asked: string[] = [];
+    const { session, transports } = await negotiated({
+      authorize: (genesis) => {
+        asked.push(genesis);
+        return pending.promise;
+      },
+    });
+    const networks = Array.from({ length: 9 }, (_, i) => `0x${i.toString(16).padStart(2, "0").repeat(32)}` as const);
+    for (const genesis of networks.slice(0, 8)) {
+      const dial = session.handleFrame(frame(JAM_PEER_TRANSPORT_DIAL, dialRequest({ genesis }), "cancel-prompt"));
+      await session.handleFrame(frame(JAM_PEER_TRANSPORT_DIAL, new Uint8Array(), "cancel-prompt", MESSAGE_TYPE_CANCEL));
+      expect(decodeReply(await dial, dialCodec)).toEqual({ success: false, value: { tag: "Cancelled" } });
+    }
+    expect(await call(session, JAM_PEER_TRANSPORT_DIAL, dialRequest({ genesis: networks[8]! }), dialCodec)).toEqual(LIMIT);
+    // Repeated cancelled subscribers must not hold operation slots or ask again.
+    for (let i = 0; i < 16; i++) {
+      const dial = session.handleFrame(frame(JAM_PEER_TRANSPORT_DIAL, dialRequest({ genesis: networks[0]! }), "retry-prompt"));
+      await session.handleFrame(frame(JAM_PEER_TRANSPORT_DIAL, new Uint8Array(), "retry-prompt", MESSAGE_TYPE_CANCEL));
+      expect(decodeReply(await dial, dialCodec)).toEqual({ success: false, value: { tag: "Cancelled" } });
+    }
+    const waiting = Array.from({ length: 8 }, () => call(session, JAM_PEER_TRANSPORT_DIAL,
+      dialRequest({ genesis: networks[0]! }), dialCodec));
+    session.close();
+    expect(await Promise.all(waiting)).toEqual(Array.from({ length: 8 }, () => ({ success: false, value: { tag: "Denied" } })));
+    pending.resolve(true);
+    await tick();
+    expect(asked).toEqual(networks.slice(0, 8));
+    expect(transports).toHaveLength(0);
+  });
+
   test("dial before the handshake is NotGranted and asks nothing", async () => {
     const asked: string[] = [];
     const session = createJamPeerTransportSession({
@@ -396,6 +485,202 @@ describe("withdrawn dials", () => {
 });
 
 describe("streams", () => {
+  test("concurrent opens reserve the sixteen slots before transport creation settles", async () => {
+    const { session, transport, conn } = await dialed();
+    const pending: Array<(stream: WebTransportBidirectionalStreamLike) => void> = [];
+    transport.createBidirectionalStream = () => {
+      const { promise, resolve } = Promise.withResolvers<WebTransportBidirectionalStreamLike>();
+      pending.push(resolve);
+      return promise;
+    };
+    const opens = Array.from({ length: 16 }, () =>
+      call(session, JAM_PEER_TRANSPORT_OPEN, T.VersionedHostJamPeerTransportOpenRequest.enc({ tag: "V1", value: { conn, kind: 0 } }), openCodec));
+    const excess = await call(session, JAM_PEER_TRANSPORT_OPEN, T.VersionedHostJamPeerTransportOpenRequest.enc({ tag: "V1", value: { conn, kind: 0 } }), openCodec);
+    expect(excess).toEqual({ success: false, value: { tag: "Domain", value: { tag: "V1", value: "Limit" } } });
+    expect(pending).toHaveLength(16);
+    for (const resolve of pending) resolve(fakeStream().local);
+    expect((await Promise.all(opens)).every((result) => result.success)).toBe(true);
+    session.close();
+  });
+
+  test("an incoming stream waiting for its kind reserves a slot too", async () => {
+    const { session, transport, conn } = await dialed();
+    const incoming = transport.peerOpen();
+    await tick();
+    for (let i = 0; i < 15; i++) {
+      const opened = await call(session, JAM_PEER_TRANSPORT_OPEN, T.VersionedHostJamPeerTransportOpenRequest.enc({ tag: "V1", value: { conn, kind: 0 } }), openCodec);
+      expect(opened.success).toBe(true);
+    }
+    const excess = await call(session, JAM_PEER_TRANSPORT_OPEN, T.VersionedHostJamPeerTransportOpenRequest.enc({ tag: "V1", value: { conn, kind: 0 } }), openCodec);
+    expect(excess).toEqual({ success: false, value: { tag: "Domain", value: { tag: "V1", value: "Limit" } } });
+    incoming.peerWrite(new Uint8Array([128]));
+    await tick();
+    const events = await call(session, JAM_PEER_TRANSPORT_EVENTS, T.VersionedHostJamPeerTransportEventsRequest.enc({ tag: "V1" }), eventsCodec);
+    expect(events.success && events.value.value.events).toEqual([{ tag: "Accepted", value: { conn, stream: 16, kind: 128 } }]);
+    session.close();
+  });
+
+  test("cancelled and closed pending opens cannot publish late transport streams", async () => {
+    for (const cancel of [true, false]) {
+      const { session, transport, conn } = await dialed();
+      const pending = Promise.withResolvers<WebTransportBidirectionalStreamLike>();
+      transport.createBidirectionalStream = () => pending.promise;
+      const opening = session.handleFrame(frame(JAM_PEER_TRANSPORT_OPEN,
+        T.VersionedHostJamPeerTransportOpenRequest.enc({ tag: "V1", value: { conn, kind: 0 } }), "pending-open"));
+      if (cancel) {
+        await session.handleFrame(frame(JAM_PEER_TRANSPORT_OPEN, new Uint8Array(), "pending-open", MESSAGE_TYPE_CANCEL));
+        expect(decodeReply(await opening, openCodec)).toEqual({ success: false, value: { tag: "Cancelled" } });
+      } else {
+        await call(session, JAM_PEER_TRANSPORT_CLOSE, T.VersionedHostJamPeerTransportCloseRequest.enc({ tag: "V1", value: { conn } }), closeCodec);
+        expect(decodeReply(await opening, openCodec)).toEqual({ success: false, value: { tag: "Domain", value: { tag: "V1", value: "Closed" } } });
+      }
+      const late = fakeStream();
+      pending.resolve(late.local);
+      await tick();
+      expect(late.sent).toEqual([]);
+      expect(() => late.peerWrite(new Uint8Array([0]))).toThrow();
+      session.close();
+    }
+  });
+
+  test("CANCEL settles blocked kind writes and message writes without waiting for the peer", async () => {
+    for (const duringOpen of [true, false]) {
+      const { session, transport, conn } = await dialed();
+      const blocked = Promise.withResolvers<void>();
+      const wire = fakeStream((chunk) => duringOpen || chunk.length > 1 ? blocked.promise : Promise.resolve());
+      transport.createBidirectionalStream = async () => wire.local;
+      const opening = session.handleFrame(frame(JAM_PEER_TRANSPORT_OPEN,
+        T.VersionedHostJamPeerTransportOpenRequest.enc({ tag: "V1", value: { conn, kind: 0 } }), "blocked"));
+      let request = opening;
+      const ids = duringOpen ? JAM_PEER_TRANSPORT_OPEN : JAM_PEER_TRANSPORT_SEND;
+      if (!duringOpen) {
+        const opened = decodeReply(await opening, openCodec);
+        if (!opened.success) throw new Error("open failed");
+        request = session.handleFrame(frame(ids, T.VersionedHostJamPeerTransportSendRequest.enc({
+          tag: "V1", value: { stream: opened.value.value.stream, message: "0x01", fin: false },
+        }), "blocked"));
+      }
+      await tick();
+      await session.handleFrame(frame(ids, new Uint8Array(), "blocked", MESSAGE_TYPE_CANCEL));
+      expect(decodeReply(await request, S.Result(S._void, S.CallError(S._void)))).toEqual({ success: false, value: { tag: "Cancelled" } });
+      blocked.resolve();
+      await tick();
+      session.close();
+    }
+  });
+
+  test("cancelled writes retain connection quota until the underlying sink settles", async () => {
+    const { session, transport, conn } = await dialed();
+    const blocked = Promise.withResolvers<void>();
+    const sending: Promise<Uint8Array>[] = [];
+    for (let i = 0; i < 3; i++) {
+      const wire = fakeStream((chunk) => chunk.length > 1 ? blocked.promise : Promise.resolve());
+      transport.createBidirectionalStream = async () => wire.local;
+      const opened = await call(session, JAM_PEER_TRANSPORT_OPEN,
+        T.VersionedHostJamPeerTransportOpenRequest.enc({ tag: "V1", value: { conn, kind: 0 } }), openCodec);
+      if (!opened.success) throw new Error("open failed");
+      sending.push(session.handleFrame(frame(JAM_PEER_TRANSPORT_SEND,
+        T.VersionedHostJamPeerTransportSendRequest.enc({
+          tag: "V1", value: { stream: opened.value.value.stream, message: `0x${"00".repeat(JAM_PEER_TRANSPORT_MAX_MESSAGE_BYTES)}`, fin: false },
+        }), `retained-${i}`)));
+    }
+    await tick();
+    for (let i = 0; i < sending.length; i++) {
+      await session.handleFrame(frame(JAM_PEER_TRANSPORT_SEND, new Uint8Array(), `retained-${i}`, MESSAGE_TYPE_CANCEL));
+      expect(decodeReply(await sending[i]!, sendCodec)).toEqual({ success: false, value: { tag: "Cancelled" } });
+    }
+    transport.createBidirectionalStream = async () => fakeStream().local;
+    const opened = await call(session, JAM_PEER_TRANSPORT_OPEN,
+      T.VersionedHostJamPeerTransportOpenRequest.enc({ tag: "V1", value: { conn, kind: 0 } }), openCodec);
+    if (!opened.success) throw new Error("open failed");
+    const request = T.VersionedHostJamPeerTransportSendRequest.enc({
+      tag: "V1", value: { stream: opened.value.value.stream, message: `0x${"00".repeat(JAM_PEER_TRANSPORT_MAX_MESSAGE_BYTES)}`, fin: false },
+    });
+    expect(await call(session, JAM_PEER_TRANSPORT_SEND, request, sendCodec))
+      .toEqual({ success: false, value: { tag: "Domain", value: { tag: "V1", value: "Limit" } } });
+    blocked.resolve();
+    await tick();
+    expect((await call(session, JAM_PEER_TRANSPORT_SEND, request, sendCodec)).success).toBe(true);
+    session.close();
+  });
+
+  test("receive backpressure counts frames across streams and resumes after recv releases space", async () => {
+    const { session, transport, conn } = await dialed();
+    const ids: number[] = [];
+    const length = JAM_PEER_TRANSPORT_MAX_BUFFERED_BYTES_PER_CONNECTION / 4 - 4;
+    for (let i = 0; i < 2; i++) {
+      const opened = await call(session, JAM_PEER_TRANSPORT_OPEN, T.VersionedHostJamPeerTransportOpenRequest.enc({ tag: "V1", value: { conn, kind: 0 } }), openCodec);
+      if (!opened.success) throw new Error("open failed");
+      ids.push(opened.value.value.stream);
+      for (let message = 0; message < (i === 0 ? 4 : 1); message++) {
+        const bytes = new Uint8Array((i === 0 ? length : 1) + 4);
+        new DataView(bytes.buffer).setUint32(0, bytes.length - 4, true);
+        transport.streams[i]!.peerWrite(bytes);
+      }
+      await tick();
+    }
+    const receive = (stream: number) => call(session, JAM_PEER_TRANSPORT_RECV,
+      T.VersionedHostJamPeerTransportRecvRequest.enc({ tag: "V1", value: { stream, max: JAM_PEER_TRANSPORT_MAX_MESSAGE_BYTES } }), recvCodec);
+    expect(await receive(ids[1]!)).toEqual({ success: true, value: { tag: "V1", value: { message: undefined, fin: false, reset: false } } });
+    const first = await receive(ids[0]!);
+    expect(first.success && first.value.value.message?.length).toBe(2 + length * 2);
+    await tick();
+    expect(await receive(ids[1]!)).toEqual({ success: true, value: { tag: "V1", value: { message: "0x00", fin: false, reset: false } } });
+    session.close();
+  });
+
+  test("FIN excludes concurrent sends before its blocked write completes", async () => {
+    const { session, transport, conn } = await dialed();
+    const blocked = Promise.withResolvers<void>();
+    const wire = fakeStream((chunk) => chunk.length > 1 ? blocked.promise : Promise.resolve());
+    transport.createBidirectionalStream = async () => wire.local;
+    const opened = await call(session, JAM_PEER_TRANSPORT_OPEN,
+      T.VersionedHostJamPeerTransportOpenRequest.enc({ tag: "V1", value: { conn, kind: 0 } }), openCodec);
+    if (!opened.success) throw new Error("open failed");
+    const stream = opened.value.value.stream;
+    const finishing = call(session, JAM_PEER_TRANSPORT_SEND,
+      T.VersionedHostJamPeerTransportSendRequest.enc({ tag: "V1", value: { stream, message: "0x01", fin: true } }), sendCodec);
+    const following = call(session, JAM_PEER_TRANSPORT_SEND,
+      T.VersionedHostJamPeerTransportSendRequest.enc({ tag: "V1", value: { stream, message: "0x02", fin: false } }), sendCodec);
+    blocked.resolve();
+    expect((await finishing).success).toBe(true);
+    expect(await following).toEqual({ success: false, value: { tag: "Domain", value: { tag: "V1", value: "Closed" } } });
+    expect(wire.sent).toHaveLength(2);
+    session.close();
+  });
+
+  test("a peer withholding one kind byte does not block other incoming streams", async () => {
+    const { session, transport, conn } = await dialed();
+    transport.peerOpen();
+    const ready = transport.peerOpen();
+    ready.peerWrite(new Uint8Array([128]));
+    await tick();
+    const events = await call(session, JAM_PEER_TRANSPORT_EVENTS,
+      T.VersionedHostJamPeerTransportEventsRequest.enc({ tag: "V1" }), eventsCodec);
+    expect(events.success && events.value.value.events).toEqual([
+      { tag: "Accepted", value: { conn, stream: 1, kind: 128 } },
+    ]);
+    session.close();
+  });
+
+  test("a final send releases a stream whose receive side was already consumed", async () => {
+    const { session, transport, conn } = await dialed();
+    for (let i = 0; i < 17; i++) {
+      const opened = await call(session, JAM_PEER_TRANSPORT_OPEN,
+        T.VersionedHostJamPeerTransportOpenRequest.enc({ tag: "V1", value: { conn, kind: 0 } }), openCodec);
+      if (!opened.success) throw new Error("completed stream retained its slot");
+      const stream = opened.value.value.stream;
+      transport.streams[i]!.peerFin();
+      await tick();
+      expect(await call(session, JAM_PEER_TRANSPORT_RECV,
+        T.VersionedHostJamPeerTransportRecvRequest.enc({ tag: "V1", value: { stream, max: 1 } }), recvCodec))
+        .toEqual({ success: true, value: { tag: "V1", value: { message: undefined, fin: true, reset: false } } });
+      expect((await call(session, JAM_PEER_TRANSPORT_SEND,
+        T.VersionedHostJamPeerTransportSendRequest.enc({ tag: "V1", value: { stream, message: "0x", fin: true } }), sendCodec)).success).toBe(true);
+    }
+    session.close();
+  });
+
   test("open sends the kind byte; send frames with a u32-LE prefix; recv unframes", async () => {
     const { session, transport, conn } = await dialed();
     const open = await call(session, JAM_PEER_TRANSPORT_OPEN, T.VersionedHostJamPeerTransportOpenRequest.enc({ tag: "V1", value: { conn, kind: 128 } }), openCodec);

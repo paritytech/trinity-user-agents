@@ -7,7 +7,7 @@ public enum RemotePermissionRequest: Equatable, Sendable {
     case chainSubmit
     case preimageSubmit
     case statementSubmit
-    /// Read-only peer access to the JAM network whose genesis header hash is
+    /// Peer messaging access to the JAM network whose genesis header hash is
     /// `genesis` (lowercase `0x`-prefixed hex).
     case jamPeers(genesis: String)
 

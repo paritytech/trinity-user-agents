@@ -28,9 +28,10 @@ use crate::{CallContext, CallError, v01, wire, wire_trait};
 #[wire_trait(id = 111)]
 #[crate::async_trait]
 pub trait JamPeerTransport: Send + Sync {
-    /// Dial one peer. The host builds the ALPN from `genesis` and requires the
-    /// peer certificate to carry `ed25519` (QUIC) or to hash to the
-    /// certificate derived from `p256` (WebTransport).
+    /// Dial one peer. Native QUIC builds the ALPN from `genesis` and requires
+    /// the peer certificate to carry `ed25519`. WebTransport negotiates
+    /// HTTP/3 and pins the certificate derived from `p256`. These checks
+    /// authenticate the caller-supplied peer identity, not chain membership.
     ///
     /// ```ts
     /// const result = await truapi.jamPeerTransport.dial({

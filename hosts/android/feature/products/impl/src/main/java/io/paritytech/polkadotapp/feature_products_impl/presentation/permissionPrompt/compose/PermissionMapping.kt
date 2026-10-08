@@ -95,7 +95,7 @@ internal fun ProductPermission.subtitle(): String {
         ProductPermission.RemotePermission.ChainSubmitAccess -> stringResource(RCommon.string.product_permission_chain_submit_subtitle, manageLater)
         ProductPermission.RemotePermission.StatementSubmitAccess -> stringResource(RCommon.string.product_permission_statement_submit_subtitle, manageLater)
         ProductPermission.RemotePermission.PreimageSubmitAccess -> stringResource(RCommon.string.product_permission_preimage_submit_subtitle, manageLater)
-        is ProductPermission.RemotePermission.JamPeersAccess -> stringResource(RCommon.string.product_permission_jam_peers_subtitle, manageLater)
+        is ProductPermission.RemotePermission.JamPeersAccess -> stringResource(RCommon.string.product_permission_jam_peers_subtitle, manageLater) + "\n\n" + genesis
     }
 }
 
@@ -123,6 +123,6 @@ internal fun ProductPermission.RemotePermission.shortLabel(): String {
         ProductPermission.RemotePermission.ChainSubmitAccess -> stringResource(RCommon.string.product_permission_chain_submit_label)
         ProductPermission.RemotePermission.StatementSubmitAccess -> stringResource(RCommon.string.product_permission_statement_submit_label)
         ProductPermission.RemotePermission.PreimageSubmitAccess -> stringResource(RCommon.string.product_permission_preimage_submit_label)
-        is ProductPermission.RemotePermission.JamPeersAccess -> stringResource(RCommon.string.product_permission_jam_peers_label, shortGenesis)
+        is ProductPermission.RemotePermission.JamPeersAccess -> stringResource(RCommon.string.product_permission_jam_peers_label, genesis)
     }
 }

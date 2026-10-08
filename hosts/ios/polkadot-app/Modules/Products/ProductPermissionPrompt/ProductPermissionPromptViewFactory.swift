@@ -148,7 +148,7 @@ private extension ProductPermissionPromptViewFactory {
                         shortGenesis: ProductPermission.shortGenesis(genesis)
                     )
                 ),
-                body: String(localized: .Products.permissionBodyJamPeers),
+                body: String(localized: .Products.permissionBodyJamPeers) + "\n\n" + genesis,
                 icon: makeIcon(systemName: "point.3.connected.trianglepath.dotted")
             )
         case .userIdentityAccess:
@@ -192,7 +192,7 @@ private extension ProductPermissionPromptViewFactory {
         case let .jamPeersAccess(genesis):
             "- " + String(
                 localized: .Products.permissionLabelJamPeers(
-                    shortGenesis: ProductPermission.shortGenesis(genesis)
+                    genesis: genesis
                 )
             )
         case let .deviceCapability(capability):
