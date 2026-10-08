@@ -10,4 +10,4 @@ import androidx.room.migration.AutoMigrationSpec
     DeleteTable(tableName = "game_players"),
     DeleteTable(tableName = "vouchers"),
 )
-class Migration68To69Spec : AutoMigrationSpec
+class Migration69To70Spec : AutoMigrationSpec

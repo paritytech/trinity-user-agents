@@ -108,9 +108,14 @@ const MAX_FACE_DEPTH: u32 = 64;
 
 /// Bracket nesting a face of [`MAX_FACE_DEPTH`] renderer levels can reach. One
 /// level spends a few brackets on its object, its value and its children, so
-/// this is generous on purpose: it guards the stack, while `MAX_FACE_DEPTH` is
-/// what actually decides whether a face is drawable.
+/// this is generous on purpose: it bounds how far the reader recurses, while
+/// `MAX_FACE_DEPTH` is what actually decides whether a face is drawable.
 const MAX_FACE_JSON_NESTING: u32 = MAX_FACE_DEPTH * 8;
+
+/// Stack the face reader runs on. A face at [`MAX_FACE_JSON_NESTING`] needs
+/// more than the threads hosts read previews on carry, 512 KiB on an iOS
+/// secondary thread and about 1 MiB on Android, so the reader brings its own.
+const FACE_READER_STACK_BYTES: usize = 8 * 1024 * 1024;
 
 /// Read a product-declared card face: a `RendererNode` tree in the JSON shape
 /// the generated TypeScript client describes.
@@ -120,10 +125,32 @@ const MAX_FACE_JSON_NESTING: u32 = MAX_FACE_DEPTH * 8;
 /// about which faces are drawable, and about how deep one may nest.
 #[uniffi::export]
 pub fn parse_renderer_node_json(json: String) -> Result<latest::RendererNode, NativeRendererError> {
+    read_face_on_stack(json, FACE_READER_STACK_BYTES)
+}
+
+/// [`parse_renderer_node_json`] on a thread of its own carrying `stack_bytes`.
+fn read_face_on_stack(
+    json: String,
+    stack_bytes: usize,
+) -> Result<latest::RendererNode, NativeRendererError> {
+    std::thread::Builder::new()
+        .name("truapi-face-reader".to_string())
+        .stack_size(stack_bytes)
+        .spawn(move || read_renderer_node_json(&json))
+        .map_err(|error| NativeRendererError::ReaderUnavailable {
+            reason: error.to_string(),
+        })?
+        .join()
+        .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
+}
+
+/// [`parse_renderer_node_json`] on the calling thread, which must carry
+/// [`FACE_READER_STACK_BYTES`].
+fn read_renderer_node_json(json: &str) -> Result<latest::RendererNode, NativeRendererError> {
     // Bounded before it is parsed, not after: serde_json recurses as it reads,
     // so a tree built to exhaust the stack would do so before any check on the
     // value it produced. Counting brackets needs no recursion at all.
-    if json_nesting_exceeds(&json, MAX_FACE_JSON_NESTING) {
+    if json_nesting_exceeds(json, MAX_FACE_JSON_NESTING) {
         return Err(NativeRendererError::TooDeep {
             limit: MAX_FACE_DEPTH,
         });
@@ -131,7 +158,7 @@ pub fn parse_renderer_node_json(json: String) -> Result<latest::RendererNode, Na
 
     // With the text bounded above, the reader's own limit would only impose a
     // second, stricter bound in JSON levels rather than in renderer levels.
-    let mut reader = serde_json::Deserializer::from_str(&json);
+    let mut reader = serde_json::Deserializer::from_str(json);
     reader.disable_recursion_limit();
     let node = latest::RendererNode::deserialize(&mut reader).map_err(|error| {
         NativeRendererError::Malformed {
@@ -217,7 +244,7 @@ pub fn encode_renderer_node(node: latest::RendererNode) -> Vec<u8> {
 /// Read back a face kept as [`encode_renderer_node`] wrote it.
 #[uniffi::export]
 pub fn decode_renderer_node(bytes: Vec<u8>) -> Result<latest::RendererNode, NativeRendererError> {
-    latest::RendererNode::decode_with_depth_limit(MAX_FACE_DEPTH, &mut bytes.as_slice()).map_err(
+    latest::RendererNode::decode_all_with_depth_limit(MAX_FACE_DEPTH, &mut bytes.as_slice()).map_err(
         |error| NativeRendererError::Malformed {
             reason: error.to_string(),
         },

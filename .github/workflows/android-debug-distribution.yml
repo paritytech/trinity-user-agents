@@ -85,6 +85,7 @@ jobs:
         env:
           CI_BUILD_ID: ${{ steps.setup.outputs.build_id }}
           APPLICATION_ID: ${{ vars.APPLICATION_ID }}
+          IOS_BUNDLE_ID: ${{ vars.IOS_BUNDLE_ID || 'io.parity.polkadotapp' }}
           APPLICATION_NAME: ${{ vars.APPLICATION_NAME }}
           CURRENCY_SYMBOL: ${{ vars.CURRENCY_SYMBOL }}
           FIAT_SYMBOL: ${{ vars.FIAT_SYMBOL || '$' }}

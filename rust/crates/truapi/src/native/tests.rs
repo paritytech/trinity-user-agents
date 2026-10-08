@@ -3025,26 +3025,74 @@ fn reads_the_card_faces_the_hosts_conform_to() {
     assert!(matches!(node, latest::RendererNode::Column { .. }));
 }
 
+/// `depth` boxes around an empty node, three brackets per box.
+fn nested_boxes(depth: usize) -> String {
+    let mut json = String::new();
+    for _ in 0..depth {
+        json.push_str(r#"{"tag":"Box","value":{"modifiers":[],"props":{},"children":["#);
+    }
+    json.push_str(r#"{"tag":"Nil"}"#);
+    for _ in 0..depth {
+        json.push_str("]}}");
+    }
+    json
+}
+
 /// A face deeper than the core will carry is refused rather than half-read,
 /// so no host draws one it could not read back.
 #[test]
 fn refuses_a_face_deeper_than_the_core_carries() {
-    let nest = |depth: usize| {
-        let mut json = String::new();
-        for _ in 0..depth {
-            json.push_str(r#"{"tag":"Box","value":{"modifiers":[],"props":{},"children":["#);
-        }
-        json.push_str(r#"{"tag":"Nil"}"#);
-        for _ in 0..depth {
-            json.push_str("]}}");
-        }
-        json
-    };
-
-    assert!(parse_renderer_node_json(nest(MAX_FACE_DEPTH as usize - 1)).is_ok());
+    assert!(parse_renderer_node_json(nested_boxes(MAX_FACE_DEPTH as usize - 1)).is_ok());
     assert!(matches!(
-        parse_renderer_node_json(nest(MAX_FACE_DEPTH as usize + 1)),
+        parse_renderer_node_json(nested_boxes(MAX_FACE_DEPTH as usize + 1)),
         Err(NativeRendererError::TooDeep { .. })
+    ));
+}
+
+/// A product chooses how deep its preview nests, and a host reads it before
+/// the user approved anything, on whatever thread it happens to be on. The
+/// deepest face the bracket bound lets through is refused on a thread with
+/// less stack than any host gives one, rather than overflowing it and taking
+/// the app down.
+#[test]
+fn a_face_at_the_nesting_bound_is_refused_on_a_small_host_stack() {
+    let json = nested_boxes(MAX_FACE_JSON_NESTING as usize / 3);
+
+    let read = std::thread::Builder::new()
+        .stack_size(256 * 1024)
+        .spawn(move || parse_renderer_node_json(json))
+        .expect("host thread starts")
+        .join()
+        .expect("host thread survives the read");
+
+    assert!(matches!(read, Err(NativeRendererError::TooDeep { .. })));
+}
+
+/// A host that cannot start the reader's thread, short of memory or of
+/// threads, gets an error it can show, not a panic, which a release build
+/// turns into an abort of the whole app.
+#[cfg(target_pointer_width = "64")]
+#[test]
+fn a_face_reader_that_cannot_start_is_an_error_not_a_crash() {
+    let no_thread_has_this_much_stack = 1 << 47;
+
+    assert!(matches!(
+        read_face_on_stack(nested_boxes(1), no_thread_has_this_much_stack),
+        Err(NativeRendererError::ReaderUnavailable { .. })
+    ));
+}
+
+/// A kept face is read back only if it is exactly what was kept: bytes past
+/// the tree mean the row is not a face this host wrote, and drawing its
+/// prefix would show a card nobody drew.
+#[test]
+fn a_kept_face_with_bytes_past_its_tree_does_not_read_back() {
+    let mut kept = encode_renderer_node(latest::RendererNode::Nil);
+    kept.push(0);
+
+    assert!(matches!(
+        decode_renderer_node(kept),
+        Err(NativeRendererError::Malformed { .. })
     ));
 }
 

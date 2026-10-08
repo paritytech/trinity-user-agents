@@ -7,6 +7,8 @@ import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardId
 import io.paritytech.polkadotapp.feature_products_api.model.PocketCardDefinition
 import io.paritytech.polkadotapp.feature_products_api.model.PocketCardPreview
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
+import uniffi.truapi.screenPocketCardId
+import uniffi.truapi.screenPocketCardTitle
 
 /** The card a debug-supplied worker declares, so a worker served from a laptop can carry one. */
 data class DebugPocketCard(
@@ -37,18 +39,20 @@ class PrefsDebugPocketCards(
         val rawId = prefs.getString(productId.key(CARD_ID), null) ?: return null
         val previewUrl = prefs.getString(productId.key(PREVIEW_URL), null)?.takeIf { it.isNotBlank() } ?: return null
 
-        // Screened with the rules the manifest path uses, so a debug card cannot carry an id the
-        // core would refuse at the first wire call. A rejected one reads as no card at all.
-        val cardId = runCatching { PocketCardIdentifier.screen(rawId) }
-            .logFailure("pocket: debug card id for $productId is not usable")
-            .getOrNull()
-            ?: return null
+        val rawTitle = prefs.getString(productId.key(TITLE), null)
 
-        return DebugPocketCard(
-            cardId = cardId,
-            title = prefs.getString(productId.key(TITLE), null)?.takeIf { it.isNotBlank() } ?: cardId.value,
-            previewUrl = previewUrl,
-        )
+        // Screened with the rules the manifest path uses, so a debug card cannot carry an id or a
+        // title the core would refuse. A rejected one reads as no card at all.
+        return runCatching {
+            val cardId = screenPocketCardId(rawId)
+            DebugPocketCard(
+                cardId = PocketCardId(cardId),
+                title = rawTitle?.let(::screenPocketCardTitle)?.takeIf { it.isNotEmpty() } ?: cardId,
+                previewUrl = previewUrl,
+            )
+        }
+            .logFailure("pocket: debug card for $productId is not usable")
+            .getOrNull()
     }
 
     override fun set(productId: ProductId, card: DebugPocketCard?) {

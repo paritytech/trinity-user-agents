@@ -87,7 +87,8 @@ import io.paritytech.polkadotapp.database.migrations.Migration60To61
 import io.paritytech.polkadotapp.database.migrations.Migration62To63
 import io.paritytech.polkadotapp.database.migrations.Migration63To64
 import io.paritytech.polkadotapp.database.migrations.Migration65To66
-import io.paritytech.polkadotapp.database.migrations.Migration68To69Spec
+import io.paritytech.polkadotapp.database.migrations.Migration68To69
+import io.paritytech.polkadotapp.database.migrations.Migration69To70Spec
 import io.paritytech.polkadotapp.database.model.BrowserTabLocal
 import io.paritytech.polkadotapp.database.model.ChatBotStateLocal
 import io.paritytech.polkadotapp.database.model.ChatDraftLocal
@@ -143,7 +144,7 @@ import io.paritytech.polkadotapp.database.model.chain.ChainNodeLocal
 import io.paritytech.polkadotapp.database.model.chain.ChainRuntimeInfoLocal
 
 @Database(
-    version = 69,
+    version = 70,
     entities = [
         ProductFundingOperationLocal::class,
         ChainLocal::class,
@@ -281,7 +282,7 @@ import io.paritytech.polkadotapp.database.model.chain.ChainRuntimeInfoLocal
         // Add chat_messages.sortOrder (local storage order) and its indices
         AutoMigration(from = 67, to = 68),
         // Drop the video game and privacy voucher tables
-        AutoMigration(from = 68, to = 69, spec = Migration68To69Spec::class),
+        AutoMigration(from = 69, to = 70, spec = Migration69To70Spec::class),
     ]
 )
 @TypeConverters(
@@ -335,6 +336,7 @@ abstract class AppDatabase : RoomDatabase() {
                 Migration62To63(),
                 Migration63To64(),
                 Migration65To66(),
+                Migration68To69(),
                 *chatMessageContentMigrations.toTypedArray() // 25 -> 26, 31 -> 32, 37 -> 38, 44 -> 45
             )
         }
