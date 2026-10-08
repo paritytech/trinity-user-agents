@@ -332,7 +332,11 @@ extension ChatExtensionDiscoverContext: ChatExtensionDiscoverContextProtocol {
 
         if let existingChat {
             if (existingChat.roomMetadata?.hidesTextInput ?? false) != hidesTextInput {
-                let visibility = Chat.RoomInputVisibility(chatId: chatId, roomId: roomId, hidesTextInput: hidesTextInput)
+                let visibility = Chat.RoomInputVisibility(
+                    chatId: chatId,
+                    roomId: roomId,
+                    hidesTextInput: hidesTextInput
+                )
                 try await roomInputRepository.saveOperation({ [visibility] }, { [] }).asyncExecute()
             }
             return .exists
