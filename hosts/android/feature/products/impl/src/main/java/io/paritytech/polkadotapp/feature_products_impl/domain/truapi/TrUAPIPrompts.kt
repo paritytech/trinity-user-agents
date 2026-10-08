@@ -37,7 +37,7 @@ class TrUAPIPrompt<Q, A>(val question: Q, private val unanswered: A) {
  * Shows one kind of host screen at a time and waits for its answer. The screen
  * reads what to show from [current].
  */
-abstract class TrUAPIPrompts<Q, A>(private val unanswered: A) {
+abstract class TrUAPIPrompts<Q, A>(private val unanswered: A, private val notShown: A = unanswered) {
     private val oneAtATime = Mutex()
 
     /**
@@ -52,7 +52,11 @@ abstract class TrUAPIPrompts<Q, A>(private val unanswered: A) {
 
     protected abstract suspend fun close()
 
+    /** Whether the screen may open for [question], once the one before it has closed. */
+    protected open suspend fun canShow(question: Q): Boolean = true
+
     suspend fun ask(question: Q): A = oneAtATime.withLock {
+        if (!canShow(question)) return@withLock notShown
         val prompt = TrUAPIPrompt(question, unanswered).also { current = it }
         try {
             open()

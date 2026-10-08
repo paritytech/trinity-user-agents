@@ -1,8 +1,8 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.truapi
 
+import androidx.lifecycle.Lifecycle
 import io.parity.truapi.ScannerHostBridge
-import io.paritytech.polkadotapp.common.data.app.AppLifecycleState
-import io.paritytech.polkadotapp.common.presentation.AppLifecycleObserver
+import io.paritytech.polkadotapp.common.presentation.resources.ContextManager
 import io.paritytech.polkadotapp.common.utils.CoroutineDispatchers
 import io.paritytech.polkadotapp.feature_products_impl.presentation.productBotManagement.ProductsRouter
 import kotlinx.coroutines.withContext
@@ -15,38 +15,38 @@ import javax.inject.Singleton
 /** What the viewfinder shows: who is asking, and what they accept. */
 class ProductScanRequest(
     val productId: String,
+    val executionKind: ProductExecutionKind,
     val request: HostScannerScanRequest,
 )
 
-/** Opens the viewfinder for a product and waits for the code the user scanned. */
+/**
+ * Serves `scanner.scan`: opens the viewfinder for a product the user can see and waits for the
+ * code they scanned. A Worker has no page, so the app must be in front. The core already checked
+ * that its user tapped its card.
+ */
 @Singleton
 class TrUAPIProductScans @Inject constructor(
     private val productsRouter: ProductsRouter,
-) : TrUAPIPrompts<ProductScanRequest, HostScan>(unanswered = HostScan.Dismissed) {
-    override suspend fun open() = productsRouter.openTrUAPIProductScan()
-
-    override suspend fun close() = productsRouter.closeTrUAPIProductScan()
-}
-
-/**
- * Serves `scanner.scan`. A Worker has no page, so it needs the app in front. The core already
- * checked that its user tapped its card.
- */
-class AppScannerHostBridge @Inject constructor(
-    private val scans: TrUAPIProductScans,
     private val visibleProducts: VisibleProducts,
-    private val appLifecycle: AppLifecycleObserver,
+    private val contextManager: ContextManager,
     private val dispatchers: CoroutineDispatchers,
-) : ScannerHostBridge {
+) : TrUAPIPrompts<ProductScanRequest, HostScan>(unanswered = HostScan.Dismissed, notShown = HostScan.NotVisible),
+    ScannerHostBridge {
     override suspend fun scanCode(
         productId: String,
         executionKind: ProductExecutionKind,
         request: HostScannerScanRequest,
-    ): HostScan {
-        val onScreen = when (executionKind) {
-            ProductExecutionKind.WORKER -> appLifecycle.getCurrentState() == AppLifecycleState.FOREGROUND
-            else -> withContext(dispatchers.main) { visibleProducts.isOnScreen(productId) }
+    ): HostScan = ask(ProductScanRequest(productId, executionKind, request))
+
+    override suspend fun canShow(question: ProductScanRequest): Boolean = withContext(dispatchers.main) {
+        when (question.executionKind) {
+            ProductExecutionKind.WORKER ->
+                contextManager.getActivity()?.lifecycle?.currentState?.isAtLeast(Lifecycle.State.RESUMED) == true
+            ProductExecutionKind.APP, ProductExecutionKind.WIDGET -> visibleProducts.isOnScreen(question.productId)
         }
-        return if (onScreen) scans.ask(ProductScanRequest(productId, request)) else HostScan.NotVisible
     }
+
+    override suspend fun open() = productsRouter.openTrUAPIProductScan()
+
+    override suspend fun close() = productsRouter.closeTrUAPIProductScan()
 }

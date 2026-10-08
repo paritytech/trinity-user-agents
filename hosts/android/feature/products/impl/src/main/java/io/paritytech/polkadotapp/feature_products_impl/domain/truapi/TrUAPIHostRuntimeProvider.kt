@@ -73,7 +73,7 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
     private val confirmationLauncher: TrUAPIConfirmationLauncher,
     private val appLifecycleObserver: AppLifecycleObserver,
     private val contactsBridge: AppContactsHostBridge,
-    private val scannerBridge: AppScannerHostBridge,
+    private val scannerBridge: TrUAPIProductScans,
     // Lazy: the supervisor boots workers on this runtime, and reports back through this bridge.
     private val workerSupervisor: Lazy<TrUAPIWorkerSupervisor>,
     dispatchers: CoroutineDispatchers,
