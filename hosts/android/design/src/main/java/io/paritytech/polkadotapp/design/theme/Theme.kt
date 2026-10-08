@@ -62,6 +62,15 @@ fun PolkadotTheme(
         }
     }
 
+    PolkadotTheme(theme = theme, content = content)
+}
+
+/** Applies [theme] to [content] alone, leaving the system bars to the app-wide theme. */
+@Composable
+fun PolkadotTheme(
+    theme: PolkadotAppTheme,
+    content: @Composable () -> Unit
+) {
     val colors: PolkadotColorsPalette = theme.colors()
     val typography: PolkadotTypography = theme.typography()
 
