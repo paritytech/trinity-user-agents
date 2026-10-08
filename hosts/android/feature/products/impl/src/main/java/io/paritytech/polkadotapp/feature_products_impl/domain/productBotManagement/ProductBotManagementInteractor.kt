@@ -11,6 +11,7 @@ import io.paritytech.polkadotapp.feature_products_impl.data.repository.ProductIn
 import io.paritytech.polkadotapp.feature_products_impl.data.repository.ProductRepository
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.DebugPocketCard
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.DebugPocketCards
+import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.isDebugServableUrl
 import io.paritytech.polkadotapp.feature_products_impl.domain.product.IntegrationType
 import io.paritytech.polkadotapp.feature_products_impl.domain.product.UninstallProductUseCase
 import io.paritytech.polkadotapp.feature_products_impl.domain.usecase.ResolveProductUseCase
@@ -94,6 +95,7 @@ class RealProductBotManagementInteractor @Inject constructor(
         appUrl: String?,
     ): Result<ProductId> {
         return runCatching {
+            requireServableAppUrl(appUrl)
             productRepository.upsertManualProduct(productId, name, workerUrl)
             debugPocketCards.set(productId, card)
             debugPocketCards.setAppUrl(productId, appUrl)
@@ -112,6 +114,7 @@ class RealProductBotManagementInteractor @Inject constructor(
         appUrl: String?,
     ): Result<Unit> {
         return runCatching {
+            requireServableAppUrl(appUrl)
             productRepository.upsertManualProduct(productId, name, workerUrl)
             debugPocketCards.set(productId, card)
             debugPocketCards.setAppUrl(productId, appUrl)
@@ -133,5 +136,9 @@ class RealProductBotManagementInteractor @Inject constructor(
 
     override fun currentTld(): DotNsTld? {
         return dotNsTldProvider.currentTldOrNull()
+    }
+
+    private fun requireServableAppUrl(appUrl: String?) {
+        require(appUrl == null || isDebugServableUrl(appUrl)) { "The app url must be http://127.0.0.1:<port>/…" }
     }
 }

@@ -85,7 +85,11 @@ fun ProductPocketCardDetails(
         onSettled()
     }
 
-    LaunchedEffect(session, fold) {
+    // A card being left stays composed while it fades out, and the next card's requests are for that
+    // card's fold alone.
+    val leaving = arrival?.targetState == EnterExitState.PostExit
+    LaunchedEffect(session, fold, leaving) {
+        if (leaving) return@LaunchedEffect
         session?.faceShownRequests?.collect { request ->
             val handling = launch { request.reply.complete(fold.showFace(request.shown)) }
             // A withdrawn request was answered NotPresented, so its face must not move after all.

@@ -32,13 +32,12 @@ class TrUAPISessionStarter @Inject constructor(
         productUrl: String,
         scope: CoroutineScope,
         hostApiNavigation: NavigationPolicy,
-        kind: ProductExecutionKind = ProductExecutionKind.APP,
         card: ExpandedCardFace? = null,
         explicitProductId: ProductId? = null,
     ): ProductTrUAPIHostBridge {
         val bridge = hostBridgeFactory.create(scope)
         scope.launch {
-            attachAndLoad(bridge, provider, productUrl, hostApiNavigation, kind, card, explicitProductId)
+            attachAndLoad(bridge, provider, productUrl, hostApiNavigation, card, explicitProductId)
                 .logFailure("Failed to start TrUAPI host bridge for $productUrl")
         }
         return bridge
@@ -49,7 +48,6 @@ class TrUAPISessionStarter @Inject constructor(
         provider: BrowserWebViewProvider,
         productUrl: String,
         navigation: NavigationPolicy,
-        kind: ProductExecutionKind,
         card: ExpandedCardFace?,
         explicitProductId: ProductId?,
     ): Result<Unit> {
@@ -72,6 +70,7 @@ class TrUAPISessionStarter @Inject constructor(
             bootstrapInstaller.installerFor(setOf(productUrl.toUri().origin()))
         }.getOrElse { return Result.failure(it) }
 
+        val kind = if (card != null) ProductExecutionKind.WIDGET else ProductExecutionKind.APP
         return bridge
             .attach(runtime, productId, chainDirectory.resolve(), navigation, kind, card) { bootstrap ->
                 provider.addWebViewSetup(installBootstrap(bootstrap))

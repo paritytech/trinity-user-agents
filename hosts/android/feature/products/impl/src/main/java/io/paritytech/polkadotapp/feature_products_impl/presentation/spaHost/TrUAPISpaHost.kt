@@ -11,6 +11,7 @@ import io.paritytech.polkadotapp.common.presentation.deeplink.handleAndProcessOu
 import io.paritytech.polkadotapp.common.presentation.screens.MessageDisplay
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsLoadProgress
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
+import io.paritytech.polkadotapp.feature_products_api.model.ExecutableKind
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_api.presentation.spaHost.FaceShownRequest
 import io.paritytech.polkadotapp.feature_products_api.presentation.spaHost.SpaHost
@@ -29,7 +30,6 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
-import uniffi.truapi.ProductExecutionKind
 import java.net.URI
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -63,6 +63,7 @@ class TrUAPISpaHost @Inject constructor(
             scope = scope,
             fixedProductId = servedPage?.productId,
             firstPartyOrigin = servedPage?.origin,
+            servedExecutable = if (underCard) ExecutableKind.WIDGET else ExecutableKind.APP,
         )
 
         val hostApiNavigation = NavigationPolicy.HostApiNavigation(
@@ -77,7 +78,6 @@ class TrUAPISpaHost @Inject constructor(
             pageUrl,
             scope,
             hostApiNavigation,
-            kind = if (underCard) ProductExecutionKind.WIDGET else ProductExecutionKind.APP,
             card = cardFaceRequests,
             explicitProductId = servedPage?.productId,
         )

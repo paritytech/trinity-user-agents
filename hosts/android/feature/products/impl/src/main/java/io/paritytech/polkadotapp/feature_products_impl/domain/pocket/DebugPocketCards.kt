@@ -76,16 +76,12 @@ class PrefsDebugPocketCards(
     override fun appUrl(productId: ProductId): String? {
         if (!isDebugBuild) return null
 
-        return prefs.getString(productId.key(APP_URL), null)?.takeIf(::isLoopbackUrl)
+        return prefs.getString(productId.key(APP_URL), null)?.takeIf(::isDebugServableUrl)
     }
 
     override fun setAppUrl(productId: ProductId, appUrl: String?) {
         prefs.edit { putString(productId.key(APP_URL), appUrl) }
     }
-
-    // The network security config allows cleartext to 127.0.0.1 only, so any other host would fail to load.
-    private fun isLoopbackUrl(url: String): Boolean =
-        runCatching { URI(url) }.getOrNull()?.let { it.scheme == "http" && it.host == LOOPBACK_HOST } == true
 
     private fun ProductId.key(field: String) = "$value.$field"
 
@@ -95,9 +91,12 @@ class PrefsDebugPocketCards(
         const val PREVIEW_URL = "preview_url"
         const val FACE_SHOWN = "face_shown"
         const val APP_URL = "app_url"
-        const val LOOPBACK_HOST = "127.0.0.1"
     }
 }
+
+// The network security config allows cleartext to 127.0.0.1 only, so any other host would fail to load.
+internal fun isDebugServableUrl(url: String): Boolean =
+    runCatching { URI(url) }.getOrNull()?.let { it.scheme == "http" && it.host == "127.0.0.1" } == true
 
 fun DebugPocketCard.toDefinition(): PocketCardDefinition = PocketCardDefinition(
     id = cardId,

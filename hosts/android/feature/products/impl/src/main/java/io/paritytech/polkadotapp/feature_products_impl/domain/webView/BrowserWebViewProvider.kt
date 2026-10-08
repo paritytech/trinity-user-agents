@@ -21,6 +21,7 @@ import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsResolver
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
 import io.paritytech.polkadotapp.feature_dotns_api.presentation.DotNsContentLoader
 import io.paritytech.polkadotapp.feature_dotns_api.presentation.DotNsServingHostResolver
+import io.paritytech.polkadotapp.feature_products_api.model.ExecutableKind
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.CallingProductIdProvider
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.FixedProductId
@@ -46,7 +47,7 @@ class BrowserWebViewProvider @AssistedInject constructor(
     private val webViewPermissionClientFactory: WebViewPermissionClientFactory,
     private val dotNsResolver: DotNsResolver,
     private val dotNsTldProvider: DotNsTldProvider,
-    private val servingHostResolver: DotNsServingHostResolver,
+    private val servingHostResolver: ProductServingHostResolver,
     dispatchers: CoroutineDispatchers,
     @Assisted("initialUrl") private val initialUrl: String,
     @Assisted private val navigationPolicy: NavigationPolicy,
@@ -54,6 +55,7 @@ class BrowserWebViewProvider @AssistedInject constructor(
     @Assisted private val scope: CoroutineScope,
     @Assisted private val fixedProductId: ProductId?,
     @Assisted("firstPartyOrigin") private val firstPartyOrigin: String?,
+    @Assisted private val servedExecutable: ExecutableKind,
 ) : WebViewProvider(dispatchers), PageLifecycleSource {
     @AssistedFactory
     interface Factory {
@@ -64,6 +66,7 @@ class BrowserWebViewProvider @AssistedInject constructor(
             scope: CoroutineScope,
             fixedProductId: ProductId? = null,
             @Assisted("firstPartyOrigin") firstPartyOrigin: String? = null,
+            servedExecutable: ExecutableKind = ExecutableKind.APP,
         ): BrowserWebViewProvider
     }
 
@@ -118,7 +121,7 @@ class BrowserWebViewProvider @AssistedInject constructor(
                 BrowserWebViewClient(
                     contentLoader,
                     dotNsTldProvider,
-                    servingHostResolver,
+                    DotNsServingHostResolver { host -> servingHostResolver.servingHostFor(host, servedExecutable) },
                     navigationPolicy,
                     frameEmbeddingResponseHeaders(allowIframes),
                 )
