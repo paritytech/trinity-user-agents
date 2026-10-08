@@ -41,7 +41,7 @@ final class PocketAddCardViewModel {
         self.interactor = interactor
         self.resolver = resolver
         resolveImage = images(productId).map { images in
-            WidgetImageResolver { await images.resolve($0) }
+            WidgetImageResolver.cached { await images.resolve($0) }
         }
     }
 

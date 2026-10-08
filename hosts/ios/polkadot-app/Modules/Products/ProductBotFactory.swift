@@ -49,7 +49,7 @@ final class ProductBotFactory {
             dotNsResolver: dotNsResolver,
             ipfsBaseURL: ipfsBaseURL
         )
-        let resolveImage = WidgetImageResolver { await images.resolve($0) }
+        let resolveImage = WidgetImageResolver.cached { await images.resolve($0) }
 
         if settingsManager.isTrUAPIRuntimeEnabled, let workers = workers() {
             let runtime = TrUAPIChatHandler(

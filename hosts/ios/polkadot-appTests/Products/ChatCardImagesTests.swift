@@ -8,40 +8,48 @@ import UIKitExt
 @testable import polkadot_app
 
 /// A chat card names its images the way a Pocket card does, so the bot the
-/// factory builds hands its decoder a resolver over the same places: the
+/// factory builds hands its decoder a loader over the same places: the
 /// product's worker archive, which serves the chat, and the Bulletin gateway.
 struct ChatCardImagesTests {
     @Test
     func readsAnArchiveImageOutOfTheProductsWorkerArchive() async throws {
-        let root = try makeArchive(files: ["art/prize.png": "png"])
+        let root = try makePictureDirectory(named: "art/prize.png")
+        defer { try? FileManager.default.removeItem(at: root) }
         let resolver = RecordingResolver(root: root)
-        let images = try chatImages(dotNsResolver: resolver)
+        let images = try chatImages(dotNsResolver: resolver, gateway: root)
 
-        let url = try #require(await images(.archive(path: "art/prize.png")))
+        let image = await images(.archive(path: "art/prize.png"))
 
-        #expect(url == root.appending(path: "art/prize.png"))
+        #expect(image?.size == pictureSize)
         #expect(resolver.asked() == ["worker.game.paseo"])
     }
 
     @Test
     func readsABulletinImageThroughTheGateway() async throws {
-        let images = try chatImages(dotNsResolver: RecordingResolver(root: URL(fileURLWithPath: "/tmp/none")))
+        let gateway = try makePictureDirectory(named: "bafyprize")
+        defer { try? FileManager.default.removeItem(at: gateway) }
+        let resolver = RecordingResolver(root: URL(fileURLWithPath: "/tmp/none"))
+        let images = try chatImages(dotNsResolver: resolver, gateway: gateway)
 
-        let url = try #require(await images(.bulletin(cid: "bafyprize")))
+        let image = await images(.bulletin(cid: "bafyprize"))
 
-        #expect(url.absoluteString == "https://gateway.invalid/ipfs/bafyprize")
+        #expect(image?.size == pictureSize)
+        #expect(resolver.asked().isEmpty)
     }
 
     /// The resolver the chat decoder draws with, reached the way the app
     /// reaches it: through the bot the factory builds for the product.
-    private func chatImages(dotNsResolver: any DotNsResolverProtocol) throws -> WidgetImageResolver {
+    private func chatImages(
+        dotNsResolver: any DotNsResolverProtocol,
+        gateway: URL
+    ) throws -> WidgetImageResolver {
         let factory = ProductBotFactory(
             productFileProvider: NoScripts(),
             runtimeProvider: NoRuntime(),
             workers: { nil },
             workerManager: NoWorkers(),
             dotNsResolver: dotNsResolver,
-            ipfsBaseURL: URL(string: "https://gateway.invalid/ipfs/")!
+            ipfsBaseURL: gateway
         )
         let bot = try #require(factory.create(resolved: gameProduct()))
         let decoder = try #require(bot.customDecoders.first as? ProductMessageDecoder)
@@ -89,15 +97,13 @@ private func gameProduct() -> ResolvedProduct {
     )
 }
 
-private func makeArchive(files: [String: String]) throws -> URL {
-    let root = URL.temporaryDirectory
-        .appending(path: "chat-images-\(UUID().uuidString)")
-        .appending(path: "content")
-    for (path, contents) in files {
-        let file = root.appending(path: path)
-        try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try Data(contents.utf8).write(to: file)
-    }
+private let pictureSize = CGSize(width: 3, height: 2)
+
+private func makePictureDirectory(named path: String) throws -> URL {
+    let root = URL.temporaryDirectory.appending(path: "chat-images-\(UUID().uuidString)")
+    let file = root.appending(path: path)
+    try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+    try FileManager.default.moveItem(at: writeTestPicture(size: pictureSize), to: file)
     return root
 }
 
