@@ -371,7 +371,7 @@ pub trait NativeFundingCallbacks: Send + Sync {
 pub trait NativePaymentCallbacks: Send + Sync {
     /// Ask the user to approve payment `request` for `product_id`, returning
     /// once the user has decided: `Ok` when they authorized it and the host
-    /// took it on. Ids are scoped to `product_id`. Its amount is a decimal
+    /// took it on. Its id is unique across products. Its amount is a decimal
     /// string of CASH units.
     async fn request_payment(
         &self,

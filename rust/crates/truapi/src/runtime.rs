@@ -24,6 +24,7 @@ pub use funding::OpenFundingError;
 mod identity;
 pub mod login_failure;
 mod pairing_host;
+mod payment_id;
 pub mod product_manifest;
 mod product_subtree;
 mod renderer;
