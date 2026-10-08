@@ -365,6 +365,35 @@ impl NativeChatActor {
                 })
                 .await?;
         }
+        let result = self
+            .select_attachments(context, peer, key, recipient.username)
+            .await;
+        if result.is_err() {
+            let valid = context.session_valid.clone();
+            self.store
+                .update(move |state| {
+                    if !valid() {
+                        return Err(Error::NotConnected);
+                    }
+                    // A failed selection owns no file custody. Do not let an
+                    // invisible placeholder consume the incoming-message quota.
+                    state
+                        .rich_messages
+                        .retain(|record| record.key != key || !record.selecting);
+                    Ok(())
+                })
+                .await?;
+        }
+        result
+    }
+
+    async fn select_attachments(
+        &self,
+        context: &NativeChatContext,
+        peer: [u8; 32],
+        key: [u8; 32],
+        peer_username: Option<String>,
+    ) -> Result<(), Error> {
         let allowed = context
             .services
             .platform
@@ -385,7 +414,7 @@ impl NativeChatActor {
             .pick_chat_files(NativeChatFilePickRequest {
                 product_id: self.product.clone(),
                 peer_identity: peer,
-                peer_username: recipient.username,
+                peer_username,
                 max_files: MAX_PICKED_FILES,
             })
             .await
@@ -498,8 +527,7 @@ impl NativeChatActor {
                 state.files.extend(files);
                 Ok(())
             })
-            .await?;
-        Ok(())
+            .await
     }
 
     pub(in crate::runtime::native_chat) async fn open_attachment(
