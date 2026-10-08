@@ -1,6 +1,8 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.truapi
 
 import io.parity.truapi.ScannerHostBridge
+import io.paritytech.polkadotapp.common.data.app.AppLifecycleState
+import io.paritytech.polkadotapp.common.presentation.AppLifecycleObserver
 import io.paritytech.polkadotapp.common.utils.CoroutineDispatchers
 import io.paritytech.polkadotapp.feature_products_impl.presentation.productBotManagement.ProductsRouter
 import kotlinx.coroutines.withContext
@@ -26,10 +28,14 @@ class TrUAPIProductScans @Inject constructor(
     override suspend fun close() = productsRouter.closeTrUAPIProductScan()
 }
 
-/** Serves `scanner.scan`. A Worker reaching here already passed the core's tap check. */
+/**
+ * Serves `scanner.scan`. A Worker has no page, so it needs the app in front. The core already
+ * checked that its user tapped its card.
+ */
 class AppScannerHostBridge @Inject constructor(
     private val scans: TrUAPIProductScans,
     private val visibleProducts: VisibleProducts,
+    private val appLifecycle: AppLifecycleObserver,
     private val dispatchers: CoroutineDispatchers,
 ) : ScannerHostBridge {
     override suspend fun scanCode(
@@ -37,8 +43,10 @@ class AppScannerHostBridge @Inject constructor(
         executionKind: ProductExecutionKind,
         request: HostScannerScanRequest,
     ): HostScan {
-        val onScreen = executionKind == ProductExecutionKind.WORKER ||
-            withContext(dispatchers.main) { visibleProducts.isOnScreen(productId) }
+        val onScreen = when (executionKind) {
+            ProductExecutionKind.WORKER -> appLifecycle.getCurrentState() == AppLifecycleState.FOREGROUND
+            else -> withContext(dispatchers.main) { visibleProducts.isOnScreen(productId) }
+        }
         return if (onScreen) scans.ask(ProductScanRequest(productId, request)) else HostScan.NotVisible
     }
 }
