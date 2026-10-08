@@ -1830,7 +1830,12 @@ notifications may be pending. Cancelling an unknown/already-delivered id is a
 successful no-op.
 
 A preimage lookup the core cannot answer from its own cache goes to the
-network's Bulletin node, by CID over `bitswap_v1_get`. A miss is asked again
+network's Bulletin node, by CID over `bitswap_v1_get`. When
+`TRUAPI_CACHE_NODES` names cache nodes, each read asks them first, in order,
+with `POST /acquire` for `bulletin:<cid>` paid as `TRUAPI_CACHE_CLIENT`
+(default `truapi`), with a 15 s bound per node. Bytes that do not hash to the
+CID are dropped and the next node is asked; when no cache node supplies the
+blob, the Bulletin node is asked as before. A miss is asked again
 every 6 s until the blob lands; a request the node can never answer ends the
 lookup with an error. The core also owns the real Bulletin client and a
 separate 16 MiB insertion-ordered preimage bridge for read-after-write
