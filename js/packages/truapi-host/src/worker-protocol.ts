@@ -339,7 +339,14 @@ export type WorkerToMain =
       requestId: number;
       name: CallbackName;
       args: CallbackArgs;
+      /**
+       * Set for a prompt callback. The main thread passes it a trailing
+       * `{ signal }` and aborts that signal on the matching `callbackAbort`.
+       */
+      withdrawable?: true;
     }
+  /** The core withdrew the prompt behind a `withdrawable` callback request. */
+  | { kind: "callbackAbort"; requestId: number }
   | {
       kind: "subscriptionStart";
       subId: number;

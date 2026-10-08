@@ -10,6 +10,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.tooling.preview.Preview
 import io.paritytech.polkadotapp.common.presentation.loading.LoadingState
+import io.paritytech.polkadotapp.design.components.avatar.AvatarUiModel
 import io.paritytech.polkadotapp.design.components.bottomsheet.NovaBottomSheetDefaults
 import io.paritytech.polkadotapp.design.components.progress.LoadingScreenState
 import io.paritytech.polkadotapp.design.components.surface.PolkadotSurface
@@ -86,7 +87,8 @@ private fun TransactionSignScreenLoadedPreview() {
             state = LoadingState.Loaded(
                 TransactionSignUiState(
                     requesterName = "Polkadot Portal",
-                    requesterIconUrl = "https://example.com/icon.png",
+                    pairedDeviceName = null,
+                    requesterAvatar = AvatarUiModel.Image("https://example.com/icon.png"),
                     content = SigningContent.Transaction(
                         callName = "Balances.transfer",
                         detailsJson = """{"address": "13Qbq8...", "call": {"module": "Balances", "function": "transfer"}}"""
@@ -110,7 +112,8 @@ private fun TransactionSignScreenRawMessagePreview() {
             state = LoadingState.Loaded(
                 TransactionSignUiState(
                     requesterName = "Polkadot Portal",
-                    requesterIconUrl = "https://example.com/icon.png",
+                    pairedDeviceName = null,
+                    requesterAvatar = AvatarUiModel.Image("https://example.com/icon.png"),
                     content = SigningContent.RawMessage(
                         hexData = "0x48656c6c6f20576f726c6421"
                     ),

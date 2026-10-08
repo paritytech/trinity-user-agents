@@ -71,7 +71,8 @@ struct RustHostRuntimeBridgeTests {
     }
 
     /// Core-reviewed actions delegate to the injected confirmation presenter
-    /// at host level, just like the per-execution bridge.
+    /// at host level, just like the per-execution bridge, naming the product
+    /// the core reports.
     @Test func confirmUserActionDelegatesToPresenter() async throws {
         let presenter = MockConfirmationPresenter()
         presenter.verdictToReturn = true
@@ -80,11 +81,32 @@ struct RustHostRuntimeBridgeTests {
         let review = UserConfirmationReview.accountAccess(
             AccountAccessReview(requestingProductId: "a.dot", targetProductId: "b.dot")
         )
-        let result = try await bridge.confirmUserAction(review: review)
+        let result = try await bridge.confirmUserAction(product: testProduct, route: .local, review: review)
 
         #expect(result)
         #expect(presenter.receivedReview == review)
-        #expect(presenter.receivedRequesterName == "host")
+        #expect(presenter.receivedRequesterName == testProduct.productId)
+    }
+
+    /// A request a paired device relayed keeps its route, so the sheet can
+    /// name that device beside the product.
+    @Test func confirmUserActionPassesTheRelayingPeer() async throws {
+        let presenter = MockConfirmationPresenter()
+        let bridge = makeHostBridge(confirmationPresenter: presenter)
+        let route = RequestRoute.pairedHost(
+            peer: PairedSsoPeer(
+                statementAccountId: Data(repeating: 7, count: 32),
+                encryptionPublicKey: Data(repeating: 8, count: 32)
+            )
+        )
+
+        _ = try await bridge.confirmUserAction(
+            product: testProduct,
+            route: route,
+            review: .preimageSubmit(PreimageSubmitReview(size: 1))
+        )
+
+        #expect(presenter.receivedRoute == route)
     }
 
     @Test func permissionsDenyAtHostLevel() async throws {
@@ -106,11 +128,11 @@ struct RustHostRuntimeBridgeTests {
             IdentityDisclosureReview(productId: "caller.dot")
         )
 
-        let result = try await bridge.confirmPermission(review: review)
+        let result = try await bridge.confirmPermission(product: testProduct, route: .local, review: review)
 
         #expect(result == decision)
         #expect(presenter.receivedReview == review)
-        #expect(presenter.receivedRequesterName == "host")
+        #expect(presenter.receivedRequesterName == testProduct.productId)
     }
 
     /// Core storage is the real host-global backend: writes round-trip.

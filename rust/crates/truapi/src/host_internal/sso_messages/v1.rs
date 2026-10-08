@@ -29,7 +29,7 @@ pub enum RemoteMessage {
     /// The peer is ending the SSO session.
     Disconnected,
     /// Ask the signing host to sign a payload or raw data with a product account.
-    SignRequest(SignRequest),
+    SignRequest(ProductRequest<SignRequest>),
     /// Signing host's answer to [`RemoteMessage::SignRequest`].
     SignResponse(Response<SignResponse>),
     /// Ask the Account Holder for a contextual alias.
@@ -37,17 +37,19 @@ pub enum RemoteMessage {
     /// Account Holder's answer to [`RemoteMessage::GetAccountAliasRequest`].
     GetAccountAliasResponse(Response<GetAccountAliasResponse>),
     /// Ask the signing host to allocate SSO-backed resources.
-    ResourceAllocationRequest(ResourceAllocationRequest),
+    ResourceAllocationRequest(ProductRequest<ResourceAllocationRequest>),
     /// Signing host's answer to [`RemoteMessage::ResourceAllocationRequest`].
     ResourceAllocationResponse(Response<ResourceAllocationResponse>),
     /// Ask the signing host to create a signed product-account transaction.
-    CreateTransactionRequest(CreateTransactionRequest),
+    CreateTransactionRequest(ProductRequest<CreateTransactionRequest>),
     /// Signing host's answer to either transaction-creation request.
     CreateTransactionResponse(Response<CreateTransactionResponse>),
     /// Ask the signing host to create a signed legacy-account transaction.
-    CreateTransactionWithLegacyAccountRequest(CreateTransactionWithLegacyAccountRequest),
+    CreateTransactionWithLegacyAccountRequest(
+        ProductRequest<CreateTransactionWithLegacyAccountRequest>,
+    ),
     /// Ask the signing host to sign raw data with a legacy account.
-    SignRawWithLegacyAccountRequest(SignRawWithLegacyAccountRequest),
+    SignRawWithLegacyAccountRequest(ProductRequest<SignRawWithLegacyAccountRequest>),
     /// Signing host's answer to [`RemoteMessage::SignRawWithLegacyAccountRequest`].
     SignRawWithLegacyAccountResponse(Response<SignRawWithLegacyAccountResponse>),
     /// Ask the Account Holder for a ring-VRF proof.

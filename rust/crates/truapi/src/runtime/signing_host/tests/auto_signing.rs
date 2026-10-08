@@ -5,6 +5,7 @@ use super::*;
 use crate::host_internal::sso_messages::{RemoteMessage, RemoteMessageData, v1};
 use crate::runtime::signing_host::SigningHostSsoService;
 use crate::runtime::sso_service::Dispatch;
+use crate::test_support::test_sso_peer;
 use truapi::versioned::account::HostAccountSignVrfRequest;
 use truapi::versioned::signing::HostSignRawWithLegacyAccountRequest;
 
@@ -184,10 +185,10 @@ fn a_blessed_vrf_signature_skips_the_prompt_only_locally_for_its_own_account() {
     let own_signed = sign_locally(request.clone());
     let foreign_signed = sign_locally(vrf_request("other.paseo"));
     let Dispatch::Response(answer) = futures::executor::block_on(
-        SigningHostSsoService::new(activation).answer(RemoteMessage::request(
+        SigningHostSsoService::new(activation, test_sso_peer()).answer(RemoteMessage::request(
             "relayed-vrf".to_string(),
             ProductRequest {
-                calling_product_id: "dim2.paseo".to_string(),
+                caller: test_product("dim2.paseo"),
                 payload: request,
             },
         )),

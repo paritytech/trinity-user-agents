@@ -1,5 +1,5 @@
 use crate::platform::{
-    AuthState, DevicePermissionStatus, PermissionDecision, UserConfirmationReview,
+    AuthState, DevicePermissionStatus, PermissionDecision, RequestRoute, UserConfirmationReview,
 };
 use truapi::v01;
 
@@ -124,15 +124,22 @@ pub trait HostCallbacks: Send + Sync {
     /// Close a previously opened chain connection.
     fn chain_close(&self, connection_id: u32) -> Result<(), HostRejection>;
 
-    /// Confirm one user-reviewed core action.
+    /// Confirm one user-reviewed core action `product` asked for. When
+    /// `route` is `PairedHost`, `product` is the caller that paired host named
+    /// for its SSO request; otherwise it is a product running on this host.
     async fn confirm_user_action(
         &self,
+        product: ProductExecutionConfig,
+        route: RequestRoute,
         review: UserConfirmationReview,
     ) -> Result<bool, HostRejection>;
 
-    /// Preserve the lifetime of consent for identity and account disclosures.
+    /// Preserve the lifetime of consent for identity and account disclosures
+    /// `product` asked for, reaching this host by `route`.
     async fn confirm_permission(
         &self,
+        product: ProductExecutionConfig,
+        route: RequestRoute,
         review: UserConfirmationReview,
     ) -> Result<PermissionDecision, HostRejection>;
 

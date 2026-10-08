@@ -4,7 +4,6 @@ import io.novasama.substrate_sdk_android.koltinx_serialization_scale.binary.anno
 import io.novasama.substrate_sdk_android.koltinx_serialization_scale.binary.annotations.FixedLength
 import io.paritytech.polkadotapp.chains.util.Sr25519SecretKey
 import io.paritytech.polkadotapp.feature_products_api.model.scale.ProductDerivationIndexScale
-import io.paritytech.polkadotapp.feature_products_api.model.scale.ProductIdScale
 import kotlinx.serialization.Serializable
 
 @Serializable
@@ -75,7 +74,7 @@ enum class SsoOnExistingAllowancePolicyScale {
 
 @Serializable
 class SsoResourceAllocationRequestScale(
-    val callingProductId: ProductIdScale,
+    val caller: SsoProductCallerScale,
     val resources: List<SsoApAllocatableResourceScale>,
     val onExisting: SsoOnExistingAllowancePolicyScale,
 )

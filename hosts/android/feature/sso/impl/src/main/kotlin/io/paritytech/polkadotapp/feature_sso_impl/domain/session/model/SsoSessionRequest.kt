@@ -21,13 +21,25 @@ class SsoSessionRequest(
     sealed class Content {
         data object Disconnected : Content()
 
-        class SigningRequest(val request: SigningRequestBody.ResultHasSignature) : Content()
+        class SigningRequest(
+            val callingProduct: ProductId,
+            val request: SigningRequestBody.ResultHasSignature,
+        ) : Content()
 
-        class CreateTransactionRequest(val request: SigningRequestBody.CreateTransaction) : Content()
+        class CreateTransactionRequest(
+            val callingProduct: ProductId,
+            val request: SigningRequestBody.CreateTransaction,
+        ) : Content()
 
-        class CreateTransactionLegacyRequest(val request: SigningRequestBody.CreateTransactionLegacy) : Content()
+        class CreateTransactionLegacyRequest(
+            val callingProduct: ProductId,
+            val request: SigningRequestBody.CreateTransactionLegacy,
+        ) : Content()
 
-        class SignRawLegacyRequest(val request: SigningRequestBody.RawLegacy) : Content()
+        class SignRawLegacyRequest(
+            val callingProduct: ProductId,
+            val request: SigningRequestBody.RawLegacy,
+        ) : Content()
 
         class AliasRequest(
             val callingProduct: ProductId,

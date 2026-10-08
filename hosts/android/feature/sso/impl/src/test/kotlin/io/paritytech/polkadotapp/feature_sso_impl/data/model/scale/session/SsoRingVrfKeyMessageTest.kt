@@ -114,7 +114,7 @@ class SsoRingVrfKeyMessageTest {
 
         assertEquals(
             18,
-            variantIndexOf(SsoMessageContent.RegisterRingVrfKeyRequest("game.dot", DerivationIndex32.fromUInt(0u).toScale(), ringScale))
+            variantIndexOf(SsoMessageContent.RegisterRingVrfKeyRequest(CALLER.toCallerScale(), DerivationIndex32.fromUInt(0u).toScale(), ringScale))
         )
         assertEquals(
             19,
@@ -122,7 +122,7 @@ class SsoRingVrfKeyMessageTest {
         )
         assertEquals(
             20,
-            variantIndexOf(SsoMessageContent.ListRingVrfKeysRequest("game.dot", "peopl.dot", RingVrfKeyDisclosureScale.Anonymized))
+            variantIndexOf(SsoMessageContent.ListRingVrfKeysRequest(CALLER.toCallerScale(), "peopl.dot", RingVrfKeyDisclosureScale.Anonymized))
         )
         assertEquals(
             21,
@@ -130,7 +130,7 @@ class SsoRingVrfKeyMessageTest {
         )
         assertEquals(
             22,
-            variantIndexOf(SsoMessageContent.RingVrfSignRequest("game.dot", KEY_HANDLE.toScale(), ByteArray(2).toDataByteArray()))
+            variantIndexOf(SsoMessageContent.RingVrfSignRequest(CALLER.toCallerScale(), KEY_HANDLE.toScale(), ByteArray(2).toDataByteArray()))
         )
         assertEquals(
             23,

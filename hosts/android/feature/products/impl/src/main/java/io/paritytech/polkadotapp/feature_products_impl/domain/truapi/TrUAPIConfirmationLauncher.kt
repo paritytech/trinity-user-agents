@@ -1,5 +1,6 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.truapi
 
+import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_api.model.signing.SigningAccount
 import io.paritytech.polkadotapp.feature_products_api.model.signing.SigningContextHolder
 import io.paritytech.polkadotapp.feature_products_api.model.signing.SigningRequestBody
@@ -84,7 +85,7 @@ class TrUAPIConfirmationLauncher @Inject constructor(
     // same way a native one is, decoded call and all.
     private suspend fun awaitSigningDecision(confirmation: TrUAPIConfirmation.Signing): Boolean {
         val context = TrUAPISigningContext(
-            requesterName = confirmation.requesterProductId,
+            requesterProduct = ProductId.fromStoredValue(confirmation.requesterProductId),
             signingRequestBody = confirmation.request,
             signingAccount = confirmation.request.signingAccount(),
         )

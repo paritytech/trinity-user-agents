@@ -22,7 +22,7 @@ sealed class SsoMessageContent {
 
     @Serializable
     @EnumIndex(1)
-    class SigningRequest(val request: SsoSigningRequestScale) : SsoMessageContent()
+    class SigningRequest(val caller: SsoProductCallerScale, val request: SsoSigningRequestScale) : SsoMessageContent()
 
     @Serializable
     @EnumIndex(2)
@@ -34,7 +34,7 @@ sealed class SsoMessageContent {
     @Serializable
     @EnumIndex(3)
     class RingVrfAliasRequest(
-        val callingProductId: ProductIdScale,
+        val caller: SsoProductCallerScale,
         val keyHandle: ProductAccountIdScale,
         val context: ProductProofContextScale,
         val ring: RingLocationScale,
@@ -62,7 +62,7 @@ sealed class SsoMessageContent {
 
     @Serializable
     @EnumIndex(7)
-    class CreateTransactionRequest(val request: SsoCreateTransactionRequestScale) : SsoMessageContent()
+    class CreateTransactionRequest(val caller: SsoProductCallerScale, val request: SsoCreateTransactionRequestScale) : SsoMessageContent()
 
     @Serializable
     @EnumIndex(8)
@@ -73,11 +73,14 @@ sealed class SsoMessageContent {
 
     @Serializable
     @EnumIndex(9)
-    class CreateTransactionLegacyRequest(val request: SsoCreateTransactionLegacyRequestScale) : SsoMessageContent()
+    class CreateTransactionLegacyRequest(
+        val caller: SsoProductCallerScale,
+        val request: SsoCreateTransactionLegacyRequestScale,
+    ) : SsoMessageContent()
 
     @Serializable
     @EnumIndex(10)
-    class SignRawLegacyRequest(val request: SsoSignRawLegacyRequestScale) : SsoMessageContent()
+    class SignRawLegacyRequest(val caller: SsoProductCallerScale, val request: SsoSignRawLegacyRequestScale) : SsoMessageContent()
 
     @Serializable
     @EnumIndex(11)
@@ -89,7 +92,7 @@ sealed class SsoMessageContent {
     @Serializable
     @EnumIndex(12)
     class RingVrfProofRequest(
-        val callingProductId: ProductIdScale,
+        val caller: SsoProductCallerScale,
         val keyHandle: ProductAccountIdScale,
         val context: ProductProofContextScale,
         val ring: RingLocationScale,
@@ -106,7 +109,7 @@ sealed class SsoMessageContent {
     @Serializable
     @EnumIndex(14)
     class SignVrfRequest(
-        val callingProductId: ProductIdScale,
+        val caller: SsoProductCallerScale,
         val account: ProductAccountIdScale,
         val transcriptLabel: DataByteArray,
         val items: List<VrfTranscriptItemScale>,
@@ -139,7 +142,7 @@ sealed class SsoMessageContent {
     @Serializable
     @EnumIndex(18)
     class RegisterRingVrfKeyRequest(
-        val callingProductId: ProductIdScale,
+        val caller: SsoProductCallerScale,
         val index: ProductDerivationIndexScale,
         val ring: RingLocationScale,
     ) : SsoMessageContent()
@@ -154,7 +157,7 @@ sealed class SsoMessageContent {
     @Serializable
     @EnumIndex(20)
     class ListRingVrfKeysRequest(
-        val callingProductId: ProductIdScale,
+        val caller: SsoProductCallerScale,
         val owner: ProductIdScale,
         val disclosure: RingVrfKeyDisclosureScale,
     ) : SsoMessageContent()
@@ -169,7 +172,7 @@ sealed class SsoMessageContent {
     @Serializable
     @EnumIndex(22)
     class RingVrfSignRequest(
-        val callingProductId: ProductIdScale,
+        val caller: SsoProductCallerScale,
         val keyHandle: ProductAccountIdScale,
         val message: DataByteArray,
     ) : SsoMessageContent()

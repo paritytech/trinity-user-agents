@@ -12,8 +12,9 @@
 //! <https://github.com/paritytech/host-spec/blob/adb3989208ae1c2107dbf0159611353e6989422c/spec/B-inter-host.md?plain=1#L194-L208>
 //! Deployed extension variants are tracked as a host-spec divergence:
 //! <https://github.com/paritytech/host-spec/blob/adb3989208ae1c2107dbf0159611353e6989422c/divergences.md?plain=1#L26-L33>
-//! Field order and enum variant order are kept wire-compatible with
-//! `@novasamatech/host-papp` 0.8.11:
+//! Enum variant order follows `@novasamatech/host-papp` 0.8.11, as does field
+//! order except that every product-originated request carries its caller's
+//! [`ProductContext`] first, through [`ProductRequest`]:
 //! <https://github.com/paritytech/triangle-js-sdks/blob/afb26e2c78bf1134886c1248c1bf2b6b4dc1fce9/packages/host-papp/src/sso/sessionManager/scale/remoteMessage.ts>
 //! <https://github.com/paritytech/triangle-js-sdks/blob/afb26e2c78bf1134886c1248c1bf2b6b4dc1fce9/packages/host-papp/src/sso/sessionManager/scale/signing.ts>
 //! <https://github.com/paritytech/triangle-js-sdks/blob/afb26e2c78bf1134886c1248c1bf2b6b4dc1fce9/packages/host-papp/src/sso/sessionManager/scale/ringVrf.ts>
@@ -41,6 +42,7 @@ use crate::host_logic::statement_store::{
     build_signed_session_request_statement, build_signed_statement, decode_verified_statement_data,
     statement_expiry_elapsed,
 };
+use crate::platform::ProductContext;
 use crate::unix_time::current_unix_secs;
 
 pub mod v1;
@@ -124,14 +126,15 @@ pub enum SsoRequestOutcome {
     Ignored,
 }
 
-/// A product's canonical request payload and the identity of its caller.
+/// A product's request payload and the identity of its caller.
 ///
-/// SCALE encodes the caller followed directly by the payload fields.
+/// SCALE encodes the caller followed directly by the payload fields. Decoding
+/// validates and normalizes the caller's product id.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 pub struct ProductRequest<P> {
-    /// Product making the request.
-    pub calling_product_id: String,
-    /// Canonical payload sent to the signing host.
+    /// Product making the request, as the pairing host attached it.
+    pub caller: ProductContext,
+    /// Payload sent to the signing host.
     pub payload: P,
 }
 
@@ -224,8 +227,6 @@ pub type CreateAccountProofResponse = Result<HostAccountCreateProofResponse, Rin
 /// auto-signing material.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 pub struct ResourceAllocationRequest {
-    /// Product id the allocation is requested for.
-    pub calling_product_id: String,
     /// Resources to allocate; outcomes come back in the same order.
     pub resources: Vec<AllocatableResource>,
     /// Policy applied when an allocation already exists for this product.
@@ -651,7 +652,7 @@ mod tests {
     use crate::host_logic::statement_store::{
         StatementField, build_signed_statement, decode_statement_data,
     };
-    use crate::test_support::sso_host_and_responder_sessions;
+    use crate::test_support::{sso_host_and_responder_sessions, test_product};
     use schnorrkel::{ExpansionMode, MiniSecretKey};
     use truapi::latest::HostSignPayloadData;
     use truapi::latest::{
@@ -709,19 +710,24 @@ mod tests {
     fn raw_sign_request_uses_remote_message_variant_indices() {
         let message = RemoteMessage::request(
             "m1".to_string(),
-            SignRequest::Raw(truapi::latest::HostSignRawRequest {
-                account: account(),
-                payload: RawPayload::Bytes {
-                    bytes: vec![0xde, 0xad],
-                },
-            }),
+            ProductRequest {
+                caller: test_product("myapp.dot"),
+                payload: SignRequest::Raw(truapi::latest::HostSignRawRequest {
+                    account: account(),
+                    payload: RawPayload::Bytes {
+                        bytes: vec![0xde, 0xad],
+                    },
+                }),
+            },
         );
         let encoded = message.encode();
+        let caller = test_product("myapp.dot").encode();
 
         assert_eq!(&encoded[..3], &[8, b'm', b'1']);
         assert_eq!(encoded[3], 0);
         assert_eq!(encoded[4], 1);
-        assert_eq!(encoded[5], 1);
+        assert_eq!(&encoded[5..5 + caller.len()], caller.as_slice());
+        assert_eq!(encoded[5 + caller.len()], 1);
     }
 
     #[test]
@@ -736,29 +742,35 @@ mod tests {
         };
         let legacy_tx = RemoteMessage::request(
             String::new(),
-            CreateTransactionWithLegacyAccountRequest {
-                payload: CreateTransactionLegacyPayload::V1(LegacyAccountTxPayload {
-                    signer: [1; 32],
-                    genesis_hash: [2; 32],
-                    call_data: Vec::new(),
-                    extensions: Vec::new(),
-                    tx_ext_version: 0,
-                }),
+            ProductRequest {
+                caller: test_product("truapi-playground.dot"),
+                payload: CreateTransactionWithLegacyAccountRequest {
+                    payload: CreateTransactionLegacyPayload::V1(LegacyAccountTxPayload {
+                        signer: [1; 32],
+                        genesis_hash: [2; 32],
+                        call_data: Vec::new(),
+                        extensions: Vec::new(),
+                        tx_ext_version: 0,
+                    }),
+                },
             },
         )
         .encode();
         let legacy_raw = RemoteMessage::request(
             String::new(),
-            SignRawWithLegacyAccountRequest {
-                account: [1; 32],
-                data: RawPayload::Bytes { bytes: vec![] },
+            ProductRequest {
+                caller: test_product("truapi-playground.dot"),
+                payload: SignRawWithLegacyAccountRequest {
+                    account: [1; 32],
+                    data: RawPayload::Bytes { bytes: vec![] },
+                },
             },
         )
         .encode();
         let register = RemoteMessage::request(
             String::new(),
             ProductRequest {
-                calling_product_id: "caller.dot".to_string(),
+                caller: test_product("caller.dot"),
                 payload: truapi::latest::HostAccountRegisterRingVrfKeyRequest {
                     index: DerivationIndex::Index(0),
                     ring: ring_location.clone(),
@@ -777,7 +789,7 @@ mod tests {
         let list = RemoteMessage::request(
             String::new(),
             ProductRequest {
-                calling_product_id: "caller.dot".to_string(),
+                caller: test_product("caller.dot"),
                 payload: truapi::latest::HostAccountListRingVrfKeysRequest {
                     owner: "peopl.dot".to_string(),
                     disclosure: truapi::v01::RingVrfKeyDisclosure::Anonymized,
@@ -796,7 +808,7 @@ mod tests {
         let sign = RemoteMessage::request(
             String::new(),
             ProductRequest {
-                calling_product_id: "caller.dot".to_string(),
+                caller: test_product("caller.dot"),
                 payload: truapi::latest::HostAccountRingVrfSignRequest {
                     key_handle,
                     message: vec![],
@@ -851,21 +863,21 @@ mod tests {
         };
         let messages = [
             v1::RemoteMessage::RegisterRingVrfKeyRequest(ProductRequest {
-                calling_product_id: "game.dot".to_string(),
+                caller: test_product("game.dot"),
                 payload: truapi::latest::HostAccountRegisterRingVrfKeyRequest {
                     index: DerivationIndex::Index(4),
                     ring: ring.clone(),
                 },
             }),
             v1::RemoteMessage::ListRingVrfKeysRequest(ProductRequest {
-                calling_product_id: "game.dot".to_string(),
+                caller: test_product("game.dot"),
                 payload: truapi::latest::HostAccountListRingVrfKeysRequest {
                     owner: "peopl.dot".to_string(),
                     disclosure: truapi::v01::RingVrfKeyDisclosure::PublicKey,
                 },
             }),
             v1::RemoteMessage::RingVrfSignRequest(ProductRequest {
-                calling_product_id: "game.dot".to_string(),
+                caller: test_product("game.dot"),
                 payload: truapi::latest::HostAccountRingVrfSignRequest {
                     key_handle: handle,
                     message: (0..16).collect(),
@@ -873,9 +885,9 @@ mod tests {
             }),
         ];
         let expected = [
-            "0x122067616d652e646f74000400000007070707070707070707070707070707070707070707070707070707070707070800090180706f703a706f6c6b61646f742e6e6574776f726b2f70656f706c652020202020",
-            "0x142067616d652e646f742470656f706c2e646f7401",
-            "0x162067616d652e646f742470656f706c2e646f74000000000040000102030405060708090a0b0c0d0e0f",
+            "0x122067616d652e646f7400000400000007070707070707070707070707070707070707070707070707070707070707070800090180706f703a706f6c6b61646f742e6e6574776f726b2f70656f706c652020202020",
+            "0x142067616d652e646f74002470656f706c2e646f7401",
+            "0x162067616d652e646f74002470656f706c2e646f74000000000040000102030405060708090a0b0c0d0e0f",
         ];
         for (message, expected) in messages.into_iter().zip(expected) {
             assert_eq!(format!("0x{}", hex::encode(message.encode())), expected);
@@ -907,7 +919,7 @@ mod tests {
         let alias = RemoteMessage::request(
             "m-alias".to_string(),
             ProductRequest {
-                calling_product_id: "caller.dot".to_string(),
+                caller: test_product("caller.dot"),
                 payload: truapi::latest::HostAccountGetAliasRequest {
                     key_handle: key_handle.clone(),
                     context: context.clone(),
@@ -918,7 +930,7 @@ mod tests {
         let proof = RemoteMessage::request(
             "m-proof".to_string(),
             ProductRequest {
-                calling_product_id: "caller.dot".to_string(),
+                caller: test_product("caller.dot"),
                 payload: truapi::latest::HostAccountCreateProofRequest {
                     key_handle,
                     context,
@@ -928,13 +940,13 @@ mod tests {
             },
         );
 
-        assert_host_papp_fixture(
+        assert_wire_fixture(
             alias,
-            "0x1c6d2d616c69617300032863616c6c65722e646f742470656f706c2e646f74000000000028766f74696e672e646f7400000000001111111111111111111111111111111111111111111111111111111111111111080043010c706f70",
+            "0x1c6d2d616c69617300032863616c6c65722e646f74002470656f706c2e646f74000000000028766f74696e672e646f7400000000001111111111111111111111111111111111111111111111111111111111111111080043010c706f70",
         );
-        assert_host_papp_fixture(
+        assert_wire_fixture(
             proof,
-            "0x1c6d2d70726f6f66000c2863616c6c65722e646f742470656f706c2e646f74000000000028766f74696e672e646f7400000000001111111111111111111111111111111111111111111111111111111111111111080043010c706f7010766f7465",
+            "0x1c6d2d70726f6f66000c2863616c6c65722e646f74002470656f706c2e646f74000000000028766f74696e672e646f7400000000001111111111111111111111111111111111111111111111111111111111111111080043010c706f7010766f7465",
         );
     }
 
@@ -990,25 +1002,40 @@ mod tests {
         );
     }
 
+    /// Pin `message` to the bytes this core puts on the SSO wire, both ways.
+    /// A product request carries the caller's `ProductContext`, which
+    /// host-papp does not encode, so these bytes are the core's own rather
+    /// than host-papp fixtures.
+    fn assert_wire_fixture(message: RemoteMessage, expected: &str) {
+        let expected = expected.trim_start_matches("0x");
+        assert_eq!(hex::encode(message.encode()), expected);
+        assert_eq!(
+            decode_remote_message(&hex::decode(expected).expect("fixture is hex")),
+            Ok(message)
+        );
+    }
+
     #[test]
     fn resource_allocation_message_wire_shape_pin() {
         let message = RemoteMessage::request(
             "m-resource".to_string(),
-            ResourceAllocationRequest {
-                calling_product_id: "truapi-playground.dot".to_string(),
-                resources: vec![
-                    AllocatableResource::StatementStoreAllowance,
-                    AllocatableResource::BulletinAllowance,
-                    AllocatableResource::SmartContractAllowance(DerivationIndex::Index(9)),
-                    AllocatableResource::AutoSigning,
-                ],
-                on_existing: OnExistingAllowancePolicy::Increase,
+            ProductRequest {
+                caller: test_product("truapi-playground.dot"),
+                payload: ResourceAllocationRequest {
+                    resources: vec![
+                        AllocatableResource::StatementStoreAllowance,
+                        AllocatableResource::BulletinAllowance,
+                        AllocatableResource::SmartContractAllowance(DerivationIndex::Index(9)),
+                        AllocatableResource::AutoSigning,
+                    ],
+                    on_existing: OnExistingAllowancePolicy::Increase,
+                },
             },
         );
 
-        assert_host_papp_fixture(
+        assert_wire_fixture(
             message,
-            "0x286d2d7265736f757263650005547472756170692d706c617967726f756e642e646f741000010200090000000301",
+            "0x286d2d7265736f757263650005547472756170692d706c617967726f756e642e646f74001000010200090000000301",
         );
     }
 
@@ -1016,27 +1043,30 @@ mod tests {
     fn create_transaction_message_wire_shape_pin() {
         let message = RemoteMessage::request(
             "m-product-tx".to_string(),
-            CreateTransactionRequest {
-                payload: CreateTransactionPayload::V1(SsoProductTxPayload {
-                    signer: ProductAccountId {
-                        dot_ns_identifier: "truapi-playground.dot".to_string(),
-                        derivation_index: DerivationIndex::Index(0),
-                    },
-                    genesis_hash: sequential_bytes(32),
-                    call_data: vec![0, 0],
-                    extensions: vec![TxPayloadExtension {
-                        id: "CheckNonce".to_string(),
-                        extra: vec![1],
-                        additional_signed: vec![2, 3],
-                    }],
-                    tx_ext_version: 0,
-                }),
+            ProductRequest {
+                caller: test_product("truapi-playground.dot"),
+                payload: CreateTransactionRequest {
+                    payload: CreateTransactionPayload::V1(SsoProductTxPayload {
+                        signer: ProductAccountId {
+                            dot_ns_identifier: "truapi-playground.dot".to_string(),
+                            derivation_index: DerivationIndex::Index(0),
+                        },
+                        genesis_hash: sequential_bytes(32),
+                        call_data: vec![0, 0],
+                        extensions: vec![TxPayloadExtension {
+                            id: "CheckNonce".to_string(),
+                            extra: vec![1],
+                            additional_signed: vec![2, 3],
+                        }],
+                        tx_ext_version: 0,
+                    }),
+                },
             },
         );
 
-        assert_host_papp_fixture(
+        assert_wire_fixture(
             message,
-            "0x306d2d70726f647563742d7478000700547472756170692d706c617967726f756e642e646f740000000000202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f0800000428436865636b4e6f6e6365040108020300",
+            "0x306d2d70726f647563742d74780007547472756170692d706c617967726f756e642e646f740000547472756170692d706c617967726f756e642e646f740000000000202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f0800000428436865636b4e6f6e6365040108020300",
         );
     }
 
@@ -1044,80 +1074,92 @@ mod tests {
     fn playground_create_transaction_message_wire_shape_pin() {
         let message = RemoteMessage::request(
             "create-transaction-1".to_string(),
-            CreateTransactionRequest {
-                payload: CreateTransactionPayload::V1(SsoProductTxPayload {
-                    signer: ProductAccountId {
-                        dot_ns_identifier: "truapi-playground.dot".to_string(),
-                        derivation_index: DerivationIndex::Index(0),
-                    },
-                    genesis_hash: [
-                        0xbf, 0x04, 0x88, 0xdb, 0xe9, 0xda, 0xa1, 0xde, 0x1c, 0x08, 0xc5, 0xf7,
-                        0x43, 0xe2, 0x6f, 0xdc, 0x2a, 0x4e, 0xcd, 0x74, 0xcf, 0x87, 0xdd, 0x1b,
-                        0x4b, 0x1e, 0xeb, 0x99, 0xae, 0x4e, 0xf1, 0x9f,
-                    ],
-                    call_data: vec![0, 0],
-                    extensions: vec![],
-                    tx_ext_version: 0,
-                }),
+            ProductRequest {
+                caller: test_product("truapi-playground.dot"),
+                payload: CreateTransactionRequest {
+                    payload: CreateTransactionPayload::V1(SsoProductTxPayload {
+                        signer: ProductAccountId {
+                            dot_ns_identifier: "truapi-playground.dot".to_string(),
+                            derivation_index: DerivationIndex::Index(0),
+                        },
+                        genesis_hash: [
+                            0xbf, 0x04, 0x88, 0xdb, 0xe9, 0xda, 0xa1, 0xde, 0x1c, 0x08, 0xc5, 0xf7,
+                            0x43, 0xe2, 0x6f, 0xdc, 0x2a, 0x4e, 0xcd, 0x74, 0xcf, 0x87, 0xdd, 0x1b,
+                            0x4b, 0x1e, 0xeb, 0x99, 0xae, 0x4e, 0xf1, 0x9f,
+                        ],
+                        call_data: vec![0, 0],
+                        extensions: vec![],
+                        tx_ext_version: 0,
+                    }),
+                },
             },
         );
 
-        assert_host_papp_fixture(
+        assert_wire_fixture(
             message,
-            "0x506372656174652d7472616e73616374696f6e2d31000700547472756170692d706c617967726f756e642e646f740000000000bf0488dbe9daa1de1c08c5f743e26fdc2a4ecd74cf87dd1b4b1eeb99ae4ef19f0800000000",
+            "0x506372656174652d7472616e73616374696f6e2d310007547472756170692d706c617967726f756e642e646f740000547472756170692d706c617967726f756e642e646f740000000000bf0488dbe9daa1de1c08c5f743e26fdc2a4ecd74cf87dd1b4b1eeb99ae4ef19f0800000000",
         );
     }
 
     #[test]
-    fn create_transaction_legacy_message_matches_host_papp_fixture() {
+    fn create_transaction_legacy_message_wire_shape_pin() {
         let message = RemoteMessage::request(
             "m-legacy-tx".to_string(),
-            CreateTransactionWithLegacyAccountRequest {
-                payload: CreateTransactionLegacyPayload::V1(LegacyAccountTxPayload {
-                    signer: sequential_bytes(0),
-                    genesis_hash: sequential_bytes(32),
-                    call_data: vec![0, 0],
-                    extensions: vec![TxPayloadExtension {
-                        id: "CheckNonce".to_string(),
-                        extra: vec![1],
-                        additional_signed: vec![2, 3],
-                    }],
-                    tx_ext_version: 0,
-                }),
+            ProductRequest {
+                caller: test_product("truapi-playground.dot"),
+                payload: CreateTransactionWithLegacyAccountRequest {
+                    payload: CreateTransactionLegacyPayload::V1(LegacyAccountTxPayload {
+                        signer: sequential_bytes(0),
+                        genesis_hash: sequential_bytes(32),
+                        call_data: vec![0, 0],
+                        extensions: vec![TxPayloadExtension {
+                            id: "CheckNonce".to_string(),
+                            extra: vec![1],
+                            additional_signed: vec![2, 3],
+                        }],
+                        tx_ext_version: 0,
+                    }),
+                },
             },
         );
 
-        assert_host_papp_fixture(
+        assert_wire_fixture(
             message,
-            "0x2c6d2d6c65676163792d7478000900000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f0800000428436865636b4e6f6e6365040108020300",
+            "0x2c6d2d6c65676163792d74780009547472756170692d706c617967726f756e642e646f740000000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f0800000428436865636b4e6f6e6365040108020300",
         );
     }
 
     #[test]
-    fn sign_raw_legacy_messages_match_host_papp_fixtures() {
-        assert_host_papp_fixture(
+    fn sign_raw_legacy_messages_wire_shape_pin() {
+        assert_wire_fixture(
             RemoteMessage::request(
                 "m-legacy-raw".to_string(),
-                SignRawWithLegacyAccountRequest {
-                    account: sequential_bytes(0),
-                    data: RawPayload::Bytes {
-                        bytes: b"Hi".to_vec(),
+                ProductRequest {
+                    caller: test_product("truapi-playground.dot"),
+                    payload: SignRawWithLegacyAccountRequest {
+                        account: sequential_bytes(0),
+                        data: RawPayload::Bytes {
+                            bytes: b"Hi".to_vec(),
+                        },
                     },
                 },
             ),
-            "0x306d2d6c65676163792d726177000a000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f00084869",
+            "0x306d2d6c65676163792d726177000a547472756170692d706c617967726f756e642e646f7400000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f00084869",
         );
-        assert_host_papp_fixture(
+        assert_wire_fixture(
             RemoteMessage::request(
                 "m-legacy-raw-payload".to_string(),
-                SignRawWithLegacyAccountRequest {
-                    account: sequential_bytes(0),
-                    data: RawPayload::Payload {
-                        payload: "<Bytes>Hi</Bytes>".to_string(),
+                ProductRequest {
+                    caller: test_product("truapi-playground.dot"),
+                    payload: SignRawWithLegacyAccountRequest {
+                        account: sequential_bytes(0),
+                        data: RawPayload::Payload {
+                            payload: "<Bytes>Hi</Bytes>".to_string(),
+                        },
                     },
                 },
             ),
-            "0x506d2d6c65676163792d7261772d7061796c6f6164000a000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f01443c42797465733e48693c2f42797465733e",
+            "0x506d2d6c65676163792d7261772d7061796c6f6164000a547472756170692d706c617967726f756e642e646f7400000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f01443c42797465733e48693c2f42797465733e",
         );
     }
 
@@ -1174,13 +1216,13 @@ mod tests {
         let request = RemoteMessage::request(
             "req".to_string(),
             ProductRequest {
-                calling_product_id: "browse.dot".to_string(),
+                caller: test_product("browse.dot"),
                 payload,
             },
         );
         assert_eq!(
             hex::encode(request.encode()),
-            "0c726571000e2862726f7773652e646f742862726f7773652e646f7400070000000c6374780418646f6d61696e080102"
+            "0c726571000e2862726f7773652e646f74002862726f7773652e646f7400070000000c6374780418646f6d61696e080102"
         );
 
         let response = RemoteMessage {
@@ -1357,12 +1399,15 @@ mod tests {
         let session = session();
         let remote_message = RemoteMessage::request(
             "remote-1".to_string(),
-            SignRequest::Raw(truapi::latest::HostSignRawRequest {
-                account: account(),
-                payload: RawPayload::Payload {
-                    payload: "<Bytes>hello</Bytes>".to_string(),
-                },
-            }),
+            ProductRequest {
+                caller: test_product("myapp.dot"),
+                payload: SignRequest::Raw(truapi::latest::HostSignRawRequest {
+                    account: account(),
+                    payload: RawPayload::Payload {
+                        payload: "<Bytes>hello</Bytes>".to_string(),
+                    },
+                }),
+            },
         );
 
         let statement = build_outgoing_request_statement_with_nonce(
@@ -1397,12 +1442,15 @@ mod tests {
         let session = session();
         let remote_message = RemoteMessage::request(
             "remote-1".to_string(),
-            SignRequest::Raw(truapi::latest::HostSignRawRequest {
-                account: account(),
-                payload: RawPayload::Payload {
-                    payload: "<Bytes>hello</Bytes>".to_string(),
-                },
-            }),
+            ProductRequest {
+                caller: test_product("myapp.dot"),
+                payload: SignRequest::Raw(truapi::latest::HostSignRawRequest {
+                    account: account(),
+                    payload: RawPayload::Payload {
+                        payload: "<Bytes>hello</Bytes>".to_string(),
+                    },
+                }),
+            },
         );
         let statement = build_outgoing_request_statement_with_nonce(
             &session,
@@ -1426,12 +1474,15 @@ mod tests {
         let (host_session, responder_session) = sso_host_and_responder_sessions();
         let request = RemoteMessage::request(
             "remote-1".to_string(),
-            SignRequest::Raw(truapi::latest::HostSignRawRequest {
-                account: account(),
-                payload: RawPayload::Payload {
-                    payload: "<Bytes>hello</Bytes>".to_string(),
-                },
-            }),
+            ProductRequest {
+                caller: test_product("myapp.dot"),
+                payload: SignRequest::Raw(truapi::latest::HostSignRawRequest {
+                    account: account(),
+                    payload: RawPayload::Payload {
+                        payload: "<Bytes>hello</Bytes>".to_string(),
+                    },
+                }),
+            },
         );
         let expiry = fresh_expiry();
         let host_statement = build_outgoing_request_statement(

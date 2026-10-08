@@ -130,11 +130,22 @@ public protocol HostBridge: AnyObject, Sendable {
     /// Close a native chain connection.
     func chainClose(connectionId: UInt32) throws
 
-    /// Confirm one user-reviewed core action before it continues.
-    func confirmUserAction(review: UserConfirmationReview) async throws -> Bool
+    /// Confirm one user-reviewed core action for `product`, which reached this
+    /// host by `route`, before it continues. Cancellation means the core
+    /// withdrew the request; dismiss the prompt.
+    func confirmUserAction(
+        product: ProductExecutionConfig,
+        route: RequestRoute,
+        review: UserConfirmationReview
+    ) async throws -> Bool
 
-    /// Preserve the selected lifetime for identity and account access consent.
-    func confirmPermission(review: UserConfirmationReview) async throws -> PermissionDecision
+    /// Preserve the selected lifetime for identity and account access consent
+    /// that `product` requested through `route`.
+    func confirmPermission(
+        product: ProductExecutionConfig,
+        route: RequestRoute,
+        review: UserConfirmationReview
+    ) async throws -> PermissionDecision
 
     /// Return the current preimage value for `key`, or nil for a miss.
     func lookupPreimage(key: Data) async throws -> Data?
@@ -319,9 +330,17 @@ public extension HostBridge {
     func chainConnect(genesisHash: Data) throws -> UInt32? { nil }
     func chainSend(connectionId: UInt32, request: String) throws {}
     func chainClose(connectionId: UInt32) throws {}
-    func confirmUserAction(review: UserConfirmationReview) async throws -> Bool { false }
-    func confirmPermission(review: UserConfirmationReview) async throws -> PermissionDecision {
-        try await confirmUserAction(review: review) ? .allowAlways : .deny
+    func confirmUserAction(
+        product: ProductExecutionConfig,
+        route: RequestRoute,
+        review: UserConfirmationReview
+    ) async throws -> Bool { false }
+    func confirmPermission(
+        product: ProductExecutionConfig,
+        route: RequestRoute,
+        review: UserConfirmationReview
+    ) async throws -> PermissionDecision {
+        try await confirmUserAction(product: product, route: route, review: review) ? .allowAlways : .deny
     }
     func lookupPreimage(key: Data) async throws -> Data? { nil }
     func currentTheme() throws -> HostThemeSubscribeItem {
@@ -625,15 +644,23 @@ private final class HostCallbackAdapter: HostCallbacks, @unchecked Sendable {
         }
     }
 
-    func confirmUserAction(review: UserConfirmationReview) async throws -> Bool {
+    func confirmUserAction(
+        product: ProductExecutionConfig,
+        route: RequestRoute,
+        review: UserConfirmationReview
+    ) async throws -> Bool {
         try await withHostRejection {
-            try await bridge.confirmUserAction(review: review)
+            try await bridge.confirmUserAction(product: product, route: route, review: review)
         }
     }
 
-    func confirmPermission(review: UserConfirmationReview) async throws -> PermissionDecision {
+    func confirmPermission(
+        product: ProductExecutionConfig,
+        route: RequestRoute,
+        review: UserConfirmationReview
+    ) async throws -> PermissionDecision {
         try await withHostRejection {
-            try await bridge.confirmPermission(review: review)
+            try await bridge.confirmPermission(product: product, route: route, review: review)
         }
     }
 
@@ -943,16 +970,17 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
         try inner.activateLocalSession(secret: secret, liteUsername: liteUsername)
     }
 
-    /// Answer one decrypted SSO remote message from the wallet-managed
-    /// statement-store session. `message` is one SCALE-encoded
+    /// Answer one decrypted SSO remote message `peer` sent over the
+    /// wallet-managed statement-store session; the confirmations it raises
+    /// name `peer` as the paired host. `message` is one SCALE-encoded
     /// `RemoteMessage` exactly as decrypted. `.response` carries the
     /// SCALE-encoded reply to post back over the same session;
     /// `.disconnected` means the peer ended the session (perform native
     /// teardown); `.ignored` means the message was not a request.
     /// Confirmation-gated requests await `confirmUserAction`, so this can
     /// take arbitrarily long — call from a `Task`, never the main thread.
-    public func handleSsoRequest(message: Data) async throws -> SsoRequestOutcome {
-        try await inner.handleSsoRequest(message: message)
+    public func handleSsoRequest(peer: PairedSsoPeer, message: Data) async throws -> SsoRequestOutcome {
+        try await inner.handleSsoRequest(peer: peer, message: message)
     }
 
     /// Build the SCALE-encoded `Disconnected` message to post over a

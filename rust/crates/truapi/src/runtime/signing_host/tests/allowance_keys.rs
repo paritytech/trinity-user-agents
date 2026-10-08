@@ -96,9 +96,10 @@ fn allowance_key(signing_host: &SigningHostRole) -> StatementStoreAllowanceKey {
             .current_session()
             .expect("a session is active");
         let cx = CallContext::default();
+        let product = test_product(PRODUCT_ID);
         futures::select! {
             result = signing_host
-                .statement_store_allowance_key(&cx, &session, PRODUCT_ID.to_string())
+                .statement_store_allowance_key(&cx, &session, &product)
                 .fuse() => result,
             _ = futures_timer::Delay::new(std::time::Duration::from_secs(30)).fuse() => {
                 panic!("the proof blocked on a chain read")

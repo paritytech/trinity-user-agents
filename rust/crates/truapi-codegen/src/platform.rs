@@ -31,6 +31,9 @@ pub struct PlatformDefinition {
     /// Composite super-trait of capabilities a host may omit
     /// (`OptionalPlatform: ChatPlatform + ...`), if any.
     pub optional_super_trait: Option<PlatformSuperTrait>,
+    /// Composite super-trait of capabilities whose async callbacks prompt the
+    /// user (`PromptPlatform: Permissions + ...`), if any.
+    pub prompt_super_trait: Option<PlatformSuperTrait>,
 }
 
 /// Single capability trait extracted from a `platform` module.
@@ -58,6 +61,9 @@ pub struct PlatformMethod {
     /// Whether the trait provides a default body, making the method optional
     /// for host implementations.
     pub has_default: bool,
+    /// Whether the callback shows a prompt the core may withdraw by dropping
+    /// its future, so the JS surface hands it an `AbortSignal`.
+    pub withdrawable: bool,
 }
 
 /// Method parameter (name + type).
@@ -119,6 +125,7 @@ pub fn extract_all(krates: &[Crate]) -> Result<PlatformDefinition> {
         types: Vec::new(),
         super_trait: None,
         optional_super_trait: None,
+        prompt_super_trait: None,
     };
     for krate in krates {
         let definition = extract(krate)?;
@@ -129,6 +136,10 @@ pub fn extract_all(krates: &[Crate]) -> Result<PlatformDefinition> {
             (
                 &mut merged.optional_super_trait,
                 definition.optional_super_trait,
+            ),
+            (
+                &mut merged.prompt_super_trait,
+                definition.prompt_super_trait,
             ),
         ] {
             if let Some(found) = found {
@@ -143,6 +154,18 @@ pub fn extract_all(krates: &[Crate]) -> Result<PlatformDefinition> {
         }
     }
     merged.traits.sort_by(|a, b| a.name.cmp(&b.name));
+    if let Some(prompts) = &merged.prompt_super_trait {
+        for trait_def in merged
+            .traits
+            .iter_mut()
+            .filter(|trait_def| prompts.composes.contains(&trait_def.name))
+        {
+            for method in &mut trait_def.methods {
+                method.withdrawable = method.return_shape.is_async
+                    && matches!(method.return_shape.inner, PlatformInner::Result { .. });
+            }
+        }
+    }
     merged.types.sort_by(|a, b| a.name.cmp(&b.name));
     if let Some(pair) = merged
         .types
@@ -169,6 +192,7 @@ fn extract(krate: &Crate) -> Result<PlatformDefinition> {
     let mut traits = Vec::new();
     let mut super_trait = None;
     let mut optional_super_trait = None;
+    let mut prompt_super_trait = None;
     for item_id in &trait_ids {
         let item = krate
             .index
@@ -185,10 +209,10 @@ fn extract(krate: &Crate) -> Result<PlatformDefinition> {
             .with_context(|| format!("Trait `{name}` missing rustdoc trait body"))?;
 
         if is_super_trait(trait_inner) {
-            let slot = if name == OPTIONAL_SUPER_TRAIT {
-                &mut optional_super_trait
-            } else {
-                &mut super_trait
+            let slot = match name.as_str() {
+                OPTIONAL_SUPER_TRAIT => &mut optional_super_trait,
+                PROMPT_SUPER_TRAIT => &mut prompt_super_trait,
+                _ => &mut super_trait,
             };
             if slot.is_some() {
                 bail!("Multiple `{name}` super-traits found; only one is supported");
@@ -214,6 +238,7 @@ fn extract(krate: &Crate) -> Result<PlatformDefinition> {
         types,
         super_trait,
         optional_super_trait,
+        prompt_super_trait,
     })
 }
 
@@ -386,8 +411,13 @@ fn collect_local_trait_ids(krate: &Crate) -> BTreeSet<String> {
 }
 
 /// Name of the method-less super-trait listing capabilities a host may omit.
-/// Every other method-less super-trait composes the required surface.
+/// Every method-less super-trait other than this and [`PROMPT_SUPER_TRAIT`]
+/// composes the required surface.
 pub const OPTIONAL_SUPER_TRAIT: &str = "OptionalPlatform";
+
+/// Name of the method-less super-trait listing capabilities whose async
+/// callbacks show a prompt the core may withdraw.
+pub const PROMPT_SUPER_TRAIT: &str = "PromptPlatform";
 
 fn is_super_trait(trait_inner: &serde_json::Value) -> bool {
     let no_methods = trait_inner
@@ -534,6 +564,7 @@ fn extract_method(item: &Item, names: &NameContext) -> Result<Option<PlatformMet
         params,
         return_shape,
         has_default,
+        withdrawable: false,
     }))
 }
 
@@ -888,6 +919,7 @@ mod tests {
                     inner: PlatformInner::Unit,
                 },
                 has_default: false,
+                withdrawable: false,
             }],
         }];
 

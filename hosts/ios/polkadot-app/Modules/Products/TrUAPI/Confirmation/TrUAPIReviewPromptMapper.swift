@@ -23,10 +23,16 @@ protocol TrUAPIReviewPromptMapping: Sendable {
     func makeActionRequest(from review: PreimageSubmitReview, requester: ProductId) -> TrUAPIActionConfirmationRequest
     func makePermissionRequest(from review: AccountAccessReview) -> TrUAPIPermissionRequest
     func makeActionRequest(from review: ProductSubtreeReview) -> TrUAPIActionConfirmationRequest
-    func makePermissionRequest(from review: AccountAliasReview) -> TrUAPIPermissionRequest
-    func makeCreateProofRequest(from review: CreateProofReview) throws -> CreateProofConfirmationRequest
-    func makeAllowanceRequest(from review: ResourceAllocationReview) throws -> TrUAPIAllowanceRequest
-    func makeSignVrfRequest(from review: SignVrfReview) throws -> SignVrfConfirmationRequest
+    func makePermissionRequest(from review: AccountAliasReview, requester: ProductId) -> TrUAPIPermissionRequest
+    func makeCreateProofRequest(
+        from review: CreateProofReview,
+        requester: ProductId
+    ) throws -> CreateProofConfirmationRequest
+    func makeAllowanceRequest(
+        from review: ResourceAllocationReview,
+        requester: ProductId
+    ) throws -> TrUAPIAllowanceRequest
+    func makeSignVrfRequest(from review: SignVrfReview, requester: ProductId) throws -> SignVrfConfirmationRequest
     func makeStatementSignRequest(
         from review: StatementStoreProductSignReview
     ) -> StatementSignConfirmationRequest
@@ -60,18 +66,22 @@ struct TrUAPIReviewPromptMapper: TrUAPIReviewPromptMapping {
 
     /// An alias is derived within the context product's ring, so it is presented
     /// as the calling product requesting access to that product's account.
-    func makePermissionRequest(from review: AccountAliasReview) -> TrUAPIPermissionRequest {
+    func makePermissionRequest(
+        from review: AccountAliasReview,
+        requester: ProductId
+    ) -> TrUAPIPermissionRequest {
         TrUAPIPermissionRequest(
-            productId: review.callingProductId,
+            productId: requester,
             permissions: [.accountAccess(targetProductId: review.context.productId)]
         )
     }
 
     func makeCreateProofRequest(
-        from review: CreateProofReview
+        from review: CreateProofReview,
+        requester: ProductId
     ) throws -> CreateProofConfirmationRequest {
         try CreateProofConfirmationRequest(
-            callingProductId: review.callingProductId,
+            callingProductId: requester,
             onBehalfOfProductId: review.context.productId,
             suffix: review.context.suffix.toIndex32().bytes,
             message: review.message
@@ -79,17 +89,21 @@ struct TrUAPIReviewPromptMapper: TrUAPIReviewPromptMapping {
     }
 
     func makeAllowanceRequest(
-        from review: ResourceAllocationReview
+        from review: ResourceAllocationReview,
+        requester: ProductId
     ) throws -> TrUAPIAllowanceRequest {
         try TrUAPIAllowanceRequest(
-            productId: review.callingProductId,
+            productId: requester,
             resources: review.resources.map(makeResource)
         )
     }
 
-    func makeSignVrfRequest(from review: SignVrfReview) throws -> SignVrfConfirmationRequest {
+    func makeSignVrfRequest(
+        from review: SignVrfReview,
+        requester: ProductId
+    ) throws -> SignVrfConfirmationRequest {
         try SignVrfConfirmationRequest(
-            callingProductId: review.callingProductId,
+            callingProductId: requester,
             payload: SignVrfPayload(
                 account: review.request.account.toAppAccount(),
                 transcriptLabel: review.request.transcriptLabel,

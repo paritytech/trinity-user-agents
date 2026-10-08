@@ -848,7 +848,9 @@ requests) are rendered prominently in the signing-host transcript. Actions use
 Allow always and `n` for Deny. Typed answers plus Enter also work. Approval
 cards summarize and redact signing payloads rather than dumping debug objects.
 The current command draft is restored afterward; Esc rejects. Concurrent
-approvals are serialized. Plain mode offers the same choices when stdin is a
+approvals are serialized. Each card names the requesting product and, for a
+relayed request, the paired host it came from; a withdrawn approval is marked
+withdrawn. Plain mode offers the same choices when stdin is a
 TTY; non-TTY stdin rejects instead of hanging. Same-product Ring-VRF requests do not
 prompt, matching the iOS signing host. Pass `--auto-accept` for unattended
 runs; every auto-approved decision is still printed.

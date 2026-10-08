@@ -71,6 +71,7 @@ import uniffi.truapi.NativeProductExecution
 import uniffi.truapi.NativeTrUApiHostRuntime
 import uniffi.truapi.NativeAnnouncedPairing
 import uniffi.truapi.PairedSsoPeer
+import uniffi.truapi.RequestRoute
 import uniffi.truapi.ResponderExit
 import uniffi.truapi.ProductRuntimeException
 import uniffi.truapi.HostNavigateToException
@@ -256,18 +257,30 @@ interface HostBridge {
     fun chainClose(connectionId: UInt) {}
 
     /**
-     * Confirm one user-reviewed core action; the review variant picks the
-     * prompt (sign payload, sign raw, create transaction, resource allocation,
-     * or preimage submit). Present it on the main thread, suspending until the
-     * user decides.
+     * Confirm one user-reviewed core action for [product], which reached this
+     * host by [route]; the review variant picks the prompt (sign payload, sign
+     * raw, create transaction, resource allocation, or preimage submit).
+     * Present it on the main thread, suspending until the user decides.
+     * Cancellation means the core withdrew the request; dismiss the prompt.
      */
     @Throws(HostRejection::class)
-    suspend fun confirmUserAction(review: UserConfirmationReview): Boolean = false
+    suspend fun confirmUserAction(
+        product: ProductExecutionConfig,
+        route: RequestRoute,
+        review: UserConfirmationReview,
+    ): Boolean = false
 
-    /** Preserve the selected lifetime for identity and account access consent. */
+    /**
+     * Preserve the selected lifetime for identity and account access consent
+     * that [product] requested through [route].
+     */
     @Throws(HostRejection::class)
-    suspend fun confirmPermission(review: UserConfirmationReview): PermissionDecision =
-        if (confirmUserAction(review)) PermissionDecision.ALLOW_ALWAYS else PermissionDecision.DENY
+    suspend fun confirmPermission(
+        product: ProductExecutionConfig,
+        route: RequestRoute,
+        review: UserConfirmationReview,
+    ): PermissionDecision =
+        if (confirmUserAction(product, route, review)) PermissionDecision.ALLOW_ALWAYS else PermissionDecision.DENY
 
     /** Return the current preimage value for [key], or null for a miss. */
     @Throws(HostRejection::class)
@@ -539,11 +552,19 @@ private class HostCallbackAdapter(private val bridge: HostBridge) : HostCallback
     override fun chainClose(connectionId: UInt) =
         withHostRejection { bridge.chainClose(connectionId) }
 
-    override suspend fun confirmUserAction(review: UserConfirmationReview): Boolean =
-        withHostRejection { bridge.confirmUserAction(review) }
+    override suspend fun confirmUserAction(
+        product: ProductExecutionConfig,
+        route: RequestRoute,
+        review: UserConfirmationReview,
+    ): Boolean =
+        withHostRejection { bridge.confirmUserAction(product, route, review) }
 
-    override suspend fun confirmPermission(review: UserConfirmationReview): PermissionDecision =
-        withHostRejection { bridge.confirmPermission(review) }
+    override suspend fun confirmPermission(
+        product: ProductExecutionConfig,
+        route: RequestRoute,
+        review: UserConfirmationReview,
+    ): PermissionDecision =
+        withHostRejection { bridge.confirmPermission(product, route, review) }
 
     override suspend fun lookupPreimage(key: ByteArray): ByteArray? =
         withHostRejection { bridge.lookupPreimage(key) }

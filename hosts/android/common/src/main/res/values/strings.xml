@@ -830,6 +830,7 @@ I’m attaching PDF with more information and details regarding the Tattoo Stenc
 
     <string name="sign_transaction_failed_title">Failed to load transaction</string>
     <string name="sign_transaction_title">%s requests signature</string>
+    <string name="sign_transaction_title_via">%1$s requests signature via %2$s</string>
     <string name="sign_transaction_view_details">View Details</string>
     <string name="sign_transaction_reject">Reject</string>
     <string name="sign_transaction_approve">Sign</string>

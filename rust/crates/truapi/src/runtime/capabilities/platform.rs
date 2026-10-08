@@ -81,6 +81,13 @@ impl System for ProductRuntimeHost {
         request: HostNavigateToRequest,
     ) -> Result<HostNavigateToResponse, CallError<HostNavigateToError>> {
         let HostNavigateToRequest::V1(v01::HostNavigateToRequest { url }) = request;
+        let withdrawn = || {
+            cx.cancel().reason().map(|reason| {
+                CallError::Domain(HostNavigateToError::V1(v01::HostNavigateToError::Unknown {
+                    reason: format!("navigation {reason}"),
+                }))
+            })
+        };
         let resolved = match parse_navigate(&url) {
             NavigateDecision::Reject { reason } => {
                 return Err(CallError::Domain(HostNavigateToError::V1(
@@ -95,8 +102,12 @@ impl System for ProductRuntimeHost {
             | NavigateDecision::Localhost { canonical_url, .. }
             | NavigateDecision::Pocket { canonical_url, .. } => canonical_url,
             NavigateDecision::External { url } => {
+                if let Some(err) = withdrawn() {
+                    return Err(err);
+                }
                 let status = self
                     .permissions_service()
+                    .withdrawn_by(cx.cancel().clone())
                     .authorize_device(v01::HostDevicePermissionRequest::OpenUrl)
                     .await
                     .map_err(|error| CallError::HostFailure {
@@ -110,12 +121,8 @@ impl System for ProductRuntimeHost {
                 url
             }
         };
-        if let Some(reason) = cx.cancel().reason() {
-            return Err(CallError::Domain(HostNavigateToError::V1(
-                v01::HostNavigateToError::Unknown {
-                    reason: format!("navigation {reason}"),
-                },
-            )));
+        if let Some(err) = withdrawn() {
+            return Err(err);
         }
         self.platform
             .navigate_to(resolved)
@@ -143,11 +150,11 @@ impl Permissions for ProductRuntimeHost {
     #[instrument(skip_all, fields(runtime.method = "permissions.authorize_device_permission"))]
     async fn authorize_device_permission(
         &self,
-        _cx: &CallContext,
+        cx: &CallContext,
         request: HostDevicePermissionRequest,
     ) -> Result<HostDevicePermissionResponse, CallError<HostDevicePermissionError>> {
         let HostDevicePermissionRequest::V1(inner) = request;
-        let service = self.permissions_service();
+        let service = self.permissions_service().withdrawn_by(cx.cancel().clone());
         match service.authorize_device(inner).await {
             Ok(decision) => Ok(HostDevicePermissionResponse::V1(
                 v01::HostDevicePermissionResponse {
@@ -163,11 +170,11 @@ impl Permissions for ProductRuntimeHost {
     #[instrument(skip_all, fields(runtime.method = "permissions.authorize_remote_permission"))]
     async fn authorize_remote_permission(
         &self,
-        _cx: &CallContext,
+        cx: &CallContext,
         request: RemotePermissionRequest,
     ) -> Result<RemotePermissionResponse, CallError<RemotePermissionError>> {
         let RemotePermissionRequest::V1(inner) = request;
-        let service = self.permissions_service();
+        let service = self.permissions_service().withdrawn_by(cx.cancel().clone());
         match service.authorize_remote(inner).await {
             Ok(decision) => Ok(RemotePermissionResponse::V1(
                 v01::RemotePermissionResponse {
@@ -183,11 +190,11 @@ impl Permissions for ProductRuntimeHost {
     #[instrument(skip_all, fields(runtime.method = "permissions.request_device_permission"))]
     async fn request_device_permission(
         &self,
-        _cx: &CallContext,
+        cx: &CallContext,
         request: HostDevicePermissionRequest,
     ) -> Result<HostDevicePermissionResponse, CallError<HostDevicePermissionError>> {
         let HostDevicePermissionRequest::V1(inner) = request;
-        let service = self.permissions_service();
+        let service = self.permissions_service().withdrawn_by(cx.cancel().clone());
         match service.check_or_prompt_device(inner).await {
             Ok(decision) => Ok(HostDevicePermissionResponse::V1(
                 v01::HostDevicePermissionResponse {
@@ -203,11 +210,11 @@ impl Permissions for ProductRuntimeHost {
     #[instrument(skip_all, fields(runtime.method = "permissions.request_remote_permission"))]
     async fn request_remote_permission(
         &self,
-        _cx: &CallContext,
+        cx: &CallContext,
         request: RemotePermissionRequest,
     ) -> Result<RemotePermissionResponse, CallError<RemotePermissionError>> {
         let RemotePermissionRequest::V1(inner) = request;
-        let service = self.permissions_service();
+        let service = self.permissions_service().withdrawn_by(cx.cancel().clone());
         match service.check_or_prompt_remote(inner).await {
             Ok(decision) => Ok(RemotePermissionResponse::V1(
                 v01::RemotePermissionResponse {
@@ -424,8 +431,21 @@ impl Notifications for ProductRuntimeHost {
         request: HostPushNotificationRequest,
     ) -> Result<HostPushNotificationResponse, CallError<HostPushNotificationError>> {
         let HostPushNotificationRequest::V1(inner) = request;
+        let withdrawn = || {
+            cx.cancel().reason().map(|reason| {
+                CallError::Domain(HostPushNotificationError::V1(
+                    v01::HostPushNotificationError::Unknown {
+                        reason: format!("notification {reason}"),
+                    },
+                ))
+            })
+        };
+        if let Some(err) = withdrawn() {
+            return Err(err);
+        }
         let status = self
             .permissions_service()
+            .withdrawn_by(cx.cancel().clone())
             .authorize_device(v01::HostDevicePermissionRequest::Notifications)
             .await
             .map_err(|err| CallError::HostFailure {
@@ -438,12 +458,8 @@ impl Notifications for ProductRuntimeHost {
                 },
             )));
         }
-        if let Some(reason) = cx.cancel().reason() {
-            return Err(CallError::Domain(HostPushNotificationError::V1(
-                v01::HostPushNotificationError::Unknown {
-                    reason: format!("notification {reason}"),
-                },
-            )));
+        if let Some(err) = withdrawn() {
+            return Err(err);
         }
         self.platform
             .push_notification(inner)

@@ -7,9 +7,11 @@ enum ProductsSignConfirmViewFactory {
     ) -> PolkadotSigningViewProtocol {
         let wireframe = ProductsSignConfirmWireframe(context: context)
         let interactor = ProductsSignConfirmInteractor(context: context)
+        let iconFactory: ProductIconViewModelMaking? = RootDependencyLocator.getDependency()
         let presenter = ProductsSignConfirmPresenter(
             interactor: interactor,
-            wireframe: wireframe
+            wireframe: wireframe,
+            requesterIcon: context.requester.productId.flatMap { iconFactory?.createViewModel(for: $0) }
         )
         let view = PolkadotSigningViewController(presenter: presenter)
 

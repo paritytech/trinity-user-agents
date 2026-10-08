@@ -34,10 +34,10 @@ final class SSOAliasRequestHandler: SSORequestHandling {
         let aliasResult: PolkadotHostRemoteMessage.AliasResult
 
         do {
-            let handler = handlerFactory.makeAliasHandler(callingProductId: request.callingProductId)
+            let handler = handlerFactory.makeAliasHandler(callingProductId: request.caller.productId)
             let alias = try await handler.getContextualAlias(
-                context: request.context,
-                ring: request.ring
+                context: request.payload.context,
+                ring: request.payload.ring
             )
             aliasResult = .success(alias)
         } catch {

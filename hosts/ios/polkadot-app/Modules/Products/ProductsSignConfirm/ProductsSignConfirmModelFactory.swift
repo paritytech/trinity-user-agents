@@ -112,21 +112,21 @@ private extension ProductsSignConfirmModelFactory {
 private extension ProductsSignConfirmModelFactory {
     func payloadCall(from review: SignPayloadReview) -> (call: Data, genesisHash: Data) {
         switch review {
-        case let .product(_, request): (request.payload.method, request.payload.genesisHash)
+        case let .product(request): (request.payload.method, request.payload.genesisHash)
         case let .legacyAccount(request): (request.payload.method, request.payload.genesisHash)
         }
     }
 
     func transactionCall(from review: CreateTransactionReview) -> (call: Data, genesisHash: Data) {
         switch review {
-        case let .product(_, payload): (payload.callData, payload.genesisHash)
+        case let .product(payload): (payload.callData, payload.genesisHash)
         case let .legacyAccount(payload): (payload.callData, payload.genesisHash)
         }
     }
 
     func rawPayload(from review: SignRawReview) -> (payload: RawPayload, watermarked: Bool) {
         switch review {
-        case let .product(_, request, watermarked): (request.payload, watermarked)
+        case let .product(request, watermarked): (request.payload, watermarked)
         case let .legacyAccount(request, watermarked): (request.payload, watermarked)
         }
     }

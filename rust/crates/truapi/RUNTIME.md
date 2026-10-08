@@ -271,9 +271,13 @@ allowance helpers. Resource consent is bound to the request's signing session:
 account changes, disconnects, and reactivation invalidate pending approval before
 allocation or key return. Allocation failure details stay in local transcripts.
 Allocation requests use the canonical `truapi::latest::AllocatableResource` type.
-Signing uses canonical request and result types. Product-scoped VRF requests use
-`ProductRequest<P>` to attach the caller to a canonical payload. Both product and
-SSO signing encode `with_signed_transaction` with the one-byte `OptionBool` codec.
+Signing uses canonical request and result types. Every product-originated request
+(signing, transaction creation, resource allocation, VRF and ring-VRF) wraps its
+payload in `ProductRequest<P>`, which carries the caller's `ProductContext`; the
+signing host names that product in its `confirm_user_action` and
+`confirm_permission` prompts, with a `RequestRoute::PairedHost` naming the peer
+the request arrived from. Both product and SSO signing encode
+`with_signed_transaction` with the one-byte `OptionBool` codec.
 
 A pairing host that stops waiting because its caller withdrew the request sends
 a `Cancel` naming it, when that request is still the newest on the session's
@@ -387,7 +391,8 @@ AutoSigning without approval. Legacy-account signing still asks the user.
   without linking the runtime, and re-exported here.
 - `AuthPresenter`: render core-owned auth state transitions.
 - `UserConfirmation`: confirm signing, transaction, resource, alias, and
-  preimage actions before the core asks the paired wallet.
+  preimage actions, naming the product that asked and the `RequestRoute` its
+  request arrived by.
 - `ThemeHost`: stream the host theme into the runtime.
 - `PreimageHost`: submit and look up preimages through the host-selected backend.
 - `ChatPlatform`: create product-scoped native chat rooms, register product
@@ -424,6 +429,12 @@ host supplies each only when it can serve it. `ExpandedCardHost` is in neither,
 because it travels per connection rather than with the platform. Codegen reads
 `OptionalPlatform` to emit each listed capability as an optional group on the
 host-callback surface.
+
+`PromptPlatform` lists the capability traits whose async callbacks put a prompt
+in front of the user, `Permissions` and `UserConfirmation`. The core withdraws
+such a prompt by dropping its future, so a host should dismiss the prompt when
+that happens. Codegen reads `PromptPlatform` to give each of these callbacks a
+trailing `{ signal }` on the JS surface, aborted on withdrawal.
 
 Omitting `ChatPlatform` makes the core answer Chat calls `Unsupported`, and
 omitting `ContactsPlatform`, `PocketPlatform` or `GamePlatform` does the same

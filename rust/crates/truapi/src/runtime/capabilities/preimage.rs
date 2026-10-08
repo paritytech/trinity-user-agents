@@ -101,6 +101,7 @@ impl Preimage for ProductRuntimeHost {
         };
         let bulletin = &self.services.bulletin;
         self.require_remote_permission(
+            cx,
             v01::RemotePermission::PreimageSubmit,
             RemotePreimageSubmitError::V1(v01::PreimageSubmitError::Unknown {
                 reason: PERMISSION_DENIED_REASON.to_string(),
@@ -132,7 +133,7 @@ impl Preimage for ProductRuntimeHost {
         let allowance = remote_authority_call(
             &authority_cx,
             self.authority
-                .bulletin_allowance_key(&authority_cx, &session, self.product_id()),
+                .bulletin_allowance_key(&authority_cx, &session, &self.product),
         )
         .await
         .map_err(|err| preimage_submit_error(bulletin_allowance_error_reason(err)))?;
@@ -167,7 +168,7 @@ impl Preimage for ProductRuntimeHost {
                     self.authority.refresh_bulletin_allowance_key(
                         &authority_cx,
                         &session,
-                        self.product_id(),
+                        &self.product,
                     ),
                 )
                 .await

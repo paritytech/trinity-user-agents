@@ -1,5 +1,6 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.truapi
 
+import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_api.model.signing.SignedTransaction
 import io.paritytech.polkadotapp.feature_products_api.model.signing.SigningAccount
 import io.paritytech.polkadotapp.feature_products_api.model.signing.SigningContext
@@ -15,11 +16,11 @@ import kotlinx.coroutines.CompletableDeferred
  * modal and the layout are the native path's.
  */
 class TrUAPISigningContext(
-    override val requesterName: String,
+    override val requesterProduct: ProductId,
     override val signingRequestBody: SigningRequestBody,
     override val signingAccount: SigningAccount,
 ) : SigningContext {
-    // Matches the native host, which has no icon for a product either.
+    override val requesterName: String = requesterProduct.value
     override val requesterIconUrl: String = ""
 
     private val decision = CompletableDeferred<Boolean>()

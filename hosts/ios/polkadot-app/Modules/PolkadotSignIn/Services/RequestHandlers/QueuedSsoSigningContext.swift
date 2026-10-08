@@ -17,6 +17,7 @@ final class QueuedSsoSigningContext: PolkadotSigningContextProtocol {
 
     init(
         host: PolkadotSignInHost,
+        requester: PolkadotSigningRequester,
         requestMessageId: String,
         signingModel: PolkadotHostSigningModel,
         messageSender: any PolkadotHostMessageSending<PolkadotHostRemoteMessage>,
@@ -29,7 +30,7 @@ final class QueuedSsoSigningContext: PolkadotSigningContextProtocol {
         self.messageSender = messageSender
         self.onCompleted = onCompleted
         self.logger = logger
-        requester = PolkadotSigningRequester(name: host.name, iconUrl: host.iconUrl)
+        self.requester = requester
     }
 
     deinit {

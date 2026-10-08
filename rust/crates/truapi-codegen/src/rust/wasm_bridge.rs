@@ -46,6 +46,7 @@ pub fn generate_wasm_bridge(
             WasmPlatform, call_js_function, decode_bytes, decode_js_item, generic, get_function,
             get_optional_function, invoke_bool, invoke_bytes_return, invoke_js_subscription,
             invoke_optional_bytes_return, invoke_unit, missing_callback, parse_optional_bytes_item,
+            withdrawable,
         }};
 
         /// JS-side callbacks invoked by the wasm platform bridge. Methods with
@@ -315,25 +316,19 @@ fn emit_result_method(
     let map_err = error_mapper(err, ctx)?;
 
     let body = if is_unit(ok) {
-        await_chain(
-            &bridge_call("invoke_unit", &method.name, &args, &[]),
-            &map_err,
-        )
+        await_chain(&invoke_call(method, "invoke_unit", &args, &[]), &map_err)
     } else if is_bool(ok) {
-        await_chain(
-            &bridge_call("invoke_bool", &method.name, &args, &[]),
-            &map_err,
-        )
+        await_chain(&invoke_call(method, "invoke_bool", &args, &[]), &map_err)
     } else if is_bytes(ok) {
         await_chain(
-            &bridge_call("invoke_bytes_return", &method.name, &args, &[]),
+            &invoke_call(method, "invoke_bytes_return", &args, &[]),
             &map_err,
         )
     } else if is_optional_bytes(ok) {
         await_chain(
-            &bridge_call(
+            &invoke_call(
+                method,
                 "invoke_optional_bytes_return",
-                &method.name,
                 &args,
                 &[format!(
                     "{:?}",
@@ -448,7 +443,7 @@ fn formatdoc_decode_result(
     ctx: &BridgeCtx<'_>,
 ) -> Result<String> {
     let ty = rust_type(ok, ctx)?;
-    let call = bridge_call("invoke_bytes_return", &method.name, args, &[]);
+    let call = invoke_call(method, "invoke_bytes_return", args, &[]);
     let await_bytes = await_chain(&call, &format!("{map_err}?"));
     Ok(format!(
         "let bytes = {await_bytes};\ndecode_bytes::<{ty}>(\n    bytes,\n    {:?},\n)\n{map_err}",
@@ -507,6 +502,21 @@ fn bridge_call(name: &str, field: &str, second_arg: &str, extra_args: &[String])
     }
     out.push(')');
     out
+}
+
+/// The bridge call for `method` through `helper`. A withdrawable callback's
+/// call runs inside `withdrawable`, which appends the `{ signal }` options
+/// argument and aborts it if the core drops the future first.
+fn invoke_call(method: &PlatformMethod, helper: &str, args: &str, extra_args: &[String]) -> String {
+    if !method.withdrawable {
+        return bridge_call(helper, &method.name, args, extra_args);
+    }
+    let call = bridge_call(helper, &method.name, "args", extra_args);
+    format!(
+        "withdrawable(\n{},\n    |args| {},\n)",
+        indent_body(args, 4),
+        indent_body(&call, 4).trim_start(),
+    )
 }
 
 fn await_chain(call: &str, map_err: &str) -> String {

@@ -10,7 +10,7 @@ use truapi::platform::{
     AuthPresenter, ChainProvider, CoreStorage, CoreStorageKey, Features, HostInfo,
     JsonRpcConnection, LocaleHost, Navigation, Notifications, PairingHostConfig, Permissions,
     PlatformInfo, PreimageHost, ProductContext, ProductOperations, ProductStorage, ProviderError,
-    ThemeHost, UserConfirmation, UserConfirmationReview,
+    RequestRoute, ThemeHost, UserConfirmation, UserConfirmationReview,
 };
 use truapi::transport::Transport;
 use truapi::v01;
@@ -238,6 +238,8 @@ impl CoreStorage for WireShapePlatform {
 impl UserConfirmation for WireShapePlatform {
     async fn confirm_user_action(
         &self,
+        _product: &ProductContext,
+        _route: &RequestRoute,
         _review: UserConfirmationReview,
     ) -> Result<bool, v01::GenericError> {
         Ok(false)

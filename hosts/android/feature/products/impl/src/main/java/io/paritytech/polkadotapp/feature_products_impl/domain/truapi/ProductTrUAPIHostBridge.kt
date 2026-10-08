@@ -50,6 +50,7 @@ import uniffi.truapi.RemotePermission
 import uniffi.truapi.ThemeName
 import uniffi.truapi.AuthState
 import uniffi.truapi.HostChainSet
+import uniffi.truapi.RequestRoute
 import uniffi.truapi.UserConfirmationReview
 import uniffi.truapi.HostNavigateToException
 import uniffi.truapi.HostRejection
@@ -188,8 +189,12 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
             Timber.tag("truapi.auth").d("%s: %s", callingProductId.value, state.marker())
         }
 
-        override suspend fun confirmUserAction(review: UserConfirmationReview): Boolean =
-            confirmationLauncher.decide(review, requesterFallback = callingProductId.value)
+        override suspend fun confirmUserAction(
+            product: ProductExecutionConfig,
+            route: RequestRoute,
+            review: UserConfirmationReview,
+        ): Boolean =
+            confirmationLauncher.decide(review, requester = callingProductId.value)
 
         override suspend fun devicePermission(
             product: ProductExecutionConfig,
@@ -344,14 +349,13 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
  * Confirm-only: the core owns the key and signs after approval, so this
  * answers yes/no and never produces a signature. A review the app cannot
  * describe fails closed, but that is a mapping bug rather than the normal
- * path. [requesterFallback] names the requester for the one review that does
- * not carry a product id itself.
+ * path. [requester] names the product the review is shown for.
  */
 internal suspend fun TrUAPIConfirmationLauncher.decide(
     review: UserConfirmationReview,
-    requesterFallback: String,
+    requester: String,
 ): Boolean {
-    val confirmation = runCatching { review.toConfirmation(requesterFallback) }
+    val confirmation = runCatching { review.toConfirmation(requester) }
         .getOrElse {
             Timber.w(it, "truapi.confirm: could not describe review, rejecting")
             return false

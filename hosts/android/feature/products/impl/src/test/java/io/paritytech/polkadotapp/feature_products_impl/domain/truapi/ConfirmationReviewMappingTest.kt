@@ -48,8 +48,7 @@ class ConfirmationReviewMappingTest {
     fun `sign payload product maps to transaction`() {
         val review = UserConfirmationReview.SignPayload(
             SignPayloadReview.Product(
-                callingProductId = caller,
-                request = HostSignPayloadRequest(account = nativeAccount(), payload = signPayloadData()),
+                HostSignPayloadRequest(account = nativeAccount(), payload = signPayloadData()),
             ),
         )
 
@@ -98,7 +97,6 @@ class ConfirmationReviewMappingTest {
     fun `sign raw product bytes maps to raw`() {
         val review = UserConfirmationReview.SignRaw(
             SignRawReview.Product(
-                callingProductId = caller,
                 request = HostSignRawRequest(
                     account = nativeAccount(),
                     payload = RawPayload.Bytes(byteArrayOf(0xca.toByte(), 0xfe.toByte())),
@@ -139,7 +137,6 @@ class ConfirmationReviewMappingTest {
     fun `a raw payload with no transaction-payload protection is refused, not shown as a message`() {
         val product = UserConfirmationReview.SignRaw(
             SignRawReview.Product(
-                callingProductId = caller,
                 request = HostSignRawRequest(account = nativeAccount(), payload = RawPayload.Payload("hello")),
                 watermarked = false,
             ),
@@ -159,8 +156,7 @@ class ConfirmationReviewMappingTest {
     fun `create transaction product maps extensions`() {
         val review = UserConfirmationReview.CreateTransaction(
             CreateTransactionReview.Product(
-                callingProductId = caller,
-                payload = ProductAccountTxPayload(
+                ProductAccountTxPayload(
                     signer = nativeAccount(),
                     genesisHash = ByteArray(32) { 3 },
                     callData = byteArrayOf(9),
@@ -209,7 +205,6 @@ class ConfirmationReviewMappingTest {
     fun `sign vrf maps transcript`() {
         val review = UserConfirmationReview.SignVrf(
             SignVrfReview(
-                callingProductId = "caller-product.dot",
                 request = HostAccountSignVrfRequest(
                     account = nativeAccount(),
                     transcriptLabel = "pop:airdrop".toByteArray(),
@@ -248,7 +243,6 @@ class ConfirmationReviewMappingTest {
 
     private fun signVrfReview(derivationIndex: DerivationIndex) = UserConfirmationReview.SignVrf(
         SignVrfReview(
-            callingProductId = "caller-product.dot",
             request = HostAccountSignVrfRequest(
                 account = NativeProductAccountId(
                     dotNsIdentifier = "demo-product.dot",
@@ -264,7 +258,6 @@ class ConfirmationReviewMappingTest {
     fun `statement store sign maps to a statement confirmation`() {
         val review = UserConfirmationReview.StatementStoreProductSign(
             StatementStoreProductSignReview(
-                callingProductId = caller,
                 account = nativeAccount(),
                 payload = byteArrayOf(1, 2, 3),
             ),
@@ -321,7 +314,6 @@ class ConfirmationReviewMappingTest {
     fun `resource allocation labels every resource`() {
         val review = UserConfirmationReview.ResourceAllocation(
             ResourceAllocationReview(
-                callingProductId = "caller.dot",
                 resources = listOf(
                     AllocatableResource.StatementStoreAllowance,
                     AllocatableResource.AutoSigning,
@@ -332,6 +324,7 @@ class ConfirmationReviewMappingTest {
         val confirmation = review.toConfirmation(caller) as TrUAPIConfirmation.ResourceAllocation
 
         assertEquals(2, confirmation.resources.size)
+        assertEquals(caller, confirmation.requesterProductId)
     }
 
     private fun UserConfirmationReview.signingRequest(): SigningRequestBody =

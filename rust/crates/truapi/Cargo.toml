@@ -153,7 +153,7 @@ wasm-bindgen-futures = { workspace = true, optional = true }
 console_error_panic_hook = { workspace = true, optional = true }
 send_wrapper = { workspace = true, features = ["futures"], optional = true }
 web-time = { workspace = true, optional = true }
-web-sys = { workspace = true, features = ["console"], optional = true }
+web-sys = { workspace = true, features = ["AbortController", "AbortSignal", "console"], optional = true }
 
 [dev-dependencies]
 scale-info = { workspace = true, features = ["std"] }

@@ -3,15 +3,18 @@ import UIKit
 final class SSOCreateTransactionHandler: SSORequestHandling {
     private let messageSender: any PolkadotHostMessageSending<PolkadotHostRemoteMessage>
     private let signingHandler: TransactionSigningHandling
+    private let pairedDeviceNames: PairedDeviceNameResolving
     private let logger: LoggerProtocol
 
     init(
         messageSender: any PolkadotHostMessageSending<PolkadotHostRemoteMessage>,
         signingHandler: TransactionSigningHandling,
+        pairedDeviceNames: PairedDeviceNameResolving = PairedDeviceNameResolver(),
         logger: LoggerProtocol = Logger.shared
     ) {
         self.messageSender = messageSender
         self.signingHandler = signingHandler
+        self.pairedDeviceNames = pairedDeviceNames
         self.logger = logger
     }
 
@@ -30,11 +33,17 @@ final class SSOCreateTransactionHandler: SSORequestHandling {
 
         logger.info("Will start create transaction")
 
+        let pairedDeviceName = await pairedDeviceNames.deviceName(forStatementAccountId: host.accountId)
+
         await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
             let context = QueuedCreateTransactionContext(
                 host: host,
+                requester: PolkadotSigningRequester(
+                    productId: value.caller.productId,
+                    pairedDeviceName: pairedDeviceName
+                ),
                 requestMessageId: message.messageId,
-                signingModel: .createTransaction(value.toDomainPayload()),
+                signingModel: .createTransaction(value.payload.toDomainPayload()),
                 messageSender: messageSender,
                 onCompleted: { continuation.resume() }
             )

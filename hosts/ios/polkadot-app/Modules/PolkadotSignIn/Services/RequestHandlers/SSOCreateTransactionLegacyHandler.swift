@@ -4,17 +4,20 @@ import KeyDerivation
 final class SSOCreateTransactionLegacyHandler: SSORequestHandling {
     private let messageSender: any PolkadotHostMessageSending<PolkadotHostRemoteMessage>
     private let signingHandler: TransactionSigningHandling
+    private let pairedDeviceNames: PairedDeviceNameResolving
     private let accountResolver: IdentityAccountResolving
     private let logger: LoggerProtocol
 
     init(
         messageSender: any PolkadotHostMessageSending<PolkadotHostRemoteMessage>,
         signingHandler: TransactionSigningHandling,
+        pairedDeviceNames: PairedDeviceNameResolving = PairedDeviceNameResolver(),
         accountResolver: IdentityAccountResolving = IdentityAccountResolver(),
         logger: LoggerProtocol = Logger.shared
     ) {
         self.messageSender = messageSender
         self.signingHandler = signingHandler
+        self.pairedDeviceNames = pairedDeviceNames
         self.accountResolver = accountResolver
         self.logger = logger
     }
@@ -34,7 +37,7 @@ final class SSOCreateTransactionLegacyHandler: SSORequestHandling {
 
         logger.info("Will start legacy create transaction")
 
-        let payload = value.toDomainPayload()
+        let payload = value.payload.toDomainPayload()
 
         do {
             try accountResolver.resolveWallet(for: payload.signer.accountId)
@@ -44,9 +47,15 @@ final class SSOCreateTransactionLegacyHandler: SSORequestHandling {
             return
         }
 
+        let pairedDeviceName = await pairedDeviceNames.deviceName(forStatementAccountId: host.accountId)
+
         await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
             let context = QueuedCreateTransactionContext(
                 host: host,
+                requester: PolkadotSigningRequester(
+                    productId: value.caller.productId,
+                    pairedDeviceName: pairedDeviceName
+                ),
                 requestMessageId: message.messageId,
                 signingModel: .legacyCreateTransaction(payload: payload),
                 messageSender: messageSender,

@@ -4,17 +4,20 @@ import KeyDerivation
 final class SSOSignRawLegacyHandler: SSORequestHandling {
     private let messageSender: any PolkadotHostMessageSending<PolkadotHostRemoteMessage>
     private let signingHandler: TransactionSigningHandling
+    private let pairedDeviceNames: PairedDeviceNameResolving
     private let accountResolver: IdentityAccountResolving
     private let logger: LoggerProtocol
 
     init(
         messageSender: any PolkadotHostMessageSending<PolkadotHostRemoteMessage>,
         signingHandler: TransactionSigningHandling,
+        pairedDeviceNames: PairedDeviceNameResolving = PairedDeviceNameResolver(),
         accountResolver: IdentityAccountResolving = IdentityAccountResolver(),
         logger: LoggerProtocol = Logger.shared
     ) {
         self.messageSender = messageSender
         self.signingHandler = signingHandler
+        self.pairedDeviceNames = pairedDeviceNames
         self.accountResolver = accountResolver
         self.logger = logger
     }
@@ -33,18 +36,24 @@ final class SSOSignRawLegacyHandler: SSORequestHandling {
         }
 
         do {
-            try accountResolver.resolveWallet(for: value.account)
+            try accountResolver.resolveWallet(for: value.payload.account)
         } catch {
             logger.error("Legacy sign raw account resolution failed: \(error)")
             await sendRejection(requestMessageId: message.messageId, to: host)
             return
         }
 
+        let pairedDeviceName = await pairedDeviceNames.deviceName(forStatementAccountId: host.accountId)
+
         await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
             let context = QueuedSsoSignRawLegacyContext(
                 host: host,
+                requester: PolkadotSigningRequester(
+                    productId: value.caller.productId,
+                    pairedDeviceName: pairedDeviceName
+                ),
                 requestMessageId: message.messageId,
-                signingModel: .legacyRawPayload(account: value.account, type: value.type),
+                signingModel: .legacyRawPayload(account: value.payload.account, type: value.payload.type),
                 messageSender: messageSender,
                 logger: logger,
                 onCompleted: { continuation.resume() }

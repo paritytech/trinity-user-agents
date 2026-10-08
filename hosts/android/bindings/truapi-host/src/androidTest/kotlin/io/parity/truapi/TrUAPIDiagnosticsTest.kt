@@ -16,6 +16,7 @@ import uniffi.truapi.HostFeatureSupportedRequest
 import uniffi.truapi.HostDevicePermissionRequest
 import uniffi.truapi.RemotePermission
 import uniffi.truapi.PermissionDecision
+import uniffi.truapi.RequestRoute
 import uniffi.truapi.UserConfirmationReview
 import uniffi.truapi.HostRuntimeConfig
 import uniffi.truapi.ProductExecutionConfig
@@ -96,7 +97,11 @@ class TrUAPIDiagnosticsTest {
                 product: ProductExecutionConfig,
                 request: RemotePermission,
             ): PermissionDecision = PermissionDecision.ALLOW_ALWAYS
-            override suspend fun confirmUserAction(review: UserConfirmationReview): Boolean = true
+            override suspend fun confirmUserAction(
+                product: ProductExecutionConfig,
+                route: RequestRoute,
+                review: UserConfirmationReview,
+            ): Boolean = true
             override suspend fun featureSupported(request: HostFeatureSupportedRequest): Boolean = false
             override fun chainConnect(genesisHash: ByteArray): UInt? = chainProvider.connect(genesisHash)
             override fun chainSend(connectionId: UInt, request: String) = chainProvider.send(connectionId, request)

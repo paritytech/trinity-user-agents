@@ -555,8 +555,9 @@ impl NativeTrUApiHostRuntime {
             .map_err(Into::into)
     }
 
-    /// Answer one decrypted SSO remote message from a wallet-managed
-    /// statement-store session.
+    /// Answer one decrypted SSO remote message `peer` sent over a
+    /// wallet-managed statement-store session. The confirmations it raises
+    /// name `peer` as the paired host.
     ///
     /// `message` is one SCALE-encoded `RemoteMessage` exactly as decrypted from
     /// the session statement. The bytes are deliberately opaque at this
@@ -571,11 +572,12 @@ impl NativeTrUApiHostRuntime {
     /// The withdrawn request, and the `Cancel` itself, answer `Ignored`.
     pub async fn handle_sso_request(
         &self,
+        peer: PairedSsoPeer,
         message: Vec<u8>,
     ) -> Result<SsoRequestOutcome, HostRejection> {
         let message =
             decode_remote_message(&message).map_err(|reason| HostRejection::Rejected { reason })?;
-        Ok(self.runtime.answer_sso_request(message).await)
+        Ok(self.runtime.answer_sso_request(peer, message).await)
     }
 
     /// Build the SCALE-encoded `Disconnected` message a wallet posts over a

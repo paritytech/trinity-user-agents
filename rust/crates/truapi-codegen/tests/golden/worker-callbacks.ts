@@ -52,9 +52,14 @@ export const SUBSCRIPTION_NAMES = [
 export type SubscriptionName = (typeof SUBSCRIPTION_NAMES)[number];
 
 export interface WorkerCallbackBridge {
+  /**
+   * Run a main-thread callback. `signal` accompanies a prompt callback;
+   * when it aborts, the bridge withdraws the prompt on the main thread.
+   */
   callbackRequest(
     name: CallbackName,
     args: readonly unknown[],
+    signal?: AbortSignal,
   ): Promise<unknown>;
   startSubscription<T>(
     name: SubscriptionName,
@@ -125,16 +130,18 @@ function rawCallbacks(
       bridge.callbackRequest("cancelNotification", [id]) as ReturnType<
         Required<RawCallbacks>["cancelNotification"]
       >,
-    devicePermission: (product, request) =>
-      bridge.callbackRequest("devicePermission", [
-        product,
-        request,
-      ]) as ReturnType<Required<RawCallbacks>["devicePermission"]>,
-    remotePermission: (product, request) =>
-      bridge.callbackRequest("remotePermission", [
-        product,
-        request,
-      ]) as ReturnType<Required<RawCallbacks>["remotePermission"]>,
+    devicePermission: (product, request, options) =>
+      bridge.callbackRequest(
+        "devicePermission",
+        [product, request],
+        options.signal,
+      ) as ReturnType<Required<RawCallbacks>["devicePermission"]>,
+    remotePermission: (product, request, options) =>
+      bridge.callbackRequest(
+        "remotePermission",
+        [product, request],
+        options.signal,
+      ) as ReturnType<Required<RawCallbacks>["remotePermission"]>,
     beginOperation: (product, label) =>
       bridge.callbackRequest("beginOperation", [product, label]) as ReturnType<
         Required<RawCallbacks>["beginOperation"]
@@ -155,14 +162,18 @@ function rawCallbacks(
       bridge.callbackRequest("clear", [key]) as ReturnType<
         Required<RawCallbacks>["clear"]
       >,
-    confirmPermission: (review) =>
-      bridge.callbackRequest("confirmPermission", [review]) as ReturnType<
-        Required<RawCallbacks>["confirmPermission"]
-      >,
-    confirmUserAction: (review) =>
-      bridge.callbackRequest("confirmUserAction", [review]) as ReturnType<
-        Required<RawCallbacks>["confirmUserAction"]
-      >,
+    confirmPermission: (product, route, review, options) =>
+      bridge.callbackRequest(
+        "confirmPermission",
+        [product, route, review],
+        options.signal,
+      ) as ReturnType<Required<RawCallbacks>["confirmPermission"]>,
+    confirmUserAction: (product, route, review, options) =>
+      bridge.callbackRequest(
+        "confirmUserAction",
+        [product, route, review],
+        options.signal,
+      ) as ReturnType<Required<RawCallbacks>["confirmUserAction"]>,
   };
 }
 

@@ -4,8 +4,8 @@ use std::sync::{Arc, Mutex};
 use crate::platform::{
     AuthPresenter, ChainProvider, CoreStorage, CoreStorageKey, DevicePermissionStatus, Features,
     JsonRpcConnection, LocaleHost, Navigation, Notifications, PermissionDecision, Permissions,
-    PreimageHost, ProductContext, ProductOperations, ProductStorage, ProviderError, ThemeHost,
-    UserConfirmation, UserConfirmationReview, async_trait,
+    PreimageHost, ProductContext, ProductOperations, ProductStorage, ProviderError, RequestRoute,
+    ThemeHost, UserConfirmation, UserConfirmationReview, async_trait,
 };
 use futures::channel::mpsc;
 use futures::stream::{self, BoxStream, StreamExt};
@@ -437,6 +437,8 @@ impl AuthPresenter for CallbackPlatform {
 impl UserConfirmation for CallbackPlatform {
     async fn confirm_permission(
         &self,
+        product: &ProductContext,
+        route: &RequestRoute,
         review: UserConfirmationReview,
     ) -> Result<PermissionDecision, v01::GenericError> {
         self.callbacks.on_core_log(
@@ -444,13 +446,15 @@ impl UserConfirmation for CallbackPlatform {
             String::new(),
         );
         self.callbacks
-            .confirm_permission(review)
+            .confirm_permission(product.into(), *route, review)
             .await
             .map_err(v01::GenericError::from)
     }
 
     async fn confirm_user_action(
         &self,
+        product: &ProductContext,
+        route: &RequestRoute,
         review: UserConfirmationReview,
     ) -> Result<bool, v01::GenericError> {
         self.callbacks.on_core_log(
@@ -458,7 +462,7 @@ impl UserConfirmation for CallbackPlatform {
             String::new(),
         );
         self.callbacks
-            .confirm_user_action(review)
+            .confirm_user_action(product.into(), *route, review)
             .await
             .map_err(v01::GenericError::from)
     }

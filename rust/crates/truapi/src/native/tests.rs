@@ -6,8 +6,8 @@ use std::sync::{Arc, Mutex};
 use crate::platform::{
     AuthPresenter, AuthState, ChainProvider, DevicePermissionStatus, LocaleHost,
     PermissionAuthorizationRequest, PermissionAuthorizationStatus, PermissionDecision,
-    PreimageHost, ProductContext, ProductExecutionKind, ProductStorage, ProviderError, ThemeHost,
-    UserConfirmation, UserConfirmationReview,
+    PreimageHost, ProductContext, ProductExecutionKind, ProductStorage, ProviderError, RequestRoute,
+    ThemeHost, UserConfirmation, UserConfirmationReview,
 };
 use futures::stream::{BoxStream, StreamExt};
 use parity_scale_codec::Encode;
@@ -32,6 +32,7 @@ use super::platform::{
 };
 use super::runtime::{NativePairingError, NativeProductExecution, NativeTrUApiHostRuntime};
 use crate::platform::CreateTransactionReview;
+use crate::test_support::test_sso_peer;
 use futures::FutureExt;
 use truapi::Bytes32;
 use truapi::v01::LegacyAccountTxPayload;
@@ -389,12 +390,16 @@ impl HostCallbacks for EventCallbacks {
     }
     async fn confirm_user_action(
         &self,
+        _product: ProductExecutionConfig,
+        _route: RequestRoute,
         _review: UserConfirmationReview,
     ) -> Result<bool, HostRejection> {
         Ok(false)
     }
     async fn confirm_permission(
         &self,
+        _product: ProductExecutionConfig,
+        _route: RequestRoute,
         _review: UserConfirmationReview,
     ) -> Result<PermissionDecision, HostRejection> {
         Ok(self.permission_confirmation_result)
@@ -1980,6 +1985,8 @@ fn start_ws_bridge_twice_returns_already_running() {
     impl HostCallbacks for Noop {
         async fn confirm_permission(
             &self,
+            _product: ProductExecutionConfig,
+            _route: RequestRoute,
             _review: UserConfirmationReview,
         ) -> Result<PermissionDecision, HostRejection> {
             Ok(PermissionDecision::Deny)
@@ -2058,6 +2065,8 @@ fn start_ws_bridge_twice_returns_already_running() {
         }
         async fn confirm_user_action(
             &self,
+            _product: ProductExecutionConfig,
+            _route: RequestRoute,
             _review: UserConfirmationReview,
         ) -> Result<bool, HostRejection> {
             Ok(false)
@@ -2161,6 +2170,8 @@ fn pending_permission_decision_does_not_stall_bridge() {
     impl HostCallbacks for GatedPermissionCallbacks {
         async fn confirm_permission(
             &self,
+            _product: ProductExecutionConfig,
+            _route: RequestRoute,
             _review: UserConfirmationReview,
         ) -> Result<PermissionDecision, HostRejection> {
             Ok(PermissionDecision::Deny)
@@ -2246,6 +2257,8 @@ fn pending_permission_decision_does_not_stall_bridge() {
         }
         async fn confirm_user_action(
             &self,
+            _product: ProductExecutionConfig,
+            _route: RequestRoute,
             _review: UserConfirmationReview,
         ) -> Result<bool, HostRejection> {
             Ok(false)
@@ -2712,8 +2725,9 @@ pub fn native_host_runtime_no_session() -> Arc<NativeTrUApiHostRuntime> {
 #[test]
 fn handle_sso_request_rejects_undecodable_bytes() {
     let runtime = native_host_runtime_no_session();
-    let result =
-        futures::executor::block_on(runtime.handle_sso_request(vec![0xFF, 0xFF, 0xFF]));
+    let result = futures::executor::block_on(
+        runtime.handle_sso_request(test_sso_peer(), vec![0xFF, 0xFF, 0xFF]),
+    );
     assert!(result.is_err(), "garbage bytes must be a decode error");
 }
 
@@ -2850,10 +2864,17 @@ fn native_permission_confirmation_preserves_consent_lifetime() {
                     product_id: "product.dot".to_string(),
                 },
             );
+            let product = crate::test_support::test_product("product.dot");
             assert_eq!(
                 (
-                    platform.confirm_permission(review.clone()).await.unwrap(),
-                    platform.confirm_user_action(review).await.unwrap(),
+                    platform
+                        .confirm_permission(&product, &RequestRoute::Local, review.clone())
+                        .await
+                        .unwrap(),
+                    platform
+                        .confirm_user_action(&product, &RequestRoute::Local, review)
+                        .await
+                        .unwrap(),
                 ),
                 (decision, false),
             );

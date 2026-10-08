@@ -3,11 +3,13 @@ import Products
 import TrUAPIHost
 
 protocol TrUAPIConfirmationPresenting: Sendable {
-    /// Present an action review, using the bridge's requester name when the review omits it.
-    func confirm(review: UserConfirmationReview, from requesterName: String) async -> Bool
+    /// Present an action review for `requesterName`.
+    /// `route` names the paired device a relayed request arrived from.
+    func confirm(review: UserConfirmationReview, from requesterName: String, route: RequestRoute) async -> Bool
     func confirmPermission(
         review: UserConfirmationReview,
-        from requesterName: String
+        from requesterName: String,
+        route: RequestRoute
     ) async -> TrUAPIPermissionDecision
 }
 
@@ -19,22 +21,25 @@ protocol TrUAPIConfirmationPresenting: Sendable {
 /// stays up and its late decision is discarded.
 final class TrUAPIConfirmationPresenter: TrUAPIConfirmationPresenting, @unchecked Sendable {
     private let routerFacade: ProductRoutersFacadeProtocol
+    private let pairedDeviceNames: PairedDeviceNameResolving
     private let promptMapper: TrUAPIReviewPromptMapping
     private let logger: LoggerProtocol
 
     init(
         routerFacade: ProductRoutersFacadeProtocol,
+        pairedDeviceNames: PairedDeviceNameResolving = PairedDeviceNameResolver(),
         promptMapper: TrUAPIReviewPromptMapping = TrUAPIReviewPromptMapper(),
         logger: LoggerProtocol = Logger.shared
     ) {
         self.routerFacade = routerFacade
+        self.pairedDeviceNames = pairedDeviceNames
         self.promptMapper = promptMapper
         self.logger = logger
     }
 
-    func confirm(review: UserConfirmationReview, from requesterName: String) async -> Bool {
+    func confirm(review: UserConfirmationReview, from requesterName: String, route: RequestRoute) async -> Bool {
         do {
-            return try await dispatch(review: review, from: requesterName)
+            return try await dispatch(review: review, from: requesterName, route: route)
         } catch {
             logger.error("Failed to map confirmation review: \(error)")
             return false
@@ -43,7 +48,8 @@ final class TrUAPIConfirmationPresenter: TrUAPIConfirmationPresenting, @unchecke
 
     func confirmPermission(
         review: UserConfirmationReview,
-        from _: String
+        from requesterName: String,
+        route _: RequestRoute
     ) async -> TrUAPIPermissionDecision {
         switch review {
         case let .identityDisclosure(identityReview):
@@ -56,7 +62,7 @@ final class TrUAPIConfirmationPresenter: TrUAPIConfirmationPresenting, @unchecke
             )
         case let .accountAlias(aliasReview):
             await presentPermission(
-                promptMapper.makePermissionRequest(from: aliasReview)
+                promptMapper.makePermissionRequest(from: aliasReview, requester: requesterName)
             )
         default:
             .deny
@@ -65,12 +71,16 @@ final class TrUAPIConfirmationPresenter: TrUAPIConfirmationPresenting, @unchecke
 }
 
 private extension TrUAPIConfirmationPresenter {
-    func dispatch(review: UserConfirmationReview, from requesterName: String) async throws -> Bool {
+    func dispatch(
+        review: UserConfirmationReview,
+        from requesterName: String,
+        route: RequestRoute
+    ) async throws -> Bool {
         switch review {
         case .signPayload,
              .signRaw,
              .createTransaction:
-            try await confirmSigning(for: review, from: requesterName)
+            try await confirmSigning(for: review, from: requesterName, route: route)
         case let .statementStoreProductSign(statementReview):
             await confirmStatementSign(
                 promptMapper.makeStatementSignRequest(from: statementReview)
@@ -84,18 +94,18 @@ private extension TrUAPIConfirmationPresenter {
         case .identityDisclosure,
              .accountAccess,
              .accountAlias:
-            await confirmPermission(review: review, from: requesterName) != .deny
+            await confirmPermission(review: review, from: requesterName, route: route) != .deny
         case let .createProof(proofReview):
             try await confirmCreateProof(
-                promptMapper.makeCreateProofRequest(from: proofReview)
+                promptMapper.makeCreateProofRequest(from: proofReview, requester: requesterName)
             )
         case let .resourceAllocation(allocationReview):
             try await confirmAllowance(
-                promptMapper.makeAllowanceRequest(from: allocationReview)
+                promptMapper.makeAllowanceRequest(from: allocationReview, requester: requesterName)
             )
         case let .signVrf(vrfReview):
             try await confirmSignVrf(
-                promptMapper.makeSignVrfRequest(from: vrfReview)
+                promptMapper.makeSignVrfRequest(from: vrfReview, requester: requesterName)
             )
         }
     }
@@ -103,24 +113,41 @@ private extension TrUAPIConfirmationPresenter {
     /// Wraps the signing review as a confirm input and presents the sheet. The
     /// sheet renders the review directly (no wallet lookup); the rust core signs
     /// after approval.
-    func confirmSigning(for review: UserConfirmationReview, from requesterName: String) async throws -> Bool {
+    func confirmSigning(
+        for review: UserConfirmationReview,
+        from requesterName: String,
+        route: RequestRoute
+    ) async throws -> Bool {
         guard let input = ProductsSignConfirmInput(review: review) else {
             throw TrUAPIReviewMappingError.notASigningReview
         }
 
-        return await presentSigning(input: input, requester: requesterName)
+        return await presentSigning(input: input, requester: requesterName, route: route)
     }
 
-    func presentSigning(input: ProductsSignConfirmInput, requester: ProductId) async -> Bool {
-        await awaitDecision(cancelled: false) { [routerFacade] in
+    func presentSigning(input: ProductsSignConfirmInput, requester: ProductId, route: RequestRoute) async -> Bool {
+        let signingRequester = await PolkadotSigningRequester(
+            productId: requester,
+            pairedDeviceName: pairedDeviceName(for: route)
+        )
+        return await awaitDecision(cancelled: false) { [routerFacade] in
             await withCheckedContinuation { continuation in
                 let context = ProductsSignConfirmContext(
-                    requester: PolkadotSigningRequester(name: requester, iconUrl: nil),
+                    requester: signingRequester,
                     input: input
                 )
                 context.setContinuation(continuation)
                 routerFacade.productsRouter.showSignConfirmation(with: context)
             }
+        }
+    }
+
+    func pairedDeviceName(for route: RequestRoute) async -> String? {
+        switch route {
+        case .local:
+            nil
+        case let .pairedHost(peer):
+            await pairedDeviceNames.deviceName(forStatementAccountId: peer.statementAccountId)
         }
     }
 

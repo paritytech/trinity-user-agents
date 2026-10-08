@@ -66,11 +66,6 @@ export interface AccountAccessReview {
  */
 export interface AccountAliasReview {
   /**
-   * Product requesting the alias.
-   */
-  callingProductId: string;
-
-  /**
    * Product-scoped context the alias is bound to.
    */
   context: ProductProofContext;
@@ -209,11 +204,6 @@ export type CoreStorageKey =
  */
 export interface CreateProofReview {
   /**
-   * Product requesting the proof.
-   */
-  callingProductId: string;
-
-  /**
    * Product-scoped context the proof's alias is bound to.
    */
   context: ProductProofContext;
@@ -234,12 +224,10 @@ export interface CreateProofReview {
  */
 export type CreateTransactionReview =
   /**
-   * Product-account transaction request.
+   * Product-account transaction request. See `SignPayloadReview::Product`
+   * for an account of another product.
    */
-  | {
-      tag: "Product";
-      value: { callingProductId?: string; payload: ProductAccountTxPayload };
-    }
+  | { tag: "Product"; value: ProductAccountTxPayload }
   /**
    * Legacy-account transaction request.
    */
@@ -378,6 +366,21 @@ export interface IdentityDisclosureReview {
 export type LoginFailureKind = "NoFreeAllowanceSlots" | "Other";
 
 /**
+ * Public key material identifying one pairing host's resumable SSO session.
+ */
+export interface PairedSsoPeer {
+  /**
+   * Pairing host's statement-store account id.
+   */
+  statementAccountId: Uint8Array;
+
+  /**
+   * Pairing host's X25519 public key.
+   */
+  encryptionPublicKey: Uint8Array;
+}
+
+/**
  * Permission request whose authorization status can be inspected or updated
  * by host administration UI.
  */
@@ -470,16 +473,24 @@ export interface ProductSubtreeReview {
 }
 
 /**
- * Review shown before allocating resources for a product. Names the
- * beneficiary product so the user knows which product receives the
- * (signing-capable) allowance key they are approving.
+ * How a request reached this host.
+ */
+export type RequestRoute =
+  /**
+   * The product runs on this host.
+   */
+  | { tag: "Local"; value?: undefined }
+  /**
+   * A paired host relayed the request over SSO; a host names that paired
+   * device beside the product.
+   */
+  | { tag: "PairedHost"; value: { peer: PairedSsoPeer } };
+
+/**
+ * Review shown before allocating resources for a product. The requesting
+ * product receives the (signing-capable) allowance key being approved.
  */
 export interface ResourceAllocationReview {
-  /**
-   * Product the allocation is requested for.
-   */
-  callingProductId: string;
-
   /**
    * Resources to allocate.
    */
@@ -545,12 +556,12 @@ export interface SessionUiInfo {
  */
 export type SignPayloadReview =
   /**
-   * Product-account signing request.
+   * Product-account signing request. The account can belong to a product
+   * other than the one the confirmation names, which is then acting under
+   * that product's `context` grant, and the user is the one who has to see
+   * that.
    */
-  | {
-      tag: "Product";
-      value: { callingProductId?: string; request: HostSignPayloadRequest };
-    }
+  | { tag: "Product"; value: HostSignPayloadRequest }
   /**
    * Legacy-account signing request.
    */
@@ -567,11 +578,7 @@ export type SignRawReview =
    */
   | {
       tag: "Product";
-      value: {
-        callingProductId?: string;
-        request: HostSignRawRequest;
-        watermarked: boolean;
-      };
+      value: { request: HostSignRawRequest; watermarked: boolean };
     }
   /**
    * Legacy-account raw signing request.
@@ -589,11 +596,6 @@ export type SignRawReview =
  */
 export interface SignVrfReview {
   /**
-   * Product making the request.
-   */
-  callingProductId: string;
-
-  /**
    * Product account and exact ordered transcript.
    */
   request: HostAccountSignVrfRequest;
@@ -607,13 +609,8 @@ export interface SignVrfReview {
  */
 export interface StatementStoreProductSignReview {
   /**
-   * Product that asked, when the request carries a caller. See
-   * `SignPayloadReview::Product`.
-   */
-  callingProductId?: string;
-
-  /**
-   * Product account that will sign the statement payload.
+   * Product account that will sign the statement payload. See
+   * `SignPayloadReview::Product` for an account of another product.
    */
   account: ProductAccountId;
 
@@ -693,7 +690,6 @@ export const AccountAccessReview: S.Codec<AccountAccessReview> = S.lazy(
 export const AccountAliasReview: S.Codec<AccountAliasReview> = S.lazy(
   (): S.Codec<AccountAliasReview> =>
     S.Struct({
-      callingProductId: S.str,
       context: ProductProofContext,
       ringLocation: RingLocation,
     }) as S.Codec<AccountAliasReview>,
@@ -775,7 +771,6 @@ export const CoreStorageKey: S.Codec<CoreStorageKey> = S.lazy(
 export const CreateProofReview: S.Codec<CreateProofReview> = S.lazy(
   (): S.Codec<CreateProofReview> =>
     S.Struct({
-      callingProductId: S.str,
       context: ProductProofContext,
       ringLocation: RingLocation,
       message: S.Bytes(),
@@ -788,13 +783,7 @@ export const CreateProofReview: S.Codec<CreateProofReview> = S.lazy(
 export const CreateTransactionReview: S.Codec<CreateTransactionReview> = S.lazy(
   (): S.Codec<CreateTransactionReview> =>
     S.TaggedUnion({
-      Product: S.Struct({
-        callingProductId: S.Option(S.str),
-        payload: ProductAccountTxPayload,
-      }) as S.Codec<{
-        callingProductId?: string;
-        payload: ProductAccountTxPayload;
-      }>,
+      Product: ProductAccountTxPayload,
       LegacyAccount: LegacyAccountTxPayload,
     }),
 );
@@ -903,6 +892,17 @@ export const LoginFailureKind: S.Codec<LoginFailureKind> = S.lazy(
 );
 
 /**
+ * Public key material identifying one pairing host's resumable SSO session.
+ */
+export const PairedSsoPeer: S.Codec<PairedSsoPeer> = S.lazy(
+  (): S.Codec<PairedSsoPeer> =>
+    S.Struct({
+      statementAccountId: S.Bytes(32),
+      encryptionPublicKey: S.Bytes(32),
+    }) as S.Codec<PairedSsoPeer>,
+);
+
+/**
  * Permission request whose authorization status can be inspected or updated
  * by host administration UI.
  */
@@ -984,15 +984,26 @@ export const ProductSubtreeReview: S.Codec<ProductSubtreeReview> = S.lazy(
 );
 
 /**
- * Review shown before allocating resources for a product. Names the
- * beneficiary product so the user knows which product receives the
- * (signing-capable) allowance key they are approving.
+ * How a request reached this host.
+ */
+export const RequestRoute: S.Codec<RequestRoute> = S.lazy(
+  (): S.Codec<RequestRoute> =>
+    S.TaggedUnion({
+      Local: S._void,
+      PairedHost: S.Struct({ peer: PairedSsoPeer }) as S.Codec<{
+        peer: PairedSsoPeer;
+      }>,
+    }),
+);
+
+/**
+ * Review shown before allocating resources for a product. The requesting
+ * product receives the (signing-capable) allowance key being approved.
  */
 export const ResourceAllocationReview: S.Codec<ResourceAllocationReview> =
   S.lazy(
     (): S.Codec<ResourceAllocationReview> =>
       S.Struct({
-        callingProductId: S.str,
         resources: S.Vector(AllocatableResource),
       }) as S.Codec<ResourceAllocationReview>,
   );
@@ -1021,13 +1032,7 @@ export const SessionUiInfo: S.Codec<SessionUiInfo> = S.lazy(
 export const SignPayloadReview: S.Codec<SignPayloadReview> = S.lazy(
   (): S.Codec<SignPayloadReview> =>
     S.TaggedUnion({
-      Product: S.Struct({
-        callingProductId: S.Option(S.str),
-        request: HostSignPayloadRequest,
-      }) as S.Codec<{
-        callingProductId?: string;
-        request: HostSignPayloadRequest;
-      }>,
+      Product: HostSignPayloadRequest,
       LegacyAccount: HostSignPayloadWithLegacyAccountRequest,
     }),
 );
@@ -1041,14 +1046,9 @@ export const SignRawReview: S.Codec<SignRawReview> = S.lazy(
   (): S.Codec<SignRawReview> =>
     S.TaggedUnion({
       Product: S.Struct({
-        callingProductId: S.Option(S.str),
         request: HostSignRawRequest,
         watermarked: S.bool,
-      }) as S.Codec<{
-        callingProductId?: string;
-        request: HostSignRawRequest;
-        watermarked: boolean;
-      }>,
+      }) as S.Codec<{ request: HostSignRawRequest; watermarked: boolean }>,
       LegacyAccount: S.Struct({
         request: HostSignRawWithLegacyAccountRequest,
         watermarked: S.bool,
@@ -1064,10 +1064,7 @@ export const SignRawReview: S.Codec<SignRawReview> = S.lazy(
  */
 export const SignVrfReview: S.Codec<SignVrfReview> = S.lazy(
   (): S.Codec<SignVrfReview> =>
-    S.Struct({
-      callingProductId: S.str,
-      request: HostAccountSignVrfRequest,
-    }) as S.Codec<SignVrfReview>,
+    S.Struct({ request: HostAccountSignVrfRequest }) as S.Codec<SignVrfReview>,
 );
 
 /**
@@ -1080,7 +1077,6 @@ export const StatementStoreProductSignReview: S.Codec<StatementStoreProductSignR
   S.lazy(
     (): S.Codec<StatementStoreProductSignReview> =>
       S.Struct({
-        callingProductId: S.Option(S.str),
         account: ProductAccountId,
         payload: S.Bytes(),
       }) as S.Codec<StatementStoreProductSignReview>,
@@ -1106,6 +1102,15 @@ export const UserConfirmationReview: S.Codec<UserConfirmationReview> = S.lazy(
       ProductSubtree: ProductSubtreeReview,
     }),
 );
+
+/** Options passed last to a callback that prompts the user. */
+export interface CallbackOptions {
+  /**
+   * Aborted when the core withdraws the request behind the prompt. An
+   * answer given afterwards reaches nobody, so dismiss the prompt.
+   */
+  signal: AbortSignal;
+}
 
 /**
  * Host auth UI driven by core-owned `AuthState` transitions.
@@ -1561,6 +1566,10 @@ export interface PermissionStatusHost {
  * Permission prompts. Device permissions (camera, mic, NFC, ...) are separate
  * from remote permissions (domain access, chain submit, ...), so the platform
  * surface mirrors that split.
+ *
+ * The core drops a prompt's future when the product call behind it is
+ * cancelled or its connection closes, and an answer given afterwards reaches
+ * nobody. A host should dismiss its prompt when that happens.
  */
 export interface Permissions {
   /**
@@ -1569,6 +1578,7 @@ export interface Permissions {
   devicePermission(
     product: ProductContext,
     request: HostDevicePermissionRequest,
+    options: CallbackOptions,
   ): Promise<PermissionDecision>;
 
   /**
@@ -1577,6 +1587,7 @@ export interface Permissions {
   remotePermission(
     product: ProductContext,
     request: RemotePermissionRequest,
+    options: CallbackOptions,
   ): Promise<PermissionDecision>;
 }
 
@@ -1713,20 +1724,36 @@ export interface ThemeHost {
  */
 export interface UserConfirmation {
   /**
-   * Preserve the lifetime of consent for identity and account disclosures.
+   * Preserve the lifetime of consent for identity and account disclosures
+   * `product` asked for, reaching this host by `route`.
+   *
+   * The core drops this future when the request behind the review is
+   * withdrawn, as it does for `UserConfirmation::confirm_user_action`.
    */
   confirmPermission?(
+    product: ProductContext,
+    route: RequestRoute,
     review: UserConfirmationReview,
+    options: CallbackOptions,
   ): Promise<PermissionDecision>;
 
   /**
-   * Confirm a reviewed action before the core continues.
+   * Confirm a reviewed action `product` asked for before the core continues.
+   *
+   * When `route` is `RequestRoute::PairedHost`, `product` is the caller
+   * that paired host named for its SSO request; otherwise it is a product
+   * running on this host.
    *
    * The core drops this future when the request behind the review is
    * withdrawn, and an answer given afterwards reaches nobody. A host should
    * dismiss its prompt when that happens.
    */
-  confirmUserAction(review: UserConfirmationReview): Promise<boolean>;
+  confirmUserAction(
+    product: ProductContext,
+    route: RequestRoute,
+    review: UserConfirmationReview,
+    options: CallbackOptions,
+  ): Promise<boolean>;
 }
 
 /**

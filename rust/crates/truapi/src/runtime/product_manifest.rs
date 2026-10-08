@@ -499,9 +499,9 @@ fn same_product_on_one_network(left: &str, right: &str) -> bool {
 ///
 /// Returned together because every consumer needs both and deriving either one
 /// again from the request re-introduces the raw-vs-normalized skew the gate
-/// exists to remove: `sso_responder` hands `calling_product_id` through
-/// untouched, so a caller that re-derives it compares a peer's spelling against
-/// a normalized owner.
+/// exists to remove: `sso_responder` hands the key handle through as the peer
+/// spelled it, so a consumer that re-derives the owner compares that spelling
+/// against a normalized caller.
 pub struct AuthorizedAccess {
     /// The caller the gate authorized, normalized.
     pub caller: String,
@@ -581,7 +581,7 @@ pub async fn ring_vrf_key_access_granted(
     //
     // That span is also what says how far to trust `caller`. Under `account.*`
     // it is the product id the host bound to the connection. Under
-    // `sso_responder.*` it is `calling_product_id` as decoded from the peer's
+    // `sso_responder.*` it is the product id as decoded from the peer's
     // message: what the authenticated paired host said, not something this host
     // verified. The refusal is sound either way, because the grant is resolved
     // from the owner's manifest and never from this field, but an operator
