@@ -7,11 +7,11 @@ created: 2026-10-08
 
 # Wasm product workers
 
-A product can ship its worker as a Rust crate compiled to `wasm32-unknown-unknown`. The core runs it in process, bound to one product. Each TrUAPI call the worker makes is a wasm import that the host answers with a direct call on the product's typed trait implementation, with no frames or dispatcher in between.
+A product can ship its worker as a Rust crate compiled to `wasm32-unknown-unknown`. The core runs it in process, bound to one product. Each TrUAPI call the worker makes is a wasm import that the host answers by calling the matching method of the [service traits](../../rust/crates/truapi/src/api.rs) directly on the product's [`ProductRuntimeHost`](../../rust/crates/truapi/src/runtime.rs), with no frames or dispatcher in between.
 
 ## Host setup
 
-The host serves a worker with the same per-product object an iframe product talks to: `ProductRuntimeHost`, which implements every service trait for one product.
+The host serves a worker with the same per-product object an iframe product talks to: [`ProductRuntimeHost`](../../rust/crates/truapi/src/runtime.rs), which implements every service trait for one product (the implementations are in [`runtime/capabilities`](../../rust/crates/truapi/src/runtime/capabilities)).
 
 ```rust
 let host = runtime.product_admin(product).product_runtime().clone(); // product runs as Worker
