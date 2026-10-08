@@ -2060,10 +2060,9 @@ impl crate::platform::PocketPlatform for RecordingPocketPlatform {
     }
 }
 
-fn pocket_host(
+fn pocket_dot_host(
     kind: crate::platform::ProductExecutionKind,
-    pocket: Option<Arc<RecordingPocketPlatform>>,
-    with_session: bool,
+    configure: impl FnOnce(&mut crate::host_core::ConnectionAdapters),
 ) -> ProductRuntimeHost {
     let (host_config, _) = runtime_config("pocket.dot");
     let product = ProductContext::new_with_execution("pocket.dot".to_string(), kind)
@@ -2079,9 +2078,19 @@ fn pocket_host(
     );
     let pairing_host = PairingHost::new(services.clone(), host_config);
     let mut adapters = crate::host_core::ConnectionAdapters::from_services(&services);
-    adapters.pocket_platform =
-        pocket.map(|pocket| pocket as Arc<dyn crate::platform::PocketPlatform>);
-    let host = ProductRuntimeHost::from_services(services, adapters, pairing_host, product);
+    configure(&mut adapters);
+    ProductRuntimeHost::from_services(services, adapters, pairing_host, product)
+}
+
+fn pocket_host(
+    kind: crate::platform::ProductExecutionKind,
+    pocket: Option<Arc<RecordingPocketPlatform>>,
+    with_session: bool,
+) -> ProductRuntimeHost {
+    let host = pocket_dot_host(kind, |adapters| {
+        adapters.pocket_platform =
+            pocket.map(|pocket| pocket as Arc<dyn crate::platform::PocketPlatform>);
+    });
     if with_session {
         install_pairing_session(&host, session_info());
     }
@@ -2158,21 +2167,161 @@ fn pocket_list_subscribe_forwards_the_host_list_and_interrupts_on_stream_errors(
     assert!(futures::executor::block_on(items.next()).is_none());
 }
 
-/// A product detects "no expanded cards here" by `Unsupported`; a
-/// `HostFailure` would read as a real failure.
-#[test]
-fn expanded_card_set_face_shown_is_unsupported_until_a_host_implements_it() {
-    let host = pocket_host(crate::platform::ProductExecutionKind::Widget, None, false);
+/// Records the visibility the host is asked for and answers a configured result.
+struct RecordingExpandedCardHost {
+    answer: Result<crate::platform::ExpandedCardFaceOutcome, truapi::latest::GenericError>,
+    requested: Mutex<Vec<bool>>,
+}
 
-    let result = futures::executor::block_on(ExpandedCard::set_face_shown(
-        &host,
+impl RecordingExpandedCardHost {
+    fn answering(
+        answer: Result<crate::platform::ExpandedCardFaceOutcome, truapi::latest::GenericError>,
+    ) -> Arc<Self> {
+        Arc::new(Self {
+            answer,
+            requested: Mutex::new(Vec::new()),
+        })
+    }
+
+    fn requested(&self) -> Vec<bool> {
+        self.requested
+            .lock()
+            .expect("requested mutex poisoned")
+            .clone()
+    }
+}
+
+#[truapi::async_trait]
+impl crate::platform::ExpandedCardHost for RecordingExpandedCardHost {
+    async fn set_expanded_card_face_shown(
+        &self,
+        shown: bool,
+    ) -> Result<crate::platform::ExpandedCardFaceOutcome, truapi::latest::GenericError> {
+        self.requested
+            .lock()
+            .expect("requested mutex poisoned")
+            .push(shown);
+        self.answer.clone()
+    }
+}
+
+fn expanded_card_host(
+    kind: crate::platform::ProductExecutionKind,
+    expanded_card: Option<Arc<RecordingExpandedCardHost>>,
+) -> ProductRuntimeHost {
+    pocket_dot_host(kind, |adapters| {
+        adapters.expanded_card =
+            expanded_card.map(|card| card as Arc<dyn crate::platform::ExpandedCardHost>);
+    })
+}
+
+fn set_face_shown(
+    host: &ProductRuntimeHost,
+    shown: bool,
+) -> Result<
+    truapi::versioned::expanded_card::HostExpandedCardSetFaceShownResponse,
+    CallError<truapi::versioned::expanded_card::HostExpandedCardSetFaceShownError>,
+> {
+    futures::executor::block_on(ExpandedCard::set_face_shown(
+        host,
         &CallContext::default(),
         HostExpandedCardSetFaceShownRequest::V1(v01::HostExpandedCardSetFaceShownRequest {
-            shown: false,
+            shown,
         }),
-    ));
+    ))
+}
 
-    assert!(matches!(result, Err(CallError::Unsupported)));
+/// The host must see exactly what the Widget asked for, in order, so a hide
+/// followed by a show never collapses into one state change.
+#[test]
+fn expanded_card_widget_requests_reach_the_host_in_order() {
+    let card = RecordingExpandedCardHost::answering(Ok(
+        crate::platform::ExpandedCardFaceOutcome::Applied,
+    ));
+    let host = expanded_card_host(
+        crate::platform::ProductExecutionKind::Widget,
+        Some(card.clone()),
+    );
+
+    for shown in [false, true, false] {
+        assert!(matches!(
+            set_face_shown(&host, shown),
+            Ok(truapi::versioned::expanded_card::HostExpandedCardSetFaceShownResponse::V1)
+        ));
+    }
+
+    assert_eq!(card.requested(), [false, true, false]);
+}
+
+/// Admin connections call the trait without the dispatcher's execution-kind
+/// filter, so only a Widget may move a face, and nothing else reaches the host.
+#[test]
+fn expanded_card_is_denied_to_non_widgets_without_reaching_the_host() {
+    for kind in [
+        crate::platform::ProductExecutionKind::App,
+        crate::platform::ProductExecutionKind::Worker,
+    ] {
+        let card = RecordingExpandedCardHost::answering(Ok(
+            crate::platform::ExpandedCardFaceOutcome::Applied,
+        ));
+        let host = expanded_card_host(kind, Some(card.clone()));
+
+        assert!(matches!(set_face_shown(&host, false), Err(CallError::Denied)));
+        assert!(card.requested().is_empty());
+    }
+}
+
+/// A host with no adapter, like the browser, must read as "not supported", the
+/// answer a product uses to detect that no expanded cards exist; a
+/// `HostFailure` would read as a real failure.
+#[test]
+fn expanded_card_without_an_adapter_is_unsupported() {
+    let host = expanded_card_host(crate::platform::ProductExecutionKind::Widget, None);
+
+    assert!(matches!(
+        set_face_shown(&host, false),
+        Err(CallError::Unsupported)
+    ));
+}
+
+/// Each host outcome must reach the product as the answer it branches on;
+/// `Unsupported` in particular has to stay distinguishable from a failure.
+#[test]
+fn expanded_card_host_outcomes_map_to_wire_answers() {
+    use crate::platform::ExpandedCardFaceOutcome;
+    use truapi::versioned::expanded_card::HostExpandedCardSetFaceShownError as WireError;
+
+    let answer = |outcome| {
+        let card = RecordingExpandedCardHost::answering(outcome);
+        let host = expanded_card_host(crate::platform::ProductExecutionKind::Widget, Some(card));
+        set_face_shown(&host, false)
+    };
+
+    assert!(matches!(
+        answer(Ok(ExpandedCardFaceOutcome::Unsupported)),
+        Err(CallError::Unsupported)
+    ));
+    assert!(matches!(
+        answer(Ok(ExpandedCardFaceOutcome::NotPresented)),
+        Err(CallError::Domain(WireError::V1(
+            v01::HostExpandedCardSetFaceShownError::NotPresented
+        )))
+    ));
+    assert!(matches!(
+        answer(Ok(ExpandedCardFaceOutcome::UserMoving)),
+        Err(CallError::Domain(WireError::V1(
+            v01::HostExpandedCardSetFaceShownError::UserMoving
+        )))
+    ));
+    let Err(CallError::Domain(WireError::V1(v01::HostExpandedCardSetFaceShownError::Unknown {
+        reason,
+    }))) = answer(Err(truapi::latest::GenericError {
+        reason: "drawer crashed".to_string(),
+    }))
+    else {
+        panic!("a host failure is reported as an unknown domain error");
+    };
+    assert_eq!(reason, "drawer crashed");
 }
 
 #[test]
