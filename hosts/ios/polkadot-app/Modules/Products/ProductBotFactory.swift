@@ -1,4 +1,5 @@
 import Foundation
+import FoundationExt
 import UIKit
 import Keystore_iOS
 import Products
@@ -37,6 +38,7 @@ final class ProductBotFactory {
         guard servesChat(resolved) else { return nil }
 
         let product = resolved.product
+        let productDescription = resolved.description?.nilIfEmpty
 
         if settingsManager.isTrUAPIRuntimeEnabled, let workers = workers() {
             let runtime = TrUAPIChatHandler(
@@ -44,11 +46,21 @@ final class ProductBotFactory {
                 workers: workers,
                 logger: logger
             )
-            return ProductBot(product: product, runtime: runtime, logger: logger)
+            return ProductBot(
+                product: product,
+                productDescription: productDescription,
+                runtime: runtime,
+                logger: logger
+            )
         }
 
         let runtime = ManagedChatRuntime(productId: product.identifier, manager: workerManager)
-        return ProductBot(product: product, runtime: runtime, logger: logger)
+        return ProductBot(
+            product: product,
+            productDescription: productDescription,
+            runtime: runtime,
+            logger: logger
+        )
     }
 }
 

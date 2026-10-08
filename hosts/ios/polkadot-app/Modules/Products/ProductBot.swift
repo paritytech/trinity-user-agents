@@ -14,6 +14,7 @@ import UIKitExt
 /// Each instance is created by ``ProductBotFactory`` for a specific ``Product``.
 final class ProductBot: ChatExtensionBot {
     let product: Product
+    private let productDescription: String?
     private let runtime: ChatRuntimeProtocol
     private let logger: LoggerProtocol
 
@@ -22,15 +23,18 @@ final class ProductBot: ChatExtensionBot {
     lazy var messageDecoder = ProductMessageDecoder(
         runtime: runtime,
         tokenResolver: WidgetDesignTokenResolver(),
+        productDescription: productDescription,
         logger: logger
     )
 
     init(
         product: Product,
+        productDescription: String?,
         runtime: ChatRuntimeProtocol,
         logger: LoggerProtocol = Logger.shared
     ) {
         self.product = product
+        self.productDescription = productDescription
         self.runtime = runtime
         self.logger = logger
     }
@@ -86,7 +90,7 @@ extension ProductBot: ChatExtensionBotProtocol {
         Chat.PeerMetadata(
             name: product.name,
             contactSource: .chat,
-            icon: .image(nil),
+            icon: .product(domain: product.id),
             input: .inputField(.init(canPay: false, canAttachFile: false)),
             moreActions: []
         )

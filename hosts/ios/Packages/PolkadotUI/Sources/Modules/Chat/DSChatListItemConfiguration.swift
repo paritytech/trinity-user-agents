@@ -4,7 +4,19 @@ import SwiftUI
 import UIKit
 
 public struct DSChatListItemConfiguration: HashableContentConfiguration {
+    /// An image loaded over the letter avatar. `id` names the image, so rows compare without loading it.
+    public struct AvatarIcon {
+        public let id: String
+        public let viewModel: any ImageViewModelProtocol
+
+        public init(id: String, viewModel: any ImageViewModelProtocol) {
+            self.id = id
+            self.viewModel = viewModel
+        }
+    }
+
     public let avatarViewModel: AvatarViewModel
+    public let avatarIcon: AvatarIcon?
     public let sender: String
     public let message: String?
     public let messageKind: DSChatMessage.Kind
@@ -20,6 +32,7 @@ public struct DSChatListItemConfiguration: HashableContentConfiguration {
     public init(
         dateFormatter: TimestampFormatting,
         avatarViewModel: AvatarViewModel,
+        avatarIcon: AvatarIcon? = nil,
         sender: String,
         message: String? = nil,
         messageKind: DSChatMessage.Kind = .default,
@@ -32,6 +45,7 @@ public struct DSChatListItemConfiguration: HashableContentConfiguration {
     ) {
         self.dateFormatter = dateFormatter
         self.avatarViewModel = avatarViewModel
+        self.avatarIcon = avatarIcon
         self.sender = sender
         self.message = message
         self.messageKind = messageKind
@@ -46,7 +60,7 @@ public struct DSChatListItemConfiguration: HashableContentConfiguration {
     public func makeContentView() -> any UIView & UIContentView {
         UIHostingConfiguration {
             DSChatListItem(data: rowData) {
-                DSAvatarFactory.chatList(avatarViewModel)
+                DSAvatarFactory.chatList(avatarViewModel, icon: avatarIcon?.viewModel)
             }
             .accessibilityId(rawValue: accessibilityId)
         }
@@ -56,6 +70,7 @@ public struct DSChatListItemConfiguration: HashableContentConfiguration {
 
     public func hash(into hasher: inout Hasher) {
         hasher.combine(avatarViewModel)
+        hasher.combine(avatarIcon?.id)
         hasher.combine(sender)
         hasher.combine(message)
         hasher.combine(messageKind)
@@ -69,6 +84,7 @@ public struct DSChatListItemConfiguration: HashableContentConfiguration {
 
     public static func == (lhs: DSChatListItemConfiguration, rhs: DSChatListItemConfiguration) -> Bool {
         lhs.avatarViewModel == rhs.avatarViewModel &&
+            lhs.avatarIcon?.id == rhs.avatarIcon?.id &&
             lhs.sender == rhs.sender &&
             lhs.message == rhs.message &&
             lhs.messageKind == rhs.messageKind &&
@@ -80,8 +96,8 @@ public struct DSChatListItemConfiguration: HashableContentConfiguration {
             lhs.accessibilityId == rhs.accessibilityId
     }
 
-    private var rowData: DSChatListItem<DSAvatar>.Data {
-        DSChatListItem<DSAvatar>.Data(
+    private var rowData: DSChatListItem<DSAsyncAvatar>.Data {
+        DSChatListItem<DSAsyncAvatar>.Data(
             sender: sender,
             timestamp: formattedDate ?? "",
             message: message ?? "",
