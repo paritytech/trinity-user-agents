@@ -12,7 +12,7 @@ import io.paritytech.polkadotapp.common.utils.enable
 import io.paritytech.polkadotapp.common.utils.launchUnit
 import io.paritytech.polkadotapp.common.utils.withLoading
 import io.paritytech.polkadotapp.feature_coinage_api.domain.model.BackupProgress
-import io.paritytech.polkadotapp.feature_products_api.domain.FundingConfig
+import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingDirection
 import io.paritytech.polkadotapp.feature_tokens_api.presentation.mapper.TokenAmountMapper
 import io.paritytech.polkadotapp.feature_wallet_impl.PocketRouter
 import io.paritytech.polkadotapp.feature_wallet_impl.domain.interactor.DigitalDollarCardDetailsInteractor
@@ -40,7 +40,7 @@ class DigitalDollarCardDetailsViewModel @Inject constructor(
     private val tokenAmountMapper: TokenAmountMapper
 ) : BaseViewModel() {
     private val fundInProgress = MutableStateFlow(false)
-    private val fundingSheetInProgress = MutableStateFlow(false)
+    private val fundingInProgress = MutableStateFlow(false)
 
     /**
      * Owned here rather than remembered in the card, so the spread grid outlives the holdings updating
@@ -86,9 +86,9 @@ class DigitalDollarCardDetailsViewModel @Inject constructor(
             )
         )
 
-    fun onGetCashClick() = openFundingSheet(FundingConfig::onrampUrl, ::GetCashUnavailablePresentationError)
+    fun onGetCashClick() = openFunding(FundingDirection.IN, ::GetCashUnavailablePresentationError)
 
-    fun onWithdrawClick() = openFundingSheet(FundingConfig::offrampUrl, ::WithdrawUnavailablePresentationError)
+    fun onWithdrawClick() = openFunding(FundingDirection.OUT, ::WithdrawUnavailablePresentationError)
 
     fun onSendClick() {
         router.openSendPayment()
@@ -119,16 +119,15 @@ class DigitalDollarCardDetailsViewModel @Inject constructor(
             .onFailure { showPresentationError(ShareCoinageLogsFailedPresentationError(it)) }
     }
 
-    private fun openFundingSheet(
-        urlOf: (FundingConfig) -> String,
+    private fun openFunding(
+        direction: FundingDirection,
         error: (Throwable) -> PresentationThrowable
     ) = launchUnit {
-        if (fundingSheetInProgress.value) return@launchUnit
-        fundingSheetInProgress.enable()
-        interactor.getFundingConfig()
-            .onSuccess { router.openSpaSheet(urlOf(it)) }
+        if (fundingInProgress.value) return@launchUnit
+        fundingInProgress.enable()
+        interactor.openFunding(direction)
             .onFailure { showPresentationError(error(it)) }
-        fundingSheetInProgress.disable()
+        fundingInProgress.disable()
     }
 
     private fun CoinageHoldingsInfo.toTokensState(asset: Chain.Asset) = CoinageUiState.TokensState(
