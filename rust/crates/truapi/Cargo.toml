@@ -184,6 +184,10 @@ name = "wire_result_shape"
 required-features = ["runtime"]
 
 [[test]]
+name = "wasm_worker"
+required-features = ["wasm-worker"]
+
+[[test]]
 name = "signing_host_mock_platform"
 required-features = ["mock"]
 

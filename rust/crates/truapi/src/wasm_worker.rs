@@ -6,11 +6,12 @@
 //! core in process with no frames in between. The import names and the guest
 //! protocol are in [`crate::wasm_abi`].
 
+use core::task::{Context, Poll};
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use futures::future::{AbortHandle, Abortable, BoxFuture};
-use futures::stream::{self, BoxStream, SelectAll};
+use futures::future::BoxFuture;
+use futures::stream::{self, BoxStream};
 use futures::{FutureExt, StreamExt};
 use parity_scale_codec::{DecodeAll, Encode};
 use wasmi::{
@@ -25,7 +26,7 @@ use crate::wasm_abi::{
     ALLOC_EXPORT, EventKind, FINISH_IMPORT, IMPORT_MODULE, LOG_IMPORT, ON_EVENT_EXPORT,
     RELEASE_IMPORT, START_EXPORT,
 };
-use crate::{CallContext, CallError, CancellationToken, Subscription};
+use crate::{CallContext, CallError, Subscription};
 
 /// Instructions a worker may run per entry from the host before it traps.
 const FUEL_PER_ENTRY: u64 = 1_000_000_000;
@@ -280,18 +281,12 @@ struct Exports {
     on_event: TypedFunc<(u32, u32, u32, u32), ()>,
 }
 
-struct InFlight {
-    abort: AbortHandle,
-    cancel: CancellationToken,
-}
-
 /// A loaded wasm worker. [`Self::run`] drives it until its entry point
 /// returns.
 pub struct WasmWorker {
     store: Store<GuestState>,
     exports: Exports,
-    pending: SelectAll<BoxStream<'static, (u32, Event)>>,
-    in_flight: HashMap<u32, InFlight>,
+    calls: HashMap<u32, BoxStream<'static, Event>>,
 }
 
 impl WasmWorker {
@@ -336,8 +331,7 @@ impl WasmWorker {
         Ok(Self {
             store,
             exports,
-            pending: SelectAll::new(),
-            in_flight: HashMap::new(),
+            calls: HashMap::new(),
         })
     }
 
@@ -350,14 +344,33 @@ impl WasmWorker {
             if let Some(outcome) = self.store.data_mut().finished.take() {
                 return outcome.map_err(|message| WasmWorkerError::Failed { message });
             }
-            let Some((handle, event)) = self.pending.next().await else {
+            if self.calls.is_empty() {
                 return Err(WasmWorkerError::Stalled);
-            };
-            if event.kind != EventKind::Item {
-                self.in_flight.remove(&handle);
             }
+            let (handle, event) =
+                futures::future::poll_fn(|context| self.poll_calls(context)).await;
             self.deliver(handle, event)?;
         }
+    }
+
+    /// The next event of any call in flight, forgetting the call once its
+    /// terminal event is out.
+    fn poll_calls(&mut self, context: &mut Context<'_>) -> Poll<(u32, Event)> {
+        let ready = self.calls.iter_mut().find_map(|(handle, events)| {
+            match events.poll_next_unpin(context) {
+                Poll::Ready(event) => Some((*handle, event)),
+                Poll::Pending => None,
+            }
+        });
+        let Some((handle, event)) = ready else {
+            return Poll::Pending;
+        };
+        let event =
+            event.expect("a call is forgotten at its terminal event, before its stream ends");
+        if event.kind != EventKind::Item {
+            self.calls.remove(&handle);
+        }
+        Poll::Ready((handle, event))
     }
 
     fn apply_commands(&mut self) {
@@ -368,19 +381,11 @@ impl WasmWorker {
                     method,
                     request,
                 } => {
-                    let cancel = CancellationToken::default();
-                    let cx = CallContext::with_parts(format!("wasm-{handle}"), cancel.clone());
-                    let (abort, registration) = AbortHandle::new_pair();
-                    let events = Abortable::new(method(cx, request), registration);
-                    self.pending
-                        .push(events.map(move |event| (handle, event)).boxed());
-                    self.in_flight.insert(handle, InFlight { abort, cancel });
+                    let cx = CallContext::with_request_id(format!("wasm-{handle}"));
+                    self.calls.insert(handle, method(cx, request));
                 }
                 Command::Release { handle } => {
-                    if let Some(call) = self.in_flight.remove(&handle) {
-                        call.cancel.cancel();
-                        call.abort.abort();
-                    }
+                    self.calls.remove(&handle);
                 }
             }
         }
