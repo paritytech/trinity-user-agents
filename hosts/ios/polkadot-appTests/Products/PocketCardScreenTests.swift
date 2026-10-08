@@ -33,7 +33,7 @@ struct PocketCardScreenTests {
     /// the card rather than to whatever the product later calls itself.
     @Test
     func takesItsTitleFromTheCard() {
-        let screen = PocketCardScreenViewController(card: loyalty, product: StubSPAView())
+        let screen = PocketCardScreenViewController(card: loyalty, product: StubSPAView(), surface: PocketCardSurface())
 
         screen.loadViewIfNeeded()
 
@@ -67,7 +67,7 @@ private let loyalty = PocketCardViewModel(
 
 @MainActor
 private func laidOutScreen(product: SPAViewProtocol) -> PocketCardScreenViewController {
-    let screen = PocketCardScreenViewController(card: loyalty, product: product)
+    let screen = PocketCardScreenViewController(card: loyalty, product: product, surface: PocketCardSurface())
 
     screen.view.frame = CGRect(origin: .zero, size: screenSize)
     screen.view.layoutIfNeeded()

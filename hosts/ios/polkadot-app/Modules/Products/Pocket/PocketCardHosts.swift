@@ -16,23 +16,27 @@ import UIKit
 /// handed to the next session still talking to the last one's core.
 @MainActor
 final class PocketCardHosts {
-    private struct Held {
+    /// A product and the surface its page reaches the card's screen through.
+    struct Held {
         let key: PocketCardKey
         let view: SPAViewProtocol
+        let surface: PocketCardSurface
     }
 
     private var held: Held?
 
     /// The product for `key`, built by `make` unless the one already held is it.
-    func view(for key: PocketCardKey, make: () -> SPAViewProtocol?) -> SPAViewProtocol? {
-        if let held, held.key == key { return held.view }
+    func product(for key: PocketCardKey, make: (PocketCardSurface) -> SPAViewProtocol?) -> Held? {
+        if let held, held.key == key { return held }
 
         release()
 
-        guard let view = make() else { return nil }
+        let surface = PocketCardSurface()
+        guard let view = make(surface) else { return nil }
 
-        held = Held(key: key, view: view)
-        return view
+        let product = Held(key: key, view: view, surface: surface)
+        held = product
+        return product
     }
 
     /// Gives up a product held for a card the collection no longer has, since a

@@ -42,8 +42,13 @@ struct RustRuntimeEnvironment {
     /// in the runtime's `start` via ``ExecutionModel/startBridge()``. The
     /// execution retains the bridge (callback retainer) and the bridge retains
     /// the pool, so holding `ExecutionModel` pins the whole chain.
-    func makeSPAExecution(productId: ProductId, routers: ProductRoutersFacadeProtocol) throws -> ExecutionModel {
-        try makeExecution(productId: productId, routers: routers, kind: .app)
+    func makeSPAExecution(
+        productId: ProductId,
+        routers: ProductRoutersFacadeProtocol,
+        kind: ProductExecutionKind,
+        cardSurface: PocketCardSurface?
+    ) throws -> ExecutionModel {
+        try makeExecution(productId: productId, routers: routers, kind: kind, cardSurface: cardSurface)
     }
 
     /// Open `productId`'s one Worker execution. The core keeps a single Worker
@@ -72,6 +77,7 @@ private extension RustRuntimeEnvironment {
         productId: ProductId,
         routers: ProductRoutersFacadeProtocol,
         kind: ProductExecutionKind,
+        cardSurface: PocketCardSurface? = nil,
         chatMessaging: (any ProductChatMessaging)? = nil,
         pocket: (any PocketHostBridge)? = nil
     ) throws -> ExecutionModel {
@@ -95,7 +101,7 @@ private extension RustRuntimeEnvironment {
         let chatBridge = chatMessaging.map {
             RustChatExecutionBridge(dependencies: dependencies, chatMessaging: $0)
         }
-        let bridge = chatBridge ?? RustProductExecutionBridge(dependencies: dependencies)
+        let bridge = chatBridge ?? RustProductExecutionBridge(dependencies: dependencies, cardSurface: cardSurface)
 
         let execution = try runtime.openProductExecution(
             bridge: bridge,

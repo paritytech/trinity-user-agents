@@ -21,13 +21,14 @@ enum PocketCardOpening {
             let page = flowState.hostProvider.page(url: url)
         else { return }
 
-        let product = pocket.cardHosts.view(for: card.key) {
+        let product = pocket.cardHosts.product(for: card.key) { surface in
             let configuration = SPAConfiguration(
                 title: card.title,
                 isRootScreen: false,
                 showMoreButton: false,
                 page: page,
-                executable: .widget
+                executable: .widget,
+                cardSurface: surface
             )
 
             return SPAViewFactory.createView(configuration: configuration, flowState: flowState)
@@ -35,7 +36,9 @@ enum PocketCardOpening {
 
         guard let product else { return }
 
-        navigator.presentFullScreen(PocketCardScreenViewController(card: card, product: product))
+        navigator.presentFullScreen(
+            PocketCardScreenViewController(card: card, product: product.view, surface: product.surface)
+        )
     }
 
     /// A link may name a card the Pocket does not hold, which is the one case

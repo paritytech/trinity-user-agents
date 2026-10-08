@@ -37,10 +37,12 @@ class RustProductExecutionBridge: HostBridge, @unchecked Sendable {
     let coreStorage: HostCoreStorageBackend
 
     private let dependencies: Dependencies
+    private let cardSurface: PocketCardSurface?
     private weak var execution: TrUAPIProductExecutionProtocol?
 
-    init(dependencies: Dependencies) {
+    init(dependencies: Dependencies, cardSurface: PocketCardSurface? = nil) {
         self.dependencies = dependencies
+        self.cardSurface = cardSurface
         storage = ProductStorageBackend(storage: dependencies.productStorage)
         coreStorage = CoreStorageBackend(storage: dependencies.coreStorage)
     }
@@ -152,6 +154,12 @@ class RustProductExecutionBridge: HostBridge, @unchecked Sendable {
 
     func currentTheme() throws -> ThemeVariant {
         .dark
+    }
+
+    func setExpandedCardFaceShown(shown: Bool) async throws -> ExpandedCardFaceOutcome {
+        guard let cardSurface else { return .unsupported }
+
+        return await cardSurface.setFaceShown(shown)
     }
 
     func featureSupported(request: HostFeatureSupportedRequest) async throws -> Bool {

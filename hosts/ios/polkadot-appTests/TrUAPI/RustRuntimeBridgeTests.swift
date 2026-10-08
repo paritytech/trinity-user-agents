@@ -85,7 +85,8 @@ private func makeBridge(
     confirmationPresenter: MockConfirmationPresenter = MockConfirmationPresenter(),
     preimageCache: TrUAPIPreimageCache = TrUAPIPreimageCache { _ in nil },
     productStorageFails: Bool = false,
-    hostProvider: ProductHostProviding = StubHostProvider()
+    hostProvider: ProductHostProviding = StubHostProvider(),
+    cardSurface: PocketCardSurface? = nil
 ) -> RustProductExecutionBridge {
     let router = MockNavigationRouter()
     let pool = makeRegistryPool(chainRegistry: chainRegistry)
@@ -111,7 +112,7 @@ private func makeBridge(
         preimageCache: preimageCache,
         hostProvider: hostProvider,
         logger: Logger.shared
-    ))
+    ), cardSurface: cardSurface)
 }
 
 // MARK: - Tests
@@ -554,6 +555,25 @@ struct RustRuntimeBridgeTests {
         let bridge = makeBridge()
         let theme = try bridge.currentTheme()
         #expect(theme == .dark)
+    }
+
+    // MARK: setExpandedCardFaceShown
+
+    /// Only a page under a card has a face to move; anywhere else the page is
+    /// told the app does not offer it. Called through `HostBridge` because the
+    /// core does: an override whose signature drifts would lose to the default.
+    @Test func expandedCardFaceIsUnsupportedWithoutACard() async throws {
+        let bridge: HostBridge = makeBridge()
+
+        #expect(try await bridge.setExpandedCardFaceShown(shown: false) == .unsupported)
+    }
+
+    /// A card that is closed keeps its page loaded, and that page must hear at
+    /// once that there is no face to move.
+    @Test func expandedCardFaceAsksTheCardsSurface() async throws {
+        let bridge: HostBridge = makeBridge(cardSurface: PocketCardSurface())
+
+        #expect(try await bridge.setExpandedCardFaceShown(shown: false) == .notPresented)
     }
 
     // MARK: attach

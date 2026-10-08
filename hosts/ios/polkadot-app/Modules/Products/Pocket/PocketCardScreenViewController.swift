@@ -1,6 +1,7 @@
 import DesignSystem
 import SnapKit
 import SwiftUI
+import TrUAPIHost
 import UIKit
 
 /// A card opened: the card itself at the top of the screen, with its product
@@ -12,18 +13,22 @@ import UIKit
 final class PocketCardScreenViewController: UIViewController {
     private let card: PocketCardViewModel
     private let product: SPAViewProtocol
+    private let surface: PocketCardSurface
     private let face: UIHostingController<PocketOpenedCardView>
 
     private let scrollView = UIScrollView()
 
-    init(card: PocketCardViewModel, product: SPAViewProtocol) {
+    init(card: PocketCardViewModel, product: SPAViewProtocol, surface: PocketCardSurface) {
         self.card = card
         self.product = product
+        self.surface = surface
         let face = UIHostingController(rootView: PocketOpenedCardView(card: card))
         face.view.backgroundColor = .clear
         self.face = face
 
         super.init(nibName: nil, bundle: nil)
+
+        surface.screen = self
     }
 
     @available(*, unavailable)
@@ -58,6 +63,15 @@ final class PocketCardScreenViewController: UIViewController {
             child.view.removeFromSuperview()
             child.removeFromParent()
         }
+
+        if surface.screen === self {
+            surface.screen = nil
+        }
+    }
+
+    /// Shows or hides the face at the page's request.
+    func setFaceShown(_: Bool, animated _: Bool) -> ExpandedCardFaceOutcome {
+        .applied
     }
 }
 

@@ -15,11 +15,11 @@ struct PocketCardHostsTests {
         let hosts = PocketCardHosts()
         let factory = CountingFactory()
 
-        let first = hosts.view(for: loyalty, make: factory.make)
-        let second = hosts.view(for: loyalty, make: factory.make)
+        let first = hosts.product(for: loyalty, make: factory.make)
+        let second = hosts.product(for: loyalty, make: factory.make)
 
         #expect(factory.built == 1)
-        #expect(first === second)
+        #expect(first?.view === second?.view)
     }
 
     /// One at a time: a second card takes the first down rather than adding to it.
@@ -28,12 +28,38 @@ struct PocketCardHostsTests {
         let hosts = PocketCardHosts()
         let factory = CountingFactory()
 
-        let first = hosts.view(for: loyalty, make: factory.make)
-        _ = hosts.view(for: trophy, make: factory.make)
-        let loyaltyAgain = hosts.view(for: loyalty, make: factory.make)
+        let first = hosts.product(for: loyalty, make: factory.make)
+        _ = hosts.product(for: trophy, make: factory.make)
+        let loyaltyAgain = hosts.product(for: loyalty, make: factory.make)
 
         #expect(factory.built == 3)
-        #expect(first !== loyaltyAgain)
+        #expect(first?.view !== loyaltyAgain?.view)
+    }
+
+    /// The surface is how a warm page reaches whichever screen shows it next,
+    /// so the card reopened must find the one its page was built with.
+    @Test
+    func keepsTheSurfaceAWarmProductWasBuiltWith() {
+        let hosts = PocketCardHosts()
+        let factory = CountingFactory()
+
+        let first = hosts.product(for: loyalty, make: factory.make)
+        let second = hosts.product(for: loyalty, make: factory.make)
+
+        #expect(first?.surface === factory.surfaces.first)
+        #expect(second?.surface === first?.surface)
+    }
+
+    /// Another card's page must never move this card's face.
+    @Test
+    func givesEachProductItsOwnSurface() {
+        let hosts = PocketCardHosts()
+        let factory = CountingFactory()
+
+        let first = hosts.product(for: loyalty, make: factory.make)
+        let second = hosts.product(for: trophy, make: factory.make)
+
+        #expect(first?.surface !== second?.surface)
     }
 
     /// A card the collection no longer holds has no next tap, so the product
@@ -42,10 +68,10 @@ struct PocketCardHostsTests {
     func givesUpAProductWhoseCardIsGone() {
         let hosts = PocketCardHosts()
         let factory = CountingFactory()
-        _ = hosts.view(for: loyalty, make: factory.make)
+        _ = hosts.product(for: loyalty, make: factory.make)
 
         hosts.keepOnly { $0 != loyalty }
-        _ = hosts.view(for: loyalty, make: factory.make)
+        _ = hosts.product(for: loyalty, make: factory.make)
 
         #expect(factory.built == 2)
     }
@@ -57,10 +83,10 @@ struct PocketCardHostsTests {
     func buildsAgainAfterTheSessionLetItGo() {
         let hosts = PocketCardHosts()
         let factory = CountingFactory()
-        _ = hosts.view(for: loyalty, make: factory.make)
+        _ = hosts.product(for: loyalty, make: factory.make)
 
         hosts.release()
-        _ = hosts.view(for: loyalty, make: factory.make)
+        _ = hosts.product(for: loyalty, make: factory.make)
 
         #expect(factory.built == 2)
     }
@@ -69,10 +95,10 @@ struct PocketCardHostsTests {
     func keepsAProductWhoseCardIsStillHeld() {
         let hosts = PocketCardHosts()
         let factory = CountingFactory()
-        _ = hosts.view(for: loyalty, make: factory.make)
+        _ = hosts.product(for: loyalty, make: factory.make)
 
         hosts.keepOnly { $0 == loyalty }
-        _ = hosts.view(for: loyalty, make: factory.make)
+        _ = hosts.product(for: loyalty, make: factory.make)
 
         #expect(factory.built == 1)
     }
@@ -85,10 +111,11 @@ private let trophy = PocketCardKey(productId: "game.paseo", cardId: PocketCardId
 
 @MainActor
 private final class CountingFactory {
-    private(set) var built = 0
+    private(set) var surfaces: [PocketCardSurface] = []
+    var built: Int { surfaces.count }
 
-    func make() -> SPAViewProtocol? {
-        built += 1
+    func make(surface: PocketCardSurface) -> SPAViewProtocol? {
+        surfaces.append(surface)
         return StubSPAView()
     }
 }
