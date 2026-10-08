@@ -116,6 +116,23 @@ class RealProductBotManagementInteractorTest {
         assertEquals(APP_URL, storedAppUrl)
     }
 
+    // Cleartext loads only from 127.0.0.1, so any other url would save cleanly and then never be served.
+    @Test
+    fun `updating a product with an app url the device cannot load is refused`() = runBlocking {
+        val result = interactor.updateProduct(PRODUCT, WORKER_URL, "Coinflip", CARD, "http://localhost:5173/")
+
+        assertTrue(result.isFailure)
+        assertNull(storedAppUrl)
+    }
+
+    @Test
+    fun `adding a product with an app url the device cannot load is refused`() = runBlocking {
+        val result = interactor.upsertProduct(PRODUCT, WORKER_URL, "Coinflip", CARD, "https://127.0.0.1:5173/")
+
+        assertTrue(result.isFailure)
+        assertNull(storedAppUrl)
+    }
+
     // The app url is read for every page of its product id, so one left behind would keep serving a
     // deleted debug product from the developer's machine.
     @Test

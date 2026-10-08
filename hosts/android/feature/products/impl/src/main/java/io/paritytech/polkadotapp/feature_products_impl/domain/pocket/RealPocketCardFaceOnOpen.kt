@@ -4,9 +4,9 @@ import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardFa
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardKey
 import kotlinx.coroutines.withTimeoutOrNull
 import javax.inject.Inject
-import kotlin.time.Duration.Companion.milliseconds
+import kotlin.time.Duration.Companion.seconds
 
-/** Reads the setting from the product's cached manifest; any lookup that is not quick and clear shows the face. */
+/** Reads the setting from the product's manifest; any lookup that does not answer clearly shows the face. */
 class RealPocketCardFaceOnOpen @Inject constructor(
     private val publishedCards: PublishedPocketCards,
 ) : PocketCardFaceOnOpen {
@@ -15,7 +15,8 @@ class RealPocketCardFaceOnOpen @Inject constructor(
     } ?: true
 
     private companion object {
-        // The card is already travelling; past this the page loads regardless.
-        val LOOKUP_TIMEOUT = 500.milliseconds
+        // The page waits on the same product resolution before it can be served, so this only bounds
+        // a chain read that hangs.
+        val LOOKUP_TIMEOUT = 5.seconds
     }
 }
