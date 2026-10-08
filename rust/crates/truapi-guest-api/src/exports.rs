@@ -1,4 +1,4 @@
-//! What the exports [`main!`](crate::main) defines run: a single-task
+//! What the exports [`main`](crate::main) emits run: a single-task
 //! executor that polls the entry point at start and after every event the
 //! host delivers, for as long as the entry point keeps waking itself.
 

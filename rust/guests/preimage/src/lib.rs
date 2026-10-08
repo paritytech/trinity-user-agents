@@ -4,9 +4,8 @@ use futures::StreamExt;
 use truapi_guest_api::latest::RemotePreimageLookupSubscribeRequest;
 use truapi_guest_api::{Error, log, preimage};
 
-truapi_guest_api::main!(run);
-
-async fn run() -> Result<(), Error> {
+#[truapi_guest_api::main]
+async fn main() -> Result<(), Error> {
     let value = b"hello truapi".to_vec();
     let key = preimage::submit(value.clone()).await?;
 

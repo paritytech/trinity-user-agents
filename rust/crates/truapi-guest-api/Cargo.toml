@@ -8,6 +8,7 @@ publish = false
 
 [dependencies]
 truapi = { path = "../truapi", default-features = false, features = ["guest"] }
+truapi-macros = { path = "../truapi-macros" }
 derive_more = { workspace = true, features = ["display"] }
 
 [lints]

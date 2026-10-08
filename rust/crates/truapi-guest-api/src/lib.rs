@@ -1,15 +1,14 @@
 //! Experimental: TrUAPI for a product worker compiled to wasm.
 //!
 //! A worker is a `cdylib` built for `wasm32-unknown-unknown`. Its entry point
-//! is an async function named by [`main!`]; each service module below holds
+//! is an async function marked [`main`]; each service module below holds
 //! one async function per TrUAPI method, taking and returning the latest
 //! protocol types. The host runs the worker for one product, so every call is
 //! made as that product.
 //!
 //! ```ignore
-//! truapi_guest_api::main!(run);
-//!
-//! async fn run() -> Result<(), truapi_guest_api::Error> {
+//! #[truapi_guest_api::main]
+//! async fn main() -> Result<(), truapi_guest_api::Error> {
 //!     let user = truapi_guest_api::account::get_user_id(()).await?;
 //!     truapi_guest_api::log!("user id: {}", user.primary_username);
 //!     Ok(())
@@ -46,6 +45,7 @@ pub use truapi::api::system::guest as system;
 pub use truapi::api::theme::guest as theme;
 pub use truapi::api::worker::guest as worker;
 pub use truapi::{CallError, latest};
+pub use truapi_macros::guest_main as main;
 
 #[allow(unsafe_code)]
 mod imports {
@@ -81,11 +81,10 @@ macro_rules! log {
 }
 
 /// Export the worker's entry points, running `entry` when the host starts it.
-///
-/// `entry` is an `async fn() -> Result<(), Error>`. The worker ends when it
-/// returns.
+/// Emitted by [`main`]; the worker ends when `entry` returns.
+#[doc(hidden)]
 #[macro_export]
-macro_rules! main {
+macro_rules! export_entry {
     ($entry:path) => {
         #[unsafe(no_mangle)]
         pub extern "C" fn truapi_start() {

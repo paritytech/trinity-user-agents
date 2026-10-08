@@ -6,9 +6,8 @@ use futures::StreamExt;
 use truapi_guest_api::latest::RemotePreimageLookupSubscribeRequest;
 use truapi_guest_api::{Error, account, preimage};
 
-truapi_guest_api::main!(run);
-
-async fn run() -> Result<(), Error> {
+#[truapi_guest_api::main]
+async fn main() -> Result<(), Error> {
     let key = b"key".to_vec();
     let mut lookup = preimage::lookup_subscribe(RemotePreimageLookupSubscribeRequest { key });
     lookup

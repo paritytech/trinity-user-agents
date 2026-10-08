@@ -3,6 +3,7 @@
 //! Each macro's implementation lives in its own module. Rust requires the
 //! public proc-macro entry points to be defined at the crate root.
 
+mod guest_main;
 mod service;
 mod sso_service;
 mod versioned_type;
@@ -57,6 +58,23 @@ pub fn wire(args: TokenStream, item: TokenStream) -> TokenStream {
 #[proc_macro_attribute]
 pub fn wire_trait(args: TokenStream, item: TokenStream) -> TokenStream {
     wire::expand_trait(args, item)
+}
+
+/// Make an `async fn` the entry point of a product worker compiled to wasm.
+///
+/// ```ignore
+/// #[truapi_guest_api::main]
+/// async fn main() -> Result<(), truapi_guest_api::Error> {
+///     Ok(())
+/// }
+/// ```
+///
+/// Emits the exports the host starts the worker and delivers events through.
+/// Re-exported as `truapi_guest_api::main`, which the expansion names, so it
+/// works only in a crate depending on `truapi-guest-api`.
+#[proc_macro_attribute]
+pub fn guest_main(args: TokenStream, item: TokenStream) -> TokenStream {
+    guest_main::expand(args, item)
 }
 
 /// Expose a TrUAPI service trait to wasm workers.
