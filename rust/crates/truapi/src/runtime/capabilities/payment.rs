@@ -141,6 +141,17 @@ impl Payment for ProductRuntimeHost {
         if self.authority.current_session().is_none() {
             return Subscription::interrupted(CallError::Denied);
         }
+        if let Err(error) = self
+            .require_remote_permission(
+                v01::RemotePermission::BalanceAccess,
+                HostPaymentBalanceSubscribeError::V1(
+                    v01::HostPaymentBalanceSubscribeError::PermissionDenied,
+                ),
+            )
+            .await
+        {
+            return Subscription::interrupted(error);
+        }
         Subscription::new(Box::pin(
             platform
                 .subscribe_balance(&self.product, request.purse)
@@ -166,11 +177,19 @@ impl Payment for ProductRuntimeHost {
         if self.authority.current_session().is_none() {
             return Err(CallError::Denied);
         }
-        platform
-            .request_payment(&self.product, request)
-            .await
-            .map(|()| HostPaymentResponse::V1)
-            .map_err(|error| CallError::Domain(HostPaymentError::V1(error)))
+        match platform.request_payment(&self.product, request).await {
+            Ok(()) => Ok(HostPaymentResponse::V1),
+            // Only a product the user lets see the balance may learn that the
+            // balance was short; to any other it reads as a refusal.
+            Err(v01::HostPaymentError::InsufficientBalance)
+                if !self.holds_balance_access().await =>
+            {
+                Err(CallError::Domain(HostPaymentError::V1(
+                    v01::HostPaymentError::Rejected,
+                )))
+            }
+            Err(error) => Err(CallError::Domain(HostPaymentError::V1(error))),
+        }
     }
 
     #[instrument(skip_all, fields(runtime.method = "payment.status_subscribe"))]
@@ -213,6 +232,11 @@ impl Payment for ProductRuntimeHost {
             return Err(CallError::Denied);
         }
         let domain = |error| CallError::Domain(HostPaymentTopUpError::V1(error));
+        if request.amount == 0 {
+            return Err(domain(v01::HostPaymentTopUpError::Unknown {
+                reason: "amount must be positive".to_string(),
+            }));
+        }
         if !source_keys_are_valid(&request.source) {
             return Err(domain(v01::HostPaymentTopUpError::InvalidSource));
         }
@@ -248,6 +272,20 @@ impl Payment for ProductRuntimeHost {
                     })
                 }),
         ))
+    }
+}
+
+impl ProductRuntimeHost {
+    /// Whether the product already holds balance access, without asking.
+    async fn holds_balance_access(&self) -> bool {
+        matches!(
+            self.permissions_service()
+                .peek_remote(&v01::RemotePermissionRequest {
+                    permission: v01::RemotePermission::BalanceAccess,
+                })
+                .await,
+            Ok(crate::platform::PermissionAuthorizationStatus::Authorized)
+        )
     }
 }
 

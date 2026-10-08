@@ -7741,9 +7741,13 @@ fn a_pairing_test_host_keeps_a_submitted_preimage_and_serves_it_back() {
 }
 
 fn payment_services() -> Arc<RuntimeServices> {
+    payment_services_over(stub_platform())
+}
+
+fn payment_services_over(platform: Arc<dyn Platform>) -> Arc<RuntimeServices> {
     let (host_config, _) = runtime_config("payments.dot");
     RuntimeServices::new(
-        stub_platform(),
+        platform,
         host_config.host.host_info.clone(),
         host_config.people_chain_genesis_hash,
         host_config.bulletin_chain_genesis_hash,
@@ -8165,6 +8169,128 @@ fn the_balance_comes_from_the_host_for_each_product() {
             Some(Err(denied(v01::HostPaymentBalanceSubscribeError::PermissionDenied))),
             Some(Err(CallError::Denied)),
             vec![("wallet.dot".to_string(), None), ("private.dot".to_string(), None)],
+        )
+    );
+}
+
+// A product sees the balance only once the user lets it: a refusal answers
+// PermissionDenied, and the host's balance view is never asked.
+#[test]
+fn the_balance_needs_the_users_permission_before_the_host_is_asked() {
+    let platform = Arc::new(crate::test_support::StubPlatform {
+        remote_permission_denied: true,
+        ..Default::default()
+    });
+    let services = payment_services_over(platform.clone());
+    let balance = Arc::new(RecordingBalancePlatform::default());
+    assert!(services.install_balance_platform(balance.clone()));
+
+    let refused = first_balance(&payment_host(&services, "wallet.dot", true));
+
+    assert_eq!(
+        (
+            refused,
+            balance.asked.lock().expect("asked mutex poisoned").len(),
+            platform.remote_permission_requests.lock().expect("requests mutex poisoned").clone(),
+        ),
+        (
+            Some(Err(CallError::Domain(
+                truapi::versioned::payment::HostPaymentBalanceSubscribeError::V1(
+                    v01::HostPaymentBalanceSubscribeError::PermissionDenied,
+                ),
+            ))),
+            0,
+            vec![v01::RemotePermissionRequest { permission: v01::RemotePermission::BalanceAccess }],
+        )
+    );
+}
+
+/// A payment engine whose user never has enough.
+struct ShortPaymentPlatform;
+
+#[truapi::async_trait]
+impl crate::platform::PaymentPlatform for ShortPaymentPlatform {
+    async fn request_payment(
+        &self,
+        _product: &ProductContext,
+        _request: truapi::latest::HostPaymentRequest,
+    ) -> Result<(), truapi::latest::HostPaymentError> {
+        Err(v01::HostPaymentError::InsufficientBalance)
+    }
+
+    fn subscribe_payment_status(
+        &self,
+        _product: &ProductContext,
+        _id: [u8; 32],
+    ) -> futures::stream::BoxStream<
+        'static,
+        Result<truapi::latest::HostPaymentStatusSubscribeItem, truapi::latest::HostPaymentStatusSubscribeError>,
+    > {
+        Box::pin(futures::stream::empty())
+    }
+}
+
+// A short balance is the balance's business: a product that may not see the
+// balance learns only that the payment was refused, and asking does not
+// prompt the user.
+#[test]
+fn a_short_balance_reads_as_a_refusal_unless_the_product_may_see_it() {
+    let platform = Arc::new(crate::test_support::StubPlatform::default());
+    let services = payment_services_over(platform.clone());
+    assert!(services.install_payment_platform(Arc::new(ShortPaymentPlatform)));
+    let host = payment_host(&services, "wallet.dot", true);
+
+    let without_access = request_payment(&host);
+    futures::executor::block_on(host.set_permission_authorization_status(
+        PermissionAuthorizationRequest::Remote(v01::RemotePermissionRequest {
+            permission: v01::RemotePermission::BalanceAccess,
+        }),
+        PermissionAuthorizationStatus::Authorized,
+    ))
+    .expect("grant stored");
+    let with_access = request_payment(&host);
+
+    let refused = |error| CallError::Domain(truapi::versioned::payment::HostPaymentError::V1(error));
+    assert_eq!(
+        (
+            without_access,
+            with_access,
+            platform.remote_permission_requests.lock().expect("requests mutex poisoned").len(),
+        ),
+        (
+            Err(refused(v01::HostPaymentError::Rejected)),
+            Err(refused(v01::HostPaymentError::InsufficientBalance)),
+            0,
+        )
+    );
+}
+
+// Nothing to claim is not a top-up: the host never sees it.
+#[test]
+fn a_top_up_of_nothing_is_refused_before_the_host_sees_it() {
+    let services = payment_services();
+    let engine = Arc::new(RecordingTopUpPlatform::default());
+    assert!(services.install_top_up_platform(engine.clone()));
+    let host = payment_host(&services, "wallet.dot", true);
+
+    let refused = futures::executor::block_on(truapi::api::Payment::top_up(
+        &host,
+        &CallContext::default(),
+        truapi::versioned::payment::HostPaymentTopUpRequest::V1(v01::HostPaymentTopUpRequest {
+            into: None,
+            amount: 0,
+            source: product_account_source(),
+            id: [7; 32],
+        }),
+    ));
+
+    assert_eq!(
+        (refused, engine.started.lock().expect("started mutex poisoned").len()),
+        (
+            Err(CallError::Domain(truapi::versioned::payment::HostPaymentTopUpError::V1(
+                v01::HostPaymentTopUpError::Unknown { reason: "amount must be positive".to_string() },
+            ))),
+            0,
         )
     );
 }

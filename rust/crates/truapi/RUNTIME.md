@@ -397,12 +397,15 @@ AutoSigning without approval. Legacy-account signing still asks the user.
 - `PocketPlatform`: stream the product's Pocket card collection and remove a
   card from it. The host owns the collection and decides which cards are
   privileged.
-- `BalancePlatform`: stream the user's spendable balance to a product, the
-  current value first and then each change, or `PermissionDenied` when the
-  host does not share it with that product. Installed with
+- `BalancePlatform`: stream what a payment request can spend right now, the
+  current value first and then each change. Installed with
   `set_balance_platform`; native hosts use `set_balance_callbacks` with
-  `notify_balance`. The core requires a session. Without it,
-  `balanceSubscribe` answers `Unsupported`.
+  `notify_balance`. The core requires a session and the product's
+  `BalanceAccess` remote permission, asking for it on the first subscription
+  and answering `PermissionDenied` when the user refuses. A host
+  `InsufficientBalance` reaches a product without that permission as
+  `Rejected`. Without a balance view, `balanceSubscribe` answers
+  `Unsupported`.
 - `PaymentPlatform`: pay from the user's balance to an account once the user
   approves, and stream each payment's status by its caller-chosen id.
   Installed with `set_payment_platform`; native hosts use

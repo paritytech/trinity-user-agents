@@ -1058,6 +1058,7 @@ fn remote_permission_key(permission: &latest::RemotePermission) -> &'static str 
         Permission::ChainSubmit => "ChainSubmit",
         Permission::PreimageSubmit => "PreimageSubmit",
         Permission::StatementSubmit => "StatementSubmit",
+        Permission::BalanceAccess => "BalanceAccess",
     }
 }
 
