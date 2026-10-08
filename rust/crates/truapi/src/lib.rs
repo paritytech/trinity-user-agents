@@ -196,6 +196,12 @@ pub mod latest {
     pub type HostPocketRemoveCardRequest = LatestOf<versioned::pocket::HostPocketRemoveCardRequest>;
     /// Pocket card removal failure.
     pub type HostPocketRemoveCardError = LatestOf<versioned::pocket::HostPocketRemoveCardError>;
+    /// Request to show or hide the face above the calling Widget.
+    pub type HostExpandedCardSetFaceShownRequest =
+        LatestOf<versioned::expanded_card::HostExpandedCardSetFaceShownRequest>;
+    /// Face visibility change failure.
+    pub type HostExpandedCardSetFaceShownError =
+        LatestOf<versioned::expanded_card::HostExpandedCardSetFaceShownError>;
     /// Push notification scheduling request.
     pub type HostPushNotificationRequest =
         LatestOf<versioned::notifications::HostPushNotificationRequest>;
