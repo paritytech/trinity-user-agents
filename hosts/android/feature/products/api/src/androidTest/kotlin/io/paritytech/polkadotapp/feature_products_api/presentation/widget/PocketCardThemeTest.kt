@@ -19,9 +19,9 @@ import io.paritytech.polkadotapp.feature_products_api.model.JsButtonVariant
 import io.paritytech.polkadotapp.feature_products_api.model.JsColor
 import io.paritytech.polkadotapp.feature_products_api.model.JsModifier
 import io.paritytech.polkadotapp.feature_products_api.model.JsWidget
+import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
-import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -60,14 +60,17 @@ class PocketCardThemeTest {
     fun aCardFaceLooksTheSameWhateverThemeTheUserPicked() {
         draw(faceUsingThemeDefaults) { face -> PocketCardTheme(content = face) }
 
-        assertTrue(drawnTheSameUnder(PolkadotAppTheme.Lisbon, PolkadotAppTheme.BerlinDay))
+        val inDefaultTheme = drawnUnder(PolkadotAppTheme.DEFAULT)
+        PolkadotAppTheme.entries.forEach { theme ->
+            assertArrayEquals(theme.name, inDefaultTheme, drawnUnder(theme))
+        }
     }
 
     @Test
     fun aWidgetOutsideAPocketCardFollowsThePickedTheme() {
         draw(faceUsingThemeDefaults) { face -> face() }
 
-        assertFalse(drawnTheSameUnder(PolkadotAppTheme.Lisbon, PolkadotAppTheme.BerlinDay))
+        assertFalse(drawnUnder(PolkadotAppTheme.Lisbon).contentEquals(drawnUnder(PolkadotAppTheme.BerlinDay)))
     }
 
     private fun draw(widget: JsWidget, surface: @Composable (face: @Composable () -> Unit) -> Unit) {
@@ -80,12 +83,9 @@ class PocketCardThemeTest {
         }
     }
 
-    private fun drawnTheSameUnder(first: PolkadotAppTheme, second: PolkadotAppTheme): Boolean {
-        pickedTheme = first
-        val underFirst = captureFace().pixels()
-        pickedTheme = second
-        val underSecond = captureFace().pixels()
-        return underFirst.contentEquals(underSecond)
+    private fun drawnUnder(theme: PolkadotAppTheme): IntArray {
+        pickedTheme = theme
+        return captureFace().pixels()
     }
 
     private fun captureFace(): ImageBitmap = compose.onNodeWithTag(FACE_TAG).captureToImage()

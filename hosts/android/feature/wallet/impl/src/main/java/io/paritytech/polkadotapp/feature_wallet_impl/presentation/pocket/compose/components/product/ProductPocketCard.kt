@@ -51,35 +51,35 @@ fun ProductPocketCard(
 ) {
     val currentFace by bindings.face.collectAsStateWithLifecycle()
 
-    PolkadotSurface(
-        modifier = modifier.testTag(PocketTestTags.PRODUCT_CARD),
-        shape = PolkadotTheme.shapes.large,
-        color = PocketCardColors.DigitalDollarCardBackground,
-        border = BorderStroke(Dp.Hairline, PocketCardColors.Secondary),
-    ) {
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(CardSizes.HEIGHT)
-                // The expanded copy is the card the user is already looking at: it takes no presses
-                // of its own, so it does not ripple under the finger either.
-                .combinedClickable(
-                    enabled = onOpen != null || onRemoveRequested != null,
-                    onClick = { onOpen?.invoke(card) },
-                    // A pinned card is never offered for removal, so long-press does nothing on it.
-                    onLongClick = if (card.pinned) null else onRemoveRequested?.let { { it(card) } },
-                )
+    PocketCardTheme {
+        PolkadotSurface(
+            modifier = modifier.testTag(PocketTestTags.PRODUCT_CARD),
+            shape = PolkadotTheme.shapes.large,
+            color = PocketCardColors.DigitalDollarCardBackground,
+            border = BorderStroke(Dp.Hairline, PocketCardColors.Secondary),
         ) {
-            Image(
-                modifier = Modifier.matchParentSize(),
-                painter = painterResource(R.drawable.img_texture_grain_dark),
-                contentDescription = null,
-                contentScale = ContentScale.Crop
-            )
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(CardSizes.HEIGHT)
+                    // The expanded copy is the card the user is already looking at: it takes no presses
+                    // of its own, so it does not ripple under the finger either.
+                    .combinedClickable(
+                        enabled = onOpen != null || onRemoveRequested != null,
+                        onClick = { onOpen?.invoke(card) },
+                        // A pinned card is never offered for removal, so long-press does nothing on it.
+                        onLongClick = if (card.pinned) null else onRemoveRequested?.let { { it(card) } },
+                    )
+            ) {
+                Image(
+                    modifier = Modifier.matchParentSize(),
+                    painter = painterResource(R.drawable.img_texture_grain_dark),
+                    contentDescription = null,
+                    contentScale = ContentScale.Crop
+                )
 
-            currentFace?.let { widget ->
-                CompositionLocalProvider(LocalJsImageResolver provides bindings.imageResolver) {
-                    PocketCardTheme {
+                currentFace?.let { widget ->
+                    CompositionLocalProvider(LocalJsImageResolver provides bindings.imageResolver) {
                         JsWidgetRenderer(
                             widget = widget,
                             modifier = Modifier.matchParentSize(),

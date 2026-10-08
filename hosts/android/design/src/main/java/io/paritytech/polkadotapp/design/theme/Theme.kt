@@ -73,19 +73,23 @@ fun PolkadotTheme(
     val colors: PolkadotColorsPalette = remember(theme) { theme.colors() }
     val typography: PolkadotTypography = remember(theme) { theme.typography() }
 
-    val spacings: PolkadotSpacings = PolkadotDefaultSpacings()
-    val radii: PolkadotRadii = PolkadotDefaultRadii()
-    val shapes: PolkadotShapes = PolkadotDefaultShapes()
-    val borders: PolkadotBorders = PolkadotDefaultBorders()
+    val spacings: PolkadotSpacings = remember { PolkadotDefaultSpacings() }
+    val radii: PolkadotRadii = remember { PolkadotDefaultRadii() }
+    val shapes: PolkadotShapes = remember { PolkadotDefaultShapes() }
+    val borders: PolkadotBorders = remember { PolkadotDefaultBorders() }
 
-    val textSelectionColors = TextSelectionColors(
-        handleColor = colors.fg.tertiary,
-        backgroundColor = colors.fg.primary.copy(alpha = 0.34f)
-    )
+    val textSelectionColors = remember(colors) {
+        TextSelectionColors(
+            handleColor = colors.fg.tertiary,
+            backgroundColor = colors.fg.primary.copy(alpha = 0.34f)
+        )
+    }
+    val colorScheme = remember(colors) { colors.toMaterialColorScheme() }
+    val materialTypography = remember(typography) { typography.toMaterialTypography() }
 
     MaterialTheme(
-        colorScheme = colors.toMaterialColorScheme(),
-        typography = typography.toMaterialTypography(),
+        colorScheme = colorScheme,
+        typography = materialTypography,
         shapes = materialShapes()
     ) {
         CompositionLocalProvider(
