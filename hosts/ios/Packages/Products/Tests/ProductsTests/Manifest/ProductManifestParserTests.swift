@@ -199,6 +199,41 @@ struct ProductManifestParserTests {
         #expect(!worker.serves(.pocket))
     }
 
+    // MARK: - Chat presentation
+
+    /// A product whose rooms run on actions alone asks for no text field.
+    @Test func hidesTheTextInputAWorkerTurnsOff() throws {
+        let manifest = Fixtures.worker(pocketSection: nil, chatSection: #"{"textInput":false}"#)
+        let worker = try #require(parsedWorker(manifest))
+
+        #expect(worker.chatPresentation == .init(showsTextInput: false))
+    }
+
+    /// Every worker published before the section existed keeps its text field.
+    @Test func showsTheTextInputWhenTheWorkerSaysNothing() throws {
+        let worker = try #require(parsedWorker(Fixtures.worker()))
+
+        #expect(worker.chatPresentation == .standard)
+    }
+
+    /// A section of the wrong shape costs the product its setting, not the
+    /// worker record that also declares its chat.
+    @Test(arguments: [#"{"textInput":"no"}"#, #""hidden""#, "[]", "false"])
+    func keepsTheWorkerAndTheTextInputWhenTheChatSectionIsMalformed(_ section: String) throws {
+        let worker = try #require(parsedWorker(Fixtures.worker(pocketSection: nil, chatSection: section)))
+
+        #expect(worker.entrypoint == "src/worker.js")
+        #expect(worker.chatPresentation == .standard)
+    }
+
+    /// Read only behind the flag that declares the chat, as the cards are.
+    @Test func ignoresTheChatSectionWithoutTheChatInclude() throws {
+        let manifest = Fixtures.worker(chat: "false", pocketSection: nil, chatSection: #"{"textInput":false}"#)
+        let worker = try #require(parsedWorker(manifest))
+
+        #expect(worker.chatPresentation == nil)
+    }
+
     // MARK: - Pocket cards
 
     @Test func parsesPocketCardsAWorkerPublishes() throws {
@@ -375,11 +410,17 @@ private enum Fixtures {
         worker(chat: chat, pocket: pocket, pocketSection: cards.map { "{\"cards\":\($0)}" })
     }
 
-    static func worker(chat: String = "true", pocket: String = "false", pocketSection: String?) -> String {
+    static func worker(
+        chat: String = "true",
+        pocket: String = "false",
+        pocketSection: String?,
+        chatSection: String? = nil
+    ) -> String {
         let pocketField = pocketSection.map { ",\"pocket\":\($0)" } ?? ""
+        let chatField = chatSection.map { ",\"chat\":\($0)" } ?? ""
         return """
         {"$v":1,"kind":"worker","appVersion":[1,0,0],"entrypoint":"src/worker.js",
-         "includes":{"chat":\(chat),"pocket":\(pocket)}\(pocketField)}
+         "includes":{"chat":\(chat),"pocket":\(pocket)}\(pocketField)\(chatField)}
         """
     }
 

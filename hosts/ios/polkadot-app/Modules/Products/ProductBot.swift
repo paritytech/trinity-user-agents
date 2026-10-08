@@ -14,6 +14,7 @@ import UIKitExt
 /// Each instance is created by ``ProductBotFactory`` for a specific ``Product``.
 final class ProductBot: ChatExtensionBot {
     let product: Product
+    private let presentation: ProductExecutable.Worker.ChatPresentation
     private let runtime: ChatRuntimeProtocol
     private let logger: LoggerProtocol
 
@@ -27,10 +28,12 @@ final class ProductBot: ChatExtensionBot {
 
     init(
         product: Product,
+        presentation: ProductExecutable.Worker.ChatPresentation,
         runtime: ChatRuntimeProtocol,
         logger: LoggerProtocol = Logger.shared
     ) {
         self.product = product
+        self.presentation = presentation
         self.runtime = runtime
         self.logger = logger
     }
@@ -87,7 +90,7 @@ extension ProductBot: ChatExtensionBotProtocol {
             name: product.name,
             contactSource: .chat,
             icon: .image(nil),
-            input: .inputField(.init(canPay: false, canAttachFile: false)),
+            input: presentation.showsTextInput ? .inputField(.init(canPay: false, canAttachFile: false)) : .empty,
             moreActions: []
         )
     }

@@ -111,6 +111,7 @@ class RealFundingProductsWarmUpTest {
                     includesChat = true,
                     includesPocket = false,
                     pocketCards = emptyList(),
+                    showsTextInput = true,
                 )
             },
         )

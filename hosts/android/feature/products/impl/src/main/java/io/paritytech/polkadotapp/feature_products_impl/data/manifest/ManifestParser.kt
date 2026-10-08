@@ -1,6 +1,9 @@
 package io.paritytech.polkadotapp.feature_products_impl.data.manifest
 
 import com.google.gson.Gson
+import com.google.gson.JsonElement
+import com.google.gson.JsonObject
+import com.google.gson.JsonPrimitive
 import io.paritytech.polkadotapp.common.utils.enumValueOfOrNull
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardId
 import io.paritytech.polkadotapp.feature_products_api.model.ExecutableHost
@@ -60,13 +63,15 @@ internal class ManifestParser @Inject constructor(
                 ExecutableKind.WORKER -> {
                     val entrypoint = requireNotNull(remote.entrypoint) { "worker missing entrypoint" }
                     val includes = requireNotNull(remote.includes) { "worker missing includes" }
+                    val includesChat = requireNotNull(includes.chat) { "worker includes missing 'chat'" }
                     val includesPocket = requireNotNull(includes.pocket) { "worker includes missing 'pocket'" }
                     ProductExecutable.Worker(
                         scriptUrl = "https://${host.value}/$entrypoint",
                         appVersion = appVersion,
-                        includesChat = requireNotNull(includes.chat) { "worker includes missing 'chat'" },
+                        includesChat = includesChat,
                         includesPocket = includesPocket,
                         pocketCards = remote.pocket.toCardDefinitions(includesPocket),
+                        showsTextInput = !includesChat || remote.chat.showsTextInput(),
                     )
                 }
             }
@@ -78,6 +83,11 @@ internal class ManifestParser @Inject constructor(
      * its cards and nothing more: failing the worker record over one would take the product's chat
      * with it, and chat has nothing to do with the cards.
      */
+    private fun JsonElement?.showsTextInput(): Boolean {
+        val textInput = (this as? JsonObject)?.get("textInput") as? JsonPrimitive
+        return textInput?.takeIf { it.isBoolean }?.asBoolean ?: true
+    }
+
     private fun PocketRemote?.toCardDefinitions(includesPocket: Boolean): List<PocketCardDefinition> {
         if (this == null) return emptyList()
 

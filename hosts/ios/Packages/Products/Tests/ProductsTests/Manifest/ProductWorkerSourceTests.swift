@@ -5,7 +5,7 @@ import Testing
 /// drift apart about which product has one.
 struct ProductWorkerSourceTests {
     @Test func servesAPublishedWorkerThatIncludesTheModality() throws {
-        let resolved = product(worker: worker(modalities: [.chat, .pocket([])]))
+        let resolved = product(worker: worker(modalities: [.chat(.standard), .pocket([])]))
 
         #expect(ProductWorkerSource.published(for: resolved, serving: .chat)?.contentId == "worker.game.dot")
         #expect(ProductWorkerSource.published(for: resolved, serving: .pocket)?.contentId == "worker.game.dot")
@@ -15,7 +15,7 @@ struct ProductWorkerSourceTests {
     /// back to a hand-installed script here would hand a product's cards to a
     /// file the product never published.
     @Test func servesNothingWhenThePublishedWorkerOmitsTheModality() throws {
-        let resolved = product(worker: worker(modalities: [.chat]))
+        let resolved = product(worker: worker(modalities: [.chat(.standard)]))
 
         #expect(ProductWorkerSource.published(for: resolved, serving: .pocket) == nil)
         #expect(ProductWorkerSource.published(for: resolved, serving: .chat) != nil)

@@ -53,7 +53,7 @@ struct PublishedPocketCardsTests {
             identifier: "worker.game.paseo",
             appVersion: .zero,
             entrypoint: "worker.js",
-            modalities: [.chat]
+            modalities: [.chat(.standard)]
         )
         let cards = PublishedPocketCards(products: gameResolver(worker: worker))
 
