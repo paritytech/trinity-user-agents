@@ -1,6 +1,5 @@
 package io.paritytech.polkadotapp.feature_products_impl.data.manifest
 
-import com.google.gson.JsonElement
 import com.google.gson.annotations.JsonAdapter
 import com.google.gson.annotations.SerializedName
 import io.paritytech.polkadotapp.feature_products_api.model.ProductIcon
@@ -31,8 +30,6 @@ internal class ExecutableManifestRemote(
     // worker
     val entrypoint: String? = null,
     val includes: IncludesRemote? = null,
-    // Read by hand so a section of the wrong shape costs the setting, not the worker record.
-    val chat: JsonElement? = null,
     val pocket: PocketRemote? = null,
     // widget
     val description: String? = null,

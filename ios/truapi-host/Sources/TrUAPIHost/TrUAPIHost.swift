@@ -207,7 +207,10 @@ public protocol ChatHostBridge: AnyObject, Sendable {
     /// Create or resolve a native product Chat room. The core has bounded and
     /// normalized these arguments and screened the icon scheme; escaping them
     /// for the surface that renders them is still the host's job.
-    func createRoom(roomId: String, name: String, icon: String) async throws
+    ///
+    /// Apply `hideTextInput` to an existing room too, so a product can change it
+    /// after the room was created.
+    func createRoom(roomId: String, name: String, icon: String, hideTextInput: Bool) async throws
         -> ChatRoomRegistrationStatus
 
     /// Register or resolve a native product Chat bot. The core has bounded and
@@ -373,10 +376,11 @@ private final class ChatCallbackAdapter: NativeChatCallbacks, @unchecked Sendabl
     func createRoom(
         roomId: String,
         name: String,
-        icon: String
+        icon: String,
+        hideTextInput: Bool
     ) async throws -> ChatRoomRegistrationStatus {
         try await withHostRejection {
-            try await bridge.createRoom(roomId: roomId, name: name, icon: icon)
+            try await bridge.createRoom(roomId: roomId, name: name, icon: icon, hideTextInput: hideTextInput)
         }
     }
 

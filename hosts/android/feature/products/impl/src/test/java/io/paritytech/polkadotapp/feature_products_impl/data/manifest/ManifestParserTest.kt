@@ -251,43 +251,4 @@ class ManifestParserTest {
         assertEquals(true, worker?.includesChat)
         assertEquals(emptyList<PocketCardDefinition>(), worker?.pocketCards)
     }
-
-    private fun parsedWorker(chatSection: String?, includesChat: Boolean = true): ProductExecutable.Worker? {
-        val chatField = chatSection?.let { ""","chat":$it""" } ?: ""
-        return parser.parseExecutable(
-            """{"${'$'}v":1,"kind":"worker","appVersion":[1,0,0],"entrypoint":"i.js","includes":{"chat":$includesChat,"pocket":false}$chatField}""",
-            ExecutableKind.WORKER,
-            host("worker.coinflip.dot"),
-        ).getOrNull() as? ProductExecutable.Worker
-    }
-
-    // A product whose rooms run on actions alone asks for no text field.
-    @Test
-    fun `a worker can turn off the text input of its rooms`() {
-        assertEquals(false, parsedWorker("""{"textInput":false}""")?.showsTextInput)
-    }
-
-    // Every worker published before the section existed keeps its text field.
-    @Test
-    fun `a worker that says nothing keeps the text input`() {
-        assertEquals(true, parsedWorker(chatSection = null)?.showsTextInput)
-    }
-
-    // A section of the wrong shape costs the product its setting, not the worker record that also
-    // declares its chat.
-    @Test
-    fun `a malformed chat section keeps the worker and its text input`() {
-        for (section in listOf("""{"textInput":"no"}""", """"hidden"""", "[]", "false")) {
-            val worker = parsedWorker(section)
-
-            assertEquals("expected a worker for $section", true, worker?.includesChat)
-            assertEquals("expected the text input for $section", true, worker?.showsTextInput)
-        }
-    }
-
-    // Read only behind the flag that declares the chat, as the cards are.
-    @Test
-    fun `the chat section is ignored without includes chat`() {
-        assertEquals(true, parsedWorker("""{"textInput":false}""", includesChat = false)?.showsTextInput)
-    }
 }

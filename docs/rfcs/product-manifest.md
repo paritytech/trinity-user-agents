@@ -180,7 +180,6 @@ type WorkerManifest = CommonExecutableFields & {
     chat?: boolean;
     input?: boolean;
   };
-  chat?: ChatPresentation;                         // Read only when `includes.chat` is true; see [Chat presentation](#chat-presentation).
 };
 
 type SemVer = [major: number, minor: number, patch: number, build?: string];
@@ -196,20 +195,6 @@ type SemVer = [major: number, minor: number, patch: number, build?: string];
 Publishers MUST set `kind` to match the subname label the manifest is written under: `app` under `app.<product_id>.<tld>`, `widget` under `widget.<product_id>.<tld>`, `worker` under `worker.<product_id>.<tld>`. Hosts MUST reject a manifest whose `kind` does not match the subname it was read from.
 
 **Why one Worker, not per modality.** A Worker is the product's single background process, carrying its full Host-API surface (signing, notifications, chain access, long-lived caches). Those capabilities do not split cleanly along the boundaries between Pocket, Chat, and Input, and one bundle per surface would duplicate that surface area and make the product's on-chain signing identity ambiguous. `includes` only advertises which user-facing affordances the same process serves; the executable remains a single artifact.
-
-#### Chat presentation
-
-The `chat` section tells the Host how to present the rooms the worker creates.
-
-```typescript
-type ChatPresentation = {
-  textInput?: boolean;           // Show the text field in the worker's rooms. Omitted means `true`.
-};
-```
-
-A worker whose rooms are driven by action buttons alone, such as a game, sets `textInput` to `false`. The Host then shows those rooms without a text field, as it does for its own built-in bots, and the user answers through the actions the worker posts.
-
-The setting applies to every room of the worker, and takes effect when the Host next resolves the worker manifest. A Host that does not read the section shows the text field, which is what every Host did before it existed, so publishing it never breaks a room.
 
 ### Executable structure (v1)
 
@@ -339,7 +324,6 @@ type WorkerConfig = {
     pocket?: boolean;
     input?: boolean;
   };
-  chat?: ChatPresentation; // Same shape as WorkerManifest.chat.
 };
 ```
 
@@ -516,7 +500,6 @@ A conforming Host implementation should produce well-defined behaviour for each 
 - Executable subname `contenthash` unset, non-IPFS codec, or undecodable → cannot launch that executable; surface a diagnostic.
 - Executable CID unreachable → cannot launch that executable; surface a diagnostic.
 - Executable subname owned by a different account than the base name (when strict provenance is enabled) → skip that executable.
-- A worker `chat` section that is not the `ChatPresentation` shape is ignored, and the worker's rooms keep their text field. The worker and its other surfaces still serve.
 
 ## Drawbacks
 

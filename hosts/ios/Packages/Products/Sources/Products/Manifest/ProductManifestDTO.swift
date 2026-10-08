@@ -31,7 +31,6 @@ struct ExecutableManifestDTO: Decodable {
     let appVersion: SemVerDTO?
     let entrypoint: String?
     let includes: IncludesDTO?
-    let chat: ChatPresentationDTO?
     let pocket: PocketDTO?
     let description: String?
     let dimensions: DimensionsDTO?
@@ -42,7 +41,6 @@ struct ExecutableManifestDTO: Decodable {
         case appVersion
         case entrypoint
         case includes
-        case chat
         case pocket
         case description
         case dimensions
@@ -52,21 +50,6 @@ struct ExecutableManifestDTO: Decodable {
 struct IncludesDTO: Decodable {
     let chat: Bool?
     let pocket: Bool?
-}
-
-/// Decodes leniently, so a section of the wrong shape costs the product its setting and not the
-/// worker record its chat is declared in.
-struct ChatPresentationDTO: Decodable {
-    let textInput: Bool?
-
-    private enum CodingKeys: String, CodingKey {
-        case textInput
-    }
-
-    init(from decoder: Decoder) throws {
-        textInput = try? decoder.container(keyedBy: CodingKeys.self)
-            .decodeIfPresent(Bool.self, forKey: .textInput)
-    }
 }
 
 /// The section decodes leniently so a publisher who typed it wrong costs the product its cards and

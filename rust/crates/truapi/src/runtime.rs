@@ -110,6 +110,7 @@ use truapi::versioned::renderer::{
     HostRendererActionSubscribeError, HostRendererActionSubscribeItem,
     HostRendererActionSubscribeRequest,
 };
+use truapi::versioned::IntoLatest;
 use truapi::{CallContext, CallError, CancellationReason, Subscription, v01};
 #[cfg(target_arch = "wasm32")]
 use web_time::Instant;
@@ -1446,7 +1447,7 @@ impl Chat for ProductRuntimeHost {
         request: HostChatCreateRoomRequest,
     ) -> Result<HostChatCreateRoomResponse, CallError<HostChatCreateRoomError>> {
         let platform = self.chat_platform()?;
-        let HostChatCreateRoomRequest::V1(mut request) = request;
+        let mut request = request.into_latest();
         request.room_id = normalize_chat_identifier("roomId", &request.room_id)
             .map_err(chat_create_room_field_error)?;
         request.name =
@@ -1456,8 +1457,8 @@ impl Chat for ProductRuntimeHost {
         platform
             .create_chat_room(&self.product, request)
             .await
-            .map(HostChatCreateRoomResponse::V1)
-            .map_err(|error| CallError::Domain(HostChatCreateRoomError::V1(error)))
+            .map(HostChatCreateRoomResponse::V2)
+            .map_err(|error| CallError::Domain(HostChatCreateRoomError::V2(error)))
     }
 
     #[instrument(skip_all, fields(runtime.method = "chat.register_bot"))]
@@ -1658,7 +1659,7 @@ fn chat_post_field_error(error: ChatFieldError) -> CallError<HostChatPostMessage
 fn chat_create_room_field_error(
     error: crate::platform::ChatFieldError,
 ) -> CallError<HostChatCreateRoomError> {
-    CallError::Domain(HostChatCreateRoomError::V1(
+    CallError::Domain(HostChatCreateRoomError::V2(
         v01::HostChatCreateRoomError::Unknown {
             reason: error.to_string(),
         },

@@ -1,7 +1,7 @@
 //! Parse rustdoc JSON output to extract API definitions.
 
 use std::cmp::Ordering;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use anyhow::{Context, Result, bail};
 use serde::Deserialize;
@@ -272,6 +272,47 @@ pub struct NameContext {
 }
 
 impl NameContext {
+    /// Names for the platform walk, where a signature may pin a protocol
+    /// version. A pinned type that another version redefines keeps its version
+    /// in its name, so it is not mistaken for the latest payload.
+    pub fn for_platform(krate: &Crate) -> Self {
+        let mut versions_by_name: HashMap<&str, Vec<(&String, u32)>> = HashMap::new();
+        for (item_id, item_path) in &krate.paths {
+            if item_path.crate_id != 0 {
+                continue;
+            }
+            let Some(name) = item_path.path.last() else {
+                continue;
+            };
+            if let Some(version) = item_path
+                .path
+                .iter()
+                .find_map(|segment| version_module_number(segment))
+            {
+                versions_by_name
+                    .entry(name)
+                    .or_default()
+                    .push((item_id, version));
+            }
+        }
+
+        let mut ctx = Self::default();
+        for (name, items) in versions_by_name {
+            let versions = items
+                .iter()
+                .map(|(_, version)| version)
+                .collect::<BTreeSet<_>>();
+            if versions.len() < 2 {
+                continue;
+            }
+            for (item_id, version) in items {
+                ctx.by_item_id
+                    .insert(item_id.clone(), format!("V{version:02}{name}"));
+            }
+        }
+        ctx
+    }
+
     fn name_for_item(&self, item_id: &str, fallback: &str) -> String {
         self.by_item_id
             .get(item_id)
@@ -538,6 +579,19 @@ fn disambiguated_type_name(simple_name: &str, path: &[String]) -> String {
         .map(|segment| to_pascal_case(segment))
         .unwrap_or_default();
     format!("{module}{simple_name}")
+}
+
+/// Split a `V01Name` type name into its protocol version and base name.
+pub fn version_prefixed_type(name: &str) -> Option<(u32, &str)> {
+    let rest = name.strip_prefix('V')?;
+    if rest.len() < 3 {
+        return None;
+    }
+    let (version, base) = rest.split_at(2);
+    if base.is_empty() {
+        return None;
+    }
+    Some((version.parse().ok()?, base))
 }
 
 fn version_module_number(segment: &str) -> Option<u32> {

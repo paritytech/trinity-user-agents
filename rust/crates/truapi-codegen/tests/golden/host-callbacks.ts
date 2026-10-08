@@ -1150,6 +1150,9 @@ export interface ChainProvider {
 export interface ChatPlatform {
   /**
    * Create or resolve a product-scoped native chat room.
+   *
+   * `hide_text_input` applies to an existing room too, so a product can change it
+   * after the room was created.
    */
   createChatRoom(
     product: ProductContext,

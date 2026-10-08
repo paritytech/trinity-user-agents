@@ -57,7 +57,8 @@ extension BoundProductChatMessaging {
             for: bot,
             roomId: request.roomId,
             name: request.name,
-            icon: request.icon
+            icon: request.icon,
+            hidesTextInput: request.hidesTextInput
         )
 
         return CreateRoomResult(status: status)

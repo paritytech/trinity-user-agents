@@ -232,6 +232,7 @@ impl ChatPlatform for CliChatHost {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use parity_scale_codec::OptionBool;
     use std::fs::read_to_string;
 
     fn product() -> ProductContext {
@@ -249,6 +250,7 @@ mod tests {
             room_id: room_id.to_string(),
             name: "Support".to_string(),
             icon: String::new(),
+            hide_text_input: OptionBool(None),
         }
     }
 

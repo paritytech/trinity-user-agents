@@ -213,11 +213,15 @@ pub trait HostCallbacks: Send + Sync {
 #[async_trait::async_trait]
 pub trait NativeChatCallbacks: Send + Sync {
     /// Create or resolve a native product Chat room.
+    ///
+    /// `hide_text_input` applies to an existing room too, so a product can change it
+    /// after the room was created.
     async fn create_room(
         &self,
         room_id: String,
         name: String,
         icon: String,
+        hide_text_input: bool,
     ) -> Result<v01::ChatRoomRegistrationStatus, HostRejection>;
 
     /// Register or resolve a native product Chat bot.

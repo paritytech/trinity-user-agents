@@ -167,9 +167,7 @@ private extension ProductManifestParser {
         // still reported as the defect they are.
         let cards = pocketCards(dto.pocket, includesPocket: includesPocket, identifier: identifier)
         var modalities: [ProductExecutable.Worker.Modality] = []
-        if includesChat {
-            modalities.append(.chat(.init(showsTextInput: dto.chat?.textInput ?? true)))
-        }
+        if includesChat { modalities.append(.chat) }
         if includesPocket { modalities.append(.pocket(cards)) }
 
         return .worker(

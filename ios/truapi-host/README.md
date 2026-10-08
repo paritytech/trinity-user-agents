@@ -127,10 +127,10 @@ final class MyChatBridge: ChatHostBridge, @unchecked Sendable {
 
     init(store: ChatStore) { self.store = store }
 
-    func createRoom(roomId: String, name: String, icon: String) throws
+    func createRoom(roomId: String, name: String, icon: String, hideTextInput: Bool) throws
         -> ChatRoomRegistrationStatus
     {
-        store.putRoom(roomId, name: name, icon: icon) ? .new : .exists
+        store.putRoom(roomId, name: name, icon: icon, hideTextInput: hideTextInput) ? .new : .exists
     }
 
     func registerBot(botId: String, name: String, icon: String) throws

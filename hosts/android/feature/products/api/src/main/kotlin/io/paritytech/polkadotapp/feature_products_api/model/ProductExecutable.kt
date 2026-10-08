@@ -23,7 +23,5 @@ sealed interface ProductExecutable {
         val includesChat: Boolean,
         val includesPocket: Boolean,
         val pocketCards: List<PocketCardDefinition>,
-        /** Whether the rooms the worker's chat creates show a text field. */
-        val showsTextInput: Boolean,
     ) : ProductExecutable
 }

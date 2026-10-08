@@ -89,8 +89,8 @@ import uniffi.truapi.HostRejection
 // Called from a shared dispatch pool, so the backing store must be
 // thread-safe, and a slow call here stalls other product executions.
 class MyChatBridge(private val store: ChatStore) : ChatHostBridge {
-    override fun createRoom(roomId: String, name: String, icon: String) =
-        if (store.putRoom(roomId, name, icon)) ChatRoomRegistrationStatus.NEW
+    override fun createRoom(roomId: String, name: String, icon: String, hideTextInput: Boolean) =
+        if (store.putRoom(roomId, name, icon, hideTextInput)) ChatRoomRegistrationStatus.NEW
         else ChatRoomRegistrationStatus.EXISTS
 
     override fun registerBot(botId: String, name: String, icon: String) =

@@ -17,7 +17,12 @@ final class RustChatExecutionBridge: RustProductExecutionBridge, ChatHostBridge,
         super.init(dependencies: dependencies)
     }
 
-    func createRoom(roomId: String, name: String, icon: String) async throws -> ChatRoomRegistrationStatus {
+    func createRoom(
+        roomId: String,
+        name: String,
+        icon: String,
+        hideTextInput: Bool
+    ) async throws -> ChatRoomRegistrationStatus {
         logger.debug("[truapi:chat-bridge] createRoom \(roomId)")
         // Same validation `postMessage` applies: an empty id names no room, and
         // the chat identifier built from it would be malformed.
@@ -28,7 +33,8 @@ final class RustChatExecutionBridge: RustProductExecutionBridge, ChatHostBridge,
         let result = try await chatMessaging.createRoom(CreateRoomRequest(
             roomId: roomId,
             name: name.nilIfEmpty,
-            icon: icon.nilIfEmpty
+            icon: icon.nilIfEmpty,
+            hidesTextInput: hideTextInput
         ))
         return switch result.status {
         case .new: .new

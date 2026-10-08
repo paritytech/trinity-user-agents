@@ -5,5 +5,6 @@ extension Chat {
         let chatRelativeId: String
         let name: String?
         let icon: String?
+        let hidesTextInput: Bool
     }
 }

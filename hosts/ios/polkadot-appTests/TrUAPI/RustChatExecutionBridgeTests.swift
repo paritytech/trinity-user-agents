@@ -18,23 +18,33 @@ struct RustChatExecutionBridgeTests {
         let bridge = await makeBridge(api: api)
 
         api.createRoomStatus = .new
-        #expect(try await bridge.createRoom(roomId: "r", name: "n", icon: "i") == .new)
+        #expect(try await bridge.createRoom(roomId: "r", name: "n", icon: "i", hideTextInput: false) == .new)
 
         api.createRoomStatus = .exists
-        #expect(try await bridge.createRoom(roomId: "r", name: "n", icon: "i") == .exists)
+        #expect(try await bridge.createRoom(roomId: "r", name: "n", icon: "i", hideTextInput: false) == .exists)
     }
 
     /// Empty name and icon mean "unset" to the native api, not empty strings.
     @Test func createRoomNormalisesEmptyFields() async throws {
         let api = RecordingChatMessaging()
         let bridge = await makeBridge(api: api)
-        _ = try await bridge.createRoom(roomId: "r", name: "", icon: "")
-        _ = try await bridge.createRoom(roomId: "r2", name: "kept", icon: "icon")
+        _ = try await bridge.createRoom(roomId: "r", name: "", icon: "", hideTextInput: false)
+        _ = try await bridge.createRoom(roomId: "r2", name: "kept", icon: "icon", hideTextInput: false)
 
         #expect(api.createdRooms.first?.name == nil)
         #expect(api.createdRooms.first?.icon == nil)
         #expect(api.createdRooms.last?.name == "kept")
         #expect(api.createdRooms.last?.icon == "icon")
+    }
+
+    /// A product driving its room through actions alone asks for no text input.
+    @Test func createRoomForwardsHideInput() async throws {
+        let api = RecordingChatMessaging()
+        let bridge = await makeBridge(api: api)
+        _ = try await bridge.createRoom(roomId: "r", name: "n", icon: "", hideTextInput: true)
+        _ = try await bridge.createRoom(roomId: "r", name: "n", icon: "", hideTextInput: false)
+
+        #expect(api.createdRooms.map(\.hidesTextInput) == [true, false])
     }
 
     @Test func postMessageForwardsTextAndCustomOnly() async throws {
@@ -97,7 +107,7 @@ struct RustChatExecutionBridgeTests {
         let bridge = await makeBridge(api: api)
 
         await #expect(throws: HostRejection.self) {
-            try await bridge.createRoom(roomId: "", name: "n", icon: "")
+            try await bridge.createRoom(roomId: "", name: "n", icon: "", hideTextInput: false)
         }
         #expect(api.createdRooms.isEmpty)
     }

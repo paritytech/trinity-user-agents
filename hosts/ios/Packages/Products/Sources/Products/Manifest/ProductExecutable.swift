@@ -45,7 +45,7 @@ public enum ProductExecutable: Hashable, Sendable {
         /// declared with. A worker that declares none is valid: it runs as
         /// background logic with no user-facing surface.
         public enum Modality: Hashable, Sendable {
-            case chat(ChatPresentation)
+            case chat
             case pocket([PocketCardDefinition])
 
             public var kind: ProductWorkerModality {
@@ -53,17 +53,6 @@ public enum ProductExecutable: Hashable, Sendable {
                 case .chat: .chat
                 case .pocket: .pocket
                 }
-            }
-        }
-
-        /// How the host presents the rooms a worker's chat creates.
-        public struct ChatPresentation: Hashable, Sendable {
-            public let showsTextInput: Bool
-
-            public static let standard = ChatPresentation(showsTextInput: true)
-
-            public init(showsTextInput: Bool) {
-                self.showsTextInput = showsTextInput
             }
         }
 
@@ -92,15 +81,6 @@ public enum ProductExecutable: Hashable, Sendable {
                     if case let .pocket(cards) = modality { cards } else { nil }
                 }
                 .first ?? []
-        }
-
-        /// How this worker's chat rooms are presented, nil unless it serves chat.
-        public var chatPresentation: ChatPresentation? {
-            modalities
-                .compactMap { modality in
-                    if case let .chat(presentation) = modality { presentation } else { nil }
-                }
-                .first
         }
     }
 }

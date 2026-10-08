@@ -24,7 +24,6 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.bot.model.ProductC
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.model.ProductChatRoom
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.model.extractProductChatIdParameter
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.model.toChatId
-import io.paritytech.polkadotapp.feature_products_impl.domain.product.ProductScriptResolver
 import io.paritytech.polkadotapp.feature_products_impl.domain.worker.ProductWorkerRefCounter
 import io.paritytech.polkadotapp.feature_products_impl.domain.worker.WorkerModalityApi
 import io.paritytech.polkadotapp.feature_products_impl.presentation.bot.menu.ProductChatMenuRenderer
@@ -34,7 +33,6 @@ import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.filter
-import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onEach
@@ -56,7 +54,6 @@ class ProductChatExtension(
     appContext: Context,
     val product: Product,
     private val workerRefCounter: ProductWorkerRefCounter,
-    private val scriptResolver: ProductScriptResolver,
 ) : ExternalExtension() {
     override val id = product.id.toChatExtensionId()
 
@@ -77,10 +74,6 @@ class ProductChatExtension(
     }
 
     override fun customMenuRenderer(chatId: ChatId): CustomChatMenuRenderer = ProductChatMenuRenderer(product, chatId)
-
-    override fun observeUserInputAllowed(chatId: ChatId): Flow<Boolean> = flow {
-        emit(scriptResolver.resolveWorker(product.id).getOrNull()?.showsTextInput ?: true)
-    }
 
     context(chatExtensionContext: ChatExtensionContext)
     override fun startGlobalWork() {

@@ -282,7 +282,8 @@ final class StubChatHostBridge: ChatHostBridge {
     func createRoom(
         roomId _: String,
         name _: String,
-        icon _: String
+        icon _: String,
+        hideTextInput _: Bool
     ) async throws -> ChatRoomRegistrationStatus { .new }
 
     func registerBot(

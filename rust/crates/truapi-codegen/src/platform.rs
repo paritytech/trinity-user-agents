@@ -164,7 +164,7 @@ fn in_platform_module(path: &[String]) -> bool {
 /// Walk one crate's `platform` module and extract every public trait + its methods.
 fn extract(krate: &Crate) -> Result<PlatformDefinition> {
     let trait_ids = collect_local_trait_ids(krate);
-    let names = NameContext::default();
+    let names = NameContext::for_platform(krate);
 
     let mut traits = Vec::new();
     let mut super_trait = None;

@@ -67,7 +67,8 @@ private extension HostPlacedRoomPlacer {
                 roomMetadata: Chat.RoomMetadata(
                     chatRelativeId: hostPlaced.roomId,
                     name: hostPlaced.fallbackName,
-                    icon: nil
+                    icon: nil,
+                    hidesTextInput: false
                 )
             )
 

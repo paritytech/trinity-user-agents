@@ -143,7 +143,6 @@ internal class RealResolveProductUseCase @Inject constructor(
             includesChat = true,
             includesPocket = card != null,
             pocketCards = listOfNotNull(card?.toDefinition()),
-            showsTextInput = true,
         )
     }
 

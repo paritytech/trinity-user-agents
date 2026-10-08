@@ -6,7 +6,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use crate::platform::{
     AuthState, CoreStorage as PlatformCoreStorage, CoreStorageKey, PermissionAuthorizationRequest,
 };
-use parity_scale_codec::Encode;
+use parity_scale_codec::{Encode, OptionBool};
 use truapi::api::{
     Account, Chain, Entropy, Game, LocalStorage, Notifications, Permissions, Preimage,
     ResourceAllocation, Scanner, Signing, StatementStore, System, Theme, Worker,
@@ -1343,6 +1343,7 @@ fn two_products_receive_the_same_handle_for_one_contact() {
 struct RecordingChatPlatform {
     registered_bots: Mutex<Vec<String>>,
     created_rooms: Mutex<Vec<String>>,
+    created_rooms_hide_text_input: Mutex<Vec<OptionBool>>,
     posted_rooms: Mutex<Vec<String>>,
     posted_payloads: Mutex<Vec<v01::ChatMessageContent>>,
 }
@@ -1359,6 +1360,10 @@ impl crate::platform::ChatPlatform for RecordingChatPlatform {
             .lock()
             .expect("created rooms mutex poisoned")
             .push(request.room_id);
+        self.created_rooms_hide_text_input
+            .lock()
+            .expect("created rooms mutex poisoned")
+            .push(request.hide_text_input);
         Ok(truapi::latest::HostChatCreateRoomResponse {
             status: v01::ChatRoomRegistrationStatus::New,
         })
@@ -1777,6 +1782,62 @@ fn chat_post_message_screens_content_before_it_reaches_a_host() {
 }
 
 #[test]
+fn a_room_hides_its_input_only_when_the_product_asks() {
+    let (host_config, _) = runtime_config("chat.dot");
+    let product = ProductContext::new_with_execution(
+        "chat.dot".to_string(),
+        crate::platform::ProductExecutionKind::Worker,
+    )
+    .expect("test chat product context is valid");
+    let spawner = test_spawner();
+    let platform: Arc<dyn Platform> = stub_platform();
+    let services = RuntimeServices::new(
+        platform.clone(),
+        host_config.host.host_info.clone(),
+        host_config.people_chain_genesis_hash,
+        host_config.bulletin_chain_genesis_hash,
+        host_config.asset_hub_chain_genesis_hash,
+        spawner.clone(),
+    );
+    let chat_platform = Arc::new(RecordingChatPlatform::default());
+    let pairing_host = PairingHost::new(services.clone(), host_config);
+    let mut adapters = crate::host_core::ConnectionAdapters::from_services(&services);
+    adapters.chat_platform = Some(chat_platform.clone());
+    let host = ProductRuntimeHost::from_services(services, adapters, pairing_host, product);
+    install_pairing_session(&host, session_info());
+
+    // A v0.1 product predates the flag, so its room keeps the input.
+    for request in [
+        HostChatCreateRoomRequest::V1(v01::HostChatCreateRoomRequest {
+            room_id: "room".to_string(),
+            name: "Room".to_string(),
+            icon: String::new(),
+        }),
+        HostChatCreateRoomRequest::V2(v02::HostChatCreateRoomRequest {
+            room_id: "room".to_string(),
+            name: "Room".to_string(),
+            icon: String::new(),
+            hide_text_input: OptionBool(Some(true)),
+        }),
+    ] {
+        futures::executor::block_on(Chat::create_room(
+            &host,
+            &CallContext::default(),
+            request,
+        ))
+        .expect("create_room accepts the room");
+    }
+
+    assert_eq!(
+        *chat_platform
+            .created_rooms_hide_text_input
+            .lock()
+            .expect("created rooms mutex poisoned"),
+        [OptionBool(None), OptionBool(Some(true))]
+    );
+}
+
+#[test]
 fn chat_room_ids_agree_across_create_and_post() {
     let (host_config, _) = runtime_config("chat.dot");
     let product = ProductContext::new_with_execution(
@@ -1852,7 +1913,7 @@ fn chat_room_ids_agree_across_create_and_post() {
         assert!(
             matches!(
                 rejected,
-                Err(CallError::Domain(HostChatCreateRoomError::V1(
+                Err(CallError::Domain(HostChatCreateRoomError::V2(
                     v01::HostChatCreateRoomError::Unknown { .. }
                 )))
             ),

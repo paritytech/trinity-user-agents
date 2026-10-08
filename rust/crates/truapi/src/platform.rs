@@ -3240,6 +3240,9 @@ pub trait PreimageHost: Send + Sync {
 #[async_trait]
 pub trait ChatPlatform: Send + Sync {
     /// Create or resolve a product-scoped native chat room.
+    ///
+    /// `hide_text_input` applies to an existing room too, so a product can change it
+    /// after the room was created.
     async fn create_chat_room(
         &self,
         product: &ProductContext,

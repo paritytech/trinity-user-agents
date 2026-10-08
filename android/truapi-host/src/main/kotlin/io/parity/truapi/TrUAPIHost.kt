@@ -355,9 +355,17 @@ interface ChatHostBridge {
      * Create or resolve a native product Chat room. The core has bounded and
      * normalized these arguments and screened the icon scheme; escaping them
      * for the surface that renders them is still the host's job.
+     *
+     * Apply [hideTextInput] to an existing room too, so a product can change it
+     * after the room was created.
      */
     @Throws(HostRejection::class)
-    suspend fun createRoom(roomId: String, name: String, icon: String): ChatRoomRegistrationStatus
+    suspend fun createRoom(
+        roomId: String,
+        name: String,
+        icon: String,
+        hideTextInput: Boolean,
+    ): ChatRoomRegistrationStatus
 
     /**
      * Register or resolve a native product Chat bot. The core has bounded and
@@ -616,7 +624,10 @@ private class ChatCallbackAdapter(private val bridge: ChatHostBridge) : NativeCh
         roomId: String,
         name: String,
         icon: String,
-    ): ChatRoomRegistrationStatus = withHostRejection { bridge.createRoom(roomId, name, icon) }
+        hideTextInput: Boolean,
+    ): ChatRoomRegistrationStatus = withHostRejection {
+        bridge.createRoom(roomId, name, icon, hideTextInput)
+    }
 
     override suspend fun registerBot(
         botId: String,

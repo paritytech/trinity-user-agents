@@ -32,7 +32,8 @@ protocol ChatExtensionDiscoverContextProtocol {
         for chatBot: ChatExtensionBotProtocol,
         roomId: String,
         name: String?,
-        icon: String?
+        icon: String?,
+        hidesTextInput: Bool
     ) async throws -> CreateRoomStatus
 
     func subscribeRooms(
@@ -80,6 +81,7 @@ actor ChatExtensionDiscoverContext {
     let messageRepository: AnyDataProviderRepository<Chat.LocalMessage>
     let storageFacade: StorageFacadeProtocol
     let chatRepository: AnyDataProviderRepository<Chat.LocalModel>
+    let roomInputRepository: AnyDataProviderRepository<Chat.RoomInputVisibility>
     let chatsProviderFactory: ChatContactDataProviderMaking
 
     init(
@@ -100,6 +102,12 @@ actor ChatExtensionDiscoverContext {
         chatRepository = AnyDataProviderRepository(
             storageFacade.createRepository(
                 mapper: AnyCoreDataMapper(ChatModelMapper())
+            )
+        )
+
+        roomInputRepository = AnyDataProviderRepository(
+            storageFacade.createRepository(
+                mapper: AnyCoreDataMapper(ChatRoomInputMapper())
             )
         )
 
@@ -313,7 +321,8 @@ extension ChatExtensionDiscoverContext: ChatExtensionDiscoverContextProtocol {
         for chatBot: ChatExtensionBotProtocol,
         roomId: String,
         name: String?,
-        icon: String?
+        icon: String?,
+        hidesTextInput: Bool
     ) async throws -> CreateRoomStatus {
         let chatId = Chat.Id.chatExtension(chatBot.identifier, roomId: roomId)
 
@@ -321,14 +330,19 @@ extension ChatExtensionDiscoverContext: ChatExtensionDiscoverContextProtocol {
             .fetchOperation(by: { chatId.rawRepresentation }, options: RepositoryFetchOptions())
             .asyncExecute()
 
-        if existingChat != nil {
+        if let existingChat {
+            if (existingChat.roomMetadata?.hidesTextInput ?? false) != hidesTextInput {
+                let visibility = Chat.RoomInputVisibility(chatId: chatId, roomId: roomId, hidesTextInput: hidesTextInput)
+                try await roomInputRepository.saveOperation({ [visibility] }, { [] }).asyncExecute()
+            }
             return .exists
         }
 
         let roomMetadata = Chat.RoomMetadata(
             chatRelativeId: roomId,
             name: name,
-            icon: icon
+            icon: icon,
+            hidesTextInput: hidesTextInput
         )
 
         let chat = Chat.LocalModel.newChatWithRoom(
