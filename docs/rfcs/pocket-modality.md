@@ -64,9 +64,9 @@ Pocket adds two rules on top. First, the host caches the newest tree per card du
 cold start before the worker answers, and a privileged card has something to show on first run.
 
 Second, the host draws every face in one fixed theme, whatever theme the user picked, so a face's colour tokens give the
-same colours everywhere and a card looks the same in every theme. In the Polkadot Android and iOS apps that theme is
-Berlin Night: `FgPrimary` is near-white (`#F4F4F5`) and `BgSurfaceMain` is near-black (`#0B0C0F`). The theme a product
-reads from `theme.subscribe` describes its own screens and does not change how its faces are drawn.
+same colours everywhere and a card looks the same in every theme. In the Polkadot Android app that theme is Berlin
+Night: `FgPrimary` is near-white (`#F4F4F5`) and `BgSurfaceMain` is near-black (`#0B0C0F`). The theme a product reads
+from `theme.subscribe` describes its own screens and does not change how its faces are drawn.
 
 ### Expanded card
 

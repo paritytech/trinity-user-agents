@@ -3,6 +3,8 @@ package io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compos
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.toPixelMap
 import androidx.compose.ui.test.captureToImage
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
@@ -22,6 +24,7 @@ import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.Product
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.PocketCardUiModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import org.junit.Assert.assertArrayEquals
+import org.junit.Assert.assertEquals
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -47,8 +50,34 @@ class ProductPocketCardThemeTest {
         ),
     )
 
+    private val primaryGroundFillingTheCard = JsWidget.Box(
+        modifiers = listOf(
+            JsModifier.FillMaxWidth(),
+            JsModifier.FillMaxHeight(),
+            JsModifier.Background(color = JsColor.FG_PRIMARY),
+        ),
+    )
+
+    @Test
+    fun aProductCardOnThePocketTabGetsTheBerlinNightColoursTheRfcPromises() {
+        pickedTheme = PolkadotAppTheme.Lisbon
+        showCard(primaryGroundFillingTheCard)
+
+        val pixels = compose.onNodeWithTag(PocketTestTags.PRODUCT_CARD).captureToImage().toPixelMap()
+        assertEquals(Color(0xFFF4F4F5), pixels[pixels.width / 2, pixels.height / 2])
+    }
+
     @Test
     fun aProductCardOnThePocketTabLooksTheSameWhateverThemeTheUserPicked() {
+        showCard(faceUsingThemeDefaults)
+
+        val inBerlinNight = drawnUnder(PolkadotAppTheme.BerlinNight)
+        PolkadotAppTheme.entries.forEach { theme ->
+            assertArrayEquals(theme.name, inBerlinNight, drawnUnder(theme))
+        }
+    }
+
+    private fun showCard(face: JsWidget) {
         compose.setContent {
             PolkadotTheme(theme = pickedTheme) {
                 ProductPocketCard(
@@ -58,7 +87,7 @@ class ProductPocketCardThemeTest {
                         pinned = false,
                     ),
                     bindings = ProductFaceBindings(
-                        face = MutableStateFlow(faceUsingThemeDefaults),
+                        face = MutableStateFlow(face),
                         onFaceAction = { _, _ -> },
                         imageResolver = JsImageResolver { null },
                     ),
@@ -66,11 +95,6 @@ class ProductPocketCardThemeTest {
                     onRemoveRequested = null,
                 )
             }
-        }
-
-        val inBerlinNight = drawnUnder(PolkadotAppTheme.BerlinNight)
-        PolkadotAppTheme.entries.forEach { theme ->
-            assertArrayEquals(theme.name, inBerlinNight, drawnUnder(theme))
         }
     }
 
