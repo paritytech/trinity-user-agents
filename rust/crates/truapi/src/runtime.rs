@@ -774,9 +774,9 @@ impl<H: AccountHolder> ProductRuntimeHost<H> {
     }
 
     fn normalize_product_account_id(
-        product_account_id: v01::ProductAccountId,
-    ) -> Result<v01::ProductAccountId, ()> {
-        Ok(v01::ProductAccountId {
+        product_account_id: latest::ProductAccountId,
+    ) -> Result<latest::ProductAccountId, ()> {
+        Ok(latest::ProductAccountId {
             dot_ns_identifier: normalize_product_identifier(&product_account_id.dot_ns_identifier)
                 .map_err(|_| ())?,
             derivation_index: product_account_id.derivation_index,
@@ -814,9 +814,9 @@ impl<H: AccountHolder> ProductRuntimeHost<H> {
                 cx,
                 operation,
                 &self.connection.product,
-                &v01::ProductAccountId {
+                &latest::ProductAccountId {
                     dot_ns_identifier: self.connection.product_id(),
-                    derivation_index: v01::DerivationIndex::Index(0),
+                    derivation_index: latest::DerivationIndex::Index(0),
                 },
                 None,
             )
