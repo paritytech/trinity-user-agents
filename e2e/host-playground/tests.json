@@ -1,6 +1,6 @@
 {
   "product": "host-playground.paseo",
-  "hostPlaygroundCommit": "66e0458891fa2999929e7f3e5363cacbe2eaa478",
+  "hostPlaygroundCommit": "7b0795f64d0de513b5c3101ecb06985b20721e72",
   "tests": [
     "accounts-provider-product",
     "accounts-provider-legacy",
