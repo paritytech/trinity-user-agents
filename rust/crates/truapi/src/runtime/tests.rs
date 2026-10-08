@@ -8310,6 +8310,38 @@ fn a_provider_worker_delivers_a_session_across_a_restart() {
     );
 }
 
+// The core follows a provider's top-up under the id the host received it
+// with, so delivery is decided from the top-up the provider actually started.
+#[test]
+fn a_session_settles_from_the_top_up_the_provider_started() {
+    let services = funding_services();
+    assert!(services.funding().install_platform(RecordingFundingPlatform::answering(
+        crate::platform::FundingPresentOutcome::Started,
+    )));
+    let engine = Arc::new(RecordingTopUpPlatform::default());
+    assert!(services.install_top_up_platform(engine.clone()));
+    let intent = futures::executor::block_on(services.open_funding(None, v01::FundingDirection::In, Some(1_000)))
+        .expect("opened")
+        .intent;
+    assert!(futures::executor::block_on(services.select_funding_provider(&intent, "ramp.dot")).expect("selected"));
+    let worker = provider_worker(&services, "ramp.dot");
+    first_served(&worker);
+    top_up(&worker, product_account_source()).expect("top-up accepted");
+    report_funding(&worker, &intent, v01::FundingUpdate::Crediting { top_up_id: [7; 32], amount: 1_000 })
+        .expect("crediting");
+    report_funding(&worker, &intent, v01::FundingUpdate::Delivered).expect("delivered");
+
+    let stage = wait_for_stage(&services, &intent);
+    let started_id = engine.started.lock().expect("started mutex poisoned")[0].1.id;
+    assert_eq!(
+        (stage, engine.followed.lock().expect("followed mutex poisoned").clone()),
+        (
+            Some(v01::HostFundingStatusSubscribeItem::Delivered { credited: 1_000 }),
+            vec![("ramp.dot".to_string(), started_id)],
+        )
+    );
+}
+
 // Only the assigned provider's worker may serve or report on a session.
 #[test]
 fn only_the_assigned_provider_worker_reports() {
@@ -8667,15 +8699,18 @@ fn a_top_up_reaches_the_host_engine_scoped_to_its_product() {
     top_up(&payment_host(&services, "wallet.dot", true), product_account_source())
         .expect("top-up accepted");
 
+    let started = engine.started.lock().expect("started mutex poisoned").clone();
+    let host_id = started[0].1.id;
+    assert_ne!(host_id, [7; 32]);
     assert_eq!(
-        engine.started.lock().expect("started mutex poisoned").as_slice(),
+        started.as_slice(),
         [(
             "wallet.dot".to_string(),
             v01::HostPaymentTopUpRequest {
                 into: None,
                 amount: 1_000,
                 source: product_account_source(),
-                id: [7; 32],
+                id: host_id,
             },
         )]
     );
@@ -8718,6 +8753,8 @@ fn top_up_status_is_forwarded_from_the_host_engine() {
     let engine = Arc::new(RecordingTopUpPlatform::default());
     assert!(services.install_top_up_platform(engine.clone()));
     let host = payment_host(&services, "wallet.dot", true);
+    top_up(&host, product_account_source()).expect("top-up accepted");
+    let host_id = engine.started.lock().expect("started mutex poisoned")[0].1.id;
 
     let statuses = futures::executor::block_on(
         futures::executor::block_on(truapi::api::Payment::top_up_status_subscribe(
@@ -8744,7 +8781,7 @@ fn top_up_status_is_forwarded_from_the_host_engine() {
                     v01::HostPaymentTopUpStatusSubscribeItem::Claimed { finalized: true }
                 )),
             ],
-            vec![("wallet.dot".to_string(), [7; 32])]
+            vec![("wallet.dot".to_string(), host_id)]
         )
     );
 }
@@ -8870,8 +8907,8 @@ fn follow_payment(
 }
 
 // The host owns the approval sheet and the transfer; core hands it the
-// request as the product made it, and relays the status the host reports,
-// a partial payment included.
+// request under the id the host sees for it, follows the payment under that
+// same id, and relays the status the host reports, a partial payment included.
 #[test]
 fn a_payment_reaches_the_host_engine_and_its_status_is_relayed() {
     let services = payment_services();
@@ -8879,12 +8916,17 @@ fn a_payment_reaches_the_host_engine_and_its_status_is_relayed() {
     assert!(services.install_payment_platform(engine.clone()));
     let host = payment_host(&services, "wallet.dot", true);
 
+    let requested = request_payment(&host);
+    let statuses = follow_payment(&host);
+    let followed = engine.followed.lock().expect("followed mutex poisoned").clone();
+    let host_id = followed[0].1;
+    assert_ne!(host_id, payment_request().id);
     assert_eq!(
         (
-            request_payment(&host),
-            follow_payment(&host),
+            requested,
+            statuses,
             engine.requested.lock().expect("requested mutex poisoned").clone(),
-            engine.followed.lock().expect("followed mutex poisoned").clone(),
+            followed,
         ),
         (
             Ok(truapi::versioned::payment::HostPaymentResponse::V1),
@@ -8896,10 +8938,27 @@ fn a_payment_reaches_the_host_engine_and_its_status_is_relayed() {
                     v01::HostPaymentStatusSubscribeItem::PartiallyClaimed { actual_claimed: 600 }
                 )),
             ],
-            vec![("wallet.dot".to_string(), payment_request())],
-            vec![("wallet.dot".to_string(), [9; 32])],
+            vec![(
+                "wallet.dot".to_string(),
+                v01::HostPaymentRequest { id: host_id, ..payment_request() }
+            )],
+            vec![("wallet.dot".to_string(), host_id)],
         )
     );
+}
+
+// A host cannot mix up two products' payments, even when both chose the
+// same id: each reaches the host under its own.
+#[test]
+fn two_products_naming_one_id_reach_the_host_under_different_ids() {
+    let services = payment_services();
+    let engine = Arc::new(RecordingPaymentPlatform::default());
+    assert!(services.install_payment_platform(engine.clone()));
+    follow_payment(&payment_host(&services, "wallet.dot", true));
+    follow_payment(&payment_host(&services, "shop.dot", true));
+
+    let followed = engine.followed.lock().expect("followed mutex poisoned").clone();
+    assert_ne!(followed[0].1, followed[1].1);
 }
 
 // Payments move the user's balance, so a product without a session cannot

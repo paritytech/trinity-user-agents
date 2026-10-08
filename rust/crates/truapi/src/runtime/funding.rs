@@ -35,6 +35,7 @@ use crate::platform::{
     CoreStorage, FundingPlatform, FundingPresentOutcome, FundingPresentation, Platform,
     ProductContext, ProductExecutionKind,
 };
+use crate::runtime::payment_id::host_payment_id;
 use crate::unix_time::current_unix_millis;
 
 /// Wait before retrying an expiry sweep whose write failed.
@@ -764,7 +765,7 @@ impl RuntimeServices {
         let mut credited: u128 = 0;
         for (id, amount) in top_ups {
             let mut claimed = None;
-            let mut statuses = platform.subscribe_top_up_status(provider, id);
+            let mut statuses = platform.subscribe_top_up_status(provider, host_payment_id(provider, id));
             while let Some(status) = statuses.next().await {
                 match status {
                     Ok(HostPaymentTopUpStatusSubscribeItem::Claimed { finalized }) => {
@@ -802,7 +803,7 @@ impl RuntimeServices {
             tracing::warn!("no payment platform to follow a funding session's payment");
             return None;
         };
-        let mut statuses = platform.subscribe_payment_status(provider, id);
+        let mut statuses = platform.subscribe_payment_status(provider, host_payment_id(provider, id));
         while let Some(status) = statuses.next().await {
             match status {
                 Ok(HostPaymentStatusSubscribeItem::Completed) => return Some(amount),
