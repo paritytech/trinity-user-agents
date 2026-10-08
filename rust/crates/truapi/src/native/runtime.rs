@@ -1184,6 +1184,40 @@ mod tests {
     }
 
     #[test]
+    fn a_tap_the_execution_publishes_lets_its_worker_scan() {
+        // Hosts publish taps on the execution, while the scanner checks them on
+        // the connection the scan arrives on.
+        let host = NativeTrUApiHostRuntime::with_runtime_config(
+            Arc::new(EventCallbacks::new()),
+            native_host_runtime_config(),
+        )
+        .expect("host runtime config should be valid");
+        let execution = host
+            .open_product_execution(
+                Arc::new(EventCallbacks::new()),
+                None,
+                None,
+                None,
+                native_execution_config("receipts.dot", ProductExecutionKind::Worker),
+            )
+            .expect("Worker execution should open");
+        let admin = execution.admin();
+        let connection = admin.product_runtime();
+        assert!(!connection.recently_tapped());
+
+        execution
+            .publish_renderer_action(v01::HostRendererActionSubscribeItem {
+                context: v01::RenderContext::PocketCard {
+                    card_id: "receipts".to_string(),
+                },
+                action_id: "scan".to_string(),
+                payload: Vec::new(),
+            })
+            .expect("a Worker execution may publish renderer actions");
+        assert!(connection.recently_tapped());
+    }
+
+    #[test]
     fn product_execution_routes_chain_events_to_shared_and_scoped_services() {
         let host = NativeTrUApiHostRuntime::with_runtime_config(
             Arc::new(EventCallbacks::new()),

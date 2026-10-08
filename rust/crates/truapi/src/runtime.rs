@@ -363,9 +363,9 @@ impl ProductRuntimeHost {
         }
     }
 
-    /// Whether the user tapped UI the host drew for this product within the
-    /// last [`USER_TAP_WINDOW_SECS`]. A Worker may scan only shortly after one,
-    /// because it has no screen the user could be looking at.
+    /// Whether the host published a renderer action, which only the user
+    /// causes, within the last [`USER_TAP_WINDOW_SECS`]. A Worker may scan only
+    /// shortly after one, because it has no screen the user could be looking at.
     pub fn recently_tapped(&self) -> bool {
         self.renderer.published_within(USER_TAP_WINDOW_SECS)
     }
