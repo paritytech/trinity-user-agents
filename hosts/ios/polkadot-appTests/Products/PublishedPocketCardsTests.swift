@@ -178,6 +178,17 @@ struct PublishedPocketCardsTests {
         #expect(faceShown)
         #expect(ContinuousClock.now - started < .seconds(5))
     }
+
+    /// A lookup the open gave up on must not keep running after it: a
+    /// resolver that honours cancellation is told to stop.
+    @Test
+    func stopsTheLookupItGaveUpOn() async {
+        await confirmation { lookupStopped in
+            let cards = CancellationReportingCards { lookupStopped() }
+
+            _ = await PocketCardFaceOnOpen.faceShown(for: loyaltyKey, cards: cards, timeout: .milliseconds(10))
+        }
+    }
 }
 
 // MARK: - Fixtures
@@ -223,4 +234,18 @@ private func gameResolver(worker: ProductExecutable.Worker?) -> StubProductResol
         executables: ProductExecutables(app: nil, widget: nil, worker: worker),
         hasManifest: true
     ))
+}
+
+/// Never answers, and reports being cancelled at the moment it is.
+private struct CancellationReportingCards: PublishedPocketCardsResolving {
+    let onCancel: @Sendable () -> Void
+
+    func find(productId _: ProductId, cardId _: PocketCardId) async throws -> PublishedPocketCard {
+        try await withTaskCancellationHandler {
+            try await Task.sleep(for: .seconds(60))
+            throw CancellationError()
+        } onCancel: {
+            onCancel()
+        }
+    }
 }
