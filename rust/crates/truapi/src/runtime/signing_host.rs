@@ -2345,28 +2345,74 @@ mod tests {
 		}
 	}
 
-	fn full_person_ring_resolver() -> Arc<StubRingResolver> {
-		let full_entropy = derive_ring_vrf_entropy(
-			&ENTROPY,
-			&ProductId::for_test("peopl.dot"),
-			&v01::DerivationIndex::Index(0),
-		)
-		.expect("full-person entropy");
-		let full_member = futures::executor::block_on(crate::runtime::vrf::load())
-			.expect("verifiable is linked")
-			.member(&full_entropy)
-			.expect("full-person member");
-		Arc::new(StubRingResolver {
-			collection: *b"pop:polkadot.network/people     ",
-			ring: ResolvedRing {
-				selected: MemberCandidate { member: full_member },
-				ring_index: 7,
-				ring_revision: 11,
-				domain_size: crate::runtime::vrf::DOMAIN_2E11,
-				members: vec![full_member],
-			},
-		})
-	}
+    #[test]
+    fn concurrent_implicit_allowance_approval_reuses_the_new_grant() {
+        use futures::FutureExt;
+        let (release, gate) = futures::channel::oneshot::channel();
+        let platform = Arc::new(StubPlatform {
+            resource_allocation_confirmed: true,
+            ..Default::default()
+        });
+        *platform
+            .resource_allocation_confirmation_gate
+            .lock()
+            .expect("gate") = Some(gate);
+        let (services, authority) = signing_runtime_with_platform(platform.clone());
+        futures::executor::block_on(async {
+            authority
+                .activate_local_session(ENTROPY.to_vec())
+                .await
+                .unwrap();
+            let runtime = product_runtime(services, authority.clone());
+            let session = authority.current_session().unwrap();
+            let first = runtime.require_statement_store_allowance(&session, None);
+            futures::pin_mut!(first);
+            assert!(first.as_mut().now_or_never().is_none());
+            runtime
+                .require_statement_store_allowance(&session, None)
+                .await
+                .unwrap();
+            release.send(()).unwrap();
+            first.await.unwrap();
+            assert_eq!(
+                runtime
+                    .permission_authorization_status(
+                        PermissionAuthorizationRequest::StatementStoreAllowance {
+                            derivation_index: None,
+                        },
+                    )
+                    .await
+                    .unwrap(),
+                PermissionAuthorizationStatus::Authorized,
+            );
+        });
+    }
+
+    #[test]
+    fn statement_allowance_decisions_survive_runtime_restart_and_remain_scoped() {
+        let platform = Arc::new(StubPlatform {
+            resource_allocation_confirmed: true,
+            chain_connect_error: Some("offline"),
+            ..Default::default()
+        });
+        let selector = Some(v01::DerivationIndex::Index(0));
+        let request = PermissionAuthorizationRequest::StatementStoreAllowance {
+            derivation_index: selector.clone(),
+        };
+        futures::executor::block_on(async {
+            let (services, authority) = signing_runtime_with_platform(platform.clone());
+            authority
+                .activate_local_session(ENTROPY.to_vec())
+                .await
+                .unwrap();
+            let first = product_runtime(services, authority.clone());
+            let session = authority.current_session().unwrap();
+            first
+                .require_statement_store_allowance(&session, selector.clone())
+                .await
+                .unwrap();
+            drop(first);
+            drop(authority);
 
 	/// Seed `owner`'s cached manifest so a grant lookup resolves without a
 	/// chain. Mirrors `runtime::tests::cache_manifest`.
@@ -4950,6 +4996,44 @@ mod tests {
                     truapi::latest::HostProductDeviceChatError::AccessNotGranted
                 )))
             ));
+        });
+    }
+
+    #[test]
+    fn product_chat_allow_once_does_not_survive_wallet_reactivation() {
+        futures::executor::block_on(async {
+            let platform = Arc::new(StubPlatform::default());
+            platform
+                .permission_confirmation_decisions
+                .lock()
+                .expect("permission confirmation mutex poisoned")
+                .push_back(crate::platform::PermissionDecision::AllowOnce);
+            let (services, activation) = signing_runtime_with_platform(platform.clone());
+            activation
+                .activate_local_session(ENTROPY.to_vec())
+                .await
+                .unwrap();
+            let runtime = product_runtime(services, activation.clone());
+            let cx = CallContext::default();
+            let initialize = HostProductDeviceChatRequest::V2(
+                truapi::latest::HostProductDeviceChatRequest::Initialize,
+            );
+            runtime
+                .product_device_chat(&cx, initialize.clone())
+                .await
+                .unwrap();
+            activation.disconnect().await;
+            activation
+                .activate_local_session(ENTROPY.to_vec())
+                .await
+                .unwrap();
+            assert!(matches!(
+                runtime.product_device_chat(&cx, initialize).await,
+                Err(CallError::Domain(HostProductDeviceChatError::V1(
+                    truapi::latest::HostProductDeviceChatError::AccessNotGranted
+                )))
+            ));
+            assert_eq!(platform.chat_authority_reviews.lock().len(), 2);
         });
     }
 

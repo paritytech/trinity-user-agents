@@ -133,9 +133,10 @@ deadline; pass `requestTimeoutMs` to `createTransport` to override it.
 
 See [`js/packages/truapi/README.md`](js/packages/truapi/README.md) for the full client reference.
 
-`account.deviceChat` is a high-level, Host-owned native Chat actor (`Account::product_device_chat` in Rust). Account
-method 12 initializes a private device, manages authenticated peers, receives/decrypts native traffic, and sends
-ordinary messages or reviewed Coinage payments. Retired method 11 and its raw Open/Seal/proof operations are
+`account.deviceChat` is the Host-owned native Chat cryptographic and custody boundary
+(`Account::product_device_chat` in Rust). Account method 12 initializes a private device, binds authenticated peers,
+opens supplied native ciphertext, and prepares ordinary messages or reviewed Coinage payments. Products own ordinary
+Chat transport, subscriptions and acknowledgments. Retired method 11 and its raw Open/Seal/proof operations are
 unsupported, including over SSO. Guest and Host must upgrade together.
 
 The signing Host owns the device secret, encrypted roster/outbox, payment WAL, and spendable memos. Chat-authority
@@ -179,10 +180,9 @@ keys and asset-instance encoding come from metadata. Instance-scoped runtimes re
 the encrypted wallet binds that selection permanently, so a configuration change cannot retarget pending claims or
 payments.
 
-Once initialized and authorized, a Host-owned subscription receives and reconciles without an open guest. Revocation,
-logout, or session replacement stops the old receiver. This is in-process execution, not OS wake support. The draft
-requires a durable initialized-product index and post-unlock receiver restoration only for products whose Chat and
-transport grants remain valid; embedding Hosts must qualify that cold-restart path separately.
+After unlock, Host-owned recovery resumes accepted wallet commitments independently of an open guest or Chat grants.
+It does not subscribe to ordinary Chat traffic or receive new messages for a closed product. Logout or session replacement
+fences the old recovery work. This is in-process wallet recovery, not OS wake support or a background Chat receiver.
 
 Native push-token announcements are validated as private metadata, including when batched with iOS acceptance controls.
 Their timestamps are checked and their digests bind replay detection; token credentials are discarded rather than
@@ -219,22 +219,9 @@ navigation and requires `Notifications` for push delivery. Hosts preserve the us
 `Deny` choice; Rust owns one-use grants for Rust-backed executions. Android permission prompts belong to one request and
 close when it finishes or is cancelled, including cancellation while the app is backgrounded.
 
-Background receiving appends actions 2–7 to Notifications without changing send/cancel.
-The resident Rust service owns consent, revision-fenced watches, authenticated delivery,
-receipts and activation; each product execution supplies an immutable verified authority.
-The browser's single-writer `WasmNotificationReceiver` uses the same service without
-starting a wallet or product runtime. Enrollment needs a host receiving adapter and
-separate consent; unsupported hosts report that explicitly. Logout revokes locally
-without waiting for a relay. See the [host receiving contract](js/packages/truapi-host/README.md)
-and [product notification helpers](js/packages/truapi/README.md). These hooks do not
-establish OS/provider delivery guarantees or replace the separate PolkaVM runtime.
-Relay revocation and synchronization acknowledgements use the full receiving
-authority, so retained records from a previous account or verified artifact cannot
-revoke the current enrollment.
-
-The shared Rust core asks blessed products (`peopl`, `dim2` and `stash`,
-on every supported network) only for device permissions and legacy-account signing.
-All other operations it handles bypass permission prompts and recorded decisions.
+The shared Rust core auto-grants remote permissions to trusted products (`peopl`, `dim2` and `stash`,
+on every supported network) only when no stored decision overrides that default. Recorded denials still apply.
+Device permissions, identity disclosure, account access and Chat authority retain their separate consent checks.
 
 ## Repository layout
 
@@ -525,9 +512,9 @@ truapi-host dev -- yarn dev
 the host already live. The product reaches it through a development-only `<script>` tag:
 
 ```jsx
-{
-  process.env.NODE_ENV === "development" && <script src="http://127.0.0.1:9955/bootstrap.js" />;
-}
+{process.env.NODE_ENV === "development" && (
+  <script src="http://127.0.0.1:9955/bootstrap.js" />
+)}
 ```
 
 The host serves that script itself, with no imports or environment variables

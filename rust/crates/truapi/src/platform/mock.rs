@@ -813,9 +813,9 @@ fn core_key(key: &CoreStorageKey) -> String {
             genesis_hash,
             product_id,
             attachment_id,
-            ..
+            chunk_index,
         } => format!(
-            "core:native-chat-file-chunk:{}:{}:{product_id}:{}",
+            "core:native-chat-file-chunk:{}:{}:{product_id}:{}:{chunk_index}",
             hex_key(root_public_key),
             hex_key(genesis_hash),
             hex_key(attachment_id)
@@ -1505,30 +1505,30 @@ mod tests {
     }
 
     #[test]
-    fn automatic_preimage_storage_is_scoped_by_product_root_and_genesis() {
-        let p = MockPlatform::new();
-        let keys = [
-            ("mock.dot", [0xab; 32], [0xcd; 32]),
-            ("other.dot", [0xab; 32], [0xcd; 32]),
-            ("mock.dot", [0xef; 32], [0xcd; 32]),
-            ("mock.dot", [0xab; 32], [0xef; 32]),
-        ]
-        .map(|(product_id, root_public_key, genesis_hash)| {
-            CoreStorageKey::AutomaticPreimageUploads {
-                product_id: product_id.to_string(),
-                root_public_key,
-                genesis_hash,
-            }
-        });
-        for (value, key) in (1u8..).zip(&keys) {
-            block_on(p.write_core_storage(key.clone(), vec![value])).unwrap();
-        }
-        for (value, key) in (1u8..).zip(&keys) {
-            assert_eq!(
-                block_on(p.read_core_storage(key.clone())).unwrap(),
-                Some(vec![value])
-            );
-        }
+    fn native_chat_file_chunks_have_independent_storage_slots() {
+        let platform = MockPlatform::new();
+        let key = |chunk_index| CoreStorageKey::NativeChatFileChunk {
+            root_public_key: [1; 32],
+            genesis_hash: [2; 32],
+            product_id: "chat.dot".into(),
+            attachment_id: [3; 32],
+            chunk_index,
+        };
+        block_on(platform.write_core_storage(key(0), vec![10])).unwrap();
+        block_on(platform.write_core_storage(key(1), vec![20])).unwrap();
+        assert_eq!(
+            block_on(platform.read_core_storage(key(0))).unwrap(),
+            Some(vec![10]),
+        );
+        assert_eq!(
+            block_on(platform.read_core_storage(key(1))).unwrap(),
+            Some(vec![20]),
+        );
+        block_on(platform.clear_core_storage(key(0))).unwrap();
+        assert_eq!(
+            block_on(platform.read_core_storage(key(1))).unwrap(),
+            Some(vec![20]),
+        );
     }
 
     #[test]

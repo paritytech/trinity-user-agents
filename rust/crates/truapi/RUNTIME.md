@@ -222,14 +222,18 @@ proof contexts. Configuration keeps local activation and key derivation
 available offline. The core validates supported suffixes but does not
 automatically check that the configured suffix matches the chain.
 
-#### JAM peer transport
+The signing runtime persists initialized Chat products in the wallet/network-owned `CoreStorageKey::NativeChatProducts`
+slot (index 16) for the trusted contacts directory. Directory reads restore existing devices only when current
+`ChatAuthority` permits access; they never prompt or generate replacements for missing device state.
+`clear_product_state` forgets the indexed product without deleting wallet custody or received history.
+Unlock resumes accepted wallet commitments independently of Chat grants, not ordinary Chat subscriptions. Products own
+ordinary reception and acknowledgments; the Host recovery worker is not an OS background scheduler.
 
-Native product runtimes (iOS, Android, CLI) serve `JamPeerTransport` (trait
-111) themselves over JAMNP-S QUIC, with one endpoint per product connection.
-Every `dial` first requires `RemotePermission::JamPeers { genesis }` through the
-flow above. The connection asks once per genesis: concurrent dials wait for the
-same prompt, a refusal stays `NotGranted` for the connection, and the answer is
-persisted even when every dial waiting on it has given up.
+Native `native_describe_core_storage_key` and WASM `describeCoreStorageKey` let embedders route permission slots to the
+same verified-artifact namespace used by their product execution. Root callbacks used by Chat authority must resolve
+that current namespace; copying grants into a broader wallet namespace would defeat artifact revocation. WASM role
+handles accept optional execution-local raw platform callbacks as the third `productRuntime` argument while retaining
+one shared authority and wallet allocator.
 
 - A dial answers within 10 seconds, prompt included. One still waiting then
   answers `Unreachable`, a cancelled one `Cancelled`, and what it would have
