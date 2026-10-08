@@ -285,9 +285,11 @@ class PocketViewModel @Inject constructor(
     /**
      * The product is loaded only once the card has finished travelling. Building a WebView while the
      * card is still moving starves the animation, and the card is the part the user is watching.
+     * A card already left can still report itself settled while it fades out, so only the selected
+     * one is hosted.
      */
     fun hostExpandedProduct(card: PocketCardUiModel.ProductCard) {
-        expandedProduct.open(card.key.launchUrl())
+        if (card.id == selectedCardId.value) expandedProduct.open(card.key.launchUrl())
     }
 
     /** A press or edit inside a face goes back to the product; a text edit carries the new value as UTF-8. */

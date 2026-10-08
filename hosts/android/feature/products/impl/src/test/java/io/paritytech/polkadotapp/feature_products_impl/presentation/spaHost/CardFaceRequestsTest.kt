@@ -1,6 +1,7 @@
 package io.paritytech.polkadotapp.feature_products_impl.presentation.spaHost
 
 import io.paritytech.polkadotapp.feature_products_api.presentation.spaHost.FaceShownAnswer
+import io.paritytech.polkadotapp.feature_products_api.presentation.spaHost.FaceShownRequest
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.launch
@@ -54,6 +55,17 @@ class CardFaceRequestsTest {
         advanceTimeBy(200)
 
         assertEquals(ExpandedCardFaceOutcome.NOT_PRESENTED, outcome)
+    }
+
+    // The product has been told its face is not there; a screen answering late must not move it after all.
+    @Test
+    fun `a request left unanswered is withdrawn from the screen`() = runTest {
+        var received: FaceShownRequest? = null
+        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { requests.requests.collect { received = it } }
+
+        requests.setFaceShown(false)
+
+        assertEquals(true, received?.reply?.isCancelled)
     }
 
     // A screen that is watching but busy must not hold the product's call open past the timeout.

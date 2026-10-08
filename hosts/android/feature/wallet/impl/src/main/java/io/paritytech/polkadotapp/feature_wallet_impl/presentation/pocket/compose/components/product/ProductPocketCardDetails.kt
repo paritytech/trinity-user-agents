@@ -87,7 +87,9 @@ fun ProductPocketCardDetails(
 
     LaunchedEffect(session, fold) {
         session?.faceShownRequests?.collect { request ->
-            launch { request.reply.complete(fold.showFace(request.shown)) }
+            val handling = launch { request.reply.complete(fold.showFace(request.shown)) }
+            // A withdrawn request was answered NotPresented, so its face must not move after all.
+            request.reply.invokeOnCompletion { cause -> if (cause != null) handling.cancel() }
         }
     }
 
