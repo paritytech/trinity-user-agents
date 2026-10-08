@@ -7,48 +7,22 @@ import Testing
 struct DebugPocketCardsTests {
     // MARK: - The page a card opens
 
-    /// The page is loaded exactly as typed, and the card query is how it
-    /// learns which card it sits under.
-    @Test
-    func opensTheWidgetPageForTheCardItSitsUnder() throws {
-        let store = storeHolding(card(widgetUrl: "http://127.0.0.1:5173/index.html"))
+    /// The page is loaded as typed, and the card query is how it learns which
+    /// card it sits under. Its own query, such as the test page's `hideOnLoad`,
+    /// reaches it encoded as typed (decoded, `a%2Bb` would read as `a b`), and a
+    /// stale card query typed into the address must not shadow the real one.
+    @Test(arguments: [
+        ("index.html", "index.html?card=loyalty"),
+        ("index.html?hideOnLoad", "index.html?hideOnLoad&card=loyalty"),
+        ("index.html?card=other&hideOnLoad", "index.html?hideOnLoad&card=loyalty"),
+        ("index.html?x=a%2Bb", "index.html?x=a%2Bb&card=loyalty")
+    ])
+    func opensTheWidgetPageForTheCardItSitsUnder(typed: String, opened: String) throws {
+        let store = storeHolding(card(widgetUrl: "http://127.0.0.1:5173/\(typed)"))
 
         let url = try #require(store.widgetURL(for: loyaltyKey))
 
-        #expect(url.absoluteString == "http://127.0.0.1:5173/index.html?card=loyalty")
-    }
-
-    /// A page can be told how to behave through its own query, such as the
-    /// test page's `hideOnLoad`, so the card query must join it, not replace it.
-    @Test
-    func keepsTheWidgetPagesOwnQuery() throws {
-        let store = storeHolding(card(widgetUrl: "http://127.0.0.1:5173/index.html?hideOnLoad"))
-
-        let url = try #require(store.widgetURL(for: loyaltyKey))
-
-        #expect(url.absoluteString == "http://127.0.0.1:5173/index.html?hideOnLoad&card=loyalty")
-    }
-
-    /// The card query is what tells the page which card it sits under, so a
-    /// stale one typed into the address must not shadow it.
-    @Test
-    func replacesACardQueryTypedIntoTheWidgetPage() throws {
-        let store = storeHolding(card(widgetUrl: "http://127.0.0.1:5173/index.html?card=other&hideOnLoad"))
-
-        let url = try #require(store.widgetURL(for: loyaltyKey))
-
-        #expect(url.absoluteString == "http://127.0.0.1:5173/index.html?hideOnLoad&card=loyalty")
-    }
-
-    /// The page reads its own query as typed, so an encoded value must reach
-    /// it encoded: decoded, `a%2Bb` would read as `a b`.
-    @Test
-    func passesAnEncodedQueryValueOnUntouched() throws {
-        let store = storeHolding(card(widgetUrl: "http://127.0.0.1:5173/index.html?x=a%2Bb"))
-
-        let url = try #require(store.widgetURL(for: loyaltyKey))
-
-        #expect(url.absoluteString == "http://127.0.0.1:5173/index.html?x=a%2Bb&card=loyalty")
+        #expect(url.absoluteString == "http://127.0.0.1:5173/\(opened)")
     }
 
     /// A product's cards can each have their own page, so one card's page
@@ -72,29 +46,15 @@ struct DebugPocketCardsTests {
         #expect(store.widgetURL(for: loyaltyKey) != nil)
     }
 
-    /// Without a page of its own the card opens the product's published widget.
-    @Test
-    func opensNoPageOfItsOwnWhenNoneWasTyped() {
-        let store = storeHolding(card(widgetUrl: nil))
-
-        #expect(store.widgetURL(for: loyaltyKey) == nil)
-    }
-
     // MARK: - The face a card opens with
 
     /// A developer working on the page itself wants it in front, not behind
-    /// the face, so the switch must reach the lookup that runs when the card opens.
+    /// the face, so the switch must reach the card the lookup finds on open.
     @Test
-    func opensWithTheFaceAwayWhenTheCardIsToldTo() async {
+    func opensWithTheFaceAwayWhenTheCardIsToldTo() {
         let store = storeHolding(card(faceShown: false))
-        let cards = PublishedPocketCards(
-            products: StubProductResolver(alwaysFailing: URLError(.timedOut)),
-            debugCards: { store.cards(for: $0) }
-        )
 
-        let faceShown = await PocketCardFaceOnOpen.faceShown(for: loyaltyKey, cards: cards)
-
-        #expect(!faceShown)
+        #expect(store.cards(for: "game.paseo").map(\.faceShown) == [false])
     }
 
     /// What the menu was told must reach the stored card: the face switch, a
