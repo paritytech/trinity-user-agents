@@ -101,17 +101,17 @@ private extension RustRuntimeEnvironment {
             osPermissionAsker: osPermissionAsker
         )
 
-        let bridge = purpose.makeBridge(dependencies: dependencies)
+        let bridges = purpose.makeBridges(dependencies: dependencies)
 
         let execution = try runtime.openProductExecution(
-            bridge: bridge,
+            bridge: bridges.host,
             configuration: ProductExecutionConfig(productId: productId, executionKind: purpose.executionKind),
-            chat: bridge as? ChatHostBridge,
+            chat: bridges.chat,
             pocket: purpose.pocket,
-            game: gameReminders == nil ? nil : bridge
+            game: gameReminders == nil ? nil : bridges.host
         )
 
-        bridge.attach(execution)
+        bridges.host.attach(execution)
 
         return ExecutionModel(
             execution: execution,
@@ -171,12 +171,16 @@ private extension ExecutionPurpose {
         return pocket
     }
 
-    func makeBridge(dependencies: RustProductExecutionBridge.Dependencies) -> RustProductExecutionBridge {
+    /// A worker's bridge also answers its chat callbacks, so it is handed back twice.
+    func makeBridges(
+        dependencies: RustProductExecutionBridge.Dependencies
+    ) -> (host: RustProductExecutionBridge, chat: RustChatExecutionBridge?) {
         switch self {
         case let .page(_, cardFace):
-            RustProductExecutionBridge(dependencies: dependencies, cardFace: cardFace)
+            return (RustProductExecutionBridge(dependencies: dependencies, cardFace: cardFace), nil)
         case let .worker(chatMessaging, _):
-            RustChatExecutionBridge(dependencies: dependencies, chatMessaging: chatMessaging)
+            let chat = RustChatExecutionBridge(dependencies: dependencies, chatMessaging: chatMessaging)
+            return (chat, chat)
         }
     }
 }
