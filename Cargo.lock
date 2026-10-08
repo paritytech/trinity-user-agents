@@ -5624,6 +5624,7 @@ version = "0.1.0"
 dependencies = [
  "derive_more 2.1.1",
  "truapi",
+ "truapi-macros",
 ]
 
 [[package]]
@@ -5672,6 +5673,7 @@ dependencies = [
 name = "truapi-macros"
 version = "0.1.0"
 dependencies = [
+ "proc-macro-crate",
  "proc-macro2",
  "quote",
  "syn 2.0.119",

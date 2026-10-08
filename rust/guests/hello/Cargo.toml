@@ -9,4 +9,4 @@ publish = false
 crate-type = ["cdylib"]
 
 [dependencies]
-truapi-guest-api = { workspace = true }
+truapi = { workspace = true }

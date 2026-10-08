@@ -63,15 +63,15 @@ pub fn wire_trait(args: TokenStream, item: TokenStream) -> TokenStream {
 /// Make an `async fn` the entry point of a product worker compiled to wasm.
 ///
 /// ```ignore
-/// #[truapi_guest_api::main]
-/// async fn main() -> Result<(), truapi_guest_api::Error> {
+/// #[truapi::main]
+/// async fn main() -> Result<(), truapi::Error> {
 ///     Ok(())
 /// }
 /// ```
 ///
 /// Emits the exports the host starts the worker and delivers events through.
-/// Re-exported as `truapi_guest_api::main`, which the expansion names, so it
-/// works only in a crate depending on `truapi-guest-api`.
+/// Re-exported as `truapi_guest_api::main`; the expansion finds that crate
+/// under whatever name the worker depends on it by.
 #[proc_macro_attribute]
 pub fn guest_main(args: TokenStream, item: TokenStream) -> TokenStream {
     guest_main::expand(args, item)

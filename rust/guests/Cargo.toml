@@ -11,7 +11,7 @@ license = "MIT"
 
 [workspace.dependencies]
 futures = "0.3"
-truapi-guest-api = { path = "../crates/truapi-guest-api" }
+truapi = { package = "truapi-guest-api", path = "../crates/truapi-guest-api" }
 
 [profile.release]
 opt-level = "z"

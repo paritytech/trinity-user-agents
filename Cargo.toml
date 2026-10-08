@@ -49,6 +49,7 @@ nanoid = "0.4"
 parking_lot = "0.12"
 parity-scale-codec = "3"
 pin-project = "1"
+proc-macro-crate = "3"
 proc-macro2 = "1"
 qrcode = { version = "0.14.1", default-features = false }
 quote = "1"

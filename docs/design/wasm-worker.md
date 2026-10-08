@@ -71,13 +71,18 @@ once the guest returns control, then delivers events one at a time.
 
 ## Writing a worker
 
-```rust
-use truapi_guest_api::{Error, account, log};
+A worker depends on `truapi-guest-api` under the name `truapi`, so calls read
+like the TypeScript client's `truapi.account.getUserId()`:
 
-#[truapi_guest_api::main]
-async fn main() -> Result<(), Error> {
-    let user = account::get_user_id(()).await?;
-    log!("user id: {}", user.primary_username);
+```toml
+truapi = { package = "truapi-guest-api", path = "..." }
+```
+
+```rust
+#[truapi::main]
+async fn main() -> Result<(), truapi::Error> {
+    let user = truapi::account::get_user_id(()).await?;
+    truapi::log!("user id: {}", user.primary_username);
     Ok(())
 }
 ```

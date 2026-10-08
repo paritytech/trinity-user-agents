@@ -3,18 +3,18 @@
 //! runs.
 
 use futures::StreamExt;
-use truapi_guest_api::latest::RemotePreimageLookupSubscribeRequest;
-use truapi_guest_api::{Error, account, preimage};
+use truapi::latest::RemotePreimageLookupSubscribeRequest;
 
-#[truapi_guest_api::main]
-async fn main() -> Result<(), Error> {
+#[truapi::main]
+async fn main() -> Result<(), truapi::Error> {
     let key = b"key".to_vec();
-    let mut lookup = preimage::lookup_subscribe(RemotePreimageLookupSubscribeRequest { key });
+    let mut lookup =
+        truapi::preimage::lookup_subscribe(RemotePreimageLookupSubscribeRequest { key });
     lookup
         .next()
         .await
         .ok_or("lookup ended without an item")??;
     drop(lookup);
-    account::get_user_id(()).await?;
+    truapi::account::get_user_id(()).await?;
     Ok(())
 }

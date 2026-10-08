@@ -1,18 +1,18 @@
 //! Submits a preimage, then waits on a lookup subscription until it resolves.
 
 use futures::StreamExt;
-use truapi_guest_api::latest::RemotePreimageLookupSubscribeRequest;
-use truapi_guest_api::{Error, log, preimage};
+use truapi::latest::RemotePreimageLookupSubscribeRequest;
 
-#[truapi_guest_api::main]
-async fn main() -> Result<(), Error> {
+#[truapi::main]
+async fn main() -> Result<(), truapi::Error> {
     let value = b"hello truapi".to_vec();
-    let key = preimage::submit(value.clone()).await?;
+    let key = truapi::preimage::submit(value.clone()).await?;
 
-    let mut lookup = preimage::lookup_subscribe(RemotePreimageLookupSubscribeRequest { key });
+    let mut lookup =
+        truapi::preimage::lookup_subscribe(RemotePreimageLookupSubscribeRequest { key });
     while let Some(item) = lookup.next().await {
         if item?.value.as_deref() == Some(value.as_slice()) {
-            log!("preimage resolved");
+            truapi::log!("preimage resolved");
             return Ok(());
         }
     }

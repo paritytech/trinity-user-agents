@@ -1,16 +1,23 @@
 //! Experimental: TrUAPI for a product worker compiled to wasm.
 //!
-//! A worker is a `cdylib` built for `wasm32-unknown-unknown`. Its entry point
-//! is an async function marked [`main`]; each service module below holds
-//! one async function per TrUAPI method, taking and returning the latest
-//! protocol types. The host runs the worker for one product, so every call is
-//! made as that product.
+//! A worker is a `cdylib` built for `wasm32-unknown-unknown`. It depends on
+//! this crate as `truapi`, so calls read like the TypeScript client's
+//! `truapi.account.getUserId()`:
+//!
+//! ```toml
+//! truapi = { package = "truapi-guest-api", path = "..." }
+//! ```
+//!
+//! Its entry point is an async function marked [`main`]. Each service module
+//! below holds one async function per TrUAPI method, taking and returning the
+//! latest protocol types. The host runs the worker for one product, so every
+//! call is made as that product.
 //!
 //! ```ignore
-//! #[truapi_guest_api::main]
-//! async fn main() -> Result<(), truapi_guest_api::Error> {
-//!     let user = truapi_guest_api::account::get_user_id(()).await?;
-//!     truapi_guest_api::log!("user id: {}", user.primary_username);
+//! #[truapi::main]
+//! async fn main() -> Result<(), truapi::Error> {
+//!     let user = truapi::account::get_user_id(()).await?;
+//!     truapi::log!("user id: {}", user.primary_username);
 //!     Ok(())
 //! }
 //! ```

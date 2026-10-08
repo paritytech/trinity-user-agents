@@ -1,7 +1,9 @@
 //! Entry point of a product worker compiled to wasm.
 
 use proc_macro::TokenStream;
-use quote::quote;
+use proc_macro_crate::{FoundCrate, crate_name};
+use proc_macro2::TokenStream as TokenStream2;
+use quote::{format_ident, quote};
 use syn::{ItemFn, parse_macro_input};
 
 /// Parse the macro input and emit generated code or a compiler diagnostic.
@@ -9,22 +11,38 @@ pub fn expand(args: TokenStream, item: TokenStream) -> TokenStream {
     if !args.is_empty() {
         return syn::Error::new(
             proc_macro2::Span::call_site(),
-            "#[truapi_guest_api::main] takes no arguments",
+            "the worker entry point attribute takes no arguments",
         )
         .to_compile_error()
         .into();
     }
     let entry = parse_macro_input!(item as ItemFn);
-    match check(&entry) {
-        Ok(()) => {
+    match check(&entry).and_then(|()| guest_api_path()) {
+        Ok(guest_api) => {
             let ident = &entry.sig.ident;
             quote! {
                 #entry
-                ::truapi_guest_api::export_entry!(#ident);
+                #guest_api::export_entry!(#ident);
             }
             .into()
         }
         Err(error) => error.to_compile_error().into(),
+    }
+}
+
+/// `truapi-guest-api` under the name the worker depends on it by, usually
+/// `truapi`.
+fn guest_api_path() -> syn::Result<TokenStream2> {
+    match crate_name("truapi-guest-api") {
+        Ok(FoundCrate::Itself) => Ok(quote!(crate)),
+        Ok(FoundCrate::Name(name)) => {
+            let name = format_ident!("{name}");
+            Ok(quote!(::#name))
+        }
+        Err(error) => Err(syn::Error::new(
+            proc_macro2::Span::call_site(),
+            error.to_string(),
+        )),
     }
 }
 
