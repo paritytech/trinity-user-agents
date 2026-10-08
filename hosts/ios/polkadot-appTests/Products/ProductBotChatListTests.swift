@@ -23,37 +23,22 @@ struct ProductBotChatListTests {
         #expect(bot.messageDecoder.previewString(data: Data()) == String(localized: .Common.productWidgetMessage))
     }
 
-    /// With the manifest icon in hand the row draws it instead of a letter.
+    /// The list loads the image by domain, so the row shows the manifest icon instead of a letter.
     @Test
-    func theRowIconIsTheProductManifestIcon() async {
-        let bot = makeBot(description: nil, icon: manifestIcon)
+    func theRowIconIsTheProductManifestIcon() {
+        let bot = makeBot(description: nil)
 
-        await bot.loadIcon()
-
-        #expect(bot.peerMetadata.icon == .image(manifestIcon))
+        #expect(bot.peerMetadata.icon == .product(domain: "dim2.paseo"))
     }
 }
 
 private extension ProductBotChatListTests {
-    var manifestIcon: Data {
-        Data([0x89, 0x50, 0x4E, 0x47])
-    }
-
-    func makeBot(description: String?, icon: Data? = nil) -> ProductBot {
+    func makeBot(description: String?) -> ProductBot {
         ProductBot(
             product: Product(id: "dim2.paseo", name: "Jollity"),
             description: description,
-            iconLoader: StubIconLoader(icon: icon),
             runtime: IdleChatRuntime()
         )
-    }
-}
-
-private struct StubIconLoader: ProductIconLoading {
-    let icon: Data?
-
-    func loadIcon(for _: ProductId) async -> Data? {
-        icon
     }
 }
 

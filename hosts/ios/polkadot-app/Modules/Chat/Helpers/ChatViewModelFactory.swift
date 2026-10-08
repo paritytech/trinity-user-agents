@@ -76,7 +76,9 @@ extension ChatViewModelFactory: ChatViewModelMaking {
         actions: ChatViewModelActions,
         footerConfiguration: (any HashableContentConfiguration)?
     ) -> ChatViewLayout.ViewModel {
-        let headerConfiguration = metadata.chatMetadata.chatContactInfo
+        let headerConfiguration = metadata.chatMetadata.chatContactInfo(
+            iconViewModelFactory: flowState.iconViewModelFactory
+        )
 
         let inputConfiguration = makeInputConfiguration(for: metadata.chatMetadata, actions: actions)
 
