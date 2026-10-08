@@ -6,6 +6,17 @@ Add product-scoped Chat v2 authority with dedicated Chat authorization, separate
 boundary to local and SSO sessions, expose it in the iOS permission flow, and avoid cloning secret-bearing pairing
 results.
 
+Keep one-session Chat consent only in the wallet authority, so retaining a product execution across logout or wallet
+reactivation cannot silently grant Chat in the next session.
+
+Discard failed attachment-selection placeholders so cancelled pickers and unavailable HOP endpoints do not consume
+the incoming rich-message quota. Preserve custody if a storage commit has an uncertain outcome.
+
+Keep mock attachment chunks in separate storage slots by chunk index.
+
+Reuse an implicit Statement Store allowance grant approved while another confirmation is open. Remove the obsolete
+product-renewal registration attempt now that product grants are provisioned on demand rather than renewed globally.
+
 Use the unified runtime's native UniFFI gates and shared clock, dotNS discovery and runtime view-response decoding
 for Chat and Coinage without changing product authorization or payment review policy.
 

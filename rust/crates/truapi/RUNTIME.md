@@ -236,13 +236,14 @@ separate allocator. Snapshot version 3 refuses legacy `//pps` snapshots without 
 allocator state is not shared; same-wallet use requires reconciliation and one owner, not concurrent allocators.
 
 The signing runtime persists initialized Chat products in the wallet/network-owned `CoreStorageKey::NativeChatProducts`
-slot (index 16). Unlock restores their existing devices and background subscriptions only when the current
-`ChatAuthority` and `StatementSubmit` grants remain authorized; it never prompts or generates a replacement for missing
-device state. `clear_product_state` forgets this product from reception without deleting wallet custody or received
-history. This is in-process restoration, not an OS background scheduler.
+slot (index 16) for the trusted contacts directory. Directory reads restore existing devices only when current
+`ChatAuthority` permits access; they never prompt or generate replacements for missing device state.
+`clear_product_state` forgets the indexed product without deleting wallet custody or received history.
+Unlock resumes accepted wallet commitments independently of Chat grants, not ordinary Chat subscriptions. Products own
+ordinary reception and acknowledgments; the Host recovery worker is not an OS background scheduler.
 
 Native `native_describe_core_storage_key` and WASM `describeCoreStorageKey` let embedders route permission slots to the
-same verified-artifact namespace used by their product execution. Root callbacks used by restored receivers must resolve
+same verified-artifact namespace used by their product execution. Root callbacks used by Chat authority must resolve
 that current namespace; copying grants into a broader wallet namespace would defeat artifact revocation. WASM role
 handles accept optional execution-local raw platform callbacks as the third `productRuntime` argument while retaining
 one shared authority and wallet allocator.

@@ -955,9 +955,6 @@ pub async fn allocate_statement_store_allowance(
     product_id: &str,
     policy: OnExistingAllowancePolicy,
 ) -> Result<StatementStoreAllocation, AllowanceAllocationError> {
-    #[cfg(any(test, not(target_arch = "wasm32")))]
-    use super::allowance_renewal::{self, StatementRenewalTarget};
-
     signing_host.require_current_session(session)?;
     let entropy = signing_host.root_entropy()?;
     let allowance =
@@ -982,17 +979,6 @@ pub async fn allocate_statement_store_allowance(
         policy,
     )
     .await?;
-    #[cfg(any(test, not(target_arch = "wasm32")))]
-    if let Err(reason) = allowance_renewal::track(
-        signing_host,
-        vec![StatementRenewalTarget::ProductStatementAllowance {
-            product_id: product_id.to_string(),
-        }],
-    )
-    .await
-    {
-        warn!(%product_id, %reason, "failed to record statement-store renewal target");
-    }
     signing_host.require_current_session(session)?;
     Ok(StatementStoreAllocation {
         secret: allowance.secret.to_bytes().to_vec(),

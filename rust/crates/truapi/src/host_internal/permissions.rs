@@ -537,8 +537,8 @@ impl<'a, S: CoreStorage + ?Sized, P: Permissions + ?Sized> PermissionsService<'a
     /// Resolve the product's Chat authority grant, prompting once when no
     /// durable user decision exists.
     ///
-    /// `AllowOnce` stores nothing: it grants Chat for this service's
-    /// temporary-permission scope, and the caller extends it to the session.
+    /// `AllowOnce` stores nothing here: the caller binds the consent to the
+    /// current authority session, never to the longer-lived product execution.
     pub async fn check_or_prompt_chat_authority(&self) -> Result<ChatAuthorityConsent, GenericError>
     where
         P: UserConfirmation,
@@ -548,10 +548,6 @@ impl<'a, S: CoreStorage + ?Sized, P: Permissions + ?Sized> PermissionsService<'a
             PermissionAuthorizationStatus::Authorized => return Ok(ChatAuthorityConsent::Persisted),
             PermissionAuthorizationStatus::Denied => return Ok(ChatAuthorityConsent::Refused),
             PermissionAuthorizationStatus::NotDetermined => {}
-        }
-        let key = CoreStorageKey::chat_authority_authorization(self.product_id());
-        if self.temporary_permissions.authorize(&key, false) {
-            return Ok(ChatAuthorityConsent::Session);
         }
         let decision = match self
             .prompt
@@ -564,10 +560,7 @@ impl<'a, S: CoreStorage + ?Sized, P: Permissions + ?Sized> PermissionsService<'a
             Err(_) => return Ok(ChatAuthorityConsent::Refused),
         };
         match decision {
-            PermissionDecision::AllowOnce => {
-                self.temporary_permissions.grant(key);
-                Ok(ChatAuthorityConsent::Session)
-            }
+            PermissionDecision::AllowOnce => Ok(ChatAuthorityConsent::Session),
             PermissionDecision::AllowAlways => {
                 self.set_authorization_status(&request, PermissionAuthorizationStatus::Authorized)
                     .await?;
@@ -2350,9 +2343,9 @@ mod tests {
     }
 
     #[test]
-    fn chat_authority_allow_once_lasts_for_the_scope_without_persisting() {
+    fn chat_authority_allow_once_is_not_cached_in_the_execution() {
         let platform = StubPlatform {
-            chat_authority_confirmed: true,
+            chat_authority_confirmed: false,
             ..Default::default()
         };
         platform
@@ -2369,18 +2362,28 @@ mod tests {
         let service = PermissionsService::new(&platform, &platform, &chat_product)
             .with_temporary_permissions(Arc::clone(&grants));
 
-        for _ in 0..2 {
-            assert_eq!(
-                futures::executor::block_on(service.check_or_prompt_chat_authority()).unwrap(),
-                ChatAuthorityConsent::Session
-            );
-        }
+        assert_eq!(
+            futures::executor::block_on(service.check_or_prompt_chat_authority()).unwrap(),
+            ChatAuthorityConsent::Session
+        );
         assert_eq!(platform.chat_authority_reviews.lock().len(), 1);
         let request = PermissionAuthorizationRequest::ChatAuthority;
         assert_eq!(
             futures::executor::block_on(service.authorization_status(&request)).unwrap(),
             PermissionAuthorizationStatus::NotDetermined
         );
+        assert!(
+            !grants.authorize(
+                &CoreStorageKey::chat_authority_authorization("chat.paseo"),
+                false,
+            ),
+            "execution grants must not extend Chat consent across wallet sessions"
+        );
+        assert_eq!(
+            futures::executor::block_on(service.check_or_prompt_chat_authority()).unwrap(),
+            ChatAuthorityConsent::Refused
+        );
+        assert_eq!(platform.chat_authority_reviews.lock().len(), 2);
 
         futures::executor::block_on(
             service.set_authorization_status(&request, PermissionAuthorizationStatus::Denied),
@@ -2390,7 +2393,7 @@ mod tests {
             futures::executor::block_on(service.check_or_prompt_chat_authority()).unwrap(),
             ChatAuthorityConsent::Refused
         );
-        assert_eq!(platform.chat_authority_reviews.lock().len(), 1);
+        assert_eq!(platform.chat_authority_reviews.lock().len(), 2);
     }
 
     #[test]
