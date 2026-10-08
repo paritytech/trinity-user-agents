@@ -70,7 +70,10 @@ fn chain_with_allocated_slot() -> Arc<StubPlatform> {
                 "state_getStorage",
                 format!(r#""0x{}""#, hex::encode(TEST_NETWORK_SUFFIX.encode())),
             ),
-            ("state_queryStorageAt", people_row),
+            (
+                "state_queryStorageAt",
+                people_row,
+            ),
             // The LitePeople row, read alongside People's, is empty.
             (
                 "state_queryStorageAt",

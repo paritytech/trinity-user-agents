@@ -13,7 +13,7 @@ use super::services::RuntimeServices;
 use super::signing_host::{
     ChainRingResolver, MemberCandidate, RingResolver, create_proof, development_context_bytes,
 };
-use super::vrf;
+use super::{HostSession, SsoAccountHolderClient, SsoRequestService, vrf};
 use crate::host_internal::extrinsic::{
     Sr25519Signer, build_signed_transaction, local_transaction_metadata,
 };
@@ -21,16 +21,17 @@ use crate::host_internal::sso_messages::{OnExistingAllowancePolicy, RingVrfError
 use crate::host_internal::transaction::sign_extrinsic_payload;
 use crate::host_logic::product_account::{
     SR25519_SIGNING_CONTEXT, derivation_index_bytes, derive_product_keypair_from_subtree_secret,
-    derive_ring_vrf_entropy_from_domain,
+    derive_product_public_key, derive_ring_vrf_entropy_from_domain,
 };
 use crate::host_logic::raw_signing::raw_payload_bytes;
 use crate::host_logic::session::{SessionInfo, SessionState};
 use crate::platform::{
-    ProductContext, SignVrfReview, UserConfirmationReview, normalize_product_identifier,
+    PairingHostConfig, PermissionAuthorizationStatus, ProductContext, ProductSubtreeReview,
+    SignVrfReview, UserConfirmationReview, normalize_product_identifier,
 };
 use futures::StreamExt;
 use std::sync::Arc;
-use truapi::{CallContext, latest as api};
+use truapi::{CallContext, CallError, latest as api};
 use zeroize::Zeroizing;
 
 /// Receives, retains and uses product grants from one selected account holder.
@@ -45,6 +46,30 @@ pub struct HostAccounts<H: AccountHolder> {
     resource_controls: Arc<super::test_resource_controls::TestResourceControls>,
     #[cfg(feature = "test-host")]
     submit_preimages_locally: core::sync::atomic::AtomicBool,
+}
+
+impl HostAccounts<SsoAccountHolderClient> {
+    /// Bind paired account operations and lifecycle to the same session and grant store.
+    pub fn pairing(
+        services: Arc<RuntimeServices>,
+        config: PairingHostConfig,
+    ) -> (Arc<Self>, Arc<SsoRequestService>) {
+        let grants = Arc::new(HostGrantStore::new(services.platform.clone()));
+        let sso = SsoRequestService::new(services.clone(), config, grants.clone());
+        let accounts = Self::new(
+            services.clone(),
+            Arc::new(SsoAccountHolderClient::new(
+                sso.clone(),
+                services.platform.clone(),
+            )),
+            sso.session_state(),
+            grants,
+            RingVrfRegistryStore::new(services.platform.clone()),
+            #[cfg(feature = "test-host")]
+            Arc::default(),
+        );
+        (accounts, sso)
+    }
 }
 
 impl<H: AccountHolder> HostAccounts<H> {
@@ -141,6 +166,84 @@ impl<H: AccountHolder> HostAccounts<H> {
     ) -> Result<Option<super::WalletAuthorization>, AuthorityError> {
         self.hold_operation(operation)?
             .wallet_authorization(operation, &product.product_id)
+    }
+
+    /// Disclose an account only after the calling product may access it.
+    pub async fn get_account(
+        &self,
+        cx: &CallContext,
+        product: &ProductContext,
+        platform: &dyn crate::platform::Platform,
+        mut account: api::ProductAccountId,
+    ) -> Result<[u8; 32], CallError<api::HostAccountGetError>> {
+        account.dot_ns_identifier = normalize_product_identifier(&account.dot_ns_identifier)
+            .map_err(|_| CallError::Domain(api::HostAccountGetError::DomainNotValid))?;
+        let operation = self
+            .current_operation()
+            .ok_or(CallError::Domain(api::HostAccountGetError::NotConnected))?;
+        if account.dot_ns_identifier != product.product_id {
+            match super::account_access_authorization(
+                platform,
+                &product.product_id,
+                &account.dot_ns_identifier,
+            )
+            .await
+            {
+                Ok(PermissionAuthorizationStatus::Authorized) => {}
+                Ok(
+                    PermissionAuthorizationStatus::Denied
+                    | PermissionAuthorizationStatus::NotDetermined,
+                ) => {
+                    return Err(CallError::Domain(api::HostAccountGetError::Rejected));
+                }
+                Err(error) => {
+                    return Err(CallError::HostFailure {
+                        reason: error.to_string(),
+                    });
+                }
+            }
+        }
+        let outbound_review = (account.dot_ns_identifier == product.product_id).then(|| {
+            UserConfirmationReview::ProductSubtree(ProductSubtreeReview {
+                product_id: account.dot_ns_identifier.clone(),
+            })
+        });
+        self.product_account_public_key(cx, &operation, product, &account, outbound_review.as_ref())
+            .await
+            .map_err(super::account_get_authority_error)
+    }
+
+    /// Derive an account beneath a subtree selected by an already authorized operation.
+    pub async fn product_account_public_key(
+        &self,
+        cx: &CallContext,
+        operation: &HostOperation,
+        product: &ProductContext,
+        product_account_id: &api::ProductAccountId,
+        outbound_review: Option<&UserConfirmationReview>,
+    ) -> Result<[u8; 32], AuthorityError> {
+        let subtree = operation
+            .run(
+                self,
+                self.product_subtree_public_key(
+                    operation,
+                    cx,
+                    AccountCaller::Local {
+                        product,
+                        authorization: None,
+                        outbound_review,
+                    },
+                    product_account_id.dot_ns_identifier.clone(),
+                ),
+            )
+            .await?;
+        derive_product_public_key(
+            subtree,
+            derivation_index_bytes(&product_account_id.derivation_index),
+        )
+        .map_err(|err| AuthorityError::Unknown {
+            reason: err.to_string(),
+        })
     }
 
     /// Resolve a retained subtree before asking the holder to review and resolve it.

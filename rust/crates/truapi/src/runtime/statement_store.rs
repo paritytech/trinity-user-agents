@@ -389,7 +389,14 @@ impl<H: super::AccountHolder> ProductRuntimeHost<H> {
         statement: latest::Statement,
     ) -> Result<latest::StatementProof, StatementProofFailure> {
         let signer = self
-            .product_account_public_key(cx, operation, &product_account_id, None)
+            .accounts
+            .product_account_public_key(
+                cx,
+                operation,
+                &self.connection.product,
+                &product_account_id,
+                None,
+            )
             .await
             .map_err(|err| StatementProofFailure::UnableToSign(err.to_string()))?;
         let fields = statement_fields_from_v01(statement)

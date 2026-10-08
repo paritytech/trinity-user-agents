@@ -79,7 +79,7 @@ pub mod latest {
         ChatRoomRegistrationStatus, ColorToken, ColumnProps, ContactHandle, ContactPickOutcome,
         ContentAlignment, ContextualAlias, DerivationIndex, Dimensions, Effect, EffectProps,
         GenericError, HorizontalAlignment, HostAccountCreateProofRequest,
-        HostAccountGetAliasRequest, HostAccountListRingVrfKeysRequest,
+        HostAccountGetAliasRequest, HostAccountGetError, HostAccountListRingVrfKeysRequest,
         HostAccountRegisterRingVrfKeyRequest, HostAccountRingVrfSignRequest,
         HostAccountSignVrfError, HostAccountSignVrfRequest, HostPlatform, HostSignPayloadData,
         HostWorkerBeginOperationRequest, HostWorkerOperationError, ImageFit, ImageProps,

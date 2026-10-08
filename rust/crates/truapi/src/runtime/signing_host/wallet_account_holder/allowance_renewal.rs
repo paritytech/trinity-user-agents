@@ -525,7 +525,8 @@ mod tests {
             [0; 32],
             test_spawner(),
         );
-        let registry = crate::runtime::RingVrfRegistryStore::new(services.platform.clone());
+        let registry =
+            crate::runtime::ring_vrf_registry::RingVrfRegistryStore::new(services.platform.clone());
         let wallet = WalletAccountHolder::new(services, "paseo".to_string(), registry);
         wallet_account_holder::install(
             &wallet,

@@ -21,6 +21,7 @@ use crate::host_internal::sso_messages::{
 };
 use crate::host_internal::sso_wire::SsoRequest;
 use crate::host_logic::entropy::derive_product_entropy_from_source;
+use crate::platform::{Platform, UserConfirmationReview, has_trusted_remote_permissions};
 use futures::{
     StreamExt,
     stream::{self, BoxStream},
@@ -31,12 +32,45 @@ use truapi::latest;
 /// Account-holder requests over one runtime's selected SSO channel.
 pub struct SsoAccountHolderClient {
     service: Arc<SsoRequestService>,
+    platform: Arc<dyn Platform>,
 }
 
 impl SsoAccountHolderClient {
     /// Use the runtime's existing session and outbound transport.
-    pub fn new(service: Arc<SsoRequestService>) -> Self {
-        Self { service }
+    pub fn new(service: Arc<SsoRequestService>, platform: Arc<dyn Platform>) -> Self {
+        Self { service, platform }
+    }
+
+    async fn approve(&self, invocation: &AccountInvocation<'_>) -> Result<(), AuthorityError> {
+        if let AccountCaller::Local {
+            product,
+            outbound_review: Some(review),
+            ..
+        } = invocation.caller
+        {
+            if has_trusted_remote_permissions(&product.product_id)
+                && matches!(
+                    review,
+                    UserConfirmationReview::ResourceAllocation(_)
+                        | UserConfirmationReview::ProductSubtree(_)
+                )
+            {
+                return Ok(());
+            }
+            invocation
+                .confirm(self.platform.as_ref(), review.clone())
+                .await
+                .map_err(|error| match (review, error) {
+                    (
+                        UserConfirmationReview::SignVrf(_),
+                        AuthorityError::ConfirmationFailed(error),
+                    ) => AuthorityError::Unknown {
+                        reason: format!("VRF signing confirmation failed: {error:?}"),
+                    },
+                    (_, error) => error,
+                })?;
+        }
+        Ok(())
     }
 
     async fn call_product<R: Send, T>(
@@ -67,7 +101,7 @@ impl SsoAccountHolderClient {
         request: R,
     ) -> Result<R::Response, AuthorityError> {
         self.require_current_session(invocation.session)?;
-        self.service.approve(invocation).await?;
+        self.approve(invocation).await?;
         let session = require_current_session(&self.service.session_state(), invocation.session)?;
         let cx = match invocation.caller {
             AccountCaller::Local { .. } => super::remote_authority_context(invocation.call),
@@ -100,7 +134,7 @@ impl AccountHolder for SsoAccountHolderClient {
     ) -> Result<futures::future::BoxFuture<'a, Result<[u8; 32], AuthorityError>>, AuthorityError>
     {
         self.require_current_session(invocation.session)?;
-        self.service.approve(&invocation).await?;
+        self.approve(&invocation).await?;
         let session = require_current_session(&self.service.session_state(), invocation.session)?;
         Ok(Box::pin(async move {
             self.service
@@ -309,7 +343,7 @@ impl AccountHolder for SsoAccountHolderClient {
         _payload: Vec<u8>,
     ) -> Result<[u8; 64], AuthorityError> {
         self.require_current_session(invocation.session)?;
-        self.service.approve(&invocation).await?;
+        self.approve(&invocation).await?;
         Err(AuthorityError::Unavailable { reason: "pairing host: exact statement proof signing needs an AutoSigning capability; the current SSO raw-signing protocol cannot carry it".to_string() })
     }
 
@@ -354,7 +388,7 @@ impl AccountHolder for SsoAccountHolderClient {
         policy: OnExistingAllowancePolicy,
     ) -> Result<BoxStream<'a, Result<AccountGrantOutcome, AuthorityError>>, AuthorityError> {
         self.require_current_session(invocation.session)?;
-        self.service.approve(&invocation).await?;
+        self.approve(&invocation).await?;
         let session = require_current_session(&self.service.session_state(), invocation.session)?;
         let request = ResourceAllocationRequest {
             calling_product_id: invocation
