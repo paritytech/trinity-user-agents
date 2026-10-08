@@ -27,18 +27,24 @@ pub mod mock;
 
 use truapi::latest::{
     AllocatableResource, ChainIdentifier, ChatAction, ChatActions, ChatCustomMessage, ChatFile,
-    ChatMedia, ChatMessageContent, ChatReaction, ChatRichText, GenericError,
+    ChatMedia, ChatMessageContent, ChatReaction, ChatRichText, FundingDirection, FundingQuote,
+    FundingQuoteRefusal, GenericError,
     HostChatCreateRoomError, HostChatCreateRoomRequest, HostChatCreateRoomResponse,
     HostChatListSubscribeItem, HostChatPostMessageError, HostChatPostMessageRequest,
     HostChatPostMessageResponse, HostChatRegisterBotError, HostChatRegisterBotRequest,
     HostChatRegisterBotResponse, HostDevicePermissionRequest, HostFeatureSupportedRequest,
-    HostFeatureSupportedResponse, HostLocalStorageChangeItem, HostLocaleSubscribeItem,
-    HostNavigateToError, HostPlatform, HostPocketListSubscribeItem, HostPocketRemoveCardError,
-    HostPocketRemoveCardRequest, HostPushNotificationRequest, HostPushNotificationResponse,
-    HostSignPayloadRequest, HostSignPayloadWithLegacyAccountRequest, HostSignRawRequest,
-    HostSignRawWithLegacyAccountRequest, HostThemeSubscribeItem, HostWorkerBeginOperationResponse,
-    HostWorkerOperationError, LegacyAccountTxPayload, ProductAccountId, ProductAccountTxPayload,
-    ProductProofContext, RemotePermission, RemotePermissionRequest, RingLocation,
+    HostFeatureSupportedResponse, HostFundingStatusSubscribeItem, HostLocalStorageChangeItem,
+    HostLocaleSubscribeItem, HostNavigateToError, HostPaymentBalanceSubscribeError,
+    HostPaymentBalanceSubscribeItem, HostPaymentError, HostPaymentRequest,
+    HostPaymentStatusSubscribeError, HostPaymentStatusSubscribeItem, HostPaymentTopUpError,
+    HostPaymentTopUpRequest, HostPaymentTopUpStatusSubscribeError,
+    HostPaymentTopUpStatusSubscribeItem, HostPlatform, HostPocketListSubscribeItem,
+    HostPocketRemoveCardError, HostPocketRemoveCardRequest, HostPushNotificationRequest,
+    HostPushNotificationResponse, HostSignPayloadRequest, HostSignPayloadWithLegacyAccountRequest,
+    HostSignRawRequest, HostSignRawWithLegacyAccountRequest, HostThemeSubscribeItem,
+    HostWorkerBeginOperationResponse, HostWorkerOperationError, LegacyAccountTxPayload,
+    ProductAccountId, ProductAccountTxPayload, ProductProofContext, RemotePermission,
+    RemotePermissionRequest, RingLocation,
 };
 use truapi::v01::HostAccountSignVrfRequest;
 use url::{Host, Url};
@@ -1473,6 +1479,25 @@ pub enum CoreStorageKey {
         /// Product whose manifest was cached, normalized.
         product_id: String,
     },
+    /// Funding sessions: every live one plus a bounded tail of settled ones,
+    /// as one SCALE blob.
+    #[codec(index = 13)]
+    FundingSessions,
+    /// A product's Worker executable manifest as last read from dotNS, and when,
+    /// cached for the same lifetime as [`Self::ProductManifest`].
+    #[codec(index = 14)]
+    WorkerManifest {
+        /// Bare label of the product whose Worker manifest was cached.
+        product_id: String,
+    },
+    /// The products published to browse on this network, as last read, and
+    /// when, cached for the same lifetime as [`Self::ProductManifest`].
+    #[codec(index = 15)]
+    PublishedProducts,
+    /// What funding providers' quote answers showed about what they serve,
+    /// each record trusted for twelve hours.
+    #[codec(index = 16)]
+    FundingSupport,
 }
 
 /// Stable metadata describing one strictly decoded [`CoreStorageKey`].
@@ -1526,6 +1551,10 @@ pub fn describe_core_storage_key(
         CoreStorageKey::DeviceEncryptionKey => ("DeviceEncryptionKey", None),
         CoreStorageKey::SsoResponderRequestLedger { .. } => ("SsoResponderRequestLedger", None),
         CoreStorageKey::ProductManifest { product_id } => ("ProductManifest", Some(product_id)),
+        CoreStorageKey::FundingSessions => ("FundingSessions", None),
+        CoreStorageKey::WorkerManifest { product_id } => ("WorkerManifest", Some(product_id)),
+        CoreStorageKey::PublishedProducts => ("PublishedProducts", None),
+        CoreStorageKey::FundingSupport => ("FundingSupport", None),
     };
     Ok(CoreStorageKeyDescription { kind, product_id })
 }
@@ -2593,6 +2622,16 @@ mod tests {
                 "SsoResponderRequestLedger",
                 None,
             ),
+            (CoreStorageKey::FundingSessions, "FundingSessions", None),
+            (
+                CoreStorageKey::WorkerManifest {
+                    product_id: "ramp".to_string(),
+                },
+                "WorkerManifest",
+                Some("ramp"),
+            ),
+            (CoreStorageKey::PublishedProducts, "PublishedProducts", None),
+            (CoreStorageKey::FundingSupport, "FundingSupport", None),
         ] {
             let description = describe_core_storage_key(&key.encode()).expect("valid key");
             assert_eq!(description.kind, kind);
@@ -3267,6 +3306,187 @@ pub trait ChatPlatform: Send + Sync {
         &self,
         product: &ProductContext,
     ) -> BoxStream<'static, Result<HostChatListSubscribeItem, GenericError>>;
+}
+
+/// Host-implemented balance view: what a payment request can spend right now,
+/// the figure the host checks a payment against. Optional: a host that omits
+/// it leaves balance subscriptions answered `Unsupported`.
+///
+/// The core asks for the product's balance access before calling here.
+pub trait BalancePlatform: Send + Sync {
+    /// Emit the balance of `purse` (`None` for the main purse) now and on
+    /// every change.
+    fn subscribe_balance(
+        &self,
+        product: &ProductContext,
+        purse: Option<u32>,
+    ) -> BoxStream<'static, Result<HostPaymentBalanceSubscribeItem, HostPaymentBalanceSubscribeError>>;
+}
+
+/// Host-implemented top-up engine: claims a source's funds into the user's
+/// balance through the host's coinage onboarding. Optional: a host that omits
+/// it leaves top-ups answered `Unsupported`.
+///
+/// The core validates the source keys before calling. The host owns retries,
+/// partial claims and persistence, and scopes ids to `product`.
+#[async_trait]
+pub trait TopUpPlatform: Send + Sync {
+    /// Start a top-up. Returns once the host has accepted it.
+    async fn top_up(
+        &self,
+        product: &ProductContext,
+        request: HostPaymentTopUpRequest,
+    ) -> Result<(), HostPaymentTopUpError>;
+
+    /// Emit a top-up's current status and every later one, ending after a
+    /// terminal status.
+    fn subscribe_top_up_status(
+        &self,
+        product: &ProductContext,
+        id: [u8; 32],
+    ) -> BoxStream<
+        'static,
+        Result<HostPaymentTopUpStatusSubscribeItem, HostPaymentTopUpStatusSubscribeError>,
+    >;
+}
+
+/// Host-implemented payment engine: pays from the user's balance to an
+/// account, once the user approves. Optional: a host that omits it leaves
+/// payment requests answered `Unsupported`.
+///
+/// The host owns the approval sheet, the transfer and its persistence, and
+/// scopes ids to `product`.
+#[async_trait]
+pub trait PaymentPlatform: Send + Sync {
+    /// Ask the user to approve `request`. Returns once the user has decided:
+    /// `Ok` when they authorized it and the host took it on; the payment's
+    /// outcome arrives through its status.
+    async fn request_payment(
+        &self,
+        product: &ProductContext,
+        request: HostPaymentRequest,
+    ) -> Result<(), HostPaymentError>;
+
+    /// Emit a payment's current status and every later one, ending after a
+    /// terminal status.
+    fn subscribe_payment_status(
+        &self,
+        product: &ProductContext,
+        id: [u8; 32],
+    ) -> BoxStream<'static, Result<HostPaymentStatusSubscribeItem, HostPaymentStatusSubscribeError>>;
+}
+
+/// A funding session as the host overlay needs it to open on the right screen.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FundingPresentation {
+    /// Session id.
+    pub intent: String,
+    /// Which way value moves, which decides the screen the overlay opens on.
+    pub direction: FundingDirection,
+    /// Amount the caller asked for, or `None` to let the user choose.
+    pub amount: Option<u128>,
+}
+
+/// One provider's place in the list a quote request fills in.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(
+    all(feature = "runtime", not(target_arch = "wasm32")),
+    derive(uniffi::Record)
+)]
+pub struct FundingQuoteRow {
+    /// The provider.
+    pub provider_id: String,
+    /// Where its quote stands.
+    pub state: FundingQuoteState,
+}
+
+/// Where a provider's quote stands.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(
+    all(feature = "runtime", not(target_arch = "wasm32")),
+    derive(uniffi::Enum)
+)]
+pub enum FundingQuoteState {
+    /// Asked, not answered yet.
+    Pending,
+    /// The provider's price.
+    Quoted {
+        /// The quote.
+        quote: FundingQuote,
+    },
+    /// The provider cannot be offered for this ask; the host shows it
+    /// disabled.
+    Unavailable {
+        /// Why.
+        reason: FundingQuoteUnavailable,
+    },
+}
+
+/// Why a provider cannot be offered for an ask.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(
+    all(feature = "runtime", not(target_arch = "wasm32")),
+    derive(uniffi::Enum)
+)]
+pub enum FundingQuoteUnavailable {
+    /// The provider refused to price it.
+    Refused {
+        /// Why.
+        reason: FundingQuoteRefusal,
+    },
+    /// The provider did not answer in time.
+    Timeout,
+}
+
+/// How the user left the funding overlay.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
+pub enum FundingPresentOutcome {
+    /// The user went ahead; the session runs on without the overlay.
+    Started,
+    /// The user closed the overlay before starting; the core discards the
+    /// session.
+    Dismissed,
+}
+
+/// Host-implemented funding surface: the native overlay a funding session
+/// runs in. Optional: a host that omits it leaves funding requests answered
+/// `Unsupported`.
+#[async_trait]
+pub trait FundingPlatform: Send + Sync {
+    /// Show the funding overlay for a session that `product` opened, or the
+    /// host itself when `product` is `None`.
+    async fn present_funding(
+        &self,
+        product: Option<&ProductContext>,
+        session: FundingPresentation,
+    ) -> Result<FundingPresentOutcome, GenericError>;
+
+    /// Show `provider`'s screen at `route` for session `intent`, such as its
+    /// KYC or card entry, in a frame the host owns, and answer once it closes.
+    async fn present_provider_frame(
+        &self,
+        provider: &ProductContext,
+        intent: String,
+        route: String,
+    ) -> Result<truapi::latest::FundingFrameOutcome, GenericError>;
+
+    /// Observe a session's status change, for host UI such as the in-flight
+    /// pill.
+    fn funding_session_changed(&self, intent: String, status: HostFundingStatusSubscribeItem) {
+        let _ = (intent, status);
+    }
+
+    /// Observe one provider's row of a quote list the host requested, for the
+    /// provider list. Each provider's row arrives `Pending`, then once more
+    /// with its quote or why it is unavailable.
+    fn funding_quote_changed(
+        &self,
+        intent: String,
+        row: FundingQuoteRow,
+    ) {
+        let _ = (intent, row);
+    }
 }
 
 /// Host-implemented adapter through which product Pocket calls reach the

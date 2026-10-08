@@ -397,6 +397,99 @@ AutoSigning without approval. Legacy-account signing still asks the user.
 - `PocketPlatform`: stream the product's Pocket card collection and remove a
   card from it. The host owns the collection and decides which cards are
   privileged.
+- `FundingPlatform`: show the native funding overlay for a session, with its
+  direction and amount and the product that opened it, and report whether the
+  user started or dismissed it. Installed with `set_funding_platform`; the
+  Balance card opens sessions with `open_funding`. The core owns the sessions,
+  persists them, expires them, and answers Funding calls `Unsupported` while no
+  overlay is installed.
+  Native hosts reach this through `NativeTrUApiHostRuntime`:
+  `set_funding_callbacks` (the overlay), `open_funding`,
+  `funding_session`, `funding_progress`, `funding_sessions`, `set_funding_providers`,
+  `funding_candidates`, `get_funding_quote`, `select_funding_provider`,
+  `cancel_funding` and `acknowledge_funding_session`. Amounts cross the FFI as decimal strings.
+  `funding_sessions` lists sessions in flight first, then ended ones, each
+  newest first. An ended session is handed to the host through
+  `funding_session_changed` each time funding resumes until the host calls
+  `acknowledge_funding_session`, so its history writes every outcome once;
+  the core keeps the 50 newest recorded sessions and every unrecorded one
+  within the 200 newest ended.
+  The host lists its providers with `set_funding_providers`, each with the
+  Worker manifest it ships for it. `funding_candidates(intent)` answers the
+  providers serving that session's direction, with their routes, from what the
+  `includes.funding` configuration of each provider's Worker manifest declares:
+  dotNS's answer once the core has read it (cached for a day, re-checked in the
+  background on every query), the shipped snapshot until then, so the list
+  renders with no chain read. A provider whose manifest no longer serves
+  Funding drops out.
+  `get_funding_quote(intent, ask)` prices an ask (rail, asset, amount,
+  country) with every funding provider, whatever its manifest says it serves,
+  since a provider can serve more or less than it last published: core sends
+  each provider's worker a `Quote` item on `serveSubscribe`, holding the worker
+  while it waits, and the worker answers with `answerQuote`, from its own API
+  directly or through the onramp adapter when that needs the provider's key.
+  Each provider's row is `Pending`, then `Quoted` or `Unavailable`, and a
+  provider that does not answer within 10 seconds is unavailable. A provider's
+  answer is reused for the same ask for 30 seconds. What an answer shows (a
+  quote or an out-of-range amount: served; a refused country: not served
+  there) is stored under `FundingSupport` and folded into `funding_candidates`
+  for 12 hours, as routes the manifest did not declare and as `unsupported`
+  entries the host can filter by the user's country. Natively the rows arrive
+  through `funding_quote_changed`.
+  `select_funding_provider` hands a session to the provider the user chose,
+  which must be one of those candidates, on the quote it was chosen by, which
+  must be one core offered for the session and not yet expired; the provider
+  receives it in `Assigned`, and the session keeps it with the rail and asset
+  it priced.
+  `funding_progress(intent)` gives the steps the host draws for a session's
+  direction and rail, each with when it was reached: in, `Started`,
+  `Payment`, `Approved` (bank and crypto, once the payment can no longer be
+  reversed), `Conversion`, `Added`; out, `Started`, `Payment`, `Sent`. A step
+  the provider skipped takes the time of the first later one. It also carries
+  when the session failed, the latest transaction id and reference the
+  provider reported with `Details`, the latest `Deposit` instructions for the
+  host to draw (a crypto address with network, asset, amount, whether it is
+  exact, an optional payment URI for the QR code and expiry, or bank details
+  with the reference), and what arrived when a `PaymentReceived` reports a
+  short or wrong-asset payment. `Deposit` is inbound only and allowed until
+  funds move, so a provider can ask for the rest of a short payment.
+  That provider's worker runs it through the `FundingProvider` trait:
+  `serveSubscribe` replays its sessions in flight and then streams new ones
+  and cancel requests, `report` stores each update on the session (only from
+  the assigned provider, only forward; `Details` may come at any point while
+  the session is open), `save` keeps up to 4 KiB of the provider's own state
+  with the session, handed back in `Assigned` and dropped once the session
+  ends, and `presentFrame` asks the host to
+  show one of its screens through `present_provider_frame`. The core holds the
+  provider's worker while a session is assigned and open. It ends a session as
+  `Delivered` or `Released` itself, from the claims of the top-ups the
+  provider named (`Crediting`, then `Delivered`) or the completion of the
+  payment request it named (`Collecting`); once funds move, the provider can
+  no longer fail the session and its deadline no longer applies. A cancel ends
+  an unassigned session, asks the provider of an assigned one, and is refused
+  once the provider has seen the user's payment.
+- `BalancePlatform`: stream what a payment request can spend right now, the
+  current value first and then each change. Installed with
+  `set_balance_platform`; native hosts use `set_balance_callbacks` with
+  `notify_balance`. The core requires a session and the product's
+  `BalanceAccess` remote permission, asking for it on the first subscription
+  and answering `PermissionDenied` when the user refuses. A host
+  `InsufficientBalance` reaches a product without that permission as
+  `Rejected`. Without a balance view, `balanceSubscribe` answers
+  `Unsupported`.
+- `PaymentPlatform`: pay from the user's balance to an account once the user
+  approves, and stream each payment's status by its caller-chosen id.
+  Installed with `set_payment_platform`; native hosts use
+  `set_payment_callbacks` with `notify_payment_status`. The core requires a
+  session. Without it, `request` and
+  `statusSubscribe` answer `Unsupported`.
+- `TopUpPlatform`: claim a top-up source's funds into the user's balance and
+  stream each top-up's status. Installed with `set_top_up_platform`; native
+  hosts use `set_top_up_callbacks` with `notify_top_up_status`. The core
+  requires a session and checks the source keys; a `ProductAccount` source is
+  passed through for the host to derive. The host owns claiming, retries,
+  partial claims, persistence and scoping ids to the product. Without it,
+  `topUp` and `topUpStatusSubscribe` answer `Unsupported`.
 - `ContactsPlatform`: resolve the handles a transaction names to contacts, and
   render the picker that selects one. `contacts` is the only required method; `pick_contact`
   defaults to `Unsupported`, so a host serving no picker says so rather than

@@ -10,6 +10,9 @@ import {
   AllocatableResource,
   Bytes32,
   ChainIdentifier,
+  FundingDirection,
+  FundingQuote,
+  FundingQuoteRefusal,
   HostAccountSignVrfRequest,
   HostDevicePermissionRequest,
   HostSignPayloadRequest,
@@ -25,6 +28,7 @@ import {
 } from "@parity/truapi";
 
 import type {
+  FundingFrameOutcome,
   GenericError,
   HostChatCreateRoomRequest,
   HostChatCreateRoomResponse,
@@ -35,8 +39,17 @@ import type {
   HostChatRegisterBotResponse,
   HostFeatureSupportedRequest,
   HostFeatureSupportedResponse,
+  HostFundingStatusSubscribeItem,
   HostLocalStorageChangeItem,
   HostLocaleSubscribeItem,
+  HostPaymentBalanceSubscribeError,
+  HostPaymentBalanceSubscribeItem,
+  HostPaymentRequest,
+  HostPaymentStatusSubscribeError,
+  HostPaymentStatusSubscribeItem,
+  HostPaymentTopUpRequest,
+  HostPaymentTopUpStatusSubscribeError,
+  HostPaymentTopUpStatusSubscribeItem,
   HostPocketListSubscribeItem,
   HostPocketRemoveCardRequest,
   HostPushNotificationRequest,
@@ -202,7 +215,27 @@ export type CoreStorageKey =
    * core honours it for a bounded lifetime, which is what makes a revoked
    * trust grant eventually take effect.
    */
-  | { tag: "ProductManifest"; value: { productId: string } };
+  | { tag: "ProductManifest"; value: { productId: string } }
+  /**
+   * Funding sessions: every live one plus a bounded tail of settled ones,
+   * as one SCALE blob.
+   */
+  | { tag: "FundingSessions"; value?: undefined }
+  /**
+   * A product's Worker executable manifest as last read from dotNS, and when,
+   * cached for the same lifetime as `Self::ProductManifest`.
+   */
+  | { tag: "WorkerManifest"; value: { productId: string } }
+  /**
+   * The products published to browse on this network, as last read, and
+   * when, cached for the same lifetime as `Self::ProductManifest`.
+   */
+  | { tag: "PublishedProducts"; value?: undefined }
+  /**
+   * What funding providers' quote answers showed about what they serve,
+   * each record trusted for twelve hours.
+   */
+  | { tag: "FundingSupport"; value?: undefined };
 
 /**
  * Review shown before a product creates a ring-VRF proof (RFC 0004).
@@ -258,6 +291,77 @@ export type DevicePermissionStatus =
   | "Denied"
   | "NotDetermined"
   | "NotApplicable";
+
+/**
+ * How the user left the funding overlay.
+ */
+export type FundingPresentOutcome = "Started" | "Dismissed";
+
+/**
+ * A funding session as the host overlay needs it to open on the right screen.
+ */
+export interface FundingPresentation {
+  /**
+   * Session id.
+   */
+  intent: string;
+
+  /**
+   * Which way value moves, which decides the screen the overlay opens on.
+   */
+  direction: FundingDirection;
+
+  /**
+   * Amount the caller asked for, or ``undefined`` to let the user choose.
+   */
+  amount?: bigint;
+}
+
+/**
+ * One provider's place in the list a quote request fills in.
+ */
+export interface FundingQuoteRow {
+  /**
+   * The provider.
+   */
+  providerId: string;
+
+  /**
+   * Where its quote stands.
+   */
+  state: FundingQuoteState;
+}
+
+/**
+ * Where a provider's quote stands.
+ */
+export type FundingQuoteState =
+  /**
+   * Asked, not answered yet.
+   */
+  | { tag: "Pending"; value?: undefined }
+  /**
+   * The provider's price.
+   */
+  | { tag: "Quoted"; value: { quote: FundingQuote } }
+  /**
+   * The provider cannot be offered for this ask; the host shows it
+   * disabled.
+   */
+  | { tag: "Unavailable"; value: { reason: FundingQuoteUnavailable } };
+
+/**
+ * Why a provider cannot be offered for an ask.
+ */
+export type FundingQuoteUnavailable =
+  /**
+   * The provider refused to price it.
+   */
+  | { tag: "Refused"; value: { reason: FundingQuoteRefusal } }
+  /**
+   * The provider did not answer in time.
+   */
+  | { tag: "Timeout"; value?: undefined };
 
 /**
  * One chain a host serves: a protocol chain role mapped to the concrete
@@ -757,6 +861,12 @@ export const CoreStorageKey: S.Codec<CoreStorageKey> = S.lazy(
       ProductManifest: S.Struct({ productId: S.str }) as S.Codec<{
         productId: string;
       }>,
+      FundingSessions: S._void,
+      WorkerManifest: S.Struct({ productId: S.str }) as S.Codec<{
+        productId: string;
+      }>,
+      PublishedProducts: S._void,
+      FundingSupport: S._void,
     }),
 );
 
@@ -801,6 +911,65 @@ export const CreateTransactionReview: S.Codec<CreateTransactionReview> = S.lazy(
 export const DevicePermissionStatus: S.Codec<DevicePermissionStatus> = S.lazy(
   (): S.Codec<DevicePermissionStatus> =>
     S.Status("Granted", "Denied", "NotDetermined", "NotApplicable"),
+);
+
+/**
+ * How the user left the funding overlay.
+ */
+export const FundingPresentOutcome: S.Codec<FundingPresentOutcome> = S.lazy(
+  (): S.Codec<FundingPresentOutcome> => S.Status("Started", "Dismissed"),
+);
+
+/**
+ * A funding session as the host overlay needs it to open on the right screen.
+ */
+export const FundingPresentation: S.Codec<FundingPresentation> = S.lazy(
+  (): S.Codec<FundingPresentation> =>
+    S.Struct({
+      intent: S.str,
+      direction: FundingDirection,
+      amount: S.Option(S.u128),
+    }) as S.Codec<FundingPresentation>,
+);
+
+/**
+ * One provider's place in the list a quote request fills in.
+ */
+export const FundingQuoteRow: S.Codec<FundingQuoteRow> = S.lazy(
+  (): S.Codec<FundingQuoteRow> =>
+    S.Struct({
+      providerId: S.str,
+      state: FundingQuoteState,
+    }) as S.Codec<FundingQuoteRow>,
+);
+
+/**
+ * Where a provider's quote stands.
+ */
+export const FundingQuoteState: S.Codec<FundingQuoteState> = S.lazy(
+  (): S.Codec<FundingQuoteState> =>
+    S.TaggedUnion({
+      Pending: S._void,
+      Quoted: S.Struct({ quote: FundingQuote }) as S.Codec<{
+        quote: FundingQuote;
+      }>,
+      Unavailable: S.Struct({ reason: FundingQuoteUnavailable }) as S.Codec<{
+        reason: FundingQuoteUnavailable;
+      }>,
+    }),
+);
+
+/**
+ * Why a provider cannot be offered for an ask.
+ */
+export const FundingQuoteUnavailable: S.Codec<FundingQuoteUnavailable> = S.lazy(
+  (): S.Codec<FundingQuoteUnavailable> =>
+    S.TaggedUnion({
+      Refused: S.Struct({ reason: FundingQuoteRefusal }) as S.Codec<{
+        reason: FundingQuoteRefusal;
+      }>,
+      Timeout: S._void,
+    }),
 );
 
 /**
@@ -1105,6 +1274,26 @@ export interface AuthPresenter {
 }
 
 /**
+ * Host-implemented balance view: what a payment request can spend right now,
+ * the figure the host checks a payment against. Optional: a host that omits
+ * it leaves balance subscriptions answered `Unsupported`.
+ *
+ * The core asks for the product's balance access before calling here.
+ */
+export interface BalancePlatform {
+  /**
+   * Emit the balance of `purse` (``undefined`` for the main purse) now and on
+   * every change.
+   */
+  subscribeBalance(
+    product: ProductContext,
+    purse: number | undefined,
+  ): AsyncIterable<
+    Result<HostPaymentBalanceSubscribeItem, HostPaymentBalanceSubscribeError>
+  >;
+}
+
+/**
  * JSON-RPC provider factory for chain access.
  *
  * The platform provides a way to get a JSON-RPC connection for a given chain.
@@ -1389,6 +1578,48 @@ export interface Features {
 }
 
 /**
+ * Host-implemented funding surface: the native overlay a funding session
+ * runs in. Optional: a host that omits it leaves funding requests answered
+ * `Unsupported`.
+ */
+export interface FundingPlatform {
+  /**
+   * Show the funding overlay for a session that `product` opened, or the
+   * host itself when `product` is ``undefined``.
+   */
+  presentFunding(
+    product: ProductContext | undefined,
+    session: FundingPresentation,
+  ): Promise<FundingPresentOutcome>;
+
+  /**
+   * Show `provider`'s screen at `route` for session `intent`, such as its
+   * KYC or card entry, in a frame the host owns, and answer once it closes.
+   */
+  presentProviderFrame(
+    provider: ProductContext,
+    intent: string,
+    route: string,
+  ): Promise<FundingFrameOutcome>;
+
+  /**
+   * Observe a session's status change, for host UI such as the in-flight
+   * pill.
+   */
+  fundingSessionChanged?(
+    intent: string,
+    status: HostFundingStatusSubscribeItem,
+  ): void;
+
+  /**
+   * Observe one provider's row of a quote list the host requested, for the
+   * provider list. Each provider's row arrives `Pending`, then once more
+   * with its quote or why it is unavailable.
+   */
+  fundingQuoteChanged?(intent: string, row: FundingQuoteRow): void;
+}
+
+/**
  * Host-implemented adapter that holds a product's next-game reminder.
  * Optional: a host that omits it leaves Game requests answered `Unsupported`.
  * See `OptionalPlatform`.
@@ -1501,6 +1732,37 @@ export interface PairingHostAdmin {
    * decoding that blob into live `SessionState` / `AuthState`.
    */
   notifySessionStoreChanged(): void;
+}
+
+/**
+ * Host-implemented payment engine: pays from the user's balance to an
+ * account, once the user approves. Optional: a host that omits it leaves
+ * payment requests answered `Unsupported`.
+ *
+ * The host owns the approval sheet, the transfer and its persistence, and
+ * scopes ids to `product`.
+ */
+export interface PaymentPlatform {
+  /**
+   * Ask the user to approve `request`. Returns once the user has decided:
+   * `Ok` when they authorized it and the host took it on; the payment's
+   * outcome arrives through its status.
+   */
+  requestPayment(
+    product: ProductContext,
+    request: HostPaymentRequest,
+  ): Promise<void>;
+
+  /**
+   * Emit a payment's current status and every later one, ending after a
+   * terminal status.
+   */
+  subscribePaymentStatus(
+    product: ProductContext,
+    id: Uint8Array,
+  ): AsyncIterable<
+    Result<HostPaymentStatusSubscribeItem, HostPaymentStatusSubscribeError>
+  >;
 }
 
 /**
@@ -1675,6 +1937,38 @@ export interface ThemeHost {
    * named themes report `ThemeName::Default`.
    */
   subscribeTheme(): AsyncIterable<Result<HostThemeSubscribeItem, GenericError>>;
+}
+
+/**
+ * Host-implemented top-up engine: claims a source's funds into the user's
+ * balance through the host's coinage onboarding. Optional: a host that omits
+ * it leaves top-ups answered `Unsupported`.
+ *
+ * The core validates the source keys before calling. The host owns retries,
+ * partial claims and persistence, and scopes ids to `product`.
+ */
+export interface TopUpPlatform {
+  /**
+   * Start a top-up. Returns once the host has accepted it.
+   */
+  topUp(
+    product: ProductContext,
+    request: HostPaymentTopUpRequest,
+  ): Promise<void>;
+
+  /**
+   * Emit a top-up's current status and every later one, ending after a
+   * terminal status.
+   */
+  subscribeTopUpStatus(
+    product: ProductContext,
+    id: Uint8Array,
+  ): AsyncIterable<
+    Result<
+      HostPaymentTopUpStatusSubscribeItem,
+      HostPaymentTopUpStatusSubscribeError
+    >
+  >;
 }
 
 /**

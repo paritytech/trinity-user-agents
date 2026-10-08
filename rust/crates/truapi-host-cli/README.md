@@ -754,6 +754,8 @@ Scripts under `js/scripts/` include:
   make e2e-chat-cli                     # chat phase only
   scripts/battery.sh --pocket-host      # Pocket phase only
   make e2e-pocket-cli                   # Pocket phase only
+  scripts/battery.sh --funding-host     # funding phase only, on a test-host build
+  make e2e-funding-cli                  # funding phase only
   scripts/battery.sh --release          # release binary
   scripts/battery.sh -- --network foo   # arguments after `--` go to every host process
   ```
@@ -768,6 +770,24 @@ Scripts under `js/scripts/` include:
   removable and one privileged, and records every removal the host is asked for
   in `TRUAPI_POCKET_LOG`. The cases read that transcript, so a pass means the
   host and the product agree rather than resting on the product's word.
+
+  The funding phase builds the host with `--features test-host` and installs
+  a scripted funding overlay: each request the product makes is answered with
+  the next outcome from `TRUAPI_FUNDING_OUTCOMES`
+  (`deliver:900,release:500,fail,dismiss,provide,provide,provide-cancel`). A
+  `deliver`, `release` or `fail` session is settled through the core's test
+  hook with no chain behind it. A `provide` session is handed to the product
+  that asked, which `TRUAPI_FUNDING_PROVIDERS` offers as a provider with a
+  scripted Worker manifest seeded into the core's cache, which runs as a Worker and serves it as the provider: it reports
+  progress, starts top-ups and payment requests, which scripted engines
+  complete in full and record in `TRUAPI_FUNDING_LEDGER`, and the core settles
+  the session from them. `provide-cancel` also cancels it. The phase runs the
+  host twice on the same storage, so the provider resumes an inbound session
+  after a restart with the state it saved. Every overlay request and session change is recorded in
+  `TRUAPI_FUNDING_LOG`, which the cases read. CI runs this phase on every
+  change to the core, the CLI or the client, with a fixed development signer
+  in `HOST_CLI_SIGNER_MNEMONIC` so the host needs no account provisioned on
+  chain.
 
   The CLI accepts and logs Game reminders on every execution kind, without
   holding or firing them. The core serves Game to the game product (`dim2`)

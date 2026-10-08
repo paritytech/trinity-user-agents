@@ -16,8 +16,9 @@ use crate::host_logic::worker::WorkerTransition;
 use crate::{DevicePairingObserver, PairedSsoPeer};
 
 use super::callbacks::{
-    HostCallbacks, NativeChatCallbacks, NativeContactsCallbacks, NativeGameCallbacks,
-    NativePocketCallbacks, NativePocketRemoval,
+    HostCallbacks, NativeBalanceCallbacks, NativeChatCallbacks, NativeContactsCallbacks,
+    NativeFundingCallbacks, NativeGameCallbacks, NativePaymentCallbacks, NativePocketCallbacks,
+    NativePocketRemoval, NativeTopUpCallbacks,
 };
 use super::errors::HostRejection;
 use super::events::NativeEventBus;
@@ -661,5 +662,670 @@ impl crate::platform::GamePlatform for GameCallbackPlatform {
             .cancel_reminder()
             .await
             .map_err(v01::GenericError::from)
+    }
+}
+
+/// [`crate::platform::FundingPlatform`] served by host-provided
+/// [`NativeFundingCallbacks`].
+pub struct FundingCallbackPlatform {
+    /// Host funding overlay.
+    pub funding: Arc<dyn NativeFundingCallbacks>,
+}
+
+#[async_trait]
+impl crate::platform::FundingPlatform for FundingCallbackPlatform {
+    async fn present_funding(
+        &self,
+        product: Option<&ProductContext>,
+        session: crate::platform::FundingPresentation,
+    ) -> Result<crate::platform::FundingPresentOutcome, v01::GenericError> {
+        self.funding
+            .present_funding(
+                product.map(|product| product.product_id.clone()),
+                session.intent,
+                session.direction,
+                session.amount,
+            )
+            .await
+            .map_err(v01::GenericError::from)
+    }
+
+    async fn present_provider_frame(
+        &self,
+        provider: &ProductContext,
+        intent: String,
+        route: String,
+    ) -> Result<v01::FundingFrameOutcome, v01::GenericError> {
+        self.funding
+            .present_provider_frame(provider.product_id.clone(), intent, route)
+            .await
+            .map_err(v01::GenericError::from)
+    }
+
+    fn funding_session_changed(&self, intent: String, status: v01::HostFundingStatusSubscribeItem) {
+        self.funding.funding_session_changed(intent, status);
+    }
+
+    fn funding_quote_changed(
+        &self,
+        intent: String,
+        row: crate::platform::FundingQuoteRow,
+    ) {
+        self.funding.funding_quote_changed(intent, row);
+    }
+}
+
+/// One subscription to a host-pushed status.
+struct Follower<S> {
+    /// Tells this subscription apart from others on the same id.
+    subscription: u64,
+    sender: mpsc::UnboundedSender<S>,
+}
+
+/// Who follows which status, per product and id.
+struct Followers<S> {
+    next: u64,
+    by_id: std::collections::HashMap<(String, crate::Bytes32), Vec<Follower<S>>>,
+}
+
+impl<S> Default for Followers<S> {
+    fn default() -> Self {
+        Self {
+            next: 0,
+            by_id: std::collections::HashMap::new(),
+        }
+    }
+}
+
+impl<S> Followers<S> {
+    /// Forget followers whose streams were dropped.
+    fn prune(&mut self) {
+        self.by_id.retain(|_, senders| {
+            senders.retain(|follower| !follower.sender.is_closed());
+            !senders.is_empty()
+        });
+    }
+}
+
+/// Rank of a terminal status.
+const TERMINAL_RANK: u8 = 3;
+
+/// Statuses a host answers once and pushes after, relayed to every stream
+/// following an id: each starts at the host's current status and shows every
+/// later one once, never stepping back, and ends at a terminal one.
+struct StatusRelay<T, E> {
+    followers: Mutex<Followers<Result<T, E>>>,
+    /// How far along a status is; [`TERMINAL_RANK`] ends a stream.
+    rank: fn(&T) -> u8,
+}
+
+impl<T: Clone + Send + 'static, E: Send + 'static> StatusRelay<T, E> {
+    fn new(rank: fn(&T) -> u8) -> Self {
+        Self {
+            followers: Mutex::new(Followers::default()),
+            rank,
+        }
+    }
+
+    /// Deliver a later `status` of `product_id`'s `id` to everyone following
+    /// it; a terminal one ends their streams.
+    fn notify(&self, product_id: String, id: crate::Bytes32, status: T) {
+        let terminal = (self.rank)(&status) == TERMINAL_RANK;
+        let mut followers = self.lock_followers();
+        let key = (product_id, id);
+        if let Some(senders) = followers.by_id.get_mut(&key) {
+            for follower in senders.iter() {
+                let _ = follower.sender.unbounded_send(Ok(status.clone()));
+            }
+        }
+        if terminal {
+            followers.by_id.remove(&key);
+        }
+        followers.prune();
+    }
+
+    /// Follow `product_id`'s `id` from `current`, the host's answer for it
+    /// now; an error ends the stream there.
+    fn follow(
+        &self,
+        product_id: String,
+        id: crate::Bytes32,
+        current: impl FnOnce() -> Result<T, E>,
+    ) -> BoxStream<'static, Result<T, E>> {
+        let key = (product_id, id);
+        // Registered before the current status is read, so a status the host
+        // pushes in between is not lost; the stream below drops it if it
+        // repeats or precedes the current one.
+        let (sender, changes) = mpsc::unbounded();
+        let follower = {
+            let mut followers = self.lock_followers();
+            followers.prune();
+            followers.next += 1;
+            let follower = followers.next;
+            followers
+                .by_id
+                .entry(key.clone())
+                .or_default()
+                .push(Follower {
+                    subscription: follower,
+                    sender,
+                });
+            follower
+        };
+        let rank = self.rank;
+        let first = current();
+        let last_rank = first.as_ref().map_or(TERMINAL_RANK, rank);
+        if last_rank == TERMINAL_RANK {
+            let mut followers = self.lock_followers();
+            if let Some(senders) = followers.by_id.get_mut(&key) {
+                senders.retain(|registered| registered.subscription != follower);
+            }
+            followers.prune();
+            return stream::iter([first]).boxed();
+        }
+        let later = changes.scan(last_rank, move |shown, status: Result<T, E>| {
+            let next = status.as_ref().map_or(TERMINAL_RANK, rank);
+            let fresh = next > *shown || (next == *shown && next == TERMINAL_RANK);
+            if fresh {
+                *shown = next;
+            }
+            futures::future::ready(Some(fresh.then_some(status)))
+        });
+        stream::iter([first])
+            .chain(later.filter_map(futures::future::ready))
+            .boxed()
+    }
+
+    /// How many ids are followed.
+    #[cfg(test)]
+    fn followed(&self) -> usize {
+        self.lock_followers().by_id.len()
+    }
+
+    fn lock_followers(&self) -> std::sync::MutexGuard<'_, Followers<Result<T, E>>> {
+        self.followers
+            .lock()
+            .expect("status followers mutex poisoned")
+    }
+}
+
+/// [`crate::platform::TopUpPlatform`] served by host-provided
+/// [`NativeTopUpCallbacks`]: the host answers a top-up's current status, and
+/// pushes each later one through [`Self::notify_status`].
+pub struct TopUpCallbackPlatform {
+    top_up: Arc<dyn NativeTopUpCallbacks>,
+    statuses: StatusRelay<
+        v01::HostPaymentTopUpStatusSubscribeItem,
+        v01::HostPaymentTopUpStatusSubscribeError,
+    >,
+}
+
+impl TopUpCallbackPlatform {
+    /// Serve top-ups from `top_up`.
+    pub fn new(top_up: Arc<dyn NativeTopUpCallbacks>) -> Self {
+        Self {
+            top_up,
+            statuses: StatusRelay::new(top_up_rank),
+        }
+    }
+
+    /// Deliver a later status of `product_id`'s top-up `id` to everyone
+    /// following it; a terminal one ends their streams.
+    pub fn notify_status(
+        &self,
+        product_id: String,
+        id: crate::Bytes32,
+        status: v01::HostPaymentTopUpStatusSubscribeItem,
+    ) {
+        self.statuses.notify(product_id, id, status);
+    }
+}
+
+/// How far along a top-up `status` is, so a stream never steps back.
+fn top_up_rank(status: &v01::HostPaymentTopUpStatusSubscribeItem) -> u8 {
+    match status {
+        v01::HostPaymentTopUpStatusSubscribeItem::Detecting => 0,
+        v01::HostPaymentTopUpStatusSubscribeItem::Claiming => 1,
+        v01::HostPaymentTopUpStatusSubscribeItem::Claimed { finalized: false } => 2,
+        v01::HostPaymentTopUpStatusSubscribeItem::Claimed { finalized: true }
+        | v01::HostPaymentTopUpStatusSubscribeItem::ClaimedPartially { .. }
+        | v01::HostPaymentTopUpStatusSubscribeItem::NotClaimed => TERMINAL_RANK,
+    }
+}
+
+#[async_trait]
+impl crate::platform::TopUpPlatform for TopUpCallbackPlatform {
+    async fn top_up(
+        &self,
+        product: &ProductContext,
+        request: v01::HostPaymentTopUpRequest,
+    ) -> Result<(), v01::HostPaymentTopUpError> {
+        self.top_up
+            .top_up(product.product_id.clone(), request)
+            .await
+    }
+
+    fn subscribe_top_up_status(
+        &self,
+        product: &ProductContext,
+        id: crate::Bytes32,
+    ) -> BoxStream<
+        'static,
+        Result<v01::HostPaymentTopUpStatusSubscribeItem, v01::HostPaymentTopUpStatusSubscribeError>,
+    > {
+        let product_id = product.product_id.clone();
+        self.statuses.follow(product_id.clone(), id, || {
+            match self.top_up.top_up_status(product_id, id) {
+                Ok(Some(status)) => Ok(status),
+                Ok(None) => Err(v01::HostPaymentTopUpStatusSubscribeError::NotFound),
+                Err(error) => Err(v01::HostPaymentTopUpStatusSubscribeError::Unknown {
+                    reason: error.to_string(),
+                }),
+            }
+        })
+    }
+}
+
+/// [`crate::platform::PaymentPlatform`] served by host-provided
+/// [`NativePaymentCallbacks`]: the host answers a payment's current status,
+/// and pushes each later one through [`Self::notify_status`].
+pub struct PaymentCallbackPlatform {
+    payments: Arc<dyn NativePaymentCallbacks>,
+    statuses:
+        StatusRelay<v01::HostPaymentStatusSubscribeItem, v01::HostPaymentStatusSubscribeError>,
+}
+
+impl PaymentCallbackPlatform {
+    /// Serve payments from `payments`.
+    pub fn new(payments: Arc<dyn NativePaymentCallbacks>) -> Self {
+        Self {
+            payments,
+            statuses: StatusRelay::new(payment_rank),
+        }
+    }
+
+    /// Deliver a later status of `product_id`'s payment `id` to everyone
+    /// following it; a terminal one ends their streams.
+    pub fn notify_status(
+        &self,
+        product_id: String,
+        id: crate::Bytes32,
+        status: v01::HostPaymentStatusSubscribeItem,
+    ) {
+        self.statuses.notify(product_id, id, status);
+    }
+}
+
+/// How far along a payment `status` is, so a stream never steps back.
+fn payment_rank(status: &v01::HostPaymentStatusSubscribeItem) -> u8 {
+    match status {
+        v01::HostPaymentStatusSubscribeItem::Processing => 0,
+        v01::HostPaymentStatusSubscribeItem::Completed
+        | v01::HostPaymentStatusSubscribeItem::Failed { .. }
+        | v01::HostPaymentStatusSubscribeItem::PartiallyClaimed { .. } => TERMINAL_RANK,
+    }
+}
+
+#[async_trait]
+impl crate::platform::PaymentPlatform for PaymentCallbackPlatform {
+    async fn request_payment(
+        &self,
+        product: &ProductContext,
+        request: v01::HostPaymentRequest,
+    ) -> Result<(), v01::HostPaymentError> {
+        self.payments
+            .request_payment(product.product_id.clone(), request)
+            .await
+    }
+
+    fn subscribe_payment_status(
+        &self,
+        product: &ProductContext,
+        id: crate::Bytes32,
+    ) -> BoxStream<
+        'static,
+        Result<v01::HostPaymentStatusSubscribeItem, v01::HostPaymentStatusSubscribeError>,
+    > {
+        let product_id = product.product_id.clone();
+        self.statuses.follow(product_id.clone(), id, || {
+            match self.payments.payment_status(product_id, id) {
+                Ok(Some(status)) => Ok(status),
+                Ok(None) => Err(v01::HostPaymentStatusSubscribeError::PaymentNotFound),
+                Err(error) => Err(v01::HostPaymentStatusSubscribeError::Unknown {
+                    reason: error.to_string(),
+                }),
+            }
+        })
+    }
+}
+
+/// One product following the balance of a purse.
+struct BalanceFollower {
+    purse: Option<u32>,
+    sender: mpsc::UnboundedSender<u128>,
+}
+
+/// [`crate::platform::BalancePlatform`] served by host-provided
+/// [`NativeBalanceCallbacks`]: the host answers a product's current balance,
+/// and pushes each change through [`Self::notify_balance`].
+pub struct BalanceCallbackPlatform {
+    balance: Arc<dyn NativeBalanceCallbacks>,
+    followers: Arc<Mutex<Vec<BalanceFollower>>>,
+}
+
+impl BalanceCallbackPlatform {
+    /// Serve balances from `balance`.
+    pub fn new(balance: Arc<dyn NativeBalanceCallbacks>) -> Self {
+        Self {
+            balance,
+            followers: Default::default(),
+        }
+    }
+
+    /// Deliver the new balance of `purse` to every product following it.
+    pub fn notify_balance(&self, purse: Option<u32>, available: u128) {
+        let mut followers = self
+            .followers
+            .lock()
+            .expect("balance followers mutex poisoned");
+        followers.retain(|follower| {
+            follower.purse != purse || follower.sender.unbounded_send(available).is_ok()
+        });
+    }
+}
+
+impl crate::platform::BalancePlatform for BalanceCallbackPlatform {
+    fn subscribe_balance(
+        &self,
+        product: &ProductContext,
+        purse: Option<u32>,
+    ) -> BoxStream<
+        'static,
+        Result<v01::HostPaymentBalanceSubscribeItem, v01::HostPaymentBalanceSubscribeError>,
+    > {
+        // Registered before the host answers, so a change it pushes in
+        // between is not lost.
+        let (sender, changes) = mpsc::unbounded();
+        let mut followers = self
+            .followers
+            .lock()
+            .expect("balance followers mutex poisoned");
+        // Forget followers whose streams were dropped, so re-subscribing
+        // while the balance holds still does not grow the list.
+        followers.retain(|follower| !follower.sender.is_closed());
+        followers.push(BalanceFollower { purse, sender });
+        drop(followers);
+        let balance = self.balance.clone();
+        let product_id = product.product_id.clone();
+        stream::once(async move { (balance.balance(product_id, purse).await, changes) })
+            .flat_map(|(first, changes)| match first {
+                Ok(available) => stream::iter([available])
+                    .chain(changes)
+                    .scan(None, |shown, available| {
+                        let fresh = *shown != Some(available);
+                        *shown = Some(available);
+                        futures::future::ready(Some(fresh.then_some(available)))
+                    })
+                    .filter_map(futures::future::ready)
+                    .map(|available| Ok(v01::HostPaymentBalanceSubscribeItem { available }))
+                    .boxed(),
+                Err(error) => stream::iter([Err(error)]).boxed(),
+            })
+            .boxed()
+    }
+}
+
+#[cfg(test)]
+mod status_relay_tests {
+    use super::*;
+
+    use futures::executor::block_on;
+
+    use crate::platform::TopUpPlatform;
+
+    /// A top-up engine holding one status per id, and nothing else.
+    struct Engine(
+        Mutex<std::collections::HashMap<crate::Bytes32, v01::HostPaymentTopUpStatusSubscribeItem>>,
+    );
+
+    #[async_trait::async_trait]
+    impl NativeTopUpCallbacks for Engine {
+        async fn top_up(
+            &self,
+            _product_id: String,
+            _request: v01::HostPaymentTopUpRequest,
+        ) -> Result<(), v01::HostPaymentTopUpError> {
+            Ok(())
+        }
+
+        fn top_up_status(
+            &self,
+            _product_id: String,
+            id: crate::Bytes32,
+        ) -> Result<Option<v01::HostPaymentTopUpStatusSubscribeItem>, HostRejection> {
+            Ok(self.0.lock().expect("statuses").get(&id).cloned())
+        }
+    }
+
+    fn product() -> ProductContext {
+        ProductContext {
+            product_id: "fund.dot".into(),
+            execution_kind: Default::default(),
+        }
+    }
+
+    // A follower sees the status the host holds now, then every status the
+    // host pushes, and its stream ends with the claim's verdict, so core's
+    // credit step and a product's subscription both learn how it ended.
+    #[test]
+    fn a_top_up_is_followed_from_its_current_status_to_its_verdict() {
+        let engine = Arc::new(Engine(Mutex::new(std::collections::HashMap::from([(
+            [1; 32],
+            v01::HostPaymentTopUpStatusSubscribeItem::Detecting,
+        )]))));
+        let platform = TopUpCallbackPlatform::new(engine);
+        let followed = platform.subscribe_top_up_status(&product(), [1; 32]);
+        let missing = platform.subscribe_top_up_status(&product(), [2; 32]);
+
+        platform.notify_status(
+            "fund.dot".into(),
+            [1; 32],
+            v01::HostPaymentTopUpStatusSubscribeItem::Claiming,
+        );
+        platform.notify_status(
+            "fund.dot".into(),
+            [1; 32],
+            v01::HostPaymentTopUpStatusSubscribeItem::Claimed { finalized: true },
+        );
+
+        assert_eq!(
+            (
+                block_on(followed.collect::<Vec<_>>()),
+                block_on(missing.collect::<Vec<_>>()),
+                platform.statuses.followed(),
+            ),
+            (
+                vec![
+                    Ok(v01::HostPaymentTopUpStatusSubscribeItem::Detecting),
+                    Ok(v01::HostPaymentTopUpStatusSubscribeItem::Claiming),
+                    Ok(v01::HostPaymentTopUpStatusSubscribeItem::Claimed { finalized: true }),
+                ],
+                vec![Err(v01::HostPaymentTopUpStatusSubscribeError::NotFound)],
+                0,
+            )
+        );
+    }
+
+    // Core's credit step subscribes afresh on every pass. Its subscription
+    // seeing a verdict in the host's store must not end a product's stream
+    // that still waits for the host to push that verdict.
+    #[test]
+    fn a_subscriber_that_sees_the_verdict_leaves_other_followers_waiting() {
+        let engine = Arc::new(Engine(Mutex::new(std::collections::HashMap::from([(
+            [1; 32],
+            v01::HostPaymentTopUpStatusSubscribeItem::Claiming,
+        )]))));
+        let platform = TopUpCallbackPlatform::new(engine.clone());
+        let product_stream = platform.subscribe_top_up_status(&product(), [1; 32]);
+        engine.0.lock().expect("statuses").insert(
+            [1; 32],
+            v01::HostPaymentTopUpStatusSubscribeItem::Claimed { finalized: true },
+        );
+        let core_pass = platform.subscribe_top_up_status(&product(), [1; 32]);
+        let verdict = v01::HostPaymentTopUpStatusSubscribeItem::Claimed { finalized: true };
+        platform.notify_status("fund.dot".into(), [1; 32], verdict.clone());
+
+        assert_eq!(
+            (
+                block_on(core_pass.collect::<Vec<_>>()),
+                block_on(product_stream.collect::<Vec<_>>()),
+            ),
+            (
+                vec![Ok(verdict.clone())],
+                vec![
+                    Ok(v01::HostPaymentTopUpStatusSubscribeItem::Claiming),
+                    Ok(verdict)
+                ],
+            )
+        );
+    }
+
+    // A status pushed while the snapshot is read reaches the follower too;
+    // a stream shows each status once and never steps back, and a follower
+    // that stops listening is forgotten.
+    #[test]
+    fn a_stream_never_repeats_or_steps_back_and_dropped_followers_are_forgotten() {
+        let engine = Arc::new(Engine(Mutex::new(std::collections::HashMap::from([(
+            [1; 32],
+            v01::HostPaymentTopUpStatusSubscribeItem::Claimed { finalized: false },
+        )]))));
+        let platform = TopUpCallbackPlatform::new(engine);
+        let followed = platform.subscribe_top_up_status(&product(), [1; 32]);
+        let dropped = platform.subscribe_top_up_status(&product(), [1; 32]);
+        drop(dropped);
+        for status in [
+            v01::HostPaymentTopUpStatusSubscribeItem::Claiming,
+            v01::HostPaymentTopUpStatusSubscribeItem::Claimed { finalized: false },
+            v01::HostPaymentTopUpStatusSubscribeItem::NotClaimed,
+        ] {
+            platform.notify_status("fund.dot".into(), [1; 32], status);
+        }
+        let _ = platform.subscribe_top_up_status(&product(), [2; 32]);
+
+        assert_eq!(
+            (
+                block_on(followed.collect::<Vec<_>>()),
+                platform.statuses.followed(),
+            ),
+            (
+                vec![
+                    Ok(v01::HostPaymentTopUpStatusSubscribeItem::Claimed { finalized: false }),
+                    Ok(v01::HostPaymentTopUpStatusSubscribeItem::NotClaimed),
+                ],
+                0,
+            )
+        );
+    }
+
+    /// A payment engine holding one status per id, and nothing else.
+    struct Payments(
+        Mutex<std::collections::HashMap<crate::Bytes32, v01::HostPaymentStatusSubscribeItem>>,
+    );
+
+    #[async_trait::async_trait]
+    impl NativePaymentCallbacks for Payments {
+        async fn request_payment(
+            &self,
+            _product_id: String,
+            _request: v01::HostPaymentRequest,
+        ) -> Result<(), v01::HostPaymentError> {
+            Ok(())
+        }
+
+        fn payment_status(
+            &self,
+            _product_id: String,
+            id: crate::Bytes32,
+        ) -> Result<Option<v01::HostPaymentStatusSubscribeItem>, HostRejection> {
+            Ok(self.0.lock().expect("statuses").get(&id).cloned())
+        }
+    }
+
+    // A payment is followed from the host's current status to the verdict
+    // it pushes, and one the host does not hold is reported as not found,
+    // so its caller knows to request it again.
+    #[test]
+    fn a_payment_is_followed_to_its_verdict_and_an_unknown_one_is_not_found() {
+        use crate::platform::PaymentPlatform;
+
+        let payments = Arc::new(Payments(Mutex::new(std::collections::HashMap::from([(
+            [1; 32],
+            v01::HostPaymentStatusSubscribeItem::Processing,
+        )]))));
+        let platform = PaymentCallbackPlatform::new(payments);
+        let followed = platform.subscribe_payment_status(&product(), [1; 32]);
+        let missing = platform.subscribe_payment_status(&product(), [2; 32]);
+        platform.notify_status(
+            "fund.dot".into(),
+            [1; 32],
+            v01::HostPaymentStatusSubscribeItem::Completed,
+        );
+
+        assert_eq!(
+            (
+                block_on(followed.collect::<Vec<_>>()),
+                block_on(missing.collect::<Vec<_>>())
+            ),
+            (
+                vec![
+                    Ok(v01::HostPaymentStatusSubscribeItem::Processing),
+                    Ok(v01::HostPaymentStatusSubscribeItem::Completed),
+                ],
+                vec![Err(v01::HostPaymentStatusSubscribeError::PaymentNotFound)],
+            )
+        );
+    }
+
+    /// A balance view that shares a fixed balance.
+    struct Shared(u128);
+
+    #[async_trait::async_trait]
+    impl NativeBalanceCallbacks for Shared {
+        async fn balance(
+            &self,
+            _product_id: String,
+            _purse: Option<u32>,
+        ) -> Result<u128, v01::HostPaymentBalanceSubscribeError> {
+            Ok(self.0)
+        }
+    }
+
+    // A follower gets the current balance and then each change to its own
+    // purse, never the same value twice and never another purse's.
+    #[test]
+    fn a_balance_is_followed_through_each_change_to_its_purse() {
+        use crate::platform::BalancePlatform;
+        let platform = BalanceCallbackPlatform::new(Arc::new(Shared(10)));
+        let mut followed = platform.subscribe_balance(&product(), None);
+        let first = block_on(followed.next());
+        platform.notify_balance(None, 10);
+        platform.notify_balance(Some(1), 99);
+        platform.notify_balance(None, 25);
+        let next = block_on(followed.next());
+        let available = |available| Some(Ok(v01::HostPaymentBalanceSubscribeItem { available }));
+        assert_eq!((first, next), (available(10), available(25)));
+    }
+
+    // Dropped subscriptions are forgotten on the next subscribe, so a product
+    // re-subscribing while the balance holds still keeps one follower.
+    #[test]
+    fn a_dropped_balance_follower_is_forgotten_on_resubscribe() {
+        use crate::platform::BalancePlatform;
+        let platform = BalanceCallbackPlatform::new(Arc::new(Shared(10)));
+        for _ in 0..3 {
+            drop(platform.subscribe_balance(&product(), None));
+        }
+        let _live = platform.subscribe_balance(&product(), None);
+        assert_eq!(platform.followers.lock().unwrap().len(), 1);
     }
 }

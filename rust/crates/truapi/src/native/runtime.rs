@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, Weak};
+use std::sync::{Arc, Mutex, OnceLock, Weak};
 
 use crate::platform::{
     CoreAdmin, PermissionAuthorizationRequest, PermissionAuthorizationStatus, ProductContext,
@@ -25,24 +25,26 @@ use crate::subscription::Spawner;
 use crate::{PairedSsoPeer, ResponderExit, SigningHostRuntime};
 
 use super::callbacks::{
-    HostCallbacks, NativeChatCallbacks, NativeContactsCallbacks, NativeGameCallbacks,
-    NativePocketCallbacks,
+    HostCallbacks, NativeBalanceCallbacks, NativeChatCallbacks, NativeContactsCallbacks,
+    NativeFundingCallbacks, NativeGameCallbacks, NativePaymentCallbacks, NativePocketCallbacks,
+    NativeTopUpCallbacks,
 };
 use super::config::{
     HostRuntimeConfig, NativeResolvedHostRuntimeConfig, NativeRuntimeConfigError,
     ProductExecutionConfig,
 };
 use super::errors::{HostRejection, NativeCoreDatabaseError};
-use super::executor::shared_native_executor;
 use super::events::NativeEventBus;
+use super::executor::shared_native_executor;
+#[cfg(doc)]
+use super::parse_pairing_deeplink;
 use super::platform::{
-    CallbackPlatform, ChatCallbackPlatform, ContactsCallbackPlatform, GameCallbackPlatform,
-    PocketCallbackPlatform,
+    BalanceCallbackPlatform, CallbackPlatform, ChatCallbackPlatform, ContactsCallbackPlatform,
+    FundingCallbackPlatform, GameCallbackPlatform, PaymentCallbackPlatform, PocketCallbackPlatform,
+    TopUpCallbackPlatform,
 };
 #[cfg(doc)]
 use crate::WorkerTransition;
-#[cfg(doc)]
-use super::parse_pairing_deeplink;
 
 /// Process-owned native TrUAPI runtime shared by all executable connections.
 #[derive(uniffi::Object)]
@@ -53,6 +55,13 @@ pub struct NativeTrUApiHostRuntime {
     ws_bridge: Arc<SharedWsBridge>,
     /// The one Worker execution per product; opening another replaces it.
     worker_executions: Mutex<HashMap<String, Weak<NativeProductExecution>>>,
+    /// The host's top-up engine, once installed, which later statuses are
+    /// pushed through.
+    top_up: OnceLock<Arc<TopUpCallbackPlatform>>,
+    /// The payment engine statuses are pushed to, once installed.
+    payments: OnceLock<Arc<PaymentCallbackPlatform>>,
+    /// The balance view changes are pushed to, once installed.
+    balance: OnceLock<Arc<BalanceCallbackPlatform>>,
 }
 
 impl NativeTrUApiHostRuntime {
@@ -70,11 +79,12 @@ impl NativeTrUApiHostRuntime {
             }
         })?;
         let directory = &runtime_config.database_directory;
-        let core_db = futures::executor::block_on(Db::open(core_db_config(directory))).map_err(
-            |err| NativeRuntimeConfigError::DatabaseUnavailable {
-                reason: format!("{}: {err}", directory.display()),
-            },
-        )?;
+        let core_db =
+            futures::executor::block_on(Db::open(core_db_config(directory))).map_err(|err| {
+                NativeRuntimeConfigError::DatabaseUnavailable {
+                    reason: format!("{}: {err}", directory.display()),
+                }
+            })?;
         let events = Arc::new(NativeEventBus::default());
         let platform = Arc::new(CallbackPlatform {
             callbacks: callbacks.clone(),
@@ -118,6 +128,9 @@ impl NativeTrUApiHostRuntime {
                 callbacks.on_core_log(marker.to_string(), detail.to_string());
             }))),
             worker_executions: Mutex::new(HashMap::new()),
+            top_up: OnceLock::new(),
+            payments: OnceLock::new(),
+            balance: OnceLock::new(),
         }))
     }
 
@@ -243,6 +256,157 @@ impl From<v01::GenericError> for NativePairingError {
 #[derive(uniffi::Object)]
 pub struct NativeAnnouncedPairing {
     inner: AnnouncedPairing,
+}
+
+#[uniffi::export]
+impl NativeTrUApiHostRuntime {
+    /// Install the host's funding overlay. Set-once; answers whether this
+    /// call installed it. Call it before opening any product execution.
+    pub fn set_funding_callbacks(&self, callbacks: Arc<dyn NativeFundingCallbacks>) -> bool {
+        self.runtime
+            .set_funding_platform(Arc::new(FundingCallbackPlatform { funding: callbacks }))
+    }
+
+    /// Open a funding session on the host's own behalf, as the Balance
+    /// card does, and show the overlay. Answers the session id, or `None`
+    /// when the user dismissed it.
+    pub async fn open_funding(
+        &self,
+        direction: v01::FundingDirection,
+        amount: Option<u128>,
+    ) -> Result<Option<String>, HostRejection> {
+        Ok(self.runtime.open_funding(direction, amount).await?)
+    }
+
+    /// Session `intent` as the core holds it, for the host's status and
+    /// history views.
+    pub fn funding_session(
+        &self,
+        intent: String,
+    ) -> Option<crate::host_logic::funding::FundingSession> {
+        self.runtime.funding_session(&intent)
+    }
+
+    /// Session `intent`'s progress: the steps for its direction and rail
+    /// with when each was reached, and the provider's references.
+    pub fn funding_progress(
+        &self,
+        intent: String,
+    ) -> Option<crate::host_logic::funding::FundingProgress> {
+        self.runtime.funding_progress(&intent)
+    }
+
+    /// Every funding session the core keeps, in flight first, then ended,
+    /// each newest first.
+    pub fn funding_sessions(&self) -> Vec<crate::host_logic::funding::FundingSession> {
+        self.runtime.funding_sessions()
+    }
+
+    /// Record that the host wrote ended session `intent` into its own
+    /// history; until then it is handed over again on each resume.
+    pub async fn acknowledge_funding_session(&self, intent: String) -> Result<bool, HostRejection> {
+        Ok(self.runtime.acknowledge_funding_session(&intent).await?)
+    }
+
+    /// Cancel funding session `intent` at the user's request: it ends if no
+    /// provider serves it, otherwise its provider is asked to stop.
+    pub async fn cancel_funding(&self, intent: String) -> Result<bool, HostRejection> {
+        Ok(self.runtime.cancel_funding(&intent).await?)
+    }
+
+    /// Install the host's top-up engine. Set-once; answers whether this call
+    /// installed it. Report each later status with
+    /// [`Self::notify_top_up_status`].
+    pub fn set_top_up_callbacks(&self, callbacks: Arc<dyn NativeTopUpCallbacks>) -> bool {
+        let platform = Arc::new(TopUpCallbackPlatform::new(callbacks));
+        self.runtime.set_top_up_platform(platform.clone()) && self.top_up.set(platform).is_ok()
+    }
+
+    /// Report a later status of `product_id`'s top-up `id` to the products
+    /// following it.
+    pub fn notify_top_up_status(
+        &self,
+        product_id: String,
+        id: crate::Bytes32,
+        status: v01::HostPaymentTopUpStatusSubscribeItem,
+    ) {
+        if let Some(platform) = self.top_up.get() {
+            platform.notify_status(product_id, id, status);
+        }
+    }
+
+    /// Install the host's payment engine. Set-once; answers whether this
+    /// call installed it. Report each later status with
+    /// [`Self::notify_payment_status`].
+    pub fn set_payment_callbacks(&self, callbacks: Arc<dyn NativePaymentCallbacks>) -> bool {
+        let platform = Arc::new(PaymentCallbackPlatform::new(callbacks));
+        self.runtime.set_payment_platform(platform.clone()) && self.payments.set(platform).is_ok()
+    }
+
+    /// Report a later status of `product_id`'s payment `id` to the products
+    /// following it.
+    pub fn notify_payment_status(
+        &self,
+        product_id: String,
+        id: crate::Bytes32,
+        status: v01::HostPaymentStatusSubscribeItem,
+    ) {
+        if let Some(platform) = self.payments.get() {
+            platform.notify_status(product_id, id, status);
+        }
+    }
+
+    /// Install the host's balance view. Set-once; answers whether this call
+    /// installed it. Report each change with [`Self::notify_balance`].
+    pub fn set_balance_callbacks(&self, callbacks: Arc<dyn NativeBalanceCallbacks>) -> bool {
+        let platform = Arc::new(BalanceCallbackPlatform::new(callbacks));
+        self.runtime.set_balance_platform(platform.clone()) && self.balance.set(platform).is_ok()
+    }
+
+    /// Report the new balance of `purse` (`None` for the main purse), a
+    /// decimal string of CASH units, to the products following it.
+    pub fn notify_balance(&self, purse: Option<u32>, available: u128) {
+        if let Some(platform) = self.balance.get() {
+            platform.notify_balance(purse, available);
+        }
+    }
+
+    /// Replace the funding providers this host offers, each with the Worker
+    /// manifest JSON it ships for it.
+    pub fn set_funding_providers(
+        &self,
+        providers: Vec<crate::host_logic::funding_providers::FundingProviderEntry>,
+    ) -> Result<(), HostRejection> {
+        Ok(self.runtime.set_funding_providers(providers)?)
+    }
+
+    /// The providers funding session `intent` can be handed to.
+    pub fn funding_candidates(
+        &self,
+        intent: String,
+    ) -> Vec<crate::host_logic::funding_providers::FundingCandidate> {
+        self.runtime.funding_candidates(&intent)
+    }
+
+    /// Ask the candidates for funding session `intent` to price `ask`. Each
+    /// provider's row arrives through `funding_quote_changed`.
+    pub fn get_funding_quote(&self, intent: String, ask: v01::FundingQuoteAsk) {
+        self.runtime.request_funding_quotes(&intent, ask);
+    }
+
+    /// Hand open funding session `intent` to the provider the user chose, by
+    /// product id, on the quote it was chosen by when it was quoted.
+    pub async fn select_funding_provider(
+        &self,
+        intent: String,
+        provider_id: String,
+        quote_id: Option<String>,
+    ) -> Result<bool, HostRejection> {
+        Ok(self
+            .runtime
+            .select_funding_provider(&intent, &provider_id, quote_id.as_deref())
+            .await?)
+    }
 }
 
 #[uniffi::export]
@@ -540,6 +704,15 @@ impl NativeTrUApiHostRuntime {
                 .activate_local_session_with_identity(secret, lite_username),
         )
         .map_err(Into::into)
+    }
+
+    /// `product_id`'s Worker manifest from dotNS, cached for a day. `None`
+    /// when the product publishes no Worker, or one the core cannot use.
+    pub async fn worker_manifest(
+        &self,
+        product_id: String,
+    ) -> Result<Option<crate::host_logic::worker_manifest::WorkerManifest>, HostRejection> {
+        Ok(self.runtime.worker_manifest(&product_id).await?)
     }
 
     /// Reports the core database's SQLite version, schema version and file

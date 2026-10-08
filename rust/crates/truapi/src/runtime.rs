@@ -13,12 +13,17 @@ mod allowances;
 /// Core-owned auth/session UI state machine.
 pub mod auth_state;
 mod authority;
+mod browse;
 /// In-core Bulletin preimage submission over the shared Subxt client.
 pub mod bulletin_rpc;
 mod capabilities;
 mod chat;
 pub mod contacts;
 mod dotns_lookup;
+mod funding;
+mod funding_providers;
+mod funding_quotes;
+pub use funding::OpenFundingError;
 mod identity;
 pub mod login_failure;
 mod pairing_host;
@@ -89,7 +94,7 @@ pub use signing_host::StatementRenewalTarget;
 #[cfg(not(target_arch = "wasm32"))]
 pub use signing_host::TrackedStatementRenewalTarget;
 use tracing::{instrument, warn};
-use truapi::api::{Chat, Contacts, Pocket, Renderer};
+use truapi::api::{Chat, Contacts, Funding, FundingProvider, Pocket, Renderer};
 use truapi::versioned::account::{HostAccountGetError, HostAccountSignVrfError};
 use truapi::versioned::chat::{
     HostChatActionSubscribeError, HostChatActionSubscribeItem, HostChatActionSubscribeRequest,
@@ -100,6 +105,18 @@ use truapi::versioned::chat::{
 };
 use truapi::versioned::contacts::{
     HostContactsPickError, HostContactsPickRequest, HostContactsPickResponse,
+};
+use truapi::versioned::funding::{
+    HostFundingError, HostFundingRequest, HostFundingResponse, HostFundingStatusSubscribeError,
+    HostFundingStatusSubscribeItem, HostFundingStatusSubscribeRequest,
+};
+use truapi::versioned::funding_provider::{
+    HostFundingAnswerQuoteError, HostFundingAnswerQuoteRequest, HostFundingAnswerQuoteResponse,
+    HostFundingPresentFrameError, HostFundingPresentFrameRequest, HostFundingPresentFrameResponse,
+    HostFundingReportError, HostFundingReportRequest, HostFundingReportResponse,
+    HostFundingSaveError, HostFundingSaveRequest, HostFundingSaveResponse,
+    HostFundingServeSubscribeError, HostFundingServeSubscribeItem,
+    HostFundingServeSubscribeRequest,
 };
 use truapi::versioned::pocket::{
     HostPocketListSubscribeError, HostPocketListSubscribeItem, HostPocketListSubscribeRequest,
@@ -122,12 +139,14 @@ use crate::host_internal::sso_messages::RingVrfError;
 use crate::host_logic::product_account::{
     derivation_index_bytes, derive_product_public_key, public_key_from_address,
 };
+use crate::host_logic::funding::{MAX_SAVED_BYTES, ReportRefusal, SaveRefusal};
 use crate::host_logic::session::SessionInfo;
 #[cfg(test)]
 use crate::host_logic::session::SessionState;
 use crate::host_logic::sso::pairing::x25519_public_key;
 #[cfg(test)]
 use crate::subscription::Spawner;
+use crate::unix_time::current_unix_millis;
 
 /// Error reason surfaced to products when a permission is not granted.
 pub const PERMISSION_DENIED_REASON: &str = "Permission denied";
@@ -1089,8 +1108,6 @@ fn transaction_call_error<E>(
     }))
 }
 
-const PAYMENTS_NOT_IMPLEMENTED: &str = "Payments are not supported in dot.li";
-
 impl ProductRuntimeHost {
     /// Chat access policy for this connection; see [`chat_platform_for`].
     pub fn native_chat_platform(
@@ -1262,6 +1279,18 @@ impl ProductRuntimeHost {
             return Err(CallError::Denied);
         }
         self.pocket_platform.clone().ok_or(CallError::Unsupported)
+    }
+
+    /// Funding provider access policy for this connection: a provider serves
+    /// sessions only from a Worker execution with an active session, and only
+    /// where the host has a funding surface.
+    fn funding_provider_access<E>(&self) -> Result<Arc<dyn crate::platform::FundingPlatform>, CallError<E>> {
+        if self.product.execution_kind != crate::platform::ProductExecutionKind::Worker
+            || self.authority.session_state().current().is_none()
+        {
+            return Err(CallError::Denied);
+        }
+        self.services.funding().platform().ok_or(CallError::Unsupported)
     }
 
     /// Replace the contact handles a call declares with the accounts they
@@ -1558,6 +1587,226 @@ impl Renderer for ProductRuntimeHost {
             return Subscription::interrupted(CallError::Denied);
         }
         self.renderer.subscribe()
+    }
+}
+
+#[truapi::async_trait]
+impl FundingProvider for ProductRuntimeHost {
+    #[instrument(skip_all, fields(runtime.method = "funding_provider.serve_subscribe"))]
+    async fn serve_subscribe(
+        &self,
+        _cx: &CallContext,
+        _request: HostFundingServeSubscribeRequest,
+    ) -> Subscription<HostFundingServeSubscribeItem, CallError<HostFundingServeSubscribeError>>
+    {
+        if let Err(error) = self.funding_provider_access() {
+            return Subscription::interrupted(error);
+        }
+        let registry = self.services.funding();
+        registry.bind(&self.services);
+        let loaded = registry
+            .commit(self.platform.as_ref(), current_unix_millis(), |_| {
+                ((), Vec::new())
+            })
+            .await;
+        if let Err(error) = loaded {
+            return Subscription::interrupted(CallError::HostFailure {
+                reason: error.to_string(),
+            });
+        }
+        registry.keep_expiring(&self.services);
+        Subscription::new(Box::pin(
+            registry
+                .serve(&self.product.product_id)
+                .map(|item| Ok(HostFundingServeSubscribeItem::V1(item))),
+        ))
+    }
+
+    #[instrument(skip_all, fields(runtime.method = "funding_provider.report"))]
+    async fn report(
+        &self,
+        _cx: &CallContext,
+        request: HostFundingReportRequest,
+    ) -> Result<HostFundingReportResponse, CallError<HostFundingReportError>> {
+        let HostFundingReportRequest::V1(request) = request;
+        self.funding_provider_access()?;
+        let registry = self.services.funding();
+        registry.bind(&self.services);
+        let reported = registry
+            .report(
+                self.platform.as_ref(),
+                current_unix_millis(),
+                &self.product.product_id,
+                &request.intent,
+                request.update,
+            )
+            .await
+            .map_err(|error| CallError::HostFailure {
+                reason: error.to_string(),
+            })?;
+        let domain = |error| CallError::Domain(HostFundingReportError::V1(error));
+        match reported {
+            Ok(()) => Ok(HostFundingReportResponse::V1),
+            Err(ReportRefusal::NotFound) => Err(domain(v01::HostFundingReportError::NotFound)),
+            Err(ReportRefusal::OutOfOrder) => Err(domain(v01::HostFundingReportError::OutOfOrder)),
+            Err(ReportRefusal::DuplicateId) => Err(domain(v01::HostFundingReportError::DuplicateId)),
+        }
+    }
+
+    #[instrument(skip_all, fields(runtime.method = "funding_provider.save"))]
+    async fn save(
+        &self,
+        _cx: &CallContext,
+        request: HostFundingSaveRequest,
+    ) -> Result<HostFundingSaveResponse, CallError<HostFundingSaveError>> {
+        let HostFundingSaveRequest::V1(request) = request;
+        self.funding_provider_access()?;
+        let saved = self
+            .services
+            .funding()
+            .save(
+                self.platform.as_ref(),
+                current_unix_millis(),
+                &self.product.product_id,
+                &request.intent,
+                request.state,
+            )
+            .await
+            .map_err(|error| CallError::HostFailure {
+                reason: error.to_string(),
+            })?;
+        let domain = |error| CallError::Domain(HostFundingSaveError::V1(error));
+        match saved {
+            Ok(()) => Ok(HostFundingSaveResponse::V1),
+            Err(SaveRefusal::NotFound) => Err(domain(v01::HostFundingSaveError::NotFound)),
+            Err(SaveRefusal::TooLarge) => Err(domain(v01::HostFundingSaveError::TooLarge {
+                max: MAX_SAVED_BYTES,
+            })),
+        }
+    }
+
+    #[instrument(skip_all, fields(runtime.method = "funding_provider.answer_quote"))]
+    async fn answer_quote(
+        &self,
+        _cx: &CallContext,
+        request: HostFundingAnswerQuoteRequest,
+    ) -> Result<HostFundingAnswerQuoteResponse, CallError<HostFundingAnswerQuoteError>> {
+        let HostFundingAnswerQuoteRequest::V1(request) = request;
+        self.funding_provider_access()?;
+        if self.services.funding().answer_quote(
+            &self.product.product_id,
+            &request.ask_id,
+            request.answer,
+        ) {
+            Ok(HostFundingAnswerQuoteResponse::V1)
+        } else {
+            Err(CallError::Domain(HostFundingAnswerQuoteError::V1(
+                v01::HostFundingAnswerQuoteError::NotFound,
+            )))
+        }
+    }
+
+    #[instrument(skip_all, fields(runtime.method = "funding_provider.present_frame"))]
+    async fn present_frame(
+        &self,
+        _cx: &CallContext,
+        request: HostFundingPresentFrameRequest,
+    ) -> Result<HostFundingPresentFrameResponse, CallError<HostFundingPresentFrameError>> {
+        let HostFundingPresentFrameRequest::V1(request) = request;
+        let platform = self.funding_provider_access()?;
+        if !self
+            .services
+            .funding()
+            .is_serving(&self.product.product_id, &request.intent)
+        {
+            return Err(CallError::Domain(HostFundingPresentFrameError::V1(
+                v01::HostFundingPresentFrameError::NotFound,
+            )));
+        }
+        let outcome = platform
+            .present_provider_frame(&self.product, request.intent, request.route)
+            .await
+            .map_err(|error| CallError::HostFailure {
+                reason: error.reason,
+            })?;
+        Ok(HostFundingPresentFrameResponse::V1(
+            v01::HostFundingPresentFrameResponse { outcome },
+        ))
+    }
+}
+
+#[truapi::async_trait]
+impl Funding for ProductRuntimeHost {
+    #[instrument(skip_all, fields(runtime.method = "funding.request"))]
+    async fn request(
+        &self,
+        _cx: &CallContext,
+        request: HostFundingRequest,
+    ) -> Result<HostFundingResponse, CallError<HostFundingError>> {
+        let HostFundingRequest::V1(request) = request;
+        let domain = |error| CallError::Domain(HostFundingError::V1(error));
+        // A capability the host does not serve is a framework answer; a
+        // missing session is one the product handles.
+        if self.services.funding().platform().is_none() {
+            return Err(CallError::Unsupported);
+        }
+        if self.authority.current_session().is_none() {
+            return Err(domain(v01::HostFundingError::NotConnected));
+        }
+        let session = self
+            .services
+            .open_funding(Some(&self.product), request.direction, request.amount)
+            .await
+            .map_err(|error| match error {
+                funding::OpenFundingError::Unsupported => CallError::Unsupported,
+                funding::OpenFundingError::Dismissed => domain(v01::HostFundingError::Rejected),
+                funding::OpenFundingError::Present(error) => CallError::HostFailure {
+                    reason: error.reason,
+                },
+                funding::OpenFundingError::Session(error) => CallError::HostFailure {
+                    reason: error.to_string(),
+                },
+            })?;
+        Ok(HostFundingResponse::V1(v01::HostFundingResponse {
+            intent: session.intent,
+        }))
+    }
+
+    #[instrument(skip_all, fields(runtime.method = "funding.status_subscribe"))]
+    async fn status_subscribe(
+        &self,
+        _cx: &CallContext,
+        request: HostFundingStatusSubscribeRequest,
+    ) -> Subscription<HostFundingStatusSubscribeItem, CallError<HostFundingStatusSubscribeError>>
+    {
+        let HostFundingStatusSubscribeRequest::V1(request) = request;
+        let registry = self.services.funding();
+        if registry.platform().is_none() {
+            return Subscription::interrupted(CallError::Unsupported);
+        }
+        let loaded = registry
+            .commit(self.platform.as_ref(), current_unix_millis(), |_| {
+                ((), Vec::new())
+            })
+            .await;
+        if let Err(error) = loaded {
+            return Subscription::interrupted(CallError::HostFailure {
+                reason: error.to_string(),
+            });
+        }
+        registry.keep_expiring(&self.services);
+        // Another product's session reads as absent, so ids reveal nothing.
+        let owned = registry.get(&request.intent).is_some_and(|session| {
+            session.owner_product_id.as_deref() == Some(self.product.product_id.as_str())
+        });
+        match owned.then(|| registry.subscribe(&request.intent)).flatten() {
+            Some(stream) => Subscription::new(Box::pin(
+                stream.map(|item| Ok(HostFundingStatusSubscribeItem::V1(item))),
+            )),
+            None => Subscription::interrupted(CallError::Domain(
+                HostFundingStatusSubscribeError::V1(v01::HostFundingStatusSubscribeError::NotFound),
+            )),
+        }
     }
 }
 

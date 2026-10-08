@@ -66,6 +66,26 @@ uniffi::custom_type!(Bytes32, Vec<u8>, {
     try_lift: |bytes| Ok(bytes.as_slice().try_into()?),
 });
 
+/// A 64-byte value, such as an sr25519 secret key, passed as plain bytes on
+/// FFI surfaces.
+pub type Bytes64 = [u8; 64];
+
+#[cfg(all(feature = "runtime", not(target_arch = "wasm32")))]
+uniffi::custom_type!(Bytes64, Vec<u8>, {
+    remote,
+    lower: |bytes| bytes.to_vec(),
+    try_lift: |bytes| Ok(bytes.as_slice().try_into()?),
+});
+
+// Swift and Kotlin have no 128-bit integer, so amounts cross FFI surfaces as
+// decimal strings.
+#[cfg(all(feature = "runtime", not(target_arch = "wasm32")))]
+uniffi::custom_type!(u128, String, {
+    remote,
+    lower: |amount| amount.to_string(),
+    try_lift: |amount| Ok(amount.parse()?),
+});
+
 /// Latest-version protocol payload types, unwrapped from their versioned
 /// envelopes. Runtime code should use these instead of per-version modules.
 pub mod latest {
@@ -78,20 +98,22 @@ pub mod latest {
         ChatMessageContent, ChatReaction, ChatRichText, ChatRoom, ChatRoomParticipation,
         ChatRoomRegistrationStatus, CodeFormat, ColorToken, ColumnProps, ContactHandle,
         ContactPickOutcome, ContentAlignment, ContextualAlias, DerivationIndex, Dimensions, Effect,
-        EffectProps, GenericError, HorizontalAlignment, HostAccountCreateProofRequest,
-        HostAccountGetAliasRequest, HostAccountListRingVrfKeysRequest,
-        HostAccountRegisterRingVrfKeyRequest, HostAccountRingVrfSignRequest,
-        HostAccountSignVrfError, HostAccountSignVrfRequest, HostPlatform, HostSignPayloadData,
-        HostWorkerOperationError, ImageFit, ImageProps, ImageSource, Modifier,
-        OperationStartedResult, PocketCard, ProductAccountId, ProductProofContext, RawPayload,
-        RegisteredRingVrfKey, RemotePermission, RemoteStatementStoreCreateProofError,
-        RemoteStatementStoreCreateProofRequest, RemoteStatementStoreCreateProofResponse,
-        RemoteStatementStoreSubscribeItem, RemoteStatementStoreSubscribeRequest, RenderContext,
-        RendererNode, RingLocation, RingLocationJunction, RingVrfKeyDisclosure, RowProps,
-        RuntimeApi, RuntimeSpec, RuntimeType, ScanOutcome, Shape, SignedStatement, Size, Statement,
-        StatementProof, StorageQueryItem, StorageQueryType, StorageResultItem, TextFieldProps,
-        TextProps, ThemeName, ThemeVariant, TxPayloadExtension, TypographyStyle, VerticalAlignment,
-        VrfSignature,
+        EffectProps, FundingAssignment, FundingDeposit, FundingDirection, FundingFailure,
+        FundingFrameOutcome, FundingQuote, FundingQuoteAnswer, FundingQuoteAsk,
+        FundingQuoteRefusal, FundingRail, FundingReceived, FundingUpdate, GenericError,
+        HorizontalAlignment, HostAccountCreateProofRequest, HostAccountGetAliasRequest,
+        HostAccountListRingVrfKeysRequest, HostAccountRegisterRingVrfKeyRequest,
+        HostAccountRingVrfSignRequest, HostAccountSignVrfError, HostAccountSignVrfRequest,
+        HostPlatform, HostSignPayloadData, HostWorkerOperationError, ImageFit, ImageProps,
+        ImageSource, Modifier, OperationStartedResult, PaymentTopUpSource, PocketCard,
+        ProductAccountId, ProductProofContext, RawPayload, RegisteredRingVrfKey, RemotePermission,
+        RemoteStatementStoreCreateProofError, RemoteStatementStoreCreateProofRequest,
+        RemoteStatementStoreCreateProofResponse, RemoteStatementStoreSubscribeItem,
+        RemoteStatementStoreSubscribeRequest, RenderContext, RendererNode, RingLocation,
+        RingLocationJunction, RingVrfKeyDisclosure, RowProps, RuntimeApi, RuntimeSpec, RuntimeType,
+        ScanOutcome, Shape, SignedStatement, Size, Statement, StatementProof, StorageQueryItem,
+        StorageQueryType, StorageResultItem, TextFieldProps, TextProps, ThemeName, ThemeVariant,
+        TxPayloadExtension, TypographyStyle, VerticalAlignment, VrfSignature,
     };
 
     /// Latest payload type of a versioned envelope.
@@ -190,6 +212,78 @@ pub mod latest {
     pub type HostLocaleSubscribeItem = LatestOf<versioned::locale::HostLocaleSubscribeItem>;
     /// Navigation request error.
     pub type HostNavigateToError = LatestOf<versioned::system::HostNavigateToError>;
+    /// Funding request.
+    pub type HostFundingRequest = LatestOf<versioned::funding::HostFundingRequest>;
+    /// Accepted funding intent.
+    pub type HostFundingResponse = LatestOf<versioned::funding::HostFundingResponse>;
+    /// Funding request failure.
+    pub type HostFundingError = LatestOf<versioned::funding::HostFundingError>;
+    /// Request to watch a funding session.
+    pub type HostFundingStatusSubscribeRequest =
+        LatestOf<versioned::funding::HostFundingStatusSubscribeRequest>;
+    /// Progress of a funding session.
+    pub type HostFundingStatusSubscribeItem =
+        LatestOf<versioned::funding::HostFundingStatusSubscribeItem>;
+    /// Failure watching a funding session.
+    pub type HostFundingStatusSubscribeError =
+        LatestOf<versioned::funding::HostFundingStatusSubscribeError>;
+
+    /// Payment balance subscription item.
+    pub type HostPaymentBalanceSubscribeItem =
+        LatestOf<versioned::payment::HostPaymentBalanceSubscribeItem>;
+    /// Payment balance subscription failure.
+    pub type HostPaymentBalanceSubscribeError =
+        LatestOf<versioned::payment::HostPaymentBalanceSubscribeError>;
+    /// A provider's assigned sessions and cancel requests.
+    pub type HostFundingServeSubscribeItem =
+        LatestOf<versioned::funding_provider::HostFundingServeSubscribeItem>;
+    /// Failure serving funding sessions.
+    pub type HostFundingServeSubscribeError =
+        LatestOf<versioned::funding_provider::HostFundingServeSubscribeError>;
+    /// A provider's progress report.
+    pub type HostFundingReportRequest =
+        LatestOf<versioned::funding_provider::HostFundingReportRequest>;
+    /// Failure reporting progress.
+    pub type HostFundingReportError = LatestOf<versioned::funding_provider::HostFundingReportError>;
+    /// A provider's answer to a quote ask.
+    pub type HostFundingAnswerQuoteRequest =
+        LatestOf<versioned::funding_provider::HostFundingAnswerQuoteRequest>;
+    /// Failure answering a quote ask.
+    pub type HostFundingAnswerQuoteError =
+        LatestOf<versioned::funding_provider::HostFundingAnswerQuoteError>;
+    /// A provider's state saved for a session.
+    pub type HostFundingSaveRequest = LatestOf<versioned::funding_provider::HostFundingSaveRequest>;
+    /// Failure saving a provider's state.
+    pub type HostFundingSaveError = LatestOf<versioned::funding_provider::HostFundingSaveError>;
+    /// Request to show a provider screen.
+    pub type HostFundingPresentFrameRequest =
+        LatestOf<versioned::funding_provider::HostFundingPresentFrameRequest>;
+    /// How a provider screen closed.
+    pub type HostFundingPresentFrameResponse =
+        LatestOf<versioned::funding_provider::HostFundingPresentFrameResponse>;
+    /// Failure showing a provider screen.
+    pub type HostFundingPresentFrameError =
+        LatestOf<versioned::funding_provider::HostFundingPresentFrameError>;
+    /// Payment request.
+    pub type HostPaymentRequest = LatestOf<versioned::payment::HostPaymentRequest>;
+    /// Payment request failure.
+    pub type HostPaymentError = LatestOf<versioned::payment::HostPaymentError>;
+    /// Progress of a payment.
+    pub type HostPaymentStatusSubscribeItem =
+        LatestOf<versioned::payment::HostPaymentStatusSubscribeItem>;
+    /// Failure following a payment.
+    pub type HostPaymentStatusSubscribeError =
+        LatestOf<versioned::payment::HostPaymentStatusSubscribeError>;
+    /// Payment top-up request.
+    pub type HostPaymentTopUpRequest = LatestOf<versioned::payment::HostPaymentTopUpRequest>;
+    /// Payment top-up failure.
+    pub type HostPaymentTopUpError = LatestOf<versioned::payment::HostPaymentTopUpError>;
+    /// Progress of a payment top-up.
+    pub type HostPaymentTopUpStatusSubscribeItem =
+        LatestOf<versioned::payment::HostPaymentTopUpStatusSubscribeItem>;
+    /// Failure following a payment top-up.
+    pub type HostPaymentTopUpStatusSubscribeError =
+        LatestOf<versioned::payment::HostPaymentTopUpStatusSubscribeError>;
     /// The calling product's Pocket cards.
     pub type HostPocketListSubscribeItem = LatestOf<versioned::pocket::HostPocketListSubscribeItem>;
     /// Pocket card removal request.
@@ -614,7 +708,9 @@ runtime_items! {
     pub use runtime::StatementRenewalTarget;
     pub use runtime::contacts::contact_handle;
     pub use runtime::login_failure::reports_exhausted_period;
-    pub use runtime::product_manifest::{encode_cached_root_manifest, manifest_cache_key};
+    pub use runtime::product_manifest::{
+        encode_cached_root_manifest, manifest_cache_key, worker_manifest_cache_key,
+    };
     pub use runtime::statement_allowance;
     pub use runtime::{
         AnnouncedPairing, DevicePairingObserver, MAX_PAIRING_METADATA_CHARS, PairedSsoPeer,

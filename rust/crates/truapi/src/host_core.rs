@@ -15,7 +15,8 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use crate::platform::{
-    ChatPlatform, ContactsPlatform, GamePlatform, PermissionStatusHost, PocketPlatform,
+    BalancePlatform, ChatPlatform, ContactsPlatform, FundingPlatform, GamePlatform,
+    PaymentPlatform, PermissionStatusHost, PocketPlatform, TopUpPlatform,
 };
 use crate::platform::{
     CoreAdmin, PairingHostAdmin, PairingHostConfig, PermissionAuthorizationRequest,
@@ -30,7 +31,6 @@ use tracing::{instrument, warn};
 use truapi::v01;
 use truapi::{CallContext, CancellationReason};
 
-use crate::truapi_core::TrUApiCore;
 use crate::frame::ProtocolMessage;
 use crate::host_internal::sso_messages::{RemoteMessage, SsoRequestOutcome};
 use crate::host_logic::worker::WorkerLedger;
@@ -44,6 +44,7 @@ use crate::runtime::{
 };
 use crate::subscription::{HostInitiatedSubscriptionManager, Spawner};
 use crate::transport::Transport;
+use crate::truapi_core::TrUApiCore;
 
 /// Outgoing frame sink owned by a host adapter.
 ///
@@ -194,6 +195,23 @@ impl PairingHostRuntime {
         self.pairing_host.set_submit_preimages_locally(local);
     }
 
+    /// `product_id`'s Worker manifest from dotNS, cached for a day like the
+    /// root manifest. `Ok(None)` when the product publishes no Worker, or one
+    /// this core cannot use; `Err` when dotNS could not be read.
+    #[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.worker_manifest"))]
+    pub async fn worker_manifest(
+        &self,
+        product_id: &str,
+    ) -> Result<Option<crate::host_logic::worker_manifest::WorkerManifest>, v01::GenericError> {
+        crate::runtime::product_manifest::worker_manifest(
+            &self.services,
+            self.services.platform.as_ref(),
+            product_id,
+        )
+        .await
+        .map_err(|reason| v01::GenericError { reason })
+    }
+
     /// Build a long-lived pairing-host runtime around a platform implementation.
     #[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.new"))]
     pub fn new<P>(platform: Arc<P>, config: PairingHostConfig, spawner: Spawner) -> Self
@@ -275,6 +293,37 @@ impl PairingHostRuntime {
         self.services.install_pocket_platform(platform)
     }
 
+    /// Install the host's [`FundingPlatform`], the native funding overlay.
+    ///
+    /// Set-once. Returns whether this call installed it. Call it before
+    /// serving any product runtime.
+    #[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.set_funding_platform"))]
+    pub fn set_funding_platform(&self, platform: Arc<dyn FundingPlatform>) -> bool {
+        let installed = self.services.funding().install_platform(platform);
+        if installed {
+            self.services.resume_funding();
+        }
+        installed
+    }
+
+    /// Open a funding session on the host's own behalf, as the Balance card's
+    /// Add and Withdraw do, and show the overlay. Returns the session id, or
+    /// `None` when the user dismissed the overlay without starting.
+    #[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.open_funding"))]
+    pub async fn open_funding(
+        &self,
+        direction: v01::FundingDirection,
+        amount: Option<u128>,
+    ) -> Result<Option<String>, v01::GenericError> {
+        match self.services.open_funding(None, direction, amount).await {
+            Ok(session) => Ok(Some(session.intent)),
+            Err(crate::runtime::OpenFundingError::Dismissed) => Ok(None),
+            Err(error) => Err(v01::GenericError {
+                reason: error.to_string(),
+            }),
+        }
+    }
+
     /// Install the host's [`GamePlatform`], which holds each product's game
     /// reminder.
     ///
@@ -284,6 +333,29 @@ impl PairingHostRuntime {
     #[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.set_game_platform"))]
     pub fn set_game_platform(&self, platform: Arc<dyn GamePlatform>) -> bool {
         self.services.install_game_platform(platform)
+    }
+
+    /// Install the host's [`TopUpPlatform`], which claims funds into the
+    /// balance. Set-once. Returns whether this call installed it.
+    #[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.set_top_up_platform"))]
+    pub fn set_top_up_platform(&self, platform: Arc<dyn TopUpPlatform>) -> bool {
+        self.services.install_top_up_platform(platform)
+    }
+
+    /// Install the host's [`PaymentPlatform`], which pays from the user's
+    /// balance once the user approves. Set-once; returns whether this call
+    /// installed it.
+    #[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.set_payment_platform"))]
+    pub fn set_payment_platform(&self, platform: Arc<dyn PaymentPlatform>) -> bool {
+        self.services.install_payment_platform(platform)
+    }
+
+    /// Install the host's [`BalancePlatform`], which shares the user's
+    /// balance with products. Set-once; returns whether this call installed
+    /// it.
+    #[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.set_balance_platform"))]
+    pub fn set_balance_platform(&self, platform: Arc<dyn BalancePlatform>) -> bool {
+        self.services.install_balance_platform(platform)
     }
 
     /// Install the host's [`ContactsPlatform`], which owns the contact list and
@@ -585,6 +657,23 @@ pub struct SigningHostRuntime {
 }
 
 impl SigningHostRuntime {
+    /// `product_id`'s Worker manifest from dotNS, cached for a day like the
+    /// root manifest. `Ok(None)` when the product publishes no Worker, or one
+    /// this core cannot use; `Err` when dotNS could not be read.
+    #[instrument(skip_all, fields(runtime.method = "signing_host_runtime.worker_manifest"))]
+    pub async fn worker_manifest(
+        &self,
+        product_id: &str,
+    ) -> Result<Option<crate::host_logic::worker_manifest::WorkerManifest>, v01::GenericError> {
+        crate::runtime::product_manifest::worker_manifest(
+            &self.services,
+            self.services.platform.as_ref(),
+            product_id,
+        )
+        .await
+        .map_err(|reason| v01::GenericError { reason })
+    }
+
     /// Answer resource allocation as granted without performing it.
     ///
     /// For test hosts only, with the `test-host` feature enabled.
@@ -612,6 +701,25 @@ impl SigningHostRuntime {
     ) -> Result<Option<[u8; 32]>, v01::GenericError> {
         self.signing_host
             .derive_subtree_public_key(product_id)
+            .map_err(|err| v01::GenericError {
+                reason: err.to_string(),
+            })
+    }
+
+    /// End funding session `intent` with `stage` as though its funds had
+    /// moved, so a test host can drive the flow with no chain behind it.
+    /// Returns whether it was still in flight.
+    ///
+    /// For test hosts only, with the `test-host` feature enabled.
+    #[cfg(feature = "test-host")]
+    pub async fn settle_funding_for_test(
+        &self,
+        intent: &str,
+        stage: crate::host_logic::funding::FundingStage,
+    ) -> Result<bool, v01::GenericError> {
+        self.services
+            .settle_funding_for_test(intent, stage)
+            .await
             .map_err(|err| v01::GenericError {
                 reason: err.to_string(),
             })
@@ -716,6 +824,166 @@ impl SigningHostRuntime {
         self.services.install_pocket_platform(platform)
     }
 
+    /// Install the host's [`FundingPlatform`], the native funding overlay.
+    ///
+    /// Set-once. Returns whether this call installed it. Call it before
+    /// serving any product runtime.
+    #[instrument(skip_all, fields(runtime.method = "signing_host_runtime.set_funding_platform"))]
+    pub fn set_funding_platform(&self, platform: Arc<dyn FundingPlatform>) -> bool {
+        let installed = self.services.funding().install_platform(platform);
+        if installed {
+            self.services.resume_funding();
+        }
+        installed
+    }
+
+    /// Session `intent`'s progress as the host draws it: the steps for its
+    /// direction and rail with when each was reached, and the provider's
+    /// references.
+    pub fn funding_progress(&self, intent: &str) -> Option<crate::host_logic::funding::FundingProgress> {
+        self.services.funding().get(intent).map(|session| session.progress())
+    }
+
+    /// Every funding session the core keeps, in flight first, then ended,
+    /// each newest first.
+    pub fn funding_sessions(&self) -> Vec<crate::host_logic::funding::FundingSession> {
+        self.services.funding().sessions()
+    }
+
+    /// Record that the host wrote ended session `intent` into its own
+    /// history. Until it does, the session is handed over again through
+    /// `funding_session_changed` each time funding resumes; the host reads
+    /// the full record with `funding_session`. Call it outside that
+    /// callback, which runs while the core holds its session lock.
+    #[instrument(skip_all, fields(runtime.method = "signing_host_runtime.acknowledge_funding_session"))]
+    pub async fn acknowledge_funding_session(
+        &self,
+        intent: &str,
+    ) -> Result<bool, v01::GenericError> {
+        self.services
+            .acknowledge_funding_session(intent)
+            .await
+            .map_err(|err| v01::GenericError {
+                reason: err.to_string(),
+            })
+    }
+
+    /// Cancel funding session `intent` at the user's request: it ends if no
+    /// provider serves it, otherwise its provider is asked to stop. Returns
+    /// whether the cancel was taken.
+    #[instrument(skip_all, fields(runtime.method = "signing_host_runtime.cancel_funding"))]
+    pub async fn cancel_funding(&self, intent: &str) -> Result<bool, v01::GenericError> {
+        self.services
+            .cancel_funding(intent)
+            .await
+            .map_err(|err| v01::GenericError {
+                reason: err.to_string(),
+            })
+    }
+
+    /// Replace the funding providers this host offers, each with the Worker
+    /// manifest it ships for it. The core re-reads each one from dotNS in the
+    /// background, and that answer wins once it has one.
+    #[instrument(skip_all, fields(runtime.method = "signing_host_runtime.set_funding_providers"))]
+    pub fn set_funding_providers(
+        &self,
+        providers: Vec<crate::host_logic::funding_providers::FundingProviderEntry>,
+    ) -> Result<(), v01::GenericError> {
+        self.services
+            .set_funding_providers(providers)
+            .map_err(|err| v01::GenericError {
+                reason: err.to_string(),
+            })
+    }
+
+    /// The providers funding session `intent` can be handed to, with the
+    /// routes that serve its direction, in the host's order. Empty for a
+    /// session the core does not know.
+    pub fn funding_candidates(
+        &self,
+        intent: &str,
+    ) -> Vec<crate::host_logic::funding_providers::FundingCandidate> {
+        self.services
+            .funding()
+            .get(intent)
+            .map(|session| self.services.funding_candidates(session.direction))
+            .unwrap_or_default()
+    }
+
+    /// Live quotes for funding session `intent`: one row per candidate
+    /// serving `ask`'s rail and asset, `Pending` and then `Quoted` or
+    /// `Unavailable` as each provider answers or runs out of time.
+    pub fn get_funding_quote(
+        &self,
+        intent: &str,
+        ask: v01::FundingQuoteAsk,
+    ) -> futures::stream::BoxStream<'static, crate::platform::FundingQuoteRow>
+    {
+        self.services.get_funding_quote(intent, ask)
+    }
+
+    /// [`Self::get_funding_quote`] for hosts that take each row through
+    /// [`FundingPlatform::funding_quote_changed`] instead of a stream.
+    pub fn request_funding_quotes(&self, intent: &str, ask: v01::FundingQuoteAsk) {
+        let rows = self.services.get_funding_quote(intent, ask);
+        let platform = self.services.funding().platform();
+        let intent = intent.to_string();
+        (self.services.spawner)(Box::pin(async move {
+            let Some(platform) = platform else {
+                return;
+            };
+            futures::pin_mut!(rows);
+            while let Some(row) = futures::StreamExt::next(&mut rows).await {
+                platform.funding_quote_changed(intent.clone(), row);
+            }
+        }));
+    }
+
+    /// Hand open funding session `intent` to the provider the user chose,
+    /// by product id, on the quote they chose it by, when it was quoted.
+    /// Returns whether it was open and not yet assigned.
+    #[instrument(skip_all, fields(runtime.method = "signing_host_runtime.select_funding_provider"))]
+    pub async fn select_funding_provider(
+        &self,
+        intent: &str,
+        provider_id: &str,
+        quote_id: Option<&str>,
+    ) -> Result<bool, v01::GenericError> {
+        self.services
+            .select_funding_provider(intent, provider_id, quote_id)
+            .await
+            .map_err(|err| v01::GenericError {
+                reason: err.to_string(),
+            })
+    }
+
+    /// One funding session as the core holds it, for the host's own status
+    /// and history views.
+    pub fn funding_session(
+        &self,
+        intent: &str,
+    ) -> Option<crate::host_logic::funding::FundingSession> {
+        self.services.funding().get(intent)
+    }
+
+    /// Open a funding session on the host's own behalf, as the Balance card's
+    /// Add and Withdraw do, and show the overlay. Returns the session id, or
+    /// `None` when the user dismissed the overlay without starting.
+    #[instrument(skip_all, fields(runtime.method = "signing_host_runtime.open_funding"))]
+    pub async fn open_funding(
+        &self,
+        direction: v01::FundingDirection,
+        amount: Option<u128>,
+    ) -> Result<Option<String>, v01::GenericError> {
+        match self.services.open_funding(None, direction, amount).await {
+            Ok(session) => Ok(Some(session.intent)),
+            Err(crate::runtime::OpenFundingError::Dismissed) => Ok(None),
+            Err(error) => Err(v01::GenericError {
+                reason: error.to_string(),
+            }),
+        }
+    }
+
     /// Install the host's [`GamePlatform`], which holds each product's game
     /// reminder.
     ///
@@ -725,6 +993,29 @@ impl SigningHostRuntime {
     #[instrument(skip_all, fields(runtime.method = "signing_host_runtime.set_game_platform"))]
     pub fn set_game_platform(&self, platform: Arc<dyn GamePlatform>) -> bool {
         self.services.install_game_platform(platform)
+    }
+
+    /// Install the host's [`TopUpPlatform`], which claims funds into the
+    /// balance. Set-once. Returns whether this call installed it.
+    #[instrument(skip_all, fields(runtime.method = "signing_host_runtime.set_top_up_platform"))]
+    pub fn set_top_up_platform(&self, platform: Arc<dyn TopUpPlatform>) -> bool {
+        self.services.install_top_up_platform(platform)
+    }
+
+    /// Install the host's [`PaymentPlatform`], which pays from the user's
+    /// balance once the user approves. Set-once; returns whether this call
+    /// installed it.
+    #[instrument(skip_all, fields(runtime.method = "signing_host_runtime.set_payment_platform"))]
+    pub fn set_payment_platform(&self, platform: Arc<dyn PaymentPlatform>) -> bool {
+        self.services.install_payment_platform(platform)
+    }
+
+    /// Install the host's [`BalancePlatform`], which shares the user's
+    /// balance with products. Set-once; returns whether this call installed
+    /// it.
+    #[instrument(skip_all, fields(runtime.method = "signing_host_runtime.set_balance_platform"))]
+    pub fn set_balance_platform(&self, platform: Arc<dyn BalancePlatform>) -> bool {
+        self.services.install_balance_platform(platform)
     }
 
     /// Install the host's [`ContactsPlatform`], which owns the contact list and
@@ -1016,10 +1307,7 @@ impl SigningHostRuntime {
     /// even while that request is still being answered by another call, and a
     /// withdrawn request is answered `Ignored`.
     #[instrument(skip_all, fields(runtime.method = "signing_host_runtime.answer_sso_request"))]
-    pub async fn answer_sso_request(
-        &self,
-        message: RemoteMessage,
-    ) -> SsoRequestOutcome {
+    pub async fn answer_sso_request(&self, message: RemoteMessage) -> SsoRequestOutcome {
         let service = SigningHostSsoService::new(self.signing_host.clone());
         match service.answer(message).await {
             Dispatch::Response(answer) => SsoRequestOutcome::Response {
@@ -3542,9 +3830,9 @@ mod tests {
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn the_core_database_is_installed_once_and_reports_when_missing() {
+        use crate::platform::{HostInfo, PlatformInfo, SigningHostConfig};
         use crate::store::{Db, DbConfig, DbError, DbLocation};
         use futures::executor::block_on;
-        use crate::platform::{HostInfo, PlatformInfo, SigningHostConfig};
 
         let config = SigningHostConfig::new(
             HostInfo {
@@ -3577,7 +3865,10 @@ mod tests {
         assert!(runtime.set_core_db(installed));
         assert!(!runtime.set_core_db(other));
 
-        let db = runtime.services.core_db().expect("installed database is served");
+        let db = runtime
+            .services
+            .core_db()
+            .expect("installed database is served");
         let answer: i64 =
             block_on(db.write(|tx| Ok(tx.query_row("SELECT 42", [], |row| row.get(0))?)))
                 .expect("installed database serves writes");

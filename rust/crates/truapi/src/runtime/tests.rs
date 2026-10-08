@@ -2575,6 +2575,345 @@ fn game_is_unsupported_for_every_product_but_the_game() {
     }
 }
 
+struct RecordingFundingPlatform {
+    outcome: crate::platform::FundingPresentOutcome,
+    presented: Mutex<Vec<(Option<String>, crate::platform::FundingPresentation)>>,
+    announced: Mutex<Vec<String>>,
+}
+
+impl RecordingFundingPlatform {
+    fn answering(outcome: crate::platform::FundingPresentOutcome) -> Arc<Self> {
+        Arc::new(Self {
+            outcome,
+            presented: Mutex::new(Vec::new()),
+            announced: Mutex::new(Vec::new()),
+        })
+    }
+}
+
+#[truapi::async_trait]
+impl crate::platform::FundingPlatform for RecordingFundingPlatform {
+    async fn present_funding(
+        &self,
+        product: Option<&ProductContext>,
+        session: crate::platform::FundingPresentation,
+    ) -> Result<crate::platform::FundingPresentOutcome, truapi::latest::GenericError> {
+        self.presented
+            .lock()
+            .expect("presented mutex poisoned")
+            .push((product.map(|product| product.product_id.clone()), session));
+        Ok(self.outcome)
+    }
+
+    async fn present_provider_frame(
+        &self,
+        _provider: &ProductContext,
+        _intent: String,
+        _route: String,
+    ) -> Result<truapi::latest::FundingFrameOutcome, truapi::latest::GenericError> {
+        Ok(truapi::latest::FundingFrameOutcome::Closed)
+    }
+
+    fn funding_session_changed(
+        &self,
+        intent: String,
+        _status: truapi::latest::HostFundingStatusSubscribeItem,
+    ) {
+        self.announced
+            .lock()
+            .expect("announced mutex poisoned")
+            .push(intent);
+    }
+}
+
+fn funding_services() -> Arc<RuntimeServices> {
+    let (host_config, _) = runtime_config("funding.dot");
+    RuntimeServices::new(
+        stub_platform(),
+        host_config.host.host_info.clone(),
+        host_config.people_chain_genesis_hash,
+        host_config.bulletin_chain_genesis_hash,
+        host_config.asset_hub_chain_genesis_hash,
+        test_spawner(),
+    )
+}
+
+// A host's history writes one row per outcome, so an ended session it has
+// not recorded is announced again each time funding resumes, until the host
+// acknowledges it.
+#[test]
+fn funding_resumes_by_announcing_what_the_host_has_not_recorded() {
+    let services = funding_services();
+    let platform = RecordingFundingPlatform::answering(crate::platform::FundingPresentOutcome::Started);
+    assert!(services.funding().install_platform(platform.clone()));
+    let intent = futures::executor::block_on(services.open_funding(None, v01::FundingDirection::Out, None))
+        .expect("opened")
+        .intent;
+    assert!(futures::executor::block_on(services.cancel_funding(&intent)).expect("cancelled"));
+    let announced_on_resume = || {
+        platform.announced.lock().expect("announced mutex poisoned").clear();
+        services.resume_funding();
+        for _ in 0..200 {
+            let announced = platform.announced.lock().expect("announced mutex poisoned").clone();
+            if !announced.is_empty() {
+                return announced;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        Vec::new()
+    };
+
+    let before = announced_on_resume();
+    let acknowledged =
+        futures::executor::block_on(services.acknowledge_funding_session(&intent)).expect("acknowledged");
+    let after = announced_on_resume();
+
+    assert_eq!((before, acknowledged, after), (vec![intent], true, Vec::new()));
+}
+
+fn funding_host(
+    services: &Arc<RuntimeServices>,
+    product_id: &str,
+    with_session: bool,
+) -> ProductRuntimeHost {
+    let (host_config, product) = runtime_config(product_id);
+    let pairing_host = PairingHost::new(services.clone(), host_config);
+    let host = ProductRuntimeHost::from_services(
+        services.clone(),
+        crate::host_core::ConnectionAdapters::from_services(services),
+        pairing_host,
+        product,
+    );
+    if with_session {
+        install_pairing_session(&host, session_info());
+    }
+    host
+}
+
+fn request_funding(
+    host: &ProductRuntimeHost,
+) -> Result<
+    truapi::versioned::funding::HostFundingResponse,
+    CallError<truapi::versioned::funding::HostFundingError>,
+> {
+    futures::executor::block_on(truapi::api::Funding::request(
+        host,
+        &CallContext::default(),
+        truapi::versioned::funding::HostFundingRequest::V1(v01::HostFundingRequest {
+            direction: v01::FundingDirection::In,
+            amount: Some(1_000),
+        }),
+    ))
+}
+
+fn first_funding_status(
+    host: &ProductRuntimeHost,
+    intent: &str,
+) -> Option<
+    Result<
+        truapi::versioned::funding::HostFundingStatusSubscribeItem,
+        CallError<truapi::versioned::funding::HostFundingStatusSubscribeError>,
+    >,
+> {
+    futures::executor::block_on(
+        futures::executor::block_on(truapi::api::Funding::status_subscribe(
+            host,
+            &CallContext::default(),
+            truapi::versioned::funding::HostFundingStatusSubscribeRequest::V1(
+                v01::HostFundingStatusSubscribeRequest {
+                    intent: intent.to_string(),
+                },
+            ),
+        ))
+        .next(),
+    )
+}
+
+fn funding_not_found() -> CallError<truapi::versioned::funding::HostFundingStatusSubscribeError> {
+    CallError::Domain(
+        truapi::versioned::funding::HostFundingStatusSubscribeError::V1(
+            v01::HostFundingStatusSubscribeError::NotFound,
+        ),
+    )
+}
+
+#[test]
+fn a_funding_request_opens_the_overlay_and_only_its_product_can_watch_it() {
+    let services = funding_services();
+    let platform =
+        RecordingFundingPlatform::answering(crate::platform::FundingPresentOutcome::Started);
+    assert!(services.funding().install_platform(platform.clone()));
+    let owner = funding_host(&services, "wallet.dot", true);
+
+    let truapi::versioned::funding::HostFundingResponse::V1(response) =
+        request_funding(&owner).expect("request accepted");
+
+    let presented = platform
+        .presented
+        .lock()
+        .expect("presented mutex poisoned")
+        .clone();
+    assert_eq!(
+        presented,
+        [(
+            Some("wallet.dot".to_string()),
+            crate::platform::FundingPresentation {
+                intent: response.intent.clone(),
+                direction: v01::FundingDirection::In,
+                amount: Some(1_000),
+            },
+        )]
+    );
+    assert!(matches!(
+        first_funding_status(&owner, &response.intent),
+        Some(Ok(
+            truapi::versioned::funding::HostFundingStatusSubscribeItem::V1(
+                v01::HostFundingStatusSubscribeItem::AwaitingDeposit { .. }
+            )
+        ))
+    ));
+    // Another product's session reads exactly like one that does not exist.
+    assert_eq!(
+        first_funding_status(
+            &funding_host(&services, "other.dot", true),
+            &response.intent
+        ),
+        Some(Err(funding_not_found()))
+    );
+}
+
+#[test]
+fn a_dismissed_funding_overlay_is_rejected_and_leaves_no_session() {
+    let services = funding_services();
+    let platform =
+        RecordingFundingPlatform::answering(crate::platform::FundingPresentOutcome::Dismissed);
+    assert!(services.funding().install_platform(platform.clone()));
+    let host = funding_host(&services, "wallet.dot", true);
+
+    assert_eq!(
+        request_funding(&host),
+        Err(CallError::Domain(
+            truapi::versioned::funding::HostFundingError::V1(v01::HostFundingError::Rejected)
+        ))
+    );
+    let intent = platform.presented.lock().expect("presented mutex poisoned")[0]
+        .1
+        .intent
+        .clone();
+    assert_eq!(
+        first_funding_status(&host, &intent),
+        Some(Err(funding_not_found()))
+    );
+}
+
+// The host's in-flight pill reads these announcements, so a session the user
+// never started must not appear there.
+#[test]
+fn the_host_hears_of_started_sessions_only() {
+    for (outcome, expected) in [
+        (crate::platform::FundingPresentOutcome::Started, 1),
+        (crate::platform::FundingPresentOutcome::Dismissed, 0),
+    ] {
+        let services = funding_services();
+        let platform = RecordingFundingPlatform::answering(outcome);
+        assert!(services.funding().install_platform(platform.clone()));
+
+        let _ = request_funding(&funding_host(&services, "wallet.dot", true));
+
+        assert_eq!(
+            platform
+                .announced
+                .lock()
+                .expect("announced mutex poisoned")
+                .len(),
+            expected
+        );
+    }
+}
+
+#[test]
+fn a_host_opened_funding_session_belongs_to_no_product() {
+    let services = funding_services();
+    assert!(
+        services
+            .funding()
+            .install_platform(RecordingFundingPlatform::answering(
+                crate::platform::FundingPresentOutcome::Started,
+            ))
+    );
+    let session =
+        futures::executor::block_on(services.open_funding(None, v01::FundingDirection::Out, None))
+            .expect("opened");
+
+    assert_eq!(
+        first_funding_status(
+            &funding_host(&services, "wallet.dot", true),
+            &session.intent
+        ),
+        Some(Err(funding_not_found()))
+    );
+}
+
+#[test]
+fn a_funding_request_needs_a_host_overlay_then_a_session() {
+    let services = funding_services();
+    assert_eq!(
+        request_funding(&funding_host(&services, "wallet.dot", false)),
+        Err(CallError::Unsupported)
+    );
+
+    assert!(
+        services
+            .funding()
+            .install_platform(RecordingFundingPlatform::answering(
+                crate::platform::FundingPresentOutcome::Started,
+            ))
+    );
+    assert_eq!(
+        request_funding(&funding_host(&services, "wallet.dot", false)),
+        Err(CallError::Domain(
+            truapi::versioned::funding::HostFundingError::V1(v01::HostFundingError::NotConnected)
+        ))
+    );
+}
+
+// A test host settles a session as though its funds had moved, and the
+// product sees that ending; a session already over, or unknown, is left as
+// it is.
+#[cfg(feature = "test-host")]
+#[test]
+fn a_test_host_settles_a_funding_session_once() {
+    let services = funding_services();
+    assert!(services.funding().install_platform(RecordingFundingPlatform::answering(
+        crate::platform::FundingPresentOutcome::Started,
+    )));
+    let intent = futures::executor::block_on(services.open_funding(None, v01::FundingDirection::In, Some(1_000)))
+        .expect("opened")
+        .intent;
+    let delivered = |credited| crate::host_logic::funding::FundingStage::Delivered {
+        credited,
+        settled_at_ms: 1,
+    };
+    let settle = |intent: &str, credited| {
+        futures::executor::block_on(services.settle_funding_for_test(intent, delivered(credited))).expect("saved")
+    };
+
+    assert_eq!(
+        (
+            settle(&intent, 900),
+            settle(&intent, 1),
+            settle("fs_unknown", 900),
+            services.funding().get(&intent).map(|session| session.wire_item()),
+        ),
+        (
+            true,
+            false,
+            false,
+            Some(v01::HostFundingStatusSubscribeItem::Delivered { credited: 900 }),
+        )
+    );
+}
+
 #[test]
 fn chain_follow_ids_are_scoped_per_product_core() {
     let (host_config, product) = runtime_config("same.dot");
@@ -7757,5 +8096,1021 @@ fn a_pairing_test_host_keeps_a_submitted_preimage_and_serves_it_back() {
         Ok(RemotePreimageLookupSubscribeItem::V1(
             v01::RemotePreimageLookupSubscribeItem { value: Some(value) }
         ))
+    );
+}
+
+fn payment_services() -> Arc<RuntimeServices> {
+    payment_services_over(stub_platform())
+}
+
+fn payment_services_over(platform: Arc<dyn Platform>) -> Arc<RuntimeServices> {
+    let (host_config, _) = runtime_config("payments.dot");
+    RuntimeServices::new(
+        platform,
+        host_config.host.host_info.clone(),
+        host_config.people_chain_genesis_hash,
+        host_config.bulletin_chain_genesis_hash,
+        host_config.asset_hub_chain_genesis_hash,
+        test_spawner(),
+    )
+}
+
+fn payment_host(services: &Arc<RuntimeServices>, product_id: &str, with_session: bool) -> ProductRuntimeHost {
+    let (host_config, product) = runtime_config(product_id);
+    let pairing_host = PairingHost::new(services.clone(), host_config);
+    let host = ProductRuntimeHost::from_services(
+        services.clone(),
+        crate::host_core::ConnectionAdapters::from_services(services),
+        pairing_host,
+        product,
+    );
+    if with_session {
+        install_pairing_session(&host, session_info());
+    }
+    host
+}
+
+/// A Worker manifest serving card payments in and crypto in and out.
+const RAMP_MANIFEST: &str = r#"{"$v":1,"appVersion":[1,0,0],"kind":"worker","entrypoint":"index.js","includes":{"funding":{"routes":[{"mode":"CARD","directions":["In"],"assets":["EUR"]},{"mode":"CRYPTO","directions":["In","Out"],"assets":["USDT"]}]}}}"#;
+
+/// Offer `provider_id` as a funding provider publishing `manifest`.
+fn offer_provider(services: &Arc<RuntimeServices>, provider_id: &str, manifest: &str) {
+    services
+        .set_funding_providers(vec![crate::host_logic::funding_providers::FundingProviderEntry {
+            product_id: provider_id.to_string(),
+            worker_manifest: Some(manifest.to_string()),
+        }])
+        .expect("provider offered");
+}
+
+fn funding_services_over(platform: Arc<dyn Platform>) -> Arc<RuntimeServices> {
+    let (host_config, _) = runtime_config("funding.dot");
+    RuntimeServices::new(
+        platform,
+        host_config.host.host_info.clone(),
+        host_config.people_chain_genesis_hash,
+        host_config.bulletin_chain_genesis_hash,
+        host_config.asset_hub_chain_genesis_hash,
+        test_spawner(),
+    )
+}
+
+/// A provider's worker connection, signed in.
+fn provider_worker(services: &Arc<RuntimeServices>, provider_id: &str) -> ProductRuntimeHost {
+    let (host_config, _) = runtime_config(provider_id);
+    let product = ProductContext::new_with_execution(
+        provider_id.to_string(),
+        crate::platform::ProductExecutionKind::Worker,
+    )
+    .expect("test provider context is valid");
+    let pairing_host = PairingHost::new(services.clone(), host_config);
+    let host = ProductRuntimeHost::from_services(
+        services.clone(),
+        crate::host_core::ConnectionAdapters::from_services(services),
+        pairing_host,
+        product,
+    );
+    install_pairing_session(&host, session_info());
+    host
+}
+
+fn first_served(
+    host: &ProductRuntimeHost,
+) -> Option<Result<v01::HostFundingServeSubscribeItem, CallError<truapi::versioned::funding_provider::HostFundingServeSubscribeError>>> {
+    futures::executor::block_on(
+        futures::executor::block_on(truapi::api::FundingProvider::serve_subscribe(
+            host,
+            &CallContext::default(),
+            truapi::versioned::funding_provider::HostFundingServeSubscribeRequest::V1,
+        ))
+        .next(),
+    )
+    .map(|item| item.map(|truapi::versioned::funding_provider::HostFundingServeSubscribeItem::V1(item)| item))
+}
+
+fn report_funding(
+    host: &ProductRuntimeHost,
+    intent: &str,
+    update: v01::FundingUpdate,
+) -> Result<(), CallError<truapi::versioned::funding_provider::HostFundingReportError>> {
+    futures::executor::block_on(truapi::api::FundingProvider::report(
+        host,
+        &CallContext::default(),
+        truapi::versioned::funding_provider::HostFundingReportRequest::V1(
+            v01::HostFundingReportRequest {
+                intent: intent.to_string(),
+                update,
+            },
+        ),
+    ))
+    .map(|_| ())
+}
+
+fn save_funding(
+    host: &ProductRuntimeHost,
+    intent: &str,
+    state: &[u8],
+) -> Result<(), CallError<truapi::versioned::funding_provider::HostFundingSaveError>> {
+    futures::executor::block_on(truapi::api::FundingProvider::save(
+        host,
+        &CallContext::default(),
+        truapi::versioned::funding_provider::HostFundingSaveRequest::V1(v01::HostFundingSaveRequest {
+            intent: intent.to_string(),
+            state: state.to_vec(),
+        }),
+    ))
+    .map(|_| ())
+}
+
+fn wait_for_stage(
+    services: &RuntimeServices,
+    intent: &str,
+) -> Option<v01::HostFundingStatusSubscribeItem> {
+    for _ in 0..200 {
+        let session = services.funding().get(intent)?;
+        if session.is_terminal() {
+            return Some(session.wire_item());
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    None
+}
+
+// The provider's worker takes a session from assignment to delivered, and a
+// restart in between loses nothing: the restarted worker is handed the
+// session again with its last step and the state it saved, and the host
+// still decides delivery from the claim of the top-up the provider named.
+// The saved state goes once the session ends.
+#[test]
+fn a_provider_worker_delivers_a_session_across_a_restart() {
+    let storage = stub_platform();
+    let start = |storage: &Arc<crate::test_support::StubPlatform>| {
+        let services = funding_services_over(storage.clone());
+        assert!(services.funding().install_platform(RecordingFundingPlatform::answering(
+            crate::platform::FundingPresentOutcome::Started,
+        )));
+        assert!(services.install_top_up_platform(Arc::new(RecordingTopUpPlatform::default())));
+        services.resume_funding();
+        services
+    };
+    let before = start(&storage);
+    offer_provider(&before, "ramp.dot", RAMP_MANIFEST);
+    let intent = futures::executor::block_on(before.open_funding(
+        None,
+        v01::FundingDirection::In,
+        Some(1_000),
+    ))
+    .expect("opened")
+    .intent;
+    assert!(futures::executor::block_on(before.select_funding_provider(&intent, "ramp.dot", None)).expect("selected"));
+    let worker = provider_worker(&before, "ramp.dot");
+    let assigned = first_served(&worker);
+    let crediting = v01::FundingUpdate::Crediting { top_up_id: [7; 32], amount: 1_000 };
+    report_funding(&worker, &intent, v01::FundingUpdate::Converting).expect("converting");
+    report_funding(&worker, &intent, crediting.clone()).expect("crediting");
+    let details = v01::FundingUpdate::Details { transaction_id: Some("tx-1".into()), reference: None };
+    report_funding(&worker, &intent, details).expect("details while crediting");
+    save_funding(&worker, &intent, b"order-1").expect("saved");
+    let too_large = save_funding(&worker, &intent, &[0; 4097]);
+
+    let after = start(&storage);
+    let restarted = provider_worker(&after, "ramp.dot");
+    let replayed = first_served(&restarted);
+    report_funding(&restarted, &intent, v01::FundingUpdate::Delivered).expect("delivered");
+
+    let assignment = |last_update, saved: Option<&[u8]>| {
+        Some(Ok(v01::HostFundingServeSubscribeItem::Assigned {
+            session: Box::new(v01::FundingAssignment {
+                intent: intent.clone(),
+                direction: v01::FundingDirection::In,
+                amount: Some(1_000),
+                expires_at: after.funding().get(&intent).expect("kept").deadline_ms,
+                last_update,
+                quote: None,
+                saved: saved.map(<[u8]>::to_vec),
+            }),
+        }))
+    };
+    let delivered = wait_for_stage(&after, &intent);
+    assert_eq!(
+        (
+            assigned,
+            replayed,
+            too_large.is_err(),
+            delivered,
+            after.funding().get(&intent).and_then(|session| session.saved),
+        ),
+        (
+            assignment(None, None),
+            assignment(Some(crediting), Some(b"order-1")),
+            true,
+            Some(v01::HostFundingStatusSubscribeItem::Delivered { credited: 1_000 }),
+            None,
+        )
+    );
+}
+
+// Only the assigned provider's worker may serve or report on a session.
+#[test]
+fn only_the_assigned_provider_worker_reports() {
+    let services = funding_services();
+    assert!(services.funding().install_platform(RecordingFundingPlatform::answering(
+        crate::platform::FundingPresentOutcome::Started,
+    )));
+    offer_provider(&services, "ramp.dot", RAMP_MANIFEST);
+    let intent = futures::executor::block_on(services.open_funding(None, v01::FundingDirection::In, None))
+        .expect("opened")
+        .intent;
+    assert!(futures::executor::block_on(services.select_funding_provider(&intent, "ramp.dot", None)).expect("selected"));
+    let app = funding_host(&services, "ramp.dot", true);
+    let other = provider_worker(&services, "other.dot");
+
+    assert!(matches!(
+        (
+            report_funding(&app, &intent, v01::FundingUpdate::AwaitingPayment),
+            report_funding(&other, &intent, v01::FundingUpdate::AwaitingPayment),
+        ),
+        (
+            Err(CallError::Denied),
+            Err(CallError::Domain(truapi::versioned::funding_provider::HostFundingReportError::V1(
+                v01::HostFundingReportError::NotFound
+            ))),
+        )
+    ));
+}
+
+// A session goes only to a provider the host offers, and only one serving
+// the session's direction; anything else the user could not have picked.
+#[test]
+fn a_session_is_handed_only_to_an_offered_provider_serving_its_direction() {
+    let services = funding_services();
+    assert!(services.funding().install_platform(RecordingFundingPlatform::answering(
+        crate::platform::FundingPresentOutcome::Started,
+    )));
+    let card_in_only = RAMP_MANIFEST.replace(
+        r#",{"mode":"CRYPTO","directions":["In","Out"],"assets":["USDT"]}"#,
+        "",
+    );
+    offer_provider(&services, "ramp.dot", &card_in_only);
+    let open = |direction| {
+        futures::executor::block_on(services.open_funding(None, direction, None))
+            .expect("opened")
+            .intent
+    };
+    let (inbound, outbound) = (open(v01::FundingDirection::In), open(v01::FundingDirection::Out));
+    let select = |intent: &str, provider| {
+        futures::executor::block_on(services.select_funding_provider(intent, provider, None)).is_ok()
+    };
+
+    assert_eq!(
+        (
+            select(&inbound, "unknown.dot"),
+            select(&outbound, "ramp.dot"),
+            select(&inbound, "ramp.dot"),
+        ),
+        (false, false, true)
+    );
+}
+
+/// Answer every quote ask `provider_id`'s workers receive with `quote`,
+/// on a thread of its own, as the provider's worker would.
+fn answer_quotes(services: &Arc<RuntimeServices>, provider_id: &str, quote: v01::FundingQuote) -> Arc<Mutex<usize>> {
+    answer_asks(services, provider_id, v01::FundingQuoteAnswer::Quoted { quote })
+}
+
+/// Answer every quote ask `provider_id`'s workers receive with `answer`.
+fn answer_asks(services: &Arc<RuntimeServices>, provider_id: &str, answer: v01::FundingQuoteAnswer) -> Arc<Mutex<usize>> {
+    let asks = Arc::new(Mutex::new(0));
+    let counted = asks.clone();
+    let registry = services.funding().clone();
+    let mut served = registry.serve(provider_id);
+    let provider_id = provider_id.to_string();
+    std::thread::spawn(move || {
+        futures::executor::block_on(async move {
+            while let Some(item) = served.next().await {
+                if let v01::HostFundingServeSubscribeItem::Quote { ask_id, .. } = item {
+                    *counted.lock().expect("asks mutex poisoned") += 1;
+                    registry.answer_quote(&provider_id, &ask_id, answer.clone());
+                }
+            }
+        });
+    });
+    asks
+}
+
+fn card_quote(quote_id: &str) -> v01::FundingQuote {
+    v01::FundingQuote {
+        quote_id: quote_id.to_string(),
+        send_amount: 1_020,
+        receive_amount: 1_000,
+        provider_fee: 15,
+        network_fee: 5,
+        eta_secs: Some(60),
+        expires_at: None,
+    }
+}
+
+fn card_ask(country: Option<&str>) -> v01::FundingQuoteAsk {
+    v01::FundingQuoteAsk {
+        direction: v01::FundingDirection::In,
+        rail: v01::FundingRail::Card,
+        asset: "EUR".to_string(),
+        amount: 1_000,
+        country: country.map(str::to_string),
+    }
+}
+
+// Each provider's row resolves on its own: a provider that answers is
+// quoted, one that stays silent becomes unavailable at the deadline instead
+// of holding the list, and the user can only pick a quote the core offered.
+#[test]
+fn quotes_resolve_row_by_row_and_a_silent_provider_times_out() {
+    let services = funding_services();
+    assert!(services.funding().install_platform(RecordingFundingPlatform::answering(
+        crate::platform::FundingPresentOutcome::Started,
+    )));
+    services
+        .set_funding_providers(
+            ["ramp.dot", "slow.dot"]
+                .map(|product_id| crate::host_logic::funding_providers::FundingProviderEntry {
+                    product_id: product_id.to_string(),
+                    worker_manifest: Some(RAMP_MANIFEST.to_string()),
+                })
+                .to_vec(),
+        )
+        .expect("providers offered");
+    let intent = futures::executor::block_on(services.open_funding(None, v01::FundingDirection::In, Some(1_000)))
+        .expect("opened")
+        .intent;
+    answer_quotes(&services, "ramp.dot", card_quote("q1"));
+
+    let rows: Vec<_> = futures::executor::block_on(
+        services
+            .get_funding_quote_within(&intent, card_ask(None), Duration::from_millis(300))
+            .collect::<Vec<_>>(),
+    );
+    let select = |quote_id| {
+        futures::executor::block_on(services.select_funding_provider(&intent, "ramp.dot", Some(quote_id)))
+    };
+    let unknown = select("q-never");
+    let chosen = select("q1");
+
+    use crate::platform::{FundingQuoteState, FundingQuoteUnavailable};
+    let final_state = |provider: &str| {
+        rows.iter()
+            .rev()
+            .find(|row| row.provider_id == provider)
+            .map(|row| row.state.clone())
+    };
+    assert_eq!(
+        (
+            rows.iter().filter(|row| row.state == FundingQuoteState::Pending).count(),
+            final_state("ramp.dot"),
+            final_state("slow.dot"),
+            unknown.is_err(),
+            chosen,
+            services.funding().get(&intent).and_then(|session| session.choice),
+        ),
+        (
+            2,
+            Some(FundingQuoteState::Quoted { quote: card_quote("q1") }),
+            Some(FundingQuoteState::Unavailable { reason: FundingQuoteUnavailable::Timeout }),
+            true,
+            Ok(true),
+            Some(crate::host_logic::funding::FundingChoice {
+                quote: card_quote("q1"),
+                rail: v01::FundingRail::Card,
+                asset: "EUR".into(),
+            }),
+        )
+    );
+}
+
+// A manifest can lag behind its provider, so every provider is asked
+// whatever its routes say, and what the answers show is kept: a provider that
+// quotes a rail it never declared becomes a candidate for it, one that refuses
+// the user's country is marked unsupported there, and both survive a restart.
+// An answer is reused for the same ask, so editing back to an amount does not
+// ask the providers again.
+#[test]
+fn quotes_ask_every_provider_and_learn_what_it_serves() {
+    let storage = stub_platform();
+    let start = || {
+        let services = funding_services_over(storage.clone());
+        assert!(services.funding().install_platform(RecordingFundingPlatform::answering(
+            crate::platform::FundingPresentOutcome::Started,
+        )));
+        let germany_only = RAMP_MANIFEST.replace(
+            r#""assets":["EUR"]}"#,
+            r#""assets":["EUR"],"countries":["DE"]}"#,
+        );
+        let crypto_only = RAMP_MANIFEST.replace(
+            r#"{"mode":"CARD","directions":["In"],"assets":["EUR"]},"#,
+            "",
+        );
+        services
+            .set_funding_providers(vec![
+                crate::host_logic::funding_providers::FundingProviderEntry {
+                    product_id: "ramp.dot".to_string(),
+                    worker_manifest: Some(germany_only),
+                },
+                crate::host_logic::funding_providers::FundingProviderEntry {
+                    product_id: "chain.dot".to_string(),
+                    worker_manifest: Some(crypto_only),
+                },
+            ])
+            .expect("providers offered");
+        services
+    };
+    let services = start();
+    let intent = futures::executor::block_on(services.open_funding(None, v01::FundingDirection::In, Some(1_000)))
+        .expect("opened")
+        .intent;
+    let refused = answer_asks(
+        &services,
+        "ramp.dot",
+        v01::FundingQuoteAnswer::Refused {
+            reason: v01::FundingQuoteRefusal::CountryUnsupported,
+        },
+    );
+    let quoted = answer_quotes(&services, "chain.dot", card_quote("q1"));
+    let ask = || {
+        futures::executor::block_on(
+            services
+                .get_funding_quote_within(&intent, card_ask(Some("US")), Duration::from_secs(5))
+                .collect::<Vec<_>>(),
+        )
+    };
+
+    ask();
+    ask();
+    let candidate = |services: &Arc<RuntimeServices>, provider: &str| {
+        services
+            .funding_candidates(v01::FundingDirection::In)
+            .into_iter()
+            .find(|candidate| candidate.provider_id == provider)
+    };
+    let card = crate::host_logic::worker_manifest::FundingMode::Card;
+    let serves_card_eur = |services: &Arc<RuntimeServices>| {
+        candidate(services, "chain.dot").is_some_and(|candidate| {
+            candidate
+                .routes
+                .iter()
+                .any(|route| route.mode == card && route.assets.contains(&"EUR".to_string()))
+        })
+    };
+    let us_unsupported = |services: &Arc<RuntimeServices>| {
+        candidate(services, "ramp.dot").is_some_and(|candidate| {
+            candidate.unsupported
+                == vec![crate::host_logic::funding_providers::FundingUnsupported {
+                    rail: v01::FundingRail::Card,
+                    asset: "EUR".to_string(),
+                    country: Some("US".to_string()),
+                }]
+        })
+    };
+    let before_restart = (serves_card_eur(&services), us_unsupported(&services));
+    let restarted = start();
+    let mut after_restart = (false, false);
+    for _ in 0..200 {
+        after_restart = (serves_card_eur(&restarted), us_unsupported(&restarted));
+        if after_restart == (true, true) {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+
+    assert_eq!(
+        (
+            *refused.lock().expect("asks mutex poisoned"),
+            *quoted.lock().expect("asks mutex poisoned"),
+            before_restart,
+            after_restart,
+        ),
+        (1, 1, (true, true), (true, true))
+    );
+}
+
+#[derive(Default)]
+struct RecordingTopUpPlatform {
+    started: Mutex<Vec<(String, truapi::latest::HostPaymentTopUpRequest)>>,
+    followed: Mutex<Vec<(String, [u8; 32])>>,
+}
+
+#[truapi::async_trait]
+impl crate::platform::TopUpPlatform for RecordingTopUpPlatform {
+    async fn top_up(
+        &self,
+        product: &ProductContext,
+        request: truapi::latest::HostPaymentTopUpRequest,
+    ) -> Result<(), truapi::latest::HostPaymentTopUpError> {
+        self.started
+            .lock()
+            .expect("started mutex poisoned")
+            .push((product.product_id.clone(), request));
+        Ok(())
+    }
+
+    fn subscribe_top_up_status(
+        &self,
+        product: &ProductContext,
+        id: [u8; 32],
+    ) -> futures::stream::BoxStream<
+        'static,
+        Result<
+            truapi::latest::HostPaymentTopUpStatusSubscribeItem,
+            truapi::latest::HostPaymentTopUpStatusSubscribeError,
+        >,
+    > {
+        self.followed
+            .lock()
+            .expect("followed mutex poisoned")
+            .push((product.product_id.clone(), id));
+        Box::pin(futures::stream::iter([
+            Ok(v01::HostPaymentTopUpStatusSubscribeItem::Claiming),
+            Ok(v01::HostPaymentTopUpStatusSubscribeItem::Claimed { finalized: true }),
+        ]))
+    }
+}
+
+fn top_up(
+    host: &ProductRuntimeHost,
+    source: v01::PaymentTopUpSource,
+) -> Result<
+    truapi::versioned::payment::HostPaymentTopUpResponse,
+    CallError<truapi::versioned::payment::HostPaymentTopUpError>,
+> {
+    futures::executor::block_on(truapi::api::Payment::top_up(
+        host,
+        &CallContext::default(),
+        truapi::versioned::payment::HostPaymentTopUpRequest::V1(v01::HostPaymentTopUpRequest {
+            into: None,
+            amount: 1_000,
+            source,
+            id: [7; 32],
+        }),
+    ))
+}
+
+fn product_account_source() -> v01::PaymentTopUpSource {
+    v01::PaymentTopUpSource::ProductAccount {
+        derivation_index: v01::DerivationIndex::Index(0),
+    }
+}
+
+#[test]
+fn a_top_up_reaches_the_host_engine_scoped_to_its_product() {
+    let services = payment_services();
+    let engine = Arc::new(RecordingTopUpPlatform::default());
+    assert!(services.install_top_up_platform(engine.clone()));
+
+    top_up(&payment_host(&services, "wallet.dot", true), product_account_source())
+        .expect("top-up accepted");
+
+    assert_eq!(
+        engine.started.lock().expect("started mutex poisoned").as_slice(),
+        [(
+            "wallet.dot".to_string(),
+            v01::HostPaymentTopUpRequest {
+                into: None,
+                amount: 1_000,
+                source: product_account_source(),
+                id: [7; 32],
+            },
+        )]
+    );
+}
+
+// A coin source with no coins can never claim anything, so it is refused in
+// the core rather than handed to the host.
+#[test]
+fn a_top_up_without_coins_is_refused_before_the_host_sees_it() {
+    let services = payment_services();
+    let engine = Arc::new(RecordingTopUpPlatform::default());
+    assert!(services.install_top_up_platform(engine.clone()));
+
+    let refused = top_up(
+        &payment_host(&services, "wallet.dot", true),
+        v01::PaymentTopUpSource::Coins {
+            sr25519_secret_keys: Vec::new(),
+        },
+    );
+
+    assert_eq!(
+        (
+            refused,
+            engine.started.lock().expect("started mutex poisoned").len()
+        ),
+        (
+            Err(CallError::Domain(
+                truapi::versioned::payment::HostPaymentTopUpError::V1(
+                    v01::HostPaymentTopUpError::InvalidSource
+                )
+            )),
+            0
+        )
+    );
+}
+
+#[test]
+fn top_up_status_is_forwarded_from_the_host_engine() {
+    let services = payment_services();
+    let engine = Arc::new(RecordingTopUpPlatform::default());
+    assert!(services.install_top_up_platform(engine.clone()));
+    let host = payment_host(&services, "wallet.dot", true);
+
+    let statuses = futures::executor::block_on(
+        futures::executor::block_on(truapi::api::Payment::top_up_status_subscribe(
+            &host,
+            &CallContext::default(),
+            truapi::versioned::payment::HostPaymentTopUpStatusSubscribeRequest::V1(
+                v01::HostPaymentTopUpStatusSubscribeRequest { id: [7; 32] },
+            ),
+        ))
+        .collect::<Vec<_>>(),
+    );
+
+    assert_eq!(
+        (
+            statuses,
+            engine.followed.lock().expect("followed mutex poisoned").clone()
+        ),
+        (
+            vec![
+                Ok(truapi::versioned::payment::HostPaymentTopUpStatusSubscribeItem::V1(
+                    v01::HostPaymentTopUpStatusSubscribeItem::Claiming
+                )),
+                Ok(truapi::versioned::payment::HostPaymentTopUpStatusSubscribeItem::V1(
+                    v01::HostPaymentTopUpStatusSubscribeItem::Claimed { finalized: true }
+                )),
+            ],
+            vec![("wallet.dot".to_string(), [7; 32])]
+        )
+    );
+}
+
+// The source key is spent by the host, so a key that is not a usable sr25519
+// secret is refused before any claim starts.
+#[test]
+fn a_top_up_with_a_malformed_key_is_refused_before_the_host_sees_it() {
+    let services = payment_services();
+    let engine = Arc::new(RecordingTopUpPlatform::default());
+    assert!(services.install_top_up_platform(engine.clone()));
+
+    let refused = top_up(
+        &payment_host(&services, "wallet.dot", true),
+        v01::PaymentTopUpSource::PrivateKey {
+            sr25519_secret_key: [0xff; 64],
+        },
+    );
+
+    assert_eq!(
+        (
+            refused,
+            engine.started.lock().expect("started mutex poisoned").len()
+        ),
+        (
+            Err(CallError::Domain(
+                truapi::versioned::payment::HostPaymentTopUpError::V1(
+                    v01::HostPaymentTopUpError::InvalidSource
+                )
+            )),
+            0
+        )
+    );
+}
+
+#[test]
+fn a_top_up_needs_a_session() {
+    let services = payment_services();
+    assert!(services.install_top_up_platform(Arc::new(RecordingTopUpPlatform::default())));
+
+    assert_eq!(
+        top_up(&payment_host(&services, "wallet.dot", false), product_account_source()),
+        Err(CallError::Denied)
+    );
+}
+
+#[derive(Default)]
+struct RecordingPaymentPlatform {
+    requested: Mutex<Vec<(String, truapi::latest::HostPaymentRequest)>>,
+    followed: Mutex<Vec<(String, [u8; 32])>>,
+}
+
+#[truapi::async_trait]
+impl crate::platform::PaymentPlatform for RecordingPaymentPlatform {
+    async fn request_payment(
+        &self,
+        product: &ProductContext,
+        request: truapi::latest::HostPaymentRequest,
+    ) -> Result<(), truapi::latest::HostPaymentError> {
+        self.requested
+            .lock()
+            .expect("requested mutex poisoned")
+            .push((product.product_id.clone(), request));
+        Ok(())
+    }
+
+    fn subscribe_payment_status(
+        &self,
+        product: &ProductContext,
+        id: [u8; 32],
+    ) -> futures::stream::BoxStream<
+        'static,
+        Result<truapi::latest::HostPaymentStatusSubscribeItem, truapi::latest::HostPaymentStatusSubscribeError>,
+    > {
+        self.followed
+            .lock()
+            .expect("followed mutex poisoned")
+            .push((product.product_id.clone(), id));
+        Box::pin(futures::stream::iter([
+            Ok(v01::HostPaymentStatusSubscribeItem::Processing),
+            Ok(v01::HostPaymentStatusSubscribeItem::PartiallyClaimed { actual_claimed: 600 }),
+        ]))
+    }
+}
+
+fn payment_request() -> v01::HostPaymentRequest {
+    v01::HostPaymentRequest {
+        from: None,
+        amount: 1_000,
+        destination: [3; 32],
+        id: [9; 32],
+    }
+}
+
+fn request_payment(
+    host: &ProductRuntimeHost,
+) -> Result<truapi::versioned::payment::HostPaymentResponse, CallError<truapi::versioned::payment::HostPaymentError>> {
+    futures::executor::block_on(truapi::api::Payment::request(
+        host,
+        &CallContext::default(),
+        truapi::versioned::payment::HostPaymentRequest::V1(payment_request()),
+    ))
+}
+
+fn follow_payment(
+    host: &ProductRuntimeHost,
+) -> Vec<
+    Result<
+        truapi::versioned::payment::HostPaymentStatusSubscribeItem,
+        CallError<truapi::versioned::payment::HostPaymentStatusSubscribeError>,
+    >,
+> {
+    futures::executor::block_on(
+        futures::executor::block_on(truapi::api::Payment::status_subscribe(
+            host,
+            &CallContext::default(),
+            truapi::versioned::payment::HostPaymentStatusSubscribeRequest::V1(
+                v01::HostPaymentStatusSubscribeRequest { id: [9; 32] },
+            ),
+        ))
+        .collect::<Vec<_>>(),
+    )
+}
+
+// The host owns the approval sheet and the transfer; core hands it the
+// request as the product made it, and relays the status the host reports,
+// a partial payment included.
+#[test]
+fn a_payment_reaches_the_host_engine_and_its_status_is_relayed() {
+    let services = payment_services();
+    let engine = Arc::new(RecordingPaymentPlatform::default());
+    assert!(services.install_payment_platform(engine.clone()));
+    let host = payment_host(&services, "wallet.dot", true);
+
+    assert_eq!(
+        (
+            request_payment(&host),
+            follow_payment(&host),
+            engine.requested.lock().expect("requested mutex poisoned").clone(),
+            engine.followed.lock().expect("followed mutex poisoned").clone(),
+        ),
+        (
+            Ok(truapi::versioned::payment::HostPaymentResponse::V1),
+            vec![
+                Ok(truapi::versioned::payment::HostPaymentStatusSubscribeItem::V1(
+                    v01::HostPaymentStatusSubscribeItem::Processing
+                )),
+                Ok(truapi::versioned::payment::HostPaymentStatusSubscribeItem::V1(
+                    v01::HostPaymentStatusSubscribeItem::PartiallyClaimed { actual_claimed: 600 }
+                )),
+            ],
+            vec![("wallet.dot".to_string(), payment_request())],
+            vec![("wallet.dot".to_string(), [9; 32])],
+        )
+    );
+}
+
+// Payments move the user's balance, so a product without a session cannot
+// reach the host's payments.
+#[test]
+fn no_product_pays_or_follows_payments_without_a_session() {
+    let services = payment_services();
+    let engine = Arc::new(RecordingPaymentPlatform::default());
+    assert!(services.install_payment_platform(engine.clone()));
+    let signed_out = payment_host(&services, "wallet.dot", false);
+
+    assert_eq!(
+        (
+            request_payment(&signed_out),
+            follow_payment(&signed_out),
+            engine.requested.lock().expect("requested mutex poisoned").len(),
+            engine.followed.lock().expect("followed mutex poisoned").len(),
+        ),
+        (Err(CallError::Denied), vec![Err(CallError::Denied)], 0, 0)
+    );
+}
+
+/// A balance view sharing one balance with every product but `private.dot`,
+/// and the products it was asked for.
+#[derive(Default)]
+struct RecordingBalancePlatform {
+    asked: Mutex<Vec<(String, Option<u32>)>>,
+}
+
+impl crate::platform::BalancePlatform for RecordingBalancePlatform {
+    fn subscribe_balance(
+        &self,
+        product: &crate::platform::ProductContext,
+        purse: Option<u32>,
+    ) -> futures::stream::BoxStream<
+        'static,
+        Result<v01::HostPaymentBalanceSubscribeItem, v01::HostPaymentBalanceSubscribeError>,
+    > {
+        self.asked
+            .lock()
+            .expect("asked mutex poisoned")
+            .push((product.product_id.clone(), purse));
+        let shared = if product.product_id == "private.dot" {
+            Err(v01::HostPaymentBalanceSubscribeError::PermissionDenied)
+        } else {
+            Ok(v01::HostPaymentBalanceSubscribeItem { available: 4_000_000 })
+        };
+        futures::stream::iter([shared]).boxed()
+    }
+}
+
+fn first_balance(
+    host: &ProductRuntimeHost,
+) -> Option<Result<v01::HostPaymentBalanceSubscribeItem, CallError<truapi::versioned::payment::HostPaymentBalanceSubscribeError>>> {
+    futures::executor::block_on(
+        futures::executor::block_on(truapi::api::Payment::balance_subscribe(
+            host,
+            &CallContext::default(),
+            truapi::versioned::payment::HostPaymentBalanceSubscribeRequest::V1(
+                v01::HostPaymentBalanceSubscribeRequest { purse: None },
+            ),
+        ))
+        .next(),
+    )
+    .map(|item| item.map(|truapi::versioned::payment::HostPaymentBalanceSubscribeItem::V1(item)| item))
+}
+
+// A product sees the balance the host shares with it, the host can refuse
+// one product, a product without a session is refused before the host is
+// asked, and a host with no balance view answers Unsupported.
+#[test]
+fn the_balance_comes_from_the_host_for_each_product() {
+    let services = payment_services();
+    let unsupported = first_balance(&payment_host(&services, "wallet.dot", true));
+    let platform = Arc::new(RecordingBalancePlatform::default());
+    assert!(services.install_balance_platform(platform.clone()));
+    let shared = first_balance(&payment_host(&services, "wallet.dot", true));
+    let refused = first_balance(&payment_host(&services, "private.dot", true));
+    let no_session = first_balance(&payment_host(&services, "wallet.dot", false));
+
+    let denied = |error| CallError::Domain(truapi::versioned::payment::HostPaymentBalanceSubscribeError::V1(error));
+    assert_eq!(
+        (unsupported, shared, refused, no_session, platform.asked.lock().expect("asked mutex poisoned").clone()),
+        (
+            Some(Err(CallError::Unsupported)),
+            Some(Ok(v01::HostPaymentBalanceSubscribeItem { available: 4_000_000 })),
+            Some(Err(denied(v01::HostPaymentBalanceSubscribeError::PermissionDenied))),
+            Some(Err(CallError::Denied)),
+            vec![("wallet.dot".to_string(), None), ("private.dot".to_string(), None)],
+        )
+    );
+}
+
+// A product sees the balance only once the user lets it: a refusal answers
+// PermissionDenied, and the host's balance view is never asked.
+#[test]
+fn the_balance_needs_the_users_permission_before_the_host_is_asked() {
+    let platform = Arc::new(crate::test_support::StubPlatform {
+        remote_permission_denied: true,
+        ..Default::default()
+    });
+    let services = payment_services_over(platform.clone());
+    let balance = Arc::new(RecordingBalancePlatform::default());
+    assert!(services.install_balance_platform(balance.clone()));
+
+    let refused = first_balance(&payment_host(&services, "wallet.dot", true));
+
+    assert_eq!(
+        (
+            refused,
+            balance.asked.lock().expect("asked mutex poisoned").len(),
+            platform.remote_permission_requests.lock().expect("requests mutex poisoned").clone(),
+        ),
+        (
+            Some(Err(CallError::Domain(
+                truapi::versioned::payment::HostPaymentBalanceSubscribeError::V1(
+                    v01::HostPaymentBalanceSubscribeError::PermissionDenied,
+                ),
+            ))),
+            0,
+            vec![v01::RemotePermissionRequest { permission: v01::RemotePermission::BalanceAccess }],
+        )
+    );
+}
+
+/// A payment engine whose user never has enough.
+struct ShortPaymentPlatform;
+
+#[truapi::async_trait]
+impl crate::platform::PaymentPlatform for ShortPaymentPlatform {
+    async fn request_payment(
+        &self,
+        _product: &ProductContext,
+        _request: truapi::latest::HostPaymentRequest,
+    ) -> Result<(), truapi::latest::HostPaymentError> {
+        Err(v01::HostPaymentError::InsufficientBalance)
+    }
+
+    fn subscribe_payment_status(
+        &self,
+        _product: &ProductContext,
+        _id: [u8; 32],
+    ) -> futures::stream::BoxStream<
+        'static,
+        Result<truapi::latest::HostPaymentStatusSubscribeItem, truapi::latest::HostPaymentStatusSubscribeError>,
+    > {
+        Box::pin(futures::stream::empty())
+    }
+}
+
+// A short balance is the balance's business: a product that may not see the
+// balance learns only that the payment was refused, and asking does not
+// prompt the user.
+#[test]
+fn a_short_balance_reads_as_a_refusal_unless_the_product_may_see_it() {
+    let platform = Arc::new(crate::test_support::StubPlatform::default());
+    let services = payment_services_over(platform.clone());
+    assert!(services.install_payment_platform(Arc::new(ShortPaymentPlatform)));
+    let host = payment_host(&services, "wallet.dot", true);
+
+    let without_access = request_payment(&host);
+    futures::executor::block_on(host.set_permission_authorization_status(
+        PermissionAuthorizationRequest::Remote(v01::RemotePermissionRequest {
+            permission: v01::RemotePermission::BalanceAccess,
+        }),
+        PermissionAuthorizationStatus::Authorized,
+    ))
+    .expect("grant stored");
+    let with_access = request_payment(&host);
+
+    let refused = |error| CallError::Domain(truapi::versioned::payment::HostPaymentError::V1(error));
+    assert_eq!(
+        (
+            without_access,
+            with_access,
+            platform.remote_permission_requests.lock().expect("requests mutex poisoned").len(),
+        ),
+        (
+            Err(refused(v01::HostPaymentError::Rejected)),
+            Err(refused(v01::HostPaymentError::InsufficientBalance)),
+            0,
+        )
+    );
+}
+
+// Nothing to claim is not a top-up: the host never sees it.
+#[test]
+fn a_top_up_of_nothing_is_refused_before_the_host_sees_it() {
+    let services = payment_services();
+    let engine = Arc::new(RecordingTopUpPlatform::default());
+    assert!(services.install_top_up_platform(engine.clone()));
+    let host = payment_host(&services, "wallet.dot", true);
+
+    let refused = futures::executor::block_on(truapi::api::Payment::top_up(
+        &host,
+        &CallContext::default(),
+        truapi::versioned::payment::HostPaymentTopUpRequest::V1(v01::HostPaymentTopUpRequest {
+            into: None,
+            amount: 0,
+            source: product_account_source(),
+            id: [7; 32],
+        }),
+    ));
+
+    assert_eq!(
+        (refused, engine.started.lock().expect("started mutex poisoned").len()),
+        (
+            Err(CallError::Domain(truapi::versioned::payment::HostPaymentTopUpError::V1(
+                v01::HostPaymentTopUpError::Unknown { reason: "amount must be positive".to_string() },
+            ))),
+            0,
+        )
     );
 }

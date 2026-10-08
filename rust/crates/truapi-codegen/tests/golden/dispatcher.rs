@@ -19,7 +19,9 @@ use truapi::api::{
     CoinPayment,
     Contacts,
     Entropy,
+    Funding,
     Game,
+    FundingProvider,
     LocalStorage,
     Locale,
     Notifications,
@@ -58,7 +60,9 @@ where
     register_coin_payment(dispatcher, host.clone());
     register_contacts(dispatcher, host.clone());
     register_entropy(dispatcher, host.clone());
+    register_funding(dispatcher, host.clone());
     register_game(dispatcher, host.clone());
+    register_funding_provider(dispatcher, host.clone());
     register_local_storage(dispatcher, host.clone());
     register_locale(dispatcher, host.clone());
     register_notifications(dispatcher, host.clone());
@@ -1337,6 +1341,72 @@ where
     }
 }
 
+fn register_funding<P>(dispatcher: &mut Dispatcher, host: Arc<P>)
+where
+    P: Funding + Send + Sync + 'static,
+{
+    {
+        let host = host.clone();
+        dispatcher.on_request(wire_table::FUNDING_REQUEST, move |request_id: String, bytes: Vec<u8>, cancel: truapi::CancellationToken| {
+            let host = host.clone();
+            Box::pin(async move {
+                let request: versioned::funding::HostFundingRequest = match DecodeAll::decode_all(&mut &bytes[..]) {
+                    Ok(request) => request,
+                    Err(err) => {
+                        let error: truapi::CallError<versioned::funding::HostFundingError> =
+                            truapi::CallError::MalformedFrame { reason: err.to_string() };
+                        let result: Result<versioned::funding::HostFundingResponse, truapi::CallError<versioned::funding::HostFundingError>> = Err(error);
+                        return result.encode();
+                    }
+                };
+                let target_version = request.version();
+                let cx = CallContext::with_parts(request_id, cancel);
+                let result: Result<versioned::funding::HostFundingResponse, truapi::CallError<versioned::funding::HostFundingError>> =
+                    match host.request(&cx, request).await {
+                        Ok(response) => Ok(<versioned::funding::HostFundingResponse as truapi::versioned::FromLatest>::from_latest(
+                            truapi::versioned::IntoLatest::into_latest(response),
+                            target_version,
+                        )),
+                        Err(err) => Err(downgrade_call_error(err, target_version)),
+                    };
+                result.encode()
+            })
+        });
+    }
+    {
+        let host = host;
+        dispatcher.on_subscription(wire_table::FUNDING_STATUS_SUBSCRIBE, move |request_id: String, bytes: Vec<u8>| {
+            let host = host.clone();
+            Box::pin(async move {
+                let request: versioned::funding::HostFundingStatusSubscribeRequest = match DecodeAll::decode_all(&mut &bytes[..]) {
+                    Ok(request) => request,
+                    Err(err) => {
+                        let error: truapi::CallError<versioned::funding::HostFundingStatusSubscribeError> =
+                            truapi::CallError::MalformedFrame { reason: err.to_string() };
+                        return Err(subscription_interrupt(error));
+                    }
+                };
+                let target_version = request.version();
+                let cx = CallContext::with_request_id(request_id);
+                let stream = host.status_subscribe(&cx, request).await;
+                let stream = futures::StreamExt::map(
+                    stream,
+                    move |item: Result<versioned::funding::HostFundingStatusSubscribeItem, truapi::CallError<versioned::funding::HostFundingStatusSubscribeError>>| {
+                        item.map(|item| {
+                            <versioned::funding::HostFundingStatusSubscribeItem as truapi::versioned::FromLatest>::from_latest(
+                                truapi::versioned::IntoLatest::into_latest(item),
+                                target_version,
+                            )
+                        })
+                        .map_err(|error| downgrade_call_error(error, target_version))
+                    },
+                );
+                Ok(subscription_stream(stream))
+            })
+        });
+    }
+}
+
 fn register_game<P>(dispatcher: &mut Dispatcher, host: Arc<P>)
 where
     P: Game + Send + Sync + 'static,
@@ -1388,6 +1458,185 @@ where
                 let result: Result<versioned::game::HostCancelNextGameResponse, truapi::CallError<versioned::game::HostCancelNextGameError>> =
                     match host.cancel_next_game(&cx, request).await {
                         Ok(response) => Ok(<versioned::game::HostCancelNextGameResponse as truapi::versioned::FromLatest>::from_latest(
+                            truapi::versioned::IntoLatest::into_latest(response),
+                            target_version,
+                        )),
+                        Err(err) => Err(downgrade_call_error(err, target_version)),
+                    };
+                result.encode()
+            })
+        });
+    }
+}
+
+fn register_funding_provider<P>(dispatcher: &mut Dispatcher, host: Arc<P>)
+where
+    P: FundingProvider + Send + Sync + 'static,
+{
+    {
+        let execution_allowed = dispatcher.allows_execution(ProductExecutionKind::Worker);
+        let host = host.clone();
+        dispatcher.on_subscription(wire_table::FUNDING_PROVIDER_SERVE_SUBSCRIBE, move |request_id: String, bytes: Vec<u8>| {
+            let host = host.clone();
+            Box::pin(async move {
+                let request: versioned::funding_provider::HostFundingServeSubscribeRequest = match DecodeAll::decode_all(&mut &bytes[..]) {
+                    Ok(request) => request,
+                    Err(err) => {
+                        let error: truapi::CallError<versioned::funding_provider::HostFundingServeSubscribeError> =
+                            truapi::CallError::MalformedFrame { reason: err.to_string() };
+                        return Err(subscription_interrupt(error));
+                    }
+                };
+                let target_version = request.version();
+                let cx = CallContext::with_request_id(request_id);
+                if !execution_allowed {
+                    let error: truapi::CallError<versioned::funding_provider::HostFundingServeSubscribeError> = truapi::CallError::Denied;
+                    return Err(subscription_interrupt(error));
+                }
+                let stream = host.serve_subscribe(&cx, request).await;
+                let stream = futures::StreamExt::map(
+                    stream,
+                    move |item: Result<versioned::funding_provider::HostFundingServeSubscribeItem, truapi::CallError<versioned::funding_provider::HostFundingServeSubscribeError>>| {
+                        item.map(|item| {
+                            <versioned::funding_provider::HostFundingServeSubscribeItem as truapi::versioned::FromLatest>::from_latest(
+                                truapi::versioned::IntoLatest::into_latest(item),
+                                target_version,
+                            )
+                        })
+                        .map_err(|error| downgrade_call_error(error, target_version))
+                    },
+                );
+                Ok(subscription_stream(stream))
+            })
+        });
+    }
+    {
+        let execution_allowed = dispatcher.allows_execution(ProductExecutionKind::Worker);
+        let host = host.clone();
+        dispatcher.on_request(wire_table::FUNDING_PROVIDER_REPORT, move |request_id: String, bytes: Vec<u8>, cancel: truapi::CancellationToken| {
+            let host = host.clone();
+            Box::pin(async move {
+                let request: versioned::funding_provider::HostFundingReportRequest = match DecodeAll::decode_all(&mut &bytes[..]) {
+                    Ok(request) => request,
+                    Err(err) => {
+                        let error: truapi::CallError<versioned::funding_provider::HostFundingReportError> =
+                            truapi::CallError::MalformedFrame { reason: err.to_string() };
+                        let result: Result<versioned::funding_provider::HostFundingReportResponse, truapi::CallError<versioned::funding_provider::HostFundingReportError>> = Err(error);
+                        return result.encode();
+                    }
+                };
+                let target_version = request.version();
+                let cx = CallContext::with_parts(request_id, cancel);
+                if !execution_allowed {
+                    let error: truapi::CallError<versioned::funding_provider::HostFundingReportError> = truapi::CallError::Denied;
+                    let result: Result<versioned::funding_provider::HostFundingReportResponse, truapi::CallError<versioned::funding_provider::HostFundingReportError>> = Err(error);
+                    return result.encode();
+                }
+                let result: Result<versioned::funding_provider::HostFundingReportResponse, truapi::CallError<versioned::funding_provider::HostFundingReportError>> =
+                    match host.report(&cx, request).await {
+                        Ok(response) => Ok(<versioned::funding_provider::HostFundingReportResponse as truapi::versioned::FromLatest>::from_latest(
+                            truapi::versioned::IntoLatest::into_latest(response),
+                            target_version,
+                        )),
+                        Err(err) => Err(downgrade_call_error(err, target_version)),
+                    };
+                result.encode()
+            })
+        });
+    }
+    {
+        let execution_allowed = dispatcher.allows_execution(ProductExecutionKind::Worker);
+        let host = host.clone();
+        dispatcher.on_request(wire_table::FUNDING_PROVIDER_PRESENT_FRAME, move |request_id: String, bytes: Vec<u8>, cancel: truapi::CancellationToken| {
+            let host = host.clone();
+            Box::pin(async move {
+                let request: versioned::funding_provider::HostFundingPresentFrameRequest = match DecodeAll::decode_all(&mut &bytes[..]) {
+                    Ok(request) => request,
+                    Err(err) => {
+                        let error: truapi::CallError<versioned::funding_provider::HostFundingPresentFrameError> =
+                            truapi::CallError::MalformedFrame { reason: err.to_string() };
+                        let result: Result<versioned::funding_provider::HostFundingPresentFrameResponse, truapi::CallError<versioned::funding_provider::HostFundingPresentFrameError>> = Err(error);
+                        return result.encode();
+                    }
+                };
+                let target_version = request.version();
+                let cx = CallContext::with_parts(request_id, cancel);
+                if !execution_allowed {
+                    let error: truapi::CallError<versioned::funding_provider::HostFundingPresentFrameError> = truapi::CallError::Denied;
+                    let result: Result<versioned::funding_provider::HostFundingPresentFrameResponse, truapi::CallError<versioned::funding_provider::HostFundingPresentFrameError>> = Err(error);
+                    return result.encode();
+                }
+                let result: Result<versioned::funding_provider::HostFundingPresentFrameResponse, truapi::CallError<versioned::funding_provider::HostFundingPresentFrameError>> =
+                    match host.present_frame(&cx, request).await {
+                        Ok(response) => Ok(<versioned::funding_provider::HostFundingPresentFrameResponse as truapi::versioned::FromLatest>::from_latest(
+                            truapi::versioned::IntoLatest::into_latest(response),
+                            target_version,
+                        )),
+                        Err(err) => Err(downgrade_call_error(err, target_version)),
+                    };
+                result.encode()
+            })
+        });
+    }
+    {
+        let execution_allowed = dispatcher.allows_execution(ProductExecutionKind::Worker);
+        let host = host.clone();
+        dispatcher.on_request(wire_table::FUNDING_PROVIDER_ANSWER_QUOTE, move |request_id: String, bytes: Vec<u8>, cancel: truapi::CancellationToken| {
+            let host = host.clone();
+            Box::pin(async move {
+                let request: versioned::funding_provider::HostFundingAnswerQuoteRequest = match DecodeAll::decode_all(&mut &bytes[..]) {
+                    Ok(request) => request,
+                    Err(err) => {
+                        let error: truapi::CallError<versioned::funding_provider::HostFundingAnswerQuoteError> =
+                            truapi::CallError::MalformedFrame { reason: err.to_string() };
+                        let result: Result<versioned::funding_provider::HostFundingAnswerQuoteResponse, truapi::CallError<versioned::funding_provider::HostFundingAnswerQuoteError>> = Err(error);
+                        return result.encode();
+                    }
+                };
+                let target_version = request.version();
+                let cx = CallContext::with_parts(request_id, cancel);
+                if !execution_allowed {
+                    let error: truapi::CallError<versioned::funding_provider::HostFundingAnswerQuoteError> = truapi::CallError::Denied;
+                    let result: Result<versioned::funding_provider::HostFundingAnswerQuoteResponse, truapi::CallError<versioned::funding_provider::HostFundingAnswerQuoteError>> = Err(error);
+                    return result.encode();
+                }
+                let result: Result<versioned::funding_provider::HostFundingAnswerQuoteResponse, truapi::CallError<versioned::funding_provider::HostFundingAnswerQuoteError>> =
+                    match host.answer_quote(&cx, request).await {
+                        Ok(response) => Ok(<versioned::funding_provider::HostFundingAnswerQuoteResponse as truapi::versioned::FromLatest>::from_latest(
+                            truapi::versioned::IntoLatest::into_latest(response),
+                            target_version,
+                        )),
+                        Err(err) => Err(downgrade_call_error(err, target_version)),
+                    };
+                result.encode()
+            })
+        });
+    }
+    {
+        let execution_allowed = dispatcher.allows_execution(ProductExecutionKind::Worker);
+        let host = host;
+        dispatcher.on_request(wire_table::FUNDING_PROVIDER_SAVE, move |request_id: String, bytes: Vec<u8>, cancel: truapi::CancellationToken| {
+            let host = host.clone();
+            Box::pin(async move {
+                let request: versioned::funding_provider::HostFundingSaveRequest = match DecodeAll::decode_all(&mut &bytes[..]) {
+                    Ok(request) => request,
+                    Err(err) => {
+                        let error: truapi::CallError<versioned::funding_provider::HostFundingSaveError> =
+                            truapi::CallError::MalformedFrame { reason: err.to_string() };
+                        let result: Result<versioned::funding_provider::HostFundingSaveResponse, truapi::CallError<versioned::funding_provider::HostFundingSaveError>> = Err(error);
+                        return result.encode();
+                    }
+                };
+                let target_version = request.version();
+                let cx = CallContext::with_parts(request_id, cancel);
+                if !execution_allowed {
+                    let error: truapi::CallError<versioned::funding_provider::HostFundingSaveError> = truapi::CallError::Denied;
+                    let result: Result<versioned::funding_provider::HostFundingSaveResponse, truapi::CallError<versioned::funding_provider::HostFundingSaveError>> = Err(error);
+                    return result.encode();
+                }
+                let result: Result<versioned::funding_provider::HostFundingSaveResponse, truapi::CallError<versioned::funding_provider::HostFundingSaveError>> =
+                    match host.save(&cx, request).await {
+                        Ok(response) => Ok(<versioned::funding_provider::HostFundingSaveResponse as truapi::versioned::FromLatest>::from_latest(
                             truapi::versioned::IntoLatest::into_latest(response),
                             target_version,
                         )),
@@ -1718,7 +1967,7 @@ where
         });
     }
     {
-        let host = host;
+        let host = host.clone();
         dispatcher.on_request(wire_table::PAYMENT_TOP_UP, move |request_id: String, bytes: Vec<u8>, cancel: truapi::CancellationToken| {
             let host = host.clone();
             Box::pin(async move {
@@ -1742,6 +1991,38 @@ where
                         Err(err) => Err(downgrade_call_error(err, target_version)),
                     };
                 result.encode()
+            })
+        });
+    }
+    {
+        let host = host;
+        dispatcher.on_subscription(wire_table::PAYMENT_TOP_UP_STATUS_SUBSCRIBE, move |request_id: String, bytes: Vec<u8>| {
+            let host = host.clone();
+            Box::pin(async move {
+                let request: versioned::payment::HostPaymentTopUpStatusSubscribeRequest = match DecodeAll::decode_all(&mut &bytes[..]) {
+                    Ok(request) => request,
+                    Err(err) => {
+                        let error: truapi::CallError<versioned::payment::HostPaymentTopUpStatusSubscribeError> =
+                            truapi::CallError::MalformedFrame { reason: err.to_string() };
+                        return Err(subscription_interrupt(error));
+                    }
+                };
+                let target_version = request.version();
+                let cx = CallContext::with_request_id(request_id);
+                let stream = host.top_up_status_subscribe(&cx, request).await;
+                let stream = futures::StreamExt::map(
+                    stream,
+                    move |item: Result<versioned::payment::HostPaymentTopUpStatusSubscribeItem, truapi::CallError<versioned::payment::HostPaymentTopUpStatusSubscribeError>>| {
+                        item.map(|item| {
+                            <versioned::payment::HostPaymentTopUpStatusSubscribeItem as truapi::versioned::FromLatest>::from_latest(
+                                truapi::versioned::IntoLatest::into_latest(item),
+                                target_version,
+                            )
+                        })
+                        .map_err(|error| downgrade_call_error(error, target_version))
+                    },
+                );
+                Ok(subscription_stream(stream))
             })
         });
     }

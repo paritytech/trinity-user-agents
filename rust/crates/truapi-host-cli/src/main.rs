@@ -21,6 +21,8 @@ mod chat;
 mod contacts;
 mod dotns_read;
 mod frame_server;
+#[cfg(feature = "test-host")]
+mod funding_host;
 mod game;
 mod network;
 mod platform;
@@ -1710,6 +1712,8 @@ async fn start_signing_host(
         pocket.clone(),
     )?;
     apply_local_product_grants(platform.as_ref(), &args.product_config).await?;
+    #[cfg(feature = "test-host")]
+    funding_host::offer_scripted_providers(&runtime, platform.as_ref()).await?;
     let runtime_factory = frame_server::SwitchableSigningRuntime::new(runtime.clone());
     let last_script = profile
         .as_ref()
@@ -1818,6 +1822,8 @@ fn build_signing_runtime(
     if let Some(pocket) = pocket {
         runtime.set_pocket_platform(pocket);
     }
+    #[cfg(feature = "test-host")]
+    funding_host::CliFundingHost::install_from_env(&runtime);
     runtime.set_game_platform(Arc::new(game::CliGameHost));
     runtime.set_core_db(core_db);
     runtime.start_statement_allowance_renewal();

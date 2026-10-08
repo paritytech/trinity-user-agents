@@ -6,12 +6,12 @@ use truapi::v01;
 use crate::PairedSsoPeer;
 use crate::host_logic::worker::WorkerTransition;
 
+#[cfg(doc)]
+use super::NativeTrUApiHostRuntime;
 use super::config::ProductExecutionConfig;
 use super::errors::HostRejection;
 #[cfg(doc)]
 use crate::platform::CoreStorageKey;
-#[cfg(doc)]
-use super::NativeTrUApiHostRuntime;
 
 /// Callback surface that iOS and Android implement.
 ///
@@ -324,4 +324,123 @@ pub trait NativeContactsCallbacks: Send + Sync {
         &self,
         product_id: String,
     ) -> Result<crate::platform::HostContactPick, HostRejection>;
+}
+
+/// Native funding overlay. A host with a funding modality passes an
+/// implementation to [`NativeTrUApiHostRuntime::set_funding_callbacks`];
+/// without one, funding requests answer `Unsupported`.
+///
+/// [`NativeTrUApiHostRuntime::set_funding_callbacks`]: super::NativeTrUApiHostRuntime::set_funding_callbacks
+#[uniffi::export(rust, foreign)]
+#[async_trait::async_trait]
+pub trait NativeFundingCallbacks: Send + Sync {
+    /// Show the funding overlay for session `intent`, which `product_id`
+    /// opened, or the host itself when `None`, on the screen `direction`
+    /// names, and report whether the user started or dismissed it. `amount`
+    /// is a decimal string of CASH units.
+    async fn present_funding(
+        &self,
+        product_id: Option<String>,
+        intent: String,
+        direction: v01::FundingDirection,
+        amount: Option<u128>,
+    ) -> Result<crate::platform::FundingPresentOutcome, HostRejection>;
+
+    /// Show provider `provider_id`'s screen at `route` for session `intent`
+    /// in a frame the host owns, and report how it closed.
+    async fn present_provider_frame(
+        &self,
+        provider_id: String,
+        intent: String,
+        route: String,
+    ) -> Result<v01::FundingFrameOutcome, HostRejection>;
+
+    /// A session's status changed, for host UI such as the in-flight pill.
+    fn funding_session_changed(&self, intent: String, status: v01::HostFundingStatusSubscribeItem);
+
+    /// One provider's row of a quote list the host requested with
+    /// `get_funding_quote`: `Pending` first, then its quote or why it is
+    /// unavailable.
+    fn funding_quote_changed(
+        &self,
+        intent: String,
+        row: crate::platform::FundingQuoteRow,
+    );
+}
+
+/// Native payment engine, which pays from the user's balance to an account.
+/// A host passes an implementation to
+/// [`NativeTrUApiHostRuntime::set_payment_callbacks`] and reports each later
+/// status with [`NativeTrUApiHostRuntime::notify_payment_status`].
+///
+/// [`NativeTrUApiHostRuntime::set_payment_callbacks`]: super::NativeTrUApiHostRuntime::set_payment_callbacks
+/// [`NativeTrUApiHostRuntime::notify_payment_status`]: super::NativeTrUApiHostRuntime::notify_payment_status
+#[uniffi::export(rust, foreign)]
+#[async_trait::async_trait]
+pub trait NativePaymentCallbacks: Send + Sync {
+    /// Ask the user to approve payment `request` for `product_id`, returning
+    /// once the user has decided: `Ok` when they authorized it and the host
+    /// took it on. Ids are scoped to `product_id`. Its amount is a decimal
+    /// string of CASH units.
+    async fn request_payment(
+        &self,
+        product_id: String,
+        request: v01::HostPaymentRequest,
+    ) -> Result<(), v01::HostPaymentError>;
+
+    /// The current status of `product_id`'s payment `id`, or `None` when the
+    /// host holds no such payment.
+    fn payment_status(
+        &self,
+        product_id: String,
+        id: crate::Bytes32,
+    ) -> Result<Option<v01::HostPaymentStatusSubscribeItem>, HostRejection>;
+}
+
+/// Native top-up engine, which claims a source's funds into the user's
+/// balance. A host passes an implementation to
+/// [`NativeTrUApiHostRuntime::set_top_up_callbacks`] and reports each later
+/// status with [`NativeTrUApiHostRuntime::notify_top_up_status`].
+///
+/// [`NativeTrUApiHostRuntime::set_top_up_callbacks`]: super::NativeTrUApiHostRuntime::set_top_up_callbacks
+/// [`NativeTrUApiHostRuntime::notify_top_up_status`]: super::NativeTrUApiHostRuntime::notify_top_up_status
+#[uniffi::export(rust, foreign)]
+#[async_trait::async_trait]
+pub trait NativeTopUpCallbacks: Send + Sync {
+    /// Start top-up `request` for `product_id`, returning once the host has
+    /// accepted it. Its amount is a decimal string of CASH units.
+    async fn top_up(
+        &self,
+        product_id: String,
+        request: v01::HostPaymentTopUpRequest,
+    ) -> Result<(), v01::HostPaymentTopUpError>;
+
+    /// The current status of `product_id`'s top-up `id`, or `None` when the
+    /// host holds no such top-up.
+    fn top_up_status(
+        &self,
+        product_id: String,
+        id: crate::Bytes32,
+    ) -> Result<Option<v01::HostPaymentTopUpStatusSubscribeItem>, HostRejection>;
+}
+
+/// Native balance view, which shares the user's spendable balance with a
+/// product. A host passes an implementation to
+/// [`NativeTrUApiHostRuntime::set_balance_callbacks`] and reports each change
+/// with [`NativeTrUApiHostRuntime::notify_balance`].
+///
+/// [`NativeTrUApiHostRuntime::set_balance_callbacks`]: super::NativeTrUApiHostRuntime::set_balance_callbacks
+/// [`NativeTrUApiHostRuntime::notify_balance`]: super::NativeTrUApiHostRuntime::notify_balance
+#[uniffi::export(rust, foreign)]
+#[async_trait::async_trait]
+pub trait NativeBalanceCallbacks: Send + Sync {
+    /// The current balance of `purse` (`None` for the main purse) for
+    /// `product_id`, as a decimal string of CASH units: what a payment
+    /// request can spend right now. The core has already checked the
+    /// product's balance access.
+    async fn balance(
+        &self,
+        product_id: String,
+        purse: Option<u32>,
+    ) -> Result<u128, v01::HostPaymentBalanceSubscribeError>;
 }

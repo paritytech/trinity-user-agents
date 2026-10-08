@@ -29,11 +29,14 @@ mod ws_bridge;
 pub use crate::host_internal::sso_messages::SsoRequestOutcome;
 pub use crate::host_logic::dotns::{NavigateDecision, PocketDeeplinkAction};
 pub use callbacks::{
-    HostCallbacks, NativeChatCallbacks, NativeContactsCallbacks, NativeGameCallbacks,
-    NativePocketCallbacks, NativePocketRemoval,
+    HostCallbacks, NativeBalanceCallbacks, NativeChatCallbacks, NativeContactsCallbacks,
+    NativeFundingCallbacks, NativeGameCallbacks, NativePaymentCallbacks, NativePocketCallbacks,
+    NativePocketRemoval, NativeTopUpCallbacks,
 };
 pub use config::{HostRuntimeConfig, NativeRuntimeConfigError, ProductExecutionConfig};
-pub use errors::{HostRejection, NativeChatFieldError, NativeCoreDatabaseError, NativeRendererError};
+pub use errors::{
+    HostRejection, NativeChatFieldError, NativeCoreDatabaseError, NativeRendererError,
+};
 pub use renderer::{NativeRendererObserver, NativeRendererSubscription};
 pub use runtime::{
     NativeAnnouncedPairing, NativePairingError, NativeProductExecution, NativeTrUApiHostRuntime,
@@ -45,9 +48,9 @@ use serde::Deserialize;
 use truapi::latest;
 
 use crate::PairingProposal;
-use crate::host_logic::dotns;
 #[cfg(doc)]
 use crate::SigningHostRuntime;
+use crate::host_logic::dotns;
 
 /// Classify a navigation input exactly like the core's internal navigate host
 /// call: dotNS first, then `localhost`, then normalized external, with

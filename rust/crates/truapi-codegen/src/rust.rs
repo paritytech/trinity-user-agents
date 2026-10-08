@@ -61,6 +61,8 @@ const TRAIT_MODULE_MAP: &[(&str, &str)] = &[
     ("Chat", "chat"),
     ("Contacts", "contacts"),
     ("Entropy", "entropy"),
+    ("Funding", "funding"),
+    ("FundingProvider", "funding_provider"),
     ("JsonRpc", "jsonrpc"),
     ("LocalStorage", "local_storage"),
     ("Payment", "payment"),

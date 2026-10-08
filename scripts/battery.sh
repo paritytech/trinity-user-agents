@@ -11,6 +11,7 @@
 #   scripts/battery.sh --signing-host     # direct phase only
 #   scripts/battery.sh --pairing-host     # paired phase only
 #   scripts/battery.sh --pocket-host      # Pocket phase only
+#   scripts/battery.sh --funding-host     # funding phase only, on a test-host build
 #   scripts/battery.sh --release          # build and run the release binary
 #   scripts/battery.sh -- --network foo   # arguments after `--` go to every host process
 #
@@ -48,6 +49,7 @@ unset DYLD_LIBRARY_PATH
 SCRIPT="rust/crates/truapi-host-cli/js/scripts/battery.ts"
 CHAT_SCRIPT="rust/crates/truapi-host-cli/js/scripts/chat-battery.ts"
 POCKET_SCRIPT="rust/crates/truapi-host-cli/js/scripts/pocket-battery.ts"
+FUNDING_SCRIPT="rust/crates/truapi-host-cli/js/scripts/funding-battery.ts"
 PRODUCT_ID="truapi-playground.dot"
 REPORTS="explorer/diagnosis-reports/spa"
 LOG_DIR="target/battery"
@@ -61,6 +63,7 @@ RUN_SIGNING=1
 RUN_PAIRING=1
 RUN_CHAT=0
 RUN_POCKET=0
+RUN_FUNDING=0
 
 usage() {
   awk 'NR == 1 { next } /^#/ { sub(/^# ?/, ""); print; next } { exit }' "$0"
@@ -76,6 +79,9 @@ while [ $# -gt 0 ]; do
     # Pocket is its own phase for the same reason: it needs a Worker-execution
     # connection with a seeded card set, which no other phase opens.
     --pocket-host) RUN_SIGNING=0; RUN_PAIRING=0; RUN_POCKET=1 ;;
+    # Funding is its own phase: it needs a host built with the test hooks
+    # and a scripted overlay, which no other phase uses.
+    --funding-host) RUN_SIGNING=0; RUN_PAIRING=0; RUN_FUNDING=1 ;;
     --release) CARGO_ARGS+=(--release); PROFILE_DIR="release" ;;
     --product-id)
       [ $# -ge 2 ] || { echo "battery: --product-id needs a value" >&2; exit 2; }
@@ -134,6 +140,11 @@ fi
 
 # The paired phase runs two hosts at once, so build once up front instead of
 # letting concurrent `cargo run` invocations queue on the build lock.
+# The funding phase settles sessions through the core's test hooks, which
+# only a test-host build carries.
+if [ "$RUN_FUNDING" = 1 ]; then
+  CARGO_ARGS+=(--features test-host)
+fi
 cargo build ${CARGO_ARGS[@]+"${CARGO_ARGS[@]}"} -p truapi-host-cli
 HOST="target/$PROFILE_DIR/truapi-host"
 mkdir -p "$LOG_DIR"
@@ -242,6 +253,46 @@ pocket_phase() {
   return "$rc"
 }
 
+funding_phase() {
+  local log="$LOG_DIR/funding-host-cli.log"
+  echo "battery: funding phase (host transcripts $LOG_DIR/funding-host-transcript*.jsonl)"
+  # Overlay requests and session changes as the host saw them. The cases read
+  # it so a pass cannot rest on the product's word alone.
+  export TRUAPI_FUNDING_LOG="$ROOT/$LOG_DIR/funding-host-transcript.jsonl"
+  # One outcome per request the cases make, in order; see funding-e2e.ts and
+  # funding-provider-e2e.ts.
+  export TRUAPI_FUNDING_OUTCOMES="deliver:900,release:500,fail,dismiss,provide,provide,provide-cancel"
+  # The scripted top-up and payment engines' record, kept across the restart.
+  export TRUAPI_FUNDING_LEDGER="$ROOT/$LOG_DIR/funding-host-ledger.jsonl"
+  # The product the cases run as is also the provider they choose.
+  export TRUAPI_FUNDING_PROVIDERS="$PRODUCT_ID"
+  export TRUAPI_FUNDING_STATE="$ROOT/$LOG_DIR/funding-battery-state.json"
+  rm -f "$TRUAPI_FUNDING_LOG" "$TRUAPI_FUNDING_LEDGER" "$TRUAPI_FUNDING_STATE"
+  # Run as a Worker, so the script can also serve the sessions it asks for as
+  # the provider; then once more on the same storage, as a restarted host.
+  local rc=0
+  funding_run start "$log" || rc=$?
+  [ "$rc" = 0 ] || return "$rc"
+  export TRUAPI_FUNDING_LOG="$ROOT/$LOG_DIR/funding-host-transcript-resumed.jsonl"
+  rm -f "$TRUAPI_FUNDING_LOG"
+  funding_run resume "$LOG_DIR/funding-host-cli-resumed.log"
+}
+
+funding_run() {
+  local stage="$1" log="$2"
+  TRUAPI_FUNDING_STAGE="$stage" "$HOST" signing-host \
+    --product-id "$PRODUCT_ID" \
+    --execution-kind worker \
+    --script "$FUNDING_SCRIPT" \
+    --auto-accept \
+    ${HOST_ARGS[@]+"${HOST_ARGS[@]}"} > >(tee "$log") 2>&1 &
+  local host_pid=$! rc=0
+  start_watchdog "$host_pid" "funding phase ($stage)"
+  wait "$host_pid" || rc=$?
+  stop_watchdog
+  return "$rc"
+}
+
 pairing_phase() {
   local log="$LOG_DIR/pairing-host-cli.log"
   local signer_log="$LOG_DIR/pairing-host-cli-signer.log"
@@ -316,6 +367,7 @@ SIGNING_RC="skipped"
 PAIRING_RC="skipped"
 CHAT_RC="skipped"
 POCKET_RC="skipped"
+FUNDING_RC="skipped"
 
 # Each phase writes under the directory for the modality it exercises, so the
 # summary names the ones this run actually produced rather than always the App
@@ -330,6 +382,9 @@ report_dirs() {
   fi
   if [ "$POCKET_RC" != "skipped" ]; then
     dirs="${dirs:+$dirs, }explorer/diagnosis-reports/pocket/"
+  fi
+  if [ "$FUNDING_RC" != "skipped" ]; then
+    dirs="${dirs:+$dirs, }explorer/diagnosis-reports/funding/"
   fi
   printf '%s' "${dirs:-explorer/diagnosis-reports/}"
 }
@@ -354,10 +409,16 @@ if [ "$RUN_POCKET" = 1 ]; then
   pocket_phase || POCKET_RC=$?
 fi
 
+if [ "$RUN_FUNDING" = 1 ]; then
+  FUNDING_RC=0
+  funding_phase || FUNDING_RC=$?
+fi
+
 echo
-echo "battery: signing-host exit=$SIGNING_RC · pairing-host exit=$PAIRING_RC · chat-host exit=$CHAT_RC · pocket-host exit=$POCKET_RC"
+echo "battery: signing-host exit=$SIGNING_RC · pairing-host exit=$PAIRING_RC · chat-host exit=$CHAT_RC · pocket-host exit=$POCKET_RC · funding-host exit=$FUNDING_RC"
 echo "battery: reports under $(report_dirs), logs under $LOG_DIR/"
 [ "$SIGNING_RC" = 0 ] || [ "$SIGNING_RC" = "skipped" ] || exit "$SIGNING_RC"
 [ "$PAIRING_RC" = 0 ] || [ "$PAIRING_RC" = "skipped" ] || exit "$PAIRING_RC"
 [ "$CHAT_RC" = 0 ] || [ "$CHAT_RC" = "skipped" ] || exit "$CHAT_RC"
 [ "$POCKET_RC" = 0 ] || [ "$POCKET_RC" = "skipped" ] || exit "$POCKET_RC"
+[ "$FUNDING_RC" = 0 ] || [ "$FUNDING_RC" = "skipped" ] || exit "$FUNDING_RC"

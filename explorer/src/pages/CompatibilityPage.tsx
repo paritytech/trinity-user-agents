@@ -6,6 +6,7 @@ import { methodPath } from "../data/registry";
 import {
   chatCompatibility,
   compatibility,
+  fundingCompatibility,
   pocketCompatibility,
 } from "../data/compatibility";
 import type {
@@ -21,7 +22,8 @@ export default function CompatibilityPage() {
   const hostCount =
     compatibility.hosts.length +
     chatCompatibility.hosts.length +
-    pocketCompatibility.hosts.length;
+    pocketCompatibility.hosts.length +
+    fundingCompatibility.hosts.length;
 
   if (hostCount === 0) {
     return (
@@ -115,6 +117,15 @@ export default function CompatibilityPage() {
           description="Pocket API coverage measured from the product's Worker execution."
           serviceName="Pocket"
           matrix={pocketCompatibility}
+          version={version}
+          expandedId={expandedId}
+          onToggle={setExpandedId}
+        />
+        <CompatibilitySection
+          title="Funding compatibility"
+          description="Funding requests and statuses against a scripted funding host, with no chain behind it."
+          serviceName="Funding"
+          matrix={fundingCompatibility}
           version={version}
           expandedId={expandedId}
           onToggle={setExpandedId}
