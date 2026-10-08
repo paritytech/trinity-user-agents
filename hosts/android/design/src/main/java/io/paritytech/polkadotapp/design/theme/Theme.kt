@@ -70,27 +70,22 @@ fun PolkadotTheme(
     theme: PolkadotAppTheme,
     content: @Composable () -> Unit
 ) {
-    val colors: PolkadotColorsPalette = remember(theme) { theme.colors() }
-    val typography: PolkadotTypography = remember(theme) { theme.typography() }
+    val colors: PolkadotColorsPalette = theme.colors()
+    val typography: PolkadotTypography = theme.typography()
 
-    val spacings: PolkadotSpacings = remember { PolkadotDefaultSpacings() }
-    val radii: PolkadotRadii = remember { PolkadotDefaultRadii() }
-    val shapes: PolkadotShapes = remember { PolkadotDefaultShapes() }
-    val borders: PolkadotBorders = remember { PolkadotDefaultBorders() }
+    val spacings: PolkadotSpacings = PolkadotDefaultSpacings()
+    val radii: PolkadotRadii = PolkadotDefaultRadii()
+    val shapes: PolkadotShapes = PolkadotDefaultShapes()
+    val borders: PolkadotBorders = PolkadotDefaultBorders()
 
-    val textSelectionColors = remember(colors) {
-        TextSelectionColors(
-            handleColor = colors.fg.tertiary,
-            backgroundColor = colors.fg.primary.copy(alpha = 0.34f)
-        )
-    }
-    val colorScheme = remember(colors) { colors.toMaterialColorScheme() }
-    val materialTypography = remember(typography) { typography.toMaterialTypography() }
-    val indication = remember(colors) { ripple(color = colors.fg.primary) }
+    val textSelectionColors = TextSelectionColors(
+        handleColor = colors.fg.tertiary,
+        backgroundColor = colors.fg.primary.copy(alpha = 0.34f)
+    )
 
     MaterialTheme(
-        colorScheme = colorScheme,
-        typography = materialTypography,
+        colorScheme = colors.toMaterialColorScheme(),
+        typography = typography.toMaterialTypography(),
         shapes = materialShapes()
     ) {
         CompositionLocalProvider(
@@ -100,7 +95,7 @@ fun PolkadotTheme(
             LocalPolkadotRadii provides radii,
             LocalPolkadotShapes provides shapes,
             LocalPolkadotBorders provides borders,
-            LocalIndication provides indication,
+            LocalIndication provides ripple(color = colors.fg.primary),
             LocalContentColor provides colors.fg.primary,
             LocalTextStyle provides typography.body.medium,
             LocalTextSelectionColors provides textSelectionColors

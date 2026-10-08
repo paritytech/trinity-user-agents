@@ -29,10 +29,4 @@ dependencies {
     implementation(libs.nova.substrate.serialization)
 
     testImplementation(libs.junit)
-
-    androidTestImplementation(platform(libs.androidx.compose.bom))
-    androidTestImplementation(libs.androidx.compose.ui.test.junit4)
-    androidTestImplementation(libs.androidx.compose.ui.test.manifest)
-    androidTestImplementation(libs.androidx.junit)
-    androidTestImplementation(libs.androidx.test.runner)
 }

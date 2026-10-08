@@ -4,6 +4,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.toPixelMap
 import androidx.compose.ui.test.captureToImage
 import androidx.compose.ui.test.junit4.createComposeRule
@@ -37,47 +38,23 @@ class ProductPocketCardThemeTest {
     private var pickedTheme by mutableStateOf(PolkadotAppTheme.BerlinNight)
 
     private val faceUsingThemeDefaults = JsWidget.Column(
+        modifiers = listOf(JsModifier.FillMaxWidth(), JsModifier.FillMaxHeight()),
         children = listOf(
             JsWidget.Text(text = "Loyalty"),
             JsWidget.Button(text = "Remove", variant = JsButtonVariant.TEXT),
             JsWidget.Button(text = "Open", variant = JsButtonVariant.SECONDARY),
             JsWidget.Box(
                 modifiers = listOf(
-                    JsModifier.Size(width = 40, height = 40),
+                    JsModifier.FillMaxWidth(),
+                    JsModifier.FillMaxHeight(),
                     JsModifier.Background(color = JsColor.FG_PRIMARY),
                 ),
             ),
         ),
     )
 
-    private val primaryGroundFillingTheCard = JsWidget.Box(
-        modifiers = listOf(
-            JsModifier.FillMaxWidth(),
-            JsModifier.FillMaxHeight(),
-            JsModifier.Background(color = JsColor.FG_PRIMARY),
-        ),
-    )
-
     @Test
-    fun aProductCardOnThePocketTabGetsTheBerlinNightColoursTheRfcPromises() {
-        pickedTheme = PolkadotAppTheme.Lisbon
-        showCard(primaryGroundFillingTheCard)
-
-        val pixels = compose.onNodeWithTag(PocketTestTags.PRODUCT_CARD).captureToImage().toPixelMap()
-        assertEquals(Color(0xFFF4F4F5), pixels[pixels.width / 2, pixels.height / 2])
-    }
-
-    @Test
-    fun aProductCardOnThePocketTabLooksTheSameWhateverThemeTheUserPicked() {
-        showCard(faceUsingThemeDefaults)
-
-        val inBerlinNight = drawnUnder(PolkadotAppTheme.BerlinNight)
-        PolkadotAppTheme.entries.forEach { theme ->
-            assertArrayEquals(theme.name, inBerlinNight, drawnUnder(theme))
-        }
-    }
-
-    private fun showCard(face: JsWidget) {
+    fun aProductCardIsDrawnInBerlinNightWhateverThemeTheUserPicked() {
         compose.setContent {
             PolkadotTheme(theme = pickedTheme) {
                 ProductPocketCard(
@@ -87,7 +64,7 @@ class ProductPocketCardThemeTest {
                         pinned = false,
                     ),
                     bindings = ProductFaceBindings(
-                        face = MutableStateFlow(face),
+                        face = MutableStateFlow(faceUsingThemeDefaults),
                         onFaceAction = { _, _ -> },
                         imageResolver = JsImageResolver { null },
                     ),
@@ -96,11 +73,20 @@ class ProductPocketCardThemeTest {
                 )
             }
         }
+
+        val inBerlinNight = captureCardUnder(PolkadotAppTheme.BerlinNight)
+        val ground = inBerlinNight.toPixelMap().let { it[it.width / 2, it.height * 9 / 10] }
+        assertEquals("the FgPrimary the Pocket RFC promises", Color(0xFFF4F4F5), ground)
+
+        PolkadotAppTheme.entries.forEach { theme ->
+            assertArrayEquals(theme.name, inBerlinNight.pixels(), captureCardUnder(theme).pixels())
+        }
     }
 
-    private fun drawnUnder(theme: PolkadotAppTheme): IntArray {
+    private fun captureCardUnder(theme: PolkadotAppTheme): ImageBitmap {
         pickedTheme = theme
-        val image = compose.onNodeWithTag(PocketTestTags.PRODUCT_CARD).captureToImage()
-        return IntArray(image.width * image.height).also { image.readPixels(it) }
+        return compose.onNodeWithTag(PocketTestTags.PRODUCT_CARD).captureToImage()
     }
+
+    private fun ImageBitmap.pixels(): IntArray = IntArray(width * height).also { readPixels(it) }
 }
