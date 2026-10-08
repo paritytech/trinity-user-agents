@@ -158,7 +158,7 @@ cargo build -p truapi-host-cli
 The published route is the installer script, which needs no Rust toolchain:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/paritytech/host-rust-core/main/scripts/truapi-host-installer.sh | bash
+curl -fsSL https://raw.githubusercontent.com/paritytech/trinity-user-agents/main/scripts/truapi-host-installer.sh | bash
 ```
 
 It resolves the current stable version from the `truapi-host-cli-stable`

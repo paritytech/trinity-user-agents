@@ -612,6 +612,7 @@ fn numeric_js_arg(name: &str, primitive: &str) -> Result<String> {
         "u8" | "u16" | "u32" | "i8" | "i16" | "i32" => {
             Ok(format!("JsValue::from_f64(f64::from({name}))"))
         }
+        "u64" | "i64" | "u128" | "i128" => Ok(format!("js_sys::BigInt::from({name}).into()")),
         "bool" => Ok(format!("JsValue::from_bool({name})")),
         other => bail!("numeric callback parameter `{name}: {other}` is not JS-number safe"),
     }

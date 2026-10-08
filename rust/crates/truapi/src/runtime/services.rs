@@ -50,6 +50,9 @@ pub struct RuntimeServices {
     /// Contact handles already resolved, shared by every product runtime of
     /// this host and emptied when the host says its contacts changed.
     pub contact_handles: crate::runtime::contacts::ContactHandleCache,
+    /// Host Game adapter, installed once at startup by a host that can hold
+    /// reminders. Unset leaves every product Game call `Unsupported`.
+    game_platform: OnceLock<Arc<dyn crate::platform::GamePlatform>>,
     /// Host observer told when a device finishes pairing with this signing
     /// host. Unset leaves a paired device unannounced.
     device_pairing_observer: OnceLock<Arc<dyn DevicePairingObserver>>,
@@ -75,6 +78,11 @@ pub struct RuntimeServices {
     /// Values from confirmed in-core submissions, served to `lookup_subscribe`
     /// until the host's content backend has them. Byte-bounded, oldest-first.
     preimage_cache: Mutex<PreimageCache>,
+    /// Preimages a test host kept instead of submitting. Unbounded, unlike
+    /// `preimage_cache`: nothing else holds them, so evicting one would leave
+    /// its key unresolvable for the rest of the run.
+    #[cfg(feature = "test-host")]
+    local_preimages: Mutex<std::collections::HashMap<[u8; 32], Vec<u8>>>,
     /// Confirmed submissions served to new subscriptions until the remote
     /// Statement Store reports them.
     statement_cache: Mutex<StatementCache>,
@@ -119,6 +127,7 @@ impl RuntimeServices {
             pocket_platform: OnceLock::new(),
             contacts_platform: OnceLock::new(),
             contact_handles: Default::default(),
+            game_platform: OnceLock::new(),
             device_pairing_observer: OnceLock::new(),
             #[cfg(not(target_arch = "wasm32"))]
             core_db: OnceLock::new(),
@@ -129,6 +138,8 @@ impl RuntimeServices {
             bulletin,
             chain_context: crate::runtime::statement_allowance::ChainContextCache::default(),
             preimage_cache: Mutex::new(PreimageCache::default()),
+            #[cfg(feature = "test-host")]
+            local_preimages: Mutex::new(std::collections::HashMap::new()),
             statement_cache: Mutex::new(StatementCache::default()),
             spawner,
             device_encryption_key: futures::lock::Mutex::new(()),
@@ -209,6 +220,22 @@ impl RuntimeServices {
         self.pocket_platform.get().cloned()
     }
 
+    /// Install the host's Game adapter.
+    ///
+    /// Set-once, like every optional capability, so reminders cannot change
+    /// hands under a running product. Returns whether this call installed it.
+    pub fn install_game_platform(
+        &self,
+        platform: Arc<dyn crate::platform::GamePlatform>,
+    ) -> bool {
+        self.game_platform.set(platform).is_ok()
+    }
+
+    /// The host's Game adapter, when one is installed.
+    pub fn game_platform(&self) -> Option<Arc<dyn crate::platform::GamePlatform>> {
+        self.game_platform.get().cloned()
+    }
+
     /// Install the host's contacts adapter. Answers whether this call was the
     /// one that installed it.
     pub fn install_contacts_platform(
@@ -282,8 +309,26 @@ impl RuntimeServices {
             .insert(key, value);
     }
 
+    /// Keep a preimage a test host did not submit, for the rest of the run.
+    #[cfg(feature = "test-host")]
+    pub fn keep_local_preimage(&self, key: [u8; 32], value: Vec<u8>) {
+        self.local_preimages
+            .lock()
+            .expect("local preimage store mutex poisoned")
+            .insert(key, value);
+    }
+
     /// Return a cached preimage value for `key`, if present.
     pub fn cached_preimage(&self, key: &[u8; 32]) -> Option<Vec<u8>> {
+        #[cfg(feature = "test-host")]
+        if let Some(value) = self
+            .local_preimages
+            .lock()
+            .expect("local preimage store mutex poisoned")
+            .get(key)
+        {
+            return Some(value.clone());
+        }
         self.preimage_cache
             .lock()
             .expect("preimage cache mutex poisoned")

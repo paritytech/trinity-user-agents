@@ -4,7 +4,7 @@ This file is intentionally **thin**. Detailed architecture and code rules are in
 
 ## Build prerequisites
 
-The build needs the TrUAPI Rust core, because `:feature:products:impl` depends on `:bindings:truapi-host` in every variant. Inside `host-rust-core` the core is the enclosing repository and nothing has to be fetched. Outside it, run `scripts/setup-truapi.py` once: it clones `paritytech/host-rust-core` at the `truapi_ref` pin from `.github/actions/install/action.yaml` and writes `truapi.dir` to `local.properties`. Re-run it after the pin moves. A `truapi.dir` that is set but does not resolve still fails at configuration time rather than falling back.
+The build needs the TrUAPI Rust core, because `:feature:products:impl` depends on `:bindings:truapi-host` in every variant. Inside `trinity-user-agents` the core is the enclosing repository and nothing has to be fetched. Outside it, run `scripts/setup-truapi.py` once: it clones `paritytech/trinity-user-agents` at the `truapi_ref` pin from `.github/actions/install/action.yaml` and writes `truapi.dir` to `local.properties`. Re-run it after the pin moves. A `truapi.dir` that is set but does not resolve still fails at configuration time rather than falling back.
 
 `FIRESTORE_DATABASE_ID` must also be in `local.properties`, or configuration fails before anything compiles. It is a CI secret, so ask for the value.
 

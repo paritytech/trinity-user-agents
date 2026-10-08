@@ -26,7 +26,7 @@ Every chain-scoped TrUAPI call is keyed by `genesisHash`, and today products obt
 
 **Environment moves.** Pointing a product at a different environment (a new testnet iteration, a devnet) means editing constants and shipping a new build, even though the host-side change is a config edit.
 
-The fix is to make the host's chain set discoverable over the wire. Hosts already hold this data in enumerable form: dotli's network config has named slots (`relay`, `assethub`, `bulletin`, `people`) per environment, each with a genesis hash and RPC endpoints. This RFC exposes that mapping to products. Tracking issue: [paritytech/host-rust-core#352](https://github.com/paritytech/host-rust-core/issues/352).
+The fix is to make the host's chain set discoverable over the wire. Hosts already hold this data in enumerable form: dotli's network config has named slots (`relay`, `assethub`, `bulletin`, `people`) per environment, each with a genesis hash and RPC endpoints. This RFC exposes that mapping to products. Tracking issue: [paritytech/trinity-user-agents#352](https://github.com/paritytech/trinity-user-agents/issues/352).
 
 ## Detailed Design
 

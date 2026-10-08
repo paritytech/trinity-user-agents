@@ -18,6 +18,10 @@ final class MockProductExecution: TrUAPIProductExecutionProtocol, @unchecked Sen
     var devicePermissionGranted = false
     private(set) var devicePermissionRequests: [HostDevicePermissionRequest] = []
 
+    /// Card lists pushed to the product, in order, so a test can assert the
+    /// worker was told what it holds rather than only that it started.
+    private(set) var pocketCardNotifications: [[PocketCard]] = []
+
     private(set) var publishedChatActions: [HostChatActionSubscribeItem] = []
     private(set) var publishedRendererActions: [HostRendererActionSubscribeItem] = []
     /// Requests passed to `render`, in order, including ones that threw, so
@@ -28,6 +32,10 @@ final class MockProductExecution: TrUAPIProductExecutionProtocol, @unchecked Sen
     var renderErrors: [Error] = []
     /// Nodes the render stream yields before finishing.
     var renderNodes: [RendererNode] = []
+    /// Keeps the render stream open after those nodes, the way a live worker
+    /// does. A stream that finishes is reopened after a wall-clock backoff, so
+    /// a test counting `render` calls has to hold it open to be deterministic.
+    var keepsRenderStreamOpen = false
 
     func startWsBridge(bindPort _: UInt16) throws -> WsBridgeEndpoint {
         startWsBridgeCallCount += 1
@@ -53,9 +61,10 @@ final class MockProductExecution: TrUAPIProductExecutionProtocol, @unchecked Sen
         }
 
         let nodes = renderNodes
+        let staysOpen = keepsRenderStreamOpen
         return AsyncThrowingStream { continuation in
             nodes.forEach { continuation.yield($0) }
-            continuation.finish()
+            if !staysOpen { continuation.finish() }
         }
     }
 
@@ -99,5 +108,7 @@ final class MockProductExecution: TrUAPIProductExecutionProtocol, @unchecked Sen
         nil
     }
 
-    func notifyPocketCardsChanged(cards _: [PocketCard]) {}
+    func notifyPocketCardsChanged(cards: [PocketCard]) {
+        pocketCardNotifications.append(cards)
+    }
 }

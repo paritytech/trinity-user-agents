@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
@@ -22,6 +23,8 @@ import io.paritytech.polkadotapp.common.R as RCommon
 @Composable
 fun EmbeddedQrScanner(
     modifier: Modifier = Modifier,
+    cameraActive: Boolean,
+    recognitionArmed: Boolean,
     onScanHandled: (navigate: (() -> Unit)?) -> Unit,
 ) {
     val viewModel = hiltViewModel<ScanPanelViewModel>()
@@ -30,11 +33,16 @@ fun EmbeddedQrScanner(
         onScanHandled(navigate)
     }
 
+    LaunchedEffect(recognitionArmed) {
+        viewModel.setRecognitionArmed(recognitionArmed)
+    }
+
     QrViewfinder(
         modifier = modifier,
         surfaceRequestFlow = viewModel.surfaceRequest,
         invalidCodeEvent = viewModel.invalidCodeEvent,
         cameraPermissionDeniedFlow = viewModel.cameraPermissionDenied,
+        cameraActive = cameraActive,
         bindToCamera = viewModel::bindToCamera,
         onInvalidCodeAlertClosed = viewModel::invalidationDialogClosed,
         onPermissionAlertClosed = viewModel::permissionAlertClosed,

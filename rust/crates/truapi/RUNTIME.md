@@ -404,16 +404,26 @@ AutoSigning without approval. Legacy-account signing still asks the user.
   reaches the product — only a handle for the selection does. The core caches
   resolved handles; a host calls `notify_contacts_changed` on its runtime when
   a contact is removed or blocked.
+- `GamePlatform`: hold the game product's next-game reminder and drop it.
+  The core serves Game only to `dim2`, on every network, and answers
+  `Unsupported` to any other product without calling the host. A host
+  keeps one reminder per product: a schedule replaces the reminder the same
+  product already holds. The core asks for no per-product consent: the host
+  asks the OS for what the reminder needs, rings an alarm where the OS allows
+  one and delivers a notification otherwise, may add a calendar event, and
+  keeps the reminder across app kill and reboot. A schedule the host cannot
+  hold fails as a host failure carrying its reason.
 
 `Platform` is a blanket-implemented supertrait that combines the capability
-traits above except `ChatPlatform`, `ContactsPlatform`, `PermissionStatusHost`
-and `PocketPlatform`, which `OptionalPlatform` lists instead: a host supplies
-each only when it can serve it. Codegen reads `OptionalPlatform` to emit each listed
-capability as an optional group on the host-callback surface.
+traits above except `ChatPlatform`, `ContactsPlatform`, `PermissionStatusHost`,
+`PocketPlatform` and `GamePlatform`, which `OptionalPlatform` lists instead: a
+host supplies each only when it can serve it. Codegen reads `OptionalPlatform`
+to emit each listed capability as an optional group on the host-callback
+surface.
 
 Omitting `ChatPlatform` makes the core answer Chat calls `Unsupported`, and
-omitting `ContactsPlatform` or `PocketPlatform` does the same for Contacts or
-Pocket calls.
+omitting `ContactsPlatform`, `PocketPlatform` or `GamePlatform` does the same
+for Contacts, Pocket or Game calls.
 Omitting `PermissionStatusHost` leaves device grants resolving from stored
 state alone, which is what a host with no OS permission model does anyway.
 Serving it gates both halves of the surface: a device permission request and a

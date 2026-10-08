@@ -140,8 +140,8 @@ let dependencyConfigs: [DependencyConfig] = [
         products: ["WebRTC"]
     ),
     .init(
-        name: "host-rust-core",
-        url: coreIsInTree ? corePath : "https://github.com/paritytech/host-rust-core",
+        name: "trinity-user-agents",
+        url: coreIsInTree ? corePath : "https://github.com/paritytech/trinity-user-agents",
         version: coreIsInTree ? .local : .exact("0.16.0"),
         products: ["TrUAPIHost"]
     ),

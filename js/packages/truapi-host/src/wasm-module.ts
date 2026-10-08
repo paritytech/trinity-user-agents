@@ -65,6 +65,8 @@ export interface WorkerPairingHostRuntime extends PermissionAuthorizationRuntime
   activateStoredSession(): Promise<void>;
   activateExternalSession(blob: Uint8Array): Promise<void>;
   resetSessionState(): Promise<void>;
+  /** Only on a core built with `test-host`. */
+  setSubmitPreimagesLocally?(local: boolean): void;
   /**
    * Take one reference on the product's worker. The first one reports
    * `"Start"` through the runtime's `workerDemandChanged` callback.
@@ -93,6 +95,8 @@ export interface WorkerSigningHostRuntime extends WorkerPairingHostRuntime {
    */
   /** Only on a core built with `wasm-signing-host`. */
   setGrantAllowancesUnchecked?(granted: boolean): void;
+  /** Only on a core built with `wasm-signing-host`. */
+  setWithheldResources?(tags: string[]): void;
   activateLocalSessionWithIdentity?(
     secret: Uint8Array,
     liteUsername?: string | null,

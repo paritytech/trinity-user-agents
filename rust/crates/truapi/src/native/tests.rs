@@ -18,7 +18,8 @@ use crate::host_logic::worker::WorkerTransition;
 use crate::{PairedSsoPeer, PairingProposal};
 
 use super::callbacks::{
-    HostCallbacks, NativeChatCallbacks, NativePocketCallbacks, NativePocketRemoval,
+    HostCallbacks, NativeChatCallbacks, NativeGameCallbacks, NativePocketCallbacks,
+    NativePocketRemoval,
 };
 use super::config::{
     HostRuntimeConfig, NativeResolvedHostRuntimeConfig, NativeRuntimeConfigError,
@@ -26,7 +27,9 @@ use super::config::{
 };
 use super::errors::HostRejection;
 use super::events::NativeEventBus;
-use super::platform::{CallbackPlatform, ChatCallbackPlatform, PocketCallbackPlatform};
+use super::platform::{
+    CallbackPlatform, ChatCallbackPlatform, GameCallbackPlatform, PocketCallbackPlatform,
+};
 use super::runtime::{NativePairingError, NativeProductExecution, NativeTrUApiHostRuntime};
 use crate::platform::CreateTransactionReview;
 use futures::FutureExt;
@@ -644,6 +647,7 @@ pub fn native_product_execution(
         callbacks,
         None,
         None,
+        None,
         native_execution_config(product_id, ProductExecutionKind::App),
     )
     .expect("product execution config should be valid")
@@ -993,6 +997,53 @@ fn native_pocket_removal_outcomes_are_decided_by_the_host() {
     );
 }
 
+#[derive(Default)]
+struct RecordingGameCallbacks {
+    calls: Mutex<Vec<Option<u64>>>,
+}
+
+#[async_trait::async_trait]
+impl NativeGameCallbacks for RecordingGameCallbacks {
+    async fn schedule_reminder(&self, starts_at: u64) -> Result<(), HostRejection> {
+        self.calls
+            .lock()
+            .expect("game calls mutex poisoned")
+            .push(Some(starts_at));
+        Ok(())
+    }
+
+    async fn cancel_reminder(&self) -> Result<(), HostRejection> {
+        self.calls
+            .lock()
+            .expect("game calls mutex poisoned")
+            .push(None);
+        Ok(())
+    }
+}
+
+#[test]
+fn game_callbacks_receive_the_start_time_and_the_cancel() {
+    let callbacks = Arc::new(RecordingGameCallbacks::default());
+    let platform = GameCallbackPlatform {
+        game: callbacks.clone(),
+    };
+    let product = ProductContext::new("dim2.dot".to_string()).expect("valid product id");
+
+    futures::executor::block_on(async {
+        crate::platform::GamePlatform::schedule_game_reminder(&platform, &product, 42)
+            .await
+            .expect("schedule succeeds");
+        crate::platform::GamePlatform::cancel_game_reminder(&platform, &product)
+            .await
+            .expect("cancel succeeds");
+    });
+
+    assert_eq!(
+        *callbacks.calls.lock().expect("game calls mutex poisoned"),
+        vec![Some(42), None]
+    );
+}
+
 #[test]
 fn native_chat_entrypoint_is_unsupported_without_an_adapter() {
     let mut config = native_host_runtime_config();
@@ -1003,6 +1054,7 @@ fn native_chat_entrypoint_is_unsupported_without_an_adapter() {
     let execution = host
         .open_product_execution(
             Arc::new(EventCallbacks::new()),
+            None,
             None,
             None,
             native_execution_config("chat-product.dot", ProductExecutionKind::Worker),
@@ -2398,6 +2450,7 @@ fn closing_an_execution_releases_its_callbacks_while_the_host_lives() {
             callbacks,
             None,
             None,
+            None,
             native_execution_config("first.dot", ProductExecutionKind::App),
         )
         .expect("open execution");
@@ -2431,6 +2484,7 @@ fn bridge_logs_follow_the_host_and_authenticated_execution() {
     let executions = [(1, "first.dot"), (2, "second.dot")].map(|(index, product_id)| {
         host.open_product_execution(
             callbacks[index].clone(),
+            None,
             None,
             None,
             native_execution_config(product_id, ProductExecutionKind::App),
@@ -2512,6 +2566,7 @@ fn two_executions_share_one_bridge_through_the_native_api() {
             Arc::new(EventCallbacks::new()),
             None,
             None,
+            None,
             native_execution_config("shared.dot", ProductExecutionKind::App),
         )
         .expect("App execution should open");
@@ -2520,6 +2575,7 @@ fn two_executions_share_one_bridge_through_the_native_api() {
         .open_product_execution(
             chat_host.clone(),
             Some(chat_host),
+            None,
             None,
             native_execution_config("shared.dot", ProductExecutionKind::Worker),
         )
@@ -2729,6 +2785,7 @@ fn native_remote_authorization_uses_the_execution_permission_callback() {
                 callbacks.clone(),
                 None,
                 None,
+                None,
                 native_execution_config("fetch.dot", ProductExecutionKind::Worker),
             )
             .unwrap();
@@ -2805,6 +2862,7 @@ fn native_remote_authorization_reuses_stored_product_decisions() {
                 callbacks.clone(),
                 None,
                 None,
+                None,
                 native_execution_config(product_id, ProductExecutionKind::App),
             )
             .unwrap()
@@ -2863,6 +2921,7 @@ fn native_remote_authorization_rejects_closed_and_closing_executions() {
                 callbacks.clone(),
                 None,
                 None,
+                None,
                 native_execution_config("fetch.dot", ProductExecutionKind::App),
             )
             .unwrap();
@@ -2913,6 +2972,7 @@ fn a_native_status_read_follows_the_os_gate() {
             )),
             None,
             None,
+            None,
             native_execution_config("gated.dot", ProductExecutionKind::App),
         )
         .expect("execution should open");
@@ -2935,4 +2995,130 @@ fn a_native_status_read_follows_the_os_gate() {
             PermissionAuthorizationStatus::NotDetermined,
         )
     );
+}
+
+/// A face kept and read back is the same face, so a card draws at a cold
+/// start exactly as its product last drew it.
+#[test]
+fn a_kept_face_reads_back_as_itself() {
+    let json = std::fs::read_to_string(format!(
+        "{}/tests/fixtures/pocket_faces/devicehood.json",
+        env!("CARGO_MANIFEST_DIR")
+    ))
+    .expect("fixture");
+    let face = parse_renderer_node_json(json).expect("fixture reads");
+
+    let kept = encode_renderer_node(face.clone());
+
+    assert_eq!(decode_renderer_node(kept).expect("reads back"), face);
+}
+
+/// A face a real product ships, kept here as well as in the iOS host so the
+/// reader is measured against the protocol shape rather than against what
+/// this code happens to accept. One is enough for that, and the hosts keep
+/// the rest of the conformance set.
+#[test]
+fn reads_the_card_faces_the_hosts_conform_to() {
+    let json = std::fs::read_to_string(format!(
+        "{}/tests/fixtures/pocket_faces/devicehood.json",
+        env!("CARGO_MANIFEST_DIR")
+    ))
+    .expect("fixture");
+
+    let node = parse_renderer_node_json(json).expect("devicehood must read as a renderer tree");
+
+    assert!(matches!(node, latest::RendererNode::Column { .. }));
+}
+
+/// `depth` boxes around an empty node, three brackets per box.
+fn nested_boxes(depth: usize) -> String {
+    let mut json = String::new();
+    for _ in 0..depth {
+        json.push_str(r#"{"tag":"Box","value":{"modifiers":[],"props":{},"children":["#);
+    }
+    json.push_str(r#"{"tag":"Nil"}"#);
+    for _ in 0..depth {
+        json.push_str("]}}");
+    }
+    json
+}
+
+/// A face deeper than the core will carry is refused rather than half-read,
+/// so no host draws one it could not read back.
+#[test]
+fn refuses_a_face_deeper_than_the_core_carries() {
+    assert!(parse_renderer_node_json(nested_boxes(MAX_FACE_DEPTH as usize - 1)).is_ok());
+    assert!(matches!(
+        parse_renderer_node_json(nested_boxes(MAX_FACE_DEPTH as usize + 1)),
+        Err(NativeRendererError::TooDeep { .. })
+    ));
+}
+
+/// A product chooses how deep its preview nests, and a host reads it before
+/// the user approved anything, on whatever thread it happens to be on. The
+/// deepest face the bracket bound lets through is refused on a thread with
+/// less stack than any host gives one, rather than overflowing it and taking
+/// the app down.
+#[test]
+fn a_face_at_the_nesting_bound_is_refused_on_a_small_host_stack() {
+    let json = nested_boxes(MAX_FACE_JSON_NESTING as usize / 3);
+
+    let read = std::thread::Builder::new()
+        .stack_size(256 * 1024)
+        .spawn(move || parse_renderer_node_json(json))
+        .expect("host thread starts")
+        .join()
+        .expect("host thread survives the read");
+
+    assert!(matches!(read, Err(NativeRendererError::TooDeep { .. })));
+}
+
+/// A host that cannot start the reader's thread, short of memory or of
+/// threads, gets an error it can show, not a panic, which a release build
+/// turns into an abort of the whole app.
+#[cfg(target_pointer_width = "64")]
+#[test]
+fn a_face_reader_that_cannot_start_is_an_error_not_a_crash() {
+    let no_thread_has_this_much_stack = 1 << 47;
+
+    assert!(matches!(
+        read_face_on_stack(nested_boxes(1), no_thread_has_this_much_stack),
+        Err(NativeRendererError::ReaderUnavailable { .. })
+    ));
+}
+
+/// A kept face is read back only if it is exactly what was kept: bytes past
+/// the tree mean the row is not a face this host wrote, and drawing its
+/// prefix would show a card nobody drew.
+#[test]
+fn a_kept_face_with_bytes_past_its_tree_does_not_read_back() {
+    let mut kept = encode_renderer_node(latest::RendererNode::Nil);
+    kept.push(0);
+
+    assert!(matches!(
+        decode_renderer_node(kept),
+        Err(NativeRendererError::Malformed { .. })
+    ));
+}
+
+/// A title is drawn and an id is addressed, so they cannot share one rule:
+/// the emoji below carries a variation selector, which an id may not.
+#[test]
+fn a_card_title_accepts_what_a_card_id_refuses() {
+    assert_eq!(
+        screen_pocket_card_title("\u{2615}\u{fe0f} Coffee".to_string()).unwrap(),
+        "\u{2615}\u{fe0f} Coffee"
+    );
+    assert!(screen_pocket_card_id("\u{2615}\u{fe0f} Coffee".to_string()).is_err());
+}
+
+/// Both sides NFC-normalize, so a host that compares raw bytes against what
+/// the core stored would miss a card it holds.
+#[test]
+fn screening_normalizes_and_trims() {
+    assert_eq!(
+        screen_pocket_card_id("  cafe\u{301}  ".to_string()).unwrap(),
+        "caf\u{e9}"
+    );
+    assert!(screen_pocket_card_id("   ".to_string()).is_err());
 }

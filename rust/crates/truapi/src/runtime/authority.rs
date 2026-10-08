@@ -307,7 +307,7 @@ pub enum AutoSigningGrant {
 }
 
 /// Statement-store allowance signing material held by the authority layer.
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq, zeroize::Zeroize, zeroize::ZeroizeOnDrop)]
 pub struct StatementStoreAllowanceKey {
     /// sr25519 secret used to sign allowance statements.
     pub secret: [u8; 64],
@@ -535,6 +535,22 @@ pub trait ProductAuthority: Send + Sync {
         session: &AuthoritySession,
         product_id: String,
     ) -> Result<StatementStoreAllowanceKey, AuthorityError>;
+
+    /// Drop the product's cached statement-store allowance key if it is
+    /// `public_key`. Only the local signing host caches that key; the default
+    /// does nothing.
+    fn forget_statement_store_allowance_key(&self, _product_id: &str, _public_key: [u8; 32]) {}
+
+    /// Whether a preimage submission is kept in the core instead of being sent
+    /// to the Bulletin chain.
+    ///
+    /// True only for a test host that answers allowances as granted without
+    /// performing them: the Bulletin allowance it hands out was never
+    /// authorized on chain, so a real `store` would always be refused.
+    #[cfg(feature = "test-host")]
+    fn submits_preimages_locally(&self) -> bool {
+        false
+    }
 
     /// Return Bulletin allowance key material for the calling product.
     async fn bulletin_allowance_key(

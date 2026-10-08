@@ -1,5 +1,6 @@
 package io.paritytech.polkadotapp.feature_videogame_impl.di
 
+import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import dagger.Binds
 import dagger.Lazy
 import dagger.Module
@@ -19,6 +20,7 @@ import io.paritytech.polkadotapp.common.presentation.AppInitializer
 import io.paritytech.polkadotapp.common.utils.CoroutineDispatchers
 import io.paritytech.polkadotapp.feature_account_api.domain.model.AliasAccountDerivationOverride
 import io.paritytech.polkadotapp.feature_chats_api.domain.extension.ChatExtension
+import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.ChatOverlay
 import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.CustomChatHeaderRenderer
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatOriginCustomConfiguration
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
@@ -27,6 +29,8 @@ import io.paritytech.polkadotapp.feature_people_api.data.AliasContextProvider
 import io.paritytech.polkadotapp.feature_people_api.data.SetAliasContext
 import io.paritytech.polkadotapp.feature_people_api.domain.dim.DimCommitmentHandler
 import io.paritytech.polkadotapp.feature_products_api.domain.accountsProtocol.aliasAccountDerivationPath
+import io.paritytech.polkadotapp.feature_products_api.domain.game.ProductGameReminder
+import io.paritytech.polkadotapp.feature_products_api.presentation.SpaBrowserFragmentClass
 import io.paritytech.polkadotapp.feature_videogame_api.data.repositories.VideoGameRepository
 import io.paritytech.polkadotapp.feature_videogame_api.data.voucher.ScoreVouchersSyncManager
 import io.paritytech.polkadotapp.feature_videogame_api.domain.collectibles.CollectiblesUrlResolver
@@ -37,6 +41,7 @@ import io.paritytech.polkadotapp.feature_videogame_impl.VideoGameNotificationPub
 import io.paritytech.polkadotapp.feature_videogame_impl.data.RealVideoGameInfoSyncService
 import io.paritytech.polkadotapp.feature_videogame_impl.data.ScoreContextProvider
 import io.paritytech.polkadotapp.feature_videogame_impl.data.VideoGameInfoSyncService
+import io.paritytech.polkadotapp.feature_videogame_impl.data.calendar.RealProductGameCalendar
 import io.paritytech.polkadotapp.feature_videogame_impl.data.collectibles.CollectiblesRepository
 import io.paritytech.polkadotapp.feature_videogame_impl.data.collectibles.RealCollectiblesRepository
 import io.paritytech.polkadotapp.feature_videogame_impl.data.collectibles.RealCollectiblesUrlResolver
@@ -88,6 +93,10 @@ import io.paritytech.polkadotapp.feature_videogame_impl.domain.interactor.VideoG
 import io.paritytech.polkadotapp.feature_videogame_impl.domain.interactor.VideoGameChatBotInteractor
 import io.paritytech.polkadotapp.feature_videogame_impl.domain.interactor.VideoGameVoteInteractor
 import io.paritytech.polkadotapp.feature_videogame_impl.domain.models.GameContactOrigins
+import io.paritytech.polkadotapp.feature_videogame_impl.domain.notifications.ProductGameCalendar
+import io.paritytech.polkadotapp.feature_videogame_impl.domain.notifications.ProductGameNotificationAutoCanceller
+import io.paritytech.polkadotapp.feature_videogame_impl.domain.notifications.ProductGameOsAccess
+import io.paritytech.polkadotapp.feature_videogame_impl.domain.notifications.RealProductGameReminder
 import io.paritytech.polkadotapp.feature_videogame_impl.domain.notifications.RealVideoGameReminderScheduler
 import io.paritytech.polkadotapp.feature_videogame_impl.domain.notifications.VideoGameNotificationAutoCanceller
 import io.paritytech.polkadotapp.feature_videogame_impl.domain.notifications.VideoGameReminderScheduler
@@ -113,8 +122,12 @@ import io.paritytech.polkadotapp.feature_videogame_impl.domain.usecase.VideoGame
 import io.paritytech.polkadotapp.feature_videogame_impl.domain.usecase.VideoGameOffboardingOptionUseCase
 import io.paritytech.polkadotapp.feature_videogame_impl.domain.usecase.VideoGameRegistrationStageUseCase
 import io.paritytech.polkadotapp.feature_videogame_impl.domain.usecase.VideoGameReportSubmittedUseCase
+import io.paritytech.polkadotapp.feature_videogame_impl.presentation.autoLaunch.ProductGameAutoOpener
+import io.paritytech.polkadotapp.feature_videogame_impl.presentation.bot.overlay.GamePillOverlayRenderer
+import io.paritytech.polkadotapp.feature_videogame_impl.presentation.bot.overlay.ProductGamePillOverlayViewModel
 import io.paritytech.polkadotapp.feature_videogame_impl.presentation.bot.overlay.RealWeeklyGamePillVisibilityHolder
 import io.paritytech.polkadotapp.feature_videogame_impl.presentation.bot.overlay.WeeklyGamePillVisibilityHolder
+import io.paritytech.polkadotapp.feature_videogame_impl.presentation.notifications.RealProductGameOsAccess
 import io.paritytech.polkadotapp.feature_videogame_impl.presentation.renderer.GameChatHeaderRenderer
 import io.paritytech.polkadotapp.feature_videogame_impl.service.GestureAcceptanceChannel
 import io.paritytech.polkadotapp.feature_videogame_impl.service.RealVideoGameStateHolder
@@ -182,6 +195,15 @@ internal interface VideoGameFeatureModule {
 
     @Binds
     fun bindVideoGameReminderScheduler(impl: RealVideoGameReminderScheduler): VideoGameReminderScheduler
+
+    @Binds
+    fun bindProductGameReminder(impl: RealProductGameReminder): ProductGameReminder
+
+    @Binds
+    fun bindProductGameCalendar(impl: RealProductGameCalendar): ProductGameCalendar
+
+    @Binds
+    fun bindProductGameOsAccess(impl: RealProductGameOsAccess): ProductGameOsAccess
 
     @Binds
     fun bindVideoGameKeepPlayingWarningUseCase(impl: RealVideoGameKeepPlayingWarningUseCase): VideoGameKeepPlayingWarningUseCase
@@ -254,6 +276,14 @@ internal interface VideoGameFeatureModule {
 
     @Binds
     @IntoSet
+    fun bindProductGameAutoOpener(impl: ProductGameAutoOpener): AppInitializer
+
+    @Binds
+    @IntoSet
+    fun bindProductGameNotificationAutoCanceller(impl: ProductGameNotificationAutoCanceller): AppInitializer
+
+    @Binds
+    @IntoSet
     fun bindVideoGameResultsPreloadInitializer(impl: VideoGameResultsPreloadInitializer): AppInitializer
 
     @Binds
@@ -291,6 +321,14 @@ internal interface VideoGameFeatureModule {
         @IntoMap
         @StringKey(GameContactOrigins.SHARED_GAME)
         fun provideGameChatOriginConfiguration(): ChatOriginCustomConfiguration = GameChatOriginConfiguration()
+
+        // Owned fragments hide an overlay: the pill stays off while a product is on screen.
+        @Provides
+        @IntoSet
+        fun provideProductGamePill(@SpaBrowserFragmentClass spaBrowserFragmentClass: String): ChatOverlay = ChatOverlay(
+            renderer = GamePillOverlayRenderer { hiltViewModel<ProductGamePillOverlayViewModel>() },
+            ownedFragmentClasses = setOf(spaBrowserFragmentClass),
+        )
 
         @Provides
         @ElementsIntoSet

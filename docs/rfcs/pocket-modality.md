@@ -21,11 +21,11 @@ Pocket-targeted deeplink and approves a host dialog showing the card as it will 
 product can remove a card. Three privileged cards, Humanity, Balance and Scarcity, are always present and removable by
 neither.
 
-A face is drawn through the [Unified Renderer](https://github.com/paritytech/host-rust-core/pull/633)'s `PocketCard`
+A face is drawn through the [Unified Renderer](https://github.com/paritytech/trinity-user-agents/pull/633)'s `PocketCard`
 context. The collection itself is one `Pocket` trait with two methods, a Pocket section in the Worker manifest, and a
 deeplink grammar that names a target modality.
 
-Tracking issue: [#563](https://github.com/paritytech/host-rust-core/issues/563).
+Tracking issue: [#563](https://github.com/paritytech/trinity-user-agents/issues/563).
 
 ## Motivation
 
@@ -55,7 +55,7 @@ The host is the only writer of the collection. A product observes its own cards 
 
 ### Rendering and actions
 
-A face is a body drawn through [Renderer](https://github.com/paritytech/host-rust-core/pull/633), on the
+A face is a body drawn through [Renderer](https://github.com/paritytech/trinity-user-agents/pull/633), on the
 `PocketCard { card_id }` context. The host opens a `render` stream while the face is on screen and gets a `RendererNode`
 tree per item; presses and edits inside the tree arrive on `action_subscribe` under the same context, so one handler
 serves every card of the product.
@@ -97,7 +97,7 @@ type PocketCardDefinition = {
 ```
 
 The preview is a static file in the CID-pinned archive, so the host can show a card before any product code runs, the
-same property the [funding modality](https://github.com/paritytech/host-rust-core/pull/339) relies on for its rail list.
+same property the [funding modality](https://github.com/paritytech/trinity-user-agents/pull/339) relies on for its rail list.
 It is the face the user approves; the live face may differ once the worker streams.
 
 **Deeplinks name a modality.** A product URL is `polkadot://<product_id>.<tld>/<path>` and today always opens the App.
@@ -141,7 +141,8 @@ User                Host                             Product worker
 ```
 
 An added card is an ordinary card from then on: same face stream, actions, expansion, removal rules, and worker
-reference as a privileged one, without the pin. If the card is already present, `add` behaves as `open`. An unknown
+reference as a privileged one, without the pin. If the card is already present, `add` behaves as `open`, and if it is
+not, `open` behaves as `add`, so a link to a card the user has yet to add leads to it through the dialog. An unknown
 card, or a product whose manifest lacks `includes.pocket`, produces a host error and no dialog.
 
 ### Removing a card
@@ -206,7 +207,7 @@ other unit response is.
 normalized, and rejected if it contains characters that let two distinct ids render identically (joiners, variation
 selectors, soft hyphens, non-ASCII spaces). Pocket reuses the constant rather than declaring its own, so the modalities
 cannot drift; chat acquired these bounds only after hosts had already diverged
-([#453](https://github.com/paritytech/host-rust-core/pull/453)), which is the outcome stating them here avoids. Action
+([#453](https://github.com/paritytech/trinity-user-agents/pull/453)), which is the outcome stating them here avoids. Action
 ids and action payloads are the renderer's, and bounded there.
 
 No request names a product: the host knows which worker it is talking to, so a product can neither observe nor remove

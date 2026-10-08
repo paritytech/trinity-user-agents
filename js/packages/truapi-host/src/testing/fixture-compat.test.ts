@@ -2,7 +2,13 @@ import { describe, expect, it } from "bun:test";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
-import { createTestHostFixture, fromNetworks } from "./playwright.js";
+import {
+  createTestHostFixture,
+  fromNetworks,
+  productStorageEntry,
+} from "./playwright.js";
+import { createMockClient } from "./create-mock-client.js";
+import { wasmIsBuilt } from "./require-wasm.js";
 import { PASEO_ASSET_HUB, LIVE_CHAINS } from "./dev-accounts.js";
 
 const SAMPLE_CHAIN = {
@@ -179,5 +185,350 @@ describe("proxy routing across several chains", () => {
   it("leaves a lone proxy unhashed, so a chain reset cannot break it", () => {
     const { mock } = fromNetworks([SAMPLE_CHAIN]);
     expect(mock.chainProxies).toEqual([{ rpcUrl: SAMPLE_CHAIN.rpcUrl }]);
+  });
+});
+
+describe("reading a stored value back the way the old package spelled it", () => {
+  // `@parity/host-api-test-sdk` spells this `getProductStorageValue`, returns a
+  // string, and publishes it on the in-page host, where a suite compares the
+  // result inside a `page.waitForFunction` predicate. All three matter: a
+  // promise, or a node-only member, fails such a predicate rather than the
+  // assertion under it.
+  const suite = wasmIsBuilt("testing/truapi_server.js") ? describe : describe.skip;
+
+  suite("against the real core", () => {
+    it("decodes what the product wrote, matching on the product's own key", async () => {
+      const { client, host, dispose } = await createMockClient();
+      try {
+        // "hi" as the hex the generated client takes.
+        const written = await client.localStorage.write({
+          key: "greeting",
+          value: "0x6869",
+        });
+        expect(written.isOk()).toBe(true);
+
+        // The core namespaced the key before the host saw it, so a suite
+        // asking for its own key has to still find the value.
+        expect(Object.keys(host.getProductStorage())).not.toContain("greeting");
+        expect(host.getProductStorageValue("greeting")).toBe("hi");
+      } finally {
+        dispose();
+      }
+    });
+
+    it("keeps a prefixed store distinct from an unprefixed one", async () => {
+      // A product writing `demo:mykey` and `mykey` produces two namespaced keys
+      // that both end in `:mykey`. A suffix search answers either with whichever
+      // it reaches first, so a suite asserting the two stores do not collide
+      // passes whatever the host does. This is that assertion.
+      const { client, host, dispose } = await createMockClient();
+      try {
+        // "hi" and "jj" as the hex the generated client takes.
+        await client.localStorage.write({ key: "demo:mykey", value: "0x6869" });
+        await client.localStorage.write({ key: "mykey", value: "0x6a6a" });
+
+        expect(host.getProductStorageValue("demo:mykey")).toBe("hi");
+        expect(host.getProductStorageValue("mykey")).toBe("jj");
+      } finally {
+        dispose();
+      }
+    });
+
+    it("reads a product id that carries a colon", async () => {
+      // The core length-prefixes the product id precisely because it may hold
+      // colons, and `localhost:<port>` is the ordinary local one. Reading the
+      // id up to the next separator instead of by its length stops at
+      // `localhost`, and every lookup answers `undefined`.
+      const { client, host, dispose } = await createMockClient({
+        runtimeConfig: { productId: "localhost:3000" },
+      });
+      try {
+        await client.localStorage.write({ key: "greeting", value: "0x6869" });
+        expect(host.getProductStorageValue("greeting")).toBe("hi");
+      } finally {
+        dispose();
+      }
+    });
+
+    it("does not answer a bare key with a prefixed entry", async () => {
+      const { client, host, dispose } = await createMockClient();
+      try {
+        await client.localStorage.write({ key: "demo:only", value: "0x6869" });
+        expect(host.getProductStorageValue("only")).toBeUndefined();
+      } finally {
+        dispose();
+      }
+    });
+
+    it("keeps the two stores apart for the byte reader as well", async () => {
+      // `findProductStorage` reads the same entries by the same key. Matching
+      // on a `:mykey` suffix instead answers the bare key with the prefixed
+      // store's value, so a suite reading bytes and a suite reading text
+      // disagree about which value a key holds.
+      const { client, host, dispose } = await createMockClient();
+      try {
+        await client.localStorage.write({ key: "demo:mykey", value: "0x6869" });
+        await client.localStorage.write({ key: "mykey", value: "0x6a6a" });
+
+        const stored = host.getProductStorage();
+        expect(productStorageEntry(stored, "demo:mykey")).toEqual(
+          Uint8Array.from([0x68, 0x69]),
+        );
+        expect(productStorageEntry(stored, "mykey")).toEqual(
+          Uint8Array.from([0x6a, 0x6a]),
+        );
+      } finally {
+        dispose();
+      }
+    });
+
+    it("answers a value that is not text with an absence, not mojibake", async () => {
+      // A lenient decode turns bytes that are not UTF-8 into replacement
+      // characters, which compare equal to nothing a product wrote and read as
+      // a value it did. Absence says what happened and points at
+      // `getProductStorage`, which hands back the bytes.
+      const { client, host, dispose } = await createMockClient();
+      try {
+        await client.localStorage.write({ key: "blob", value: "0xdeadbeef" });
+        expect(host.getProductStorageValue("blob")).toBeUndefined();
+        expect(Object.values(host.getProductStorage())).toContainEqual(
+          Uint8Array.from([0xde, 0xad, 0xbe, 0xef]),
+        );
+      } finally {
+        dispose();
+      }
+    });
+
+    it("returns synchronously, not a promise", async () => {
+      const { host, dispose } = await createMockClient();
+      try {
+        expect(host.getProductStorageValue("greeting")).not.toBeInstanceOf(
+          Promise,
+        );
+      } finally {
+        dispose();
+      }
+    });
+
+    it("keeps a key the product never wrote undefined", async () => {
+      const { host, dispose } = await createMockClient();
+      try {
+        // Not an empty string: "stored nothing" and "stored nothing here" are
+        // different claims, and a suite asserting a cleared key wants the latter.
+        expect(host.getProductStorageValue("never-written")).toBeUndefined();
+      } finally {
+        dispose();
+      }
+    });
+  });
+});
+
+describe("where the loopback statement store attaches", () => {
+  const PEOPLE = {
+    id: "paseo-people",
+    name: "Paseo People",
+    genesisHash: "0xpeople",
+    rpcUrl: "wss://people.example",
+  };
+
+  it("serves the store on the only chain when no People chain is declared", () => {
+    // A suite declaring a hub alone still has to be able to publish: its single
+    // proxy is unhashed, so it takes the statement requests too. Without this
+    // the statements reach the hub, which has no store, and the suite waits out
+    // its timeout with nothing to show for it.
+    const { mock } = fromNetworks([SAMPLE_CHAIN], true);
+    expect(mock.chainProxies).toEqual([
+      { rpcUrl: SAMPLE_CHAIN.rpcUrl, loopbackStatements: true },
+    ]);
+  });
+
+  it("serves it only on People when one is declared", () => {
+    const { mock } = fromNetworks([SAMPLE_CHAIN, PEOPLE], true);
+    expect(mock.chainProxies).toEqual([
+      { genesisHash: SAMPLE_CHAIN.genesisHash, rpcUrl: SAMPLE_CHAIN.rpcUrl },
+      {
+        genesisHash: PEOPLE.genesisHash,
+        rpcUrl: PEOPLE.rpcUrl,
+        loopbackStatements: true,
+      },
+    ]);
+  });
+
+  it("refuses several chains with no People among them, rather than silently serving nothing", () => {
+    const second = { ...SAMPLE_CHAIN, id: "paseo-bulletin", genesisHash: "0xb" };
+    expect(() => fromNetworks([SAMPLE_CHAIN, second], true)).toThrow(
+      /needs a People chain/,
+    );
+  });
+
+  it("serves no store where the derived default cannot be carried", () => {
+    // The store is on by default for every granted-allocation suite, so the
+    // refusal above must not reach one that never named it: it would attach
+    // nowhere, and the whole fixture would fail over an option the suite does
+    // not use.
+    const second = { ...SAMPLE_CHAIN, id: "paseo-bulletin", genesisHash: "0xb" };
+    const { mock } = fromNetworks([SAMPLE_CHAIN, second], "default");
+    expect(mock.chainProxies).toEqual([
+      { genesisHash: SAMPLE_CHAIN.genesisHash, rpcUrl: SAMPLE_CHAIN.rpcUrl },
+      { genesisHash: second.genesisHash, rpcUrl: second.rpcUrl },
+    ]);
+  });
+
+  it("builds a two-chain fixture on default options", () => {
+    // The default-on store is derived from `allowances`, which itself defaults
+    // to "granted", so this is what a suite declaring a relay and a hub writes
+    // without naming statements at all.
+    const second = { ...SAMPLE_CHAIN, id: "paseo-bulletin", genesisHash: "0xb" };
+    expect(() =>
+      createTestHostFixture({
+        productUrl: "http://localhost:5200",
+        hostUrl: "http://localhost:5199",
+        networks: [SAMPLE_CHAIN, second],
+      }),
+    ).not.toThrow();
+  });
+
+  it("attaches nothing when the store is not asked for", () => {
+    const { mock } = fromNetworks([SAMPLE_CHAIN], false);
+    expect(mock.chainProxies).toEqual([{ rpcUrl: SAMPLE_CHAIN.rpcUrl }]);
+  });
+});
+
+describe("the permission policy the old package's name asks for", () => {
+  const suite = wasmIsBuilt("testing/truapi_server.js") ? describe : describe.skip;
+
+  suite("against the real core", () => {
+    it("takes `reject-all` without complaint", async () => {
+      // The name the old package spells the denying policy with, recognised
+      // rather than merely unequal to "allow-all". Recognising it is what
+      // leaves the mock free to refuse a name it does not know, which the
+      // case below asserts.
+      const { host, dispose } = await createMockClient();
+      try {
+        expect(() => host.setPermissionBehavior("reject-all")).not.toThrow();
+      } finally {
+        dispose();
+      }
+    });
+
+    it("refuses a policy name that means nothing here", async () => {
+      // Without this a typo denies everything silently, and a suite meaning to
+      // allow sees refusals with nothing saying why.
+      const { host, dispose } = await createMockClient();
+      try {
+        expect(() =>
+          (host.setPermissionBehavior as (value: string) => void)("allow_all"),
+        ).toThrow(/does not know the policy/);
+      } finally {
+        dispose();
+      }
+    });
+  });
+});
+
+describe("changing an answer the core has already settled", () => {
+  const suite = wasmIsBuilt("testing/truapi_server.js") ? describe : describe.skip;
+
+  suite("against the real core", () => {
+    it("asks once, then answers from the core's own record", async () => {
+      // Not a limitation to work around: a settled permission is the core's to
+      // answer, and a host that were asked twice would be the wrong behaviour.
+      const { client, host, dispose } = await createMockClient();
+      try {
+        await client.permissions.requestDevicePermission("Camera");
+        expect(host.getPermissionLog()).toHaveLength(1);
+
+        await client.permissions.requestDevicePermission("Camera");
+        expect(host.getPermissionLog()).toHaveLength(1);
+      } finally {
+        dispose();
+      }
+    });
+
+    it("re-asks after the answer is changed, rather than keeping the settled one", async () => {
+      // `@parity/host-api-test-sdk` has no core, so setting an answer there is
+      // the whole story. Here the core has already recorded one, and a suite
+      // that revoked and saw nothing reach the host would be watching a request
+      // that was never made.
+      const { client, host, dispose } = await createMockClient();
+      try {
+        await client.permissions.requestDevicePermission("Camera");
+        expect(host.getPermissionLog()).toHaveLength(1);
+
+        host.revokePermission("Camera");
+        const second = await client.permissions.requestDevicePermission("Camera");
+
+        expect(host.getPermissionLog()).toHaveLength(2);
+        expect(host.getPermissionLog().at(-1)?.approved).toBe(false);
+        expect(second._unsafeUnwrap().granted).toBe(false);
+      } finally {
+        dispose();
+      }
+    });
+
+    it("leaves another permission's settled answer alone", async () => {
+      // The slot is selected by name, so revoking one permission must not make
+      // every other one ask again.
+      const { client, host, dispose } = await createMockClient();
+      try {
+        await client.permissions.requestDevicePermission("Camera");
+        await client.permissions.requestDevicePermission("Microphone");
+        expect(host.getPermissionLog()).toHaveLength(2);
+
+        host.revokePermission("Camera");
+        await client.permissions.requestDevicePermission("Microphone");
+
+        expect(host.getPermissionLog()).toHaveLength(2);
+      } finally {
+        dispose();
+      }
+    });
+  });
+});
+
+describe("withholding one resource while the rest stay granted", () => {
+  it("carries the refused resources to the page", async () => {
+    // The whole point of the option: with allocation granted, a product's
+    // refusal path is unreachable, so a suite proving the product survives one
+    // has to be able to name the resource it wants refused.
+    const url = new URL(
+      await hostPageUrlFor({
+        behaviors: { resourceAllocation: { AutoSigning: false } },
+      }),
+    );
+    expect(url.searchParams.get("withheld")).toBe("AutoSigning");
+  });
+
+  it("carries only the refused ones", async () => {
+    const url = new URL(
+      await hostPageUrlFor({
+        behaviors: {
+          resourceAllocation: {
+            AutoSigning: false,
+            StatementStoreAllowance: true,
+            BulletinAllowance: false,
+          },
+        },
+      }),
+    );
+    // `true` is what an unlisted resource already is, so sending it would name
+    // something the host does not act on.
+    expect(url.searchParams.get("withheld")).toBe(
+      "AutoSigning,BulletinAllowance",
+    );
+  });
+
+  it("sets nothing when every resource is allowed", async () => {
+    const url = new URL(
+      await hostPageUrlFor({
+        behaviors: { resourceAllocation: { AutoSigning: true } },
+      }),
+    );
+    expect(url.searchParams.has("withheld")).toBe(false);
+  });
+
+  it("sets nothing when the option is absent", async () => {
+    const url = new URL(await hostPageUrlFor({}));
+    expect(url.searchParams.has("withheld")).toBe(false);
   });
 });

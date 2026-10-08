@@ -204,6 +204,26 @@ class ManifestParserTest {
         publishesNoCards(worker("""{}"""))
     }
 
+    /**
+     * A title is drawn, not matched, so it carries the core's display rules, the ones iOS applies too:
+     * a title that could reorder the text around it is refused, while the variation selector an emoji
+     * needs is kept. Screening it as an id would cost a product every card it publishes.
+     */
+    @Test
+    fun `a card title is screened by the core's display rules`() {
+        fun worker(title: String) =
+            """{"${'$'}v":1,"kind":"worker","appVersion":[1,0,0],"entrypoint":"i.js","includes":{"chat":false,"pocket":true},
+               "pocket":{"cards":[{"id":"coffee","title":"$title","preview":"a.json"}]}}"""
+
+        publishesNoCards(worker("Coffee\\u202e"))
+        // NEXT LINE is not blank to Kotlin, but the core trims it away and would leave the card untitled.
+        publishesNoCards(worker("\\u0085"))
+
+        val worker = parser.parseExecutable(worker(" \\u2615\\ufe0f Coffee "), ExecutableKind.WORKER, host("worker.coinflip.dot"))
+            .getOrNull() as? ProductExecutable.Worker
+        assertEquals("☕️ Coffee", worker?.pocketCards?.single()?.title)
+    }
+
     @Test
     fun `executables that do not conform are rejected`() {
         // Incomplete includes: RFC-0001 types it as Record<'chat' | 'pocket', boolean>.

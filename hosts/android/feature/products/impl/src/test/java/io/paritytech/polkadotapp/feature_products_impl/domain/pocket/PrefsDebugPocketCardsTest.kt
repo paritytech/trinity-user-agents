@@ -65,6 +65,22 @@ class PrefsDebugPocketCardsTest {
         assertEquals("loyalty", cards().get(productId)?.title)
     }
 
+    // The core trims every Unicode space, NEXT LINE included, which Kotlin does not count as blank.
+    // Judged before screening, this title would reach the card as an empty one.
+    @Test
+    fun `a title the core trims to nothing also falls back to the card id`() {
+        stored(cardId = "loyalty", title = "\u0085")
+
+        assertEquals("loyalty", cards().get(productId)?.title)
+    }
+
+    @Test
+    fun `a title the core would refuse to draw reads as no card at all`() {
+        stored(cardId = "loyalty", title = "Loyalty\u202E")
+
+        assertNull(cards().get(productId))
+    }
+
     /** A release build has no debug menu, so it must not carry whatever a debug build left behind. */
     @Test
     fun `nothing is read on a release build`() {

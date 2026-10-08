@@ -61,6 +61,7 @@ import uniffi.truapi.ChatBotRegistrationStatus
 import uniffi.truapi.NativeChatCallbacks
 import uniffi.truapi.NativeCoreDatabaseException
 import uniffi.truapi.ChatRoomRegistrationStatus
+import uniffi.truapi.NativeGameCallbacks
 import uniffi.truapi.NativePocketCallbacks
 import uniffi.truapi.NativePocketRemoval
 import uniffi.truapi.NativeRendererObserver
@@ -414,6 +415,35 @@ interface PocketHostBridge {
 }
 
 /**
+ * Native game-reminder surface. Implement and pass to
+ * [TrUAPIHostRuntime.openProductExecution] when the host can hold reminders;
+ * hosts without one pass nothing.
+ *
+ * The host holds one reminder per product: a schedule replaces the reminder
+ * the same product already holds. The core asks for no per-product consent;
+ * the host asks the OS for what it needs, rings an alarm where the OS allows
+ * one and delivers a notification otherwise, may add the game to the
+ * calendar, keeps the reminder across app kill and reboot, and drops it once
+ * the game starts.
+ *
+ * Threading: both calls suspend, so an implementation may switch to its own
+ * dispatcher to answer; implementations must be safe to enter concurrently.
+ */
+interface GameHostBridge {
+    /**
+     * Hold [startsAt] (Unix milliseconds, UTC) as this product's reminder, replacing any it holds.
+     * Any exception, including an OS that allows neither alarms nor notifications, reaches the
+     * product as a host failure carrying its reason.
+     */
+    @Throws(HostRejection::class)
+    suspend fun scheduleReminder(startsAt: ULong)
+
+    /** Drop this product's reminder. Dropping none succeeds. */
+    @Throws(HostRejection::class)
+    suspend fun cancelReminder()
+}
+
+/**
  * Adapter from the public [HostBridge] surface to the generated UniFFI
  * [HostCallbacks] interface. Keeps the public API stable even if uniffi-bindgen
  * renames generated symbols.
@@ -655,6 +685,16 @@ private class PocketCallbackAdapter(private val bridge: PocketHostBridge) : Nati
 }
 
 /**
+ * Adapter from the public [GameHostBridge] surface to the generated UniFFI
+ * [NativeGameCallbacks] interface.
+ */
+private class GameCallbackAdapter(private val bridge: GameHostBridge) : NativeGameCallbacks {
+    override suspend fun scheduleReminder(startsAt: ULong) = withHostRejection { bridge.scheduleReminder(startsAt) }
+
+    override suspend fun cancelReminder() = withHostRejection { bridge.cancelReminder() }
+}
+
+/**
  * Bootstrap helper for the native localhost WebSocket bridge that a product
  * execution starts.
  */
@@ -710,7 +750,8 @@ class TrUAPIHostRuntime @Throws(NativeRuntimeConfigException::class) constructor
      * Open one executable connection with a host-assigned immutable context.
      * Pass [chat] to install the host's Chat adapter; hosts without the Chat
      * modality omit it. Pass [pocket] to install the card collection, and omit
-     * that where the host has no Pocket surface.
+     * that where the host has no Pocket surface. Pass [game] to hold game
+     * reminders, and omit it where the host cannot.
      */
     @Throws(NativeRuntimeConfigException::class)
     fun openProductExecution(
@@ -718,18 +759,21 @@ class TrUAPIHostRuntime @Throws(NativeRuntimeConfigException::class) constructor
         configuration: ProductExecutionConfig,
         chat: ChatHostBridge? = null,
         pocket: PocketHostBridge? = null,
+        game: GameHostBridge? = null,
     ): TrUAPIProductExecution {
         val adapter = HostCallbackAdapter(bridge)
         val chatAdapter = chat?.let { ChatCallbackAdapter(it) }
         val pocketAdapter = pocket?.let { PocketCallbackAdapter(it) }
+        val gameAdapter = game?.let { GameCallbackAdapter(it) }
         val execution =
             inner.openProductExecution(
                 adapter,
                 chatAdapter,
                 pocketAdapter,
+                gameAdapter,
                 configuration,
             )
-        return TrUAPIProductExecution(execution, adapter, chatAdapter, pocketAdapter)
+        return TrUAPIProductExecution(execution, adapter, chatAdapter, pocketAdapter, gameAdapter)
     }
 
     /**
@@ -933,6 +977,7 @@ class TrUAPIProductExecution internal constructor(
     private val callbackRetainer: HostCallbacks,
     private val chatRetainer: NativeChatCallbacks?,
     private val pocketRetainer: NativePocketCallbacks?,
+    private val gameRetainer: NativeGameCallbacks?,
 ) : AutoCloseable {
     private val shutDown = AtomicBoolean(false)
 

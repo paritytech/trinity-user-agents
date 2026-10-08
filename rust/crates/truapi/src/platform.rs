@@ -271,6 +271,12 @@ impl ProductContext {
             execution_kind,
         })
     }
+
+    /// Whether this is the game product, Jollity, on any dotNS network. A
+    /// subname such as `app.dim2.dot` is a different product.
+    pub fn is_game_product(&self) -> bool {
+        dotns_product_label(&self.product_id) == Some(GAME_PRODUCT_LABEL)
+    }
 }
 
 /// Decoding routes through [`ProductContext::new_with_execution`] so a frame
@@ -311,7 +317,10 @@ pub fn has_dotns_tld(normalized: &str) -> bool {
 /// Blessed product labels across every network in [`DOTNS_TLDS`].
 ///
 /// These products bypass recorded permissions and prompt only for device access.
-pub const REMOTE_PERMISSION_TRUSTED_LABELS: &[&str] = &["peopl", "dim2", "stash"];
+pub const REMOTE_PERMISSION_TRUSTED_LABELS: &[&str] = &["peopl", GAME_PRODUCT_LABEL, "stash"];
+
+/// The bare label of the game product, Jollity, on every network.
+const GAME_PRODUCT_LABEL: &str = "dim2";
 
 /// Hosts available to every product unless a stored permission decision blocks them.
 pub const BLESSED_REMOTE_DOMAINS: &[&str] = &["fonts.googleapis.com", "fonts.gstatic.com"];
@@ -324,10 +333,20 @@ pub const BLESSED_REMOTE_DOMAINS: &[&str] = &["fonts.googleapis.com", "fonts.gst
 /// not. The label is only read out of an id that [`has_dotns_tld`] accepts, so a
 /// widened product-id policy cannot promote an arbitrary single-label host.
 pub fn has_trusted_remote_permissions(product_id: &str) -> bool {
-    has_dotns_tld(product_id)
-        && product_id
-            .rsplit_once('.')
-            .is_some_and(|(label, _tld)| REMOTE_PERMISSION_TRUSTED_LABELS.contains(&label))
+    dotns_product_label(product_id)
+        .is_some_and(|label| REMOTE_PERMISSION_TRUSTED_LABELS.contains(&label))
+}
+
+/// Everything before the TLD of a dotNS `product_id`: `dim2` for `dim2.dot`,
+/// `app.dim2` for `app.dim2.dot`. `None` when the id does not end in one of
+/// [`DOTNS_TLDS`], so a `localhost` id never yields a label.
+///
+/// Expects the [`normalize_product_identifier`] form.
+fn dotns_product_label(product_id: &str) -> Option<&str> {
+    if !has_dotns_tld(product_id) {
+        return None;
+    }
+    product_id.rsplit_once('.').map(|(label, _tld)| label)
 }
 
 /// Whether `product_id` in any accepted spelling holds every
@@ -3273,6 +3292,33 @@ pub trait PocketPlatform: Send + Sync {
     ) -> Result<(), HostPocketRemoveCardError>;
 }
 
+/// Host-implemented adapter that holds a product's next-game reminder.
+/// Optional: a host that omits it leaves Game requests answered `Unsupported`.
+/// See [`OptionalPlatform`].
+///
+/// The core serves only the game product and refuses a start that is not in
+/// the future before it calls here; it asks for no per-product consent. The
+/// host asks the OS for what the reminder needs, rings an alarm where the OS
+/// allows one and delivers an ordinary notification otherwise, and may add the
+/// game to the user's calendar. A host keeps one reminder per product: a
+/// schedule replaces the reminder the same product already holds and leaves
+/// other products' reminders alone. The host keeps each reminder across app
+/// kill and device reboot and drops it once its game has started.
+#[async_trait]
+pub trait GamePlatform: Send + Sync {
+    /// Hold `starts_at` (Unix milliseconds, UTC) as the product's reminder,
+    /// replacing any it holds. An error, including an OS that allows neither
+    /// alarms nor notifications, reaches the product as a host failure.
+    async fn schedule_game_reminder(
+        &self,
+        product: &ProductContext,
+        starts_at: u64,
+    ) -> Result<(), GenericError>;
+
+    /// Drop the product's reminder. Idempotent: dropping none succeeds.
+    async fn cancel_game_reminder(&self, product: &ProductContext) -> Result<(), GenericError>;
+}
+
 /// What the operating system currently says about a device capability.
 ///
 /// Distinct from [`PermissionAuthorizationStatus`], which is the product-scoped
@@ -3488,11 +3534,11 @@ impl<T> Platform for T where
 /// with `Unsupported`. Codegen reads this list to emit each capability as an
 /// optional group on the host-callback surface.
 pub trait OptionalPlatform:
-    ChatPlatform + ContactsPlatform + PermissionStatusHost + PocketPlatform
+    ChatPlatform + ContactsPlatform + PermissionStatusHost + PocketPlatform + GamePlatform
 {
 }
 
 impl<T> OptionalPlatform for T where
-    T: ChatPlatform + ContactsPlatform + PermissionStatusHost + PocketPlatform
+    T: ChatPlatform + ContactsPlatform + PermissionStatusHost + PocketPlatform + GamePlatform
 {
 }
