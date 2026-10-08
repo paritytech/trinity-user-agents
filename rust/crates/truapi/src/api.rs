@@ -18,6 +18,7 @@ pub mod pocket;
 pub mod preimage;
 pub mod renderer;
 pub mod resource_allocation;
+pub mod scanner;
 pub mod signing;
 pub mod statement_store;
 pub mod system;
@@ -42,6 +43,7 @@ pub use pocket::Pocket;
 pub use preimage::Preimage;
 pub use renderer::Renderer;
 pub use resource_allocation::ResourceAllocation;
+pub use scanner::Scanner;
 pub use signing::Signing;
 pub use statement_store::StatementStore;
 pub use system::System;
@@ -68,6 +70,7 @@ pub trait TrUApi:
     + Preimage
     + Renderer
     + ResourceAllocation
+    + Scanner
     + Signing
     + StatementStore
     + System
@@ -97,6 +100,7 @@ impl<T> TrUApi for T where
         + Preimage
         + Renderer
         + ResourceAllocation
+        + Scanner
         + Signing
         + StatementStore
         + System

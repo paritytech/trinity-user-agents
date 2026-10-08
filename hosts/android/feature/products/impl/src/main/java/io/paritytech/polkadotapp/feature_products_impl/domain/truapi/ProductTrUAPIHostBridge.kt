@@ -201,8 +201,10 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
             product: ProductExecutionConfig,
             request: RemotePermission,
         ): TrUAPIPermissionDecision =
-            hostApiInteractor
-                .requestRemotePermissionDecision(callingProductId, request.toDomain())
+            when (val domain = request.toDomain()) {
+                null -> hostApiInteractor.requestBalanceAccessDecision(callingProductId)
+                else -> hostApiInteractor.requestRemotePermissionDecision(callingProductId, domain)
+            }
                 .getOrElse { throw it }
                 .toNative()
 
@@ -375,12 +377,14 @@ private fun HostDevicePermissionRequest.toCapability(): DeviceCapabilityType = w
     HostDevicePermissionRequest.BIOMETRICS -> DeviceCapabilityType.Biometrics
 }
 
-private fun RemotePermission.toDomain(): RemotePermissionRequest = when (this) {
+/** `null` for balance access, which this host asks about as a product permission. */
+private fun RemotePermission.toDomain(): RemotePermissionRequest? = when (this) {
     is RemotePermission.Remote -> RemotePermissionRequest.Remote(domains)
     RemotePermission.WebRtc -> RemotePermissionRequest.WebRtc
     RemotePermission.ChainSubmit -> RemotePermissionRequest.ChainSubmit
     RemotePermission.PreimageSubmit -> RemotePermissionRequest.PreimageSubmit
     RemotePermission.StatementSubmit -> RemotePermissionRequest.StatementSubmit
+    RemotePermission.BalanceAccess -> null
 }
 
 private fun PermissionDecision.toNative(): TrUAPIPermissionDecision = when (this) {

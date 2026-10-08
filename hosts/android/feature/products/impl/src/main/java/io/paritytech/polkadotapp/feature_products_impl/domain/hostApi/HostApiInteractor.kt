@@ -315,6 +315,10 @@ class HostApiInteractor @Inject constructor(
         permissionRequester.promptBatched(callingProductId, request.toDomainPermissions())
     }
 
+    suspend fun requestBalanceAccessDecision(callingProductId: ProductId): Result<PermissionDecision> = runCatching {
+        permissionRequester.prompt(callingProductId, ProductPermission.BalanceAccess)
+    }
+
     suspend fun allowWebRtcAccess(callingProductId: ProductId): Result<Boolean> {
         val permission = ProductPermission.RemotePermission.WebRtcAccess
         return Result.success(permissionGuard.consumePermission(callingProductId, permission))

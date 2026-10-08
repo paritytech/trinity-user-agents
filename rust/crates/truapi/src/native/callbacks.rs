@@ -435,9 +435,9 @@ pub trait NativeTopUpCallbacks: Send + Sync {
 #[async_trait::async_trait]
 pub trait NativeBalanceCallbacks: Send + Sync {
     /// The current balance of `purse` (`None` for the main purse) for
-    /// `product_id`, as a decimal string of CASH units, or `PermissionDenied`
-    /// when the user does not share it with that product. The host may ask
-    /// the user first.
+    /// `product_id`, as a decimal string of CASH units: what a payment
+    /// request can spend right now. The core has already checked the
+    /// product's balance access.
     async fn balance(
         &self,
         product_id: String,

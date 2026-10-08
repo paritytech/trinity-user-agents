@@ -39,7 +39,7 @@ Rather than exposing these implementation details to products, this RFC defines 
 
 #### 1. Balance Subscription
 
-Subscribe to the user's payment balance. The host must explicitly ask the user whether they want to grant the product access to their balance before emitting data.
+Subscribe to the user's payment balance. The user must grant the product balance access before any value is emitted; the grant is a remote permission (`BalanceAccess`), asked for on the first subscription and kept like the others.
 
 ```rust
 fn host_payment_balance_subscribe(
@@ -47,7 +47,8 @@ fn host_payment_balance_subscribe(
 ) -> Result<Subscriber, PaymentBalanceErr>
 
 struct PaymentBalance {
-    /// Balance that can be spent right now
+    /// What a payment request can spend right now: the same figure the host
+    /// checks a payment against
     available: Balance
 }
 
@@ -135,7 +136,9 @@ enum PaymentRequestErr {
     AlreadyExists,
     /// User denied the payment request
     Rejected,
-    /// User's available balance is not sufficient for the requested amount
+    /// User's available balance is not sufficient for the requested amount.
+    /// Only a product holding balance access receives it; to any other a
+    /// short balance reads as `Rejected`
     InsufficientBalance,
     Unknown(GenericErr)
 }
