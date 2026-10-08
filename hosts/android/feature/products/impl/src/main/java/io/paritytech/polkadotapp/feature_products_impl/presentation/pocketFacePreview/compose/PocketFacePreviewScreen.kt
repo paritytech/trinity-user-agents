@@ -93,14 +93,16 @@ private fun PocketFacePreviewScreenInternal(
 
                 // The same frame the approval sheet gives a card, so what is drawn here is the size
                 // and shape the user will actually see.
-                PolkadotSurface(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(PocketCardSize.HEIGHT),
-                    shape = PolkadotTheme.shapes.large,
-                    color = PolkadotTheme.colors.bg.surface.container,
-                ) {
-                    FaceOrExplanation(face = state.face)
+                PocketCardTheme {
+                    PolkadotSurface(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(PocketCardSize.HEIGHT),
+                        shape = PolkadotTheme.shapes.large,
+                        color = PolkadotTheme.colors.bg.surface.container,
+                    ) {
+                        FaceOrExplanation(face = state.face)
+                    }
                 }
             }
         }
@@ -124,13 +126,11 @@ private fun FaceOrExplanation(face: LoadingState<JsWidget>?) {
                 face.exception.message ?: face.exception.javaClass.simpleName
             )
 
-            is LoadingState.Loaded -> PocketCardTheme {
-                JsWidgetRenderer(
-                    widget = face.data,
-                    modifier = Modifier.fillMaxSize(),
-                    jsEventHandler = { _, _ -> },
-                )
-            }
+            is LoadingState.Loaded -> JsWidgetRenderer(
+                widget = face.data,
+                modifier = Modifier.fillMaxSize(),
+                jsEventHandler = { _, _ -> },
+            )
         }
     }
 }
