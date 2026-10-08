@@ -43,7 +43,8 @@ extension ServiceCoordinator {
             productFileProvider: productFileProvider,
             runtimeProvider: truapiRuntimeProvider,
             workers: { pocket?.workers },
-            workerManager: workerFacade.manager
+            workerManager: workerFacade.manager,
+            iconLoader: ProductIconLoader(productResolver: spaFlowState.productResolver)
         )
 
         let productBotProvider = ProductBotProvider(

@@ -1,4 +1,5 @@
 import Foundation
+import os
 import Products
 import SubstrateSdk
 import UIKitExt
@@ -15,10 +16,13 @@ import UIKitExt
 final class ProductBot: ChatExtensionBot {
     let product: Product
     private let productDescription: String?
+    private let iconLoader: ProductIconLoading
     private let runtime: ChatRuntimeProtocol
     private let logger: LoggerProtocol
+    private let icon = OSAllocatedUnfairLock<Data?>(initialState: nil)
 
     private var initTask: Task<Void, Never>?
+    private var iconTask: Task<Void, Never>?
 
     lazy var messageDecoder = ProductMessageDecoder(
         runtime: runtime,
@@ -30,17 +34,20 @@ final class ProductBot: ChatExtensionBot {
     init(
         product: Product,
         productDescription: String?,
+        iconLoader: ProductIconLoading,
         runtime: ChatRuntimeProtocol,
         logger: LoggerProtocol = Logger.shared
     ) {
         self.product = product
         self.productDescription = productDescription
+        self.iconLoader = iconLoader
         self.runtime = runtime
         self.logger = logger
     }
 
     deinit {
         initTask?.cancel()
+        iconTask?.cancel()
         // Enforce the runtime ownership contract even when the bot is dropped
         // without an explicit dispose() (e.g. the store discards it).
         Task { [runtime] in await runtime.dispose() }
@@ -70,6 +77,8 @@ final class ProductBot: ChatExtensionBot {
     func dispose() async {
         initTask?.cancel()
         initTask = nil
+        iconTask?.cancel()
+        iconTask = nil
         await runtime.dispose()
         logger.debug("Disposed product bot: \(product.name)")
     }
@@ -90,13 +99,20 @@ extension ProductBot: ChatExtensionBotProtocol {
         Chat.PeerMetadata(
             name: product.name,
             contactSource: .chat,
-            icon: .product(domain: product.id),
+            icon: .image(icon.withLock { $0 }),
             input: .inputField(.init(canPay: false, canAttachFile: false)),
             moreActions: []
         )
     }
 
+    /// Fetches the icon the product's manifest declares, which ``peerMetadata`` then draws.
+    func loadIcon() async {
+        let data = await iconLoader.loadIcon(for: product.id)
+        icon.withLock { $0 = data }
+    }
+
     func deliverAutomaticMessages(_ context: ChatExtensionDiscoverContextProtocol) {
+        iconTask = Task { [weak self] in await self?.loadIcon() }
         initTask = Task { [weak self] in
             guard let self else { return }
 

@@ -13,6 +13,7 @@ import Products
 final class ProductBotFactory {
     private let productFileProvider: ChatProductFileProviding
     private let settingsManager: SettingsManagerProtocol
+    private let iconLoader: ProductIconLoading
     private let runtimeProvider: TrUAPIHostRuntimeProviding
     private let workers: @Sendable () -> (any TrUAPIWorkerManaging)?
     private let workerManager: ProductWorkerManaging
@@ -23,11 +24,13 @@ final class ProductBotFactory {
         runtimeProvider: TrUAPIHostRuntimeProviding,
         workers: @Sendable @escaping () -> (any TrUAPIWorkerManaging)?,
         workerManager: ProductWorkerManaging,
+        iconLoader: ProductIconLoading,
         settingsManager: SettingsManagerProtocol = SettingsManager.shared,
         logger: LoggerProtocol = Logger.shared
     ) {
         self.productFileProvider = productFileProvider
         self.settingsManager = settingsManager
+        self.iconLoader = iconLoader
         self.runtimeProvider = runtimeProvider
         self.workers = workers
         self.workerManager = workerManager
@@ -49,6 +52,7 @@ final class ProductBotFactory {
             return ProductBot(
                 product: product,
                 productDescription: productDescription,
+                iconLoader: iconLoader,
                 runtime: runtime,
                 logger: logger
             )
@@ -58,6 +62,7 @@ final class ProductBotFactory {
         return ProductBot(
             product: product,
             productDescription: productDescription,
+            iconLoader: iconLoader,
             runtime: runtime,
             logger: logger
         )
