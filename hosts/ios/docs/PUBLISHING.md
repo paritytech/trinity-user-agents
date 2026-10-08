@@ -164,8 +164,6 @@ Optional — an absent key disables or degrades the feature it drives:
 | Parameter | Type | Used for |
 |-----------|------|----------|
 | `latest_ios_version` | string | Latest published app version; logged only. |
-| `funding_config` | JSON object | `{"onrampUrl": "getcash.dot", "offrampUrl": "https://getcash.dot/offramp"}` — the dApp destinations the CASH card opens for top up and withdraw, each a dot-domain or a full URL. Without them the CASH card entry points report unavailable. |
-| `funding_domain` | string | Legacy DotNS label of the funding dApp; read only when `funding_config.onrampUrl` is absent. |
 | `cross_chain_transfers`, `xcm_general_config` | JSON | XCM transfer routes for the deposit flow (`XcmTransfersSyncService`). Deposits via XCM stay unavailable without them. |
 | `transaction_extension_versions` | JSON object | `{"<chainId>": <uint8>}` — transaction-extension version per chain; defaults to `0`. |
 | `collectibles_enabled` | bool | Shows the collectibles entry on the wallet screen. |

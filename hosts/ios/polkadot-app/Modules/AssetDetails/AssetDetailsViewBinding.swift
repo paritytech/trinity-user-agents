@@ -3,6 +3,7 @@ import PolkadotUI
 import SwiftUI
 import UIKit
 import UIKitExt
+import TrUAPIHost
 
 final class AssetDetailsViewBinding: AssetDetailsViewProtocol {
     let viewModel: AssetDetailsViewModel
@@ -154,10 +155,10 @@ final class AssetDetailsViewBinding: AssetDetailsViewProtocol {
         }
     }
 
-    func didReceive(rampLoading action: RampAction, isLoading: Bool) {
-        switch action {
-        case .topUp: viewModel.isTopUpInProgress = isLoading
-        case .withdraw: viewModel.isWithdrawInProgress = isLoading
+    func didReceive(fundingLoading direction: FundingDirection, isLoading: Bool) {
+        switch direction {
+        case .in: viewModel.isTopUpInProgress = isLoading
+        case .out: viewModel.isWithdrawInProgress = isLoading
         }
     }
 

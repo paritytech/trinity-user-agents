@@ -8,18 +8,8 @@ import Products
 final class AssetDetailsWireframe: AssetDetailsWireframeProtocol {
     let context: WalletFlowContextProtocol
 
-    private let moduleNavigator: ModuleNavigating
-
-    init(
-        context: WalletFlowContextProtocol,
-        moduleNavigator: ModuleNavigating = ModuleNavigator()
-    ) {
+    init(context: WalletFlowContextProtocol) {
         self.context = context
-        self.moduleNavigator = moduleNavigator
-    }
-
-    func showProduct(page: ProductPage) {
-        moduleNavigator.openProduct(page: page)
     }
 
     func showTransfer(from view: ControllerBackedProtocol?, chainAsset: ChainAsset) {

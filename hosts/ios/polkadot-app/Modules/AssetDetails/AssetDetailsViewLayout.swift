@@ -53,6 +53,7 @@ struct AssetDetailsView: View {
             } else {
                 actions()
             }
+            FundingActivityView(cash: .current)
             if let breakdown = viewModel.coinageBreakdown,
                viewModel.balanceCardModel != nil {
                 CoinageBalanceBreakdownView(breakdown: breakdown)
