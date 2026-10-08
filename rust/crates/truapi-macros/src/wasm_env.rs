@@ -177,6 +177,7 @@ fn expand_host(item_trait: &ItemTrait, trait_prefix: &str, bindings: &[Binding])
     });
     quote! {
         #[cfg(feature = "wasm-worker")]
+        #[allow(deprecated)]
         impl<H: #trait_ident + 'static> crate::wasm_worker::WasmEnv<H> {
             #[doc = #doc]
             pub fn #link(&mut self) {
@@ -197,7 +198,11 @@ fn expand_guest(item_trait: &ItemTrait, bindings: &[Binding]) -> TokenStream2 {
         }
     });
     let wrappers = bindings.iter().map(|binding| {
-        let docs = binding.method.attrs.iter().filter(|attr| attr.path().is_ident("doc"));
+        let docs = binding
+            .method
+            .attrs
+            .iter()
+            .filter(|attr| attr.path().is_ident("doc") || attr.path().is_ident("deprecated"));
         let method = &binding.method.sig.ident;
         let request = binding.request;
         let response = binding.response;

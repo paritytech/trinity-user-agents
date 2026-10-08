@@ -601,6 +601,9 @@ runtime_items! {
     #[cfg(not(target_arch = "wasm32"))]
     pub mod native;
 
+    #[cfg(all(feature = "wasm-worker", not(target_arch = "wasm32")))]
+    mod wasm_worker;
+
     #[cfg(target_arch = "wasm32")]
     pub mod wasm;
 
@@ -611,6 +614,8 @@ runtime_items! {
     pub mod store;
 
     pub use truapi_core::TrUApiCore;
+    #[cfg(all(feature = "wasm-worker", not(target_arch = "wasm32")))]
+    pub use wasm_worker::{WasmEnv, WasmWorker, WasmWorkerError};
     pub use host_core::{
         ChannelId, DebugEvent, DebugSink, FrameDirection, FrameSink, HostAdmin, PairingHostRuntime,
         ProductRuntime, ProductRuntimeControl, ProductRuntimeError, SigningHostRuntime,
