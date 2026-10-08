@@ -48,7 +48,7 @@ struct RustRuntimeEnvironment {
         kind: ProductExecutionKind,
         cardFace: (any ExpandedCardFaceShowing)?
     ) throws -> ExecutionModel {
-        try makeExecution(productId: productId, routers: routers, kind: kind, cardFace: cardFace)
+        try makeExecution(productId: productId, routers: routers, purpose: .page(kind, cardFace: cardFace))
     }
 
     /// Open `productId`'s one Worker execution. The core keeps a single Worker
@@ -65,21 +65,24 @@ struct RustRuntimeEnvironment {
         try makeExecution(
             productId: productId,
             routers: routers,
-            kind: .worker,
-            chatMessaging: chatMessaging,
-            pocket: pocket
+            purpose: .worker(chatMessaging: chatMessaging, pocket: pocket)
         )
     }
+}
+
+/// What one execution serves, which decides the bridge the core calls back on.
+private enum ExecutionPurpose {
+    /// A product's page, under the face of the Pocket card it was opened from, if any.
+    case page(ProductExecutionKind, cardFace: (any ExpandedCardFaceShowing)?)
+    /// The product's one worker, serving its chat bot and its Pocket cards.
+    case worker(chatMessaging: any ProductChatMessaging, pocket: any PocketHostBridge)
 }
 
 private extension RustRuntimeEnvironment {
     func makeExecution(
         productId: ProductId,
         routers: ProductRoutersFacadeProtocol,
-        kind: ProductExecutionKind,
-        cardFace: (any ExpandedCardFaceShowing)? = nil,
-        chatMessaging: (any ProductChatMessaging)? = nil,
-        pocket: (any PocketHostBridge)? = nil
+        purpose: ExecutionPurpose
     ) throws -> ExecutionModel {
         let chainConnections = TrUAPIChainConnectionPool(
             engineResolver: { [chainRegistry] genesisHash in
@@ -98,16 +101,13 @@ private extension RustRuntimeEnvironment {
             osPermissionAsker: osPermissionAsker
         )
 
-        let chatBridge = chatMessaging.map {
-            RustChatExecutionBridge(dependencies: dependencies, chatMessaging: $0)
-        }
-        let bridge = chatBridge ?? RustProductExecutionBridge(dependencies: dependencies, cardFace: cardFace)
+        let bridge = purpose.makeBridge(dependencies: dependencies)
 
         let execution = try runtime.openProductExecution(
             bridge: bridge,
-            configuration: ProductExecutionConfig(productId: productId, executionKind: kind),
-            chat: chatBridge,
-            pocket: pocket,
+            configuration: ProductExecutionConfig(productId: productId, executionKind: purpose.executionKind),
+            chat: bridge as? ChatHostBridge,
+            pocket: purpose.pocket,
             game: gameReminders == nil ? nil : bridge
         )
 
@@ -154,5 +154,29 @@ private extension RustRuntimeEnvironment {
             hostProvider: hostProvider,
             logger: logger
         )
+    }
+}
+
+private extension ExecutionPurpose {
+    var executionKind: ProductExecutionKind {
+        switch self {
+        case let .page(kind, _): kind
+        case .worker: .worker
+        }
+    }
+
+    var pocket: (any PocketHostBridge)? {
+        guard case let .worker(_, pocket) = self else { return nil }
+
+        return pocket
+    }
+
+    func makeBridge(dependencies: RustProductExecutionBridge.Dependencies) -> RustProductExecutionBridge {
+        switch self {
+        case let .page(_, cardFace):
+            RustProductExecutionBridge(dependencies: dependencies, cardFace: cardFace)
+        case let .worker(chatMessaging, _):
+            RustChatExecutionBridge(dependencies: dependencies, chatMessaging: chatMessaging)
+        }
     }
 }
