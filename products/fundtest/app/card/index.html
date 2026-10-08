@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Fundtest card</title>
+  </head>
+  <body>
+    <main>
+      <h1>Pay by card</h1>
+      <p class="note">Test provider. No card is charged; the payment is simulated.</p>
+      <div class="amount" id="price">…</div>
+      <div id="amount-field" hidden>
+        <label for="amount">Amount of CASH</label>
+        <input id="amount" inputmode="decimal" placeholder="25.00" />
+      </div>
+      <label for="number">Card number</label>
+      <input id="number" inputmode="numeric" value="4242 4242 4242 4242" autocomplete="off" />
+      <div class="row">
+        <div>
+          <label for="expiry">Expiry</label>
+          <input id="expiry" value="12/30" autocomplete="off" />
+        </div>
+        <div>
+          <label for="cvc">CVC</label>
+          <input id="cvc" inputmode="numeric" value="123" autocomplete="off" />
+        </div>
+      </div>
+      <button id="pay" disabled>Pay</button>
+      <p id="status"></p>
+    </main>
+    <script type="module" src="../src/card.ts"></script>
+  </body>
+</html>

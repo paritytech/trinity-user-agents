@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Fundtest bank transfer</title>
+  </head>
+  <body>
+    <main>
+      <h1>Pay by bank transfer</h1>
+      <p class="note">Test provider. Do not send real money; the transfer is simulated.</p>
+      <div class="amount" id="price">…</div>
+      <div id="amount-field" hidden>
+        <label for="amount">Amount of CASH</label>
+        <input id="amount" inputmode="decimal" placeholder="25.00" />
+      </div>
+      <dl>
+        <dt>Beneficiary</dt>
+        <dd id="beneficiary">…</dd>
+        <dt>IBAN</dt>
+        <dd id="account">…</dd>
+        <dt>BIC</dt>
+        <dd id="bank-code">…</dd>
+        <dt>Reference</dt>
+        <dd id="reference">…</dd>
+      </dl>
+      <button id="sent" disabled>I've sent funds</button>
+      <p id="status"></p>
+    </main>
+    <script type="module" src="../src/bank.ts"></script>
+  </body>
+</html>

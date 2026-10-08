@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Fundtest payout</title>
+  </head>
+  <body>
+    <main>
+      <h1>Where should we pay you?</h1>
+      <p class="note">Test provider. The payout is simulated; nothing is sent to what you enter.</p>
+      <div class="amount" id="price">…</div>
+      <label for="destination" id="destination-label">Destination</label>
+      <input id="destination" autocomplete="off" />
+      <button id="confirm" disabled>Confirm</button>
+      <p id="status"></p>
+    </main>
+    <script type="module" src="../src/payout.ts"></script>
+  </body>
+</html>

@@ -129,6 +129,8 @@ android/truapi-provider/   truapi-provider-android: chain transport AAR (binding
 ios/truapi-host/           Swift host adapter package over the truapi UniFFI core
 ios/truapi-provider/       TrUAPIProvider Swift package: chain transport over UniFFI
 playground/                Interactive Next.js playground (truapi-playground dotNS label)
+products/fundtest/         Reference funding provider for Paseo Next v2 (fundtest dotNS label):
+                           simulated card and bank legs, the real Asset Hub to People route
 hosts/ios/                 iOS host app; resolves the core from this tree
 hosts/android/             Android host app
 hosts/dotli/               dotli host, vendored as a submodule
@@ -691,6 +693,7 @@ use a different state directory while debugging.
 Pushes to `main` build and deploy:
 
 - The playground to the dotNS label [`truapi-playground`](https://truapi-playground.paseo.li/), live as `truapi-playground.paseo`, via [`.github/workflows/deploy-playground.yml`](.github/workflows/deploy-playground.yml).
+- The reference funding provider in [`products/fundtest/`](products/fundtest/README.md) is not deployed by CI; its README has the manual steps.
 - The Rust API docs to [https://paritytech.github.io/trinity-user-agents](https://paritytech.github.io/trinity-user-agents) via [`.github/workflows/deploy-docs.yml`](.github/workflows/deploy-docs.yml).
 
 ## Release
