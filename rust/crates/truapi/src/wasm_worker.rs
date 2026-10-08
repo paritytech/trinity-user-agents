@@ -269,6 +269,7 @@ enum Command {
 
 struct GuestState {
     limits: StoreLimits,
+    log: Box<dyn Fn(&str) + Send + Sync>,
     next_handle: u32,
     commands: Vec<Command>,
     finished: Option<Result<(), String>>,
@@ -304,6 +305,7 @@ impl WasmWorker {
 
         let state = GuestState {
             limits: StoreLimitsBuilder::new().memory_size(MEMORY_LIMIT).build(),
+            log: Box::new(|line| tracing::info!(target: "truapi::wasm_worker", "{line}")),
             next_handle: 0,
             commands: Vec::new(),
             finished: None,
@@ -333,6 +335,12 @@ impl WasmWorker {
             exports,
             calls: HashMap::new(),
         })
+    }
+
+    /// Send the worker's log lines to `log` instead of `tracing`.
+    pub fn with_log(mut self, log: impl Fn(&str) + Send + Sync + 'static) -> Self {
+        self.store.data_mut().log = Box::new(log);
+        self
     }
 
     /// Run the entry point, answering its calls until it returns.
@@ -485,7 +493,7 @@ fn release(mut caller: Caller<'_, GuestState>, handle: u32) {
 
 fn log(caller: Caller<'_, GuestState>, pointer: u32, length: u32) -> Result<(), wasmi::Error> {
     let line = read_guest_text(&caller, pointer, length)?;
-    tracing::info!(target: "truapi::wasm_worker", "{line}");
+    (caller.data().log)(&line);
     Ok(())
 }
 
