@@ -33,8 +33,13 @@ A call goes through three steps, joined by the import name:
 1. **Building the env.** `#[wasm_env]` registers one `Method` per import name. A `Method` takes the request bytes and returns the events to send back: it decodes the versioned request, runs the typed call, and encodes the result in the caller's protocol version.
 
    ```rust
+   // A request: its `Method` yields one `Response` event.
    self.request("account_get_user_id", |host, cx, request| {
        Box::pin(async move { Account::get_user_id(&*host, &cx, request).await })
+   });
+   // A subscription: its `Method` yields one `Item` event per item, then one `End` event.
+   self.subscription("preimage_lookup_subscribe", |host, cx, request| {
+       Box::pin(async move { Preimage::lookup_subscribe(&*host, &cx, request).await })
    });
    ```
 
