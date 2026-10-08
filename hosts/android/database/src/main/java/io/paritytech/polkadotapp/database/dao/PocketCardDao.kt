@@ -19,8 +19,8 @@ interface PocketCardDao {
     @Query("DELETE FROM pocket_cards WHERE productId = :productId AND cardId = :cardId")
     suspend fun delete(productId: String, cardId: String): Int
 
-    @Query("SELECT faceJson FROM pocket_card_faces WHERE productId = :productId AND cardId = :cardId")
-    suspend fun getFace(productId: String, cardId: String): String?
+    @Query("SELECT face FROM pocket_card_faces WHERE productId = :productId AND cardId = :cardId")
+    suspend fun getFace(productId: String, cardId: String): ByteArray?
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertFace(face: PocketCardFaceLocal)

@@ -602,6 +602,7 @@ jobs:
           # built for. Inert in this job, which compiles a library module and
           # never applies the Google Services plugin.
           APPLICATION_ID: io.parity.polkadotapp
+          IOS_BUNDLE_ID: io.parity.polkadotapp
           APPLICATION_NAME: Polkadot
           CURRENCY_SYMBOL: DOT
           FIAT_SYMBOL: "$"
@@ -646,6 +647,7 @@ jobs:
         working-directory: hosts/android
         env:
           APPLICATION_ID: io.parity.polkadotapp
+          IOS_BUNDLE_ID: io.parity.polkadotapp
           APPLICATION_NAME: Polkadot
           CONTACT_EMAIL: ci@example.invalid
           CURRENCY_SYMBOL: DOT
