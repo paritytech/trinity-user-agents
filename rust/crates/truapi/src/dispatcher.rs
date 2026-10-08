@@ -1218,5 +1218,8 @@ mod tests {
         assert!(!app.allows_execution(crate::platform::ProductExecutionKind::Worker));
         assert!(!widget.allows_execution(crate::platform::ProductExecutionKind::Worker));
         assert!(worker.allows_execution(crate::platform::ProductExecutionKind::Worker));
+        assert!(widget.allows_execution(crate::platform::ProductExecutionKind::Widget));
+        assert!(!app.allows_execution(crate::platform::ProductExecutionKind::Widget));
+        assert!(!worker.allows_execution(crate::platform::ProductExecutionKind::Widget));
     }
 }
