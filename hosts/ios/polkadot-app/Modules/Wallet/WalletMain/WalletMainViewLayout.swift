@@ -38,11 +38,6 @@ struct WalletView: View {
                     }
                     .id(scrollTopAnchor)
                 }
-                .safeAreaInset(edge: .bottom) {
-                    if viewModel.expandedSection == .assetDetails {
-                        AssetDetailsFundingBar(viewModel: viewModel.assetDetailsViewModel)
-                    }
-                }
                 .modifier(OverscrollReader(overscroll: $overscroll))
                 .onChange(of: viewModel.expandedSection) { _, newValue in
                     guard newValue == .none else { return }

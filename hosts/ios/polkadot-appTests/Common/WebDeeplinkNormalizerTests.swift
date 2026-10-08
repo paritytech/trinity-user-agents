@@ -31,13 +31,13 @@ struct WebDeeplinkNormalizerTests {
 
     @Test("Keeps the rest of a nested action path")
     func keepsNestedActionPath() throws {
-        let url = try #require(URL(string: "https://dot.li/fiatOnramp/buySuccess?sessionId=1"))
+        let url = try #require(URL(string: "https://dot.li/action/nested?id=1"))
 
         let normalized = try #require(normalizer.appSchemeDeeplink(from: url))
 
-        #expect(normalized.host() == "fiatOnramp")
-        #expect(normalized.path() == "/buySuccess")
-        #expect(normalized.query() == "sessionId=1")
+        #expect(normalized.host() == "action")
+        #expect(normalized.path() == "/nested")
+        #expect(normalized.query() == "id=1")
     }
 
     @Test("Maps bare host on http scheme too")

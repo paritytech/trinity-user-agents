@@ -23,7 +23,6 @@ enum AssetDetailsViewFactory {
     ) -> AssetDetailsScene {
         let interactor = AssetDetailsInteractor(
             priceLocalSubscriptionFactory: PriceProviderFactory.shared,
-            fiatOnrampTrackingService: context.fiatOnrampTrackingService,
             chainAsset: chainAsset,
             coinageService: context.coinageService,
             coinageBackupSyncService: context.coinageBackupSyncService,

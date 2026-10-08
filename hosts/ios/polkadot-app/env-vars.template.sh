@@ -7,6 +7,3 @@
 
 # Sentry crash/issue reporting (TESTNET_FEATURE builds only)
 export SENTRY_DSN=""
-
-# MELD fiat on-ramp Basic auth token ("publicKey:secretKey", base64-encoded)
-export MELD_BASIC_AUTH_TOKEN=""
