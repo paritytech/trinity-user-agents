@@ -9,6 +9,7 @@ import TrUAPIHost
 // Scoped import: the TrUAPIHost module also declares a *type* named TrUAPIHost,
 // so `TrUAPIHost.ProductAccountId` cannot disambiguate from Products'.
 import struct TrUAPIHost.ProductAccountId
+import UIKit
 import UIKitExt
 @testable import polkadot_app
 
@@ -30,6 +31,13 @@ private func makeRegistryPool(chainRegistry: ChainRegistryProtocol) -> TrUAPICha
 private func makeTestDefaults() -> UserDefaults {
     UserDefaults(suiteName: "io.polkadotapp.tests.truapi-bridge") ?? .standard
 }
+
+private let cardFixture = PocketCardViewModel(
+    key: PocketCardKey(productId: "game.paseo", cardId: PocketCardId(value: "loyalty")),
+    title: "Loyalty",
+    privileged: false,
+    face: nil
+)
 
 // MARK: - Stubs
 
@@ -560,17 +568,31 @@ struct RustRuntimeBridgeTests {
     // MARK: setExpandedCardFaceShown
 
     /// Only a page under a card has a face to move; anywhere else the page is
-    /// told the app does not offer it. Called through `HostBridge` because the
-    /// core does: an override whose signature drifts would lose to the default.
+    /// told the app does not offer it.
     @Test func expandedCardFaceIsUnsupportedWithoutACard() async throws {
         let bridge: HostBridge = makeBridge()
 
         #expect(try await bridge.setExpandedCardFaceShown(shown: false) == .unsupported)
     }
 
+    /// The page's request reaches the card's screen. Called through
+    /// `HostBridge` because the core does: an override whose signature drifts
+    /// would lose to the default and answer `.unsupported`.
+    @Test func expandedCardFaceReachesTheCardsScreen() async throws {
+        let surface = PocketCardSurface()
+        let screen = PocketCardScreenViewController(card: cardFixture, product: StubSPAView(), surface: surface)
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 393, height: 800))
+        window.rootViewController = screen
+        window.isHidden = false
+        let bridge: HostBridge = makeBridge(cardSurface: surface)
+
+        #expect(try await bridge.setExpandedCardFaceShown(shown: false) == .applied)
+        window.isHidden = true
+    }
+
     /// A card that is closed keeps its page loaded, and that page must hear at
     /// once that there is no face to move.
-    @Test func expandedCardFaceAsksTheCardsSurface() async throws {
+    @Test func expandedCardFaceIsNotPresentedWithTheCardClosed() async throws {
         let bridge: HostBridge = makeBridge(cardSurface: PocketCardSurface())
 
         #expect(try await bridge.setExpandedCardFaceShown(shown: false) == .notPresented)

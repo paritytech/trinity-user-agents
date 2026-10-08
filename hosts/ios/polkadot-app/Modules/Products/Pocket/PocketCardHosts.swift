@@ -17,16 +17,16 @@ import UIKit
 @MainActor
 final class PocketCardHosts {
     /// A product and the surface its page reaches the card's screen through.
-    struct Held {
+    struct CardProduct {
         let key: PocketCardKey
         let view: SPAViewProtocol
         let surface: PocketCardSurface
     }
 
-    private var held: Held?
+    private var held: CardProduct?
 
     /// The product for `key`, built by `make` unless the one already held is it.
-    func product(for key: PocketCardKey, make: (PocketCardSurface) -> SPAViewProtocol?) -> Held? {
+    func product(for key: PocketCardKey, make: (PocketCardSurface) -> SPAViewProtocol?) -> CardProduct? {
         if let held, held.key == key { return held }
 
         release()
@@ -34,7 +34,7 @@ final class PocketCardHosts {
         let surface = PocketCardSurface()
         guard let view = make(surface) else { return nil }
 
-        let product = Held(key: key, view: view, surface: surface)
+        let product = CardProduct(key: key, view: view, surface: surface)
         held = product
         return product
     }
