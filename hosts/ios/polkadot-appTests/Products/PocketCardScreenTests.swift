@@ -57,7 +57,8 @@ struct PocketCardScreenTests {
     /// A page may ask for the face where it already is, and is told it is
     /// there; the page must stay fitted rather than be left reaching under
     /// the face for a move that never happens. Shown in a window, since only
-    /// there does the move animate.
+    /// there does an animated move to where the face already is end without
+    /// a callback to fit the page.
     @Test
     func keepsThePageFittedWhenAskedForTheFaceWhereItIs() throws {
         let product = StubSPAView()
@@ -66,7 +67,7 @@ struct PocketCardScreenTests {
         let scrollView = try #require(screen.scrollView)
 
         #expect(screen.setFaceShown(true, animated: true) == .applied)
-        waitForTheMoveToEnd(on: screen)
+        screen.view.layoutIfNeeded()
 
         #expect(product.controller.view.frame.height == scrollView.bounds.height - faceHeight)
         withExtendedLifetime(window) {}
@@ -165,6 +166,23 @@ struct PocketCardScreenTests {
         #expect(scrollView.contentOffset.y == faceHeight)
     }
 
+    /// A tap that stops a gliding face ends a drag with no glide after it and
+    /// no end-of-glide callback; the face is at rest, so the page may move it.
+    @Test
+    func honoursRequestsAfterATapStopsTheGlidingFace() throws {
+        let screen = laidOutScreen(product: StubSPAView())
+        let scrollView = try #require(screen.scrollView)
+        scrollView.delegate?.scrollViewWillBeginDragging?(scrollView)
+        scrollView.delegate?.scrollViewDidEndDragging?(scrollView, willDecelerate: true)
+        scrollView.delegate?.scrollViewWillBeginDragging?(scrollView)
+        scrollView.delegate?.scrollViewDidEndDragging?(scrollView, willDecelerate: false)
+
+        let outcome = screen.setFaceShown(false, animated: false)
+
+        #expect(outcome == .applied)
+        #expect(scrollView.contentOffset.y == faceHeight)
+    }
+
     /// The page is fitted only once the face rests, so while the face scrolls
     /// away the page must already reach the bottom of the screen, or a blank
     /// strip would open under it.
@@ -175,6 +193,23 @@ struct PocketCardScreenTests {
         let scrollView = try #require(screen.scrollView)
 
         scrollView.delegate?.scrollViewWillBeginDragging?(scrollView)
+        scrollView.contentOffset.y = 100
+        screen.view.layoutIfNeeded()
+
+        #expect(product.controller.view.frame.height == screenSize.height)
+    }
+
+    /// A drag can take over a move the page started; that move's end must not
+    /// fit the page while the user is still carrying the face.
+    @Test
+    func leavesThePageUnderTheWholeScreenWhenADragCutsAPageMoveShort() throws {
+        let product = StubSPAView()
+        let screen = laidOutScreen(product: product)
+        let scrollView = try #require(screen.scrollView)
+        scrollView.delegate?.scrollViewWillBeginDragging?(scrollView)
+        scrollView.contentOffset.y = 100
+
+        scrollView.delegate?.scrollViewDidEndScrollingAnimation?(scrollView)
         screen.view.layoutIfNeeded()
 
         #expect(product.controller.view.frame.height == screenSize.height)
@@ -212,16 +247,16 @@ struct PocketCardScreenTests {
 
         #expect(product.controller.view.frame.height == visibleHeight)
 
-        waitForTheMoveToEnd(on: screen)
+        try #require(waitUntil(on: screen) { scrollView.contentOffset.y == faceHeight })
 
-        #expect(scrollView.contentOffset.y == faceHeight)
         #expect(product.controller.view.frame.height == visibleHeight)
 
         #expect(screen.setFaceShown(true, animated: true) == .applied)
-        waitForTheMoveToEnd(on: screen)
+        try #require(waitUntil(on: screen) {
+            product.controller.view.frame.height == visibleHeight - faceHeight
+        })
 
         #expect(scrollView.contentOffset.y == 0)
-        #expect(product.controller.view.frame.height == visibleHeight - faceHeight)
         withExtendedLifetime(window) {}
     }
 
@@ -303,9 +338,18 @@ private func showing(_ screen: UIViewController) -> UIWindow {
 }
 
 @MainActor
-private func waitForTheMoveToEnd(on screen: UIViewController) {
-    RunLoop.main.run(until: Date().addingTimeInterval(1))
-    screen.view.layoutIfNeeded()
+private func waitUntil(on screen: UIViewController, _ condition: () -> Bool) -> Bool {
+    let deadline = Date().addingTimeInterval(5)
+
+    while Date() < deadline {
+        screen.view.layoutIfNeeded()
+
+        if condition() { return true }
+
+        RunLoop.main.run(until: Date().addingTimeInterval(0.02))
+    }
+
+    return false
 }
 
 private extension PocketCardScreenViewController {

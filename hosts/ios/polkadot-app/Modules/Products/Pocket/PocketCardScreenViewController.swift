@@ -129,6 +129,8 @@ extension PocketCardScreenViewController: UIScrollViewDelegate {
     }
 
     func scrollViewDidEndScrollingAnimation(_: UIScrollView) {
+        guard !userOwnsFace else { return }
+
         fitProduct()
     }
 }
@@ -189,18 +191,18 @@ private extension PocketCardScreenViewController {
 
     /// An animated move is fitted when its animation ends. A move made at
     /// once, or to where the face already is, gets no such callback, so it is
-    /// fitted here.
+    /// fitted here; nothing moves in between, so the page need not grow.
     func moveFace(shown: Bool, animated: Bool) {
         let target = CGPoint(x: 0, y: shown ? 0 : PocketOpenedCardView.height)
 
-        guard scrollView.contentOffset != target else { return fitProduct() }
+        guard animated, scrollView.contentOffset != target else {
+            scrollView.contentOffset = target
+            fitProduct()
+            return
+        }
 
         growProduct()
-        scrollView.setContentOffset(target, animated: animated)
-
-        if !animated {
-            fitProduct()
-        }
+        scrollView.setContentOffset(target, animated: true)
     }
 
     /// Lays the product under the whole screen while the face moves, so no
