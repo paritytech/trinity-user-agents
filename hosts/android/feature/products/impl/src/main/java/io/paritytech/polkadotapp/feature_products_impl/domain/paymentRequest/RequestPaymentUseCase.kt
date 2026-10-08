@@ -20,7 +20,18 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.models
 import io.paritytech.polkadotapp.feature_products_impl.presentation.productBotManagement.ProductsRouter
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.mapNotNull
 import javax.inject.Inject
+
+/** Who decides whether a product may learn that the balance cannot cover its payment. */
+enum class ShortfallDisclosure {
+    /** The host: a product without BalanceAccess is told only that the payment was rejected. */
+    HOST_BALANCE_ACCESS,
+
+    /** The caller, which owns BalanceAccess itself: a shortfall is always reported as one. */
+    CALLER,
+}
 
 interface RequestPaymentUseCase {
     /** Returns once the payment is registered, not once it is paid; [subscribeStatus] follows it from there. */
@@ -29,6 +40,7 @@ interface RequestPaymentUseCase {
         id: ProductPaymentRequestId,
         amount: Balance,
         destination: AccountId,
+        shortfallDisclosure: ShortfallDisclosure = ShortfallDisclosure.HOST_BALANCE_ACCESS,
     ): Result<Unit>
 
     fun subscribeStatus(productId: ProductId, id: ProductPaymentRequestId): Flow<PaymentStatus>
@@ -39,6 +51,11 @@ interface RequestPaymentUseCase {
  * user confirmed through the privacy warning may spend it all.
  */
 fun CoinageBalance.spendableByProducts(): Balance = availablePrivate + gainingPrivacy.amount
+
+/** [spendableByProducts] as it changes, so a product never sees an amount it cannot ask for. */
+fun TotalBalanceUseCase.subscribeSpendableByProducts(): Flow<Balance> = subscribeTotalBalance()
+    .mapNotNull { it.getOrNull() }
+    .map { it.spendableByProducts() }
 
 class RealRequestPaymentUseCase @Inject constructor(
     private val externalPaymentService: ExternalPaymentService,
@@ -55,6 +72,7 @@ class RealRequestPaymentUseCase @Inject constructor(
         id: ProductPaymentRequestId,
         amount: Balance,
         destination: AccountId,
+        shortfallDisclosure: ShortfallDisclosure,
     ): Result<Unit> {
         val key = paymentKey(productId, id)
 
@@ -62,7 +80,7 @@ class RealRequestPaymentUseCase @Inject constructor(
             .flatMap { exists ->
                 if (exists) Result.failure(PaymentRequestError.AlreadyExists(id)) else totalBalanceUseCase.getBalance()
             }
-            .flatMap { balance -> authorize(productId, amount, balance) }
+            .flatMap { balance -> authorize(productId, amount, balance, shortfallDisclosure) }
             .flatMap { externalPaymentService.initiatePayment(key, amount, destination) }
             .mapErrorInstance<_, ExternalPaymentError.AlreadyExists> { PaymentRequestError.AlreadyExists(id) }
     }
@@ -71,8 +89,15 @@ class RealRequestPaymentUseCase @Inject constructor(
         externalPaymentService.subscribePaymentStatus(paymentKey(productId, id))
             .catch { error -> throw if (error is ExternalPaymentError.NotFound) PaymentRequestError.NotFound(id) else error }
 
-    private suspend fun authorize(productId: ProductId, amount: Balance, balance: CoinageBalance): Result<Unit> {
-        if (balance.spendableByProducts() < amount) return Result.failure(insufficientBalanceError(productId))
+    private suspend fun authorize(
+        productId: ProductId,
+        amount: Balance,
+        balance: CoinageBalance,
+        shortfallDisclosure: ShortfallDisclosure,
+    ): Result<Unit> {
+        if (balance.spendableByProducts() < amount) {
+            return Result.failure(insufficientBalanceError(productId, shortfallDisclosure))
+        }
 
         return privacyWarningNeeded(amount).flatMap { warn ->
             val steps = buildList {
@@ -106,10 +131,15 @@ class RealRequestPaymentUseCase @Inject constructor(
     /**
      * Checked with `check`, not `requestPermission`, so the user is never prompted for BalanceAccess just to be
      * told the payment cannot happen. Without it the product learns nothing about the balance: a rejection is
-     * all it gets.
+     * all it gets. A caller that owns BalanceAccess itself makes that call on its side.
      */
-    private suspend fun insufficientBalanceError(productId: ProductId): PaymentRequestError =
-        if (permissionGuard.check(productId, ProductPermission.BalanceAccess)) {
+    private suspend fun insufficientBalanceError(
+        productId: ProductId,
+        shortfallDisclosure: ShortfallDisclosure,
+    ): PaymentRequestError =
+        if (shortfallDisclosure == ShortfallDisclosure.CALLER ||
+            permissionGuard.check(productId, ProductPermission.BalanceAccess)
+        ) {
             PaymentRequestError.InsufficientBalance()
         } else {
             PaymentRequestError.Rejected()

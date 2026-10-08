@@ -177,6 +177,17 @@ class RealRequestPaymentUseCaseTest {
         assertTrue(result.exceptionOrNull() is PaymentRequestError.Rejected)
     }
 
+    /** The core owns BalanceAccess and hides the shortfall itself, so it must always hear about one. */
+    @Test
+    fun `a caller that owns balance access always learns the balance is insufficient`() = runBlocking<Unit> {
+        givenProduct(whitelisted = false, strategy = RecyclingStrategyType.BALANCED)
+
+        val result = useCase.requestPayment(product, id, planks(31), destination, ShortfallDisclosure.CALLER)
+
+        assertTrue(result.exceptionOrNull() is PaymentRequestError.InsufficientBalance)
+        coVerify(exactly = 0) { permissionGuard.check(any(), any()) }
+    }
+
     // ---- idempotency ----
 
     @Test
