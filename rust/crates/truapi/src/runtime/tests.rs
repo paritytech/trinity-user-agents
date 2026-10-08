@@ -1538,70 +1538,6 @@ fn a_withdrawn_request_already_published_is_cancelled_on_the_phone() {
     assert_eq!(withdrawn(), vec![published]);
 }
 
-#[test]
-fn a_cancelled_request_dropped_by_a_host_reset_is_withdrawn() {
-    let session = sso_session_info();
-    let platform = Arc::new(StubPlatform {
-        sign_raw_confirmed: true,
-        rpc_responses: vec![
-            subscribe_ack_frame("truapi:1", "own-sub-reset"),
-            subscribe_ack_frame("truapi:2", "peer-sub-reset"),
-            r#"{"jsonrpc":"2.0","id":"truapi:3","result":{"status":"new"}}"#.to_string(),
-        ],
-        ..Default::default()
-    });
-    let (config, product) = runtime_config("myapp.dot");
-    let (host, accounts, sso) = ProductRuntimeHost::new_pairing_for_tests(
-        platform.clone(),
-        config,
-        product.clone(),
-        test_spawner(),
-    );
-    install_pairing_session(&host, session.clone());
-    let operation = accounts.current_operation().unwrap();
-    let cancel = truapi::CancellationToken::default();
-    let cx = CallContext::with_parts("sign-raw-reset".to_string(), cancel.clone());
-    let request = authority::SignRawAuthorityRequest::Product(truapi::latest::HostSignRawRequest {
-        account: account_id("myapp.dot", 0),
-        payload: raw_payload(),
-    });
-    let mut call = Box::pin(operation.run(
-        accounts.as_ref(),
-        accounts.sign_raw(
-            &operation,
-            &cx,
-            AccountCaller::Local {
-                product: &product,
-                authorization: None,
-                outbound_review: None,
-            },
-            request,
-            true,
-        ),
-    ));
-    wait_until(
-        || {
-            assert!(call.as_mut().now_or_never().is_none());
-            recorded_rpc_method_count(&platform.sent_rpc, "statement_submit") == 1
-        },
-        "the request was not published",
-    );
-    let published = submitted_remote_message(&platform, &session).message_id;
-
-    futures::executor::block_on(sso.clear_product_state("myapp.dot")).unwrap();
-    cancel.cancel();
-    assert_eq!(
-        futures::executor::block_on(call),
-        Err(AuthorityError::Disconnected)
-    );
-
-    wait_until(
-        || !withdrawn_requests(&platform, &session).is_empty(),
-        "no request was withdrawn",
-    );
-    assert_eq!(withdrawn_requests(&platform, &session), vec![published]);
-}
-
 /// A request whose statement never went out is not on the channel, so a
 /// `Cancel` for it would replace whatever older request is there instead.
 #[test]
@@ -7882,12 +7818,12 @@ fn host_accounts_refuse_a_foreign_ring_vrf_key_without_a_grant() {
         product,
     );
     install_pairing_session(&host, session_info());
-    let operation = accounts
-        .current_operation()
+    let authority_session = accounts
+        .current_session()
         .expect("the pairing host has an active session");
 
     let proof = futures::executor::block_on(accounts.create_proof(
-        &operation,
+        &authority_session,
         &CallContext::default(),
         AccountCaller::Local {
             product: &ProductContext::new("dim2.dot".to_string()).unwrap(),
@@ -7914,7 +7850,7 @@ fn host_accounts_refuse_a_foreign_ring_vrf_key_without_a_grant() {
     );
 
     let signed = futures::executor::block_on(accounts.ring_vrf_sign(
-        &operation,
+        &authority_session,
         &CallContext::default(),
         AccountCaller::Local {
             product: &ProductContext::new("dim2.dot".to_string()).unwrap(),

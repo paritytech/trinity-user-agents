@@ -49,7 +49,7 @@ Shared RuntimeServices: platform, chain access and RPC clients
 Host Platform: storage, prompts, chain transport and navigation
 ```
 
-`HostAccounts<H>` uses the original `HostOperation` captured before product permission and review. It retains and uses delegated keys or wallet-issued authorization; `AccountHolder` owns wallet execution and grant issuance. Wallet lifecycle and secret helpers remain internal. The native wallet and shared host use the same ring registry. `host_logic` provides pure crypto, codecs and derivation rather than another execution layer.
+`HostAccounts<H>` uses the account session selected before product permission and review. It retains and uses delegated keys or wallet-issued authorization; `AccountHolder` owns wallet execution and grant issuance. Wallet lifecycle and secret helpers remain internal. The native wallet and shared host use the same ring registry. `host_logic` provides pure crypto, codecs and derivation rather than another execution layer.
 
 `runtime.rs` owns the product runtime and shared helpers. The trait adapters
 are grouped by surface under `runtime/capabilities/`; cross-capability fixtures
@@ -191,7 +191,7 @@ Native allowance records use `CoreStorageKey::NativeAllowanceKeys`, a versioned 
 - Native execution uses `HostAccounts<WalletAccountHolder>`; paired execution uses `HostAccounts<SsoAccountHolderClient>`. Both share the same grant acquisition, retention and delegated signing policy.
 - `WalletAccountHolder` owns entropy, wallet consent, derivation, issuance and renewal. Incoming `SsoAccountHolderService` calls it directly and cannot inherit native permissions or populate native grants.
 - `AccountInvocation` carries the selected wallet activation and trusted caller origin. Local callers may carry a wallet-issued authorization; remote callers require independent approval.
-- `HostOperation` captures the original account session and host grant revision before review. Wallet signing and cached-key use validate that selection after asynchronous preparation. Product reset invalidates host work without changing the wallet activation.
+- Product calls keep the selected `AuthoritySession` across review. The account holder validates that activation before wallet execution. `HostAccounts` checks grant revisions when retaining or using delegated keys; product reset clears grants without changing the wallet activation. It does not cancel an independent wallet approval already in progress.
 - `AccountHolder::allocate_grants` returns a lazy, ordered stream. The host retains each success before continuing; recoverable item failures and whole-operation failures remain distinct.
 - `HostGrantStore` owns retained keys, wallet authorizations and public subtrees. Paired keys use existing storage encodings; native allowance grants use `CoreStorage`. Both hosts use a cached Bulletin key, dry-run the transaction, then refresh once on allowance rejection.
 - `HostSession` covers login, disconnect and identity lookup through the existing `SigningHost` or `SsoRequestService`. Paired session replacement waits for pending storage cleanup, and explicit cancellation withdraws submitted SSO requests.

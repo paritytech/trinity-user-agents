@@ -71,7 +71,7 @@ fn withholding_nothing_leaves_every_resource_granted() {
             activation
                 .accounts()
                 .wallet_authorization(
-                    &activation.accounts().current_operation().unwrap(),
+                    &activation.accounts().current_session().unwrap(),
                     &ProductContext::new("myapp.dot".to_string()).unwrap()
                 )
                 .map(|authorization| authorization.is_some()),
@@ -159,7 +159,7 @@ fn a_withheld_bulletin_allowance_yields_no_key_on_either_call() {
     activation.set_withheld_resources(vec!["BulletinAllowance".to_string()]);
     let session = activation
         .accounts()
-        .current_operation()
+        .current_session()
         .expect("the session just made");
     let cx = CallContext::default();
 

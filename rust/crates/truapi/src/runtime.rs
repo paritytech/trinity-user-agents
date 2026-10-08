@@ -63,7 +63,6 @@ pub use actions::ActionChannel;
 use authority::AuthorityCancelError;
 pub use authority::{
     AccountCaller, AccountHolder, AuthorityError, AuthoritySession, BulletinAllowanceKey,
-    HostOperation,
 };
 /// Wallet-issued permission for one product during one activation.
 #[derive(Clone)]
@@ -783,36 +782,15 @@ impl<H: AccountHolder> ProductRuntimeHost<H> {
         })
     }
 
-    async fn account_operation<T, E, F>(
-        &self,
-        operation: &HostOperation,
-        cx: &CallContext,
-        call: F,
-    ) -> Result<T, E>
-    where
-        F: Future<Output = Result<T, E>>,
-        E: From<AuthorityError>,
-    {
-        remote_authority_call(cx, self.account_call(operation, call)).await
-    }
-
-    async fn account_call<T, E, F>(&self, operation: &HostOperation, call: F) -> Result<T, E>
-    where
-        F: Future<Output = Result<T, E>>,
-        E: From<AuthorityError>,
-    {
-        operation.run(self.accounts.as_ref(), call).await
-    }
-
     async fn legacy_slot_zero_public_key(
         &self,
         cx: &CallContext,
-        operation: &HostOperation,
+        authority_session: &AuthoritySession,
     ) -> Result<[u8; 32], String> {
         self.accounts
             .product_account_public_key(
                 cx,
-                operation,
+                authority_session,
                 &self.connection.product,
                 &latest::ProductAccountId {
                     dot_ns_identifier: self.connection.product_id(),
@@ -827,27 +805,27 @@ impl<H: AccountHolder> ProductRuntimeHost<H> {
     async fn classify_legacy_address_signer(
         &self,
         cx: &CallContext,
-        operation: &HostOperation,
+        authority_session: &AuthoritySession,
         signer: &str,
     ) -> Result<LegacySigner, LegacySignerError> {
         let requested_key = parse_legacy_signer_hex(signer)
             .or_else(|| public_key_from_address(signer))
             .ok_or(LegacySignerError::Unavailable)?;
-        self.classify_legacy_signer(cx, operation, requested_key)
+        self.classify_legacy_signer(cx, authority_session, requested_key)
             .await
     }
 
     async fn classify_legacy_signer(
         &self,
         cx: &CallContext,
-        operation: &HostOperation,
+        authority_session: &AuthoritySession,
         requested_key: [u8; 32],
     ) -> Result<LegacySigner, LegacySignerError> {
-        if operation.session.identity_account_id == Some(requested_key) {
+        if authority_session.identity_account_id == Some(requested_key) {
             return Ok(LegacySigner::Identity(requested_key));
         }
         let product_public_key = self
-            .legacy_slot_zero_public_key(cx, operation)
+            .legacy_slot_zero_public_key(cx, authority_session)
             .await
             .map_err(LegacySignerError::ProductDerivation)?;
         if requested_key == product_public_key {
@@ -1204,21 +1182,21 @@ impl<H: AccountHolder> ProductRuntimeHost<H> {
             .services
             .contacts_platform()
             .ok_or(CallError::Unsupported)?;
-        let operation = self
+        let authority_session = self
             .accounts
-            .current_operation()
+            .current_session()
             .ok_or(CallError::Domain(v01::HostContactsPickError::NotConnected))?;
-        let handle_key =
-            self.accounts
-                .contacts_handle_key(&operation)
-                .map_err(|error| match error {
-                    AuthorityError::Disconnected => {
-                        CallError::Domain(v01::HostContactsPickError::NotConnected)
-                    }
-                    other => CallError::Domain(v01::HostContactsPickError::Unknown {
-                        reason: other.to_string(),
-                    }),
-                })?;
+        let handle_key = self
+            .accounts
+            .contacts_handle_key(&authority_session)
+            .map_err(|error| match error {
+                AuthorityError::Disconnected => {
+                    CallError::Domain(v01::HostContactsPickError::NotConnected)
+                }
+                other => CallError::Domain(v01::HostContactsPickError::Unknown {
+                    reason: other.to_string(),
+                }),
+            })?;
         Ok((
             platform,
             crate::runtime::contacts::ContactHandles::from_handle_key(handle_key),

@@ -2062,7 +2062,7 @@ mod tests {
         let authorization = authority
             .accounts()
             .wallet_authorization(
-                &authority.accounts().current_operation().unwrap(),
+                &authority.accounts().current_session().unwrap(),
                 &ProductContext::new("myapp.dot".to_string()).unwrap(),
             )
             .unwrap();
@@ -2122,7 +2122,8 @@ mod tests {
         });
         let (services, authority) = signing_runtime_with_platform(platform);
         futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec())).unwrap();
-        let operation = authority.accounts().current_operation().unwrap();
+        let authority_session = authority.accounts().current_session().unwrap();
+        let revision = authority.grants.lifecycle().revision();
         for product in ["myapp.dot", "other.dot"] {
             auto_signing::grant_auto_signing(&product_runtime_for(
                 services.clone(),
@@ -2133,7 +2134,7 @@ mod tests {
         let authorization = authority
             .accounts()
             .wallet_authorization(
-                &operation,
+                &authority_session,
                 &ProductContext::new("myapp.dot".to_string()).unwrap(),
             )
             .unwrap()
@@ -2143,14 +2144,14 @@ mod tests {
         let own = authority
             .accounts()
             .wallet_authorization(
-                &authority.accounts().current_operation().unwrap(),
+                &authority.accounts().current_session().unwrap(),
                 &ProductContext::new("myapp.dot".to_string()).unwrap(),
             )
             .map(|authorization| authorization.is_some());
         let other = authority
             .accounts()
             .wallet_authorization(
-                &authority.accounts().current_operation().unwrap(),
+                &authority.accounts().current_session().unwrap(),
                 &ProductContext::new("other.dot".to_string()).unwrap(),
             )
             .map(|authorization| authorization.is_some());
@@ -2161,13 +2162,14 @@ mod tests {
                 other,
                 authority.grants.lifecycle().retain_wallet_authorization(
                     &authority.session_state(),
-                    &operation,
+                    &authority_session,
+                    revision,
                     "myapp.dot",
                     authorization,
                 )
             ),
             (
-                operation.session.clone(),
+                authority_session.clone(),
                 Ok(false),
                 Ok(true),
                 Err(AuthorityError::Disconnected)
@@ -2191,7 +2193,7 @@ mod tests {
                 authority
                     .accounts()
                     .wallet_authorization(
-                        &authority.accounts().current_operation().unwrap(),
+                        &authority.accounts().current_session().unwrap(),
                         &product
                     )
                     .unwrap()
@@ -2209,7 +2211,7 @@ mod tests {
                 authority
                     .accounts()
                     .wallet_authorization(
-                        &authority.accounts().current_operation().unwrap(),
+                        &authority.accounts().current_session().unwrap(),
                         &product
                     )
                     .map(|authorization| authorization.is_some()),
@@ -2227,7 +2229,7 @@ mod tests {
             .expect("first activation succeeds");
         let stale = authority
             .accounts()
-            .current_operation()
+            .current_session()
             .expect("first session snapshot");
 
         futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
@@ -2236,7 +2238,7 @@ mod tests {
             .account_holder()
             .current_session()
             .expect("replacement session");
-        assert_ne!(stale.session.validation_id, current.validation_id);
+        assert_ne!(stale.validation_id, current.validation_id);
 
         let error = futures::executor::block_on(authority.accounts().allocate_resources(
             &CallContext::default(),
@@ -2253,7 +2255,7 @@ mod tests {
                 authority
                     .accounts()
                     .wallet_authorization(
-                        &authority.accounts().current_operation().unwrap(),
+                        &authority.accounts().current_session().unwrap(),
                         &ProductContext::new("myapp.dot".to_string()).unwrap(),
                     )
                     .map(|authorization| authorization.is_some()),
@@ -2287,15 +2289,17 @@ mod tests {
         let authorization = granting_authority
             .accounts()
             .wallet_authorization(
-                &granting_authority.accounts().current_operation().unwrap(),
+                &granting_authority.accounts().current_session().unwrap(),
                 &ProductContext::new("myapp.dot".to_string()).unwrap(),
             )
             .unwrap()
             .unwrap();
-        let operation = replacement.accounts().current_operation().unwrap();
+        let authority_session = replacement.accounts().current_session().unwrap();
+        let revision = replacement.grants.lifecycle().revision();
         let retained = replacement.grants.lifecycle().retain_wallet_authorization(
             &replacement.session_state(),
-            &operation,
+            &authority_session,
+            revision,
             "myapp.dot",
             authorization,
         );
@@ -2305,7 +2309,7 @@ mod tests {
                 replacement
                     .accounts()
                     .wallet_authorization(
-                        &replacement.accounts().current_operation().unwrap(),
+                        &replacement.accounts().current_session().unwrap(),
                         &ProductContext::new("myapp.dot".to_string()).unwrap(),
                     )
                     .map(|authorization| authorization.is_some()),
@@ -2810,7 +2814,7 @@ mod tests {
         let (_services, authority) = signing_runtime_with_platform(platform);
         futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
             .expect("activation");
-        let session = authority.accounts().current_operation().expect("connected");
+        let session = authority.accounts().current_session().expect("connected");
         let cx = CallContext::default();
         let product = ProductContext::new("myapp.dot".to_string()).unwrap();
 
@@ -2843,7 +2847,7 @@ mod tests {
             signing_runtime_with_platform(Arc::new(StubPlatform::default()));
         futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
             .expect("activation");
-        let session = authority.accounts().current_operation().expect("connected");
+        let session = authority.accounts().current_session().expect("connected");
         let cancel = truapi::CancellationToken::default();
         cancel.cancel();
         let cx = CallContext::with_parts("allocation-withdrawn".to_string(), cancel);
@@ -2882,7 +2886,7 @@ mod tests {
         let (_services, authority) = signing_runtime_with_platform(platform);
         futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
             .expect("activation");
-        let session = authority.accounts().current_operation().expect("connected");
+        let session = authority.accounts().current_session().expect("connected");
         let cx = CallContext::default();
         let product = ProductContext::new("myapp.dot".to_string()).unwrap();
 

@@ -97,7 +97,7 @@ fn proof_signer(signing_host: &SigningHostRole) -> [u8; 32] {
     let proof = futures::executor::block_on(async {
         let session = signing_host
             .accounts()
-            .current_operation()
+            .current_session()
             .expect("a session is active");
         let cx = CallContext::default();
         futures::select! {
@@ -271,7 +271,7 @@ fn clearing_a_product_forgets_only_its_key() {
 #[test]
 fn a_replaced_session_is_not_served_the_new_sessions_key() {
     let signing_host = active_signing_host(Arc::new(StubPlatform::default()));
-    let operation = signing_host.accounts().current_operation().unwrap();
+    let authority_session = signing_host.accounts().current_session().unwrap();
     futures::executor::block_on(signing_host.activate_local_session(ENTROPY.to_vec()))
         .expect("re-activation succeeds");
     remember(
@@ -284,7 +284,7 @@ fn a_replaced_session_is_not_served_the_new_sessions_key() {
         matches!(
             futures::executor::block_on(signing_host.accounts().create_authorized_statement_proof(
                 &CallContext::default(),
-                &operation,
+                &authority_session,
                 PRODUCT_ID.to_string(),
                 crate::test_support::statement(),
             )),
@@ -324,16 +324,16 @@ fn a_key_allocated_under_a_replaced_session_is_not_remembered() {
 }
 
 #[test]
-fn product_reset_stops_native_allowance_preparation_on_resumption() {
+fn product_reset_does_not_restore_a_pending_allowance() {
     let (release, gate) = futures::channel::oneshot::channel();
     let platform = chain_with_allocated_slot();
     *platform.rpc_method_responses_gate.lock().unwrap() = Some(gate);
     let signing_host = active_signing_host(platform.clone());
-    let operation = signing_host.accounts().current_operation().unwrap();
+    let authority_session = signing_host.accounts().current_session().unwrap();
     let cx = CallContext::default();
     let allocation = signing_host.accounts().create_authorized_statement_proof(
         &cx,
-        &operation,
+        &authority_session,
         PRODUCT_ID.to_string(),
         crate::test_support::statement(),
     );
@@ -343,7 +343,6 @@ fn product_reset_stops_native_allowance_preparation_on_resumption() {
         || sent_rpc_count(&platform) > 0,
         "allowance preparation did not reach the chain",
     );
-    let before_reset = sent_rpc_count(&platform);
     futures::executor::block_on(signing_host.clear_product_state(PRODUCT_ID)).unwrap();
     release.send(()).unwrap();
     let result = futures::executor::block_on(async {
@@ -355,10 +354,11 @@ fn product_reset_stops_native_allowance_preparation_on_resumption() {
     assert_eq!(
         (
             matches!(result, Err(StatementProofFailure::NoSession)),
-            sent_rpc_count(&platform),
+            remembered(&signing_host, PRODUCT_ID),
+            remembered(&active_signing_host(platform), PRODUCT_ID),
         ),
-        (true, before_reset),
-        "reset must stop chain preparation, not only discard its eventual key",
+        (true, None, None),
+        "a late grant cannot restore the cleared key in memory or storage",
     );
 }
 
@@ -493,7 +493,7 @@ fn native_bulletin_reuses_its_retained_key_until_refresh() {
         .to_bytes();
     let state = host.session_state();
     let session = state.current().unwrap();
-    let operation = host.accounts().current_operation().unwrap();
+    let authority_session = host.accounts().current_session().unwrap();
     let revision = host.grants.lifecycle().revision();
     let result = futures::executor::block_on(async {
         host.grants
@@ -510,16 +510,16 @@ fn native_bulletin_reuses_its_retained_key_until_refresh() {
             .unwrap();
         let (_, cold) = signing_runtime_with_platform(platform.clone());
         cold.activate_local_session(ENTROPY.to_vec()).await.unwrap();
-        let cold_operation = cold.accounts().current_operation().unwrap();
+        let cold_session = cold.accounts().current_session().unwrap();
         let cx = CallContext::default();
         let warm = cold
             .accounts()
-            .bulletin_allowance_key(&cx, &cold_operation, PRODUCT_ID.to_string())
+            .bulletin_allowance_key(&cx, &cold_session, PRODUCT_ID.to_string())
             .await
             .unwrap();
         let refreshed = host
             .accounts()
-            .refresh_bulletin_allowance_key(&cx, &operation, PRODUCT_ID.to_string())
+            .refresh_bulletin_allowance_key(&cx, &authority_session, PRODUCT_ID.to_string())
             .await
             .unwrap();
         let cached = host
