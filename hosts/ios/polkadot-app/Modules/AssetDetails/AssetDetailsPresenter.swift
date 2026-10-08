@@ -5,6 +5,7 @@ import PolkadotUI
 import Coinage
 import ChainRegistry
 import Products
+import TrUAPIHost
 
 @MainActor
 final class AssetDetailsPresenter {
@@ -113,11 +114,11 @@ extension AssetDetailsPresenter: AssetDetailsPresenterProtocol {
     }
 
     func onTopUp() {
-        openRampProduct(.topUp)
+        openFunding(.in)
     }
 
     func onWithdraw() {
-        openRampProduct(.withdraw)
+        openFunding(.out)
     }
 
     #if TESTNET_FEATURE
@@ -130,16 +131,12 @@ extension AssetDetailsPresenter: AssetDetailsPresenterProtocol {
 }
 
 extension AssetDetailsPresenter: AssetDetailsInteractorOutputProtocol {
-    func didResolveRampProduct(_ action: RampAction, result: Result<ProductPage, Error>) {
-        view?.didReceive(rampLoading: action, isLoading: false)
+    func didCompleteFunding(_ direction: FundingDirection, result: Result<Void, Error>) {
+        view?.didReceive(fundingLoading: direction, isLoading: false)
 
-        switch result {
-        case let .success(page):
-            wireframe.showProduct(page: page)
-        case let .failure(error):
-            guard !(error is CancellationError) else { return }
-            wireframe.present(error: action.errorContent(for: error), from: view)
-        }
+        guard case let .failure(error) = result, !(error is CancellationError) else { return }
+
+        wireframe.present(error: error, from: view)
     }
 
     func didReceive(coinageAmounts: CoinageAmounts, holdings: CoinageHoldings) {
@@ -224,9 +221,9 @@ private extension AssetDetailsPresenter {
 }
 
 private extension AssetDetailsPresenter {
-    func openRampProduct(_ action: RampAction) {
-        view?.didReceive(rampLoading: action, isLoading: true)
+    func openFunding(_ direction: FundingDirection) {
+        view?.didReceive(fundingLoading: direction, isLoading: true)
 
-        interactor?.openRampProduct(action)
+        interactor?.openFunding(direction)
     }
 }

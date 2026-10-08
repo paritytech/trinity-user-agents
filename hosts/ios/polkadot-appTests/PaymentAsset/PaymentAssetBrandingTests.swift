@@ -95,8 +95,6 @@ private extension PaymentAssetBrandingTests {
             dotNsResolver: nil,
             dotNsNameRegistry: nil,
             coinageInstanceId: nil,
-            fundingUrl: nil,
-            offrampUrl: nil,
             accountDataStoreContract: nil,
             paymentAsset: published
                 ? PaymentAssetConfig(symbol: symbol, squareIconURL: square, wideIconURL: wide)

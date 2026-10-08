@@ -179,7 +179,7 @@ Rules:
 | Seam                          | Where                                    | When to touch                        |
 |-------------------------------|------------------------------------------|--------------------------------------|
 | Product container bridge      | `Packages/Products/`                     | Adding new JS↔Swift bridge methods   |
-| Payment approval              | `Modules/Products/PaymentRequest/`       | Changing who sees the payment sheet (allowlist lives in `ProductAutoAllowList`) |
+| Payment approval              | `Modules/Products/PaymentRequest/`       | Changing who sees the payment sheet |
 | Product module sub-modules    | `polkadot-app/Modules/Products/`         | Adding new product screens           |
 | Deep link handlers            | `AppConfig/AppConfig.swift`              | Adding product deep links            |
 | SPA module                    | `polkadot-app/Modules/SPA/`             | Smart Proposal Agent changes         |
