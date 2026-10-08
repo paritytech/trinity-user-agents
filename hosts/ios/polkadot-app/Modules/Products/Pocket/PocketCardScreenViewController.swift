@@ -23,8 +23,7 @@ final class PocketCardScreenViewController: UIViewController {
     private let scrollView = UIScrollView()
     private var productHeight: Constraint?
 
-    private var openingFaceShown: Bool
-    private var openingFaceApplied = false
+    private var pendingFaceShown: Bool?
     private var userOwnsFace = false
     private var pageMoveTarget: CGPoint?
 
@@ -37,7 +36,7 @@ final class PocketCardScreenViewController: UIViewController {
         self.card = card
         self.product = product
         self.surface = surface
-        openingFaceShown = faceShown
+        pendingFaceShown = faceShown
         let face = UIHostingController(rootView: PocketOpenedCardView(card: card))
         face.view.backgroundColor = .clear
         face.safeAreaRegions = []
@@ -67,10 +66,10 @@ final class PocketCardScreenViewController: UIViewController {
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
 
-        guard !openingFaceApplied, scrollView.bounds.height > 0 else { return }
+        guard let pendingFaceShown, scrollView.bounds.height > 0 else { return }
 
-        openingFaceApplied = true
-        moveFace(shown: openingFaceShown, animated: false)
+        self.pendingFaceShown = nil
+        moveFace(shown: pendingFaceShown, animated: false)
     }
 
     override func viewDidDisappear(_ animated: Bool) {
@@ -100,10 +99,10 @@ final class PocketCardScreenViewController: UIViewController {
     func setFaceShown(_ shown: Bool, animated: Bool) -> ExpandedCardFaceOutcome {
         guard !userOwnsFace else { return .userMoving }
 
-        if openingFaceApplied {
+        if pendingFaceShown == nil {
             moveFace(shown: shown, animated: animated)
         } else {
-            openingFaceShown = shown
+            pendingFaceShown = shown
         }
 
         return .applied
