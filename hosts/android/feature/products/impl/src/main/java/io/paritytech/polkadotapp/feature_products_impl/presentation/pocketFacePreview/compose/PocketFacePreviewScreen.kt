@@ -30,6 +30,7 @@ import io.paritytech.polkadotapp.design.theme.PolkadotTheme
 import io.paritytech.polkadotapp.feature_products_api.model.JsWidget
 import io.paritytech.polkadotapp.feature_products_api.presentation.widget.JsWidgetRenderer
 import io.paritytech.polkadotapp.feature_products_api.presentation.widget.PocketCardSize
+import io.paritytech.polkadotapp.feature_products_api.presentation.widget.PocketCardTheme
 import io.paritytech.polkadotapp.feature_products_impl.presentation.pocketFacePreview.PocketFacePreviewContract
 import io.paritytech.polkadotapp.feature_products_impl.presentation.pocketFacePreview.PocketFacePreviewState
 import io.paritytech.polkadotapp.common.R as RCommon
@@ -123,11 +124,13 @@ private fun FaceOrExplanation(face: LoadingState<JsWidget>?) {
                 face.exception.message ?: face.exception.javaClass.simpleName
             )
 
-            is LoadingState.Loaded -> JsWidgetRenderer(
-                widget = face.data,
-                modifier = Modifier.fillMaxSize(),
-                jsEventHandler = { _, _ -> },
-            )
+            is LoadingState.Loaded -> PocketCardTheme {
+                JsWidgetRenderer(
+                    widget = face.data,
+                    modifier = Modifier.fillMaxSize(),
+                    jsEventHandler = { _, _ -> },
+                )
+            }
         }
     }
 }

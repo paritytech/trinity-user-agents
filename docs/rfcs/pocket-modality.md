@@ -60,8 +60,11 @@ A face is a body drawn through [Renderer](https://github.com/paritytech/trinity-
 tree per item; presses and edits inside the tree arrive on `action_subscribe` under the same context, so one handler
 serves every card of the product.
 
-Pocket adds one rule on top: the host caches the newest tree per card durably, so a face is shown offline and at cold
-start before the worker answers, and a privileged card has something to show on first run.
+Pocket adds two rules on top. First, the host caches the newest tree per card durably, so a face is shown offline and at
+cold start before the worker answers, and a privileged card has something to show on first run.
+
+Second, the host draws every face in its default theme, whatever theme the user picked, so a face's colour tokens give
+the same colours everywhere and a card looks the same in every theme.
 
 ### Expanded card
 

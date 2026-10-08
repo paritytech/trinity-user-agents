@@ -27,6 +27,7 @@ import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_api.presentation.widget.JsImageResolver
 import io.paritytech.polkadotapp.feature_products_api.presentation.widget.JsWidgetRenderer
 import io.paritytech.polkadotapp.feature_products_api.presentation.widget.LocalJsImageResolver
+import io.paritytech.polkadotapp.feature_products_api.presentation.widget.PocketCardTheme
 import io.paritytech.polkadotapp.feature_wallet_impl.R
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.PocketTestTags
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.ProductFaceBindings
@@ -78,11 +79,13 @@ fun ProductPocketCard(
 
             currentFace?.let { widget ->
                 CompositionLocalProvider(LocalJsImageResolver provides bindings.imageResolver) {
-                    JsWidgetRenderer(
-                        widget = widget,
-                        modifier = Modifier.matchParentSize(),
-                        jsEventHandler = bindings.onFaceAction,
-                    )
+                    PocketCardTheme {
+                        JsWidgetRenderer(
+                            widget = widget,
+                            modifier = Modifier.matchParentSize(),
+                            jsEventHandler = bindings.onFaceAction,
+                        )
+                    }
                 }
             }
         }
