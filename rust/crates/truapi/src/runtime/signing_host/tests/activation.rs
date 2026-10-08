@@ -63,7 +63,7 @@ fn invalid_activation_preserves_the_active_wallet_and_its_grants() {
 }
 
 #[test]
-fn pending_vrf_approval_distinguishes_wallet_and_host_reset() {
+fn pending_vrf_approval_tracks_wallet_activation() {
     use crate::host_internal::sso_messages::{RemoteMessage, RemoteMessageData, v1};
     use crate::runtime::signing_host::SigningHostSsoService;
     use crate::runtime::sso_service::Dispatch;
@@ -130,7 +130,7 @@ fn pending_vrf_approval_distinguishes_wallet_and_host_reset() {
                 _ => unreachable!(),
             }
             release.send(()).unwrap();
-            let expected = if change == "reset" && remote {
+            let expected = if change == "reset" {
                 Ok(())
             } else {
                 Err(v01::HostAccountSignVrfError::NotConnected)
@@ -176,7 +176,7 @@ fn product_reset_during_allocation_review_cannot_restore_native_grants() {
     let result = futures::executor::block_on(allocation);
     let status = authority
         .wallet_authorization(
-            &authority.current_operation().unwrap(),
+            &authority.account_holder().current_session().unwrap(),
             &ProductContext::new("myapp.dot".to_string()).unwrap(),
         )
         .map(|authorization| authorization.is_some());
