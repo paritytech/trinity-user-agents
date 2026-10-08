@@ -286,7 +286,7 @@ mod tests {
     use super::super::{
         AccountHolder, HostSession, ProductRuntimeHost, RuntimeServices, SigningHostRole,
     };
-    use super::TEST_NETWORK_SUFFIX;
+    use super::{LocalActivation, TEST_NETWORK_SUFFIX, WalletAccountHolder};
     use super::ring_vrf::{MemberCandidate, ResolvedRing, RingResolver};
     use crate::host_internal::extrinsic::tests::split_v4;
     use crate::host_internal::sso_messages::ProductRequest;
