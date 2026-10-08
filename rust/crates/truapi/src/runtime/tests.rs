@@ -7810,7 +7810,6 @@ fn unwrap_scan(
         Ok(HostScannerScanResponse::V1(response)) => Ok(response.outcome),
         Err(CallError::Domain(HostScannerScanError::V1(error))) => Err(CallError::Domain(error)),
         Err(CallError::Unsupported) => Err(CallError::Unsupported),
-        Err(CallError::Cancelled) => Err(CallError::Cancelled),
         Err(other) => panic!("unexpected scanner error: {other:?}"),
     }
 }
@@ -8036,8 +8035,12 @@ fn a_pairing_test_host_keeps_a_submitted_preimage_and_serves_it_back() {
     let session = sso_session_info();
     let platform = Arc::new(StubPlatform::default());
     let (host_config, product) = runtime_config("myapp.dot");
-    let (host, pairing_host) =
-        ProductRuntimeHost::new_pairing_for_tests(platform, host_config, product, test_spawner());
+    let (host, pairing_host) = ProductRuntimeHost::new_pairing_for_tests(
+        platform,
+        host_config,
+        product,
+        test_spawner(),
+    );
     install_pairing_session(&host, session.clone());
     let lifecycle_epoch = pairing_host.current_session_lifecycle_epoch();
     futures::executor::block_on(pairing_host.cache_bulletin_allowance_key(

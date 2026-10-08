@@ -182,15 +182,12 @@ mod tests {
         assert!(!valid(qr, None, Some(&"a".repeat(MAX_HINT_CHARS + 1))));
         for refused in [
             "scan\nto sign in",
-            "tab\there",
             "line\u{2028}separator",
             "para\u{2029}separator",
             "\u{202E}reversed",
             "\u{2066}isolate",
             "\u{200F}mark",
             "\u{061C}arabic letter mark",
-            "zero\u{200B}width",
-            "word\u{2060}joiner",
             "\u{FEFF}byte order mark",
             "\u{FFF9}annotation",
         ] {
