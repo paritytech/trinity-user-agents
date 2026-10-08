@@ -21,7 +21,7 @@ struct SPAConfiguration {
     let executable: ExecutableKind
     /// How a Pocket card's page reaches the face above it; nil for a page
     /// shown anywhere else.
-    let cardSurface: PocketCardSurface?
+    let cardFace: (any ExpandedCardFaceShowing)?
 
     init(
         title: String?,
@@ -32,7 +32,7 @@ struct SPAConfiguration {
         isBrowserTab: Bool = false,
         browserTabId: UUID? = nil,
         executable: ExecutableKind = .app,
-        cardSurface: PocketCardSurface? = nil
+        cardFace: (any ExpandedCardFaceShowing)? = nil
     ) {
         self.title = title
         self.isRootScreen = isRootScreen
@@ -42,7 +42,7 @@ struct SPAConfiguration {
         self.isBrowserTab = isBrowserTab
         self.browserTabId = browserTabId
         self.executable = executable
-        self.cardSurface = cardSurface
+        self.cardFace = cardFace
     }
 }
 

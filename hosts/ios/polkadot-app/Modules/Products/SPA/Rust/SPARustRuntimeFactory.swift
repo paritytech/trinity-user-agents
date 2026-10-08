@@ -39,7 +39,7 @@ extension SPARustRuntimeFactory: SPARuntimeFactoryProtocol {
             productId: productId,
             routers: environment.routers,
             kind: environment.configuration.executable.executionKind,
-            cardSurface: environment.configuration.cardSurface
+            cardFace: environment.configuration.cardFace
         )
 
         return SPARustRuntime(

@@ -7,7 +7,7 @@ import UIKit
 /// the screens that show it: the card reopened is a new screen, and the page
 /// already loaded under it must find that one.
 @MainActor
-final class PocketCardSurface {
+final class PocketCardSurface: ExpandedCardFaceShowing {
     /// The screen showing the card now, if any.
     weak var screen: PocketCardScreenViewController?
 

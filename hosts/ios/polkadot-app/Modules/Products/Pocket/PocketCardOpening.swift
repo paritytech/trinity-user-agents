@@ -82,7 +82,7 @@ private extension PocketCardOpening {
             page: page,
             contentSource: widgetURL.map(SPAContentSource.directURL) ?? .dotNs,
             executable: .widget,
-            cardSurface: surface
+            cardFace: surface
         )
 
         // The native runtime cannot load a page by its address.

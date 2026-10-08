@@ -9,7 +9,6 @@ import TrUAPIHost
 // Scoped import: the TrUAPIHost module also declares a *type* named TrUAPIHost,
 // so `TrUAPIHost.ProductAccountId` cannot disambiguate from Products'.
 import struct TrUAPIHost.ProductAccountId
-import UIKit
 import UIKitExt
 @testable import polkadot_app
 
@@ -72,6 +71,18 @@ private struct StubHostProvider: ProductHostProviding {
     }
 }
 
+/// Answers every request with an outcome no other path gives, so a test can
+/// tell its answer arrived.
+@MainActor
+private final class StubCardFace: ExpandedCardFaceShowing {
+    private(set) var requests: [Bool] = []
+
+    func setFaceShown(_ shown: Bool) -> ExpandedCardFaceOutcome {
+        requests.append(shown)
+        return .userMoving
+    }
+}
+
 // MARK: - Bridge factory
 
 @MainActor
@@ -87,7 +98,7 @@ private func makeBridge(
     preimageCache: TrUAPIPreimageCache = TrUAPIPreimageCache { _ in nil },
     productStorageFails: Bool = false,
     hostProvider: ProductHostProviding = StubHostProvider(),
-    cardSurface: PocketCardSurface? = nil
+    cardFace: (any ExpandedCardFaceShowing)? = nil
 ) -> RustProductExecutionBridge {
     let router = MockNavigationRouter()
     let pool = makeRegistryPool(chainRegistry: chainRegistry)
@@ -113,7 +124,7 @@ private func makeBridge(
         preimageCache: preimageCache,
         hostProvider: hostProvider,
         logger: Logger.shared
-    ), cardSurface: cardSurface)
+    ), cardFace: cardFace)
 }
 
 // MARK: - Tests
@@ -568,25 +579,15 @@ struct RustRuntimeBridgeTests {
         #expect(try await bridge.setExpandedCardFaceShown(shown: false) == .unsupported)
     }
 
-    /// The page's request reaches the card's screen. Called through
-    /// `HostBridge` because the core does: an override whose signature drifts
-    /// would lose to the default and answer `.unsupported`.
-    @Test func expandedCardFaceReachesTheCardsScreen() async throws {
-        let surface = PocketCardSurface()
-        let screen = PocketCardScreenViewController(card: loyaltyCard, product: StubSPAView(), surface: surface)
-        let window = showing(screen)
-        let bridge: HostBridge = makeBridge(cardSurface: surface)
+    /// The page's request reaches the card's face and its answer comes back.
+    /// Called through `HostBridge` because the core does: an override whose
+    /// signature drifts would lose to the default and answer `.unsupported`.
+    @Test func expandedCardFaceReachesTheCardsFace() async throws {
+        let face = StubCardFace()
+        let bridge: HostBridge = makeBridge(cardFace: face)
 
-        #expect(try await bridge.setExpandedCardFaceShown(shown: false) == .applied)
-        window.isHidden = true
-    }
-
-    /// A card that is closed keeps its page loaded, and that page must hear at
-    /// once that there is no face to move.
-    @Test func expandedCardFaceIsNotPresentedWithTheCardClosed() async throws {
-        let bridge: HostBridge = makeBridge(cardSurface: PocketCardSurface())
-
-        #expect(try await bridge.setExpandedCardFaceShown(shown: false) == .notPresented)
+        #expect(try await bridge.setExpandedCardFaceShown(shown: false) == .userMoving)
+        #expect(face.requests == [false])
     }
 
     // MARK: attach

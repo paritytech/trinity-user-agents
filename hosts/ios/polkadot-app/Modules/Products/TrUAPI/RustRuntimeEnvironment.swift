@@ -46,9 +46,9 @@ struct RustRuntimeEnvironment {
         productId: ProductId,
         routers: ProductRoutersFacadeProtocol,
         kind: ProductExecutionKind,
-        cardSurface: PocketCardSurface?
+        cardFace: (any ExpandedCardFaceShowing)?
     ) throws -> ExecutionModel {
-        try makeExecution(productId: productId, routers: routers, kind: kind, cardSurface: cardSurface)
+        try makeExecution(productId: productId, routers: routers, kind: kind, cardFace: cardFace)
     }
 
     /// Open `productId`'s one Worker execution. The core keeps a single Worker
@@ -77,7 +77,7 @@ private extension RustRuntimeEnvironment {
         productId: ProductId,
         routers: ProductRoutersFacadeProtocol,
         kind: ProductExecutionKind,
-        cardSurface: PocketCardSurface? = nil,
+        cardFace: (any ExpandedCardFaceShowing)? = nil,
         chatMessaging: (any ProductChatMessaging)? = nil,
         pocket: (any PocketHostBridge)? = nil
     ) throws -> ExecutionModel {
@@ -101,7 +101,7 @@ private extension RustRuntimeEnvironment {
         let chatBridge = chatMessaging.map {
             RustChatExecutionBridge(dependencies: dependencies, chatMessaging: $0)
         }
-        let bridge = chatBridge ?? RustProductExecutionBridge(dependencies: dependencies, cardSurface: cardSurface)
+        let bridge = chatBridge ?? RustProductExecutionBridge(dependencies: dependencies, cardFace: cardFace)
 
         let execution = try runtime.openProductExecution(
             bridge: bridge,
