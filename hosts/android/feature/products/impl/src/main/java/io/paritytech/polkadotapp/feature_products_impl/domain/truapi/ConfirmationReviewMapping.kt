@@ -101,12 +101,15 @@ private fun AllocatableResource.describe(): String = when (this) {
 
 private fun NativeProductAccountId.toDomain(): ProductAccountId = ProductAccountId(
     productId = dotNsIdentifier,
-    index = when (val index = derivationIndex) {
-        is DerivationIndex.Index -> DerivationIndex32.fromUInt(index.v1)
-        is DerivationIndex.Raw -> DerivationIndex32.fromBytes(index.v1.toDataByteArray())
-            .getOrElse { throw UnsupportedReviewException("raw derivation index must be 32 bytes") }
-    },
+    index = derivationIndex.toDomain()
+        .getOrElse { throw UnsupportedReviewException("raw derivation index must be 32 bytes") },
 )
+
+/** The core's derivation index as the app's; only a raw one of the wrong length fails. */
+internal fun DerivationIndex.toDomain(): Result<DerivationIndex32> = when (this) {
+    is DerivationIndex.Index -> Result.success(DerivationIndex32.fromUInt(v1))
+    is DerivationIndex.Raw -> DerivationIndex32.fromBytes(v1.toDataByteArray())
+}
 
 private fun <Signer> HostSignPayloadData.toSignerPayloadJson(account: Signer) = SignerPayloadJson(
     account = account,
