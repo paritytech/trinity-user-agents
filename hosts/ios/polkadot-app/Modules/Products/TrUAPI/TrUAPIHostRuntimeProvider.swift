@@ -41,7 +41,7 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
     private let coreStorage: TrUAPILocalStoring
     private let confirmationRouterFacade: ProductRoutersFacadeProtocol
     private let tldProvider: DotNsTldProviding
-    private let fundingOverlay: FundingOverlayPresenting
+    private let fundingOverlay: FundingOverlayPresenting?
     private let logger: LoggerProtocol
 
     private let lock = NSLock()
@@ -68,7 +68,7 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
         self.coreStorage = coreStorage
         self.confirmationRouterFacade = confirmationRouterFacade
         self.tldProvider = tldProvider
-        self.fundingOverlay = fundingOverlay ?? PendingFundingOverlay(logger: logger)
+        self.fundingOverlay = fundingOverlay
         self.logger = logger
     }
 
@@ -133,7 +133,11 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
         // Also before any execution opens, so a product's Funding request
         // never answers unsupported. The providers are discovered by the core,
         // so the host ships none of its own.
-        runtime.setFunding(AppFundingHostBridge(overlay: fundingOverlay))
+        let overlay = fundingOverlay ?? AppFundingOverlay(runtime: runtime) { [confirmationRouterFacade] in
+            AppFundingEnvironment(router: confirmationRouterFacade.productsRouter)
+        }
+        runtime.setFunding(AppFundingHostBridge(overlay: overlay))
+        FundingActivityCenter.attach(runtime: runtime)
         contactsChangeNotifier = ContactsChangeNotifier(
             dataProviderFactory: ChatContactDataProviderFactory(),
             logger: logger,

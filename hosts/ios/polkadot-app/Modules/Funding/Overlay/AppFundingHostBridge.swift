@@ -23,36 +23,6 @@ protocol FundingOverlayPresenting: AnyObject, Sendable {
     func fundingQuoteChanged(intent: String, row: FundingQuoteRow)
 }
 
-/// Stands in until the overlay UI lands: every session is dismissed, so the
-/// core discards it, and every provider frame reports the user closed it.
-final class PendingFundingOverlay: FundingOverlayPresenting, @unchecked Sendable {
-    private let logger: LoggerProtocol
-
-    init(logger: LoggerProtocol) {
-        self.logger = logger
-    }
-
-    func presentFunding(
-        productId: String?,
-        intent: String,
-        direction: FundingDirection,
-        amount _: U128?
-    ) async -> FundingPresentOutcome {
-        let opener = productId ?? "host"
-        logger.warning("Funding overlay not built yet, dismissing \(direction) session \(intent) for \(opener)")
-        return .dismissed
-    }
-
-    func presentProviderFrame(providerId: String, intent: String, route _: String) async -> FundingFrameOutcome {
-        logger.warning("Funding overlay not built yet, dismissing \(providerId) frame for session \(intent)")
-        return .dismissed
-    }
-
-    func fundingSessionChanged(intent _: String, status _: HostFundingStatusSubscribeItem) {}
-
-    func fundingQuoteChanged(intent _: String, row _: FundingQuoteRow) {}
-}
-
 /// The runtime's funding overlay. Installed once, before any product
 /// execution opens, and forwards to whatever draws the overlay.
 final class AppFundingHostBridge: FundingHostBridge, @unchecked Sendable {
