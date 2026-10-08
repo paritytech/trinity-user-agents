@@ -227,7 +227,10 @@ public protocol ChatHostBridge: AnyObject, Sendable {
     /// must name this message for as long as the host stores it. An id
     /// arriving in a `reaction` or `reactionRemoved` is product-chosen and
     /// untrusted: it may name a message in another room, or none at all.
-    func postMessage(roomId: String, content: ChatMessageContent) async throws -> String
+    ///
+    /// `alt` is the product's one-line description of the message, already
+    /// trimmed and screened, for places that list it without drawing it.
+    func postMessage(roomId: String, content: ChatMessageContent, alt: String?) async throws -> String
 
     /// Return the current product-scoped native Chat rooms.
     func listRooms() async throws -> [ChatRoom]
@@ -390,9 +393,9 @@ private final class ChatCallbackAdapter: NativeChatCallbacks, @unchecked Sendabl
         }
     }
 
-    func postMessage(roomId: String, content: ChatMessageContent) async throws -> String {
+    func postMessage(roomId: String, content: ChatMessageContent, alt: String?) async throws -> String {
         try await withHostRejection {
-            try await bridge.postMessage(roomId: roomId, content: content)
+            try await bridge.postMessage(roomId: roomId, content: content, alt: alt)
         }
     }
 

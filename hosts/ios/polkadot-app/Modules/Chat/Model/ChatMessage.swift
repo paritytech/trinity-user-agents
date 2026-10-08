@@ -712,27 +712,34 @@ extension Chat.LocalMessage.Content {
         let decoderId: UInt8
         let data: Data
         let identifier: String
+        /// The sender's one-line description, previewed in place of the drawn card.
+        let alt: String?
 
         init(
             decoderId: UInt8,
             data: Data,
-            identifier: String
+            identifier: String,
+            alt: String? = nil
         ) {
             self.decoderId = decoderId
             self.data = data
             self.identifier = identifier
+            self.alt = alt
         }
 
         init(scaleDecoder: any ScaleDecoding) throws {
             identifier = try String(scaleDecoder: scaleDecoder)
             decoderId = try UInt8(scaleDecoder: scaleDecoder)
             data = try Data(scaleDecoder: scaleDecoder)
+            // Messages stored before `alt` existed end after `data`.
+            alt = scaleDecoder.remained > 0 ? try ScaleOption<String>(scaleDecoder: scaleDecoder).value : nil
         }
 
         func encode(scaleEncoder: any ScaleEncoding) throws {
             try identifier.encode(scaleEncoder: scaleEncoder)
             try decoderId.encode(scaleEncoder: scaleEncoder)
             try data.encode(scaleEncoder: scaleEncoder)
+            try ScaleOption(value: alt).encode(scaleEncoder: scaleEncoder)
         }
     }
 

@@ -164,6 +164,8 @@ pub struct ChatMessageRecord {
     pub room_id: String,
     /// What was posted.
     pub payload: latest::ChatMessageContent,
+    /// The product's one-line description of the message.
+    pub alt: Option<String>,
 }
 
 /// How the mock's chain connection behaves.
@@ -1415,6 +1417,7 @@ impl ChatPlatform for MockPlatform {
                 message_id: message_id.clone(),
                 room_id: request.room_id,
                 payload: request.payload,
+                alt: request.alt,
             });
         Ok(latest::HostChatPostMessageResponse { message_id })
     }
@@ -2069,6 +2072,7 @@ mod tests {
                 payload: latest::ChatMessageContent::Text {
                     text: body.to_string(),
                 },
+                alt: None,
             },
         ))
     }

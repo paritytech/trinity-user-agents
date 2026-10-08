@@ -543,11 +543,11 @@ impl crate::platform::ChatPlatform for ChatCallbackPlatform {
     async fn post_chat_message(
         &self,
         _product: &ProductContext,
-        request: v01::HostChatPostMessageRequest,
+        request: truapi::latest::HostChatPostMessageRequest,
     ) -> Result<v01::HostChatPostMessageResponse, v01::HostChatPostMessageError> {
         let message_id = self
             .chat
-            .post_message(request.room_id, request.payload)
+            .post_message(request.room_id, request.payload, request.alt)
             .await
             .map_err(|error| v01::HostChatPostMessageError::Unknown {
                 reason: error.to_string(),

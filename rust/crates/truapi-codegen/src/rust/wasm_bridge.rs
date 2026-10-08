@@ -738,8 +738,10 @@ fn validate_error_name<'a>(
             })
             .collect::<Vec<_>>();
         if !versioned_payloads.is_empty() && versioned_payloads.len() == variants.len() {
+            // Each version walks its own path: two versions sharing one
+            // payload type are siblings, not a cycle.
             for payload in versioned_payloads {
-                validate_error_name(named_type_name(payload)?, ctx, seen)?;
+                validate_error_name(named_type_name(payload)?, ctx, &mut seen.clone())?;
             }
             return Ok(());
         }

@@ -176,7 +176,8 @@ public struct RingVrfProofResult: Codable {
 
 public enum ProductBotMessage {
     case text(String)
-    case custom(messageType: String, data: Data)
+    /// `alt` is the product's one-line description, shown where the card is listed rather than drawn.
+    case custom(messageType: String, data: Data, alt: String?)
 }
 
 // MARK: - Signing

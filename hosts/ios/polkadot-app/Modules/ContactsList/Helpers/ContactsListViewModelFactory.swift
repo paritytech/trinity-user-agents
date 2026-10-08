@@ -269,6 +269,10 @@ private extension ContactsListViewModelFactory {
             return content
 
         case let .customRendered(content):
+            if let alt = content.alt {
+                return alt
+            }
+
             let decoders = chatMessageDecoderFactory.makeDecoders(for: chain, chatId: chat.chatId)
             let preview = decoders
                 .first(where: { $0.identifier.rawValue == content.decoderId })?
