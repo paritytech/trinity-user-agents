@@ -8,47 +8,76 @@ created: 2026-10-08
 # Wasm product workers
 
 A product can ship its worker as a Rust crate compiled to `wasm32-unknown-unknown`.
-The core runs the module in process, bound to one product, beside the QuickJS
-sandbox the [worker lifecycle RFC](../rfcs/worker-lifecycle.md) describes for
-JavaScript workers. The module calls TrUAPI through wasm imports, and each import
-reaches the product's typed trait implementation directly, with no frames or
+The core runs it in process, bound to one product, beside the QuickJS sandbox the
+[worker lifecycle RFC](../rfcs/worker-lifecycle.md) describes for JavaScript
+workers. Each TrUAPI call the worker makes is a wasm import that the host answers
+with a direct call on the product's typed trait implementation, with no frames or
 dispatcher in between.
 
-```
- worker.wasm (one product)                    core
-+------------------------------+          +------------------------------------+
-| truapi_guest_api::account::  |  import  | WasmWorker                         |
-|   get_user_id(()).await      |--------->|   truapi.account_get_user_id       |
-|                              |          |     -> Account::get_user_id(&cx,   |
-| exports:                     |  export  |          request) on the product's |
-|   truapi_start               |<---------|        ProductRuntimeHost          |
-|   truapi_alloc               |          |   answers through truapi_on_event  |
-|   truapi_on_event            |          |                                    |
-+------------------------------+          +------------------------------------+
+## Host setup
+
+The host serves a worker with the same per-product object an iframe product talks
+to: `ProductRuntimeHost`, which implements every service trait for one product.
+
+```rust
+let host = runtime.product_admin(product).product_runtime().clone(); // product runs as Worker
+let env = WasmEnv::for_product(host);      // import name -> typed call on `host`
+let worker = WasmWorker::new(env, &wasm)?; // load the module, link the imports it declares
+worker.run().await?;                       // start it, answer its calls until it returns
 ```
 
-## One definition, both sides
+`WasmEnv` maps each import name, such as `account_get_user_id`, to a closure that
+decodes the request, calls `Account::get_user_id` on `host`, and encodes the
+result. `WasmWorker::new` rejects a module that imports a name the table lacks.
+
+## A call, end to end
+
+```
+ worker (guest)                                   core (host)
+ truapi::account::get_user_id(()).await
+   encode the request
+   import truapi.account_get_user_id(ptr, len) --> copy the request, return handle 7
+   the future for handle 7 waits, main yields
+                                                  Account::get_user_id(&host, cx, request).await
+                                                  encode the result
+                                              <-- truapi_alloc(len), write the result,
+                                                  truapi_on_event(7, Response, ptr, len)
+   the future for handle 7 decodes it, main resumes
+```
+
+- Wasm imports are synchronous, so an import only starts the call and returns a
+  handle. The answer arrives later through `truapi_on_event`, which wakes the
+  future or stream holding that handle.
+- A subscription is answered the same way: one `Item` event per item, then one
+  `End` event.
+- Dropping the future or stream calls the `release` import, which cancels the call
+  on the host.
+- Imports never call back into the guest. The host starts queued calls once the
+  guest returns control, then delivers events one at a time.
+
+## Where the bindings come from
 
 `#[wasm_env]` sits on every service trait in `truapi::api`. From one reading of the
-trait it emits:
+trait it emits both sides, so they cannot drift apart:
 
-- **Host side**, under the `wasm-worker` feature: `WasmEnv::link_<trait>`, which
-  links each method to a typed call on any `H: Trait`. `WasmEnv::for_product`
-  links every trait for a `TrUApi` implementation.
-- **Guest side**, under the `guest` feature: a `guest` module beside the trait,
-  holding the import declarations and one typed async function per method.
-  `truapi-guest-api` re-exports these modules and adds the executor and exports.
+- **Host**, under the `wasm-worker` feature: `WasmEnv::link_<trait>`, the table
+  entries for that trait. `WasmEnv::for_product` links all of them.
+- **Guest**, under the `guest` feature on wasm32: a `guest` module beside the
+  trait, with the import declarations and one typed async function per method.
+  `truapi-guest-api` re-exports it as `truapi::<trait>` and adds the executor and
+  exports.
 
-Import names are `<trait>_<method>`, the same names the wire table uses, and a
-test holds the linked set equal to the wire table's product-started methods.
-Internal methods and host-initiated methods get no import.
+Import names are `<trait>_<method>`, the names the wire table uses, and a test
+holds the linked set equal to the wire table's product-started methods. Internal
+and host-initiated methods get no import.
 
-## The import module
+## The ABI
 
-Every import lives in the `truapi` wasm module. The names are constants in
-`truapi::wasm_abi`.
+`truapi::wasm_abi` holds what both sides must agree on beyond the generated method
+imports: the import module name, the fixed imports and exports, and the event
+kinds.
 
-| Import | Signature | Meaning |
+| Import (module `truapi`) | Signature | Meaning |
 | --- | --- | --- |
 | `<trait>_<method>` | `(request_ptr, request_len) -> handle` | Start a call with a SCALE-encoded versioned request |
 | `release` | `(handle)` | Cancel a request or stop a subscription |
@@ -58,16 +87,17 @@ Every import lives in the `truapi` wasm module. The names are constants in
 | Export | Signature | Meaning |
 | --- | --- | --- |
 | `truapi_start` | `()` | Run the entry point |
-| `truapi_alloc` | `(len) -> ptr` | Memory for a payload the host is about to write |
+| `truapi_alloc` | `(len) -> ptr` | Guest memory for a payload the host is about to write |
 | `truapi_on_event` | `(handle, kind, ptr, len)` | Deliver one event for a call |
+
+`truapi_alloc` allocates with the guest's own allocator. It is exported because the
+host cannot reach that allocator any other way, and it needs guest memory to write
+an event into.
 
 An event is a `Response` (`Result<Response, CallError<Error>>`), an `Item` of a
 subscription, or the `End` of a subscription (`Result<(), CallError<Error>>`).
-Payloads are the same versioned SCALE values the wire carries, so a worker built
-against an older protocol is answered in its own version.
-
-Imports never call back into the guest. The host queues each call and starts it
-once the guest returns control, then delivers events one at a time.
+Payloads are the versioned SCALE values the wire carries, so a worker built against
+an older protocol is answered in its own version.
 
 ## Writing a worker
 
