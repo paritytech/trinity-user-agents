@@ -11,7 +11,8 @@ rust/crates/
                          feature); ships as WASM (browser/node); its `platform` module
                          holds the host syscall traits (storage, navigation, consent, ...)
                          and, on native targets, its `durable` module follows presigned
-                         transactions to a verdict over the core database
+                         transactions to a verdict over the core database and builds
+                         scheduled ones through their submission policies
   truapi-codegen/        rustdoc JSON → TypeScript client + Rust dispatcher
   truapi-macros/         #[wire_trait(id = N)] and #[wire(id = N)] proc-macros;
                          #[sso_service] for truapi's inter-host SSO protocol

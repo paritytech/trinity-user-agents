@@ -1,4 +1,5 @@
-//! [`DurableRegistry`]: the oracle of every domain the engine serves.
+//! [`DurableRegistry`]: the oracle of every domain the engine serves and
+//! every submission policy that builds its transactions.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -6,13 +7,15 @@ use std::sync::Arc;
 use subxt::utils::H256;
 
 use super::CompletionOracle;
-use crate::durable::model::DomainId;
+use crate::durable::model::{DomainId, PolicyId};
+use crate::durable::policy::SubmissionPolicy;
 
-/// The oracle of every domain the engine serves. A domain without one cannot
-/// register transactions.
+/// The oracle of every domain the engine serves, and every submission policy.
+/// A domain without an oracle cannot register transactions.
 #[derive(Default)]
 pub struct DurableRegistry {
     oracles: HashMap<DomainId, Arc<dyn CompletionOracle>>,
+    policies: HashMap<PolicyId, Arc<dyn SubmissionPolicy>>,
 }
 
 impl DurableRegistry {
@@ -37,6 +40,27 @@ impl DurableRegistry {
         self
     }
 
+    /// Adds `policy` under its own id.
+    ///
+    /// # Panics
+    ///
+    /// When a policy with that id is already registered: rows naming it
+    /// could not tell the two apart.
+    pub fn with_policy(mut self, policy: Arc<dyn SubmissionPolicy>) -> Self {
+        let id = policy.id();
+        assert!(
+            self.policies.insert(id.clone(), policy).is_none(),
+            "submission policy {} registered twice",
+            id.as_str()
+        );
+        self
+    }
+
+    /// The policy registered as `id`.
+    pub fn policy(&self, id: &PolicyId) -> Option<&Arc<dyn SubmissionPolicy>> {
+        self.policies.get(id)
+    }
+
     /// The oracle of `domain`.
     pub fn oracle(&self, domain: &DomainId) -> Option<&Arc<dyn CompletionOracle>> {
         self.oracles.get(domain)
@@ -55,6 +79,7 @@ impl DurableRegistry {
 mod tests {
     use super::*;
     use crate::durable::oracle::Unobservable;
+    use crate::durable::testing::ScriptedPolicy;
 
     #[test]
     #[should_panic(expected = "registered twice")]
@@ -63,5 +88,14 @@ mod tests {
         let _ = DurableRegistry::new()
             .with_domain(DomainId::from_static("test"), oracle.clone())
             .with_domain(DomainId::from_static("test"), oracle);
+    }
+
+    #[test]
+    #[should_panic(expected = "registered twice")]
+    fn a_policy_registered_twice_is_a_wiring_bug() {
+        let policy_id = crate::durable::model::PolicyId::from_static("rebuild");
+        let _ = DurableRegistry::new()
+            .with_policy(ScriptedPolicy::retrying(policy_id.clone(), false))
+            .with_policy(ScriptedPolicy::retrying(policy_id, true));
     }
 }

@@ -1,5 +1,7 @@
 //! The recovery loop: passes on every head and wake until nothing is live.
 
+use std::sync::Arc;
+
 use futures::FutureExt;
 use futures::channel::mpsc;
 use futures::future::ready;
@@ -11,6 +13,7 @@ use super::DurableTxEngine;
 use crate::chain::HeadEvent;
 use crate::chain_runtime::RuntimeFailure;
 use crate::durable::dao;
+use crate::durable::model::DomainId;
 
 /// What wakes the loop for another pass. An `Err` stops it.
 type Triggers = BoxStream<'static, Result<(), RecoveryError>>;
@@ -34,11 +37,14 @@ pub enum RecoveryError {
 
 impl DurableTxEngine {
     /// Runs recovery passes until no transaction a registered domain can
-    /// decide is live: one at once, then one per new head of any registered
-    /// chain and per wake, collapsing whatever arrives while a pass runs. An
-    /// unreadable ledger counts as live. Fails when a head subscription does;
-    /// dropping the future stops it.
-    pub async fn run_until_settled(&self) -> Result<(), RecoveryError> {
+    /// decide is live and none waits to be built: one at once, then one per
+    /// new head of any registered chain and per wake, collapsing whatever
+    /// arrives while a pass runs. Starts building waiting transactions too,
+    /// since after a restart nothing else does. An unreadable ledger counts
+    /// as live. Fails when a head subscription does; dropping the future
+    /// stops it.
+    pub async fn run_until_settled(self: &Arc<Self>) -> Result<(), RecoveryError> {
+        self.ensure_submissions_started();
         let wakes = self.recovery_wakes.subscribe();
         self.run_pass().await;
         if !self.has_live().await {
@@ -81,20 +87,29 @@ impl DurableTxEngine {
             .boxed())
     }
 
-    /// Whether a transaction some registered domain can decide is live. Rows
-    /// of a domain without an oracle stay as they are: no pass could decide
-    /// them. An unreadable ledger counts as live: abandoning transactions is
-    /// far worse than one more pass.
+    /// Whether a transaction some registered domain can decide is live, or
+    /// one waits to be built. Rows of a domain without an oracle stay as they
+    /// are: no pass could decide them. An unreadable ledger counts as live:
+    /// abandoning transactions is far worse than one more pass.
     async fn has_live(&self) -> bool {
-        match self.db.read(dao::live_domains).await {
-            Ok(domains) => domains
-                .iter()
-                .any(|domain| self.registry.oracle(domain).is_some()),
+        let read = self.db.read(|conn| {
+            let waiting = dao::has_pending_submissions(conn)?;
+            Ok((waiting, dao::live_domains(conn)?))
+        });
+        match read.await {
+            Ok((waiting, domains)) => waiting || self.any_decidable(&domains),
             Err(error) => {
                 warn!(%error, "durable recovery could not read the ledger");
                 true
             }
         }
+    }
+
+    /// Whether any of `domains` has an oracle to decide it.
+    fn any_decidable(&self, domains: &[DomainId]) -> bool {
+        domains
+            .iter()
+            .any(|domain| self.registry.oracle(domain).is_some())
     }
 }
 
@@ -129,7 +144,6 @@ async fn next_trigger(triggers: &mut Triggers) -> Result<(), RecoveryError> {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     use futures::executor::block_on;
@@ -139,7 +153,13 @@ mod tests {
     use crate::chain_runtime::RuntimeFailure;
     use crate::durable::model::{DomainId, DurableTxEntry, HeadKind};
     use crate::durable::oracle::{CompletionOracle, DurableRegistry, LedgerView, PassScope};
-    use crate::durable::testing::{FakeChain, GENESIS, block, engine_with, extrinsic, insert};
+    use std::collections::HashMap;
+
+    use crate::durable::model::DurableTxStatus;
+    use crate::durable::policy::Preparation;
+    use crate::durable::testing::{
+        FakeChain, GENESIS, ManualTimer, ScriptedPolicy, block, engine_with, extrinsic, insert,
+    };
     use crate::test_support::wait_until;
 
     const TEST: DomainId = DomainId::from_static("test");
@@ -385,5 +405,104 @@ mod tests {
         );
 
         assert_eq!(block_on(engine.run_until_settled()), Ok(()));
+    }
+
+    const POLICY: crate::durable::model::PolicyId =
+        crate::durable::model::PolicyId::from_static("rebuild");
+
+    /// A row of the `test` domain waiting for the `rebuild` policy, written
+    /// as a previous process would have left it: no executor is running.
+    fn leave_waiting(engine: &Arc<DurableTxEngine>) -> crate::durable::model::DurableTxId {
+        let policy = crate::durable::model::PolicyRef {
+            id: POLICY,
+            params: vec![],
+        };
+        block_on(
+            engine
+                .db
+                .write(move |tx| dao::schedule(tx, &TEST, None, &policy)),
+        )
+        .unwrap()
+    }
+
+    /// An engine whose `rebuild` policy gives up on its first batch once
+    /// `give_up` is set, and has nothing to say before.
+    fn engine_with_policy(
+        chain: &Arc<FakeChain>,
+        give_up: Arc<std::sync::atomic::AtomicBool>,
+    ) -> (
+        tempfile::TempDir,
+        Arc<DurableTxEngine>,
+        Arc<ScriptedPolicy>,
+        Arc<ManualTimer>,
+    ) {
+        let policy = ScriptedPolicy::new(
+            POLICY,
+            false,
+            Box::new(move |ids| {
+                let answer = match give_up.load(Ordering::SeqCst) {
+                    true => ids.iter().map(|id| (*id, Preparation::GiveUp)).collect(),
+                    false => HashMap::new(),
+                };
+                Box::pin(futures::future::ready(Ok(answer)))
+            }),
+        );
+        let registry = DurableRegistry::new()
+            .with_domain(
+                TEST,
+                Arc::new(crate::durable::oracle::Unobservable(GENESIS)),
+            )
+            .with_policy(policy.clone());
+        let (dir, engine, timer) = engine_with(chain, registry);
+        (dir, engine, policy, timer)
+    }
+
+    /// The app was killed before a scheduled transaction was built. Recovery
+    /// is all that runs on the next launch, so it must build it.
+    #[test]
+    fn recovery_builds_what_a_previous_process_left_waiting() {
+        let chain = FakeChain::new(130, 140);
+        let _heads = chain.script_heads();
+        let (_dir, engine, policy, _timer) = engine_with_policy(&chain, Arc::default());
+        let id = leave_waiting(&engine);
+
+        let _running = run_in_background(&engine);
+
+        wait_until(
+            || policy.batches() == vec![vec![id]],
+            "recovery builds the row",
+        );
+    }
+
+    /// Nothing on chain can decide a transaction that was never submitted,
+    /// but it is still work: the host must keep recovery running until it is
+    /// built or given up.
+    #[test]
+    fn recovery_runs_until_waiting_transactions_are_decided() {
+        let chain = FakeChain::new(130, 140);
+        let heads = chain.script_heads();
+        let give_up = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let (_dir, engine, policy, timer) = engine_with_policy(&chain, give_up.clone());
+        let id = leave_waiting(&engine);
+        let running = run_in_background(&engine);
+        wait_until(|| policy.batches().len() == 1, "the row is asked about");
+
+        heads
+            .unbounded_send(Ok(HeadEvent::Finalized(block(131))))
+            .unwrap();
+        std::thread::sleep(core::time::Duration::from_millis(50));
+        assert!(!running.is_finished());
+        give_up.store(true, Ordering::SeqCst);
+        wait_until(|| timer.sleeps() == 1, "the bucket backs off");
+        timer.advance(core::time::Duration::from_secs(2));
+        wait_until(
+            || block_on(engine.status(id)).unwrap() == Some(DurableTxStatus::Failure),
+            "the policy gives up",
+        );
+        heads
+            .unbounded_send(Ok(HeadEvent::Finalized(block(132))))
+            .unwrap();
+
+        assert_eq!(running.join().unwrap(), Ok(()));
     }
 }

@@ -246,6 +246,11 @@ them once the rows commit, watches each one, and decides whatever it no longer
 watches from the chain. Signed bytes are never stored, so a transaction left
 live by a previous process is decided by recovery rather than sent again.
 
+A domain can also schedule a transaction before it can be signed. A submission
+policy the domain registers builds it later, and builds it again when a proven
+failure is one it accepts to retry; a presigned transaction may name such a
+policy too.
+
 The host keeps recovery alive. `durableWorkChanged(pending: true)` asks it to
 run a background task that awaits `runDurableRecovery()`, which returns once
 nothing is live: a WorkManager worker on Android, a `BGProcessingTask` on iOS.

@@ -31,6 +31,36 @@ impl DomainId {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct DurableTxId(pub i64);
 
+/// A submission policy's name, as the ledger stores it.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct PolicyId(Cow<'static, str>);
+
+impl PolicyId {
+    /// A policy named by a compile-time constant.
+    pub const fn from_static(name: &'static str) -> Self {
+        Self(Cow::Borrowed(name))
+    }
+
+    /// A policy named at run time, such as one read back from the ledger.
+    pub fn new(name: impl Into<String>) -> Self {
+        Self(Cow::Owned(name.into()))
+    }
+
+    /// The name stored in the ledger.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+/// The policy that builds a transaction, and what it needs to build it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PolicyRef {
+    /// The policy.
+    pub id: PolicyId,
+    /// Opaque to the engine; handed back to the policy on every call.
+    pub params: Vec<u8>,
+}
+
 /// A caller-chosen operation that several transactions belong to.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct GroupId(String);
@@ -50,6 +80,9 @@ impl GroupId {
 /// Where a transaction stands.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DurableTxStatus {
+    /// Waiting for its policy to build an attempt. Live, but nothing on chain
+    /// can decide it.
+    PendingSubmission,
     /// Submitted or about to be, with no evidence either way.
     Pending,
     /// Took effect at a block that is not finalized yet.
@@ -87,7 +120,7 @@ pub enum HeadKind {
     Best,
 }
 
-/// One ledger row.
+/// One ledger row with a submitted attempt.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DurableTxEntry {
     /// Ledger id.
@@ -104,6 +137,19 @@ pub struct DurableTxEntry {
     pub status: DurableTxStatus,
     /// The block its success was seen at, while that is still the evidence.
     pub success_detected_at: Option<HashAndNumber>,
+}
+
+/// A transaction waiting for its policy to build an attempt.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ScheduledDurableTx {
+    /// Ledger id.
+    pub id: DurableTxId,
+    /// The domain that registered it.
+    pub domain: DomainId,
+    /// The operation it belongs to, if any.
+    pub group: Option<GroupId>,
+    /// The policy that builds it.
+    pub policy: PolicyRef,
 }
 
 /// A transaction's id and status, as a group lists them.

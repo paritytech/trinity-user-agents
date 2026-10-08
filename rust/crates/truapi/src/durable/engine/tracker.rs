@@ -268,7 +268,7 @@ mod tests {
     use crate::durable::oracle::{DurableRegistry, Unobservable};
     use crate::durable::testing::{
         FakeChain, GENESIS, ManualTimer, block, block_hash, counting_spawner, engine_with_spawner,
-        extrinsic,
+        extrinsic, without_policy,
     };
     use crate::test_support::wait_until;
     use subxt::tx::TransactionInvalid;
@@ -330,9 +330,9 @@ mod tests {
         );
         let nudges = engine.recovery_wakes.subscribe();
         let tx = extrinsic(1, 100, 64);
-        let id = block_on(
-            engine.execute(DurableRequest::presigned(TEST, None, vec![tx.clone()]).unwrap()),
-        )
+        let id = block_on(engine.execute(
+            DurableRequest::presigned(TEST, None, without_policy(vec![tx.clone()])).unwrap(),
+        ))
         .unwrap()[0];
         (
             Fixture {

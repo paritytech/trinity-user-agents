@@ -5,7 +5,9 @@
 //! in its own write and observes their status; the engine broadcasts them,
 //! watches them, and decides every one it no longer watches from the chain.
 //! Signed bytes are never persisted, so a transaction left live by a previous
-//! process is decided by recovery rather than resent.
+//! process is decided by recovery rather than resent. A domain may instead
+//! schedule a transaction for a [`SubmissionPolicy`] to build, and a policy
+//! builds again any failure it accepts to retry.
 
 mod dao;
 mod engine;
@@ -13,6 +15,7 @@ mod ladder;
 mod model;
 mod oracle;
 mod ownership;
+mod policy;
 mod search;
 mod time;
 
@@ -20,15 +23,16 @@ mod time;
 mod testing;
 
 pub use engine::{
-    DurableDeps, DurableRequest, DurableTxEngine, DurableWorkObserver, EmptyRequest, RecoveryError,
-    RegistrationError,
+    DurableDeps, DurableRequest, DurableSubmission, DurableTxEngine, DurableWorkObserver,
+    EmptyRequest, RecoveryError, RegistrationError,
 };
 pub use model::{
     DomainId, DurableTxEntry, DurableTxId, DurableTxState, DurableTxStatus, FailureKind, GroupId,
-    HeadKind, Verdict,
+    HeadKind, PolicyId, PolicyRef, ScheduledDurableTx, Verdict,
 };
 pub use oracle::{
     CompletionOracle, DurableRegistry, LedgerView, Monotone, MonotoneEffect, PassScope,
     Unobservable,
 };
+pub use policy::{PolicyError, Preparation, SubmissionPolicy};
 pub use time::{RealTimer, Timer};

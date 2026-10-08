@@ -48,6 +48,7 @@ impl Drop for DurableTxEngine {
         if let Some(reporter) = self.reporter.get_mut().take() {
             reporter.abort();
         }
+        self.executor.abort_all();
     }
 }
 
@@ -67,7 +68,7 @@ mod tests {
 
     use crate::durable::engine::DurableRequest;
     use crate::durable::model::DomainId;
-    use crate::durable::testing::{FakeChain, extrinsic, test_engine};
+    use crate::durable::testing::{FakeChain, extrinsic, test_engine, without_policy};
     use crate::test_support::wait_until;
 
     /// A watch that hands its transaction back while no recovery runs must
@@ -82,7 +83,7 @@ mod tests {
         let request = DurableRequest::presigned(
             DomainId::from_static("test"),
             None,
-            vec![extrinsic(1, 100, 64)],
+            without_policy(vec![extrinsic(1, 100, 64)]),
         )
         .unwrap();
         block_on(engine.execute(request)).unwrap();
