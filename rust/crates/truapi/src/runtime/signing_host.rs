@@ -50,7 +50,7 @@ pub use wallet_account_holder::{StatementRenewalTarget, WalletAccountHolder};
 use super::WalletAuthorization;
 use super::authority::{
     AccountCaller, AccountHolder, AccountInvocation, AuthorityError, AuthoritySession,
-    BulletinAllowanceKey, HostOperation, ProductAuthority, StatementStoreAllowanceKey,
+    BulletinAllowanceKey, ProductAuthority, StatementStoreAllowanceKey,
 };
 use super::{RuntimeServices, connected_session_ui_info};
 use crate::host_internal::sso_messages::OnExistingAllowancePolicy;
@@ -86,6 +86,13 @@ struct LocalGrantState {
 }
 
 impl LocalGrantState {
+    fn require_revision(&self, revision: u64) -> Result<(), AuthorityError> {
+        if self.revision != revision {
+            return Err(AuthorityError::Disconnected);
+        }
+        Ok(())
+    }
+
     fn clear_grants(&mut self) {
         self.revision = self
             .revision
@@ -247,7 +254,8 @@ impl SigningHost {
 
     fn retain_wallet_authorization(
         &self,
-        operation: &HostOperation,
+        authority_session: &AuthoritySession,
+        revision: u64,
         product_id: &str,
         authorization: WalletAuthorization,
     ) -> Result<(), AuthorityError> {
@@ -255,10 +263,10 @@ impl SigningHost {
             .local_grants
             .lock()
             .expect("local AutoSigning grant mutex poisoned");
-        operation.require_revision(state.revision)?;
+        state.require_revision(revision)?;
         wallet_account_holder::validate_authorization(
             &self.wallet,
-            &operation.session,
+            authority_session,
             product_id,
             &authorization,
         )?;
@@ -270,7 +278,8 @@ impl SigningHost {
 
     fn retain_statement_store_allowance(
         &self,
-        operation: &HostOperation,
+        authority_session: &AuthoritySession,
+        revision: u64,
         product_id: &str,
         allocation: StatementStoreAllocation,
     ) -> Result<StatementStoreAllowanceKey, AuthorityError> {
@@ -279,8 +288,8 @@ impl SigningHost {
             .local_grants
             .lock()
             .expect("local AutoSigning grant mutex poisoned");
-        operation.require_revision(state.revision)?;
-        wallet_account_holder::require_current_session(&self.wallet, &operation.session)?;
+        state.require_revision(revision)?;
+        wallet_account_holder::require_current_session(&self.wallet, authority_session)?;
         state
             .statement_allowance_keys
             .insert(product_id.to_string(), (allocation.period, key.clone()));
@@ -349,43 +358,28 @@ impl ProductAuthority for SigningHost {
         self.wallet.as_ref()
     }
 
-    fn current_operation(&self) -> Option<HostOperation> {
-        let state = self
-            .local_grants
-            .lock()
-            .expect("local AutoSigning grant mutex poisoned");
-        self.wallet
-            .current_session()
-            .map(|session| HostOperation::new(session, state.revision))
-    }
-
-    fn require_current_operation(&self, operation: &HostOperation) -> Result<(), AuthorityError> {
-        let state = self
-            .local_grants
-            .lock()
-            .expect("local AutoSigning grant mutex poisoned");
-        operation.require_revision(state.revision)?;
-        wallet_account_holder::require_current_session(&self.wallet, &operation.session)?;
-        Ok(())
-    }
-
     async fn allocate_resources(
         &self,
         cx: &CallContext,
-        operation: &HostOperation,
+        authority_session: &AuthoritySession,
         product: &ProductContext,
         request: latest::HostRequestResourceAllocationRequest,
     ) -> Result<latest::HostRequestResourceAllocationResponse, AuthorityError> {
         use futures::StreamExt;
 
-        self.require_current_operation(operation)?;
+        wallet_account_holder::require_current_session(&self.wallet, authority_session)?;
+        let revision = self
+            .local_grants
+            .lock()
+            .expect("local AutoSigning grant mutex poisoned")
+            .revision;
         #[cfg(feature = "test-host")]
         let resources = request.resources.clone();
         let mut grants = wallet_account_holder::allocate_grants(
             &self.wallet,
             AccountInvocation {
                 call: cx,
-                session: &operation.session,
+                session: authority_session,
                 caller: AccountCaller::Local {
                     product,
                     authorization: None,
@@ -406,6 +400,10 @@ impl ProductAuthority for SigningHost {
             super::RESOURCE_ALLOCATION_REMOTE_AUTHORITY_RESPONSE_TIMEOUT,
         );
         let allocation = async {
+            self.local_grants
+                .lock()
+                .expect("local AutoSigning grant mutex poisoned")
+                .require_revision(revision)?;
             #[cfg(feature = "test-host")]
             if wallet_account_holder::grants_allowances_unchecked(&self.wallet) {
                 drop(grants);
@@ -425,17 +423,31 @@ impl ProductAuthority for SigningHost {
             let product_id = &product.product_id;
             let mut outcomes = Vec::new();
             loop {
-                self.require_current_operation(operation)?;
+                self.local_grants
+                    .lock()
+                    .expect("local AutoSigning grant mutex poisoned")
+                    .require_revision(revision)?;
+                wallet_account_holder::require_current_session(&self.wallet, authority_session)?;
                 let Some(grant) = grants.next().await else {
                     break;
                 };
                 let outcome = grant.and_then(|grant| match grant {
                     AccountGrant::StatementStore(allocation) => self
-                        .retain_statement_store_allowance(operation, product_id, allocation)
+                        .retain_statement_store_allowance(
+                            authority_session,
+                            revision,
+                            product_id,
+                            allocation,
+                        )
                         .map(|_| ())
                         .map_err(Into::into),
                     AccountGrant::WalletAuthorization(authorization) => self
-                        .retain_wallet_authorization(operation, product_id, authorization)
+                        .retain_wallet_authorization(
+                            authority_session,
+                            revision,
+                            product_id,
+                            authorization,
+                        )
                         .map_err(Into::into),
                     AccountGrant::Bulletin(_) | AccountGrant::SmartContract => Ok(()),
                     AccountGrant::AutoSigning(_) => {
@@ -454,7 +466,7 @@ impl ProductAuthority for SigningHost {
             }
             Ok(latest::HostRequestResourceAllocationResponse { outcomes })
         };
-        super::remote_authority_call(&cx, operation.run(self, allocation)).await
+        super::remote_authority_call(&cx, allocation).await
     }
 
     fn session_state(&self) -> Arc<SessionState> {
@@ -494,26 +506,30 @@ impl ProductAuthority for SigningHost {
 
     fn wallet_authorization(
         &self,
-        operation: &HostOperation,
+        authority_session: &AuthoritySession,
         product: &ProductContext,
     ) -> Result<Option<WalletAuthorization>, AuthorityError> {
         let state = self
             .local_grants
             .lock()
             .expect("local AutoSigning grant mutex poisoned");
-        operation.require_revision(state.revision)?;
-        wallet_account_holder::require_current_session(&self.wallet, &operation.session)?;
+        wallet_account_holder::require_current_session(&self.wallet, authority_session)?;
         Ok(state.auto_signing_grants.get(&product.product_id).cloned())
     }
 
     async fn statement_store_allowance_key(
         &self,
         _cx: &CallContext,
-        operation: &HostOperation,
+        authority_session: &AuthoritySession,
         product_id: String,
     ) -> Result<StatementStoreAllowanceKey, AuthorityError> {
-        self.require_current_operation(operation)?;
-        let session = &operation.session;
+        wallet_account_holder::require_current_session(&self.wallet, authority_session)?;
+        let revision = self
+            .local_grants
+            .lock()
+            .expect("local AutoSigning grant mutex poisoned")
+            .revision;
+        let session = authority_session;
         #[cfg(feature = "test-host")]
         wallet_account_holder::refuse_withheld(
             &self.wallet,
@@ -527,25 +543,20 @@ impl ProductAuthority for SigningHost {
                 .local_grants
                 .lock()
                 .expect("local AutoSigning grant mutex poisoned");
-            operation.require_revision(state.revision)?;
             wallet_account_holder::require_current_session(&self.wallet, session)?;
             if let Some(key) = state.statement_allowance_key(&product_id, period) {
                 return Ok(key.clone());
             }
         }
-        let allocation = operation
-            .run(
-                self,
-                wallet_account_holder::allocate_statement_store_allowance(
-                    &self.wallet,
-                    session,
-                    &product_id,
-                    OnExistingAllowancePolicy::Ignore,
-                ),
-            )
-            .await
-            .map_err(AllowanceAllocationError::into_authority_error)?;
-        self.retain_statement_store_allowance(operation, &product_id, allocation)
+        let allocation = wallet_account_holder::allocate_statement_store_allowance(
+            &self.wallet,
+            session,
+            &product_id,
+            OnExistingAllowancePolicy::Ignore,
+        )
+        .await
+        .map_err(AllowanceAllocationError::into_authority_error)?;
+        self.retain_statement_store_allowance(authority_session, revision, &product_id, allocation)
     }
 
     #[cfg(feature = "test-host")]
@@ -566,58 +577,68 @@ impl ProductAuthority for SigningHost {
     async fn bulletin_allowance_key(
         &self,
         _cx: &CallContext,
-        operation: &HostOperation,
+        authority_session: &AuthoritySession,
         product_id: String,
     ) -> Result<BulletinAllowanceKey, AuthorityError> {
-        self.require_current_operation(operation)?;
-        let session = &operation.session;
+        wallet_account_holder::require_current_session(&self.wallet, authority_session)?;
+        let revision = self
+            .local_grants
+            .lock()
+            .expect("local AutoSigning grant mutex poisoned")
+            .revision;
+        let session = authority_session;
         #[cfg(feature = "test-host")]
         wallet_account_holder::refuse_withheld(
             &self.wallet,
             &latest::AllocatableResource::BulletinAllowance,
         )?;
-        let secret = operation
-            .run(
-                self,
-                wallet_account_holder::allocate_bulletin_allowance(
-                    &self.wallet,
-                    session,
-                    &product_id,
-                    OnExistingAllowancePolicy::Ignore,
-                ),
-            )
-            .await
-            .map_err(AllowanceAllocationError::into_authority_error)?;
-        self.require_current_operation(operation)?;
+        let secret = wallet_account_holder::allocate_bulletin_allowance(
+            &self.wallet,
+            session,
+            &product_id,
+            OnExistingAllowancePolicy::Ignore,
+        )
+        .await
+        .map_err(AllowanceAllocationError::into_authority_error)?;
+        wallet_account_holder::require_current_session(&self.wallet, authority_session)?;
+        self.local_grants
+            .lock()
+            .expect("local AutoSigning grant mutex poisoned")
+            .require_revision(revision)?;
         BulletinAllowanceKey::from_secret_bytes(secret)
     }
 
     async fn refresh_bulletin_allowance_key(
         &self,
         _cx: &CallContext,
-        operation: &HostOperation,
+        authority_session: &AuthoritySession,
         product_id: String,
     ) -> Result<BulletinAllowanceKey, AuthorityError> {
-        self.require_current_operation(operation)?;
-        let session = &operation.session;
+        wallet_account_holder::require_current_session(&self.wallet, authority_session)?;
+        let revision = self
+            .local_grants
+            .lock()
+            .expect("local AutoSigning grant mutex poisoned")
+            .revision;
+        let session = authority_session;
         #[cfg(feature = "test-host")]
         wallet_account_holder::refuse_withheld(
             &self.wallet,
             &latest::AllocatableResource::BulletinAllowance,
         )?;
-        let secret = operation
-            .run(
-                self,
-                wallet_account_holder::allocate_bulletin_allowance(
-                    &self.wallet,
-                    session,
-                    &product_id,
-                    OnExistingAllowancePolicy::Increase,
-                ),
-            )
-            .await
-            .map_err(AllowanceAllocationError::into_authority_error)?;
-        self.require_current_operation(operation)?;
+        let secret = wallet_account_holder::allocate_bulletin_allowance(
+            &self.wallet,
+            session,
+            &product_id,
+            OnExistingAllowancePolicy::Increase,
+        )
+        .await
+        .map_err(AllowanceAllocationError::into_authority_error)?;
+        wallet_account_holder::require_current_session(&self.wallet, authority_session)?;
+        self.local_grants
+            .lock()
+            .expect("local AutoSigning grant mutex poisoned")
+            .require_revision(revision)?;
         BulletinAllowanceKey::from_secret_bytes(secret)
     }
 }
@@ -2381,7 +2402,7 @@ mod tests {
 
         let authorization = authority
             .wallet_authorization(
-                &authority.current_operation().unwrap(),
+                &authority.account_holder().current_session().unwrap(),
                 &ProductContext::new("myapp.dot".to_string()).unwrap(),
             )
             .unwrap();
@@ -2439,7 +2460,8 @@ mod tests {
         });
         let (services, authority) = signing_runtime_with_platform(platform);
         futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec())).unwrap();
-        let operation = authority.current_operation().unwrap();
+        let authority_session = authority.account_holder().current_session().unwrap();
+        let revision = authority.local_grants.lock().unwrap().revision;
         for product in ["myapp.dot", "other.dot"] {
             auto_signing::grant_auto_signing(&product_runtime_for(
                 services.clone(),
@@ -2453,13 +2475,13 @@ mod tests {
         let current_session = authority.account_holder().current_session().unwrap();
         let own = authority
             .wallet_authorization(
-                &authority.current_operation().unwrap(),
+                &authority.account_holder().current_session().unwrap(),
                 &ProductContext::new("myapp.dot".to_string()).unwrap(),
             )
             .map(|authorization| authorization.is_some());
         let other = authority
             .wallet_authorization(
-                &authority.current_operation().unwrap(),
+                &authority.account_holder().current_session().unwrap(),
                 &ProductContext::new("other.dot".to_string()).unwrap(),
             )
             .map(|authorization| authorization.is_some());
@@ -2468,10 +2490,15 @@ mod tests {
                 current_session,
                 own,
                 other,
-                authority.retain_wallet_authorization(&operation, "myapp.dot", authorization)
+                authority.retain_wallet_authorization(
+                    &authority_session,
+                    revision,
+                    "myapp.dot",
+                    authorization
+                )
             ),
             (
-                operation.session.clone(),
+                authority_session.clone(),
                 Ok(false),
                 Ok(true),
                 Err(AuthorityError::Disconnected)
@@ -2493,7 +2520,10 @@ mod tests {
             let product = ProductContext::new("myapp.dot".to_string()).unwrap();
             assert!(
                 authority
-                    .wallet_authorization(&authority.current_operation().unwrap(), &product)
+                    .wallet_authorization(
+                        &authority.account_holder().current_session().unwrap(),
+                        &product
+                    )
                     .unwrap()
                     .is_some()
             );
@@ -2507,7 +2537,10 @@ mod tests {
             futures::executor::block_on(authority.activate_local_session(entropy)).unwrap();
             assert_eq!(
                 authority
-                    .wallet_authorization(&authority.current_operation().unwrap(), &product)
+                    .wallet_authorization(
+                        &authority.account_holder().current_session().unwrap(),
+                        &product
+                    )
                     .map(|authorization| authorization.is_some()),
                 Ok(false),
                 "disconnect: {disconnect}",
@@ -2522,7 +2555,8 @@ mod tests {
         futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
             .expect("first activation succeeds");
         let stale = authority
-            .current_operation()
+            .account_holder()
+            .current_session()
             .expect("first session snapshot");
 
         futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
@@ -2531,7 +2565,7 @@ mod tests {
             .account_holder()
             .current_session()
             .expect("replacement session");
-        assert_ne!(stale.session.validation_id, current.validation_id);
+        assert_ne!(stale.validation_id, current.validation_id);
 
         let error = futures::executor::block_on(authority.allocate_resources(
             &CallContext::default(),
@@ -2547,7 +2581,7 @@ mod tests {
                 error,
                 authority
                     .wallet_authorization(
-                        &authority.current_operation().unwrap(),
+                        &authority.account_holder().current_session().unwrap(),
                         &ProductContext::new("myapp.dot".to_string()).unwrap(),
                     )
                     .map(|authorization| authorization.is_some()),
@@ -2584,8 +2618,10 @@ mod tests {
             .unwrap()
             .auto_signing_grants["myapp.dot"]
             .clone();
+        let revision = replacement.local_grants.lock().unwrap().revision;
         let retained = replacement.retain_wallet_authorization(
-            &replacement.current_operation().unwrap(),
+            &replacement.account_holder().current_session().unwrap(),
+            revision,
             "myapp.dot",
             authorization,
         );
@@ -2594,7 +2630,7 @@ mod tests {
                 retained,
                 replacement
                     .wallet_authorization(
-                        &replacement.current_operation().unwrap(),
+                        &replacement.account_holder().current_session().unwrap(),
                         &ProductContext::new("myapp.dot".to_string()).unwrap(),
                     )
                     .map(|authorization| authorization.is_some()),
@@ -3090,7 +3126,10 @@ mod tests {
         let (_services, authority) = signing_runtime_with_platform(platform);
         futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
             .expect("activation");
-        let session = authority.current_operation().expect("connected");
+        let session = authority
+            .account_holder()
+            .current_session()
+            .expect("connected");
         let cx = CallContext::default();
         let product = ProductContext::new("myapp.dot".to_string()).unwrap();
 
@@ -3123,7 +3162,10 @@ mod tests {
             signing_runtime_with_platform(Arc::new(StubPlatform::default()));
         futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
             .expect("activation");
-        let session = authority.current_operation().expect("connected");
+        let session = authority
+            .account_holder()
+            .current_session()
+            .expect("connected");
         let cancel = truapi::CancellationToken::default();
         cancel.cancel();
         let cx = CallContext::with_parts("allocation-withdrawn".to_string(), cancel);
@@ -3162,7 +3204,10 @@ mod tests {
         let (_services, authority) = signing_runtime_with_platform(platform);
         futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
             .expect("activation");
-        let session = authority.current_operation().expect("connected");
+        let session = authority
+            .account_holder()
+            .current_session()
+            .expect("connected");
         let cx = CallContext::default();
         let product = ProductContext::new("myapp.dot".to_string()).unwrap();
 

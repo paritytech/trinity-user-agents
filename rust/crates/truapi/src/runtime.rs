@@ -62,10 +62,9 @@ use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 pub use actions::ActionChannel;
-use authority::AuthorityCancelError;
 pub use authority::{
     AccountCaller, AccountHolder, AccountInvocation, AuthorityError, AuthoritySession,
-    BulletinAllowanceKey, HostOperation, ProductAuthority,
+    BulletinAllowanceKey, ProductAuthority,
 };
 /// Wallet-issued permission for one product during one activation.
 #[derive(Clone)]
@@ -75,6 +74,7 @@ pub struct WalletAuthorization {
     product_id: String,
 }
 
+use authority::AuthorityCancelError;
 pub use chat::chat_platform_for;
 pub use contacts::ContactResolutionError;
 
@@ -658,48 +658,22 @@ impl ProductRuntimeHost {
         self.product.product_id.as_str().to_string()
     }
 
-    async fn account_operation<T, E, F>(
-        &self,
-        operation: &HostOperation,
-        cx: &CallContext,
-        call: F,
-    ) -> Result<T, E>
-    where
-        F: Future<Output = Result<T, E>>,
-        E: From<AuthorityError>,
-    {
-        remote_authority_call(cx, self.account_call(operation, call)).await
-    }
-
-    async fn account_call<T, E, F>(&self, operation: &HostOperation, call: F) -> Result<T, E>
-    where
-        F: Future<Output = Result<T, E>>,
-        E: From<AuthorityError>,
-    {
-        self.authority.require_current_operation(operation)?;
-        let result = call.await?;
-        self.authority.require_current_operation(operation)?;
-        Ok(result)
-    }
-
     async fn product_account_public_key(
         &self,
         cx: &CallContext,
-        operation: &HostOperation,
+        authority_session: &AuthoritySession,
         product_account_id: &v01::ProductAccountId,
     ) -> Result<[u8; 32], AuthorityError> {
         let cx = remote_authority_context(cx);
-        let subtree = self
-            .account_operation(
-                operation,
+        let subtree = crate::runtime::remote_authority_call(
+            &cx,
+            self.authority.account_holder().product_subtree_public_key(
                 &cx,
-                self.authority.account_holder().product_subtree_public_key(
-                    &cx,
-                    &operation.session,
-                    product_account_id.dot_ns_identifier.clone(),
-                ),
-            )
-            .await?;
+                authority_session,
+                product_account_id.dot_ns_identifier.clone(),
+            ),
+        )
+        .await?;
         derive_product_public_key(
             subtree,
             derivation_index_bytes(&product_account_id.derivation_index),
@@ -712,11 +686,11 @@ impl ProductRuntimeHost {
     async fn legacy_slot_zero_public_key(
         &self,
         cx: &CallContext,
-        operation: &HostOperation,
+        authority_session: &AuthoritySession,
     ) -> Result<[u8; 32], String> {
         self.product_account_public_key(
             cx,
-            operation,
+            authority_session,
             &v01::ProductAccountId {
                 dot_ns_identifier: self.product_id(),
                 derivation_index: v01::DerivationIndex::Index(0),
@@ -876,27 +850,27 @@ impl ProductRuntimeHost {
     async fn classify_legacy_address_signer(
         &self,
         cx: &CallContext,
-        operation: &HostOperation,
+        authority_session: &AuthoritySession,
         signer: &str,
     ) -> Result<LegacySigner, LegacySignerError> {
         let requested_key = parse_legacy_signer_hex(signer)
             .or_else(|| public_key_from_address(signer))
             .ok_or(LegacySignerError::Unavailable)?;
-        self.classify_legacy_signer(cx, operation, requested_key)
+        self.classify_legacy_signer(cx, authority_session, requested_key)
             .await
     }
 
     async fn classify_legacy_signer(
         &self,
         cx: &CallContext,
-        operation: &HostOperation,
+        authority_session: &AuthoritySession,
         requested_key: [u8; 32],
     ) -> Result<LegacySigner, LegacySignerError> {
-        if operation.session.identity_account_id == Some(requested_key) {
+        if authority_session.identity_account_id == Some(requested_key) {
             return Ok(LegacySigner::Identity(requested_key));
         }
         let product_public_key = self
-            .legacy_slot_zero_public_key(cx, operation)
+            .legacy_slot_zero_public_key(cx, authority_session)
             .await
             .map_err(LegacySignerError::ProductDerivation)?;
         if requested_key == product_public_key {

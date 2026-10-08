@@ -93,7 +93,8 @@ fn active_signing_host(platform: Arc<StubPlatform>) -> Arc<SigningHostRole> {
 fn allowance_key(signing_host: &SigningHostRole) -> StatementStoreAllowanceKey {
     futures::executor::block_on(async {
         let session = signing_host
-            .current_operation()
+            .account_holder()
+            .current_session()
             .expect("a session is active");
         let cx = CallContext::default();
         futures::select! {
@@ -209,7 +210,7 @@ fn clearing_a_product_forgets_only_its_key() {
 #[test]
 fn a_replaced_session_is_not_served_the_new_sessions_key() {
     let signing_host = active_signing_host(Arc::new(StubPlatform::default()));
-    let operation = signing_host.current_operation().unwrap();
+    let authority_session = signing_host.account_holder().current_session().unwrap();
     futures::executor::block_on(signing_host.activate_local_session(ENTROPY.to_vec()))
         .expect("re-activation succeeds");
     remember(
@@ -221,7 +222,7 @@ fn a_replaced_session_is_not_served_the_new_sessions_key() {
     assert_eq!(
         futures::executor::block_on(signing_host.statement_store_allowance_key(
             &CallContext::default(),
-            &operation,
+            &authority_session,
             PRODUCT_ID.to_string()
         ))
         .map(|_| ()),
@@ -233,12 +234,14 @@ fn a_replaced_session_is_not_served_the_new_sessions_key() {
 #[test]
 fn a_key_allocated_under_a_replaced_session_is_not_remembered() {
     let signing_host = active_signing_host(Arc::new(StubPlatform::default()));
-    let operation = signing_host.current_operation().unwrap();
+    let authority_session = signing_host.account_holder().current_session().unwrap();
+    let revision = signing_host.local_grants.lock().unwrap().revision;
     futures::executor::block_on(signing_host.activate_local_session(ENTROPY.to_vec()))
         .expect("re-activation succeeds");
 
     let remembered_stale = signing_host.retain_statement_store_allowance(
-        &operation,
+        &authority_session,
+        revision,
         PRODUCT_ID,
         super::super::wallet_account_holder::StatementStoreAllocation {
             secret: SECRET.to_vec(),
@@ -256,22 +259,21 @@ fn a_key_allocated_under_a_replaced_session_is_not_remembered() {
 }
 
 #[test]
-fn product_reset_stops_native_allowance_preparation_on_resumption() {
+fn product_reset_does_not_restore_a_pending_allowance() {
     let (release, gate) = futures::channel::oneshot::channel();
     let platform = chain_with_allocated_slot();
     *platform.rpc_method_responses_gate.lock().unwrap() = Some(gate);
     let signing_host = active_signing_host(platform.clone());
-    let operation = signing_host.current_operation().unwrap();
+    let authority_session = signing_host.account_holder().current_session().unwrap();
     let cx = CallContext::default();
     let allocation =
-        signing_host.statement_store_allowance_key(&cx, &operation, PRODUCT_ID.to_string());
+        signing_host.statement_store_allowance_key(&cx, &authority_session, PRODUCT_ID.to_string());
     futures::pin_mut!(allocation);
     assert!(allocation.as_mut().now_or_never().is_none());
     crate::test_support::wait_until(
         || sent_rpc_count(&platform) > 0,
         "allowance preparation did not reach the chain",
     );
-    let before_reset = sent_rpc_count(&platform);
     signing_host.clear_product_state(PRODUCT_ID).unwrap();
     release.send(()).unwrap();
     let result = futures::executor::block_on(async {
@@ -281,9 +283,17 @@ fn product_reset_stops_native_allowance_preparation_on_resumption() {
         }
     });
     assert_eq!(
-        (result, sent_rpc_count(&platform)),
-        (Err(AuthorityError::Disconnected), before_reset),
-        "reset must stop chain preparation, not only discard its eventual key",
+        (
+            result,
+            signing_host
+                .local_grants
+                .lock()
+                .unwrap()
+                .statement_allowance_keys
+                .contains_key(PRODUCT_ID)
+        ),
+        (Err(AuthorityError::Disconnected), false),
+        "a late grant cannot restore the cleared key",
     );
 }
 

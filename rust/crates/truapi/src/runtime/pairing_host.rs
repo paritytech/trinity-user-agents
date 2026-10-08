@@ -12,9 +12,9 @@ use truapi::latest::{
 
 use super::authority::{
     AccountCaller, AccountHolder, AccountInvocation, AuthorityError, AuthoritySession,
-    AutoSigningKey, BulletinAllowanceKey, CreateTransactionAuthorityRequest, HostOperation,
-    ProductAuthority, SignPayloadAuthorityRequest, SignRawAuthorityRequest,
-    StatementStoreAllowanceKey, require_current_session,
+    AutoSigningKey, BulletinAllowanceKey, CreateTransactionAuthorityRequest, ProductAuthority,
+    SignPayloadAuthorityRequest, SignRawAuthorityRequest, StatementStoreAllowanceKey,
+    require_current_session,
 };
 use super::host_grants::HostGrantStore;
 use super::services::RuntimeServices;
@@ -220,13 +220,12 @@ impl PairingHost {
         require_current_session(&self.sso.session_state(), session)
     }
 
-    fn operation_session(
+    fn grant_session(
         &self,
-        operation: &HostOperation,
+        authority_session: &AuthoritySession,
     ) -> Result<(SessionInfo, u64), AuthorityError> {
         let lifecycle = self.grants.lifecycle();
-        lifecycle.require(operation)?;
-        let session = self.current_private_session(&operation.session)?;
+        let session = self.current_private_session(authority_session)?;
         Ok((session, lifecycle.revision()))
     }
 
@@ -700,13 +699,7 @@ impl PairingHost {
         account: latest::ProductAccountId,
         payload: Vec<u8>,
     ) -> Result<[u8; 64], AuthorityError> {
-        let (session, operation) = {
-            let lifecycle = self.grants.lifecycle();
-            (
-                self.current_private_session(invocation.session)?,
-                lifecycle.capture(invocation.session.clone()),
-            )
-        };
+        let (session, revision) = self.grant_session(invocation.session)?;
         if !matches!(invocation.caller, AccountCaller::Local { product, .. } if product.product_id == account.dot_ns_identifier)
         {
             invocation
@@ -735,7 +728,7 @@ impl PairingHost {
                 return Err(AuthorityError::Unavailable { reason: "pairing host: exact statement proof signing needs an AutoSigning capability; the current SSO raw-signing protocol cannot carry it".to_string() });
             };
             let lifecycle = self.grants.lifecycle();
-            lifecycle.require(&operation)?;
+            lifecycle.require_revision(revision)?;
             self.current_private_session(invocation.session)?;
             Ok(keypair.secret.sign_simple(SR25519_SIGNING_CONTEXT, &payload, &keypair.public).to_bytes())
         }).await
@@ -759,24 +752,14 @@ impl ProductAuthority for PairingHost {
         self
     }
 
-    fn current_operation(&self) -> Option<HostOperation> {
-        let lifecycle = self.grants.lifecycle();
-        self.current_session()
-            .map(|session| lifecycle.capture(session))
-    }
-
-    fn require_current_operation(&self, operation: &HostOperation) -> Result<(), AuthorityError> {
-        self.operation_session(operation).map(|_| ())
-    }
-
     async fn allocate_resources(
         &self,
         cx: &CallContext,
-        operation: &HostOperation,
+        authority_session: &AuthoritySession,
         product: &ProductContext,
         request: latest::HostRequestResourceAllocationRequest,
     ) -> Result<latest::HostRequestResourceAllocationResponse, AuthorityError> {
-        let (session, lifecycle_epoch) = self.operation_session(operation)?;
+        let (session, lifecycle_epoch) = self.grant_session(authority_session)?;
         let confirmed = super::until_cancelled(cx, async {
             if crate::platform::has_trusted_remote_permissions(&product.product_id) {
                 return Ok(true);
@@ -802,7 +785,8 @@ impl ProductAuthority for PairingHost {
             super::RESOURCE_ALLOCATION_REMOTE_AUTHORITY_RESPONSE_TIMEOUT,
         );
         super::remote_authority_call(&cx, async {
-            self.require_current_operation(operation)?;
+            self.current_private_session(authority_session)?;
+            self.grants.lifecycle().require_revision(lifecycle_epoch)?;
             let outcomes = sso_channel::remote_allocate_resources(
                 self,
                 &cx,
@@ -819,7 +803,8 @@ impl ProductAuthority for PairingHost {
                 &outcomes,
             )
             .await?;
-            self.require_current_operation(operation)?;
+            self.current_private_session(authority_session)?;
+            self.grants.lifecycle().require_revision(lifecycle_epoch)?;
             Ok(latest::HostRequestResourceAllocationResponse {
                 outcomes: outcomes.into_iter().map(Into::into).collect(),
             })
@@ -873,20 +858,20 @@ impl ProductAuthority for PairingHost {
 
     fn wallet_authorization(
         &self,
-        operation: &HostOperation,
+        authority_session: &AuthoritySession,
         _product: &ProductContext,
     ) -> Result<Option<super::WalletAuthorization>, AuthorityError> {
-        self.require_current_operation(operation)?;
+        self.current_private_session(authority_session)?;
         Ok(None)
     }
 
     async fn statement_store_allowance_key(
         &self,
         cx: &CallContext,
-        operation: &HostOperation,
+        authority_session: &AuthoritySession,
         product_id: String,
     ) -> Result<StatementStoreAllowanceKey, AuthorityError> {
-        let (session, lifecycle_epoch) = self.operation_session(operation)?;
+        let (session, lifecycle_epoch) = self.grant_session(authority_session)?;
         sso_channel::remote_statement_store_allowance_key(
             self,
             cx,
@@ -900,10 +885,10 @@ impl ProductAuthority for PairingHost {
     async fn bulletin_allowance_key(
         &self,
         cx: &CallContext,
-        operation: &HostOperation,
+        authority_session: &AuthoritySession,
         product_id: String,
     ) -> Result<BulletinAllowanceKey, AuthorityError> {
-        let (session, lifecycle_epoch) = self.operation_session(operation)?;
+        let (session, lifecycle_epoch) = self.grant_session(authority_session)?;
         sso_channel::remote_bulletin_allowance_key(self, cx, &session, lifecycle_epoch, product_id)
             .await
     }
@@ -911,10 +896,10 @@ impl ProductAuthority for PairingHost {
     async fn refresh_bulletin_allowance_key(
         &self,
         cx: &CallContext,
-        operation: &HostOperation,
+        authority_session: &AuthoritySession,
         product_id: String,
     ) -> Result<BulletinAllowanceKey, AuthorityError> {
-        let (session, lifecycle_epoch) = self.operation_session(operation)?;
+        let (session, lifecycle_epoch) = self.grant_session(authority_session)?;
         sso_channel::remote_refresh_bulletin_allowance_key(
             self,
             cx,
@@ -954,13 +939,7 @@ impl AccountHolder for PairingHost {
         invocation: AccountInvocation<'_>,
         request: SignPayloadAuthorityRequest,
     ) -> Result<latest::HostSignPayloadResponse, AuthorityError> {
-        let (session, operation) = {
-            let lifecycle = self.grants.lifecycle();
-            (
-                self.current_private_session(invocation.session)?,
-                lifecycle.capture(invocation.session.clone()),
-            )
-        };
+        let (session, revision) = self.grant_session(invocation.session)?;
         let keypair = if let AccountCaller::Local { product, .. } = invocation.caller
             && let SignPayloadAuthorityRequest::Product(payload) = &request
         {
@@ -979,12 +958,12 @@ impl AccountHolder for PairingHost {
             AccountCaller::Remote { .. } => invocation.call.clone(),
         };
         super::remote_authority_call(&cx, async {
-            self.require_current_operation(&operation)?;
+            self.current_private_session(invocation.session)?;
             if let Some(keypair) = keypair
                 && let SignPayloadAuthorityRequest::Product(payload) = request
             {
                 let lifecycle = self.grants.lifecycle();
-                lifecycle.require(&operation)?;
+                lifecycle.require_revision(revision)?;
                 self.current_private_session(invocation.session)?;
                 return Ok(sign_extrinsic_payload(&keypair, payload.payload)?);
             }
@@ -1007,13 +986,7 @@ impl AccountHolder for PairingHost {
         request: SignRawAuthorityRequest,
         watermarked: bool,
     ) -> Result<latest::HostSignPayloadResponse, AuthorityError> {
-        let (session, operation) = {
-            let lifecycle = self.grants.lifecycle();
-            (
-                self.current_private_session(invocation.session)?,
-                lifecycle.capture(invocation.session.clone()),
-            )
-        };
+        let (session, revision) = self.grant_session(invocation.session)?;
         if !matches!(request, SignRawAuthorityRequest::Product(_))
             && matches!(invocation.caller, AccountCaller::Local { .. })
         {
@@ -1059,7 +1032,7 @@ impl AccountHolder for PairingHost {
             AccountCaller::Remote { .. } => invocation.call.clone(),
         };
         super::remote_authority_call(&cx, async {
-            self.require_current_operation(&operation)?;
+            self.current_private_session(invocation.session)?;
             if let Some(keypair) = keypair {
                 let payload = match request {
                     SignRawAuthorityRequest::Product(request) => request.payload,
@@ -1068,7 +1041,7 @@ impl AccountHolder for PairingHost {
                 };
                 let message = raw_payload_bytes(payload, watermarked)?;
                 let lifecycle = self.grants.lifecycle();
-                lifecycle.require(&operation)?;
+                lifecycle.require_revision(revision)?;
                 self.current_private_session(invocation.session)?;
                 let signature = keypair
                     .secret
@@ -1098,13 +1071,7 @@ impl AccountHolder for PairingHost {
         invocation: AccountInvocation<'_>,
         request: CreateTransactionAuthorityRequest,
     ) -> Result<latest::HostCreateTransactionResponse, AuthorityError> {
-        let (session, operation) = {
-            let lifecycle = self.grants.lifecycle();
-            (
-                self.current_private_session(invocation.session)?,
-                lifecycle.capture(invocation.session.clone()),
-            )
-        };
+        let (session, revision) = self.grant_session(invocation.session)?;
         let keypair = if let AccountCaller::Local { product, .. } = invocation.caller
             && let CreateTransactionAuthorityRequest::Product(payload) = &request
         {
@@ -1126,14 +1093,14 @@ impl AccountHolder for PairingHost {
             AccountCaller::Remote { .. } => invocation.call.clone(),
         };
         super::remote_authority_call(&cx, async {
-            self.require_current_operation(&operation)?;
+            self.current_private_session(invocation.session)?;
             if let Some(keypair) = keypair
                 && let CreateTransactionAuthorityRequest::Product(payload) = request
             {
                 let metadata =
                     local_transaction_metadata(&self.chain, payload.genesis_hash).await?;
                 let lifecycle = self.grants.lifecycle();
-                lifecycle.require(&operation)?;
+                lifecycle.require_revision(revision)?;
                 self.current_private_session(invocation.session)?;
                 return Ok(latest::HostCreateTransactionResponse {
                     transaction: build_signed_transaction(

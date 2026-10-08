@@ -50,12 +50,12 @@ impl Account for ProductRuntimeHost {
                     v01::HostAccountGetError::DomainNotValid,
                 ))
             })?;
-        let Some(operation) = self.authority.current_operation() else {
+        let Some(authority_session) = self.authority.account_holder().current_session() else {
             return Err(CallError::Domain(HostAccountGetError::V1(
                 v01::HostAccountGetError::NotConnected,
             )));
         };
-        let session = &operation.session;
+        let session = &authority_session;
 
         let product_id = self.product_id();
         if product_account_id.dot_ns_identifier != product_id {
@@ -111,7 +111,7 @@ impl Account for ProductRuntimeHost {
         }
 
         let public_key = self
-            .product_account_public_key(cx, &operation, &product_account_id)
+            .product_account_public_key(cx, &authority_session, &product_account_id)
             .await
             .map_err(account_get_authority_error)?;
 
@@ -137,16 +137,15 @@ impl Account for ProductRuntimeHost {
                     },
                 ))
             })?;
-        let Some(operation) = self.authority.current_operation() else {
+        let Some(authority_session) = self.authority.account_holder().current_session() else {
             return Err(CallError::Domain(HostAccountGetAliasError::V1(
                 v01::HostAccountGetAliasError::Rejected,
             )));
         };
-        let session = &operation.session;
+        let session = &authority_session;
 
         let cx = remote_authority_context(cx);
-        self.account_operation(
-            &operation,
+        crate::runtime::remote_authority_call(
             &cx,
             self.authority.account_holder().account_alias(
                 AccountInvocation {
@@ -185,12 +184,12 @@ impl Account for ProductRuntimeHost {
         // whom: with no session a granting target answers `Rejected` and a
         // non-granting one `NotAllowlisted`, which is exactly what the uniform
         // cross-product refusal exists to prevent.
-        let Some(operation) = self.authority.current_operation() else {
+        let Some(authority_session) = self.authority.account_holder().current_session() else {
             return Err(CallError::Domain(HostAccountCreateProofError::V1(
                 v01::HostAccountCreateProofError::Rejected,
             )));
         };
-        let session = &operation.session;
+        let session = &authority_session;
 
         let calling_product_id = self.product_id();
         let cx = remote_authority_context(cx);
@@ -231,8 +230,7 @@ impl Account for ProductRuntimeHost {
             )));
         };
         request.key_handle.dot_ns_identifier = owner;
-        self.account_operation(
-            &operation,
+        crate::runtime::remote_authority_call(
             &cx,
             self.authority.account_holder().create_proof(
                 AccountInvocation {
@@ -261,15 +259,14 @@ impl Account for ProductRuntimeHost {
     ) -> Result<HostAccountRegisterRingVrfKeyResponse, CallError<HostAccountRegisterRingVrfKeyError>>
     {
         let HostAccountRegisterRingVrfKeyRequest::V1(request) = request;
-        let Some(operation) = self.authority.current_operation() else {
+        let Some(authority_session) = self.authority.account_holder().current_session() else {
             return Err(CallError::Domain(HostAccountRegisterRingVrfKeyError::V1(
                 v01::HostAccountRegisterRingVrfKeyError::NotConnected,
             )));
         };
-        let session = &operation.session;
+        let session = &authority_session;
         let cx = remote_authority_context(cx);
-        self.account_operation(
-            &operation,
+        crate::runtime::remote_authority_call(
             &cx,
             self.authority.account_holder().register_ring_vrf_key(
                 AccountInvocation {
@@ -300,12 +297,12 @@ impl Account for ProductRuntimeHost {
     ) -> Result<HostAccountListRingVrfKeysResponse, CallError<HostAccountListRingVrfKeysError>>
     {
         let HostAccountListRingVrfKeysRequest::V1(mut request) = request;
-        let Some(operation) = self.authority.current_operation() else {
+        let Some(authority_session) = self.authority.account_holder().current_session() else {
             return Err(CallError::Domain(HostAccountListRingVrfKeysError::V1(
                 v01::HostAccountListRingVrfKeysError::NotConnected,
             )));
         };
-        let session = &operation.session;
+        let session = &authority_session;
         request.owner = normalize_product_identifier(&request.owner).map_err(|err| {
             CallError::Domain(HostAccountListRingVrfKeysError::V1(
                 v01::HostAccountListRingVrfKeysError::Unknown {
@@ -314,8 +311,7 @@ impl Account for ProductRuntimeHost {
             ))
         })?;
         let cx = remote_authority_context(cx);
-        self.account_operation(
-            &operation,
+        crate::runtime::remote_authority_call(
             &cx,
             self.authority.account_holder().list_ring_vrf_keys(
                 AccountInvocation {
@@ -353,12 +349,12 @@ impl Account for ProductRuntimeHost {
                     },
                 ))
             })?;
-        let Some(operation) = self.authority.current_operation() else {
+        let Some(authority_session) = self.authority.account_holder().current_session() else {
             return Err(CallError::Domain(HostAccountRingVrfSignError::V1(
                 v01::HostAccountRingVrfSignError::NotConnected,
             )));
         };
-        let session = &operation.session;
+        let session = &authority_session;
         let calling_product_id = self.product_id();
         let cx = remote_authority_context(cx);
         // As in `create_account_proof`: the lookup is bounded before the authority
@@ -387,8 +383,7 @@ impl Account for ProductRuntimeHost {
             )));
         };
         request.key_handle.dot_ns_identifier = owner;
-        self.account_operation(
-            &operation,
+        crate::runtime::remote_authority_call(
             &cx,
             self.authority.account_holder().ring_vrf_sign(
                 AccountInvocation {
@@ -426,19 +421,18 @@ impl Account for ProductRuntimeHost {
                 v01::HostAccountSignVrfError::Unknown { reason },
             ))
         })?;
-        let Some(operation) = self.authority.current_operation() else {
+        let Some(authority_session) = self.authority.account_holder().current_session() else {
             return Err(CallError::Domain(HostAccountSignVrfError::V1(
                 v01::HostAccountSignVrfError::NotConnected,
             )));
         };
-        let session = &operation.session;
+        let session = &authority_session;
         let authorization = self
             .authority
-            .wallet_authorization(&operation, &self.product)
+            .wallet_authorization(&authority_session, &self.product)
             .map_err(|error| CallError::Domain(HostAccountSignVrfError::V1(error.into())))?;
         let cx = remote_authority_context(cx);
-        self.account_operation(
-            &operation,
+        crate::runtime::remote_authority_call(
             &cx,
             self.authority.account_holder().sign_vrf(
                 AccountInvocation {

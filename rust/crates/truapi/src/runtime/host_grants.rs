@@ -2,8 +2,7 @@
 
 use super::allowances::{self, AllowanceCacheKey, AllowanceResource};
 use super::authority::{
-    AuthorityError, AuthoritySession, AutoSigningKey, BulletinAllowanceKey, HostOperation,
-    StatementStoreAllowanceKey,
+    AuthorityError, AutoSigningKey, BulletinAllowanceKey, StatementStoreAllowanceKey,
 };
 use super::product_subtree;
 use super::sso_remote::SsoSessionKey;
@@ -852,14 +851,12 @@ impl HostGrantGuard<'_> {
         self.state.revision
     }
 
-    /// Bind a selected wallet session to this host's revision.
-    pub fn capture(&self, session: AuthoritySession) -> HostOperation {
-        HostOperation::new(session, self.state.revision)
-    }
-
-    /// Reject work selected before host grants were invalidated.
-    pub fn require(&self, operation: &HostOperation) -> Result<(), AuthorityError> {
-        operation.require_revision(self.state.revision)
+    /// Reject grant work that began before revocation.
+    pub fn require_revision(&self, revision: u64) -> Result<(), AuthorityError> {
+        if self.state.revision != revision {
+            return Err(AuthorityError::Disconnected);
+        }
+        Ok(())
     }
 
     /// Preserve cleanup intent across failed or dropped session writes.

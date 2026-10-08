@@ -6,7 +6,7 @@ use core::task::{Context, Poll};
 
 use futures::StreamExt as _;
 
-use super::authority::{AuthorityError, HostOperation, StatementStoreAllowanceKey};
+use super::authority::{AuthorityError, AuthoritySession, StatementStoreAllowanceKey};
 use super::statement_store_rpc::{self, StatementStoreRpc};
 use super::{PERMISSION_DENIED_REASON, ProductRuntimeHost, remote_authority_context};
 use crate::host_logic::statement_store::{
@@ -64,7 +64,7 @@ impl StatementStore for ProductRuntimeHost {
                     latest::RemoteStatementStoreCreateProofError::UnknownAccount,
                 ))
             })?;
-        let operation = self.authority.current_operation();
+        let authority_session = self.authority.account_holder().current_session();
         let Some(owner) = self
             .authorized_product_account(&inner.product_account_id.dot_ns_identifier, cx)
             .await
@@ -74,13 +74,13 @@ impl StatementStore for ProductRuntimeHost {
             )));
         };
         inner.product_account_id.dot_ns_identifier = owner;
-        let operation = operation
+        let authority_session = authority_session
             .ok_or(StatementProofFailure::NoSession)
             .map_err(statement_proof_error)?;
         let proof = self
             .create_product_statement_proof(
                 cx,
-                &operation,
+                &authority_session,
                 inner.product_account_id,
                 inner.statement,
             )
@@ -343,13 +343,13 @@ impl ProductRuntimeHost {
     async fn create_product_statement_proof(
         &self,
         cx: &CallContext,
-        operation: &HostOperation,
+        authority_session: &AuthoritySession,
         product_account_id: latest::ProductAccountId,
         statement: latest::Statement,
     ) -> Result<latest::StatementProof, StatementProofFailure> {
-        let session = &operation.session;
+        let session = &authority_session;
         let signer = self
-            .product_account_public_key(cx, operation, &product_account_id)
+            .product_account_public_key(cx, authority_session, &product_account_id)
             .await
             .map_err(|err| StatementProofFailure::UnableToSign(err.to_string()))?;
         let fields = statement_fields_from_v01(statement)
@@ -357,22 +357,19 @@ impl ProductRuntimeHost {
         let payload = unsigned_statement_signing_payload(fields)
             .map_err(StatementProofFailure::UnableToSign)?;
         let signature = self
-            .account_call(
-                operation,
-                self.authority
-                    .account_holder()
-                    .sign_statement_store_product_payload(
-                        crate::runtime::authority::AccountInvocation {
-                            call: cx,
-                            session,
-                            caller: crate::runtime::authority::AccountCaller::Local {
-                                product: &self.product,
-                                authorization: None,
-                            },
-                        },
-                        product_account_id,
-                        payload,
-                    ),
+            .authority
+            .account_holder()
+            .sign_statement_store_product_payload(
+                crate::runtime::authority::AccountInvocation {
+                    call: cx,
+                    session,
+                    caller: crate::runtime::authority::AccountCaller::Local {
+                        product: &self.product,
+                        authorization: None,
+                    },
+                },
+                product_account_id,
+                payload,
             )
             .await
             .map_err(statement_authority_failure)?;
@@ -384,20 +381,22 @@ impl ProductRuntimeHost {
         cx: &CallContext,
         statement: latest::Statement,
     ) -> Result<latest::StatementProof, StatementProofFailure> {
-        let operation = self
+        let authority_session = self
             .authority
-            .current_operation()
+            .account_holder()
+            .current_session()
             .ok_or(StatementProofFailure::NoSession)?;
         let cx = remote_authority_context(cx);
-        let allowance = self
-            .account_operation(
-                &operation,
+        let allowance = crate::runtime::remote_authority_call(
+            &cx,
+            self.authority.statement_store_allowance_key(
                 &cx,
-                self.authority
-                    .statement_store_allowance_key(&cx, &operation, self.product_id()),
-            )
-            .await
-            .map_err(statement_authority_failure)?;
+                &authority_session,
+                self.product_id(),
+            ),
+        )
+        .await
+        .map_err(statement_authority_failure)?;
         create_statement_proof_with_key(statement, &allowance)
     }
 }

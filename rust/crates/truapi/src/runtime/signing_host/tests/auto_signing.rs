@@ -248,19 +248,19 @@ fn direct_allocation_cannot_authorize_signing_without_wallet_approval() {
     let platform = Arc::new(StubPlatform::default());
     let (_, authority) = signing_runtime_with_platform(platform.clone());
     futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec())).unwrap();
-    let operation = authority.current_operation().unwrap();
+    let authority_session = authority.account_holder().current_session().unwrap();
     let request = truapi::latest::HostRequestResourceAllocationRequest {
         resources: vec![truapi::latest::AllocatableResource::AutoSigning],
     };
     let result = futures::executor::block_on(authority.allocate_resources(
         &CallContext::default(),
-        &operation,
+        &authority_session,
         &ProductContext::new("myapp.dot".to_string()).unwrap(),
         request.clone(),
     ));
     let grant = authority
         .wallet_authorization(
-            &authority.current_operation().unwrap(),
+            &authority.account_holder().current_session().unwrap(),
             &ProductContext::new("myapp.dot".to_string()).unwrap(),
         )
         .map(|authorization| authorization.is_some());
@@ -320,7 +320,7 @@ fn cancelling_a_later_resource_keeps_the_first_native_authorization() {
     );
     let retained_before_cancel = authority
         .wallet_authorization(
-            &authority.current_operation().unwrap(),
+            &authority.account_holder().current_session().unwrap(),
             &ProductContext::new("myapp.dot".to_string()).unwrap(),
         )
         .map(|authorization| authorization.is_some());
@@ -328,7 +328,7 @@ fn cancelling_a_later_resource_keeps_the_first_native_authorization() {
     let result = futures::executor::block_on(allocation);
     let retained_after_cancel = authority
         .wallet_authorization(
-            &authority.current_operation().unwrap(),
+            &authority.account_holder().current_session().unwrap(),
             &ProductContext::new("myapp.dot".to_string()).unwrap(),
         )
         .map(|authorization| authorization.is_some());
