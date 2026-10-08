@@ -17,6 +17,7 @@ struct DebugPocketCard: Codable, Equatable, Swift.Identifiable {
     /// The page the card opens instead of the product's published widget,
     /// typically one served from the developer's machine.
     let widgetUrl: String?
+    /// Nil for a card stored before the switch existed, which opens with the face shown.
     let faceShown: Bool?
 
     var id: String { "\(productId)/\(cardId)" }
@@ -76,14 +77,19 @@ struct DebugPocketCards: DebugPocketCardsStoring {
     }
 
     /// The page is loaded as typed rather than through the card's launch
-    /// address, so it is handed the card query the launch address carries.
+    /// address, so it is handed the launch address's query in place of any
+    /// typed item of the same name, with the typed encoding kept as it is.
     func widgetURL(for key: PocketCardKey) -> URL? {
         guard
             let widgetUrl = cards(of: key.productId).first(where: { $0.definition?.id == key.cardId })?.widgetUrl,
-            var components = URLComponents(string: widgetUrl)
+            var components = URLComponents(string: widgetUrl),
+            let launchUrl = key.launchUrl,
+            let launchItems = URLComponents(url: launchUrl, resolvingAgainstBaseURL: false)?.percentEncodedQueryItems
         else { return nil }
 
-        components.queryItems = (components.queryItems ?? []) + [URLQueryItem(name: "card", value: key.cardId.value)]
+        let launchNames = Set(launchItems.map(\.name))
+        let typedItems = (components.percentEncodedQueryItems ?? []).filter { !launchNames.contains($0.name) }
+        components.percentEncodedQueryItems = typedItems + launchItems
 
         return components.url
     }

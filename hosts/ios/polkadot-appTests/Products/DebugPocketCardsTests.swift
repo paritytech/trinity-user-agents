@@ -29,6 +29,40 @@ struct DebugPocketCardsTests {
         #expect(url.absoluteString == "http://127.0.0.1:5173/index.html?hideOnLoad&card=loyalty")
     }
 
+    /// The card query is what tells the page which card it sits under, so a
+    /// stale one typed into the address must not shadow it.
+    @Test
+    func replacesACardQueryTypedIntoTheWidgetPage() throws {
+        let store = storeHolding(card(widgetUrl: "http://127.0.0.1:5173/index.html?card=other&hideOnLoad"))
+
+        let url = try #require(store.widgetURL(for: loyaltyKey))
+
+        #expect(url.absoluteString == "http://127.0.0.1:5173/index.html?hideOnLoad&card=loyalty")
+    }
+
+    /// The page reads its own query as typed, so an encoded value must reach
+    /// it encoded: decoded, `a%2Bb` would read as `a b`.
+    @Test
+    func passesAnEncodedQueryValueOnUntouched() throws {
+        let store = storeHolding(card(widgetUrl: "http://127.0.0.1:5173/index.html?x=a%2Bb"))
+
+        let url = try #require(store.widgetURL(for: loyaltyKey))
+
+        #expect(url.absoluteString == "http://127.0.0.1:5173/index.html?x=a%2Bb&card=loyalty")
+    }
+
+    /// A product's cards can each have their own page, so one card's page
+    /// must not open under another.
+    @Test
+    func opensOnlyThePageTypedForThatCard() {
+        let store = DebugPocketCards(settingsManager: InMemorySettingsManager())
+        store.save(card(widgetUrl: "http://127.0.0.1:5173/index.html"))
+        store.save(card(cardId: "gold", widgetUrl: nil))
+        let gold = PocketCardKey(productId: "game.paseo", cardId: PocketCardId(value: "gold"))
+
+        #expect(store.widgetURL(for: gold) == nil)
+    }
+
     /// The card is opened under the id its product resolved to, which need
     /// not be the casing typed into the debug menu.
     @Test
@@ -63,21 +97,39 @@ struct DebugPocketCardsTests {
         #expect(!faceShown)
     }
 
-    /// An empty widget field must leave the card on its product's own page
-    /// rather than on an address that loads nothing.
-    @Test @MainActor
-    func savesWhatTheMenuWasToldAboutThePageAndTheFace() {
+    /// What the menu was told must reach the stored card: the face switch, a
+    /// typed page without the whitespace a paste brings along, and an empty
+    /// widget field as no page at all, which leaves the card on its product's
+    /// own page rather than on an address that loads nothing.
+    @Test(arguments: [
+        ("", nil),
+        ("  http://127.0.0.1:5173/index.html \n", "http://127.0.0.1:5173/index.html")
+    ] as [(String, String?)])
+    @MainActor
+    func savesWhatTheMenuWasToldAboutThePageAndTheFace(typed: String, stored: String?) {
         let store = DebugPocketCards(settingsManager: InMemorySettingsManager())
-        let viewModel = DebugPocketCardsViewModel(store: store)
-        viewModel.productId = "game.paseo"
-        viewModel.cardId = "loyalty"
-        viewModel.title = "Loyalty"
-        viewModel.faceUrl = faceUrl
+        let viewModel = menuFilledIn(saving: store)
+        viewModel.widgetUrl = typed
         viewModel.opensWithFaceAway = true
 
         viewModel.save()
 
-        #expect(store.cards() == [card(widgetUrl: nil, faceShown: false)])
+        #expect(store.cards() == [card(widgetUrl: stored, faceShown: false)])
+    }
+
+    /// A page address that cannot load would only show up as the card's
+    /// error screen, far from where the typo was made.
+    @Test(arguments: ["not a url", "127.0.0.1:5173/index.html", "ftp://127.0.0.1/index.html", "http:///index.html"])
+    @MainActor
+    func refusesAWidgetPageThatIsNotAWebAddress(typed: String) {
+        let store = DebugPocketCards(settingsManager: InMemorySettingsManager())
+        let viewModel = menuFilledIn(saving: store)
+        viewModel.widgetUrl = typed
+
+        viewModel.save()
+
+        #expect(viewModel.refusal != nil)
+        #expect(store.cards().isEmpty)
     }
 
     // MARK: - Cards typed in before
@@ -113,12 +165,13 @@ private let loyaltyKey = PocketCardKey(productId: "game.paseo", cardId: PocketCa
 
 private func card(
     productId: String = "game.paseo",
+    cardId: String = "loyalty",
     widgetUrl: String? = nil,
     faceShown: Bool? = nil
 ) -> DebugPocketCard {
     DebugPocketCard(
         productId: productId,
-        cardId: "loyalty",
+        cardId: cardId,
         title: "Loyalty",
         faceUrl: faceUrl,
         widgetUrl: widgetUrl,
@@ -130,4 +183,14 @@ private func storeHolding(_ card: DebugPocketCard) -> DebugPocketCards {
     let store = DebugPocketCards(settingsManager: InMemorySettingsManager())
     store.save(card)
     return store
+}
+
+@MainActor
+private func menuFilledIn(saving store: DebugPocketCards) -> DebugPocketCardsViewModel {
+    let viewModel = DebugPocketCardsViewModel(store: store)
+    viewModel.productId = "game.paseo"
+    viewModel.cardId = "loyalty"
+    viewModel.title = "Loyalty"
+    viewModel.faceUrl = faceUrl
+    return viewModel
 }

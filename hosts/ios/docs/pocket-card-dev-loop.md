@@ -122,8 +122,8 @@ Work down this list. Each step rules out the one below it.
 
 ## When you are ready to publish
 
-Declare the card in the worker's manifest instead, and the debug fields stop
-being involved:
+Declare the card in the worker's manifest instead, and the debug card's fields
+stop being involved, all but its widget URL:
 
 ```json
 {
@@ -141,3 +141,7 @@ being involved:
 `faceShown: false` opens the card with its face away; left out or `null`, the
 face shows, and a value that is not a boolean drops all of the product's cards
 while its worker keeps running.
+
+A debug card's widget URL still opens in place of the product's widget once the
+product publishes its own, which is how a published widget is worked on
+locally. Delete the debug card to see the published widget.

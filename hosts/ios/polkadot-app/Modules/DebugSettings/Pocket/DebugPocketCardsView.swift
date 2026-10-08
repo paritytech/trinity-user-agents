@@ -3,8 +3,11 @@ import SwiftUI
 /// Cards typed in by hand, for driving a product's Pocket before it
 /// publishes a manifest.
 ///
-/// The product must be one with **no published worker**: a published one
-/// always wins, so a card named here would never be reached.
+/// A card named here is only offered for a product with **no published
+/// worker**: a published one always wins. A widget URL is the exception: it
+/// opens in place of the product's widget even when the product publishes
+/// its own, which is how a published widget is worked on locally. Delete the
+/// card to see the published widget again.
 struct DebugPocketCardsView: View {
     @State var viewModel = DebugPocketCardsViewModel()
 

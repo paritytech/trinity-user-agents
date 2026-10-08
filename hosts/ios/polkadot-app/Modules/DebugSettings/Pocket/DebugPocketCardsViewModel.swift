@@ -32,17 +32,23 @@ final class DebugPocketCardsViewModel {
     /// id the core refuses reads as no card at all, which looks like the
     /// card simply never arriving.
     func save() {
+        let typedWidgetUrl = widgetUrl.trimmingCharacters(in: .whitespacesAndNewlines)
         let card = DebugPocketCard(
             productId: productId,
             cardId: cardId,
             title: title,
             faceUrl: faceUrl,
-            widgetUrl: widgetUrl.isEmpty ? nil : widgetUrl,
+            widgetUrl: typedWidgetUrl.isEmpty ? nil : typedWidgetUrl,
             faceShown: !opensWithFaceAway
         )
 
         guard card.definition != nil else {
             refusal = "'\(cardId)' is not a card id the core will accept"
+            return
+        }
+
+        guard card.widgetUrl.map(Self.isWebAddress) ?? true else {
+            refusal = "'\(typedWidgetUrl)' is not an http or https address"
             return
         }
 
@@ -58,5 +64,15 @@ final class DebugPocketCardsViewModel {
             store.delete(cards[index])
         }
         load()
+    }
+}
+
+private extension DebugPocketCardsViewModel {
+    static func isWebAddress(_ address: String) -> Bool {
+        guard let components = URLComponents(string: address), components.host?.isEmpty == false else {
+            return false
+        }
+
+        return ["http", "https"].contains(components.scheme?.lowercased() ?? "")
     }
 }
