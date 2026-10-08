@@ -266,16 +266,9 @@ struct ProductManifestParserTests {
         #expect(worker.pocketCards.isEmpty)
     }
 
-    /// Every card published before a card could ask for anything else opens
-    /// with its face shown, and must go on doing so.
-    @Test func opensACardWithItsFaceShownWhenItSaysNothing() throws {
-        let worker = try #require(parsedWorker(Fixtures.worker(pocket: "true", cards: Fixtures.cards())))
-
-        #expect(worker.pocketCards.map(\.faceShown) == [true, true])
-    }
-
     /// The request is the card's own, so one card asking for its face away
-    /// leaves its sibling opening as it always has.
+    /// leaves its sibling opening with its face shown, as every card published
+    /// before the field existed does.
     @Test func opensOnlyTheCardThatAsksWithItsFaceAway() throws {
         let cards = """
         [{"id":"loyalty","title":"Loyalty","preview":"faces/loyalty.json","faceShown":false},
@@ -298,20 +291,12 @@ struct ProductManifestParserTests {
     /// Guessing what a value that is not a boolean meant would open a card in
     /// a way its publisher never tested, and Android refuses it too, so it is a
     /// card defect like any other: the product loses its cards, not its worker.
+    /// The RFC drops every card over one invalid definition, so a valid card
+    /// beside the bad one goes with it.
     @Test(arguments: [#""no""#, "0"])
     func publishesNoCardsWhenFaceShownIsNotABoolean(_ faceShown: String) throws {
-        let cards = #"[{"id":"loyalty","title":"Loyalty","preview":"faces/loyalty.json","faceShown":\#(faceShown)}]"#
-        let worker = try #require(parsedWorker(Fixtures.worker(pocket: "true", cards: cards)))
-
-        #expect(worker.serves(.chat))
-        #expect(worker.pocketCards.isEmpty)
-    }
-
-    /// The RFC drops every card over one invalid definition, and Android does
-    /// the same, so a valid card beside a bad one is dropped with it.
-    @Test func dropsAValidCardBesideOneWhoseFaceShownIsNotABoolean() throws {
         let cards = """
-        [{"id":"loyalty","title":"Loyalty","preview":"faces/loyalty.json","faceShown":"no"},
+        [{"id":"loyalty","title":"Loyalty","preview":"faces/loyalty.json","faceShown":\(faceShown)},
          {"id":"trophy","title":"Trophy","preview":"faces/trophy.json"}]
         """
         let worker = try #require(parsedWorker(Fixtures.worker(pocket: "true", cards: cards)))
