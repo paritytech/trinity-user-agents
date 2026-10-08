@@ -232,6 +232,11 @@ shares, re-shares or withdraws a profile, and with no avatars when the product's
 the product cannot
 read that lets pointer input through, and never tell the product what was drawn. The host runtimes take
 `RequiredHostCallbacks`, so a `profile` group implements it and `presentContactProfile` alongside `presentProfile`.
+For older JavaScript embeddings missing either callback, the adapter independently normalizes both:
+missing `presentContactProfile` presents a shared reference through `presentProfile` and rejects empty-profile
+feedback; missing `placeContactAvatars` draws nothing and resolves, matching the Rust platform default.
+Resolution does not guarantee that avatars were rendered. Omitting the entire `profile` group leaves Profile
+unsupported; an absent placement callback alone is not an `Unsupported` signal.
 
 `profile.disclose` needs no `profile` group, but the first call from a product asks the user through
 `userConfirmation.confirmPermission` with a `ProfileDisclosure` review naming that product. V1 shares app-scoped

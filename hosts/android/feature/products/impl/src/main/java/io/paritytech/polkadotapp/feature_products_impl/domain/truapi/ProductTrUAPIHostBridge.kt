@@ -208,6 +208,9 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
         override suspend fun confirmUserAction(review: UserConfirmationReview): Boolean =
             confirmationLauncher.decide(review, requesterFallback = callingProductId.value)
 
+        override suspend fun confirmPermission(review: UserConfirmationReview): TrUAPIPermissionDecision =
+            confirmationLauncher.decidePermission(review, requesterFallback = callingProductId.value)
+
         override suspend fun devicePermission(
             product: ProductExecutionConfig,
             request: HostDevicePermissionRequest,
@@ -389,6 +392,21 @@ internal suspend fun TrUAPIConfirmationLauncher.decide(
         }
 
     return awaitDecision(confirmation)
+}
+
+/** Unsupported disclosure UI is a callback failure, never a durable user denial. */
+internal suspend fun TrUAPIConfirmationLauncher.decidePermission(
+    review: UserConfirmationReview,
+    requesterFallback: String,
+): TrUAPIPermissionDecision {
+    if (review is UserConfirmationReview.ProfileDisclosure) {
+        throw HostRejection.Rejected("profile disclosure has no prompt on this host")
+    }
+    return if (decide(review, requesterFallback)) {
+        TrUAPIPermissionDecision.ALLOW_ALWAYS
+    } else {
+        TrUAPIPermissionDecision.DENY
+    }
 }
 
 // Reports the theme name the native host's `themeSubscribe` already sends, so a

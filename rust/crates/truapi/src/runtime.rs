@@ -2319,11 +2319,7 @@ impl Profile for ProductRuntimeHost {
                 v01::HostProfilePlaceContactAvatarsError::NotConnected,
             ));
         };
-        let authority = request
-            .slots
-            .iter()
-            .any(|slot| matches!(slot.contact, truapi::latest::ProfileContact::Handle { .. }))
-            .then(|| Arc::downgrade(&self.authority));
+        let authority = Some(Arc::downgrade(&self.authority));
         placement
             .place(owner, request, authority)
             .await
@@ -2338,12 +2334,16 @@ impl Profile for ProductRuntimeHost {
         _request: HostProfileOwnStatusRequest,
     ) -> Result<HostProfileOwnStatusResponse, CallError<HostProfileOwnStatusError>> {
         let domain = |error| CallError::Domain(HostProfileOwnStatusError::V1(error));
+        let session = self.authority.current_session();
         let owner = self
             .profile_owner()
             .ok_or_else(|| domain(v01::HostProfileOwnStatusError::NotConnected))?;
         let disclosure = profile::read_disclosure(self.platform.as_ref(), owner)
             .await
             .map_err(|reason| domain(v01::HostProfileOwnStatusError::Unknown { reason }))?;
+        if self.authority.current_session() != session {
+            return Err(domain(v01::HostProfileOwnStatusError::NotConnected));
+        }
         if disclosure
             .as_ref()
             .is_some_and(|disclosure| !is_screened_profile_reference(&disclosure.reference))
@@ -2367,12 +2367,17 @@ impl Profile for ProductRuntimeHost {
     ) -> Result<HostProfilePresentOwnResponse, CallError<HostProfilePresentOwnError>> {
         let platform = self.profile_platform()?;
         let domain = |error| CallError::Domain(HostProfilePresentOwnError::V1(error));
+        let session = self.authority.current_session();
         let owner = self
             .profile_owner()
             .ok_or_else(|| domain(v01::HostProfilePresentOwnError::NotConnected))?;
-        let reference = profile::read_disclosure(self.platform.as_ref(), owner)
+        let disclosure = profile::read_disclosure(self.platform.as_ref(), owner)
             .await
-            .map_err(|reason| domain(v01::HostProfilePresentOwnError::Unknown { reason }))?
+            .map_err(|reason| domain(v01::HostProfilePresentOwnError::Unknown { reason }))?;
+        if self.authority.current_session() != session {
+            return Err(domain(v01::HostProfilePresentOwnError::NotConnected));
+        }
+        let reference = disclosure
             .map(|disclosure| disclosure.reference)
             .ok_or_else(|| domain(v01::HostProfilePresentOwnError::NotConfigured))?;
         if !is_screened_profile_reference(&reference) {

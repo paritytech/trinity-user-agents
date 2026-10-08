@@ -13,6 +13,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex, Weak};
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use crate::platform::{PlacedAvatar, PlacedAvatars, Platform, ProductContext, ProfilePlatform};
 use tracing::debug;
@@ -23,7 +24,7 @@ use truapi::latest::{
 
 use super::{ProfileOwner, read_disclosure, read_received};
 use crate::runtime::{
-    ProductAuthority, RuntimeServices, contacts::ContactHandles, is_screened_profile_reference,
+    AuthoritySession, ProductAuthority, RuntimeServices, contacts::ContactHandles, is_screened_profile_reference,
     resolve_contact_accounts,
 };
 use crate::subscription::Spawner;
@@ -69,20 +70,36 @@ pub(crate) struct ContactAvatarPlacement {
     /// Held across each draw, so the host sees the connection's placements in
     /// the order they were made.
     state: futures::lock::Mutex<PlacementState>,
+    closed: AtomicBool,
 }
 
 struct RememberedPlacement {
     owner: ProfileOwner,
     request: HostProfilePlaceContactAvatarsRequest,
-    authority: Option<Weak<dyn ProductAuthority>>,
+    authority: Option<PlacementAuthority>,
+    generation: u64,
+}
+
+struct PlacementAuthority {
+    authority: Weak<dyn ProductAuthority>,
+    session: Option<AuthoritySession>,
+}
+
+impl PlacementAuthority {
+    fn is_current(&self, owner: ProfileOwner) -> bool {
+        self.session.as_ref().is_some_and(|session| {
+            session.public_key == owner.root_public_key
+                && self.authority.upgrade().is_some_and(|authority| {
+                    authority.current_session().as_ref() == Some(session)
+                })
+        })
+    }
 }
 
 #[derive(Default)]
 struct PlacementState {
     /// The last non-empty placement and the wallet it was drawn for.
     placed: Option<RememberedPlacement>,
-    /// The connection is gone; nothing is drawn for it again.
-    closed: bool,
 }
 
 impl ContactAvatarPlacement {
@@ -98,6 +115,7 @@ impl ContactAvatarPlacement {
             product,
             services,
             state: futures::lock::Mutex::new(PlacementState::default()),
+            closed: AtomicBool::new(false),
         }
     }
 
@@ -110,18 +128,26 @@ impl ContactAvatarPlacement {
         request: HostProfilePlaceContactAvatarsRequest,
         authority: Option<Weak<dyn ProductAuthority>>,
     ) -> Result<(), HostProfilePlaceContactAvatarsError> {
+        let authority = authority.map(|authority| PlacementAuthority {
+            session: authority.upgrade().and_then(|authority| authority.current_session()),
+            authority,
+        });
+        let generation = self.services.upgrade()
+            .map_or(0, |services| services.contact_handles.generation());
         let mut state = self.state.lock().await;
-        if state.closed {
+        if self.closed.load(Ordering::Acquire) {
             return Ok(());
         }
-        state.placed = None;
         self.draw(owner, &request, authority.as_ref()).await?;
         if request.own.is_some() || !request.slots.is_empty() {
             state.placed = Some(RememberedPlacement {
                 owner,
                 request,
                 authority,
+                generation,
             });
+        } else {
+            state.placed = None;
         }
         Ok(())
     }
@@ -135,8 +161,15 @@ impl ContactAvatarPlacement {
     /// Clear what the host drew and draw nothing for this connection again.
     async fn close(&self) {
         let mut state = self.state.lock().await;
-        state.closed = true;
+        self.closed.store(true, Ordering::Release);
         self.clear_drawn(&mut state).await;
+    }
+
+    async fn session_changed(&self, generation: u64) {
+        let mut state = self.state.lock().await;
+        if state.placed.as_ref().is_some_and(|placed| placed.generation < generation) {
+            self.clear_drawn(&mut state).await;
+        }
     }
 
     async fn clear_drawn(&self, state: &mut PlacementState) {
@@ -166,6 +199,7 @@ impl ContactAvatarPlacement {
             owner: placed_for,
             request,
             authority,
+            ..
         }) = state.placed.as_ref()
         else {
             return;
@@ -184,6 +218,7 @@ impl ContactAvatarPlacement {
             owner,
             request,
             authority,
+            ..
         }) = state.placed.as_ref()
         else {
             return;
@@ -214,34 +249,43 @@ impl ContactAvatarPlacement {
         &self,
         owner: ProfileOwner,
         request: &HostProfilePlaceContactAvatarsRequest,
-        authority: Option<&Weak<dyn ProductAuthority>>,
+        authority: Option<&PlacementAuthority>,
     ) -> Result<(), HostProfilePlaceContactAvatarsError> {
         let unknown = |reason| HostProfilePlaceContactAvatarsError::Unknown { reason };
+        let current = || !self.closed.load(Ordering::Acquire)
+            && authority.is_none_or(|authority| authority.is_current(owner));
         let mut own_avatar = None;
-        if let Some(own) = request.own {
-            let disclosure = read_disclosure(self.storage.as_ref(), owner)
-                .await
-                .map_err(unknown)?;
-            if let Some(disclosure) =
-                disclosure.filter(|disclosure| is_screened_profile_reference(&disclosure.reference))
-            {
-                own_avatar = Some(PlacedAvatar {
-                    slot: own.slot,
-                    rect: own.rect,
-                    clip: own.clip,
-                    reference: disclosure.reference,
-                    // Every disclosure takes a newer revision, so a host that
-                    // caches by `shared_at` refetches the user's new profile.
-                    shared_at: disclosure.revision,
-                });
+        if current() {
+            if let Some(own) = request.own {
+                let disclosure = read_disclosure(self.storage.as_ref(), owner)
+                    .await
+                    .map_err(unknown)?;
+                if let Some(disclosure) =
+                    disclosure.filter(|disclosure| is_screened_profile_reference(&disclosure.reference))
+                {
+                    own_avatar = Some(PlacedAvatar {
+                        slot: own.slot,
+                        rect: own.rect,
+                        clip: own.clip,
+                        reference: disclosure.reference,
+                        // A newer disclosure revision refreshes the host's cached profile.
+                        shared_at: disclosure.revision,
+                    });
+                }
             }
         }
-        let mut avatars = self
-            .drawable(owner, &request.slots, authority)
-            .await
-            .map_err(unknown)?;
+        let mut avatars = if current() {
+            self.drawable(owner, &request.slots, authority.map(|authority| &authority.authority))
+                .await
+                .map_err(unknown)?
+        } else {
+            Vec::new()
+        };
         if let Some(own_avatar) = own_avatar {
             avatars.push(own_avatar);
+        }
+        if !current() {
+            avatars.clear();
         }
         let (surface_width, surface_height) = (request.surface_width, request.surface_height);
         let placed = PlacedAvatars {
@@ -393,7 +437,23 @@ impl ContactAvatarPlacements {
         else {
             return;
         };
+        placement.closed.store(true, Ordering::Release);
         spawner(Box::pin(async move { placement.close().await }));
+    }
+
+    /// Clear the preceding session's placements without erasing newer draws.
+    pub(crate) fn session_changed(&self, generation: u64, spawner: &Spawner) {
+        let placements: Vec<_> = self.by_runtime.lock()
+            .expect("contact avatar placements mutex poisoned")
+            .values().cloned().collect();
+        if placements.is_empty() {
+            return;
+        }
+        spawner(Box::pin(async move {
+            for placement in placements {
+                placement.session_changed(generation).await;
+            }
+        }));
     }
 
     /// Redraw every placement `product_id` holds for `owner`, after what that

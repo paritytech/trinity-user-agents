@@ -349,7 +349,7 @@ impl Decode for State {
             Some(len) => {
                 let mut rest = vec![0; len];
                 input.read(&mut rest)?;
-                profile::decode_watermarks(&rest)?
+                profile::decode_watermarks(&rest, &peers, &outbox)?
             }
             None => return Err("unbounded Chat state".into()),
         };
@@ -740,6 +740,7 @@ impl NativeChatActor {
                         !profile::superseded(
                             entry,
                             &state.profile_shared,
+                            &state.peers,
                             disclosure.as_ref(),
                             &self.product,
                             profile_revision,

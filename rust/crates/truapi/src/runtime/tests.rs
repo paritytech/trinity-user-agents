@@ -2910,6 +2910,53 @@ fn own_profile_status_and_presentation_resolve_the_host_owned_disclosure() {
     );
 }
 
+#[test]
+fn own_profile_reads_do_not_cross_a_wallet_switch() {
+    for present in [false, true] {
+        let platform = consenting_platform();
+        let presenter = Arc::new(RecordingProfilePlatform::default());
+        let host = signed_in(
+            profile_host_on(platform.clone(), egui_chat(), Some(presenter.clone())),
+            WALLET,
+        );
+        disclose(&host, CONTACTS_REFERENCE).unwrap();
+        let (release, gate) = futures::channel::oneshot::channel();
+        *platform.core_storage_read_gate.lock() = Some((
+            crate::test_support::core_storage_test_key(owner_of(&host).disclosure_key()),
+            gate,
+        ));
+        futures::executor::block_on(async {
+            let context = CallContext::default();
+            let operation = async {
+                if present {
+                    assert!(matches!(
+                        Profile::present_own(&host, &context, HostProfilePresentOwnRequest::V1).await,
+                        Err(CallError::Domain(HostProfilePresentOwnError::V1(
+                            v01::HostProfilePresentOwnError::NotConnected
+                        )))
+                    ));
+                } else {
+                    assert!(matches!(
+                        Profile::own_status(&host, &context, HostProfileOwnStatusRequest::V1).await,
+                        Err(CallError::Domain(HostProfileOwnStatusError::V1(
+                            v01::HostProfileOwnStatusError::NotConnected
+                        )))
+                    ));
+                }
+            };
+            futures::pin_mut!(operation);
+            assert!(futures::poll!(operation.as_mut()).is_pending());
+            host.test_session_state().set_session(SessionInfo {
+                public_key: [0x99; 32],
+                ..session_info()
+            });
+            release.send(()).unwrap();
+            operation.await;
+        });
+        assert!(presenter.presented.lock().unwrap().is_empty());
+    }
+}
+
 const CONTACTS_REFERENCE: &str = "seity-contacts:v1:5c9584ba6e565351723d57394780b31b4c2156123e1269c4724ae5f01258bb535c9584ba6e565351723d57394780b31b4c2156123e1269c4724ae5f01258bb53";
 
 const WALLET: [u8; 32] = [0x57; 32];
@@ -3431,6 +3478,30 @@ fn a_contact_removed_during_lookup_never_becomes_a_transaction_recipient_or_prof
             .unwrap(),
         None,
     );
+}
+
+#[test]
+fn an_unrenderable_profile_permission_review_does_not_store_a_denial() {
+    let platform = Arc::new(StubPlatform {
+        profile_disclosure_error: Some("profile disclosure review is unsupported"),
+        ..Default::default()
+    });
+    let host = app_host(&platform, "seity.dot");
+    for _ in 0..2 {
+        assert!(matches!(
+            disclose(&host, CONTACTS_REFERENCE),
+            Err(CallError::Domain(HostProfileDiscloseError::V1(
+                v01::HostProfileDiscloseError::PermissionDenied
+            )))
+        ));
+        assert_eq!(
+            futures::executor::block_on(host.permission_authorization_status(
+                PermissionAuthorizationRequest::ProfileDisclosure,
+            )).unwrap(),
+            PermissionAuthorizationStatus::NotDetermined,
+        );
+    }
+    assert_eq!(platform.profile_disclosure_reviews.lock().expect("profile reviews").len(), 2);
 }
 
 #[test]
@@ -3956,6 +4027,104 @@ fn handle_avatars_render_personal_profiles_without_reviving_removed_contacts_on_
         empty,
         "a later profile update cannot reuse the removed handle's account"
     );
+}
+
+#[test]
+fn peer_and_own_avatars_are_discarded_after_a_wallet_switch_during_storage_read() {
+    for own in [false, true] {
+        let platform = consenting_platform();
+        let avatars = Arc::new(RecordingAvatarHost::default());
+        let host = signed_in(avatar_host(&platform, egui_chat(), &avatars), WALLET);
+        let owner = owner_of(&host);
+        disclose(&host, CONTACTS_REFERENCE).unwrap();
+        futures::executor::block_on(profile::record_received_reference(
+            platform.as_ref(), owner, "egui-chat.dot", [0xa1; 32],
+            "seity.dot".into(), 1, Some(CONTACTS_REFERENCE.into()),
+        )).unwrap();
+        let mut request = truapi::versioned::IntoLatest::into_latest(
+            HostProfilePlaceContactAvatarsRequest::V1(avatar_placement(&[(0, [0xa1; 32])])),
+        );
+        if own {
+            request.own = Some(truapi::latest::OwnAvatarSlot {
+                slot: 1, rect: avatar_rect(16, 16, 44), clip: AVATAR_CLIP,
+            });
+        }
+        let key = if own {
+            owner.disclosure_key()
+        } else {
+            CoreStorageKey::ProfileReferencesReceived {
+                root_public_key: owner.root_public_key,
+                genesis_hash: owner.genesis_hash,
+                product_id: "egui-chat.dot".into(),
+            }
+        };
+        let (release, gate) = futures::channel::oneshot::channel();
+        *platform.core_storage_read_gate.lock() =
+            Some((crate::test_support::core_storage_test_key(key), gate));
+        futures::executor::block_on(async {
+            let context = CallContext::default();
+            let operation = Profile::place_contact_avatars(
+                &host, &context, HostProfilePlaceContactAvatarsRequest::V3(request),
+            );
+            futures::pin_mut!(operation);
+            assert!(futures::poll!(operation.as_mut()).is_pending());
+            host.test_session_state().set_session(SessionInfo {
+                public_key: [0x99; 32], ..session_info()
+            });
+            release.send(()).unwrap();
+            assert_eq!(operation.await, Ok(HostProfilePlaceContactAvatarsResponse::V3));
+        });
+        assert_eq!(avatars.placements(), vec![(
+            "egui-chat.dot".into(), placed_avatars(Vec::new()),
+        )]);
+    }
+}
+
+#[test]
+fn profile_session_change_clears_and_forgets_a_stationary_peer_avatar() {
+    let platform = stub_platform();
+    let avatars = Arc::new(RecordingAvatarHost::default());
+    let host = signed_in(avatar_host(&platform, egui_chat(), &avatars), WALLET);
+    let owner = owner_of(&host);
+    futures::executor::block_on(profile::record_received_reference(
+        platform.as_ref(), owner, "egui-chat.dot", [0xa1; 32],
+        "seity.dot".into(), 1, Some(CONTACTS_REFERENCE.into()),
+    )).unwrap();
+    place_avatars(&host, avatar_placement(&[(0, [0xa1; 32])])).unwrap();
+    host.test_session_state().clear_session();
+    host.services.contacts_session_changed();
+    assert_eq!(avatars.wait_for(2)[1], (
+        "egui-chat.dot".into(), placed_avatars(Vec::new()),
+    ));
+    host.test_session_state().set_session(SessionInfo { public_key: WALLET, ..session_info() });
+    let spawner: crate::subscription::Spawner = Arc::new(futures::executor::block_on);
+    host.services.contact_avatars.redraw_owner(owner, &spawner);
+    assert_eq!(avatars.placements().len(), 2);
+}
+
+#[test]
+fn failed_avatar_replacement_still_clears_the_previous_layer_on_teardown() {
+    let platform = stub_platform();
+    let avatars = Arc::new(RecordingAvatarHost::default());
+    let host = signed_in(avatar_host(&platform, egui_chat(), &avatars), WALLET);
+    let owner = owner_of(&host);
+    futures::executor::block_on(profile::record_received_reference(
+        platform.as_ref(), owner, "egui-chat.dot", [0xa1; 32],
+        "seity.dot".into(), 1, Some(CONTACTS_REFERENCE.into()),
+    )).unwrap();
+    place_avatars(&host, avatar_placement(&[(0, [0xa1; 32])])).unwrap();
+    platform.core_read_failures.lock().insert(crate::test_support::core_storage_test_key(
+        CoreStorageKey::ProfileReferencesReceived {
+            root_public_key: owner.root_public_key,
+            genesis_hash: owner.genesis_hash,
+            product_id: "egui-chat.dot".into(),
+        },
+    ));
+    assert!(place_avatars(&host, avatar_placement(&[(1, [0xa1; 32])])).is_err());
+    drop(host);
+    assert_eq!(avatars.wait_for(2)[1], (
+        "egui-chat.dot".into(), placed_avatars(Vec::new()),
+    ));
 }
 
 #[test]

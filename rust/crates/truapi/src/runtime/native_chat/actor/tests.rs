@@ -1812,6 +1812,14 @@ fn a_disclosed_profile_reference_is_sealed_once_per_peer_and_withdrawn_on_retrac
         assert_eq!(view.prepared[0].peer_identity, identity.account);
         assert!(view.prepared[0].requires_ack);
         let first_request = view.prepared[0].request_id.clone();
+        let predicted = actor.store.read(|state| {
+            let watermark = &state.profile_shared[0];
+            hash(&(identity.account, "seity.dot", Some(PROFILE_REFERENCE), watermark.timestamp).encode())
+        }).await.unwrap();
+        assert_ne!(
+            first_request, format!("profile-{}", hex::encode(&predicted[..8])),
+            "the public request id must not be an offline reference oracle"
+        );
         assert!(
             !contains(
                 &view.prepared[0].statement.encode(),
@@ -1960,6 +1968,60 @@ fn a_disclosed_profile_reference_is_sealed_once_per_peer_and_withdrawn_on_retrac
                 .unwrap(),
             "and is sent once"
         );
+    });
+}
+
+#[test]
+fn profile_delivery_tracks_the_contacts_current_device_roster() {
+    block_on(async {
+        for acknowledged in [false, true] {
+            let fixture = Fixture::new();
+            set_product_grants(&fixture.platform, PRODUCT,
+                crate::platform::PermissionAuthorizationStatus::Authorized).await;
+            let actor = fixture.actor().await;
+            let identity = IdentityFixture::new();
+            let old = DeviceFixture::new(1);
+            let new = DeviceFixture::new(2);
+            seed_peer(&actor, &identity, &[&old]).await;
+            crate::runtime::profile::write_disclosure(
+                fixture.platform.as_ref(), profile::profile_owner(&fixture.context),
+                &crate::runtime::profile::Disclosure {
+                    product_id: "seity.dot".into(), reference: PROFILE_REFERENCE.into(), revision: 1,
+                    all_chat_apps: true, app_products: Vec::new(), contacts: Vec::new(),
+                },
+            ).await.unwrap();
+            assert!(actor.publish_profile_reference(&fixture.context).await.unwrap());
+            let previous = actor.public_view(&fixture.context, vec![]).await.unwrap().prepared[0]
+                .request_id.clone();
+            let account = identity.account;
+            let replacement = DeviceRecord {
+                account: new.account(), key: Some(new.public_key()), active: true,
+                timestamp: fixture.timestamp, message_id: "device-handover".into(),
+            };
+            actor.store.update(move |state| {
+                if acknowledged {
+                    state.outbox.retain(|entry| entry.kind.profile_scope().is_none());
+                }
+                let peer = state.peer_mut(&account)?;
+                peer.revocation_acks = vec![replacement.account];
+                peer.devices = vec![replacement];
+                peer.revision += 1;
+                Ok(())
+            }).await.unwrap();
+            assert!(actor.public_view(&fixture.context, vec![]).await.unwrap().prepared.is_empty(),
+                "no statement sealed to the revoked device can still reach the product");
+            assert!(actor.publish_profile_reference(&fixture.context).await.unwrap());
+            let prepared = actor.public_view(&fixture.context, vec![]).await.unwrap().prepared;
+            assert_eq!(prepared.len(), 1);
+            assert_ne!(prepared[0].request_id, previous);
+            let wire::V2StatementTransportData::MultiRequest(sealed) =
+                open_output(&actor, &identity, &prepared[0].statement, false, false)
+            else { panic!("profile must use authenticated multi-device transport") };
+            assert_eq!(sealed.devices_info.iter().map(|device| device.statement_account_id)
+                .collect::<Vec<_>>(), vec![new.account()]);
+            let opened = open_body(&actor, &new, &sealed.encrypted_request, &sealed.devices_info);
+            assert!(contains(&opened, PROFILE_REFERENCE.as_bytes()));
+        }
     });
 }
 

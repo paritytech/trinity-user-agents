@@ -238,6 +238,9 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
         override suspend fun confirmUserAction(review: UserConfirmationReview): Boolean =
             confirmationLauncher.decide(review, requesterFallback = HOST_REQUESTER)
 
+        override suspend fun confirmPermission(review: UserConfirmationReview): PermissionDecision =
+            confirmationLauncher.decidePermission(review, requesterFallback = HOST_REQUESTER)
+
         override suspend fun featureSupported(request: HostFeatureSupportedRequest): Boolean =
             when (request) {
                 is HostFeatureSupportedRequest.Chain -> cachedChains.get().canDial(request.genesisHash)
