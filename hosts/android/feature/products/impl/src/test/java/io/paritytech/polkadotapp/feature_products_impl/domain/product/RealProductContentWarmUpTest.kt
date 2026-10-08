@@ -2,6 +2,7 @@ package io.paritytech.polkadotapp.feature_products_impl.domain.product
 
 import android.net.Uri
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsResolver
+import io.paritytech.polkadotapp.feature_products_api.domain.runtime.ProductRuntimeSettings
 import io.paritytech.polkadotapp.feature_products_api.model.ExecutableKind
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_impl.domain.webView.ProductServingHostResolver
@@ -19,7 +20,15 @@ import org.mockito.Mockito.verify
 class RealProductContentWarmUpTest {
     private val dotNsResolver: DotNsResolver = mock()
     private val servingHostResolver: ProductServingHostResolver = mock()
-    private val warmUp = RealProductContentWarmUp(dotNsResolver, servingHostResolver)
+    private var truapiRuntime = true
+    private val runtimeSettings = object : ProductRuntimeSettings {
+        override fun isTrUAPIRuntimeEnabled() = truapiRuntime
+
+        override fun setTrUAPIRuntimeEnabled(enabled: Boolean) {
+            truapiRuntime = enabled
+        }
+    }
+    private val warmUp = RealProductContentWarmUp(dotNsResolver, servingHostResolver, runtimeSettings)
 
     private val productId = ProductId.fromStoredValue("game.dot")
     private val archive: Uri = mock()
@@ -35,6 +44,20 @@ class RealProductContentWarmUpTest {
         val result = warmUp.warmUp(productId)
 
         verify(dotNsResolver).resolveToLocalUri("widget.game.dot")
+        assertTrue(result.isSuccess)
+    }
+
+    // The native runtime, which release builds run, still serves the app under a card. Warming the
+    // widget there would download an archive that card never loads.
+    @Test
+    fun `on the native runtime it warms the app archive the card loads`() = runBlocking {
+        truapiRuntime = false
+        whenever(servingHostResolver.servingHostFor("game.dot", ExecutableKind.APP)).thenReturn("app.game.dot")
+        whenever(dotNsResolver.resolveToLocalUri("app.game.dot")).thenReturn(Result.success(archive))
+
+        val result = warmUp.warmUp(productId)
+
+        verify(dotNsResolver).resolveToLocalUri("app.game.dot")
         assertTrue(result.isSuccess)
     }
 

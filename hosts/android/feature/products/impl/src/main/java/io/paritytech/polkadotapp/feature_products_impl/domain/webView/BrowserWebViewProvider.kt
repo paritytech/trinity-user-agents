@@ -70,7 +70,8 @@ class BrowserWebViewProvider @AssistedInject constructor(
         ): BrowserWebViewProvider
     }
 
-    // A page served from a debug loopback url has no dotNS host to read its product from.
+    // A page served from a debug loopback url has no dotNS host to read its product from. The id stays fixed across
+    // navigations, so a debug page that navigates to another product's page runs that page as the debug product.
     override val callingProductIdProvider: CallingProductIdProvider =
         fixedProductId?.let(::FixedProductId) ?: UrlDerivedProductId(dotNsTldProvider) {
             accessWebView(WebView::getUrl)
