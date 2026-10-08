@@ -140,6 +140,17 @@ private extension ProductPermissionPromptViewFactory {
                 body: String(localized: .Products.permissionBodyStatementSubmit),
                 icon: makeIcon(systemName: "text.bubble")
             )
+        case let .jamPeersAccess(genesis):
+            PromptContent(
+                title: String(
+                    localized: .Products.permissionTitleJamPeers(
+                        productId: productId,
+                        shortGenesis: ProductPermission.shortGenesis(genesis)
+                    )
+                ),
+                body: String(localized: .Products.permissionBodyJamPeers) + "\n\n" + genesis,
+                icon: makeIcon(systemName: "point.3.connected.trianglepath.dotted")
+            )
         case .userIdentityAccess:
             PromptContent(
                 title: String(localized: .Products.permissionTitleRemote(productId: productId)),
@@ -185,6 +196,12 @@ private extension ProductPermissionPromptViewFactory {
             "- " + String(localized: .Products.permissionBodyPreimageSubmit)
         case .statementSubmitAccess:
             "- " + String(localized: .Products.permissionBodyStatementSubmit)
+        case let .jamPeersAccess(genesis):
+            "- " + String(
+                localized: .Products.permissionLabelJamPeers(
+                    genesis: genesis
+                )
+            )
         case let .deviceCapability(capability):
             "- " + capabilityDescription(capability)
         case let .accountAccess(targetProductId):

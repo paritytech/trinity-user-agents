@@ -19,7 +19,8 @@ pub enum HostJamPeerTransportDialError {
     /// The peer refused the connection or presented a certificate that does
     /// not match the requested identity.
     Refused,
-    /// The connection cap for this execution is exhausted.
+    /// The execution's connection budget (including pending dials), or its
+    /// eight distinct genesis decisions, is exhausted.
     Limit,
     /// The endpoint could not be reached.
     Unreachable,
@@ -28,8 +29,9 @@ pub enum HostJamPeerTransportDialError {
 /// Dial one JAM peer over JAMNP-S (QUIC) or WebTransport.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 pub struct HostJamPeerTransportDialRequest {
-    /// Genesis header hash; the host derives the ALPN from it and requires a
-    /// `RemotePermission::JamPeers` grant for it.
+    /// Genesis header hash authorizing this dial. Native QUIC derives its
+    /// ALPN from the first four bytes; WebTransport negotiates HTTP/3.
+    /// Neither transport authenticates the peer's chain membership.
     pub genesis: [u8; 32],
     /// Peer IP address, IPv6 or v4-mapped IPv6.
     pub ip: [u8; 16],

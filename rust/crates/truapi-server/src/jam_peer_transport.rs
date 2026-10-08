@@ -8,10 +8,11 @@
 //! Anything short of a grant answers
 //! [`NotGranted`](truapi::latest::HostJamPeerTransportDialError::NotGranted).
 //!
-//! The host also owns the transport: it builds the JAMNP-S ALPN from the
-//! genesis ([`alpn`]), verifies the peer certificate against the identity the
-//! guest named, frames messages and enforces the `JAM_PEER_TRANSPORT_MAX_*` caps
-//! from `truapi::latest`.
+//! The host also owns the transport: native QUIC builds the JAMNP-S ALPN from
+//! the first four genesis bytes ([`alpn`]) and pins the guest-named Ed25519
+//! identity. WebTransport uses HTTP/3 and a guest-named P-256 identity.
+//! Neither authenticates chain membership. The host frames messages and
+//! enforces the `JAM_PEER_TRANSPORT_MAX_*` caps from `truapi::latest`.
 //!
 //! Native product runtimes serve `JamPeerTransport` themselves over JAMNP-S
 //! QUIC, one endpoint per product connection. The browser core keeps the
@@ -40,6 +41,7 @@ pub struct InvalidGenesis;
 
 /// The JAMNP-S ALPN protocol id for `genesis`:
 /// `jamnp-s/1/<first 8 hex nibbles of the genesis header hash>`.
+/// This protocol selector is not a cryptographic chain-membership proof.
 pub fn alpn(genesis: &[u8; 32]) -> String {
     let mut alpn = String::with_capacity(ALPN_PREFIX.len() + 8);
     alpn.push_str(ALPN_PREFIX);

@@ -27,7 +27,7 @@ public enum ProductPermission: Equatable, Sendable {
     case chainSubmitAccess
     case preimageSubmitAccess
     case statementSubmitAccess
-    /// Read-only peer access to the JAM network whose genesis header hash is
+    /// Peer messaging access to the JAM network whose genesis header hash is
     /// `genesis` (lowercase `0x`-prefixed hex).
     case jamPeersAccess(genesis: String)
     case userIdentityAccess
