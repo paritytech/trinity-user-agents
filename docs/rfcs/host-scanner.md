@@ -121,8 +121,10 @@ of that and returns the text. If the product wants to follow a scanned link, it 
 rules.
 
 **A pairing request never reaches a product.** A pairing link lets whoever answers it first pair with the device that
-showed it, so it is a credential. The core refuses any code it would itself accept as a pairing request, whatever the
-request's formats and prefix, including the bare handshake without the `pair` link around it. In the viewfinder it is
+showed it, so it is a credential. The core refuses any code that carries a handshake in a form some wallet reads,
+whatever the request's formats and prefix: any `handshake=` value or the bare handshake, in hex with or without `0x`,
+of any proposal version. It matches the shape rather than decoding, so a wallet more lenient than the core is still
+covered. In the viewfinder it is
 treated like any code that is not for this product. The prefix stays optional, because a barcode such as an EAN-13
 grocery code has no prefix to give, and a required prefix would not help anyway: a product could pass
 `polkadotapp://pair?` as its prefix.

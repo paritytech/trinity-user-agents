@@ -73,10 +73,36 @@ pub fn accepts(request: &HostScannerScanRequest, format: CodeFormat, text: &str)
         })
 }
 
-/// Whether the core would accept `text` as a pairing request, with or without
-/// the `pair` link around the handshake.
+/// Proposal version tags wallets read: V1, which the core no longer sends, and
+/// V2.
+const PROPOSAL_VERSIONS: [u8; 2] = [0, 1];
+/// A version tag followed by the host's two 32-byte device keys, the start of
+/// every proposal version.
+const MIN_PROPOSAL_BYTES: usize = 1 + 32 + 32;
+
+/// Whether `text` carries a pairing handshake in a form some wallet reads: as
+/// any `handshake=` value or bare, in hex with or without `0x`. Matched by
+/// shape rather than decoded, so a wallet more lenient than the core still
+/// never receives one through a product.
 fn is_pairing_request(text: &str) -> bool {
-    crate::host_logic::sso::pairing::decode_pairing_deeplink(text).is_ok()
+    let handshake_values = text
+        .split("handshake=")
+        .skip(1)
+        .map(|rest| rest.split(['&', '#']).next().unwrap_or_default());
+    core::iter::once(text)
+        .chain(handshake_values)
+        .any(is_handshake_proposal)
+}
+
+fn is_handshake_proposal(payload: &str) -> bool {
+    let payload = payload.trim();
+    let hex = payload
+        .strip_prefix("0x")
+        .or_else(|| payload.strip_prefix("0X"))
+        .unwrap_or(payload);
+    hex::decode(hex).is_ok_and(|bytes| {
+        bytes.len() >= MIN_PROPOSAL_BYTES && PROPOSAL_VERSIONS.contains(&bytes[0])
+    })
 }
 
 /// What a host does with one code the camera read.
@@ -231,14 +257,31 @@ mod tests {
             [2; 32],
             &config,
         );
-        let other_scheme = link.replacen("polkadotapp", "otherwallet", 1);
-        let bare_handshake = link.split_once("?handshake=").unwrap().1.to_owned();
-        for text in [&link, &other_scheme, &bare_handshake] {
+        let handshake = link.split_once("?handshake=").unwrap().1;
+        // Wallets read these forms too, and a V1 proposal starts with tag 0.
+        let v1_handshake = format!("00{}", "07".repeat(70));
+        for text in [
+            link.clone(),
+            link.replacen("polkadotapp", "otherwallet", 1),
+            link.replacen("?handshake=", "?handshake=0x", 1),
+            link.replacen("?handshake=", "?source=poster&handshake=", 1),
+            format!("{link}&source=poster"),
+            format!("polkadotapp://pair?handshake={v1_handshake}"),
+            handshake.to_owned(),
+            format!("0x{handshake}"),
+        ] {
             for prefix in [None, Some("polkadotapp://pair?")] {
                 let any_qr = request(&[CodeFormat::Qr], prefix, None);
-                assert!(!accepts(&any_qr, CodeFormat::Qr, text), "{text}");
+                assert!(!accepts(&any_qr, CodeFormat::Qr, &text), "{text}");
             }
         }
+        // Too short to hold a proposal's keys, so a product may receive it.
+        let account = format!("0x{}", "01".repeat(32));
+        assert!(accepts(
+            &request(&[CodeFormat::Qr], None, None),
+            CodeFormat::Qr,
+            &account
+        ));
     }
 
     #[test]
