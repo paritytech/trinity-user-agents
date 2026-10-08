@@ -212,6 +212,7 @@ type FundingRoute = {
   mode: 'CARD' | 'BANK' | 'CRYPTO';
   directions: ('In' | 'Out')[];  // In: into the user's balance. Out: out of it.
   assets: string[];              // Symbols the user pays with (In) or receives (Out): ISO 4217 codes for CARD and BANK, token symbols for CRYPTO.
+  networks?: string[];           // CRYPTO only: networks the assets move on, such as "polkadot" (Polkadot Asset Hub), "ethereum", "tron", "solana", "bitcoin". Omitted means not declared.
   countries?: string[];          // ISO 3166-1 alpha-2 codes the route serves. Omitted means not declared.
   requiresAccount?: boolean;     // The user needs an account with the provider, such as one past its KYC.
 };
@@ -219,10 +220,11 @@ type FundingRoute = {
 
 - **One mode per route.** A provider serving card and bank publishes two routes.
 - **Unrecognised values are ignored, not fatal**, so later revisions can add modes and directions without a new `$v`. A route is ignored when its `mode` is unrecognised or it has no recognised direction or no assets; an unrecognised direction is dropped from a route that has others. A worker left with no usable route serves no Funding, and its other surfaces are unaffected.
+- **Networks are lowercase ids**, and a Host asks for a quote on one of them. Unrecognised ids are ignored like other unknown values, and `networks` on a CARD or BANK route is ignored.
 - **The quote is authoritative.** A Host MAY leave out a route whose `countries` omit the user's country without quoting it; a declared country can still be refused, and a route without `countries` is checked by its quote. Limits, fees and timing come only from the quote, which the Funding runtime contract defines.
 - **`backend` is an onramp adapter id, never a key.** The adapter holds the provider's key, attaches it to the worker's call and returns the provider's answer to the worker.
 
-A provider serving inbound card payments in EUR and USD in three countries, and crypto deposits and withdrawals of USDT and DOT:
+A provider serving inbound card payments in EUR and USD in three countries, and crypto deposits and withdrawals of USDT and DOT on Polkadot and Ethereum:
 
 ```json
 {
@@ -234,7 +236,7 @@ A provider serving inbound card payments in EUR and USD in three countries, and 
     "funding": {
       "routes": [
         { "mode": "CARD", "directions": ["In"], "assets": ["EUR", "USD"], "countries": ["DE", "FR", "US"], "requiresAccount": true },
-        { "mode": "CRYPTO", "directions": ["In", "Out"], "assets": ["USDT", "DOT"] }
+        { "mode": "CRYPTO", "directions": ["In", "Out"], "assets": ["USDT", "DOT"], "networks": ["polkadot", "ethereum"] }
       ]
     }
   }
