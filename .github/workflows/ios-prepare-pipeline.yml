@@ -119,6 +119,17 @@ jobs:
           fi
           TIMESTAMP="$(date -u +%Y%m%d%H%M)"
           BRANCH_NAME="release/release-${NEW_VERSION}-${TIMESTAMP}"
+          # ios-release-distribution.yml and ios-release-branch-lifecycle.yml select
+          # an app release by this prefix, which is what keeps a package release off
+          # App Store Connect. Renaming the branch here without them would turn the
+          # app build off silently, so fail instead.
+          case "${BRANCH_NAME}" in
+            release/release-*) ;;
+            *)
+              echo "::error::Release branch '${BRANCH_NAME}' must start with 'release/release-'; the distribution and lifecycle workflows select app releases by that prefix"
+              exit 1
+              ;;
+          esac
           VERSION_CHANGED=$([[ "${LEVEL}" != "no-bump" ]] && echo "true" || echo "false")
           {
             echo "new_version=${NEW_VERSION}"
