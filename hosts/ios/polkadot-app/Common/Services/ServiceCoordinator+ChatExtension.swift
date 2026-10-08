@@ -45,7 +45,7 @@ extension ServiceCoordinator {
             workers: { pocket?.workers },
             workerManager: workerFacade.manager,
             dotNsResolver: spaFlowState.dotNsResolver,
-            ipfsBaseURL: AppConfig.KnownIPFS.main
+            ipfsBaseURL: spaFlowState.ipfsGatewayBaseUrl
         )
 
         let productBotProvider = ProductBotProvider(

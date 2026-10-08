@@ -176,7 +176,7 @@ final class ProductPocketService: @unchecked Sendable {
             ),
             products: flowState.productResolver,
             dotNsResolver: flowState.dotNsResolver,
-            ipfsBaseURL: AppConfig.KnownIPFS.main
+            ipfsBaseURL: flowState.ipfsGatewayBaseUrl
         )
 
         install(manager: manager, drawing: drawing, handlers: handlers)
