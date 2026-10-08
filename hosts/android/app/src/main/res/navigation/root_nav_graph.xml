@@ -315,10 +315,6 @@
         app:launchSingleTop="true" />
 
     <action
-        android:id="@+id/action_global_to_fund_graph"
-        app:destination="@id/fund_graph" />
-
-    <action
         android:id="@+id/action_global_to_scan_graph"
         app:destination="@id/scan_graph" />
 
@@ -404,7 +400,6 @@
     <include app:graph="@navigation/video_game_play_graph" />
     <include app:graph="@navigation/evidence_video_graph" />
     <include app:graph="@navigation/evidence_photo_graph" />
-    <include app:graph="@navigation/fund_graph" />
     <include app:graph="@navigation/product_settings_graph" />
 
 </navigation>

@@ -130,7 +130,6 @@ dependencies {
     // Region features
     implementation(project(":feature:backup:impl"))
     implementation(project(":feature:xcm:impl"))
-    implementation(project(":feature:fund:impl"))
     implementation(project(":feature:swap:impl"))
     implementation(project(":feature:chats:impl"))
     implementation(project(":feature:device-sync:impl"))
