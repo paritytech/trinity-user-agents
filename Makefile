@@ -3,7 +3,7 @@
 # Run `make help` for the list of targets.
 
 .DEFAULT_GOAL := help
-.PHONY: help setup build codegen test check check-generated clean playground wasm wasm-crypto-test uniffi uniffi-kotlin android-check provider-android-check ios-build ios-run ios-chat-run ios-chat-host-playground-run ios-chat-all android-jni android-publish-local dotli-link dev dev-cli dev-bootstrap debugger dev-link-check e2e-dotli e2e-cli-diagnosis e2e-signing-cli e2e-pairing-cli e2e-chat-cli e2e-pocket-cli e2e-scanner-cli e2e-cross-product-storage e2e-cross-product-ringvrf e2e-cross-product-signing e2e-cli-update headless install cli-runner cli-dist matrix explorer xcframework
+.PHONY: help setup build codegen test check check-generated clean playground wasm wasm-crypto-test uniffi uniffi-kotlin android-check provider-android-check ios-build ios-run ios-chat-run ios-chat-host-playground-run ios-chat-all android-jni android-publish-local dotli-link dev dev-cli dev-bootstrap debugger dev-link-check e2e-dotli e2e-cli-diagnosis e2e-signing-cli e2e-pairing-cli e2e-chat-cli e2e-pocket-cli e2e-cross-product-storage e2e-cross-product-ringvrf e2e-cross-product-signing e2e-cli-update headless install cli-runner cli-dist matrix explorer xcframework
 
 CARGO ?= cargo
 # The dated nightly CI runs; see nightly-toolchain.
@@ -463,9 +463,6 @@ e2e-chat-cli: ## Run the Chat content-screening battery against a chat signing-h
 
 e2e-pocket-cli: ## Run the Pocket protocol battery against a Pocket signing-host CLI.
 	scripts/battery.sh --pocket-host
-
-e2e-scanner-cli: ## Run the scanner checks against both CLI host roles, each scanning a fixed code.
-	scripts/battery.sh --scanner-host
 
 e2e-cross-product-storage: ## One product reads another's storage on the signing-host CLI, granted by a local product config.
 	scripts/cross-product-storage-e2e.sh

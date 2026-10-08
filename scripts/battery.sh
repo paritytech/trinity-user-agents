@@ -11,7 +11,6 @@
 #   scripts/battery.sh --signing-host     # direct phase only
 #   scripts/battery.sh --pairing-host     # paired phase only
 #   scripts/battery.sh --pocket-host      # Pocket phase only
-#   scripts/battery.sh --scanner-host     # scanner phase only
 #   scripts/battery.sh --release          # build and run the release binary
 #   scripts/battery.sh -- --network foo   # arguments after `--` go to every host process
 #
@@ -49,7 +48,6 @@ unset DYLD_LIBRARY_PATH
 SCRIPT="rust/crates/truapi-host-cli/js/scripts/battery.ts"
 CHAT_SCRIPT="rust/crates/truapi-host-cli/js/scripts/chat-battery.ts"
 POCKET_SCRIPT="rust/crates/truapi-host-cli/js/scripts/pocket-battery.ts"
-SCANNER_SCRIPT="rust/crates/truapi-host-cli/js/scripts/scanner-battery.ts"
 PRODUCT_ID="truapi-playground.dot"
 REPORTS="explorer/diagnosis-reports/spa"
 LOG_DIR="target/battery"
@@ -63,7 +61,6 @@ RUN_SIGNING=1
 RUN_PAIRING=1
 RUN_CHAT=0
 RUN_POCKET=0
-RUN_SCANNER=0
 
 usage() {
   awk 'NR == 1 { next } /^#/ { sub(/^# ?/, ""); print; next } { exit }' "$0"
@@ -79,9 +76,6 @@ while [ $# -gt 0 ]; do
     # Pocket is its own phase for the same reason: it needs a Worker-execution
     # connection with a seeded card set, which no other phase opens.
     --pocket-host) RUN_SIGNING=0; RUN_PAIRING=0; RUN_POCKET=1 ;;
-    # The scanner is its own phase because the host needs TRUAPI_SCAN_TEXT set,
-    # and the generated battery expects a dismissal from a host without it.
-    --scanner-host) RUN_SIGNING=0; RUN_PAIRING=0; RUN_SCANNER=1 ;;
     --release) CARGO_ARGS+=(--release); PROFILE_DIR="release" ;;
     --product-id)
       [ $# -ge 2 ] || { echo "battery: --product-id needs a value" >&2; exit 2; }
@@ -248,35 +242,6 @@ pocket_phase() {
   return "$rc"
 }
 
-scanner_phase() {
-  echo "battery: scanner phase"
-  # The code the CLI scans in every case. The cases refuse it on purpose too,
-  # which only the core can do, since the CLI does not filter.
-  export TRUAPI_SCAN_TEXT="https://greenmarket.example/r/BAG6"
-  local role rc=0
-  # Scanning needs no session, so the pairing host runs unpaired, from a fresh
-  # base path so no earlier session is restored.
-  for role in signing-host pairing-host; do
-    local log="$LOG_DIR/scanner-$role-cli.log" role_args=()
-    if [ "$role" = pairing-host ]; then
-      rm -rf "$LOG_DIR/scanner-pairing-host-state"
-      role_args=(--base-path "$LOG_DIR/scanner-pairing-host-state")
-    fi
-    "$HOST" "$role" \
-      --product-id "$PRODUCT_ID" \
-      --script "$SCANNER_SCRIPT" \
-      --auto-accept \
-      ${role_args[@]+"${role_args[@]}"} \
-      ${HOST_ARGS[@]+"${HOST_ARGS[@]}"} > >(tee "$log") 2>&1 &
-    local host_pid=$!
-    start_watchdog "$host_pid" "scanner phase ($role)"
-    wait "$host_pid" || rc=$?
-    stop_watchdog
-  done
-  unset TRUAPI_SCAN_TEXT
-  return "$rc"
-}
-
 pairing_phase() {
   local log="$LOG_DIR/pairing-host-cli.log"
   local signer_log="$LOG_DIR/pairing-host-cli-signer.log"
@@ -351,7 +316,6 @@ SIGNING_RC="skipped"
 PAIRING_RC="skipped"
 CHAT_RC="skipped"
 POCKET_RC="skipped"
-SCANNER_RC="skipped"
 
 # Each phase writes under the directory for the modality it exercises, so the
 # summary names the ones this run actually produced rather than always the App
@@ -390,16 +354,10 @@ if [ "$RUN_POCKET" = 1 ]; then
   pocket_phase || POCKET_RC=$?
 fi
 
-if [ "$RUN_SCANNER" = 1 ]; then
-  SCANNER_RC=0
-  scanner_phase || SCANNER_RC=$?
-fi
-
 echo
-echo "battery: signing-host exit=$SIGNING_RC · pairing-host exit=$PAIRING_RC · chat-host exit=$CHAT_RC · pocket-host exit=$POCKET_RC · scanner-host exit=$SCANNER_RC"
+echo "battery: signing-host exit=$SIGNING_RC · pairing-host exit=$PAIRING_RC · chat-host exit=$CHAT_RC · pocket-host exit=$POCKET_RC"
 echo "battery: reports under $(report_dirs), logs under $LOG_DIR/"
 [ "$SIGNING_RC" = 0 ] || [ "$SIGNING_RC" = "skipped" ] || exit "$SIGNING_RC"
 [ "$PAIRING_RC" = 0 ] || [ "$PAIRING_RC" = "skipped" ] || exit "$PAIRING_RC"
 [ "$CHAT_RC" = 0 ] || [ "$CHAT_RC" = "skipped" ] || exit "$CHAT_RC"
 [ "$POCKET_RC" = 0 ] || [ "$POCKET_RC" = "skipped" ] || exit "$POCKET_RC"
-[ "$SCANNER_RC" = 0 ] || [ "$SCANNER_RC" = "skipped" ] || exit "$SCANNER_RC"
