@@ -205,7 +205,8 @@ interface HostBridge {
     /**
      * Show or hide the face above this execution's expanded card. Answers
      * [ExpandedCardFaceOutcome.NOT_PRESENTED] when the product is not under its
-     * card and [ExpandedCardFaceOutcome.USER_MOVING] while the user drags it.
+     * card and [ExpandedCardFaceOutcome.USER_MOVING] while the user drags it,
+     * and returns without waiting for the animation.
      *
      * Defaults to [ExpandedCardFaceOutcome.UNSUPPORTED], so an app without cards
      * says so instead of pretending it moved one.
