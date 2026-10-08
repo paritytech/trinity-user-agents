@@ -286,16 +286,30 @@ struct PocketCardScreenTests {
     }
 
     /// The product is kept warm for the next tap on the same card, which only
-    /// works if the screen it was shown on let go of it.
+    /// works if closing the card let go of it, and the page left behind must
+    /// no longer reach a screen that is gone. Presented as the app presents
+    /// it, inside a navigation controller.
     @Test
-    func handsTheProductBackFreeToShowAgain() {
+    func handsTheProductBackWhenTheCardIsClosed() async {
         let product = StubSPAView()
-        let screen = laidOutScreen(product: product)
+        let surface = PocketCardSurface()
+        let screen = PocketCardScreenViewController(card: loyaltyCard, product: product, surface: surface)
+        let presenter = UIViewController()
+        let window = showing(presenter)
+        let navigation = AppNavigationController(rootViewController: screen)
+        navigation.modalPresentationStyle = .fullScreen
 
-        screen.handBackProduct()
+        await withCheckedContinuation { presented in
+            presenter.present(navigation, animated: true) { presented.resume() }
+        }
+        await withCheckedContinuation { dismissed in
+            presenter.dismiss(animated: true) { dismissed.resume() }
+        }
 
         #expect(product.controller.parent == nil)
         #expect(product.controller.view.superview == nil)
+        #expect(surface.screen == nil)
+        withExtendedLifetime(window) {}
     }
 
     /// A hidden face sits under the status bar. Were it to inset itself for

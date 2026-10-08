@@ -75,7 +75,7 @@ final class PocketCardScreenViewController: UIViewController {
     override func viewDidDisappear(_ animated: Bool) {
         super.viewDidDisappear(animated)
 
-        guard isBeingDismissed else { return }
+        guard (navigationController ?? self).isBeingDismissed else { return }
 
         handBackProduct()
     }
