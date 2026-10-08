@@ -196,7 +196,6 @@ impl<'a> SsoPairingFlow<'a> {
         CallError::Domain(api::HostRequestLoginError::Unknown { reason })
     }
 
-    /// Errors become `LoginFailed` at the single exit in `request_session`.
     async fn run_pairing_flow(
         &self,
         bootstrap: &PairingBootstrap,
