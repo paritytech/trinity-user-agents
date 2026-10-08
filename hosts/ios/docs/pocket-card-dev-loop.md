@@ -67,18 +67,23 @@ To try it with the test page in
 [`pocket-worker`](../../android/feature/products/product-sample/pocket-worker/README.md)
 (its README has the details):
 
-1. **Debug → TrUAPI Runtime** on, and restart when asked. It applies at the
-   next launch, and the native runtime has no expanded card.
-2. Build the test page against this checkout's client (the README's "Build"
+1. Build the test page against this checkout's client (the README's "Build"
    section) and serve its `dist/` on port 5173:
    `npx serve -l 5173 dist`.
-3. Loop B with worker URL `http://127.0.0.1:5173/worker.js`, card `loyalty`,
+2. Loop B with worker URL `http://127.0.0.1:5173/worker.js`, card `loyalty`,
    face URL `http://127.0.0.1:5173/faces/loyalty.json` and **Widget URL
-   (optional)** `http://127.0.0.1:5173/index.html`. The app appends
-   `card=<id>` to the widget URL, keeping its own query, so add `?hideOnLoad`
-   to test a call made as the page loads. **Open with the face away** opens the
-   card onto the page with the face out of the way.
-4. Add the card and open it.
+   (optional)** `http://127.0.0.1:5173/`. Not `/index.html`: `serve` redirects
+   it to a clean address and drops the query on the way. The app appends
+   `card=<id>` to the widget URL, keeping its own query, so use
+   `http://127.0.0.1:5173/?hideOnLoad` to test a call made as the page loads.
+   **Open with the face away** opens the card onto the page with the face out
+   of the way.
+3. Add the card and open it.
+
+A card with a widget URL always loads through the TrUAPI runtime. A card that
+opens its product's published widget needs **Debug → TrUAPI Runtime** on,
+which applies at the next launch, since the native runtime has no expanded
+card.
 
 The page has buttons that hide and show the face, a log of each answer, its own
 height, and a red bar pinned to its bottom edge, which goes missing when the
