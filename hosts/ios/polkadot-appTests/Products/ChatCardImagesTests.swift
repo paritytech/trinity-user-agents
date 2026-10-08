@@ -3,21 +3,19 @@ import AsyncExtensions
 import PolkadotUI
 import Products
 import Testing
+import TrUAPIHost
+import UIKitExt
 @testable import polkadot_app
 
-/// A chat card names its images the way a Pocket card does, so the chat reads
-/// them from the same places: the product's worker archive, which serves the
-/// chat, and the Bulletin gateway.
+/// A chat card names its images the way a Pocket card does, so the bot the
+/// factory builds hands its decoder a resolver over the same places: the
+/// product's worker archive, which serves the chat, and the Bulletin gateway.
 struct ChatCardImagesTests {
     @Test
     func readsAnArchiveImageOutOfTheProductsWorkerArchive() async throws {
         let root = try makeArchive(files: ["art/prize.png": "png"])
         let resolver = RecordingResolver(root: root)
-        let images = ProductBotFactory.chatImages(
-            for: gameProduct(),
-            dotNsResolver: resolver,
-            ipfsUrl: { _ in nil }
-        )
+        let images = try chatImages(dotNsResolver: resolver)
 
         let url = try #require(await images(.archive(path: "art/prize.png")))
 
@@ -27,15 +25,47 @@ struct ChatCardImagesTests {
 
     @Test
     func readsABulletinImageThroughTheGateway() async throws {
-        let images = ProductBotFactory.chatImages(
-            for: gameProduct(),
-            dotNsResolver: RecordingResolver(root: URL(fileURLWithPath: "/tmp/none")),
-            ipfsUrl: { URL(string: "https://gateway.invalid/ipfs/\($0)") }
-        )
+        let images = try chatImages(dotNsResolver: RecordingResolver(root: URL(fileURLWithPath: "/tmp/none")))
 
         let url = try #require(await images(.bulletin(cid: "bafyprize")))
 
         #expect(url.absoluteString == "https://gateway.invalid/ipfs/bafyprize")
+    }
+
+    /// The resolver the chat decoder draws with, reached the way the app
+    /// reaches it: through the bot the factory builds for the product.
+    private func chatImages(dotNsResolver: any DotNsResolverProtocol) throws -> WidgetImageResolver {
+        let factory = ProductBotFactory(
+            productFileProvider: NoScripts(),
+            runtimeProvider: NoRuntime(),
+            workers: { nil },
+            workerManager: NoWorkers(),
+            dotNsResolver: dotNsResolver,
+            ipfsBaseURL: URL(string: "https://gateway.invalid/ipfs/")!
+        )
+        let bot = try #require(factory.create(resolved: gameProduct()))
+        let decoder = try #require(bot.customDecoders.first as? ProductMessageDecoder)
+
+        return decoder.resolveImage
+    }
+}
+
+private struct Unavailable: Error {}
+
+private struct NoScripts: ChatProductFileProviding {
+    func load(for _: ProductId, relativePath _: String) -> Data? { nil }
+    func manualScriptEntryPath(productId _: ProductId) -> String? { nil }
+}
+
+private final class NoRuntime: TrUAPIHostRuntimeProviding {
+    func sharedRuntime() throws -> TrUAPIHostRuntime { throw Unavailable() }
+    @MainActor func setPresentationView(_: ControllerBackedProtocol) {}
+    func attach(workerManager _: any TrUAPIWorkerManaging) {}
+}
+
+private struct NoWorkers: ProductWorkerManaging {
+    func acquire(productId _: ProductId) async -> ProductWorkerLease {
+        ProductWorkerLease(token: ProductWorkerToken {}, result: .failure(Unavailable()))
     }
 }
 
@@ -52,7 +82,7 @@ private func gameProduct() -> ResolvedProduct {
                 identifier: "worker.game.paseo",
                 appVersion: .zero,
                 entrypoint: "index.js",
-                modalities: []
+                modalities: [.chat]
             )
         ),
         hasManifest: true

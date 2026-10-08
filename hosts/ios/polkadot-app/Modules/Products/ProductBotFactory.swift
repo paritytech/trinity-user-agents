@@ -17,7 +17,7 @@ final class ProductBotFactory {
     private let workers: @Sendable () -> (any TrUAPIWorkerManaging)?
     private let workerManager: ProductWorkerManaging
     private let dotNsResolver: any DotNsResolverProtocol
-    private let ipfsUrl: @Sendable (String) -> URL?
+    private let ipfsBaseURL: URL
     private let logger: LoggerProtocol
 
     init(
@@ -26,7 +26,7 @@ final class ProductBotFactory {
         workers: @Sendable @escaping () -> (any TrUAPIWorkerManaging)?,
         workerManager: ProductWorkerManaging,
         dotNsResolver: any DotNsResolverProtocol,
-        ipfsUrl: @escaping @Sendable (String) -> URL?,
+        ipfsBaseURL: URL,
         settingsManager: SettingsManagerProtocol = SettingsManager.shared,
         logger: LoggerProtocol = Logger.shared
     ) {
@@ -36,7 +36,7 @@ final class ProductBotFactory {
         self.workers = workers
         self.workerManager = workerManager
         self.dotNsResolver = dotNsResolver
-        self.ipfsUrl = ipfsUrl
+        self.ipfsBaseURL = ipfsBaseURL
         self.logger = logger
     }
 
@@ -44,7 +44,12 @@ final class ProductBotFactory {
         guard servesChat(resolved) else { return nil }
 
         let product = resolved.product
-        let resolveImage = Self.chatImages(for: resolved, dotNsResolver: dotNsResolver, ipfsUrl: ipfsUrl)
+        let images = ProductImageResolver(
+            contentId: { resolved.contentId(for: .worker) },
+            dotNsResolver: dotNsResolver,
+            ipfsBaseURL: ipfsBaseURL
+        )
+        let resolveImage = WidgetImageResolver { await images.resolve($0) }
 
         if settingsManager.isTrUAPIRuntimeEnabled, let workers = workers() {
             let runtime = TrUAPIChatHandler(
@@ -57,24 +62,6 @@ final class ProductBotFactory {
 
         let runtime = ManagedChatRuntime(productId: product.identifier, manager: workerManager)
         return ProductBot(product: product, runtime: runtime, resolveImage: resolveImage, logger: logger)
-    }
-}
-
-extension ProductBotFactory {
-    /// Reads the images inside a chat card the way a Pocket card reads its own:
-    /// an archive path from the product's worker archive, which also serves the
-    /// chat, and a Bulletin CID through the IPFS gateway.
-    static func chatImages(
-        for resolved: ResolvedProduct,
-        dotNsResolver: any DotNsResolverProtocol,
-        ipfsUrl: @escaping @Sendable (String) -> URL?
-    ) -> WidgetImageResolver {
-        let images = PocketImageResolver(
-            contentId: { resolved.contentId(for: .worker) },
-            archive: ProductWorkerArchive(dotNsResolver: dotNsResolver),
-            ipfsUrl: ipfsUrl
-        )
-        return WidgetImageResolver { await images.resolve($0) }
     }
 }
 

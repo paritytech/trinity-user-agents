@@ -33,7 +33,7 @@ final class PocketAddCardViewModel {
         productId: ProductId,
         cardId: PocketCardId,
         interactor: PocketAddCardInteractor,
-        images: (ProductId) -> PocketImageResolver?,
+        images: (ProductId) -> ProductImageResolver?,
         resolver: any WidgetDesignTokenResolving = WidgetDesignTokenResolver()
     ) {
         self.productId = productId

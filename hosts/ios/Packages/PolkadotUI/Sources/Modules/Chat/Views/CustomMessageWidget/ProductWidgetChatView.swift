@@ -8,13 +8,13 @@ public struct ProductWidgetChatView: View, Hashable {
     let messageId: String
     let nodeProvider: any WidgetNodeProviding
     let onAction: WidgetActionHandler?
-    let resolveImage: WidgetImageResolver?
+    let resolveImage: WidgetImageResolver
 
     public init(
         messageId: String,
         nodeProvider: any WidgetNodeProviding,
         onAction: WidgetActionHandler?,
-        resolveImage: WidgetImageResolver? = nil
+        resolveImage: WidgetImageResolver
     ) {
         self.messageId = messageId
         self.nodeProvider = nodeProvider

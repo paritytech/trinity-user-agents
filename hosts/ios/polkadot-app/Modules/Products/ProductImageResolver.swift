@@ -1,14 +1,16 @@
+import BulletinChain
 import Foundation
 import PolkadotUI
 @preconcurrency import Products
 
-/// Turns an image source inside a face into an address the image loader can
-/// fetch: a file in the product's own archive, or a bulletin gateway address.
+/// Turns an image source inside a face or a chat card into an address the
+/// image loader can fetch: a file in the product's own archive, or a bulletin
+/// gateway address.
 ///
 /// Nothing here throws. A source that cannot be resolved answers nil, and the
-/// rest of the face still draws with a hole where the image would be. A card
+/// rest of the tree still draws with a hole where the image would be. A card
 /// whose product ships a bad path is worth more than no card at all.
-struct PocketImageResolver: Sendable {
+struct ProductImageResolver: Sendable {
     /// Resolved per call: the archive a face is drawn from is the product's
     /// worker, and naming it may cost a manifest read.
     private let contentId: @Sendable () async -> ProductId?
@@ -23,6 +25,19 @@ struct PocketImageResolver: Sendable {
         self.contentId = contentId
         self.archive = archive
         self.ipfsUrl = ipfsUrl
+    }
+
+    init(
+        contentId: @escaping @Sendable () async -> ProductId?,
+        dotNsResolver: any DotNsResolverProtocol,
+        ipfsBaseURL: URL
+    ) {
+        let converter = HexToCIDConverter(ipfsBaseURL: ipfsBaseURL)
+        self.init(
+            contentId: contentId,
+            archive: ProductWorkerArchive(dotNsResolver: dotNsResolver),
+            ipfsUrl: { converter.ipfsURL(cid: $0) }
+        )
     }
 
     func resolve(_ source: CustomMessageWidgetNode.ImageSource) async -> URL? {

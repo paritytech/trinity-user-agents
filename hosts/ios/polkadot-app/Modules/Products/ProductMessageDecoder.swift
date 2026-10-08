@@ -6,16 +6,17 @@ import SwiftUI
 final class ProductMessageDecoder: ChatMessageCustomDecoding {
     let identifier: MessageDecoderIdentifier = .product
 
+    let resolveImage: WidgetImageResolver
+
     private let runtime: ChatRuntimeProtocol
     private let tokenResolver: any WidgetDesignTokenResolving
-    private let resolveImage: WidgetImageResolver?
     private let logger: LoggerProtocol
     private var viewModels: [String: ProductWidgetViewModel] = [:]
 
     init(
         runtime: ChatRuntimeProtocol,
         tokenResolver: any WidgetDesignTokenResolving,
-        resolveImage: WidgetImageResolver?,
+        resolveImage: WidgetImageResolver,
         logger: LoggerProtocol
     ) {
         self.runtime = runtime

@@ -19,7 +19,7 @@ struct PocketAddCardViewModelTests {
             interactor: makeAddCardInteractor(published: [loyalty]),
             images: { productId in
                 asked.note(productId)
-                return PocketImageResolver(
+                return ProductImageResolver(
                     contentId: { productId },
                     archive: ProductWorkerArchive(
                         dotNsResolver: StubArchiveRoot(),
