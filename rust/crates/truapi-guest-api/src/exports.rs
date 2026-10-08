@@ -44,26 +44,13 @@ pub fn start(entry: impl Future<Output = Result<(), Error>> + 'static) {
     poll_entry();
 }
 
-/// Memory for a payload the host is about to write. Ownership passes back
-/// with the [`on_event`] call that names it.
-pub fn alloc(len: u32) -> *mut u8 {
-    Box::into_raw(vec![0u8; len as usize].into_boxed_slice()).cast()
-}
-
-/// Hand one host event to the call it belongs to, then resume the entry
-/// point.
-///
-/// # Safety
-///
-/// `payload` must be a buffer [`alloc`] returned for `len`, not yet passed
-/// here.
-#[allow(unsafe_code)]
-pub unsafe fn on_event(handle: u32, kind: u32, payload: *mut u8, len: u32) {
+/// Read one host event of `len` bytes, hand it to the call it belongs to,
+/// then resume the entry point.
+pub fn on_event(handle: u32, kind: u32, len: u32) {
     let kind = EventKind::try_from(kind).expect("host sent an unknown event kind");
-    // SAFETY: the caller guarantees `alloc` returned this buffer for `len`.
-    let payload =
-        unsafe { Box::from_raw(core::ptr::slice_from_raw_parts_mut(payload, len as usize)) };
-    deliver(handle, kind, payload.into_vec());
+    let mut payload = vec![0u8; len as usize];
+    imports::read_event(payload.as_mut_ptr());
+    deliver(handle, kind, payload);
     poll_entry();
 }
 

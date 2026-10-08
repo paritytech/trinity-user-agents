@@ -2,17 +2,23 @@
 //!
 //! A guest starts a call through the import named after the method, which
 //! returns a call handle. The host answers later by calling the guest's
-//! [`ON_EVENT_EXPORT`] once per [`EventKind`], with the payload written into
-//! memory the guest handed out through [`ALLOC_EXPORT`].
+//! [`ON_EVENT_EXPORT`] once per [`EventKind`] with the payload's length; the
+//! guest copies the payload into a buffer of its own through
+//! [`READ_EVENT_IMPORT`]. The host never allocates in guest memory.
 //!
-//! The host only ever reads guest memory behind a pointer an import passes,
-//! within the given length, which is why guests declare those imports safe.
+//! The host only touches guest memory behind a pointer an import passes, within
+//! the length the guest gave or was told, which is why guests declare those
+//! imports safe.
 
 /// Import module of every host function.
 pub const IMPORT_MODULE: &str = "truapi";
 
 /// Import a guest calls to withdraw a call it no longer awaits.
 pub const RELEASE_IMPORT: &str = "release";
+
+/// Import copying the payload of the event being delivered into guest memory,
+/// for exactly the length [`ON_EVENT_EXPORT`] announced.
+pub const READ_EVENT_IMPORT: &str = "read_event";
 
 /// Import a guest writes a UTF-8 log line through.
 pub const LOG_IMPORT: &str = "log";
@@ -24,10 +30,7 @@ pub const FINISH_IMPORT: &str = "finish";
 /// Export the host calls once to run the guest's entry point.
 pub const START_EXPORT: &str = "truapi_start";
 
-/// Export returning guest memory for a payload of the given length.
-pub const ALLOC_EXPORT: &str = "truapi_alloc";
-
-/// Export delivering one event: `(handle, kind, payload_ptr, payload_len)`.
+/// Export delivering one event: `(handle, kind, payload_len)`.
 pub const ON_EVENT_EXPORT: &str = "truapi_on_event";
 
 /// What one event carries for a call handle.

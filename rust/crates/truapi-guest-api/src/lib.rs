@@ -58,6 +58,7 @@ pub use truapi_macros::guest_main as main;
 mod imports {
     #[link(wasm_import_module = "truapi")]
     unsafe extern "C" {
+        pub safe fn read_event(payload: *mut u8);
         pub safe fn log(line: *const u8, line_len: u32);
         pub safe fn finish(succeeded: u32, message: *const u8, message_len: u32);
     }
@@ -99,22 +100,8 @@ macro_rules! export_entry {
         }
 
         #[unsafe(no_mangle)]
-        pub extern "C" fn truapi_alloc(len: u32) -> *mut u8 {
-            $crate::exports::alloc(len)
-        }
-
-        /// # Safety
-        ///
-        /// Only the host calls this, with a buffer `truapi_alloc` returned for `len`.
-        #[unsafe(no_mangle)]
-        pub unsafe extern "C" fn truapi_on_event(
-            handle: u32,
-            kind: u32,
-            payload: *mut u8,
-            len: u32,
-        ) {
-            // SAFETY: forwarded unchanged from the host, under the same contract.
-            unsafe { $crate::exports::on_event(handle, kind, payload, len) };
+        pub extern "C" fn truapi_on_event(handle: u32, kind: u32, len: u32) {
+            $crate::exports::on_event(handle, kind, len);
         }
     };
 }

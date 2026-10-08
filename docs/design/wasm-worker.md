@@ -40,8 +40,9 @@ result. `WasmWorker::new` rejects a module that imports a name the table lacks.
    the future for handle 7 waits, main yields
                                                   Account::get_user_id(&host, cx, request).await
                                                   encode the result
-                                              <-- truapi_alloc(len), write the result,
-                                                  truapi_on_event(7, Response, ptr, len)
+                                              <-- truapi_on_event(7, Response, len)
+   allocate len bytes
+   import truapi.read_event(ptr)              --> copy the result into ptr
    the future for handle 7 decodes it, main resumes
 ```
 
@@ -81,18 +82,20 @@ kinds.
 | --- | --- | --- |
 | `<trait>_<method>` | `(request_ptr, request_len) -> handle` | Start a call with a SCALE-encoded versioned request |
 | `release` | `(handle)` | Cancel a request or stop a subscription |
+| `read_event` | `(ptr)` | Copy the payload of the event being delivered into guest memory, for the length `truapi_on_event` announced |
 | `log` | `(ptr, len)` | Write a UTF-8 line to the host's log |
 | `finish` | `(succeeded, ptr, len)` | Report that the entry point returned, with an error message when it failed |
 
 | Export | Signature | Meaning |
 | --- | --- | --- |
 | `truapi_start` | `()` | Run the entry point |
-| `truapi_alloc` | `(len) -> ptr` | Guest memory for a payload the host is about to write |
-| `truapi_on_event` | `(handle, kind, ptr, len)` | Deliver one event for a call |
+| `truapi_on_event` | `(handle, kind, len)` | Announce one event for a call; the guest reads its payload with `read_event` |
 
-`truapi_alloc` allocates with the guest's own allocator. It is exported because the
-host cannot reach that allocator any other way, and it needs guest memory to write
-an event into.
+The guest owns all of its memory: it passes the buffers for requests and events,
+and the host never allocates in it. This is the caller-provided buffer pattern of
+WASI preview 1 and `pallet-revive-uapi`, so the ABI itself needs no allocator in
+the guest. The typed bindings in `truapi-guest-api` still allocate, since protocol
+types hold `Vec` and `String`.
 
 An event is a `Response` (`Result<Response, CallError<Error>>`), an `Item` of a
 subscription, or the `End` of a subscription (`Result<(), CallError<Error>>`).

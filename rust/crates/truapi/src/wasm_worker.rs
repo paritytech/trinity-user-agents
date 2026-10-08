@@ -23,7 +23,7 @@ use crate::api::TrUApi;
 use crate::frame::downgrade_call_error;
 use crate::versioned::{FromLatest, IntoLatest, Versioned};
 use crate::wasm_abi::{
-    ALLOC_EXPORT, EventKind, FINISH_IMPORT, IMPORT_MODULE, LOG_IMPORT, ON_EVENT_EXPORT,
+    EventKind, FINISH_IMPORT, IMPORT_MODULE, LOG_IMPORT, ON_EVENT_EXPORT, READ_EVENT_IMPORT,
     RELEASE_IMPORT, START_EXPORT,
 };
 use crate::{CallContext, CallError, CancellationToken, Subscription};
@@ -280,14 +280,14 @@ struct GuestState {
     next_handle: u32,
     calls_in_flight: usize,
     commands: Vec<Command>,
+    /// Payload of the event being delivered, until the guest reads it.
+    event_payload: Vec<u8>,
     finished: Option<Result<(), String>>,
 }
 
 struct Exports {
-    memory: Memory,
     start: TypedFunc<(), ()>,
-    alloc: TypedFunc<u32, u32>,
-    on_event: TypedFunc<(u32, u32, u32, u32), ()>,
+    on_event: TypedFunc<(u32, u32, u32), ()>,
 }
 
 struct Call {
@@ -327,6 +327,7 @@ impl WasmWorker {
             next_handle: 0,
             calls_in_flight: 0,
             commands: Vec::new(),
+            event_payload: Vec::new(),
             finished: None,
         };
         let mut store = Store::new(&engine, state);
@@ -336,15 +337,12 @@ impl WasmWorker {
             .instantiate(&mut store, &module)
             .and_then(|instance| instance.start(&mut store))
             .map_err(invalid_module)?;
+        instance
+            .get_memory(&store, MEMORY_EXPORT)
+            .ok_or_else(|| missing_export(MEMORY_EXPORT))?;
         let exports = Exports {
-            memory: instance
-                .get_memory(&store, MEMORY_EXPORT)
-                .ok_or_else(|| missing_export(MEMORY_EXPORT))?,
             start: instance
                 .get_typed_func(&store, START_EXPORT)
-                .map_err(invalid_module)?,
-            alloc: instance
-                .get_typed_func(&store, ALLOC_EXPORT)
                 .map_err(invalid_module)?,
             on_event: instance
                 .get_typed_func(&store, ON_EVENT_EXPORT)
@@ -450,19 +448,14 @@ impl WasmWorker {
 
     fn deliver(&mut self, handle: u32, event: Event) -> Result<(), WasmWorkerError> {
         let length = event.payload.len() as u32;
+        self.store.data_mut().event_payload = event.payload;
         self.store.set_fuel(FUEL_PER_ENTRY)?;
-        let pointer = self.exports.alloc.call(&mut self.store, length)?;
-        self.exports
-            .memory
-            .write(&mut self.store, pointer as usize, &event.payload)
-            .map_err(|error| WasmWorkerError::Trapped {
-                reason: error.to_string(),
-            })?;
-        self.exports.on_event.call(
-            &mut self.store,
-            (handle, event.kind as u32, pointer, length),
-        )?;
-        Ok(())
+        let delivered = self
+            .exports
+            .on_event
+            .call(&mut self.store, (handle, event.kind as u32, length));
+        self.store.data_mut().event_payload.clear();
+        Ok(delivered?)
     }
 }
 
@@ -503,6 +496,7 @@ fn link(
         }
         let linked = match import.name() {
             RELEASE_IMPORT => linker.func_wrap(IMPORT_MODULE, RELEASE_IMPORT, release),
+            READ_EVENT_IMPORT => linker.func_wrap(IMPORT_MODULE, READ_EVENT_IMPORT, read_event),
             LOG_IMPORT => linker.func_wrap(IMPORT_MODULE, LOG_IMPORT, log),
             FINISH_IMPORT => linker.func_wrap(IMPORT_MODULE, FINISH_IMPORT, finish),
             name => {
@@ -552,6 +546,18 @@ fn release(mut caller: Caller<'_, GuestState>, handle: u32) {
     caller.data_mut().commands.push(Command::Release { handle });
 }
 
+fn read_event(mut caller: Caller<'_, GuestState>, pointer: u32) -> Result<(), wasmi::Error> {
+    let memory = guest_memory(&caller)?;
+    let payload = core::mem::take(&mut caller.data_mut().event_payload);
+    let start = pointer as usize;
+    memory
+        .data_mut(&mut caller)
+        .get_mut(start..start + payload.len())
+        .ok_or_else(|| wasmi::Error::new("event buffer outside worker memory"))?
+        .copy_from_slice(&payload);
+    Ok(())
+}
+
 fn log(caller: Caller<'_, GuestState>, pointer: u32, length: u32) -> Result<(), wasmi::Error> {
     let line = read_guest_text(&caller, pointer, length)?;
     (caller.data().log)(&line);
@@ -581,16 +587,19 @@ fn read_guest(
     if length > MAX_PAYLOAD_BYTES {
         return Err(wasmi::Error::new("payload too large"));
     }
-    let memory = caller
-        .get_export(MEMORY_EXPORT)
-        .and_then(Extern::into_memory)
-        .ok_or_else(|| wasmi::Error::new("worker exports no memory"))?;
     let start = pointer as usize;
-    memory
+    guest_memory(caller)?
         .data(caller)
         .get(start..start + length as usize)
         .map(<[u8]>::to_vec)
         .ok_or_else(|| wasmi::Error::new("payload outside worker memory"))
+}
+
+fn guest_memory(caller: &Caller<'_, GuestState>) -> Result<Memory, wasmi::Error> {
+    caller
+        .get_export(MEMORY_EXPORT)
+        .and_then(Extern::into_memory)
+        .ok_or_else(|| wasmi::Error::new("worker exports no memory"))
 }
 
 fn read_guest_text(
