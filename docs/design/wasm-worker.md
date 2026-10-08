@@ -17,7 +17,9 @@ created: 2026-10-08
 The host serves a worker with the same per-product object an iframe product talks to: [`ProductRuntimeHost`](../../rust/crates/truapi/src/runtime.rs), which implements every service trait for one product (the implementations are in [`runtime/capabilities`](../../rust/crates/truapi/src/runtime/capabilities)).
 
 ```rust
-// `product` carries the Worker execution kind.
+// The worker acts as `chess.dot`, running as its Worker executable.
+let product = ProductContext::new_with_execution("chess.dot".to_string(), ProductExecutionKind::Worker)?;
+// `runtime` is the host's `SigningHostRuntime` or `PairingHostRuntime`.
 let host = runtime.product_admin(product).product_runtime().clone();
 // Maps each import name to a typed call on `host`.
 let env = WasmEnv::for_product(host);
