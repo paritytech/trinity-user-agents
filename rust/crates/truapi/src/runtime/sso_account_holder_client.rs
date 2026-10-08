@@ -426,6 +426,26 @@ impl AccountHolder for SsoAccountHolderClient {
         .boxed())
     }
 
+    async fn renew_statement_sponsorship(
+        &self,
+        invocation: AccountInvocation<'_>,
+        account_id: [u8; 32],
+    ) -> Result<(), AuthorityError> {
+        match self
+            .ensure_allowance(
+                invocation,
+                AllowanceResource::StatementStore,
+                OnExistingAllowancePolicy::Ignore,
+            )
+            .await?
+        {
+            AccountGrant::StatementStore { key, .. } if key.public_key == account_id => Ok(()),
+            _ => Err(AuthorityError::Unavailable {
+                reason: "Sponsorship signer changed".to_string(),
+            }),
+        }
+    }
+
     async fn ensure_allowance(
         &self,
         invocation: AccountInvocation<'_>,

@@ -86,9 +86,8 @@ pub use signing_host::{
     PairingProposal, PairingProposalMetadata, ResponderExit,
 };
 pub use signing_host::{
-    LocalActivation, SigningHost as SigningHostRole, WalletAccountHolder, disconnect_paired_host,
-    establish_pairing, notify_pairing_allowance_allocation, notify_pairing_failed,
-    respond_to_pairing, resume_pairing,
+    LocalActivation, SigningHost as SigningHostRole, disconnect_paired_host, establish_pairing,
+    notify_pairing_allowance_allocation, notify_pairing_failed, respond_to_pairing, resume_pairing,
 };
 pub use sso_account_holder_client::SsoAccountHolderClient;
 pub use sso_account_holder_service::SsoAccountHolderService;
@@ -727,11 +726,6 @@ impl<H: AccountHolder> ProductRuntimeHost<H> {
     /// Shared connection state used by product control handles.
     pub fn connection(&self) -> &Arc<ProductConnection> {
         &self.connection
-    }
-
-    /// Account service shared by this connection and its host administration.
-    pub fn accounts(&self) -> &Arc<HostAccounts<H>> {
-        &self.accounts
     }
 
     /// Lifecycle owner shared by this connection and its host administration.
@@ -1512,18 +1506,6 @@ fn preimage_submit_error(reason: String) -> CallError<RemotePreimageSubmitError>
     CallError::Domain(RemotePreimageSubmitError::V1(
         v01::PreimageSubmitError::Unknown { reason },
     ))
-}
-
-fn bulletin_allowance_error_reason(err: AuthorityError) -> String {
-    match err {
-        AuthorityError::Rejected => {
-            "Bulletin allowance allocation was rejected by the signing host".to_string()
-        }
-        AuthorityError::Disconnected => {
-            "Signing host disconnected while allocating Bulletin allowance".to_string()
-        }
-        other => other.to_string(),
-    }
 }
 
 #[cfg(test)]

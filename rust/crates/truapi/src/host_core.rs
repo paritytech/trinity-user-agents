@@ -37,7 +37,7 @@ use crate::runtime::{
     DEFAULT_REMOTE_AUTHORITY_RESPONSE_TIMEOUT, DevicePairingObserver, HostAccounts, HostSession,
     LocalActivation, PairedSsoPeer, ProductConnection, ProductRuntimeHost, ResponderExit,
     RuntimeServices, SigningHostRole, SsoAccountHolderClient, SsoAccountHolderService,
-    SsoRequestService, WalletAccountHolder, disconnect_paired_host, establish_pairing,
+    SsoRequestService, disconnect_paired_host, establish_pairing,
     notify_pairing_allowance_allocation, notify_pairing_failed, respond_to_pairing, resume_pairing,
 };
 use crate::subscription::{HostInitiatedSubscriptionManager, Spawner};
@@ -325,7 +325,7 @@ impl PairingHostRuntime {
 
     /// Build a product-scoped administration handle from this pairing host.
     #[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.product_admin"))]
-    pub fn product_admin(&self, product: ProductContext) -> HostAdmin<SsoAccountHolderClient> {
+    pub fn product_admin(&self, product: ProductContext) -> HostAdmin {
         HostAdmin::new(
             self.services.clone(),
             self.accounts.clone(),
@@ -798,7 +798,7 @@ impl SigningHostRuntime {
 
     /// Build a product-scoped administration handle from this signing host.
     #[instrument(skip_all, fields(runtime.method = "signing_host_runtime.product_admin"))]
-    pub fn product_admin(&self, product: ProductContext) -> HostAdmin<WalletAccountHolder> {
+    pub fn product_admin(&self, product: ProductContext) -> HostAdmin {
         HostAdmin::new(
             self.services.clone(),
             self.signing_host.accounts().clone(),
@@ -1029,7 +1029,7 @@ pub fn product_admin_with_adapters(
     host: &SigningHostRuntime,
     product: ProductContext,
     adapters: ConnectionAdapters,
-) -> HostAdmin<WalletAccountHolder> {
+) -> HostAdmin {
     HostAdmin::new(
         host.services.clone(),
         host.signing_host.accounts().clone(),
@@ -1193,22 +1193,34 @@ fn ring_vrf_admin_error(
     }
 }
 
+type ProductSubtreeRequest = Arc<
+    dyn Fn(
+            String,
+            Option<u32>,
+        )
+            -> futures::future::BoxFuture<'static, Result<Option<[u8; 32]>, v01::GenericError>>
+        + Send
+        + Sync,
+>;
+
 /// Product-scoped administration handle for host UI.
 ///
 /// Host UI should use this when it needs to inspect or update core-owned state
 /// without owning a product frame endpoint.
-pub struct HostAdmin<H: AccountHolder> {
-    product_runtime: Arc<ProductRuntimeHost<H>>,
+pub struct HostAdmin {
+    product_runtime: Arc<dyn truapi::api::Permissions>,
+    connection: Arc<ProductConnection>,
+    host_session: Arc<dyn HostSession>,
+    product_subtree: ProductSubtreeRequest,
 }
 
-impl<H: AccountHolder> HostAdmin<H> {
+impl HostAdmin {
     /// Authorize one operation using this execution's saved and one-use permissions.
     #[cfg(not(target_arch = "wasm32"))]
     pub async fn authorize_remote_permission(
         &self,
         request: truapi::latest::RemotePermissionRequest,
     ) -> Result<bool, truapi::latest::GenericError> {
-        use truapi::api::Permissions;
         use truapi::versioned::IntoLatest;
 
         self.product_runtime
@@ -1224,7 +1236,7 @@ impl<H: AccountHolder> HostAdmin<H> {
     }
 
     #[instrument(skip_all, fields(runtime.method = "host_admin.new"))]
-    fn new(
+    fn new<H: AccountHolder>(
         services: Arc<RuntimeServices>,
         accounts: Arc<HostAccounts<H>>,
         host_session: Arc<dyn HostSession>,
@@ -1234,17 +1246,27 @@ impl<H: AccountHolder> HostAdmin<H> {
         let product_runtime = Arc::new(ProductRuntimeHost::from_services(
             services,
             adapters,
-            accounts,
-            host_session,
+            accounts.clone(),
+            host_session.clone(),
             product,
         ));
-        Self { product_runtime }
+        Self {
+            connection: product_runtime.connection().clone(),
+            product_runtime,
+            host_session,
+            product_subtree: Arc::new(move |product_id, timeout_ms| {
+                let accounts = accounts.clone();
+                Box::pin(async move {
+                    product_subtree_public_key(&accounts, &product_id, timeout_ms).await
+                })
+            }),
+        }
     }
 
     /// Core-owned logout/disconnect.
     #[instrument(skip_all, fields(runtime.method = "host_admin.disconnect_session"))]
     pub async fn disconnect_session(&self) {
-        self.product_runtime.host_session().disconnect().await;
+        self.host_session.disconnect().await;
     }
 
     /// Read a stored permission authorization status without prompting.
@@ -1257,8 +1279,7 @@ impl<H: AccountHolder> HostAdmin<H> {
         &self,
         request: PermissionAuthorizationRequest,
     ) -> Result<PermissionAuthorizationStatus, v01::GenericError> {
-        self.product_runtime
-            .connection()
+        self.connection
             .permission_authorization_status(request)
             .await
     }
@@ -1273,8 +1294,7 @@ impl<H: AccountHolder> HostAdmin<H> {
         &self,
         requests: Vec<PermissionAuthorizationRequest>,
     ) -> Result<Vec<PermissionAuthorizationStatus>, v01::GenericError> {
-        self.product_runtime
-            .connection()
+        self.connection
             .permission_authorization_statuses(requests)
             .await
     }
@@ -1286,15 +1306,14 @@ impl<H: AccountHolder> HostAdmin<H> {
         request: PermissionAuthorizationRequest,
         status: PermissionAuthorizationStatus,
     ) -> Result<(), v01::GenericError> {
-        self.product_runtime
-            .connection()
+        self.connection
             .set_permission_authorization_status(request, status)
             .await
     }
 }
 
 #[crate::platform::async_trait]
-impl<H: AccountHolder> CoreAdmin for HostAdmin<H> {
+impl CoreAdmin for HostAdmin {
     async fn disconnect_session(&self) -> Result<(), v01::GenericError> {
         HostAdmin::disconnect_session(self).await;
         Ok(())
@@ -1324,8 +1343,7 @@ impl<H: AccountHolder> CoreAdmin for HostAdmin<H> {
 
     async fn get_session_chat_identity_key(&self) -> Result<Option<[u8; 32]>, v01::GenericError> {
         Ok(self
-            .product_runtime
-            .host_session()
+            .host_session
             .session_state()
             .current()
             .and_then(|session| session.identity_chat_private_key))
@@ -1333,8 +1351,7 @@ impl<H: AccountHolder> CoreAdmin for HostAdmin<H> {
 
     async fn get_device_statement_key(&self) -> Result<Option<Vec<u8>>, v01::GenericError> {
         Ok(self
-            .product_runtime
-            .host_session()
+            .host_session
             .session_state()
             .current()
             .and_then(|session| session.sso)
@@ -1342,8 +1359,7 @@ impl<H: AccountHolder> CoreAdmin for HostAdmin<H> {
     }
 
     async fn get_device_encryption_key(&self) -> Result<[u8; 32], v01::GenericError> {
-        self.product_runtime
-            .connection()
+        self.connection
             .services()
             .device_encryption_secret()
             .await
@@ -1355,12 +1371,7 @@ impl<H: AccountHolder> CoreAdmin for HostAdmin<H> {
         product_id: String,
         timeout_ms: Option<u32>,
     ) -> Result<Option<[u8; 32]>, v01::GenericError> {
-        product_subtree_public_key(
-            self.product_runtime.accounts().as_ref(),
-            &product_id,
-            timeout_ms,
-        )
-        .await
+        (self.product_subtree)(product_id, timeout_ms).await
     }
 }
 
@@ -1956,7 +1967,6 @@ mod tests {
     use crate::test_support::{StubPlatform, runtime_config, test_spawner, wait_until};
     use parity_scale_codec::Encode;
     use std::sync::atomic::Ordering;
-    use truapi::api::Permissions;
     use truapi::latest::{RemotePermission, RemotePermissionRequest, RemotePermissionResponse};
     use truapi::versioned::permissions;
 

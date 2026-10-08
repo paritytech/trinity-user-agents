@@ -86,6 +86,32 @@ impl WalletAccountHolder {
         product_id: &str,
         policy: OnExistingAllowancePolicy,
     ) -> Result<StatementStoreAllocation, AllowanceAllocationError> {
+        let target = self.with_keys::<_, AllowanceAllocationError>(session, |keys| {
+            Ok(keys.statement_allowance_key(product_id)?.public.to_bytes())
+        })?;
+        let period = self
+            .ensure_statement_slot(session, product_id, target, policy)
+            .await?;
+        self.with_keys(session, |keys| {
+            Ok(StatementStoreAllocation {
+                secret: keys
+                    .statement_allowance_key(product_id)?
+                    .secret
+                    .to_bytes()
+                    .to_vec(),
+                period,
+            })
+        })
+    }
+
+    /// Renew an authorized sponsorship without disclosing another key.
+    pub async fn ensure_statement_slot(
+        &self,
+        session: &AuthoritySession,
+        product_id: &str,
+        target: [u8; 32],
+        policy: OnExistingAllowancePolicy,
+    ) -> Result<u32, AllowanceAllocationError> {
         use super::allowance_renewal::StatementRenewalTarget;
         use crate::runtime::statement_allowance::collection::PersonhoodCollection;
         use crate::runtime::statement_allowance::{
@@ -93,23 +119,12 @@ impl WalletAccountHolder {
             find_including_rings, register_statement_account_pooled, scan_collections,
         };
 
-        // Test signatures use real keys without claiming on-chain registration.
         #[cfg(feature = "test-host")]
         if self.resource_controls.grants_allowances_unchecked() {
-            return self.with_keys(session, |keys| {
-                Ok(StatementStoreAllocation {
-                    secret: keys
-                        .statement_allowance_key(product_id)?
-                        .secret
-                        .to_bytes()
-                        .to_vec(),
-                    period: statement_allowance::slot::current_period(current_unix_secs()?),
-                })
-            });
+            return Ok(statement_allowance::slot::current_period(
+                current_unix_secs()?,
+            ));
         }
-        let target = self.with_keys::<_, AllowanceAllocationError>(session, |keys| {
-            Ok(keys.statement_allowance_key(product_id)?.public.to_bytes())
-        })?;
         let client = self
             .services
             .statement_store
@@ -147,16 +162,8 @@ impl WalletAccountHolder {
                 %collection,
                 "statement-store allowance already allocated"
             );
-            return self.with_keys(session, |keys| {
-                Ok(StatementStoreAllocation {
-                    secret: keys
-                        .statement_allowance_key(product_id)?
-                        .secret
-                        .to_bytes()
-                        .to_vec(),
-                    period,
-                })
-            });
+            self.require_current_session(session)?;
+            return Ok(period);
         }
 
         // Every ring back to index 0, because a membership that stopped being
@@ -230,16 +237,7 @@ impl WalletAccountHolder {
         {
             warn!(%product_id, %reason, "failed to record statement-store renewal target");
         }
-        self.with_keys(session, |keys| {
-            Ok(StatementStoreAllocation {
-                secret: keys
-                    .statement_allowance_key(product_id)?
-                    .secret
-                    .to_bytes()
-                    .to_vec(),
-                period,
-            })
-        })
+        Ok(period)
     }
 
     /// Issue the product's Bulletin allowance key.
@@ -352,6 +350,7 @@ impl WalletAccountHolder {
             &bulletin_rpc,
             &target,
             current_allowance,
+            1,
             BULLETIN_AUTHORIZATION_WAIT,
         )
         .await?;

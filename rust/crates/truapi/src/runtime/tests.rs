@@ -1,6 +1,7 @@
 //! Shared runtime fixtures and cross-capability integration tests.
 
-use super::authority::{AccountCaller, AutoSigningKey, StatementStoreAllowanceKey};
+use super::allowances::AllowanceResource;
+use super::authority::{AccountCaller, AccountGrant, AutoSigningKey, StatementStoreAllowanceKey};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -133,14 +134,6 @@ fn cache_test_product_subtree(
     product_id: &str,
 ) {
     host.test_cache_product_subtree(session, product_id, test_product_subtree(product_id));
-}
-
-#[test]
-fn preimage_reports_bulletin_allocation_rejection_with_context() {
-    assert_eq!(
-        bulletin_allowance_error_reason(AuthorityError::Rejected),
-        "Bulletin allowance allocation was rejected by the signing host"
-    );
 }
 
 fn recorded_rpc_methods(sent_rpc: &Mutex<Vec<String>>) -> Vec<String> {
@@ -6542,29 +6535,35 @@ fn stale_secret_allocations_cannot_persist_after_reset_and_same_owner_reactivati
         ))
         .expect_err("the old AutoSigning allocation completion must be rejected");
     let statement_store_result = futures::executor::block_on(
-        accounts
-            .grants_for_tests()
-            .cache_statement_store_allowance_key(
-                &sso.session_state(),
-                &session,
-                stale_epoch,
-                "myapp.dot",
-                StatementStoreAllowanceKey::from_secret_bytes(subtree.secret.to_bytes().to_vec())
-                    .unwrap(),
-                None,
-            ),
-    );
-    let Err(statement_store_error) = statement_store_result else {
-        panic!("the old statement-store allocation completion must be rejected");
-    };
-    let bulletin_result =
-        futures::executor::block_on(accounts.grants_for_tests().cache_bulletin_allowance_key(
+        accounts.grants_for_tests().retain_allowance(
             &sso.session_state(),
             &session,
             stale_epoch,
             "myapp.dot",
-            BulletinAllowanceKey::from_secret_bytes(subtree.secret.to_bytes().to_vec()).unwrap(),
-        ));
+            &AccountGrant::StatementStore {
+                key: StatementStoreAllowanceKey::from_secret_bytes(
+                    subtree.secret.to_bytes().to_vec(),
+                )
+                .unwrap(),
+                period: None,
+            },
+        ),
+    );
+    let Err(statement_store_error) = statement_store_result else {
+        panic!("the old statement-store allocation completion must be rejected");
+    };
+    let bulletin_result = futures::executor::block_on(
+        accounts.grants_for_tests().retain_allowance(
+            &sso.session_state(),
+            &session,
+            stale_epoch,
+            "myapp.dot",
+            &AccountGrant::Bulletin(
+                BulletinAllowanceKey::from_secret_bytes(subtree.secret.to_bytes().to_vec())
+                    .unwrap(),
+            ),
+        ),
+    );
     let Err(bulletin_error) = bulletin_result else {
         panic!("the old Bulletin allocation completion must be rejected");
     };
@@ -6637,28 +6636,33 @@ fn product_clear_preserves_other_capabilities_and_fences_stale_work() {
         ))
         .unwrap();
         futures::executor::block_on(
-            accounts
-                .grants_for_tests()
-                .cache_statement_store_allowance_key(
-                    &sso.session_state(),
-                    &session,
-                    stale_epoch,
-                    product_id,
-                    StatementStoreAllowanceKey::from_secret_bytes(
+            accounts.grants_for_tests().retain_allowance(
+                &sso.session_state(),
+                &session,
+                stale_epoch,
+                product_id,
+                &AccountGrant::StatementStore {
+                    key: StatementStoreAllowanceKey::from_secret_bytes(
                         subtree.secret.to_bytes().to_vec(),
                     )
                     .unwrap(),
-                    None,
-                ),
+                    period: None,
+                },
+            ),
         )
         .unwrap();
-        futures::executor::block_on(accounts.grants_for_tests().cache_bulletin_allowance_key(
-            &sso.session_state(),
-            &session,
-            stale_epoch,
-            product_id,
-            BulletinAllowanceKey::from_secret_bytes(subtree.secret.to_bytes().to_vec()).unwrap(),
-        ))
+        futures::executor::block_on(
+            accounts.grants_for_tests().retain_allowance(
+                &sso.session_state(),
+                &session,
+                stale_epoch,
+                product_id,
+                &AccountGrant::Bulletin(
+                    BulletinAllowanceKey::from_secret_bytes(subtree.secret.to_bytes().to_vec())
+                        .unwrap(),
+                ),
+            ),
+        )
         .unwrap();
     }
 
@@ -6690,49 +6694,45 @@ fn product_clear_preserves_other_capabilities_and_fences_stale_work() {
         .is_some()
     );
     assert!(
-        futures::executor::block_on(
-            accounts
-                .grants_for_tests()
-                .cached_statement_store_allowance_key(
-                    &sso.session_state(),
-                    &session,
-                    current_epoch,
-                    "myapp.dot"
-                )
-        )
-        .unwrap()
-        .is_none()
-    );
-    assert!(
-        futures::executor::block_on(
-            accounts
-                .grants_for_tests()
-                .cached_statement_store_allowance_key(
-                    &sso.session_state(),
-                    &session,
-                    current_epoch,
-                    "other.dot"
-                )
-        )
-        .unwrap()
-        .is_some()
-    );
-    assert!(
-        futures::executor::block_on(accounts.grants_for_tests().cached_bulletin_allowance_key(
+        futures::executor::block_on(accounts.grants_for_tests().cached_allowance(
             &sso.session_state(),
             &session,
             current_epoch,
-            "myapp.dot"
+            "myapp.dot",
+            AllowanceResource::StatementStore
         ))
         .unwrap()
         .is_none()
     );
     assert!(
-        futures::executor::block_on(accounts.grants_for_tests().cached_bulletin_allowance_key(
+        futures::executor::block_on(accounts.grants_for_tests().cached_allowance(
             &sso.session_state(),
             &session,
             current_epoch,
-            "other.dot"
+            "other.dot",
+            AllowanceResource::StatementStore
+        ))
+        .unwrap()
+        .is_some()
+    );
+    assert!(
+        futures::executor::block_on(accounts.grants_for_tests().cached_allowance(
+            &sso.session_state(),
+            &session,
+            current_epoch,
+            "myapp.dot",
+            AllowanceResource::Bulletin
+        ))
+        .unwrap()
+        .is_none()
+    );
+    assert!(
+        futures::executor::block_on(accounts.grants_for_tests().cached_allowance(
+            &sso.session_state(),
+            &session,
+            current_epoch,
+            "other.dot",
+            AllowanceResource::Bulletin
         ))
         .unwrap()
         .is_some()
@@ -6751,17 +6751,19 @@ fn product_clear_preserves_other_capabilities_and_fences_stale_work() {
     ));
     assert!(matches!(
         futures::executor::block_on(
-            accounts
-                .grants_for_tests()
-                .cache_statement_store_allowance_key(
-                    &sso.session_state(),
-                    &session,
-                    stale_epoch,
-                    "myapp.dot",
-                    StatementStoreAllowanceKey::from_secret_bytes(first.secret.to_bytes().to_vec())
-                        .unwrap(),
-                    None,
-                )
+            accounts.grants_for_tests().retain_allowance(
+                &sso.session_state(),
+                &session,
+                stale_epoch,
+                "myapp.dot",
+                &AccountGrant::StatementStore {
+                    key: StatementStoreAllowanceKey::from_secret_bytes(
+                        first.secret.to_bytes().to_vec()
+                    )
+                    .unwrap(),
+                    period: None
+                },
+            )
         ),
         Err(AuthorityError::Disconnected)
     ));
@@ -6810,25 +6812,29 @@ fn reset_session_state_clears_all_capabilities_without_peer_traffic() {
     ))
     .unwrap();
     futures::executor::block_on(
-        accounts
-            .grants_for_tests()
-            .cache_statement_store_allowance_key(
-                &sso.session_state(),
-                &session,
-                lifecycle_epoch,
-                "myapp.dot",
-                StatementStoreAllowanceKey::from_secret_bytes(subtree.secret.to_bytes().to_vec())
-                    .unwrap(),
-                None,
-            ),
+        accounts.grants_for_tests().retain_allowance(
+            &sso.session_state(),
+            &session,
+            lifecycle_epoch,
+            "myapp.dot",
+            &AccountGrant::StatementStore {
+                key: StatementStoreAllowanceKey::from_secret_bytes(
+                    subtree.secret.to_bytes().to_vec(),
+                )
+                .unwrap(),
+                period: None,
+            },
+        ),
     )
     .unwrap();
-    futures::executor::block_on(accounts.grants_for_tests().cache_bulletin_allowance_key(
+    futures::executor::block_on(accounts.grants_for_tests().retain_allowance(
         &sso.session_state(),
         &session,
         lifecycle_epoch,
         "myapp.dot",
-        BulletinAllowanceKey::from_secret_bytes(subtree.secret.to_bytes().to_vec()).unwrap(),
+        &AccountGrant::Bulletin(
+            BulletinAllowanceKey::from_secret_bytes(subtree.secret.to_bytes().to_vec()).unwrap(),
+        ),
     ))
     .unwrap();
     assert_eq!(
@@ -6884,25 +6890,29 @@ fn identity_replacement_clears_all_stale_wallet_capabilities() {
         crate::host_logic::product_account::derive_product_subtree_keypair(&root, "myapp.dot")
             .unwrap();
     futures::executor::block_on(
-        accounts
-            .grants_for_tests()
-            .cache_statement_store_allowance_key(
-                &sso.session_state(),
-                &session,
-                lifecycle_epoch,
-                "myapp.dot",
-                StatementStoreAllowanceKey::from_secret_bytes(subtree.secret.to_bytes().to_vec())
-                    .unwrap(),
-                None,
-            ),
+        accounts.grants_for_tests().retain_allowance(
+            &sso.session_state(),
+            &session,
+            lifecycle_epoch,
+            "myapp.dot",
+            &AccountGrant::StatementStore {
+                key: StatementStoreAllowanceKey::from_secret_bytes(
+                    subtree.secret.to_bytes().to_vec(),
+                )
+                .unwrap(),
+                period: None,
+            },
+        ),
     )
     .unwrap();
-    futures::executor::block_on(accounts.grants_for_tests().cache_bulletin_allowance_key(
+    futures::executor::block_on(accounts.grants_for_tests().retain_allowance(
         &sso.session_state(),
         &session,
         lifecycle_epoch,
         "myapp.dot",
-        BulletinAllowanceKey::from_secret_bytes(subtree.secret.to_bytes().to_vec()).unwrap(),
+        &AccountGrant::Bulletin(
+            BulletinAllowanceKey::from_secret_bytes(subtree.secret.to_bytes().to_vec()).unwrap(),
+        ),
     ))
     .unwrap();
 
@@ -8019,18 +8029,15 @@ fn a_pairing_test_host_keeps_a_submitted_preimage_and_serves_it_back() {
     let lifecycle_epoch = pairing_host.grants_for_tests().lifecycle().revision();
     let allowance =
         crate::host_logic::product_account::derive_root_keypair_from_entropy(&[0x42; 32]).unwrap();
-    futures::executor::block_on(
-        pairing_host
-            .grants_for_tests()
-            .cache_bulletin_allowance_key(
-                &sso.session_state(),
-                &session,
-                lifecycle_epoch,
-                "myapp.dot",
-                BulletinAllowanceKey::from_secret_bytes(allowance.secret.to_bytes().to_vec())
-                    .unwrap(),
-            ),
-    )
+    futures::executor::block_on(pairing_host.grants_for_tests().retain_allowance(
+        &sso.session_state(),
+        &session,
+        lifecycle_epoch,
+        "myapp.dot",
+        &AccountGrant::Bulletin(
+            BulletinAllowanceKey::from_secret_bytes(allowance.secret.to_bytes().to_vec()).unwrap(),
+        ),
+    ))
     .expect("the wallet's allowance is cached");
     pairing_host.set_submit_preimages_locally(true);
     let value = b"pairing test host preimage".to_vec();

@@ -642,7 +642,7 @@ impl NativeProductExecution {
         }
     }
 
-    fn admin(&self) -> crate::HostAdmin<crate::runtime::WalletAccountHolder> {
+    fn admin(&self) -> crate::HostAdmin {
         crate::host_core::product_admin_with_adapters(
             &self.runtime,
             self.product.clone(),

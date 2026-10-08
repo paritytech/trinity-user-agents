@@ -141,19 +141,28 @@ impl<H: super::AccountHolder> StatementStore for ProductRuntimeHost<H> {
                 reason,
             }))
         })?;
+        if let latest::StatementProof::Sr25519 { signer, .. } = &statement.proof {
+            let renewal = super::remote_authority_context(cx);
+            super::remote_authority_call(
+                &renewal,
+                self.accounts.renew_statement_sponsorship(
+                    &renewal,
+                    &self.connection.product,
+                    *signer,
+                ),
+            )
+            .await
+            .map_err(|error| {
+                CallError::Domain(RemoteStatementStoreSubmitError::V1(latest::GenericError {
+                    reason: error.to_string(),
+                }))
+            })?;
+        }
         self.connection
             .statement_store_rpc()
             .submit_sso(encoded, "statement-store")
             .await
             .map_err(|reason| {
-                if let latest::StatementProof::Sr25519 { signer, .. } = statement.proof
-                    && statement_store_rpc::is_no_allowance_rejection(&reason)
-                {
-                    self.accounts.forget_statement_store_allowance_key(
-                        &self.connection.product_id(),
-                        signer,
-                    );
-                }
                 CallError::Domain(RemoteStatementStoreSubmitError::V1(latest::GenericError {
                     reason: format!("statement-store submit failed: {reason}"),
                 }))
@@ -493,7 +502,8 @@ fn statement_proof_authorized_error(
 
 #[cfg(test)]
 mod tests {
-    use super::super::{LocalActivation, RuntimeServices, SigningHostRole, WalletAccountHolder};
+    use super::super::signing_host::WalletAccountHolder;
+    use super::super::{LocalActivation, RuntimeServices, SigningHostRole};
     use super::*;
     use crate::host_logic::product_account::{
         SR25519_SIGNING_CONTEXT, derive_product_keypair, derive_root_keypair_from_entropy,

@@ -19,7 +19,7 @@ protocol API into a working host. It owns:
 
 ## Architecture
 
-Each product connection owns its dispatcher adapters and `ProductConnection`. The host runtime shares `HostAccounts<H>`, its selected account holder, the session lifecycle and `RuntimeServices` across connections. The dispatcher erases the concrete account-holder type; product execution and control handles remain concrete.
+Each product connection owns its dispatcher adapters and `ProductConnection`. The host runtime shares `HostAccounts<H>`, its selected account holder, the session lifecycle and `RuntimeServices` across connections. The dispatcher erases the concrete account-holder type; product execution and administration handles expose no account-holder type parameter.
 
 ```text
 Per product connection
@@ -191,7 +191,7 @@ path. Web hosts do not compile the store.
 - `AccountInvocation` carries the selected wallet activation and trusted caller origin. Local callers may carry a wallet-issued authorization; remote signing always requires wallet approval. Local and remote account access share stored decisions, including refusals.
 - Product calls keep the selected `AuthoritySession` across review. The account holder validates that activation before wallet execution. `HostAccounts` checks grant revisions when retaining or using delegated keys; product reset clears grants without changing the wallet activation. It does not cancel an independent wallet approval already in progress.
 - `AccountHolder::allocate_grants` returns a lazy, ordered stream. The host retains each success before continuing; recoverable item failures and whole-operation failures remain distinct.
-- `HostGrantStore` owns retained keys, wallet authorizations and public subtrees. Paired keys use existing storage encodings; native grants remain in memory. Both hosts use a cached Bulletin key, dry-run the transaction, then refresh once on allowance rejection.
+- `HostGrantStore` owns retained keys, wallet authorizations and public subtrees. Paired keys use existing storage encodings; native grants remain in memory. Both hosts read the retained Bulletin key’s on-chain authorization before submission, checking expiry, transaction count and payload capacity. Insufficient authorization requests an approved Increase and waits for propagation; failure preserves the key. Native Statement Store submissions silently renew only the product’s retained sponsorship signer. Paired renewals use the existing SSO allocation request and its phone approval.
 - `HostSession` covers login, disconnect and identity lookup through the existing `SigningHost` or `SsoRequestService`. Paired session replacement waits for pending storage cleanup, and explicit cancellation withdraws submitted SSO requests.
 - `ProductConnection` holds the existing per-product adapters, permissions, action channels and open-operation references independently of the holder type. The dispatcher erases that type for native control handles. Worker scheduling and ownership remain in their existing components.
 

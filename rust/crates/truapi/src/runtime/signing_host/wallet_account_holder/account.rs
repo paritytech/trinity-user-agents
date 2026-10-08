@@ -443,46 +443,59 @@ impl AccountHolder for WalletAccountHolder {
         .boxed())
     }
 
+    async fn renew_statement_sponsorship(
+        &self,
+        invocation: AccountInvocation<'_>,
+        account_id: [u8; 32],
+    ) -> Result<(), AuthorityError> {
+        let AccountCaller::Local { product, .. } = invocation.caller else {
+            return Err(AuthorityError::Rejected);
+        };
+        self.require_current_session(invocation.session)?;
+        #[cfg(feature = "test-host")]
+        self.resource_controls
+            .refuse_withheld(&api::AllocatableResource::StatementStoreAllowance)?;
+        until_cancelled(
+            invocation.call,
+            self.ensure_statement_slot(
+                invocation.session,
+                &product.product_id,
+                account_id,
+                OnExistingAllowancePolicy::Ignore,
+            ),
+        )
+        .await?
+        .map_err(AllowanceAllocationError::into_authority_error)?;
+        self.require_current_session(invocation.session)
+    }
+
     async fn ensure_allowance(
         &self,
         invocation: AccountInvocation<'_>,
         resource: AllowanceResource,
         policy: OnExistingAllowancePolicy,
     ) -> Result<AccountGrant, AuthorityError> {
-        match resource {
-            AllowanceResource::StatementStore => {
-                let allocation = self
-                    .allocate_statement_store_allowance(
-                        invocation.session,
-                        invocation
-                            .caller
-                            .product_id()
-                            .ok_or(AuthorityError::Rejected)?,
-                        policy,
-                    )
-                    .await
-                    .map_err(AllowanceAllocationError::into_authority_error)?;
-                Ok(AccountGrant::StatementStore {
-                    key: StatementStoreAllowanceKey::from_secret_bytes(allocation.secret)?,
-                    period: Some(allocation.period),
+        let resource = match resource {
+            AllowanceResource::StatementStore => api::AllocatableResource::StatementStoreAllowance,
+            AllowanceResource::Bulletin => api::AllocatableResource::BulletinAllowance,
+        };
+        let mut grants = self
+            .allocate_grants(
+                invocation,
+                api::HostRequestResourceAllocationRequest {
+                    resources: vec![resource],
+                },
+                policy,
+            )
+            .await?;
+        match grants.next().await.transpose()? {
+            Some(AccountGrantOutcome::Allocated(grant)) => Ok(grant),
+            Some(AccountGrantOutcome::NotAvailable { reason }) => {
+                Err(AuthorityError::Unavailable {
+                    reason: reason.unwrap_or_else(|| "Allowance unavailable".to_string()),
                 })
             }
-            AllowanceResource::Bulletin => {
-                let secret = self
-                    .allocate_bulletin_allowance(
-                        invocation.session,
-                        invocation
-                            .caller
-                            .product_id()
-                            .ok_or(AuthorityError::Rejected)?,
-                        policy,
-                    )
-                    .await
-                    .map_err(AllowanceAllocationError::into_authority_error)?;
-                Ok(AccountGrant::Bulletin(
-                    BulletinAllowanceKey::from_secret_bytes(secret)?,
-                ))
-            }
+            Some(AccountGrantOutcome::Rejected) | None => Err(AuthorityError::Rejected),
         }
     }
 

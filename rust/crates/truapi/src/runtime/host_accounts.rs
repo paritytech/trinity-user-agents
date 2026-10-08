@@ -31,7 +31,11 @@ use crate::platform::{
 };
 use futures::StreamExt;
 use std::sync::Arc;
+#[cfg(not(target_arch = "wasm32"))]
+use std::time::Instant;
 use truapi::{CallContext, CallError, latest as api};
+#[cfg(target_arch = "wasm32")]
+use web_time::Instant;
 use zeroize::Zeroizing;
 
 /// Receives, retains and uses product grants from one selected account holder.
@@ -308,7 +312,8 @@ impl<H: AccountHolder> HostAccounts<H> {
             });
         #[cfg(feature = "test-host")]
         let resources = request.resources.clone();
-        let mut grants = self
+        let count = request.resources.len();
+        let mut grants = match self
             .holder
             .allocate_grants(
                 AccountInvocation {
@@ -324,12 +329,15 @@ impl<H: AccountHolder> HostAccounts<H> {
                 OnExistingAllowancePolicy::Increase,
             )
             .await
-            .map_err(|error| match error {
-                AuthorityError::Rejected => AuthorityError::Unknown {
-                    reason: "User rejected resource allocation".to_string(),
-                },
-                other => other,
-            })?;
+        {
+            Ok(grants) => grants,
+            Err(AuthorityError::Rejected) => {
+                return Ok(api::HostRequestResourceAllocationResponse {
+                    outcomes: vec![api::AllocationOutcome::Rejected; count],
+                });
+            }
+            Err(error) => return Err(error),
+        };
         let cx = super::remote_authority_context_with_default(
             cx,
             super::RESOURCE_ALLOCATION_REMOTE_AUTHORITY_RESPONSE_TIMEOUT,
@@ -373,26 +381,14 @@ impl<H: AccountHolder> HostAccounts<H> {
         let (session, _) = self.grant_session(authority_session)?;
         self.hold_grant(authority_session, revision)?;
         match grant {
-            AccountGrant::StatementStore { key, period } => {
+            grant @ (AccountGrant::StatementStore { .. } | AccountGrant::Bulletin(_)) => {
                 self.grants
-                    .cache_statement_store_allowance_key(
+                    .retain_allowance(
                         &self.session_state,
                         &session,
                         revision,
                         &product.product_id,
-                        key,
-                        period,
-                    )
-                    .await?;
-            }
-            AccountGrant::Bulletin(key) => {
-                self.grants
-                    .cache_bulletin_allowance_key(
-                        &self.session_state,
-                        &session,
-                        revision,
-                        &product.product_id,
-                        key,
+                        &grant,
                     )
                     .await?;
             }
@@ -434,7 +430,7 @@ impl<H: AccountHolder> HostAccounts<H> {
         self.holder.require_current_session(authority_session)
     }
 
-    /// Acquire a statement key, renewing only grants whose actual allocation period is known.
+    /// Reuse a retained sponsorship key or request its initial issuance.
     async fn statement_store_allowance_key(
         &self,
         cx: &CallContext,
@@ -445,26 +441,19 @@ impl<H: AccountHolder> HostAccounts<H> {
         #[cfg(feature = "test-host")]
         self.resource_controls
             .refuse_withheld(&api::AllocatableResource::StatementStoreAllowance)?;
-        if let Some((period, key)) = self
+        if let Some(AccountGrant::StatementStore { key, .. }) = self
             .grants
-            .cached_statement_store_allowance_key(
+            .cached_allowance(
                 &self.session_state,
                 &session,
                 revision,
                 &product_id,
+                AllowanceResource::StatementStore,
             )
             .await?
         {
-            let current = period
-                .map(|_| {
-                    super::allowances::current_unix_secs()
-                        .map(super::statement_allowance::slot::current_period)
-                })
-                .transpose()?;
-            if period.is_none() || period == current {
-                self.holder.require_current_session(authority_session)?;
-                return Ok(key);
-            }
+            self.holder.require_current_session(authority_session)?;
+            return Ok(key);
         }
         let product = ProductContext::new(product_id.clone()).map_err(|error| {
             AuthorityError::Unavailable {
@@ -488,18 +477,12 @@ impl<H: AccountHolder> HostAccounts<H> {
             )
             .await?;
         match grant {
-            AccountGrant::StatementStore { key, period } => {
+            AccountGrant::StatementStore { ref key, .. } => {
                 self.holder.require_current_session(authority_session)?;
                 self.grants
-                    .cache_statement_store_allowance_key(
-                        &self.session_state,
-                        &session,
-                        revision,
-                        &product_id,
-                        key,
-                        period,
-                    )
-                    .await
+                    .retain_allowance(&self.session_state, &session, revision, &product_id, &grant)
+                    .await?;
+                Ok(key.clone())
             }
             _ => Err(AuthorityError::Unknown {
                 reason: "Unexpected statement-store allowance response resource".to_string(),
@@ -507,15 +490,59 @@ impl<H: AccountHolder> HostAccounts<H> {
         }
     }
 
-    /// Forget only the dated statement grant whose key was rejected.
-    pub fn forget_statement_store_allowance_key(&self, product_id: &str, public_key: [u8; 32]) {
-        self.grants
-            .lifecycle()
-            .forget_statement_store_allowance(product_id, public_key);
+    /// Renew only statements signed by this product's retained sponsorship key.
+    pub async fn renew_statement_sponsorship(
+        &self,
+        cx: &CallContext,
+        product: &ProductContext,
+        signer: [u8; 32],
+    ) -> Result<(), AuthorityError> {
+        let Some(authority_session) = self.current_session() else {
+            return Ok(());
+        };
+        let (session, revision) = self.grant_session(&authority_session)?;
+        let grant = match self
+            .grants
+            .cached_allowance(
+                &self.session_state,
+                &session,
+                revision,
+                &product.product_id,
+                AllowanceResource::StatementStore,
+            )
+            .await
+        {
+            Ok(grant) => grant,
+            Err(error) => {
+                tracing::warn!(%error, product_id = %product.product_id, "could not identify statement sponsorship");
+                return Ok(());
+            }
+        };
+        if !matches!(grant, Some(AccountGrant::StatementStore { key, .. }) if key.public_key == signer)
+        {
+            return Ok(());
+        }
+        self.hold_grant(&authority_session, revision)?;
+        self.holder
+            .renew_statement_sponsorship(
+                AccountInvocation {
+                    call: cx,
+                    session: &authority_session,
+                    caller: AccountCaller::Local {
+                        product,
+                        authorization: None,
+                        outbound_review: None,
+                    },
+                },
+                signer,
+            )
+            .await?;
+        self.hold_grant(&authority_session, revision)?;
+        Ok(())
     }
 
     /// Reuse a retained Bulletin key without contacting its issuer.
-    pub async fn bulletin_allowance_key(
+    async fn bulletin_allowance_key(
         &self,
         cx: &CallContext,
         authority_session: &AuthoritySession,
@@ -525,9 +552,15 @@ impl<H: AccountHolder> HostAccounts<H> {
         #[cfg(feature = "test-host")]
         self.resource_controls
             .refuse_withheld(&api::AllocatableResource::BulletinAllowance)?;
-        if let Some(key) = self
+        if let Some(AccountGrant::Bulletin(key)) = self
             .grants
-            .cached_bulletin_allowance_key(&self.session_state, &session, revision, &product_id)
+            .cached_allowance(
+                &self.session_state,
+                &session,
+                revision,
+                &product_id,
+                AllowanceResource::Bulletin,
+            )
             .await?
         {
             self.holder.require_current_session(authority_session)?;
@@ -538,29 +571,6 @@ impl<H: AccountHolder> HostAccounts<H> {
             authority_session,
             product_id,
             OnExistingAllowancePolicy::Ignore,
-        )
-        .await
-    }
-
-    /// Refresh after the chain rejects a missing or exhausted Bulletin allowance.
-    pub async fn refresh_bulletin_allowance_key(
-        &self,
-        cx: &CallContext,
-        authority_session: &AuthoritySession,
-        product_id: String,
-    ) -> Result<BulletinAllowanceKey, AuthorityError> {
-        let (session, revision) = self.grant_session(authority_session)?;
-        #[cfg(feature = "test-host")]
-        self.resource_controls
-            .refuse_withheld(&api::AllocatableResource::BulletinAllowance)?;
-        self.grants
-            .evict_bulletin_allowance_key(&self.session_state, &session, revision, &product_id)
-            .await?;
-        self.allocate_bulletin_allowance_key(
-            cx,
-            authority_session,
-            product_id,
-            OnExistingAllowancePolicy::Increase,
         )
         .await
     }
@@ -595,17 +605,12 @@ impl<H: AccountHolder> HostAccounts<H> {
             )
             .await?;
         match grant {
-            AccountGrant::Bulletin(key) => {
+            AccountGrant::Bulletin(ref key) => {
                 self.holder.require_current_session(authority_session)?;
                 self.grants
-                    .cache_bulletin_allowance_key(
-                        &self.session_state,
-                        &session,
-                        revision,
-                        &product_id,
-                        key,
-                    )
-                    .await
+                    .retain_allowance(&self.session_state, &session, revision, &product_id, &grant)
+                    .await?;
+                Ok(key.clone())
             }
             _ => Err(AuthorityError::Unknown {
                 reason: "Unexpected bulletin allowance response resource".to_string(),
@@ -1344,51 +1349,82 @@ fn apply_ring_vrf_disclosure(
 }
 
 impl<H: AccountHolder> HostAccounts<H> {
-    /// Prepare public transaction data before using the retained secret under its original guard.
-    pub async fn build_bulletin_transaction<
-        C: subxt::client::OnlineClientAtBlockT<subxt::config::substrate::SubstrateConfig>,
-    >(
+    /// Check the retained allowance before preparing and signing a Bulletin submission.
+    pub async fn submit_preimage(
         &self,
+        cx: &CallContext,
+        deadline: Instant,
         authority_session: &AuthoritySession,
-        allowance: &BulletinAllowanceKey,
-        client: &subxt::client::ClientAtBlock<subxt::config::substrate::SubstrateConfig, C>,
-        data: &[u8],
-    ) -> Result<
-        subxt::tx::SubmittableTransaction<subxt::config::substrate::SubstrateConfig, C>,
-        super::bulletin_rpc::BulletinSubmitError,
-    > {
+        product_id: String,
+        value: &[u8],
+    ) -> Result<Vec<u8>, super::bulletin_rpc::BulletinSubmitError> {
         use super::bulletin_rpc::BulletinSubmitError;
-        use crate::host_internal::bulletin::{
-            MORTAL_PERIOD_BLOCKS, allowance_signer, store_transaction_payload,
-        };
+        use super::statement_allowance::{fetch_bulletin_allowance, wait_bulletin_authorization};
+        use crate::host_internal::bulletin::allowance_signer;
         use subxt::tx::Signer;
+
         let revision = self.grants.lifecycle().revision();
-        let account_id = {
-            let _lifecycle = self.hold_grant(authority_session, revision)?;
-            allowance_signer(allowance)
+        let mut allowance = self
+            .bulletin_allowance_key(cx, authority_session, product_id.clone())
+            .await?;
+        #[cfg(feature = "test-host")]
+        if self.submits_preimages_locally() {
+            self.hold_grant(authority_session, revision)?;
+            return Ok(crate::host_internal::bulletin::preimage_key(value).to_vec());
+        }
+        let rpc = self
+            .services
+            .bulletin
+            .client("Bulletin authorization")
+            .await
+            .map_err(BulletinSubmitError::Host)?;
+        let rpc = super::statement_allowance::rpc::RpcClient::new(rpc);
+        let target = allowance_signer(&allowance)
+            .map_err(BulletinSubmitError::InvalidAllowanceKey)?
+            .account_id()
+            .0;
+        let current = fetch_bulletin_allowance(&rpc, &target)
+            .await
+            .map_err(|error| AuthorityError::Unavailable {
+                reason: error.to_string(),
+            })?;
+        if !current.is_some_and(|info| info.can_store(value.len() as u64)) {
+            self.hold_grant(authority_session, revision)?;
+            allowance = self
+                .allocate_bulletin_allowance_key(
+                    cx,
+                    authority_session,
+                    product_id,
+                    OnExistingAllowancePolicy::Increase,
+                )
+                .await?;
+            let replacement = allowance_signer(&allowance)
                 .map_err(BulletinSubmitError::InvalidAllowanceKey)?
                 .account_id()
-        };
-        let payload = store_transaction_payload(data);
-        let params = subxt::config::DefaultExtrinsicParamsBuilder::<
-            subxt::config::substrate::SubstrateConfig,
-        >::new()
-        .mortal(MORTAL_PERIOD_BLOCKS)
-        .build();
-        let mut prepared = client
-            .tx()
-            .create_signable(&payload, &account_id, params)
-            .await
-            .map_err(|error| BulletinSubmitError::Subxt(Box::new(error.into())))?;
-        let _lifecycle = self.hold_grant(authority_session, revision)?;
+                .0;
+            let baseline = (replacement == target).then_some(current).flatten();
+            let timeout = deadline.saturating_duration_since(Instant::now());
+            wait_bulletin_authorization(&rpc, &replacement, baseline, value.len() as u64, timeout)
+                .await
+                .map_err(|error| AuthorityError::Unavailable {
+                    reason: error.to_string(),
+                })?;
+        }
         let signer =
-            allowance_signer(allowance).map_err(BulletinSubmitError::InvalidAllowanceKey)?;
-        let bytes = prepared
-            .signer_payload()
-            .map_err(|error| BulletinSubmitError::Subxt(Box::new(error.into())))?;
-        prepared
-            .sign_with_account_and_signature(&account_id, &signer.sign(&bytes))
-            .map_err(|error| BulletinSubmitError::Subxt(Box::new(error.into())))
+            allowance_signer(&allowance).map_err(BulletinSubmitError::InvalidAllowanceKey)?;
+        self.services
+            .bulletin
+            .submit_preimage(
+                cx,
+                deadline,
+                &signer.account_id(),
+                &|bytes| {
+                    let _grant = self.hold_grant(authority_session, revision)?;
+                    Ok(signer.sign(bytes))
+                },
+                value,
+            )
+            .await
     }
 
     /// Acquire and sign a statement while its retained grant remains selected.
