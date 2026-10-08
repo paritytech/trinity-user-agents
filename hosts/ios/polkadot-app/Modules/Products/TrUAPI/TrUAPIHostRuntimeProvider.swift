@@ -51,6 +51,10 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
     /// first use, which is long after, so the manager is in place by then.
     private var workerManager: (any TrUAPIWorkerManaging)?
 
+    /// Set once at startup, after the payment engines are assembled. Installed on the runtime when
+    /// it is built, or right away if it already is.
+    private var paymentsBridge: RustPaymentsBridge?
+
     init(
         chainRegistry: ChainRegistryProtocol,
         entropyManager: RootEntropyManaging,
@@ -79,6 +83,33 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
         defer { lock.unlock() }
 
         self.workerManager = workerManager
+    }
+
+    /// Serve top-ups, payments and balance to the core from `paymentsSupport`. Approvals and
+    /// privacy warnings are presented like the core's own host-level prompts.
+    func attach(paymentsSupport: PaymentsSupport, hostProvider: ProductHostProviding) {
+        let productsRouter = confirmationRouterFacade.productsRouter
+        let bridge = RustPaymentsBridge(
+            payments: ProductPayments(
+                support: paymentsSupport,
+                approvalRequester: PaymentApprovalRequesterFactory.create(
+                    router: productsRouter,
+                    fundingProvider: FundingDomainProvider(hostProvider: hostProvider)
+                ),
+                privacyConfirmer: PaymentPrivacyConfirmer(router: productsRouter),
+                recyclingStrategy: CoinageRecyclingStrategyStore.shared
+            ),
+            logger: logger
+        )
+
+        lock.lock()
+        defer { lock.unlock() }
+
+        guard paymentsBridge == nil else { return }
+        paymentsBridge = bridge
+        if let cachedRuntime {
+            bridge.install(on: cachedRuntime)
+        }
     }
 
     func sharedRuntime() throws -> TrUAPIHostRuntime {
@@ -127,6 +158,7 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
             routerFacade: confirmationRouterFacade
         )
         runtime.setContacts(contactsBridge)
+        paymentsBridge?.install(on: runtime)
         contactsChangeNotifier = ContactsChangeNotifier(
             dataProviderFactory: ChatContactDataProviderFactory(),
             logger: logger,
