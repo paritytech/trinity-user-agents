@@ -14,10 +14,7 @@ use crate::dispatcher::Dispatcher;
 use crate::frame::ProtocolMessage;
 use crate::generated::dispatcher;
 use crate::host_logic::session::SessionState;
-use crate::runtime::{
-    HostGrantStore, PairingHostRole, ProductAuthority, ProductRuntimeHost, RuntimeServices,
-    SsoRequestService,
-};
+use crate::runtime::{PairingHostRole, ProductAuthority, ProductRuntimeHost, RuntimeServices};
 use crate::subscription::Spawner;
 use crate::transport::Transport;
 
@@ -66,9 +63,7 @@ impl TrUApiCore {
             host_config.asset_hub_chain_genesis_hash,
             spawner.clone(),
         );
-        let grants = Arc::new(HostGrantStore::new(services.platform.clone()));
-        let sso = SsoRequestService::new(services.clone(), host_config, grants.clone());
-        let pairing_host = PairingHostRole::new(services.clone(), sso.clone(), grants);
+        let (pairing_host, sso) = PairingHostRole::new(services.clone(), host_config);
         sso.clone().start_session_store_sync(spawner);
         Self::from_runtime_parts(services, pairing_host, product)
     }

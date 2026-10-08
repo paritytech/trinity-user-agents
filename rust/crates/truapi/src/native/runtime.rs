@@ -551,18 +551,20 @@ impl NativeTrUApiHostRuntime {
     }
 
     /// Bind externally owned SSO transport to its current wallet activation.
-    pub fn open_sso_session(
+    pub fn open_sso_service(
         &self,
         own_statement_account_id: Bytes32,
         own_encryption_public_key: Bytes32,
-    ) -> Result<Arc<super::sso::NativeSsoAccountHolderSession>, HostRejection> {
-        let session = self
+    ) -> Result<Arc<super::sso::NativeSsoAccountHolderService>, HostRejection> {
+        let service = self
             .runtime
-            .open_sso_session(own_statement_account_id, own_encryption_public_key)
+            .open_sso_service(own_statement_account_id, own_encryption_public_key)
             .map_err(|error| HostRejection::Rejected {
                 reason: error.to_string(),
             })?;
-        Ok(Arc::new(super::sso::new_session(session)))
+        Ok(Arc::new(super::sso::NativeSsoAccountHolderService::new(
+            service,
+        )))
     }
 
     /// Build the SCALE-encoded `Disconnected` message a wallet posts over a

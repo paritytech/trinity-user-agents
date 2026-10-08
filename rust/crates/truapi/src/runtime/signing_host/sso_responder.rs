@@ -11,9 +11,9 @@
 //! same seam browser hosts use for their confirmation modals; a headless host
 //! implements it with its approval policy.
 
-use crate::runtime::AccountHolder;
 use crate::runtime::authority::AuthoritySession;
 use crate::runtime::signing_host::WalletAccountHolder;
+use crate::runtime::{AccountHolder, SsoAccountHolderService};
 use std::collections::{HashSet, VecDeque};
 use std::sync::Arc;
 use std::time::Instant;
@@ -38,11 +38,9 @@ use crate::host_logic::sso::pairing::{
 };
 use crate::host_logic::statement_store::parse_new_statements_result;
 use crate::runtime::services::RuntimeServices;
-use crate::runtime::sso_account_holder_service::withdrawals;
 use crate::runtime::sso_remote::{fresh_statement_expiry, sso_message_id};
-use crate::runtime::sso_service::{Dispatch, SsoWithdrawals};
+use crate::runtime::sso_service::Dispatch;
 use crate::runtime::statement_store_rpc;
-use crate::runtime::{AuthoritySession, SsoAccountHolderService};
 use crate::unix_time::current_unix_secs as statement_current_unix_secs;
 
 /// Upper bound on undecodable request ids acknowledged within one serve loop.
@@ -454,8 +452,13 @@ async fn serve_session(
     );
     // Boxed as a trait object so the hosts that await a session need not
     // lay out this future or prove it `Send`.
-    serve_pages(pages, withdrawals(&service), |incoming| {
-        serve_statement(
+    serve_pages(
+        pages,
+        |message| {
+            service.handle_control(message);
+        },
+        |incoming| {
+            serve_statement(
             services,
             &signing_host,
             &service,
@@ -463,7 +466,8 @@ async fn serve_session(
             replay_scope,
             incoming,
         )
-    })
+        },
+    )
     .boxed()
     .await
 }
@@ -476,7 +480,7 @@ const MAX_QUEUED_REQUESTS: usize = 64;
 /// so a `Cancel` reaches the request it withdraws.
 async fn serve_pages<Fut>(
     pages: impl Stream<Item = Result<Vec<IncomingSsoRequest>, String>>,
-    withdrawals: &SsoWithdrawals,
+    handle_control: impl Fn(&RemoteMessage),
     mut serve: impl FnMut(IncomingSsoRequest) -> Fut,
 ) -> Result<ResponderExit, String>
 where
@@ -516,9 +520,9 @@ where
                     None => break,
                 };
                 for incoming in page {
-                    if let Some(targets) = withdrawn_targets(&incoming) {
-                        for target in targets {
-                            withdrawals.withdraw(target);
+                    if incoming.messages.iter().all(|message| message.withdrawn_request_id().is_some()) {
+                        for message in &incoming.messages {
+                            handle_control(message);
                         }
                         continue;
                     }
@@ -615,15 +619,6 @@ fn log_request_received(incoming: &IncomingSsoRequest) {
     }
 }
 
-/// The requests a statement withdraws, when it carries nothing but `Cancel`s.
-fn withdrawn_targets(incoming: &IncomingSsoRequest) -> Option<Vec<&str>> {
-    incoming
-        .messages
-        .iter()
-        .map(RemoteMessage::withdrawn_request_id)
-        .collect()
-}
-
 /// Serve one inbound request statement exactly once across redeliveries.
 async fn serve_statement(
     services: &RuntimeServices,
@@ -696,9 +691,6 @@ async fn serve_request(
             vec![response],
             fresh_statement_expiry(),
         )?;
-        service
-            .require_current_session()
-            .map_err(|error| error.to_string())?;
         let publish_result = services
             .statement_store
             .submit_sso(statement, "sso-responder response")
@@ -835,6 +827,7 @@ mod tests {
         generate_pairing_device_identity,
     };
     use crate::host_logic::statement_store::build_signed_statement;
+    use crate::runtime::sso_service::SsoWithdrawals;
     use parity_scale_codec::Encode;
 
     /// The key a host advertises on chain must be the one it serves over
@@ -1714,9 +1707,17 @@ mod tests {
             }
             release.send(()).unwrap();
 
+            let Ok(Dispatch::Response(answer)) = answer.await else {
+                panic!("expected not-connected response")
+            };
+            let RemoteMessageData::V1(v1::RemoteMessage::ResourceAllocationResponse(response)) =
+                answer.message.data
+            else {
+                panic!("expected allocation response")
+            };
             assert_eq!(
-                answer.await,
-                Err(crate::runtime::AuthorityError::Disconnected)
+                response.payload,
+                Err("signing host session is not active".to_string())
             );
             assert!(platform.sent_rpc.lock().unwrap().is_empty());
         });
@@ -1862,15 +1863,19 @@ mod tests {
         pages
             .unbounded_send(Ok(statement("stmt-1", allocation_request("alloc-1"))))
             .unwrap();
-        let serving = serve_pages(statements, &withdrawals, |incoming| {
-            let request = withdrawals.begin(&incoming.messages[0].message_id);
-            async move {
-                if let Some(request) = request {
+        let serving = serve_pages(
+            statements,
+            |message| withdrawals.withdraw(message.withdrawn_request_id().unwrap()),
+            |incoming| {
+                let request = withdrawals.begin(&incoming.messages[0].message_id);
+                async move {
+                    if let Some(request) = request {
                     request.cancel.cancelled().await;
+                    }
+                    Ok(Some(ResponderExit::PeerDisconnected))
                 }
-                Ok(Some(ResponderExit::PeerDisconnected))
-            }
-        });
+            },
+        );
         futures::pin_mut!(serving);
         assert!(serving.as_mut().now_or_never().is_none());
 
@@ -1896,15 +1901,19 @@ mod tests {
         pages
             .unbounded_send(Ok(statement("stmt-1", allocation_request("alloc-1"))))
             .unwrap();
-        let serving = serve_pages(statements, &withdrawals, |_| {
-            let gate = gate.take();
-            async move {
-                if let Some(gate) = gate {
+        let serving = serve_pages(
+            statements,
+            |message| withdrawals.withdraw(message.withdrawn_request_id().unwrap()),
+            |_| {
+                let gate = gate.take();
+                async move {
+                    if let Some(gate) = gate {
                     let _ = gate.await;
+                    }
+                    Ok(None)
                 }
-                Ok(None)
-            }
-        });
+            },
+        );
         futures::pin_mut!(serving);
         assert!(serving.as_mut().now_or_never().is_none());
 

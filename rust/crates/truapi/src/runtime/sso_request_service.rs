@@ -67,6 +67,7 @@ impl Drop for LoginInFlightOwner<'_> {
 struct Selection {
     login_generation: u64,
     external_session_active: bool,
+    pending_auth_deletion: bool,
 }
 
 #[derive(Debug, derive_more::Display)]
@@ -289,7 +290,10 @@ impl SsoRequestService {
                 .await
                 .map_err(StoredSessionActivationError::Cleanup)?;
             let epoch = self.advance_session_lifecycle();
-            let read = persistence.read_auth_session().await;
+            let read = self
+                .platform
+                .read_core_storage(CoreStorageKey::AuthSession)
+                .await;
             (epoch, read)
         };
         let blob = match read {
@@ -326,7 +330,10 @@ impl SsoRequestService {
         if self.grants.lifecycle().revision() != activation_epoch {
             return Err(StoredSessionActivationError::Changed);
         }
-        let latest = persistence.read_auth_session().await;
+        let latest = self
+            .platform
+            .read_core_storage(CoreStorageKey::AuthSession)
+            .await;
         let error = match latest {
             Ok(latest) if latest.as_deref() == Some(blob.as_slice()) => None,
             Ok(_) => Some((false, StoredSessionActivationError::Changed)),
@@ -354,7 +361,10 @@ impl SsoRequestService {
             return Err(StoredSessionActivationError::Changed);
         }
         if resolved_blob != blob && self.grants.lifecycle().revision() == activation_epoch {
-            let _ = persistence.write_auth_session(resolved_blob).await;
+            let _ = self
+                .platform
+                .write_core_storage(CoreStorageKey::AuthSession, resolved_blob)
+                .await;
         }
         if let Err(reason) = self.drain_session_deletions(&persistence).await {
             warn!(%reason, "session cleanup remains pending");
@@ -485,21 +495,26 @@ impl SsoRequestService {
             if selection.login_generation != generation {
                 return Ok(false);
             }
-            lifecycle.queue_auth_deletion();
+            selection.pending_auth_deletion = true;
             selection.external_session_active = false;
             lifecycle.advance()
         };
         let blob = encode_persisted_session(session);
-        persistence.write_auth_session(blob.clone()).await?;
+        self.platform
+            .write_core_storage(CoreStorageKey::AuthSession, blob.clone())
+            .await?;
         while self.is_current_login_attempt(generation) {
             let latest_epoch = self.grants.lifecycle().revision();
             if latest_epoch != epoch {
-                let latest = persistence.read_auth_session().await?;
-                let selection = self
+                let latest = self
+                    .platform
+                    .read_core_storage(CoreStorageKey::AuthSession)
+                    .await?;
+                let mut selection = self
                     .selection
                     .lock()
                     .expect("session selection mutex poisoned");
-                let mut lifecycle = self.grants.lifecycle();
+                let lifecycle = self.grants.lifecycle();
                 if selection.login_generation != generation {
                     break;
                 }
@@ -507,7 +522,7 @@ impl SsoRequestService {
                     continue;
                 }
                 if latest.as_deref() != Some(blob.as_slice()) {
-                    lifecycle.forget_auth_deletion();
+                    selection.pending_auth_deletion = false;
                     return Ok(false);
                 }
                 epoch = latest_epoch;
@@ -663,7 +678,8 @@ impl SsoRequestService {
             return false;
         }
         let previous = self.session_state.current();
-        lifecycle.revoke_session(previous.as_ref(), clear_auth_session);
+        lifecycle.revoke_session(previous.as_ref());
+        selection.pending_auth_deletion |= clear_auth_session;
         selection.external_session_active = false;
         self.session_state.clear_session();
         let monitor = channel::detach_session_channel(self, previous.as_ref());
@@ -677,11 +693,32 @@ impl SsoRequestService {
         &self,
         persistence: &HostGrantPersistence<'_>,
     ) -> Result<(), String> {
-        if !persistence.begin_cleanup() {
+        let pending_auth_deletion = self
+            .selection
+            .lock()
+            .expect("session selection mutex poisoned")
+            .pending_auth_deletion;
+        let pending_grants = persistence.begin_cleanup();
+        if !pending_auth_deletion && !pending_grants {
             return Ok(());
         }
         self.auth_state.store_disconnected();
-        persistence.drain_cleanup().await
+        let auth_result = if pending_auth_deletion {
+            self.platform
+                .clear_core_storage(CoreStorageKey::AuthSession)
+                .await
+                .map(|()| {
+                    self.selection
+                        .lock()
+                        .expect("session selection mutex poisoned")
+                        .pending_auth_deletion = false
+                })
+                .map_err(|error| error.reason)
+        } else {
+            Ok(())
+        };
+        let grants_result = persistence.drain_cleanup().await;
+        auth_result.and(grants_result)
     }
 
     #[instrument(skip_all, fields(runtime.method = "session_store.clear_disconnected"))]
@@ -743,7 +780,7 @@ impl SsoRequestService {
             {
                 return false;
             }
-            let mut lifecycle = self.grants.lifecycle();
+            let lifecycle = self.grants.lifecycle();
             if lifecycle.revision() != activation_epoch {
                 return false;
             }
@@ -755,7 +792,7 @@ impl SsoRequestService {
                 let monitor = channel::detach_session_channel(self, previous.as_ref());
                 (previous, monitor)
             });
-            lifecycle.forget_auth_deletion();
+            selection.pending_auth_deletion = false;
             self.session_state.set_session(session.clone());
             selection.external_session_active = external_session;
             detached
@@ -833,8 +870,12 @@ impl SsoRequestService {
         }
         self.auth_state
             .connected(&connected_session_ui_info(&resolved));
-        if let Err(err) = persistence
-            .write_auth_session(encode_persisted_session(&resolved))
+        if let Err(err) = self
+            .platform
+            .write_core_storage(
+                CoreStorageKey::AuthSession,
+                encode_persisted_session(&resolved),
+            )
             .await
         {
             warn!(reason = %err.reason, "refreshed session identity persist failed");

@@ -33,11 +33,10 @@ use truapi::{CallContext, CancellationReason};
 use crate::frame::ProtocolMessage;
 use crate::host_logic::worker::WorkerLedger;
 use crate::runtime::{
-    AccountHolder, ActionChannel, AuthorityError, AuthoritySession,
-    DEFAULT_REMOTE_AUTHORITY_RESPONSE_TIMEOUT, DevicePairingObserver, HostGrantStore,
-    LocalActivation, PairedSsoPeer, PairingHostRole, ProductAuthority, ProductRuntimeHost,
-    ResponderExit, RuntimeServices, SigningHostRole, SsoAccountHolderService, SsoRequestService,
-    WalletAccountHolder, disconnect_paired_host, establish_pairing,
+    AccountHolder, ActionChannel, AuthorityError, DEFAULT_REMOTE_AUTHORITY_RESPONSE_TIMEOUT,
+    DevicePairingObserver, LocalActivation, PairedSsoPeer, PairingHostRole, ProductAuthority,
+    ProductRuntimeHost, ResponderExit, RuntimeServices, SigningHostRole, SsoAccountHolderService,
+    SsoRequestService, disconnect_paired_host, establish_pairing,
     notify_pairing_allowance_allocation, notify_pairing_failed, respond_to_pairing, resume_pairing,
 };
 use crate::subscription::{HostInitiatedSubscriptionManager, Spawner};
@@ -246,9 +245,7 @@ impl PairingHostRuntime {
         if let Some(contacts_platform) = contacts_platform {
             services.install_contacts_platform(contacts_platform);
         }
-        let grants = Arc::new(HostGrantStore::new(services.platform.clone()));
-        let sso = SsoRequestService::new(services.clone(), config, grants.clone());
-        let pairing_host = PairingHostRole::new(services.clone(), sso.clone(), grants);
+        let (pairing_host, sso) = PairingHostRole::new(services.clone(), config);
         sso.clone().start_session_store_sync(spawner);
         Self {
             services,
@@ -1017,11 +1014,11 @@ impl SigningHostRuntime {
     }
 
     /// Bind an external SSO transport to the wallet matching both of its keys.
-    pub fn open_sso_session(
+    pub fn open_sso_service(
         &self,
         own_statement_account_id: [u8; 32],
         own_encryption_public_key: [u8; 32],
-    ) -> Result<SsoAccountHolderSession, AuthorityError> {
+    ) -> Result<SsoAccountHolderService, AuthorityError> {
         let wallet = self.signing_host.account_holder().clone();
         let session = wallet
             .current_session()
@@ -1031,24 +1028,7 @@ impl SigningHostRuntime {
             own_statement_account_id,
             own_encryption_public_key,
         )?;
-        Ok(SsoAccountHolderSession { wallet, session })
-    }
-}
-
-/// A wallet activation authenticated by an externally owned SSO transport.
-pub struct SsoAccountHolderSession {
-    wallet: Arc<WalletAccountHolder>,
-    session: AuthoritySession,
-}
-
-impl SsoAccountHolderSession {
-    /// Give each peer independent request and withdrawal state.
-    pub fn open_service(&self) -> Result<SsoAccountHolderService, AuthorityError> {
-        self.wallet.require_current_session(&self.session)?;
-        Ok(SsoAccountHolderService::new(
-            self.wallet.clone(),
-            self.session.clone(),
-        ))
+        Ok(SsoAccountHolderService::new(wallet, session))
     }
 }
 

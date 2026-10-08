@@ -70,30 +70,32 @@ impl PairingHost {
             .store(local, core::sync::atomic::Ordering::Relaxed);
     }
 
-    /// Compose account policy with the runtime's shared session and grants.
+    /// Compose one paired host and its session service with shared grant ownership.
     pub fn new(
         services: Arc<RuntimeServices>,
-        sso: Arc<SsoRequestService>,
-        grants: Arc<HostGrantStore>,
-    ) -> Arc<Self> {
+        config: crate::platform::PairingHostConfig,
+    ) -> (Arc<Self>, Arc<SsoRequestService>) {
+        let grants = Arc::new(HostGrantStore::new(services.platform.clone()));
+        let sso = SsoRequestService::new(services.clone(), config, grants.clone());
         if services.asset_hub_chain_genesis_hash().is_none() {
             tracing::warn!(
                 "no Asset Hub configured on the pairing role: no product manifest \
                  will resolve, so every cross-product grant is refused"
             );
         }
-        Arc::new(Self {
+        let host = Arc::new(Self {
             platform: services.platform.clone(),
             chain: services.chain.clone(),
             ring_resolver: ChainRingResolver::new(services.chain.clone()),
             ring_vrf_registry: RingVrfRegistryStore::new(services.platform.clone()),
             services,
             holder: Arc::new(super::SsoAccountHolderClient::new(sso.clone())),
-            sso,
+            sso: sso.clone(),
             grants,
             #[cfg(feature = "test-host")]
             submit_preimages_locally: core::sync::atomic::AtomicBool::new(false),
-        })
+        });
+        (host, sso)
     }
 
     /// Real session service exercised by lifecycle and transport tests.

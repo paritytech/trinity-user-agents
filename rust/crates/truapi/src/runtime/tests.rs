@@ -792,9 +792,7 @@ fn contacts_host(
     if let Some(contacts) = contacts {
         services.install_contacts_platform(contacts);
     }
-    let grants = Arc::new(HostGrantStore::new(services.platform.clone()));
-    let sso = SsoRequestService::new(services.clone(), host_config, grants.clone());
-    let pairing_host = PairingHost::new(services.clone(), sso, grants);
+    let (pairing_host, _) = PairingHost::new(services.clone(), host_config);
     let adapters = crate::host_core::ConnectionAdapters::from_services(&services);
     let host = ProductRuntimeHost::from_services(services, adapters, pairing_host, product);
     if connected {
@@ -860,9 +858,7 @@ fn a_host_that_only_resolves_contacts_reports_unsupported() {
         None,
     );
     services.install_contacts_platform(Arc::new(LookupOnlyContactsPlatform));
-    let grants = Arc::new(HostGrantStore::new(services.platform.clone()));
-    let sso = SsoRequestService::new(services.clone(), host_config, grants.clone());
-    let pairing_host = PairingHost::new(services.clone(), sso, grants);
+    let (pairing_host, _) = PairingHost::new(services.clone(), host_config);
     let adapters = crate::host_core::ConnectionAdapters::from_services(&services);
     let host = ProductRuntimeHost::from_services(services, adapters, pairing_host, product);
     install_pairing_session(&host, session_info());
@@ -1206,9 +1202,7 @@ fn host_with_contacts(contacts: Arc<dyn crate::platform::ContactsPlatform>) -> P
         None,
     );
     services.install_contacts_platform(contacts);
-    let grants = Arc::new(HostGrantStore::new(services.platform.clone()));
-    let sso = SsoRequestService::new(services.clone(), host_config, grants.clone());
-    let pairing_host = PairingHost::new(services.clone(), sso, grants);
+    let (pairing_host, _) = PairingHost::new(services.clone(), host_config);
     let adapters = crate::host_core::ConnectionAdapters::from_services(&services);
     let host = ProductRuntimeHost::from_services(services, adapters, pairing_host, product);
     install_pairing_session(&host, session_info());
@@ -1440,9 +1434,7 @@ fn a_withdrawn_request_already_published_is_cancelled_on_the_phone() {
         host_config.asset_hub_chain_genesis_hash,
         test_spawner(),
     );
-    let grants = Arc::new(HostGrantStore::new(services.platform.clone()));
-    let sso = SsoRequestService::new(services.clone(), host_config, grants.clone());
-    let pairing_host = PairingHost::new(services.clone(), sso, grants);
+    let (pairing_host, _) = PairingHost::new(services.clone(), host_config);
     let adapters = crate::host_core::ConnectionAdapters::from_services(&services);
     let host = ProductRuntimeHost::from_services(services, adapters, pairing_host.clone(), product);
     install_pairing_session(&host, session.clone());
@@ -1534,9 +1526,7 @@ fn a_request_that_times_out_is_not_withdrawn_from_the_phone() {
         host_config.asset_hub_chain_genesis_hash,
         test_spawner(),
     );
-    let grants = Arc::new(HostGrantStore::new(services.platform.clone()));
-    let sso = SsoRequestService::new(services.clone(), host_config, grants.clone());
-    let pairing_host = PairingHost::new(services.clone(), sso, grants);
+    let (pairing_host, _) = PairingHost::new(services.clone(), host_config);
     let adapters = crate::host_core::ConnectionAdapters::from_services(&services);
     let host = ProductRuntimeHost::from_services(services, adapters, pairing_host.clone(), product);
     install_pairing_session(&host, session.clone());
@@ -1596,9 +1586,7 @@ fn a_withdrawn_request_with_a_newer_one_behind_it_sends_no_cancel() {
         host_config.asset_hub_chain_genesis_hash,
         test_spawner(),
     );
-    let grants = Arc::new(HostGrantStore::new(services.platform.clone()));
-    let sso = SsoRequestService::new(services.clone(), host_config, grants.clone());
-    let pairing_host = PairingHost::new(services.clone(), sso, grants);
+    let (pairing_host, _) = PairingHost::new(services.clone(), host_config);
     let adapters = crate::host_core::ConnectionAdapters::from_services(&services);
     let host = Arc::new(ProductRuntimeHost::from_services(
         services,
@@ -1673,9 +1661,7 @@ fn chat_post_message_screens_content_before_it_reaches_a_host() {
         spawner.clone(),
     );
     let chat_platform = Arc::new(RecordingChatPlatform::default());
-    let grants = Arc::new(HostGrantStore::new(services.platform.clone()));
-    let sso = SsoRequestService::new(services.clone(), host_config, grants.clone());
-    let pairing_host = PairingHost::new(services.clone(), sso, grants);
+    let (pairing_host, _) = PairingHost::new(services.clone(), host_config);
     let mut adapters = crate::host_core::ConnectionAdapters::from_services(&services);
     adapters.chat_platform = Some(chat_platform.clone());
     let host = ProductRuntimeHost::from_services(services, adapters, pairing_host, product);
@@ -1819,9 +1805,7 @@ fn chat_room_ids_agree_across_create_and_post() {
         spawner.clone(),
     );
     let chat_platform = Arc::new(RecordingChatPlatform::default());
-    let grants = Arc::new(HostGrantStore::new(services.platform.clone()));
-    let sso = SsoRequestService::new(services.clone(), host_config, grants.clone());
-    let pairing_host = PairingHost::new(services.clone(), sso, grants);
+    let (pairing_host, _) = PairingHost::new(services.clone(), host_config);
     let mut adapters = crate::host_core::ConnectionAdapters::from_services(&services);
     adapters.chat_platform = Some(chat_platform.clone());
     let host = ProductRuntimeHost::from_services(services, adapters, pairing_host, product);
@@ -1906,9 +1890,7 @@ fn chat_register_bot_rejects_unsafe_product_fields() {
         spawner.clone(),
     );
     let chat_platform = Arc::new(RecordingChatPlatform::default());
-    let grants = Arc::new(HostGrantStore::new(services.platform.clone()));
-    let sso = SsoRequestService::new(services.clone(), host_config, grants.clone());
-    let pairing_host = PairingHost::new(services.clone(), sso, grants);
+    let (pairing_host, _) = PairingHost::new(services.clone(), host_config);
     let mut adapters = crate::host_core::ConnectionAdapters::from_services(&services);
     adapters.chat_platform = Some(chat_platform.clone());
     let host = ProductRuntimeHost::from_services(services, adapters, pairing_host, product.clone());
@@ -1993,9 +1975,7 @@ fn chat_register_bot_reaches_the_installed_adapter() {
         spawner.clone(),
     );
     let chat_platform = Arc::new(RecordingChatPlatform::default());
-    let grants = Arc::new(HostGrantStore::new(services.platform.clone()));
-    let sso = SsoRequestService::new(services.clone(), host_config, grants.clone());
-    let pairing_host = PairingHost::new(services.clone(), sso, grants);
+    let (pairing_host, _) = PairingHost::new(services.clone(), host_config);
     let mut adapters = crate::host_core::ConnectionAdapters::from_services(&services);
     adapters.chat_platform = Some(chat_platform.clone());
     let host = ProductRuntimeHost::from_services(
@@ -2106,9 +2086,7 @@ fn pocket_host(
         host_config.asset_hub_chain_genesis_hash,
         test_spawner(),
     );
-    let grants = Arc::new(HostGrantStore::new(services.platform.clone()));
-    let sso = SsoRequestService::new(services.clone(), host_config, grants.clone());
-    let pairing_host = PairingHost::new(services.clone(), sso, grants);
+    let (pairing_host, _) = PairingHost::new(services.clone(), host_config);
     let mut adapters = crate::host_core::ConnectionAdapters::from_services(&services);
     adapters.pocket_platform =
         pocket.map(|pocket| pocket as Arc<dyn crate::platform::PocketPlatform>);
@@ -2356,9 +2334,7 @@ fn game_host_for(
         host_config.asset_hub_chain_genesis_hash,
         test_spawner(),
     );
-    let grants = Arc::new(HostGrantStore::new(services.platform.clone()));
-    let sso = SsoRequestService::new(services.clone(), host_config, grants.clone());
-    let pairing_host = PairingHost::new(services.clone(), sso, grants);
+    let (pairing_host, _) = PairingHost::new(services.clone(), host_config);
     let mut adapters = crate::host_core::ConnectionAdapters::from_services(&services);
     adapters.game_platform = game.map(|game| game as Arc<dyn crate::platform::GamePlatform>);
     ProductRuntimeHost::from_services(services, adapters, pairing_host, product)
@@ -2622,9 +2598,7 @@ fn chain_follow_ids_are_scoped_per_product_core() {
         host_config.asset_hub_chain_genesis_hash,
         spawner.clone(),
     );
-    let grants = Arc::new(HostGrantStore::new(services.platform.clone()));
-    let sso = SsoRequestService::new(services.clone(), host_config, grants.clone());
-    let pairing_host = PairingHost::new(services.clone(), sso, grants);
+    let (pairing_host, _) = PairingHost::new(services.clone(), host_config);
     let first = ProductRuntimeHost::from_services(
         services.clone(),
         crate::host_core::ConnectionAdapters::from_services(&services),
@@ -2746,9 +2720,7 @@ fn permission_prompts_name_the_requesting_product_and_execution_kind() {
         spawner,
     );
     let adapters = crate::host_core::ConnectionAdapters::from_services(&services);
-    let grants = Arc::new(HostGrantStore::new(services.platform.clone()));
-    let sso = SsoRequestService::new(services.clone(), host_config, grants.clone());
-    let pairing_host = PairingHost::new(services.clone(), sso, grants);
+    let (pairing_host, _) = PairingHost::new(services.clone(), host_config);
     let host = ProductRuntimeHost::from_services(services, adapters, pairing_host, product.clone());
     let cx = CallContext::default();
 
@@ -7758,9 +7730,7 @@ fn the_pairing_authority_refuses_a_foreign_ring_vrf_key_without_a_grant() {
         host_config.asset_hub_chain_genesis_hash,
         test_spawner(),
     );
-    let grants = Arc::new(HostGrantStore::new(services.platform.clone()));
-    let sso = SsoRequestService::new(services.clone(), host_config, grants.clone());
-    let pairing_host = PairingHost::new(services.clone(), sso, grants);
+    let (pairing_host, _) = PairingHost::new(services.clone(), host_config);
     let adapters = crate::host_core::ConnectionAdapters::from_services(&services);
     let host = ProductRuntimeHost::from_services(services, adapters, pairing_host.clone(), product);
     install_pairing_session(&host, session_info());
@@ -7843,9 +7813,7 @@ fn a_grant_lookup_obeys_the_callers_deadline() {
         host_config.asset_hub_chain_genesis_hash,
         test_spawner(),
     );
-    let grants = Arc::new(HostGrantStore::new(services.platform.clone()));
-    let sso = SsoRequestService::new(services.clone(), host_config, grants.clone());
-    let pairing_host = PairingHost::new(services.clone(), sso, grants);
+    let (pairing_host, _) = PairingHost::new(services.clone(), host_config);
     let adapters = crate::host_core::ConnectionAdapters::from_services(&services);
     let host = ProductRuntimeHost::from_services(services, adapters, pairing_host, product);
     install_pairing_session(&host, session_info());

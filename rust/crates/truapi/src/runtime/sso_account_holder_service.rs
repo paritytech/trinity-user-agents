@@ -31,11 +31,6 @@ pub struct SsoAccountHolderService {
     withdrawals: SsoWithdrawals,
 }
 
-/// Withdrawals shared with this peer's transport reader.
-pub fn withdrawals(service: &SsoAccountHolderService) -> &SsoWithdrawals {
-    &service.withdrawals
-}
-
 impl SsoAccountHolderService {
     /// Bind one peer to the activation that authenticated its transport.
     pub fn new(wallet: Arc<WalletAccountHolder>, session: AuthoritySession) -> Self {
@@ -74,12 +69,14 @@ impl SsoAccountHolderService {
             self.session.clone(),
             request.cancel.clone(),
         );
-        let dispatch = self.dispatch(Some(cx), message).await;
+        let dispatch = self.dispatch(Some(cx), message.clone()).await;
         if matches!(dispatch, Dispatch::Response(_)) {
             if request.cancel.is_cancelled() {
                 return Ok(Dispatch::Withdrawn);
             }
-            self.require_current_session()?;
+            if self.require_current_session().is_err() {
+                return Ok(self.dispatch(None, message).await);
+            }
         }
         Ok(dispatch)
     }

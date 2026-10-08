@@ -74,7 +74,6 @@ type ContactsPicker = (
     crate::runtime::contacts::ContactHandles,
 );
 use futures::{FutureExt, StreamExt, pin_mut};
-pub use host_grants::HostGrantStore;
 #[cfg(test)]
 use pairing_host::PairingHost;
 pub use pairing_host::PairingHost as PairingHostRole;
@@ -85,9 +84,8 @@ pub use signing_host::{
     PairingProposal, PairingProposalMetadata, ResponderExit,
 };
 pub use signing_host::{
-    LocalActivation, SigningHost as SigningHostRole, WalletAccountHolder, disconnect_paired_host,
-    establish_pairing, notify_pairing_allowance_allocation, notify_pairing_failed,
-    respond_to_pairing, resume_pairing,
+    LocalActivation, SigningHost as SigningHostRole, disconnect_paired_host, establish_pairing,
+    notify_pairing_allowance_allocation, notify_pairing_failed, respond_to_pairing, resume_pairing,
 };
 pub use sso_account_holder_client::SsoAccountHolderClient;
 pub use sso_account_holder_service::SsoAccountHolderService;
@@ -485,9 +483,7 @@ impl ProductRuntimeHost {
             host_config.asset_hub_chain_genesis_hash,
             spawner.clone(),
         );
-        let grants = Arc::new(HostGrantStore::new(services.platform.clone()));
-        let sso = SsoRequestService::new(services.clone(), host_config, grants.clone());
-        let pairing_host = PairingHost::new(services.clone(), sso, grants);
+        let (pairing_host, _) = PairingHost::new(services.clone(), host_config);
         let core_instance = services.next_core_instance();
         let chat = Arc::new(ActionChannel::chat());
         let renderer = Arc::new(ActionChannel::renderer());
