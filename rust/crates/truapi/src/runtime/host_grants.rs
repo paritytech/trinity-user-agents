@@ -18,7 +18,6 @@ use schnorrkel::SecretKey;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, MutexGuard};
 use tracing::warn;
-use truapi::latest::GenericError;
 use zeroize::{Zeroize, Zeroizing};
 
 #[derive(Clone, PartialEq, Eq, Hash, Encode, Decode)]
@@ -168,14 +167,16 @@ impl HostGrantStore {
         session_state: &SessionState,
         session: &SessionInfo,
         lifecycle_epoch: u64,
+        product_id: &str,
     ) -> Result<HostGrantPersistence<'_>, AuthorityError> {
         let storage = self.persistence().await;
-        if session.sso.is_none() {
-            storage.begin_cleanup();
-            storage
-                .drain_cleanup()
-                .await
-                .map_err(|reason| AuthorityError::Unavailable { reason })?;
+        if session.sso.is_none()
+            && let Err(reason) = storage.drain_cleanup().await
+            && self.lifecycle().state.pending_deletions.iter().any(|deletion| {
+                matches!(deletion, PendingDeletion::NativeAllowance(scope) if scope.includes(session.public_key, product_id))
+            })
+        {
+            return Err(AuthorityError::Unavailable { reason });
         }
         if !self.session_secret_allocation_is_current(session_state, session, lifecycle_epoch) {
             return Err(AuthorityError::Disconnected);
@@ -363,7 +364,7 @@ impl HostGrantStore {
             _ => return Err(AuthorityError::Rejected),
         };
         let storage = self
-            .allowance_persistence(session_state, session, lifecycle_epoch)
+            .allowance_persistence(session_state, session, lifecycle_epoch, product_id)
             .await?;
         if session.sso.is_none() {
             native_allowances::retain_native_allowance(
@@ -455,7 +456,7 @@ impl HostGrantStore {
     ) -> Result<Option<AccountGrant>, AuthorityError> {
         let cache_key = AllowanceCacheKey::new(session, product_id, resource);
         let storage = self
-            .allowance_persistence(session_state, session, lifecycle_epoch)
+            .allowance_persistence(session_state, session, lifecycle_epoch, product_id)
             .await?;
         let cached = match resource {
             AllowanceResource::StatementStore => self
@@ -513,69 +514,6 @@ impl HostGrantStore {
             &allowance,
         )?;
         Ok(Some(allowance))
-    }
-
-    /// Drop the cached and persisted Bulletin allowance key for one product.
-    pub async fn evict_bulletin_allowance_key(
-        &self,
-        session_state: &SessionState,
-        session: &SessionInfo,
-        lifecycle_epoch: u64,
-        product_id: &str,
-    ) -> Result<(), AuthorityError> {
-        let cache_key = AllowanceCacheKey::new(session, product_id, AllowanceResource::Bulletin);
-        if session.sso.is_none() {
-            {
-                let mut lifecycle = self.lifecycle();
-                if lifecycle.revision() != lifecycle_epoch
-                    || !GrantScope::from_session(session).matches(session_state)
-                {
-                    return Err(AuthorityError::Disconnected);
-                }
-                self.bulletin_allowances
-                    .lock()
-                    .expect("bulletin allowance cache mutex poisoned")
-                    .remove(&cache_key);
-                lifecycle
-                    .state
-                    .queue_deletion(PendingDeletion::NativeAllowance(
-                        NativeAllowanceDeletion::Bulletin {
-                            owner: session.public_key,
-                            product_id: product_id.to_string(),
-                        },
-                    ));
-            }
-            let storage = self.persistence().await;
-            storage.begin_cleanup();
-            storage
-                .drain_cleanup()
-                .await
-                .map_err(|reason| AuthorityError::Unavailable { reason })?;
-            if !self.session_secret_allocation_is_current(session_state, session, lifecycle_epoch) {
-                return Err(AuthorityError::Disconnected);
-            }
-            return Ok(());
-        }
-        let _storage_guard = self.persistence().await;
-        if !self.session_secret_allocation_is_current(session_state, session, lifecycle_epoch) {
-            return Err(AuthorityError::Disconnected);
-        }
-        self.bulletin_allowances
-            .lock()
-            .expect("bulletin allowance cache mutex poisoned")
-            .remove(&cache_key);
-
-        allowances::remove_allowance_key(
-            &*self.storage,
-            session,
-            product_id,
-            AllowanceResource::Bulletin,
-        )
-        .await?;
-        if !self.session_secret_allocation_is_current(session_state, session, lifecycle_epoch) {
-            return Err(AuthorityError::Disconnected);
-        }
-        Ok(())
     }
 
     /// Drop memory-cached statement-store allowance keys, scoped to `session`
@@ -930,32 +868,21 @@ impl HostGrantGuard<'_> {
         ));
     }
 
-    /// Forget exactly the dated native grant observed before submission.
-    pub fn forget_statement_store_allowance(
-        &mut self,
-        session: &SessionInfo,
-        product_id: &str,
-        public_key: [u8; 32],
-        period: u32,
-    ) {
-        let scope = GrantScope::from_session(session);
+    /// Delete an owner's retained grants without revoking another wallet's cache.
+    pub fn revoke_native_owner(&mut self, owner: [u8; 32]) {
+        self.advance();
         self.store
             .statement_store_allowances
             .lock()
             .expect("statement-store allowance cache mutex poisoned")
-            .retain(|owner, (cached_period, key)| {
-                !owner.is_for_session(scope)
-                    || !owner.is_for_product(product_id)
-                    || *cached_period != Some(period)
-                    || key.public_key != public_key
-            });
+            .retain(|key, _| !key.is_for_owner(owner));
+        self.store
+            .bulletin_allowances
+            .lock()
+            .expect("bulletin allowance cache mutex poisoned")
+            .retain(|key, _| !key.is_for_owner(owner));
         self.state.queue_deletion(PendingDeletion::NativeAllowance(
-            NativeAllowanceDeletion::StatementStore {
-                owner: session.public_key,
-                product_id: product_id.to_string(),
-                public_key,
-                period,
-            },
+            NativeAllowanceDeletion::Owner(owner),
         ));
     }
 
@@ -982,25 +909,9 @@ impl HostGrantGuard<'_> {
         Ok(())
     }
 
-    /// Preserve cleanup intent across failed or dropped session writes.
-    pub fn queue_auth_deletion(&mut self) {
-        self.state
-            .queue_deletion(PendingDeletion::Core(CoreStorageKey::AuthSession));
-    }
-
-    /// Consume the selected write's cleanup intent at commit.
-    pub fn forget_auth_deletion(&mut self) {
-        self.state
-            .pending_deletions
-            .retain(|key| *key != PendingDeletion::Core(CoreStorageKey::AuthSession));
-    }
-
     /// Queue the old session's durable grants before its caches are detached.
-    pub fn revoke_session(&mut self, previous: Option<&SessionInfo>, clear_auth: bool) {
+    pub fn revoke_session(&mut self, previous: Option<&SessionInfo>) {
         self.advance();
-        if clear_auth {
-            self.queue_auth_deletion();
-        }
         self.state
             .queue_deletion(PendingDeletion::Core(CoreStorageKey::AutoSigningKeys));
         if let Some(sso) = previous.and_then(|session| session.sso.as_ref()) {
@@ -1031,25 +942,16 @@ impl HostGrantGuard<'_> {
 }
 
 impl HostGrantPersistence<'_> {
-    /// Read the auth snapshot while replacement and deletion are excluded.
-    pub async fn read_auth_session(&self) -> Result<Option<Vec<u8>>, GenericError> {
-        self.store
-            .storage
-            .read_core_storage(CoreStorageKey::AuthSession)
-            .await
-    }
-
-    /// Persist the auth snapshot within the caller's selected commit.
-    pub async fn write_auth_session(&self, blob: Vec<u8>) -> Result<(), GenericError> {
-        self.store
-            .storage
-            .write_core_storage(CoreStorageKey::AuthSession, blob)
-            .await
-    }
-
     /// Evict keys loaded before revocation acquired persistence.
     pub fn begin_cleanup(&self) -> bool {
-        if self.store.lifecycle().state.pending_deletions.is_empty() {
+        if !self
+            .store
+            .lifecycle()
+            .state
+            .pending_deletions
+            .iter()
+            .any(|deletion| matches!(deletion, PendingDeletion::Core(_)))
+        {
             return false;
         }
         self.store.clear_statement_store_allowance_keys(None);
@@ -1088,7 +990,7 @@ impl HostGrantPersistence<'_> {
                 PendingDeletion::NativeAllowance(deletion) => {
                     native_allowances::delete_native_allowances(self, deletion)
                         .await
-                        .map_err(|error| GenericError {
+                        .map_err(|error| crate::latest::GenericError {
                             reason: error.to_string(),
                         })
                 }

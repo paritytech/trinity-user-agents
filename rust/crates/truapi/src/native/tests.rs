@@ -335,6 +335,9 @@ impl HostCallbacks for EventCallbacks {
             .expect("auth state mutex poisoned")
             .push(state);
     }
+    async fn core_storage_keys(&self) -> Result<Vec<Vec<u8>>, HostRejection> {
+        Ok(self.core_storage.lock().unwrap().keys().cloned().collect())
+    }
     async fn core_storage_read(&self, key: Vec<u8>) -> Result<Option<Vec<u8>>, HostRejection> {
         Ok(self.core_storage.lock().unwrap().get(&key).cloned())
     }
@@ -2009,10 +2012,10 @@ fn start_ws_bridge_twice_returns_already_running() {
             Ok(PermissionDecision::Deny)
         }
         fn auth_state_changed(&self, _state: AuthState) {}
-        async fn core_storage_read(
-            &self,
-            _key: Vec<u8>,
-        ) -> Result<Option<Vec<u8>>, HostRejection> {
+        async fn core_storage_keys(&self) -> Result<Vec<Vec<u8>>, HostRejection> {
+            Ok(Vec::new())
+        }
+        async fn core_storage_read(&self, _key: Vec<u8>) -> Result<Option<Vec<u8>>, HostRejection> {
             Ok(None)
         }
         async fn core_storage_write(
@@ -2191,10 +2194,10 @@ fn pending_permission_decision_does_not_stall_bridge() {
             Ok(PermissionDecision::Deny)
         }
         fn auth_state_changed(&self, _state: AuthState) {}
-        async fn core_storage_read(
-            &self,
-            _key: Vec<u8>,
-        ) -> Result<Option<Vec<u8>>, HostRejection> {
+        async fn core_storage_keys(&self) -> Result<Vec<Vec<u8>>, HostRejection> {
+            Ok(Vec::new())
+        }
+        async fn core_storage_read(&self, _key: Vec<u8>) -> Result<Option<Vec<u8>>, HostRejection> {
             Ok(None)
         }
         async fn core_storage_write(
@@ -2704,7 +2707,7 @@ fn native_sso_binding_verifies_transport_and_retains_its_activation() {
     let (_, encryption) = derive_x25519_keypair_from_entropy(&entropy, b"sso");
     assert!(
         native_host_runtime_no_session()
-            .open_sso_session(statement, encryption)
+            .open_sso_service(statement, encryption)
             .is_err()
     );
     for replacement in [vec![8; 32], entropy.to_vec()] {
@@ -2715,13 +2718,12 @@ fn native_sso_binding_verifies_transport_and_retains_its_activation() {
         .unwrap();
         assert_eq!(
             (
-                runtime.open_sso_session([0; 32], encryption).is_err(),
-                runtime.open_sso_session(statement, [0; 32]).is_err(),
+                runtime.open_sso_service([0; 32], encryption).is_err(),
+                runtime.open_sso_service(statement, [0; 32]).is_err(),
             ),
             (true, true),
         );
-        let binding = runtime.open_sso_session(statement, encryption).unwrap();
-        let service = binding.open_service().unwrap();
+        let service = runtime.open_sso_service(statement, encryption).unwrap();
         let request = RemoteMessage::request(
             "subtree".to_string(),
             ProductSubtreeRequest {
@@ -2751,7 +2753,7 @@ fn native_sso_binding_verifies_transport_and_retains_its_activation() {
             futures::executor::block_on(service.handle_sso_request(request.clone())).unwrap(),
             response(Ok(public_key))
         );
-        let other_peer = binding.open_service().unwrap();
+        let other_peer = runtime.open_sso_service(statement, encryption).unwrap();
         let cancel = RemoteMessage {
             message_id: "cancel".to_string(),
             data: RemoteMessageData::V1(v1::RemoteMessage::Cancel(
@@ -2798,13 +2800,6 @@ fn native_sso_binding_verifies_transport_and_retains_its_activation() {
             SsoRequestOutcome::Disconnected
         );
         runtime.activate_local_session(replacement, None).unwrap();
-        assert_eq!(
-            (
-                binding.open_service().is_err(),
-                service.require_current_session().is_err()
-            ),
-            (true, true)
-        );
         assert_eq!(
             futures::executor::block_on(service.handle_sso_request(request)).unwrap(),
             response(Err("signing host session is not active".to_string()))

@@ -285,6 +285,16 @@ impl ProductOperations for CallbackPlatform {
 
 #[async_trait]
 impl CoreStorage for CallbackPlatform {
+    async fn core_storage_keys(
+        &self,
+    ) -> Result<crate::platform::CoreStorageKeys, v01::GenericError> {
+        self.callbacks
+            .core_storage_keys()
+            .await
+            .map(|encoded_keys| crate::platform::CoreStorageKeys { encoded_keys })
+            .map_err(v01::GenericError::from)
+    }
+
     async fn read_core_storage(
         &self,
         key: CoreStorageKey,

@@ -34,6 +34,7 @@ pub struct JsBridge {
     pub subscribe_chat_rooms: Function,
     pub contacts: Function,
     pub pick_contact: Function,
+    pub core_storage_keys: Function,
     pub read_core_storage: Function,
     pub write_core_storage: Function,
     pub clear_core_storage: Function,
@@ -84,6 +85,7 @@ impl JsBridge {
                 .unwrap_or_else(|| missing_callback("contacts")),
             pick_contact: get_optional_function(callbacks, "pickContact")?
                 .unwrap_or_else(|| missing_callback("pickContact")),
+            core_storage_keys: get_function(callbacks, "coreStorageKeys")?,
             read_core_storage: get_function(callbacks, "readCoreStorage")?,
             write_core_storage: get_function(callbacks, "writeCoreStorage")?,
             clear_core_storage: get_function(callbacks, "clearCoreStorage")?,
@@ -283,6 +285,19 @@ impl crate::platform::ContactsPlatform for WasmPlatform {
 
 #[crate::platform::async_trait]
 impl crate::platform::CoreStorage for WasmPlatform {
+    async fn core_storage_keys(
+        &self,
+    ) -> Result<crate::platform::CoreStorageKeys, v01::GenericError> {
+        let bytes = invoke_bytes_return(&self.bridge.core_storage_keys, Vec::new())
+            .await
+            .map_err(generic)?;
+        decode_bytes::<crate::platform::CoreStorageKeys>(
+            bytes,
+            "coreStorageKeys response did not decode",
+        )
+        .map_err(generic)
+    }
+
     async fn read_core_storage(
         &self,
         key: crate::platform::CoreStorageKey,

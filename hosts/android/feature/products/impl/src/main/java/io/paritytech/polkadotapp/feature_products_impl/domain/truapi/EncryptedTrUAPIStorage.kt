@@ -45,12 +45,18 @@ class EncryptedHostStorage(
         productStorageKeyOwner(key)?.takeUnless { it == normalizedProductId } ?: productId
 }
 
+/** Retains core secrets with committed writes and strict read failures. */
 @Singleton
 class EncryptedHostCoreStorage @Inject constructor(
     private val preferences: EncryptedPreferences,
     private val backing: Preferences,
 ) : HostCoreStorage {
     private val mutex = Mutex()
+
+    override suspend fun keys(): List<ByteArray> = withStorage {
+        backing.keys().filter { it.startsWith("truapi/core/") }
+            .mapNotNull { decodeOrNull(it.removePrefix("truapi/core/")) }
+    }
 
     override suspend fun read(key: ByteArray): ByteArray? = withStorage {
         val stored = preferences.getDecryptedStringOrThrow(qualify(key))
@@ -104,14 +110,7 @@ internal fun productStorageKeyOwner(key: String): String? {
 internal fun normalizeProductId(productId: String): String =
     Normalizer.normalize(productId.trim(), Normalizer.Form.NFC).lowercase()
 
-/**
- * `EncryptionUtil` reports both a failed encrypt and a failed decrypt by
- * returning an empty string, and it also refuses to encrypt an empty input, so
- * a write that silently failed is otherwise indistinguishable from a value that
- * is legitimately empty. Tagging the plaintext makes the two tellable apart: an
- * untagged read is a failure and must surface as a miss rather than as empty
- * bytes the core would treat as real.
- */
+/** Distinguishes encoded core bytes from unrelated preference values. */
 private const val VALUE_TAG = "v1:"
 
 private fun readValue(preferences: EncryptedPreferences, key: String): ByteArray? {

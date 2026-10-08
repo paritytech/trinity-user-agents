@@ -1,5 +1,7 @@
 import Foundation
 import Keystore_iOS
+import Products
+import Security
 import TrUAPIHost
 import SubstrateSdk
 
@@ -26,26 +28,32 @@ final class ProductStorageBackend: HostStorageBackend, @unchecked Sendable {
     }
 }
 
+/// Protects secret slots in the installation’s Keychain namespace.
 final class CoreStorageBackend: HostCoreStorageBackend, @unchecked Sendable {
     private static let lock = NSLock()
     private let storage: TrUAPILocalStoring
     private let keychain: KeystoreProtocol
+    private let defaults: UserDefaults
+    private let keychainPrefix: String
 
-    private init(storage: TrUAPILocalStoring, keychain: KeystoreProtocol) {
-        self.storage = storage
+    private init(defaults: UserDefaults, keychain: KeystoreProtocol) {
+        self.storage = TrUAPILocalStorage.createCoreLocalStorage(defaults: defaults)
         self.keychain = keychain
+        self.defaults = defaults
+        let installId = ProductResourceStoreIdStore(userDefaults: defaults).getStoreId()
+        self.keychainPrefix = "io.polkadotapp.truapi.core.\(installId)."
     }
 
     static func create(
         defaults: UserDefaults = .standard,
         keychain: KeystoreProtocol = Keychain()
     ) -> CoreStorageBackend {
-        CoreStorageBackend(storage: TrUAPILocalStorage.createCoreLocalStorage(defaults: defaults), keychain: keychain)
+        Self.lock.withLock { CoreStorageBackend(defaults: defaults, keychain: keychain) }
     }
 
     func read(key: Data) throws -> Data? {
         try withStorage {
-            guard try isProtected(key) else { return try storage.read(key: key.toHex()) }
+            guard isProtected(key) else { return try storage.read(key: key.toHex()) }
             do {
                 return try keychain.fetchKey(for: identifier(key))
             } catch KeystoreError.noKeyFound {
@@ -56,7 +64,7 @@ final class CoreStorageBackend: HostCoreStorageBackend, @unchecked Sendable {
 
     func write(key: Data, value: Data) throws {
         try withStorage {
-            if try isProtected(key) {
+            if isProtected(key) {
                 try keychain.saveKey(value, with: identifier(key))
             } else {
                 try storage.write(key: key.toHex(), value: value)
@@ -66,7 +74,7 @@ final class CoreStorageBackend: HostCoreStorageBackend, @unchecked Sendable {
 
     func clear(key: Data) throws {
         try withStorage {
-            if try isProtected(key) {
+            if isProtected(key) {
                 try keychain.deleteKeyIfExists(for: identifier(key))
             } else {
                 try storage.clear(key: key.toHex())
@@ -83,21 +91,40 @@ final class CoreStorageBackend: HostCoreStorageBackend, @unchecked Sendable {
         }
     }
 
-    private func isProtected(_ key: Data) throws -> Bool {
-        switch try coreStorageKeyKind(encoded: key) {
-        case "AuthSession",
-             "PairingDeviceIdentity",
-             "AllowanceKeys",
-             "AutoSigningKey",
-             "AutoSigningKeys",
-             "DeviceEncryptionKey",
-             "NativeAllowanceKeys": true
-        default: false
-        }
+    private func isProtected(_ key: Data) -> Bool {
+        (try? coreStorageKeyDescription(encoded: key).protection) != .public
     }
 
     private func identifier(_ key: Data) -> String {
-        "io.polkadotapp.truapi.core.\(key.toHex())"
+        "\(keychainPrefix)\(key.toHex())"
+    }
+
+    func keys() throws -> [Data] {
+        try withStorage {
+            var keys = defaults.dictionaryRepresentation().keys.compactMap { name -> Data? in
+                let prefix = "io.polkadotapp.truapi.core."
+                guard name.hasPrefix(prefix) else { return nil }
+                return try? Data(hexString: String(name.dropFirst(prefix.count)))
+            }
+            let query: [String: Any] = [
+                kSecClass as String: kSecClassKey,
+                kSecMatchLimit as String: kSecMatchLimitAll,
+                kSecReturnAttributes as String: true
+            ]
+            var result: CFTypeRef?
+            let status = SecItemCopyMatching(query as CFDictionary, &result)
+            guard status != errSecItemNotFound else { return keys }
+            guard status == errSecSuccess else { throw KeystoreError.unexpectedFail }
+            for item in result as? [[String: Any]] ?? [] {
+                guard let tag = item[kSecAttrApplicationTag as String] as? Data,
+                      let name = String(data: tag, encoding: .utf8),
+                      name.hasPrefix(keychainPrefix),
+                      let key = try? Data(hexString: String(name.dropFirst(keychainPrefix.count)))
+                else { continue }
+                keys.append(key)
+            }
+            return keys
+        }
     }
 }
 

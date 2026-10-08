@@ -34,7 +34,6 @@ final class SSOTrUAPIRequestHandler: SSORequestHandling {
             switch outcome {
             case let .response(responseBytes):
                 let response = try SSORawHostMessage(rawBytes: responseBytes)
-                try request.service.requireCurrentSession()
                 try await sender.postMessage(response, to: host)
             case .disconnected:
                 logger.info("Runtime disconnected for host \(host.name); running teardown")

@@ -41,9 +41,16 @@ public protocol HostStorageBackend: AnyObject, Sendable {
 /// `truapi::platform::CoreStorageKey` values, so embedders can persist them
 /// opaquely or decode them to choose a secure backing store per slot.
 public protocol HostCoreStorageBackend: AnyObject, Sendable {
+    func keys() throws -> [Data]
     func read(key: Data) throws -> Data?
     func write(key: Data, value: Data) throws
     func clear(key: Data) throws
+}
+
+public extension HostCoreStorageBackend {
+    func keys() throws -> [Data] {
+        throw HostRejection.Rejected(reason: "Core storage enumeration is unavailable")
+    }
 }
 
 /// Host-side callback bundle that the Rust core invokes for capabilities the
@@ -573,6 +580,10 @@ private final class HostCallbackAdapter: HostCallbacks, @unchecked Sendable {
         bridge.authStateChanged(state: state)
     }
 
+    func coreStorageKeys() throws -> [Data] {
+        try withHostRejection { try bridge.coreStorage.keys() }
+    }
+
     func coreStorageRead(key: Data) throws -> Data? {
         try withHostRejection {
             try bridge.coreStorage.read(key: key)
@@ -923,18 +934,26 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
         try await inner.coreDatabaseStatus()
     }
 
+    /// Revoke retained grants when a product is uninstalled.
+    public func clearProductState(productId: String) async throws {
+        try await inner.clearProductState(productId: productId)
+    }
+
+    /// Revoke retained grants owned by a deleted wallet.
+    public func clearWalletState(owner: Data) async throws {
+        try await inner.clearWalletState(owner: owner)
+    }
+
     public func activateLocalSession(secret: Data, liteUsername: String? = nil) throws {
         try inner.activateLocalSession(secret: secret, liteUsername: liteUsername)
     }
 
-    /// Bind an external SSO transport to the active wallet after verifying
-    /// its own statement and encryption public keys. Retain this binding
-    /// with the transport and open one service per authenticated peer.
-    public func openSsoSession(
+    /// Bind one peer to the wallet matching the transport's public keys.
+    public func openSsoService(
         ownStatementAccountId: Data,
         ownEncryptionPublicKey: Data
-    ) throws -> NativeSsoAccountHolderSession {
-        try inner.openSsoSession(
+    ) throws -> NativeSsoAccountHolderService {
+        try inner.openSsoService(
             ownStatementAccountId: ownStatementAccountId,
             ownEncryptionPublicKey: ownEncryptionPublicKey
         )

@@ -27,7 +27,6 @@ use crate::host_logic::dotns_gateway::{
     DotnsTransport, DotnsViewError, call_bytes32, call_no_args, decode_address, decode_string,
     discover_pop_controller, namehash_under,
 };
-use crate::runtime::authority::AccountCaller;
 use crate::runtime::dotns_lookup::DotnsLookup;
 use crate::runtime::services::RuntimeServices;
 use crate::unix_time::current_unix_secs;
@@ -494,17 +493,14 @@ pub struct AuthorizedAccess {
     pub owner: String,
 }
 
-/// Own-key or published access, with this host's stored refusals applied only to local callers.
+/// Own-key or published access, honoring stored account-access refusals.
 /// Returns canonical identities for key derivation and context checks.
 pub async fn ring_vrf_key_access_granted(
     services: &RuntimeServices,
     platform: &dyn Platform,
-    invocation_caller: AccountCaller<'_>,
+    calling_product_id: &str,
     handle: &v01::ProductAccountId,
 ) -> Result<AuthorizedAccess, RingVrfError> {
-    let calling_product_id = invocation_caller
-        .product_id()
-        .ok_or(RingVrfError::NotAllowlisted)?;
     let Ok(caller) = normalize_product_identifier(calling_product_id) else {
         return Err(RingVrfError::NotAllowlisted);
     };
@@ -514,14 +510,7 @@ pub async fn ring_vrf_key_access_granted(
     if caller == owner {
         return Ok(AuthorizedAccess { caller, owner });
     }
-    let decision = match invocation_caller {
-        AccountCaller::Local { .. } => {
-            scope_grant(services, platform, &caller, &owner, Granted::Context).await
-        }
-        AccountCaller::Remote { .. } => {
-            published_scope_grant(services, platform, &caller, &owner, Granted::Context).await
-        }
-    };
+    let decision = scope_grant(services, platform, &caller, &owner, Granted::Context).await;
     if decision.is_ok() {
         info!(
             caller = %caller,

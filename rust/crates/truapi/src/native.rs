@@ -38,7 +38,7 @@ pub use renderer::{NativeRendererObserver, NativeRendererSubscription};
 pub use runtime::{
     NativeAnnouncedPairing, NativePairingError, NativeProductExecution, NativeTrUApiHostRuntime,
 };
-pub use sso::{NativeSsoAccountHolderService, NativeSsoAccountHolderSession, SsoRequestOutcome};
+pub use sso::{NativeSsoAccountHolderService, SsoRequestOutcome};
 pub use ws_bridge::{WsBridgeEndpoint, WsBridgeStartError};
 
 use parity_scale_codec::{DecodeLimit, Encode};
@@ -52,12 +52,12 @@ use crate::host_logic::dotns;
 
 /// Classify a core slot so native hosts can choose its storage protection.
 #[uniffi::export]
-pub fn core_storage_key_kind(encoded: Vec<u8>) -> Result<String, HostRejection> {
-    crate::platform::describe_core_storage_key(&encoded)
-        .map(|description| description.kind.to_string())
-        .map_err(|error| HostRejection::Rejected {
-            reason: error.to_string(),
-        })
+pub fn core_storage_key_description(
+    encoded: Vec<u8>,
+) -> Result<crate::platform::CoreStorageKeyDescription, HostRejection> {
+    crate::platform::describe_core_storage_key(&encoded).map_err(|error| HostRejection::Rejected {
+        reason: error.to_string(),
+    })
 }
 
 /// Classify a navigation input exactly like the core's internal navigate host

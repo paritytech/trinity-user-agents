@@ -2,7 +2,6 @@ use super::SigningHost;
 use crate::runtime::authority::AuthorityError;
 use crate::runtime::connected_session_ui_info;
 
-use crate::runtime::signing_host::wallet_account_holder;
 /// Activate the wallet from entropy supplied by the embedding host.
 #[async_trait::async_trait]
 pub trait LocalActivation: Send + Sync {
@@ -31,12 +30,11 @@ impl LocalActivation for SigningHost {
         secret: Vec<u8>,
         lite_username: Option<String>,
     ) -> Result<(), AuthorityError> {
-        let activation =
-            wallet_account_holder::prepare_activation(&self.wallet, secret, lite_username)?;
+        let activation = self.wallet.prepare_activation(secret, lite_username)?;
         let session = {
             let mut state = self.grants.lifecycle();
             state.clear_memory();
-            wallet_account_holder::install(&self.wallet, activation)
+            self.wallet.install(activation)
         };
         self.auth_state
             .connected(&connected_session_ui_info(&session));

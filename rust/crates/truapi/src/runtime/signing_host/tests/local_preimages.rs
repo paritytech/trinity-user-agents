@@ -86,8 +86,7 @@ fn a_withheld_bulletin_allowance_still_refuses_the_submit() {
         error,
         CallError::Domain(truapi::versioned::preimage::RemotePreimageSubmitError::V1(
             v01::PreimageSubmitError::Unknown {
-                reason: "Bulletin allowance allocation was rejected by the signing host"
-                    .to_string(),
+                reason: "Rejected".to_string(),
             }
         ))
     );

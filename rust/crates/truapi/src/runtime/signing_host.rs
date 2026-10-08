@@ -11,20 +11,6 @@ mod sso_replay;
 mod sso_responder;
 mod wallet_account_holder;
 
-pub use wallet_account_holder::{
-    derive_subtree_public_key as wallet_derive_subtree_public_key,
-    require_sso_identity as wallet_require_sso_identity,
-};
-#[cfg(not(target_arch = "wasm32"))]
-pub use wallet_account_holder::{
-    last_statement_renewal_report as wallet_last_statement_renewal_report,
-    renew_statement_allowances as wallet_renew_statement_allowances,
-    statement_renewal_owner_key as wallet_statement_renewal_owner_key,
-    statement_renewal_targets as wallet_statement_renewal_targets,
-    track_statement_renewal_targets as wallet_track_statement_renewal_targets,
-    untrack_statement_renewal_account as wallet_untrack_statement_renewal_account,
-};
-
 use std::sync::Arc;
 
 pub use local_activation::LocalActivation;
@@ -113,11 +99,11 @@ impl SigningHost {
         let accounts = HostAccounts::new(
             services.clone(),
             wallet.clone(),
-            wallet_account_holder::session_state(&wallet),
+            wallet.session_state(),
             grants.clone(),
             registry,
             #[cfg(feature = "test-host")]
-            wallet_account_holder::resource_controls(&wallet).clone(),
+            wallet.resource_controls().clone(),
         );
         Arc::new(Self {
             #[cfg(any(not(target_arch = "wasm32"), test))]
@@ -135,14 +121,15 @@ impl SigningHost {
     /// Answer resource allocation as granted without performing it in test hosts.
     #[cfg(feature = "test-host")]
     pub fn set_grant_allowances_unchecked(&self, granted: bool) {
-        wallet_account_holder::resource_controls(&self.wallet)
+        self.wallet
+            .resource_controls()
             .set_grant_allowances_unchecked(granted);
     }
 
     /// Replace resource tags refused by this test host.
     #[cfg(feature = "test-host")]
     pub fn set_withheld_resources(&self, tags: Vec<String>) {
-        wallet_account_holder::resource_controls(&self.wallet).set_withheld_resources(tags);
+        self.wallet.resource_controls().set_withheld_resources(tags);
     }
 
     /// The shared services this role was built over, for tests that also need
@@ -180,7 +167,7 @@ impl SigningHost {
             crate::test_support::test_spawner(),
         );
         let registry = RingVrfRegistryStore::new(platform.clone());
-        let wallet = Arc::new(wallet_account_holder::new_with_ring_resolver(
+        let wallet = Arc::new(WalletAccountHolder::new_with_ring_resolver(
             services.clone(),
             network_suffix.to_string(),
             ring_resolver,
@@ -209,10 +196,38 @@ impl SigningHost {
             .map_err(|reason| AuthorityError::Unavailable { reason })
     }
 
+    /// Delete persisted grants when their wallet is removed, including while locked.
+    pub async fn clear_wallet_state(&self, owner: [u8; 32]) -> Result<(), AuthorityError> {
+        let disconnected = {
+            let mut lifecycle = self.grants.lifecycle();
+            lifecycle.revoke_native_owner(owner);
+            if self
+                .wallet
+                .current_session()
+                .is_some_and(|session| session.public_key == owner)
+            {
+                lifecycle.clear_memory();
+                self.wallet.clear();
+                true
+            } else {
+                false
+            }
+        };
+        if disconnected {
+            self.auth_state.store_disconnected();
+        }
+        self.grants
+            .persistence()
+            .await
+            .drain_cleanup()
+            .await
+            .map_err(|reason| AuthorityError::Unavailable { reason })
+    }
+
     fn clear_local_session(&self) {
         let mut state = self.grants.lifecycle();
         state.clear_memory();
-        wallet_account_holder::clear(&self.wallet);
+        self.wallet.clear();
     }
 }
 
@@ -235,7 +250,7 @@ impl SigningHost {
                     let Some(host) = weak_host.upgrade() else {
                         return;
                     };
-                    wallet_account_holder::renewal_tick(&host.wallet).await;
+                    host.wallet.renewal_tick().await;
                 }
                 let delay = match current_unix_secs() {
                     Ok(now) => statement_allowance::renewal::next_tick_delay(now),
@@ -251,14 +266,14 @@ impl SigningHost {
 impl HostSession for SigningHost {
     /// Shared session holder for connection-status subscriptions.
     fn session_state(&self) -> Arc<SessionState> {
-        wallet_account_holder::session_state(&self.wallet)
+        self.wallet.session_state()
     }
 
     async fn request_login(
         &self,
         _product: &ProductContext,
     ) -> Result<HostRequestLoginResponse, CallError<HostRequestLoginError>> {
-        if let Some(session) = wallet_account_holder::session_state(&self.wallet).current() {
+        if let Some(session) = self.wallet.session_state().current() {
             self.auth_state
                 .connected(&connected_session_ui_info(&session));
             Ok(HostRequestLoginResponse::AlreadyConnected)
@@ -303,11 +318,9 @@ mod tests {
     };
     use super::super::{
         AccountHolder, HostSession, ProductRuntimeHost, RuntimeServices, SigningHostRole,
-        WalletAccountHolder,
     };
-    use super::LocalActivation;
-    use super::TEST_NETWORK_SUFFIX;
     use super::ring_vrf::{MemberCandidate, ResolvedRing, RingResolver};
+    use super::{LocalActivation, TEST_NETWORK_SUFFIX, WalletAccountHolder};
     use crate::host_internal::extrinsic::tests::split_v4;
     use crate::host_internal::sso_messages::ProductRequest;
     use crate::host_internal::sso_messages::RingVrfError;

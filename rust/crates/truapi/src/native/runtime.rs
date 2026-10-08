@@ -527,6 +527,22 @@ impl NativeTrUApiHostRuntime {
         self.runtime.last_statement_renewal_report()
     }
 
+    /// Remove retained grants when a product is uninstalled.
+    pub async fn clear_product_state(&self, product_id: String) -> Result<(), HostRejection> {
+        self.runtime
+            .clear_product_state(&product_id)
+            .await
+            .map_err(Into::into)
+    }
+
+    /// Remove a deleted wallet's retained grants, including while locked.
+    pub async fn clear_wallet_state(&self, owner: Bytes32) -> Result<(), HostRejection> {
+        self.runtime
+            .clear_wallet_state(owner)
+            .await
+            .map_err(Into::into)
+    }
+
     /// Activate or replace the process-wide local signing session.
     pub fn activate_local_session(
         &self,
@@ -552,18 +568,20 @@ impl NativeTrUApiHostRuntime {
     }
 
     /// Bind externally owned SSO transport to its current wallet activation.
-    pub fn open_sso_session(
+    pub fn open_sso_service(
         &self,
         own_statement_account_id: Bytes32,
         own_encryption_public_key: Bytes32,
-    ) -> Result<Arc<super::sso::NativeSsoAccountHolderSession>, HostRejection> {
-        let session = self
+    ) -> Result<Arc<super::sso::NativeSsoAccountHolderService>, HostRejection> {
+        let service = self
             .runtime
-            .open_sso_session(own_statement_account_id, own_encryption_public_key)
+            .open_sso_service(own_statement_account_id, own_encryption_public_key)
             .map_err(|error| HostRejection::Rejected {
                 reason: error.to_string(),
             })?;
-        Ok(Arc::new(super::sso::new_session(session)))
+        Ok(Arc::new(super::sso::NativeSsoAccountHolderService::new(
+            service,
+        )))
     }
 
     /// Build the SCALE-encoded `Disconnected` message a wallet posts over a
@@ -640,7 +658,7 @@ impl NativeProductExecution {
         }
     }
 
-    fn admin(&self) -> crate::HostAdmin<crate::runtime::WalletAccountHolder> {
+    fn admin(&self) -> crate::HostAdmin {
         crate::host_core::product_admin_with_adapters(
             &self.runtime,
             self.product.clone(),

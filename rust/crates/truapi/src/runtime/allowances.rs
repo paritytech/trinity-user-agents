@@ -8,14 +8,7 @@ use super::authority::AuthorityError;
 use super::sso_remote::SsoSessionKey;
 use crate::host_logic::session::{SessionInfo, SsoSessionInfo};
 
-/// Chain resource an allowance key grants access to.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Encode, Decode)]
-pub enum AllowanceResource {
-    /// Bulletin-chain transaction storage.
-    Bulletin,
-    /// People-chain statement store.
-    StatementStore,
-}
+pub use crate::platform::AllowanceResource;
 
 /// Canonical wallet and optional paired channel owning in-memory grants.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -63,6 +56,11 @@ impl AllowanceCacheKey {
     /// Whether this key belongs to the given SSO session.
     pub fn is_for_session(&self, session: GrantScope) -> bool {
         self.session == session
+    }
+
+    /// Whether this grant belongs to a wallet being removed.
+    pub fn is_for_owner(&self, owner: [u8; 32]) -> bool {
+        self.session.root_public_key == owner
     }
 
     /// Whether this key belongs to the given product.

@@ -17,6 +17,7 @@ export const CALLBACK_NAMES = [
   "postChatMessage",
   "contacts",
   "pickContact",
+  "coreStorageKeys",
   "readCoreStorage",
   "writeCoreStorage",
   "clearCoreStorage",
@@ -71,6 +72,7 @@ function rawCallbacks(
   Pick<
     RawCallbacks,
     | "authStateChanged"
+    | "coreStorageKeys"
     | "readCoreStorage"
     | "writeCoreStorage"
     | "clearCoreStorage"
@@ -93,6 +95,10 @@ function rawCallbacks(
   return {
     authStateChanged: (state) =>
       void bridge.callbackRequest("authStateChanged", [state]).catch(() => {}),
+    coreStorageKeys: () =>
+      bridge.callbackRequest("coreStorageKeys", []) as ReturnType<
+        Required<RawCallbacks>["coreStorageKeys"]
+      >,
     readCoreStorage: (key) =>
       bridge.callbackRequest("readCoreStorage", [key]) as ReturnType<
         Required<RawCallbacks>["readCoreStorage"]

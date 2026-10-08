@@ -755,54 +755,10 @@ fn product_key(key: &str) -> String {
     format!("product:{key}")
 }
 
-/// Lowercase hex for a 32-byte key used in a storage slot name.
-fn hex_key(bytes: &[u8; 32]) -> String {
-    bytes.iter().map(|b| format!("{b:02x}")).collect()
-}
-
 /// Stable string key for a typed core-storage slot.
 fn core_key(key: &CoreStorageKey) -> String {
-    match key {
-        CoreStorageKey::NativeAllowanceKeys => "core:native-allowance-keys".to_string(),
-        CoreStorageKey::AuthSession => "core:auth-session".to_string(),
-        CoreStorageKey::PairingDeviceIdentity => "core:pairing-device-identity".to_string(),
-        CoreStorageKey::PermissionAuthorization {
-            product_id,
-            request,
-        } => format!("core:permission:{product_id}:{request:?}"),
-        CoreStorageKey::AutoSigningKey { product_id } => {
-            format!("core:auto-signing-key:{product_id}")
-        }
-        CoreStorageKey::AutoSigningKeys => "core:auto-signing-keys".to_string(),
-        CoreStorageKey::RingVrfRegistry { root_public_key } => {
-            format!("core:ring-vrf-registry:{}", hex_key(root_public_key))
-        }
-        CoreStorageKey::StatementRenewalTargets => "core:statement-renewal-targets".to_string(),
-        CoreStorageKey::DeviceEncryptionKey => "core:device-encryption-key".to_string(),
-        CoreStorageKey::ProductSubtree {
-            session_id,
-            product_id,
-        } => format!("core:product-subtree:{session_id}:{product_id}"),
-        CoreStorageKey::SsoResponderRequestLedger {
-            root_public_key,
-            peer_statement_account_id,
-            peer_encryption_public_key,
-        } => format!(
-            "core:sso-responder-ledger:{}:{}:{}",
-            hex_key(root_public_key),
-            hex_key(peer_statement_account_id),
-            hex_key(peer_encryption_public_key)
-        ),
-        CoreStorageKey::ProductManifest { product_id } => {
-            format!("core:product-manifest:{product_id}")
-        }
-        CoreStorageKey::AllowanceKeys { session_id } => {
-            format!("core:allowance-keys:{session_id}")
-        }
-        CoreStorageKey::LastProcessedPairingStatement => {
-            "core:last-processed-pairing-statement".to_string()
-        }
-    }
+    use parity_scale_codec::Encode;
+    format!("core:{}", hex::encode(key.encode()))
 }
 
 /// Content address of a preimage value: blake2b-256 of the raw bytes.
@@ -895,6 +851,28 @@ impl ProductStorage for MockPlatform {
 
 #[async_trait]
 impl CoreStorage for MockPlatform {
+    async fn core_storage_keys(
+        &self,
+    ) -> Result<crate::platform::CoreStorageKeys, latest::GenericError> {
+        if let Some(reason) = &self.config.faults.storage_error {
+            return Err(latest::GenericError {
+                reason: reason.clone(),
+            });
+        }
+        Ok(crate::platform::CoreStorageKeys {
+            encoded_keys: self
+                .storage
+                .lock()
+                .expect("storage poisoned")
+                .keys()
+                .filter_map(|key| {
+                    key.strip_prefix("core:")
+                        .and_then(|encoded| hex::decode(encoded).ok())
+                })
+                .collect(),
+        })
+    }
+
     async fn read_core_storage(
         &self,
         key: CoreStorageKey,

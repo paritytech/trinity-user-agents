@@ -12,7 +12,7 @@ struct CoreStorageBackendTests {
         defer { defaults.removePersistentDomain(forName: suite) }
         let keychain = InMemoryKeychain()
         let storage = CoreStorageBackend.create(defaults: defaults, keychain: keychain)
-        let secret = Data([13])
+        let secret = Data([9])
         let ordinary = Data([4])
         let value = Data([1, 2, 3])
         try storage.write(key: secret, value: value)
@@ -26,9 +26,34 @@ struct CoreStorageBackendTests {
         #expect(try storage.read(key: ordinary) == value)
     }
 
+    @Test func reinstallCannotRestoreAnotherInstallSecret() throws {
+        let keychain = InMemoryKeychain()
+        let suite = "io.polkadotapp.tests.core-storage.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let original = CoreStorageBackend.create(defaults: defaults, keychain: keychain)
+        let key = Data([9])
+        try original.write(key: key, value: Data([1]))
+        defaults.removePersistentDomain(forName: suite)
+        let reinstalled = CoreStorageBackend.create(defaults: defaults, keychain: keychain)
+        #expect(try reinstalled.read(key: key) == nil)
+        #expect(try original.read(key: key) == Data([1]))
+    }
+
+    @Test func enumerationIncludesProtectedKeysWithoutReadingTheirValues() throws {
+        let suite = "io.polkadotapp.tests.core-storage.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let storage = CoreStorageBackend.create(defaults: defaults)
+        let key = Data([9])
+        try storage.write(key: key, value: Data([255]))
+        defer { try? storage.clear(key: key) }
+        #expect(try storage.keys() == [key])
+    }
+
     @Test func keychainFailuresCannotBecomeMissingOrSuccessfulWrites() {
         let storage = CoreStorageBackend.create(keychain: UnavailableKeychain())
-        let key = Data([13])
+        let key = Data([255])
         #expect(throws: HostRejection.self) { try storage.read(key: key) }
         #expect(throws: HostRejection.self) { try storage.write(key: key, value: Data([1])) }
         #expect(throws: HostRejection.self) { try storage.clear(key: key) }

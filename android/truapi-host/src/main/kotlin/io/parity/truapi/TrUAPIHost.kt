@@ -69,7 +69,6 @@ import uniffi.truapi.DevicePermissionStatus
 import uniffi.truapi.NativeProductExecution
 import uniffi.truapi.NativeTrUApiHostRuntime
 import uniffi.truapi.NativeAnnouncedPairing
-import uniffi.truapi.NativeSsoAccountHolderSession
 import uniffi.truapi.PairedSsoPeer
 import uniffi.truapi.ResponderExit
 import uniffi.truapi.ProductRuntimeException
@@ -119,6 +118,9 @@ interface HostStorage {
  * [HostRejection] on failure.
  */
 interface HostCoreStorage {
+    @Throws(HostRejection::class)
+    suspend fun keys(): List<ByteArray> = throw HostRejection.Rejected("Core storage enumeration is unavailable")
+
     @Throws(HostRejection::class)
     suspend fun read(key: ByteArray): ByteArray?
 
@@ -506,6 +508,9 @@ private class HostCallbackAdapter(private val bridge: HostBridge) : HostCallback
         }
     }
 
+    override suspend fun coreStorageKeys(): List<ByteArray> =
+        withHostRejection { bridge.coreStorage.keys() }
+
     override suspend fun coreStorageRead(key: ByteArray): ByteArray? =
         withHostRejection { bridge.coreStorage.read(key) }
 
@@ -878,24 +883,19 @@ class TrUAPIHostRuntime @Throws(NativeRuntimeConfigException::class) constructor
     @Throws(NativeCoreDatabaseException::class)
     suspend fun coreDatabaseStatus(): DbStatus = inner.coreDatabaseStatus()
 
+    /** Revoke retained grants when a product is uninstalled. */
+    @Throws(HostRejection::class)
+    suspend fun clearProductState(productId: String) = inner.clearProductState(productId)
+
+    /** Revoke retained grants owned by a deleted wallet. */
+    @Throws(HostRejection::class)
+    suspend fun clearWalletState(owner: ByteArray) = inner.clearWalletState(owner)
+
     /** Activate or replace the process-wide local signing session. */
     @Throws(HostRejection::class)
     fun activateLocalSession(secret: ByteArray, liteUsername: String? = null) {
         inner.activateLocalSession(secret, liteUsername)
     }
-
-    /**
-     * Bind an external SSO transport to the active wallet after verifying its
-     * own statement and encryption public keys. Retain this binding with the
-     * transport, open one service per authenticated peer, and close each handle
-     * when its transport ends.
-     */
-    @Throws(HostRejection::class)
-    fun openSsoSession(
-        ownStatementAccountId: ByteArray,
-        ownEncryptionPublicKey: ByteArray,
-    ): NativeSsoAccountHolderSession =
-        inner.openSsoSession(ownStatementAccountId, ownEncryptionPublicKey)
 
     /** Push a JSON-RPC response from a native chain connection into the runtime. */
     fun notifyChainResponse(connectionId: UInt, json: String) {

@@ -17,6 +17,16 @@ class EncryptedHostCoreStorageTest {
     private val key = byteArrayOf(13)
 
     @Test
+    fun `enumeration and deletion do not decrypt a corrupt value`() = runTest {
+        every { backing.keys() } returns setOf("truapi/core/0d", "unrelated")
+        every { encrypted.removeKeyCommitted("truapi/core/0d") } returns Unit
+        assertEquals(listOf(listOf<Byte>(13)), storage.keys().map { it.toList() })
+        storage.clear(key)
+        verify(exactly = 0) { encrypted.getDecryptedStringOrThrow(any()) }
+        verify { encrypted.removeKeyCommitted("truapi/core/0d") }
+    }
+
+    @Test
     fun `a failed commit cannot expose the value still visible in memory`() = runTest {
         every { backing.edit().commit() } returnsMany listOf(true, false)
         every { encrypted.putEncryptedStringCommitted(any(), any()) } throws IllegalStateException("disk full")

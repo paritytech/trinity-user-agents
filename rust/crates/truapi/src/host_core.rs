@@ -33,11 +33,11 @@ use truapi::{CallContext, CancellationReason};
 use crate::frame::ProtocolMessage;
 use crate::host_logic::worker::WorkerLedger;
 use crate::runtime::{
-    AccountCaller, AccountHolder, ActionChannel, AuthorityError, AuthoritySession,
+    AccountCaller, AccountHolder, ActionChannel, AuthorityError,
     DEFAULT_REMOTE_AUTHORITY_RESPONSE_TIMEOUT, DevicePairingObserver, HostAccounts, HostSession,
     LocalActivation, PairedSsoPeer, ProductConnection, ProductRuntimeHost, ResponderExit,
     RuntimeServices, SigningHostRole, SsoAccountHolderClient, SsoAccountHolderService,
-    SsoRequestService, WalletAccountHolder, disconnect_paired_host, establish_pairing,
+    SsoRequestService, disconnect_paired_host, establish_pairing,
     notify_pairing_allowance_allocation, notify_pairing_failed, respond_to_pairing, resume_pairing,
 };
 use crate::subscription::{HostInitiatedSubscriptionManager, Spawner};
@@ -325,7 +325,7 @@ impl PairingHostRuntime {
 
     /// Build a product-scoped administration handle from this pairing host.
     #[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.product_admin"))]
-    pub fn product_admin(&self, product: ProductContext) -> HostAdmin<SsoAccountHolderClient> {
+    pub fn product_admin(&self, product: ProductContext) -> HostAdmin {
         HostAdmin::new(
             self.services.clone(),
             self.accounts.clone(),
@@ -613,13 +613,12 @@ impl SigningHostRuntime {
         &self,
         product_id: &str,
     ) -> Result<Option<[u8; 32]>, v01::GenericError> {
-        crate::runtime::wallet_derive_subtree_public_key(
-            self.signing_host.account_holder(),
-            product_id,
-        )
-        .map_err(|err| v01::GenericError {
-            reason: err.to_string(),
-        })
+        self.signing_host
+            .account_holder()
+            .derive_subtree_public_key(product_id)
+            .map_err(|err| v01::GenericError {
+                reason: err.to_string(),
+            })
     }
 
     /// Answer these resource tags as refused, replacing any earlier set.
@@ -799,7 +798,7 @@ impl SigningHostRuntime {
 
     /// Build a product-scoped administration handle from this signing host.
     #[instrument(skip_all, fields(runtime.method = "signing_host_runtime.product_admin"))]
-    pub fn product_admin(&self, product: ProductContext) -> HostAdmin<WalletAccountHolder> {
+    pub fn product_admin(&self, product: ProductContext) -> HostAdmin {
         HostAdmin::new(
             self.services.clone(),
             self.signing_host.accounts().clone(),
@@ -832,6 +831,16 @@ impl SigningHostRuntime {
     pub async fn clear_product_state(&self, product_id: &str) -> Result<(), v01::GenericError> {
         self.signing_host
             .clear_product_state(product_id)
+            .await
+            .map_err(|error| v01::GenericError {
+                reason: error.to_string(),
+            })
+    }
+
+    /// Remove grants owned by a deleted wallet, preserving other wallets' records.
+    pub async fn clear_wallet_state(&self, owner: [u8; 32]) -> Result<(), v01::GenericError> {
+        self.signing_host
+            .clear_wallet_state(owner)
             .await
             .map_err(|error| v01::GenericError {
                 reason: error.to_string(),
@@ -987,22 +996,21 @@ impl SigningHostRuntime {
     }
 
     /// Bind an external SSO transport to the wallet matching both of its keys.
-    pub fn open_sso_session(
+    pub fn open_sso_service(
         &self,
         own_statement_account_id: [u8; 32],
         own_encryption_public_key: [u8; 32],
-    ) -> Result<SsoAccountHolderSession, AuthorityError> {
+    ) -> Result<SsoAccountHolderService, AuthorityError> {
         let wallet = self.signing_host.account_holder().clone();
         let session = wallet
             .current_session()
             .ok_or(AuthorityError::Disconnected)?;
-        crate::runtime::wallet_require_sso_identity(
-            &wallet,
+        wallet.require_sso_identity(
             &session,
             own_statement_account_id,
             own_encryption_public_key,
         )?;
-        Ok(SsoAccountHolderSession { wallet, session })
+        Ok(SsoAccountHolderService::new(wallet, session))
     }
 }
 
@@ -1032,7 +1040,7 @@ pub fn product_admin_with_adapters(
     host: &SigningHostRuntime,
     product: ProductContext,
     adapters: ConnectionAdapters,
-) -> HostAdmin<WalletAccountHolder> {
+) -> HostAdmin {
     HostAdmin::new(
         host.services.clone(),
         host.signing_host.accounts().clone(),
@@ -1040,23 +1048,6 @@ pub fn product_admin_with_adapters(
         product,
         adapters,
     )
-}
-
-/// A wallet activation authenticated by an externally owned SSO transport.
-pub struct SsoAccountHolderSession {
-    wallet: Arc<WalletAccountHolder>,
-    session: AuthoritySession,
-}
-
-impl SsoAccountHolderSession {
-    /// Give each peer independent request and withdrawal state.
-    pub fn open_service(&self) -> Result<SsoAccountHolderService, AuthorityError> {
-        self.wallet.require_current_session(&self.session)?;
-        Ok(SsoAccountHolderService::new(
-            self.wallet.clone(),
-            self.session.clone(),
-        ))
-    }
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -1068,12 +1059,11 @@ impl SigningHostRuntime {
         &self,
         targets: Vec<crate::runtime::StatementRenewalTarget>,
     ) -> Result<(), v01::GenericError> {
-        crate::runtime::wallet_track_statement_renewal_targets(
-            self.signing_host.account_holder(),
-            targets,
-        )
-        .await
-        .map_err(|reason| v01::GenericError { reason })
+        self.signing_host
+            .account_holder()
+            .track_statement_renewal_targets(targets)
+            .await
+            .map_err(|reason| v01::GenericError { reason })
     }
 
     /// Every statement account the renewal ledger currently tracks.
@@ -1084,7 +1074,9 @@ impl SigningHostRuntime {
     pub async fn statement_renewal_targets(
         &self,
     ) -> Result<Vec<crate::runtime::TrackedStatementRenewalTarget>, v01::GenericError> {
-        crate::runtime::wallet_statement_renewal_targets(self.signing_host.account_holder())
+        self.signing_host
+            .account_holder()
+            .statement_renewal_targets()
             .await
             .map_err(|reason| v01::GenericError { reason })
     }
@@ -1097,7 +1089,9 @@ impl SigningHostRuntime {
     /// from what it will prune.
     #[instrument(skip_all, fields(runtime.method = "signing_host_runtime.statement_renewal_owner_key"))]
     pub fn statement_renewal_owner_key(&self) -> Result<truapi::Bytes32, v01::GenericError> {
-        crate::runtime::wallet_statement_renewal_owner_key(self.signing_host.account_holder())
+        self.signing_host
+            .account_holder()
+            .statement_renewal_owner_key()
             .map_err(|reason| v01::GenericError { reason })
     }
 
@@ -1107,12 +1101,11 @@ impl SigningHostRuntime {
         &self,
         account_id: &[u8; 32],
     ) -> Result<bool, v01::GenericError> {
-        crate::runtime::wallet_untrack_statement_renewal_account(
-            self.signing_host.account_holder(),
-            account_id,
-        )
-        .await
-        .map_err(|reason| v01::GenericError { reason })
+        self.signing_host
+            .account_holder()
+            .untrack_statement_renewal_account(account_id)
+            .await
+            .map_err(|reason| v01::GenericError { reason })
     }
 
     /// Run one statement-store renewal pass now and return per-target
@@ -1124,7 +1117,9 @@ impl SigningHostRuntime {
         &self,
     ) -> Result<crate::statement_allowance::renewal::StatementRenewalReport, v01::GenericError>
     {
-        crate::runtime::wallet_renew_statement_allowances(self.signing_host.account_holder())
+        self.signing_host
+            .account_holder()
+            .renew_statement_allowances()
             .await
             .map_err(|reason| v01::GenericError { reason })
     }
@@ -1153,7 +1148,9 @@ impl SigningHostRuntime {
     pub fn last_statement_renewal_report(
         &self,
     ) -> Option<crate::statement_allowance::renewal::StatementRenewalReport> {
-        crate::runtime::wallet_last_statement_renewal_report(self.signing_host.account_holder())
+        self.signing_host
+            .account_holder()
+            .last_statement_renewal_report()
     }
 }
 
@@ -1207,22 +1204,34 @@ fn ring_vrf_admin_error(
     }
 }
 
+type ProductSubtreeRequest = Arc<
+    dyn Fn(
+            String,
+            Option<u32>,
+        )
+            -> futures::future::BoxFuture<'static, Result<Option<[u8; 32]>, v01::GenericError>>
+        + Send
+        + Sync,
+>;
+
 /// Product-scoped administration handle for host UI.
 ///
 /// Host UI should use this when it needs to inspect or update core-owned state
 /// without owning a product frame endpoint.
-pub struct HostAdmin<H: AccountHolder> {
-    product_runtime: Arc<ProductRuntimeHost<H>>,
+pub struct HostAdmin {
+    product_runtime: Arc<dyn truapi::api::Permissions>,
+    connection: Arc<ProductConnection>,
+    host_session: Arc<dyn HostSession>,
+    product_subtree: ProductSubtreeRequest,
 }
 
-impl<H: AccountHolder> HostAdmin<H> {
+impl HostAdmin {
     /// Authorize one operation using this execution's saved and one-use permissions.
     #[cfg(not(target_arch = "wasm32"))]
     pub async fn authorize_remote_permission(
         &self,
         request: truapi::latest::RemotePermissionRequest,
     ) -> Result<bool, truapi::latest::GenericError> {
-        use truapi::api::Permissions;
         use truapi::versioned::IntoLatest;
 
         self.product_runtime
@@ -1238,7 +1247,7 @@ impl<H: AccountHolder> HostAdmin<H> {
     }
 
     #[instrument(skip_all, fields(runtime.method = "host_admin.new"))]
-    fn new(
+    fn new<H: AccountHolder>(
         services: Arc<RuntimeServices>,
         accounts: Arc<HostAccounts<H>>,
         host_session: Arc<dyn HostSession>,
@@ -1248,17 +1257,27 @@ impl<H: AccountHolder> HostAdmin<H> {
         let product_runtime = Arc::new(ProductRuntimeHost::from_services(
             services,
             adapters,
-            accounts,
-            host_session,
+            accounts.clone(),
+            host_session.clone(),
             product,
         ));
-        Self { product_runtime }
+        Self {
+            connection: product_runtime.connection().clone(),
+            product_runtime,
+            host_session,
+            product_subtree: Arc::new(move |product_id, timeout_ms| {
+                let accounts = accounts.clone();
+                Box::pin(async move {
+                    product_subtree_public_key(&accounts, &product_id, timeout_ms).await
+                })
+            }),
+        }
     }
 
     /// Core-owned logout/disconnect.
     #[instrument(skip_all, fields(runtime.method = "host_admin.disconnect_session"))]
     pub async fn disconnect_session(&self) {
-        self.product_runtime.host_session().disconnect().await;
+        self.host_session.disconnect().await;
     }
 
     /// Read a stored permission authorization status without prompting.
@@ -1271,8 +1290,7 @@ impl<H: AccountHolder> HostAdmin<H> {
         &self,
         request: PermissionAuthorizationRequest,
     ) -> Result<PermissionAuthorizationStatus, v01::GenericError> {
-        self.product_runtime
-            .connection()
+        self.connection
             .permission_authorization_status(request)
             .await
     }
@@ -1287,8 +1305,7 @@ impl<H: AccountHolder> HostAdmin<H> {
         &self,
         requests: Vec<PermissionAuthorizationRequest>,
     ) -> Result<Vec<PermissionAuthorizationStatus>, v01::GenericError> {
-        self.product_runtime
-            .connection()
+        self.connection
             .permission_authorization_statuses(requests)
             .await
     }
@@ -1300,15 +1317,14 @@ impl<H: AccountHolder> HostAdmin<H> {
         request: PermissionAuthorizationRequest,
         status: PermissionAuthorizationStatus,
     ) -> Result<(), v01::GenericError> {
-        self.product_runtime
-            .connection()
+        self.connection
             .set_permission_authorization_status(request, status)
             .await
     }
 }
 
 #[crate::platform::async_trait]
-impl<H: AccountHolder> CoreAdmin for HostAdmin<H> {
+impl CoreAdmin for HostAdmin {
     async fn disconnect_session(&self) -> Result<(), v01::GenericError> {
         HostAdmin::disconnect_session(self).await;
         Ok(())
@@ -1338,8 +1354,7 @@ impl<H: AccountHolder> CoreAdmin for HostAdmin<H> {
 
     async fn get_session_chat_identity_key(&self) -> Result<Option<[u8; 32]>, v01::GenericError> {
         Ok(self
-            .product_runtime
-            .host_session()
+            .host_session
             .session_state()
             .current()
             .and_then(|session| session.identity_chat_private_key))
@@ -1347,8 +1362,7 @@ impl<H: AccountHolder> CoreAdmin for HostAdmin<H> {
 
     async fn get_device_statement_key(&self) -> Result<Option<Vec<u8>>, v01::GenericError> {
         Ok(self
-            .product_runtime
-            .host_session()
+            .host_session
             .session_state()
             .current()
             .and_then(|session| session.sso)
@@ -1356,8 +1370,7 @@ impl<H: AccountHolder> CoreAdmin for HostAdmin<H> {
     }
 
     async fn get_device_encryption_key(&self) -> Result<[u8; 32], v01::GenericError> {
-        self.product_runtime
-            .connection()
+        self.connection
             .services()
             .device_encryption_secret()
             .await
@@ -1369,12 +1382,7 @@ impl<H: AccountHolder> CoreAdmin for HostAdmin<H> {
         product_id: String,
         timeout_ms: Option<u32>,
     ) -> Result<Option<[u8; 32]>, v01::GenericError> {
-        product_subtree_public_key(
-            self.product_runtime.accounts().as_ref(),
-            &product_id,
-            timeout_ms,
-        )
-        .await
+        (self.product_subtree)(product_id, timeout_ms).await
     }
 }
 
@@ -1970,7 +1978,6 @@ mod tests {
     use crate::test_support::{StubPlatform, runtime_config, test_spawner, wait_until};
     use parity_scale_codec::Encode;
     use std::sync::atomic::Ordering;
-    use truapi::api::Permissions;
     use truapi::latest::{RemotePermission, RemotePermissionRequest, RemotePermissionResponse};
     use truapi::versioned::permissions;
 

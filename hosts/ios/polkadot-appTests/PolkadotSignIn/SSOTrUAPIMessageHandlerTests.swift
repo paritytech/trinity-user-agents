@@ -66,7 +66,6 @@ private actor SpyRequestHandler: SSORequestHandling {
 private final class StubAccountHolderService: NativeSsoAccountHolderServiceProtocol, @unchecked Sendable {
     var control: (Data) throws -> SsoRequestOutcome? = { _ in nil }
     var request: (Data) async throws -> SsoRequestOutcome = { _ in .ignored }
-    var validate: () throws -> Void = {}
 
     func handleSsoControl(message: Data) throws -> SsoRequestOutcome? {
         try control(message)
@@ -74,10 +73,6 @@ private final class StubAccountHolderService: NativeSsoAccountHolderServiceProto
 
     func handleSsoRequest(message: Data) async throws -> SsoRequestOutcome {
         try await request(message)
-    }
-
-    func requireCurrentSession() throws {
-        try validate()
     }
 }
 
@@ -251,16 +246,11 @@ struct SSOTrUAPIMessageHandlerTests {
         #expect(Set(marked) == ["first", "second", "third", "cancel"])
     }
 
-    @Test("Responses can only start posting while their bound session is current", arguments: [false, true])
-    func responsePostRequiresCurrentSession(stale: Bool) async throws {
-        enum SessionError: Error { case stale }
-
+    @Test("Wallet results, including not-connected replies, reach the peer")
+    func walletResponseIsPosted() async throws {
         let service = StubAccountHolderService()
         let message = try makeRawMessage(messageId: "response")
         service.request = { _ in .response(message: message.rawBytes) }
-        service.validate = {
-            if stale { throw SessionError.stale }
-        }
         let sender = RawMessageSender()
         let handler = SSOTrUAPIRequestHandler(
             sender: sender,
@@ -270,6 +260,6 @@ struct SSOTrUAPIMessageHandlerTests {
 
         await handler.handle(message: SSOTrUAPIRequest(message: message, service: service), from: makeHost())
 
-        #expect(await sender.postedMessages == (stale ? [] : [message]))
+        #expect(await sender.postedMessages == [message])
     }
 }

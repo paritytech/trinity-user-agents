@@ -136,14 +136,6 @@ fn cache_test_product_subtree(
     host.test_cache_product_subtree(session, product_id, test_product_subtree(product_id));
 }
 
-#[test]
-fn preimage_reports_bulletin_allocation_rejection_with_context() {
-    assert_eq!(
-        bulletin_allowance_error_reason(AuthorityError::Rejected),
-        "Bulletin allowance allocation was rejected by the signing host"
-    );
-}
-
 fn recorded_rpc_methods(sent_rpc: &Mutex<Vec<String>>) -> Vec<String> {
     sent_rpc
         .lock()
@@ -5376,18 +5368,14 @@ fn resource_allocation_rejects_when_user_declines() {
     let host = ProductRuntimeHost::new_compat(stub_platform(), test_spawner());
     install_pairing_session(&host, session_info());
     let cx = CallContext::default();
-    let err = futures::executor::block_on(ResourceAllocation::request(
-        &host,
-        &cx,
-        resource_allocation_request(),
-    ))
-    .unwrap_err();
-    match err {
-        CallError::Domain(HostRequestResourceAllocationError::V1(
-            v01::ResourceAllocationError::Unknown { reason },
-        )) => assert_eq!(reason, "User rejected resource allocation"),
-        other => panic!("expected user-rejected resource allocation error, got {other:?}"),
-    }
+    let request = resource_allocation_request();
+    let HostRequestResourceAllocationRequest::V1(inner) = &request;
+    let expected =
+        HostRequestResourceAllocationResponse::V1(v01::HostRequestResourceAllocationResponse {
+            outcomes: vec![v01::AllocationOutcome::Rejected; inner.resources.len()],
+        });
+    let result = futures::executor::block_on(ResourceAllocation::request(&host, &cx, request));
+    assert_eq!(result, Ok(expected));
 }
 
 #[test]

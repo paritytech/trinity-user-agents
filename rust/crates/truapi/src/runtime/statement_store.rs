@@ -141,65 +141,32 @@ impl<H: super::AccountHolder> StatementStore for ProductRuntimeHost<H> {
                 reason,
             }))
         })?;
-        let authority_session = self.accounts.current_session();
-        let period =
-            if let (Some(authority_session), latest::StatementProof::Sr25519 { signer, .. }) =
-                (&authority_session, &statement.proof)
-            {
-                self.accounts
-                    .statement_store_allowance_period(
-                        authority_session,
-                        &self.connection.product_id(),
-                        *signer,
-                    )
-                    .await
-                    .map_err(|error| {
-                        CallError::Domain(RemoteStatementStoreSubmitError::V1(
-                            latest::GenericError {
-                                reason: error.to_string(),
-                            },
-                        ))
-                    })?
-            } else {
-                None
-            };
-        if let Some(reason) = cx.cancel().reason() {
-            return Err(CallError::Domain(RemoteStatementStoreSubmitError::V1(
-                latest::GenericError {
-                    reason: format!("statement submit {reason}"),
-                },
-            )));
+        if let latest::StatementProof::Sr25519 { signer, .. } = &statement.proof {
+            let renewal = super::remote_authority_context(cx);
+            super::remote_authority_call(
+                &renewal,
+                self.accounts.renew_statement_sponsorship(
+                    &renewal,
+                    &self.connection.product,
+                    *signer,
+                ),
+            )
+            .await
+            .map_err(|error| {
+                CallError::Domain(RemoteStatementStoreSubmitError::V1(latest::GenericError {
+                    reason: error.to_string(),
+                }))
+            })?;
         }
-        if let Err(mut reason) = self
-            .connection
+        self.connection
             .statement_store_rpc()
             .submit_sso(encoded, "statement-store")
             .await
-        {
-            if let (
-                Some(authority_session),
-                Some(period),
-                latest::StatementProof::Sr25519 { signer, .. },
-            ) = (&authority_session, period, &statement.proof)
-                && statement_store_rpc::is_no_allowance_rejection(&reason)
-                && let Err(error) = self
-                    .accounts
-                    .forget_statement_store_allowance_key(
-                        authority_session,
-                        &self.connection.product_id(),
-                        *signer,
-                        period,
-                    )
-                    .await
-            {
-                reason = format!("{reason}; allowance cleanup failed: {error}");
-            }
-            return Err(CallError::Domain(RemoteStatementStoreSubmitError::V1(
-                latest::GenericError {
+            .map_err(|reason| {
+                CallError::Domain(RemoteStatementStoreSubmitError::V1(latest::GenericError {
                     reason: format!("statement-store submit failed: {reason}"),
-                },
-            )));
-        }
+                }))
+            })?;
         self.connection.services.cache_statement(statement);
         Ok(RemoteStatementStoreSubmitResponse::V1)
     }
@@ -535,7 +502,8 @@ fn statement_proof_authorized_error(
 
 #[cfg(test)]
 mod tests {
-    use super::super::{LocalActivation, RuntimeServices, SigningHostRole, WalletAccountHolder};
+    use super::super::signing_host::WalletAccountHolder;
+    use super::super::{LocalActivation, RuntimeServices, SigningHostRole};
     use super::*;
     use crate::host_logic::product_account::{
         SR25519_SIGNING_CONTEXT, derive_product_keypair, derive_root_keypair_from_entropy,

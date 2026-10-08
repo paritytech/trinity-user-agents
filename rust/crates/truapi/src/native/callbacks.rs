@@ -91,6 +91,9 @@ pub trait HostCallbacks: Send + Sync {
     /// only when the state changes.
     fn auth_state_changed(&self, state: AuthState);
 
+    /// List encoded core keys without loading or decrypting their values.
+    async fn core_storage_keys(&self) -> Result<Vec<Vec<u8>>, HostRejection>;
+
     /// Read a core-owned host-private storage slot. `key` is a SCALE-encoded
     /// [`CoreStorageKey`].
     async fn core_storage_read(&self, key: Vec<u8>) -> Result<Option<Vec<u8>>, HostRejection>;

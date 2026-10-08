@@ -17,11 +17,10 @@ use truapi::{CallContext, CallError, Subscription, v01};
 use web_time::Instant;
 
 use crate::host_internal::bulletin::preimage_key;
-use crate::runtime::bulletin_rpc::BulletinSubmitError;
 use crate::runtime::{
     PERMISSION_DENIED_REASON, PREIMAGE_REMOTE_AUTHORITY_RESPONSE_TIMEOUT, PREIMAGE_SUBMIT_TIMEOUT,
-    ProductRuntimeHost, bulletin_allowance_error_reason, preimage_submit_error,
-    remote_authority_call, remote_authority_context_until, until_cancelled,
+    ProductRuntimeHost, preimage_submit_error, remote_authority_call,
+    remote_authority_context_until, until_cancelled,
 };
 
 #[truapi::async_trait]
@@ -103,7 +102,6 @@ impl<H: crate::runtime::AccountHolder> Preimage for ProductRuntimeHost<H> {
         let Some(authority_session) = self.accounts.current_session() else {
             return Err(preimage_submit_error("No active session".to_string()));
         };
-        let bulletin = &self.connection.services.bulletin;
         self.connection
             .require_remote_permission(
                 v01::RemotePermission::PreimageSubmit,
@@ -135,73 +133,26 @@ impl<H: crate::runtime::AccountHolder> Preimage for ProductRuntimeHost<H> {
             PREIMAGE_REMOTE_AUTHORITY_RESPONSE_TIMEOUT,
             submission_deadline,
         );
-        let allowance = remote_authority_call(
+        let key = remote_authority_call(
             &authority_cx,
-            self.accounts.bulletin_allowance_key(
+            self.accounts.submit_preimage(
                 &authority_cx,
+                submission_deadline,
                 &authority_session,
                 self.connection.product_id(),
+                &value,
             ),
         )
         .await
-        .map_err(|err| preimage_submit_error(bulletin_allowance_error_reason(err)))?;
-
-        // A test host's allowance was never authorized on chain, so a Bulletin
-        // `store` signed with it would always be refused. The value is kept in
-        // the core under its content key, and the product reads it back through
-        // the same lookup a landed submission answers.
+        .map_err(|err| preimage_submit_error(err.to_string()))?;
         #[cfg(feature = "test-host")]
         if self.accounts.submits_preimages_locally() {
-            let key = preimage_key(&value);
-            self.connection.services.keep_local_preimage(key, value);
-            return Ok(RemotePreimageSubmitResponse::V1(key.to_vec()));
+            self.connection
+                .services
+                .keep_local_preimage(preimage_key(&value), value);
+            return Ok(RemotePreimageSubmitResponse::V1(key));
         }
 
-        let key = match bulletin
-            .submit_preimage(
-                cx,
-                submission_deadline,
-                self.accounts.as_ref(),
-                &authority_session,
-                &allowance,
-                &value,
-            )
-            .await
-        {
-            Ok(key) => key,
-            // A rejected allowance is the one case a refresh-and-retry can fix:
-            // evict the exhausted key, allocate a fresh (increased) allowance,
-            // and try exactly once more.
-            Err(BulletinSubmitError::AllowanceRejected { .. }) => {
-                let authority_cx = remote_authority_context_until(
-                    cx,
-                    PREIMAGE_REMOTE_AUTHORITY_RESPONSE_TIMEOUT,
-                    submission_deadline,
-                );
-                let allowance = remote_authority_call(
-                    &authority_cx,
-                    self.accounts.refresh_bulletin_allowance_key(
-                        &authority_cx,
-                        &authority_session,
-                        self.connection.product_id(),
-                    ),
-                )
-                .await
-                .map_err(|err| preimage_submit_error(bulletin_allowance_error_reason(err)))?;
-                bulletin
-                    .submit_preimage(
-                        cx,
-                        submission_deadline,
-                        self.accounts.as_ref(),
-                        &authority_session,
-                        &allowance,
-                        &value,
-                    )
-                    .await
-                    .map_err(|err| preimage_submit_error(err.to_string()))?
-            }
-            Err(err) => return Err(preimage_submit_error(err.to_string())),
-        };
         // Move the owned body into the lookup cache (no extra copy) so an
         // immediate product lookup hits before the content backend has it.
         self.prime_preimage_cache(&key, value);

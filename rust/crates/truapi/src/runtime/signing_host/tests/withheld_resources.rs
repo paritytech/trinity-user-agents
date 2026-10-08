@@ -148,35 +148,22 @@ fn a_granted_statement_store_allowance_signs_the_proof_path() {
     assert!(proof_is_signed(&runtime));
 }
 
-/// The bulletin keys allocate on their own too, both the first one a preimage
-/// submission asks for and the refreshed one it falls back to.
 #[test]
-fn a_withheld_bulletin_allowance_yields_no_key_on_either_call() {
+fn a_withheld_bulletin_allowance_prevents_submission() {
     let (_services, activation) = signing_runtime_with_platform(granting_platform());
-    futures::executor::block_on(activation.activate_local_session(ENTROPY.to_vec()))
-        .expect("activation succeeds");
+    futures::executor::block_on(activation.activate_local_session(ENTROPY.to_vec())).unwrap();
     activation.set_grant_allowances_unchecked(true);
     activation.set_withheld_resources(vec!["BulletinAllowance".to_string()]);
-    let session = activation
-        .accounts()
-        .current_session()
-        .expect("the session just made");
-    let cx = CallContext::default();
-
-    let keys = futures::executor::block_on(async {
-        [
-            activation
-                .accounts()
-                .bulletin_allowance_key(&cx, &session, "myapp.dot".to_string())
-                .await
-                .is_ok(),
-            activation
-                .accounts()
-                .refresh_bulletin_allowance_key(&cx, &session, "myapp.dot".to_string())
-                .await
-                .is_ok(),
-        ]
-    });
-
-    assert_eq!(keys, [false, false]);
+    let session = activation.accounts().current_session().unwrap();
+    let result = futures::executor::block_on(activation.accounts().submit_preimage(
+        &CallContext::default(),
+        std::time::Instant::now() + std::time::Duration::from_secs(1),
+        &session,
+        "myapp.dot".to_string(),
+        b"withheld",
+    ));
+    assert!(matches!(
+        result,
+        Err(crate::runtime::bulletin_rpc::BulletinSubmitError::Authority(AuthorityError::Rejected))
+    ));
 }

@@ -452,7 +452,7 @@ impl CreateTransactionAuthorityRequest {
 }
 
 /// Whether blessed `calling_product_id` is using its own account, `owner`.
-pub(crate) fn is_blessed_owner(calling_product_id: &str, owner: &str) -> bool {
+pub fn is_blessed_owner(calling_product_id: &str, owner: &str) -> bool {
     use crate::platform::{has_trusted_remote_permissions, normalize_product_identifier};
     normalize_product_identifier(calling_product_id).is_ok_and(|caller| {
         has_trusted_remote_permissions(&caller)
@@ -555,13 +555,20 @@ pub trait AccountHolder: Send + Sync + 'static {
         AuthorityError,
     >;
 
-    /// Obtain one implicit allowance without introducing an explicit allocation review.
+    /// Obtain one allowance with wallet approval when the host has no usable grant.
     async fn ensure_allowance(
         &self,
         invocation: AccountInvocation<'_>,
         resource: super::allowances::AllowanceResource,
         policy: crate::host_internal::sso_messages::OnExistingAllowancePolicy,
     ) -> Result<AccountGrant, AuthorityError>;
+
+    /// Renew a sponsorship already retained by this host without issuing a new signing key.
+    async fn renew_statement_sponsorship(
+        &self,
+        invocation: AccountInvocation<'_>,
+        account_id: [u8; 32],
+    ) -> Result<(), AuthorityError>;
 
     /// Resolve the public hard subtree under the selected account holder.
     async fn product_subtree_public_key<'a>(

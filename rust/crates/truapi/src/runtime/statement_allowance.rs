@@ -487,7 +487,12 @@ enum BulletinAuthorizationScope {
 impl BulletinAllowanceInfo {
     /// Returns whether the snapshot still permits at least one submission.
     pub fn available(self) -> bool {
-        self.remained_size > 0
+        self.can_store(1)
+    }
+
+    /// Require enough bytes and a live transaction allowance for this payload.
+    pub fn can_store(self, size: u64) -> bool {
+        self.remained_size >= size
             && self.remained_transactions > 0
             && self.fetched_at < self.expires_in
     }
@@ -1112,6 +1117,7 @@ pub async fn wait_bulletin_authorization(
     rpc: &RpcClient,
     target: &[u8; 32],
     current: Option<BulletinAllowanceInfo>,
+    size: u64,
     timeout: Duration,
 ) -> Result<BulletinAllowanceInfo, StatementAllowanceError> {
     let started = Instant::now();
@@ -1121,7 +1127,7 @@ pub async fn wait_bulletin_authorization(
             wait_before_next_bulletin_authorization_poll(started, timeout).await?;
             continue;
         };
-        if authorization_refreshed(info, baseline) {
+        if info.can_store(size) && authorization_refreshed(info, baseline) {
             return Ok(info);
         }
         wait_before_next_bulletin_authorization_poll(started, timeout).await?;
@@ -1258,6 +1264,18 @@ mod tests {
             expires_in,
             fetched_at: 10,
         }
+    }
+
+    #[test]
+    fn bulletin_authorization_covers_the_whole_submission() {
+        let results = [
+            allowance(128, 1, 11),
+            allowance(127, 1, 11),
+            allowance(128, 0, 11),
+            allowance(128, 1, 10),
+        ]
+        .map(|info| info.can_store(128));
+        assert_eq!(results, [true, false, false, false]);
     }
 
     #[test]

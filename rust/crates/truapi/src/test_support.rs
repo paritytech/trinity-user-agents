@@ -1066,6 +1066,31 @@ impl PlatformProductOperations for StubPlatform {
 
 #[crate::platform::async_trait]
 impl PlatformCoreStorage for StubPlatform {
+    async fn core_storage_keys(
+        &self,
+    ) -> Result<crate::platform::CoreStorageKeys, v01::GenericError> {
+        if let Some(storage) = &self.core_storage_override {
+            return storage.core_storage_keys().await;
+        }
+        if let Some(reason) = self.local_storage_error {
+            return Err(v01::GenericError {
+                reason: reason.to_string(),
+            });
+        }
+        Ok(crate::platform::CoreStorageKeys {
+            encoded_keys: self
+                .local_storage
+                .lock()
+                .unwrap()
+                .keys()
+                .filter_map(|key| {
+                    key.strip_prefix("core:")
+                        .and_then(|encoded| hex::decode(encoded).ok())
+                })
+                .collect(),
+        })
+    }
+
     async fn read_core_storage(
         &self,
         key: CoreStorageKey,
