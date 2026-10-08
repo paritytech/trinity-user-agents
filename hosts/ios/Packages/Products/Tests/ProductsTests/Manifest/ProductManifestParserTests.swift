@@ -307,6 +307,19 @@ struct ProductManifestParserTests {
         #expect(worker.pocketCards.isEmpty)
     }
 
+    /// The RFC drops every card over one invalid definition, and Android does
+    /// the same, so a valid card beside a bad one is dropped with it.
+    @Test func dropsAValidCardBesideOneWhoseFaceShownIsNotABoolean() throws {
+        let cards = """
+        [{"id":"loyalty","title":"Loyalty","preview":"faces/loyalty.json","faceShown":"no"},
+         {"id":"trophy","title":"Trophy","preview":"faces/trophy.json"}]
+        """
+        let worker = try #require(parsedWorker(Fixtures.worker(pocket: "true", cards: cards)))
+
+        #expect(worker.serves(.chat))
+        #expect(worker.pocketCards.isEmpty)
+    }
+
     /// Two cards under one id would make the card a product hands out ambiguous,
     /// so the whole set is refused rather than one of them picked.
     @Test func publishesNoCardsWhenIdsRepeat() throws {

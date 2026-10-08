@@ -24,6 +24,7 @@ final class PocketCardHosts {
     }
 
     private var held: CardProduct?
+    private var opening = false
 
     /// The product for `key`, built by `make` unless the one already held is it.
     func product(for key: PocketCardKey, make: (PocketCardSurface) -> SPAViewProtocol?) -> CardProduct? {
@@ -45,6 +46,17 @@ final class PocketCardHosts {
         guard let held, !isStillHeld(held.key) else { return }
 
         release()
+    }
+
+    /// Runs `open` unless an earlier one is still under way. A screen claims its
+    /// product's surface when it is built, so one built while another waits to
+    /// present would take the surface, and the page, from the screen the user sees.
+    func openIfIdle(_ open: @MainActor () async -> Void) async {
+        guard !opening else { return }
+
+        opening = true
+        defer { opening = false }
+        await open()
     }
 
     func release() {

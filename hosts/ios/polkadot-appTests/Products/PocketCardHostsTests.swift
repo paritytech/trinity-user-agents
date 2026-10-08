@@ -102,12 +102,47 @@ struct PocketCardHostsTests {
 
         #expect(factory.built == 1)
     }
+
+    /// A screen claims its product's surface when it is built, so a second tap
+    /// landing while the first open still waits to present would build a screen
+    /// that takes the surface, and the page, from the one the user is shown.
+    @Test
+    func ignoresAnOpenWhileAnotherIsStillUnderWay() async {
+        let hosts = PocketCardHosts()
+        let opens = PresentedOpens()
+        let (started, signalStarted) = AsyncStream<Void>.makeStream()
+        let (lookedUp, signalLookedUp) = AsyncStream<Void>.makeStream()
+
+        let first = Task {
+            await hosts.openIfIdle {
+                signalStarted.yield()
+                for await _ in lookedUp {
+                    break
+                }
+                opens.presented.append("first")
+            }
+        }
+        for await _ in started {
+            break
+        }
+        await hosts.openIfIdle { opens.presented.append("second") }
+        signalLookedUp.yield()
+        await first.value
+        await hosts.openIfIdle { opens.presented.append("after") }
+
+        #expect(opens.presented == ["first", "after"])
+    }
 }
 
 // MARK: - Fixtures
 
 private let loyalty = PocketCardKey(productId: "game.paseo", cardId: PocketCardId(value: "loyalty"))
 private let trophy = PocketCardKey(productId: "game.paseo", cardId: PocketCardId(value: "trophy"))
+
+@MainActor
+private final class PresentedOpens {
+    var presented: [String] = []
+}
 
 @MainActor
 private final class CountingFactory {

@@ -1,11 +1,11 @@
 import Foundation
 import Products
 
-/// Never answers in any time a test waits for, which is how a chain read that hangs reaches its
-/// caller. The wait gives up when cancelled, so a caller that stops waiting lets the test end.
+/// Never answers in any time a test waits for, and, like ``ProductResolver``, waits on a read shared
+/// through an unstructured task, so cancelling the caller does not end the wait.
 struct HangingProductResolver: ProductResolving {
     func resolve(_ productId: ProductId) async throws -> ResolvedProduct {
-        try await Task.sleep(for: .seconds(60))
+        try await Task { try await Task.sleep(for: .seconds(60)) }.value
         return ResolvedProduct.legacy(id: productId)
     }
 }
