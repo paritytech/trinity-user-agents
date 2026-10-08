@@ -96,8 +96,6 @@ jobs:
           SENTRY_ORG: ${{ vars.SENTRY_ORG }}
           SENTRY_PROJECT: ${{ vars.SENTRY_PROJECT }}
           SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
-          GAME_RESULTS_FALLBACK_URL: ${{ vars.GAME_RESULTS_FALLBACK_URL }}
-          REFERRAL_WEB_HOST: ${{ vars.REFERRAL_WEB_HOST }}
           FIRESTORE_DATABASE_ID: ${{ secrets.FIRESTORE_DATABASE_ID }}
           GOOGLE_OAUTH_ID: ${{ secrets.GOOGLE_OAUTH_ID }}
           GOOGLE_PROJECT_ID: ${{ secrets.GOOGLE_PROJECT_ID }}

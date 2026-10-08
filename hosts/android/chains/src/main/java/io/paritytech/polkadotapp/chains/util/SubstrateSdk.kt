@@ -237,17 +237,9 @@ fun RuntimeMetadata.balances() = module(Modules.BALANCES)
 
 fun RuntimeMetadata.transactionStorage() = module(Modules.TRANSACTION_STORAGE)
 
-fun RuntimeMetadata.mobRule() = module(Modules.MOB_RULE)
-
 fun RuntimeMetadata.privacyVoucher() = module(Modules.PRIVACY_VOUCHER)
 
 fun RuntimeMetadata.identity() = module(Modules.IDENTITY)
-
-fun RuntimeMetadata.proofOfInk() = module(Modules.PROOF_OF_INK)
-
-fun RuntimeMetadata.videoGame() = module(Modules.VIDEO_GAME)
-
-fun RuntimeMetadata.score() = module(Modules.SCORE)
 
 fun RuntimeMetadata.resources() = module(Modules.RESOURCES)
 
@@ -394,11 +386,7 @@ object Modules {
 
     const val TRANSACTION_PAYMENT = "TransactionPayment"
 
-    const val PROOF_OF_INK = "ProofOfInk"
-
     const val TRANSACTION_STORAGE = "TransactionStorage"
-
-    const val MOB_RULE = "MobRule"
 
     const val PRIVACY_VOUCHER = "PrivacyVoucher"
 
@@ -417,10 +405,6 @@ object Modules {
     const val MEMBERS_SUBSCRIBER = "MembersSubscriber"
 
     const val IDENTITY = "Identity"
-
-    const val VIDEO_GAME = "Game"
-
-    const val SCORE = "Score"
 
     const val RESOURCES = "Resources"
 

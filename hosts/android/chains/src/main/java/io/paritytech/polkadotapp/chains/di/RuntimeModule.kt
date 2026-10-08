@@ -33,7 +33,6 @@ import io.paritytech.polkadotapp.chains.storage.source.LocalStorageSource
 import io.paritytech.polkadotapp.chains.storage.source.RemoteStorageSource
 import io.paritytech.polkadotapp.chains.storage.source.StorageDataSource
 import io.paritytech.polkadotapp.chains.storage.source.query.RemoteStorageQueryContextFactory
-import io.paritytech.polkadotapp.chains.storage.source.query.intercept.StorageInterceptorRegistry
 import io.paritytech.polkadotapp.chains.util.AddressFormatter
 import io.paritytech.polkadotapp.chains.util.RealAddressFormatter
 import io.paritytech.polkadotapp.common.data.storage.preferences.Preferences
@@ -68,9 +67,8 @@ internal class RuntimeModule {
         storageCache: StorageCache,
         sharedRequestsBuilderFactory: StorageSharedRequestsBuilderFactory,
         coroutineDispatchers: CoroutineDispatchers,
-        interceptorRegistry: StorageInterceptorRegistry,
     ): StorageDataSource =
-        LocalStorageSource(chainRegistry, sharedRequestsBuilderFactory, coroutineDispatchers, storageCache, interceptorRegistry)
+        LocalStorageSource(chainRegistry, sharedRequestsBuilderFactory, coroutineDispatchers, storageCache)
 
     @Provides
     @Singleton
@@ -96,9 +94,8 @@ internal class RuntimeModule {
         sharedRequestsBuilderFactory: StorageSharedRequestsBuilderFactory,
         remoteStorageQueryContextFactory: RemoteStorageQueryContextFactory,
         coroutineDispatchers: CoroutineDispatchers,
-        interceptorRegistry: StorageInterceptorRegistry,
     ): StorageDataSource =
-        RemoteStorageSource(chainRegistry, sharedRequestsBuilderFactory, remoteStorageQueryContextFactory, coroutineDispatchers, interceptorRegistry)
+        RemoteStorageSource(chainRegistry, sharedRequestsBuilderFactory, remoteStorageQueryContextFactory, coroutineDispatchers)
 
     @Provides
     @Singleton

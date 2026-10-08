@@ -72,8 +72,6 @@ import io.paritytech.polkadotapp.feature_chats_impl.data.repository.RealMessageR
 import io.paritytech.polkadotapp.feature_chats_impl.data.repository.RealProcessedChatMessageRepository
 import io.paritytech.polkadotapp.feature_chats_impl.data.repository.RealRemovedChatsRepository
 import io.paritytech.polkadotapp.feature_chats_impl.data.repository.RemovedChatsRepository
-import io.paritytech.polkadotapp.feature_chats_impl.data.storage.AskedFaqQuestionsStorage
-import io.paritytech.polkadotapp.feature_chats_impl.data.storage.RealAskedFaqQuestionsStorage
 import io.paritytech.polkadotapp.feature_chats_impl.deeplink.RealChatDeeplinkMapper
 import io.paritytech.polkadotapp.feature_chats_impl.domain.ChatActiveTrackerInternal
 import io.paritytech.polkadotapp.feature_chats_impl.domain.ChatEngine
@@ -203,9 +201,6 @@ internal interface ChatsFeatureApiModule {
 
     @Binds
     fun bindMessageSender(chatEngine: ChatEngine): ChatMessageSender
-
-    @Binds
-    fun bindClickedFaqQuestionsStorage(real: RealAskedFaqQuestionsStorage): AskedFaqQuestionsStorage
 
     @Binds
     fun bindMessageRevisionRepository(impl: RealMessageRevisionRepository): MessageRevisionRepository

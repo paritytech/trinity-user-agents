@@ -8,92 +8,14 @@
     <string name="common_intent_failed">Failed to find application to perform specified action</string>
     <string name="add_contact_already_exists_error">You have already added this contact</string>
 
-    <string name="video_game_deposit_lost_title">Deposit lost: You didn’t participate in the weekly game</string>
-    <string name="video_game_deposit_lost_message">If you still want to play the weekly games, please add a new deposit.</string>
-
-    <string name="video_game_keep_playing_games_title">Keep playing the weekly game</string>
-    <string name="video_game_keep_playing_games_message">Not participating can lead to your Membership status being put on hold</string>
     <string name="common_got_it">Got it</string>
-
-    <string name="people_issuing_citizenship_title">Issuing your Membership</string>
-    <string name="people_issuing_citizenship_message">Issuing your Membership can take a few days, please check back later.</string>
-
-    <string name="people_ring_setup_notification_title">Issuing Membership</string>
-    <string name="people_ring_setup_notification_message">Working on issuing your Membership.</string>
-
-    <string name="video_game_claim_citizenship_title">Your Membership is ready to be issued</string>
-    <string name="video_game_claim_citizenship_action">Claim your Membership</string>
-    <string name="video_game_claim_citizenship_card_header">Polkadot</string>
-    <string name="video_game_claim_citizenship_card_footer">Membership</string>
-
-    <string name="video_game_final_processing_title">Game completed</string>
-    <string name="video_game_final_processing_subtitle">Membership is within reach. Check the app a bit later, or we’ll notify you when it’s ready.</string>
-    <string name="video_game_chat_with_players_title">Chat with players</string>
-    <string name="video_game_chat_with_players_empty">No players found</string>
-    <string name="video_game_chat_with_players_add">Add</string>
-    <string name="video_game_chat_with_players_message">Message</string>
-
-    <string name="mobrule_rewards_sync_worker_notification_title">Voting rewards sync</string>
-    <string name="mobrule_rewards_sync_worker_notification_message">Syncing and claiming your pending voting rewards</string>
 
     <string name="login_title">Polkadot</string>
     <string name="login_default_action">Get started</string>
     <string name="login_restore_action">Other options</string>
     <string name="login_restoring_account_progress">Restoring your account</string>
 
-    <string name="dim_switch_to_dim1_placeholder">You\’re joining Peers through the Unique Tattoo. Press \“Edit\” to switch to the Weekly Game option.</string>
-    <string name="dim_switch_to_dim1_sheet_title">Switch to the Unique Peer Tattoo Option?</string>
-    <string name="dim_switch_to_dim1_sheet_description">Once you switch, you will need to add a new deposit.\nThe existing deposit will be returned to the original transfer address.</string>
-
-    <string name="dim_switch_to_dim2_placeholder">You\'re applying to become a Peer through the weekly game. To switch to the unique tattoo option, press \"Edit\".</string>
-    <string name="dim_switch_to_dim2_sheet_title">Switch to the Weekly Game option?</string>
-    <string name="dim_switch_to_dim2_sheet_description">Cancel your reserved tattoo and register\nto start playing weekly games instead?\n Your game progress will be permanently lost, and your deposit will not be returned!</string>
-    <string name="dim_switch_to_dim1_unavailable">Edit will be available after the active game you are participating in is finished</string>
-    <string name="dim_switch_to_dim2_unavailable">Switching is not available after committing to a tattoo design</string>
-
-    <string name="tattoo_families_examples_header">Polkadot Citizen Tattoo Designs Examples</string>
-    <string name="tattoo_families_selection_header">Select the design  for your tattoo</string>
-    <string name="tattoo_families_not_enough_deposit_footer">Deposit %s to Choose the Tattoo and Provide Evidence</string>
-    <string name="tattoo_families_not_enough_deposit_footer_action">Deposit %s</string>
-    <string name="tattoo_families_can_apply_footer_title">%s Deposit Received</string>
-    <string name="tattoo_families_can_apply_footer_description">Select and Reserve\nany Available Tattoo</string>
-    <string name="tattoo_families_can_apply_footer_action">Generate Personal Tattoos</string>
-
-    <string name="tattoo_families_personal_tattoos_title">Personalized Designs</string>
-    <string name="tattoo_families_personal_tattoos_description">Procedural designs based on a your unique citizenship number or account address. The designs use algorithmic rules to map the input (e.g., a number or address) into specific aesthetic designs, ensuring both uniqueness and relevance to your individual data.</string>
-    <string name="mob_rule_warn_sensitive_content_skip">Next Evidence</string>
-    <string name="mob_rule_warn_sensitive_content_show">Show Anyway</string>
-
-    <string name="mob_rule_warn_sensitive_content_title">The Evidence May Contain Sensitive Content or Inappropriate Information</string>
-
-    <string name="mob_rule_report_evidence_title">Report Evidence</string>
-    <string name="mob_rule_report_evidence_description">Submit the report if you think the evidence contains sensitive content or inappropriate information.</string>
-
     <string name="common_submit_report">Submit Report</string>
-
-    <string name="mob_rule_voting_error">Failed to vote on the case. It will appear again in the review feed</string>
-    <string name="mob_rule_content_reporting_error">Failed to report the sensitive content</string>
-
-    <string name="mob_rule_bot_sensitive_title">Sensitive Content Warning</string>
-    <string name="mob_rule_bot_sensitive_description">This case may contain sensitive or inappropriate content.</string>
-    <string name="mob_rule_bot_show_evidence">Show Evidence</string>
-    <string name="mob_rule_bot_show_more">Show more</string>
-    <string name="mob_rule_bot_show_less">Show Less</string>
-    <string name="mob_rule_bot_photo_title">Tattoo Photo</string>
-    <string name="mob_rule_bot_video_title">Documentation Video</string>
-    <string name="mob_rule_bot_photo_description">• Is the Tattoo Design matches the submitted image in terms of design?\n\n• Is the tattoo located on the upper arm between the elbow and armpit?\n\n• Are marks of skin reaction to the tattoo visible in the photo to ensure that it is real?</string>
-    <string name="mob_rule_bot_video_description">• Is the Tattoo Design matches the submitted image in terms of design?\n\n• Are marks of skin reaction to the tattoo visible in the video to ensure that the process is real?</string>
-    <string name="mob_rule_bot_welcome">Provide Judgments, Earn Rewards\n\n• The app will send you documentation tattoo videos and photos\n\n• Provide ✅ True or ❌ False judgement for each case, earn rewards for each statement</string>
-    <string name="mob_rule_view_case">View Case</string>
-    <string name="mob_rule_vote_true">✅ True</string>
-    <string name="mob_rule_vote_false">❌ False</string>
-    <string name="mob_rule_case_subtitle">Mob Rule Case #%s</string>
-    <string name="mob_rule_judgment_processing">Judgement is being processed</string>
-    <string name="mob_rule_judgment_correct">Judgement is correct.</string>
-    <string name="mob_rule_judgment_incorrect">Judgement is incorrect</string>
-
-    <string name="home_citizenship_waiting_final_judgment">Review in progress</string>
-    <string name="home_citizenship_registering_person">Registering as a person</string>
 
     <string name="common_send">Send</string>
     <string name="common_withdraw">Withdraw</string>
@@ -102,46 +24,6 @@
 
     <string name="common_pdf_attachment">Pdf attachment</string>
 
-    <string name="become_citizen_send_inquiry_message">"I hope this message finds you well. I\'ve been admiring your work for a while now, and I\'m interested in getting a custom tattoo from you.
-
-I have a specific design  that I\'d like to have placed on inner part of the upper left arm.
-
-Additionally, I would like to document the last three minutes of the tattooing process.
-
-Could we possibly schedule a consultation to discuss the design, placement, and the filming aspect?
-I’m attaching PDF with more information and details regarding the Tattoo Stencil, Placement, and Evidence video.Looking forward to the possibility of working with you."</string>
-
-    <string name="become_citizen_tattoo_details_evidence_review_title">Evidence review</string>
-    <string name="become_citizen_tattoo_details_evidence_review_description">The review time can take from %s to %s.</string>
-
-    <string name="become_citizen_evidence">Evidence</string>
-
-    <string name="become_citizen_tattoo_details_execution_title">Execution</string>
-    <string name="become_citizen_tattoo_details_execution_description">Find any tattooer you like. You will also see a few suggested tattoo studios after booking.</string>
-
-    <string name="become_citizen_tattoo_details_reimbursement_title">Tattoo expenses Reimbursement</string>
-    <string name="become_citizen_tattoo_details_reimbursement_description">Once your Proof of Ink Evidence is approved, you will receive full reimbursement for your tattoo expenses.</string>
-
-    <string name="become_citizen_tattoo_details_evidence_title">Proof of Ink Evidence</string>
-    <string name="become_citizen_tattoo_details_evidence_description">Provide 3-minute proof of documentation video and a picture of the final tattoo</string>
-
-    <string name="become_citizen_tattoo_evidence_provided_review_title">Evidence in Review</string>
-    <string name="become_citizen_tattoo_evidence_provided_review_description">The review time can take from  one day to a week</string>
-    <string name="become_citizen_tattoo_evidence_provided_review_action">Report an Issue</string>
-
-    <string name="citizenship_issued_title">Web3 Citizenship is Issued. Claim Username Now!</string>
-    <string name="citizenship_issued_action">Claim Unique Username</string>
-
-    <string name="become_citizen_tattoo_evidence_confirmed_citizenship">Polkadot Citizen #%s</string>
-    <string name="become_citizen_tattoo_evidence_confirmed_citizenship_received_at">Received at</string>
-
-    <string name="become_citizen_notification_permission_request_title">Enable Notifications to Receive Updates</string>
-    <string name="become_citizen_notification_permission_request_benefit_1">For Evidence Upload Status</string>
-    <string name="become_citizen_notification_permission_request_benefit_2">When Evidence is Accepted</string>
-    <string name="become_citizen_notification_permission_request_benefit_3">When Citizenship is Issued</string>
-    <string name="become_citizen_notification_permission_rationale_title">We kindly recommend enabling notifications to avoid missing important updates about your evidence processing</string>
-    <string name="become_citizen_notification_permission_rationale_message">Disabling notifications may result in missing important updates, actions that need to be taken, and could overall prolong the evidence upload and review process. </string>
-
     <string name="notification_permission_request_ok_button">Enable notifications</string>
     <string name="notification_permission_request_nah_button">Don’t enable</string>
 
@@ -149,15 +31,9 @@ I’m attaching PDF with more information and details regarding the Tattoo Stenc
     <string name="common_duration_format_long_period_days" translatable="false">%dD</string>
     <string name="common_duration_format_long_period_weeks" translatable="false">%dW</string>
 
-    <string name="common_from">From</string>
     <string name="common_to">To</string>
     <string name="common_username">Username</string>
 
-    <string name="home_citizenship_failed">Uploading failed: %s</string>
-
-    <string name="home_citizenship_uploading">Uploading: %s</string>
-    <string name="home_citizenship_waiting_intermediate_judgment">Intermediate review in progress</string>
-    <string name="home_citizenship_waiting_storage">Waiting storage allocation</string>
     <string name="common_permission_permissions_needed_title">Permissions needed</string>
     <string name="common_permission_permissions_needed_message">Requested permissions are required to use this screen.</string>
     <string name="common_ask_again">Ask again</string>
@@ -172,173 +48,36 @@ I’m attaching PDF with more information and details regarding the Tattoo Stenc
     <string name="common_error_signing_failed">Couldn\'t sign the transaction. Try again.</string>
     <string name="common_error_integrity">Device integrity verification failed</string>
 
-    <string name="become_citizen_tattoo_details">Tattoo Details</string>
-    <string name="become_citizen_tattoo_reserved_teails_instructions_title">Stencil and Guidelines PDF</string>
-
-    <string name="tattoo_instructions_stencil_title">Stencil</string>
-    <string name="tattoo_instructions_location_title">Tattoo Location</string>
-    <string name="tattoo_instructions_location_subtitle">Inner part of the upper left arm</string>
-    <string name="tattoo_instructions_location_description">The tattoo has to be made on inner part of the upper left arm. Centred between armpit and elbow. Location is fixed and can’t be replaced.</string>
-    <string name="tattoo_instructions_proof_of_ink_title">Proof of Ink Evidence</string>
-    <string name="tattoo_instructions_proof_of_ink_description">The tattoo has to be made on inner part of the upper left arm. Centred between armpit and elbow. Location is fixed and can’t be replaced.</string>
-    <string name="tattoo_instructions_documentation_title">Documentation video</string>
-    <string name="tattoo_instructions_documentation_description">Filming has to be started once most of the tattoo has been performed</string>
-    <string name="tattoo_instructions_final_photo_title">Final Tattoo Photo</string>
-    <string name="tattoo_instructions_final_photo_description">Close up picture of the fresh tattoo exposed</string>
-
-    <string name="tattoo_instructions_page_footer_counter" translatable="false">%d / %d</string>
-    <string name="tattoo_instructions_page_footer">The Polkadot Citizen Tattoo Guidelines</string>
-
-    <string name="become_citizen_tattoo_location_title">Location</string>
-    <string name="become_citizen_tattoo_location_description">The tattoo has to be made on inner part of the upper left arm. Centred between armpit and elbow. Location is fixed and can’t be replaced.</string>
-
-    <string name="become_citizen_tattoo_size_title">Size in Millimeters</string>
-    <string name="become_citizen_tattoo_size_description">This tattoo is available in several sizes ranging from %s to %s millimeters. You will see stencil with all sizes after booking.</string>
-
-    <string name="become_citizen_provide_evidence_notification_title">Uploading evidence...</string>
-    <string name="become_citizen_provide_evidence_notification_message">Evidence is being uploaded to the blockchain</string>
     <string name="common_proceed">Proceed</string>
     <string name="common_cancel">Cancel</string>
     <string name="common_continue">Continue</string>
     <string name="common_ok">OK</string>
     <string name="common_retry">Retry</string>
-    <string name="common_confirm">Confirm</string>
     <string name="common_done">Done</string>
     <string name="common_close">Close</string>
     <string name="common_quit">Quit</string>
     <string name="common_save">Save</string>
-    <string name="common_next">Next</string>
     <string name="common_paste">Paste</string>
     <string name="common_copy">Copy</string>
     <string name="common_back">Back</string>
-    <string name="common_switch">Switch</string>
-    <string name="common_open">Open</string>
     <string name="common_you">You</string>
     <string name="common_delete">Delete</string>
     <string name="common_decline">Decline</string>
-    <string name="common_true">True</string>
-    <string name="common_false">False</string>
-
-    <string name="become_citizen_confirm_tattoo_title">Confirm Polkadot Peer Tattoo Reservation</string>
-    <string name="become_citizen_confirm_tattoo_description">Be sure you’re happy with your choice, as the tattoo design can’t be changed after confirmation.</string>
-    <string name="become_citizen_confirm_tattoo_deadline_format">By confirming you’re agree to submit tattoo evidence before %s.</string>
-    <string name="become_citizen_confirm_tattoo_already_reserved">This tattoo is already reserved, select again</string>
-
-    <string name="become_citizen_tattoo_proceed">Proceed with this Tattoo</string>
-
-    <string name="home_citizenship_apply_format">Upgrade ID to %s</string>
-    <string name="home_citizenship_apply_highlighted_part">Polkadot Citizen</string>
 
     <string name="home_credentials_card_title">Add Credentials</string>
     <string name="home_credentials_card_description">Link social media accounts to your citizenship</string>
     <string name="home_credentials_card_action_add">Add Credentials</string>
     <string name="home_credentials_card_action_edit">Edit Credentials</string>
 
-    <string name="home_citizenship_commited_title">Tattoo %s</string>
-    <string name="home_citizenship_commited_title_highlighted_part">Reserved</string>
-
-    <string name="home_citizenship_commited_subtitle">%s to provide evidence</string>
-
-    <string name="home_citizenship_judjing_title">Evidence %s</string>
-    <string name="home_citizenship_judjing_title_highlighted_part">Provided</string>
-    <string name="home_citizenship_judjing_subtitle">Review is in Process</string>
-
-    <string name="home_citizenship_proven_title">You are Proven</string>
-    <string name="home_citizenship_unknown_title">Unknown citizen state</string>
-
-    <string name="home_next_video_game_in">Next Game In</string>
-
     <string name="home_title">Home</string>
-
-    <string name="home_citizen_id">Web3 Citizen #%d</string>
 
     <string name="home_username_banned_title">Your username has been banned</string>
     <string name="home_username_banned_description">Your username was reported by users for containing hate speech, violent symbols, or harmful language.</string>
     <string name="home_username_banned_action">Got it</string>
 
-    <string name="become_citizen_select_design">Select the design for your tattoo</string>
-    <string name="become_citizen_see_collection">See Collection</string>
-
-    <string name="tattoo_image_description">Tattoo image</string>
-
     <string name="deposit_tokens_copy_cta">Copy Address</string>
     <string name="deposit_tokens_section_to">To</string>
     <string name="deposit_tokens_title">Deposit %1$s</string>
-    <string name="deposit_tokens_tattoo_evidence_description">Deposited %1$s will be held and sent back after tattoo evidence has been confirmed.</string>
-    <string name="deposit_tokens_video_game_description">A small deposit is required to prevent game violations and will be fully refunded upon obtaining citizenship.</string>
-
-    <string name="home_mob_rule_title">Vote and Earn</string>
-    <string name="home_mob_rule_subtitle">Total Score</string>
-    <string name="home_mob_rule_statements_header">Statements</string>
-    <string name="home_mob_rule_correct_header">Correct</string>
-    <string name="home_mob_rule_widget_title">Earn Rewards</string>
-    <string name="home_mob_rule_widget_description">Earn DOT rewards by reviewing Proof of Ink Evidence.</string>
-    <string name="home_mob_rule_widget_action">Start Earning</string>
-
-    <string name="screen_voting_title">Mob Rule</string>
-    <string name="screen_voting_out_of_statements">Out of Statements</string>
-
-    <string name="mobrule_card_header_photo">Proof of Ink Photo</string>
-    <string name="mobrule_card_header_video">Proof of Ink Video</string>
-    <string name="mobrule_card_header_credentials">Online Activity Credential</string>
-    <string name="mobrule_card_description_photo">· Does the film start once enough  of the selected design has been tattooed and is clearly visible\n\n
-· Is the needle clearly visible enough in the frame during the tattooing process to ensure that it is real?\n\n
-· Is the Tattoo Design matches the submitted image in terms of design.\n\n
-· Are marks of skin reaction to the tattoo visible in the video to ensure that the process is real?\n\n
-· A napkin is often used to wipe off ink traces, making the tattoo area clear for the next line. Is a napkin used in the video?</string>
-    <string name="mobrule_card_description_video">· Does the film start once enough  of the selected design has been tattooed and is clearly visible\n\n
-· Is the needle clearly visible enough in the frame during the tattooing process to ensure that it is real?\n\n
-· Is the Tattoo Design matches the submitted image in terms of design.\n\n
-· Are marks of skin reaction to the tattoo visible in the video to ensure that the process is real?\n\n
-· A napkin is often used to wipe off ink traces, making the tattoo area clear for the next line. Is a napkin used in the video?</string>
-    <string name="mobrule_card_description_credentials">· Tap the link to go to the profile where  the claimed credential is located\n\n
-· Compare the information\n\n
-· Return to the app to make statement</string>
-    <string name="mobrule_card_timeout_label">Watch 10 or more seconds of the video to complete statement</string>
-    <string name="mobrule_card_read_more">Read More</string>
-    <string name="mobrule_card_credentials_text">Does the tagline of the\n%s\ncontain the text\n%s\n?</string>
-    <string name="mobrule_card_credentials_headline">Does the tagline of the</string>
-    <string name="mobrule_card_credentials_contain">contain the text</string>
-    <string name="mobrule_card_header_username">Reported username</string>
-    <string name="mobrule_card_description_username">· Please review the reported username and determine if it includes any of the following:\n\n· Hate speech or slurs (e.g. racism, sexism, homophobia)\n\n· References to violence, extremism, or threats\n\n· Offensive or dehumanizing language\n\n· Symbols or coded terms commonly associated with hate or harm\n\nIf the username clearly contains such elements — even indirectly or in disguised form — it can be considered grounds for removal and banning.</string>
-    <string name="mobrule_card_username_question_part1">Is the username</string>
-    <string name="mobrule_card_username_question_part2">free from harmful\nor offensive content?</string>
-
-    <string name="identity_credentials_platforms_title">Online Activities Credentials</string>
-    <string name="identity_credentials_platforms_description">Social media and other proof on online activities can be used as proof of your identity required by some apps</string>
-
-    <string name="identity_credentials_platform_add">Add %s</string>
-    <string name="identity_credentials_platform_rejected">Rejected</string>
-    <string name="identity_credentials_platform_under_review">Under Review</string>
-
-    <string name="identity_credentials_add_handle_twitter_description">Type or paste link to twitter profile  you want to add</string>
-    <string name="identity_credentials_add_handle_discord_description">Type or paste Discord tag  you want to add</string>
-    <string name="identity_credentials_add_handle_github_description">Type or paste Github profile name  you want to add</string>
-
-    <string name="identity_credentials_add_steps_counter">Step %s / %s</string>
-    <string name="identity_credentials_add_handle_title">Add Handle</string>
-    <string name="identity_credentials_add_proof_title">Add Proof of Ownership Mark</string>
-
-    <string name="identity_credentials_proof_description">Your unique Web3 citizen username is your proof of ownership mark. Copy and paste it into your %s profile bio and confirm</string>
-
-    <string name="identity_credentials_add_handle_twitter_placeholder">Your X @username</string>
-    <string name="identity_credentials_add_handle_discord_placeholder">Your Discord #Tag</string>
-    <string name="identity_credentials_add_handle_github_placeholder">Your Github profile name</string>
-
-    <string name="identity_credentials_add_proof_first_step_title">Username</string>
-    <string name="identity_credentials_add_proof_second_step_title">Add Proof of OwnerShip</string>
-
-    <string name="identity_credentials_add_proof_open_action">Open %s</string>
-
-    <string name="identity_credentials_add_proof_action">Confirm and Submit</string>
-
-    <string name="identity_credentials_rejected_title">Credentials Has Been Rejected</string>
-    <string name="identity_credentials_rejected_description">The review time can take from one day to a week</string>
-    <string name="identity_credentials_rejected_action">Submit again</string>
-
-    <string name="identity_credentials_review_title">Credentials  are Under Review</string>
-    <string name="identity_credentials_review_description">The review time can take from  one day to a week</string>
-    <string name="identity_credentials_review_action">Back To Home Screen</string>
 
     <string name="pick_username_title">Pick a username</string>
     <string name="pick_username_description">Use this name to send and receive all types of payments instead of hard-to remember wallet address.</string>
@@ -405,7 +144,6 @@ I’m attaching PDF with more information and details regarding the Tattoo Stenc
     <string name="authentication_description">Use your device screen lock to verify it\'s you</string>
 
     <string name="bottom_nav_menu_chats">Chats</string>
-    <string name="bottom_nav_menu_mob_rule">Vote</string>
     <string name="bottom_nav_menu_pocket">Pocket</string>
     <string name="bottom_nav_menu_explore">Browse</string>
     <string name="bottom_nav_menu_settings">Settings</string>
@@ -438,42 +176,9 @@ I’m attaching PDF with more information and details regarding the Tattoo Stenc
     <string name="recover_mnemonic_invalid_mnemonic_description">Please check your recovery phrase</string>
     <string name="recover_mnemonic_invalid_mnemonic_action">Got it</string>
 
-    <string name="rewards_title">Your Rewards</string>
-    <string name="rewards_total_balance">Total Balance</string>
-    <string name="rewards_approx_not_yet_available">approx. %s will soon be available to withdraw</string>
-    <string name="rewards_available_to_withdraw">Available to Withdraw</string>
-    <string name="rewards_withdraw_to">Withdraw to</string>
-    <string name="rewards_withdraw_elsewhere_action">or Withdraw Elsewhere</string>
-    <string name="rewards_withdraw_to_polkadot_app_action">Withdraw to Polkadot App</string>
-    <string name="rewards_withdraw_to_address_action">Withdraw Rewards</string>
-    <string name="rewards_until_next_withdrawal">Not available</string>
-    <string name="rewards_expiration_warning">Reward is expiring in %s. Withdraw it now.</string>
-    <string name="rewards_start_earning_description">Earn %1$s by providing judgements, playing weekly games, or inviting friends</string>
-    <string name="rewards_start_earning_action">Start earning</string>
-    <string name="rewards_remove_address_action">Remove</string>
-    <string name="rewards_add_address_action">Add Withdrawal Address</string>
-    <string name="rewards_withdrawal_options">Withdrawal Options</string>
-
-    <string name="rewards_polkadot_banner_title">Withdraw to</string>
-    <string name="rewards_polkadot_banner_subtitle">Polkadot App</string>
-    <string name="rewards_polkadot_banner_description">Transfer your DOT rewards to the Polkadot App</string>
-
-    <string name="add_withdrawal_address_title">Add Withdrawal Address</string>
-    <string name="add_withdrawal_address_description">Scan or paste the address and make sure it’s correct.</string>
-    <string name="add_withdrawal_address_input_placeholder">Withdrawal Address</string>
-    <string name="add_withdrawal_address_add_action">Add Address</string>
-    <string name="add_withdrawal_address_invalid_address_error">Invalid address</string>
     <string name="add_withdrawal_scan_invalid_code_error_title">Invalid QR code</string>
     <string name="add_withdrawal_scan_invalid_code_error_message">Be sure you’re scanning a Polkadot account address</string>
     <string name="add_withdrawal_scan_invalid_code_error_action">Got it</string>
-
-    <string name="withdrawal_confirmation_section_header_withdrawing">Withdrawing</string>
-    <string name="withdrawal_confirmation_section_header_destination">To</string>
-    <string name="withdrawal_confirmation_confirm_action">Confirm Withdrawal</string>
-    <string name="withdrawal_confirmation_success">Reward Withdrawn Successfully</string>
-
-    <string name="voucher_sync_worker_notification_title">Vouchers sync</string>
-    <string name="voucher_sync_worker_notification_message">Your vouchers are being synced right now</string>
 
     <string name="coinage_recycling_worker_notification_title">Coin recycling</string>
     <string name="coinage_recycling_worker_notification_message">Recycling aged coins to keep your wallet healthy</string>
@@ -501,102 +206,13 @@ I’m attaching PDF with more information and details regarding the Tattoo Stenc
     <string name="tracked_extrinsic_worker_notification_title">Submitting transaction…</string>
     <string name="tracked_extrinsic_worker_notification_message">Waiting for on-chain confirmation</string>
 
-    <string name="video_game_home_title">Weekly games</string>
-    <string name="video_game_home_next_game_starts_in">next game starts</string>
-    <string name="video_game_home_next_game_in_progress">Game in progress</string>
-    <string name="video_game_home_missing_game_disclaimer">Missing this game risks deposit loss.</string>
-    <string name="video_game_home_last_game_result_pending_title">Game Results Pending</string>
-    <string name="video_game_home_last_game_result_pending_description">Wait 24 hours for other players\' attestations to be finalized.</string>
-    <string name="video_game_home_last_game_result_failed_title">Game Not Successful</string>
-    <string name="video_game_home_last_game_result_failed_description">An extra game has been added.</string>
-    <string name="video_game_home_last_game_result_dismiss_action">Got It</string>
-    <string name="video_game_home_register_action">Register for the game</string>
-    <string name="video_game_home_register_in_action">Register in %s</string>
-    <string name="video_game_home_start_playing_action">Start playing</string>
-    <string name="video_game_home_start_playing_in_action">Start playing %s</string>
-    <string name="video_game_home_add_deposit_action">Add a deposit to play</string>
-    <string name="video_game_home_citizenship_journey_title">Citizenship Journey</string>
-    <string name="video_game_home_footer_title">If you don’t want to play games for citizenship, quit anytime and apply with a tattoo and video evidence.</string>
-    <string name="video_game_home_footer_action">Quit Games &amp; Apply Another Way</string>
-    <string name="video_game_home_games_left">Game Left\nto Play</string>
-    <string name="video_game_home_offboard_title">Quit Games?</string>
-    <string name="video_game_home_offboard_message">Warning: Your game progress will be permanently lost, and your deposit will not be returned!</string>
-
-    <string name="video_game_play_waiting_room_countdown">Game starts %s</string>
     <string name="video_game_pill_waiting_countdown_label">Game starting in</string>
-    <string name="video_game_connection_game_starting_in">Game starting in %1$d</string>
-    <string name="video_game_connection_connected">Connected</string>
-    <string name="video_game_connection_connecting">Connecting</string>
-    <string name="video_game_connection_not_connected">Not connected</string>
-    <string name="video_game_pill_in_progress_label">Game Live</string>
-    <string name="video_game_pill_round_template">Round %1$d / %2$d</string>
-    <string name="video_game_pill_review_label">Review</string>
-    <string name="video_game_pill_content_description">Expand weekly game</string>
-    <string name="video_game_play_player_banned">Banned</string>
-    <string name="video_game_play_player_meet_host">Meet the host</string>
-    <string name="video_game_play_player_you_are_host">You\’re the host</string>
-    <string name="video_game_play_host_transition_description_show">Show gesture!</string>
-    <string name="video_game_play_host_transition_description_copy">Copy gesture!</string>
-    <string name="video_game_play_disconnected_host">Host disconnected</string>
-    <string name="video_game_play_disconnected_player">Player disconnected</string>
-    <string name="video_game_play_no_host_pill">No host - copy other players</string>
-
-    <string name="video_game_vote_title">Check your\nchoices</string>
-    <string name="video_game_confirming_in">Confirming in %1$d</string>
-    <string name="video_game_confirming">Confirming…</string>
-
-    <string name="video_game_registration_reminder_title">Join the %s game</string>
-    <string name="video_game_registration_reminder_message">Register now to take part in this weeks\'s game</string>
-    <string name="video_game_waiting_room_reminder_title">Game starting soon</string>
-    <string name="video_game_waiting_room_reminder_message">The weekly game starts in 5 minutes! Join for free to win amazing prizes!</string>
-    <string name="video_game_about_to_start_reminder_title">Game is about to start</string>
-    <string name="video_game_about_to_start_reminder_message">The game is about to start! Join and get ready for fun and rewards!</string>
     <string name="video_game_start_reminder_title">Game starting now!</string>
     <string name="video_game_start_reminder_message">The game is starting! Jump in!</string>
     <string name="video_game_calendar_event_title">%1$s game</string>
 
-    <string name="video_game_alert_setting_title">Alert</string>
-    <string name="video_game_alert_offset_seconds">%d sec before</string>
-
-    <string name="platform_twitter" translatable="false">X</string>
-    <string name="platform_github" translatable="false">Github</string>
-    <string name="platform_discord" translatable="false">Discord</string>
-
     <string name="workers_notification_channel_id" translatable="false">workers_notification_channel_id</string>
     <string name="workers_notification_channel_name">Background service workers</string>
-
-    <string name="video_game_notifications_channel_id" translatable="false">video_game_notifications_channel_id</string>
-    <string name="video_game_notifications_channel_name">Video game reminders</string>
-    <string name="video_game_notifications_channel_description">Reminders for when a Video Game is about to start.</string>
-
-    <string name="video_game_alarms_channel_id" translatable="false">video_game_alarms_channel_id</string>
-    <string name="video_game_alarms_channel_name">Video game alarms</string>
-    <string name="video_game_alarms_channel_description">Critical alerts with loud sound and vibration for unmissable game events.</string>
-
-    <string name="video_game_person_title">Weekly Game</string>
-    <string name="video_game_person_missing_game_warning_part_one">Don\'t miss the game.</string>
-    <string name="video_game_person_missing_game_warning_part_two">Missing the game will pause your citizenship status.</string>
-    <string name="video_game_person_start_playing_action">Start Playing</string>
-    <string name="video_game_person_get_rewards_footer">Get your reward once the game ends</string>
-    <string name="video_game_person_game_in_progress_title">Game In Progress</string>
-    <string name="video_game_person_game_in_progress_description">Your session is still active.\nRejoin to continue playing.</string>
-
-    <string name="video_game_confirm_registration_title">Confirm Registration</string>
-    <string name="video_game_confirm_registration_description">Once confirmed, participation is required. Missing this game risks deposit loss.</string>
-
-    <string name="video_game_notifications_permission_request_title">Enable notifications to receive updates</string>
-    <string name="video_game_notifications_permission_request_benefit_1">Upcoming game reminders</string>
-    <string name="video_game_notifications_permission_request_benefit_2">Completed game results</string>
-    <string name="video_game_notifications_permission_request_benefit_3">Rewards updates</string>
-    <string name="video_game_notifications_permission_rationale_title">We strongly recommend enabling notifications and alarms to avoid missing games.</string>
-    <string name="video_game_notifications_permission_rationale_message">Missing games will result in losing your Membership.</string>
-
-    <string name="video_game_add_to_calendar_title">Add the upcoming game to your calendar</string>
-    <string name="video_game_add_to_calendar_description">To make sure never miss a game!</string>
-    <string name="video_game_add_to_calendar_add_action">Add to calendar</string>
-    <string name="video_game_add_to_calendar_later_action">Maybe later</string>
-
-    <string name="video_game_service_notification_title">Video game is in progress</string>
 
     <string name="settings_backup_title">Backup</string>
     <string name="settings_backup_no_backup_header">Backup your account</string>
@@ -636,9 +252,7 @@ I’m attaching PDF with more information and details regarding the Tattoo Stenc
     <string name="debug_menu_title">Debug menu</string>
     <string name="debug_menu_clear_backup">Clear backup</string>
     <string name="debug_menu_share_logs">Share logs</string>
-    <string name="debug_menu_open_video_game">Open video game</string>
     <string name="debug_menu_copy_deposit_account">Copy wallet account address</string>
-    <string name="debug_menu_copy_candidate_account">Copy candidate account address</string>
     <string name="debug_menu_copy_deposit_mnemonic">Copy wallet mnemonic</string>
     <string name="debug_menu_product_bots">Product bots</string>
     <string name="product_bot_management_title">Product bots</string>
@@ -676,7 +290,6 @@ I’m attaching PDF with more information and details regarding the Tattoo Stenc
     <string name="debug_menu_clear_dotns_cache">Clear DotNs cache</string>
     <string name="debug_menu_clear_jwt_token">Clear JWT token (none)</string>
     <string name="debug_menu_clear_jwt_token_stored">Clear JWT token (stored)</string>
-    <string name="debug_menu_simulate_game_results">Simulate game-results WebView</string>
     <string name="debug_menu_coinage_debug_widgets">Coinage debug overlays</string>
     <string name="debug_menu_truapi_runtime">TrUAPI runtime (products)</string>
     <string name="debug_menu_runtime_restart_title">Restart required</string>
@@ -690,16 +303,6 @@ I’m attaching PDF with more information and details regarding the Tattoo Stenc
     <string name="settings_mnemonic_reveal_title">Recovery phrase</string>
     <string name="settings_mnemonic_reveal_description">Never share the recovery phrase. Anyone with the recovery phrase has full access to your account, cash and collectables.</string>
     <string name="settings_mnemonic_reveal_copy_action">Copy To Clipboard</string>
-
-    <plurals name="mob_rule_points">
-        <item quantity="one">%d Point</item>
-        <item quantity="other">%d Points</item>
-    </plurals>
-
-    <string name="mob_rule_bot_judge_to_unlock">Judge the case to unlock %d More</string>
-    <string name="mob_rule_bot_all_cases_completed">Thank you for contributing your judgments. You\'ve completed all available cases. The app will notify you when new cases appear.</string>
-    <string name="mob_rule_evidence_watch_prompt">Tap and watch at least 10 seconds of the video to make your judgement</string>
-    <string name="mob_rule_evidence_watch_countdown">Watch 10 seconds of the video to make your judgement</string>
 
     <plurals name="common_weeks_format">
         <item quantity="one">%d week</item>
@@ -725,18 +328,12 @@ I’m attaching PDF with more information and details regarding the Tattoo Stenc
 
     <string name="common_no_results_for">No results for\n“%1$s”</string>
 
-    <plurals name="tattoo_family_designs">
-        <item quantity="one">%d Design</item>
-        <item quantity="other">%d Designs</item>
-    </plurals>
-
     <string name="identity_details_description_text">Use your ID to start a chat or\nreceive digital dollars.</string>
     <string name="identity_details_share_button_label">Share ID</string>
     <string name="identity_details_copy_username_description">Copy username</string>
     <string name="identity_card_top_bar_title">ID card</string>
     <string name="identity_card_rank_label">Rank</string>
     <string name="identity_card_rank_basic">Basic</string>
-    <string name="identity_card_rank_member">Member</string>
     <string name="pocket_id_share_subtitle">Show this QR to someone who wants to add you as a contact or send you %1$s</string>
     <string name="pocket_id_share_scan_title">Scan with a camera</string>
     <string name="pocket_id_share_message">Hey! I’m using the Polkadot app for chat. It’s private and easy to use. Download it at %1$s and add me – my username is %2$s.</string>
@@ -978,14 +575,6 @@ I’m attaching PDF with more information and details regarding the Tattoo Stenc
     <string name="chat_request_invite_description">You can only send one message in this request.</string>
     <string name="chat_request_waiting_description">Wait for %s to accept your request message before sending the next message.</string>
 
-    <string name="video_game_tutorial_first_step">Copy the gesture</string>
-    <string name="video_game_tutorial_second_step">Tap other players who also copy the gesture</string>
-    <string name="video_game_tips_show_gesture">Show Gesture</string>
-    <string name="video_game_tips_copy_host">Copy Host</string>
-    <string name="video_game_tips_vote">Tap to Identify Humans</string>
-    <string name="video_game_how_to_play">How to play</string>
-    <string name="video_game_waiting_room_close_content_description">Close waiting room</string>
-
     <string name="call_incoming">Incoming call</string>
     <string name="call_initializing">Initializing\u2026</string>
     <string name="call_requesting">Contacting\u2026</string>
@@ -1109,8 +698,6 @@ I’m attaching PDF with more information and details regarding the Tattoo Stenc
     <string name="chat_last_message_reacted_incoming">%1$s reacted with %2$s</string>
     <string name="chat_last_message_reaction_removed_outgoing">You: removed reaction</string>
     <string name="chat_last_message_reaction_removed_incoming">%1$s removed reaction</string>
-    <string name="chat_last_message_evidence_photo_provided">You provided photo evidence</string>
-    <string name="chat_last_message_evidence_video_provided">You provided video evidence</string>
     <string name="chat_message_multimedia_uploading_progress">Uploading %1$d%%</string>
     <string name="chat_message_multimedia_uploading_failed">Uploading failed · retry</string>
     <string name="chat_message_multimedia_downloading_progress">Downloading %1$d%%</string>
@@ -1132,103 +719,10 @@ I’m attaching PDF with more information and details regarding the Tattoo Stenc
     <string name="chat_error_contact_not_found">This contact is no longer available. It may have been removed.</string>
     <string name="chat_error_attachment_too_large">This file is too large to send. Choose one under %1$d MB.</string>
 
-    <string name="chat_peer_join_as_polkadot_peer_message">Join as a Polkadot Peer!\n\n🎰 Participate in Weekly Prize Draw\n👤 Choose a Short Username\n🔒 Enjoy Free, Private Transfers\n💎 Experience Premium Service Level across all Polkadot products\n💵 Seize the opportunity for daily paid contributions.</string>
-    <string name="chat_peer_option1_weekly_game_message">Option 1. Play a Weekly Game. Requires Constant Participation.\n\n🤖 Attest humans, remove AI in a 5 minute game</string>
-    <string name="chat_peer_option2_unique_tattoo_message">Option 2. Get a Unique Free Tattoo. One and Done Option.\n\n✍️ Get Inked with Any Artist You Like and Provide a 3 Minute Video Documenting the Tattoo Process</string>
-    <string name="chat_peer_faq_who_is_polkadot_peer">Who is Polkadot Peer?</string>
-    <string name="chat_peer_faq_who_is_polkadot_peer_answer">Polkadot Peers have premium access to many Polkadot services such as Academy Membership and many more</string>
-    <string name="chat_peer_faq_why_become_a_peer">Why become a Peer?</string>
-    <string name="chat_peer_faq_why_become_a_peer_answer">As a Polkadot Peer, you get premium service levels, participate in weekly prize draws, enjoy free private transfers, choose a short username, and have opportunities for daily paid contributions.</string>
-    <string name="chat_peer_faq_i_have_other_questions">I have other Questions</string>
-    <string name="chat_peer_faq_i_have_other_questions_answer">Feel free to explore the chat options or reach out to our support team for any additional questions you may have about becoming a Polkadot Peer.</string>
-
-    <string name="chat_bot_prizes_intro_message_1">Win cash prizes by playing a free, fun and quick game.</string>
-    <string name="chat_bot_prizes_intro_message_2">During the Web3 Summit, you jump into a two minute game with five other people. The game is easy, copy gestures from other players and make your own.</string>
-    <string name="chat_bot_prizes_intro_message_3">Why gestures? Bots can’t copy them live. Playing proves you’re a real person.</string>
-    <string name="chat_bot_prizes_intro_message_4">How to play in two simple steps:\n1. Copy the gesture</string>
-    <string name="chat_bot_prizes_intro_message_5">2. Tap other players who also copy the gesture</string>
-    <string name="chat_bot_prizes_intro_message_6">Play once to get your Membership and your chance to win a cash prize! Just by playing you also get rewarded with exciting collectibles.</string>
-
-    <string name="chat_bot_weekly_game_state_register_title">Register for the Game</string>
-    <string name="chat_bot_weekly_game_state_registered_title">Registered</string>
-    <string name="chat_bot_weekly_game_state_registered_subtitle">· Game starts</string>
-    <string name="chat_bot_weekly_game_state_game_starting_title">Game is starting</string>
-    <string name="chat_bot_weekly_game_state_game_ongoing_title">Game is in progress</string>
-    <string name="chat_bot_weekly_game_state_game_ongoing_message">Join now!</string>
-
-    <string name="chat_bot_weekly_game_state_register_action">Register</string>
-    <string name="chat_bot_weekly_game_state_register_opening_soon">Opening soon</string>
-    <string name="chat_bot_prizes_next_game_label">NEXT GAME STARTING</string>
-    <string name="chat_bot_prizes_game_live_label">GAME IS LIVE</string>
-    <string name="chat_bot_prizes_play_to_retain_membership">PLAY TO RETAIN YOUR MEMBERSHIP</string>
-    <string name="chat_bot_weekly_game_add_to_calendar_action">Add game to calendar</string>
-    <string name="chat_bot_weekly_game_start_playing_action">Start Playing</string>
-    <string name="chat_bot_weekly_game_deposit_required_title">Deposit is required</string>
-    <string name="chat_bot_weekly_game_deposit_required_subtitle">Deposit %1$s and join the weekly game</string>
-    <string name="chat_bot_weekly_game_deposit_required_description">Deposited funds will be held from you %1$s account and sent back after you become a Member.</string>
-    <string name="chat_bot_weekly_game_deposit_required_action">Deposit %1$s</string>
-    <string name="chat_bot_weekly_game_deposit_required_funding">Funding account, please wait…</string>
-
-    <string name="chat_bot_weekly_game_result_title">The game was played on</string>
-    <string name="chat_bot_weekly_game_result_date_placeholder">%s at %s</string>
-    <string name="chat_bot_weekly_game_result_pending">Game results pending</string>
-    <string name="chat_bot_weekly_game_result_pending_description">It may take up to a little while to process.</string>
-    <string name="chat_bot_weekly_game_result_success">Thanks for playing! See you next time.</string>
-    <string name="chat_bot_weekly_game_result_success_description">Play %s more games in a row to become a Polkadot Member.</string>
-    <string name="chat_bot_weekly_game_result_success_external_description">Reward granted shortly</string>
-    <string name="chat_bot_weekly_game_result_success_personhood_description">You got Membership!</string>
-    <string name="chat_bot_weekly_game_result_success_paused_description">Play %s more games in a row to resume your Membership status.</string>
-    <string name="chat_bot_weekly_game_result_failed">Game ended</string>
-    <string name="chat_bot_weekly_game_result_failed_subtitle">This one got away. Your next chance awaits</string>
-    <string name="chat_bot_weekly_game_result_chat_with_players">Chat with players</string>
-
-    <string name="chat_bot_tattoo_welcome_message_1">Become a Peer by Getting a Unique Free Tattoo\n\n✍️ Get Inked with Any Artist You Like and Provide a 3 Minute Video Documenting the Tattoo Process</string>
-    <string name="chat_bot_tattoo_welcome_message_2">📐 Size. This tattoo is available in several sizes ranging from 25 to 50 millimeters. You will see stencil with all sizes after booking.\n\n💪 Tattoo Location. The tattoo has to be made on inner part of the upper left arm. Centred between armpit and elbow. </string>
-    <string name="chat_bot_tattoo_welcome_message_3">🎨 Design. Add a small $10 deposit to select your unique design from over 2,000 options available.</string>
-    <string name="chat_bot_tattoo_welcome_message_4">📆 Execution. Find any tattooer you like. You will also see a few suggested tattoo studios after booking. </string>
-    <string name="chat_bot_tattoo_welcome_message_5">🤳 Evidence. Provide 3-minute proof of documentation video and a picture of the final tattoo</string>
-    <string name="chat_bot_tattoo_welcome_message_6">🗳️ Review. Tattoo Evidence is reviewed by other Polkadot peers, who will vote individually based on your documentation video evidence.\n\n💸 Reimbursement. Get Your Tattoo Expenses Refund</string>
-
-    <string name="chat_bot_tattoo_select_and_reserve_tattoo_action">Select and Reserve a Unique Tattoo</string>
-    <string name="chat_bot_tattoo_film_video_header">I\'m at the tattoo studio now</string>
-    <string name="chat_bot_tattoo_film_video_action">1/2 Film Documentation Video</string>
-    <string name="chat_bot_tattoo_take_photo_header">I\'ve done the tattoo</string>
-    <string name="chat_bot_tattoo_take_photo_action">2/2 Take Photo</string>
-    <string name="chat_bot_tattoo_evidence_provided_description">Evidence has been provided, wait for the upload and review. This process can take anywhere from one day to a week.</string>
-    <string name="chat_bot_tattoo_evidence_approved_description_title">Evidence Approved: Becoming a Peer.</string>
-    <string name="chat_bot_tattoo_evidence_approved_description_subtitle">Issuing Peer status can take some time</string>
-    <string name="chat_bot_tattoo_unrecoverable_error">Unrecoverable error</string>
-
-    <string name="chat_bot_tattoo_you_ve_commited_to_tattoo">You’ve committed to %s tattoo</string>
-    <string name="chat_bot_tattoo_after_commitment_message_1">You’ve reserved your unique tattoo design, now it’s time to make it happen! Share the design PDF with anyone you consider to do the tattoo, discuss the details, and make sure to capture video evidence of the process.</string>
-    <string name="chat_bot_tattoo_after_commitment_message_2">💸  Don’t forget, tattoo expenses will be reimbursed, so go ahead and spend your funds; you’ll get them back once your evidence is approved.</string>
-    <string name="chat_bot_tattoo_after_commitment_message_3">Send PDF with stencil to any tattoo artist you want. Also it contains additional instructions how to provide photo and video evidence</string>
-    <string name="chat_bot_tattoo_after_commitment_message_4">Provide Photo and Video Documentation\n\n🤳 Film the process while getting a tattoo. You can either ask for assistance or use the in-app camera to film yourself.\n\n🎦 Begin filming once the majority of the tattoo has been completed, ensuring that the chosen design is clearly visible.\n\n⏱️ Film closer moments when making tattoo lines over the stencil image\n\n🔄 Film 3 minute video without breaks\n\n📸 Take a picture of the fresh tattoo exposed </string>
-    <string name="chat_bot_tattoo_after_commitment_message_5">⏺ Evidence 1/2. The documentation video comes first. Press the "provide" button when you’re at the tattoo studio and ready to start filming with the in-app camera.</string>
-
-    <string name="chat_bot_tattoo_after_video_evidence_provided">📸 Evidence 2/2. Photo Evidence.\nTake a picture of the fresh tattoo exposed using in-app camera.</string>
-
-    <string name="chat_bot_tattoo_notification_photo_title">Photo Evidence Accepted</string>
-    <string name="chat_bot_tattoo_notification_photo_description">Tap to see more and start uploading the video evidence.</string>
-    <string name="chat_bot_tattoo_notification_video_title">Video Evidence Accepted</string>
-    <string name="chat_bot_tattoo_notification_video_description">Issuing Membership. Tap to see more.</string>
-    <string name="chat_bot_notification_citizenship_issued_title">Username upgrade available</string>
-    <string name="chat_bot_notification_citizenship_issued_description">Claim your unique username</string>
-
     <string name="chat_faq_component_opened_title_base">Have more Questions or %1$s</string>
     <string name="chat_faq_component_opened_title_action">Hide</string>
     <string name="chat_faq_component_closed_title_base">Have more Questions? %1$s</string>
     <string name="chat_faq_component_closed_title_action">Show More</string>
-    <string name="chat_faq_proof_of_ink_question_alter_location">Can I alter the location?</string>
-    <string name="chat_faq_proof_of_ink_question_film_evidence">How Should I Film the Evidence?</string>
-    <string name="chat_faq_proof_of_ink_question_after_submission">What happens after I submit the evidence?</string>
-    <string name="chat_dim_navigation_buttons_title">Open the chat for each option to explore</string>
-    <string name="chat_dim1_navigation_button_title">Unique Peer Tattoo</string>
-    <string name="chat_dim2_navigation_button_title">Weekly game</string>
-    <string name="chat_dim1_navigation_button_description">Get Inked and Provide a 3 Minute Video</string>
-    <string name="chat_dim2_navigation_button_description">Play a free, fun and quick weekly game.</string>
-    <string name="chat_mob_rule_navigation_button_title">Mob Rule</string>
-    <string name="chat_mob_rule_navigation_button_description">Earn by reviewing tattoo documentation videos</string>
 
     <string name="chat_notification_reaction_added">reacted with %1$s</string>
 
@@ -1379,15 +873,8 @@ I’m attaching PDF with more information and details regarding the Tattoo Stenc
 
     <string name="notification_channel_name_video_game">Weekly game</string>
     <string name="notification_channel_description_video_game">Notifications about upcoming weekly games</string>
-
     <string name="notification_channel_name_video_game_alarm">Weekly game urgent</string>
     <string name="notification_channel_description_video_game_alarm">Urgent notifications when games are about to start</string>
-
-    <string name="notification_channel_name_tattoo_bot">Tattoo urgent</string>
-    <string name="notification_channel_description_tattoo_bot">Notifications when evidences are accepted</string>
-
-    <string name="notification_channel_name_become_citizen">Polkadot Membership</string>
-    <string name="notification_channel_description_become_citizen">Notifications about your Polkadot Membership</string>
 
     <string name="notification_channel_name_calls">Calls</string>
     <string name="notification_channel_description_calls">Notifications about incoming calls</string>
@@ -1395,101 +882,10 @@ I’m attaching PDF with more information and details regarding the Tattoo Stenc
     <string name="notification_channel_name_products">Products</string>
     <string name="notification_channel_description_products">Notifications from products</string>
 
-    <string name="chat_bot_weekly_game_add_to_calendar_action_added">Added to calendar</string>
-
-    <string name="upgrade_username_title">Pick your new username</string>
-    <string name="upgrade_username_widget_title">Get your new username!</string>
-    <string name="upgrade_username_widget_title_upgraded">✅ Your new username is</string>
-    <string name="upgrade_username_description">As a member, you\'re eligible for a clean username without a suffix. Claim it for free</string>
-    <string name="upgrade_username_action_confirm">Confirm</string>
-    <string name="upgrade_username_field_placeholder">Enter username</string>
-    <string name="upgrade_username_state_taken">This username is already taken</string>
-    <string name="upgrade_username_description_placeholder">As a Member, you are eligible for a clean username without a suffix. How cool!</string>
-    <string name="upgrade_username_keep_playing_description">Keep playing to retain your Membership, win prizes, and get other perks!</string>
-    <string name="upgrade_username_any_other_username">or any other available name</string>
-
-    <string name="upgrade_username_congrats_subtitle">Congrats on securing this name!</string>
-    <string name="upgrade_username_CTA">Get your username</string>
-    <string name="upgrade_username_upgraded_placeholder">You upgraded your username\nfrom %s to %s</string>
-    <string name="chat_you_are_member_bold">You\'re a Polkadot member!</string>
-    <string name="chat_you_are_member_rest"> </string>
-    <string name="chat_failed_to_become_peer">Couldn\'t process your Membership. Please try again.</string>
-
-    <string name="evidence_video_instructions_title">Tattoo Documentation Video Instructions</string>
-    <string name="evidence_video_instructions_action_start_filming">Start Filming</string>
-    <string name="evidence_video_instructions_film_during_session_title">Film During the Tattoo Session</string>
-    <string name="evidence_video_instructions_film_during_session_description">Record the video while the tattoo is being executed, not before or after.</string>
-    <string name="evidence_video_instructions_partially_completed_title">Film a Partially Completed Tattoo</string>
-    <string name="evidence_video_instructions_partially_completed_description">The tattoo must be in progress—the stencil and the partially inked design must both be clearly visible.</string>
-    <string name="evidence_video_instructions_in_app_camera_title">Use the In-App Camera</string>
-    <string name="evidence_video_instructions_in_app_camera_description">All footage must be recorded directly through the app\'s built-in camera.</string>
-    <string name="evidence_video_instructions_continuous_take_title">Record in One Continuous Take</string>
-    <string name="evidence_video_instructions_continuous_take_description">Your video must be filmed without any pauses or cuts. If you stop, the recording will restart from the beginning.</string>
-    <string name="evidence_video_instructions_filming_style_title">Choose Your Filming Style</string>
-    <string name="evidence_video_instructions_filming_style_description">You may film in any style you prefer, as long as the tattoo execution and the overall design are clearly shown.</string>
-    <string name="evidence_video_instructions_assistance_title">Get Assistance if Needed</string>
-    <string name="evidence_video_instructions_assistance_description">You can ask someone to help you film, or record it yourself.</string>
-
-    <string name="evidence_video_precondition_battery_title">Please Charge Your Phone</string>
-    <string name="evidence_video_precondition_battery_description">Your phone\'s battery is required to be at least %s charged for filming evidence</string>
-    <string name="evidence_video_precondition_storage_title">Your Phone Storage Is Full</string>
-    <string name="evidence_video_precondition_storage_description">Your phone storage needs to have at least %s of free space for filming evidence</string>
-    <string name="evidence_video_precondition_accept_action">Got It</string>
-    <string name="evidence_video_precondition_ignore_action">Take the Risk and Proceed</string>
-    <string name="evidence_video_recording_title">Documentation Video</string>
-
-    <string name="evidence_video_preview_title">Confirm Filmed Video</string>
-
-    <string name="evidence_photo_instructions_title">Tattoo Photo Instructions</string>
-    <string name="evidence_photo_instructions_action_take_photo">Take Photo</string>
-    <string name="evidence_photo_instructions_in_app_camera_title">Use the In-App Camera</string>
-    <string name="evidence_photo_instructions_in_app_camera_description">Take the photo directly through the app’s built-in camera.</string>
-    <string name="evidence_photo_instructions_show_full_tattoo_title">Show the Full Tattoo</string>
-    <string name="evidence_photo_instructions_show_full_tattoo_description">Make sure the entire tattoo is clearly visible in the photo.</string>
-
-    <string name="evidence_photo_instructions_assistance_title">Get Assistance if Needed</string>
-    <string name="evidence_photo_instructions_assistance_description">You may ask someone to take the photo for you or take it yourself — what matters most is that the tattoo is fully visible.</string>
-
-    <string name="evidence_photo_capture_title">Tattoo Photo</string>
-    <string name="evidence_photo_capture_toggle_overlay_button">Toggle Outlines</string>
-    <string name="evidence_photo_preview_title">Tattoo Photo</string>
-
-    <string name="evidence_provided_photo_message_status">Photo Evidence</string>
-    <string name="evidence_provided_video_message_status">Video Evidence</string>
-    <string name="evidence_provided_video_message_footer">Uploading begins after tattoo photo evidence is submitted</string>
-    <string name="evidence_provided_status_queued">Upload Queued</string>
-    <string name="evidence_provided_status_uploading">Uploading</string>
-    <string name="evidence_provided_status_in_review">In Review</string>
-    <string name="evidence_provided_status_approved">Approved</string>
-    <string name="evidence_provided_status_failed">Upload Failed</string>
-    <string name="evidence_provided_status_uploading_progress">Uploading %s</string>
-
-    <string name="tattoo_family_details_error">Failed to load family details</string>
-
-    <string name="chat_header_shared_game">You played the game together on %s</string>
-
-    <string name="chat_bot_weekly_game_chat_preview_game_announced">Next game: %s. Register now!</string>
-    <string name="chat_bot_weekly_game_chat_preview_game_registered">Registered! Next game starts on %s.</string>
-    <string name="chat_bot_weekly_game_chat_preview_game_starting">Game starting. Play now!</string>
-    <string name="chat_bot_weekly_game_chat_preview_game_processing">Thanks for playing. Results processing...</string>
-    <string name="chat_bot_weekly_game_chat_preview_game_success">Thanks for playing! Play %d more to become a Member</string>
-    <string name="chat_bot_weekly_game_chat_preview_game_peer_reached">You’re a Polkadot Member!</string>
-    <string name="chat_bot_weekly_game_chat_preview_game_failed"> </string>
-
-    <string name="chat_message_deposit_added">%s deposit added</string>
-    <string name="chat_message_deposit_added_empty">Deposit added</string>
-
-    <string name="mob_rule_peer_suspended_message">Your Membership has been suspended.\nYou cannot make judgements until you reclaim it.</string>
-    <string name="mob_rule_peer_suspended_reclaim">Reclaim your Peer Status</string>
-
     <string name="product_chat_menu_open_app">Open %s app</string>
     <string name="product_chat_menu_remove_chat">Remove chat</string>
     <string name="product_chat_menu_remove_confirmation_text">Remove chat?</string>
     <string name="product_chat_menu_remove_confirmation_positive">Remove</string>
-
-    <string name="video_game_results_title">Game Results</string>
-    <string name="collectibles_title">Collectibles</string>
-    <string name="collectibles_unavailable">Collectibles are temporarily unavailable. Please try again later.</string>
 
     <string name="chain_health_state_connected">Connected</string>
     <string name="chain_health_state_not_producing">Not producing blocks</string>
@@ -1518,8 +914,6 @@ I’m attaching PDF with more information and details regarding the Tattoo Stenc
     <string name="pocket_digital_dollar_title">%1$s Card</string>
     <string name="pocket_digital_dollar_card_title">%1$s</string>
     <string name="pocket_digital_dollar_faucet_top_up">Faucet Top Up</string>
-    <string name="pocket_collectibles_open_button">View collectibles</string>
-    <string name="pocket_collectibles_title">Collectibles</string>
     <string name="pocket_error_get_cash_unavailable">Get %1$s isn\'t available right now. Try again later.</string>
     <string name="pocket_error_withdraw_unavailable">Withdrawing %1$s isn\'t available right now. Try again later.</string>
     <string name="pocket_error_auto_fund_failed">Couldn\'t add test funds to this account. Try again.</string>
@@ -1565,10 +959,6 @@ I’m attaching PDF with more information and details regarding the Tattoo Stenc
     <string name="payment_privacy_mode_state_not_selected">Not selected</string>
 
     <!-- Keys carried over from the branch, not yet present on master -->
-    <string name="video_game_play_host_transition_title">Round %d of %d</string>
-    <string name="video_game_play_finished_title">Game\ncomplete</string>
-    <string name="video_game_play_finished_description">Check your choices.</string>
-    <string name="video_game_vote_description">" "</string>
     <string name="sso_pair_request_connect_title">%s wants to connect</string>
     <string name="sso_pair_request_share_info_message">Do you want to share \"%s\" info with them?</string>
     <string name="sso_pair_request_reject">Reject</string>
@@ -1578,26 +968,10 @@ I’m attaching PDF with more information and details regarding the Tattoo Stenc
     <string name="chat_payment_status_detecting">Detecting…</string>
     <string name="chat_payment_status_detected_best">Confirming…</string>
     <string name="chat_payment_status_detected_finalized">Confirmed</string>
-    <string name="chat_bot_prizes_become_a_peer_pill">Become a Peer in 6 games</string>
-    <string name="chat_bot_prizes_games_to_play">%1$d games to play</string>
     <string name="settings_blocked_users">Blocked users</string>
-    <string name="video_game_play_player_copy_host">Copy Host</string>
-    <string name="video_game_play_host_transition_progress">Round is Starting</string>
-    <string name="video_game_play_tapping_hint">Tap on the Humans Who Copied 👇</string>
     <string name="common_relative_time_just_now">Now</string>
 
     <!-- Keys removed on master but retained intentionally -->
-    <string name="chat_bot_weekly_game_footer_title">Upcoming weekly game scheduled</string>
-    <string name="chat_bot_weekly_game_result_failed_paused">Your Polkadot Membership is paused</string>
-    <string name="chat_bot_weekly_game_result_failed_external_description">You won\'t receive a reward for this game</string>
-    <string name="chat_bot_weekly_game_result_failed_paused_description">Keep playing to resume your Polkadot Membership, sign up for next weeks game.</string>
-    <string name="chat_bot_weekly_game_result_failed_description">Keep playing to become a Member, sign up for next weeks game.</string>
-    <string name="chat_bot_weekly_game_welcome_message_1">Play a Weekly Game. Requires Constant Participation.\n\n🤖 Attest humans, remove AI in a 5 minute game</string>
-    <string name="chat_bot_weekly_game_welcome_message_2">🤙 Gesture. As a host perform a hand gesture, as a player mimic another host’s gesture</string>
-    <string name="chat_bot_weekly_game_welcome_message_3">🤖 Attestation. Identify humans playing the game with you. Remove AI.</string>
-    <string name="chat_bot_weekly_game_welcome_message_4">🏃 Play 6 games in a row to achieve your Polkadot Peer status.</string>
-    <string name="chat_bot_weekly_game_welcome_message_5">❣️️ Attendance. Attendance is important, missing the game pauses Peer status. Game has to be played constantly.</string>
-    <string name="chat_bot_weekly_game_welcome_message_6">🕰️ Game Time! The game is played every Thursday at 6 PM CET.</string>
 
     <!-- TrUAPI core confirmation prompts -->
     <string name="truapi_confirm_title_signing">Approve signing?</string>

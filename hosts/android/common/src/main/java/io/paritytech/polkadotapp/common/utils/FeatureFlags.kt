@@ -7,10 +7,7 @@ object FeatureFlags {
 
     fun isEnabled(feature: FeatureOption): Boolean {
         return when (feature) {
-            FeatureOption.SHOW_MOB_RULE_CASE_FOR_DEVELOPMENT,
-            FeatureOption.SHORT_WORKER_BACKOFF,
-            FeatureOption.LOW_BATTERY_EVIDENCE_PROVISION,
-            FeatureOption.SKIP_MOBRULE_CASE -> BuildConfig.DEBUG
+            FeatureOption.SHORT_WORKER_BACKOFF -> BuildConfig.DEBUG
 
             FeatureOption.DEBUG_MENU -> BuildConfig.DEBUG_TOOLS_ENABLED
 
@@ -21,28 +18,18 @@ object FeatureFlags {
             FeatureOption.ALL_CHAT_EXTENSIONS,
             FeatureOption.LINKED_DEVICES,
             FeatureOption.PRODUCT_SETTINGS,
-            FeatureOption.PERSONHOOD,
-            FeatureOption.COLLECTIBLES -> fullFeatured
+            FeatureOption.PERSONHOOD -> fullFeatured
 
             FeatureOption.TAB_BAR_CONNECTIVITY_INDICATOR -> BuildConfig.TAB_BAR_CONNECTIVITY_INDICATOR
             FeatureOption.COINAGE_DEBUG_FEATURES -> BuildConfig.COINAGE_DEBUG_FEATURES
-            FeatureOption.ALLOW_SHORT_EVIDENCE_VIDEO -> BuildConfig.ALLOW_SHORT_EVIDENCE_VIDEO
             FeatureOption.SAMPLE_BOT -> BuildConfig.SAMPLE_BOT
-            FeatureOption.DIM1_BOT_BY_DEFAULT -> BuildConfig.DIM1_BOT_BY_DEFAULT
-            FeatureOption.PEER_BOT_BY_DEFAULT -> BuildConfig.PEER_BOT_BY_DEFAULT
         }
     }
 }
 
 enum class FeatureOption {
-    SHOW_MOB_RULE_CASE_FOR_DEVELOPMENT,
-    ALLOW_SHORT_EVIDENCE_VIDEO,
     SHORT_WORKER_BACKOFF,
-    LOW_BATTERY_EVIDENCE_PROVISION,
-    SKIP_MOBRULE_CASE,
     SAMPLE_BOT,
-    DIM1_BOT_BY_DEFAULT,
-    PEER_BOT_BY_DEFAULT,
     DEBUG_MENU,
     BROWSE_TAB,
 
@@ -66,7 +53,6 @@ enum class FeatureOption {
     LINKED_DEVICES,
     PRODUCT_SETTINGS,
     PERSONHOOD,
-    COLLECTIBLES,
     ARBITRARY_PRODUCTS
 }
 

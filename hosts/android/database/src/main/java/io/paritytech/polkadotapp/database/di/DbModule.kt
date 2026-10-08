@@ -22,7 +22,6 @@ import io.paritytech.polkadotapp.database.dao.ContactDeviceDao
 import io.paritytech.polkadotapp.database.dao.ExternalPaymentDao
 import io.paritytech.polkadotapp.database.dao.FileDownloadDao
 import io.paritytech.polkadotapp.database.dao.FileUploadDao
-import io.paritytech.polkadotapp.database.dao.GamePlayersDao
 import io.paritytech.polkadotapp.database.dao.PocketCardDao
 import io.paritytech.polkadotapp.database.dao.ProductDao
 import io.paritytech.polkadotapp.database.dao.ProductFundingOperationDao
@@ -38,8 +37,6 @@ import io.paritytech.polkadotapp.database.dao.SsoSessionDao
 import io.paritytech.polkadotapp.database.dao.StatementStoreSlotAllocationDao
 import io.paritytech.polkadotapp.database.dao.TokenPriceDao
 import io.paritytech.polkadotapp.database.dao.TrackedExtrinsicDao
-import io.paritytech.polkadotapp.database.dao.VideoGameBannedPlayerDao
-import io.paritytech.polkadotapp.database.dao.VideoGameConnectionAttemptDao
 import io.paritytech.polkadotapp.database.migrations.ChatMessageContentMigration
 import javax.inject.Singleton
 
@@ -118,15 +115,7 @@ class DbModule {
 
     @Provides
     @Singleton
-    fun provideVideoGameVoteDao(appDatabase: AppDatabase) = appDatabase.videoGameVoteDao()
-
-    @Provides
-    @Singleton
     fun provideMessageReactionDao(appDatabase: AppDatabase) = appDatabase.messageReactionsDao()
-
-    @Provides
-    @Singleton
-    fun provideVouchersDao(appDatabase: AppDatabase) = appDatabase.vouchersDao()
 
     @Provides
     @Singleton
@@ -144,10 +133,6 @@ class DbModule {
     @Provides
     @Singleton
     fun provideMessageRevisionDao(appDatabase: AppDatabase) = appDatabase.messageRevisionDao()
-
-    @Provides
-    @Singleton
-    fun provideGamePlayersDao(appDatabase: AppDatabase): GamePlayersDao = appDatabase.gamePlayersDao()
 
     @Provides
     @Singleton
@@ -205,19 +190,11 @@ class DbModule {
 
     @Provides
     @Singleton
-    fun provideVideoGameBannedPlayerDao(appDatabase: AppDatabase): VideoGameBannedPlayerDao = appDatabase.videoGameBannedPlayerDao()
-
-    @Provides
-    @Singleton
     fun provideFileUploadDao(appDatabase: AppDatabase): FileUploadDao = appDatabase.fileUploadDao()
 
     @Provides
     @Singleton
     fun provideFileDownloadDao(appDatabase: AppDatabase): FileDownloadDao = appDatabase.fileDownloadDao()
-
-    @Provides
-    @Singleton
-    fun provideVideoGameConnectionAttemptDao(appDatabase: AppDatabase): VideoGameConnectionAttemptDao = appDatabase.videoGameConnectionAttemptDao()
 
     @Provides
     @Singleton

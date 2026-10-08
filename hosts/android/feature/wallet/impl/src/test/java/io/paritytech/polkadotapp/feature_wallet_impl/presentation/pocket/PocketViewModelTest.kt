@@ -15,10 +15,8 @@ import io.paritytech.polkadotapp.feature_products_api.presentation.spaHost.SpaHo
 import io.paritytech.polkadotapp.feature_products_api.presentation.spaHost.SpaHostSession
 import io.paritytech.polkadotapp.feature_tokens_api.presentation.formatter.TokenAmountFormatter
 import io.paritytech.polkadotapp.feature_tokens_api.presentation.mapper.TokenAmountMapper
-import io.paritytech.polkadotapp.feature_videogame_api.domain.collectibles.CollectiblesUrlResolver
 import io.paritytech.polkadotapp.feature_wallet_impl.PocketRouter
 import io.paritytech.polkadotapp.feature_wallet_impl.domain.interactor.PocketInteractor
-import io.paritytech.polkadotapp.feature_wallet_impl.domain.model.PocketRank
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.PocketCardUiModel
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.PocketScreenState
 import io.paritytech.polkadotapp.test_shared.TestCoroutineDispatchers
@@ -51,11 +49,9 @@ import org.mockito.stubbing.Answer
 
 class PocketViewModelTest {
     // Every flow the screen combines answers empty unless a test says otherwise, so each test names
-    // only the source it is about. observeRank is answered here rather than stubbed because its
-    // context parameter cannot be named from a call site that does not have one.
+    // only the source it is about.
     private val quietFlows = Answer { invocation ->
         when {
-            invocation.method.name == "observeRank" -> flowOf(PocketRank.Basic)
             invocation.method.name == "warmUpProduct" -> Result.success(Unit)
             invocation.method.returnType == Flow::class.java -> emptyFlow<Any>()
             else -> null
@@ -94,7 +90,6 @@ class PocketViewModelTest {
         tokenAmountMapper = mock(TokenAmountMapper::class.java),
         tokenAmountFormatter = mock(TokenAmountFormatter::class.java),
         router = mock(PocketRouter::class.java),
-        collectiblesUrlResolver = mock(CollectiblesUrlResolver::class.java),
         idShareImageRenderer = mock(IdShareImageRenderer::class.java),
         sharingManager = mock(SharingManager::class.java),
         dispatchers = dispatchers,

@@ -191,11 +191,6 @@
             android:foregroundServiceType="phoneCall|microphone|camera" />
 
         <service
-            android:name="io.paritytech.polkadotapp.feature_videogame_impl.service.VideoGameService"
-            android:exported="false"
-            android:foregroundServiceType="camera" />
-
-        <service
             android:name="androidx.work.impl.foreground.SystemForegroundService"
             android:foregroundServiceType="dataSync"
             tools:node="merge" />
