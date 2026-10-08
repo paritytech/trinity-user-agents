@@ -7,7 +7,10 @@ created: 2026-10-08
 
 # Wasm product workers
 
-A product can ship its worker as a Rust crate compiled to `wasm32-unknown-unknown`. The core runs it in process, bound to one product. Each TrUAPI call the worker makes is a wasm import that the host answers by calling the matching method of the [service traits](../../rust/crates/truapi/src/api.rs) directly on the product's [`ProductRuntimeHost`](../../rust/crates/truapi/src/runtime.rs), with no frames or dispatcher in between.
+- A product can ship its worker as a Rust crate compiled to `wasm32-unknown-unknown`.
+- The core runs it in process, bound to one product.
+- Each TrUAPI call the worker makes is a wasm import.
+- The host answers it by calling the matching method of the [service traits](../../rust/crates/truapi/src/api.rs) directly on the product's [`ProductRuntimeHost`](../../rust/crates/truapi/src/runtime.rs), with no frames or dispatcher in between.
 
 ## Host setup
 
