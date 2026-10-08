@@ -328,24 +328,3 @@ private func layOut(_ screen: PocketCardScreenViewController) {
     screen.view.frame = CGRect(origin: .zero, size: screenSize)
     screen.view.layoutIfNeeded()
 }
-
-@MainActor
-private func waitUntil(on screen: UIViewController, _ condition: () -> Bool) -> Bool {
-    let deadline = Date().addingTimeInterval(5)
-
-    while Date() < deadline {
-        screen.view.layoutIfNeeded()
-
-        if condition() { return true }
-
-        RunLoop.main.run(until: Date().addingTimeInterval(0.02))
-    }
-
-    return false
-}
-
-private extension PocketCardScreenViewController {
-    var scrollView: UIScrollView? {
-        view.subviews.compactMap { $0 as? UIScrollView }.first
-    }
-}

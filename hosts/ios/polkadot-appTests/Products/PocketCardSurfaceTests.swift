@@ -34,6 +34,23 @@ struct PocketCardSurfaceTests {
         }
     }
 
+    /// A warm page hears its card reopen while the new screen is still on its
+    /// way up, before it is in a window, and the face must still move.
+    @Test
+    func handsTheRequestToAScreenStillBeingPresented() {
+        let surface = PocketCardSurface()
+        let screen = PocketCardScreenViewController(card: loyaltyCard, product: StubSPAView(), surface: surface)
+        let presenter = UIViewController()
+        let window = showing(presenter)
+        let navigation = AppNavigationController(rootViewController: screen)
+        navigation.modalPresentationStyle = .fullScreen
+        presenter.present(navigation, animated: true)
+
+        #expect(surface.setFaceShown(false) == .applied)
+        #expect(waitUntil(on: screen) { screen.scrollView?.contentOffset.y == PocketOpenedCardView.height })
+        withExtendedLifetime(window) {}
+    }
+
     /// The surface outlives its screens, and the same card reopened gets a new
     /// screen before the old one is torn down, so only the screen the surface
     /// points at may let go of it.

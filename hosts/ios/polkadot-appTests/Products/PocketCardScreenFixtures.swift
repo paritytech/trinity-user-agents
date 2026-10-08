@@ -23,3 +23,25 @@ func showing(_ screen: UIViewController) -> UIWindow {
     window.layoutIfNeeded()
     return window
 }
+
+/// Turns the run loop until `condition` holds, for up to five seconds.
+@MainActor
+func waitUntil(on screen: UIViewController, _ condition: () -> Bool) -> Bool {
+    let deadline = Date().addingTimeInterval(5)
+
+    while Date() < deadline {
+        screen.view.layoutIfNeeded()
+
+        if condition() { return true }
+
+        RunLoop.main.run(until: Date().addingTimeInterval(0.02))
+    }
+
+    return false
+}
+
+extension PocketCardScreenViewController {
+    var scrollView: UIScrollView? {
+        view.subviews.compactMap { $0 as? UIScrollView }.first
+    }
+}
