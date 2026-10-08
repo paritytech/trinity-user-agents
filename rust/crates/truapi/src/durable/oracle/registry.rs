@@ -48,16 +48,16 @@ impl DurableRegistry {
     /// could not tell the two apart.
     pub fn with_policy(mut self, policy: Arc<dyn SubmissionPolicy>) -> Self {
         let id = policy.id();
+        let name = id.as_str().to_owned();
         assert!(
-            self.policies.insert(id.clone(), policy).is_none(),
-            "submission policy {} registered twice",
-            id.as_str()
+            self.policies.insert(id, policy).is_none(),
+            "submission policy {name} registered twice"
         );
         self
     }
 
     /// The policy registered as `id`.
-    pub fn policy(&self, id: &PolicyId) -> Option<&Arc<dyn SubmissionPolicy>> {
+    pub fn submission_policy(&self, id: &PolicyId) -> Option<&Arc<dyn SubmissionPolicy>> {
         self.policies.get(id)
     }
 
@@ -79,7 +79,7 @@ impl DurableRegistry {
 mod tests {
     use super::*;
     use crate::durable::oracle::Unobservable;
-    use crate::durable::testing::ScriptedPolicy;
+    use crate::durable::testing::{REBUILD_POLICY, RetryAnswer, ScriptedPolicy};
 
     #[test]
     #[should_panic(expected = "registered twice")]
@@ -93,9 +93,8 @@ mod tests {
     #[test]
     #[should_panic(expected = "registered twice")]
     fn a_policy_registered_twice_is_a_wiring_bug() {
-        let policy_id = crate::durable::model::PolicyId::from_static("rebuild");
         let _ = DurableRegistry::new()
-            .with_policy(ScriptedPolicy::retrying(policy_id.clone(), false))
-            .with_policy(ScriptedPolicy::retrying(policy_id, true));
+            .with_policy(ScriptedPolicy::never_building(REBUILD_POLICY, RetryAnswer::Final))
+            .with_policy(ScriptedPolicy::never_building(REBUILD_POLICY, RetryAnswer::Retry));
     }
 }

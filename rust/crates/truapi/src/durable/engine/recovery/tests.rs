@@ -1,0 +1,347 @@
+use core::time::Duration;
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+
+use futures::executor::block_on;
+use futures::future::ready;
+
+use super::*;
+use crate::chain::{HeadEvent, Heads};
+use crate::chain_runtime::RuntimeFailure;
+use crate::durable::model::{DomainId, DurableTxEntry, DurableTxStatus, HeadKind};
+use crate::durable::oracle::{CompletionOracle, DurableRegistry, LedgerView, PassScope};
+use crate::durable::policy::Preparation;
+use crate::durable::testing::{
+    FakeChain, GENESIS, ManualTimer, PrepareScript, REBUILD_POLICY, RetryAnswer, ScriptedPolicy,
+    block, engine_with, engine_with_policies, extrinsic, insert, leave_waiting, rebuild_plan,
+};
+use crate::test_support::wait_until;
+
+const TEST: DomainId = DomainId::from_static("test");
+
+/// Counts the passes that reached the domain, and proves its
+/// transactions completed from the `complete_from`th one on.
+struct CountingOracle {
+    opened: AtomicUsize,
+    complete_from: usize,
+}
+
+#[async_trait::async_trait]
+impl CompletionOracle for CountingOracle {
+    fn chain(&self) -> H256 {
+        GENESIS
+    }
+
+    async fn open_pass(
+        &self,
+        _transactions: &[DurableTxEntry],
+        _ledger: &LedgerView,
+        _heads: &Heads,
+    ) -> Result<Box<dyn PassScope>, RuntimeFailure> {
+        let opened = self.opened.fetch_add(1, Ordering::SeqCst) + 1;
+        Ok(Box::new(Completes(opened >= self.complete_from)))
+    }
+}
+
+struct Completes(bool);
+
+impl PassScope for Completes {
+    fn proven_completed(&self, _tx: &DurableTxEntry, head: HeadKind) -> bool {
+        self.0 && head == HeadKind::Finalized
+    }
+}
+
+struct Fixture {
+    _dir: tempfile::TempDir,
+    engine: Arc<DurableTxEngine>,
+    oracle: Arc<CountingOracle>,
+    heads: mpsc::UnboundedSender<Result<HeadEvent, RuntimeFailure>>,
+}
+
+fn fixture(complete_from: usize) -> Fixture {
+    let chain = FakeChain::new(130, 140);
+    let heads = chain.script_heads();
+    let oracle = Arc::new(CountingOracle {
+        opened: AtomicUsize::new(0),
+        complete_from,
+    });
+    let (dir, engine, _timer) = engine_with(
+        &chain,
+        DurableRegistry::new().with_domain(TEST, oracle.clone()),
+    );
+    insert(&engine.db, &TEST, extrinsic(1, 100, 64));
+    Fixture {
+        _dir: dir,
+        engine,
+        oracle,
+        heads,
+    }
+}
+
+fn run_in_background(
+    engine: &Arc<DurableTxEngine>,
+) -> std::thread::JoinHandle<Result<(), RecoveryError>> {
+    let engine = engine.clone();
+    std::thread::spawn(move || block_on(engine.run_until_settled()))
+}
+
+fn passes(fixture: &Fixture) -> usize {
+    fixture.oracle.opened.load(Ordering::SeqCst)
+}
+
+/// The app was killed after its last transaction was finalized but before
+/// its row was updated; the launch pass settles it and recovery stops
+/// without waiting for a head.
+#[test]
+fn a_ledger_settled_by_the_first_pass_costs_one_pass() {
+    let fixture = fixture(1);
+    fixture
+        .heads
+        .unbounded_send(Ok(HeadEvent::Finalized(block(131))))
+        .unwrap();
+
+    block_on(fixture.engine.run_until_settled()).unwrap();
+
+    assert_eq!(passes(&fixture), 1);
+}
+
+#[test]
+fn one_pass_per_head_until_nothing_is_live() {
+    let fixture = fixture(3);
+    let running = run_in_background(&fixture.engine);
+    wait_until(|| passes(&fixture) == 1, "the first pass runs at once");
+
+    fixture
+        .heads
+        .unbounded_send(Ok(HeadEvent::Finalized(block(131))))
+        .unwrap();
+    wait_until(|| passes(&fixture) == 2, "a finalized head runs a pass");
+    fixture
+        .heads
+        .unbounded_send(Ok(HeadEvent::Finalized(block(132))))
+        .unwrap();
+
+    assert_eq!(running.join().unwrap(), Ok(()));
+    assert_eq!(passes(&fixture), 3);
+}
+
+/// Pre-finality success is read at the best head, so a new best block can
+/// decide a transaction several blocks before finality does.
+#[test]
+fn a_best_head_drives_a_pass() {
+    let fixture = fixture(2);
+    let running = run_in_background(&fixture.engine);
+    wait_until(|| passes(&fixture) == 1, "the first pass runs at once");
+
+    fixture
+        .heads
+        .unbounded_send(Ok(HeadEvent::Best(block(141))))
+        .unwrap();
+
+    assert_eq!(running.join().unwrap(), Ok(()));
+    assert_eq!(passes(&fixture), 2);
+}
+
+/// A released watch hands its transaction back without waiting a block.
+#[test]
+fn a_nudge_drives_a_pass() {
+    let fixture = fixture(2);
+    let running = run_in_background(&fixture.engine);
+    wait_until(|| passes(&fixture) == 1, "the first pass runs at once");
+
+    fixture.engine.recovery_wakes.wake();
+
+    assert_eq!(running.join().unwrap(), Ok(()));
+    assert_eq!(passes(&fixture), 2);
+}
+
+/// An error item is one missed head; the subscription goes on.
+#[test]
+fn a_failed_head_read_is_skipped() {
+    let fixture = fixture(2);
+    let running = run_in_background(&fixture.engine);
+    wait_until(|| passes(&fixture) == 1, "the first pass runs at once");
+
+    fixture
+        .heads
+        .unbounded_send(Err(RuntimeFailure::host_failure("head", "glitch")))
+        .unwrap();
+    fixture
+        .heads
+        .unbounded_send(Ok(HeadEvent::Finalized(block(131))))
+        .unwrap();
+
+    assert_eq!(running.join().unwrap(), Ok(()));
+    assert_eq!(passes(&fixture), 2);
+}
+
+/// The app went to background and the node connection closed. Without heads
+/// nothing would drive the next pass, so the loop fails and the host
+/// retries it.
+#[test]
+fn a_head_subscription_that_ends_fails_the_loop() {
+    let fixture = fixture(usize::MAX);
+    let running = run_in_background(&fixture.engine);
+    wait_until(|| passes(&fixture) == 1, "the first pass runs at once");
+
+    drop(fixture.heads);
+
+    assert!(matches!(
+        running.join().unwrap(),
+        Err(RecoveryError::HeadsLost { genesis, .. }) if genesis == GENESIS
+    ));
+}
+
+#[test]
+fn a_head_subscription_that_cannot_open_fails_the_loop() {
+    let chain = FakeChain::new(130, 140);
+    let (_dir, engine, _timer) = engine_with(
+        &chain,
+        DurableRegistry::new().with_domain(
+            TEST,
+            Arc::new(crate::durable::oracle::Unobservable(GENESIS)),
+        ),
+    );
+    insert(&engine.db, &TEST, extrinsic(1, 100, 64));
+
+    assert!(matches!(
+        block_on(engine.run_until_settled()),
+        Err(RecoveryError::HeadsLost { .. })
+    ));
+}
+
+/// Abandoning live transactions because the ledger could not be read once
+/// is far worse than one more pass.
+#[test]
+fn an_unreadable_ledger_counts_as_live() {
+    let fixture = fixture(1);
+    block_on(fixture.engine.db.close()).unwrap();
+
+    assert!(block_on(fixture.engine.has_live()));
+}
+
+/// Nothing could decide a domain without an oracle, so its rows must not
+/// keep recovery running.
+#[test]
+fn live_rows_no_oracle_can_decide_do_not_keep_recovery_running() {
+    let chain = FakeChain::new(130, 140);
+    chain.script_heads();
+    let (_dir, engine, _timer) = engine_with(
+        &chain,
+        DurableRegistry::new().with_domain(
+            TEST,
+            Arc::new(crate::durable::oracle::Unobservable(GENESIS)),
+        ),
+    );
+    insert(
+        &engine.db,
+        &DomainId::from_static("orphan"),
+        extrinsic(1, 100, 64),
+    );
+
+    let running = run_in_background(&engine);
+
+    wait_until(|| running.is_finished(), "recovery returns");
+    assert_eq!(running.join().unwrap(), Ok(()));
+}
+
+/// The device is offline at launch with nothing live. Recovery must finish
+/// rather than fail on a head subscription it never needed, or the host
+/// would retry it forever.
+#[test]
+fn a_settled_ledger_needs_no_head_subscription() {
+    let chain = FakeChain::new(130, 140);
+    let (_dir, engine, _timer) = engine_with(
+        &chain,
+        DurableRegistry::new().with_domain(
+            TEST,
+            Arc::new(crate::durable::oracle::Unobservable(GENESIS)),
+        ),
+    );
+
+    assert_eq!(block_on(engine.run_until_settled()), Ok(()));
+}
+
+/// An engine with a `rebuild` policy, and what a test steers it with.
+struct PolicyFixture {
+    _dir: tempfile::TempDir,
+    engine: Arc<DurableTxEngine>,
+    policy: Arc<ScriptedPolicy>,
+    timer: Arc<ManualTimer>,
+    heads: mpsc::UnboundedSender<Result<HeadEvent, RuntimeFailure>>,
+}
+
+/// A policy that gives up on every row once `give_up` is set, and has
+/// nothing to say before.
+fn gives_up_once_set(give_up: Arc<AtomicBool>) -> PrepareScript {
+    Box::new(move |ids| {
+        let answer = match give_up.load(Ordering::SeqCst) {
+            true => ids.iter().map(|id| (*id, Preparation::GiveUp)).collect(),
+            false => HashMap::new(),
+        };
+        Box::pin(ready(Ok(answer)))
+    })
+}
+
+/// An engine serving the `test` domain whose `rebuild` policy answers with
+/// `script`.
+fn policy_fixture(script: PrepareScript) -> PolicyFixture {
+    let chain = FakeChain::new(130, 140);
+    let heads = chain.script_heads();
+    let policy = ScriptedPolicy::new(REBUILD_POLICY, RetryAnswer::Final, script);
+    let (dir, engine, timer) = engine_with_policies(&chain, &[TEST], vec![policy.clone()]);
+    PolicyFixture {
+        _dir: dir,
+        engine,
+        policy,
+        timer,
+        heads,
+    }
+}
+
+fn finalize(heads: &mpsc::UnboundedSender<Result<HeadEvent, RuntimeFailure>>, number: u64) {
+    let head = HeadEvent::Finalized(block(number));
+    heads.unbounded_send(Ok(head)).unwrap();
+}
+
+/// The app was killed before a scheduled transaction was built. Recovery
+/// is all that runs on the next launch, so it must build it.
+#[test]
+fn recovery_builds_what_a_previous_process_left_waiting() {
+    let fixture = policy_fixture(gives_up_once_set(Arc::default()));
+    let id = leave_waiting(&fixture.engine.db, TEST, rebuild_plan(vec![]));
+
+    let _running = run_in_background(&fixture.engine);
+
+    wait_until(
+        || fixture.policy.batches() == vec![vec![id]],
+        "recovery builds the row",
+    );
+}
+
+/// Nothing on chain can decide a transaction that was never submitted,
+/// but it is still work: the host must keep recovery running until it is
+/// built or given up.
+#[test]
+fn recovery_runs_until_waiting_transactions_are_decided() {
+    let give_up = Arc::new(AtomicBool::new(false));
+    let fixture = policy_fixture(gives_up_once_set(give_up.clone()));
+    let id = leave_waiting(&fixture.engine.db, TEST, rebuild_plan(vec![]));
+    let running = run_in_background(&fixture.engine);
+    wait_until(
+        || fixture.policy.batches().len() == 1,
+        "the row is asked about",
+    );
+
+    finalize(&fixture.heads, 131);
+    std::thread::sleep(Duration::from_millis(50));
+    assert!(!running.is_finished());
+    give_up.store(true, Ordering::SeqCst);
+    wait_until(|| fixture.timer.sleeps() == 1, "the bucket backs off");
+    fixture.timer.advance(Duration::from_secs(2));
+    let failed = || block_on(fixture.engine.status(id)).unwrap() == Some(DurableTxStatus::Failure);
+    wait_until(failed, "the policy gives up");
+    finalize(&fixture.heads, 132);
+
+    assert_eq!(running.join().unwrap(), Ok(()));
+}

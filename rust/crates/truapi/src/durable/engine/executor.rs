@@ -2,15 +2,17 @@
 //! with one task per domain, policy and group.
 
 mod attempt;
+mod backoff;
 mod bucket;
 
 #[cfg(test)]
 mod tests;
 
+use core::future::Future;
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Weak};
 
-use futures::future::{AbortHandle, Abortable, FutureExt};
+use futures::future::{AbortHandle, AbortRegistration, Abortable, FutureExt};
 use futures::stream::{BoxStream, StreamExt};
 use parking_lot::Mutex;
 use tracing::warn;
@@ -20,10 +22,6 @@ use crate::durable::dao;
 use crate::durable::model::{DomainId, DurableTxId, GroupId, PolicyId, ScheduledDurableTx};
 use crate::store::DbError;
 use bucket::BucketRun;
-#[cfg(test)]
-use bucket::{
-    INITIAL_BACKOFF, MAX_BACKOFF, MAX_REBUILD_COOLDOWN, REBUILD_COOLDOWN, backoff, cooldown,
-};
 
 /// The executor's tasks and what they remember between rounds. Held in
 /// memory only: after a restart every waiting row is simply built again.
@@ -37,7 +35,13 @@ pub struct SubmissionExecutor {
 }
 
 /// The rows one task builds together: one domain's, of one policy and group.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, derive_more::Display)]
+#[display(
+    "domain {} policy {} group {:?}",
+    domain.as_str(),
+    policy.as_str(),
+    group.as_ref().map(GroupId::as_str)
+)]
 pub struct SubmissionBucket {
     domain: DomainId,
     policy: PolicyId,
@@ -48,7 +52,7 @@ impl SubmissionBucket {
     fn of(scheduled: &ScheduledDurableTx) -> Self {
         Self {
             domain: scheduled.domain.clone(),
-            policy: scheduled.policy.id.clone(),
+            policy: scheduled.plan.policy.clone(),
             group: scheduled.group.clone(),
         }
     }
@@ -64,6 +68,25 @@ impl SubmissionExecutor {
             bucket.abort();
         }
     }
+
+    /// Drops what is remembered about row `id`, once nothing will build it
+    /// again.
+    pub fn forget_attempts(&self, id: DurableTxId) {
+        self.attempts_started.lock().remove(&id);
+    }
+
+    /// Counts one more attempt built for row `id`.
+    fn count_started_attempt(&self, id: DurableTxId) {
+        let mut started = self.attempts_started.lock();
+        *started.entry(id).or_default() += 1;
+    }
+
+    /// The most attempts any row of `rows` was built into.
+    fn most_attempts(&self, rows: &[ScheduledDurableTx]) -> u32 {
+        let started = self.attempts_started.lock();
+        let attempts = rows.iter().filter_map(|row| started.get(&row.id)).max();
+        attempts.copied().unwrap_or(0)
+    }
 }
 
 impl DurableTxEngine {
@@ -76,11 +99,11 @@ impl DurableTxEngine {
             return;
         }
         let (abort, registration) = AbortHandle::new_pair();
-        let waiting = dao::observe_pending_submissions(&self.db);
-        let task = collect(Arc::downgrade(self), waiting);
         *collector = Some(abort);
         drop(collector);
-        (self.spawner)(Box::pin(Abortable::new(task, registration).map(|_| ())));
+        let waiting = dao::observe_pending_submissions(&self.db);
+        let task = launch_on_pending_change(Arc::downgrade(self), waiting);
+        self.spawn_abortable(task, registration);
     }
 
     /// Starts a task for every bucket of `waiting` that has none.
@@ -101,15 +124,25 @@ impl DurableTxEngine {
         let (abort, registration) = AbortHandle::new_pair();
         buckets.insert(bucket.clone(), abort.clone());
         drop(buckets);
-        let run = BucketRun::new(self, bucket, abort).run();
-        (self.spawner)(Box::pin(Abortable::new(run, registration).map(|_| ())));
+        let run = BucketRun::new(self, bucket, abort).run_until_drained();
+        self.spawn_abortable(run, registration);
+    }
+
+    /// Spawns `task`, stopped by the handle paired with `registration`.
+    fn spawn_abortable(
+        &self,
+        task: impl Future<Output = ()> + Send + 'static,
+        registration: AbortRegistration,
+    ) {
+        let abortable = Abortable::new(task, registration).map(|_| ());
+        (self.spawner)(Box::pin(abortable));
     }
 }
 
 /// Launches buckets on every change of the waiting rows. Every emission
 /// launches every idle bucket it names, because a bucket may have ended
 /// since the last one.
-async fn collect(
+async fn launch_on_pending_change(
     engine: Weak<DurableTxEngine>,
     mut waiting: BoxStream<'static, Result<Vec<ScheduledDurableTx>, DbError>>,
 ) {

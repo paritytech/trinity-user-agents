@@ -234,12 +234,13 @@ verdict is a compare-and-set against the status and attempt it was derived
 from, and rows are never deleted.
 
 A domain can also schedule transactions it cannot sign yet
-(`DurableRequest::scheduled`), each naming a `SubmissionPolicy` registered in
-the `DurableRegistry`. They wait as `PENDING_SUBMISSION` rows until the
+(`DurableRequest::scheduled`), each with a `SubmissionPlan`: the
+`SubmissionPolicy` registered in the `DurableRegistry` that builds it, and that
+policy's `PolicyParams` for it. They wait as `PENDING_SUBMISSION` rows until the
 submission executor builds them: one task per domain, policy and group asks the
 policy to `prepare` its waiting rows, starts an attempt for each `Ready` answer
 and fails each `GiveUp`, backing off after rounds that decide nothing. A
-presigned submission may name a policy as well. When a verdict proves a
+presigned submission may carry a plan as well. When a verdict proves a
 transaction with a policy failed, the verdict writer asks the policy's
 `can_retry`, and a yes sends the row back to be built instead of failing it.
 The executor starts with the engine in `set_core_db` and again in every

@@ -28,7 +28,7 @@ pub use engine::{
 };
 pub use model::{
     DomainId, DurableTxEntry, DurableTxId, DurableTxState, DurableTxStatus, FailureKind, GroupId,
-    HeadKind, PolicyId, PolicyRef, ScheduledDurableTx, Verdict,
+    HeadKind, PolicyId, PolicyParams, ScheduledDurableTx, SubmissionPlan, Verdict,
 };
 pub use oracle::{
     CompletionOracle, DurableRegistry, LedgerView, Monotone, MonotoneEffect, PassScope,

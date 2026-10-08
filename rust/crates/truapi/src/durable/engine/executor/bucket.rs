@@ -1,7 +1,6 @@
 //! [`BucketRun`]: one task building the waiting rows of one bucket, round
 //! after round, until none is left.
 
-use core::time::Duration;
 use std::collections::HashMap;
 use std::collections::hash_map::Entry;
 use std::sync::{Arc, Weak};
@@ -10,22 +9,16 @@ use futures::future::AbortHandle;
 use subxt::utils::H256;
 use tracing::{error, warn};
 
+use super::attempt::{give_up_submission, start_built_attempt};
+use super::backoff::{backoff, cooldown};
 use super::{SubmissionBucket, SubmissionExecutor};
+use crate::chain::MortalExtrinsic;
 use crate::durable::dao;
 use crate::durable::engine::DurableTxEngine;
 use crate::durable::model::{DurableTxId, ScheduledDurableTx};
 use crate::durable::policy::{Preparation, SubmissionPolicy};
 use crate::durable::time::Timer;
 use crate::store::{Db, DbError};
-
-/// The wait after the first round that decided nothing.
-pub const INITIAL_BACKOFF: Duration = Duration::from_secs(2);
-/// The longest wait between rounds that decide nothing.
-pub const MAX_BACKOFF: Duration = Duration::from_secs(120);
-/// The wait before building a row again after its first attempt.
-pub const REBUILD_COOLDOWN: Duration = Duration::from_secs(5);
-/// The longest wait before building a row again.
-pub const MAX_REBUILD_COOLDOWN: Duration = Duration::from_secs(600);
 
 /// One bucket's task. Holds the engine weakly, so a policy that never
 /// answers cannot keep a dropped engine alive.
@@ -40,9 +33,43 @@ pub struct BucketRun {
 
 /// What builds a bucket's rows: its policy, and the chain its domain lives
 /// on.
-struct Builder {
+struct ResolvedPolicy {
     policy: Arc<dyn SubmissionPolicy>,
     genesis: H256,
+}
+
+/// What a round, or one row of it, changed in the ledger.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum RoundOutcome {
+    /// A row was decided, so the next round runs at once.
+    Progress,
+    /// Nothing was decided, so the next round backs off.
+    NoProgress,
+}
+
+/// Whether a bucket task ends after a round.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum BucketExit {
+    /// No row is left, or another task took the bucket over.
+    Leave,
+    /// Rows still wait: another round runs.
+    Stay,
+}
+
+impl RoundOutcome {
+    /// [`Self::Progress`] when the ledger `changed`.
+    fn of(changed: bool) -> Self {
+        if changed {
+            Self::Progress
+        } else {
+            Self::NoProgress
+        }
+    }
+
+    /// [`Self::Progress`] when either `self` or `other` is.
+    fn or(self, other: Self) -> Self {
+        if self == Self::Progress { self } else { other }
+    }
 }
 
 impl BucketRun {
@@ -64,137 +91,160 @@ impl BucketRun {
 
     /// Runs rounds until the bucket is drained, backing off after every round
     /// that decided nothing.
-    pub async fn run(self) {
+    pub async fn run_until_drained(self) {
         let mut fruitless_rounds = 0;
         while self.engine.strong_count() > 0 {
-            if self.round().await {
-                fruitless_rounds = 0;
-            } else {
-                fruitless_rounds += 1;
-                self.timer.sleep(backoff(fruitless_rounds)).await;
+            match self.decide_round().await {
+                RoundOutcome::Progress => fruitless_rounds = 0,
+                RoundOutcome::NoProgress => {
+                    fruitless_rounds += 1;
+                    self.timer.sleep(backoff(fruitless_rounds)).await;
+                }
             }
-            if self.finish().await {
+            if self.leave_if_drained().await == BucketExit::Leave {
                 return;
             }
         }
     }
 
     /// Asks the policy about every waiting row once and applies its answers.
-    /// Returns whether any row was decided.
-    async fn round(&self) -> bool {
-        let rows = match self.waiting().await {
-            Ok(rows) => rows,
-            Err(error) => {
-                warn!(%error, "durable submission bucket could not read its rows");
-                return false;
-            }
+    /// An empty bucket needs no backoff: its task leaves next.
+    async fn decide_round(&self) -> RoundOutcome {
+        let Some(rows) = self.readable_rows().await else {
+            return RoundOutcome::NoProgress;
         };
         if rows.is_empty() {
-            return true;
+            return RoundOutcome::Progress;
         }
         let Some(engine) = self.engine.upgrade() else {
-            return false;
+            return RoundOutcome::NoProgress;
+        };
+        let Some(resolved) = resolve_policy(&engine, &self.bucket) else {
+            return abandon_unbuildable(&engine, &self.bucket, &rows).await;
         };
         // The engine is held only while this round decides, never across a
         // policy call that may not return.
-        let builder = builder_of(&engine, &self.bucket);
-        match builder {
-            Some(builder) => {
-                drop(engine);
-                self.build(&builder, rows).await
+        drop(engine);
+        self.prepare_and_apply(&resolved, rows).await
+    }
+
+    /// The bucket's waiting rows, or `None` when the ledger cannot be read.
+    async fn readable_rows(&self) -> Option<Vec<ScheduledDurableTx>> {
+        match self.read_bucket_rows().await {
+            Ok(rows) => Some(rows),
+            Err(error) => {
+                warn!(bucket = %self.bucket, %error, "durable submission bucket could not read its rows");
+                None
             }
-            None => abandon_all(&engine, &self.bucket, &rows).await,
         }
     }
 
-    /// Builds `rows` with `builder` after their cooldown.
-    async fn build(&self, builder: &Builder, rows: Vec<ScheduledDurableTx>) -> bool {
+    /// Builds `rows` with `resolved` after their cooldown.
+    async fn prepare_and_apply(
+        &self,
+        resolved: &ResolvedPolicy,
+        rows: Vec<ScheduledDurableTx>,
+    ) -> RoundOutcome {
         self.cool_down(&rows).await;
-        match builder.policy.prepare(&rows).await {
-            Ok(answers) => self.apply_all(builder.genesis, rows, answers).await,
+        let prepared = resolved.policy.prepare(&rows).await;
+        match prepared {
+            Ok(answers) => self.apply_all(resolved.genesis, rows, answers).await,
             Err(error) => {
-                warn!(policy = self.bucket.policy.as_str(), %error, "durable submission not prepared");
-                false
+                warn!(bucket = %self.bucket, rows = rows.len(), %error, "durable submissions not prepared");
+                RoundOutcome::NoProgress
             }
         }
     }
 
     /// Applies the answer for each row of `rows`. Answers about other rows
-    /// are ignored. Returns whether any row was decided.
+    /// are ignored.
     async fn apply_all(
         &self,
         genesis: H256,
         rows: Vec<ScheduledDurableTx>,
         mut answers: HashMap<DurableTxId, Preparation>,
-    ) -> bool {
-        let mut decided = false;
+    ) -> RoundOutcome {
+        let mut outcome = RoundOutcome::NoProgress;
         for row in rows {
             if let Some(preparation) = answers.remove(&row.id) {
-                decided |= self.apply(genesis, row.id, preparation).await;
+                let applied = self.apply_preparation(genesis, row.id, preparation).await;
+                outcome = outcome.or(applied);
             }
         }
-        decided
+        outcome
     }
 
     /// Starts the attempt a ready row makes, or fails a row its policy gave
-    /// up on. Returns whether the ledger changed.
-    async fn apply(&self, genesis: H256, id: DurableTxId, preparation: Preparation) -> bool {
+    /// up on.
+    async fn apply_preparation(
+        &self,
+        genesis: H256,
+        id: DurableTxId,
+        preparation: Preparation,
+    ) -> RoundOutcome {
         let Some(engine) = self.engine.upgrade() else {
-            return false;
+            return RoundOutcome::NoProgress;
         };
-        match preparation {
+        let changed = match preparation {
             Preparation::Ready(extrinsic) => {
-                let started = engine.start_built_attempt(id, genesis, extrinsic).await;
-                if started {
-                    *self.executor.attempts_started.lock().entry(id).or_default() += 1;
-                }
-                started
+                self.start_attempt(&engine, genesis, id, extrinsic).await
             }
-            Preparation::GiveUp => engine.give_up_submission(id).await,
+            Preparation::GiveUp => give_up_submission(&engine, id).await,
+        };
+        RoundOutcome::of(changed)
+    }
+
+    /// Starts the attempt `extrinsic` makes and counts it towards the row's
+    /// rebuild cooldown. Returns whether it started.
+    async fn start_attempt(
+        &self,
+        engine: &Arc<DurableTxEngine>,
+        genesis: H256,
+        id: DurableTxId,
+        extrinsic: MortalExtrinsic,
+    ) -> bool {
+        if !start_built_attempt(engine, id, genesis, extrinsic).await {
+            return false;
         }
+        self.executor.count_started_attempt(id);
+        true
     }
 
     /// Waits out the cooldown of the most rebuilt row of `rows`.
     async fn cool_down(&self, rows: &[ScheduledDurableTx]) {
-        let wait = cooldown(self.most_attempts(rows));
+        let attempts = self.executor.most_attempts(rows);
+        let wait = cooldown(attempts);
         if !wait.is_zero() {
             self.timer.sleep(wait).await;
         }
     }
 
-    /// The most attempts any row of `rows` was built into.
-    fn most_attempts(&self, rows: &[ScheduledDurableTx]) -> u32 {
-        let started = self.executor.attempts_started.lock();
-        let attempts = rows.iter().filter_map(|row| started.get(&row.id)).max();
-        attempts.copied().unwrap_or(0)
-    }
-
-    /// Whether to stop: true once no row is left. A row scheduled while the
-    /// task leaves is caught by the second read, and the task stays unless a
-    /// new one already took over.
-    async fn finish(&self) -> bool {
-        if !self.drained().await {
-            return false;
+    /// Leaves once no row is left. A row scheduled while the task leaves is
+    /// caught by the second read, and the task stays unless a new one
+    /// already took over.
+    async fn leave_if_drained(&self) -> BucketExit {
+        if !self.bucket_is_drained().await {
+            return BucketExit::Stay;
         }
         self.executor.buckets.lock().remove(&self.bucket);
-        if self.drained().await {
-            return true;
+        if self.bucket_is_drained().await {
+            return BucketExit::Leave;
         }
         match self.executor.buckets.lock().entry(self.bucket.clone()) {
             Entry::Vacant(vacant) => {
                 vacant.insert(self.abort.clone());
-                false
+                BucketExit::Stay
             }
-            Entry::Occupied(_) => true,
+            Entry::Occupied(_) => BucketExit::Leave,
         }
     }
 
     /// Whether no row is waiting. An unreadable ledger counts as not drained.
-    async fn drained(&self) -> bool {
-        matches!(self.waiting().await, Ok(rows) if rows.is_empty())
+    async fn bucket_is_drained(&self) -> bool {
+        matches!(self.read_bucket_rows().await, Ok(rows) if rows.is_empty())
     }
 
-    async fn waiting(&self) -> Result<Vec<ScheduledDurableTx>, DbError> {
+    async fn read_bucket_rows(&self) -> Result<Vec<ScheduledDurableTx>, DbError> {
         let bucket = self.bucket.clone();
         self.db
             .read(move |conn| {
@@ -205,46 +255,25 @@ impl BucketRun {
 }
 
 /// The policy and chain that build `bucket`, when both are still registered.
-fn builder_of(engine: &DurableTxEngine, bucket: &SubmissionBucket) -> Option<Builder> {
+fn resolve_policy(engine: &DurableTxEngine, bucket: &SubmissionBucket) -> Option<ResolvedPolicy> {
     let genesis = engine.chain_of(&bucket.domain)?;
-    let policy = engine.registry.policy(&bucket.policy)?.clone();
-    Some(Builder { policy, genesis })
+    let policy = engine.registry.submission_policy(&bucket.policy)?.clone();
+    Some(ResolvedPolicy { policy, genesis })
 }
 
 /// Fails every row of a bucket whose policy or domain is no longer
 /// registered: nothing could ever build them.
-async fn abandon_all(
+async fn abandon_unbuildable(
     engine: &DurableTxEngine,
     bucket: &SubmissionBucket,
     rows: &[ScheduledDurableTx],
-) -> bool {
-    error!(
-        domain = bucket.domain.as_str(),
-        policy = bucket.policy.as_str(),
-        "durable submissions name a policy or domain that is not registered"
-    );
-    let mut decided = false;
+) -> RoundOutcome {
+    let ids: Vec<i64> = rows.iter().map(|row| row.id.0).collect();
+    error!(%bucket, ?ids, "durable submissions name a policy or domain that is not registered, failing them");
+    let mut outcome = RoundOutcome::NoProgress;
     for row in rows {
-        decided |= engine.give_up_submission(row.id).await;
+        let abandoned = give_up_submission(engine, row.id).await;
+        outcome = outcome.or(RoundOutcome::of(abandoned));
     }
-    decided
-}
-
-/// The wait after `rounds` rounds in a row that decided nothing.
-pub fn backoff(rounds: u32) -> Duration {
-    doubled(INITIAL_BACKOFF, rounds.saturating_sub(1)).min(MAX_BACKOFF)
-}
-
-/// The wait before building a row that was already built into `attempts`
-/// attempts.
-pub fn cooldown(attempts: u32) -> Duration {
-    match attempts {
-        0 => Duration::ZERO,
-        _ => doubled(REBUILD_COOLDOWN, attempts - 1).min(MAX_REBUILD_COOLDOWN),
-    }
-}
-
-/// `base` doubled `times` times, at most ten.
-fn doubled(base: Duration, times: u32) -> Duration {
-    base * (1 << times.min(10))
+    outcome
 }

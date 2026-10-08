@@ -5,7 +5,7 @@ use tracing::error;
 
 use super::DurableTxEngine;
 use crate::durable::dao;
-use crate::durable::model::{DurableTxEntry, DurableTxStatus, FailureKind, PolicyRef, Verdict};
+use crate::durable::model::{DurableTxEntry, DurableTxStatus, FailureKind, SubmissionPlan, Verdict};
 use crate::store::DbError;
 
 /// The verdict that hands a transaction back to its policy to be built again.
@@ -15,67 +15,72 @@ const BACK_TO_POLICY: Verdict = Verdict {
     failure: None,
 };
 
-impl DurableTxEngine {
-    /// Writes `verdict` only while `observed` is still the row's status and
-    /// attempt. Returns whether it wrote. A failure the row's policy accepts
-    /// to retry is written as [`DurableTxStatus::PendingSubmission`] instead.
-    /// When the policy cannot be read the write fails, because neither answer
-    /// is known to be right.
-    pub async fn write_verdict(
-        &self,
-        observed: &DurableTxEntry,
-        verdict: Verdict,
-    ) -> Result<bool, DbError> {
-        let verdict = self.retry_or_keep(observed, verdict).await?;
-        let observed = observed.clone();
-        self.db
-            .write(move |tx| dao::compare_and_set(tx, &observed, &verdict))
-            .await
+/// Writes `verdict` only while `observed` is still the row's status and
+/// attempt. Returns whether it wrote. A failure the row's policy accepts to
+/// retry is written as [`DurableTxStatus::PendingSubmission`] instead. When
+/// the policy cannot be read the write fails, because neither answer is
+/// known to be right. A final verdict ends the row's rebuild cooldown.
+pub async fn write_verdict(
+    engine: &DurableTxEngine,
+    observed: &DurableTxEntry,
+    verdict: Verdict,
+) -> Result<bool, DbError> {
+    let verdict = retry_or_keep(engine, observed, verdict).await?;
+    let (id, decided) = (observed.id, verdict.status.is_final());
+    let observed = observed.clone();
+    let written = engine
+        .db
+        .write(move |tx| dao::compare_and_set(tx, &observed, &verdict))
+        .await?;
+    if written && decided {
+        engine.executor.forget_attempts(id);
     }
+    Ok(written)
+}
 
-    /// [`BACK_TO_POLICY`] when `verdict` is a failure the row's policy
-    /// retries, otherwise `verdict` itself.
-    async fn retry_or_keep(
-        &self,
-        observed: &DurableTxEntry,
-        verdict: Verdict,
-    ) -> Result<Verdict, DbError> {
-        let Some(failure) = failure_kind(&verdict) else {
-            return Ok(verdict);
-        };
-        let id = observed.id;
-        let policy = self
-            .db
-            .read(move |conn| dao::submission_policy(conn, id))
-            .await?;
-        match policy {
-            Some(policy) if self.policy_retries(observed, &policy, failure).await => {
-                Ok(BACK_TO_POLICY)
-            }
-            _ => Ok(verdict),
-        }
+/// [`BACK_TO_POLICY`] when `verdict` is a failure the row's policy retries,
+/// otherwise `verdict` itself.
+async fn retry_or_keep(
+    engine: &DurableTxEngine,
+    observed: &DurableTxEntry,
+    verdict: Verdict,
+) -> Result<Verdict, DbError> {
+    let Some(failure) = failure_kind(&verdict) else {
+        return Ok(verdict);
+    };
+    let id = observed.id;
+    let plan = engine
+        .db
+        .read(move |conn| dao::submission_plan(conn, id))
+        .await?;
+    let Some(plan) = plan else {
+        return Ok(verdict);
+    };
+    if policy_retries(engine, observed, &plan, failure).await {
+        return Ok(BACK_TO_POLICY);
     }
+    Ok(verdict)
+}
 
-    /// Asks the policy `policy` names whether `observed` is built again. A
-    /// policy that is not registered retries nothing.
-    async fn policy_retries(
-        &self,
-        observed: &DurableTxEntry,
-        policy: &PolicyRef,
-        failure: FailureKind,
-    ) -> bool {
-        let Some(registered) = self.registry.policy(&policy.id) else {
-            error!(
-                id = observed.id.0,
-                policy = policy.id.as_str(),
-                "durable failure names a submission policy that is not registered"
-            );
-            return false;
-        };
-        registered
-            .can_retry(observed, &policy.params, failure)
-            .await
-    }
+/// Asks the policy `plan` names whether `observed` is built again. A policy
+/// that is not registered retries nothing.
+async fn policy_retries(
+    engine: &DurableTxEngine,
+    observed: &DurableTxEntry,
+    plan: &SubmissionPlan,
+    failure: FailureKind,
+) -> bool {
+    let Some(registered) = engine.registry.submission_policy(&plan.policy) else {
+        error!(
+            id = observed.id.0,
+            policy = plan.policy.as_str(),
+            "durable failure names a submission policy that is not registered"
+        );
+        return false;
+    };
+    registered
+        .can_retry(observed, &plan.params, failure)
+        .await
 }
 
 /// Why `verdict` fails its transaction, when it does and the reason is known.
@@ -93,17 +98,13 @@ mod tests {
     use futures::executor::block_on;
 
     use super::*;
-    use crate::durable::model::{
-        DomainId, DurableTxId, DurableTxStatus, FailureKind, PolicyId, PolicyRef,
-    };
-    use crate::durable::oracle::{DurableRegistry, Unobservable};
+    use crate::durable::model::{DomainId, DurableTxId, DurableTxStatus, FailureKind, PolicyParams};
     use crate::durable::testing::{
-        FakeChain, GENESIS, RetryQuestion, ScriptedPolicy, block, engine_with, extrinsic, insert,
-        insert_retryable,
+        FakeChain, REBUILD_POLICY, RetryAnswer, RetryQuestion, ScriptedPolicy, block,
+        engine_with_policies, extrinsic, insert, insert_retryable, rebuild_plan,
     };
 
     const TEST: DomainId = DomainId::from_static("test");
-    const POLICY: PolicyId = PolicyId::from_static("rebuild");
 
     struct Fixture {
         _dir: tempfile::TempDir,
@@ -111,17 +112,25 @@ mod tests {
         policy: Arc<ScriptedPolicy>,
     }
 
-    /// An engine whose `rebuild` policy answers `retries`, or that has no
-    /// policy at all when `registered` is false.
-    fn fixture(retries: bool, registered: bool) -> Fixture {
+    /// An engine whose `rebuild` policy answers `retry_answer`.
+    fn fixture(retry_answer: RetryAnswer) -> Fixture {
+        let policy = ScriptedPolicy::never_building(REBUILD_POLICY, retry_answer);
+        fixture_registering(policy.clone(), vec![policy])
+    }
+
+    /// An engine whose rows name a `rebuild` policy it does not have.
+    fn fixture_without_policy() -> Fixture {
+        let policy = ScriptedPolicy::never_building(REBUILD_POLICY, RetryAnswer::Retry);
+        fixture_registering(policy, vec![])
+    }
+
+    /// An engine registering `registered`, watched through `policy`.
+    fn fixture_registering(
+        policy: Arc<ScriptedPolicy>,
+        registered: Vec<Arc<ScriptedPolicy>>,
+    ) -> Fixture {
         let chain = FakeChain::new(130, 140);
-        let policy = ScriptedPolicy::retrying(POLICY, retries);
-        let mut registry =
-            DurableRegistry::new().with_domain(TEST, Arc::new(Unobservable(GENESIS)));
-        if registered {
-            registry = registry.with_policy(policy.clone());
-        }
-        let (dir, engine, _timer) = engine_with(&chain, registry);
+        let (dir, engine, _timer) = engine_with_policies(&chain, &[TEST], registered);
         Fixture {
             _dir: dir,
             engine,
@@ -130,10 +139,7 @@ mod tests {
     }
 
     fn retryable(fixture: &Fixture) -> DurableTxEntry {
-        let policy = PolicyRef {
-            id: POLICY,
-            params: vec![7],
-        };
+        let policy = rebuild_plan(vec![7]);
         let id = insert_retryable(&fixture.engine.db, &TEST, extrinsic(1, 100, 64), policy);
         entry(fixture, id)
     }
@@ -157,21 +163,18 @@ mod tests {
     }
 
     fn write(fixture: &Fixture, observed: &DurableTxEntry, verdict: Verdict) -> bool {
-        block_on(fixture.engine.write_verdict(observed, verdict)).unwrap()
+        block_on(write_verdict(&fixture.engine, observed, verdict)).unwrap()
     }
 
     /// The nonce went stale while the transaction waited; its policy can sign
     /// it again, so the failure goes back to be built instead of being final.
     #[test]
     fn a_failure_the_policy_retries_goes_back_to_be_built() {
-        let fixture = fixture(true, true);
+        let fixture = fixture(RetryAnswer::Retry);
         let observed = retryable(&fixture);
+        let dispatch_failed = failure(Some(FailureKind::DispatchFailed));
 
-        assert!(write(
-            &fixture,
-            &observed,
-            failure(Some(FailureKind::DispatchFailed))
-        ));
+        assert!(write(&fixture, &observed, dispatch_failed));
 
         assert_eq!(
             status(&fixture, observed.id),
@@ -181,7 +184,7 @@ mod tests {
             fixture.policy.retry_questions(),
             vec![RetryQuestion {
                 entry: observed,
-                params: vec![7],
+                params: PolicyParams(vec![7]),
                 failure: FailureKind::DispatchFailed,
             }]
         );
@@ -189,7 +192,7 @@ mod tests {
 
     #[test]
     fn a_failure_without_a_policy_stays_final() {
-        let fixture = fixture(true, true);
+        let fixture = fixture(RetryAnswer::Retry);
         let id = insert(&fixture.engine.db, &TEST, extrinsic(1, 100, 64));
         let observed = entry(&fixture, id);
 
@@ -201,7 +204,7 @@ mod tests {
 
     #[test]
     fn a_failure_the_policy_declines_stays_final() {
-        let fixture = fixture(false, true);
+        let fixture = fixture(RetryAnswer::Final);
         let observed = retryable(&fixture);
 
         write(&fixture, &observed, failure(Some(FailureKind::Rejected)));
@@ -216,7 +219,7 @@ mod tests {
     /// Nothing can build it again, so the failure is final.
     #[test]
     fn a_failure_whose_policy_is_no_longer_registered_stays_final() {
-        let fixture = fixture(true, false);
+        let fixture = fixture_without_policy();
         let observed = retryable(&fixture);
 
         write(&fixture, &observed, failure(Some(FailureKind::Expired)));
@@ -230,7 +233,7 @@ mod tests {
     /// A failure whose reason is unknown gives the policy nothing to judge.
     #[test]
     fn a_failure_without_a_kind_stays_final_without_asking_the_policy() {
-        let fixture = fixture(true, true);
+        let fixture = fixture(RetryAnswer::Retry);
         let observed = retryable(&fixture);
 
         write(&fixture, &observed, failure(None));
@@ -244,7 +247,7 @@ mod tests {
 
     #[test]
     fn a_success_is_written_without_asking_the_policy() {
-        let fixture = fixture(true, true);
+        let fixture = fixture(RetryAnswer::Retry);
         let observed = retryable(&fixture);
         let success = Verdict {
             status: DurableTxStatus::FinalizedSuccess,
@@ -265,7 +268,7 @@ mod tests {
     /// may be written: the write fails and the next pass asks again.
     #[test]
     fn a_policy_that_cannot_be_read_writes_nothing() {
-        let fixture = fixture(true, true);
+        let fixture = fixture(RetryAnswer::Retry);
         let observed = retryable(&fixture);
         let id = observed.id;
         block_on(fixture.engine.db.write(move |tx| {
@@ -277,11 +280,8 @@ mod tests {
         }))
         .unwrap();
 
-        let written = block_on(
-            fixture
-                .engine
-                .write_verdict(&observed, failure(Some(FailureKind::Expired))),
-        );
+        let expired = failure(Some(FailureKind::Expired));
+        let written = block_on(write_verdict(&fixture.engine, &observed, expired));
 
         assert!(written.is_err());
         assert_eq!(status(&fixture, id), Some(DurableTxStatus::Pending));

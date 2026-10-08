@@ -8,6 +8,7 @@ use subxt::utils::H256;
 use tracing::warn;
 
 use super::DurableTxEngine;
+use super::verdict::write_verdict;
 use crate::chain_runtime::RuntimeFailure;
 use crate::durable::dao;
 use crate::durable::ladder::{PinnedView, RuleOutcome, evaluate_ladder};
@@ -153,7 +154,7 @@ impl DurableTxEngine {
         if verdict.status == tx.status && verdict.success_detected_at == tx.success_detected_at {
             return false;
         }
-        self.write_verdict(tx, verdict)
+        write_verdict(self, tx, verdict)
             .await
             .unwrap_or_else(|error| {
                 warn!(id = tx.id.0, %error, "durable verdict write failed");

@@ -146,12 +146,12 @@ mod tests {
 
     use super::*;
     use crate::chain::MortalExtrinsic;
-    use crate::durable::testing::{FakeChain, extrinsic, test_engine, without_policy};
+    use crate::durable::testing::{FakeChain, extrinsic, test_engine, without_plan};
 
     const DOMAIN: DomainId = DomainId::from_static("test");
 
     fn request(extrinsics: Vec<MortalExtrinsic>) -> DurableRequest {
-        DurableRequest::presigned(DOMAIN, Some(GroupId::new("op")), without_policy(extrinsics))
+        DurableRequest::presigned(DOMAIN, Some(GroupId::new("op")), without_plan(extrinsics))
             .unwrap()
     }
 

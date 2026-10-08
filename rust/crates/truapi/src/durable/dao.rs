@@ -8,7 +8,8 @@ use subxt::utils::H256;
 
 use super::model::{
     DomainId, DurableTxEntry, DurableTxId, DurableTxState, DurableTxStatus, GroupId, PolicyId,
-    PolicyRef, ScheduledDurableTx, Verdict,
+    PolicyParams,
+    SubmissionPlan, ScheduledDurableTx, Verdict,
 };
 use crate::chain::{HashAndNumber, MortalExtrinsic, Mortality};
 use crate::store::{Db, DbError};
@@ -20,14 +21,14 @@ const INSERT: &str = "INSERT INTO durable_tx
      :policy_id, :policy_params)
     RETURNING id";
 
-/// Records a presigned extrinsic as a `Pending` row, rebuilt by `policy` after
-/// a failure it accepts to retry.
+/// Records a presigned extrinsic as a `Pending` row, rebuilt through `plan`
+/// after a failure its policy accepts to retry.
 pub fn insert(
     tx: &Transaction<'_>,
     domain: &DomainId,
     group: Option<&GroupId>,
     extrinsic: &MortalExtrinsic,
-    policy: Option<&PolicyRef>,
+    plan: Option<&SubmissionPlan>,
 ) -> Result<DurableTxId, DbError> {
     let birth = extrinsic.mortality.birth();
     let id = tx.prepare_cached(INSERT)?.query_row(
@@ -38,8 +39,8 @@ pub fn insert(
             ":birth_number": birth.number,
             ":birth_hash": birth.hash.0,
             ":period": extrinsic.mortality.period(),
-            ":policy_id": policy.map(|policy| policy.id.as_str()),
-            ":policy_params": policy.map(|policy| policy.params.as_slice()),
+            ":policy_id": plan.map(|plan| plan.policy.as_str()),
+            ":policy_params": plan.map(|plan| &plan.params),
         },
         |row| row.get("id").map(DurableTxId),
     )?;
@@ -51,20 +52,20 @@ const SCHEDULE: &str = "INSERT INTO durable_tx
     VALUES (:domain, :group_id, 'PENDING_SUBMISSION', :policy_id, :policy_params)
     RETURNING id";
 
-/// Records a transaction `policy` builds later, as a `PendingSubmission` row
-/// with no attempt.
+/// Records a transaction built later through `plan`, as a
+/// `PendingSubmission` row with no attempt.
 pub fn schedule(
     tx: &Transaction<'_>,
     domain: &DomainId,
     group: Option<&GroupId>,
-    policy: &PolicyRef,
+    plan: &SubmissionPlan,
 ) -> Result<DurableTxId, DbError> {
     let id = tx.prepare_cached(SCHEDULE)?.query_row(
         named_params! {
             ":domain": domain.as_str(),
             ":group_id": group.map(GroupId::as_str),
-            ":policy_id": policy.id.as_str(),
-            ":policy_params": policy.params,
+            ":policy_id": plan.policy.as_str(),
+            ":policy_params": plan.params,
         },
         |row| row.get("id").map(DurableTxId),
     )?;
@@ -105,14 +106,14 @@ pub fn abandon_submission(tx: &Transaction<'_>, id: DurableTxId) -> Result<bool,
     Ok(changed == 1)
 }
 
-const SUBMISSION_POLICY: &str = "SELECT policy_id, policy_params FROM durable_tx
+const SUBMISSION_PLAN: &str = "SELECT policy_id, policy_params FROM durable_tx
     WHERE id = :id AND policy_id IS NOT NULL";
 
-/// The policy that rebuilds the row with `id`, when it has one.
-pub fn submission_policy(conn: &Connection, id: DurableTxId) -> Result<Option<PolicyRef>, DbError> {
-    let mut stmt = conn.prepare_cached(SUBMISSION_POLICY)?;
+/// The plan that rebuilds the row with `id`, when it has one.
+pub fn submission_plan(conn: &Connection, id: DurableTxId) -> Result<Option<SubmissionPlan>, DbError> {
+    let mut stmt = conn.prepare_cached(SUBMISSION_PLAN)?;
     let mut rows = stmt.query(named_params! { ":id": id.0 })?;
-    Ok(rows.next()?.map(PolicyRef::from_row).transpose()?)
+    Ok(rows.next()?.map(SubmissionPlan::from_row).transpose()?)
 }
 
 // `tx_hash` is selected only so a row handed back with a new previous attempt
@@ -136,9 +137,9 @@ const HAS_PENDING_SUBMISSIONS: &str = "SELECT EXISTS (SELECT 1 FROM durable_tx
 
 /// Whether any row is waiting to be built.
 pub fn has_pending_submissions(conn: &Connection) -> Result<bool, DbError> {
-    Ok(conn
-        .prepare_cached(HAS_PENDING_SUBMISSIONS)?
-        .query_row([], |row| row.get("waiting"))?)
+    let mut stmt = conn.prepare_cached(HAS_PENDING_SUBMISSIONS)?;
+    let waiting = stmt.query_row([], |row| row.get("waiting"))?;
+    Ok(waiting)
 }
 
 const BUCKET_SUBMISSIONS: &str = "SELECT id, domain, group_id, policy_id, policy_params
@@ -153,17 +154,14 @@ pub fn bucket_submissions(
     policy: &PolicyId,
     group: Option<&GroupId>,
 ) -> Result<Vec<ScheduledDurableTx>, DbError> {
-    Ok(conn
-        .prepare_cached(BUCKET_SUBMISSIONS)?
-        .query_map(
-            named_params! {
-                ":domain": domain.as_str(),
-                ":policy_id": policy.as_str(),
-                ":group_id": group.map(GroupId::as_str),
-            },
-            ScheduledDurableTx::from_row,
-        )?
-        .collect::<rusqlite::Result<_>>()?)
+    let mut stmt = conn.prepare_cached(BUCKET_SUBMISSIONS)?;
+    let params = named_params! {
+        ":domain": domain.as_str(),
+        ":policy_id": policy.as_str(),
+        ":group_id": group.map(GroupId::as_str),
+    };
+    let rows = stmt.query_map(params, ScheduledDurableTx::from_row)?;
+    Ok(rows.collect::<rusqlite::Result<_>>()?)
 }
 
 const COMPARE_AND_SET: &str = "UPDATE durable_tx
@@ -190,8 +188,15 @@ pub fn compare_and_set(
     Ok(changed == 1)
 }
 
-const ENTRY: &str = "SELECT * FROM durable_tx
-    WHERE id = :id AND status != 'PENDING_SUBMISSION' AND tx_hash IS NOT NULL";
+/// Rows holding a submitted attempt: neither waiting to be built nor given
+/// up before they ever were.
+macro_rules! submitted {
+    () => {
+        "status != 'PENDING_SUBMISSION' AND tx_hash IS NOT NULL"
+    };
+}
+
+const ENTRY: &str = concat!("SELECT * FROM durable_tx WHERE id = :id AND ", submitted!());
 
 /// The row with `id`, while it holds a submitted attempt.
 pub fn entry(conn: &Connection, id: DurableTxId) -> Result<Option<DurableTxEntry>, DbError> {
@@ -251,9 +256,11 @@ pub fn observe_group(
     })
 }
 
-const DOMAIN_ENTRIES: &str = "SELECT * FROM durable_tx
-    WHERE domain = :domain AND status != 'PENDING_SUBMISSION' AND tx_hash IS NOT NULL
-    ORDER BY id";
+const DOMAIN_ENTRIES: &str = concat!(
+    "SELECT * FROM durable_tx WHERE domain = :domain AND ",
+    submitted!(),
+    " ORDER BY id"
+);
 
 /// Every row of one domain with a submitted attempt, in registration order.
 pub fn domain_entries(
@@ -293,14 +300,24 @@ impl DurableTxEntry {
     fn from_row(row: &Row<'_>) -> rusqlite::Result<Self> {
         Ok(Self {
             id: DurableTxId(row.get("id")?),
-            domain: DomainId::new(row.get::<_, String>("domain")?),
-            group: row.get::<_, Option<String>>("group_id")?.map(GroupId::new),
+            domain: domain_from_row(row)?,
+            group: group_from_row(row)?,
             tx_hash: H256(row.get("tx_hash")?),
             mortality: mortality_from_row(row)?,
             status: row.get("status")?,
             success_detected_at: success_from_row(row)?,
         })
     }
+}
+
+fn domain_from_row(row: &Row<'_>) -> rusqlite::Result<DomainId> {
+    let name: String = row.get("domain")?;
+    Ok(DomainId::new(name))
+}
+
+fn group_from_row(row: &Row<'_>) -> rusqlite::Result<Option<GroupId>> {
+    let name: Option<String> = row.get("group_id")?;
+    Ok(name.map(GroupId::new))
 }
 
 /// The era of the row's attempt, checked as [`Mortality::new`] checks it.
@@ -328,18 +345,18 @@ impl ScheduledDurableTx {
     fn from_row(row: &Row<'_>) -> rusqlite::Result<Self> {
         Ok(Self {
             id: DurableTxId(row.get("id")?),
-            domain: DomainId::new(row.get::<_, String>("domain")?),
-            group: row.get::<_, Option<String>>("group_id")?.map(GroupId::new),
-            policy: PolicyRef::from_row(row)?,
+            domain: domain_from_row(row)?,
+            group: group_from_row(row)?,
+            plan: SubmissionPlan::from_row(row)?,
         })
     }
 }
 
-impl PolicyRef {
+impl SubmissionPlan {
     fn from_row(row: &Row<'_>) -> rusqlite::Result<Self> {
         Ok(Self {
-            id: PolicyId::new(row.get::<_, String>("policy_id")?),
-            params: row.get("policy_params")?,
+            policy: PolicyId::new(row.get::<_, String>("policy_id")?),
+            params: PolicyParams(row.get("policy_params")?),
         })
     }
 }
@@ -350,6 +367,12 @@ impl DurableTxState {
             id: DurableTxId(row.get("id")?),
             status: row.get("status")?,
         })
+    }
+}
+
+impl ToSql for PolicyParams {
+    fn to_sql(&self) -> rusqlite::Result<ToSqlOutput<'_>> {
+        self.0.to_sql()
     }
 }
 
@@ -385,503 +408,4 @@ impl FromSql for DurableTxStatus {
 }
 
 #[cfg(test)]
-mod tests {
-    use futures::executor::block_on;
-    use futures::{FutureExt, StreamExt};
-
-    use super::*;
-    use crate::durable::model::FailureKind;
-    use crate::durable::testing::{block, extrinsic, open_db};
-
-    const DOMAIN: DomainId = DomainId::from_static("test");
-
-    fn register(db: &Db, group: Option<GroupId>, tag: u8) -> DurableTxId {
-        block_on(
-            db.write(move |tx| insert(tx, &DOMAIN, group.as_ref(), &extrinsic(tag, 100, 64), None)),
-        )
-        .unwrap()
-    }
-
-    fn read<T: Send + 'static>(
-        db: &Db,
-        f: impl FnOnce(&Connection) -> Result<T, DbError> + Send + 'static,
-    ) -> T {
-        block_on(db.read(f)).unwrap()
-    }
-
-    fn write_verdict(db: &Db, observed: DurableTxEntry, verdict: Verdict) -> bool {
-        block_on(db.write(move |tx| compare_and_set(tx, &observed, &verdict))).unwrap()
-    }
-
-    fn verdict(status: DurableTxStatus, success_detected_at: Option<HashAndNumber>) -> Verdict {
-        Verdict {
-            status,
-            success_detected_at,
-            failure: None,
-        }
-    }
-
-    #[test]
-    fn an_inserted_row_reads_back_pending_with_its_attempt() {
-        let (_dir, db) = open_db();
-        let id = register(&db, Some(GroupId::new("payment")), 7);
-
-        assert_eq!(
-            read(&db, move |conn| entry(conn, id)),
-            Some(DurableTxEntry {
-                id,
-                domain: DOMAIN,
-                group: Some(GroupId::new("payment")),
-                tx_hash: extrinsic(7, 100, 64).extrinsic.hash(),
-                mortality: extrinsic(7, 100, 64).mortality,
-                status: DurableTxStatus::Pending,
-                success_detected_at: None,
-            })
-        );
-    }
-
-    #[test]
-    fn ids_follow_registration_order() {
-        let (_dir, db) = open_db();
-        let ids = [register(&db, None, 1), register(&db, None, 2)];
-
-        assert!(ids[0] < ids[1]);
-    }
-
-    #[test]
-    fn a_missing_row_reads_as_none() {
-        let (_dir, db) = open_db();
-
-        assert_eq!(
-            read(&db, |conn| Ok((
-                entry(conn, DurableTxId(9))?,
-                status(conn, DurableTxId(9))?
-            ))),
-            (None, None)
-        );
-    }
-
-    #[test]
-    fn a_verdict_is_written_against_the_status_and_attempt_it_was_derived_from() {
-        let (_dir, db) = open_db();
-        let id = register(&db, None, 1);
-        let observed = read(&db, move |conn| entry(conn, id)).unwrap();
-        let at = block(120);
-
-        let wrote = write_verdict(
-            &db,
-            observed.clone(),
-            verdict(DurableTxStatus::PendingSuccess, Some(at)),
-        );
-
-        assert!(wrote);
-        assert_eq!(
-            read(&db, move |conn| entry(conn, id)).unwrap(),
-            DurableTxEntry {
-                status: DurableTxStatus::PendingSuccess,
-                success_detected_at: Some(at),
-                ..observed
-            }
-        );
-    }
-
-    /// A pass and a watch both read a row as Pending; the watch records the
-    /// inclusion first. The pass's verdict, derived from the stale status, must
-    /// not overwrite it.
-    #[test]
-    fn a_verdict_is_refused_once_the_status_moved() {
-        let (_dir, db) = open_db();
-        let id = register(&db, None, 1);
-        let observed = read(&db, move |conn| entry(conn, id)).unwrap();
-        write_verdict(
-            &db,
-            observed.clone(),
-            verdict(DurableTxStatus::PendingSuccess, Some(block(120))),
-        );
-
-        let wrote = write_verdict(&db, observed, verdict(DurableTxStatus::Failure, None));
-
-        assert!(!wrote);
-        assert_eq!(
-            read(&db, move |conn| status(conn, id)),
-            Some(DurableTxStatus::PendingSuccess)
-        );
-    }
-
-    /// A verdict derived from one attempt must not land on a row whose attempt
-    /// has since changed, as it will once a policy rebuilds a transaction under
-    /// the same id.
-    #[test]
-    fn a_verdict_is_refused_for_another_attempt() {
-        let (_dir, db) = open_db();
-        let id = register(&db, None, 1);
-        let mut observed = read(&db, move |conn| entry(conn, id)).unwrap();
-        observed.tx_hash = H256::repeat_byte(0xee);
-
-        assert!(!write_verdict(
-            &db,
-            observed,
-            verdict(DurableTxStatus::FinalizedSuccess, None)
-        ));
-    }
-
-    #[test]
-    fn a_terminal_row_is_never_rewritten() {
-        let (_dir, db) = open_db();
-        let id = register(&db, None, 1);
-        let observed = read(&db, move |conn| entry(conn, id)).unwrap();
-        write_verdict(
-            &db,
-            observed.clone(),
-            Verdict {
-                status: DurableTxStatus::Failure,
-                success_detected_at: None,
-                failure: Some(FailureKind::Expired),
-            },
-        );
-        let terminal = DurableTxEntry {
-            status: DurableTxStatus::Failure,
-            ..observed
-        };
-
-        assert!(!write_verdict(
-            &db,
-            terminal,
-            verdict(DurableTxStatus::FinalizedSuccess, None)
-        ));
-    }
-
-    /// Two domains may pick the same group name, such as an operation id; a
-    /// group is only ever read within its domain.
-    #[test]
-    fn a_group_lists_its_own_domain_in_registration_order() {
-        let (_dir, db) = open_db();
-        let group_id = GroupId::new("payment");
-        let first = register(&db, Some(group_id.clone()), 1);
-        let second = register(&db, Some(group_id.clone()), 2);
-        register(&db, None, 3);
-        let other = group_id.clone();
-        block_on(db.write(move |tx| {
-            insert(
-                tx,
-                &DomainId::from_static("other"),
-                Some(&other),
-                &extrinsic(4, 100, 64),
-                None,
-            )
-        }))
-        .unwrap();
-
-        assert_eq!(
-            read(&db, move |conn| group(conn, &DOMAIN, &group_id)),
-            vec![
-                DurableTxState {
-                    id: first,
-                    status: DurableTxStatus::Pending
-                },
-                DurableTxState {
-                    id: second,
-                    status: DurableTxStatus::Pending
-                },
-            ]
-        );
-    }
-
-    #[test]
-    fn domain_entries_list_every_row_of_the_domain() {
-        let (_dir, db) = open_db();
-        let ids = [register(&db, None, 1), register(&db, None, 2)];
-
-        let listed = read(&db, |conn| domain_entries(conn, &DOMAIN));
-
-        assert_eq!(listed.iter().map(|entry| entry.id).collect::<Vec<_>>(), ids);
-    }
-
-    #[test]
-    fn only_domains_with_a_transaction_awaiting_a_verdict_are_live() {
-        let (_dir, db) = open_db();
-        assert_eq!(read(&db, live_domains), Vec::<DomainId>::new());
-        let id = register(&db, None, 1);
-        assert_eq!(read(&db, live_domains), vec![DOMAIN]);
-
-        let observed = read(&db, move |conn| entry(conn, id)).unwrap();
-        write_verdict(
-            &db,
-            observed,
-            verdict(DurableTxStatus::FinalizedSuccess, None),
-        );
-
-        assert_eq!(read(&db, live_domains), Vec::<DomainId>::new());
-    }
-
-    #[test]
-    fn observed_queries_follow_commits() {
-        let (_dir, db) = open_db();
-        let group_id = GroupId::new("payment");
-        let mut live = observe_has_live(&db);
-        let mut grouped = observe_group(&db, DOMAIN, group_id.clone());
-        assert!(!next(&mut live));
-        assert_eq!(next(&mut grouped), vec![]);
-
-        let id = register(&db, Some(group_id), 1);
-        let mut status = observe_status(&db, id);
-
-        assert!(next(&mut live));
-        assert_eq!(
-            next(&mut grouped),
-            vec![DurableTxState {
-                id,
-                status: DurableTxStatus::Pending
-            }]
-        );
-        assert_eq!(next(&mut status), Some(DurableTxStatus::Pending));
-    }
-
-    fn next<T>(stream: &mut BoxStream<'static, Result<T, DbError>>) -> T {
-        block_on(stream.next()).unwrap().unwrap()
-    }
-
-    const POLICY: PolicyId = PolicyId::from_static("rebuild");
-
-    fn policy_ref(params: u8) -> PolicyRef {
-        PolicyRef {
-            id: POLICY,
-            params: vec![params],
-        }
-    }
-
-    fn schedule_in(db: &Db, domain: DomainId, group: Option<GroupId>) -> DurableTxId {
-        block_on(db.write(move |tx| schedule(tx, &domain, group.as_ref(), &policy_ref(1)))).unwrap()
-    }
-
-    fn pending(db: &Db) -> Vec<ScheduledDurableTx> {
-        block_on(observe_pending_submissions(db).next())
-            .unwrap()
-            .unwrap()
-    }
-
-    fn start(db: &Db, id: DurableTxId, tag: u8) -> bool {
-        block_on(db.write(move |tx| start_attempt(tx, id, &extrinsic(tag, 110, 32)))).unwrap()
-    }
-
-    fn abandon(db: &Db, id: DurableTxId) -> bool {
-        block_on(db.write(move |tx| abandon_submission(tx, id))).unwrap()
-    }
-
-    #[test]
-    fn a_scheduled_row_waits_for_its_policy_with_no_attempt() {
-        let (_dir, db) = open_db();
-        let id = schedule_in(&db, DOMAIN, Some(GroupId::new("payment")));
-
-        assert_eq!(
-            pending(&db),
-            vec![ScheduledDurableTx {
-                id,
-                domain: DOMAIN,
-                group: Some(GroupId::new("payment")),
-                policy: policy_ref(1),
-            }]
-        );
-        assert_eq!(
-            read(&db, move |conn| status(conn, id)),
-            Some(DurableTxStatus::PendingSubmission)
-        );
-        assert_eq!(read(&db, move |conn| entry(conn, id)), None);
-    }
-
-    /// Something is still to be done, so the host must keep recovery running,
-    /// but no pass can decide a transaction that was never submitted.
-    #[test]
-    fn a_transaction_waiting_to_be_built_is_live_but_not_decidable() {
-        let (_dir, db) = open_db();
-        schedule_in(&db, DOMAIN, None);
-
-        assert!(next(&mut observe_has_live(&db)));
-        assert!(read(&db, has_pending_submissions));
-        assert_eq!(read(&db, live_domains), Vec::<DomainId>::new());
-        assert_eq!(read(&db, |conn| domain_entries(conn, &DOMAIN)), vec![]);
-    }
-
-    #[test]
-    fn starting_an_attempt_gives_a_waiting_row_its_extrinsic() {
-        let (_dir, db) = open_db();
-        let id = schedule_in(&db, DOMAIN, None);
-
-        assert!(start(&db, id, 9));
-        assert_eq!(
-            read(&db, move |conn| entry(conn, id)),
-            Some(DurableTxEntry {
-                id,
-                domain: DOMAIN,
-                group: None,
-                tx_hash: extrinsic(9, 110, 32).extrinsic.hash(),
-                mortality: extrinsic(9, 110, 32).mortality,
-                status: DurableTxStatus::Pending,
-                success_detected_at: None,
-            })
-        );
-        assert_eq!(pending(&db), vec![]);
-    }
-
-    /// Two builds of one row must not both become attempts: only the first
-    /// finds it still waiting.
-    #[test]
-    fn an_attempt_starts_only_on_a_row_still_waiting() {
-        let (_dir, db) = open_db();
-        let waiting = schedule_in(&db, DOMAIN, None);
-        let submitted = register(&db, None, 1);
-        start(&db, waiting, 9);
-
-        assert!(!start(&db, waiting, 10));
-        assert!(!start(&db, submitted, 10));
-        assert_eq!(
-            read(&db, move |conn| entry(conn, waiting)).unwrap().tx_hash,
-            extrinsic(9, 110, 32).extrinsic.hash()
-        );
-    }
-
-    #[test]
-    fn only_a_row_still_waiting_can_be_abandoned() {
-        let (_dir, db) = open_db();
-        let waiting = schedule_in(&db, DOMAIN, None);
-        let submitted = register(&db, None, 1);
-
-        assert!(abandon(&db, waiting));
-        assert!(!abandon(&db, waiting));
-        assert!(!abandon(&db, submitted));
-        assert_eq!(
-            read(&db, move |conn| status(conn, waiting)),
-            Some(DurableTxStatus::Failure)
-        );
-        assert_eq!(
-            read(&db, move |conn| status(conn, submitted)),
-            Some(DurableTxStatus::Pending)
-        );
-    }
-
-    /// A proven failure the policy accepts to retry sends the row back to be
-    /// built, through the same compare-and-set as any verdict.
-    #[test]
-    fn a_verdict_can_send_a_submitted_row_back_to_its_policy() {
-        let (_dir, db) = open_db();
-        let id = block_on(db.write(|tx| {
-            insert(
-                tx,
-                &DOMAIN,
-                None,
-                &extrinsic(1, 100, 64),
-                Some(&policy_ref(3)),
-            )
-        }))
-        .unwrap();
-        let observed = read(&db, move |conn| entry(conn, id)).unwrap();
-
-        assert!(write_verdict(
-            &db,
-            observed,
-            verdict(DurableTxStatus::PendingSubmission, None)
-        ));
-        assert_eq!(
-            pending(&db),
-            vec![ScheduledDurableTx {
-                id,
-                domain: DOMAIN,
-                group: None,
-                policy: policy_ref(3),
-            }]
-        );
-    }
-
-    #[test]
-    fn a_row_names_the_policy_it_was_registered_with() {
-        let (_dir, db) = open_db();
-        let with_policy = block_on(db.write(|tx| {
-            insert(
-                tx,
-                &DOMAIN,
-                None,
-                &extrinsic(1, 100, 64),
-                Some(&policy_ref(3)),
-            )
-        }))
-        .unwrap();
-        let without = register(&db, None, 2);
-
-        assert_eq!(
-            read(&db, move |conn| submission_policy(conn, with_policy)),
-            Some(policy_ref(3))
-        );
-        assert_eq!(
-            read(&db, move |conn| submission_policy(conn, without)),
-            None
-        );
-    }
-
-    /// A bucket builds one domain's rows of one policy and group. A row with
-    /// no group is a bucket of its own, not a match for every group.
-    #[test]
-    fn a_bucket_lists_only_its_domain_policy_and_group() {
-        let (_dir, db) = open_db();
-        let grouped = schedule_in(&db, DOMAIN, Some(GroupId::new("g1")));
-        let ungrouped = schedule_in(&db, DOMAIN, None);
-        schedule_in(
-            &db,
-            DomainId::from_static("other"),
-            Some(GroupId::new("g1")),
-        );
-        schedule_in(&db, DOMAIN, Some(GroupId::new("g2")));
-        let bucket = |group: Option<GroupId>| {
-            read(&db, move |conn| {
-                bucket_submissions(conn, &DOMAIN, &POLICY, group.as_ref())
-            })
-            .iter()
-            .map(|scheduled| scheduled.id)
-            .collect::<Vec<_>>()
-        };
-
-        assert_eq!(bucket(Some(GroupId::new("g1"))), vec![grouped]);
-        assert_eq!(bucket(None), vec![ungrouped]);
-    }
-
-    /// A transaction given up before it was ever built has no attempt. It
-    /// must not make the rest of its domain unreadable to recovery.
-    #[test]
-    fn a_transaction_given_up_before_it_was_built_leaves_its_domain_readable() {
-        let (_dir, db) = open_db();
-        let never_built = schedule_in(&db, DOMAIN, None);
-        abandon(&db, never_built);
-        let live = register(&db, None, 1);
-
-        let listed = read(&db, |conn| domain_entries(conn, &DOMAIN));
-
-        assert_eq!(
-            listed.iter().map(|entry| entry.id).collect::<Vec<_>>(),
-            vec![live]
-        );
-        assert_eq!(read(&db, move |conn| entry(conn, never_built)), None);
-    }
-
-    /// A row built and handed back between two reads of the observer looks
-    /// the same by id. It must still be reported, or nothing builds it again.
-    #[test]
-    fn a_row_handed_back_between_two_reads_is_reported_again() {
-        let (_dir, db) = open_db();
-        let mut waiting = observe_pending_submissions(&db);
-        assert_eq!(next(&mut waiting), vec![]);
-        let id = schedule_in(&db, DOMAIN, None);
-        assert_eq!(next(&mut waiting).len(), 1);
-
-        start(&db, id, 9);
-        let attempt = read(&db, move |conn| entry(conn, id)).unwrap();
-        write_verdict(
-            &db,
-            attempt,
-            verdict(DurableTxStatus::PendingSubmission, None),
-        );
-
-        crate::test_support::wait_until(
-            || matches!(waiting.next().now_or_never(), Some(Some(Ok(rows))) if rows.len() == 1),
-            "the handed-back row is reported",
-        );
-    }
-}
+mod tests;

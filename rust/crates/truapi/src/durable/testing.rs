@@ -2,7 +2,10 @@
 
 mod policy;
 
-pub use policy::{PrepareAnswer, PrepareScript, RetryQuestion, ScriptedPolicy};
+pub use policy::{
+    PrepareAnswer, PrepareScript, REBUILD_POLICY, RetryAnswer, RetryQuestion, ScriptedPolicy,
+    engine_with_policies, insert_retryable, leave_waiting, rebuild_plan, without_plan,
+};
 
 use core::time::Duration;
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -17,9 +20,9 @@ use subxt::tx::{TransactionValid, ValidationResult};
 use subxt::utils::H256;
 use tempfile::TempDir;
 
-use super::engine::{DurableDeps, DurableSubmission, DurableTxEngine};
+use super::engine::{DurableDeps, DurableTxEngine};
 use super::ladder::{PinnedView, SearchResult};
-use super::model::{DomainId, DurableTxEntry, DurableTxId, DurableTxStatus, HeadKind, PolicyRef};
+use super::model::{DomainId, DurableTxEntry, DurableTxId, DurableTxStatus, HeadKind, SubmissionPlan};
 use super::oracle::{DurableRegistry, PassScope, Unobservable};
 use super::time::Timer;
 use crate::chain::{
@@ -61,17 +64,6 @@ pub fn extrinsic(tag: u8, birth: u64, period: u64) -> MortalExtrinsic {
         extrinsic: EncodedExtrinsic::new(vec![4, tag]),
         mortality: Mortality::new(block(birth), period).unwrap(),
     }
-}
-
-/// `extrinsics` as presigned submissions no policy rebuilds.
-pub fn without_policy(extrinsics: Vec<MortalExtrinsic>) -> Vec<DurableSubmission> {
-    extrinsics
-        .into_iter()
-        .map(|extrinsic| DurableSubmission {
-            extrinsic,
-            policy: None,
-        })
-        .collect()
 }
 
 /// A pending entry of the `test` domain, born at `birth` with `period`.
@@ -475,26 +467,20 @@ pub fn engine_with_spawner(
 /// Records `extrinsic` as a pending row of `domain` without watching it, as a
 /// previous process would have left it.
 pub fn insert(db: &Db, domain: &DomainId, extrinsic: MortalExtrinsic) -> DurableTxId {
-    let domain = domain.clone();
-    futures::executor::block_on(
-        db.write(move |tx| super::dao::insert(tx, &domain, None, &extrinsic, None)),
-    )
-    .unwrap()
+    insert_with_plan(db, domain, extrinsic, None)
 }
 
-/// Records `extrinsic` as a pending row of `domain` that `policy` rebuilds,
-/// without watching it.
-pub fn insert_retryable(
+/// [`insert`], for a row rebuilt through `plan` after a failure its policy
+/// retries.
+pub fn insert_with_plan(
     db: &Db,
     domain: &DomainId,
     extrinsic: MortalExtrinsic,
-    policy: PolicyRef,
+    plan: Option<SubmissionPlan>,
 ) -> DurableTxId {
     let domain = domain.clone();
-    futures::executor::block_on(
-        db.write(move |tx| super::dao::insert(tx, &domain, None, &extrinsic, Some(&policy))),
-    )
-    .unwrap()
+    let write = db.write(move |tx| super::dao::insert(tx, &domain, None, &extrinsic, plan.as_ref()));
+    futures::executor::block_on(write).unwrap()
 }
 
 /// A spawner running each task on its own thread, counting the tasks that

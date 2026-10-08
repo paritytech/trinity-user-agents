@@ -14,6 +14,7 @@ use subxt::utils::H256;
 use tracing::{debug, warn};
 
 use super::DurableTxEngine;
+use super::verdict::write_verdict;
 use crate::chain::{DispatchOutcome, EncodedExtrinsic, HashAndNumber, MortalExtrinsic, WatchEvent};
 use crate::durable::dao;
 use crate::durable::model::{DurableTxId, DurableTxStatus, FailureKind, Verdict};
@@ -222,7 +223,7 @@ impl DurableTxEngine {
         if !observed.status.awaits_verdict() || observed.tx_hash != attempt.tx_hash {
             return;
         }
-        if let Err(error) = self.write_verdict(&observed, verdict).await {
+        if let Err(error) = write_verdict(self, &observed, verdict).await {
             warn!(id = id.0, %error, "durable proposal could not be written");
         }
     }
@@ -268,7 +269,7 @@ mod tests {
     use crate::durable::oracle::{DurableRegistry, Unobservable};
     use crate::durable::testing::{
         FakeChain, GENESIS, ManualTimer, block, block_hash, counting_spawner, engine_with_spawner,
-        extrinsic, without_policy,
+        extrinsic, without_plan,
     };
     use crate::test_support::wait_until;
     use subxt::tx::TransactionInvalid;
@@ -331,7 +332,7 @@ mod tests {
         let nudges = engine.recovery_wakes.subscribe();
         let tx = extrinsic(1, 100, 64);
         let id = block_on(engine.execute(
-            DurableRequest::presigned(TEST, None, without_policy(vec![tx.clone()])).unwrap(),
+            DurableRequest::presigned(TEST, None, without_plan(vec![tx.clone()])).unwrap(),
         ))
         .unwrap()[0];
         (

@@ -52,13 +52,19 @@ impl PolicyId {
     }
 }
 
-/// The policy that builds a transaction, and what it needs to build it.
+/// What a policy stores with each transaction it builds. Opaque to the
+/// engine.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct PolicyParams(pub Vec<u8>);
+
+/// How a transaction gets built: the policy that builds it, and that
+/// policy's params for it.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct PolicyRef {
-    /// The policy.
-    pub id: PolicyId,
-    /// Opaque to the engine; handed back to the policy on every call.
-    pub params: Vec<u8>,
+pub struct SubmissionPlan {
+    /// The registered policy that builds it.
+    pub policy: PolicyId,
+    /// Handed back to the policy on every call.
+    pub params: PolicyParams,
 }
 
 /// A caller-chosen operation that several transactions belong to.
@@ -97,6 +103,11 @@ impl DurableTxStatus {
     /// Whether a recovery pass or a submission watch may still decide it.
     pub fn awaits_verdict(self) -> bool {
         matches!(self, Self::Pending | Self::PendingSuccess)
+    }
+
+    /// Whether nothing will ever change it again.
+    pub fn is_final(self) -> bool {
+        matches!(self, Self::FinalizedSuccess | Self::Failure)
     }
 }
 
@@ -148,8 +159,8 @@ pub struct ScheduledDurableTx {
     pub domain: DomainId,
     /// The operation it belongs to, if any.
     pub group: Option<GroupId>,
-    /// The policy that builds it.
-    pub policy: PolicyRef,
+    /// How it gets built.
+    pub plan: SubmissionPlan,
 }
 
 /// A transaction's id and status, as a group lists them.
