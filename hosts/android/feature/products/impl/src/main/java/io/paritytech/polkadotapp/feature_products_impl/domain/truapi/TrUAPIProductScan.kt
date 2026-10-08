@@ -5,12 +5,16 @@ import io.parity.truapi.ScannerHostBridge
 import io.paritytech.polkadotapp.common.presentation.resources.ContextManager
 import io.paritytech.polkadotapp.common.utils.CoroutineDispatchers
 import io.paritytech.polkadotapp.feature_products_impl.presentation.productBotManagement.ProductsRouter
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import uniffi.truapi.HostScan
 import uniffi.truapi.HostScannerScanRequest
 import uniffi.truapi.ProductExecutionKind
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlin.time.Duration.Companion.milliseconds
+import kotlin.time.Duration.Companion.seconds
 
 /** What the viewfinder shows: who is asking, and what they accept. */
 class ProductScanRequest(
@@ -42,11 +46,21 @@ class TrUAPIProductScans @Inject constructor(
         when (question.executionKind) {
             ProductExecutionKind.WORKER ->
                 contextManager.getActivity()?.lifecycle?.currentState?.isAtLeast(Lifecycle.State.RESUMED) == true
-            ProductExecutionKind.APP, ProductExecutionKind.WIDGET -> visibleProducts.isOnScreen(question.productId)
+            ProductExecutionKind.APP, ProductExecutionKind.WIDGET -> pageOnScreen(question.productId)
         }
     }
 
     override suspend fun open() = productsRouter.openTrUAPIProductScan()
 
     override suspend fun close() = productsRouter.closeTrUAPIProductScan()
+
+    // A host screen closing over the page, such as the last scanner, holds focus for a moment.
+    private suspend fun pageOnScreen(productId: String) = withTimeoutOrNull(FOCUS_RETURN_TIMEOUT) {
+        while (!visibleProducts.isOnScreen(productId)) delay(FOCUS_POLL_INTERVAL)
+    } != null
+
+    private companion object {
+        val FOCUS_RETURN_TIMEOUT = 1.seconds
+        val FOCUS_POLL_INTERVAL = 50.milliseconds
+    }
 }
