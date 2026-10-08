@@ -16,10 +16,10 @@ use truapi::v02;
 use truapi::versioned::account::{
     HostAccountConnectionStatusSubscribeItem, HostAccountCreateProofError,
     HostAccountCreateProofResponse, HostAccountGetAliasError, HostAccountGetAliasResponse,
-    HostAccountGetRequest, HostAccountGetResponse, HostAccountRingVrfSignError,
-    HostAccountRingVrfSignRequest, HostAccountRingVrfSignResponse, HostAccountSignVrfRequest,
-    HostAccountSignVrfResponse, HostGetLegacyAccountsRequest, HostGetLegacyAccountsResponse,
-    HostGetUserIdError, HostGetUserIdRequest, HostGetUserIdResponse,
+    HostAccountGetError, HostAccountGetRequest, HostAccountGetResponse,
+    HostAccountRingVrfSignError, HostAccountRingVrfSignRequest, HostAccountRingVrfSignResponse,
+    HostAccountSignVrfRequest, HostAccountSignVrfResponse, HostGetLegacyAccountsRequest,
+    HostGetLegacyAccountsResponse, HostGetUserIdError, HostGetUserIdRequest, HostGetUserIdResponse,
 };
 use truapi::versioned::chain::{
     RemoteChainInfoError, RemoteChainInfoRequest, RemoteChainInfoResponse,
@@ -78,7 +78,7 @@ use super::product_manifest::{CachedManifest, MANIFEST_TTL_SECS};
 use super::*;
 use crate::host_internal::product_manifest::test_manifest_json;
 use crate::host_internal::sso_messages::{RemoteMessage, RemoteMessageData, Response, v1};
-use crate::host_logic::product_account::index_bytes;
+use crate::host_logic::product_account::{derive_product_public_key, index_bytes};
 use crate::test_support::*;
 use crate::unix_time::current_unix_secs;
 
@@ -89,7 +89,10 @@ fn paired_accounts(
 ) -> Arc<HostAccounts<SsoAccountHolderClient>> {
     HostAccounts::new(
         services.clone(),
-        Arc::new(SsoAccountHolderClient::new(sso.clone())),
+        Arc::new(SsoAccountHolderClient::new(
+            sso.clone(),
+            services.platform.clone(),
+        )),
         sso.session_state(),
         grants,
         ring_vrf_registry::RingVrfRegistryStore::new(services.platform.clone()),
@@ -3703,14 +3706,21 @@ fn get_account_other_product_maps_confirmation_failure_to_host_failure() {
 }
 
 #[test]
-fn get_account_other_product_accepts_confirmation_then_derives_key() {
-    let host = ProductRuntimeHost::new(
-        Arc::new(StubPlatform {
-            account_access_confirmed: true,
-            ..Default::default()
-        }),
-        runtime_config("myapp.dot"),
-        test_spawner(),
+fn get_account_reviews_with_connection_platform_before_deriving_key() {
+    let host =
+        ProductRuntimeHost::new(stub_platform(), runtime_config("myapp.dot"), test_spawner());
+    let mut adapters =
+        crate::host_core::ConnectionAdapters::from_services(&host.connection.services);
+    adapters.platform = Arc::new(StubPlatform {
+        account_access_confirmed: true,
+        ..Default::default()
+    });
+    let host = ProductRuntimeHost::from_services(
+        host.connection.services.clone(),
+        adapters,
+        host.accounts.clone(),
+        host.host_session.clone(),
+        host.connection.product.clone(),
     );
     let session = sso_session_info();
     install_pairing_session(&host, session.clone());

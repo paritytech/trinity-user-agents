@@ -34,12 +34,11 @@ use crate::frame::ProtocolMessage;
 use crate::host_logic::worker::WorkerLedger;
 use crate::runtime::{
     AccountCaller, AccountHolder, ActionChannel, AuthorityError, AuthoritySession,
-    DEFAULT_REMOTE_AUTHORITY_RESPONSE_TIMEOUT, DevicePairingObserver, HostAccounts, HostGrantStore,
-    HostSession, LocalActivation, PairedSsoPeer, ProductConnection, ProductRuntimeHost,
-    ResponderExit, RingVrfRegistryStore, RuntimeServices, SigningHostRole, SsoAccountHolderClient,
-    SsoAccountHolderService, SsoRequestService, WalletAccountHolder, disconnect_paired_host,
-    establish_pairing, notify_pairing_allowance_allocation, notify_pairing_failed,
-    respond_to_pairing, resume_pairing,
+    DEFAULT_REMOTE_AUTHORITY_RESPONSE_TIMEOUT, DevicePairingObserver, HostAccounts, HostSession,
+    LocalActivation, PairedSsoPeer, ProductConnection, ProductRuntimeHost, ResponderExit,
+    RuntimeServices, SigningHostRole, SsoAccountHolderClient, SsoAccountHolderService,
+    SsoRequestService, WalletAccountHolder, disconnect_paired_host, establish_pairing,
+    notify_pairing_allowance_allocation, notify_pairing_failed, respond_to_pairing, resume_pairing,
 };
 use crate::subscription::{HostInitiatedSubscriptionManager, Spawner};
 use crate::transport::Transport;
@@ -247,17 +246,7 @@ impl PairingHostRuntime {
         if let Some(contacts_platform) = contacts_platform {
             services.install_contacts_platform(contacts_platform);
         }
-        let grants = Arc::new(HostGrantStore::new(services.platform.clone()));
-        let sso = SsoRequestService::new(services.clone(), config, grants.clone());
-        let accounts = HostAccounts::new(
-            services.clone(),
-            Arc::new(SsoAccountHolderClient::new(sso.clone())),
-            sso.session_state(),
-            grants,
-            RingVrfRegistryStore::new(services.platform.clone()),
-            #[cfg(feature = "test-host")]
-            Arc::default(),
-        );
+        let (accounts, sso) = HostAccounts::pairing(services.clone(), config);
         sso.clone().start_session_store_sync(spawner);
         Self {
             services,

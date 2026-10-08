@@ -2,10 +2,7 @@
 //!
 //! Account operations use shared host accounts; login uses the session lifecycle.
 
-use crate::platform::{
-    PermissionAuthorizationStatus, ProductSubtreeReview, UserConfirmationReview,
-    normalize_product_identifier,
-};
+use crate::platform::{PermissionAuthorizationStatus, normalize_product_identifier};
 use futures::StreamExt;
 use tracing::instrument;
 use truapi::api::Account;
@@ -28,10 +25,9 @@ use truapi::{CallContext, CallError, Subscription, latest, v01};
 
 use crate::host_internal::product_manifest::Granted;
 use crate::runtime::{
-    AccountCaller, AccountHolder, ProductRuntimeHost, account_access_authorization,
-    account_get_authority_error, remote_authority_context, ring_vrf_alias_error,
-    ring_vrf_list_error, ring_vrf_proof_error, ring_vrf_register_error, ring_vrf_sign_error,
-    validate_vrf_transcript, vrf_call_error,
+    AccountCaller, AccountHolder, ProductRuntimeHost, remote_authority_context,
+    ring_vrf_alias_error, ring_vrf_list_error, ring_vrf_proof_error, ring_vrf_register_error,
+    ring_vrf_sign_error, validate_vrf_transcript, vrf_call_error,
 };
 
 #[truapi::async_trait]
@@ -43,57 +39,23 @@ impl<H: AccountHolder> Account for ProductRuntimeHost<H> {
         request: HostAccountGetRequest,
     ) -> Result<HostAccountGetResponse, CallError<HostAccountGetError>> {
         let HostAccountGetRequest::V1(v01::HostAccountGetRequest { product_account_id }) = request;
-        let product_account_id =
-            Self::normalize_product_account_id(product_account_id).map_err(|()| {
-                CallError::Domain(HostAccountGetError::V1(
-                    v01::HostAccountGetError::DomainNotValid,
-                ))
-            })?;
-        let Some(operation) = self.accounts.current_operation() else {
-            return Err(CallError::Domain(HostAccountGetError::V1(
-                v01::HostAccountGetError::NotConnected,
-            )));
-        };
-        let product_id = self.connection.product_id();
-        if product_account_id.dot_ns_identifier != product_id {
-            match account_access_authorization(
-                self.connection.platform.as_ref(),
-                &product_id,
-                &product_account_id.dot_ns_identifier,
-            )
-            .await
-            {
-                Ok(PermissionAuthorizationStatus::Authorized) => {}
-                Ok(
-                    PermissionAuthorizationStatus::Denied
-                    | PermissionAuthorizationStatus::NotDetermined,
-                ) => {
-                    return Err(CallError::Domain(HostAccountGetError::V1(
-                        v01::HostAccountGetError::Rejected,
-                    )));
-                }
-                Err(err) => {
-                    return Err(CallError::HostFailure {
-                        reason: err.to_string(),
-                    });
-                }
-            }
-        }
-        let outbound_review = (product_account_id.dot_ns_identifier == product_id).then(|| {
-            UserConfirmationReview::ProductSubtree(ProductSubtreeReview {
-                product_id: product_account_id.dot_ns_identifier.clone(),
-            })
-        });
-
         let public_key = self
-            .product_account_public_key(
+            .accounts
+            .get_account(
                 cx,
-                &operation,
-                &product_account_id,
-                outbound_review.as_ref(),
+                &self.connection.product,
+                self.connection.platform.as_ref(),
+                product_account_id,
             )
             .await
-            .map_err(account_get_authority_error)?;
+            .map_err(|error| match error {
+                CallError::Domain(error) => CallError::Domain(HostAccountGetError::V1(error)),
+                CallError::Denied => CallError::Denied,
+                CallError::Unsupported => CallError::Unsupported,
+                CallError::MalformedFrame { reason } => CallError::MalformedFrame { reason },
+                CallError::HostFailure { reason } => CallError::HostFailure { reason },
+                CallError::Cancelled => CallError::Cancelled,
+            })?;
 
         Ok(HostAccountGetResponse::V1(v01::HostAccountGetResponse {
             account: v01::ProductAccount {

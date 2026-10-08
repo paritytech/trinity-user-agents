@@ -84,7 +84,6 @@ type ContactsPicker = (
 );
 use futures::{FutureExt, StreamExt, pin_mut};
 pub use host_accounts::HostAccounts;
-pub use ring_vrf_registry::RingVrfRegistryStore;
 #[cfg(feature = "test-host")]
 mod test_resource_controls;
 pub use host_grants::HostGrantStore;
@@ -118,7 +117,7 @@ pub use signing_host::StatementRenewalTarget;
 pub use signing_host::TrackedStatementRenewalTarget;
 use tracing::{instrument, warn};
 use truapi::api::{Chat, Contacts, Pocket, Renderer};
-use truapi::versioned::account::{HostAccountGetError, HostAccountSignVrfError};
+use truapi::versioned::account::HostAccountSignVrfError;
 use truapi::versioned::chat::{
     HostChatActionSubscribeError, HostChatActionSubscribeItem, HostChatActionSubscribeRequest,
     HostChatCreateRoomError, HostChatCreateRoomRequest, HostChatCreateRoomResponse,
@@ -147,9 +146,7 @@ use crate::host_internal::bulletin::preimage_key;
 use crate::host_internal::permissions::{PermissionsService, TemporaryPermissions};
 use crate::host_internal::product_manifest::Granted;
 use crate::host_internal::sso_messages::RingVrfError;
-use crate::host_logic::product_account::{
-    derivation_index_bytes, derive_product_public_key, public_key_from_address,
-};
+use crate::host_logic::product_account::public_key_from_address;
 use crate::host_logic::session::{SessionInfo, SessionState};
 use crate::host_logic::sso::pairing::x25519_public_key;
 #[cfg(test)]
@@ -807,53 +804,24 @@ impl<H: AccountHolder> ProductRuntimeHost<H> {
         operation.run(self.accounts.as_ref(), call).await
     }
 
-    async fn product_account_public_key(
-        &self,
-        cx: &CallContext,
-        operation: &HostOperation,
-        product_account_id: &v01::ProductAccountId,
-        outbound_review: Option<&UserConfirmationReview>,
-    ) -> Result<[u8; 32], AuthorityError> {
-        let subtree = self
-            .account_call(
-                operation,
-                self.accounts.product_subtree_public_key(
-                    operation,
-                    cx,
-                    AccountCaller::Local {
-                        product: &self.connection.product,
-                        authorization: None,
-                        outbound_review,
-                    },
-                    product_account_id.dot_ns_identifier.clone(),
-                ),
-            )
-            .await?;
-        derive_product_public_key(
-            subtree,
-            derivation_index_bytes(&product_account_id.derivation_index),
-        )
-        .map_err(|err| AuthorityError::Unknown {
-            reason: err.to_string(),
-        })
-    }
-
     async fn legacy_slot_zero_public_key(
         &self,
         cx: &CallContext,
         operation: &HostOperation,
     ) -> Result<[u8; 32], String> {
-        self.product_account_public_key(
-            cx,
-            operation,
-            &v01::ProductAccountId {
-                dot_ns_identifier: self.connection.product_id(),
-                derivation_index: v01::DerivationIndex::Index(0),
-            },
-            None,
-        )
-        .await
-        .map_err(|err| err.to_string())
+        self.accounts
+            .product_account_public_key(
+                cx,
+                operation,
+                &self.connection.product,
+                &v01::ProductAccountId {
+                    dot_ns_identifier: self.connection.product_id(),
+                    derivation_index: v01::DerivationIndex::Index(0),
+                },
+                None,
+            )
+            .await
+            .map_err(|err| err.to_string())
     }
 
     async fn classify_legacy_address_signer(
@@ -1007,23 +975,24 @@ fn validate_vrf_transcript(request: &v01::HostAccountSignVrfRequest) -> Result<(
 fn vrf_call_error(err: AuthorityError) -> CallError<HostAccountSignVrfError> {
     CallError::Domain(HostAccountSignVrfError::V1(err.into()))
 }
-fn account_get_authority_error(err: AuthorityError) -> CallError<HostAccountGetError> {
+
+fn account_get_authority_error(err: AuthorityError) -> CallError<latest::HostAccountGetError> {
     let error = match err {
-        AuthorityError::Disconnected => v01::HostAccountGetError::NotConnected,
-        AuthorityError::Rejected => v01::HostAccountGetError::Rejected,
+        AuthorityError::Disconnected => latest::HostAccountGetError::NotConnected,
+        AuthorityError::Rejected => latest::HostAccountGetError::Rejected,
         AuthorityError::ConfirmationFailed(error) => {
             return CallError::HostFailure {
                 reason: error.reason,
             };
         }
-        AuthorityError::Cancelled(err) => v01::HostAccountGetError::Unknown {
+        AuthorityError::Cancelled(err) => latest::HostAccountGetError::Unknown {
             reason: err.to_string(),
         },
         AuthorityError::Unavailable { reason }
         | AuthorityError::NotSupported { reason }
-        | AuthorityError::Unknown { reason } => v01::HostAccountGetError::Unknown { reason },
+        | AuthorityError::Unknown { reason } => latest::HostAccountGetError::Unknown { reason },
     };
-    CallError::Domain(HostAccountGetError::V1(error))
+    CallError::Domain(error)
 }
 
 fn ring_vrf_alias_error(err: RingVrfError) -> v01::HostAccountGetAliasError {
@@ -1674,17 +1643,7 @@ impl ProductRuntimeHost<SsoAccountHolderClient> {
             host_config.asset_hub_chain_genesis_hash,
             spawner.clone(),
         );
-        let grants = Arc::new(HostGrantStore::new(services.platform.clone()));
-        let sso = SsoRequestService::new(services.clone(), host_config, grants.clone());
-        let accounts = HostAccounts::new(
-            services.clone(),
-            Arc::new(SsoAccountHolderClient::new(sso.clone())),
-            sso.session_state(),
-            grants,
-            ring_vrf_registry::RingVrfRegistryStore::new(services.platform.clone()),
-            #[cfg(feature = "test-host")]
-            Arc::default(),
-        );
+        let (accounts, sso) = HostAccounts::pairing(services.clone(), host_config);
         let adapters = crate::host_core::ConnectionAdapters::from_services(&services);
         let host = Self::from_services(services, adapters, accounts.clone(), sso.clone(), product);
         (host, accounts, sso)
