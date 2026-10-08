@@ -154,6 +154,7 @@ class ManifestParserTest {
             PocketCardId("loyalty"),
             "Loyalty",
             PocketCardPreview.Archive("faces/loyalty.json"),
+            faceShown = true,
         )
         assertEquals(listOf(expected), worker?.pocketCards)
     }

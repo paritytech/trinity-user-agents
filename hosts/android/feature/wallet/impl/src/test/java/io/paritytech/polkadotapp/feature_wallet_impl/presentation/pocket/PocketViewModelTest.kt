@@ -302,4 +302,24 @@ class PocketViewModelTest {
 
             assertNull(viewModel.openingFaceShown.value)
         }
+
+    // The card being left is still drawn while it fades out, and it reports itself settled again when
+    // the next card's opening face arrives. Hosting its product then would put it under the next card.
+    @Test
+    fun `a card that is no longer selected does not get its product hosted`() = runTest(testDispatcher) {
+        val left = productCard("left")
+        val next = productCard("next")
+        whenever(interactor.observeProductCards()).thenReturn(flowOf(listOf(left, next)))
+
+        val viewModel = createViewModel()
+        val cards = settledCards(viewModel).filterIsInstance<PocketCardUiModel.ProductCard>()
+        val leftCard = cards.single { it.title == left.title }
+        viewModel.selectCard(leftCard)
+        viewModel.dismissCard()
+        viewModel.selectCard(cards.single { it.title == next.title })
+
+        viewModel.hostExpandedProduct(leftCard)
+
+        assertNull(viewModel.expandedProductSession.value)
+    }
 }

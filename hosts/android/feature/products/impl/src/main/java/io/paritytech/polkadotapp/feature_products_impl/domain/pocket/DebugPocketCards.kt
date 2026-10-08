@@ -16,7 +16,7 @@ data class DebugPocketCard(
     val cardId: PocketCardId,
     val title: String,
     val previewUrl: String,
-    val faceShown: Boolean = true,
+    val faceShown: Boolean,
 )
 
 /**

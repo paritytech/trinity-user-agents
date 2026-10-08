@@ -122,6 +122,7 @@ class RealProductBotManagementInteractor @Inject constructor(
 
     override suspend fun deleteProduct(productId: ProductId): Result<Unit> {
         return uninstallProductUseCase(productId)
+            .onSuccess { debugPocketCards.setAppUrl(productId, null) }
     }
 
     override suspend fun installChatIntegration(productId: ProductId): Result<Unit> {

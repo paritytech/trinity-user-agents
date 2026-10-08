@@ -10,5 +10,5 @@ data class PocketCardDefinition(
     val id: PocketCardId,
     val title: String,
     val preview: PocketCardPreview,
-    val faceShown: Boolean = true,
+    val faceShown: Boolean,
 )

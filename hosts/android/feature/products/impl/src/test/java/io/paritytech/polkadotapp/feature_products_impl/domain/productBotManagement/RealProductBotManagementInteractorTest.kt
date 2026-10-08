@@ -5,6 +5,8 @@ import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardId
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.DebugPocketCard
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.DebugPocketCards
+import io.paritytech.polkadotapp.feature_products_impl.domain.product.UninstallProductUseCase
+import io.paritytech.polkadotapp.test_shared.whenever
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.asCoroutineDispatcher
@@ -51,12 +53,14 @@ class RealProductBotManagementInteractorTest {
         }
     }
 
+    private val uninstallProductUseCase: UninstallProductUseCase = mock()
+
     private val interactor = RealProductBotManagementInteractor(
         productRepository = mock(),
         integrationRepository = mock(),
         botStateController = mock(),
         resolveProductUseCase = mock(),
-        uninstallProductUseCase = mock(),
+        uninstallProductUseCase = uninstallProductUseCase,
         dotNsTldProvider = mock(),
         debugPocketCards = debugPocketCards,
         dispatchers = dispatchers,
@@ -112,6 +116,18 @@ class RealProductBotManagementInteractorTest {
         assertEquals(APP_URL, storedAppUrl)
     }
 
+    // The app url is read for every page of its product id, so one left behind would keep serving a
+    // deleted debug product from the developer's machine.
+    @Test
+    fun `deleting a product forgets its app url`() = runBlocking {
+        storedAppUrl = APP_URL
+        whenever(uninstallProductUseCase(PRODUCT)).thenReturn(Result.success(Unit))
+
+        interactor.deleteProduct(PRODUCT)
+
+        assertNull(storedAppUrl)
+    }
+
     private companion object {
         const val APP_URL = "http://127.0.0.1:5173/"
         const val WORKER_URL = "http://127.0.0.1:5173/worker.js"
@@ -122,6 +138,7 @@ class RealProductBotManagementInteractorTest {
             cardId = PocketCardId("loyalty"),
             title = "Loyalty",
             previewUrl = "http://127.0.0.1:5173/face.json",
+            faceShown = true,
         )
     }
 }
