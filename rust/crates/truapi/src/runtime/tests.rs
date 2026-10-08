@@ -6,7 +6,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use crate::platform::{
     AuthState, CoreStorage as PlatformCoreStorage, CoreStorageKey, PermissionAuthorizationRequest,
 };
-use parity_scale_codec::{Encode, OptionBool};
+use parity_scale_codec::Encode;
 use truapi::api::{
     Account, Chain, Entropy, ExpandedCard, Game, LocalStorage, Notifications, Permissions,
     Preimage, ResourceAllocation, Scanner, Signing, StatementStore, System, Theme, Worker,
@@ -1344,9 +1344,9 @@ fn two_products_receive_the_same_handle_for_one_contact() {
 struct RecordingChatPlatform {
     registered_bots: Mutex<Vec<String>>,
     created_rooms: Mutex<Vec<String>>,
-    created_rooms_hide_text_input: Mutex<Vec<OptionBool>>,
     posted_rooms: Mutex<Vec<String>>,
     posted_payloads: Mutex<Vec<v01::ChatMessageContent>>,
+    room_footers: Mutex<Vec<(String, v01::ChatRoomFooter)>>,
 }
 
 #[truapi::async_trait]
@@ -1361,10 +1361,6 @@ impl crate::platform::ChatPlatform for RecordingChatPlatform {
             .lock()
             .expect("created rooms mutex poisoned")
             .push(request.room_id);
-        self.created_rooms_hide_text_input
-            .lock()
-            .expect("created rooms mutex poisoned")
-            .push(request.hide_text_input);
         Ok(truapi::latest::HostChatCreateRoomResponse {
             status: v01::ChatRoomRegistrationStatus::New,
         })
@@ -1402,6 +1398,18 @@ impl crate::platform::ChatPlatform for RecordingChatPlatform {
         Ok(truapi::latest::HostChatPostMessageResponse {
             message_id: "message-id".to_string(),
         })
+    }
+
+    async fn set_chat_room_footer(
+        &self,
+        _product: &ProductContext,
+        request: truapi::latest::HostChatSetRoomFooterRequest,
+    ) -> Result<(), truapi::latest::GenericError> {
+        self.room_footers
+            .lock()
+            .expect("room footers mutex poisoned")
+            .push((request.room_id, request.footer));
+        Ok(())
     }
 
     fn subscribe_chat_rooms(
@@ -1783,7 +1791,7 @@ fn chat_post_message_screens_content_before_it_reaches_a_host() {
 }
 
 #[test]
-fn a_room_hides_its_input_only_when_the_product_asks() {
+fn a_room_footer_reaches_the_host_for_the_room_the_product_created() {
     let (host_config, _) = runtime_config("chat.dot");
     let product = ProductContext::new_with_execution(
         "chat.dot".to_string(),
@@ -1807,34 +1815,37 @@ fn a_room_hides_its_input_only_when_the_product_asks() {
     let host = ProductRuntimeHost::from_services(services, adapters, pairing_host, product);
     install_pairing_session(&host, session_info());
 
-    // A v0.1 product predates the flag, so its room keeps the input.
-    for request in [
-        HostChatCreateRoomRequest::V1(v01::HostChatCreateRoomRequest {
-            room_id: "room".to_string(),
-            name: "Room".to_string(),
-            icon: String::new(),
+    // Decomposed here, precomposed when the room was created: the host must
+    // see the id it stored, or the footer lands on a room that does not exist.
+    futures::executor::block_on(Chat::set_room_footer(
+        &host,
+        &CallContext::default(),
+        HostChatSetRoomFooterRequest::V1(v01::HostChatSetRoomFooterRequest {
+            room_id: "cafe\u{301}".to_string(),
+            footer: v01::ChatRoomFooter::Empty,
         }),
-        HostChatCreateRoomRequest::V2(v02::HostChatCreateRoomRequest {
-            room_id: "room".to_string(),
-            name: "Room".to_string(),
-            icon: String::new(),
-            hide_text_input: OptionBool(Some(true)),
-        }),
-    ] {
-        futures::executor::block_on(Chat::create_room(
-            &host,
-            &CallContext::default(),
-            request,
-        ))
-        .expect("create_room accepts the room");
-    }
+    ))
+    .expect("set_room_footer accepts a normalizable id");
 
+    let rejected = futures::executor::block_on(Chat::set_room_footer(
+        &host,
+        &CallContext::default(),
+        HostChatSetRoomFooterRequest::V1(v01::HostChatSetRoomFooterRequest {
+            room_id: "room\u{202e}".to_string(),
+            footer: v01::ChatRoomFooter::Empty,
+        }),
+    ));
+
+    assert!(
+        matches!(rejected, Err(CallError::Domain(_))),
+        "a bidi room id must be a domain error, got {rejected:?}"
+    );
     assert_eq!(
         *chat_platform
-            .created_rooms_hide_text_input
+            .room_footers
             .lock()
-            .expect("created rooms mutex poisoned"),
-        [OptionBool(None), OptionBool(Some(true))]
+            .expect("room footers mutex poisoned"),
+        [("caf\u{e9}".to_string(), v01::ChatRoomFooter::Empty)]
     );
 }
 
@@ -1914,7 +1925,7 @@ fn chat_room_ids_agree_across_create_and_post() {
         assert!(
             matches!(
                 rejected,
-                Err(CallError::Domain(HostChatCreateRoomError::V2(
+                Err(CallError::Domain(HostChatCreateRoomError::V1(
                     v01::HostChatCreateRoomError::Unknown { .. }
                 )))
             ),

@@ -35,6 +35,7 @@ import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.flow.conflate
 import uniffi.truapi.ChatMessageContent
 import uniffi.truapi.ChatRoom
+import uniffi.truapi.ChatRoomFooter
 import uniffi.truapi.HostChatActionSubscribeItem
 import uniffi.truapi.HostDevicePermissionRequest
 import uniffi.truapi.HostFeatureSupportedRequest
@@ -355,17 +356,9 @@ interface ChatHostBridge {
      * Create or resolve a native product Chat room. The core has bounded and
      * normalized these arguments and screened the icon scheme; escaping them
      * for the surface that renders them is still the host's job.
-     *
-     * Apply [hideTextInput] to an existing room too, so a product can change it
-     * after the room was created.
      */
     @Throws(HostRejection::class)
-    suspend fun createRoom(
-        roomId: String,
-        name: String,
-        icon: String,
-        hideTextInput: Boolean,
-    ): ChatRoomRegistrationStatus
+    suspend fun createRoom(roomId: String, name: String, icon: String): ChatRoomRegistrationStatus
 
     /**
      * Register or resolve a native product Chat bot. The core has bounded and
@@ -390,6 +383,13 @@ interface ChatHostBridge {
      */
     @Throws(HostRejection::class)
     suspend fun postMessage(roomId: String, content: ChatMessageContent): String
+
+    /**
+     * Set what a product's native Chat room shows below its messages, and keep
+     * it until the product sets another.
+     */
+    @Throws(HostRejection::class)
+    suspend fun setRoomFooter(roomId: String, footer: ChatRoomFooter)
 
     /** Return the current product-scoped native Chat rooms. */
     @Throws(HostRejection::class)
@@ -624,10 +624,7 @@ private class ChatCallbackAdapter(private val bridge: ChatHostBridge) : NativeCh
         roomId: String,
         name: String,
         icon: String,
-        hideTextInput: Boolean,
-    ): ChatRoomRegistrationStatus = withHostRejection {
-        bridge.createRoom(roomId, name, icon, hideTextInput)
-    }
+    ): ChatRoomRegistrationStatus = withHostRejection { bridge.createRoom(roomId, name, icon) }
 
     override suspend fun registerBot(
         botId: String,
@@ -637,6 +634,9 @@ private class ChatCallbackAdapter(private val bridge: ChatHostBridge) : NativeCh
 
     override suspend fun postMessage(roomId: String, content: ChatMessageContent): String =
         withHostRejection { bridge.postMessage(roomId, content) }
+
+    override suspend fun setRoomFooter(roomId: String, footer: ChatRoomFooter) =
+        withHostRejection { bridge.setRoomFooter(roomId, footer) }
 
     override suspend fun listRooms(): List<ChatRoom> = withHostRejection { bridge.listRooms() }
 }

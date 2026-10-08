@@ -1419,6 +1419,25 @@ impl ChatPlatform for MockPlatform {
         Ok(latest::HostChatPostMessageResponse { message_id })
     }
 
+    async fn set_chat_room_footer(
+        &self,
+        _product: &ProductContext,
+        request: latest::HostChatSetRoomFooterRequest,
+    ) -> Result<(), latest::GenericError> {
+        if self
+            .chat_rooms
+            .lock()
+            .expect("chat rooms poisoned")
+            .contains_key(&request.room_id)
+        {
+            Ok(())
+        } else {
+            Err(latest::GenericError {
+                reason: format!("unknown chat room {}", request.room_id),
+            })
+        }
+    }
+
     fn subscribe_chat_rooms(
         &self,
         _product: &ProductContext,
@@ -1452,7 +1471,6 @@ mod tests {
     use super::*;
     use futures::FutureExt;
     use futures::executor::block_on;
-    use parity_scale_codec::OptionBool;
 
     /// Decode a lowercase hex string into bytes.
     fn hex_bytes(hex: &str) -> Vec<u8> {
@@ -2052,7 +2070,6 @@ mod tests {
                 room_id: room_id.to_string(),
                 name: format!("{room_id} room"),
                 icon: "https://example.invalid/i.png".to_string(),
-                hide_text_input: OptionBool(None),
             },
         ))
         .expect("room registration succeeds")
@@ -2140,7 +2157,6 @@ mod tests {
                 room_id: "lobby".to_string(),
                 name: "lobby room".to_string(),
                 icon: "https://example.invalid/i.png".to_string(),
-                hide_text_input: OptionBool(None),
             },
         ))
         .expect_err("room creation carries the injected reason");

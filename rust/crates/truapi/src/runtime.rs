@@ -97,6 +97,7 @@ use truapi::versioned::chat::{
     HostChatListSubscribeError, HostChatListSubscribeItem, HostChatListSubscribeRequest,
     HostChatPostMessageError, HostChatPostMessageRequest, HostChatPostMessageResponse,
     HostChatRegisterBotError, HostChatRegisterBotRequest, HostChatRegisterBotResponse,
+    HostChatSetRoomFooterError, HostChatSetRoomFooterRequest, HostChatSetRoomFooterResponse,
 };
 use truapi::versioned::contacts::{
     HostContactsPickError, HostContactsPickRequest, HostContactsPickResponse,
@@ -110,7 +111,6 @@ use truapi::versioned::renderer::{
     HostRendererActionSubscribeError, HostRendererActionSubscribeItem,
     HostRendererActionSubscribeRequest,
 };
-use truapi::versioned::IntoLatest;
 use truapi::{CallContext, CallError, CancellationReason, Subscription, v01};
 #[cfg(target_arch = "wasm32")]
 use web_time::Instant;
@@ -1447,7 +1447,7 @@ impl Chat for ProductRuntimeHost {
         request: HostChatCreateRoomRequest,
     ) -> Result<HostChatCreateRoomResponse, CallError<HostChatCreateRoomError>> {
         let platform = self.chat_platform()?;
-        let mut request = request.into_latest();
+        let HostChatCreateRoomRequest::V1(mut request) = request;
         request.room_id = normalize_chat_identifier("roomId", &request.room_id)
             .map_err(chat_create_room_field_error)?;
         request.name =
@@ -1457,8 +1457,8 @@ impl Chat for ProductRuntimeHost {
         platform
             .create_chat_room(&self.product, request)
             .await
-            .map(HostChatCreateRoomResponse::V2)
-            .map_err(|error| CallError::Domain(HostChatCreateRoomError::V2(error)))
+            .map(HostChatCreateRoomResponse::V1)
+            .map_err(|error| CallError::Domain(HostChatCreateRoomError::V1(error)))
     }
 
     #[instrument(skip_all, fields(runtime.method = "chat.register_bot"))]
@@ -1531,6 +1531,26 @@ impl Chat for ProductRuntimeHost {
             .await
             .map(HostChatPostMessageResponse::V1)
             .map_err(|error| CallError::Domain(HostChatPostMessageError::V1(error)))
+    }
+
+    #[instrument(skip_all, fields(runtime.method = "chat.set_room_footer"))]
+    async fn set_room_footer(
+        &self,
+        _cx: &CallContext,
+        request: HostChatSetRoomFooterRequest,
+    ) -> Result<HostChatSetRoomFooterResponse, CallError<HostChatSetRoomFooterError>> {
+        let platform = self.chat_platform()?;
+        let HostChatSetRoomFooterRequest::V1(mut request) = request;
+        request.room_id = normalize_chat_identifier("roomId", &request.room_id).map_err(|error| {
+            CallError::Domain(HostChatSetRoomFooterError::V1(v01::GenericError {
+                reason: error.to_string(),
+            }))
+        })?;
+        platform
+            .set_chat_room_footer(&self.product, request)
+            .await
+            .map(|()| HostChatSetRoomFooterResponse::V1)
+            .map_err(|error| CallError::Domain(HostChatSetRoomFooterError::V1(error)))
     }
 
     #[instrument(skip_all, fields(runtime.method = "chat.action_subscribe"))]
@@ -1659,7 +1679,7 @@ fn chat_post_field_error(error: ChatFieldError) -> CallError<HostChatPostMessage
 fn chat_create_room_field_error(
     error: crate::platform::ChatFieldError,
 ) -> CallError<HostChatCreateRoomError> {
-    CallError::Domain(HostChatCreateRoomError::V2(
+    CallError::Domain(HostChatCreateRoomError::V1(
         v01::HostChatCreateRoomError::Unknown {
             reason: error.to_string(),
         },

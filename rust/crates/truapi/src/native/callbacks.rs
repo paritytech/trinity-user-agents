@@ -213,15 +213,11 @@ pub trait HostCallbacks: Send + Sync {
 #[async_trait::async_trait]
 pub trait NativeChatCallbacks: Send + Sync {
     /// Create or resolve a native product Chat room.
-    ///
-    /// `hide_text_input` applies to an existing room too, so a product can change it
-    /// after the room was created.
     async fn create_room(
         &self,
         room_id: String,
         name: String,
         icon: String,
-        hide_text_input: bool,
     ) -> Result<v01::ChatRoomRegistrationStatus, HostRejection>;
 
     /// Register or resolve a native product Chat bot.
@@ -244,6 +240,14 @@ pub trait NativeChatCallbacks: Send + Sync {
         room_id: String,
         content: v01::ChatMessageContent,
     ) -> Result<String, HostRejection>;
+
+    /// Set what a product's native Chat room shows below its messages, and keep
+    /// it until the product sets another.
+    async fn set_room_footer(
+        &self,
+        room_id: String,
+        footer: v01::ChatRoomFooter,
+    ) -> Result<(), HostRejection>;
 
     /// Return the current product-scoped native Chat room list.
     async fn list_rooms(&self) -> Result<Vec<v01::ChatRoom>, HostRejection>;

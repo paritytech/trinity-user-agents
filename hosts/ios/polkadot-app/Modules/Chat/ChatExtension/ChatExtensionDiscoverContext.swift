@@ -32,9 +32,14 @@ protocol ChatExtensionDiscoverContextProtocol {
         for chatBot: ChatExtensionBotProtocol,
         roomId: String,
         name: String?,
-        icon: String?,
-        hidesTextInput: Bool
+        icon: String?
     ) async throws -> CreateRoomStatus
+
+    func setRoomFooter(
+        for chatBot: ChatExtensionBotProtocol,
+        roomId: String,
+        hidesTextInput: Bool
+    ) async throws
 
     func subscribeRooms(
         for chatBot: ChatExtensionBotProtocol
@@ -321,8 +326,7 @@ extension ChatExtensionDiscoverContext: ChatExtensionDiscoverContextProtocol {
         for chatBot: ChatExtensionBotProtocol,
         roomId: String,
         name: String?,
-        icon: String?,
-        hidesTextInput: Bool
+        icon: String?
     ) async throws -> CreateRoomStatus {
         let chatId = Chat.Id.chatExtension(chatBot.identifier, roomId: roomId)
 
@@ -330,15 +334,7 @@ extension ChatExtensionDiscoverContext: ChatExtensionDiscoverContextProtocol {
             .fetchOperation(by: { chatId.rawRepresentation }, options: RepositoryFetchOptions())
             .asyncExecute()
 
-        if let existingChat {
-            if (existingChat.roomMetadata?.hidesTextInput ?? false) != hidesTextInput {
-                let visibility = Chat.RoomInputVisibility(
-                    chatId: chatId,
-                    roomId: roomId,
-                    hidesTextInput: hidesTextInput
-                )
-                try await roomInputRepository.saveOperation({ [visibility] }, { [] }).asyncExecute()
-            }
+        if existingChat != nil {
             return .exists
         }
 
@@ -346,7 +342,7 @@ extension ChatExtensionDiscoverContext: ChatExtensionDiscoverContextProtocol {
             chatRelativeId: roomId,
             name: name,
             icon: icon,
-            hidesTextInput: hidesTextInput
+            hidesTextInput: false
         )
 
         let chat = Chat.LocalModel.newChatWithRoom(
@@ -358,6 +354,29 @@ extension ChatExtensionDiscoverContext: ChatExtensionDiscoverContextProtocol {
         try await chatRepository.saveOperation({ [chat] }, { [] }).asyncExecute()
 
         return .new
+    }
+
+    func setRoomFooter(
+        for chatBot: ChatExtensionBotProtocol,
+        roomId: String,
+        hidesTextInput: Bool
+    ) async throws {
+        let chatId = Chat.Id.chatExtension(chatBot.identifier, roomId: roomId)
+
+        let existingChat = try await chatRepository
+            .fetchOperation(by: { chatId.rawRepresentation }, options: RepositoryFetchOptions())
+            .asyncExecute()
+
+        guard let existingChat else {
+            throw RoomFooterError.unknownRoom(roomId)
+        }
+
+        guard (existingChat.roomMetadata?.hidesTextInput ?? false) != hidesTextInput else {
+            return
+        }
+
+        let visibility = Chat.RoomInputVisibility(chatId: chatId, roomId: roomId, hidesTextInput: hidesTextInput)
+        try await roomInputRepository.saveOperation({ [visibility] }, { [] }).asyncExecute()
     }
 
     func subscribeRooms(
@@ -398,5 +417,16 @@ extension ChatExtensionDiscoverContext: ChatExtensionDiscoverContextProtocol {
         try await messageRepository.saveOperation({ [message] }, { [] }).asyncExecute()
 
         return message
+    }
+}
+
+enum RoomFooterError: LocalizedError {
+    case unknownRoom(String)
+
+    var errorDescription: String? {
+        switch self {
+        case let .unknownRoom(roomId):
+            "no chat room \(roomId)"
+        }
     }
 }

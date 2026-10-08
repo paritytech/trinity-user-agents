@@ -31,7 +31,7 @@ use truapi::latest::{
     HostChatCreateRoomError, HostChatCreateRoomRequest, HostChatCreateRoomResponse,
     HostChatListSubscribeItem, HostChatPostMessageError, HostChatPostMessageRequest,
     HostChatPostMessageResponse, HostChatRegisterBotError, HostChatRegisterBotRequest,
-    HostChatRegisterBotResponse, HostDevicePermissionRequest, HostFeatureSupportedRequest,
+    HostChatRegisterBotResponse, HostChatSetRoomFooterRequest, HostDevicePermissionRequest, HostFeatureSupportedRequest,
     HostFeatureSupportedResponse, HostLocalStorageChangeItem, HostLocaleSubscribeItem,
     HostNavigateToError, HostPlatform, HostPocketListSubscribeItem, HostPocketRemoveCardError,
     HostPocketRemoveCardRequest, HostPushNotificationRequest, HostPushNotificationResponse,
@@ -3218,8 +3218,8 @@ pub trait PreimageHost: Send + Sync {
 /// answered `Unsupported`. See [`OptionalPlatform`].
 ///
 /// The core bounds and screens the product-supplied fields it forwards. Ids,
-/// names and icons on `create_chat_room`, `register_chat_bot` and
-/// `post_chat_message` are NFC-normalized and rejected for control and bidi
+/// names and icons on `create_chat_room`, `register_chat_bot`,
+/// `post_chat_message` and `set_chat_room_footer` are NFC-normalized and rejected for control and bidi
 /// characters. Message bodies are bounded and screened but pass through
 /// byte-for-byte, keeping line breaks and tabs, so a product reads back the
 /// bytes it sent. Counts and byte budgets are enforced, and any URL a host may
@@ -3240,9 +3240,6 @@ pub trait PreimageHost: Send + Sync {
 #[async_trait]
 pub trait ChatPlatform: Send + Sync {
     /// Create or resolve a product-scoped native chat room.
-    ///
-    /// `hide_text_input` applies to an existing room too, so a product can change it
-    /// after the room was created.
     async fn create_chat_room(
         &self,
         product: &ProductContext,
@@ -3264,6 +3261,14 @@ pub trait ChatPlatform: Send + Sync {
         product: &ProductContext,
         request: HostChatPostMessageRequest,
     ) -> Result<HostChatPostMessageResponse, HostChatPostMessageError>;
+
+    /// Set what a product-scoped room shows below its messages, for the room
+    /// as it is now and every later time it is shown.
+    async fn set_chat_room_footer(
+        &self,
+        product: &ProductContext,
+        request: HostChatSetRoomFooterRequest,
+    ) -> Result<(), GenericError>;
 
     /// Emit the current product-scoped room list and later replacements.
     fn subscribe_chat_rooms(

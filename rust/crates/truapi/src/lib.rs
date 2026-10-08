@@ -75,23 +75,23 @@ pub mod latest {
         AllocatableResource, AllocationOutcome, Arrangement, Background, BlendingMode, BorderStyle,
         BoxProps, ButtonProps, ButtonVariant, ChainIdentifier, ChatAction, ChatActionLayout,
         ChatActions, ChatBotRegistrationStatus, ChatCustomMessage, ChatFile, ChatMedia,
-        ChatMessageContent, ChatReaction, ChatRichText, ChatRoom, ChatRoomParticipation,
-        ChatRoomRegistrationStatus, CodeFormat, ColorToken, ColumnProps, ContactHandle,
-        ContactPickOutcome, ContentAlignment, ContextualAlias, DerivationIndex, Dimensions, Effect,
-        EffectProps, GenericError, HorizontalAlignment, HostAccountCreateProofRequest,
-        HostAccountGetAliasRequest, HostAccountListRingVrfKeysRequest,
-        HostAccountRegisterRingVrfKeyRequest, HostAccountRingVrfSignRequest,
-        HostAccountSignVrfError, HostAccountSignVrfRequest, HostPlatform, HostSignPayloadData,
-        HostWorkerOperationError, ImageFit, ImageProps, ImageSource, Modifier,
-        OperationStartedResult, PocketCard, ProductAccountId, ProductProofContext, RawPayload,
-        RegisteredRingVrfKey, RemotePermission, RemoteStatementStoreCreateProofError,
-        RemoteStatementStoreCreateProofRequest, RemoteStatementStoreCreateProofResponse,
-        RemoteStatementStoreSubscribeItem, RemoteStatementStoreSubscribeRequest, RenderContext,
-        RendererNode, RingLocation, RingLocationJunction, RingVrfKeyDisclosure, RowProps,
-        RuntimeApi, RuntimeSpec, RuntimeType, ScanOutcome, Shape, SignedStatement, Size, Statement,
-        StatementProof, StorageQueryItem, StorageQueryType, StorageResultItem, TextFieldProps,
-        TextProps, ThemeName, ThemeVariant, TxPayloadExtension, TypographyStyle, VerticalAlignment,
-        VrfSignature,
+        ChatMessageContent, ChatReaction, ChatRichText, ChatRoom, ChatRoomFooter,
+        ChatRoomParticipation, ChatRoomRegistrationStatus, CodeFormat, ColorToken, ColumnProps,
+        ContactHandle, ContactPickOutcome, ContentAlignment, ContextualAlias, DerivationIndex,
+        Dimensions, Effect, EffectProps, GenericError, HorizontalAlignment,
+        HostAccountCreateProofRequest, HostAccountGetAliasRequest,
+        HostAccountListRingVrfKeysRequest, HostAccountRegisterRingVrfKeyRequest,
+        HostAccountRingVrfSignRequest, HostAccountSignVrfError, HostAccountSignVrfRequest,
+        HostPlatform, HostSignPayloadData, HostWorkerOperationError, ImageFit, ImageProps,
+        ImageSource, Modifier, OperationStartedResult, PocketCard, ProductAccountId,
+        ProductProofContext, RawPayload, RegisteredRingVrfKey, RemotePermission,
+        RemoteStatementStoreCreateProofError, RemoteStatementStoreCreateProofRequest,
+        RemoteStatementStoreCreateProofResponse, RemoteStatementStoreSubscribeItem,
+        RemoteStatementStoreSubscribeRequest, RenderContext, RendererNode, RingLocation,
+        RingLocationJunction, RingVrfKeyDisclosure, RowProps, RuntimeApi, RuntimeSpec, RuntimeType,
+        ScanOutcome, Shape, SignedStatement, Size, Statement, StatementProof, StorageQueryItem,
+        StorageQueryType, StorageResultItem, TextFieldProps, TextProps, ThemeName, ThemeVariant,
+        TxPayloadExtension, TypographyStyle, VerticalAlignment, VrfSignature,
     };
 
     /// Latest payload type of a versioned envelope.
@@ -114,6 +114,8 @@ pub mod latest {
     pub type HostChatRegisterBotResponse = LatestOf<versioned::chat::HostChatRegisterBotResponse>;
     /// Native chat bot registration failure.
     pub type HostChatRegisterBotError = LatestOf<versioned::chat::HostChatRegisterBotError>;
+    /// Request to set what a native chat room shows below its messages.
+    pub type HostChatSetRoomFooterRequest = LatestOf<versioned::chat::HostChatSetRoomFooterRequest>;
     /// Current native room list for a product.
     pub type HostChatListSubscribeItem = LatestOf<versioned::chat::HostChatListSubscribeItem>;
     /// Native chat message posting request.

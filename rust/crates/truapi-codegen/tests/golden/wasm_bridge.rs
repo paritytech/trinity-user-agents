@@ -7,7 +7,7 @@
 use futures::stream::BoxStream;
 use js_sys::{Function, Uint8Array};
 use parity_scale_codec::Encode;
-use truapi::latest;
+use truapi::v01;
 use wasm_bindgen::JsValue;
 
 use super::{
@@ -31,6 +31,7 @@ pub struct JsBridge {
     pub create_chat_room: Function,
     pub register_chat_bot: Function,
     pub post_chat_message: Function,
+    pub set_chat_room_footer: Function,
     pub subscribe_chat_rooms: Function,
     pub contacts: Function,
     pub pick_contact: Function,
@@ -78,6 +79,8 @@ impl JsBridge {
                 .unwrap_or_else(|| missing_callback("registerChatBot")),
             post_chat_message: get_optional_function(callbacks, "postChatMessage")?
                 .unwrap_or_else(|| missing_callback("postChatMessage")),
+            set_chat_room_footer: get_optional_function(callbacks, "setChatRoomFooter")?
+                .unwrap_or_else(|| missing_callback("setChatRoomFooter")),
             subscribe_chat_rooms: get_optional_function(callbacks, "subscribeChatRooms")?
                 .unwrap_or_else(|| missing_callback("subscribeChatRooms")),
             contacts: get_optional_function(callbacks, "contacts")?
@@ -118,6 +121,7 @@ impl JsBridge {
             chat_present: get_optional_function(callbacks, "createChatRoom")?.is_some()
                 && get_optional_function(callbacks, "registerChatBot")?.is_some()
                 && get_optional_function(callbacks, "postChatMessage")?.is_some()
+                && get_optional_function(callbacks, "setChatRoomFooter")?.is_some()
                 && get_optional_function(callbacks, "subscribeChatRooms")?.is_some(),
             contacts_present: get_optional_function(callbacks, "contacts")?.is_some()
                 && get_optional_function(callbacks, "pickContact")?.is_some(),
@@ -172,8 +176,8 @@ impl crate::platform::ChatPlatform for WasmPlatform {
     async fn create_chat_room(
         &self,
         product: &crate::platform::ProductContext,
-        request: latest::HostChatCreateRoomRequest,
-    ) -> Result<latest::HostChatCreateRoomResponse, latest::HostChatCreateRoomError> {
+        request: v01::HostChatCreateRoomRequest,
+    ) -> Result<v01::HostChatCreateRoomResponse, v01::HostChatCreateRoomError> {
         let bytes = invoke_bytes_return(
             &self.bridge.create_chat_room,
             vec![
@@ -182,19 +186,19 @@ impl crate::platform::ChatPlatform for WasmPlatform {
             ],
         )
         .await
-        .map_err(|reason| latest::HostChatCreateRoomError::Unknown { reason })?;
-        decode_bytes::<latest::HostChatCreateRoomResponse>(
+        .map_err(|reason| v01::HostChatCreateRoomError::Unknown { reason })?;
+        decode_bytes::<v01::HostChatCreateRoomResponse>(
             bytes,
             "createChatRoom response did not decode",
         )
-        .map_err(|reason| latest::HostChatCreateRoomError::Unknown { reason })
+        .map_err(|reason| v01::HostChatCreateRoomError::Unknown { reason })
     }
 
     async fn register_chat_bot(
         &self,
         product: &crate::platform::ProductContext,
-        request: latest::HostChatRegisterBotRequest,
-    ) -> Result<latest::HostChatRegisterBotResponse, latest::HostChatRegisterBotError> {
+        request: v01::HostChatRegisterBotRequest,
+    ) -> Result<v01::HostChatRegisterBotResponse, v01::HostChatRegisterBotError> {
         let bytes = invoke_bytes_return(
             &self.bridge.register_chat_bot,
             vec![
@@ -203,19 +207,19 @@ impl crate::platform::ChatPlatform for WasmPlatform {
             ],
         )
         .await
-        .map_err(|reason| latest::HostChatRegisterBotError::Unknown { reason })?;
-        decode_bytes::<latest::HostChatRegisterBotResponse>(
+        .map_err(|reason| v01::HostChatRegisterBotError::Unknown { reason })?;
+        decode_bytes::<v01::HostChatRegisterBotResponse>(
             bytes,
             "registerChatBot response did not decode",
         )
-        .map_err(|reason| latest::HostChatRegisterBotError::Unknown { reason })
+        .map_err(|reason| v01::HostChatRegisterBotError::Unknown { reason })
     }
 
     async fn post_chat_message(
         &self,
         product: &crate::platform::ProductContext,
-        request: latest::HostChatPostMessageRequest,
-    ) -> Result<latest::HostChatPostMessageResponse, latest::HostChatPostMessageError> {
+        request: v01::HostChatPostMessageRequest,
+    ) -> Result<v01::HostChatPostMessageResponse, v01::HostChatPostMessageError> {
         let bytes = invoke_bytes_return(
             &self.bridge.post_chat_message,
             vec![
@@ -224,18 +228,34 @@ impl crate::platform::ChatPlatform for WasmPlatform {
             ],
         )
         .await
-        .map_err(|reason| latest::HostChatPostMessageError::Unknown { reason })?;
-        decode_bytes::<latest::HostChatPostMessageResponse>(
+        .map_err(|reason| v01::HostChatPostMessageError::Unknown { reason })?;
+        decode_bytes::<v01::HostChatPostMessageResponse>(
             bytes,
             "postChatMessage response did not decode",
         )
-        .map_err(|reason| latest::HostChatPostMessageError::Unknown { reason })
+        .map_err(|reason| v01::HostChatPostMessageError::Unknown { reason })
+    }
+
+    async fn set_chat_room_footer(
+        &self,
+        product: &crate::platform::ProductContext,
+        request: v01::HostChatSetRoomFooterRequest,
+    ) -> Result<(), v01::GenericError> {
+        invoke_unit(
+            &self.bridge.set_chat_room_footer,
+            vec![
+                Uint8Array::from(product.encode().as_slice()).into(),
+                Uint8Array::from(request.encode().as_slice()).into(),
+            ],
+        )
+        .await
+        .map_err(generic)
     }
 
     fn subscribe_chat_rooms(
         &self,
         product: &crate::platform::ProductContext,
-    ) -> BoxStream<'static, Result<latest::HostChatListSubscribeItem, latest::GenericError>> {
+    ) -> BoxStream<'static, Result<v01::HostChatListSubscribeItem, v01::GenericError>> {
         invoke_js_subscription(
             &self.bridge.subscribe_chat_rooms,
             Some(Uint8Array::from(product.encode().as_slice()).into()),
@@ -249,7 +269,7 @@ impl crate::platform::ContactsPlatform for WasmPlatform {
     async fn contacts(
         &self,
         lookup: &crate::platform::HostContactLookup,
-    ) -> Result<crate::platform::HostContactMatches, latest::GenericError> {
+    ) -> Result<crate::platform::HostContactMatches, v01::GenericError> {
         let bytes = invoke_bytes_return(
             &self.bridge.contacts,
             vec![Uint8Array::from(lookup.encode().as_slice()).into()],
@@ -266,7 +286,7 @@ impl crate::platform::ContactsPlatform for WasmPlatform {
     async fn pick_contact(
         &self,
         _product: &crate::platform::ProductContext,
-    ) -> Result<crate::platform::HostContactPick, latest::GenericError> {
+    ) -> Result<crate::platform::HostContactPick, v01::GenericError> {
         let bytes = invoke_bytes_return(
             &self.bridge.pick_contact,
             vec![Uint8Array::from(_product.encode().as_slice()).into()],
@@ -286,7 +306,7 @@ impl crate::platform::CoreStorage for WasmPlatform {
     async fn read_core_storage(
         &self,
         key: crate::platform::CoreStorageKey,
-    ) -> Result<Option<Vec<u8>>, latest::GenericError> {
+    ) -> Result<Option<Vec<u8>>, v01::GenericError> {
         invoke_optional_bytes_return(
             &self.bridge.read_core_storage,
             vec![Uint8Array::from(key.encode().as_slice()).into()],
@@ -300,7 +320,7 @@ impl crate::platform::CoreStorage for WasmPlatform {
         &self,
         key: crate::platform::CoreStorageKey,
         value: Vec<u8>,
-    ) -> Result<(), latest::GenericError> {
+    ) -> Result<(), v01::GenericError> {
         invoke_unit(
             &self.bridge.write_core_storage,
             vec![
@@ -315,7 +335,7 @@ impl crate::platform::CoreStorage for WasmPlatform {
     async fn clear_core_storage(
         &self,
         key: crate::platform::CoreStorageKey,
-    ) -> Result<(), latest::GenericError> {
+    ) -> Result<(), v01::GenericError> {
         invoke_unit(
             &self.bridge.clear_core_storage,
             vec![Uint8Array::from(key.encode().as_slice()).into()],
@@ -329,24 +349,22 @@ impl crate::platform::CoreStorage for WasmPlatform {
 impl crate::platform::Features for WasmPlatform {
     async fn feature_supported(
         &self,
-        request: latest::HostFeatureSupportedRequest,
-    ) -> Result<latest::HostFeatureSupportedResponse, latest::GenericError> {
+        request: v01::HostFeatureSupportedRequest,
+    ) -> Result<v01::HostFeatureSupportedResponse, v01::GenericError> {
         let bytes = invoke_bytes_return(
             &self.bridge.feature_supported,
             vec![Uint8Array::from(request.encode().as_slice()).into()],
         )
         .await
         .map_err(generic)?;
-        decode_bytes::<latest::HostFeatureSupportedResponse>(
+        decode_bytes::<v01::HostFeatureSupportedResponse>(
             bytes,
             "featureSupported response did not decode",
         )
         .map_err(generic)
     }
 
-    async fn supported_chains(
-        &self,
-    ) -> Result<crate::platform::HostChainSet, latest::GenericError> {
+    async fn supported_chains(&self) -> Result<crate::platform::HostChainSet, v01::GenericError> {
         let bytes = invoke_bytes_return(&self.bridge.supported_chains, Vec::new())
             .await
             .map_err(generic)?;
@@ -364,7 +382,7 @@ impl crate::platform::GamePlatform for WasmPlatform {
         &self,
         product: &crate::platform::ProductContext,
         starts_at: u64,
-    ) -> Result<(), latest::GenericError> {
+    ) -> Result<(), v01::GenericError> {
         invoke_unit(
             &self.bridge.schedule_game_reminder,
             vec![
@@ -379,7 +397,7 @@ impl crate::platform::GamePlatform for WasmPlatform {
     async fn cancel_game_reminder(
         &self,
         product: &crate::platform::ProductContext,
-    ) -> Result<(), latest::GenericError> {
+    ) -> Result<(), v01::GenericError> {
         invoke_unit(
             &self.bridge.cancel_game_reminder,
             vec![Uint8Array::from(product.encode().as_slice()).into()],
@@ -392,7 +410,7 @@ impl crate::platform::GamePlatform for WasmPlatform {
 impl crate::platform::LocaleHost for WasmPlatform {
     fn subscribe_locale(
         &self,
-    ) -> BoxStream<'static, Result<latest::HostLocaleSubscribeItem, latest::GenericError>> {
+    ) -> BoxStream<'static, Result<v01::HostLocaleSubscribeItem, v01::GenericError>> {
         invoke_js_subscription(
             &self.bridge.subscribe_locale,
             None,
@@ -403,10 +421,10 @@ impl crate::platform::LocaleHost for WasmPlatform {
 
 #[crate::platform::async_trait]
 impl crate::platform::Navigation for WasmPlatform {
-    async fn navigate_to(&self, url: String) -> Result<(), latest::HostNavigateToError> {
+    async fn navigate_to(&self, url: String) -> Result<(), v01::HostNavigateToError> {
         invoke_unit(&self.bridge.navigate_to, vec![JsValue::from_str(&url)])
             .await
-            .map_err(|reason| latest::HostNavigateToError::Unknown { reason })
+            .map_err(|reason| v01::HostNavigateToError::Unknown { reason })
     }
 }
 
@@ -414,22 +432,22 @@ impl crate::platform::Navigation for WasmPlatform {
 impl crate::platform::Notifications for WasmPlatform {
     async fn push_notification(
         &self,
-        notification: latest::HostPushNotificationRequest,
-    ) -> Result<latest::HostPushNotificationResponse, latest::GenericError> {
+        notification: v01::HostPushNotificationRequest,
+    ) -> Result<v01::HostPushNotificationResponse, v01::GenericError> {
         let bytes = invoke_bytes_return(
             &self.bridge.push_notification,
             vec![Uint8Array::from(notification.encode().as_slice()).into()],
         )
         .await
         .map_err(generic)?;
-        decode_bytes::<latest::HostPushNotificationResponse>(
+        decode_bytes::<v01::HostPushNotificationResponse>(
             bytes,
             "pushNotification response did not decode",
         )
         .map_err(generic)
     }
 
-    async fn cancel_notification(&self, id: u32) -> Result<(), latest::GenericError> {
+    async fn cancel_notification(&self, id: u32) -> Result<(), v01::GenericError> {
         invoke_unit(
             &self.bridge.cancel_notification,
             vec![JsValue::from_f64(f64::from(id))],
@@ -443,8 +461,8 @@ impl crate::platform::Notifications for WasmPlatform {
 impl crate::platform::PermissionStatusHost for WasmPlatform {
     async fn device_permission_status(
         &self,
-        request: latest::HostDevicePermissionRequest,
-    ) -> Result<crate::platform::DevicePermissionStatus, latest::GenericError> {
+        request: v01::HostDevicePermissionRequest,
+    ) -> Result<crate::platform::DevicePermissionStatus, v01::GenericError> {
         let bytes = invoke_bytes_return(
             &self.bridge.device_permission_status,
             vec![Uint8Array::from(request.encode().as_slice()).into()],
@@ -464,8 +482,8 @@ impl crate::platform::Permissions for WasmPlatform {
     async fn device_permission(
         &self,
         product: &crate::platform::ProductContext,
-        request: latest::HostDevicePermissionRequest,
-    ) -> Result<crate::platform::PermissionDecision, latest::GenericError> {
+        request: v01::HostDevicePermissionRequest,
+    ) -> Result<crate::platform::PermissionDecision, v01::GenericError> {
         let bytes = invoke_bytes_return(
             &self.bridge.device_permission,
             vec![
@@ -485,8 +503,8 @@ impl crate::platform::Permissions for WasmPlatform {
     async fn remote_permission(
         &self,
         product: &crate::platform::ProductContext,
-        request: latest::RemotePermissionRequest,
-    ) -> Result<crate::platform::PermissionDecision, latest::GenericError> {
+        request: v01::RemotePermissionRequest,
+    ) -> Result<crate::platform::PermissionDecision, v01::GenericError> {
         let bytes = invoke_bytes_return(
             &self.bridge.remote_permission,
             vec![
@@ -509,7 +527,7 @@ impl crate::platform::PocketPlatform for WasmPlatform {
     fn subscribe_pocket_cards(
         &self,
         product: &crate::platform::ProductContext,
-    ) -> BoxStream<'static, Result<latest::HostPocketListSubscribeItem, latest::GenericError>> {
+    ) -> BoxStream<'static, Result<v01::HostPocketListSubscribeItem, v01::GenericError>> {
         invoke_js_subscription(
             &self.bridge.subscribe_pocket_cards,
             Some(Uint8Array::from(product.encode().as_slice()).into()),
@@ -520,8 +538,8 @@ impl crate::platform::PocketPlatform for WasmPlatform {
     async fn remove_pocket_card(
         &self,
         product: &crate::platform::ProductContext,
-        request: latest::HostPocketRemoveCardRequest,
-    ) -> Result<(), latest::HostPocketRemoveCardError> {
+        request: v01::HostPocketRemoveCardRequest,
+    ) -> Result<(), v01::HostPocketRemoveCardError> {
         invoke_unit(
             &self.bridge.remove_pocket_card,
             vec![
@@ -530,7 +548,7 @@ impl crate::platform::PocketPlatform for WasmPlatform {
             ],
         )
         .await
-        .map_err(|reason| latest::HostPocketRemoveCardError::Unknown { reason })
+        .map_err(|reason| v01::HostPocketRemoveCardError::Unknown { reason })
     }
 }
 
@@ -538,7 +556,7 @@ impl crate::platform::PreimageHost for WasmPlatform {
     fn lookup_preimage(
         &self,
         key: Vec<u8>,
-    ) -> BoxStream<'static, Result<Option<Vec<u8>>, latest::GenericError>> {
+    ) -> BoxStream<'static, Result<Option<Vec<u8>>, v01::GenericError>> {
         invoke_js_subscription(
             &self.bridge.lookup_preimage,
             Some(Uint8Array::from(key.as_slice()).into()),
@@ -553,7 +571,7 @@ impl crate::platform::ProductOperations for WasmPlatform {
         &self,
         product: &crate::platform::ProductContext,
         label: String,
-    ) -> Result<latest::HostWorkerBeginOperationResponse, latest::HostWorkerOperationError> {
+    ) -> Result<v01::HostWorkerBeginOperationResponse, v01::HostWorkerOperationError> {
         let bytes = invoke_bytes_return(
             &self.bridge.begin_operation,
             vec![
@@ -562,19 +580,19 @@ impl crate::platform::ProductOperations for WasmPlatform {
             ],
         )
         .await
-        .map_err(|reason| latest::HostWorkerOperationError::Unknown { reason })?;
-        decode_bytes::<latest::HostWorkerBeginOperationResponse>(
+        .map_err(|reason| v01::HostWorkerOperationError::Unknown { reason })?;
+        decode_bytes::<v01::HostWorkerBeginOperationResponse>(
             bytes,
             "beginOperation response did not decode",
         )
-        .map_err(|reason| latest::HostWorkerOperationError::Unknown { reason })
+        .map_err(|reason| v01::HostWorkerOperationError::Unknown { reason })
     }
 
     async fn end_operation(
         &self,
         product: &crate::platform::ProductContext,
         id: u32,
-    ) -> Result<(), latest::HostWorkerOperationError> {
+    ) -> Result<(), v01::HostWorkerOperationError> {
         invoke_unit(
             &self.bridge.end_operation,
             vec![
@@ -583,30 +601,27 @@ impl crate::platform::ProductOperations for WasmPlatform {
             ],
         )
         .await
-        .map_err(|reason| latest::HostWorkerOperationError::Unknown { reason })
+        .map_err(|reason| v01::HostWorkerOperationError::Unknown { reason })
     }
 }
 
 #[crate::platform::async_trait]
 impl crate::platform::ProductStorage for WasmPlatform {
-    async fn read(
-        &self,
-        key: String,
-    ) -> Result<Option<Vec<u8>>, truapi::v01::HostLocalStorageReadError> {
+    async fn read(&self, key: String) -> Result<Option<Vec<u8>>, v01::HostLocalStorageReadError> {
         invoke_optional_bytes_return(
             &self.bridge.read,
             vec![JsValue::from_str(&key)],
             "read must resolve to Uint8Array, null or undefined",
         )
         .await
-        .map_err(|reason| truapi::v01::HostLocalStorageReadError::Unknown { reason })
+        .map_err(|reason| v01::HostLocalStorageReadError::Unknown { reason })
     }
 
     async fn write(
         &self,
         key: String,
         value: Vec<u8>,
-    ) -> Result<(), truapi::v01::HostLocalStorageReadError> {
+    ) -> Result<(), v01::HostLocalStorageReadError> {
         invoke_unit(
             &self.bridge.write,
             vec![
@@ -615,19 +630,19 @@ impl crate::platform::ProductStorage for WasmPlatform {
             ],
         )
         .await
-        .map_err(|reason| truapi::v01::HostLocalStorageReadError::Unknown { reason })
+        .map_err(|reason| v01::HostLocalStorageReadError::Unknown { reason })
     }
 
-    async fn clear(&self, key: String) -> Result<(), truapi::v01::HostLocalStorageReadError> {
+    async fn clear(&self, key: String) -> Result<(), v01::HostLocalStorageReadError> {
         invoke_unit(&self.bridge.clear, vec![JsValue::from_str(&key)])
             .await
-            .map_err(|reason| truapi::v01::HostLocalStorageReadError::Unknown { reason })
+            .map_err(|reason| v01::HostLocalStorageReadError::Unknown { reason })
     }
 
     fn subscribe_storage(
         &self,
         key: String,
-    ) -> BoxStream<'static, Result<latest::HostLocalStorageChangeItem, latest::GenericError>> {
+    ) -> BoxStream<'static, Result<v01::HostLocalStorageChangeItem, v01::GenericError>> {
         invoke_js_subscription(
             &self.bridge.subscribe_storage,
             Some(JsValue::from_str(&key)),
@@ -639,7 +654,7 @@ impl crate::platform::ProductStorage for WasmPlatform {
 impl crate::platform::ThemeHost for WasmPlatform {
     fn subscribe_theme(
         &self,
-    ) -> BoxStream<'static, Result<latest::HostThemeSubscribeItem, latest::GenericError>> {
+    ) -> BoxStream<'static, Result<v01::HostThemeSubscribeItem, v01::GenericError>> {
         invoke_js_subscription(
             &self.bridge.subscribe_theme,
             None,
@@ -653,7 +668,7 @@ impl crate::platform::UserConfirmation for WasmPlatform {
     async fn confirm_permission(
         &self,
         review: crate::platform::UserConfirmationReview,
-    ) -> Result<crate::platform::PermissionDecision, latest::GenericError> {
+    ) -> Result<crate::platform::PermissionDecision, v01::GenericError> {
         let bytes = invoke_bytes_return(
             &self.bridge.confirm_permission,
             vec![Uint8Array::from(review.encode().as_slice()).into()],
@@ -670,7 +685,7 @@ impl crate::platform::UserConfirmation for WasmPlatform {
     async fn confirm_user_action(
         &self,
         review: crate::platform::UserConfirmationReview,
-    ) -> Result<bool, latest::GenericError> {
+    ) -> Result<bool, v01::GenericError> {
         invoke_bool(
             &self.bridge.confirm_user_action,
             vec![Uint8Array::from(review.encode().as_slice()).into()],
@@ -682,30 +697,30 @@ impl crate::platform::UserConfirmation for WasmPlatform {
 
 fn parse_host_chat_list_subscribe_item_item(
     value: JsValue,
-) -> Result<latest::HostChatListSubscribeItem, String> {
-    decode_js_item::<latest::HostChatListSubscribeItem>(value, "HostChatListSubscribeItem")
+) -> Result<v01::HostChatListSubscribeItem, String> {
+    decode_js_item::<v01::HostChatListSubscribeItem>(value, "HostChatListSubscribeItem")
 }
 
 fn parse_host_local_storage_change_item_item(
     value: JsValue,
-) -> Result<latest::HostLocalStorageChangeItem, String> {
-    decode_js_item::<latest::HostLocalStorageChangeItem>(value, "HostLocalStorageChangeItem")
+) -> Result<v01::HostLocalStorageChangeItem, String> {
+    decode_js_item::<v01::HostLocalStorageChangeItem>(value, "HostLocalStorageChangeItem")
 }
 
 fn parse_host_locale_subscribe_item_item(
     value: JsValue,
-) -> Result<latest::HostLocaleSubscribeItem, String> {
-    decode_js_item::<latest::HostLocaleSubscribeItem>(value, "HostLocaleSubscribeItem")
+) -> Result<v01::HostLocaleSubscribeItem, String> {
+    decode_js_item::<v01::HostLocaleSubscribeItem>(value, "HostLocaleSubscribeItem")
 }
 
 fn parse_host_pocket_list_subscribe_item_item(
     value: JsValue,
-) -> Result<latest::HostPocketListSubscribeItem, String> {
-    decode_js_item::<latest::HostPocketListSubscribeItem>(value, "HostPocketListSubscribeItem")
+) -> Result<v01::HostPocketListSubscribeItem, String> {
+    decode_js_item::<v01::HostPocketListSubscribeItem>(value, "HostPocketListSubscribeItem")
 }
 
 fn parse_host_theme_subscribe_item_item(
     value: JsValue,
-) -> Result<latest::HostThemeSubscribeItem, String> {
-    decode_js_item::<latest::HostThemeSubscribeItem>(value, "HostThemeSubscribeItem")
+) -> Result<v01::HostThemeSubscribeItem, String> {
+    decode_js_item::<v01::HostThemeSubscribeItem>(value, "HostThemeSubscribeItem")
 }

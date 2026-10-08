@@ -6,13 +6,11 @@ public struct CreateRoomRequest {
     public let roomId: String
     public let name: String?
     public let icon: String?
-    public let hidesTextInput: Bool
 
-    public init(roomId: String, name: String?, icon: String?, hidesTextInput: Bool = false) {
+    public init(roomId: String, name: String?, icon: String?) {
         self.roomId = roomId
         self.name = name
         self.icon = icon
-        self.hidesTextInput = hidesTextInput
     }
 }
 

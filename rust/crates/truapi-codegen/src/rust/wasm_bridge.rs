@@ -10,9 +10,7 @@ use crate::platform_callbacks::{
     platform_trait_names, raw_callback_field_name, raw_callback_name, raw_callback_wire_name,
     snake_case, stream_item, trait_object_return_name,
 };
-use crate::rustdoc::{
-    ApiDefinition, TypeDef, TypeDefKind, TypeRef, VariantFields, version_prefixed_type,
-};
+use crate::rustdoc::{ApiDefinition, TypeDef, TypeDefKind, TypeRef, VariantFields};
 
 pub fn generate_wasm_bridge(
     definition: &PlatformDefinition,
@@ -41,7 +39,7 @@ pub fn generate_wasm_bridge(
         use futures::stream::BoxStream;
         use js_sys::{{Function, Uint8Array}};
         use parity_scale_codec::Encode;
-        use truapi::latest;
+        use truapi::v01;
         use wasm_bindgen::JsValue;
 
         use super::{{
@@ -532,12 +530,10 @@ fn rust_type(ty: &TypeRef, ctx: &BridgeCtx<'_>) -> Result<String> {
             rust_type(&args[1], ctx)?
         )),
         TypeRef::Named { name, args } if ctx.api_types.contains_key(name.as_str()) => {
-            if !args.is_empty() {
-                bail!("generic API type `{name}` is not supported in wasm bridge")
-            } else if let Some((version, base)) = version_prefixed_type(name) {
-                Ok(format!("truapi::v{version:02}::{base}"))
+            if args.is_empty() {
+                Ok(format!("v01::{name}"))
             } else {
-                Ok(format!("latest::{name}"))
+                bail!("generic API type `{name}` is not supported in wasm bridge")
             }
         }
         TypeRef::Named { name, args } if ctx.local_types.contains(name.as_str()) => {
@@ -742,12 +738,8 @@ fn validate_error_name<'a>(
             })
             .collect::<Vec<_>>();
         if !versioned_payloads.is_empty() && versioned_payloads.len() == variants.len() {
-            let payload_names = versioned_payloads
-                .into_iter()
-                .map(named_type_name)
-                .collect::<Result<BTreeSet<_>>>()?;
-            for payload_name in payload_names {
-                validate_error_name(payload_name, ctx, seen)?;
+            for payload in versioned_payloads {
+                validate_error_name(named_type_name(payload)?, ctx, seen)?;
             }
             return Ok(());
         }

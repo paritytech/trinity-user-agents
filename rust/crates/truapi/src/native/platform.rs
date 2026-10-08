@@ -503,16 +503,11 @@ impl crate::platform::ChatPlatform for ChatCallbackPlatform {
     async fn create_chat_room(
         &self,
         _product: &ProductContext,
-        request: truapi::latest::HostChatCreateRoomRequest,
+        request: v01::HostChatCreateRoomRequest,
     ) -> Result<v01::HostChatCreateRoomResponse, v01::HostChatCreateRoomError> {
         let status: v01::ChatRoomRegistrationStatus = self
             .chat
-            .create_room(
-                request.room_id,
-                request.name,
-                request.icon,
-                request.hide_text_input.0.unwrap_or(false),
-            )
+            .create_room(request.room_id, request.name, request.icon)
             .await
             .map_err(|error| v01::HostChatCreateRoomError::Unknown {
                 reason: error.to_string(),
@@ -558,6 +553,17 @@ impl crate::platform::ChatPlatform for ChatCallbackPlatform {
                 reason: error.to_string(),
             })?;
         Ok(v01::HostChatPostMessageResponse { message_id })
+    }
+
+    async fn set_chat_room_footer(
+        &self,
+        _product: &ProductContext,
+        request: v01::HostChatSetRoomFooterRequest,
+    ) -> Result<(), v01::GenericError> {
+        self.chat
+            .set_room_footer(request.room_id, request.footer)
+            .await
+            .map_err(v01::GenericError::from)
     }
 
     fn subscribe_chat_rooms(

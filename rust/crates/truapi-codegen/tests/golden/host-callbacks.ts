@@ -33,6 +33,7 @@ import type {
   HostChatPostMessageResponse,
   HostChatRegisterBotRequest,
   HostChatRegisterBotResponse,
+  HostChatSetRoomFooterRequest,
   HostFeatureSupportedRequest,
   HostFeatureSupportedResponse,
   HostLocalStorageChangeItem,
@@ -1127,8 +1128,8 @@ export interface ChainProvider {
  * answered `Unsupported`. See `OptionalPlatform`.
  *
  * The core bounds and screens the product-supplied fields it forwards. Ids,
- * names and icons on `create_chat_room`, `register_chat_bot` and
- * `post_chat_message` are NFC-normalized and rejected for control and bidi
+ * names and icons on `create_chat_room`, `register_chat_bot`,
+ * `post_chat_message` and `set_chat_room_footer` are NFC-normalized and rejected for control and bidi
  * characters. Message bodies are bounded and screened but pass through
  * byte-for-byte, keeping line breaks and tabs, so a product reads back the
  * bytes it sent. Counts and byte budgets are enforced, and any URL a host may
@@ -1150,9 +1151,6 @@ export interface ChainProvider {
 export interface ChatPlatform {
   /**
    * Create or resolve a product-scoped native chat room.
-   *
-   * `hide_text_input` applies to an existing room too, so a product can change it
-   * after the room was created.
    */
   createChatRoom(
     product: ProductContext,
@@ -1176,6 +1174,15 @@ export interface ChatPlatform {
     product: ProductContext,
     request: HostChatPostMessageRequest,
   ): Promise<HostChatPostMessageResponse>;
+
+  /**
+   * Set what a product-scoped room shows below its messages, for the room
+   * as it is now and every later time it is shown.
+   */
+  setChatRoomFooter(
+    product: ProductContext,
+    request: HostChatSetRoomFooterRequest,
+  ): Promise<void>;
 
   /**
    * Emit the current product-scoped room list and later replacements.

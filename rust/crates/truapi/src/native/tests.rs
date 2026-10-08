@@ -10,7 +10,7 @@ use crate::platform::{
     UserConfirmation, UserConfirmationReview,
 };
 use futures::stream::{BoxStream, StreamExt};
-use parity_scale_codec::{Encode, OptionBool};
+use parity_scale_codec::Encode;
 use truapi::v01;
 
 use super::ws_bridge::WsBridgeStartError;
@@ -182,12 +182,13 @@ pub fn text_chat_action(text: &str) -> v01::HostChatActionSubscribeItem {
 pub struct EventCallbacks {
     pub logs: Mutex<Vec<String>>,
     pub chat_room_status: Mutex<v01::ChatRoomRegistrationStatus>,
-    pub chat_created_rooms: Mutex<Vec<(String, String, String, bool)>>,
+    pub chat_created_rooms: Mutex<Vec<(String, String, String)>>,
     pub chat_bot_status: Mutex<v01::ChatBotRegistrationStatus>,
     pub chat_registered_bots: Mutex<Vec<(String, String, String)>>,
     pub chat_bot_rejection: Mutex<Option<String>>,
     pub chat_post_rejection: Mutex<Option<String>>,
     pub chat_posted: Mutex<Vec<(String, v01::ChatMessageContent)>>,
+    pub chat_room_footers: Mutex<Vec<(String, v01::ChatRoomFooter)>>,
     pub pocket_cards: Mutex<Vec<v01::PocketCard>>,
     pub pocket_removed: Mutex<Vec<String>>,
     pub theme: Mutex<v01::HostThemeSubscribeItem>,
@@ -236,6 +237,7 @@ impl EventCallbacks {
             chat_registered_bots: Mutex::new(Vec::new()),
             chat_bot_rejection: Mutex::new(None),
             chat_post_rejection: Mutex::new(None),
+            chat_room_footers: Mutex::new(Vec::new()),
             chat_posted: Mutex::new(Vec::new()),
             pocket_cards: Mutex::new(Vec::new()),
             pocket_removed: Mutex::new(Vec::new()),
@@ -484,12 +486,11 @@ impl NativeChatCallbacks for EventCallbacks {
         room_id: String,
         name: String,
         icon: String,
-        hide_text_input: bool,
     ) -> Result<v01::ChatRoomRegistrationStatus, HostRejection> {
         self.chat_created_rooms
             .lock()
             .expect("created rooms mutex poisoned")
-            .push((room_id, name, icon, hide_text_input));
+            .push((room_id, name, icon));
         Ok(*self
             .chat_room_status
             .lock()
@@ -543,13 +544,25 @@ impl NativeChatCallbacks for EventCallbacks {
         Ok(format!("message-{}", posted.len()))
     }
 
+    async fn set_room_footer(
+        &self,
+        room_id: String,
+        footer: v01::ChatRoomFooter,
+    ) -> Result<(), HostRejection> {
+        self.chat_room_footers
+            .lock()
+            .expect("room footers mutex poisoned")
+            .push((room_id, footer));
+        Ok(())
+    }
+
     async fn list_rooms(&self) -> Result<Vec<v01::ChatRoom>, HostRejection> {
         let mut room_ids: Vec<String> = self
             .chat_created_rooms
             .lock()
             .expect("created rooms mutex poisoned")
             .iter()
-            .map(|(room_id, ..)| room_id.clone())
+            .map(|(room_id, _, _)| room_id.clone())
             .collect();
         room_ids.sort();
         room_ids.dedup();
@@ -1649,11 +1662,10 @@ fn native_chat_adapter_preserves_room_status_and_message_room() {
         ProductExecutionKind::Worker,
     )
     .unwrap();
-    let request = truapi::latest::HostChatCreateRoomRequest {
+    let request = v01::HostChatCreateRoomRequest {
         room_id: "support".to_string(),
         name: "Support".to_string(),
         icon: String::new(),
-        hide_text_input: OptionBool(None),
     };
     let mut rooms = crate::platform::ChatPlatform::subscribe_chat_rooms(&platform, &product);
     assert!(
@@ -1674,14 +1686,7 @@ fn native_chat_adapter_preserves_room_status_and_message_room() {
         .lock()
         .expect("room status mutex poisoned") = v01::ChatRoomRegistrationStatus::Exists;
     let existing = futures::executor::block_on(
-        crate::platform::ChatPlatform::create_chat_room(
-            &platform,
-            &product,
-            truapi::latest::HostChatCreateRoomRequest {
-                hide_text_input: OptionBool(Some(true)),
-                ..request
-            },
-        ),
+        crate::platform::ChatPlatform::create_chat_room(&platform, &product, request),
     )
     .unwrap();
     let posted = futures::executor::block_on(crate::platform::ChatPlatform::post_chat_message(
@@ -1708,18 +1713,8 @@ fn native_chat_adapter_preserves_room_status_and_message_room() {
             .expect("created rooms mutex poisoned")
             .as_slice(),
         &[
-            (
-                "support".to_string(),
-                "Support".to_string(),
-                String::new(),
-                false
-            ),
-            (
-                "support".to_string(),
-                "Support".to_string(),
-                String::new(),
-                true
-            ),
+            ("support".to_string(), "Support".to_string(), String::new()),
+            ("support".to_string(), "Support".to_string(), String::new()),
         ]
     );
     assert_eq!(
@@ -1734,6 +1729,38 @@ fn native_chat_adapter_preserves_room_status_and_message_room() {
                 text: "Echo: hello".to_string(),
             },
         )]
+    );
+}
+
+#[test]
+fn native_chat_adapter_hands_the_room_footer_to_the_host() {
+    let callbacks = Arc::new(EventCallbacks::new());
+    let platform = ChatCallbackPlatform {
+        chat: callbacks.clone(),
+        events: Arc::new(NativeEventBus::default()),
+    };
+    let product = ProductContext::new_with_execution(
+        "chat.dot".to_string(),
+        ProductExecutionKind::Worker,
+    )
+    .unwrap();
+
+    futures::executor::block_on(crate::platform::ChatPlatform::set_chat_room_footer(
+        &platform,
+        &product,
+        v01::HostChatSetRoomFooterRequest {
+            room_id: "support".to_string(),
+            footer: v01::ChatRoomFooter::Empty,
+        },
+    ))
+    .unwrap();
+
+    assert_eq!(
+        *callbacks
+            .chat_room_footers
+            .lock()
+            .expect("room footers mutex poisoned"),
+        [("support".to_string(), v01::ChatRoomFooter::Empty)]
     );
 }
 

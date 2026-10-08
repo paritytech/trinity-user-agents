@@ -97,6 +97,18 @@ fn versioned_wrapper_ts_name(name: &str) -> String {
     format!("Versioned{name}")
 }
 
+fn version_prefixed_type(name: &str) -> Option<(u32, &str)> {
+    let rest = name.strip_prefix('V')?;
+    if rest.len() < 3 {
+        return None;
+    }
+    let (version, base) = rest.split_at(2);
+    if base.is_empty() {
+        return None;
+    }
+    Some((version.parse().ok()?, base))
+}
+
 fn public_versioned_type_name(name: &str) -> String {
     version_prefixed_type(name)
         .map(|(_, base)| base.to_string())

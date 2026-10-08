@@ -25,7 +25,7 @@ use truapi::latest::{
     HostChatCreateRoomError, HostChatCreateRoomRequest, HostChatCreateRoomResponse,
     HostChatListSubscribeItem, HostChatPostMessageError, HostChatPostMessageRequest,
     HostChatPostMessageResponse, HostChatRegisterBotError, HostChatRegisterBotRequest,
-    HostChatRegisterBotResponse,
+    HostChatRegisterBotResponse, HostChatSetRoomFooterRequest,
 };
 use truapi::platform::{ChatPlatform, ProductContext, async_trait};
 use truapi::v01::{ChatRoom, ChatRoomParticipation};
@@ -213,6 +213,20 @@ impl ChatPlatform for CliChatHost {
         Ok(HostChatPostMessageResponse { message_id })
     }
 
+    async fn set_chat_room_footer(
+        &self,
+        _product: &ProductContext,
+        request: HostChatSetRoomFooterRequest,
+    ) -> Result<(), GenericError> {
+        if self.lock().rooms.contains_key(&request.room_id) {
+            Ok(())
+        } else {
+            Err(GenericError {
+                reason: format!("unknown room {:?}", request.room_id),
+            })
+        }
+    }
+
     fn subscribe_chat_rooms(
         &self,
         _product: &ProductContext,
@@ -232,7 +246,6 @@ impl ChatPlatform for CliChatHost {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use parity_scale_codec::OptionBool;
     use std::fs::read_to_string;
 
     fn product() -> ProductContext {
@@ -250,7 +263,6 @@ mod tests {
             room_id: room_id.to_string(),
             name: "Support".to_string(),
             icon: String::new(),
-            hide_text_input: OptionBool(None),
         }
     }
 

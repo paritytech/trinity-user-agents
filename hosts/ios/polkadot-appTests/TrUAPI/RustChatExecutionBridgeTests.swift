@@ -18,18 +18,18 @@ struct RustChatExecutionBridgeTests {
         let bridge = await makeBridge(api: api)
 
         api.createRoomStatus = .new
-        #expect(try await bridge.createRoom(roomId: "r", name: "n", icon: "i", hideTextInput: false) == .new)
+        #expect(try await bridge.createRoom(roomId: "r", name: "n", icon: "i") == .new)
 
         api.createRoomStatus = .exists
-        #expect(try await bridge.createRoom(roomId: "r", name: "n", icon: "i", hideTextInput: false) == .exists)
+        #expect(try await bridge.createRoom(roomId: "r", name: "n", icon: "i") == .exists)
     }
 
     /// Empty name and icon mean "unset" to the native api, not empty strings.
     @Test func createRoomNormalisesEmptyFields() async throws {
         let api = RecordingChatMessaging()
         let bridge = await makeBridge(api: api)
-        _ = try await bridge.createRoom(roomId: "r", name: "", icon: "", hideTextInput: false)
-        _ = try await bridge.createRoom(roomId: "r2", name: "kept", icon: "icon", hideTextInput: false)
+        _ = try await bridge.createRoom(roomId: "r", name: "", icon: "")
+        _ = try await bridge.createRoom(roomId: "r2", name: "kept", icon: "icon")
 
         #expect(api.createdRooms.first?.name == nil)
         #expect(api.createdRooms.first?.icon == nil)
@@ -37,14 +37,26 @@ struct RustChatExecutionBridgeTests {
         #expect(api.createdRooms.last?.icon == "icon")
     }
 
-    /// A product driving its room through actions alone asks for no text input.
-    @Test func createRoomForwardsHideInput() async throws {
+    /// A room the product drives through actions alone asks for an empty footer,
+    /// and can ask for the text input back.
+    @Test func setRoomFooterMapsTheFooterToTheTextInput() async throws {
         let api = RecordingChatMessaging()
         let bridge = await makeBridge(api: api)
-        _ = try await bridge.createRoom(roomId: "r", name: "n", icon: "", hideTextInput: true)
-        _ = try await bridge.createRoom(roomId: "r", name: "n", icon: "", hideTextInput: false)
+        try await bridge.setRoomFooter(roomId: "r", footer: .empty)
+        try await bridge.setRoomFooter(roomId: "r", footer: .textInput)
 
-        #expect(api.createdRooms.map(\.hidesTextInput) == [true, false])
+        #expect(api.roomFooters.map(\.hidesTextInput) == [true, false])
+        #expect(api.roomFooters.map(\.roomId) == ["r", "r"])
+    }
+
+    @Test func setRoomFooterRejectsAnEmptyRoom() async throws {
+        let api = RecordingChatMessaging()
+        let bridge = await makeBridge(api: api)
+
+        await #expect(throws: HostRejection.self) {
+            try await bridge.setRoomFooter(roomId: "", footer: .empty)
+        }
+        #expect(api.roomFooters.isEmpty)
     }
 
     @Test func postMessageForwardsTextAndCustomOnly() async throws {
@@ -107,7 +119,7 @@ struct RustChatExecutionBridgeTests {
         let bridge = await makeBridge(api: api)
 
         await #expect(throws: HostRejection.self) {
-            try await bridge.createRoom(roomId: "", name: "n", icon: "", hideTextInput: false)
+            try await bridge.createRoom(roomId: "", name: "n", icon: "")
         }
         #expect(api.createdRooms.isEmpty)
     }

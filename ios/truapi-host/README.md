@@ -127,10 +127,10 @@ final class MyChatBridge: ChatHostBridge, @unchecked Sendable {
 
     init(store: ChatStore) { self.store = store }
 
-    func createRoom(roomId: String, name: String, icon: String, hideTextInput: Bool) throws
+    func createRoom(roomId: String, name: String, icon: String) throws
         -> ChatRoomRegistrationStatus
     {
-        store.putRoom(roomId, name: name, icon: icon, hideTextInput: hideTextInput) ? .new : .exists
+        store.putRoom(roomId, name: name, icon: icon) ? .new : .exists
     }
 
     func registerBot(botId: String, name: String, icon: String) throws
@@ -147,6 +147,10 @@ final class MyChatBridge: ChatHostBridge, @unchecked Sendable {
             throw HostRejection.Rejected(reason: "this host cannot render file cards")
         }
         return store.append(roomId, content: content)
+    }
+
+    func setRoomFooter(roomId: String, footer: ChatRoomFooter) throws {
+        store.setFooter(roomId, footer: footer)
     }
 
     func listRooms() throws -> [ChatRoom] { store.rooms() }

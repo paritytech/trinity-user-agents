@@ -1338,6 +1338,12 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
         });
         return { messageId };
       },
+      async setChatRoomFooter(_product, request) {
+        if (faults.chatError) throw new Error(faults.chatError);
+        if (!chatRooms.has(request.roomId)) {
+          throw new Error(`unknown chat room ${request.roomId}`);
+        }
+      },
       subscribeChatRooms() {
         // The other chat calls fail with this reason, so the subscription
         // reports it too rather than handing back a stream that looks healthy

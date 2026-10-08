@@ -43,6 +43,28 @@ pub enum HostChatCreateRoomError {
     },
 }
 
+/// What a room shows below its messages.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(
+    all(feature = "runtime", not(target_arch = "wasm32")),
+    derive(uniffi::Enum)
+)]
+pub enum ChatRoomFooter {
+    /// The text field the user types messages into.
+    TextInput,
+    /// Nothing, for a room the product drives through actions alone.
+    Empty,
+}
+
+/// Request to set what a room shows below its messages.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+pub struct HostChatSetRoomFooterRequest {
+    /// A room the calling product created.
+    pub room_id: String,
+    /// What the room shows below its messages.
+    pub footer: ChatRoomFooter,
+}
+
 /// Request to register a chat bot.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 pub struct HostChatRegisterBotRequest {

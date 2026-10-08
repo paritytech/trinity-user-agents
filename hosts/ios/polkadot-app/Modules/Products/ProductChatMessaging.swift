@@ -9,6 +9,7 @@ import AsyncExtensions
 protocol ProductChatMessaging: Sendable {
     func sendMessage(_ message: ProductBotMessage, roomId: String?) async throws -> String
     func createRoom(_ request: CreateRoomRequest) async throws -> CreateRoomResult
+    func setRoomFooter(roomId: String, hidesTextInput: Bool) async throws
     func subscribeRooms() async throws -> AnyAsyncSequence<[RoomInfo]>
 }
 
@@ -57,11 +58,15 @@ extension BoundProductChatMessaging {
             for: bot,
             roomId: request.roomId,
             name: request.name,
-            icon: request.icon,
-            hidesTextInput: request.hidesTextInput
+            icon: request.icon
         )
 
         return CreateRoomResult(status: status)
+    }
+
+    func setRoomFooter(roomId: String, hidesTextInput: Bool) async throws {
+        let (context, bot) = try requireMessaging()
+        try await context.setRoomFooter(for: bot, roomId: roomId, hidesTextInput: hidesTextInput)
     }
 
     func subscribeRooms() async throws -> AnyAsyncSequence<[RoomInfo]> {

@@ -207,10 +207,7 @@ public protocol ChatHostBridge: AnyObject, Sendable {
     /// Create or resolve a native product Chat room. The core has bounded and
     /// normalized these arguments and screened the icon scheme; escaping them
     /// for the surface that renders them is still the host's job.
-    ///
-    /// Apply `hideTextInput` to an existing room too, so a product can change it
-    /// after the room was created.
-    func createRoom(roomId: String, name: String, icon: String, hideTextInput: Bool) async throws
+    func createRoom(roomId: String, name: String, icon: String) async throws
         -> ChatRoomRegistrationStatus
 
     /// Register or resolve a native product Chat bot. The core has bounded and
@@ -231,6 +228,10 @@ public protocol ChatHostBridge: AnyObject, Sendable {
     /// arriving in a `reaction` or `reactionRemoved` is product-chosen and
     /// untrusted: it may name a message in another room, or none at all.
     func postMessage(roomId: String, content: ChatMessageContent) async throws -> String
+
+    /// Set what a product's native Chat room shows below its messages, and
+    /// keep it until the product sets another.
+    func setRoomFooter(roomId: String, footer: ChatRoomFooter) async throws
 
     /// Return the current product-scoped native Chat rooms.
     func listRooms() async throws -> [ChatRoom]
@@ -376,11 +377,10 @@ private final class ChatCallbackAdapter: NativeChatCallbacks, @unchecked Sendabl
     func createRoom(
         roomId: String,
         name: String,
-        icon: String,
-        hideTextInput: Bool
+        icon: String
     ) async throws -> ChatRoomRegistrationStatus {
         try await withHostRejection {
-            try await bridge.createRoom(roomId: roomId, name: name, icon: icon, hideTextInput: hideTextInput)
+            try await bridge.createRoom(roomId: roomId, name: name, icon: icon)
         }
     }
 
@@ -397,6 +397,12 @@ private final class ChatCallbackAdapter: NativeChatCallbacks, @unchecked Sendabl
     func postMessage(roomId: String, content: ChatMessageContent) async throws -> String {
         try await withHostRejection {
             try await bridge.postMessage(roomId: roomId, content: content)
+        }
+    }
+
+    func setRoomFooter(roomId: String, footer: ChatRoomFooter) async throws {
+        try await withHostRejection {
+            try await bridge.setRoomFooter(roomId: roomId, footer: footer)
         }
     }
 
