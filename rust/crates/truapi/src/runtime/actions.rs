@@ -75,19 +75,14 @@ impl<Item: Send + 'static> ActionChannel<Item> {
     }
 
     /// Publish one item, buffering it until the product subscribes.
-    pub fn publish(&self, item: Item) -> Result<(), ProductRuntimeError> {
-        self.deliver(item)?;
-        self.last_published_secs
-            .store(crate::unix_time::current_unix_secs(), Ordering::Release);
-        Ok(())
-    }
-
-    fn deliver(&self, mut item: Item) -> Result<(), ProductRuntimeError> {
+    pub fn publish(&self, mut item: Item) -> Result<(), ProductRuntimeError> {
         let mut state = self.state.lock().expect("action channel mutex poisoned");
         if state.closed {
             return Err(ProductRuntimeError::Closed);
         }
         if let Some(sender) = state.subscriber.as_ref() {
+            // Stamped first, so a product reacting to the item already finds it.
+            self.note_published_now();
             match sender.unbounded_send(item) {
                 Ok(()) => return Ok(()),
                 Err(error) => item = error.into_inner(),
@@ -98,7 +93,13 @@ impl<Item: Send + 'static> ActionChannel<Item> {
             return Err(ProductRuntimeError::BufferFull);
         }
         state.buffer.push_back(item);
+        self.note_published_now();
         Ok(())
+    }
+
+    fn note_published_now(&self) {
+        self.last_published_secs
+            .store(crate::unix_time::current_unix_secs(), Ordering::Release);
     }
 
     /// Whether the host published an item within the last `window_secs`.
@@ -150,6 +151,16 @@ mod tests {
         let mut items = channel.subscribe::<truapi::latest::GenericError>();
         assert_eq!(block_on(items.next()), Some(Ok("first".to_string())));
         assert_eq!(block_on(items.next()), Some(Ok("second".to_string())));
+    }
+
+    #[test]
+    fn a_refused_action_is_not_a_tap() {
+        // A Worker may scan only after a tap it can receive.
+        let channel = channel();
+        channel.close();
+
+        assert!(channel.publish("tap".to_string()).is_err());
+        assert!(!channel.published_within(5));
     }
 
     #[test]
