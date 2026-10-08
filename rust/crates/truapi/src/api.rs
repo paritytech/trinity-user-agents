@@ -1,4 +1,37 @@
 //! Unified TrUAPI trait set.
+//!
+//! Each trait's wire id, set by `#[wire_trait(id = N)]`, is permanent once
+//! released. Codegen rejects two traits with one id in a tree; this table
+//! also holds ids taken by work not merged yet, so a collision shows in
+//! review instead of after both land. Claim the next free id here.
+//!
+//! | Id | Trait |
+//! |----|-------|
+//! | 1 | `System` |
+//! | 2 | `Account` |
+//! | 3 | `Chain` |
+//! | 4 | `Chat` |
+//! | 5 | `CoinPayment` |
+//! | 6 | `Entropy` |
+//! | 7 | `LocalStorage` |
+//! | 8 | `Notifications` |
+//! | 9 | `Payment` |
+//! | 10 | `Permissions` |
+//! | 11 | `Preimage` |
+//! | 12 | `ResourceAllocation` |
+//! | 13 | `Signing` |
+//! | 14 | `StatementStore` |
+//! | 15 | `Theme` |
+//! | 16 | `Locale` |
+//! | 17 | `Renderer` |
+//! | 18 | `Pocket` |
+//! | 19 | `Worker` |
+//! | 20 | `Contacts` |
+//! | 21 | `Game` |
+//! | 22 | `Funding` |
+//! | 23 | reserved: expanded card face |
+//! | 24 | `FundingProvider` |
+//! | 25 | `Scanner` |
 
 pub mod account;
 pub mod chain;

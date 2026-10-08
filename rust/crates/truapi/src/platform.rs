@@ -3327,8 +3327,9 @@ pub trait BalancePlatform: Send + Sync {
 /// balance through the host's coinage onboarding. Optional: a host that omits
 /// it leaves top-ups answered `Unsupported`.
 ///
-/// The core validates the source keys before calling. The host owns retries,
-/// partial claims and persistence, and scopes ids to `product`.
+/// The core validates the source keys and hashes the product into the id
+/// before calling, so ids never collide across products. The host owns
+/// retries, partial claims and persistence.
 #[async_trait]
 pub trait TopUpPlatform: Send + Sync {
     /// Start a top-up. Returns once the host has accepted it.
@@ -3354,8 +3355,9 @@ pub trait TopUpPlatform: Send + Sync {
 /// account, once the user approves. Optional: a host that omits it leaves
 /// payment requests answered `Unsupported`.
 ///
-/// The host owns the approval sheet, the transfer and its persistence, and
-/// scopes ids to `product`.
+/// The core hashes the product into the id before calling, so ids never
+/// collide across products. The host owns the approval sheet, the transfer
+/// and its persistence.
 #[async_trait]
 pub trait PaymentPlatform: Send + Sync {
     /// Ask the user to approve `request`. Returns once the user has decided:

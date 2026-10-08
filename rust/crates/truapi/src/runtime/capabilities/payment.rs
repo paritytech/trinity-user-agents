@@ -31,6 +31,7 @@ use truapi::{CallContext, CallError, Subscription, v01};
 
 use crate::host_internal::extrinsic::sr25519_secret_from_bytes;
 use crate::runtime::ProductRuntimeHost;
+use crate::runtime::payment_id::host_payment_id;
 
 #[truapi::async_trait]
 impl CoinPayment for ProductRuntimeHost {
@@ -169,7 +170,7 @@ impl Payment for ProductRuntimeHost {
         _cx: &CallContext,
         request: HostPaymentRequest,
     ) -> Result<HostPaymentResponse, CallError<HostPaymentError>> {
-        let HostPaymentRequest::V1(request) = request;
+        let HostPaymentRequest::V1(mut request) = request;
         let platform = self
             .services
             .payment_platform()
@@ -177,6 +178,7 @@ impl Payment for ProductRuntimeHost {
         if self.authority.current_session().is_none() {
             return Err(CallError::Denied);
         }
+        request.id = host_payment_id(&self.product, request.id);
         match platform.request_payment(&self.product, request).await {
             Ok(()) => Ok(HostPaymentResponse::V1),
             // Only a product the user lets see the balance may learn that the
@@ -208,7 +210,7 @@ impl Payment for ProductRuntimeHost {
         }
         Subscription::new(Box::pin(
             platform
-                .subscribe_payment_status(&self.product, request.id)
+                .subscribe_payment_status(&self.product, host_payment_id(&self.product, request.id))
                 .map(|item| {
                     item.map(HostPaymentStatusSubscribeItem::V1).map_err(|error| {
                         CallError::Domain(HostPaymentStatusSubscribeError::V1(error))
@@ -223,7 +225,7 @@ impl Payment for ProductRuntimeHost {
         _cx: &CallContext,
         request: HostPaymentTopUpRequest,
     ) -> Result<HostPaymentTopUpResponse, CallError<HostPaymentTopUpError>> {
-        let HostPaymentTopUpRequest::V1(request) = request;
+        let HostPaymentTopUpRequest::V1(mut request) = request;
         let platform = self
             .services
             .top_up_platform()
@@ -240,6 +242,7 @@ impl Payment for ProductRuntimeHost {
         if !source_keys_are_valid(&request.source) {
             return Err(domain(v01::HostPaymentTopUpError::InvalidSource));
         }
+        request.id = host_payment_id(&self.product, request.id);
         platform
             .top_up(&self.product, request)
             .await
@@ -265,7 +268,7 @@ impl Payment for ProductRuntimeHost {
         }
         Subscription::new(Box::pin(
             platform
-                .subscribe_top_up_status(&self.product, request.id)
+                .subscribe_top_up_status(&self.product, host_payment_id(&self.product, request.id))
                 .map(|item| {
                     item.map(HostPaymentTopUpStatusSubscribeItem::V1).map_err(|error| {
                         CallError::Domain(HostPaymentTopUpStatusSubscribeError::V1(error))

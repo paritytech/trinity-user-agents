@@ -180,7 +180,7 @@ enum PaymentStatusErr {
 
 2. **Payment authorization**: Each `host_payment_request` call must trigger a user-facing confirmation prompt showing the amount and destination. The host must not auto-approve payments.
 
-3. **Payment ID scoping**: A `PaymentId` is scoped to the product that created it. A product cannot query or subscribe to payment status for another product's payments.
+3. **Payment ID scoping**: A `PaymentId` is scoped to the product that created it. A product cannot query or subscribe to payment status for another product's payments. The core enforces this: the id a host receives is the product's id hashed with the product.
 
 4. **Terminal status delivery**: Once a payment reaches `Completed`, `Failed` or `PartiallyClaimed`, the host must deliver that status to any active subscriber and may then close the subscription. The host should make a best effort to deliver terminal status even across session restarts.
 

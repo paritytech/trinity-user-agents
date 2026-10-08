@@ -232,7 +232,7 @@ export async function runFundingE2e(
     "request_in_delivered",
     "In",
     1_000n,
-    "AwaitingDeposit",
+    "InProgress",
     (item) => item.tag === "Delivered" && item.value.credited === 900n,
     { tag: "Delivered", amount: "900" },
   );
@@ -240,7 +240,7 @@ export async function runFundingE2e(
     "request_out_released",
     "Out",
     500n,
-    "AwaitingRelease",
+    "InProgress",
     (item) => item.tag === "Released" && item.value.debited === 500n,
     { tag: "Released", amount: "500" },
   );
@@ -248,7 +248,7 @@ export async function runFundingE2e(
     "request_failed",
     "In",
     2_000n,
-    "AwaitingDeposit",
+    "InProgress",
     (item) =>
       item.tag === "Failed" &&
       item.value.reason.tag === "Other" &&
