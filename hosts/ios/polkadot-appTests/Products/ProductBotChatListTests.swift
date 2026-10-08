@@ -42,7 +42,7 @@ private extension ProductBotChatListTests {
     func makeBot(description: String?, icon: Data? = nil) -> ProductBot {
         ProductBot(
             product: Product(id: "dim2.paseo", name: "Jollity"),
-            productDescription: description,
+            description: description,
             iconLoader: StubIconLoader(icon: icon),
             runtime: IdleChatRuntime()
         )

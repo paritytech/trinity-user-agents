@@ -27,19 +27,19 @@ final class ProductBot: ChatExtensionBot {
     lazy var messageDecoder = ProductMessageDecoder(
         runtime: runtime,
         tokenResolver: WidgetDesignTokenResolver(),
-        productDescription: productDescription,
+        description: productDescription,
         logger: logger
     )
 
     init(
         product: Product,
-        productDescription: String?,
+        description: String?,
         iconLoader: ProductIconLoading,
         runtime: ChatRuntimeProtocol,
         logger: LoggerProtocol = Logger.shared
     ) {
         self.product = product
-        self.productDescription = productDescription
+        productDescription = description
         self.iconLoader = iconLoader
         self.runtime = runtime
         self.logger = logger

@@ -15,12 +15,12 @@ final class ProductMessageDecoder: ChatMessageCustomDecoding {
     init(
         runtime: ChatRuntimeProtocol,
         tokenResolver: any WidgetDesignTokenResolving,
-        productDescription: String?,
+        description: String?,
         logger: LoggerProtocol
     ) {
         self.runtime = runtime
         self.tokenResolver = tokenResolver
-        self.productDescription = productDescription
+        productDescription = description
         self.logger = logger
     }
 
