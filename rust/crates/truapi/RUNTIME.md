@@ -407,12 +407,14 @@ AutoSigning without approval. Legacy-account signing still asks the user.
   `set_funding_callbacks` (the overlay), `open_funding`,
   `funding_session`, `funding_sessions`, `select_funding_provider`,
   `cancel_funding` and `acknowledge_funding_session`. Amounts cross the FFI as decimal strings.
-  `funding_sessions` lists sessions in flight first, then ended ones, each
-  newest first. An ended session is handed to the host through
-  `funding_session_changed` each time funding resumes until the host calls
-  `acknowledge_funding_session`, so its history writes every outcome once;
-  the core keeps the 50 newest recorded sessions and every unrecorded one
-  within the 200 newest ended.
+  The host owns the funding history. A session is stored only once the user
+  starts it in the overlay. `funding_sessions` lists sessions in flight first,
+  then ended ones the host has not recorded, each newest first. An ended
+  session is handed to the host through `funding_session_changed` each time
+  funding resumes until the host calls `acknowledge_funding_session`, after
+  which the core drops it, so the host's history writes every outcome once.
+  The core keeps at most the 200 newest unrecorded sessions. Products see a
+  session in flight as `InProgress`.
   `select_funding_provider` hands a session to the provider the user chose.
   That provider's worker runs it through the `FundingProvider` trait:
   `serveSubscribe` replays its sessions in flight and then streams new ones
@@ -423,7 +425,8 @@ AutoSigning without approval. Legacy-account signing still asks the user.
   `Delivered` or `Released` itself, from the claims of the top-ups the
   provider named (`Crediting`, then `Delivered`) or the completion of the
   payment request it named (`Collecting`); once funds move, the provider can
-  no longer fail the session and its deadline no longer applies. A cancel ends
+  no longer fail the session. Only a session with no provider expires: once
+  assigned, it waits for its provider or a cancel. A cancel ends
   an unassigned session, asks the provider of an assigned one, and is refused
   once the provider has seen the user's payment.
 - `BalancePlatform`: stream what a payment request can spend right now, the

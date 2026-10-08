@@ -9,8 +9,9 @@ use crate::{wire, wire_trait};
 
 /// Move value into or out of the user's balance and watch it to completion.
 ///
-/// The host draws the whole flow. The host decides `Delivered` from its own
-/// on-chain observation and `Released` from the user's authorization to send.
+/// The host draws the whole flow. The core decides `Delivered` and `Released`
+/// itself, from the funds that moved, never from the host's or a provider's
+/// word.
 #[wire_trait(id = 22)]
 #[crate::async_trait]
 pub trait Funding: Send + Sync {

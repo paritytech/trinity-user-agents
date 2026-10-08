@@ -2671,6 +2671,100 @@ fn funding_resumes_by_announcing_what_the_host_has_not_recorded() {
     assert_eq!((before, acknowledged, after), (vec![intent], true, Vec::new()));
 }
 
+/// A funding overlay that, while it is up, records how many sessions the
+/// core has stored.
+struct ObservingFundingPlatform {
+    storage: Arc<crate::test_support::StubPlatform>,
+    stored_while_shown: Mutex<Option<usize>>,
+}
+
+#[truapi::async_trait]
+impl crate::platform::FundingPlatform for ObservingFundingPlatform {
+    async fn present_funding(
+        &self,
+        _product: Option<&ProductContext>,
+        _session: crate::platform::FundingPresentation,
+    ) -> Result<crate::platform::FundingPresentOutcome, truapi::latest::GenericError> {
+        let stored = crate::host_logic::funding::load_sessions(self.storage.as_ref())
+            .await
+            .expect("sessions read")
+            .len();
+        *self.stored_while_shown.lock().expect("stored mutex poisoned") = Some(stored);
+        Ok(crate::platform::FundingPresentOutcome::Started)
+    }
+    async fn present_provider_frame(
+        &self,
+        _provider: &ProductContext,
+        _intent: String,
+        _route: String,
+    ) -> Result<truapi::latest::FundingFrameOutcome, truapi::latest::GenericError> {
+        Ok(truapi::latest::FundingFrameOutcome::Closed)
+    }
+}
+
+// An app killed while the overlay is up must not come back to a session the
+// user never started, so nothing is stored until the user starts it.
+#[test]
+fn a_session_is_stored_only_once_the_user_starts_it() {
+    let storage = Arc::new(crate::test_support::StubPlatform::default());
+    let (host_config, _) = runtime_config("funding.dot");
+    let services = RuntimeServices::new(
+        storage.clone(),
+        host_config.host.host_info.clone(),
+        host_config.people_chain_genesis_hash,
+        host_config.bulletin_chain_genesis_hash,
+        host_config.asset_hub_chain_genesis_hash,
+        test_spawner(),
+    );
+    let platform = Arc::new(ObservingFundingPlatform {
+        storage: storage.clone(),
+        stored_while_shown: Mutex::new(None),
+    });
+    assert!(services.funding().install_platform(platform.clone()));
+
+    futures::executor::block_on(services.open_funding(None, v01::FundingDirection::In, Some(1_000)))
+        .expect("opened");
+    let stored_after = futures::executor::block_on(crate::host_logic::funding::load_sessions(storage.as_ref()))
+        .expect("sessions read")
+        .len();
+
+    assert_eq!(
+        (*platform.stored_while_shown.lock().expect("stored mutex poisoned"), stored_after),
+        (Some(0), 1)
+    );
+}
+
+// The host writes one history row per announcement, so a session an edit
+// names and the same commit expires is announced once.
+#[test]
+fn a_session_is_announced_once_per_commit() {
+    let services = funding_services();
+    let platform = RecordingFundingPlatform::answering(crate::platform::FundingPresentOutcome::Started);
+    assert!(services.funding().install_platform(platform.clone()));
+    let now = crate::unix_time::current_unix_millis();
+    let overdue = crate::host_logic::funding::FundingSession {
+        deadline_ms: now - 1,
+        ..crate::host_logic::funding::FundingSession::new(
+            "fs_overdue".to_string(),
+            None,
+            v01::FundingDirection::In,
+            None,
+            now - 2,
+        )
+    };
+
+    futures::executor::block_on(services.funding().commit(services.platform.as_ref(), now, move |sessions| {
+        sessions.insert(overdue.intent.clone(), overdue);
+        ((), vec!["fs_overdue".to_string()])
+    }))
+    .expect("committed");
+
+    assert_eq!(
+        platform.announced.lock().expect("announced mutex poisoned").clone(),
+        vec!["fs_overdue".to_string()]
+    );
+}
+
 fn funding_host(
     services: &Arc<RuntimeServices>,
     product_id: &str,
@@ -2768,7 +2862,7 @@ fn a_funding_request_opens_the_overlay_and_only_its_product_can_watch_it() {
         first_funding_status(&owner, &response.intent),
         Some(Ok(
             truapi::versioned::funding::HostFundingStatusSubscribeItem::V1(
-                v01::HostFundingStatusSubscribeItem::AwaitingDeposit { .. }
+                v01::HostFundingStatusSubscribeItem::InProgress { .. }
             )
         ))
     ));

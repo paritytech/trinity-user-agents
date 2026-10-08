@@ -18,11 +18,9 @@ use crate::platform::{CoreStorage, CoreStorageKey};
 
 /// How long a session may stay open before it expires.
 const SESSION_WINDOW_MS: u64 = 24 * 60 * 60 * 1_000;
-/// How many ended sessions the host has recorded the core keeps, most
-/// recently ended first.
-const SETTLED_HISTORY_LIMIT: usize = 50;
-/// How far back, counting every ended session newest first, those the host
-/// has not recorded yet are kept.
+/// How many ended sessions the host has not recorded yet the core keeps,
+/// newest first, so a host that never records them cannot grow the store
+/// without bound.
 const UNACKNOWLEDGED_LIMIT: usize = 200;
 /// Most top-ups a provider may start for one session, as getcash claims in
 /// up to three attempts.
@@ -378,14 +376,9 @@ impl FundingSession {
     /// Project the current stage onto the wire item subscribers receive.
     pub fn wire_item(&self) -> HostFundingStatusSubscribeItem {
         match (&self.stage, self.direction) {
-            (FundingStage::Open, FundingDirection::In) => {
-                HostFundingStatusSubscribeItem::AwaitingDeposit {
-                    expires_at: (!self.funds_moving()).then_some(self.deadline_ms),
-                }
-            }
-            (FundingStage::Open, FundingDirection::Out) => {
-                HostFundingStatusSubscribeItem::AwaitingRelease
-            }
+            (FundingStage::Open, _) => HostFundingStatusSubscribeItem::InProgress {
+                expires_at: self.can_expire().then_some(self.deadline_ms),
+            },
             (FundingStage::Failed { reason, .. }, _) => HostFundingStatusSubscribeItem::Failed {
                 reason: reason.clone(),
                 moved: 0,
@@ -414,12 +407,17 @@ impl FundingSession {
         true
     }
 
-    /// Expire the session if it is still open at its deadline. Returns whether
-    /// it expired.
+    /// Expire the session if it is still open at its deadline with no
+    /// provider assigned. An assigned session waits for its provider or a
+    /// cancel: a bank transfer can take days. Returns whether it expired.
     pub fn expire_if_due(&mut self, now_ms: u64) -> bool {
-        now_ms >= self.deadline_ms
-            && !self.funds_moving()
-            && self.fail(FundingFailure::Expired, now_ms)
+        now_ms >= self.deadline_ms && self.can_expire() && self.fail(FundingFailure::Expired, now_ms)
+    }
+
+    /// Whether the session's deadline still applies: it is open and no
+    /// provider has taken it.
+    pub fn can_expire(&self) -> bool {
+        !self.is_terminal() && self.provider_id.is_none()
     }
 }
 
@@ -454,32 +452,17 @@ pub enum FundingSessionError {
     },
 }
 
-/// The sessions worth keeping: every open one, then the most recently ended
-/// ones up to fixed bounds, longer for those the host has not recorded.
-///
-/// The bound exists because [`CoreStorageKey::FundingSessions`] is one SCALE
-/// blob rewritten on every change; the host keeps the full history.
+/// The sessions worth keeping: every open one, then the ended ones the host
+/// has not recorded yet, newest first up to a fixed bound. The host owns the
+/// history; a session it has recorded is no longer kept.
 pub fn retained(sessions: impl IntoIterator<Item = FundingSession>) -> Vec<FundingSession> {
-    let (mut open, mut settled): (Vec<_>, Vec<_>) = sessions
+    let (mut open, mut unrecorded): (Vec<_>, Vec<_>) = sessions
         .into_iter()
+        .filter(FundingSession::needs_handoff)
         .partition(|session| !session.is_terminal());
-    settled.sort_by_key(|session| core::cmp::Reverse(session.settled_at_ms()));
-    // One the host has not recorded yet is kept further back, so a host that
-    // was away still receives it, but not without bound.
-    let mut recorded = 0;
-    let mut kept: Vec<_> = settled
-        .into_iter()
-        .enumerate()
-        .filter(|(newest, session)| {
-            if !session.acknowledged {
-                return *newest < UNACKNOWLEDGED_LIMIT;
-            }
-            recorded += 1;
-            recorded <= SETTLED_HISTORY_LIMIT
-        })
-        .map(|(_, session)| session)
-        .collect();
-    open.append(&mut kept);
+    unrecorded.sort_by_key(|session| core::cmp::Reverse(session.settled_at_ms()));
+    unrecorded.truncate(UNACKNOWLEDGED_LIMIT);
+    open.append(&mut unrecorded);
     open
 }
 
@@ -555,19 +538,19 @@ mod tests {
         }
     }
 
+    // A product only waits for the outcome; the host draws the steps, so an
+    // open session reads the same whichever way value moves.
     #[test]
-    fn an_open_session_shows_the_screen_for_its_direction() {
+    fn an_open_session_reads_in_progress_until_its_deadline() {
+        let in_progress = HostFundingStatusSubscribeItem::InProgress {
+            expires_at: Some(NOW + SESSION_WINDOW_MS),
+        };
         assert_eq!(
             (
                 session(FundingDirection::In).wire_item(),
                 session(FundingDirection::Out).wire_item(),
             ),
-            (
-                HostFundingStatusSubscribeItem::AwaitingDeposit {
-                    expires_at: Some(NOW + SESSION_WINDOW_MS),
-                },
-                HostFundingStatusSubscribeItem::AwaitingRelease,
-            )
+            (in_progress.clone(), in_progress)
         );
     }
 
@@ -588,6 +571,19 @@ mod tests {
         );
     }
 
+    // A bank transfer can take days, so once a provider has taken a session it
+    // waits for the provider or a cancel instead of failing on day two, and
+    // products are no longer shown a deadline.
+    #[test]
+    fn only_a_session_no_provider_has_taken_expires() {
+        let mut assigned = served(FundingDirection::In);
+
+        assert_eq!(
+            (assigned.expire_if_due(NOW + SESSION_WINDOW_MS), assigned.wire_item()),
+            (false, HostFundingStatusSubscribeItem::InProgress { expires_at: None })
+        );
+    }
+
     #[test]
     fn an_ended_session_keeps_its_first_outcome() {
         let mut session = expired("fs_1", NOW);
@@ -596,50 +592,30 @@ mod tests {
         assert_eq!(session, expired("fs_1", NOW));
     }
 
+    // The host owns the history: a session it recorded is dropped, one it has
+    // not recorded is kept for it, newest first and not without bound, and
+    // open sessions always come first.
     #[test]
-    fn open_sessions_come_first_and_recorded_history_keeps_the_newest() {
-        let open = session(FundingDirection::Out);
-        let settled = (0..SETTLED_HISTORY_LIMIT + 1).map(|index| FundingSession {
-            acknowledged: true,
-            ..expired(&format!("fs_s{index}"), NOW + index as u64)
-        });
-
-        let kept: Vec<String> = retained(settled.chain([open]))
-            .into_iter()
-            .map(|session| session.intent)
-            .collect();
-
-        let newest_first = (1..=SETTLED_HISTORY_LIMIT).rev().map(|index| format!("fs_s{index}"));
-        assert_eq!(
-            kept,
-            std::iter::once("fs_1".to_string())
-                .chain(newest_first)
-                .collect::<Vec<_>>()
-        );
-    }
-
-    // A host that was away must still receive every outcome for its own
-    // history, so one it has not recorded outlives the recorded ones, though
-    // not without bound.
-    #[test]
-    fn history_keeps_what_the_host_has_not_recorded() {
+    fn the_core_keeps_only_open_and_unrecorded_sessions() {
         let ended = |index: usize, acknowledged| FundingSession {
             acknowledged,
             ..expired(&format!("fs_s{index}"), NOW + index as u64)
         };
-        let oldest_unrecorded = ended(0, false);
-        let recorded = (1..=SETTLED_HISTORY_LIMIT + 1).map(|index| ended(index, true));
-        let unrecorded = (100..100 + UNACKNOWLEDGED_LIMIT).map(|index| ended(index, false));
+        let open = session(FundingDirection::Out);
+        let recorded = (0..3).map(|index| ended(index, true));
+        let unrecorded = (100..101 + UNACKNOWLEDGED_LIMIT).map(|index| ended(index, false));
 
-        let kept = retained(recorded.chain(unrecorded).chain([oldest_unrecorded.clone()]));
+        let kept: Vec<String> = retained(recorded.chain(unrecorded).chain([open]))
+            .into_iter()
+            .map(|session| session.intent)
+            .collect();
 
+        let newest_unrecorded = (101..101 + UNACKNOWLEDGED_LIMIT).rev().map(|index| format!("fs_s{index}"));
         assert_eq!(
-            (
-                kept.iter().filter(|session| session.acknowledged).count(),
-                kept.iter().filter(|session| !session.acknowledged).count(),
-                kept.contains(&oldest_unrecorded),
-            ),
-            (SETTLED_HISTORY_LIMIT, UNACKNOWLEDGED_LIMIT, false)
+            kept,
+            std::iter::once("fs_1".to_string())
+                .chain(newest_unrecorded)
+                .collect::<Vec<_>>()
         );
     }
 
