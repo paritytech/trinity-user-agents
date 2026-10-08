@@ -103,64 +103,33 @@ struct PocketCardHostsTests {
         #expect(factory.built == 1)
     }
 
-    /// A screen claims its product's surface when it is built, so a second tap
-    /// landing while the first open still waits to present would build a screen
-    /// that takes the surface, and the page, from the one the user is shown.
+    /// A screen claims its product's surface when it is built, so a second open
+    /// built while the first waits to present would take the page from the
+    /// screen the user is shown.
     @Test
     func ignoresAnOpenWhileAnotherIsStillUnderWay() async {
         let hosts = PocketCardHosts()
         let opens = PresentedOpens()
-        let (started, signalStarted) = AsyncStream<Void>.makeStream()
-        let (lookedUp, signalLookedUp) = AsyncStream<Void>.makeStream()
 
-        let first = Task {
-            await hosts.openIfIdle {
-                signalStarted.yield()
-                for await _ in lookedUp {
-                    break
-                }
-            } then: {
-                opens.presented.append("first")
-            }
-        }
-        for await _ in started {
-            break
-        }
+        let finishFirst = await startOpen("first", on: hosts, recordingInto: opens)
         await hosts.openIfIdle {} then: { opens.presented.append("second") }
-        signalLookedUp.yield()
-        await first.value
+        await finishFirst()
         await hosts.openIfIdle {} then: { opens.presented.append("after") }
 
         #expect(opens.presented == ["first", "after"])
     }
 
-    /// An open waits on its card's manifest before it builds anything, and the
-    /// product it would build is wired to the session that started it. One the
-    /// session ended under would hand the next session a page talking to the
-    /// last one's core.
+    /// The product an open would build is wired to the session that started
+    /// it, so one the session ended under would hand the next session a page
+    /// talking to the last one's core.
     @Test
     func dropsAnOpenTheSessionEndedUnder() async {
         let hosts = PocketCardHosts()
         let opens = PresentedOpens()
-        let (started, signalStarted) = AsyncStream<Void>.makeStream()
-        let (lookedUp, signalLookedUp) = AsyncStream<Void>.makeStream()
 
-        let pending = Task {
-            await hosts.openIfIdle {
-                signalStarted.yield()
-                for await _ in lookedUp {
-                    break
-                }
-            } then: {
-                opens.presented.append("pending")
-            }
-        }
-        for await _ in started {
-            break
-        }
+        let finishPending = await startOpen("pending", on: hosts, recordingInto: opens)
         hosts.release()
-        signalLookedUp.yield()
-        await pending.value
+        await finishPending()
         await hosts.openIfIdle {} then: { opens.presented.append("after") }
 
         #expect(opens.presented == ["after"])
@@ -172,26 +141,11 @@ struct PocketCardHostsTests {
     func keepsAnOpenWhenTheCollectionDropsAnotherCard() async {
         let hosts = PocketCardHosts()
         let opens = PresentedOpens()
-        let (started, signalStarted) = AsyncStream<Void>.makeStream()
-        let (lookedUp, signalLookedUp) = AsyncStream<Void>.makeStream()
         _ = hosts.product(for: trophy) { _ in StubSPAView() }
 
-        let pending = Task {
-            await hosts.openIfIdle {
-                signalStarted.yield()
-                for await _ in lookedUp {
-                    break
-                }
-            } then: {
-                opens.presented.append("pending")
-            }
-        }
-        for await _ in started {
-            break
-        }
+        let finishPending = await startOpen("pending", on: hosts, recordingInto: opens)
         hosts.keepOnly { _ in false }
-        signalLookedUp.yield()
-        await pending.value
+        await finishPending()
 
         #expect(opens.presented == ["pending"])
     }
@@ -205,6 +159,36 @@ private let trophy = PocketCardKey(productId: "game.paseo", cardId: PocketCardId
 @MainActor
 private final class PresentedOpens {
     var presented: [String] = []
+}
+
+/// Starts an open that stays in its preparing step until the returned closure
+/// is awaited, and returns once that step is under way.
+@MainActor
+private func startOpen(
+    _ name: String,
+    on hosts: PocketCardHosts,
+    recordingInto opens: PresentedOpens
+) async -> () async -> Void {
+    let (started, signalStarted) = AsyncStream<Void>.makeStream()
+    let (prepared, signalPrepared) = AsyncStream<Void>.makeStream()
+    let open = Task {
+        await hosts.openIfIdle {
+            signalStarted.yield()
+            for await _ in prepared {
+                break
+            }
+        } then: {
+            opens.presented.append(name)
+        }
+    }
+    for await _ in started {
+        break
+    }
+
+    return {
+        signalPrepared.yield()
+        await open.value
+    }
 }
 
 @MainActor
