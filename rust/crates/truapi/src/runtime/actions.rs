@@ -1,5 +1,6 @@
 //! Connection-scoped, host-fed action streams buffered until the product subscribes.
 
+use core::sync::atomic::{AtomicU64, Ordering};
 use std::collections::VecDeque;
 use std::sync::Mutex;
 
@@ -31,6 +32,9 @@ impl<Item> Default for State<Item> {
 pub struct ActionChannel<Item> {
     state: Mutex<State<Item>>,
     closed_reason: &'static str,
+    /// When the host last published an item, in unix seconds, or zero before
+    /// the first.
+    last_published_secs: AtomicU64,
 }
 
 impl<Item: Send + 'static> ActionChannel<Item> {
@@ -40,6 +44,7 @@ impl<Item: Send + 'static> ActionChannel<Item> {
         Self {
             state: Mutex::new(State::default()),
             closed_reason,
+            last_published_secs: AtomicU64::new(0),
         }
     }
 
@@ -75,6 +80,7 @@ impl<Item: Send + 'static> ActionChannel<Item> {
         if state.closed {
             return Err(ProductRuntimeError::Closed);
         }
+        self.note_published_at(crate::unix_time::current_unix_secs());
         if let Some(sender) = state.subscriber.as_ref() {
             match sender.unbounded_send(item) {
                 Ok(()) => return Ok(()),
@@ -87,6 +93,17 @@ impl<Item: Send + 'static> ActionChannel<Item> {
         }
         state.buffer.push_back(item);
         Ok(())
+    }
+
+    /// Whether the host published an item within the last `window_secs`.
+    pub(crate) fn published_within(&self, window_secs: u64) -> bool {
+        let published_at = self.last_published_secs.load(Ordering::Acquire);
+        published_at != 0
+            && crate::unix_time::current_unix_secs().saturating_sub(published_at) <= window_secs
+    }
+
+    pub(crate) fn note_published_at(&self, unix_secs: u64) {
+        self.last_published_secs.store(unix_secs, Ordering::Release);
     }
 
     /// End the current subscriber's stream while keeping buffered items for
