@@ -82,7 +82,8 @@
     "build": "tsc -b && node scripts/build-cjs.mjs",
     "typecheck:harness": "tsc -p tsconfig.harness.json",
     "build:wasm": "node scripts/build-wasm.mjs",
-    "test": "bun test"
+    "test": "bun test --path-ignore-patterns='**/*.dev.test.ts' && npm run test:dev",
+    "test:dev": "BUN_RUNTIME_TRANSPILER_CACHE_PATH=0 bun test --define import.meta.env.DEV=true .dev.test.ts"
   },
   "dependencies": {
     "@noble/hashes": "^2.2.0",

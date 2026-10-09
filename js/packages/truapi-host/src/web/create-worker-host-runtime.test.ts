@@ -350,8 +350,8 @@ describe("putting a dial into service", () => {
 
 // The gate reads `import.meta.env.DEV`, which is `process.env`, and bun stores
 // only strings there - so `=== true` never holds and no dial can resolve under
-// the runner. That makes the release-on-failure wiring unobservable from here;
-// what it releases is covered at the `installDebuggerDial` seam above.
+// the plain run. The release-on-failure wiring is covered under a dev build in
+// `create-worker-host-runtime.dev.test.ts`.
 describe("a runtime whose worker never loads", () => {
   const start = (worker: FakeWorker): Promise<unknown> => {
     const started = createWebWorkerPairingHostRuntime(

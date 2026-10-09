@@ -462,6 +462,16 @@ and payment payloads; its safety is the dev-build gate above, not redaction. See
 `js/packages/truapi-debugger/README.md` for the tap, the envelope, and the
 host-dials-debugger topology.
 
+## Tests
+
+`npm test` needs bun 1.3.11 or later. It runs twice: the plain suite, then
+`test:dev`, which runs the `*.dev.test.ts` files under `--define
+import.meta.env.DEV=true` so the dev-build gate is open, as a dev bundler would
+leave it. `test:dev` also disables bun's runtime transpiler cache, because bun
+1.3 reuses a large module's cached output without keying on `--define`. CI's
+`@parity/truapi-host` job pins bun to that floor, and the wasm-bridge job runs
+the same suite on the latest bun.
+
 ## Publishing
 
 This package is published by the root `Release` workflow through
