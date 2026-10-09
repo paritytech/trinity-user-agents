@@ -17,12 +17,6 @@ struct RuntimeFundingOpener: FundingOpening {
     func openFunding(direction: FundingDirection) async throws -> String? {
         guard let runtimeProvider else { throw FundingOpeningError.runtimeUnavailable }
 
-        let runtime = try runtimeProvider.sharedRuntime()
-        #if DEBUG
-            if let sample = SampleFundingRuntime.installed {
-                return try await sample.openFunding(direction: direction, amount: nil)
-            }
-        #endif
-        return try await runtime.openFunding(direction: direction)
+        return try await runtimeProvider.sharedRuntime().openFunding(direction: direction)
     }
 }
