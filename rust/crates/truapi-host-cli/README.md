@@ -971,23 +971,37 @@ trying again.
 ## Preimage lookup through cache nodes
 
 A preimage lookup that the core cannot answer from its own cache goes to the
-network's Bulletin node, by CID over `bitswap_v1_get`. Set `TRUAPI_CACHE_NODES`
-to also ask cache nodes first: base URLs separated by commas, asked in order,
-each with `POST /acquire` for `bulletin:<cid>`. A cache node keeps verified
-copies of Bulletin blobs close to its users and answers faster than a Bulletin
-node. `TRUAPI_CACHE_CLIENT` names the payer in the cache nodes' ledger
-(default `truapi`).
+network's Bulletin node, by CID over `bitswap_v1_get`. Set
+`TRUAPI_CACHE_PROVIDERS` to a provider set file to ask cache nodes first. A cache
+node keeps verified copies of Bulletin blobs close to its users and answers
+faster than a Bulletin node. Each line of the file is one provider: its endpoint
+id (64 hex digits), any `ip:port` dial hints, and the base URL of its API. The
+host asks the providers that have an API URL, each with `POST /acquire` for
+`bulletin:<cid>`.
 
 ```bash
-TRUAPI_CACHE_NODES=http://127.0.0.1:8081,http://127.0.0.1:8082 \
-  truapi-host signing-host --frame-listen 127.0.0.1:9955
+TRUAPI_CACHE_PROVIDERS=providers.txt truapi-host signing-host --frame-listen 127.0.0.1:9955
 ```
 
+For each read the host orders the providers. Providers that failed in the last
+30 s go last. The others go by the latency the host measured (a moving
+average, 50 ms for a provider without measurements). The content's home nodes,
+the three providers that rank highest by `blake2b-256(cid || endpoint id)`,
+count at half their latency, so reads of the same content from many hosts go to
+the same nodes. Every fourth read tries a provider without measurements first.
+
 The host trusts no cache node. Bytes that do not hash to the CID are dropped
-and the next node is asked. A node that is down, refuses the payer or does not
-have the blob costs one request, and the Bulletin node answers as it would
-without cache nodes. The log names the node and the source it reports (`local`,
-`peer:<id>` or `source`) for every read a cache node serves.
+and the next provider is asked. Only for bytes that pass, the host signs a
+delivery receipt and sends it to that provider (`POST /receipt`); a provider
+gets no receipt for bad bytes. The payer key is
+`//allowance//cache//{product}` of the signed-in account, derived like the
+other per-product allowance accounts, or the sr25519 seed in
+`TRUAPI_CACHE_PAYER_SEED` for a host without an account. Without a payer the
+host does not ask cache nodes. A provider that is down, refuses the payer or
+does not have the blob costs one request, and the Bulletin node answers as it
+would without cache nodes. The log names the provider, its rank, whether it is
+a home node, the latency and the source it reports (`local`, `peer:<id>` or
+`source`) for every read a cache node serves.
 
 ## Manual use (two terminals)
 

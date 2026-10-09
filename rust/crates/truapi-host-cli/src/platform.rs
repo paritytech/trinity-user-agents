@@ -106,6 +106,8 @@ pub struct CliPlatform {
     state_dir: Mutex<Option<PathBuf>>,
     pairing_scope: Option<PairingStorageScope>,
     bulletin: Arc<BulletinLookup<CacheFirst<BitswapRpc>>>,
+    /// The cache nodes that preimage lookups ask first, when `TRUAPI_CACHE_PROVIDERS` names a provider set.
+    cache: Option<Arc<CacheNodes>>,
     next_notification_id: AtomicU32,
     scheduled_notifications: Arc<Mutex<HashMap<u32, api::HostPushNotificationRequest>>>,
     approval: Mutex<ApprovalPolicy>,
@@ -180,6 +182,7 @@ impl CliPlatform {
             .map(load_hex_key_map)
             .unwrap_or_default();
 
+        let cache = CacheNodes::from_env().map(Arc::new);
         Arc::new(Self {
             chain: WsChainProvider::new(network.people_ws, network.live_chain_endpoints),
             chains: network.host_chain_set(),
@@ -192,9 +195,10 @@ impl CliPlatform {
             state_dir: Mutex::new(storage.as_ref().map(|paths| paths.state_dir.clone())),
             pairing_scope: storage.and_then(|paths| paths.pairing_scope),
             bulletin: Arc::new(BulletinLookup::new(CacheFirst::new(
-                CacheNodes::from_env(),
+                cache.clone(),
                 BitswapRpc::new(network.bulletin_ws),
             ))),
+            cache,
             next_notification_id: AtomicU32::new(1),
             scheduled_notifications: Arc::new(Mutex::new(HashMap::new())),
             approval: Mutex::new(approval),
@@ -202,6 +206,18 @@ impl CliPlatform {
             ui,
             prompt_lock: AsyncMutex::new(()),
         })
+    }
+
+    /// Pay the cache nodes as the signed-in account, whose root entropy is `entropy`: the payer is
+    /// `//allowance//cache//{product}` for the product that `product` selects at each read.
+    pub fn set_cache_account(
+        &self,
+        entropy: &[u8],
+        product: Arc<crate::frame_server::ProductSelection>,
+    ) {
+        if let Some(cache) = &self.cache {
+            cache.set_account(Some((entropy, product)));
+        }
     }
 
     /// Return the policy used by future confirmation requests.
@@ -785,6 +801,11 @@ impl Features for CliPlatform {
 
 impl truapi::platform::AuthPresenter for CliPlatform {
     fn auth_state_changed(&self, state: AuthState) {
+        if matches!(state, AuthState::Disconnected)
+            && let Some(cache) = &self.cache
+        {
+            cache.set_account(None);
+        }
         if let AuthState::Connected(info) = &state
             && let Some(user_id) = storage_user_id(info)
             && let Err(reason) = self.switch_pairing_user_storage(user_id)
