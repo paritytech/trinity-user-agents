@@ -1226,6 +1226,7 @@ impl ProductAuthority for SigningHost {
                         .map_err(|_| RingVrfError::NotAllowlisted)?;
                 match super::account_access_authorization(
                     self.services.platform.as_ref(),
+                    &self.services.permissions,
                     &requester,
                     &owner,
                 )
@@ -1371,6 +1372,7 @@ impl ProductAuthority for SigningHost {
         if caller != owner {
             match super::account_access_authorization(
                 self.services.platform.as_ref(),
+                &self.services.permissions,
                 &caller,
                 &owner,
             )
@@ -2388,6 +2390,7 @@ mod tests {
         cache_grant(&platform, "peopl.dot", r#"{"ordinary":["context"]}"#);
         futures::executor::block_on(crate::runtime::account_access_authorization(
             platform.as_ref(),
+            &Default::default(),
             "ordinary.dot",
             "peopl.dot",
         ))

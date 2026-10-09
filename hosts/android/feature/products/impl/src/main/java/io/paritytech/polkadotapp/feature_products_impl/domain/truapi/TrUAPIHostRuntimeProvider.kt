@@ -22,6 +22,7 @@ import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
 import io.paritytech.polkadotapp.feature_dotns_api.domain.getTldRetrying
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_impl.di.TrUAPIChainHttpClient
+import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.PermissionAuthorizationChanges
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.worker.TrUAPIWorkerSupervisor
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.worker.WorkerDemand
 import kotlinx.coroutines.CoroutineScope
@@ -73,6 +74,7 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
     private val confirmationLauncher: TrUAPIConfirmationLauncher,
     private val appLifecycleObserver: AppLifecycleObserver,
     private val contactsBridge: AppContactsHostBridge,
+    private val permissionChanges: PermissionAuthorizationChanges,
     // Lazy: the supervisor boots workers on this runtime, and reports back through this bridge.
     private val workerSupervisor: Lazy<TrUAPIWorkerSupervisor>,
     dispatchers: CoroutineDispatchers,
@@ -205,6 +207,10 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
         override val storage: HostStorage = HostLevelStorage
 
         override val coreStorage: HostCoreStorage = EncryptedHostCoreStorage(encryptedPreferences)
+
+        override fun permissionAuthorizationsChanged(productId: String) {
+            permissionChanges.changed(productId)
+        }
 
         override fun onCoreLog(marker: String, detail: String) {
             Timber.tag("truapi.core").d("%s: %s", marker, detail)

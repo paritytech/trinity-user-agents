@@ -48,6 +48,12 @@ class RustProductExecutionBridge: HostBridge, @unchecked Sendable {
         dependencies.chainConnections.eventHandler = self
     }
 
+    func permissionAuthorizationsChanged(productId: String) {
+        NotificationCenter.default.post(
+            name: .productPermissionAuthorizationsChanged, object: productId
+        )
+    }
+
     func onCoreLog(marker: String, detail: String) {
         dependencies.logger.debug("[truapi:\(marker)] \(detail)")
     }
@@ -245,5 +251,30 @@ extension RemotePermission {
 extension HostPushNotificationRequest {
     func toScheduledNotificationRequest() -> ScheduledNotificationRequest {
         ScheduledNotificationRequest(text: text, deeplink: deeplink, scheduledAtMs: scheduledAt)
+    }
+}
+
+/// Native execution closure is authoritative. Ordinary permission changes must
+/// refresh settings without destroying a still-authorized product's WebView.
+final class ProductExecutionRevocationObserver: @unchecked Sendable {
+    private let token: NSObjectProtocol
+
+    init(
+        execution: TrUAPIProductExecutionProtocol,
+        onClosed: @escaping @Sendable () async -> Void
+    ) {
+        token = NotificationCenter.default.addObserver(
+            forName: .productPermissionAuthorizationsChanged, object: nil, queue: nil
+        ) { [weak execution] _ in
+            guard execution?.isClosed() == true else { return }
+            Task { await onClosed() }
+        }
+        if execution.isClosed() {
+            Task { await onClosed() }
+        }
+    }
+
+    deinit {
+        NotificationCenter.default.removeObserver(token)
     }
 }

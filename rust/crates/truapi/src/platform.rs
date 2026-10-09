@@ -310,13 +310,14 @@ pub fn has_dotns_tld(normalized: &str) -> bool {
 
 /// Blessed product labels across every network in [`DOTNS_TLDS`].
 ///
-/// These products bypass recorded permissions and prompt only for device access.
+/// These products default to authorized except for device access. Explicit
+/// stored denials still govern their remote, identity and account permissions.
 pub const REMOTE_PERMISSION_TRUSTED_LABELS: &[&str] = &["peopl", "dim2", "stash"];
 
 /// Hosts available to every product unless a stored permission decision blocks them.
 pub const BLESSED_REMOTE_DOMAINS: &[&str] = &["fonts.googleapis.com", "fonts.gstatic.com"];
 
-/// Whether `product_id` holds every [`RemotePermission`] without prompting.
+/// Whether `product_id` defaults to every [`RemotePermission`] without prompting.
 ///
 /// Expects the [`normalize_product_identifier`] form. Matches the whole label
 /// and nothing else: `peopl.dot` and `peopl.paseo` are trusted, while
@@ -330,7 +331,7 @@ pub fn has_trusted_remote_permissions(product_id: &str) -> bool {
             .is_some_and(|(label, _tld)| REMOTE_PERMISSION_TRUSTED_LABELS.contains(&label))
 }
 
-/// Whether `product_id` in any accepted spelling holds every
+/// Whether `product_id` in any accepted spelling defaults to every
 /// [`RemotePermission`] without prompting.
 ///
 /// [`has_trusted_remote_permissions`] reads the normalized form, which is what
@@ -338,7 +339,7 @@ pub fn has_trusted_remote_permissions(product_id: &str) -> bool {
 /// normalizes first and answers `false` for an id that does not normalize at
 /// all: an unrecognised spelling is never read as trusted.
 ///
-/// Recorded permission decisions do not affect this policy.
+/// This identifies the default only; authorization still checks stored denials.
 pub fn normalizes_to_trusted_remote_permissions(product_id: &str) -> bool {
     normalize_product_identifier(product_id)
         .is_ok_and(|normalized| has_trusted_remote_permissions(&normalized))
@@ -1278,8 +1279,8 @@ pub trait CoreAdmin: Send + Sync {
         requests: Vec<PermissionAuthorizationRequest>,
     ) -> Result<Vec<PermissionAuthorizationStatus>, GenericError>;
 
-    /// Update a stored permission authorization status. `NotDetermined` clears
-    /// the stored value so the next product request prompts again.
+    /// Update a stored permission authorization status. `NotDetermined` resets
+    /// the decision to ask again, retaining a tombstone against legacy re-import.
     async fn set_permission_authorization_status(
         &self,
         request: PermissionAuthorizationRequest,
@@ -3214,7 +3215,9 @@ pub trait LocaleHost: Send + Sync {
         &self,
         _request: crate::latest::HostLocaleLocalizeTimestampsRequest,
     ) -> Result<crate::latest::HostLocaleLocalizeTimestampsResponse, GenericError> {
-        Err(GenericError { reason: "Local time conversion is unavailable".into() })
+        Err(GenericError {
+            reason: "Local time conversion is unavailable".into(),
+        })
     }
 }
 

@@ -75,7 +75,9 @@ struct ProductNetworkAccessTests {
         let permission = PermissionAuthorizationRequest.remote(
             RemotePermissionRequest(permission: .remote(domains: ["127.0.0.1"]))
         )
-        try product.execution.setPermissionAuthorizationStatus(request: permission, status: .authorized)
+        try await product.runtime.setPermissionAuthorizationStatus(
+            productId: "network.paseo", request: permission, status: .authorized
+        )
         #expect(try await fetch(product.webView, remote) == "allowed")
         #expect(product.server.requests(path: "/allowed") == 1)
 
@@ -258,6 +260,7 @@ private final class NetworkTestWindow {
 @MainActor
 private struct NetworkTestProduct {
     let server: NetworkTestServer
+    let runtime: TrUAPIHostRuntime
     let execution: TrUAPIProductExecution
     let webView: WKWebView
     let window: NetworkTestWindow
@@ -300,7 +303,8 @@ private struct NetworkTestProduct {
                 #expect(webView.configuration.websiteDataStore.isPersistent)
                 try await ready.load(webView, url: server.url(host: "localhost", path: "/product"))
                 return NetworkTestProduct(
-                    server: server, execution: execution, webView: webView, window: window, navigationDelegate: ready
+                    server: server, runtime: runtime, execution: execution,
+                    webView: webView, window: window, navigationDelegate: ready
                 )
             } catch {
                 window.close()

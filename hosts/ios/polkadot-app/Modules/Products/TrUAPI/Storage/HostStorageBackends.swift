@@ -44,6 +44,12 @@ final class CoreStorageBackend: HostCoreStorageBackend, @unchecked Sendable {
         try withHostRejection { try storage.write(key: key.toHex(), value: value) }
     }
 
+    func keys() throws -> [Data] {
+        try withHostRejection {
+            try storage.keys().map { try Data(hexString: $0) }
+        }
+    }
+
     func clear(key: Data) throws {
         try withHostRejection { try storage.clear(key: key.toHex()) }
     }

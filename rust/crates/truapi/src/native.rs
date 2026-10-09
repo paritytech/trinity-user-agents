@@ -37,13 +37,14 @@ pub use errors::{HostRejection, NativeCoreDatabaseError};
 pub use renderer::{NativeRendererObserver, NativeRendererSubscription};
 pub use runtime::{
     NativeAnnouncedPairing, NativePairingError, NativeProductExecution, NativeTrUApiHostRuntime,
+    PermissionAuthorizationEntry,
 };
 pub use ws_bridge::{WsBridgeEndpoint, WsBridgeStartError};
 
 use crate::PairingProposal;
-use crate::host_logic::dotns;
 #[cfg(doc)]
 use crate::SigningHostRuntime;
+use crate::host_logic::dotns;
 
 /// Classify a navigation input exactly like the core's internal navigate host
 /// call: dotNS first, then `localhost`, then normalized external, with

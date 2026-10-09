@@ -63,7 +63,9 @@ class TrUAPISessionStarter @Inject constructor(
         }.getOrElse { return Result.failure(it) }
 
         return bridge
-            .attach(runtime, productId, chainDirectory.resolve(), navigation, ProductExecutionKind.APP) { bootstrap ->
+            .attach(runtime, productId, chainDirectory.resolve(), navigation, ProductExecutionKind.APP,
+                onPermissionRevoked = { provider.disposeRevokedExecution() },
+            ) { bootstrap ->
                 provider.addWebViewSetup(installBootstrap(bootstrap))
             }
             .mapCatching { execution ->

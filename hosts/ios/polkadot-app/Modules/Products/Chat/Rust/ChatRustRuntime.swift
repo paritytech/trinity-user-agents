@@ -43,6 +43,7 @@ actor ChatRustRuntime: ChatRuntimeProtocol {
 
     private var engine: JSEngineProtocol?
     private var engineMonitor: JSEngineMonitor?
+    private var revocationObserver: ProductExecutionRevocationObserver?
     private var moduleBridge: JSESModuleBridge?
     private var roomsForwardingTask: Task<Void, Never>?
     private var started = false
@@ -174,6 +175,7 @@ actor ChatRustRuntime: ChatRuntimeProtocol {
         // Flipped before the first suspension: any start resuming after this
         // point observes it and unwinds.
         disposed = true
+        revocationObserver = nil
 
         roomsForwardingTask?.cancel()
         roomsForwardingTask = nil
@@ -204,6 +206,9 @@ private extension ChatRustRuntime {
 
         let model = try makeExecutionModel(chatSurface)
         executionModel = model
+        revocationObserver = ProductExecutionRevocationObserver(execution: model.execution) { [weak self] in
+            await self?.dispose()
+        }
         startRoomsForwarding(chatMessaging: chatSurface, execution: model.execution)
 
         let bootstrapScript = try model.startBridge()
@@ -271,7 +276,7 @@ private extension ChatRustRuntime {
     }
 
     func checkNotDisposed() throws {
-        guard !disposed else { throw CancellationError() }
+        guard !disposed, executionModel?.execution.isClosed() != true else { throw CancellationError() }
     }
 
     /// A persisted message can decode before the product attaches. `ProductMessageDecoder`

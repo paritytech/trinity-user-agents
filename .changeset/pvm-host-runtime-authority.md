@@ -1,4 +1,5 @@
 ---
+"@parity/truapi": minor
 "@parity/truapi-host": minor
 ---
 
@@ -14,3 +15,11 @@ requests its shared or static library artifacts.
 Build each iOS XCFramework slice with its own `cargo rustc` invocation.
 Explicit static-library output cannot be combined with multiple target triples
 in one invocation.
+
+Make native permission settings use canonical core decisions, including grants
+already persisted before this update. Enumerate existing native core storage,
+import legacy decisions only when no canonical record exists, and retain reset
+tombstones so old legacy grants cannot return. Product-scoped revocation cancels
+pending permission prompts, clears sibling one-use grants and closes live native
+executions; a fresh execution can open normally under the updated decision.
+Native callbacks must support key enumeration and permission-change notifications.

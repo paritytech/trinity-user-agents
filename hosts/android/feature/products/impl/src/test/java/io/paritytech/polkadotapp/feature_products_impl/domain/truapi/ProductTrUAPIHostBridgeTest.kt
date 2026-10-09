@@ -1,6 +1,9 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.truapi
 
 import android.content.Context
+import dagger.Lazy
+import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.PermissionAuthorizationChanges
+import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.ProductPermissionRepository
 import io.paritytech.polkadotapp.feature_settings_api.domain.language.AppLanguageProvider
 import kotlinx.coroutines.flow.flowOf
 import uniffi.truapi.ProductExecutionKind
@@ -38,6 +41,8 @@ class ProductTrUAPIHostBridgeTest {
         appLanguageProvider = object : AppLanguageProvider {
             override val languageTag = flowOf("en-US")
         },
+        permissionRepository = Lazy { mock(ProductPermissionRepository::class.java) },
+        permissionChanges = PermissionAuthorizationChanges(),
         scope = CoroutineScope(StandardTestDispatcher(testScheduler)),
     )
 
@@ -51,6 +56,7 @@ class ProductTrUAPIHostBridgeTest {
             chains = EMPTY_CHAINS,
             navigationPolicy = NavigationPolicy.DeeplinkNavigation(onDeeplinkNavigation = {}),
             kind = ProductExecutionKind.APP,
+            onPermissionRevoked = {},
             onReadyToInject = {},
         )
 

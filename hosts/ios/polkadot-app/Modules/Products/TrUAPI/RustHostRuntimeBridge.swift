@@ -44,6 +44,12 @@ final class RustHostRuntimeBridge: HostBridge, @unchecked Sendable {
         self.runtime = runtime
     }
 
+    func permissionAuthorizationsChanged(productId: String) {
+        NotificationCenter.default.post(
+            name: .productPermissionAuthorizationsChanged, object: productId
+        )
+    }
+
     func onCoreLog(marker: String, detail: String) {
         logger.debug("[truapi:host:\(marker)] \(detail)")
     }

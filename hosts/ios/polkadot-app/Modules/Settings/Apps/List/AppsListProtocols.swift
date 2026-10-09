@@ -20,9 +20,10 @@ protocol AppsListInteractorInputProtocol: AnyObject {
 @MainActor
 protocol AppsListInteractorOutputProtocol: AnyObject {
     func didReceive(products: [ResolvedProduct])
+    func didReceive(error: Error)
 }
 
 @MainActor
-protocol AppsListWireframeProtocol: AnyObject {
+protocol AppsListWireframeProtocol: AnyObject, AlertPresentable {
     func showAppDetail(productId: ProductId, from view: AppsListViewProtocol?)
 }

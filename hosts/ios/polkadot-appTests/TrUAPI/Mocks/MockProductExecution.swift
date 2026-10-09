@@ -35,6 +35,8 @@ final class MockProductExecution: TrUAPIProductExecutionProtocol, @unchecked Sen
         stopWsBridgeCallCount += 1
     }
 
+    func isClosed() -> Bool { closeCallCount > 0 }
+
     func close() {
         closeCallCount += 1
     }
@@ -66,11 +68,6 @@ final class MockProductExecution: TrUAPIProductExecutionProtocol, @unchecked Sen
         permissionRequests.append(request)
         return permissionStatus
     }
-
-    func setPermissionAuthorizationStatus(
-        request _: PermissionAuthorizationRequest,
-        status _: PermissionAuthorizationStatus
-    ) throws {}
 
     func notifyThemeChanged(theme _: HostThemeSubscribeItem) {}
     func notifyLocaleChanged(locale _: HostLocaleSubscribeItem) {}

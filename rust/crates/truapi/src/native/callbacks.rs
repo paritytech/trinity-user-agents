@@ -6,12 +6,12 @@ use truapi::v01;
 use crate::PairedSsoPeer;
 use crate::host_logic::worker::WorkerTransition;
 
+#[cfg(doc)]
+use super::NativeTrUApiHostRuntime;
 use super::config::ProductExecutionConfig;
 use super::errors::HostRejection;
 #[cfg(doc)]
 use crate::platform::CoreStorageKey;
-#[cfg(doc)]
-use super::NativeTrUApiHostRuntime;
 
 /// Callback surface that iOS and Android implement.
 ///
@@ -109,6 +109,14 @@ pub trait HostCallbacks: Send + Sync {
     /// Clear a core-owned host-private storage slot. `key` is a SCALE-encoded
     /// [`CoreStorageKey`].
     async fn core_storage_clear(&self, key: Vec<u8>) -> Result<(), HostRejection>;
+
+    /// Enumerate encoded keys in the existing core store. Hosts must report
+    /// unavailable enumeration as an error, never as an empty permission list.
+    async fn core_storage_keys(&self) -> Result<Vec<Vec<u8>>, HostRejection>;
+
+    /// A canonical decision changed. Refresh permission settings and invalidate
+    /// legacy one-use decisions for this product. Called on the process bridge.
+    fn permission_authorizations_changed(&self, product_id: String);
 
     /// Open a JSON-RPC connection for a chain. Return a host-assigned
     /// connection id, or `None` when unsupported.

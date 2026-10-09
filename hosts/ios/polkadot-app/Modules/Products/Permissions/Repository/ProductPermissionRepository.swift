@@ -1,6 +1,22 @@
 import Foundation
 import Operation_iOS
 import Products
+import TrUAPIHost
+
+protocol ProductPermissionAuthority: Sendable {
+    func permissionAuthorizationProducts() async throws -> [String]
+    func permissionAuthorizations(productId: String) async throws -> [PermissionAuthorizationEntry]
+    func importPermissionAuthorizations(productId: String, entries: [PermissionAuthorizationEntry]) async throws -> [PermissionAuthorizationEntry]
+    func setPermissionAuthorizationStatus(productId: String, request: PermissionAuthorizationRequest, status: PermissionAuthorizationStatus) async throws
+    func permissionAuthorizationRevision(productId: String) throws -> UInt64
+    func setPermissionAuthorizationStatusIfCurrent(productId: String, request: PermissionAuthorizationRequest, status: PermissionAuthorizationStatus, revision: UInt64) async throws -> Bool
+}
+
+extension TrUAPIHostRuntime: ProductPermissionAuthority {}
+
+extension Notification.Name {
+    static let productPermissionAuthorizationsChanged = Notification.Name("ProductPermissionAuthorizationsChanged")
+}
 
 final class ProductPermissionRepository: @unchecked Sendable {
     private let storageFacade: StorageFacadeProtocol
@@ -8,9 +24,19 @@ final class ProductPermissionRepository: @unchecked Sendable {
     private let repository: AnyDataProviderRepository<ProductPermissionGrant>
 
     private let oneTimeLock = NSLock()
-    private var oneTimeGrants: Set<String> = []
+    private var oneTimeGrants: [String: UInt64] = [:]
+    private let authority: @Sendable () throws -> any ProductPermissionAuthority
 
-    init(storageFacade: StorageFacadeProtocol = UserDataStorageFacade.shared) {
+    init(
+        storageFacade: StorageFacadeProtocol = UserDataStorageFacade.shared,
+        authority: @escaping @Sendable () throws -> any ProductPermissionAuthority = {
+            guard let provider: TrUAPIHostRuntimeProviding = RootDependencyLocator.getDependency() else {
+                throw ProductPermissionMappingError.runtimeUnavailable
+            }
+            return try provider.sharedRuntime()
+        }
+    ) {
+        self.authority = authority
         self.storageFacade = storageFacade
 
         let mapper = AnyCoreDataMapper(ProductPermissionGrantMapper())
@@ -29,12 +55,23 @@ extension ProductPermissionRepository: ProductPermissionRepositoryProtocol {
         productId: String,
         permission: ProductPermission
     ) async throws -> ProductPermissionState {
+        if let request = try permission.authorizationRequest() {
+            let legacy = try await legacyGrants(productId: productId)
+            let entries = try await canonicalEntries(productId: productId, legacy: legacy)
+            let status = entries.first { $0.request == request }?.status ?? .notDetermined
+            if status == .denied { return .denied }
+            if hasOneTimeGrant(
+                for: ProductPermissionGrant.makeIdentifier(productId: productId, permission: permission),
+                productId: productId
+            ) { return .allowedOnce }
+            return status == .authorized ? .allowedAlways : .notDetermined
+        }
         let identifier = ProductPermissionGrant.makeIdentifier(
             productId: productId,
             permission: permission
         )
 
-        guard !hasOneTimeGrant(for: identifier) else {
+        guard !hasOneTimeGrant(for: identifier, productId: productId) else {
             return .allowedOnce
         }
 
@@ -56,26 +93,23 @@ extension ProductPermissionRepository: ProductPermissionRepositoryProtocol {
         typeName: String,
         keys: [String]
     ) async throws -> Bool {
-        let identifiers = keys.compactMap { key -> String? in
+        let grants = try await getAllByProduct(productId: productId)
+        let permissions = try keys.map { key -> ProductPermission in
             guard let permission = ProductPermission.from(typeName: typeName, key: key) else {
-                return nil
+                throw ProductPermissionMappingError.unsupported(typeName, key)
             }
-            return ProductPermissionGrant.makeIdentifier(
-                productId: productId,
-                permission: permission
-            )
+            return try permission.canonicalPermission()
         }
-
-        guard !identifiers.isEmpty else { return false }
-
-        let grants = try await productRepository(for: productId)
-            .fetchAllOperation(with: .init())
-            .asyncExecute()
-
-        return grants.contains { $0.granted && identifiers.contains($0.identifier) }
+        return grants.contains { $0.granted && permissions.contains($0.permission) }
     }
 
     func grant(productId: String, permission: ProductPermission) async throws {
+        if let request = try permission.authorizationRequest() {
+            try await authority().setPermissionAuthorizationStatus(
+                productId: productId, request: request, status: .authorized
+            )
+            return
+        }
         let grant = ProductPermissionGrant(
             productId: productId,
             permission: permission,
@@ -87,6 +121,12 @@ extension ProductPermissionRepository: ProductPermissionRepositoryProtocol {
     }
 
     func deny(productId: String, permission: ProductPermission) async throws {
+        if let request = try permission.authorizationRequest() {
+            try await authority().setPermissionAuthorizationStatus(
+                productId: productId, request: request, status: .denied
+            )
+            return
+        }
         let grant = ProductPermissionGrant(
             productId: productId,
             permission: permission,
@@ -100,6 +140,13 @@ extension ProductPermissionRepository: ProductPermissionRepositoryProtocol {
     }
 
     func revoke(productId: String, permission: ProductPermission) async throws {
+        if let request = try permission.authorizationRequest() {
+            // The core persists an explicit reset, so import cannot restore an old grant.
+            try await authority().setPermissionAuthorizationStatus(
+                productId: productId, request: request, status: .notDetermined
+            )
+            return
+        }
         let identifier = ProductPermissionGrant.makeIdentifier(
             productId: productId,
             permission: permission
@@ -111,36 +158,47 @@ extension ProductPermissionRepository: ProductPermissionRepositoryProtocol {
     }
 
     func revoke(productId: String, permissions: [ProductPermission]) async throws {
-        guard !permissions.isEmpty else { return }
-
-        let identifiers = permissions.map {
-            ProductPermissionGrant.makeIdentifier(productId: productId, permission: $0)
+        for permission in permissions {
+            try await revoke(productId: productId, permission: permission)
         }
-
-        for identifier in identifiers {
-            clearOneTimeGrant(for: identifier)
-        }
-
-        try await repository.saveOperation({ [] }, { identifiers }).asyncExecute()
     }
 
     func revokeAllByProduct(productId: String) async throws {
-        let allGrants = try await getAllByProduct(productId: productId)
-        let identifiers = allGrants.map(\.identifier)
+        let grants = try await getAllByProduct(productId: productId)
+        try await revoke(productId: productId, permissions: grants.map(\.permission))
+    }
 
-        guard !identifiers.isEmpty else { return }
-
-        for identifier in identifiers {
-            clearOneTimeGrant(for: identifier)
+    func settingsGrants(legacy: [ProductPermissionGrant]) async throws -> [ProductPermissionGrant] {
+        let nativeIds = try await authority().permissionAuthorizationProducts()
+        var productIds = Set(legacy.map(\.productId))
+        productIds.formUnion(nativeIds.filter { $0.contains(".") })
+        for productId in nativeIds where !productId.contains(".") {
+            if !productIds.contains(where: { ProductPermission.bareProductLabel($0) == productId }) {
+                productIds.insert(productId)
+            }
         }
-
-        try await repository.saveOperation({ [] }, { identifiers }).asyncExecute()
+        var grants: [ProductPermissionGrant] = []
+        for productId in productIds.sorted() {
+            grants.append(contentsOf: try await getAllByProduct(productId: productId))
+        }
+        return grants
     }
 
     func getAllByProduct(productId: String) async throws -> [ProductPermissionGrant] {
-        try await productRepository(for: productId)
-            .fetchAllOperation(with: .init())
-            .asyncExecute()
+        let legacy = try await legacyGrants(productId: productId)
+        let entries = try await canonicalEntries(productId: productId, legacy: legacy)
+        var grants = legacy.filter { $0.permission == .balanceAccess }
+        for entry in entries where entry.status != .notDetermined {
+            for permission in try ProductPermission.fromAuthorization(entry.request) {
+                grants.append(ProductPermissionGrant(
+                    productId: productId,
+                    permission: permission,
+                    granted: entry.status == .authorized,
+                    grantedAt: nil
+                ))
+            }
+        }
+        return grants
     }
 
     // MARK: - One-time grants
@@ -151,9 +209,10 @@ extension ProductPermissionRepository: ProductPermissionRepositoryProtocol {
             permission: permission
         )
 
+        guard let revision = try? authority().permissionAuthorizationRevision(productId: productId) else { return }
         oneTimeLock.lock()
         defer { oneTimeLock.unlock() }
-        oneTimeGrants.insert(key)
+        oneTimeGrants[key] = revision
     }
 
     func consumeOneTimeGrant(productId: String, permission: ProductPermission) -> Bool {
@@ -162,25 +221,87 @@ extension ProductPermissionRepository: ProductPermissionRepositoryProtocol {
             permission: permission
         )
 
+        guard let revision = try? authority().permissionAuthorizationRevision(productId: productId) else { return false }
         oneTimeLock.lock()
         defer { oneTimeLock.unlock() }
-        return oneTimeGrants.remove(key) != nil
+        return oneTimeGrants.removeValue(forKey: key) == revision
+    }
+
+    func promptPermissions(
+        productId: String,
+        permissions: [ProductPermission],
+        requester: ProductPermissionRequesting
+    ) async throws -> Bool {
+        let runtime = try authority()
+        let revision = try runtime.permissionAuthorizationRevision(productId: productId)
+        let decision: Products.PermissionDecision
+        if permissions.count == 1, let permission = permissions.first {
+            decision = await requester.prompt(productId: productId, permission: permission)
+        } else {
+            decision = await requester.promptBatched(productId: productId, permissions: permissions)
+        }
+        for permission in permissions {
+            if let request = try permission.authorizationRequest(), decision != .allowOnce {
+                guard try await runtime.setPermissionAuthorizationStatusIfCurrent(
+                    productId: productId, request: request,
+                    status: decision == .allowAlways ? .authorized : .denied, revision: revision
+                ) else { return false }
+            } else {
+                guard try runtime.permissionAuthorizationRevision(productId: productId) == revision else { return false }
+                switch decision {
+                case .allowAlways:
+                    try await grant(productId: productId, permission: permission)
+                case .deny:
+                    try await deny(productId: productId, permission: permission)
+                case .allowOnce:
+                    storeOneTime(productId: productId, permission: permission, revision: revision)
+                }
+            }
+        }
+        return decision != .deny
     }
 }
 
 private extension ProductPermissionRepository {
-    func hasOneTimeGrant(for key: String) -> Bool {
+    func hasOneTimeGrant(for key: String, productId: String) -> Bool {
+        guard let revision = try? authority().permissionAuthorizationRevision(productId: productId) else { return false }
         oneTimeLock.lock()
         defer { oneTimeLock.unlock() }
 
-        return oneTimeGrants.contains(key)
+        return oneTimeGrants[key] == revision
     }
 
     func clearOneTimeGrant(for key: String) {
         oneTimeLock.lock()
         defer { oneTimeLock.unlock() }
 
-        oneTimeGrants.remove(key)
+        oneTimeGrants.removeValue(forKey: key)
+    }
+
+    func storeOneTime(productId: String, permission: ProductPermission, revision: UInt64) {
+        let key = ProductPermissionGrant.makeIdentifier(productId: productId, permission: permission)
+        oneTimeLock.lock()
+        defer { oneTimeLock.unlock() }
+        oneTimeGrants[key] = revision
+    }
+
+    func legacyGrants(productId: String) async throws -> [ProductPermissionGrant] {
+        try await productRepository(for: productId).fetchAllOperation(with: .init()).asyncExecute()
+    }
+
+    func canonicalEntries(
+        productId: String,
+        legacy: [ProductPermissionGrant]
+    ) async throws -> [PermissionAuthorizationEntry] {
+        let runtime = try authority()
+        let entries = try legacy.compactMap { grant -> PermissionAuthorizationEntry? in
+            guard let request = try grant.permission.authorizationRequest() else { return nil }
+            return PermissionAuthorizationEntry(request: request, status: grant.granted ? .authorized : .denied)
+        }
+        if !entries.isEmpty {
+            _ = try await runtime.importPermissionAuthorizations(productId: productId, entries: entries)
+        }
+        return try await runtime.permissionAuthorizations(productId: productId)
     }
 
     func productRepository(
@@ -193,5 +314,109 @@ private extension ProductPermissionRepository {
                 mapper: mapper
             )
         )
+    }
+}
+
+enum ProductPermissionMappingError: LocalizedError {
+    case runtimeUnavailable
+    case unsupported(String, String)
+    case invalidDomain(String)
+
+    var errorDescription: String? {
+        switch self {
+        case .runtimeUnavailable:
+            "The native permission runtime is unavailable. Permissions have not been changed."
+        case let .unsupported(type, key):
+            "Cannot map stored permission \(type): \(key)."
+        case let .invalidDomain(domain):
+            "Cannot map stored network permission: \(domain)."
+        }
+    }
+}
+
+extension ProductPermission {
+    func canonicalPermission() throws -> ProductPermission {
+        switch self {
+        case let .networkAccess(domain):
+            return .networkAccess(domain: try Self.canonicalDomain(domain))
+        case let .networkAccessBundle(domains):
+            return .networkAccessBundle(domains: try Array(Set(domains.map { try Self.canonicalDomain($0) })).sorted())
+        case let .accountAccess(target):
+            return .accountAccess(targetProductId: Self.bareProductLabel(target))
+        default:
+            return self
+        }
+    }
+
+    func authorizationRequest() throws -> PermissionAuthorizationRequest? {
+        switch try canonicalPermission() {
+        case let .deviceCapability(capability):
+            let request: HostDevicePermissionRequest
+            switch capability {
+            case .camera: request = .camera
+            case .microphone: request = .microphone
+            case .notifications: request = .notifications
+            case .bluetooth: request = .bluetooth
+            case .nfc: request = .nfc
+            case .location: request = .location
+            case .clipboard: request = .clipboard
+            case .openUrl: request = .openUrl
+            case .biometrics: request = .biometrics
+            }
+            return .device(request)
+        case let .networkAccess(domain):
+            return .remote(.init(permission: .remote(domains: [domain])))
+        case let .networkAccessBundle(domains):
+            return .remote(.init(permission: .remote(domains: domains)))
+        case let .accountAccess(target):
+            return .accountAccess(targetProductId: target)
+        case .userIdentityAccess:
+            return .identityDisclosure
+        case .webRtcAccess:
+            return .remote(.init(permission: .webRtc))
+        case .chainSubmitAccess:
+            return .remote(.init(permission: .chainSubmit))
+        case .preimageSubmitAccess:
+            return .remote(.init(permission: .preimageSubmit))
+        case .statementSubmitAccess:
+            return .remote(.init(permission: .statementSubmit))
+        case .balanceAccess:
+            return nil
+        }
+    }
+
+    static func fromAuthorization(_ request: PermissionAuthorizationRequest) throws -> [ProductPermission] {
+        switch request {
+        case let .device(device):
+            return [.deviceCapability(device.deviceCapabilityType)]
+        case let .remote(remote):
+            if case let .remote(domains) = remote.permission, domains.count != 1 {
+                return [try ProductPermission.networkAccessBundle(domains: domains).canonicalPermission()]
+            }
+            return try remote.permission.toDomainRequest().toDomainPermissions().map { try $0.canonicalPermission() }
+        case .identityDisclosure:
+            return [.userIdentityAccess]
+        case let .accountAccess(targetProductId):
+            return [.accountAccess(targetProductId: bareProductLabel(targetProductId))]
+        }
+    }
+
+    static func bareProductLabel(_ value: String) -> String {
+        let parts = ProductStorageKey.normalize(value).split(separator: ".", omittingEmptySubsequences: false)
+        return String(parts.count > 1 ? parts[parts.count - 2] : parts[0])
+    }
+
+    private static func canonicalDomain(_ value: String) throws -> String {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed == "*" { return trimmed }
+        let wildcard = trimmed.hasPrefix("*.")
+        var host = wildcard ? String(trimmed.dropFirst(2)) : trimmed
+        if host.hasSuffix(".") { host.removeLast() }
+        guard !host.isEmpty, !host.contains("/"), !host.contains("@"),
+              let url = URL(string: "https://\(host)"),
+              let normalized = url.host, url.port == nil, url.query == nil, url.fragment == nil else {
+            throw ProductPermissionMappingError.invalidDomain(value)
+        }
+        return (wildcard ? "*." : "") + normalized.lowercased()
     }
 }

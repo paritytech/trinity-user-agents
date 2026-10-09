@@ -337,13 +337,25 @@ The core's `Permissions` platform trait has two methods, and so does `HostCallba
 
 `product` is the requesting execution's `ProductExecutionConfig`.
 
-Both return `PermissionDecision`: `.allowOnce`, `.allowAlways`, or `.deny`. Preserve the user’s choice; the core keeps one-use grants in memory and consumes them at the authorized operation. OS refusal after app consent should throw instead of returning `.deny`, which records a product denial. The same typed values drive the `TrUAPIProductExecution` permission admin API (`permissionAuthorizationStatus`, `setPermissionAuthorizationStatus`), which reads and updates the persisted decisions without prompting.
+Both return `PermissionDecision`: `.allowOnce`, `.allowAlways`, or `.deny`. Preserve the user’s choice; the core keeps one-use grants in memory and consumes them at the authorized operation. OS refusal after app consent should throw instead of returning `.deny`, which records a product denial. Executions expose the read-only `permissionAuthorizationStatus`; native settings administration belongs to the process-owned `TrUAPIHostRuntime`.
 
 Identity and account access reviews use `confirmPermission(review:)`, which also returns `PermissionDecision`. Override it to preserve Allow once. Its compatibility default maps `confirmUserAction`'s Boolean approval to `.allowAlways`; signing and other single-action reviews continue to use that Boolean callback.
 
 Fetch, XHR, WebSocket connections, notification scheduling, external navigation and existing remote-operation gates consume temporary grants. The shared container authorizes each `getUserMedia` call through `authorize_device_permission`, camera before microphone. Each approval consumes its one-use grant for that attempt: a later microphone denial or native capture failure does not restore the camera grant. The returned stream remains usable until stopped; another capture requires new authorization.
 
 The container enforces product consent, while native media delegates resolve OS permission without consuming product consent again. An OS grant does not establish product consent. This boundary requires the container to run before product code in every frame, with its native methods and prototypes locked. SPA and Chat install it at document start. Authorization uses a private transport and response handler with captured browser primitives, so replacing public SDK replies, collection methods or Promise methods cannot approve a pending capture.
+
+### Native settings and legacy consumers
+
+Use the same runtime supplied by the app's `ServiceCoordinator`, not a second runtime or a settings-owned permission store:
+
+- `permissionAuthorizationProducts()` and `permissionAuthorizations(productId:)` enumerate existing persisted core keys and return canonical `{ request, status }` records. Implement `HostCoreStorageBackend.keys()` over the actual core namespace; the default throws unsupported, never an empty successful snapshot.
+- `importPermissionAuthorizations(productId:entries:)` atomically fills only missing entries. Existing native grants, denials, and reset tombstones win over old legacy rows. Keep legacy-only permission types in their existing repository. Preserve exact multi-domain request identity rather than flattening a bundle denial into singleton denials.
+- `setPermissionAuthorizationStatus(productId:request:status:)` is the explicit settings mutation. Await success before acknowledging removal; show failures while the settings view is still present. `.notDetermined` persists a reset tombstone, permits a future prompt, invalidates pending and one-time grants, and closes affected product executions.
+- Legacy prompt consumers capture `try permissionAuthorizationRevision(productId:)` **before** prompting and commit persistent answers with `setPermissionAuthorizationStatusIfCurrent(..., revision:)`. A false result rejects a stale answer. Temporary legacy grants carry that same revision and are ignored after revocation.
+- Every `HostBridge` implements `permissionAuthorizationsChanged(productId:)`. The process bridge forwards it to settings subscriptions. Shell runtimes inspect `execution.isClosed()` on this notification and tear down the affected WebView/engine and live media; an ordinary grant must not tear down an open execution.
+
+The iOS app merges canonical decisions with legacy-only rows both in per-product settings and the apps-with-permissions list. Permission switches remain on and navigation is held while revocation is pending; storage or notification-cancellation errors remain visible and can be retried. Scope remains the existing product/request scope (including bare product labels for account-access decisions), not an account-specific grant.
 
 ## SSO session handling
 
@@ -458,6 +470,7 @@ final class MyCoreStorage: HostCoreStorageBackend, @unchecked Sendable {
     func read(key: Data) throws -> Data? { values[key] }
     func write(key: Data, value: Data) throws { values[key] = value }
     func clear(key: Data) throws { values.removeValue(forKey: key) }
+    func keys() throws -> [Data] { Array(values.keys) }
 }
 
 final class MyBridge: HostBridge, @unchecked Sendable {
@@ -465,6 +478,13 @@ final class MyBridge: HostBridge, @unchecked Sendable {
     let coreStorage: HostCoreStorageBackend = MyCoreStorage()
 
     func onCoreLog(marker: String, detail: String) { /* log */ }
+
+    func permissionAuthorizationsChanged(productId: String) {
+        NotificationCenter.default.post(
+            name: Notification.Name("ProductPermissionAuthorizationsChanged"),
+            object: productId
+        )
+    }
 
     func navigateTo(url: String) async throws {
         await MainActor.run { /* UIApplication.shared.open(...) */ }

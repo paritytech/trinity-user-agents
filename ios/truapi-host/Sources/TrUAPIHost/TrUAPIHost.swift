@@ -44,6 +44,13 @@ public protocol HostCoreStorageBackend: AnyObject, Sendable {
     func read(key: Data) throws -> Data?
     func write(key: Data, value: Data) throws
     func clear(key: Data) throws
+    func keys() throws -> [Data]
+}
+
+public extension HostCoreStorageBackend {
+    func keys() throws -> [Data] {
+        throw HostRejection.Rejected(reason: "core storage enumeration unsupported")
+    }
 }
 
 /// Host-side callback bundle that the Rust core invokes for capabilities the
@@ -200,6 +207,9 @@ public protocol HostBridge: AnyObject, Sendable {
     /// Core-owned host-private storage for auth session, pairing identity,
     /// and persisted permission decisions.
     var coreStorage: HostCoreStorageBackend { get }
+
+    /// Invalidates native settings and legacy permission consumers.
+    func permissionAuthorizationsChanged(productId: String)
 
 }
 
@@ -585,6 +595,14 @@ private final class HostCallbackAdapter: HostCallbacks, @unchecked Sendable {
         bridge.authStateChanged(state: state)
     }
 
+    func coreStorageKeys() async throws -> [Data] {
+        try withHostRejection { try bridge.coreStorage.keys() }
+    }
+
+    func permissionAuthorizationsChanged(productId: String) {
+        bridge.permissionAuthorizationsChanged(productId: productId)
+    }
+
     func coreStorageRead(key: Data) throws -> Data? {
         try withHostRejection {
             try bridge.coreStorage.read(key: key)
@@ -841,6 +859,44 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
         )
     }
 
+    public func permissionAuthorizationProducts() async throws -> [String] {
+        try await inner.permissionAuthorizationProducts()
+    }
+
+    public func permissionAuthorizationRevision(productId: String) throws -> UInt64 {
+        try inner.permissionAuthorizationRevision(productId: productId)
+    }
+
+    public func setPermissionAuthorizationStatusIfCurrent(
+        productId: String,
+        request: PermissionAuthorizationRequest,
+        status: PermissionAuthorizationStatus,
+        revision: UInt64
+    ) async throws -> Bool {
+        try await inner.setPermissionAuthorizationStatusIfCurrent(
+            productId: productId, request: request, status: status, revision: revision
+        )
+    }
+
+    public func permissionAuthorizations(productId: String) async throws -> [PermissionAuthorizationEntry] {
+        try await inner.permissionAuthorizations(productId: productId)
+    }
+
+    public func setPermissionAuthorizationStatus(
+        productId: String,
+        request: PermissionAuthorizationRequest,
+        status: PermissionAuthorizationStatus
+    ) async throws {
+        try await inner.setPermissionAuthorizationStatus(productId: productId, request: request, status: status)
+    }
+
+    public func importPermissionAuthorizations(
+        productId: String,
+        entries: [PermissionAuthorizationEntry]
+    ) async throws -> [PermissionAuthorizationEntry] {
+        try await inner.importPermissionAuthorizations(productId: productId, entries: entries)
+    }
+
     public func disconnect() {
         inner.disconnect()
     }
@@ -1051,16 +1107,13 @@ public protocol TrUAPIProductExecutionProtocol: AnyObject, Sendable {
     func startWsBridge(bindPort: UInt16) throws -> WsBridgeEndpoint
     func stopWsBridge()
     func close()
+    func isClosed() -> Bool
     func publishChatAction(_ action: HostChatActionSubscribeItem) throws
     func render(_ request: ProductRendererRenderRequest) throws -> AsyncThrowingStream<RendererNode, Error>
     func publishRendererAction(_ item: HostRendererActionSubscribeItem) throws
     func permissionAuthorizationStatus(
         request: PermissionAuthorizationRequest
     ) async throws -> PermissionAuthorizationStatus
-    func setPermissionAuthorizationStatus(
-        request: PermissionAuthorizationRequest,
-        status: PermissionAuthorizationStatus
-    ) throws
     func notifyThemeChanged(theme: HostThemeSubscribeItem)
     func notifyLocaleChanged(locale: HostLocaleSubscribeItem)
     func notifyStorageChanged(key: String, value: Data?)
@@ -1114,6 +1167,10 @@ public final class TrUAPIProductExecution: TrUAPIProductExecutionProtocol, @unch
         inner.stopWsBridge()
     }
 
+    public func isClosed() -> Bool {
+        inner.isClosed()
+    }
+
     public func close() {
         localeObservers.forEach(NotificationCenter.default.removeObserver)
         inner.shutdown()
@@ -1143,14 +1200,6 @@ public final class TrUAPIProductExecution: TrUAPIProductExecutionProtocol, @unch
         request: PermissionAuthorizationRequest
     ) async throws -> PermissionAuthorizationStatus {
         try await inner.permissionAuthorizationStatus(request: request)
-    }
-
-    /// Updates the product decision used by subsequent permission checks.
-    public func setPermissionAuthorizationStatus(
-        request: PermissionAuthorizationRequest,
-        status: PermissionAuthorizationStatus
-    ) throws {
-        try inner.setPermissionAuthorizationStatus(request: request, status: status)
     }
 
     public func notifyThemeChanged(theme: HostThemeSubscribeItem) {
