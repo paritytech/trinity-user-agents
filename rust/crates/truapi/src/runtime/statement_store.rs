@@ -17,7 +17,9 @@ use crate::host_logic::statement_store::{
     statement_fields_from_v01, statement_proof_to_v01, unsigned_statement_signing_payload,
 };
 
-use crate::platform::{StatementStoreProductSignReview, UserConfirmationReview};
+use crate::platform::{
+    CrossProductSignature, StatementStoreProductSignReview, UserConfirmationReview,
+};
 use serde_json::Value;
 use subxt_rpcs::client::RpcSubscription;
 use tracing::instrument;
@@ -355,16 +357,18 @@ impl ProductRuntimeHost {
         // A publisher's grant does not replace an ordinary caller's signature approval.
         if product_account_id.dot_ns_identifier != self.product_id() {
             let confirmed = self
-                .temporary_permissions
-                .approve_statement_signer(
-                    signer,
-                    self.confirm_product_action(UserConfirmationReview::StatementStoreProductSign(
-                        StatementStoreProductSignReview {
-                            calling_product_id: Some(self.product_id()),
-                            account: product_account_id.clone(),
-                            payload: payload.clone(),
-                        },
-                    )),
+                .confirm_signature(
+                    CrossProductSignature::StatementProof,
+                    &product_account_id,
+                    || {
+                        UserConfirmationReview::StatementStoreProductSign(
+                            StatementStoreProductSignReview {
+                                calling_product_id: Some(self.product_id()),
+                                account: product_account_id.clone(),
+                                payload: payload.clone(),
+                            },
+                        )
+                    },
                 )
                 .await
                 .map_err(|err| StatementProofFailure::UnableToSign(err.reason))?;
@@ -719,10 +723,11 @@ mod tests {
     }
 
     /// A game signals with one statement per move, so asking for each one
-    /// would put a prompt in front of every move. One approval covers that
-    /// account for the rest of the execution, and only that account.
+    /// would put a prompt in front of every move. One approval covers every
+    /// account of that product for the rest of the execution, and only that
+    /// product.
     #[test]
-    fn statement_store_create_proof_asks_once_per_cross_product_account() {
+    fn statement_store_create_proof_asks_once_per_cross_product_owner() {
         let platform = Arc::new(StubPlatform {
             sign_raw_confirmed: true,
             ..Default::default()
@@ -734,6 +739,8 @@ mod tests {
             create_proof_as(&host, account_id("dim2.paseo", 0)).expect("the grant admits the account");
         }
         create_proof_as(&host, account_id("dim2.paseo", 1)).expect("the grant admits the account");
+        cache_context_grant(&platform, "stash.paseo", "dim2next");
+        create_proof_as(&host, account_id("stash.paseo", 0)).expect("the grant admits the account");
 
         let reviewed: Vec<_> = platform
             .statement_store_product_sign_reviews
@@ -744,7 +751,7 @@ mod tests {
             .collect();
         assert_eq!(
             reviewed,
-            vec![account_id("dim2.paseo", 0), account_id("dim2.paseo", 1)]
+            vec![account_id("dim2.paseo", 0), account_id("stash.paseo", 0)]
         );
     }
 

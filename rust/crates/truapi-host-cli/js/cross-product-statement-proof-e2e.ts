@@ -3,8 +3,9 @@
 //
 // A game signals with one statement per move. When it plays as another
 // product's account under a `context` grant, every proof needs the user to
-// approve that account, and asking once per statement puts a prompt in front of
-// every move. The host asks once per account for the life of the execution.
+// approve signing with that product's accounts, and asking once per statement
+// puts a prompt in front of every move. The host asks once per product whose
+// accounts sign, for the life of the execution.
 //
 // The CLI appends one line per consulted confirmation to
 // `TRUAPI_APPROVALS_LOG`, and this counts the `sign statement proof` lines.
@@ -17,7 +18,7 @@ import { actionLines, approvalLines } from "./auto-signing-e2e.ts";
 
 const OWNER = "dim2.paseo";
 const CALLER = "dim2next.paseo";
-const PROOFS_PER_ACCOUNT = 5;
+const PROOFS_PER_PHASE = 5;
 const ACTION = "sign statement proof";
 
 function stringify(value: unknown): string {
@@ -91,24 +92,22 @@ async function expectPrompts(
 }
 
 await expectPrompts(
-  `${PROOFS_PER_ACCOUNT} proofs in a row as ${OWNER}/0`,
+  `${PROOFS_PER_PHASE} proofs at once as ${OWNER}/0`,
   1,
+  () =>
+    Promise.all(
+      Array.from({ length: PROOFS_PER_PHASE }, () => createProof(0)),
+    ),
+);
+
+await expectPrompts(
+  `${PROOFS_PER_PHASE} proofs in a row as ${OWNER}/1`,
+  0,
   async () => {
-    for (let move = 0; move < PROOFS_PER_ACCOUNT; move++) {
-      await createProof(0);
+    for (let move = 0; move < PROOFS_PER_PHASE; move++) {
+      await createProof(1);
     }
   },
 );
 
-await expectPrompts(
-  `${PROOFS_PER_ACCOUNT} proofs at once as ${OWNER}/1`,
-  1,
-  () =>
-    Promise.all(
-      Array.from({ length: PROOFS_PER_ACCOUNT }, () => createProof(1)),
-    ),
-);
-
-await expectPrompts(`one more proof as ${OWNER}/0`, 0, () => createProof(0));
-
-console.log("one confirmation per cross-product account");
+console.log("one confirmation per cross-product owner");

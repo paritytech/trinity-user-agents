@@ -3,9 +3,9 @@
 # CLI, counting how often the user is asked.
 #
 # `dim2next.paseo` signs statements as `dim2.paseo`, which the `context` grant
-# in `dim2.paseo`'s local product config permits. The user must approve each
-# account once, and not each statement. Run it on a build without that and the
-# first phase reports five prompts and fails.
+# in `dim2.paseo`'s local product config permits. The user must approve signing
+# with `dim2.paseo`'s accounts once, and not each statement. Run it on a build
+# without that and the first phase reports five prompts and fails.
 #
 # Chain-free. The grant resolves from `--product-config` and the proof is signed
 # locally, so nothing is submitted.

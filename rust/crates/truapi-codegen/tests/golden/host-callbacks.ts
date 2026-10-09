@@ -246,6 +246,18 @@ export type CreateTransactionReview =
   | { tag: "LegacyAccount"; value: LegacyAccountTxPayload };
 
 /**
+ * A kind of signature a product makes with another product's account.
+ *
+ * The user approves each kind separately: approving one never lets another
+ * through without a prompt.
+ */
+export type CrossProductSignature =
+  | "Payload"
+  | "Transaction"
+  | "Raw"
+  | "StatementProof";
+
+/**
  * What the operating system currently says about a device capability.
  *
  * Distinct from `PermissionAuthorizationStatus`, which is the product-scoped
@@ -388,7 +400,16 @@ export type PermissionAuthorizationRequest =
   /**
    * Product-scoped permission to access another product's account context.
    */
-  | { tag: "AccountAccess"; value: { targetProductId: string } };
+  | { tag: "AccountAccess"; value: { targetProductId: string } }
+  /**
+   * Product-scoped approval to make one kind of signature with another
+   * product's accounts. It is held in memory only and ends when the product
+   * execution closes.
+   */
+  | {
+      tag: "CrossProductSignature";
+      value: { targetProductId: string; kind: CrossProductSignature };
+    };
 
 /**
  * Authorization status for a permission request.
@@ -791,6 +812,17 @@ export const CreateTransactionReview: S.Codec<CreateTransactionReview> = S.lazy(
 );
 
 /**
+ * A kind of signature a product makes with another product's account.
+ *
+ * The user approves each kind separately: approving one never lets another
+ * through without a prompt.
+ */
+export const CrossProductSignature: S.Codec<CrossProductSignature> = S.lazy(
+  (): S.Codec<CrossProductSignature> =>
+    S.Status("Payload", "Transaction", "Raw", "StatementProof"),
+);
+
+/**
  * What the operating system currently says about a device capability.
  *
  * Distinct from `PermissionAuthorizationStatus`, which is the product-scoped
@@ -899,6 +931,10 @@ export const PermissionAuthorizationRequest: S.Codec<PermissionAuthorizationRequ
         AccountAccess: S.Struct({ targetProductId: S.str }) as S.Codec<{
           targetProductId: string;
         }>,
+        CrossProductSignature: S.Struct({
+          targetProductId: S.str,
+          kind: CrossProductSignature,
+        }) as S.Codec<{ targetProductId: string; kind: CrossProductSignature }>,
       }),
   );
 
