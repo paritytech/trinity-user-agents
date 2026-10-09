@@ -510,7 +510,7 @@ extension NativeMediaRuntime {
                     catch {
                         guard let self, self.sessionId == operation.sessionId else { return }
                         self.emit(.peerStateChanged(sessionId: operation.sessionId,
-                            participantId: await peer.participantId, state: .failed))
+                            participantId: peer.participantId, state: .failed))
                         await peer.close()
                     }
                 }
@@ -598,7 +598,7 @@ extension NativeMediaRuntime {
                     catch {
                         guard self.sessionId == sessionId else { return }
                         self.emit(.peerStateChanged(sessionId: sessionId,
-                            participantId: await peer.participantId, state: .failed))
+                            participantId: peer.participantId, state: .failed))
                         await peer.close()
                     }
                 }

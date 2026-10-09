@@ -45,7 +45,7 @@ struct TrUAPIMediaPermissionSettings: Sendable {
         defer { execution.close() }
         let status: PermissionAuthorizationStatus
         if allowed {
-            let presentation = await NativeMediaPresentation(productId: productId)
+            let presentation = NativeMediaPresentation(productId: productId)
             do {
                 let granted = try await withTaskCancellationHandler {
                     switch setting.request {
