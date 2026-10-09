@@ -465,6 +465,16 @@ impl FundingSession {
         Ok(())
     }
 
+    /// Whether the session's provider still has work on it: it is in flight,
+    /// or it is a released outbound session whose payout the provider has
+    /// not reported and the host has not recorded.
+    pub fn serves_provider(&self) -> bool {
+        !self.is_terminal()
+            || (matches!(self.stage, FundingStage::Released { .. })
+                && !self.acknowledged
+                && self.payout().is_none())
+    }
+
     /// The provider's payout outcome, once it reported one.
     pub fn payout(&self) -> Option<&FundingPayout> {
         self.updates.iter().find_map(|record| match &record.update {
