@@ -23,6 +23,7 @@ import io.paritytech.polkadotapp.feature_chats_impl.data.repository.ChatMessageR
 import io.paritytech.polkadotapp.feature_chats_impl.data.repository.ContactsRepository
 import io.paritytech.polkadotapp.feature_chats_impl.data.repository.ProcessedChatMessageRepository
 import io.paritytech.polkadotapp.feature_chats_impl.domain.ChatEngine
+import io.paritytech.polkadotapp.feature_chats_impl.domain.ChatMessagePlacement
 import io.paritytech.polkadotapp.feature_chats_impl.domain.ChatMessageSaveConflictStrategy
 import kotlinx.coroutines.flow.Flow
 import javax.inject.Inject
@@ -55,7 +56,7 @@ class RealApplyRemoteChatMessageUseCase @Inject constructor(
             .logFailure("ApplyRemoteChatMessageUseCase: failed to decode remote/synced message; dropping")
             .getOrElse { return }
 
-        val isSavedAsNew = chatEngine.saveMessage(chatMessage, ChatMessageSaveConflictStrategy.IGNORE)
+        val isSavedAsNew = chatEngine.saveMessage(chatMessage, ChatMessageSaveConflictStrategy.IGNORE, ChatMessagePlacement.ByTimestamp)
 
         if (!isSavedAsNew) {
             chatMessageRepository.updateMessageStatus(chatMessage.id, status)

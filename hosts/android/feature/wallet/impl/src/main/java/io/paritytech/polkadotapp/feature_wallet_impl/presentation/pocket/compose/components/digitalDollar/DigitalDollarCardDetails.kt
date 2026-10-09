@@ -47,7 +47,6 @@ import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compose
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compose.pocketContentSlide
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.BalanceRestoreUiState
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.CoinageBalanceBreakdownUiModel
-import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.CoinageCompositionUiModel
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.CoinageUiState
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.DigitalDollarCardDetailsUiState
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.PocketCardUiModel
@@ -79,7 +78,6 @@ fun DigitalDollarCardDetails(
         onWithdrawClick = viewModel::onWithdrawClick,
         onAutoFundClick = viewModel::onAutoFundClick,
         onDetailsToggled = viewModel::onDetailsToggled,
-        onKeyToggled = viewModel::onKeyToggled,
         onShareLogsClick = viewModel::onShareLogsClick,
         onBackupUpdateClick = viewModel::onBackupUpdateClick,
         onBackupCloseClick = viewModel::onBackupCloseClick
@@ -98,7 +96,6 @@ private fun DigitalDollarCardDetailsContent(
     onWithdrawClick: () -> Unit,
     onAutoFundClick: () -> Unit,
     onDetailsToggled: () -> Unit,
-    onKeyToggled: () -> Unit,
     onShareLogsClick: () -> Unit,
     onBackupUpdateClick: () -> Unit,
     onBackupCloseClick: () -> Unit
@@ -179,7 +176,6 @@ private fun DigitalDollarCardDetailsContent(
                         state = coinageState,
                         onAutoFundClick = onAutoFundClick,
                         onDetailsToggled = onDetailsToggled,
-                        onKeyToggled = onKeyToggled,
                         onShareLogsClick = onShareLogsClick
                     )
                 }
@@ -253,8 +249,7 @@ private fun DigitalDollarCardDetailsPreview() {
                             totalBalance = TokenAmountModel.mock,
                             readyBalance = TokenAmountModel.mock,
                             clearingBalance = TokenAmountModel.mock,
-                            composition = CoinageCompositionUiModel.EMPTY,
-                            holdings = persistentListOf(),
+                            coins = persistentListOf(),
                             breakdown = CoinageBalanceBreakdownUiModel(
                                 availablePrivate = TokenAmountModel.mock,
                                 gainingPrivacy = TokenAmountModel.mock,
@@ -266,8 +261,7 @@ private fun DigitalDollarCardDetailsPreview() {
                         fundInProgress = false,
                         actionsEnabled = true,
                         shareLogsEnabled = true,
-                        detailsVisible = false,
-                        keyVisible = false
+                        detailsVisible = false
                     )
                 ),
                 state = DigitalDollarCardDetailsUiState(
@@ -278,7 +272,6 @@ private fun DigitalDollarCardDetailsPreview() {
                 onWithdrawClick = {},
                 onAutoFundClick = {},
                 onDetailsToggled = {},
-                onKeyToggled = {},
                 onShareLogsClick = {},
                 onBackupUpdateClick = {},
                 onBackupCloseClick = {}

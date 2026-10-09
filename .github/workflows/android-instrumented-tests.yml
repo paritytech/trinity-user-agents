@@ -69,6 +69,7 @@ jobs:
         uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2.38.0
         env:
           APPLICATION_ID: ${{ vars.APPLICATION_ID }}
+          IOS_BUNDLE_ID: ${{ vars.IOS_BUNDLE_ID || 'io.parity.polkadotapp' }}
           APPLICATION_NAME: ${{ vars.APPLICATION_NAME }}
           CONTACT_EMAIL: ${{ vars.CONTACT_EMAIL }}
           CURRENCY_SYMBOL: ${{ vars.CURRENCY_SYMBOL }}

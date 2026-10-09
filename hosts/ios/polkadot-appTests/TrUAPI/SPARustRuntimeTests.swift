@@ -31,6 +31,8 @@ private struct StubTldProvider: DotNsTldProviding {
     }
 
     func refresh() {}
+
+    func reset() {}
 }
 
 private func makeRuntime(

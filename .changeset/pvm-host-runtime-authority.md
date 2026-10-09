@@ -23,3 +23,8 @@ tombstones so old legacy grants cannot return. Product-scoped revocation cancels
 pending permission prompts, clears sibling one-use grants and closes live native
 executions; a fresh execution can open normally under the updated decision.
 Native callbacks must support key enumeration and permission-change notifications.
+
+Pin the optional native composition to PolkaVM host runtime `0.3.2-rc.9`
+(`959ad63f7312a2f4598b9f718ccc2516927cbbff`) and compose the latest upstream
+native SDK, including expanded-card and game callbacks, without weakening
+canonical permission revocation or stale-prompt fencing.

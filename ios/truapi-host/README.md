@@ -308,6 +308,43 @@ the host keeps its own record of which devices it has already seen. It arrives
 on the thread answering the handshake, so hand the device off rather than
 announcing it inline. Defaults to a no-op for a host that answers no pairing.
 
+## Game
+
+A host that can hold reminders implements `GameHostBridge`, passed as `game:`
+to `openProductExecution`. Hosts without the bridge pass nothing and Game
+calls answer unsupported, as they do for every product but the game product,
+`dim2`.
+
+```swift
+final class MyGameBridge: GameHostBridge, @unchecked Sendable {
+    private let reminders: ReminderStore
+
+    init(reminders: ReminderStore) { self.reminders = reminders }
+
+    func scheduleReminder(startsAt: UInt64) async throws {
+        try await reminders.hold(startsAt: startsAt)
+    }
+
+    func cancelReminder() async throws {
+        reminders.drop()
+    }
+}
+
+let execution = try runtime.openProductExecution(
+    bridge: bridge,
+    configuration: ProductExecutionConfig(productId: "dim2.dot", executionKind: .worker),
+    game: MyGameBridge(reminders: reminderStore)
+)
+```
+
+The host holds one reminder per product: a `scheduleReminder` replaces the
+reminder the same product already holds. The core asks for no per-product
+consent: the host asks the OS for what it needs, rings an alarm where the OS
+allows one and delivers an ordinary notification otherwise, may add the game to
+the user's calendar, keeps the reminder across app kill and device reboot, and
+drops it once the game has started. A `scheduleReminder` that throws reaches
+the product as a host failure carrying its reason.
+
 ## Architecture
 
 ```text
@@ -326,7 +363,7 @@ announcing it inline. Defaults to a no-op for a host that answers no pairing.
                    Product execution
 ```
 
-The bootstrap supplies the execution endpoint to the shared container, which consumes and removes `window.__truapi_localhost` before product scripts run. The container creates one SDK connection for public calls and private permission checks, then exposes its public client through `window.__HOST_API_CLIENT__`. The Rust core handles the wire protocol directly. Outbound responses and host-side capability callbacks (`navigateTo`, `pushNotification`, `cancelNotification`, `devicePermission`, `remotePermission`, `authStateChanged`, core storage, chain JSON-RPC, confirmations, preimage, theme, `featureSupported`, `storage`) reach the embedder through `HostCallbacks`.
+The bootstrap supplies the execution endpoint to the shared container, which consumes and removes `window.__truapi_localhost` before product scripts run. The container creates one SDK connection for public calls and private permission checks, then exposes its public client through `window.__HOST_API_CLIENT__`. The Rust core handles the wire protocol directly. Outbound responses and host-side capability callbacks (`navigateTo`, `pushNotification`, `cancelNotification`, `devicePermission`, `setExpandedCardFaceShown`, `remotePermission`, `authStateChanged`, core storage, chain JSON-RPC, confirmations, preimage, theme, `featureSupported`, `storage`) reach the embedder through `HostCallbacks`.
 
 ## Permissions split
 
@@ -354,6 +391,8 @@ Use the same runtime supplied by the app's `ServiceCoordinator`, not a second ru
 - `setPermissionAuthorizationStatus(productId:request:status:)` is the explicit settings mutation. Await success before acknowledging removal; show failures while the settings view is still present. `.notDetermined` persists a reset tombstone, permits a future prompt, invalidates pending and one-time grants, and closes affected product executions.
 - Legacy prompt consumers capture `try permissionAuthorizationRevision(productId:)` **before** prompting and commit persistent answers with `setPermissionAuthorizationStatusIfCurrent(..., revision:)`. A false result rejects a stale answer. Temporary legacy grants carry that same revision and are ignored after revocation.
 - Every `HostBridge` implements `permissionAuthorizationsChanged(productId:)`. The process bridge forwards it to settings subscriptions. Shell runtimes inspect `execution.isClosed()` on this notification and tear down the affected WebView/engine and live media; an ordinary grant must not tear down an open execution.
+
+In the iOS app, Chat and Pocket share a worker rather than owning separate engines. `TrUAPIWorkerManager` observes the actual worker execution and removes its published execution, stops Pocket forwarding, and disposes the worker engine and chain connections on revocation. The observer is tied to that worker's boot identity so a delayed closure cannot tear down a replacement. A worker closed while starting must not resume into product code.
 
 The iOS app merges canonical decisions with legacy-only rows both in per-product settings and the apps-with-permissions list. Permission switches remain on and navigation is held while revocation is pending; storage or notification-cancellation errors remain visible and can be retried. Scope remains the existing product/request scope (including bare product labels for account-access decisions), not an account-specific grant.
 

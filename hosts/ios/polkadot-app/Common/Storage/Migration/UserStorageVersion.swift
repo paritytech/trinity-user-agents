@@ -13,6 +13,16 @@ enum UserStorageVersion: String, CaseIterable {
     case version50 = "UserDataModel50"
     case version51 = "UserDataModel51"
     case version52 = "UserDataModel52"
+    /// `polkadot-ios-community` is filling the same sequence, and the tree
+    /// under `hosts/ios` is a snapshot of it, so a refresh can bring a version
+    /// of its own under this name. That conflicts on the file, which is where
+    /// someone folds the two into one.
+    ///
+    /// What they fold has to hold both sides. CoreData matches a store by its
+    /// entities rather than by the name of the version, so two models sharing
+    /// this name and differing in what they hold leave a migrated device with
+    /// no model it matches, which ends in the migrator's `fatalError`.
+    case version53 = "UserDataModel53"
 
     // swiftlint:disable:next cyclomatic_complexity
     func nextVersion() -> UserStorageVersion? {
@@ -40,6 +50,8 @@ enum UserStorageVersion: String, CaseIterable {
         case .version51:
             .version52
         case .version52:
+            .version53
+        case .version53:
             nil
         }
     }

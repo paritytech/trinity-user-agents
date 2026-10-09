@@ -162,6 +162,9 @@ Native hosts that need both runtimes link the optional `truapi-polkavm-host`
 composition crate; the base `truapi` remains PolkaVM-free. Browser hosts
 consume `@parity/polkavm-browser-runtime` directly; browser assets are not
 shipped from this repository.
+The native composition pins release `v0.3.2-rc.9` at immutable source revision
+`959ad63f7312a2f4598b9f718ccc2516927cbbff`; `Cargo.toml`, `Cargo.lock`, and
+`truapi-polkavm-host`'s public provenance constants identify the same runtime.
 
 Taking a screenshot opens **Report app issue** wherever the shake-opened Debug
 menu is, which is every build except the store submission: `DEBUG_TOOLS_ENABLED`
@@ -352,6 +355,20 @@ a pass means the host and the product agree on what happened rather than
 resting on the product's word. The report lands at
 `explorer/diagnosis-reports/pocket/signing-host-cli.md` and feeds the explorer's
 Pocket compatibility matrix.
+
+`Game` (`remind_next_game`, `cancel_next_game`) serves only the game product,
+`dim2` on every network, and answers `Unsupported` to any other. The battery
+runs as another product, so it skips the `Game` service, and so does the
+playground's Diagnosis, since dot.li serves no `Game` surface. Both CLI host
+roles still install an in-memory `CliGameHost` that never rings anything. The
+`truapi` runtime tests cover the product gate, the start-time check, a call
+withdrawn before it reaches the host, the absence of any permission prompt, and
+host failures.
+
+`Scanner` (`scan`) opens the host's own QR and barcode viewfinder (RFC
+"Host-drawn scanner"). No host serves it yet, so the runtime
+answers `Unsupported`, and the battery and the playground's Diagnosis both skip
+the service.
 
 To run the playground locally in a plain browser tab, against a signing host on
 your own machine:
@@ -555,10 +572,10 @@ Each announcement links both APKs and lists the pull
 requests the build carries, with breaking changes, the titles carrying `!`,
 listed first and marked `Breaking:`. Both nightlies skip a scheduled night
 when `main` has not moved past what their last successful run built. `android-debug-distribution.yml` runs
-when a pull request merges to `main`, and answers what `main` does right now.
-It builds the merge commit rather than the pull request's merge preview, which
-is computed while the request is open and would otherwise ship a tree missing
-whatever landed first.
+on every push to `main`, and answers what `main` does right now. It builds the
+pushed commit, the one that landed. A push rather than the pull request's merge
+event, because the Firebase identity is bound to `main`, and a pull request
+event's token never matches that binding.
 
 Both authenticate by federation. The run proves its identity with its OIDC
 token and receives a short lived credential, so no long lived key for that
@@ -587,7 +604,10 @@ Variables: `APPLICATION_ID`, `APPLICATION_NAME`, `CURRENCY_SYMBOL`,
 `LOG_COLLECTION_EMAIL`, `PRIVACY_POLICY_URL`, `TERMS_OF_USE_URL`,
 `SENTRY_ORG`, `SENTRY_PROJECT`, `GAME_RESULTS_FALLBACK_URL`,
 `REFERRAL_WEB_HOST`, `CONTACT_EMAIL`, `ANDROID_FIREBASE_GROUP`,
-`ANDROID_FIREBASE_DEBUG_GROUP`.
+`ANDROID_FIREBASE_DEBUG_GROUP`, and optionally `IOS_BUNDLE_ID`, the iOS app's
+bundle id the Android app names as the APNs topic for chat pushes to iOS
+contacts. It defaults to `io.parity.polkadotapp`, matching the iOS nightly;
+debug builds append `.develop` and safetynet `.safety`, as the iOS builds do.
 
 `GOOGLE_PROJECT_ID` carries an `L` suffix. It is interpolated into a Java
 `long` literal, and a twelve digit project number overflows an `int` without

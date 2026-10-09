@@ -14,7 +14,7 @@ struct ContactsChangeNotifierTests {
 
         factory.deliver([makeContact(accountId: alice)])
 
-        #expect(removals.count == 0)
+        #expect(removals.isEmpty)
         _ = notifier
     }
 
@@ -25,7 +25,7 @@ struct ContactsChangeNotifierTests {
         factory.deliver([makeContact(accountId: alice)])
         factory.deliver([makeContact(accountId: alice), makeContact(accountId: bob)])
 
-        #expect(removals.count == 0)
+        #expect(removals.isEmpty)
         _ = notifier
     }
 
@@ -57,6 +57,10 @@ private let bob = Data(repeating: 0xB0, count: 32)
 
 private final class RemovalCounter {
     var count = 0
+
+    /// SwiftFormat's `isEmpty` rule rewrites `count == 0` on anything with a
+    /// `count`, so the type answers the spelling it is left with.
+    var isEmpty: Bool { count == 0 }
 }
 
 private func makeNotifier() -> (FakeContactDataProviderFactory, RemovalCounter, ContactsChangeNotifier) {

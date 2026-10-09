@@ -914,6 +914,9 @@ fn raw_param_ts(
                 raw_param_ts(inner, codec_types, local_codec_types)
             )
         }
+        TypeRef::Primitive(p) if matches!(p.as_str(), "u64" | "u128" | "i64" | "i128") => {
+            "bigint".to_string()
+        }
         TypeRef::Primitive(p) => raw_primitive_ts(p),
         _ => "Uint8Array".to_string(),
     }
@@ -996,8 +999,8 @@ fn collect_codec_imports(ty: &TypeRef, codec_types: &BTreeSet<String>, out: &mut
 }
 
 /// The call argument expression for one Rust param. Codec types arrive as
-/// `Uint8Array` and are decoded; `u64`-family integers arrive as JS numbers and
-/// are widened to `bigint`; everything else passes through. Arrow parameter
+/// `Uint8Array` and are decoded; everything else, including `u64`-family
+/// integers that arrive as `bigint`, passes through. Arrow parameter
 /// types are left to contextual inference from `RawCallbacks`, so only the
 /// argument expression varies.
 fn adapter_arg(
@@ -1011,9 +1014,6 @@ fn adapter_arg(
             if codec_types.contains(ty) || local_codec_types.contains(ty) =>
         {
             format!("{ty}.dec({name})")
-        }
-        TypeRef::Primitive(p) if matches!(p.as_str(), "u64" | "u128" | "i64" | "i128") => {
-            format!("BigInt({name})")
         }
         _ => name,
     }

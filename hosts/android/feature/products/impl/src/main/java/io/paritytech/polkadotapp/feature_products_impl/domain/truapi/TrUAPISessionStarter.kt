@@ -8,6 +8,7 @@ import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.navigation.NavigationPolicy
 import io.paritytech.polkadotapp.feature_products_impl.domain.webView.BrowserWebViewProvider
+import io.paritytech.polkadotapp.feature_products_impl.presentation.spaHost.ExpandedCardFace
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 import timber.log.Timber
@@ -31,10 +32,12 @@ class TrUAPISessionStarter @Inject constructor(
         productUrl: String,
         scope: CoroutineScope,
         hostApiNavigation: NavigationPolicy,
+        card: ExpandedCardFace? = null,
+        explicitProductId: ProductId? = null,
     ): ProductTrUAPIHostBridge {
         val bridge = hostBridgeFactory.create(scope)
         scope.launch {
-            attachAndLoad(bridge, provider, productUrl, hostApiNavigation)
+            attachAndLoad(bridge, provider, productUrl, hostApiNavigation, card, explicitProductId)
                 .logFailure("Failed to start TrUAPI host bridge for $productUrl")
         }
         return bridge
@@ -45,13 +48,18 @@ class TrUAPISessionStarter @Inject constructor(
         provider: BrowserWebViewProvider,
         productUrl: String,
         navigation: NavigationPolicy,
+        card: ExpandedCardFace?,
+        explicitProductId: ProductId?,
     ): Result<Unit> {
-        val tld = dotNsTldProvider.getTld().getOrElse { return Result.failure(it) }
-        // A page that is not a product (the debug SPA browser opening any URL) has no bridge to
-        // attach, but it is still a page to show.
-        val productId = ProductId.fromUrl(productUrl.toUri(), tld).getOrNull() ?: run {
-            Timber.d("Loading %s without a TrUAPI bridge: not a product URL", productUrl)
-            return runCatching { provider.loadInitialContent() }
+        // A debug page served from a loopback url carries no product in its host.
+        val productId = explicitProductId ?: run {
+            val tld = dotNsTldProvider.getTld().getOrElse { return Result.failure(it) }
+            // A page that is not a product (the debug SPA browser opening any URL) has no bridge to
+            // attach, but it is still a page to show.
+            ProductId.fromUrl(productUrl.toUri(), tld).getOrNull() ?: run {
+                Timber.d("Loading %s without a TrUAPI bridge: not a product URL", productUrl)
+                return runCatching { provider.loadInitialContent() }
+            }
         }
 
         val runtime = runtimeProvider.runtime().getOrElse { return Result.failure(it) }
@@ -62,8 +70,10 @@ class TrUAPISessionStarter @Inject constructor(
             bootstrapInstaller.installerFor(setOf(productUrl.toUri().origin()))
         }.getOrElse { return Result.failure(it) }
 
+        val kind = if (card != null) ProductExecutionKind.WIDGET else ProductExecutionKind.APP
         return bridge
-            .attach(runtime, productId, chainDirectory.resolve(), navigation, ProductExecutionKind.APP,
+            .attach(runtime, productId, chainDirectory.resolve(), navigation, kind,
+                card = card,
                 onPermissionRevoked = { provider.disposeRevokedExecution() },
             ) { bootstrap ->
                 provider.addWebViewSetup(installBootstrap(bootstrap))

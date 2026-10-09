@@ -153,6 +153,7 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
 
         return HostRuntimeConfig(
             hostName = HOST_NAME,
+            hostVersion = hostVersion(),
             peopleChainGenesisHash = peopleGenesis,
             bulletinChainGenesisHash = bulletinGenesis,
             assetHubChainGenesisHash = assetHubGenesis,
@@ -161,6 +162,11 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
             localSessionLiteUsername = localSession?.liteUsername,
             databaseDirectory = context.noBackupFilesDir.resolve(DATABASE_DIRECTORY).apply { mkdirs() }.absolutePath,
         )
+    }
+
+    private fun hostVersion(): String {
+        val packageInfo = context.packageManager.getPackageInfo(context.packageName, 0)
+        return "${packageInfo.versionName.orEmpty()} (${packageInfo.longVersionCode})"
     }
 
     // The core caches the contact handles it resolves; a removed or blocked

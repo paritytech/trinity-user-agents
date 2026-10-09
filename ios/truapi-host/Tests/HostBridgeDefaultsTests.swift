@@ -106,4 +106,14 @@ struct HostBridgeDefaultsTests {
         })
         #expect(bridge.coreLogs.contains("permissions changed demo.paseo"))
     }
+
+    /// An app that never implemented cards must say so, not pretend it moved one.
+    @Test
+    func defaultExpandedCardFaceIsUnsupported() async throws {
+        let bridge: HostBridge = StubHostBridge()
+
+        let outcome = try await bridge.setExpandedCardFaceShown(shown: false)
+
+        #expect(outcome == .unsupported)
+    }
 }
