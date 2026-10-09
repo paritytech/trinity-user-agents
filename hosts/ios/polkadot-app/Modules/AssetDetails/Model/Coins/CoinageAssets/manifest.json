@@ -1,0 +1,541 @@
+{
+ "generated": "2026-09-29T07:16:05.656Z",
+ "generator": "scripts/export-native.mjs",
+ "guide": "native/README.md",
+ "env": {
+  "equirect": "env/studio-equirect.hdr",
+  "cube": {
+   "levels": [
+    {
+     "level": 0,
+     "size": 256,
+     "roughness": 0,
+     "samples": 0,
+     "faces": {
+      "px": "env/cube/L0-px.hdr",
+      "nx": "env/cube/L0-nx.hdr",
+      "py": "env/cube/L0-py.hdr",
+      "ny": "env/cube/L0-ny.hdr",
+      "pz": "env/cube/L0-pz.hdr",
+      "nz": "env/cube/L0-nz.hdr"
+     }
+    },
+    {
+     "level": 1,
+     "size": 128,
+     "roughness": 0.166667,
+     "samples": 107,
+     "faces": {
+      "px": "env/cube/L1-px.hdr",
+      "nx": "env/cube/L1-nx.hdr",
+      "py": "env/cube/L1-py.hdr",
+      "ny": "env/cube/L1-ny.hdr",
+      "pz": "env/cube/L1-pz.hdr",
+      "nz": "env/cube/L1-nz.hdr"
+     }
+    },
+    {
+     "level": 2,
+     "size": 64,
+     "roughness": 0.333333,
+     "samples": 235,
+     "faces": {
+      "px": "env/cube/L2-px.hdr",
+      "nx": "env/cube/L2-nx.hdr",
+      "py": "env/cube/L2-py.hdr",
+      "ny": "env/cube/L2-ny.hdr",
+      "pz": "env/cube/L2-pz.hdr",
+      "nz": "env/cube/L2-nz.hdr"
+     }
+    },
+    {
+     "level": 3,
+     "size": 32,
+     "roughness": 0.5,
+     "samples": 448,
+     "faces": {
+      "px": "env/cube/L3-px.hdr",
+      "nx": "env/cube/L3-nx.hdr",
+      "py": "env/cube/L3-py.hdr",
+      "ny": "env/cube/L3-ny.hdr",
+      "pz": "env/cube/L3-pz.hdr",
+      "nz": "env/cube/L3-nz.hdr"
+     }
+    },
+    {
+     "level": 4,
+     "size": 16,
+     "roughness": 0.666667,
+     "samples": 747,
+     "faces": {
+      "px": "env/cube/L4-px.hdr",
+      "nx": "env/cube/L4-nx.hdr",
+      "py": "env/cube/L4-py.hdr",
+      "ny": "env/cube/L4-ny.hdr",
+      "pz": "env/cube/L4-pz.hdr",
+      "nz": "env/cube/L4-nz.hdr"
+     }
+    },
+    {
+     "level": 5,
+     "size": 8,
+     "roughness": 0.833333,
+     "samples": 1131,
+     "faces": {
+      "px": "env/cube/L5-px.hdr",
+      "nx": "env/cube/L5-nx.hdr",
+      "py": "env/cube/L5-py.hdr",
+      "ny": "env/cube/L5-ny.hdr",
+      "pz": "env/cube/L5-pz.hdr",
+      "nz": "env/cube/L5-nz.hdr"
+     }
+    },
+    {
+     "level": 6,
+     "size": 4,
+     "roughness": 1,
+     "samples": 1600,
+     "faces": {
+      "px": "env/cube/L6-px.hdr",
+      "nx": "env/cube/L6-nx.hdr",
+      "py": "env/cube/L6-py.hdr",
+      "ny": "env/cube/L6-ny.hdr",
+      "pz": "env/cube/L6-pz.hdr",
+      "nz": "env/cube/L6-nz.hdr"
+     }
+    }
+   ],
+   "faceOrder": [
+    "px",
+    "nx",
+    "py",
+    "ny",
+    "pz",
+    "nz"
+   ],
+   "convention": "see native/README.md, Environment"
+  },
+  "probe": [
+   "env/probe/px.hdr",
+   "env/probe/nx.hdr",
+   "env/probe/py.hdr",
+   "env/probe/ny.hdr",
+   "env/probe/pz.hdr",
+   "env/probe/nz.hdr"
+  ]
+ },
+ "atlases": {
+  "usd": {
+   "size": 1024,
+   "tilePx": 256,
+   "channels": 4,
+   "relief": "relief/usd-relief.bin"
+  },
+  "eur": {
+   "size": 1024,
+   "tilePx": 256,
+   "channels": 4,
+   "relief": "relief/eur-relief.bin"
+  },
+  "gbp": {
+   "size": 1024,
+   "tilePx": 256,
+   "channels": 4,
+   "relief": "relief/gbp-relief.bin"
+  },
+  "jpy": {
+   "size": 1024,
+   "tilePx": 256,
+   "channels": 4,
+   "relief": "relief/jpy-relief.bin"
+  },
+  "cash": {
+   "size": 1024,
+   "tilePx": 256,
+   "channels": 4,
+   "relief": "relief/cash-relief.bin"
+  }
+ },
+ "files": [
+  {
+   "path": "params.json",
+   "bytes": 4986
+  },
+  {
+   "path": "metals.json",
+   "bytes": 1181
+  },
+  {
+   "path": "meshes/g0-high.bin",
+   "bytes": 308936
+  },
+  {
+   "path": "meshes/g0-mid.bin",
+   "bytes": 56760
+  },
+  {
+   "path": "meshes/g0-low.bin",
+   "bytes": 20840
+  },
+  {
+   "path": "meshes/g0-sliver.bin",
+   "bytes": 8760
+  },
+  {
+   "path": "meshes/g1-high.bin",
+   "bytes": 296112
+  },
+  {
+   "path": "meshes/g1-mid.bin",
+   "bytes": 59568
+  },
+  {
+   "path": "meshes/g1-low.bin",
+   "bytes": 19480
+  },
+  {
+   "path": "meshes/g1-sliver.bin",
+   "bytes": 12152
+  },
+  {
+   "path": "meshes/g2-high.bin",
+   "bytes": 308936
+  },
+  {
+   "path": "meshes/g2-mid.bin",
+   "bytes": 53016
+  },
+  {
+   "path": "meshes/g2-low.bin",
+   "bytes": 19480
+  },
+  {
+   "path": "meshes/g2-sliver.bin",
+   "bytes": 9184
+  },
+  {
+   "path": "meshes/g3-high.bin",
+   "bytes": 395272
+  },
+  {
+   "path": "meshes/g3-mid.bin",
+   "bytes": 87800
+  },
+  {
+   "path": "meshes/g3-low.bin",
+   "bytes": 36520
+  },
+  {
+   "path": "meshes/g3-sliver.bin",
+   "bytes": 8760
+  },
+  {
+   "path": "meshes/g4-high.bin",
+   "bytes": 395272
+  },
+  {
+   "path": "meshes/g4-mid.bin",
+   "bytes": 87800
+  },
+  {
+   "path": "meshes/g4-low.bin",
+   "bytes": 29368
+  },
+  {
+   "path": "meshes/g4-sliver.bin",
+   "bytes": 10456
+  },
+  {
+   "path": "meshes/g5-high.bin",
+   "bytes": 395272
+  },
+  {
+   "path": "meshes/g5-mid.bin",
+   "bytes": 82008
+  },
+  {
+   "path": "meshes/g5-low.bin",
+   "bytes": 34136
+  },
+  {
+   "path": "meshes/g5-sliver.bin",
+   "bytes": 9184
+  },
+  {
+   "path": "meshes/g6-high.bin",
+   "bytes": 312600
+  },
+  {
+   "path": "meshes/g6-mid.bin",
+   "bytes": 56760
+  },
+  {
+   "path": "meshes/g6-low.bin",
+   "bytes": 20840
+  },
+  {
+   "path": "meshes/g6-sliver.bin",
+   "bytes": 8760
+  },
+  {
+   "path": "meshes/g7-high.bin",
+   "bytes": 378864
+  },
+  {
+   "path": "meshes/g7-mid.bin",
+   "bytes": 92144
+  },
+  {
+   "path": "meshes/g7-low.bin",
+   "bytes": 34136
+  },
+  {
+   "path": "meshes/g7-sliver.bin",
+   "bytes": 12152
+  },
+  {
+   "path": "meshes.json",
+   "bytes": 20619
+  },
+  {
+   "path": "designs.json",
+   "bytes": 11588
+  },
+  {
+   "path": "env/studio-equirect.hdr",
+   "bytes": 2097215
+  },
+  {
+   "path": "env/cube/L0-px.hdr",
+   "bytes": 262206
+  },
+  {
+   "path": "env/cube/L0-nx.hdr",
+   "bytes": 262206
+  },
+  {
+   "path": "env/cube/L0-py.hdr",
+   "bytes": 262206
+  },
+  {
+   "path": "env/cube/L0-ny.hdr",
+   "bytes": 262206
+  },
+  {
+   "path": "env/cube/L0-pz.hdr",
+   "bytes": 262206
+  },
+  {
+   "path": "env/cube/L0-nz.hdr",
+   "bytes": 262206
+  },
+  {
+   "path": "env/cube/L1-px.hdr",
+   "bytes": 65598
+  },
+  {
+   "path": "env/cube/L1-nx.hdr",
+   "bytes": 65598
+  },
+  {
+   "path": "env/cube/L1-py.hdr",
+   "bytes": 65598
+  },
+  {
+   "path": "env/cube/L1-ny.hdr",
+   "bytes": 65598
+  },
+  {
+   "path": "env/cube/L1-pz.hdr",
+   "bytes": 65598
+  },
+  {
+   "path": "env/cube/L1-nz.hdr",
+   "bytes": 65598
+  },
+  {
+   "path": "env/cube/L2-px.hdr",
+   "bytes": 16444
+  },
+  {
+   "path": "env/cube/L2-nx.hdr",
+   "bytes": 16444
+  },
+  {
+   "path": "env/cube/L2-py.hdr",
+   "bytes": 16444
+  },
+  {
+   "path": "env/cube/L2-ny.hdr",
+   "bytes": 16444
+  },
+  {
+   "path": "env/cube/L2-pz.hdr",
+   "bytes": 16444
+  },
+  {
+   "path": "env/cube/L2-nz.hdr",
+   "bytes": 16444
+  },
+  {
+   "path": "env/cube/L3-px.hdr",
+   "bytes": 4156
+  },
+  {
+   "path": "env/cube/L3-nx.hdr",
+   "bytes": 4156
+  },
+  {
+   "path": "env/cube/L3-py.hdr",
+   "bytes": 4156
+  },
+  {
+   "path": "env/cube/L3-ny.hdr",
+   "bytes": 4156
+  },
+  {
+   "path": "env/cube/L3-pz.hdr",
+   "bytes": 4156
+  },
+  {
+   "path": "env/cube/L3-nz.hdr",
+   "bytes": 4156
+  },
+  {
+   "path": "env/cube/L4-px.hdr",
+   "bytes": 1084
+  },
+  {
+   "path": "env/cube/L4-nx.hdr",
+   "bytes": 1084
+  },
+  {
+   "path": "env/cube/L4-py.hdr",
+   "bytes": 1084
+  },
+  {
+   "path": "env/cube/L4-ny.hdr",
+   "bytes": 1084
+  },
+  {
+   "path": "env/cube/L4-pz.hdr",
+   "bytes": 1084
+  },
+  {
+   "path": "env/cube/L4-nz.hdr",
+   "bytes": 1084
+  },
+  {
+   "path": "env/cube/L5-px.hdr",
+   "bytes": 314
+  },
+  {
+   "path": "env/cube/L5-nx.hdr",
+   "bytes": 314
+  },
+  {
+   "path": "env/cube/L5-py.hdr",
+   "bytes": 314
+  },
+  {
+   "path": "env/cube/L5-ny.hdr",
+   "bytes": 314
+  },
+  {
+   "path": "env/cube/L5-pz.hdr",
+   "bytes": 314
+  },
+  {
+   "path": "env/cube/L5-nz.hdr",
+   "bytes": 314
+  },
+  {
+   "path": "env/cube/L6-px.hdr",
+   "bytes": 122
+  },
+  {
+   "path": "env/cube/L6-nx.hdr",
+   "bytes": 122
+  },
+  {
+   "path": "env/cube/L6-py.hdr",
+   "bytes": 122
+  },
+  {
+   "path": "env/cube/L6-ny.hdr",
+   "bytes": 122
+  },
+  {
+   "path": "env/cube/L6-pz.hdr",
+   "bytes": 122
+  },
+  {
+   "path": "env/cube/L6-nz.hdr",
+   "bytes": 122
+  },
+  {
+   "path": "env/probe/px.hdr",
+   "bytes": 16444
+  },
+  {
+   "path": "env/probe/nx.hdr",
+   "bytes": 16444
+  },
+  {
+   "path": "env/probe/py.hdr",
+   "bytes": 16444
+  },
+  {
+   "path": "env/probe/ny.hdr",
+   "bytes": 16444
+  },
+  {
+   "path": "env/probe/pz.hdr",
+   "bytes": 16444
+  },
+  {
+   "path": "env/probe/nz.hdr",
+   "bytes": 16444
+  },
+  {
+   "path": "relief/usd-relief.bin",
+   "bytes": 4194304
+  },
+  {
+   "path": "relief/eur-relief.bin",
+   "bytes": 4194304
+  },
+  {
+   "path": "relief/gbp-relief.bin",
+   "bytes": 4194304
+  },
+  {
+   "path": "relief/jpy-relief.bin",
+   "bytes": 4194304
+  },
+  {
+   "path": "relief/cash-relief.bin",
+   "bytes": 4194304
+  },
+  {
+   "path": "conformance/strip.json",
+   "bytes": 623087
+  },
+  {
+   "path": "conformance/grid.json",
+   "bytes": 193709
+  },
+  {
+   "path": "conformance/fungibility.json",
+   "bytes": 1270
+  },
+  {
+   "path": "conformance/motion.json",
+   "bytes": 1309
+  },
+  {
+   "path": "conformance/studio.json",
+   "bytes": 1696
+  }
+ ]
+}

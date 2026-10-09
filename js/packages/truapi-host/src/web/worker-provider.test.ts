@@ -147,6 +147,7 @@ describe("createWebWorkerPairingHostRuntime", () => {
         chat: false,
         permissionStatus: false,
         pocket: false,
+        game: false,
         contacts: false,
       },
       // Null under `bun test`: the `import.meta.env.DEV` gate reads undefined,
@@ -185,6 +186,7 @@ describe("createWebWorkerPairingHostRuntime", () => {
       chat: true,
       permissionStatus: false,
       pocket: false,
+      game: false,
       contacts: false,
     });
   });
@@ -207,6 +209,33 @@ describe("createWebWorkerPairingHostRuntime", () => {
       chat: false,
       permissionStatus: false,
       pocket: true,
+      game: false,
+      contacts: false,
+    });
+  });
+
+  it("reports the game capability to the worker when the host serves it", async () => {
+    const worker = new FakeWorker();
+    void createWebWorkerPairingHostRuntime(
+      asWorker(worker),
+      makeHostCallbacks({
+        game: {
+          scheduleGameReminder: async () => {},
+          cancelGameReminder: async () => {},
+        },
+      }),
+      { hostConfig: hostConfigFromRuntimeConfig(runtimeConfig()) },
+    );
+
+    worker.emit({ kind: "loaded" });
+
+    // Without this the worker never builds the game callbacks, so a host that
+    // holds reminders is answered `Unsupported` anyway.
+    expect(lastMessageOfKind(worker, "init").capabilities).toEqual({
+      chat: false,
+      permissionStatus: false,
+      pocket: false,
+      game: true,
       contacts: false,
     });
   });

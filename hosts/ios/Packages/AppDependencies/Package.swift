@@ -22,7 +22,7 @@ let dependencyConfigs: [DependencyConfig] = [
     .init(
         name: "extrinsic-service-ios",
         url: "https://github.com/novasamatech/extrinsic-service-ios",
-        version: .exact("1.18.0"),
+        version: .exact("1.20.0"),
         products: ["ExtrinsicService"]
     ),
     .init(
@@ -73,7 +73,7 @@ let dependencyConfigs: [DependencyConfig] = [
     .init(
         name: "substrate-sdk-ios",
         url: "https://github.com/novasamatech/substrate-sdk-ios",
-        version: .exact("5.15.0"),
+        version: .exact("5.17.0"),
         products: [
             "SubstrateSdk",
             "SubstrateMetadataHash"
@@ -140,8 +140,8 @@ let dependencyConfigs: [DependencyConfig] = [
         products: ["WebRTC"]
     ),
     .init(
-        name: "host-rust-core",
-        url: coreIsInTree ? corePath : "https://github.com/paritytech/host-rust-core",
+        name: "trinity-user-agents",
+        url: coreIsInTree ? corePath : "https://github.com/paritytech/trinity-user-agents",
         version: coreIsInTree ? .local : .exact("0.16.0"),
         products: ["TrUAPIHost"]
     ),
@@ -162,12 +162,6 @@ let dependencyConfigs: [DependencyConfig] = [
         url: "https://github.com/pointfreeco/swift-custom-dump",
         version: .exact("1.4.1"),
         products: ["CustomDump"]
-    ),
-    .init(
-        name: "sentry-cocoa",
-        url: "https://github.com/getsentry/sentry-cocoa",
-        version: .upToNextMajor("8.0.0"),
-        products: ["Sentry"]
     )
 ]
 

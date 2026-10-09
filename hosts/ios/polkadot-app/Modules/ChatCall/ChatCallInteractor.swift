@@ -21,7 +21,7 @@ final class ChatCallInteractor {
     private var callKitEndTask: Task<Void, Never>?
     private var callKitMutedTask: Task<Void, Never>?
     private var audioRouteTask: Task<Void, Never>?
-    private var isEnding: Bool = false
+    private(set) var isEnding: Bool = false
 
     init(
         callKitManager: VoIPCallKitManaging = VoIPCallKitManager.shared,
@@ -120,7 +120,11 @@ private extension ChatCallInteractor {
             }
             do {
                 for try await isMuted in sequence.compactMap({ $0 }) {
-                    await self?.setMuted(isMuted, notifiesCallKit: false)
+                    if isMuted {
+                        await self?.setMuted(true, notifiesCallKit: false)
+                    } else {
+                        await self?.unmute(notifiesCallKit: false)
+                    }
                 }
             } catch {
                 self?.logger.error("Pending muted task failure: \(error.localizedDescription)")
@@ -232,13 +236,14 @@ private extension ChatCallInteractor {
             return
         }
 
-        guard await ensureCallPermissions() else {
-            return
-        }
+        let microphoneAccess = await permissionsService.resolveMicrophoneAccess(prompting: .whenActive)
+        await permissionsService.requestCameraAccessIfNeeded(for: callType)
 
         if notifiesCallKit {
             callKitManager.answerFromAppOrEnsureStarted(with: makeCallKitInput())
         }
+
+        await startMutedIfNeeded(for: microphoneAccess)
 
         discoverCapabilities()
         callEngine.connect()
@@ -315,26 +320,11 @@ private extension ChatCallInteractor {
         logger.debug("Call ended")
     }
 
-    func setMuted(_ isMuted: Bool, notifiesCallKit: Bool) async {
-        if notifiesCallKit {
-            callKitManager.requestMutedFromApp(isMuted)
-        }
-
-        let result = await callEngine.setMuted(isMuted)
-        callKitManager.confirmMutedState(isSuccessful: isMuted == result)
-
-        await presenter?.didUpdateMuteState(result)
-    }
-
     @MainActor
     func ensureCallPermissions() async -> Bool {
         guard await permissionsService.ensurePermissions(for: callType) else {
             logger.warning("Microphone permission denied, ending the call")
-            // Decline through the shared end sequence so it never depends on the
-            // alert being dismissed (the alert can't present on a locked screen).
-            await performEndCall(notifiesCallKit: true, notifiesRemote: true) {
-                presenter?.didDenyMicrophonePermission()
-            }
+            await performEndCall(notifiesCallKit: true, notifiesRemote: true)
             return false
         }
 
@@ -394,8 +384,11 @@ extension ChatCallInteractor: ChatCallInteractorInputProtocol {
 
     func toggleMute() {
         Task {
-            let isMuted = await callEngine.isMuted
-            await setMuted(!isMuted, notifiesCallKit: true)
+            if await callEngine.isMuted {
+                await unmute(notifiesCallKit: true)
+            } else {
+                await setMuted(true, notifiesCallKit: true)
+            }
         }
     }
 

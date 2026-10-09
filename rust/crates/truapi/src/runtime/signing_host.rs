@@ -22,7 +22,7 @@ mod sso_replay;
 mod sso_responder;
 mod sso_service;
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 use truapi::latest::{
     ChainIdentifier, DerivationIndex, HostAccountCreateProofRequest, HostAccountGetAliasRequest,
@@ -68,8 +68,8 @@ use crate::host_logic::raw_signing::raw_payload_bytes;
 use crate::host_logic::session::{SessionInfo, SessionState};
 use crate::runtime::auth_state::AuthStateMachine;
 use crate::runtime::sso_service::SsoWithdrawals;
-use crate::runtime::statement_allowance::CollectionCandidate;
 use crate::runtime::statement_allowance::collection::PersonhoodCollection;
+use crate::runtime::statement_allowance::{self, CollectionCandidate};
 use crate::runtime::vrf::{self, Vrf};
 use ring_vrf::{
     ChainRingResolver, MemberCandidate, RingResolver, create_proof, development_context_bytes,
@@ -94,6 +94,10 @@ use zeroize::Zeroizing;
 struct LocalGrantState {
     activation_generation: u64,
     auto_signing_grants: HashSet<([u8; 32], String)>,
+    /// Per product, the period its statement-store allowance was last seen
+    /// registered in, and its key.
+    // TODO(#1159): persist in core.sqlite3 allowance_records.
+    statement_allowance_keys: HashMap<String, (u32, StatementStoreAllowanceKey)>,
 }
 
 impl LocalGrantState {
@@ -103,6 +107,7 @@ impl LocalGrantState {
             .checked_add(1)
             .expect("local activation generation exhausted");
         self.auto_signing_grants.clear();
+        self.statement_allowance_keys.clear();
     }
 
     fn revoke_product(&mut self, product_id: &str) {
@@ -112,6 +117,48 @@ impl LocalGrantState {
             .expect("local activation generation exhausted");
         self.auto_signing_grants
             .retain(|(_, granted_product_id)| granted_product_id != product_id);
+        self.statement_allowance_keys.remove(product_id);
+    }
+
+    fn statement_allowance_key(
+        &self,
+        activation_generation: u64,
+        product_id: &str,
+        period: u32,
+    ) -> Result<Option<&StatementStoreAllowanceKey>, AuthorityError> {
+        if self.activation_generation != activation_generation {
+            return Err(AuthorityError::Disconnected);
+        }
+        Ok(self
+            .statement_allowance_keys
+            .get(product_id)
+            .filter(|(cached_period, _)| *cached_period == period)
+            .map(|(_, key)| key))
+    }
+
+    fn forget_statement_allowance_key(&mut self, product_id: &str, public_key: [u8; 32]) {
+        if self
+            .statement_allowance_keys
+            .get(product_id)
+            .is_some_and(|(_, key)| key.public_key == public_key)
+        {
+            self.statement_allowance_keys.remove(product_id);
+        }
+    }
+
+    fn remember_statement_allowance_key(
+        &mut self,
+        activation_generation: u64,
+        product_id: String,
+        period: u32,
+        key: StatementStoreAllowanceKey,
+    ) -> Result<(), AuthorityError> {
+        if self.activation_generation != activation_generation {
+            return Err(AuthorityError::Disconnected);
+        }
+        self.statement_allowance_keys
+            .insert(product_id, (period, key));
+        Ok(())
     }
 }
 
@@ -135,6 +182,13 @@ pub struct SigningHost {
     /// shipping host has no way to set it.
     #[cfg(feature = "test-host")]
     grant_allowances_unchecked: std::sync::atomic::AtomicBool,
+    /// Resource tags answered as refused, whatever the rest of the host would
+    /// say. A suite proving that its product handles a refusal needs one
+    /// resource withheld while the others stay granted, which neither the
+    /// unchecked-grant flag nor a real chain can arrange on its own. Compiled
+    /// only into a build carrying `test-host`.
+    #[cfg(feature = "test-host")]
+    withheld_resources: Mutex<HashSet<String>>,
     /// Root BIP-39 entropy held only while a session is active.
     root_entropy: Mutex<Option<Zeroizing<Vec<u8>>>>,
     /// In-memory grants and the activation generation that owns them. The
@@ -162,6 +216,8 @@ impl SigningHost {
             network_suffix,
             #[cfg(feature = "test-host")]
             grant_allowances_unchecked: std::sync::atomic::AtomicBool::new(false),
+            #[cfg(feature = "test-host")]
+            withheld_resources: Mutex::new(HashSet::new()),
             session_state: SessionState::new(),
             auth_state: AuthStateMachine::new(platform.clone()),
             ring_resolver,
@@ -186,6 +242,46 @@ impl SigningHost {
     pub fn set_grant_allowances_unchecked(&self, granted: bool) {
         self.grant_allowances_unchecked
             .store(granted, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// Answer these resource tags as refused, replacing any earlier set.
+    ///
+    /// The tag is the `AllocatableResource` variant name, so
+    /// `SmartContractAllowance` withholds every derivation index.
+    #[cfg(feature = "test-host")]
+    pub(crate) fn set_withheld_resources(&self, tags: Vec<String>) {
+        *self
+            .withheld_resources
+            .lock()
+            .expect("withheld resource mutex poisoned") = tags.into_iter().collect();
+    }
+
+    /// Whether `resource` is answered as refused.
+    #[cfg(feature = "test-host")]
+    fn withholds(&self, resource: &v01::AllocatableResource) -> bool {
+        let tag = match resource {
+            v01::AllocatableResource::StatementStoreAllowance => "StatementStoreAllowance",
+            v01::AllocatableResource::BulletinAllowance => "BulletinAllowance",
+            v01::AllocatableResource::SmartContractAllowance(_) => "SmartContractAllowance",
+            v01::AllocatableResource::AutoSigning => "AutoSigning",
+        };
+        self.withheld_resources
+            .lock()
+            .expect("withheld resource mutex poisoned")
+            .contains(tag)
+    }
+
+    /// Refuse a withheld resource before any allowance for it is derived.
+    ///
+    /// The allowance-key calls allocate on their own, without a product ever
+    /// asking for an allocation, so a check that lived only in the allocation
+    /// answer would hand the key to the very path the product takes.
+    #[cfg(feature = "test-host")]
+    fn refuse_withheld(&self, resource: &v01::AllocatableResource) -> Result<(), AuthorityError> {
+        if self.withholds(resource) {
+            return Err(AuthorityError::Rejected);
+        }
+        Ok(())
     }
 
     /// The shared services this role was built over, for tests that also need
@@ -228,6 +324,8 @@ impl SigningHost {
             network_suffix: network_suffix.to_string(),
             #[cfg(feature = "test-host")]
             grant_allowances_unchecked: std::sync::atomic::AtomicBool::new(false),
+            #[cfg(feature = "test-host")]
+            withheld_resources: Mutex::new(HashSet::new()),
             session_state: SessionState::new(),
             auth_state: AuthStateMachine::new(platform.clone()),
             ring_resolver,
@@ -312,6 +410,34 @@ impl SigningHost {
         Ok(())
     }
 
+    async fn allocate_statement_store_allowance_key(
+        &self,
+        session: &AuthoritySession,
+        product_id: &str,
+        policy: OnExistingAllowancePolicy,
+    ) -> Result<StatementStoreAllowanceKey, sso_responder::AllowanceAllocationError> {
+        let (_, activation_generation) = self.require_current_session(session)?;
+        let allocation = sso_responder::allocate_statement_store_allowance(
+            &self.services,
+            self,
+            session,
+            product_id,
+            policy,
+        )
+        .await?;
+        let key = StatementStoreAllowanceKey::from_secret_bytes(allocation.secret)?;
+        self.local_grants
+            .lock()
+            .expect("local AutoSigning grant mutex poisoned")
+            .remember_statement_allowance_key(
+                activation_generation,
+                product_id.to_string(),
+                allocation.period,
+                key.clone(),
+            )?;
+        Ok(key)
+    }
+
     fn has_auto_signing_grant(
         &self,
         activation_generation: u64,
@@ -352,6 +478,31 @@ impl SigningHost {
             .expect("local AutoSigning grant mutex poisoned")
             .revoke_product(&product_id);
         Ok(())
+    }
+
+    /// The product's hard-subtree public key, derived from the active session
+    /// root.
+    ///
+    /// A signing host holds the root, so it derives this rather than asking an
+    /// Account Holder for it the way a pairing host must, and answers the
+    /// `ProductAuthority` request of the same name from the same derivation.
+    /// `None` when no session is active: there is no root to derive from.
+    pub fn derive_subtree_public_key(
+        &self,
+        product_id: &str,
+    ) -> Result<Option<[u8; 32]>, AuthorityError> {
+        let product_id = normalize_product_identifier(product_id).map_err(|err| {
+            AuthorityError::Unavailable {
+                reason: err.to_string(),
+            }
+        })?;
+        let Ok(entropy) = self.root_entropy() else {
+            return Ok(None);
+        };
+        let root = derive_root_keypair_from_entropy(&entropy).map_err(product_authority_error)?;
+        let subtree =
+            derive_product_subtree_keypair(&root, &product_id).map_err(product_authority_error)?;
+        Ok(Some(subtree.public.to_bytes()))
     }
 
     /// Derive the product-account keypair for `account` from the root entropy.
@@ -1293,9 +1444,21 @@ impl ProductAuthority for SigningHost {
         {
             // Nothing is allocated and no proof is built: a suite in this mode
             // learns that its product handles a grant, not that a host would
-            // have given one.
+            // have given one. A withheld tag is still refused here, so the one
+            // resource a suite wants to prove its product lives without stays
+            // refused while the rest are granted.
             return Ok(v01::HostRequestResourceAllocationResponse {
-                outcomes: vec![v01::AllocationOutcome::Allocated; request.resources.len()],
+                outcomes: request
+                    .resources
+                    .iter()
+                    .map(|resource| {
+                        if self.withholds(resource) {
+                            v01::AllocationOutcome::Rejected
+                        } else {
+                            v01::AllocationOutcome::Allocated
+                        }
+                    })
+                    .collect(),
             });
         }
         let mut outcomes = Vec::with_capacity(request.resources.len());
@@ -1303,18 +1466,23 @@ impl ProductAuthority for SigningHost {
             if let Some(reason) = cx.cancel().reason() {
                 return Err(super::authority_cancellation_error(cx, reason));
             }
+            // Checked before the work, not after: withholding is the suite
+            // saying this resource is refused, so performing the allocation and
+            // then reporting a refusal would leave the two disagreeing.
+            #[cfg(feature = "test-host")]
+            if self.withholds(&resource) {
+                outcomes.push(v01::AllocationOutcome::Rejected);
+                continue;
+            }
             let outcome = match resource {
-                v01::AllocatableResource::StatementStoreAllowance => {
-                    sso_responder::allocate_statement_store_allowance(
-                        &self.services,
-                        self,
+                v01::AllocatableResource::StatementStoreAllowance => self
+                    .allocate_statement_store_allowance_key(
                         session,
                         &product_id,
                         OnExistingAllowancePolicy::Increase,
                     )
                     .await
-                    .map(|_| v01::AllocationOutcome::Allocated)
-                }
+                    .map(|_| v01::AllocationOutcome::Allocated),
                 v01::AllocatableResource::BulletinAllowance => {
                     sso_responder::allocate_bulletin_allowance(
                         &self.services,
@@ -1360,17 +1528,35 @@ impl ProductAuthority for SigningHost {
         session: &AuthoritySession,
         product_id: String,
     ) -> Result<StatementStoreAllowanceKey, AuthorityError> {
-        self.require_current_session(session)?;
-        let secret = sso_responder::allocate_statement_store_allowance(
-            &self.services,
-            self,
+        let (_, activation_generation) = self.require_current_session(session)?;
+        #[cfg(feature = "test-host")]
+        self.refuse_withheld(&v01::AllocatableResource::StatementStoreAllowance)?;
+        let period = statement_allowance::slot::current_period(
+            sso_responder::current_unix_secs()
+                .map_err(sso_responder::AllowanceAllocationError::into_authority_error)?,
+        );
+        if let Some(key) = self
+            .local_grants
+            .lock()
+            .expect("local AutoSigning grant mutex poisoned")
+            .statement_allowance_key(activation_generation, &product_id, period)?
+        {
+            return Ok(key.clone());
+        }
+        self.allocate_statement_store_allowance_key(
             session,
             &product_id,
             OnExistingAllowancePolicy::Ignore,
         )
         .await
-        .map_err(sso_responder::AllowanceAllocationError::into_authority_error)?;
-        StatementStoreAllowanceKey::from_secret_bytes(secret)
+        .map_err(sso_responder::AllowanceAllocationError::into_authority_error)
+    }
+
+    fn forget_statement_store_allowance_key(&self, product_id: &str, public_key: [u8; 32]) {
+        self.local_grants
+            .lock()
+            .expect("local AutoSigning grant mutex poisoned")
+            .forget_statement_allowance_key(product_id, public_key);
     }
 
     async fn bulletin_allowance_key(
@@ -1380,6 +1566,8 @@ impl ProductAuthority for SigningHost {
         product_id: String,
     ) -> Result<BulletinAllowanceKey, AuthorityError> {
         self.require_current_session(session)?;
+        #[cfg(feature = "test-host")]
+        self.refuse_withheld(&v01::AllocatableResource::BulletinAllowance)?;
         let secret = sso_responder::allocate_bulletin_allowance(
             &self.services,
             self,
@@ -1399,6 +1587,8 @@ impl ProductAuthority for SigningHost {
         product_id: String,
     ) -> Result<BulletinAllowanceKey, AuthorityError> {
         self.require_current_session(session)?;
+        #[cfg(feature = "test-host")]
+        self.refuse_withheld(&v01::AllocatableResource::BulletinAllowance)?;
         let secret = sso_responder::allocate_bulletin_allowance(
             &self.services,
             self,
@@ -1469,15 +1659,18 @@ fn product_authority_error(err: ProductAccountError) -> AuthorityError {
 
 #[cfg(test)]
 mod tests {
+    mod allowance_keys;
     mod auto_signing;
     mod cross_product_account;
     mod raw_signing;
+    #[cfg(feature = "test-host")]
+    mod withheld_resources;
 
     use std::sync::Arc;
 
     use super::super::authority::{
         AuthorityError, AuthoritySession, CreateTransactionAuthorityRequest,
-        SignPayloadAuthorityRequest, SignRawAuthorityRequest,
+        SignPayloadAuthorityRequest, SignRawAuthorityRequest, StatementStoreAllowanceKey,
     };
     use super::super::{ProductAuthority, ProductRuntimeHost, RuntimeServices, SigningHostRole};
     use super::TEST_NETWORK_SUFFIX;
@@ -3567,61 +3760,7 @@ mod tests {
     }
 
     #[test]
-    fn create_transaction_product_builds_verifiable_v4() {
-        let (_services, activation) = signing_runtime();
-        futures::executor::block_on(activation.activate_local_session(ENTROPY.to_vec()))
-            .expect("activation succeeds");
-        let session = activation.current_session().expect("active session");
-        let cx = CallContext::default();
-
-        let response = futures::executor::block_on(activation.create_transaction(
-            &cx,
-            &session,
-            None,
-            CreateTransactionAuthorityRequest::Product(tx_payload(0)),
-        ))
-        .expect("create_transaction ok");
-
-        let (account, signature, tail) = split_v4(&response.transaction);
-        assert_eq!(tail, vec![1, 0x00, 0x00], "body tail is extra ++ call_data");
-
-        let root = derive_root_keypair_from_entropy(&ENTROPY).unwrap();
-        let keypair = derive_product_keypair(&root, "myapp.dot", index_bytes(0)).unwrap();
-        assert_eq!(account, keypair.public.to_bytes());
-
-        // Payload = call_data ++ extra ++ additional_signed (call first).
-        let payload = vec![0x00, 0x00, 1, 2, 3];
-        let signature = schnorrkel::Signature::from_bytes(&signature).unwrap();
-        assert!(
-            keypair
-                .public
-                .verify_simple(b"substrate", &payload, &signature)
-                .is_ok()
-        );
-    }
-
-    #[test]
-    fn create_transaction_rejects_unknown_tx_ext_version() {
-        let (_services, activation) = signing_runtime();
-        futures::executor::block_on(activation.activate_local_session(ENTROPY.to_vec()))
-            .expect("activation succeeds");
-        let session = activation.current_session().expect("active session");
-        let cx = CallContext::default();
-
-        let err = futures::executor::block_on(activation.create_transaction(
-            &cx,
-            &session,
-            None,
-            CreateTransactionAuthorityRequest::Product(tx_payload(1)),
-        ))
-        .expect_err("unknown transaction version is unsupported");
-        assert!(
-            matches!(err, AuthorityError::NotSupported { reason } if reason.contains("tx_ext_version 1"))
-        );
-    }
-
-    #[test]
-    fn create_transaction_v5_reaches_chain_metadata_resolution() {
+    fn create_transaction_reaches_chain_metadata_resolution() {
         let platform: Arc<dyn crate::platform::Platform> = Arc::new(StubPlatform {
             chain_connect_error: Some("fixture has no live chain"),
             ..StubPlatform::default()
@@ -3636,12 +3775,12 @@ mod tests {
             &cx,
             &session,
             None,
-            CreateTransactionAuthorityRequest::Product(tx_payload(5)),
+            CreateTransactionAuthorityRequest::Product(tx_payload(0)),
         ))
         .expect_err("fixture cannot resolve metadata");
         assert!(
-            matches!(err, AuthorityError::Unavailable { reason } if reason.contains("cannot load V5 chain metadata")),
-            "V5 must pass the former NotSupported gate and attempt metadata resolution"
+            matches!(err, AuthorityError::Unavailable { reason } if reason.contains("cannot load chain metadata")),
+            "choosing the extrinsic format reads the runtime metadata"
         );
     }
 
@@ -3670,48 +3809,6 @@ mod tests {
         .expect_err("mismatched legacy signer");
         assert!(
             matches!(err, AuthorityError::Unknown { reason } if reason.contains("does not match"))
-        );
-    }
-
-    #[test]
-    fn create_transaction_legacy_builds_verifiable_v4() {
-        let (_services, activation) = signing_runtime();
-        futures::executor::block_on(activation.activate_local_session(ENTROPY.to_vec()))
-            .expect("activation succeeds");
-        let session = activation.current_session().expect("active session");
-        let cx = CallContext::default();
-
-        let root = derive_root_keypair_from_entropy(&ENTROPY).unwrap();
-        let keypair = derive_product_keypair(&root, "myapp.dot", index_bytes(0)).unwrap();
-
-        let request = CreateTransactionAuthorityRequest::LegacyAccount {
-            product_account: product_account(0),
-            request: v01::LegacyAccountTxPayload {
-                signer: keypair.public.to_bytes(), // matches the derived slot-zero key
-                genesis_hash: [0xaa; 32],
-                call_data: vec![0x00, 0x00],
-                extensions: vec![v01::TxPayloadExtension {
-                    id: "CheckNonce".to_string(),
-                    extra: vec![1],
-                    additional_signed: vec![2, 3],
-                }],
-                tx_ext_version: 0,
-            },
-        };
-        let response = futures::executor::block_on(
-            activation.create_transaction(&cx, &session, None, request),
-        )
-        .expect("legacy create_transaction ok");
-
-        let (account, signature, tail) = split_v4(&response.transaction);
-        assert_eq!(account, keypair.public.to_bytes());
-        assert_eq!(tail, vec![1, 0x00, 0x00]);
-        let signature = schnorrkel::Signature::from_bytes(&signature).unwrap();
-        assert!(
-            keypair
-                .public
-                .verify_simple(b"substrate", &[0x00, 0x00, 1, 2, 3], &signature)
-                .is_ok()
         );
     }
 

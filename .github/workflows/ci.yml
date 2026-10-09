@@ -36,9 +36,8 @@ jobs:
         with:
           persist-credentials: false
 
-      - uses: dtolnay/rust-toolchain@5b842231ba77f5c045dba54ac5560fed2db780e2 # nightly
+      - uses: ./.github/actions/rust-nightly
         with:
-          toolchain: nightly
           components: rustfmt, clippy
           targets: wasm32-unknown-unknown
 
@@ -47,13 +46,7 @@ jobs:
           toolchain: stable
           targets: wasm32-unknown-unknown
 
-      # A cache written on a pull request is visible only to that pull request,
-      # so every branch would store its own copy of the same key and the copies
-      # would evict each other from the repository's cache budget. Saving on the
-      # push events alone leaves one entry per key that every branch restores.
-      - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
-        with:
-          save-if: ${{ github.event_name == 'push' }}
+      - uses: ./.github/actions/rust-cache
 
       - name: Download codegen output
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
@@ -71,19 +64,19 @@ jobs:
       - name: cargo check wasm32
         run: cargo check --target wasm32-unknown-unknown -p truapi
 
-      - name: cargo +nightly clippy wasm32 (truapi-provider browser backends)
-        run: cargo +nightly clippy -p truapi-provider --target wasm32-unknown-unknown --no-default-features --features "js smoldot networks" --all-targets -- -D warnings
+      - name: cargo (pinned nightly) clippy wasm32 (truapi-provider browser backends)
+        run: cargo +"$TRUAPI_NIGHTLY_TOOLCHAIN" clippy -p truapi-provider --target wasm32-unknown-unknown --no-default-features --features "js smoldot networks" --all-targets -- -D warnings
 
       # The native-bindings build has no `ws` backend, which makes ChainSource a
       # single-variant enum; --all-features never exercises that shape.
-      - name: cargo +nightly clippy (truapi-provider native bindings)
-        run: cargo +nightly clippy -p truapi-provider --no-default-features --features uniffi --all-targets -- -D warnings
+      - name: cargo (pinned nightly) clippy (truapi-provider native bindings)
+        run: cargo +"$TRUAPI_NIGHTLY_TOOLCHAIN" clippy -p truapi-provider --no-default-features --features uniffi --all-targets -- -D warnings
 
-      - name: cargo +nightly fmt --check
-        run: cargo +nightly fmt --check
+      - name: cargo (pinned nightly) fmt --check
+        run: cargo +"$TRUAPI_NIGHTLY_TOOLCHAIN" fmt --check
 
-      - name: cargo +nightly clippy
-        run: cargo +nightly clippy --workspace --all-targets --all-features -- -D warnings
+      - name: cargo (pinned nightly) clippy
+        run: cargo +"$TRUAPI_NIGHTLY_TOOLCHAIN" clippy --workspace --all-targets --all-features -- -D warnings
 
       - name: cargo test
         run: cargo test --workspace --all-features
@@ -107,9 +100,8 @@ jobs:
         with:
           persist-credentials: false
 
-      - uses: dtolnay/rust-toolchain@5b842231ba77f5c045dba54ac5560fed2db780e2 # nightly
+      - uses: ./.github/actions/rust-nightly
         with:
-          toolchain: nightly
           components: rustfmt
 
       - uses: dtolnay/rust-toolchain@5b842231ba77f5c045dba54ac5560fed2db780e2 # stable
@@ -118,15 +110,13 @@ jobs:
 
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 22
+          node-version: 24
 
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version: "1.4.2"
 
-      - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
-        with:
-          save-if: ${{ github.event_name == 'push' }}
+      - uses: ./.github/actions/rust-cache
 
       - name: Isolate the installation
         run: |
@@ -169,9 +159,7 @@ jobs:
           toolchain: stable
           targets: wasm32-unknown-unknown
 
-      - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
-        with:
-          save-if: ${{ github.event_name == 'push' }}
+      - uses: ./.github/actions/rust-cache
 
       - name: Install wasm-pack
         run: cargo install wasm-pack --locked
@@ -206,18 +194,15 @@ jobs:
         with:
           toolchain: stable
 
-      - uses: dtolnay/rust-toolchain@5b842231ba77f5c045dba54ac5560fed2db780e2 # nightly
+      - uses: ./.github/actions/rust-nightly
         with:
-          toolchain: nightly
           components: rustfmt
 
-      - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
-        with:
-          save-if: ${{ github.event_name == 'push' }}
+      - uses: ./.github/actions/rust-cache
 
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 22
+          node-version: 24
 
       - name: Install workspace deps
         run: npm ci --ignore-scripts
@@ -268,9 +253,7 @@ jobs:
         with:
           toolchain: stable
 
-      - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
-        with:
-          save-if: ${{ github.event_name == 'push' }}
+      - uses: ./.github/actions/rust-cache
 
       # The truapi runtime declares its generated modules unconditionally, so the
       # cdylib bindgen builds from does not compile without the codegen output.
@@ -353,9 +336,9 @@ jobs:
             fi
           }
 
-          gate sdk_swift '^(ios/|Package\.swift$|Makefile$|Cargo\.toml$|Cargo\.lock$|js/container/|scripts/codegen\.sh$|rust/crates/truapi/|rust/crates/truapi-codegen/|rust/crates/truapi-macros/|rust/crates/truapi-provider/|rust/crates/uniffi-bindgen-cli/|\.github/workflows/ci\.yml$)'
+          gate sdk_swift '^(ios/|Package\.swift$|Makefile$|nightly-toolchain$|Cargo\.toml$|Cargo\.lock$|js/container/|scripts/codegen\.sh$|rust/crates/truapi/|rust/crates/truapi-codegen/|rust/crates/truapi-macros/|rust/crates/truapi-provider/|rust/crates/uniffi-bindgen-cli/|\.github/workflows/ci\.yml$)'
           gate workflows '^(\.github/workflows/|\.github/actions/|\.github/labeler\.yml$|\.github/CODEOWNERS$|hosts/[a-z]+/\.github/|scripts/(lint-composite-shell|check-path-routing)\.py$)'
-          gate sdk_kotlin '^(android/|Makefile$|Cargo\.toml$|Cargo\.lock$|build\.gradle\.kts$|settings\.gradle\.kts$|gradle\.properties$|package\.json$|package-lock\.json$|scripts/codegen\.sh$|rust/crates/truapi/|rust/crates/truapi-codegen/|rust/crates/truapi-macros/|rust/crates/uniffi-bindgen-cli/|\.github/workflows/ci\.yml$)'
+          gate sdk_kotlin '^(android/|Makefile$|nightly-toolchain$|Cargo\.toml$|Cargo\.lock$|build\.gradle\.kts$|settings\.gradle\.kts$|gradle\.properties$|package\.json$|package-lock\.json$|scripts/codegen\.sh$|rust/crates/truapi/|rust/crates/truapi-codegen/|rust/crates/truapi-macros/|rust/crates/uniffi-bindgen-cli/|\.github/workflows/ci\.yml$)'
 
           # The provider AAR is generated from its own cdylib and compiles
           # without codegen output, so it moves on a narrower set than the host
@@ -365,7 +348,7 @@ jobs:
           # The vendored Android host, plus the crates its bindings are
           # generated from. Nothing gated on this tree before, so a core change
           # that broke it reached a release with no gate in between.
-          gate host_android '^(hosts/android/|android/truapi-host/|rust/crates/truapi/|rust/crates/truapi-codegen/|rust/crates/truapi-macros/|rust/crates/uniffi-bindgen-cli/|scripts/(codegen\.sh|regen-explorer-versions\.mjs)$|Cargo\.toml$|Cargo\.lock$|package\.json$|package-lock\.json$|\.github/workflows/ci\.yml$)'
+          gate host_android '^(hosts/android/|android/truapi-host/|rust/crates/truapi/|rust/crates/truapi-codegen/|rust/crates/truapi-macros/|rust/crates/uniffi-bindgen-cli/|scripts/(codegen\.sh|regen-explorer-versions\.mjs)$|Cargo\.toml$|nightly-toolchain$|Cargo\.lock$|package\.json$|package-lock\.json$|\.github/actions/setup-android-build/|\.github/workflows/ci\.yml$)'
 
           # The packaging path has its own inputs: the archive layout in the
           # Makefile, the runner bundle, the generated sources cli-dist refuses
@@ -373,11 +356,11 @@ jobs:
           # survive. `@parity/truapi` is here because the runner inlines it from
           # source, and bundling it is a step no other job performs. A release
           # is the wrong place to find out one of them moved.
-          gate cli_package '^(rust/crates/(truapi-host-cli|truapi|truapi-codegen|truapi-macros)/|js/container/|js/packages/truapi/(src/|package\.json$|tsconfig[^/]*\.json$)|Makefile$|Cargo\.toml$|Cargo\.lock$|package\.json$|package-lock\.json$|scripts/(codegen\.sh|build-cli-runner\.ts|cli-runner-package\.test\.ts)$|\.github/workflows/(ci|cli-package|release-cli)\.yml$)'
+          gate cli_package '^(rust/crates/(truapi-host-cli|truapi|truapi-codegen|truapi-macros)/|js/container/|js/packages/truapi/(src/|package\.json$|tsconfig[^/]*\.json$)|Makefile$|nightly-toolchain$|Cargo\.toml$|Cargo\.lock$|package\.json$|package-lock\.json$|scripts/(codegen\.sh|build-cli-runner\.ts|cli-runner-package\.test\.ts)$|\.github/workflows/(ci|cli-package|release-cli)\.yml$)'
 
           # Include generators, dependency pins and package build configuration:
           # these can change a published artifact without touching its sources.
-          gate needs_changeset '^(rust/crates/truapi(-server|-provider|-macros|-host-cli|-codegen)?/|js/packages/[^/]+/(src/|scripts/|package\.json$|tsconfig[^/]*\.json$)|Cargo\.(toml|lock)$|package(-lock)?\.json$|rust-toolchain(\.toml)?$|\.cargo/|Makefile$|scripts/(codegen\.sh|bundle-truapi-dts\.mjs|regen-explorer-versions\.mjs)$)'
+          gate needs_changeset '^(rust/crates/truapi(-server|-provider|-macros|-host-cli|-codegen)?/|js/packages/[^/]+/(src/|scripts/|package\.json$|tsconfig[^/]*\.json$)|Cargo\.(toml|lock)$|package(-lock)?\.json$|rust-toolchain(\.toml)?$|nightly-toolchain$|\.cargo/|Makefile$|scripts/(codegen\.sh|bundle-truapi-dts\.mjs|regen-explorer-versions\.mjs)$)'
 
           # Deleting, editing or renaming an old changeset does not declare a
           # new change. README.md is Changesets' documentation, not a release.
@@ -402,17 +385,16 @@ jobs:
 
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 22
+          node-version: 24
 
       - uses: dtolnay/rust-toolchain@5b842231ba77f5c045dba54ac5560fed2db780e2 # stable
         with:
           toolchain: stable
           targets: aarch64-apple-ios-sim
 
-      - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
+      - uses: ./.github/actions/rust-cache
         with:
           shared-key: ios-swift-gate
-          save-if: ${{ github.event_name == 'push' }}
 
       - name: Download codegen output
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
@@ -538,16 +520,16 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      # codegen.sh formats its generated Rust with `cargo +nightly fmt`.
-      - uses: dtolnay/rust-toolchain@5b842231ba77f5c045dba54ac5560fed2db780e2 # nightly
+      # codegen.sh formats its generated Rust with the pinned nightly rustfmt.
+      - uses: ./.github/actions/rust-nightly
         with:
-          toolchain: nightly
           components: rustfmt
       - uses: dtolnay/rust-toolchain@5b842231ba77f5c045dba54ac5560fed2db780e2 # stable
-      - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2.8.1
+        with:
+          toolchain: stable
+      - uses: ./.github/actions/rust-cache
         with:
           shared-key: android-bindings-gate
-          save-if: ${{ github.event_name == 'push' }}
       - uses: actions/setup-java@dd06d9cba3e5552c54d9f8ea23572deb30010f7c # v6.0.0
         with:
           distribution: temurin
@@ -557,7 +539,7 @@ jobs:
           gradle-version: "8.9"
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: "22"
+          node-version: 24
       # The truapi runtime declares its generated modules unconditionally and they are
       # gitignored, so the crate does not compile until codegen has run.
       - name: Generate the Rust codegen output
@@ -598,7 +580,7 @@ jobs:
         id: setup
         uses: ./.github/actions/setup-android-build
         with:
-          save_cache: ${{ github.event_name == 'push' }}
+          save_cache: "true"
 
       # No truapi.dir: the core resolves two levels up, which is one of the
       # properties this job keeps true.
@@ -622,6 +604,7 @@ jobs:
           APPLICATION_ID: io.parity.polkadotapp
           APPLICATION_NAME: Polkadot
           CURRENCY_SYMBOL: DOT
+          FIAT_SYMBOL: "$"
           FIRESTORE_DATABASE_ID: ci
           GOOGLE_OAUTH_ID: ci
           # Typed as a long, so a non-numeric placeholder is a compile error.
@@ -666,6 +649,7 @@ jobs:
           APPLICATION_NAME: Polkadot
           CONTACT_EMAIL: ci@example.invalid
           CURRENCY_SYMBOL: DOT
+          FIAT_SYMBOL: "$"
           FIRESTORE_DATABASE_ID: ci
           GOOGLE_OAUTH_ID: ci
           GOOGLE_PROJECT_ID: "0"
@@ -694,10 +678,11 @@ jobs:
         with:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@5b842231ba77f5c045dba54ac5560fed2db780e2 # stable
-      - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2.8.1
+        with:
+          toolchain: stable
+      - uses: ./.github/actions/rust-cache
         with:
           shared-key: provider-android-bindings-gate
-          save-if: ${{ github.event_name == 'push' }}
       - uses: actions/setup-java@dd06d9cba3e5552c54d9f8ea23572deb30010f7c # v6.0.0
         with:
           distribution: temurin
@@ -733,7 +718,7 @@ jobs:
 
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 22
+          node-version: 24
 
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
@@ -776,7 +761,7 @@ jobs:
 
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 22
+          node-version: 24
 
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
@@ -815,7 +800,7 @@ jobs:
 
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 22
+          node-version: 24
 
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
@@ -826,9 +811,7 @@ jobs:
           toolchain: stable
           targets: wasm32-unknown-unknown
 
-      - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
-        with:
-          save-if: ${{ github.event_name == 'push' }}
+      - uses: ./.github/actions/rust-cache
 
       - name: Install wasm-pack
         run: cargo install wasm-pack --locked
@@ -866,7 +849,7 @@ jobs:
 
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 22
+          node-version: 24
 
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
@@ -892,6 +875,70 @@ jobs:
       - name: Test
         run: npm test --prefix js/packages/truapi-debugger
 
+  bundle-size:
+    name: Bundle size
+    timeout-minutes: 30
+    runs-on: ubuntu-latest
+    needs: codegen
+    permissions:
+      contents: read
+      # Reads main's baseline artifact from another run, and comments.
+      actions: read
+      pull-requests: write
+    env:
+      TRUAPI_REQUIRE_GENERATED: 1
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+
+      - uses: dtolnay/rust-toolchain@5b842231ba77f5c045dba54ac5560fed2db780e2 # stable
+        with:
+          toolchain: stable
+          targets: wasm32-unknown-unknown
+
+      # host-wasm builds the same truapi-host wasm and owns the cache.
+      - uses: ./.github/actions/rust-cache
+        with:
+          shared-key: host-wasm
+          save: "false"
+
+      # The version release.yml builds the published bundles with, since
+      # wasm-pack also picks the wasm-opt that shapes their size.
+      - name: Install wasm-pack
+        run: cargo install wasm-pack --version 0.14.0 --locked
+
+      - name: Download codegen output
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: codegen-output
+
+      - name: Install
+        run: npm ci --ignore-scripts
+
+      # tsc -b also builds @parity/truapi, which truapi-host references.
+      - name: Build the TypeScript packages
+        run: npm run build --prefix js/packages/truapi-host
+
+      - name: Build the WASM bundles
+        run: |
+          npm run build:wasm --prefix js/packages/truapi-host -- --web-only
+          npm run build --prefix js/packages/truapi-provider
+
+      # What the truapi-* packages ship to products. The test host behind
+      # truapi-host's `./testing` subpath is left out.
+      - name: Report bundle sizes
+        uses: ./.github/actions/bundle-size
+        with:
+          assets: |
+            truapi-host      js/packages/truapi-host/dist  !wasm/testing/ !testing/ !testing.js !web/create-mock-host.js
+            truapi-provider  js/packages/truapi-provider/dist
+            truapi           js/packages/truapi/dist
+
   playground:
     name: Playground (build + lint + unit)
     timeout-minutes: 10
@@ -906,7 +953,7 @@ jobs:
 
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 22
+          node-version: 24
 
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
@@ -926,8 +973,10 @@ jobs:
         working-directory: playground
         run: yarn install --frozen-lockfile
 
-      - name: Cache Next.js build
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      # Saved only on main, like the Rust caches, so every ref restores it.
+      - name: Restore the Next.js build cache
+        id: nextjs-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: playground/.next/cache
           key: ${{ runner.os }}-nextjs-${{ hashFiles('playground/yarn.lock') }}-${{ hashFiles('playground/src/**', 'playground/scripts/**', 'playground/public/**', 'playground/next.config.js', 'playground/tsconfig.json', 'playground/package.json') }}
@@ -937,6 +986,13 @@ jobs:
       - name: Build
         working-directory: playground
         run: yarn build
+
+      - name: Save the Next.js build cache
+        if: github.ref == 'refs/heads/main' && steps.nextjs-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: playground/.next/cache
+          key: ${{ steps.nextjs-cache.outputs.cache-primary-key }}
 
       - name: Lint
         working-directory: playground
@@ -960,7 +1016,7 @@ jobs:
 
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 22
+          node-version: 24
 
       - name: Download codegen output
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
@@ -1001,7 +1057,7 @@ jobs:
 
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 22
+          node-version: 24
 
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
@@ -1270,6 +1326,7 @@ jobs:
         ts-host,
         host-wasm,
         ts-debugger,
+        bundle-size,
         playground,
         explorer,
         e2e,
@@ -1315,7 +1372,7 @@ jobs:
             android-bindings provider-android-bindings host-android-bindings
             host-android-detekt
             cli-package ts-client
-            ts-host host-wasm ts-debugger playground explorer e2e workflow-lint
+            ts-host host-wasm ts-debugger bundle-size playground explorer e2e workflow-lint
             release-guard changeset-guard
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           SHA: ${{ github.event.pull_request.head.sha || github.sha }}

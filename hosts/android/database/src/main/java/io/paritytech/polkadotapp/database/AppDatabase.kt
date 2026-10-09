@@ -152,7 +152,7 @@ import io.paritytech.polkadotapp.database.model.chain.ChainNodeLocal
 import io.paritytech.polkadotapp.database.model.chain.ChainRuntimeInfoLocal
 
 @Database(
-    version = 67,
+    version = 68,
     entities = [
         ProductFundingOperationLocal::class,
         ChainLocal::class,
@@ -292,6 +292,8 @@ import io.paritytech.polkadotapp.database.model.chain.ChainRuntimeInfoLocal
         AutoMigration(from = 64, to = 65),
         // Add pocket_cards (cards the user added to the Pocket) and pocket_card_faces (the newest face drawn for a card)
         AutoMigration(from = 66, to = 67),
+        // Add chat_messages.sortOrder (local storage order) and its indices
+        AutoMigration(from = 67, to = 68),
     ]
 )
 @TypeConverters(

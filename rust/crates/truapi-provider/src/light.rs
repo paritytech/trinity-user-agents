@@ -85,7 +85,12 @@ type Platform = crate::light_platform_test::ShortDeadlinePlatform<
 #[cfg(target_arch = "wasm32")]
 type Platform = crate::light_platform_web::SubxtPlatform;
 
-fn new_platform() -> Platform {
+/// `connection_types` limits the peers the browser platform dials.
+#[cfg_attr(
+    not(target_arch = "wasm32"),
+    expect(unused_variables, reason = "only the browser platform filters peers")
+)]
+fn new_platform(connection_types: crate::connection_types::ConnectionTypes) -> Platform {
     #[cfg(not(target_arch = "wasm32"))]
     {
         // Before the client starts, or its first log lines are dropped.
@@ -105,7 +110,7 @@ fn new_platform() -> Platform {
     }
     #[cfg(target_arch = "wasm32")]
     {
-        crate::light_platform_web::SubxtPlatform::new()
+        crate::light_platform_web::SubxtPlatform::new(connection_types)
     }
 }
 
@@ -192,19 +197,22 @@ struct AddedChain {
 /// Lazily-started shared smoldot client owned by a provider.
 pub struct LightState {
     inner: OnceLock<Arc<Mutex<LightInner>>>,
+    /// Handed to [`new_platform`] when the client starts.
+    connection_types: crate::connection_types::ConnectionTypes,
 }
 
 impl LightState {
-    pub fn new() -> Self {
+    pub fn new(connection_types: crate::connection_types::ConnectionTypes) -> Self {
         LightState {
             inner: OnceLock::new(),
+            connection_types,
         }
     }
 
     fn inner(&self) -> &Arc<Mutex<LightInner>> {
         self.inner.get_or_init(|| {
             Arc::new(Mutex::new(LightInner {
-                client: Client::new(new_platform()),
+                client: Client::new(new_platform(self.connection_types)),
                 added: HashMap::new(),
                 connections: 0,
             }))

@@ -20,7 +20,7 @@ protocol IdentityDetailsPresenterProtocol: AnyObject {
 
 protocol IdentityDetailsInteractorInputProtocol: AnyObject {
     func setup()
-    func shareMessage(username: Username) -> [Any]
+    func shareMessage(username: Username, image: UIImage) -> [Any]
     func generateQrCode(for size: CGSize)
 }
 

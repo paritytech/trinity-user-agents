@@ -293,13 +293,18 @@ where
 /// Why a locally assembled transaction could not be produced.
 #[derive(Debug, derive_more::Display)]
 pub enum LocalTransactionError {
-    /// A version this host does not assemble.
-    #[display("unsupported tx_ext_version {version}; expected 0 for V4 or 5 for V5")]
+    /// A transaction extension version the runtime does not declare.
+    #[display(
+        "unsupported tx_ext_version {version}; the runtime declares transaction extension \
+         versions {declared:?}"
+    )]
     UnsupportedTxExtVersion {
         /// Version the caller asked for.
         version: u8,
+        /// Versions the runtime metadata declares.
+        declared: Vec<u8>,
     },
-    /// V5 needs the runtime's extension pipeline, which the chain did not yield.
+    /// The runtime metadata needed to choose and encode the format is unavailable.
     #[display("{_0}")]
     ChainUnavailable(String),
     /// The caller's extension list does not fit the runtime's pipeline.
@@ -310,15 +315,8 @@ pub enum LocalTransactionError {
     Other(String),
 }
 
-/// Assemble a transaction locally from caller-supplied, pre-encoded parts.
-///
-/// V4 needs no metadata. V5 resolves the runtime's call and transaction
-/// extension pipeline from the genesis-pinned Subxt client, keeping the caller's
-/// already-encoded call arguments and extension values opaque apart from
-/// `VerifyMultiSignature`, whose value is checked against the runtime's type.
-///
-/// V5 is signed with the local key only when `extensions` omits
-/// `VerifyMultiSignature`; callers that supply it are assembled unsigned.
+/// Assemble a transaction locally from caller-supplied, pre-encoded parts,
+/// against the runtime metadata of the genesis-pinned Subxt client.
 pub async fn build_local_transaction(
     chain: &ChainRuntime,
     keypair: &schnorrkel::Keypair,
@@ -327,50 +325,76 @@ pub async fn build_local_transaction(
     extensions: &[TxPayloadExtension],
     tx_ext_version: u8,
 ) -> Result<HostCreateTransactionResponse, LocalTransactionError> {
-    let signer = Sr25519Signer::from_keypair(keypair);
-    if tx_ext_version == 0 {
-        let transaction = build_signed_extrinsic_v4(&signer, call_data, extensions);
-        return Ok(HostCreateTransactionResponse { transaction });
-    }
-    if tx_ext_version != 5 {
-        return Err(LocalTransactionError::UnsupportedTxExtVersion {
-            version: tx_ext_version,
-        });
-    }
-
     let client = chain.online_client(&genesis_hash).await.map_err(|error| {
-        LocalTransactionError::ChainUnavailable(format!("cannot load V5 chain metadata: {error}"))
+        LocalTransactionError::ChainUnavailable(format!("cannot load chain metadata: {error}"))
     })?;
     let at_block = client.at_current_block().await.map_err(|error| {
-        LocalTransactionError::ChainUnavailable(format!(
-            "cannot select a V5 metadata block: {error}"
-        ))
+        LocalTransactionError::ChainUnavailable(format!("cannot select a metadata block: {error}"))
     })?;
-    let transaction = build_signed_extrinsic_v5(
-        &signer,
+    let transaction = build_signed_transaction(
+        &Sr25519Signer::from_keypair(keypair),
         genesis_hash,
         call_data,
         extensions,
+        tx_ext_version,
         at_block.metadata(),
-    )
-    .map_err(|error| match error {
-        V5BuildError::UnsupportedExtensions(reason) => {
-            LocalTransactionError::UnsupportedExtensions(reason)
-        }
-        V5BuildError::Other(reason) => LocalTransactionError::Other(reason),
-    })?;
+    )?;
     Ok(HostCreateTransactionResponse { transaction })
 }
 
-/// Why a V5 transaction could not be assembled.
-#[derive(Debug, derive_more::Display)]
-pub enum V5BuildError {
-    /// The caller's extension list does not fit the runtime's pipeline.
-    #[display("{_0}")]
-    UnsupportedExtensions(String),
-    /// Any other assembly failure.
-    #[display("{_0}")]
-    Other(String),
+/// Choose the extrinsic format for `tx_ext_version`, then assemble it.
+///
+/// V4 always uses transaction extension version 0, so a non-zero version
+/// builds V5. Version 0 builds V5 while it includes `VerifyMultiSignature`,
+/// since only then can a general transaction carry a signature, and V4
+/// otherwise.
+pub fn build_signed_transaction(
+    signer: &Sr25519Signer,
+    genesis_hash: [u8; 32],
+    call_data: &[u8],
+    extensions: &[TxPayloadExtension],
+    tx_ext_version: u8,
+    metadata: ArcMetadata,
+) -> Result<Vec<u8>, LocalTransactionError> {
+    let declared = metadata
+        .extrinsic_extension_version_info()
+        .map_err(|error| {
+            LocalTransactionError::Other(format!("transaction extension versions: {error}"))
+        })?
+        .collect::<Vec<_>>();
+    if !declared.contains(&tx_ext_version) {
+        return Err(LocalTransactionError::UnsupportedTxExtVersion {
+            version: tx_ext_version,
+            declared,
+        });
+    }
+    if tx_ext_version == 0 && !declares_verify_multi_signature(&metadata, 0)? {
+        return Ok(build_signed_extrinsic_v4(signer, call_data, extensions));
+    }
+    build_signed_extrinsic_v5(
+        signer,
+        genesis_hash,
+        call_data,
+        extensions,
+        tx_ext_version,
+        metadata,
+    )
+}
+
+/// Whether the given transaction extension version includes `VerifyMultiSignature`.
+fn declares_verify_multi_signature(
+    metadata: &ArcMetadata,
+    transaction_extension_version: u8,
+) -> Result<bool, LocalTransactionError> {
+    let verify_multi_signature = verify_multi_signature_name(metadata.types());
+    Ok(metadata
+        .extrinsic_extension_info(Some(transaction_extension_version))
+        .map_err(|error| {
+            LocalTransactionError::Other(format!("transaction extension metadata: {error}"))
+        })?
+        .extension_ids
+        .iter()
+        .any(|declared| declared.name == verify_multi_signature))
 }
 
 /// Whether a type encodes to zero bytes, mirroring the private `is_type_empty`
@@ -394,16 +418,16 @@ fn traverse_exactly<R: TypeResolver>(
     type_id: R::TypeId,
     types: &R,
     what: &str,
-) -> Result<(), V5BuildError> {
+) -> Result<(), LocalTransactionError> {
     let mut cursor = bytes;
     decode_with_visitor(&mut cursor, type_id, types, IgnoreVisitor::new()).map_err(|error| {
-        V5BuildError::UnsupportedExtensions(format!(
+        LocalTransactionError::UnsupportedExtensions(format!(
             "supplied {what} ({} byte(s)) does not decode: {error}",
             bytes.len()
         ))
     })?;
     if !cursor.is_empty() {
-        return Err(V5BuildError::UnsupportedExtensions(format!(
+        return Err(LocalTransactionError::UnsupportedExtensions(format!(
             "supplied {what} has {} trailing byte(s)",
             cursor.len()
         )));
@@ -428,9 +452,10 @@ pub fn build_signed_extrinsic_v5(
     genesis_hash: [u8; 32],
     call_data: &[u8],
     extensions: &[TxPayloadExtension],
+    transaction_extension_version: u8,
     metadata: ArcMetadata,
-) -> Result<Vec<u8>, V5BuildError> {
-    let other = V5BuildError::Other;
+) -> Result<Vec<u8>, LocalTransactionError> {
+    let other = LocalTransactionError::Other;
     let (&pallet_index, rest) = call_data
         .split_first()
         .ok_or_else(|| other("V5 call data is missing its pallet index".to_string()))?;
@@ -440,9 +465,6 @@ pub fn build_signed_extrinsic_v5(
     let call_info = metadata
         .extrinsic_call_info_by_index(pallet_index, call_index)
         .map_err(|error| other(format!("V5 call metadata: {error}")))?;
-    let transaction_extension_version = metadata
-        .extrinsic()
-        .transaction_extension_version_to_use_for_encoding();
     let extension_info = metadata
         .extrinsic_extension_info(Some(transaction_extension_version))
         .map_err(|error| other(format!("V5 transaction-extension metadata: {error}")))?;
@@ -477,7 +499,7 @@ pub fn build_signed_extrinsic_v5(
     let mut seen_ids = BTreeSet::new();
     for extension in extensions {
         if !seen_ids.insert(extension.id.as_str()) {
-            return Err(V5BuildError::UnsupportedExtensions(format!(
+            return Err(LocalTransactionError::UnsupportedExtensions(format!(
                 "transaction extension {:?} is listed more than once; every \
                  reader takes the first entry, so the rest would be dropped in \
                  silence",
@@ -485,7 +507,7 @@ pub fn build_signed_extrinsic_v5(
             )));
         }
         if !declared_at_any_version.contains(extension.id.as_str()) {
-            return Err(V5BuildError::UnsupportedExtensions(format!(
+            return Err(LocalTransactionError::UnsupportedExtensions(format!(
                 "transaction extension {:?} is not declared by the runtime at \
                  any pipeline version; encoding uses version \
                  {transaction_extension_version}, and the declared names across \
@@ -520,7 +542,7 @@ pub fn build_signed_extrinsic_v5(
         // encoded has no slot to put their bytes in. Silently dropping the one
         // extension that authorizes the transaction is not a safe default.
         (Some(_), None) => {
-            return Err(V5BuildError::UnsupportedExtensions(format!(
+            return Err(LocalTransactionError::UnsupportedExtensions(format!(
                 "pipeline version {transaction_extension_version} does not declare \
                  {verify_multi_signature}, so the supplied value cannot authorize \
                  this transaction"
@@ -531,7 +553,7 @@ pub fn build_signed_extrinsic_v5(
         // host's signature has nowhere to go. Returning the transaction anyway
         // hands back one that carries no authorization at all.
         (None, None) => {
-            return Err(V5BuildError::UnsupportedExtensions(format!(
+            return Err(LocalTransactionError::UnsupportedExtensions(format!(
                 "pipeline version {transaction_extension_version} does not declare \
                  {verify_multi_signature}, so the host cannot authorize this \
                  transaction"
@@ -617,7 +639,7 @@ pub fn build_signed_extrinsic_v5(
         &extension_info,
         &mut transaction,
     )
-    .map_err(|error| V5BuildError::Other(format!("V5 transaction: {error}")))?;
+    .map_err(|error| LocalTransactionError::Other(format!("V5 transaction: {error}")))?;
     Ok(transaction)
 }
 
@@ -627,10 +649,14 @@ pub fn build_signed_extrinsic_v5(
 pub mod tests {
     use super::*;
     use crate::runtime::statement_allowance::collection::PersonhoodCollection;
-    use parity_scale_codec::{Compact, Decode};
+    use parity_scale_codec::{Compact, Decode, Encode};
+    use scale_info::{PortableRegistry, TypeDef, TypeDefPrimitive};
     use subxt::client::{OfflineClient, OfflineClientAtBlock};
     use subxt::config::substrate::{SpecVersionForRange, SubstrateConfigBuilder};
+    use subxt::events::Phase;
     use subxt::ext::frame_metadata::{RuntimeMetadata, RuntimeMetadataPrefixed};
+    use subxt::ext::scale_encode::{EncodeAsFields, Field};
+    use subxt::ext::scale_value::{Primitive, Value as ScaleValue};
     use subxt::metadata::{ArcMetadata, Metadata};
     use subxt::utils::H256;
 
@@ -690,6 +716,121 @@ pub mod tests {
             spec_version: 1_000_020,
             transaction_version: 1,
             metadata: ArcMetadata::from(bulletin_metadata()),
+        }
+    }
+
+    /// Output of the runtime calls a subxt client makes to load the bulletin
+    /// fixture: `Core_version` (spec 1) and the metadata calls.
+    pub fn bulletin_runtime_call(method: &str) -> Option<Vec<u8>> {
+        Some(match method {
+            "Core_version" => (
+                "bulletin",
+                "bulletin",
+                1u32,
+                1u32,
+                1u32,
+                Vec::<([u8; 8], u32)>::new(),
+                1u32,
+            )
+                .encode(),
+            "Metadata_metadata_versions" => vec![14u32].encode(),
+            "Metadata_metadata_at_version" => {
+                let mut output = vec![1];
+                Compact(u32::try_from(BULLETIN_METADATA_BYTES.len()).unwrap())
+                    .encode_to(&mut output);
+                output.extend_from_slice(BULLETIN_METADATA_BYTES);
+                output
+            }
+            _ => return None,
+        })
+    }
+
+    /// Encoded `System.Events` over the bulletin fixture: one event per
+    /// `(extrinsic index, System event name)`, each with default field values.
+    pub fn system_events(events: &[(u32, &str)]) -> Vec<u8> {
+        let metadata = ArcMetadata::from(bulletin_metadata());
+        let system = metadata.pallet_by_name("System").unwrap();
+        let mut bytes = Vec::new();
+        Compact(u32::try_from(events.len()).unwrap()).encode_to(&mut bytes);
+        for (extrinsic_index, event_name) in events {
+            let event = system
+                .event_variants()
+                .unwrap()
+                .iter()
+                .find(|event| event.name == *event_name)
+                .unwrap();
+            let values = ScaleValue::unnamed_composite(
+                event
+                    .fields
+                    .iter()
+                    .map(|field| default_value(metadata.types(), field.ty.id)),
+            );
+            let mut fields = event
+                .fields
+                .iter()
+                .map(|field| Field::new(field.ty.id, field.name.as_deref()));
+            Phase::ApplyExtrinsic(*extrinsic_index).encode_to(&mut bytes);
+            system.event_index().encode_to(&mut bytes);
+            event.index.encode_to(&mut bytes);
+            values
+                .encode_as_fields_to(&mut fields, metadata.types(), &mut bytes)
+                .unwrap();
+            Vec::<[u8; 32]>::new().encode_to(&mut bytes);
+        }
+        bytes
+    }
+
+    /// The first-variant, zero-valued instance of a metadata type.
+    fn default_value(types: &PortableRegistry, type_id: u32) -> ScaleValue {
+        let ty = types.resolve(type_id).expect("metadata type exists");
+        match &ty.type_def {
+            TypeDef::Composite(composite) => ScaleValue::unnamed_composite(
+                composite
+                    .fields
+                    .iter()
+                    .map(|field| default_value(types, field.ty.id)),
+            ),
+            TypeDef::Variant(variants) => {
+                let variant = variants.variants.first().expect("variant exists");
+                ScaleValue::unnamed_variant(
+                    variant.name.clone(),
+                    variant
+                        .fields
+                        .iter()
+                        .map(|field| default_value(types, field.ty.id)),
+                )
+            }
+            TypeDef::Sequence(_) => ScaleValue::unnamed_composite([]),
+            TypeDef::Array(array) => ScaleValue::unnamed_composite(
+                (0..array.len).map(|_| default_value(types, array.type_param.id)),
+            ),
+            TypeDef::Tuple(tuple) => ScaleValue::unnamed_composite(
+                tuple
+                    .fields
+                    .iter()
+                    .map(|field| default_value(types, field.id)),
+            ),
+            TypeDef::Primitive(primitive) => match primitive {
+                TypeDefPrimitive::Bool => ScaleValue::bool(false),
+                TypeDefPrimitive::Char => ScaleValue::char('\0'),
+                TypeDefPrimitive::Str => ScaleValue::string(""),
+                TypeDefPrimitive::U8
+                | TypeDefPrimitive::U16
+                | TypeDefPrimitive::U32
+                | TypeDefPrimitive::U64
+                | TypeDefPrimitive::U128 => ScaleValue::u128(0),
+                TypeDefPrimitive::U256 => ScaleValue::primitive(Primitive::U256([0; 32])),
+                TypeDefPrimitive::I8
+                | TypeDefPrimitive::I16
+                | TypeDefPrimitive::I32
+                | TypeDefPrimitive::I64
+                | TypeDefPrimitive::I128 => ScaleValue::i128(0),
+                TypeDefPrimitive::I256 => ScaleValue::primitive(Primitive::I256([0; 32])),
+            },
+            TypeDef::Compact(_) => ScaleValue::u128(0),
+            TypeDef::BitSequence(_) => {
+                ScaleValue::bit_sequence(subxt::ext::scale_bits::Bits::new())
+            }
         }
     }
 
@@ -930,6 +1071,7 @@ pub mod tests {
             state.genesis_hash,
             &call_data,
             &supplied,
+            0,
             metadata.clone(),
         )
         .unwrap();
@@ -1041,6 +1183,7 @@ pub mod tests {
             state.genesis_hash,
             &call_data,
             &extensions,
+            0,
             metadata,
         )
         .unwrap();
@@ -1112,6 +1255,7 @@ pub mod tests {
             state.genesis_hash,
             &call_data,
             &extensions,
+            0,
             metadata,
         )
         .unwrap();
@@ -1143,6 +1287,7 @@ pub mod tests {
             state.genesis_hash,
             &fixture_call_data(),
             &extensions,
+            0,
             metadata,
         )
         .unwrap();
@@ -1183,6 +1328,7 @@ pub mod tests {
                 state.genesis_hash,
                 &fixture_call_data(),
                 &extensions,
+                0,
                 metadata.clone(),
             )
             .unwrap_err();
@@ -1246,6 +1392,7 @@ pub mod tests {
                     state.genesis_hash,
                     &fixture_call_data(),
                     &extensions,
+                    0,
                     metadata,
                 )
                 .unwrap_err()
@@ -1282,6 +1429,7 @@ pub mod tests {
                 state.genesis_hash,
                 &fixture_call_data(),
                 &extensions,
+                0,
                 Metadata::decode_from(FIXTURE_METADATA_BYTES).unwrap().arc(),
             )
             .unwrap_err()
@@ -1320,6 +1468,7 @@ pub mod tests {
             state.genesis_hash,
             &fixture_call_data(),
             &extensions,
+            0,
             Metadata::decode_from(FIXTURE_METADATA_BYTES).unwrap().arc(),
         )
         .expect("a well-formed proof value must pass the guard");
@@ -1344,6 +1493,7 @@ pub mod tests {
             state.genesis_hash,
             &fixture_call_data(),
             &extensions,
+            0,
             Metadata::decode_from(FIXTURE_METADATA_BYTES).unwrap().arc(),
         )
         .unwrap_err()
@@ -1378,6 +1528,7 @@ pub mod tests {
             state.genesis_hash,
             &fixture_call_data(),
             &extensions,
+            0,
             metadata,
         )
         .expect("an unread implicit must not fail the build");
@@ -1401,6 +1552,7 @@ pub mod tests {
             state.genesis_hash,
             &fixture_call_data(),
             &extensions,
+            0,
             metadata,
         )
         .unwrap();
@@ -1553,6 +1705,7 @@ pub mod tests {
             state.genesis_hash,
             &fixture_call_data(),
             &fixture_signed_extensions(&allowance_metadata, &state),
+            encoding_version,
             metadata,
         )
         .expect("an id declared at another version is surplus, not fatal");
@@ -1571,6 +1724,7 @@ pub mod tests {
             state.genesis_hash,
             &fixture_call_data(),
             &fixture_extensions(&allowance_metadata, &state),
+            1,
             metadata,
         )
         .unwrap_err()
@@ -1596,6 +1750,7 @@ pub mod tests {
             state.genesis_hash,
             &fixture_call_data(),
             &fixture_signed_extensions(&allowance_metadata, &state),
+            1,
             metadata,
         )
         .unwrap_err()
@@ -1633,6 +1788,7 @@ pub mod tests {
                 state.genesis_hash,
                 &fixture_call_data(),
                 &extensions,
+                0,
                 metadata,
             )
             .unwrap_err()
@@ -1688,5 +1844,104 @@ pub mod tests {
                 );
             }
         }
+    }
+
+    /// Version byte and transaction extension version of an encoded
+    /// transaction, read past its length prefix.
+    fn envelope(transaction: &[u8]) -> (u8, u8) {
+        let mut inner = transaction;
+        Compact::<u32>::decode(&mut inner).unwrap();
+        (inner[0], inner[1])
+    }
+
+    /// Version 0 builds V5 whenever it can carry the host's signature.
+    #[test]
+    fn tx_ext_version_zero_builds_v5_when_version_zero_verifies_signatures() {
+        let metadata = Metadata::decode_from(FIXTURE_METADATA_BYTES).unwrap().arc();
+        let allowance_metadata = AllowanceMetadata::decode(FIXTURE_METADATA_BYTES).unwrap();
+        let state = fixture_chain_state();
+
+        let transaction = build_signed_transaction(
+            &test_signer(),
+            state.genesis_hash,
+            &fixture_call_data(),
+            &fixture_signed_extensions(&allowance_metadata, &state),
+            0,
+            metadata,
+        )
+        .unwrap();
+
+        assert_eq!(envelope(&transaction), (0x45, 0));
+    }
+
+    /// Without a signature slot in version 0 a V5 transaction could not be
+    /// authorized, so zero falls back to a signed V4 transaction.
+    #[test]
+    fn tx_ext_version_zero_builds_v4_when_version_zero_has_no_signature_slot() {
+        let state = bulletin_chain_state();
+        let extensions = vec![ext("CheckNonce", &[0x00], &[])];
+
+        let transaction = build_signed_transaction(
+            &test_signer(),
+            state.genesis_hash,
+            &[0x00, 0x00],
+            &extensions,
+            0,
+            state.metadata,
+        )
+        .unwrap();
+
+        assert_eq!(envelope(&transaction).0, 0x84);
+    }
+
+    /// The encoded transaction extension version is the one the caller names,
+    /// not the one the runtime would pick for itself.
+    #[test]
+    fn tx_ext_version_is_the_encoded_transaction_extension_version() {
+        let allowance_metadata = AllowanceMetadata::decode(FIXTURE_METADATA_BYTES).unwrap();
+        let state = fixture_chain_state();
+
+        let versions: Vec<_> = [0, 1]
+            .into_iter()
+            .map(|tx_ext_version| {
+                let transaction = build_signed_transaction(
+                    &test_signer(),
+                    state.genesis_hash,
+                    &fixture_call_data(),
+                    &fixture_signed_extensions(&allowance_metadata, &state),
+                    tx_ext_version,
+                    two_version_metadata(&["RestrictOrigins"]),
+                )
+                .unwrap();
+                envelope(&transaction)
+            })
+            .collect();
+
+        assert_eq!(versions, vec![(0x45, 0), (0x45, 1)]);
+    }
+
+    /// An undeclared version has no extension set to encode against, so it is
+    /// refused rather than built on another version.
+    #[test]
+    fn tx_ext_version_the_runtime_does_not_declare_is_not_supported() {
+        let metadata = Metadata::decode_from(FIXTURE_METADATA_BYTES).unwrap().arc();
+        let allowance_metadata = AllowanceMetadata::decode(FIXTURE_METADATA_BYTES).unwrap();
+        let state = fixture_chain_state();
+
+        let error = build_signed_transaction(
+            &test_signer(),
+            state.genesis_hash,
+            &fixture_call_data(),
+            &fixture_signed_extensions(&allowance_metadata, &state),
+            5,
+            metadata,
+        )
+        .unwrap_err()
+        .to_string();
+
+        assert_eq!(
+            error,
+            "unsupported tx_ext_version 5; the runtime declares transaction extension versions [0]"
+        );
     }
 }

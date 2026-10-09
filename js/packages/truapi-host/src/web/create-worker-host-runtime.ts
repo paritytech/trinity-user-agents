@@ -91,6 +91,13 @@ export interface WorkerPairingHostRuntime {
   activateLocalSession(secret: Uint8Array, liteUsername?: string): Promise<void>;
   setGrantAllowancesUnchecked(granted: boolean): Promise<void>;
   /**
+   * Answer these resource tags as refused, replacing any earlier set.
+   *
+   * Withholding one resource while the rest stay granted is what lets a suite
+   * prove its product survives a refusal it cannot otherwise arrange.
+   */
+  setWithheldResources(tags: string[]): Promise<void>;
+  /**
    * Drop the active paired session without notifying the peer. Rejects on a
    * disposed runtime, as
    * {@link WorkerPairingHostRuntime.activateStoredSession} does.
@@ -1245,6 +1252,7 @@ export function createWebWorkerPairingHostRuntime(
             chat: host.chat !== undefined,
             permissionStatus: host.permissionStatus !== undefined,
             pocket: host.pocket !== undefined,
+            game: host.game !== undefined,
             contacts: host.contacts !== undefined,
           },
           debuggerUrl: debuggerDial,
@@ -1486,6 +1494,13 @@ function buildRuntime(state: RuntimeState): WorkerPairingHostRuntime {
         kind: "setGrantAllowancesUnchecked",
         requestId,
         granted,
+      }));
+    },
+    setWithheldResources(tags: string[]): Promise<void> {
+      return sendSessionActivationRequest(state, (requestId) => ({
+        kind: "setWithheldResources",
+        requestId,
+        tags,
       }));
     },
     resetSessionState(): Promise<void> {

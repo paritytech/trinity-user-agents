@@ -171,6 +171,23 @@ impl ChainProviderBuilder {
         Ok(())
     }
 
+    /// Limit the kinds of connection the light client opens to peers. A field
+    /// left out stays allowed; an unknown field or a non-boolean value throws.
+    #[cfg(feature = "smoldot")]
+    #[wasm_bindgen(js_name = setConnectionTypes)]
+    pub fn set_connection_types(
+        &mut self,
+        #[wasm_bindgen(unchecked_param_type = "ConnectionTypes")] types: JsValue,
+    ) -> Result<(), JsError> {
+        let types = connection_types_from_js(&types)?;
+        let builder = self
+            .inner
+            .take()
+            .ok_or_else(|| JsError::new("builder was already consumed by build()"))?;
+        self.inner = Some(builder.connection_types(types));
+        Ok(())
+    }
+
     /// Register every chain of the bundled network `name` (relay plus system
     /// parachains, with relay wiring and statement-store placement supplied by
     /// the catalog). Returns the network's genesis hashes.
@@ -439,6 +456,44 @@ impl Connection {
     pub fn close(&self) {
         self.inner.close();
     }
+}
+
+#[cfg(feature = "smoldot")]
+#[wasm_bindgen(typescript_custom_section)]
+const CONNECTION_TYPES_TS: &str = r#"
+/** Which kinds of connection the light client opens to peers; each defaults to `true`. */
+export interface ConnectionTypes {
+  /** Secure `wss://` WebSocket. */
+  secure?: boolean;
+  /** Plain `ws://` WebSocket to a localhost peer. */
+  localhost?: boolean;
+  /** Plain `ws://` WebSocket to any other peer. */
+  unsecure?: boolean;
+}
+"#;
+
+/// Read the object [`CONNECTION_TYPES_TS`] declares.
+#[cfg(feature = "smoldot")]
+fn connection_types_from_js(value: &JsValue) -> Result<crate::ConnectionTypes, JsError> {
+    let object = value
+        .dyn_ref::<js_sys::Object>()
+        .ok_or_else(|| JsError::new("connection types must be an object"))?;
+    let mut types = crate::ConnectionTypes::default();
+    for entry in js_sys::Object::entries(object).iter() {
+        let entry = js_sys::Array::from(&entry);
+        let key = entry.get(0).as_string().unwrap_or_default();
+        let field = match key.as_str() {
+            "secure" => &mut types.secure,
+            "localhost" => &mut types.localhost,
+            "unsecure" => &mut types.unsecure,
+            _ => return Err(JsError::new(&format!("unknown connection type `{key}`"))),
+        };
+        *field = entry
+            .get(1)
+            .as_bool()
+            .ok_or_else(|| JsError::new(&format!("connection type `{key}` must be a boolean")))?;
+    }
+    Ok(types)
 }
 
 #[cfg(feature = "smoldot")]
@@ -719,6 +774,24 @@ mod tests {
         client.into()
     }
 
+    #[wasm_bindgen_test]
+    fn connection_types_read_the_fields_a_host_names() {
+        let parse = |source: &str| {
+            connection_types_from_js(&js_sys::JSON::parse(source).expect("valid JSON"))
+        };
+        assert_eq!(
+            parse(r#"{"unsecure":false}"#).ok(),
+            Some(crate::ConnectionTypes {
+                unsecure: false,
+                ..crate::ConnectionTypes::default()
+            })
+        );
+        assert_eq!(parse("{}").ok(), Some(crate::ConnectionTypes::default()));
+        assert!(parse(r#"{"unsecured":false}"#).is_err());
+        assert!(parse(r#"{"secure":"no"}"#).is_err());
+        assert!(parse("true").is_err());
+    }
+
     /// The names JS actually sees. A missing `js_name` exports the Rust name
     /// instead, which the tests below would not notice because they call the
     /// Rust method rather than the export.
@@ -733,7 +806,12 @@ mod tests {
         }
 
         let builder = JsValue::from(ChainProviderBuilder::new());
-        let mut expected = vec!["setStorage", "setDatabaseContent", "addRpcChain"];
+        let mut expected = vec![
+            "setStorage",
+            "setDatabaseContent",
+            "setConnectionTypes",
+            "addRpcChain",
+        ];
         if cfg!(feature = "networks") {
             expected.push("addNetwork");
         }

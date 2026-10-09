@@ -76,11 +76,11 @@ async fn light_follow_initializes() {
 
 /// Offline, smoldot settles on `Ready` from the checkpoint after its
 /// sync-mode deadline, so reaching `Ready` alone proves nothing. A cold start
-/// against the network has to warp sync on the way there, with peers.
+/// against the network has to reach it with peers.
 #[cfg(feature = "smoldot")]
 #[tokio::test]
 #[ignore = "requires network access to Paseo and PASEO_CHAIN_SPEC"]
-async fn light_lifecycle_warp_syncs_to_ready() {
+async fn light_lifecycle_reaches_ready() {
     use truapi_provider::ChainPhase;
 
     let provider = EmbeddedChainProvider::builder()
@@ -97,13 +97,19 @@ async fn light_lifecycle_warp_syncs_to_ready() {
         .lifecycle(PASEO_GENESIS)
         .expect("a connected chain has a lifecycle");
 
-    let (synced, ready) = tokio::time::timeout(Duration::from_secs(300), async {
-        let mut synced = false;
+    // A checkpoint close to the finalized head has nothing to warp through,
+    // so `Syncing` may be skipped.
+    let ready = tokio::time::timeout(Duration::from_secs(300), async {
         loop {
             let state = lifecycle.next().await.expect("the chain stays running");
             match state.phase {
-                ChainPhase::Syncing { .. } => synced = true,
-                ChainPhase::Ready => return (synced, state),
+                ChainPhase::Syncing { at, target } => {
+                    assert!(
+                        at <= target,
+                        "sync progress {at} passed its target {target}"
+                    );
+                }
+                ChainPhase::Ready => return state,
                 ChainPhase::Connecting => {}
             }
         }
@@ -111,7 +117,6 @@ async fn light_lifecycle_warp_syncs_to_ready() {
     .await
     .expect("the chain reaches ready in time");
 
-    assert!(synced, "a cold start warp syncs before it is ready");
     assert!(ready.peers > 0, "ready with peers, not stranded offline");
     connection.close();
 }

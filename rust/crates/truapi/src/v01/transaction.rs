@@ -38,7 +38,8 @@ pub struct ProductAccountTxPayload {
     pub call_data: Vec<u8>,
     /// Transaction extensions supplied by the caller.
     pub extensions: Vec<TxPayloadExtension>,
-    /// 0 for Extrinsic V4, runtime-supported value for V5.
+    /// Version of the transaction extensions in `extensions`, as the runtime
+    /// numbers them.
     pub tx_ext_version: u8,
     /// Contact handles `call_data` names, which the host replaces with the
     /// accounts they resolve to before anything is signed or shown.
@@ -69,7 +70,8 @@ pub struct LegacyAccountTxPayload {
     pub call_data: Vec<u8>,
     /// Transaction extensions supplied by the caller.
     pub extensions: Vec<TxPayloadExtension>,
-    /// 0 for Extrinsic V4, runtime-supported value for V5.
+    /// Version of the transaction extensions in `extensions`, as the runtime
+    /// numbers them.
     pub tx_ext_version: u8,
 }
 

@@ -47,7 +47,7 @@ declare global {
   function accountIdForDotNsUsername(username?: string): Promise<import("neverthrow").Result<`0x${string}`, Error>>;
   /** Resolve a DotNS username to its owner's generic Substrate SS58 address. Defaults to truapi.account.getUserId(). */
   function ss58AddressForDotNsUsername(username?: string): Promise<import("neverthrow").Result<string, Error>>;
-  /** Build a metadata-backed product-account transaction payload for `truapi.signing.createTransaction`. */
+  /** Build a metadata-backed product-account transaction payload for `truapi.signing.createTransaction`, leaving `VerifyMultiSignature` to the host so it signs. */
   function buildCreateTransactionPayload(opts: {
     signer: import("@parity/truapi").ProductAccountId;
     genesisHash: `0x${string}`;

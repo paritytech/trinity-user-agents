@@ -7,21 +7,7 @@ final class ChatCallWireframe: ChatCallWireframeProtocol, AlertPresentable, Appl
         view?.controller.dismiss(animated: true)
     }
 
-    func presentMicrophoneAccessDenied(dismissing view: ChatCallViewProtocol?) {
-        let presentAlert: () -> Void = { [weak self] in
-            self?.presentMicrophoneAccessAlert()
-        }
-
-        if let controller = view?.controller, controller.presentingViewController != nil {
-            controller.dismiss(animated: true, completion: presentAlert)
-        } else {
-            presentAlert()
-        }
-    }
-}
-
-private extension ChatCallWireframe {
-    func presentMicrophoneAccessAlert() {
+    func presentMicrophoneAccessRequired(from view: ChatCallViewProtocol?) {
         let viewModel = AlertPresentableViewModel(
             title: String(localized: .chatCallMicAccessTitle),
             message: String(localized: .chatCallMicAccessMessage),
@@ -33,6 +19,6 @@ private extension ChatCallWireframe {
             closeActionTitle: String(localized: .Common.notNow)
         )
 
-        present(viewModel: viewModel, style: .alert, from: nil)
+        present(viewModel: viewModel, style: .alert, from: view)
     }
 }

@@ -1,5 +1,5 @@
 {
-  "originHash" : "1927bd9fea18809db3590d6653c29c81a3b4cec530d06c49ff1263753bbc1a69",
+  "originHash" : "bf56472752e0e57f5bf26c28d2e05e64aca7e4c3ec86fc038832031d40b70e0d",
   "pins" : [
     {
       "identity" : "abseil-cpp-binary",
@@ -87,8 +87,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/novasamatech/extrinsic-service-ios",
       "state" : {
-        "revision" : "a4adca31422f5627c023616b7b76b520ab186504",
-        "version" : "1.18.0"
+        "revision" : "75bd0da73f1782121cf07770f59eba3ace0b7056",
+        "version" : "1.20.0"
       }
     },
     {
@@ -267,8 +267,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/paritytech/polkadot-app-design-system-ios",
       "state" : {
-        "revision" : "6e5b2da49d753a1b5f137a4c836608f94967eeb0",
-        "version" : "0.0.21"
+        "revision" : "43e152caf88a1959fa0481089561741cdff24440",
+        "version" : "0.0.24"
       }
     },
     {
@@ -308,15 +308,6 @@
       }
     },
     {
-      "identity" : "sentry-cocoa",
-      "kind" : "remoteSourceControl",
-      "location" : "https://github.com/getsentry/sentry-cocoa/",
-      "state" : {
-        "revision" : "dad229c665bfd043c5d80ac7aa77717cbd19a1c3",
-        "version" : "8.58.3"
-      }
-    },
-    {
       "identity" : "snapkit",
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/SnapKit/SnapKit",
@@ -348,8 +339,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/novasamatech/substrate-sdk-ios",
       "state" : {
-        "revision" : "46c97f560fc18283484d6a6d9b0e018c558e176b",
-        "version" : "5.15.0"
+        "revision" : "bbc0e4825767a75c6563e37496b0b120c866dbf6",
+        "version" : "5.17.0"
       }
     },
     {

@@ -342,6 +342,83 @@
         }
       }
     },
+    "funding.errorConfigNotLoaded": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "App settings haven't loaded yet. Check your connection and try again."
+          }
+        }
+      }
+    },
+    "funding.errorNetworkUnavailable": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Couldn't fetch network suffix. Check your connection and try again."
+          }
+        }
+      }
+    },
+    "funding.errorNotConfigured": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This option isn't available yet. Try again later."
+          }
+        }
+      }
+    },
+    "funding.errorUnknown": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Something went wrong. Try again later."
+          }
+        }
+      }
+    },
+    "funding.errorWrongNetwork": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This option isn't available on the current network."
+          }
+        }
+      }
+    },
+    "funding.topUpUnavailableTitle": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Top Up Unavailable"
+          }
+        }
+      }
+    },
+    "funding.withdrawUnavailableTitle": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Withdrawal Unavailable"
+          }
+        }
+      }
+    },
     "paymentRequest.title": {
       "extractionState": "manual",
       "localizations": {

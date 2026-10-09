@@ -1,4 +1,4 @@
-//! In-memory mock [`Platform`](crate::platform::Platform) for tests and host simulators.
+//! In-memory mock [`Platform`] for tests and host simulators.
 //!
 //! `MockPlatform` implements every capability trait with deterministic,
 //! configurable behavior and no OS, device, or network dependency: storage is

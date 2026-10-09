@@ -14,6 +14,8 @@ use crate::platform::{HostInfo, JsonRpcConnection, PermissionStatusHost, Platfor
 use crate::runtime::bulletin_rpc::BulletinRpc;
 use crate::runtime::signing_host::DevicePairingObserver;
 use crate::runtime::statement_store_rpc::StatementStoreRpc;
+#[cfg(not(target_arch = "wasm32"))]
+use crate::store::{Db, DbError};
 use crate::subscription::Spawner;
 use async_trait::async_trait;
 use truapi::latest;
@@ -48,9 +50,17 @@ pub struct RuntimeServices {
     /// Contact handles already resolved, shared by every product runtime of
     /// this host and emptied when the host says its contacts changed.
     pub contact_handles: crate::runtime::contacts::ContactHandleCache,
+    /// Host Game adapter, installed once at startup by a host that can hold
+    /// reminders. Unset leaves every product Game call `Unsupported`.
+    game_platform: OnceLock<Arc<dyn crate::platform::GamePlatform>>,
     /// Host observer told when a device finishes pairing with this signing
     /// host. Unset leaves a paired device unannounced.
     device_pairing_observer: OnceLock<Arc<dyn DevicePairingObserver>>,
+    /// Core-owned database, installed once at startup by a host that
+    /// configured one. Unset makes every durable consumer report
+    /// [`DbError::NotConfigured`].
+    #[cfg(not(target_arch = "wasm32"))]
+    core_db: OnceLock<Db>,
     /// Asset Hub the dotNS contracts are deployed on. All-zero says this host
     /// has none, which leaves every manifest unresolvable.
     asset_hub_chain_genesis_hash: [u8; 32],
@@ -112,7 +122,10 @@ impl RuntimeServices {
             pocket_platform: OnceLock::new(),
             contacts_platform: OnceLock::new(),
             contact_handles: Default::default(),
+            game_platform: OnceLock::new(),
             device_pairing_observer: OnceLock::new(),
+            #[cfg(not(target_arch = "wasm32"))]
+            core_db: OnceLock::new(),
             asset_hub_chain_genesis_hash,
             worker_ledger: WorkerLedger::default(),
             chain,
@@ -200,6 +213,22 @@ impl RuntimeServices {
         self.pocket_platform.get().cloned()
     }
 
+    /// Install the host's Game adapter.
+    ///
+    /// Set-once, like every optional capability, so reminders cannot change
+    /// hands under a running product. Returns whether this call installed it.
+    pub fn install_game_platform(
+        &self,
+        platform: Arc<dyn crate::platform::GamePlatform>,
+    ) -> bool {
+        self.game_platform.set(platform).is_ok()
+    }
+
+    /// The host's Game adapter, when one is installed.
+    pub fn game_platform(&self) -> Option<Arc<dyn crate::platform::GamePlatform>> {
+        self.game_platform.get().cloned()
+    }
+
     /// Install the host's contacts adapter. Answers whether this call was the
     /// one that installed it.
     pub fn install_contacts_platform(
@@ -229,6 +258,21 @@ impl RuntimeServices {
     /// The host's device-pairing observer, when one is installed.
     pub fn device_pairing_observer(&self) -> Option<Arc<dyn DevicePairingObserver>> {
         self.device_pairing_observer.get().cloned()
+    }
+
+    /// Install the core database.
+    ///
+    /// Set-once, so durable state cannot move to another file under a running
+    /// consumer. Returns whether this call installed it.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn install_core_db(&self, db: Db) -> bool {
+        self.core_db.set(db).is_ok()
+    }
+
+    /// The core database.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn core_db(&self) -> Result<Db, DbError> {
+        self.core_db.get().cloned().ok_or(DbError::NotConfigured)
     }
 
     /// This device's persisted X25519 encryption secret, created on first use.

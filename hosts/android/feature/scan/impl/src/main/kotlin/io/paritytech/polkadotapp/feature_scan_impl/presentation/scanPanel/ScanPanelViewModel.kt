@@ -46,6 +46,10 @@ class ScanPanelViewModel @Inject constructor(
         qrScanning.permissionAlertClosed()
     }
 
+    fun setRecognitionArmed(armed: Boolean) {
+        qrScanning.setRecognitionArmed(armed)
+    }
+
     private suspend fun handlePostParseAction(action: PostParseAction) {
         val navigate: (() -> Unit)? = when (action) {
             is PostParseAction.BackAndThen -> action.postBackNavigation

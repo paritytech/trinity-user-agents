@@ -23,13 +23,16 @@ const LOG_TARGET: &str = "subxt-platform-wasm";
 /// Browser [`PlatformRef`] backing the embedded light client: tasks run on the
 /// JS event loop and peers are dialed over the browser `WebSocket`.
 #[derive(Clone)]
-pub struct SubxtPlatform {}
+pub struct SubxtPlatform {
+    /// The peer connections it opens.
+    connection_types: crate::ConnectionTypes,
+}
 
 impl SubxtPlatform {
-    /// Create a browser platform. Stateless: all per-connection state lives in
-    /// the sockets it opens.
-    pub fn new() -> Self {
-        SubxtPlatform {}
+    /// Create a browser platform that opens `connection_types`. All
+    /// per-connection state lives in the sockets it opens.
+    pub fn new(connection_types: crate::ConnectionTypes) -> Self {
+        SubxtPlatform { connection_types }
     }
 }
 
@@ -88,12 +91,7 @@ impl PlatformRef for SubxtPlatform {
     }
 
     fn supports_connection_type(&self, connection_type: ConnectionType) -> bool {
-        let result = matches!(
-            connection_type,
-            ConnectionType::WebSocketIpv4 { .. }
-                | ConnectionType::WebSocketIpv6 { .. }
-                | ConnectionType::WebSocketDns { .. }
-        );
+        let result = self.connection_types.allows(connection_type);
 
         tracing::trace!(
             target: LOG_TARGET,

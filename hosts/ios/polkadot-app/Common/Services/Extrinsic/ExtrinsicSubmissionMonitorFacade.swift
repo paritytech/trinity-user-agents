@@ -32,7 +32,7 @@ final class ExtrinsicSubmissionMonitorFacade {
         chainRegistry: ChainRegistryProtocol,
         substrateStorageFacade: StorageFacadeProtocol,
         operationQueue: OperationQueue,
-        extrinsicVersion: ConcreteExtrinsicVersion = .V5,
+        extrinsicVersion: Extrinsic.FormatVersion = .V5,
         logger: LoggerProtocol = Logger.shared
     ) {
         self.init(

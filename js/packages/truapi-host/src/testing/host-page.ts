@@ -23,6 +23,8 @@
 // has no UI to keep responsive, and one less moving part is one less thing to
 // debug when a suite fails.
 
+import { DerivationIndex } from "@parity/truapi";
+
 import { createIframeHost } from "../web/create-iframe-host.js";
 import { createWebWorkerPairingHostRuntime } from "../web/create-worker-host-runtime.js";
 import {
@@ -33,6 +35,7 @@ import {
 } from "../web/create-mock-host.js";
 import type { ProductRuntimeConfig } from "../runtime.js";
 import {
+  checkDerivationIndex,
   resolveAccount,
   type DevAccount,
   type DevAccountName,
@@ -96,6 +99,12 @@ export interface TestHostPageOptions {
    */
   allowances?: "granted" | "chain";
   /**
+   * Resource tags answered as refused, whatever `allowances` would otherwise
+   * say. Applied before the product loads, because a product asks for its
+   * resources on connect and a later call would land after that.
+   */
+  withheldResources?: string[];
+  /**
    * Core log level (`off`/`error`/`warn`/`info`/`debug`/`trace`).
    *
    * The core logs why a call failed before mapping it to a protocol answer,
@@ -136,6 +145,24 @@ export interface AccountControl {
   setAccounts(names: (DevAccountName | DevAccount)[]): Promise<void>;
   /** Drop the session, leaving the host signed out. */
   signOut(): Promise<void>;
+  /**
+   * The SS58 address of a product account, at the prefix the core mandates.
+   *
+   * Derived from the active session's root, so it answers `undefined` while
+   * the host is signed out and a different address after `switchAccount`. This
+   * is what a suite funds, or asserts on, without reading it out of the
+   * product's own UI.
+   *
+   * Encoded at the prefix the core mandates, which is not necessarily the one
+   * the product displays: a product rendering at another prefix shows a
+   * different string for the same account. Compare against a product's own
+   * rendering by decoding both, and pass this to a faucet or a transfer as it
+   * stands.
+   */
+  getProductAccountAddress(
+    productId?: string,
+    index?: number,
+  ): Promise<string | undefined>;
 }
 
 /** What the fixture reaches on `window.__TRUAPI_TEST_HOST__`. */
@@ -190,7 +217,7 @@ export async function startTestHost(
   options: TestHostPageOptions,
 ): Promise<TestHostPage> {
   const host = createMockHost(options.mock);
-  const { productId, ...hostConfig } = mockRuntimeConfig(
+  const { productId: hostProduct, ...hostConfig } = mockRuntimeConfig(
     options.runtimeConfig ?? {},
   );
 
@@ -209,6 +236,22 @@ export async function startTestHost(
     ): Promise<void>;
     disconnectSession(): Promise<void>;
   };
+  // The two derivation helpers are pure -- they need `default()` and no
+  // session -- so the worker topology, which keeps the core off this thread,
+  // loads the glue here just to call them.
+  const wasmUrl = options.wasmUrl ?? "./wasm/testing/truapi_server.js";
+  let derivation: Promise<ProductAccountDerivation> | undefined;
+  const deriveHelpers = (): Promise<ProductAccountDerivation> => {
+    derivation ??= (async () => {
+      const glue = (await import(/* @vite-ignore */ wasmUrl)) as {
+        default: () => Promise<unknown>;
+      } & ProductAccountDerivation;
+      await glue.default();
+      return glue;
+    })();
+    return derivation;
+  };
+
   if ((options.topology ?? "worker") === "worker") {
     // Production topology: the core runs in a Web Worker, reached over the
     // same protocol a real web host uses.
@@ -224,9 +267,11 @@ export async function startTestHost(
     if ((options.allowances ?? "granted") === "granted") {
       await workerRuntime.setGrantAllowancesUnchecked?.(true);
     }
+    if (options.withheldResources?.length) {
+      await workerRuntime.setWithheldResources?.(options.withheldResources);
+    }
     runtime = workerRuntime;
   } else {
-    const wasmUrl = options.wasmUrl ?? "./wasm/testing/truapi_server.js";
     const glue = (await import(/* @vite-ignore */ wasmUrl)) as {
       default: () => Promise<unknown>;
       setLogLevel?: (level: string) => void;
@@ -255,6 +300,9 @@ export async function startTestHost(
     // branching there, so both topologies activate identically.
     if ((options.allowances ?? "granted") === "granted") {
       directRuntime.setGrantAllowancesUnchecked?.(true);
+    }
+    if (options.withheldResources?.length) {
+      directRuntime.setWithheldResources?.(options.withheldResources);
     }
     const direct = directRuntime;
     runtime = {
@@ -305,7 +353,7 @@ export async function startTestHost(
     onPort(port) {
       void (async () => {
         if (workerRuntime) {
-          const provider = await workerRuntime.createProvider({ productId });
+          const provider = await workerRuntime.createProvider({ productId: hostProduct });
           const unsubscribe = provider.subscribe((frame) => {
             port.postMessage(frame);
           });
@@ -323,7 +371,7 @@ export async function startTestHost(
           };
         } else {
           const core = directRuntime!.productRuntime(
-            { productId },
+            { productId: hostProduct },
             {
               emitFrame(frame: Uint8Array) {
                 port.postMessage(frame);
@@ -359,6 +407,24 @@ export async function startTestHost(
   const control: TestHostControl = Object.assign(host, {
     getAccounts: () => roster.map((account) => account.name),
     getActiveAccount: () => active?.name,
+    async getProductAccountAddress(productId?: string, index = 0) {
+      const target = productId ?? hostProduct;
+      const subtree = await (directRuntime
+        ? directRuntime.productSubtreePublicKey(target)
+        : workerRuntime?.getProductSubtreePublicKey(target));
+      // No session: there is no root to derive from, and answering an address
+      // would name an account the host cannot sign for.
+      if (!subtree) return undefined;
+      const helpers = await deriveHelpers();
+      // The index crosses SCALE-encoded, so the chain code stays core-owned.
+      const encoded = DerivationIndex.enc({
+        tag: "Index",
+        value: checkDerivationIndex(index),
+      });
+      return helpers.productAccountAddress(
+        helpers.deriveProductAccountPublicKey(subtree, encoded),
+      );
+    },
     injectChatAction: async (action: unknown) => {
       if (!publishChatAction) {
         throw new Error(
@@ -411,9 +477,23 @@ export async function startTestHost(
   };
 }
 
+/** The core's pure product-account derivation helpers. */
+interface ProductAccountDerivation {
+  deriveProductAccountPublicKey(
+    productSubtreePublicKey: Uint8Array,
+    derivationIndex: Uint8Array,
+  ): Uint8Array;
+  productAccountAddress(publicKey: Uint8Array): string;
+}
+
 /** The main-thread signing runtime: hands back a product core directly. */
 interface DirectSigningRuntime {
   setGrantAllowancesUnchecked?(granted: boolean): void;
+  productSubtreePublicKey(
+    productId: string,
+    timeoutMs?: number,
+  ): Promise<Uint8Array | undefined>;
+  setWithheldResources?(tags: string[]): void;
   activateLocalSession(secret: Uint8Array): Promise<void>;
   activateLocalSessionWithIdentity?(
     secret: Uint8Array,
@@ -432,6 +512,11 @@ interface WorkerSigningRuntime {
   disconnectSession(): Promise<void>;
   setLogLevel?(level: string): void;
   setGrantAllowancesUnchecked?(granted: boolean): Promise<void>;
+  getProductSubtreePublicKey(
+    productId: string,
+    timeoutMs?: number,
+  ): Promise<Uint8Array | undefined>;
+  setWithheldResources?(tags: string[]): Promise<void>;
   createProvider(product: { productId: string }): Promise<{
     postMessage(frame: Uint8Array): void;
     subscribe(listener: (frame: Uint8Array) => void): () => void;

@@ -19,9 +19,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 #[cfg(feature = "wasm-signing-host")]
 use crate::platform::SigningHostConfig;
 use crate::platform::{
-    ChainProvider, ChatPlatform, ContactsPlatform, HostInfo, JsonRpcConnection, PairingHostConfig,
-    PermissionStatusHost, PlatformInfo, PocketPlatform, ProductContext, ProductExecutionKind,
-    ProviderError, RuntimeConfigValidationError,
+    ChainProvider, ChatPlatform, ContactsPlatform, GamePlatform, HostInfo, JsonRpcConnection,
+    PairingHostConfig, PermissionStatusHost, PlatformInfo, PocketPlatform, ProductContext,
+    ProductExecutionKind, ProviderError, RuntimeConfigValidationError,
 };
 use futures::channel::mpsc;
 use futures::future::{AbortHandle, Abortable};
@@ -846,6 +846,7 @@ struct WasmPlatformAdapters {
     contacts_platform: Option<Arc<dyn ContactsPlatform>>,
     status_host: Option<Arc<dyn PermissionStatusHost>>,
     pocket_platform: Option<Arc<dyn PocketPlatform>>,
+    game_platform: Option<Arc<dyn GamePlatform>>,
 }
 
 /// Build the platform and the optional capability adapters supplied by the host.
@@ -854,17 +855,20 @@ fn wasm_platform(bridge: Arc<JsBridge>) -> WasmPlatformAdapters {
     let has_contacts = bridge.has_contacts();
     let has_permission_status = bridge.has_permission_status();
     let has_pocket = bridge.has_pocket();
+    let has_game = bridge.has_game();
     let platform = Arc::new(WasmPlatform::new(bridge));
     let chat = has_chat.then(|| platform.clone() as Arc<dyn ChatPlatform>);
     let contacts = has_contacts.then(|| platform.clone() as Arc<dyn ContactsPlatform>);
     let status = has_permission_status.then(|| platform.clone() as Arc<dyn PermissionStatusHost>);
     let pocket = has_pocket.then(|| platform.clone() as Arc<dyn PocketPlatform>);
+    let game = has_game.then(|| platform.clone() as Arc<dyn GamePlatform>);
     WasmPlatformAdapters {
         platform,
         chat_platform: chat,
         contacts_platform: contacts,
         status_host: status,
         pocket_platform: pocket,
+        game_platform: game,
     }
 }
 
@@ -928,6 +932,7 @@ impl WasmPairingHostRuntime {
             contacts_platform,
             status_host,
             pocket_platform,
+            game_platform,
         } = wasm_platform(bridge);
         let spawner: Spawner = Arc::new(|fut| {
             wasm_bindgen_futures::spawn_local(fut);
@@ -945,6 +950,9 @@ impl WasmPairingHostRuntime {
         }
         if let Some(pocket_platform) = pocket_platform {
             runtime.set_pocket_platform(pocket_platform);
+        }
+        if let Some(game_platform) = game_platform {
+            runtime.set_game_platform(game_platform);
         }
         install_worker_demand_observer(runtime.worker_ledger(), &callbacks)?;
         Ok(Self {
@@ -1212,6 +1220,34 @@ impl WasmSigningHostRuntime {
         self.runtime.set_grant_allowances_unchecked(granted);
     }
 
+    /// The product's hard-subtree public key, derived from the active session
+    /// root, or `undefined` while no session is active.
+    ///
+    /// Paired with `deriveProductAccountPublicKey` and `productAccountAddress`
+    /// this gives a host the product's address without asking the product.
+    #[wasm_bindgen(js_name = productSubtreePublicKey)]
+    pub fn product_subtree_public_key(
+        &self,
+        product_id: String,
+    ) -> Result<Option<Vec<u8>>, JsValue> {
+        self.runtime
+            .product_subtree_public_key(&product_id)
+            .map(|key| key.map(|key| key.to_vec()))
+            .map_err(generic_error_to_js)
+    }
+
+    /// Answer these resource tags as refused, replacing any earlier set.
+    ///
+    /// A suite proving its product survives a refused resource needs that one
+    /// withheld while the rest stay granted. The tag is the
+    /// `AllocatableResource` variant name, so `SmartContractAllowance`
+    /// withholds every derivation index.
+    #[cfg(feature = "test-host")]
+    #[wasm_bindgen(js_name = setWithheldResources)]
+    pub fn set_withheld_resources(&self, tags: Vec<String>) {
+        self.runtime.set_withheld_resources(tags);
+    }
+
     /// Build a shared signing runtime from host callbacks and host config.
     #[wasm_bindgen(constructor)]
     pub fn new(
@@ -1224,6 +1260,7 @@ impl WasmSigningHostRuntime {
         let WasmPlatformAdapters {
             platform,
             pocket_platform,
+            game_platform,
             ..
         } = wasm_platform(bridge);
         let spawner: Spawner = Arc::new(|fut| {
@@ -1233,6 +1270,9 @@ impl WasmSigningHostRuntime {
         let runtime = SigningHostRuntime::new(platform, host_config, spawner);
         if let Some(pocket_platform) = pocket_platform {
             runtime.set_pocket_platform(pocket_platform);
+        }
+        if let Some(game_platform) = game_platform {
+            runtime.set_game_platform(game_platform);
         }
         install_worker_demand_observer(runtime.worker_ledger(), &callbacks)?;
         Ok(Self {
@@ -1307,6 +1347,25 @@ impl WasmSigningHostRuntime {
     pub fn release_worker(&self, product_id: String) {
         self.runtime.worker_ledger().release(&product_id);
     }
+}
+
+/// Derive a product's hard-subtree public key from a session's root entropy.
+///
+/// Pure: no runtime and no session, so a test harness can work out the address
+/// a product will be given before it starts a host. The entropy is the same 32
+/// bytes `activateLocalSession` takes.
+#[wasm_bindgen(js_name = deriveProductSubtreePublicKey)]
+pub fn derive_product_subtree_public_key(
+    root_entropy: Vec<u8>,
+    product_id: String,
+) -> Result<Vec<u8>, JsValue> {
+    let root = crate::host_logic::product_account::derive_root_keypair_from_entropy(&root_entropy)
+        .map_err(|err| JsValue::from_str(&err.to_string()))?;
+    let product_id = crate::platform::normalize_product_identifier(&product_id)
+        .map_err(|err| JsValue::from_str(&err.to_string()))?;
+    crate::host_logic::product_account::derive_product_subtree_keypair(&root, &product_id)
+        .map(|keypair| keypair.public.to_bytes().to_vec())
+        .map_err(|err| JsValue::from_str(&err.to_string()))
 }
 
 /// Soft-derive a product account public key from a product's hard-subtree key
@@ -1409,6 +1468,7 @@ impl WasmProductRuntime {
             contacts_platform,
             status_host,
             pocket_platform,
+            game_platform,
         } = wasm_platform(bridge);
         let spawner: Spawner = Arc::new(|fut| {
             wasm_bindgen_futures::spawn_local(fut);
@@ -1423,6 +1483,9 @@ impl WasmProductRuntime {
         }
         if let Some(pocket_platform) = pocket_platform {
             pairing.set_pocket_platform(pocket_platform);
+        }
+        if let Some(game_platform) = game_platform {
+            pairing.set_game_platform(game_platform);
         }
         if let Some(contacts_platform) = contacts_platform {
             pairing.set_contacts_platform(contacts_platform);

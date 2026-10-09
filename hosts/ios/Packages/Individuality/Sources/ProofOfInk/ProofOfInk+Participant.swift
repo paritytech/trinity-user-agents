@@ -66,7 +66,7 @@ extension ProofOfInk.AsParticipantExtension: OnlyExplicitTransactionExtending {
     ) throws -> TransactionExtension.Explicit? {
         let json = try mode.toScaleCompatibleJSON(with: context?.toRawContext())
 
-        return try TransactionExtension.Explicit(
+        return TransactionExtension.Explicit(
             from: json,
             txExtensionId: txExtensionId,
             metadata: metadata

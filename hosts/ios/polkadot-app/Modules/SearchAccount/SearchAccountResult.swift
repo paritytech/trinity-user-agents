@@ -9,5 +9,15 @@ struct SearchAccountResult {
 
     let recent: [RecentContactModelWithUsername]
     let contacts: [Contact]
-    let global: [Contact]
+    let global: AccountSearchGlobal<Contact>
+
+    init(
+        recent: [RecentContactModelWithUsername],
+        contacts: [Contact],
+        global: AccountSearchGlobal<Contact> = .loaded([])
+    ) {
+        self.recent = recent
+        self.contacts = contacts
+        self.global = global
+    }
 }

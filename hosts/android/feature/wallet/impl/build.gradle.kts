@@ -17,6 +17,7 @@ dependencies {
     implementation(libs.androidx.fragment.ktx)
 
     implementation(libs.nova.substrate.sdk)
+    implementation(libs.kotlinx.serialization.json)
 
     implementation(project(":common"))
     implementation(project(":chains"))
@@ -35,6 +36,7 @@ dependencies {
     implementation(project(":feature:videogame:api"))
     implementation(project(":feature:dotns:api"))
     implementation(project(":feature:products:api"))
+    implementation(project(":tools:remoteconfig:api"))
 
     testImplementation(project(":test-shared"))
     testImplementation(libs.mockk)

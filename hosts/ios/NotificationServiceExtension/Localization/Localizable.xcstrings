@@ -13,6 +13,18 @@
         }
       }
     },
+    "blocked.contact.message" : {
+      "comment" : "Shown instead of the message content when the sender is blocked",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Message from blocked contact"
+          }
+        }
+      }
+    },
     "chat.request.accepted" : {
       "comment" : "Display in the push notification when the peer accepts your chat request",
       "extractionState" : "manual",

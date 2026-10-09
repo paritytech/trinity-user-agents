@@ -5,6 +5,22 @@ All notable changes to the TrUAPI protocol are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 generated from [Conventional Commits](https://www.conventionalcommits.org/).
 
+## [0.23.0] - 2026-09-29
+
+### Added
+
+- refresh the relay checkpoints, let the host choose peer connection types (#1046)
+
+### Changed
+
+- make storage callbacks and Pocket removal async (#1019)
+- run native core tasks on one Tokio runtime (#1018)
+
+### Fixed
+
+- read txExtVersion as the transaction extension version (#1003)
+- recover a product and its worker after the WebView renderer dies (#994)
+
 ## [0.22.0] - 2026-09-28
 
 ### Added
@@ -17,6 +33,7 @@ generated from [Conventional Commits](https://www.conventionalcommits.org/).
 
 ### Changed
 
+- @parity/truapi 0.22.0, @parity/truapi-host 0.22.0, @parity/truapi-provider 0.3.0, @parity/ios-host 0.22.0, @parity/android-host 0.22.0 (#1045)
 - split native.rs into focused native/ submodules (#1027)
 - build the native bridge and debug sink without feature flags (#1024)
 - Adopt general AGENTS.md guidelines and refactor the Rust workspace to match (#1000)

@@ -93,6 +93,8 @@ export interface WorkerSigningHostRuntime extends WorkerPairingHostRuntime {
    */
   /** Only on a core built with `wasm-signing-host`. */
   setGrantAllowancesUnchecked?(granted: boolean): void;
+  /** Only on a core built with `wasm-signing-host`. */
+  setWithheldResources?(tags: string[]): void;
   activateLocalSessionWithIdentity?(
     secret: Uint8Array,
     liteUsername?: string | null,

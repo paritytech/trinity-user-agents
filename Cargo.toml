@@ -14,6 +14,7 @@ license = "MIT"
 
 [workspace.dependencies]
 anyhow = "1"
+async-sqlite = { version = "0.6", default-features = false }
 arboard = { version = "3.6.1", default-features = false }
 async-trait = "0.1"
 base64 = "0.22"
@@ -55,6 +56,8 @@ rand = "0.8"
 ratatui = { version = "0.30.2", default-features = false }
 reqwest = { version = "0.12", default-features = false }
 rqrr = { version = "0.10.1", default-features = false }
+rusqlite = "0.40"
+rusqlite_migration = "2.6"
 rustix = "1"
 rustls = { version = "0.23", default-features = false }
 scale-decode = "0.16"

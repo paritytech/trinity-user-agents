@@ -2240,12 +2240,12 @@ impl PairingHost {
                 .local_product_signing_key(&session, calling_product_id, &payload.signer)
                 .await?
         {
-            // A V5 payload this host cannot assemble is an error, not a
+            // A payload this host cannot assemble is an error, not a
             // fall-through to the relay: the gate already told the caller no
             // prompt was coming, and relaying would raise one on the signing
             // host after a chain timeout.
             //
-            // A V5 payload needs runtime metadata, which a granted product
+            // Assembling needs runtime metadata, which a granted product
             // moves from the signing host to this one. A pairing host is
             // assumed to reach any genesis a product it has granted signs
             // against; where it cannot, the call fails rather than producing

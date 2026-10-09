@@ -186,6 +186,7 @@ extension PeoplePallet.AsPersonTxExtension: TransactionExtending {
     public func implicit(
         using _: DynamicScaleEncodingFactoryProtocol,
         metadata _: RuntimeMetadataProtocol,
+        extensionVersion _: UInt8,
         context _: RuntimeJsonContext?
     ) throws -> Data? {
         nil
@@ -246,7 +247,7 @@ extension PeoplePallet.AsPersonTxExtension: TransactionExtending {
         metadata: RuntimeMetadataProtocol,
         context: RuntimeJsonContext?
     ) throws -> TransactionExtension.Explicit? {
-        let payloadFactory = ImplicationSignaturePayloadFactory(extrinsicVersion: extrinsicVersion)
+        let payloadFactory = ImplicationSignaturePayloadFactory(formatVersion: extrinsicVersion.formatVersion)
         let payload = try payloadFactory.createPayload(from: implication, using: encodingFactory)
         let message = try payload.blake2b32()
 
@@ -267,7 +268,7 @@ extension PeoplePallet.AsPersonTxExtension: TransactionExtending {
         let json = try Mode.asPersonalAliasWithProof(model)
             .toScaleCompatibleJSON(with: context?.toRawContext())
 
-        return try TransactionExtension.Explicit(
+        return TransactionExtension.Explicit(
             from: json,
             txExtensionId: txExtensionId,
             metadata: metadata
@@ -281,7 +282,7 @@ extension PeoplePallet.AsPersonTxExtension: TransactionExtending {
         metadata: RuntimeMetadataProtocol,
         context: RuntimeJsonContext?
     ) throws -> TransactionExtension.Explicit? {
-        let payloadFactory = ImplicationSignaturePayloadFactory(extrinsicVersion: extrinsicVersion)
+        let payloadFactory = ImplicationSignaturePayloadFactory(formatVersion: extrinsicVersion.formatVersion)
         let payload = try payloadFactory.createPayload(from: implication, using: encodingFactory)
         let message = try payload.blake2b32()
 
@@ -295,7 +296,7 @@ extension PeoplePallet.AsPersonTxExtension: TransactionExtending {
         let json = try Mode.asPersonalIdentityWithProof(model)
             .toScaleCompatibleJSON(with: context?.toRawContext())
 
-        return try TransactionExtension.Explicit(
+        return TransactionExtension.Explicit(
             from: json,
             txExtensionId: txExtensionId,
             metadata: metadata
@@ -309,7 +310,7 @@ extension PeoplePallet.AsPersonTxExtension: TransactionExtending {
         metadata: RuntimeMetadataProtocol,
         context: RuntimeJsonContext?
     ) throws -> TransactionExtension.Explicit? {
-        let payloadFactory = ImplicationSignaturePayloadFactory(extrinsicVersion: extrinsicVersion)
+        let payloadFactory = ImplicationSignaturePayloadFactory(formatVersion: extrinsicVersion.formatVersion)
         let implicationData = try payloadFactory.createPayload(from: implication, using: encodingFactory)
         let reviseData = try "revise".scaleEncoded()
         let nonceData = try params.nonce.scaleEncoded()
@@ -334,7 +335,7 @@ extension PeoplePallet.AsPersonTxExtension: TransactionExtending {
         let json = try Mode.asPersonalAliasWithAccountRevised(model)
             .toScaleCompatibleJSON(with: context?.toRawContext())
 
-        return try TransactionExtension.Explicit(
+        return TransactionExtension.Explicit(
             from: json,
             txExtensionId: txExtensionId,
             metadata: metadata

@@ -94,12 +94,17 @@ jobs:
         with:
           toolchain: stable
 
-      - uses: dtolnay/rust-toolchain@5b842231ba77f5c045dba54ac5560fed2db780e2 # nightly
+      - uses: ./.github/actions/rust-nightly
         with:
-          toolchain: nightly
           components: rustfmt
 
-      - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
+      # codegen.sh is the same work as ci.yml's codegen job, which owns the
+      # cache. The key hashes the default toolchain, so this runs after
+      # nightly, as it does there.
+      - uses: ./.github/actions/rust-cache
+        with:
+          shared-key: codegen
+          save: "false"
 
       - name: Build @parity/truapi
         run: npm ci && ./scripts/codegen.sh

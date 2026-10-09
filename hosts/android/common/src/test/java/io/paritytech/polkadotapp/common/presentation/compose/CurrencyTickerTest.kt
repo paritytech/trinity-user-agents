@@ -1,12 +1,7 @@
 package io.paritytech.polkadotapp.common.presentation.compose
 
 import androidx.compose.ui.text.TextRange
-import androidx.compose.ui.text.font.FontFamily
-import io.paritytech.polkadotapp.design.theme.lightCounterpart
-import io.paritytech.polkadotapp.designsystem.typography.PolkadotFontFamilies
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNotNull
-import org.junit.Assert.assertNull
 import org.junit.Test
 
 private const val TICKER = "CASH"
@@ -34,19 +29,6 @@ class CurrencyTickerTest {
         assertRanges("xCASH", emptyList())
         assertRanges("CASHCASH", emptyList())
         assertRanges("Buy CASHBACK today", emptyList())
-    }
-
-    @Test
-    fun `should map every design system family to a Light counterpart`() {
-        assertNotNull(PolkadotFontFamilies.inter.lightCounterpart())
-        assertNotNull(PolkadotFontFamilies.manrope.lightCounterpart())
-        assertNotNull(PolkadotFontFamilies.martianMono.lightCounterpart())
-    }
-
-    @Test
-    fun `should not map an unknown family`() {
-        assertNull(FontFamily.Default.lightCounterpart())
-        assertNull(null.lightCounterpart())
     }
 
     @Test(timeout = 5_000)

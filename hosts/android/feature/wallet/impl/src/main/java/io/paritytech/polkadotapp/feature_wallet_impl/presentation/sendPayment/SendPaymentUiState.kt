@@ -2,8 +2,6 @@ package io.paritytech.polkadotapp.feature_wallet_impl.presentation.sendPayment
 
 import androidx.annotation.StringRes
 import androidx.compose.runtime.Immutable
-import io.paritytech.polkadotapp.common.presentation.search.SearchState
-import io.paritytech.polkadotapp.common.utils.SizedList
 import io.paritytech.polkadotapp.design.components.avatar.AvatarUiModel
 import io.paritytech.polkadotapp.feature_account_api.presentation.address.model.ExtractedAddress
 import kotlinx.collections.immutable.ImmutableList
@@ -20,7 +18,18 @@ data class PaymentSearchResultUiModel(
     val avatarModel: AvatarUiModel,
 )
 
+@Immutable
+sealed interface PaymentSearchResults {
+    data class Sections(val sections: ImmutableList<PaymentSearchSectionUiModel>) : PaymentSearchResults
+
+    data object Waiting : PaymentSearchResults
+
+    data object Loading : PaymentSearchResults
+
+    data object Empty : PaymentSearchResults
+}
+
 data class SendPaymentUiState(
-    val input: String = "",
-    val searchState: SearchState<SizedList<PaymentSearchSectionUiModel>> = SearchState.Loading,
+    val input: String,
+    val results: PaymentSearchResults,
 )

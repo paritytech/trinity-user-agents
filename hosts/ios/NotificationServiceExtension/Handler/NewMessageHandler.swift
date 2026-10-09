@@ -47,6 +47,12 @@ extension NewMessageHandler: PushNotificationHandling {
                     .asyncExecute()
                     .mapOrThrow(NewMessageHandlerError.noContact)
 
+                guard !contact.isBlocked else {
+                    badgeCount = await calculateBadgeCount(unsavedMessageId: nil)
+                    completion(.createBlockedContactResult(badgeCount: badgeCount))
+                    return
+                }
+
                 let payload = try messageDecoder.decodeMessage(messageHex, for: contact)
 
                 if let fullMessage = payload.fullMessage {
@@ -183,6 +189,10 @@ private extension NewMessageHandler {
     func calculateBadgeCount(for payload: Chat.NotificationPayload) async -> Int? {
         let unsavedMessageId = payload.fullMessage == nil ? payload.messageId : nil
 
+        return await calculateBadgeCount(unsavedMessageId: unsavedMessageId)
+    }
+
+    func calculateBadgeCount(unsavedMessageId: Chat.MessageId?) async -> Int? {
         do {
             return try await unreadMessageCountService.totalUnreadBadgeMessageCount(
                 unsavedMessageId: unsavedMessageId

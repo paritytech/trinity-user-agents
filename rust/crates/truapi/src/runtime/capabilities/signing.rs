@@ -116,7 +116,7 @@ impl Signing for ProductRuntimeHost {
         request: HostSignRawRequest,
     ) -> Result<HostSignRawResponse, CallError<HostSignRawError>> {
         tracing::warn!(
-            "Temporary unwatermarked signing API is deprecated and will be removed: https://github.com/paritytech/host-rust-core/issues/612"
+            "Temporary unwatermarked signing API is deprecated and will be removed: https://github.com/paritytech/trinity-user-agents/issues/612"
         );
         self.sign_raw_with_watermark(cx, request, false).await
     }
@@ -310,7 +310,7 @@ impl Signing for ProductRuntimeHost {
     ) -> Result<HostSignRawWithLegacyAccountResponse, CallError<HostSignRawWithLegacyAccountError>>
     {
         tracing::warn!(
-            "Temporary unwatermarked signing API is deprecated and will be removed: https://github.com/paritytech/host-rust-core/issues/612"
+            "Temporary unwatermarked signing API is deprecated and will be removed: https://github.com/paritytech/trinity-user-agents/issues/612"
         );
         self.sign_raw_with_legacy_account_with_watermark(cx, request, false)
             .await

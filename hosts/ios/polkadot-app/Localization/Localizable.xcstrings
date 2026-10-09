@@ -125,6 +125,17 @@
         }
       }
     },
+    "accountSearch.globalFailed" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Couldn't search all users"
+          }
+        }
+      }
+    },
     "action.send.cash" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -1288,61 +1299,6 @@
         }
       }
     },
-    "coinageHowToRead" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "How to read this"
-          }
-        }
-      }
-    },
-    "coinageKeyHops" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Coins show one circle per past payment. Dots represent other coins that moved with the payment."
-          }
-        }
-      }
-    },
-    "coinageKeySolid" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "A single block means no past payments at all. The shorter it is, the more fungible the coin."
-          }
-        }
-      }
-    },
-    "coinageKeyUnknown" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "A thin red and orange line means we have no record for that part of the coin's past."
-          }
-        }
-      }
-    },
-    "coinageKeyVoucher" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Coins that gain privacy. The solid block is how fungible they will be at best; the striped part is the current level."
-          }
-        }
-      }
-    },
     "coinageLoading" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -1382,7 +1338,7 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Balance"
+            "value" : "Total"
           }
         }
       }
@@ -2710,17 +2666,6 @@
         }
       }
     },
-    "searchContact.loading.long" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Search is taking longer than usual"
-          }
-        }
-      }
-    },
     "searchContact.noRecentSearches" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -3475,7 +3420,7 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Ready to send"
+            "value" : "Ready"
           }
         }
       }
@@ -3596,7 +3541,7 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Balance card"
+            "value" : "%@ Card"
           }
         }
       }

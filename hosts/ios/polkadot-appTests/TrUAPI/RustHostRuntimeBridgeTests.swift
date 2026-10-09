@@ -143,7 +143,8 @@ struct TrUAPIHostRuntimeProviderConfigTests {
                 chainRegistry: MockChainRegistry(),
                 secret: Data([0x01]),
                 liteUsername: nil,
-                networkSuffix: "paseo"
+                networkSuffix: "paseo",
+                databaseDirectory: NSTemporaryDirectory()
             )
         }
     }

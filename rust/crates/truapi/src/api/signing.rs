@@ -29,6 +29,12 @@ pub trait Signing: Send + Sync {
     /// with a proof in a later extension — encodes the given bytes verbatim and
     /// returns an unsigned transaction.
     ///
+    /// `txExtVersion` is the version of the transaction extensions in
+    /// `extensions`, as the runtime numbers them. The host picks the extrinsic
+    /// format from it. V4 always uses version 0, so a non-zero version builds a
+    /// V5 general transaction. Version 0 builds V5 when it includes
+    /// `VerifyMultiSignature`, and a signed V4 transaction otherwise.
+    ///
     /// `contacts` lists the contact handles `callData` names, and the host
     /// replaces each with the account it resolves to before the call is shown
     /// or signed. A declared handle the call does not contain, or one no
@@ -53,24 +59,9 @@ pub trait Signing: Send + Sync {
     /// });
     /// assert(payload.isOk(), "buildCreateTransactionPayload failed:", payload);
     ///
-    /// for (const txExtVersion of [0, 5]) {
-    ///   const version = txExtVersion === 0 ? "V4" : "V5";
-    ///   // V5 leaves VerifyMultiSignature to the host, which signs. V4 keeps
-    ///   // it: that body is a plain concatenation, so dropping one shifts the rest.
-    ///   const extensions =
-    ///     txExtVersion === 5
-    ///       ? payload.value.extensions.filter(
-    ///           (ext) => ext.id !== "VerifyMultiSignature",
-    ///         )
-    ///       : payload.value.extensions;
-    ///   const result = await truapi.signing.createTransaction({
-    ///     ...payload.value,
-    ///     extensions,
-    ///     txExtVersion,
-    ///   });
-    ///   assert(result.isOk(), `${version} createTransaction failed:`, result);
-    ///   console.log(`${version} transaction created:`, result.value);
-    /// }
+    /// const result = await truapi.signing.createTransaction(payload.value);
+    /// assert(result.isOk(), "createTransaction failed:", result);
+    /// console.log("transaction created:", result.value);
     /// ```
     #[wire(id = 0)]
     async fn create_transaction(
@@ -112,18 +103,8 @@ pub trait Signing: Send + Sync {
     /// });
     /// assert(payload.isOk(), "buildCreateTransactionPayload failed:", payload);
     ///
-    /// // Host-owned under V5 only: a V4 body is a plain concatenation, so
-    /// // dropping a declared extension there shifts every one after it.
-    /// const extensions =
-    ///   payload.value.txExtVersion === 5
-    ///     ? payload.value.extensions.filter(
-    ///         (ext) => ext.id !== "VerifyMultiSignature",
-    ///       )
-    ///     : payload.value.extensions;
-    ///
     /// const result = await truapi.signing.createTransactionWithLegacyAccount({
     ///   ...payload.value,
-    ///   extensions,
     ///   signer: accountResult.value.account.publicKey,
     /// });
     /// assert(result.isOk(), "createTransactionWithLegacyAccount failed:", result);
@@ -297,7 +278,7 @@ pub trait Signing: Send + Sync {
     /// This permits transaction-shaped data and requires signing authorization
     /// and explicit user confirmation.
     ///
-    /// @deprecated Temporary unwatermarked signing; migrate to watermarked signing when the runtime supports it. This API will be removed. See <https://github.com/paritytech/host-rust-core/issues/612>
+    /// @deprecated Temporary unwatermarked signing; migrate to watermarked signing when the runtime supports it. This API will be removed. See <https://github.com/paritytech/trinity-user-agents/issues/612>
     ///
     /// ```ts
     /// const productContext = await truapi.system.getProductContext();
@@ -316,7 +297,7 @@ pub trait Signing: Send + Sync {
     /// console.log("raw bytes signed:", result.value);
     /// ```
     #[deprecated(
-        note = "Temporary unwatermarked signing; migrate to watermarked signing when the runtime supports it. This API will be removed. See https://github.com/paritytech/host-rust-core/issues/612"
+        note = "Temporary unwatermarked signing; migrate to watermarked signing when the runtime supports it. This API will be removed. See https://github.com/paritytech/trinity-user-agents/issues/612"
     )]
     #[wire(id = 6)]
     async fn sign_raw_unwatermarked_deprecated(
@@ -335,7 +316,7 @@ pub trait Signing: Send + Sync {
     /// This permits transaction-shaped data and requires signing authorization
     /// and explicit user confirmation.
     ///
-    /// @deprecated Temporary unwatermarked signing; migrate to watermarked signing when the runtime supports it. This API will be removed. See <https://github.com/paritytech/host-rust-core/issues/612>
+    /// @deprecated Temporary unwatermarked signing; migrate to watermarked signing when the runtime supports it. This API will be removed. See <https://github.com/paritytech/trinity-user-agents/issues/612>
     ///
     /// ```ts
     /// const accountsResult = await truapi.account.getLegacyAccounts();
@@ -356,7 +337,7 @@ pub trait Signing: Send + Sync {
     /// console.log("raw bytes signed:", result.value);
     /// ```
     #[deprecated(
-        note = "Temporary unwatermarked signing; migrate to watermarked signing when the runtime supports it. This API will be removed. See https://github.com/paritytech/host-rust-core/issues/612"
+        note = "Temporary unwatermarked signing; migrate to watermarked signing when the runtime supports it. This API will be removed. See https://github.com/paritytech/trinity-user-agents/issues/612"
     )]
     #[wire(id = 7)]
     async fn sign_raw_unwatermarked_deprecated_with_legacy_account(

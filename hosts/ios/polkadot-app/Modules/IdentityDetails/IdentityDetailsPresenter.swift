@@ -37,10 +37,10 @@ extension IdentityDetailsPresenter: IdentityDetailsPresenterProtocol {
     }
 
     func onShare() {
-        guard let username else {
+        guard let qrCode, let username else {
             return
         }
-        let items = interactor.shareMessage(username: username)
+        let items = interactor.shareMessage(username: username, image: qrCode)
         wireframe.share(items: items, from: view, with: nil)
     }
 

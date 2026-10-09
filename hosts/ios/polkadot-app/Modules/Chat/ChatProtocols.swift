@@ -55,6 +55,7 @@ protocol ChatInteractorInputProtocol: AnyObject {
     func acceptChatRequest()
     func declineChatRequest()
     func processAction(_ action: Chat.Action)
+    func isMicrophoneDenied() -> Bool
 }
 
 @MainActor
@@ -91,6 +92,8 @@ protocol ChatWireframeProtocol: AnyObject, AlertPresentable {
         chatMetadata: ChatMetadata,
         callType: ChatCallType
     )
+
+    func presentMicrophoneAccessDenied(from view: ControllerBackedProtocol?)
 
     func showEditHistory(
         from view: ControllerBackedProtocol?,

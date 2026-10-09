@@ -168,6 +168,12 @@ pub mod latest {
     /// Product context bound to the current host runtime.
     pub type HostGetProductContextResponse =
         LatestOf<versioned::system::HostGetProductContextResponse>;
+    /// Request to drop the calling product's game reminder.
+    pub type HostCancelNextGameRequest = LatestOf<versioned::game::HostCancelNextGameRequest>;
+    /// Request to remind the user when the calling product's next game starts.
+    pub type HostRemindNextGameRequest = LatestOf<versioned::game::HostRemindNextGameRequest>;
+    /// Why a game reminder was not taken.
+    pub type HostRemindNextGameError = LatestOf<versioned::game::HostRemindNextGameError>;
     /// Storage key change pushed to a subscriber.
     pub type HostLocalStorageChangeItem =
         LatestOf<versioned::local_storage::HostLocalStorageChangeItem>;
@@ -542,6 +548,7 @@ macro_rules! runtime_items {
 
 runtime_items! {
     pub mod bootstrap;
+    pub mod chain;
     mod chain_runtime;
     mod truapi_core;
     mod dispatcher;
@@ -578,11 +585,15 @@ runtime_items! {
     #[cfg(not(target_arch = "wasm32"))]
     pub mod native_debug;
 
+    #[cfg(not(target_arch = "wasm32"))]
+    pub mod store;
+
     pub use truapi_core::TrUApiCore;
     pub use host_core::{
         ChannelId, DebugEvent, DebugSink, FrameDirection, FrameSink, HostAdmin, PairingHostRuntime,
         ProductRuntime, ProductRuntimeControl, ProductRuntimeError, SigningHostRuntime,
     };
+    pub use host_internal::bulletin::{preimage_cid, preimage_key};
     pub use host_logic::session::{
         ExternalPairedSession, SsoSessionInfo, decode_persisted_session, encode_external_paired_session,
     };

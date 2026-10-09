@@ -15,4 +15,6 @@ struct StubDotNsTldProvider: DotNsTldProviding {
     }
 
     func refresh() {}
+
+    func reset() {}
 }

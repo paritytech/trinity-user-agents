@@ -26,6 +26,7 @@ import io.paritytech.polkadotapp.feature_tokens_api.di.DigitalDollarChainAssetPr
 import io.paritytech.polkadotapp.feature_tokens_api.domain.ChainAssetProvider
 import io.paritytech.polkadotapp.feature_usernames_api.domain.usecase.UsernameOfAccountUseCase
 import io.paritytech.polkadotapp.feature_videogame_api.domain.state.VideoGamesProgressUseCase
+import io.paritytech.polkadotapp.feature_wallet_impl.data.config.AppSharingConfigRepository
 import io.paritytech.polkadotapp.feature_wallet_impl.domain.model.DigitalDollarBalance
 import io.paritytech.polkadotapp.feature_wallet_impl.domain.model.PocketRank
 import io.paritytech.polkadotapp.feature_wallet_impl.domain.model.toPocketRank
@@ -50,6 +51,7 @@ class PocketInteractor @Inject constructor(
     private val pocketCollection: PocketCollection,
     private val pocketFaceSource: PocketFaceSource,
     private val productContentWarmUp: ProductContentWarmUp,
+    private val appSharingConfigRepository: AppSharingConfigRepository,
 ) {
     fun observeBackupProgress(): Flow<BackupProgress> = coinageBackupService.subscribeProgress()
 
@@ -106,4 +108,6 @@ class PocketInteractor @Inject constructor(
     } else {
         flowOf(PocketRank.Basic)
     }
+
+    suspend fun getAppSharingUrl(): Result<String> = appSharingConfigRepository.getAppSharingUrl()
 }

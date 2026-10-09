@@ -65,3 +65,22 @@ impl From<v01::GenericError> for HostRejection {
         HostRejection::Rejected { reason: err.reason }
     }
 }
+
+/// Why the core database status could not be read.
+#[derive(Debug, Clone, thiserror::Error, uniffi::Error)]
+pub enum NativeCoreDatabaseError {
+    /// The database could not be read.
+    #[error("core database unavailable: {reason}")]
+    Unavailable {
+        /// What failed.
+        reason: String,
+    },
+}
+
+impl From<crate::store::DbError> for NativeCoreDatabaseError {
+    fn from(error: crate::store::DbError) -> Self {
+        Self::Unavailable {
+            reason: error.to_string(),
+        }
+    }
+}

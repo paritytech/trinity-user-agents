@@ -1,0 +1,98 @@
+name: Build label hint
+
+# The iOS app and the Android APK are built on a pull request only when a label
+# asks for them, which is easy to miss. The first time a pull request touches
+# an app, this says which label builds it, once per app. A label already on the
+# pull request is left out, and one that already carries every relevant label
+# gets no comment.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - "hosts/ios/**"
+      - "ios/**"
+      - "Package.swift"
+      - "hosts/android/**"
+      - "android/truapi-host/**"
+
+permissions:
+  contents: read
+
+# Queued rather than cancelled, so two pushes in quick succession see each
+# other's comment instead of both posting one.
+concurrency:
+  group: build-label-hint-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+jobs:
+  hint:
+    name: Say which label builds the app
+    # A fork's token cannot comment, and a fork cannot reach the signing and
+    # configuration secrets either build needs. Release branches build neither.
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository
+      && !startsWith(github.head_ref, 'release/')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      pull-requests: write
+    steps:
+      - uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const number = context.payload.pull_request.number;
+            // One marker per label, so a pull request that touches the second
+            // app in a later push is still told about its label.
+            const marker = label => `<!-- build-label-hint:${label} -->`;
+
+            const hinted = (await github.paginate(github.rest.issues.listComments, {
+              owner, repo, issue_number: number, per_page: 100,
+            })).map(c => c.body || '').join('\n');
+
+            const files = (await github.paginate(github.rest.pulls.listFiles, {
+              owner, repo, pull_number: number, per_page: 100,
+            })).flatMap(f => [f.filename, f.previous_filename].filter(Boolean));
+            const labels = (await github.paginate(github.rest.issues.listLabelsOnIssue, {
+              owner, repo, issue_number: number, per_page: 100,
+            })).map(l => l.name);
+
+            const builds = [
+              {
+                label: 'ios-simulator-build',
+                name: 'iOS simulator build',
+                path: /^(hosts\/ios\/|ios\/|Package\.swift$)/,
+                what: 'builds the iOS app, runs its tests and attaches a build for the iOS Simulator on a Mac',
+              },
+              {
+                label: 'ios-device-build',
+                name: 'iOS device build',
+                path: /^(hosts\/ios\/|ios\/|Package\.swift$)/,
+                what: 'attaches a signed build that installs on a registered iPhone or iPad',
+              },
+              {
+                label: 'android-device-build',
+                name: 'Android build',
+                path: /^(hosts\/android\/|android\/truapi-host\/)/,
+                what: 'attaches an APK that installs on an Android phone or an emulator',
+              },
+            ].filter(b => files.some(f => b.path.test(f))
+              && !labels.includes(b.label)
+              && !hinted.includes(marker(b.label)));
+
+            if (builds.length === 0) {
+              core.info('Nothing to hint: no app touched, its label is set, or it was already hinted.');
+              return;
+            }
+
+            const lines = builds.map(b => `- **${b.name}**, \`${b.label}\`: ${b.what}.`);
+            const body = [
+              ...builds.map(b => marker(b.label)),
+              'This pull request touches an app, which is not built by default. Add a label for each build you want:',
+              '',
+              ...lines,
+              '',
+              'Each starts as soon as it is added and follows the branch from then on.',
+            ].join('\n');
+            await github.rest.issues.createComment({ owner, repo, issue_number: number, body });

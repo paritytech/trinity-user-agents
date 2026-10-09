@@ -30,6 +30,7 @@ use truapi::platform::{
 };
 use truapi::v01;
 
+use crate::bulletin_lookup::{BitswapRpc, BulletinLookup};
 use crate::chain::WsChainProvider;
 use crate::terminal_ui::{ApprovalKind, SystemEvent, UiHandle};
 
@@ -103,7 +104,7 @@ pub struct CliPlatform {
     device_storage_path: Option<PathBuf>,
     state_dir: Mutex<Option<PathBuf>>,
     pairing_scope: Option<PairingStorageScope>,
-    preimages: Mutex<HashMap<Vec<u8>, Vec<u8>>>,
+    bulletin: Arc<BulletinLookup<BitswapRpc>>,
     next_notification_id: AtomicU32,
     scheduled_notifications: Arc<Mutex<HashMap<u32, api::HostPushNotificationRequest>>>,
     approval: Mutex<ApprovalPolicy>,
@@ -189,7 +190,7 @@ impl CliPlatform {
             device_storage_path,
             state_dir: Mutex::new(storage.as_ref().map(|paths| paths.state_dir.clone())),
             pairing_scope: storage.and_then(|paths| paths.pairing_scope),
-            preimages: Mutex::new(HashMap::new()),
+            bulletin: Arc::new(BulletinLookup::new(BitswapRpc::new(network.bulletin_ws))),
             next_notification_id: AtomicU32::new(1),
             scheduled_notifications: Arc::new(Mutex::new(HashMap::new())),
             approval: Mutex::new(approval),
@@ -1027,13 +1028,7 @@ impl PreimageHost for CliPlatform {
         &self,
         key: Vec<u8>,
     ) -> BoxStream<'static, Result<Option<Vec<u8>>, api::GenericError>> {
-        let value = self
-            .preimages
-            .lock()
-            .expect("preimage mutex poisoned")
-            .get(&key)
-            .cloned();
-        Box::pin(stream::once(async move { Ok(value) }))
+        self.bulletin.subscribe(key)
     }
 }
 

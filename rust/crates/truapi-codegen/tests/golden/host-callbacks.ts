@@ -1389,6 +1389,37 @@ export interface Features {
 }
 
 /**
+ * Host-implemented adapter that holds a product's next-game reminder.
+ * Optional: a host that omits it leaves Game requests answered `Unsupported`.
+ * See `OptionalPlatform`.
+ *
+ * The core serves only the game product and refuses a start that is not in
+ * the future before it calls here; it asks for no per-product consent. The
+ * host asks the OS for what the reminder needs, rings an alarm where the OS
+ * allows one and delivers an ordinary notification otherwise, and may add the
+ * game to the user's calendar. A host keeps one reminder per product: a
+ * schedule replaces the reminder the same product already holds and leaves
+ * other products' reminders alone. The host keeps each reminder across app
+ * kill and device reboot and drops it once its game has started.
+ */
+export interface GamePlatform {
+  /**
+   * Hold `starts_at` (Unix milliseconds, UTC) as the product's reminder,
+   * replacing any it holds. An error, including an OS that allows neither
+   * alarms nor notifications, reaches the product as a host failure.
+   */
+  scheduleGameReminder(
+    product: ProductContext,
+    startsAt: bigint,
+  ): Promise<void>;
+
+  /**
+   * Drop the product's reminder. Idempotent: dropping none succeeds.
+   */
+  cancelGameReminder(product: ProductContext): Promise<void>;
+}
+
+/**
  * A live JSON-RPC connection to a chain.
  */
 export interface JsonRpcConnection {
@@ -1589,9 +1620,11 @@ export interface ProductOperations {
 /**
  * Product-scoped key-value storage.
  *
- * The core namespaces product keys before calling this trait. Host
- * implementations may treat `key` as opaque or decode it with
- * `ProductStorageKey` when their physical storage is separated by product.
+ * The core namespaces product keys before calling this trait, and the key
+ * names the product that owns the value. Host implementations may treat
+ * `key` as opaque in one shared store. A host that separates physical storage
+ * by product must decode the owner with `ProductStorageKey` on read, since
+ * that owner is another product on a granted foreign read.
  * Storage errors are pinned to `v01` rather than taken from `truapi::latest`.
  * The read error gained a cross-product refusal in v0.2 that the core decides
  * before it ever calls a host, so a host has no way to produce it and should
@@ -1601,10 +1634,11 @@ export interface ProductStorage {
   /**
    * Read a value by key.
    *
-   * Always the calling product's own storage. A read addressed at another
-   * product is adjudicated in the core against that product's manifest and
-   * refused there, so a host is never asked to enforce a grant and has no
-   * variant for one.
+   * `key` belongs to the calling product, or to another product the core
+   * has already found granting the caller read access in its manifest. The
+   * core refuses every other foreign read itself, so a host is never asked
+   * to enforce a grant and has no variant for one. Writes and clears always
+   * carry the calling product's own keys.
    */
   read(key: string): Promise<Uint8Array | undefined>;
 
@@ -1685,6 +1719,7 @@ export interface HostCallbacks {
   productOperations: ProductOperations;
   chat?: ChatPlatform;
   contacts?: ContactsPlatform;
+  game?: GamePlatform;
   permissionStatus?: PermissionStatusHost;
   pocket?: PocketPlatform;
 }
@@ -1705,6 +1740,7 @@ export interface RequiredHostCallbacks {
   productOperations: Required<ProductOperations>;
   chat?: Required<ChatPlatform>;
   contacts?: Required<ContactsPlatform>;
+  game?: Required<GamePlatform>;
   permissionStatus?: Required<PermissionStatusHost>;
   pocket?: Required<PocketPlatform>;
 }

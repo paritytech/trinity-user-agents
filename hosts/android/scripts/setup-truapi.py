@@ -14,7 +14,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-REPO = "https://github.com/paritytech/host-rust-core.git"
+REPO = "https://github.com/paritytech/trinity-user-agents.git"
 ACTION = Path(".github/actions/install/action.yaml")
 # The same directory settings.gradle.kts probes to decide the checkout is real.
 MARKER = Path("rust/crates/truapi")
@@ -121,7 +121,7 @@ def main():
         clone(target, ref)
 
     if not (target / MARKER).is_dir():
-        fail(f"{target} has no {MARKER}; that is not a host-rust-core checkout")
+        fail(f"{target} has no {MARKER}; that is not a trinity-user-agents checkout")
 
     write_local_properties(root, target)
     print("truapi core ready")

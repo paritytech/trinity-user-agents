@@ -17,6 +17,7 @@ final class ProductBotFactory {
     private let settingsManager: SettingsManagerProtocol
     private let runtimeProvider: TrUAPIHostRuntimeProviding
     private let workerManager: ProductWorkerManaging
+    private let gameReminders: ProductGameReminderScheduling
     private let logger: LoggerProtocol
 
     init(
@@ -25,6 +26,7 @@ final class ProductBotFactory {
         hostProvider: ProductHostProviding,
         runtimeProvider: TrUAPIHostRuntimeProviding,
         workerManager: ProductWorkerManaging,
+        gameReminders: ProductGameReminderScheduling,
         settingsManager: SettingsManagerProtocol = SettingsManager.shared,
         logger: LoggerProtocol = Logger.shared
     ) {
@@ -34,6 +36,7 @@ final class ProductBotFactory {
         self.settingsManager = settingsManager
         self.runtimeProvider = runtimeProvider
         self.workerManager = workerManager
+        self.gameReminders = gameReminders
         self.logger = logger
     }
 
@@ -90,6 +93,7 @@ private extension ProductBotFactory {
             runtime: runtime,
             chainRegistry: chainRegistry,
             notificationScheduler: ProductNotificationScheduler.shared,
+            gameReminders: gameReminders,
             ipfsFetcher: IpfsFetcher(ipfsBaseURL: AppConfig.KnownIPFS.main),
             hostProvider: hostProvider,
             logger: logger

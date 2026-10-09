@@ -15,8 +15,8 @@ internal class WeeklyGamePillOverlayViewModel @Inject constructor(
     private val launchCoordinator: VideoGameLaunchCoordinator,
     pillStateProducer: WeeklyGamePillStateProducer,
     pillVisibility: WeeklyGamePillVisibilityHolder,
-) : BaseViewModel() {
-    val pillState: StateFlow<VideoGamePillState> = combine(
+) : BaseViewModel(), GamePillViewModel {
+    override val pillState: StateFlow<VideoGamePillState> = combine(
         pillStateProducer.pillState(),
         pillVisibility.footerVisible,
         pillVisibility.inlinePillVisible,
@@ -24,7 +24,7 @@ internal class WeeklyGamePillOverlayViewModel @Inject constructor(
         if (footerVisible || inlinePillVisible) VideoGamePillState.Hidden else state
     }.stateInBackground(SharingStarted.Eagerly, VideoGamePillState.Hidden)
 
-    fun expand() = launchUnit {
+    override fun onPillClicked() = launchUnit {
         launchCoordinator.openOrLaunchGame()
     }
 }

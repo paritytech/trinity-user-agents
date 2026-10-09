@@ -5,6 +5,7 @@ import dagger.assisted.Assisted
 import dagger.assisted.AssistedFactory
 import dagger.assisted.AssistedInject
 import io.parity.truapi.ChatHostBridge
+import io.parity.truapi.GameHostBridge
 import io.parity.truapi.HostBridge
 import io.parity.truapi.HostCoreStorage
 import io.parity.truapi.HostStorage
@@ -18,6 +19,7 @@ import io.paritytech.polkadotapp.common.presentation.AppLifecycleObserver
 import io.paritytech.polkadotapp.common.utils.logFailure
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsUtils
+import io.paritytech.polkadotapp.feature_products_api.domain.game.ProductGameReminder
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_api.model.toUri
 import io.paritytech.polkadotapp.feature_products_impl.di.TrUAPIChainHttpClient
@@ -76,6 +78,7 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
     private val appLifecycleObserver: AppLifecycleObserver,
     private val dotNsTldProvider: DotNsTldProvider,
     private val pocketCardStore: PocketCardStore,
+    private val productGameReminder: ProductGameReminder,
     @Assisted private val scope: CoroutineScope,
 ) {
     @AssistedFactory
@@ -122,7 +125,7 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
         navigation: NavigationPolicy,
     ) = object : HostBridge {
         override val storage: HostStorage =
-            EncryptedHostStorage(encryptedPreferences, productStorageNamespace(callingProductId.value))
+            EncryptedHostStorage(encryptedPreferences, callingProductId.value)
 
         override val coreStorage: HostCoreStorage = EncryptedHostCoreStorage(encryptedPreferences)
 
@@ -227,6 +230,14 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
         override fun chainClose(connectionId: UInt) = chainProvider.close(connectionId)
     }
 
+    internal fun gameBridge(callingProductId: ProductId) = object : GameHostBridge {
+        override suspend fun scheduleReminder(startsAt: ULong) =
+            productGameReminder.schedule(callingProductId, startsAt.toLong())
+                .getOrElse { throw HostRejection.Rejected(it.message.orEmpty()) }
+
+        override suspend fun cancelReminder() = productGameReminder.cancel(callingProductId)
+    }
+
     /**
      * Opens the product's execution on the shared runtime and hands the caller
      * the bootstrap script. It must be injected before the product page loads
@@ -259,6 +270,7 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
                 configuration = ProductExecutionConfig(productId.value, kind),
                 chat = chat,
                 pocket = pocket,
+                game = gameBridge(productId),
             )
             execution = opened
             pocketBridge = pocket

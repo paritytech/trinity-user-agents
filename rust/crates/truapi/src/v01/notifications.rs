@@ -6,7 +6,7 @@ use parity_scale_codec::{Decode, Encode};
 /// wall-clock instant (Unix milliseconds UTC). `None` fires immediately,
 /// preserving prior behaviour. See [RFC 0019].
 ///
-/// [RFC 0019]: https://github.com/paritytech/host-rust-core/blob/main/docs/rfcs/0019-scheduled-notifications.md
+/// [RFC 0019]: https://github.com/paritytech/trinity-user-agents/blob/main/docs/rfcs/0019-scheduled-notifications.md
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 #[cfg_attr(
     all(feature = "runtime", not(target_arch = "wasm32")),

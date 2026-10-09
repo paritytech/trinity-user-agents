@@ -43,6 +43,7 @@ extension MembersPallet.AsMemberTxExtension: TransactionExtending {
     public func implicit(
         using _: DynamicScaleEncodingFactoryProtocol,
         metadata _: RuntimeMetadataProtocol,
+        extensionVersion _: UInt8,
         context _: RuntimeJsonContext?
     ) throws -> Data? {
         nil
@@ -54,7 +55,7 @@ extension MembersPallet.AsMemberTxExtension: TransactionExtending {
         metadata: RuntimeMetadataProtocol,
         context: RuntimeJsonContext?
     ) throws -> TransactionExtension.Explicit? {
-        let payloadFactory = ImplicationSignaturePayloadFactory(extrinsicVersion: extrinsicVersion)
+        let payloadFactory = ImplicationSignaturePayloadFactory(formatVersion: extrinsicVersion.formatVersion)
         let payload = try payloadFactory.createPayload(from: implication, using: encodingFactory)
         let message = try payload.blake2b32()
         let signature = try vrfManager.sign(message)
@@ -62,7 +63,7 @@ extension MembersPallet.AsMemberTxExtension: TransactionExtending {
         let json = try Mode.selfInclude(signature: signature)
             .toScaleCompatibleJSON(with: context?.toRawContext())
 
-        return try TransactionExtension.Explicit(
+        return TransactionExtension.Explicit(
             from: json,
             txExtensionId: txExtensionId,
             metadata: metadata
