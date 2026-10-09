@@ -9,13 +9,11 @@ import {
   DEFAULT_BUNDLE,
   appGroupId,
   bootAndInstallApp,
-  captureOptional,
   defaultAppPath,
-  isLoopback,
   readPlistValue,
-  run,
-  waitFor,
 } from "./lib/ios-simulator.mjs";
+import { captureOptional, run, waitFor } from "./lib/process.mjs";
+import { isLoopback } from "./lib/product-server.mjs";
 
 const repoRoot = resolve(import.meta.dirname, "..");
 const bundle = process.env.TRUAPI_IOS_E2E_BUNDLE ?? DEFAULT_BUNDLE;

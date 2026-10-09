@@ -23,6 +23,7 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessage
 import io.paritytech.polkadotapp.feature_chats_api.presentation.model.ChatMessageUiModel
 import io.paritytech.polkadotapp.feature_chats_api.presentation.model.LastMessageUiModel
 import io.paritytech.polkadotapp.feature_products_api.model.Product
+import io.paritytech.polkadotapp.feature_products_api.model.productRoomId
 import io.paritytech.polkadotapp.feature_products_api.model.toChatExtensionId
 import io.paritytech.polkadotapp.feature_products_api.presentation.widget.JsWidgetRenderer
 import io.paritytech.polkadotapp.feature_products_impl.domain.worker.ProductWorker
@@ -61,6 +62,7 @@ class ProductsMessageRenderer(
                         ProductsMessageContent(
                             messageId = message.id,
                             content = content,
+                            roomId = message.chatId.productRoomId(id)?.value,
                         )
                     },
                     onFailure = {
@@ -79,11 +81,12 @@ class ProductsMessageRenderer(
     private fun ProductsMessageContent(
         messageId: String,
         content: ProductsMessageContent,
+        roomId: String?,
     ) {
         val viewModel: ProductsMessageViewModel = hiltViewModel(
             key = messageId,
             creationCallback = { factory: ProductsMessageViewModel.Factory ->
-                factory.create(content, messageId, product, worker)
+                factory.create(content, messageId, product, worker, roomId)
             }
         )
 

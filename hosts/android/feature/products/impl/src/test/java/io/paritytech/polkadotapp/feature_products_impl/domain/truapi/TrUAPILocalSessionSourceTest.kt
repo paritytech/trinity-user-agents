@@ -5,9 +5,8 @@ import io.paritytech.polkadotapp.feature_account_api.data.repository.AccountRepo
 import io.paritytech.polkadotapp.feature_account_api.data.storage.accountSecrets.AccountSecretsStorage
 import io.paritytech.polkadotapp.feature_account_api.domain.model.MetaAccount
 import io.paritytech.polkadotapp.feature_products_impl.domain.deriveEntropy.RealDeriveEntropyUseCase
-import io.paritytech.polkadotapp.feature_usernames_api.domain.model.StoredUsername
+import io.paritytech.polkadotapp.feature_usernames_api.data.LocalUsernameStorage
 import io.paritytech.polkadotapp.feature_usernames_api.domain.model.Username
-import io.paritytech.polkadotapp.feature_usernames_api.domain.usecase.UsernameOfAccountUseCase
 import io.paritytech.polkadotapp.test_shared.whenever
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertArrayEquals
@@ -21,11 +20,11 @@ import org.mockito.Mockito.mock
 class TrUAPILocalSessionSourceTest {
     private val accountRepository: AccountRepository = mock()
     private val accountSecretsStorage: AccountSecretsStorage = mock()
-    private val usernameOfAccountUseCase: UsernameOfAccountUseCase = mock()
+    private val localUsernameStorage: LocalUsernameStorage = mock()
     private val source = TrUAPILocalSessionSource(
         accountRepository,
         accountSecretsStorage,
-        usernameOfAccountUseCase,
+        localUsernameStorage,
     )
 
     private val metaId = 1L
@@ -39,7 +38,7 @@ class TrUAPILocalSessionSourceTest {
             whenever(accountRepository.getWalletAccount()).thenReturn(metaAccount)
             whenever(accountSecretsStorage.getMetaAccountPassphrase(metaId))
                 .thenReturn(MnemonicCreator.fromEntropy(walletEntropy))
-            whenever(usernameOfAccountUseCase.getUsername()).thenReturn(Result.success(null))
+            whenever(localUsernameStorage.getValue()).thenReturn(null)
         }
     }
 
@@ -68,27 +67,9 @@ class TrUAPILocalSessionSourceTest {
 
     @Test
     fun `the lite username is reported when there is one`() = runBlocking {
-        whenever(usernameOfAccountUseCase.getUsername()).thenReturn(
-            Result.success(
-                StoredUsername(
-                    fullUsername = null,
-                    liteUsername = Username.fromParts("alice", index = 7),
-                    isOnChain = false,
-                ),
-            ),
-        )
+        whenever(localUsernameStorage.getValue()).thenReturn(Username.fromParts("alice", index = 7))
 
         assertEquals("alice.07", source.resolve().getOrNull()?.liteUsername)
-    }
-
-    @Test
-    fun `a failed username read still yields a session`() = runBlocking {
-        whenever(usernameOfAccountUseCase.getUsername()).thenReturn(Result.failure(IllegalStateException()))
-
-        val session = source.resolve().getOrNull()
-
-        assertArrayEquals(walletEntropy, session?.secret)
-        assertNull(session?.liteUsername)
     }
 
     @Test
@@ -96,5 +77,13 @@ class TrUAPILocalSessionSourceTest {
         whenever(accountSecretsStorage.getMetaAccountPassphrase(metaId)).thenReturn(null)
 
         assertTrue(source.resolve().isFailure)
+    }
+
+    @Test
+    fun `no stored username still yields a session`() = runBlocking {
+        val session = source.resolve().getOrThrow()
+
+        assertNull(session.liteUsername)
+        assertTrue(session.secret.isNotEmpty())
     }
 }

@@ -20,7 +20,7 @@ class RenderConnectRetryTest {
 
     @Test
     fun `a render opened before the worker's client connects is retried until it does`() = runTest {
-        val faces = renderThatConnectsAfter(failures = 2).retryWhileConnecting(attempts = 5, delay = 100.milliseconds).toList()
+        val faces = renderThatConnectsAfter(failures = 2).retryWhileConnecting(attempts = 5, retryDelay = 100.milliseconds).toList()
 
         assertEquals(listOf("face"), faces)
         assertEquals(3, opened)
@@ -28,7 +28,7 @@ class RenderConnectRetryTest {
 
     @Test
     fun `a worker that never connects stops being asked after the last attempt`() = runTest {
-        val result = runCatching { renderThatConnectsAfter(failures = 10).retryWhileConnecting(attempts = 3, delay = 100.milliseconds).toList() }
+        val result = runCatching { renderThatConnectsAfter(failures = 10).retryWhileConnecting(attempts = 3, retryDelay = 100.milliseconds).toList() }
 
         assertTrue(result.exceptionOrNull() is ProductRuntimeException.NotConnected)
         assertEquals(4, opened)
@@ -38,7 +38,7 @@ class RenderConnectRetryTest {
     fun `any other render failure is not mistaken for a connection still opening`() = runTest {
         val result = runCatching {
             renderThatConnectsAfter(failures = 1) { IllegalStateException("renderer gone") }
-                .retryWhileConnecting(attempts = 3, delay = 100.milliseconds)
+                .retryWhileConnecting(attempts = 3, retryDelay = 100.milliseconds)
                 .toList()
         }
 

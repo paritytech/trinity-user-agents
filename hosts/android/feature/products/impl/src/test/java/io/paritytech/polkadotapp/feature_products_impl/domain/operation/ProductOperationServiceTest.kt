@@ -3,6 +3,8 @@ package io.paritytech.polkadotapp.feature_products_impl.domain.operation
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_impl.data.repository.FundingOperationRecord
 import io.paritytech.polkadotapp.feature_products_impl.data.repository.ProductFundingOperationRepository
+import io.paritytech.polkadotapp.feature_products_impl.domain.bot.FakeChatMessaging
+import io.paritytech.polkadotapp.feature_products_impl.domain.bot.ProductChatMessaging
 import io.paritytech.polkadotapp.feature_products_impl.domain.worker.ProductWorker
 import io.paritytech.polkadotapp.feature_products_impl.domain.worker.ProductWorkerRefCounter
 import io.paritytech.polkadotapp.feature_products_impl.domain.worker.ProductWorkerReference
@@ -33,6 +35,8 @@ class ProductOperationServiceTest {
                 }
             }
         }
+
+        override fun chatMessaging(productId: ProductId): ProductChatMessaging = FakeChatMessaging()
     }
 
     private class FakeRepository : ProductFundingOperationRepository {

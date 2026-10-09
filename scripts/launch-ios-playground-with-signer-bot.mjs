@@ -5,7 +5,8 @@
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { DEFAULT_BUNDLE, defaultAppPath, run } from "./lib/ios-simulator.mjs";
+import { DEFAULT_BUNDLE, defaultAppPath } from "./lib/ios-simulator.mjs";
+import { run } from "./lib/process.mjs";
 
 const repoRoot = resolve(import.meta.dirname, "..");
 loadDotEnv(resolve(repoRoot, ".env"));

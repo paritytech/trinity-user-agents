@@ -1,9 +1,9 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.bot
 
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageId
+import io.paritytech.polkadotapp.feature_products_api.model.ProductChatIdParameter
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.model.CreateProductRoomRequest
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.model.CreateProductRoomResult
-import io.paritytech.polkadotapp.feature_products_impl.domain.bot.model.ProductChatIdParameter
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.model.ProductChatRoom
 import kotlinx.coroutines.flow.Flow
 
@@ -16,6 +16,9 @@ interface ProductChatMessaging {
     suspend fun createRoom(request: CreateProductRoomRequest): Result<CreateProductRoomResult>
 
     suspend fun sendMessage(chatIdParameter: ProductChatIdParameter, message: ProductBotMessage): Result<ChatMessageId>
+
+    /** Sets whether [chatIdParameter] shows the text input below its messages; the core's room footer. */
+    suspend fun setRoomFooter(chatIdParameter: ProductChatIdParameter, showsTextInput: Boolean): Result<Unit>
 
     fun subscribeChatRooms(): Flow<List<ProductChatRoom>>
 }

@@ -11,8 +11,7 @@ import {
   unlinkSync,
   writeFileSync,
 } from "node:fs";
-import { createServer } from "node:http";
-import { dirname, extname, resolve, sep } from "node:path";
+import { dirname, resolve } from "node:path";
 import {
   CHAT_DIAGNOSIS_HEADING,
   decodeTextMessage,
@@ -22,17 +21,19 @@ import {
   DEFAULT_BUNDLE,
   appGroupId,
   bootAndInstallApp,
+  defaultAppPath,
+  readPlistValue,
+  userDataDatabase,
+} from "./lib/ios-simulator.mjs";
+import {
   capture,
   captureOptional,
-  defaultAppPath,
   delay,
-  isLoopback,
-  readPlistValue,
   run,
   runAsync,
-  userDataDatabase,
   waitFor,
-} from "./lib/ios-simulator.mjs";
+} from "./lib/process.mjs";
+import { startProductServer } from "./lib/product-server.mjs";
 
 const repoRoot = resolve(import.meta.dirname, "..");
 const bundle = process.env.TRUAPI_IOS_E2E_BUNDLE ?? DEFAULT_BUNDLE;
@@ -164,6 +165,7 @@ let messageWatermark = existsSync(initialDatabase)
 const productServer = await startProductServer(
   productUrl,
   resolve(productRoot, "out"),
+  productName,
 );
 try {
   const launchApp = () =>
@@ -269,75 +271,6 @@ console.log(
     verified: true,
   }),
 );
-
-async function startProductServer(urlString, root) {
-  const url = new URL(urlString);
-  if (!isLoopback(url)) {
-    throw new Error(
-      `Product URL must be loopback for this E2E test: ${urlString}`,
-    );
-  }
-
-  try {
-    const response = await fetch(urlString);
-    if (response.ok && (await response.text()).includes(productName)) {
-      return null;
-    }
-    throw new Error(`${urlString} is serving a different application`);
-  } catch (error) {
-    if (
-      error instanceof Error &&
-      error.message.includes("different application")
-    ) {
-      throw error;
-    }
-  }
-
-  const server = createServer((request, response) => {
-    try {
-      const pathname = decodeURIComponent(
-        new URL(request.url ?? "/", urlString).pathname,
-      );
-      let file = resolve(root, `.${pathname}`);
-      if (file !== root && !file.startsWith(`${root}${sep}`)) {
-        response.writeHead(403).end();
-        return;
-      }
-      if (statSync(file).isDirectory()) {
-        file = resolve(file, "index.html");
-      }
-      response.setHeader("Content-Type", contentType(file));
-      const content = readFileSync(file);
-      response.end(content);
-    } catch {
-      response.writeHead(404).end();
-    }
-  });
-  await new Promise((resolveListen, reject) => {
-    server.once("error", reject);
-    server.listen(Number(url.port || 80), url.hostname, resolveListen);
-  });
-  return server;
-}
-
-function contentType(file) {
-  switch (extname(file)) {
-    case ".html":
-      return "text/html; charset=utf-8";
-    case ".js":
-      return "text/javascript; charset=utf-8";
-    case ".css":
-      return "text/css; charset=utf-8";
-    case ".json":
-      return "application/json";
-    case ".png":
-      return "image/png";
-    case ".svg":
-      return "image/svg+xml";
-    default:
-      return "application/octet-stream";
-  }
-}
 
 function waitForFiles(files, timeoutMs, hint) {
   return waitFor(() => files.every(existsSync), {

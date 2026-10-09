@@ -3,7 +3,7 @@
 # Run `make help` for the list of targets.
 
 .DEFAULT_GOAL := help
-.PHONY: help setup build codegen test check check-generated clean playground wasm wasm-crypto-test uniffi uniffi-kotlin android-check provider-android-check ios-build ios-run ios-chat-run ios-chat-host-playground-run ios-chat-all android-jni android-publish-local dotli-link dev dev-cli dev-bootstrap debugger dev-link-check e2e-dotli e2e-cli-diagnosis e2e-signing-cli e2e-pairing-cli e2e-chat-cli e2e-pocket-cli e2e-cross-product-storage e2e-cross-product-ringvrf e2e-cross-product-signing e2e-cli-update headless install cli-runner cli-dist matrix explorer xcframework
+.PHONY: help setup build codegen test check check-generated clean playground wasm wasm-crypto-test uniffi uniffi-kotlin android-check provider-android-check ios-build ios-run ios-chat-run ios-chat-host-playground-run ios-chat-all android-jni android-publish-local dotli-link dev dev-cli dev-bootstrap debugger dev-link-check e2e-dotli e2e-cli-diagnosis e2e-signing-cli e2e-pairing-cli e2e-chat-cli e2e-pocket-cli e2e-cross-product-storage e2e-cross-product-ringvrf e2e-cross-product-signing e2e-cli-update headless install cli-runner cli-dist matrix explorer xcframework android-chat-playground-run
 
 CARGO ?= cargo
 # The dated nightly CI runs; see nightly-toolchain.
@@ -257,6 +257,16 @@ ios-chat-host-playground-run: ios-build ## Verify Host Playground Chat through t
 	node scripts/launch-ios-chat-playground.mjs
 
 ios-chat-all: ios-chat-run ios-chat-host-playground-run ## Run both local iOS Chat playground integrations.
+
+TRUAPI_ANDROID_E2E_APK ?= hosts/android/app/build/outputs/apk/vanilla/debug/app-vanilla-debug.apk
+
+android-chat-playground-run: ## Run the TrUAPI Playground Chat diagnosis in a headless Android emulator (build the debug APK with Gradle first).
+	@test -f "$(TRUAPI_ANDROID_E2E_APK)" || { \
+		echo "Missing debug APK at $(TRUAPI_ANDROID_E2E_APK)"; \
+		echo "Build it first: cd hosts/android && ./gradlew :app:assembleVanillaDebug"; \
+		exit 1; \
+	}
+	TRUAPI_ANDROID_E2E_APK="$(TRUAPI_ANDROID_E2E_APK)" node scripts/launch-android-chat-playground.mjs
 
 UNIFFI_KOTLIN_OUT := android/truapi-host/src/main/kotlin/generated
 

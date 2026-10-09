@@ -18,12 +18,12 @@ import io.paritytech.polkadotapp.feature_products_api.domain.accountsProtocol.Ri
 import io.paritytech.polkadotapp.feature_products_api.domain.accountsProtocol.VrfSignature
 import io.paritytech.polkadotapp.feature_products_api.domain.accountsProtocol.VrfTranscriptItem
 import io.paritytech.polkadotapp.feature_products_api.model.ProductAccountId
+import io.paritytech.polkadotapp.feature_products_api.model.ProductChatIdParameter
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_api.model.signing.SignedTransaction
 import io.paritytech.polkadotapp.feature_products_api.model.signing.SigningRequestBody
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.model.CreateProductRoomRequest
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.model.CreateProductRoomResult
-import io.paritytech.polkadotapp.feature_products_impl.domain.bot.model.ProductChatIdParameter
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.model.ProductChatRoom
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.GetUserIdResult
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.LegacyAccountResult

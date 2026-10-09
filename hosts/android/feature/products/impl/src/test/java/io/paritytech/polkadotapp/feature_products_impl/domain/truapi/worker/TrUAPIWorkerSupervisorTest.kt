@@ -6,6 +6,7 @@ import io.mockk.every
 import io.mockk.mockk
 import io.mockk.mockkStatic
 import io.mockk.unmockkStatic
+import io.parity.truapi.ChatHostBridge
 import io.parity.truapi.TrUAPIProductExecution
 import io.paritytech.polkadotapp.feature_products_api.model.ProductExecutable
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
@@ -33,6 +34,8 @@ class TrUAPIWorkerSupervisorTest {
     private val rendererGoneListeners = mutableMapOf<ChatWebViewProvider, MutableList<() -> Unit>>()
     private val providers = mutableListOf<ChatWebViewProvider>()
     private val executions = mutableListOf<TrUAPIProductExecution>()
+    private val chatBridges = mutableListOf<ChatHostBridge?>()
+    private var includesChat = true
 
     @Before
     fun parseScriptUrls() {
@@ -64,6 +67,27 @@ class TrUAPIWorkerSupervisorTest {
         assertEquals(listOf(null, executions[0], null, executions[1]), seen)
     }
 
+    @Test
+    fun `only a product that includes chat gets a chat bridge`() = runTest {
+        includesChat = false
+        val supervisor = supervisor()
+
+        supervisor.onDemandChanged(PRODUCT, WorkerDemand.START)
+        advanceUntilIdle()
+
+        assertEquals(listOf<ChatHostBridge?>(null), chatBridges)
+    }
+
+    @Test
+    fun `a chat product gets a chat bridge`() = runTest {
+        val supervisor = supervisor()
+
+        supervisor.onDemandChanged(PRODUCT, WorkerDemand.START)
+        advanceUntilIdle()
+
+        assertEquals(1, chatBridges.filterNotNull().size)
+    }
+
     private fun TestScope.supervisor() = TrUAPIWorkerSupervisor(
         runtimeProvider = {
             mockk<TrUAPIHostRuntimeProvider> { coEvery { runtime() } returns Result.success(mockk()) }
@@ -73,19 +97,27 @@ class TrUAPIWorkerSupervisorTest {
         },
         chainDirectory = mockk { coEvery { resolve() } returns mockk() },
         scriptResolver = object : ProductScriptResolver {
-            override suspend fun resolveWorker(productId: ProductId) =
-                Result.success(mockk<ProductExecutable.Worker> { every { scriptUrl } returns SCRIPT_URL })
+            override suspend fun resolveWorker(productId: ProductId) = Result.success(
+                mockk<ProductExecutable.Worker> {
+                    every { scriptUrl } returns SCRIPT_URL
+                    every { includesChat } returns this@TrUAPIWorkerSupervisorTest.includesChat
+                },
+            )
         },
         webViewProviderFactory = object : ChatWebViewProvider.Factory {
             override fun create(config: ChatWebViewConfig, scope: CoroutineScope) = provider()
         },
         bootstrapInstaller = mockk(relaxed = true),
+        refCounter = { mockk(relaxed = true) },
         dispatchers = testDispatchers(),
     )
 
     private fun bridge(): ProductTrUAPIHostBridge = mockk {
         val execution = mockk<TrUAPIProductExecution>().also { executions += it }
-        coEvery { attach(any(), any(), any(), any(), any(), any(), any()) } returns Result.success(execution)
+        coEvery { attach(any(), any(), any(), any(), any(), any(), any(), any()) } answers {
+            chatBridges += arg<ChatHostBridge?>(5)
+            Result.success(execution)
+        }
     }
 
     // Stands in for the hidden WebView: its page reports finished once loaded, and a renderer

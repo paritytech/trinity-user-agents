@@ -1,4 +1,4 @@
-package io.paritytech.polkadotapp.feature_products_impl.domain.bot.model
+package io.paritytech.polkadotapp.feature_products_api.model
 
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatExtensionId
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatId
@@ -20,7 +20,13 @@ fun ChatId.extractProductChatIdParameter(extensionId: ChatExtensionId): Result<P
         val subRoomId = requireNotNull(it.subRoomId) {
             "ChatId $value is not a product chat id"
         }
+        require(subRoomId.isNotEmpty()) {
+            "ChatId $value carries no product room id"
+        }
 
         ProductChatIdParameter(subRoomId)
     }
 }
+
+fun ChatId.productRoomId(extensionId: ChatExtensionId): ProductChatIdParameter? =
+    extractProductChatIdParameter(extensionId).getOrNull()
