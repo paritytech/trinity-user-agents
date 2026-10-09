@@ -133,6 +133,8 @@ Polkadot iOS is a self-custodial superapp: your keys are created on your phone, 
 
 App permission settings use the shared Rust runtime's canonical authorization records. Chat identity authority and Statement Store allowance are separate permissions, not statement-submission or trusted-network grants. Allowance settings retain the exact legacy account (`None`), product index, or raw 32-byte product selector; each can be displayed and revoked independently. Legacy permission rows never override a core denial or revocation, and settings keep a grant visible until the runtime acknowledges its removal. This revision's native selector contract is `Index`/`Raw`, not a chain-genesis selector.
 
+Consent prompts and app settings share permission descriptions and icon metadata, including the exact Statement Store allowance selector. Canonical authorization conversion separates remote permissions from device, identity, Chat and allowance permissions; raw allowance selectors still require exactly 32 bytes. The permission-presentation refactor received Linux Swift syntax parsing and structural mapping checks only. The macOS app build, unit tests and unchanged warning ratchet must pass in CI before this revision is considered iOS-qualified.
+
 ### What it doesn't do
 
 - There is no custodian, and nobody (including the developers) can freeze, recover, or move your account. If you lose your device and have no backup, the account is gone.
