@@ -39,3 +39,8 @@ native SDK, including expanded-card and game callbacks, without weakening
 canonical permission revocation or stale-prompt fencing.
 The dependency license gate explicitly covers the runtime's MPL-2.0 Wasm compiler,
 alongside the existing per-crate runtime and wire-protocol exceptions.
+
+Batch historical ring membership reads during wallet allowance inspection instead
+of waiting for a separate status and first-page RPC for every ring. Keep the
+newest-to-oldest membership search, complete ring validation, finalized snapshot
+and identity-activation fences, so unavailable data never becomes usable capacity.
