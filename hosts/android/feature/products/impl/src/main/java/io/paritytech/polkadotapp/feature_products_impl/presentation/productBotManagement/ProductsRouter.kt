@@ -27,6 +27,12 @@ interface ProductsRouter : ReturnableRouter, SigningRouter {
 
     /** Picker for the one contact a product asked the user to name. */
     suspend fun openTrUAPIContactPick()
+    suspend fun closeTrUAPIContactPick()
+
+    /** Viewfinder for the one code a product asked the user to scan. */
+    suspend fun openTrUAPIProductScan()
+    suspend fun closeTrUAPIProductScan()
+
     fun openProductSettings(productId: ProductId)
     fun openProductPermissions(productId: ProductId)
 

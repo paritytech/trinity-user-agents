@@ -1633,6 +1633,8 @@ I’m attaching PDF with more information and details regarding the Tattoo Stenc
     <string name="truapi_contact_pick_body">%1$s learns only who you choose, and never your contact list.</string>
     <string name="truapi_contact_pick_unnamed">Unnamed contact</string>
     <string name="truapi_contact_pick_dismiss">Not now</string>
+    <string name="truapi_product_scan_title">Scan for %1$s</string>
+    <string name="truapi_product_scan_not_for_product">This code isn\'t for %1$s</string>
     <string name="debug_report_title">Report app issue</string>
     <string name="debug_report_what_happened">What happened?</string>
     <string name="debug_report_placeholder">Tell us about the issue you encountered</string>

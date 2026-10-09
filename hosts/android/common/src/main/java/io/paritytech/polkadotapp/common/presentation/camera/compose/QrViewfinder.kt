@@ -1,4 +1,4 @@
-package io.paritytech.polkadotapp.feature_scan_impl.presentation.scanning.compose
+package io.paritytech.polkadotapp.common.presentation.camera.compose
 
 import androidx.camera.compose.CameraXViewfinder
 import androidx.camera.core.SurfaceRequest
@@ -25,13 +25,13 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import io.paritytech.polkadotapp.common.R as RCommon
 
-internal class PermissionMissingHint(
+class PermissionMissingHint(
     val missing: StateFlow<Boolean>,
     val content: @Composable (onRetry: () -> Unit) -> Unit,
 )
 
 @Composable
-internal fun QrViewfinder(
+fun QrViewfinder(
     modifier: Modifier = Modifier,
     surfaceRequestFlow: StateFlow<SurfaceRequest?>,
     invalidCodeEvent: SharedFlow<Unit>,

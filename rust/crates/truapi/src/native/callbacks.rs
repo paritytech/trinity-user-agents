@@ -340,3 +340,18 @@ pub trait NativeContactsCallbacks: Send + Sync {
         product_id: String,
     ) -> Result<crate::platform::HostContactPick, HostRejection>;
 }
+
+/// Native form of [`crate::platform::ScannerPlatform`], whose rules it follows.
+/// Installed with [`NativeTrUApiHostRuntime::set_scanner_callbacks`].
+#[uniffi::export(rust, foreign)]
+#[async_trait::async_trait]
+pub trait NativeScannerCallbacks: Send + Sync {
+    /// Open the viewfinder on behalf of `product_id`'s execution of
+    /// `execution_kind` and report how it ended.
+    async fn scan_code(
+        &self,
+        product_id: String,
+        execution_kind: crate::platform::ProductExecutionKind,
+        request: truapi::latest::HostScannerScanRequest,
+    ) -> Result<crate::platform::HostScan, HostRejection>;
+}

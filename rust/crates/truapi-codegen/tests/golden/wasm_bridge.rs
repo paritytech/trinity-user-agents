@@ -57,6 +57,7 @@ pub struct JsBridge {
     pub write: Function,
     pub clear: Function,
     pub subscribe_storage: Function,
+    pub scan_code: Function,
     pub subscribe_theme: Function,
     pub confirm_permission: Function,
     pub confirm_user_action: Function,
@@ -65,6 +66,7 @@ pub struct JsBridge {
     pub game_present: bool,
     pub permission_status_present: bool,
     pub pocket_present: bool,
+    pub scanner_present: bool,
 }
 
 impl JsBridge {
@@ -112,6 +114,8 @@ impl JsBridge {
             write: get_function(callbacks, "write")?,
             clear: get_function(callbacks, "clear")?,
             subscribe_storage: get_function(callbacks, "subscribeStorage")?,
+            scan_code: get_optional_function(callbacks, "scanCode")?
+                .unwrap_or_else(|| missing_callback("scanCode")),
             subscribe_theme: get_function(callbacks, "subscribeTheme")?,
             confirm_permission: get_function(callbacks, "confirmPermission")?,
             confirm_user_action: get_function(callbacks, "confirmUserAction")?,
@@ -127,6 +131,7 @@ impl JsBridge {
                 .is_some(),
             pocket_present: get_optional_function(callbacks, "subscribePocketCards")?.is_some()
                 && get_optional_function(callbacks, "removePocketCard")?.is_some(),
+            scanner_present: get_optional_function(callbacks, "scanCode")?.is_some(),
         })
     }
 
@@ -153,6 +158,11 @@ impl JsBridge {
     /// Whether the host supplied every `pocket` callback.
     pub fn has_pocket(&self) -> bool {
         self.pocket_present
+    }
+
+    /// Whether the host supplied every `scanner` callback.
+    pub fn has_scanner(&self) -> bool {
+        self.scanner_present
     }
 }
 
@@ -633,6 +643,27 @@ impl crate::platform::ProductStorage for WasmPlatform {
             Some(JsValue::from_str(&key)),
             parse_host_local_storage_change_item_item,
         )
+    }
+}
+
+#[crate::platform::async_trait]
+impl crate::platform::ScannerPlatform for WasmPlatform {
+    async fn scan_code(
+        &self,
+        product: &crate::platform::ProductContext,
+        request: &latest::HostScannerScanRequest,
+    ) -> Result<crate::platform::HostScan, latest::GenericError> {
+        let bytes = invoke_bytes_return(
+            &self.bridge.scan_code,
+            vec![
+                Uint8Array::from(product.encode().as_slice()).into(),
+                Uint8Array::from(request.encode().as_slice()).into(),
+            ],
+        )
+        .await
+        .map_err(generic)?;
+        decode_bytes::<crate::platform::HostScan>(bytes, "scanCode response did not decode")
+            .map_err(generic)
     }
 }
 

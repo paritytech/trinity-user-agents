@@ -326,6 +326,10 @@ pub struct ProductRuntimeHost {
     open_operations: Mutex<HashSet<u32>>,
 }
 
+/// How long after a tap a Worker may still open the scanner, as browsers bound
+/// transient user activation.
+pub const USER_TAP_WINDOW_SECS: u64 = 5;
+
 /// A connection that goes away without ending its operations still owes the
 /// ledger their references, so the host is told to stop rather than keeping a
 /// worker alive for a product that is gone.
@@ -361,6 +365,13 @@ impl ProductRuntimeHost {
             game_platform: adapters.game_platform,
             open_operations: Mutex::new(HashSet::new()),
         }
+    }
+
+    /// Whether the host published a renderer action, which only the user
+    /// causes, within the last [`USER_TAP_WINDOW_SECS`]. A Worker may scan only
+    /// shortly after one, because it has no screen the user could be looking at.
+    pub fn recently_tapped(&self) -> bool {
+        self.renderer.published_within(USER_TAP_WINDOW_SECS)
     }
 
     /// Role-neutral services shared with the owning host runtime.
@@ -1384,7 +1395,7 @@ impl Contacts for ProductRuntimeHost {
     #[instrument(skip_all, fields(runtime.method = "contacts.pick"))]
     async fn pick(
         &self,
-        _cx: &CallContext,
+        cx: &CallContext,
         _request: HostContactsPickRequest,
     ) -> Result<HostContactsPickResponse, CallError<HostContactsPickError>> {
         let wrap = HostContactsPickError::V1;
@@ -1401,9 +1412,13 @@ impl Contacts for ProductRuntimeHost {
         // Read before the picker opens: a removal signalled while the user is
         // choosing must not be undone by caching their choice.
         let generation = self.services.contact_handles.generation();
-        let outcome = match platform
-            .pick_contact(&self.product)
+        let outcome = match until_cancelled(cx, platform.pick_contact(&self.product))
             .await
+            .map_err(|cancelled| {
+                CallError::Domain(wrap(v01::HostContactsPickError::Unknown {
+                    reason: cancelled.to_string(),
+                }))
+            })?
             .map_err(unknown)?
         {
             crate::platform::HostContactPick::Picked { account } => {
