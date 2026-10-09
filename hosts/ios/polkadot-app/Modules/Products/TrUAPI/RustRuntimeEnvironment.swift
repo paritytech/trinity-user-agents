@@ -45,10 +45,9 @@ struct RustRuntimeEnvironment {
     func makeSPAExecution(
         productId: ProductId,
         routers: ProductRoutersFacadeProtocol,
-        kind: ProductExecutionKind,
         cardFace: (any ExpandedCardFaceShowing)?
     ) throws -> ExecutionModel {
-        try makeExecution(productId: productId, routers: routers, purpose: .page(kind, cardFace: cardFace))
+        try makeExecution(productId: productId, routers: routers, purpose: .page(cardFace: cardFace))
     }
 
     /// Open `productId`'s one Worker execution. The core keeps a single Worker
@@ -71,9 +70,9 @@ struct RustRuntimeEnvironment {
 }
 
 /// What one execution serves, which decides the bridge the core calls back on.
-private enum ExecutionPurpose {
+enum ExecutionPurpose {
     /// A product's page, under the face of the Pocket card it was opened from, if any.
-    case page(ProductExecutionKind, cardFace: (any ExpandedCardFaceShowing)?)
+    case page(cardFace: (any ExpandedCardFaceShowing)?)
     /// The product's one worker, serving its chat bot and its Pocket cards.
     case worker(chatMessaging: any ProductChatMessaging, pocket: any PocketHostBridge)
 }
@@ -157,14 +156,17 @@ private extension RustRuntimeEnvironment {
     }
 }
 
-private extension ExecutionPurpose {
+extension ExecutionPurpose {
+    /// A page under a card's face is the product's widget, any other page its app.
     var executionKind: ProductExecutionKind {
         switch self {
-        case let .page(kind, _): kind
+        case let .page(cardFace): cardFace == nil ? .app : .widget
         case .worker: .worker
         }
     }
+}
 
+private extension ExecutionPurpose {
     var pocket: (any PocketHostBridge)? {
         guard case let .worker(_, pocket) = self else { return nil }
 
@@ -176,7 +178,7 @@ private extension ExecutionPurpose {
         dependencies: RustProductExecutionBridge.Dependencies
     ) -> (host: RustProductExecutionBridge, chat: RustChatExecutionBridge?) {
         switch self {
-        case let .page(_, cardFace):
+        case let .page(cardFace):
             return (RustProductExecutionBridge(dependencies: dependencies, cardFace: cardFace), nil)
         case let .worker(chatMessaging, _):
             let chat = RustChatExecutionBridge(dependencies: dependencies, chatMessaging: chatMessaging)
