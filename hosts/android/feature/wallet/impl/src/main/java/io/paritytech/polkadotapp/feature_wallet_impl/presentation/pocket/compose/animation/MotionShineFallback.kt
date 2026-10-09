@@ -86,7 +86,7 @@ private fun profileStops(colorAt: (Float) -> Color): Array<Pair<Float, Color>> =
 // Builds a CSS-style linear gradient along `axis` spanning the box, translated so that a `shift` in
 // the shader's normalised t-coordinate moves the colour band identically: t' = t + shift means the
 // gradient slides by -shift of its full length along the axis.
-internal fun axisGradient(
+private fun axisGradient(
     colorStops: Array<Pair<Float, Color>>,
     axis: Offset,
     size: Size,
