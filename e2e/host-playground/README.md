@@ -2,8 +2,8 @@
 
 Runs the public `host-playground` product inside the iOS and Android host apps and reports how each of its tests ended.
 
-- `tests.json` names the product, the host-playground commit the suite was written against, and the tests to run in order.
-- `page-runner.js` is injected into the product page by each driver and runs one test per call.
+- `tests.json` names the product, the host-playground commit the suite was written against, the tests to run in order, and under `knownFailures` the tests expected to fail for a reason outside the hosts, each with that reason. A known failure is reported apart and does not fail the run.
+- `page-runner.js` is injected into the product page by each driver and runs one test per call. A test that navigates within the product passes once the page reaches its destination.
 - `report.mjs` turns a run's `results.json` into `report.md` and a one-line summary.
 
 `.github/workflows/host-playground-e2e.yml` runs both platforms in CI once a day on main at 18:00 UTC, two hours before the nightlies, on a pull request when it carries the `host-playground-e2e` label (and on each push while it does), and by manual dispatch, signing in with the `E2E_ANDROID_MNEMONIC` and `E2E_IOS_MNEMONIC` test accounts and uploading each run's results and report.

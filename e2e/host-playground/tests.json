@@ -70,5 +70,8 @@
     "navigate-internal",
     "navigate-polkadot",
     "navigate-http"
-  ]
+  ],
+  "knownFailures": {
+    "contract-store-value-if-person": "peopl.paseo's manifest does not grant host-playground the context scope, so the host refuses the personhood proof"
+  }
 }

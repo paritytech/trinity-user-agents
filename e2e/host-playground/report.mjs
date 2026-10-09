@@ -7,18 +7,22 @@
 // playground marks as unsupported, permission-denied or precondition-missing
 // is counted apart from a failure, because it says what the host offers
 // rather than that something broke. A skip is a button that stayed disabled,
-// which is how the playground marks a test that only runs from a worker.
+// which is how the playground marks a test that only runs from a worker. A
+// failure `tests.json` lists under `knownFailures` is counted apart too, since
+// its cause lies outside the hosts.
 
 import { readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
 const NOT_A_FAILURE = new Set(["unsupported", "permission-denied", "precondition-missing"]);
+const KNOWN_FAILURES = JSON.parse(readFileSync(new URL("./tests.json", import.meta.url), "utf8")).knownFailures ?? {};
 
 /** The bucket a single result falls in. */
 export function classify(result) {
   if (result.status === "success") return "passed";
   if (result.status === "skipped") return "skipped";
   if (result.status === "error" && NOT_A_FAILURE.has(result.outcome)) return result.outcome;
+  if (Object.hasOwn(KNOWN_FAILURES, result.id)) return "known-failure";
   return "failed";
 }
 
