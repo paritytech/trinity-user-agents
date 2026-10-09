@@ -75,6 +75,7 @@ pub async fn offer_scripted_providers(
         providers.push(FundingProviderEntry {
             product_id: product_id.to_string(),
             worker_manifest: Some(SCRIPTED_PROVIDER_MANIFEST.to_string()),
+            bundled: false,
         });
     }
     runtime
