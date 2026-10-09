@@ -12,7 +12,6 @@ pub use allowance_renewal::StatementRenewalTarget;
 #[cfg(not(target_arch = "wasm32"))]
 pub use allowance_renewal::TrackedStatementRenewalTarget;
 
-use crate::runtime::WalletAuthorization;
 use std::sync::{Arc, Mutex};
 use truapi::latest::ProductAccountId;
 use zeroize::Zeroizing;
@@ -32,7 +31,7 @@ use crate::host_logic::sso::pairing::{
 use crate::platform::normalize_product_identifier;
 use crate::runtime::product_consent::ProductConsent;
 use crate::runtime::authority::{
-    AccountHolder, AuthorityError, AuthoritySession, AutoSigningGrant,
+    AccountHolder, AuthorityError, AuthoritySession,
     authority_session_validation_id,
 };
 use crate::runtime::statement_allowance::collection::PersonhoodCollection;
@@ -213,51 +212,6 @@ impl WalletAccountHolder {
         })
     }
 
-    /// Validate retained permission without accessing the host's grant cache.
-    fn auto_signing_status(
-        &self,
-        session: &AuthoritySession,
-        calling_product_id: &str,
-        account: &ProductAccountId,
-        authorization: Option<&WalletAuthorization>,
-    ) -> Result<AutoSigningGrant, AuthorityError> {
-        self.require_current_session(session)?;
-        if crate::runtime::authority::is_blessed_owner(
-            calling_product_id,
-            &account.dot_ns_identifier,
-        ) {
-            return Ok(AutoSigningGrant::Active);
-        }
-        let (Ok(caller), Ok(owner)) = (
-            normalize_product_identifier(calling_product_id),
-            normalize_product_identifier(&account.dot_ns_identifier),
-        ) else {
-            return Ok(AutoSigningGrant::Absent);
-        };
-        Ok(
-            if caller == owner
-                && authorization
-                    .is_some_and(|grant| self.authorization_matches(grant, session, &caller))
-            {
-                AutoSigningGrant::Active
-            } else {
-                AutoSigningGrant::Absent
-            },
-        )
-    }
-
-    fn authorization_matches(
-        &self,
-        authorization: &WalletAuthorization,
-        session: &AuthoritySession,
-        product_id: &str,
-    ) -> bool {
-        authorization
-            .issuer
-            .ptr_eq(&Arc::downgrade(&self.session_state))
-            && authorization.validation_id == session.validation_id
-            && authorization.product_id == product_id
-    }
 }
 
 impl WalletAccountHolder {

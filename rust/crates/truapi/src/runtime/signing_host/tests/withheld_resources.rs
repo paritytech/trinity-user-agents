@@ -68,15 +68,9 @@ fn withholding_nothing_leaves_every_resource_granted() {
     assert_eq!(
         (
             allocate(&runtime, vec![v01::AllocatableResource::AutoSigning]),
-            activation
-                .accounts()
-                .wallet_authorization(
-                    &activation.accounts().current_session().unwrap(),
-                    &ProductContext::new("myapp.dot".to_string()).unwrap()
-                )
-                .map(|authorization| authorization.is_some()),
+            keeps_auto_signing(&activation, "myapp.dot"),
         ),
-        (vec![v01::AllocationOutcome::Allocated], Ok(false)),
+        (vec![v01::AllocationOutcome::Allocated], false),
     );
 }
 

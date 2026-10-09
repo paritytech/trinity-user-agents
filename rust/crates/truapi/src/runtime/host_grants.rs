@@ -2,7 +2,7 @@
 
 use super::allowances::{self, AllowanceCacheKey, AllowanceResource, GrantScope};
 use super::authority::{
-    AccountGrant, AuthorityError, AuthoritySession, AutoSigningKey, BulletinAllowanceKey,
+    AccountGrant, AuthorityError, AutoSigningKey, BulletinAllowanceKey,
     StatementStoreAllowanceKey,
 };
 use super::product_subtree;
@@ -87,7 +87,6 @@ fn validate_auto_signing_key(
 struct GrantState {
     revision: u64,
     pending_deletions: Vec<CoreStorageKey>,
-    wallet_authorizations: HashMap<String, super::WalletAuthorization>,
 }
 
 impl GrantState {
@@ -539,6 +538,8 @@ impl HostGrantStore {
     }
 
     /// Validate and retain delegated signing authority for the selected session.
+    ///
+    /// A wallet's own host keeps it in memory for this activation; a paired host stores it.
     pub async fn remember_auto_signing_key(
         &self,
         session_state: &SessionState,
@@ -557,6 +558,20 @@ impl HostGrantStore {
         )?;
         let owner = AutoSigningOwner::from_session(session);
         let cache_key = (owner.clone(), product_id.to_string());
+        if session.sso.is_none() {
+            let kept = self.cache_auto_signing_key_if_current(
+                session_state,
+                session,
+                lifecycle_epoch,
+                cache_key,
+                key,
+            );
+            return if kept {
+                Ok(())
+            } else {
+                Err(AuthorityError::Disconnected)
+            };
+        }
         let _storage_guard = self.persistence().await;
         if !self.session_secret_allocation_is_current(session_state, session, lifecycle_epoch) {
             return Err(AuthorityError::Disconnected);
@@ -614,10 +629,6 @@ impl HostGrantStore {
         session: &SessionInfo,
         product_id: &str,
     ) -> Result<Option<AutoSigningKey>, AuthorityError> {
-        if session.sso.is_none() {
-            return Ok(None);
-        }
-
         let owner = AutoSigningOwner::from_session(session);
         let cache_key = (owner.clone(), product_id.to_string());
         if let Some(key) = self
@@ -628,6 +639,9 @@ impl HostGrantStore {
             .cloned()
         {
             return Ok(Some(key));
+        }
+        if session.sso.is_none() {
+            return Ok(None);
         }
 
         let _storage_guard = self.persistence().await;
@@ -776,7 +790,6 @@ impl HostGrantGuard<'_> {
     /// Revoke transient grants before replacing or locking the local wallet.
     pub fn clear_memory(&mut self) {
         self.advance();
-        self.state.wallet_authorizations.clear();
         self.store
             .statement_store_allowances
             .lock()
@@ -799,37 +812,9 @@ impl HostGrantGuard<'_> {
             .clear();
     }
 
-    /// Retain a receipt issued to this runtime's canonical wallet activation.
-    pub fn retain_wallet_authorization(
-        &mut self,
-        session_state: &Arc<SessionState>,
-        authority_session: &AuthoritySession,
-        revision: u64,
-        product_id: &str,
-        authorization: super::WalletAuthorization,
-    ) -> Result<(), AuthorityError> {
-        self.require_revision(revision)?;
-        if !authorization.issuer.ptr_eq(&Arc::downgrade(session_state))
-            || authorization.validation_id != authority_session.validation_id
-            || authorization.product_id != product_id
-        {
-            return Err(AuthorityError::Rejected);
-        }
-        self.state
-            .wallet_authorizations
-            .insert(product_id.to_string(), authorization);
-        Ok(())
-    }
-
-    /// Permission retained for the calling product in this activation.
-    pub fn wallet_authorization(&self, product_id: &str) -> Option<super::WalletAuthorization> {
-        self.state.wallet_authorizations.get(product_id).cloned()
-    }
-
     /// Invalidate one product without touching another product's wallet permission.
     pub fn revoke_product(&mut self, product_id: &str) {
         self.advance();
-        self.state.wallet_authorizations.remove(product_id);
         self.store
             .statement_store_allowances
             .lock()

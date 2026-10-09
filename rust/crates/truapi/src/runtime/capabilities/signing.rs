@@ -63,17 +63,12 @@ impl<H: AccountHolder> Signing for ProductRuntimeHost<H> {
             )));
         };
         inner.account.dot_ns_identifier = owner;
-        let authorization = self
-            .accounts
-            .wallet_authorization(&authority_session, &self.connection.product)
-            .map_err(|reason| signing_call_error(HostSignPayloadError::V1, reason))?;
         self.accounts
             .sign_payload(
                 &authority_session,
                 cx,
                 AccountCaller::Local {
                     product: &self.connection.product,
-                    authorization: authorization.as_ref(),
                 },
                 SignPayloadAuthorityRequest::Product(inner),
             )
@@ -163,17 +158,12 @@ impl<H: AccountHolder> Signing for ProductRuntimeHost<H> {
                 };
                 CallError::Domain(HostCreateTransactionError::V1(error))
             })?;
-        let authorization = self
-            .accounts
-            .wallet_authorization(&authority_session, &self.connection.product)
-            .map_err(|reason| transaction_call_error(HostCreateTransactionError::V1, reason))?;
         self.accounts
             .create_transaction(
                 &authority_session,
                 cx,
                 AccountCaller::Local {
                     product: &self.connection.product,
-                    authorization: authorization.as_ref(),
                 },
                 CreateTransactionAuthorityRequest::Product(inner),
             )
@@ -223,7 +213,6 @@ impl<H: AccountHolder> Signing for ProductRuntimeHost<H> {
                 cx,
                 AccountCaller::Local {
                     product: &self.connection.product,
-                    authorization: None,
                 },
                 SignPayloadAuthorityRequest::LegacyAccount {
                     product_account: v01::ProductAccountId {
@@ -311,7 +300,6 @@ impl<H: AccountHolder> Signing for ProductRuntimeHost<H> {
                 cx,
                 AccountCaller::Local {
                     product: &self.connection.product,
-                    authorization: None,
                 },
                 authority_request,
             )
@@ -368,17 +356,12 @@ impl<H: AccountHolder> ProductRuntimeHost<H> {
             )));
         };
         inner.account.dot_ns_identifier = owner;
-        let authorization = self
-            .accounts
-            .wallet_authorization(&authority_session, &self.connection.product)
-            .map_err(|reason| raw_signing_call_error(HostSignRawError::V1, reason))?;
         self.accounts
             .sign_raw(
                 &authority_session,
                 cx,
                 AccountCaller::Local {
                     product: &self.connection.product,
-                    authorization: authorization.as_ref(),
                 },
                 SignRawAuthorityRequest::Product(inner),
                 watermarked,
@@ -433,7 +416,6 @@ impl<H: AccountHolder> ProductRuntimeHost<H> {
                 cx,
                 AccountCaller::Local {
                     product: &self.connection.product,
-                    authorization: None,
                 },
                 authority_request,
                 watermarked,

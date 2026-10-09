@@ -1416,7 +1416,6 @@ async fn product_subtree_public_key<H: AccountHolder>(
             &cx,
             AccountCaller::Local {
                 product: &product,
-                authorization: None,
             },
             product_id,
         )

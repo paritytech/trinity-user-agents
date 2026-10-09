@@ -240,17 +240,6 @@ impl<H: AccountHolder> HostAccounts<H> {
         Ok((session, lifecycle.revision()))
     }
 
-    /// Wallet permission retained for this product and activation.
-    pub fn wallet_authorization(
-        &self,
-        authority_session: &AuthoritySession,
-        product: &ProductContext,
-    ) -> Result<Option<super::WalletAuthorization>, AuthorityError> {
-        Ok(self
-            .hold_session(authority_session)?
-            .wallet_authorization(&product.product_id))
-    }
-
     /// Canonical account owner authorized by the calling product's manifest grants.
     pub async fn authorized_product_account(
         &self,
@@ -331,7 +320,6 @@ impl<H: AccountHolder> HostAccounts<H> {
                 cx,
                 AccountCaller::Local {
                     product,
-                    authorization: None,
                 },
                 product_account_id.dot_ns_identifier.clone(),
             )
@@ -415,7 +403,6 @@ impl<H: AccountHolder> HostAccounts<H> {
                     session: authority_session,
                     caller: AccountCaller::Local {
                         product,
-                        authorization: None,
                     },
                 },
                 request,
@@ -485,15 +472,6 @@ impl<H: AccountHolder> HostAccounts<H> {
                     )
                     .await?;
             }
-            AccountGrant::WalletAuthorization(authorization) => self
-                .hold_session(authority_session)?
-                .retain_wallet_authorization(
-                    &self.session_state,
-                    authority_session,
-                    revision,
-                    &product.product_id,
-                    authorization,
-                )?,
             AccountGrant::AutoSigning(key) => {
                 let expected = self
                     .product_subtree_public_key(
@@ -501,7 +479,6 @@ impl<H: AccountHolder> HostAccounts<H> {
                         cx,
                         AccountCaller::Local {
                             product,
-                            authorization: None,
                         },
                         product.product_id.clone(),
                     )
@@ -560,7 +537,6 @@ impl<H: AccountHolder> HostAccounts<H> {
                     session: authority_session,
                     caller: AccountCaller::Local {
                         product: &product,
-                        authorization: None,
                     },
                 },
                 AllowanceResource::StatementStore,
@@ -621,7 +597,6 @@ impl<H: AccountHolder> HostAccounts<H> {
                     session: &authority_session,
                     caller: AccountCaller::Local {
                         product,
-                        authorization: None,
                     },
                 },
                 signer,
@@ -686,7 +661,6 @@ impl<H: AccountHolder> HostAccounts<H> {
                     session: authority_session,
                     caller: AccountCaller::Local {
                         product: &product,
-                        authorization: None,
                     },
                 },
                 AllowanceResource::Bulletin,
@@ -1302,7 +1276,6 @@ impl<H: AccountHolder + 'static> HostAccounts<H> {
                                 session: &authority_session,
                                 caller: AccountCaller::Local {
                                     product: &product,
-                                    authorization: None,
                                 },
                             },
                             request,

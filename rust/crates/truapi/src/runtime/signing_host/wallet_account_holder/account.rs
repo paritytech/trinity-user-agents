@@ -16,7 +16,7 @@ use crate::platform::{
 use crate::platform::ResourceAllocationReview;
 use crate::runtime::authority::{
     AccountCaller, AccountGrant, AccountGrantOutcome, AccountHolder, AccountInvocation,
-    AuthorityError, AuthoritySession, AutoSigningGrant, AutoSigningKey, BulletinAllowanceKey,
+    AuthorityError, AuthoritySession, AutoSigningKey, BulletinAllowanceKey,
     CreateTransactionAuthorityRequest, SignPayloadAuthorityRequest, SignRawAuthorityRequest,
     StatementStoreAllowanceKey,
 };
@@ -25,7 +25,7 @@ use crate::runtime::signing_host::ring_vrf::{
 };
 use crate::runtime::statement_allowance::collection::PersonhoodCollection;
 use crate::runtime::vrf::{self, Vrf};
-use crate::runtime::{WalletAuthorization, allowances::AllowanceResource};
+use crate::runtime::allowances::AllowanceResource;
 use crate::runtime::{
     remote_authority_call, remote_authority_context, until_cancelled, validate_vrf_transcript,
 };
@@ -33,7 +33,6 @@ use futures::{
     StreamExt,
     stream::{self, BoxStream},
 };
-use std::sync::Arc;
 use truapi::latest as api;
 use truapi::latest::{
     ChainIdentifier, DerivationIndex, HostAccountCreateProofRequest, HostAccountGetAliasRequest,
@@ -89,26 +88,6 @@ impl WalletAccountHolder {
                 }
                 Ok(keypair)
             }
-        }
-    }
-
-    fn invocation_auto_signing(
-        &self,
-        invocation: &AccountInvocation<'_>,
-        account: &ProductAccountId,
-    ) -> Result<bool, AuthorityError> {
-        match invocation.caller {
-            AccountCaller::Local {
-                product,
-                authorization,
-                ..
-            } => Ok(self.auto_signing_status(
-                invocation.session,
-                &product.product_id,
-                account,
-                authorization,
-            )? == AutoSigningGrant::Active),
-            AccountCaller::Remote { .. } => Ok(false),
         }
     }
 
@@ -378,29 +357,11 @@ impl AccountHolder for WalletAccountHolder {
                         }
                         api::AllocatableResource::AutoSigning => self
                             .with_keys::<_, AuthorityError>(invocation.session, |keys| {
-                                Ok(match invocation.caller {
-                                    AccountCaller::Local { .. } => {
-                                        let product_id = normalize_product_identifier(product_id)
-                                            .map_err(|error| {
-                                            AuthorityError::Unavailable {
-                                                reason: error.to_string(),
-                                            }
-                                        })?;
-                                        keys.product_subtree_public_key(&product_id)?;
-                                        AccountGrant::WalletAuthorization(WalletAuthorization {
-                                            issuer: Arc::downgrade(&self.session_state),
-                                            validation_id: invocation.session.validation_id.clone(),
-                                            product_id,
-                                        })
-                                    }
-                                    AccountCaller::Remote { .. } => {
-                                        AccountGrant::AutoSigning(AutoSigningKey::from_parts(
-                                            keys.product_subtree_secret(product_id)?,
-                                            keys.ring_vrf_domain_entropy(product_id)
-                                                .map_err(product_authority_error)?,
-                                        ))
-                                    }
-                                })
+                                Ok(AccountGrant::AutoSigning(AutoSigningKey::from_parts(
+                                    keys.product_subtree_secret(product_id)?,
+                                    keys.ring_vrf_domain_entropy(product_id)
+                                        .map_err(product_authority_error)?,
+                                )))
                             })?,
                     };
                     Ok(grant)
@@ -518,24 +479,22 @@ impl AccountHolder for WalletAccountHolder {
         self.with_keys(session, |keys| {
             keys.product_keypair(&request.account).map(|_| ())
         })?;
-        if !self.invocation_auto_signing(&invocation, &request.account)? {
-            self.consent
-                .review(
-                    invocation.call,
-                    invocation.caller,
-                    UserConfirmationReview::SignVrf(SignVrfReview {
-                        calling_product_id: calling_product_id.to_string(),
-                        request: request.clone(),
-                    }),
-                )
-                .await
-                .map_err(|error| match error {
-                    AuthorityError::ConfirmationFailed(err) => AuthorityError::Unknown {
-                        reason: format!("VRF signing confirmation failed: {err:?}"),
-                    },
-                    error => error,
-                })?;
-        }
+        self.consent
+            .review(
+                invocation.call,
+                invocation.caller,
+                UserConfirmationReview::SignVrf(SignVrfReview {
+                    calling_product_id: calling_product_id.to_string(),
+                    request: request.clone(),
+                }),
+            )
+            .await
+            .map_err(|error| match error {
+                AuthorityError::ConfirmationFailed(err) => AuthorityError::Unknown {
+                    reason: format!("VRF signing confirmation failed: {err:?}"),
+                },
+                error => error,
+            })?;
         self.with_keys(session, |keys| {
             let keypair = keys.product_keypair(&request.account)?;
             let (pre_output, proof) = crate::dynamic_vrf::sign_dynamic_vrf(
@@ -556,21 +515,13 @@ impl AccountHolder for WalletAccountHolder {
         request: SignPayloadAuthorityRequest,
     ) -> Result<api::HostSignPayloadResponse, AuthorityError> {
         self.require_current_session(invocation.session)?;
-        let granted = match &request {
-            SignPayloadAuthorityRequest::Product(request) => {
-                self.invocation_auto_signing(&invocation, &request.account)?
-            }
-            _ => false,
-        };
-        if !granted {
-            self.consent
-                .review(
-                    invocation.call,
-                    invocation.caller,
-                    request.review(invocation.caller),
-                )
-                .await?;
-        }
+        self.consent
+            .review(
+                invocation.call,
+                invocation.caller,
+                request.review(invocation.caller),
+            )
+            .await?;
         let cx = match invocation.caller {
             AccountCaller::Local { .. } => remote_authority_context(invocation.call),
             AccountCaller::Remote { .. } => invocation.call.clone(),
@@ -602,21 +553,13 @@ impl AccountHolder for WalletAccountHolder {
         watermarked: bool,
     ) -> Result<api::HostSignPayloadResponse, AuthorityError> {
         self.require_current_session(invocation.session)?;
-        let granted = match &request {
-            SignRawAuthorityRequest::Product(request) if watermarked => {
-                self.invocation_auto_signing(&invocation, &request.account)?
-            }
-            _ => false,
-        };
-        if !granted {
-            self.consent
-                .review(
-                    invocation.call,
-                    invocation.caller,
-                    request.review(invocation.caller, watermarked),
-                )
-                .await?;
-        }
+        self.consent
+            .review(
+                invocation.call,
+                invocation.caller,
+                request.review(invocation.caller, watermarked),
+            )
+            .await?;
         let cx = match invocation.caller {
             AccountCaller::Local { .. } => remote_authority_context(invocation.call),
             AccountCaller::Remote { .. } => invocation.call.clone(),
@@ -647,22 +590,13 @@ impl AccountHolder for WalletAccountHolder {
         request: CreateTransactionAuthorityRequest,
     ) -> Result<api::HostCreateTransactionResponse, AuthorityError> {
         self.require_current_session(invocation.session)?;
-        let granted = match &request {
-            CreateTransactionAuthorityRequest::Product(payload) => {
-                self.invocation_auto_signing(&invocation, &payload.signer)?
-                    && payload.contacts.is_empty()
-            }
-            _ => false,
-        };
-        if !granted {
-            self.consent
-                .review(
-                    invocation.call,
-                    invocation.caller,
-                    request.review(invocation.caller),
-                )
-                .await?;
-        }
+        self.consent
+            .review(
+                invocation.call,
+                invocation.caller,
+                request.review(invocation.caller),
+            )
+            .await?;
         let cx = match invocation.caller {
             AccountCaller::Local { .. } => remote_authority_context(invocation.call),
             AccountCaller::Remote { .. } => invocation.call.clone(),

@@ -87,7 +87,6 @@ impl<H: AccountHolder> Account for ProductRuntimeHost<H> {
                 &cx,
                 AccountCaller::Local {
                     product: &self.connection.product,
-                    authorization: None,
                 },
                 request,
             ),
@@ -125,7 +124,6 @@ impl<H: AccountHolder> Account for ProductRuntimeHost<H> {
                 &cx,
                 AccountCaller::Local {
                     product: &self.connection.product,
-                    authorization: None,
                 },
                 request,
             )
@@ -157,7 +155,6 @@ impl<H: AccountHolder> Account for ProductRuntimeHost<H> {
                 &cx,
                 AccountCaller::Local {
                     product: &self.connection.product,
-                    authorization: None,
                 },
                 request,
             ),
@@ -199,7 +196,6 @@ impl<H: AccountHolder> Account for ProductRuntimeHost<H> {
                 &cx,
                 AccountCaller::Local {
                     product: &self.connection.product,
-                    authorization: None,
                 },
                 request,
             ),
@@ -240,7 +236,6 @@ impl<H: AccountHolder> Account for ProductRuntimeHost<H> {
                 &cx,
                 AccountCaller::Local {
                     product: &self.connection.product,
-                    authorization: None,
                 },
                 request,
             )
@@ -275,10 +270,6 @@ impl<H: AccountHolder> Account for ProductRuntimeHost<H> {
                 v01::HostAccountSignVrfError::NotConnected,
             )));
         };
-        let authorization = self
-            .accounts
-            .wallet_authorization(&authority_session, &self.connection.product)
-            .map_err(|error| CallError::Domain(HostAccountSignVrfError::V1(error.into())))?;
         let cx = remote_authority_context(cx);
         remote_authority_call(
             &cx,
@@ -287,7 +278,6 @@ impl<H: AccountHolder> Account for ProductRuntimeHost<H> {
                 &cx,
                 AccountCaller::Local {
                     product: &self.connection.product,
-                    authorization: authorization.as_ref(),
                 },
                 request,
             ),

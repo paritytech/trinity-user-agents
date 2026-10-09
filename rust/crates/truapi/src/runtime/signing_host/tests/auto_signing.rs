@@ -258,13 +258,7 @@ fn direct_allocation_cannot_authorize_signing_without_wallet_approval() {
         &ProductContext::new("myapp.dot".to_string()).unwrap(),
         request.clone(),
     ));
-    let grant = authority
-        .accounts()
-        .wallet_authorization(
-            &authority.accounts().current_session().unwrap(),
-            &ProductContext::new("myapp.dot".to_string()).unwrap(),
-        )
-        .map(|authorization| authorization.is_some());
+    let grant = keeps_auto_signing(&authority, "myapp.dot");
     assert_eq!(
         (
             result,
@@ -275,7 +269,7 @@ fn direct_allocation_cannot_authorize_signing_without_wallet_approval() {
             Ok(truapi::latest::HostRequestResourceAllocationResponse {
                 outcomes: vec![truapi::latest::AllocationOutcome::Rejected],
             }),
-            Ok(false),
+            false,
             vec![crate::platform::ResourceAllocationReview {
                 calling_product_id: "myapp.dot".to_string(),
                 resources: request.resources,
@@ -319,22 +313,10 @@ fn cancelling_a_later_resource_keeps_the_first_native_authorization() {
             .poll(&mut Context::from_waker(&futures::task::noop_waker())),
         Poll::Pending,
     );
-    let retained_before_cancel = authority
-        .accounts()
-        .wallet_authorization(
-            &authority.accounts().current_session().unwrap(),
-            &ProductContext::new("myapp.dot".to_string()).unwrap(),
-        )
-        .map(|authorization| authorization.is_some());
+    let retained_before_cancel = keeps_auto_signing(&authority, "myapp.dot");
     cancel.cancel();
     let result = futures::executor::block_on(allocation);
-    let retained_after_cancel = authority
-        .accounts()
-        .wallet_authorization(
-            &authority.accounts().current_session().unwrap(),
-            &ProductContext::new("myapp.dot".to_string()).unwrap(),
-        )
-        .map(|authorization| authorization.is_some());
+    let retained_after_cancel = keeps_auto_signing(&authority, "myapp.dot");
     assert_eq!(
         (result, retained_before_cancel, retained_after_cancel),
         (
@@ -344,8 +326,8 @@ fn cancelling_a_later_resource_keeps_the_first_native_authorization() {
                         .to_string(),
                 }
             ))),
-            Ok(true),
-            Ok(true),
+            true,
+            true,
         ),
     );
 }

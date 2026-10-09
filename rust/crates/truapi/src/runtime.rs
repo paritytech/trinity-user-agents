@@ -58,14 +58,6 @@ use authority::AuthorityCancelError;
 pub use authority::{
     AccountCaller, AccountHolder, AuthorityError, AuthoritySession, BulletinAllowanceKey,
 };
-/// Wallet-issued permission for one product during one activation.
-#[derive(Clone)]
-pub struct WalletAuthorization {
-    issuer: std::sync::Weak<crate::host_logic::session::SessionState>,
-    validation_id: Vec<u8>,
-    product_id: String,
-}
-
 pub use chat::chat_platform_for;
 pub use contacts::ContactResolutionError;
 

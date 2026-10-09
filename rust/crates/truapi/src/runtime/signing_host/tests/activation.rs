@@ -178,13 +178,7 @@ fn product_reset_during_allocation_review_cannot_restore_native_grants() {
     authority.clear_product_state("myapp.dot").unwrap();
     release.send(()).unwrap();
     let result = futures::executor::block_on(allocation);
-    let status = authority
-        .accounts()
-        .wallet_authorization(
-            &authority.accounts().current_session().unwrap(),
-            &ProductContext::new("myapp.dot".to_string()).unwrap(),
-        )
-        .map(|authorization| authorization.is_some());
+    let status = keeps_auto_signing(&authority, "myapp.dot");
     assert_eq!(
         (
             result.map(|_| ()),
@@ -199,7 +193,7 @@ fn product_reset_during_allocation_review_cannot_restore_native_grants() {
                     }
                 )
             )),
-            Ok(false),
+            false,
             1
         ),
     );
@@ -227,7 +221,6 @@ fn wallet_change_during_ring_preparation_rejects_the_alias() {
                 session: &session,
                 caller: AccountCaller::Local {
                     product: &product,
-                    authorization: None,
                 },
             },
             HostAccountGetAliasRequest {

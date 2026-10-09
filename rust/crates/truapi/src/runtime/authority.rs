@@ -2,7 +2,6 @@
 //!
 //! Caller origin separates local host permissions from remote wallet consent.
 
-use super::WalletAuthorization;
 use crate::platform::ProductContext;
 use async_trait::async_trait;
 use truapi::latest::{
@@ -43,8 +42,6 @@ pub enum AccountCaller<'a> {
     Local {
         /// Product bound by the host runtime.
         product: &'a ProductContext,
-        /// Wallet-issued permission retained by this host.
-        authorization: Option<&'a WalletAuthorization>,
     },
     /// Product identity reported by an authenticated paired host.
     Remote {
@@ -57,7 +54,7 @@ impl AccountCaller<'_> {
     /// Product named by this invocation, when the transport supplied one.
     pub fn product_id(&self) -> Option<&str> {
         match self {
-            Self::Local { product, .. } => Some(&product.product_id),
+            Self::Local { product } => Some(&product.product_id),
             Self::Remote { product_id } => *product_id,
         }
     }
@@ -392,24 +389,6 @@ impl CreateTransactionAuthorityRequest {
     }
 }
 
-/// Whether blessed `calling_product_id` is using its own account, `owner`.
-pub fn is_blessed_owner(calling_product_id: &str, owner: &str) -> bool {
-    use crate::platform::{has_trusted_remote_permissions, normalize_product_identifier};
-    normalize_product_identifier(calling_product_id).is_ok_and(|caller| {
-        has_trusted_remote_permissions(&caller)
-            && normalize_product_identifier(owner).is_ok_and(|owner| owner == caller)
-    })
-}
-
-/// Whether a product-account call can be signed without a confirmation prompt.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum AutoSigningGrant {
-    /// Covered: the authority already holds the signing keys and raises no prompt.
-    Active,
-    /// Not covered: the caller must obtain user consent.
-    Absent,
-}
-
 /// Statement-store allowance signing material held by the authority layer.
 #[derive(Clone, PartialEq, Eq, zeroize::Zeroize, zeroize::ZeroizeOnDrop)]
 pub struct StatementStoreAllowanceKey {
@@ -453,8 +432,6 @@ pub enum AccountGrant {
     SmartContract,
     /// Exported product signing material.
     AutoSigning(AutoSigningKey),
-    /// Wallet permission without exported signing material.
-    WalletAuthorization(WalletAuthorization),
 }
 
 /// One resource result in an otherwise valid allocation batch.

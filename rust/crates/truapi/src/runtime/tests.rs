@@ -7625,7 +7625,6 @@ fn host_accounts_refuse_a_foreign_ring_vrf_key_without_a_grant() {
         &CallContext::default(),
         AccountCaller::Local {
             product: &ProductContext::new("dim2.dot".to_string()).unwrap(),
-            authorization: None,
         },
         v01::HostAccountCreateProofRequest {
             key_handle: v01::ProductAccountId {
@@ -7651,7 +7650,6 @@ fn host_accounts_refuse_a_foreign_ring_vrf_key_without_a_grant() {
         &CallContext::default(),
         AccountCaller::Local {
             product: &ProductContext::new("dim2.dot".to_string()).unwrap(),
-            authorization: None,
         },
         v01::HostAccountRingVrfSignRequest {
             key_handle: v01::ProductAccountId {

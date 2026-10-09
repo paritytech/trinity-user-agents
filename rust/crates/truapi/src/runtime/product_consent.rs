@@ -12,7 +12,8 @@ use crate::host_internal::product_manifest::bare_product_label;
 use crate::platform::{
     AccountAccessReview, CreateTransactionReview, PermissionAuthorizationStatus,
     PermissionDecision, Platform, SignPayloadReview, SignRawReview, UserConfirmationReview,
-    has_trusted_remote_permissions, normalizes_to_trusted_remote_permissions,
+    has_trusted_remote_permissions, normalize_product_identifier,
+    normalizes_to_trusted_remote_permissions,
 };
 
 /// One runtime's consent policy: one prompt channel, one store, one set of rules.
@@ -152,7 +153,7 @@ pub enum AccountAccessError {
 
 /// Reviews a product bound by this host may skip; a paired caller never skips one.
 fn skips_review(caller: AccountCaller<'_>, review: &UserConfirmationReview) -> bool {
-    let AccountCaller::Local { product, .. } = caller else {
+    let AccountCaller::Local { product } = caller else {
         return false;
     };
     let first_party = has_trusted_remote_permissions(&product.product_id);
@@ -163,6 +164,11 @@ fn skips_review(caller: AccountCaller<'_>, review: &UserConfirmationReview) -> b
         | UserConfirmationReview::ResourceAllocation(_) => first_party,
         UserConfirmationReview::StatementStoreProductSign(review) => {
             first_party || review.account.dot_ns_identifier == product.product_id
+        }
+        UserConfirmationReview::SignVrf(review) => {
+            first_party
+                && normalize_product_identifier(&review.request.account.dot_ns_identifier)
+                    .is_ok_and(|owner| owner == product.product_id)
         }
         _ => false,
     }

@@ -462,6 +462,14 @@ mod tests {
         )
     }
 
+    /// Whether this host keeps an AutoSigning key for `product_id` in this activation.
+    fn keeps_auto_signing(authority: &SigningHostRole, product_id: &str) -> bool {
+        let session = authority.session_state().current().expect("an active wallet");
+        futures::executor::block_on(authority.grants.auto_signing_key(&session, product_id))
+            .expect("kept keys are readable")
+            .is_some()
+    }
+
     fn vrf_request(product_id: &str) -> v01::HostAccountSignVrfRequest {
         v01::HostAccountSignVrfRequest {
             account: v01::ProductAccountId {
@@ -691,7 +699,6 @@ mod tests {
                     session: &session,
                     caller: AccountCaller::Local {
                         product: &ProductContext::new(caller.to_string()).unwrap(),
-                        authorization: None,
                     },
                 },
                 v01::HostAccountGetAliasRequest {
@@ -761,7 +768,6 @@ mod tests {
                     session: &session,
                     caller: AccountCaller::Local {
                         product: &ProductContext::new(caller.to_string()).unwrap(),
-                        authorization: None,
                     },
                 },
                 v01::HostAccountCreateProofRequest {
@@ -783,7 +789,6 @@ mod tests {
                     session: &session,
                     caller: AccountCaller::Local {
                         product: &ProductContext::new(caller.to_string()).unwrap(),
-                        authorization: None,
                     },
                 },
                 v01::HostAccountCreateProofRequest {
@@ -866,7 +871,6 @@ mod tests {
                 session: &session,
                 caller: AccountCaller::Local {
                     product: &ProductContext::new("PEOPL.DOT".to_string()).unwrap(),
-                    authorization: None,
                 },
             },
             v01::HostAccountListRingVrfKeysRequest {
@@ -920,7 +924,6 @@ mod tests {
                 session: &session,
                 caller: AccountCaller::Local {
                     product: &ProductContext::new("peopl.paseo".to_string()).unwrap(),
-                    authorization: None,
                 },
             },
             v01::HostAccountCreateProofRequest {
@@ -966,7 +969,6 @@ mod tests {
                     session: &session,
                     caller: AccountCaller::Local {
                         product: &ProductContext::new("dim2.dot".to_string()).unwrap(),
-                        authorization: None,
                     },
                 },
                 v01::HostAccountCreateProofRequest {
@@ -1104,7 +1106,6 @@ mod tests {
                     session: &session,
                     caller: AccountCaller::Local {
                         product: &ProductContext::new(caller.to_string()).unwrap(),
-                        authorization: None,
                     },
                 },
                 v01::HostAccountGetAliasRequest {
@@ -1552,7 +1553,6 @@ mod tests {
                 session: &session,
                 caller: AccountCaller::Local {
                     product: &ProductContext::new("dim2.dot".to_string()).unwrap(),
-                    authorization: None,
                 },
             },
             v01::HostAccountCreateProofRequest {
@@ -1606,7 +1606,6 @@ mod tests {
                 session,
                 caller: AccountCaller::Local {
                     product: &ProductContext::new("peopl.dot".to_string()).unwrap(),
-                    authorization: None,
                 },
             },
             HostAccountRegisterRingVrfKeyRequest {
@@ -1642,7 +1641,6 @@ mod tests {
                 session: &session,
                 caller: AccountCaller::Local {
                     product: &ProductContext::new("peopl.dot".to_string()).unwrap(),
-                    authorization: None,
                 },
             },
             HostAccountGetAliasRequest {
@@ -1658,7 +1656,6 @@ mod tests {
                 session: &session,
                 caller: AccountCaller::Local {
                     product: &ProductContext::new("peopl.dot".to_string()).unwrap(),
-                    authorization: None,
                 },
             },
             HostAccountCreateProofRequest {
@@ -1696,7 +1693,6 @@ mod tests {
                 session: &session,
                 caller: AccountCaller::Local {
                     product: &ProductContext::new("peopl.dot".to_string()).unwrap(),
-                    authorization: None,
                 },
             },
             HostAccountGetAliasRequest {
@@ -1748,7 +1744,6 @@ mod tests {
                 session: &session,
                 caller: AccountCaller::Local {
                     product: &ProductContext::new("myapp.dot".to_string()).unwrap(),
-                    authorization: None,
                 },
             },
             HostAccountRingVrfSignRequest {
@@ -1789,7 +1784,6 @@ mod tests {
                 session: &session,
                 caller: AccountCaller::Local {
                     product: &ProductContext::new("myapp.dot".to_string()).unwrap(),
-                    authorization: None,
                 },
             },
             HostAccountGetAliasRequest {
@@ -1806,7 +1800,6 @@ mod tests {
                 session: &session,
                 caller: AccountCaller::Local {
                     product: &ProductContext::new("myapp.dot".to_string()).unwrap(),
-                    authorization: None,
                 },
             },
             HostAccountCreateProofRequest {
@@ -1861,7 +1854,6 @@ mod tests {
                 session: &session,
                 caller: AccountCaller::Local {
                     product: &ProductContext::new(request.calling_product_id.clone()).unwrap(),
-                    authorization: None,
                 },
             },
             request.payload.clone(),
@@ -1873,7 +1865,6 @@ mod tests {
                 session: &session,
                 caller: AccountCaller::Local {
                     product: &ProductContext::new(request.calling_product_id.clone()).unwrap(),
-                    authorization: None,
                 },
             },
             request.payload,
@@ -1971,7 +1962,6 @@ mod tests {
                 session: &session,
                 caller: AccountCaller::Local {
                     product: &ProductContext::new("myapp.dot".to_string()).unwrap(),
-                    authorization: None,
                 },
             },
             request,
@@ -2021,29 +2011,19 @@ mod tests {
             1,
         );
 
-        let authorization = authority
-            .accounts()
-            .wallet_authorization(
-                &authority.accounts().current_session().unwrap(),
-                &ProductContext::new("myapp.dot".to_string()).unwrap(),
-            )
-            .unwrap();
         let session = authority
-            .account_holder()
+            .accounts()
             .current_session()
             .expect("active session");
-        futures::executor::block_on(authority.account_holder().sign_vrf(
-            AccountInvocation {
-                call: &CallContext::default(),
-                session: &session,
-                caller: AccountCaller::Local {
-                    product: &ProductContext::new("myapp.dot".to_string()).unwrap(),
-                    authorization: authorization.as_ref(),
-                },
+        futures::executor::block_on(authority.accounts().sign_vrf(
+            &session,
+            &CallContext::default(),
+            AccountCaller::Local {
+                product: &ProductContext::new("myapp.dot".to_string()).unwrap(),
             },
             vrf_request("myapp.dot"),
         ))
-        .expect("granted product signs without another confirmation");
+        .expect("granted product signs with its kept key");
         assert!(
             platform
                 .sign_vrf_reviews
@@ -2053,14 +2033,11 @@ mod tests {
             "the allocation grant bypasses only the subsequent VRF prompt",
         );
 
-        let error = futures::executor::block_on(authority.account_holder().sign_vrf(
-            AccountInvocation {
-                call: &CallContext::default(),
-                session: &session,
-                caller: AccountCaller::Local {
-                    product: &ProductContext::new("other.dot".to_string()).unwrap(),
-                    authorization: None,
-                },
+        let error = futures::executor::block_on(authority.accounts().sign_vrf(
+            &session,
+            &CallContext::default(),
+            AccountCaller::Local {
+                product: &ProductContext::new("other.dot".to_string()).unwrap(),
             },
             vrf_request("myapp.dot"),
         ))
@@ -2091,47 +2068,38 @@ mod tests {
                 product,
             ));
         }
-        let authorization = authority
-            .accounts()
-            .wallet_authorization(
-                &authority_session,
-                &ProductContext::new("myapp.dot".to_string()).unwrap(),
-            )
-            .unwrap()
-            .unwrap();
+        let wallet_session = authority.session_state().current().unwrap();
+        let key = futures::executor::block_on(
+            authority
+                .grants
+                .auto_signing_key(&wallet_session, "myapp.dot"),
+        )
+        .unwrap()
+        .unwrap();
+        let root = derive_root_keypair_from_entropy(&ENTROPY).unwrap();
+        let subtree = crate::host_logic::product_account::derive_product_subtree_keypair(
+            &root,
+            "myapp.dot",
+        )
+        .unwrap();
         authority.clear_product_state("myapp.dot").unwrap();
         let current_session = authority.account_holder().current_session().unwrap();
-        let own = authority
-            .accounts()
-            .wallet_authorization(
-                &authority.accounts().current_session().unwrap(),
-                &ProductContext::new("myapp.dot".to_string()).unwrap(),
-            )
-            .map(|authorization| authorization.is_some());
-        let other = authority
-            .accounts()
-            .wallet_authorization(
-                &authority.accounts().current_session().unwrap(),
-                &ProductContext::new("other.dot".to_string()).unwrap(),
-            )
-            .map(|authorization| authorization.is_some());
+        let own = keeps_auto_signing(&authority, "myapp.dot");
+        let other = keeps_auto_signing(&authority, "other.dot");
+        let stale = futures::executor::block_on(authority.grants.remember_auto_signing_key(
+            &authority.session_state(),
+            &wallet_session,
+            revision,
+            "myapp.dot",
+            subtree.public.to_bytes(),
+            key,
+        ));
         assert_eq!(
-            (
-                current_session,
-                own,
-                other,
-                authority.grants.lifecycle().retain_wallet_authorization(
-                    &authority.session_state(),
-                    &authority_session,
-                    revision,
-                    "myapp.dot",
-                    authorization,
-                )
-            ),
+            (current_session, own, other, stale),
             (
                 authority_session.clone(),
-                Ok(false),
-                Ok(true),
+                false,
+                true,
                 Err(AuthorityError::Disconnected)
             ),
         );
@@ -2148,17 +2116,7 @@ mod tests {
             futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
                 .unwrap();
             auto_signing::grant_auto_signing(&product_runtime(services, authority.clone()));
-            let product = ProductContext::new("myapp.dot".to_string()).unwrap();
-            assert!(
-                authority
-                    .accounts()
-                    .wallet_authorization(
-                        &authority.accounts().current_session().unwrap(),
-                        &product
-                    )
-                    .unwrap()
-                    .is_some()
-            );
+            assert!(keeps_auto_signing(&authority, "myapp.dot"));
 
             let entropy = if disconnect {
                 futures::executor::block_on(authority.disconnect());
@@ -2167,15 +2125,8 @@ mod tests {
                 vec![0xCD; 16]
             };
             futures::executor::block_on(authority.activate_local_session(entropy)).unwrap();
-            assert_eq!(
-                authority
-                    .accounts()
-                    .wallet_authorization(
-                        &authority.accounts().current_session().unwrap(),
-                        &product
-                    )
-                    .map(|authorization| authorization.is_some()),
-                Ok(false),
+            assert!(
+                !keeps_auto_signing(&authority, "myapp.dot"),
                 "disconnect: {disconnect}",
             );
         }
@@ -2212,18 +2163,14 @@ mod tests {
         assert_eq!(
             (
                 error,
-                authority
-                    .accounts()
-                    .wallet_authorization(
-                        &authority.accounts().current_session().unwrap(),
-                        &ProductContext::new("myapp.dot".to_string()).unwrap(),
-                    )
-                    .map(|authorization| authorization.is_some()),
+                keeps_auto_signing(&authority, "myapp.dot"),
             ),
-            (AuthorityError::Disconnected, Ok(false)),
+            (AuthorityError::Disconnected, false),
         );
     }
 
+    /// A wallet's own host keeps AutoSigning keys in memory for one activation, so
+    /// another runtime over the same wallet and storage starts without them.
     #[test]
     fn auto_signing_grant_does_not_cross_runtime_instance() {
         let platform = Arc::new(StubPlatform {
@@ -2246,35 +2193,12 @@ mod tests {
         let (_replacement_services, replacement) = signing_runtime_with_platform(platform);
         futures::executor::block_on(replacement.activate_local_session(ENTROPY.to_vec()))
             .expect("replacement runtime activates with the same root");
-        let authorization = granting_authority
-            .accounts()
-            .wallet_authorization(
-                &granting_authority.accounts().current_session().unwrap(),
-                &ProductContext::new("myapp.dot".to_string()).unwrap(),
-            )
-            .unwrap()
-            .unwrap();
-        let authority_session = replacement.accounts().current_session().unwrap();
-        let revision = replacement.grants.lifecycle().revision();
-        let retained = replacement.grants.lifecycle().retain_wallet_authorization(
-            &replacement.session_state(),
-            &authority_session,
-            revision,
-            "myapp.dot",
-            authorization,
-        );
         assert_eq!(
             (
-                retained,
-                replacement
-                    .accounts()
-                    .wallet_authorization(
-                        &replacement.accounts().current_session().unwrap(),
-                        &ProductContext::new("myapp.dot".to_string()).unwrap(),
-                    )
-                    .map(|authorization| authorization.is_some()),
+                keeps_auto_signing(&granting_authority, "myapp.dot"),
+                keeps_auto_signing(&replacement, "myapp.dot"),
             ),
-            (Err(AuthorityError::Rejected), Ok(false)),
+            (true, false),
         );
     }
 
@@ -2310,7 +2234,6 @@ mod tests {
                     session: &session,
                     caller: AccountCaller::Local {
                         product: &ProductContext::new("myapp.dot".to_string()).unwrap(),
-                        authorization: None,
                     },
                 },
                 SignPayloadAuthorityRequest::Product(v01::HostSignPayloadRequest {
@@ -2356,7 +2279,6 @@ mod tests {
                 session: &session,
                 caller: AccountCaller::Local {
                     product: &ProductContext::new("myapp.dot".to_string()).unwrap(),
-                    authorization: None,
                 },
             },
             SignPayloadAuthorityRequest::LegacyAccount {
@@ -2406,7 +2328,6 @@ mod tests {
                 session: &session,
                 caller: AccountCaller::Local {
                     product: &ProductContext::new("myapp.dot".to_string()).unwrap(),
-                    authorization: None,
                 },
             },
             request(identity.public.to_bytes()),
@@ -2427,7 +2348,6 @@ mod tests {
                 session: &session,
                 caller: AccountCaller::Local {
                     product: &ProductContext::new("myapp.dot".to_string()).unwrap(),
-                    authorization: None,
                 },
             },
             request([0xff; 32]),
@@ -2500,7 +2420,6 @@ mod tests {
                 session: &session,
                 caller: AccountCaller::Local {
                     product: &ProductContext::new("myapp.dot".to_string()).unwrap(),
-                    authorization: None,
                 },
             },
             CreateTransactionAuthorityRequest::Product(tx_payload(0)),
@@ -2543,7 +2462,6 @@ mod tests {
                 session: &session,
                 caller: AccountCaller::Local {
                     product: &ProductContext::new("myapp.dot".to_string()).unwrap(),
-                    authorization: None,
                 },
             },
             request,
@@ -2571,7 +2489,6 @@ mod tests {
                 session: &stale_session,
                 caller: AccountCaller::Local {
                     product: &ProductContext::new("myapp.dot".to_string()).unwrap(),
-                    authorization: None,
                 },
             },
             CreateTransactionAuthorityRequest::Product(tx_payload(0)),
@@ -2701,7 +2618,6 @@ mod tests {
                 session: &stale,
                 caller: AccountCaller::Local {
                     product: &ProductContext::new("myapp.dot".to_string()).unwrap(),
-                    authorization: None,
                 },
             },
             SignRawAuthorityRequest::Product(request),
@@ -2738,7 +2654,6 @@ mod tests {
                 session: &session,
                 caller: AccountCaller::Local {
                     product: &ProductContext::new("myapp.dot".to_string()).unwrap(),
-                    authorization: None,
                 },
             },
             SignRawAuthorityRequest::Product(request),

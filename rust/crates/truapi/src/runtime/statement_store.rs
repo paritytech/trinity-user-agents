@@ -390,7 +390,6 @@ impl<H: super::AccountHolder> ProductRuntimeHost<H> {
                 cx,
                 crate::runtime::authority::AccountCaller::Local {
                     product: &self.connection.product,
-                    authorization: None,
                 },
                 product_account_id,
                 payload,
