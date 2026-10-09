@@ -1971,7 +1971,8 @@ fn chat_post_message_screens_the_alt_before_it_reaches_a_host() {
     post(card(), Some("  Week 12 results  ".to_string())).expect("a short alt is accepted");
     post(card(), Some("   ".to_string())).expect("a blank alt is accepted");
     post(card(), None).expect("a message without an alt is accepted");
-    // A text message previews as itself, so a host never sees an alt for one.
+    // Only a custom message needs a description, so a host never sees an alt
+    // for any other kind.
     post(
         v01::ChatMessageContent::Text {
             text: "hello".to_string(),
@@ -1979,6 +1980,15 @@ fn chat_post_message_screens_the_alt_before_it_reaches_a_host() {
         Some("Greeting".to_string()),
     )
     .expect("a text message with an alt is accepted");
+    post(
+        v01::ChatMessageContent::Actions(v01::ChatActions {
+            text: None,
+            actions: Vec::new(),
+            layout: v01::ChatActionLayout::Column,
+        }),
+        Some("Pick one".to_string()),
+    )
+    .expect("an action set with an alt is accepted");
 
     let too_long = post(card(), Some("x".repeat(crate::platform::CHAT_FIELD_MAX_BYTES + 1)))
         .expect_err("an over-long alt must be rejected");
@@ -1995,7 +2005,7 @@ fn chat_post_message_screens_the_alt_before_it_reaches_a_host() {
             .lock()
             .expect("posted alts mutex poisoned")
             .as_slice(),
-        &[Some("Week 12 results".to_string()), None, None, None]
+        &[Some("Week 12 results".to_string()), None, None, None, None]
     );
 }
 

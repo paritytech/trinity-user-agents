@@ -1552,7 +1552,7 @@ impl Chat for ProductRuntimeHost {
             .transpose()
             .map_err(chat_post_field_error)?
             .filter(|alt| !alt.is_empty())
-            .filter(|_| !matches!(request.payload, truapi::latest::ChatMessageContent::Text { .. }));
+            .filter(|_| matches!(request.payload, truapi::latest::ChatMessageContent::Custom(_)));
         platform
             .post_chat_message(&self.product, request)
             .await
