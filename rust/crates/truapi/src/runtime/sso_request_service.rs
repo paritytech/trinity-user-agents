@@ -8,7 +8,7 @@ mod tests;
 use super::auth_state::AuthStateMachine;
 use super::authority::{AuthoritySession, authority_session};
 use super::connected_session_ui_info;
-use super::host_grants::{HostGrantPersistence, HostGrantStore};
+use super::host_grants::GrantBarrier;
 use super::identity::resolve_session_identity_with_chain;
 use super::services::RuntimeServices;
 use super::sso_remote::{SSO_PEER_DISCONNECT_REASON, SessionDisconnects, SsoSessionKey};
@@ -31,6 +31,38 @@ use tracing::{instrument, warn};
 use truapi::CallError;
 use truapi::latest as api;
 use truapi::versioned::account::{HostRequestLoginError, HostRequestLoginResponse};
+
+/// Keeps grants for the paired session and hears when that session changes.
+#[async_trait::async_trait]
+pub trait PairedSessionOwner: Send + Sync {
+    /// Hold back the owner's durable writes across a session change.
+    async fn write_barrier(&self) -> GrantBarrier;
+
+    /// `previous` is no longer selected: `revoked` when it was cleared, not replaced.
+    ///
+    /// Runs while session selection is locked, so it must not call back into the service.
+    fn session_ended(&self, previous: Option<&SessionInfo>, revoked: bool);
+
+    /// Drop grants loaded before a pending revocation; whether one is pending.
+    fn begin_cleanup(&self, barrier: &GrantBarrier) -> bool;
+
+    /// Finish pending durable revocation; failures stay pending.
+    async fn finish_cleanup(&self, barrier: &GrantBarrier) -> Result<(), String>;
+
+    /// Reconcile kept grants with `next` before it is published.
+    async fn prepare_session(
+        &self,
+        barrier: &GrantBarrier,
+        previous: Option<&SessionInfo>,
+        next: &SessionInfo,
+    );
+}
+
+/// The owner and its write barrier, held across one session change.
+struct OwnerHold {
+    owner: Arc<dyn PairedSessionOwner>,
+    barrier: GrantBarrier,
+}
 
 struct LoginInFlight {
     waiters: Vec<oneshot::Sender<Result<(), String>>>,
@@ -66,8 +98,19 @@ impl Drop for LoginInFlightOwner<'_> {
 #[derive(Default)]
 struct Selection {
     login_generation: u64,
+    session_epoch: u64,
     external_session_active: bool,
     pending_auth_deletion: bool,
+}
+
+impl Selection {
+    fn advance_epoch(&mut self) -> u64 {
+        self.session_epoch = self
+            .session_epoch
+            .checked_add(1)
+            .expect("session epoch exhausted");
+        self.session_epoch
+    }
 }
 
 #[derive(Debug, derive_more::Display)]
@@ -115,7 +158,7 @@ pub struct SsoRequestService {
     disconnect_monitor: Mutex<Option<SsoDisconnectMonitor>>,
     login_in_flight: Mutex<Option<LoginInFlight>>,
     selection: Mutex<Selection>,
-    grants: Arc<HostGrantStore>,
+    owner: Weak<dyn PairedSessionOwner>,
     session_store_activation: futures::lock::Mutex<()>,
     #[cfg(test)]
     external_session_activation_pause: Mutex<Option<(oneshot::Sender<()>, oneshot::Receiver<()>)>>,
@@ -126,11 +169,11 @@ pub struct SsoRequestService {
 }
 
 impl SsoRequestService {
-    /// Share the runtime's grant persistence barrier with session selection.
+    /// Select paired sessions for `owner`, which keeps their grants.
     pub fn new(
         services: Arc<RuntimeServices>,
         host_config: PairingHostConfig,
-        grants: Arc<HostGrantStore>,
+        owner: Weak<dyn PairedSessionOwner>,
     ) -> Arc<Self> {
         let platform = services.platform.clone();
         let auth_state = AuthStateMachine::new(platform.clone());
@@ -147,7 +190,7 @@ impl SsoRequestService {
             disconnect_monitor: Mutex::new(None),
             login_in_flight: Mutex::new(None),
             selection: Mutex::new(Selection::default()),
-            grants,
+            owner,
             session_store_activation: futures::lock::Mutex::new(()),
             #[cfg(test)]
             external_session_activation_pause: Mutex::new(None),
@@ -174,9 +217,22 @@ impl SsoRequestService {
             .selection
             .lock()
             .expect("session selection mutex poisoned");
-        let mut lifecycle = self.grants.lifecycle();
         selection.external_session_active = false;
-        lifecycle.advance()
+        selection.advance_epoch()
+    }
+
+    fn session_epoch(&self) -> u64 {
+        self.selection
+            .lock()
+            .expect("session selection mutex poisoned")
+            .session_epoch
+    }
+
+    /// The owner's barrier, or nothing to order once the owner is gone.
+    async fn hold_owner(&self) -> Option<OwnerHold> {
+        let owner = self.owner.upgrade()?;
+        let barrier = owner.write_barrier().await;
+        Some(OwnerHold { owner, barrier })
     }
 
     /// `message_id` of the request the session's request channel carries.
@@ -285,8 +341,8 @@ impl SsoRequestService {
             return Ok(());
         }
         let (activation_epoch, read) = {
-            let persistence = self.grants.persistence().await;
-            self.drain_session_deletions(&persistence)
+            let hold = self.hold_owner().await;
+            self.drain_session_deletions(hold.as_ref())
                 .await
                 .map_err(StoredSessionActivationError::Cleanup)?;
             let epoch = self.advance_session_lifecycle();
@@ -323,11 +379,11 @@ impl SsoRequestService {
             session,
         )
         .await;
-        let persistence = self.grants.persistence().await;
-        self.drain_session_deletions(&persistence)
+        let hold = self.hold_owner().await;
+        self.drain_session_deletions(hold.as_ref())
             .await
             .map_err(StoredSessionActivationError::Cleanup)?;
-        if self.grants.lifecycle().revision() != activation_epoch {
+        if self.session_epoch() != activation_epoch {
             return Err(StoredSessionActivationError::Changed);
         }
         let latest = self
@@ -344,29 +400,29 @@ impl SsoRequestService {
         };
         if let Some((clear_auth, error)) = error {
             if self.begin_session_clear(clear_auth, Some(activation_epoch), None)
-                && let Err(reason) = self.drain_session_deletions(&persistence).await
+                && let Err(reason) = self.drain_session_deletions(hold.as_ref()).await
             {
                 warn!(%reason, "session cleanup remains pending");
             }
             return Err(error);
         }
-        self.prepare_session_installation(&persistence, &resolved)
+        self.prepare_session_installation(hold.as_ref(), &resolved)
             .await
             .map_err(StoredSessionActivationError::Cleanup)?;
-        if self.grants.lifecycle().revision() != activation_epoch {
+        if self.session_epoch() != activation_epoch {
             return Err(StoredSessionActivationError::Changed);
         }
         let resolved_blob = encode_persisted_session(&resolved);
         if !self.install_session_if_current(resolved, activation_epoch, false, None) {
             return Err(StoredSessionActivationError::Changed);
         }
-        if resolved_blob != blob && self.grants.lifecycle().revision() == activation_epoch {
+        if resolved_blob != blob && self.session_epoch() == activation_epoch {
             let _ = self
                 .platform
                 .write_core_storage(CoreStorageKey::AuthSession, resolved_blob)
                 .await;
         }
-        if let Err(reason) = self.drain_session_deletions(&persistence).await {
+        if let Err(reason) = self.drain_session_deletions(hold.as_ref()).await {
             warn!(%reason, "session cleanup remains pending");
         }
         Ok(())
@@ -479,11 +535,11 @@ impl SsoRequestService {
         session: &SessionInfo,
         generation: u64,
     ) -> Result<bool, truapi::latest::GenericError> {
-        let persistence = self.grants.persistence().await;
+        let hold = self.hold_owner().await;
         if !self.is_current_login_attempt(generation) {
             return Ok(false);
         }
-        self.prepare_session_installation(&persistence, session)
+        self.prepare_session_installation(hold.as_ref(), session)
             .await
             .map_err(|reason| truapi::latest::GenericError { reason })?;
         let mut epoch = {
@@ -491,20 +547,19 @@ impl SsoRequestService {
                 .selection
                 .lock()
                 .expect("session selection mutex poisoned");
-            let mut lifecycle = self.grants.lifecycle();
             if selection.login_generation != generation {
                 return Ok(false);
             }
             selection.pending_auth_deletion = true;
             selection.external_session_active = false;
-            lifecycle.advance()
+            selection.advance_epoch()
         };
         let blob = encode_persisted_session(session);
         self.platform
             .write_core_storage(CoreStorageKey::AuthSession, blob.clone())
             .await?;
         while self.is_current_login_attempt(generation) {
-            let latest_epoch = self.grants.lifecycle().revision();
+            let latest_epoch = self.session_epoch();
             if latest_epoch != epoch {
                 let latest = self
                     .platform
@@ -514,11 +569,10 @@ impl SsoRequestService {
                     .selection
                     .lock()
                     .expect("session selection mutex poisoned");
-                let lifecycle = self.grants.lifecycle();
                 if selection.login_generation != generation {
                     break;
                 }
-                if lifecycle.revision() != latest_epoch {
+                if selection.session_epoch != latest_epoch {
                     continue;
                 }
                 if latest.as_deref() != Some(blob.as_slice()) {
@@ -531,15 +585,15 @@ impl SsoRequestService {
                 return Ok(true);
             }
         }
-        self.drain_session_deletions(&persistence)
+        self.drain_session_deletions(hold.as_ref())
             .await
             .map_err(|reason| truapi::latest::GenericError { reason })?;
         Ok(false)
     }
 
     async fn discard_login_session(&self) {
-        let persistence = self.grants.persistence().await;
-        if let Err(reason) = self.drain_session_deletions(&persistence).await {
+        let hold = self.hold_owner().await;
+        if let Err(reason) = self.drain_session_deletions(hold.as_ref()).await {
             warn!(%reason, "cancelled login cleanup remains pending");
         }
     }
@@ -560,18 +614,9 @@ impl SsoRequestService {
         }
     }
 
-    /// Disconnect and discard pairing bootstrap material so the next login
-    /// generates a new device keypair and topic.
-    pub async fn logout_and_reset_pairing(&self) -> Result<(), String> {
-        self.disconnect().await;
-        self.grants
-            .persistence()
-            .await
-            .clear_auto_signing_keys()
-            .await
-            .map_err(|reason| {
-                format!("session disconnected, but AutoSigning reset failed: {reason}")
-            })?;
+    /// Discard pairing bootstrap material so the next login generates a new
+    /// device keypair and topic.
+    pub async fn forget_pairing_identity(&self) -> Result<(), String> {
         self.platform
             .clear_core_storage(CoreStorageKey::PairingDeviceIdentity)
             .await
@@ -671,34 +716,32 @@ impl SsoRequestService {
             .selection
             .lock()
             .expect("session selection mutex poisoned");
-        let mut lifecycle = self.grants.lifecycle();
-        if expected_epoch.is_some_and(|epoch| lifecycle.revision() != epoch)
+        if expected_epoch.is_some_and(|epoch| selection.session_epoch != epoch)
             || expected_peer.is_some_and(|key| !self.current_sso_session_matches(key))
         {
             return false;
         }
         let previous = self.session_state.current();
-        lifecycle.revoke_session(previous.as_ref());
+        selection.advance_epoch();
+        if let Some(owner) = self.owner.upgrade() {
+            owner.session_ended(previous.as_ref(), true);
+        }
         selection.pending_auth_deletion |= clear_auth_session;
         selection.external_session_active = false;
         self.session_state.clear_session();
-        let monitor = channel::detach_session_channel(self, previous.as_ref());
-        drop(lifecycle);
+        let monitor = channel::detach_session_channel(self);
         drop(selection);
         channel::stop_session_channel(self, previous.as_ref(), monitor);
         true
     }
 
-    async fn drain_session_deletions(
-        &self,
-        persistence: &HostGrantPersistence<'_>,
-    ) -> Result<(), String> {
+    async fn drain_session_deletions(&self, hold: Option<&OwnerHold>) -> Result<(), String> {
         let pending_auth_deletion = self
             .selection
             .lock()
             .expect("session selection mutex poisoned")
             .pending_auth_deletion;
-        let pending_grants = persistence.begin_cleanup();
+        let pending_grants = hold.is_some_and(|hold| hold.owner.begin_cleanup(&hold.barrier));
         if !pending_auth_deletion && !pending_grants {
             return Ok(());
         }
@@ -717,7 +760,10 @@ impl SsoRequestService {
         } else {
             Ok(())
         };
-        let grants_result = persistence.drain_cleanup().await;
+        let grants_result = match hold {
+            Some(hold) => hold.owner.finish_cleanup(&hold.barrier).await,
+            None => Ok(()),
+        };
         auth_result.and(grants_result)
     }
 
@@ -730,21 +776,27 @@ impl SsoRequestService {
         if !self.begin_session_clear(clear_auth_session, expected_epoch, None) {
             return;
         }
-        let persistence = self.grants.persistence().await;
-        if let Err(reason) = self.drain_session_deletions(&persistence).await {
+        let hold = self.hold_owner().await;
+        if let Err(reason) = self.drain_session_deletions(hold.as_ref()).await {
             warn!(%reason, "session cleanup remains pending");
         }
     }
 
     async fn prepare_session_installation(
         &self,
-        persistence: &HostGrantPersistence<'_>,
+        hold: Option<&OwnerHold>,
         session: &SessionInfo,
     ) -> Result<(), String> {
-        self.drain_session_deletions(persistence).await?;
-        persistence
-            .prepare_session(self.session_state.current().as_ref(), session)
-            .await;
+        self.drain_session_deletions(hold).await?;
+        if let Some(hold) = hold {
+            hold.owner
+                .prepare_session(
+                    &hold.barrier,
+                    self.session_state.current().as_ref(),
+                    session,
+                )
+                .await;
+        }
         Ok(())
     }
 
@@ -754,11 +806,11 @@ impl SsoRequestService {
         activation_epoch: u64,
         external_session: bool,
     ) -> Result<bool, String> {
-        let persistence = self.grants.persistence().await;
-        if self.grants.lifecycle().revision() != activation_epoch {
+        let hold = self.hold_owner().await;
+        if self.session_epoch() != activation_epoch {
             return Ok(false);
         }
-        self.prepare_session_installation(&persistence, &session)
+        self.prepare_session_installation(hold.as_ref(), &session)
             .await?;
         Ok(self.install_session_if_current(session, activation_epoch, external_session, None))
     }
@@ -780,8 +832,7 @@ impl SsoRequestService {
             {
                 return false;
             }
-            let lifecycle = self.grants.lifecycle();
-            if lifecycle.revision() != activation_epoch {
+            if selection.session_epoch != activation_epoch {
                 return false;
             }
             if expected_login_generation.is_none() {
@@ -789,7 +840,10 @@ impl SsoRequestService {
             }
             let previous = self.session_state.current();
             let detached = (previous.as_ref() != Some(&session)).then(|| {
-                let monitor = channel::detach_session_channel(self, previous.as_ref());
+                if let Some(owner) = self.owner.upgrade() {
+                    owner.session_ended(previous.as_ref(), false);
+                }
+                let monitor = channel::detach_session_channel(self);
                 (previous, monitor)
             });
             selection.pending_auth_deletion = false;
@@ -823,8 +877,8 @@ impl SsoRequestService {
         if !self.begin_session_clear(true, None, Some(key)) {
             return;
         }
-        let persistence = self.grants.persistence().await;
-        if let Err(reason) = self.drain_session_deletions(&persistence).await {
+        let hold = self.hold_owner().await;
+        if let Err(reason) = self.drain_session_deletions(hold.as_ref()).await {
             warn!(%reason, "session cleanup remains pending");
         }
     }
@@ -836,8 +890,11 @@ impl SsoRequestService {
     /// Resolve missing identity information for the selected session.
     pub async fn refresh_current_session_identity(&self) -> Option<AuthoritySession> {
         let (current, epoch) = {
-            let lifecycle = self.grants.lifecycle();
-            (self.session_state.current()?, lifecycle.revision())
+            let selection = self
+                .selection
+                .lock()
+                .expect("session selection mutex poisoned");
+            (self.session_state.current()?, selection.session_epoch)
         };
         if current.has_username() || self.host_config.asset_hub_chain_genesis_hash == [0; 32] {
             return Some(authority_session(&current));
@@ -853,14 +910,17 @@ impl SsoRequestService {
             return self.current_session();
         }
 
-        let persistence = self.grants.persistence().await;
-        if let Err(reason) = self.drain_session_deletions(&persistence).await {
+        let hold = self.hold_owner().await;
+        if let Err(reason) = self.drain_session_deletions(hold.as_ref()).await {
             warn!(%reason, "session cleanup remains pending");
             return self.current_session();
         }
         {
-            let lifecycle = self.grants.lifecycle();
-            if lifecycle.revision() != epoch
+            let selection = self
+                .selection
+                .lock()
+                .expect("session selection mutex poisoned");
+            if selection.session_epoch != epoch
                 || !self
                     .session_state
                     .replace_session_if_current(&current, resolved.clone())
@@ -880,7 +940,7 @@ impl SsoRequestService {
         {
             warn!(reason = %err.reason, "refreshed session identity persist failed");
         }
-        if let Err(reason) = self.drain_session_deletions(&persistence).await {
+        if let Err(reason) = self.drain_session_deletions(hold.as_ref()).await {
             warn!(%reason, "session cleanup remains pending");
         }
         self.current_session()

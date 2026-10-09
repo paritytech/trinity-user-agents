@@ -4,7 +4,7 @@
 
 mod sso_channel;
 
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
 use truapi::latest::{
     HostAccountCreateProofRequest, HostAccountGetAliasRequest, HostAccountListRingVrfKeysRequest,
     HostAccountRegisterRingVrfKeyRequest, HostAccountRingVrfSignRequest,
@@ -19,7 +19,8 @@ use super::authority::{
 use super::host_grants::HostGrantStore;
 use super::product_consent::ProductConsent;
 use super::services::RuntimeServices;
-use super::sso_request_service::SsoRequestService;
+use super::host_grants::GrantBarrier;
+use super::sso_request_service::{PairedSessionOwner, SsoRequestService};
 use crate::chain_runtime::ChainRuntime;
 use crate::host_internal::extrinsic::{
     Sr25519Signer, build_signed_transaction, local_transaction_metadata,
@@ -71,33 +72,51 @@ impl PairingHost {
             .store(local, core::sync::atomic::Ordering::Relaxed);
     }
 
-    /// Compose one paired host and its session service with shared grant ownership.
+    /// Compose one paired host with the session service whose grants it keeps.
     pub fn new(
         services: Arc<RuntimeServices>,
         config: crate::platform::PairingHostConfig,
     ) -> (Arc<Self>, Arc<SsoRequestService>) {
-        let grants = Arc::new(HostGrantStore::new(services.platform.clone()));
-        let sso = SsoRequestService::new(services.clone(), config, grants.clone());
         if services.asset_hub_chain_genesis_hash().is_none() {
             tracing::warn!(
                 "no Asset Hub configured on the pairing role: no product manifest \
                  will resolve, so every cross-product grant is refused"
             );
         }
-        let host = Arc::new(Self {
-            platform: services.platform.clone(),
-            consent: Arc::new(ProductConsent::new(services.platform.clone())),
-            chain: services.chain.clone(),
-            ring_resolver: ChainRingResolver::new(services.chain.clone()),
-            ring_vrf_registry: RingVrfRegistryStore::new(services.platform.clone()),
-            services,
-            holder: Arc::new(super::SsoAccountHolderClient::new(sso.clone())),
-            sso: sso.clone(),
-            grants,
-            #[cfg(feature = "test-host")]
-            submit_preimages_locally: core::sync::atomic::AtomicBool::new(false),
+        let host = Arc::new_cyclic(|host: &Weak<Self>| {
+            let owner: Weak<dyn PairedSessionOwner> = host.clone();
+            let sso = SsoRequestService::new(services.clone(), config, owner);
+            Self {
+                platform: services.platform.clone(),
+                consent: Arc::new(ProductConsent::new(services.platform.clone())),
+                chain: services.chain.clone(),
+                ring_resolver: ChainRingResolver::new(services.chain.clone()),
+                ring_vrf_registry: RingVrfRegistryStore::new(services.platform.clone()),
+                grants: Arc::new(HostGrantStore::new(services.platform.clone())),
+                services,
+                holder: Arc::new(super::SsoAccountHolderClient::new(sso.clone())),
+                sso,
+                #[cfg(feature = "test-host")]
+                submit_preimages_locally: core::sync::atomic::AtomicBool::new(false),
+            }
         });
+        let sso = host.sso.clone();
         (host, sso)
+    }
+
+    /// Disconnect, then drop AutoSigning keys and pairing bootstrap material so
+    /// the next login starts from a new device keypair and topic.
+    pub async fn logout_and_reset_pairing(&self) -> Result<(), String> {
+        self.sso.disconnect().await;
+        self.grants
+            .persistence()
+            .await
+            .clear_auto_signing_keys()
+            .await
+            .map_err(|reason| {
+                format!("session disconnected, but AutoSigning reset failed: {reason}")
+            })?;
+        self.sso.forget_pairing_identity().await
     }
 
     /// Real session service exercised by lifecycle and transport tests.
@@ -705,6 +724,38 @@ fn apply_ring_vrf_disclosure(
         for entry in entries {
             entry.public_key = None;
         }
+    }
+}
+
+#[async_trait::async_trait]
+impl PairedSessionOwner for PairingHost {
+    async fn write_barrier(&self) -> GrantBarrier {
+        self.grants.barrier().await
+    }
+
+    fn session_ended(&self, previous: Option<&SessionInfo>, revoked: bool) {
+        self.grants.session_ended(previous, revoked);
+        self.consent.forget_allowed_once();
+    }
+
+    fn begin_cleanup(&self, barrier: &GrantBarrier) -> bool {
+        self.grants.persistence_under(barrier).begin_cleanup()
+    }
+
+    async fn finish_cleanup(&self, barrier: &GrantBarrier) -> Result<(), String> {
+        self.grants.persistence_under(barrier).drain_cleanup().await
+    }
+
+    async fn prepare_session(
+        &self,
+        barrier: &GrantBarrier,
+        previous: Option<&SessionInfo>,
+        next: &SessionInfo,
+    ) {
+        self.grants
+            .persistence_under(barrier)
+            .prepare_session(previous, next)
+            .await;
     }
 }
 

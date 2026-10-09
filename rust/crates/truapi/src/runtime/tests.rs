@@ -6186,7 +6186,7 @@ fn auto_signing_logout_reset_clears_cached_and_persisted_capability() {
             .contains_key(&core_storage_test_key(CoreStorageKey::AutoSigningKeys))
     );
 
-    futures::executor::block_on(pairing_host.sso_for_tests().logout_and_reset_pairing()).unwrap();
+    futures::executor::block_on(pairing_host.logout_and_reset_pairing()).unwrap();
 
     assert!(
         !platform
@@ -6226,7 +6226,7 @@ fn stale_secret_allocations_cannot_persist_after_reset_and_same_owner_reactivati
         crate::host_logic::product_account::derive_product_subtree_keypair(&root, "myapp.dot")
             .unwrap();
 
-    futures::executor::block_on(pairing_host.sso_for_tests().logout_and_reset_pairing()).unwrap();
+    futures::executor::block_on(pairing_host.logout_and_reset_pairing()).unwrap();
     futures::executor::block_on(
         pairing_host
             .sso_for_tests()
@@ -7396,7 +7396,7 @@ fn pairing_logout_clears_session_and_bootstrap_identity() {
         );
     }
 
-    futures::executor::block_on(pairing_host.sso_for_tests().logout_and_reset_pairing()).unwrap();
+    futures::executor::block_on(pairing_host.logout_and_reset_pairing()).unwrap();
 
     assert!(host.test_session_state().current().is_none());
     let storage = platform
@@ -7840,5 +7840,80 @@ fn a_pairing_test_host_keeps_a_submitted_preimage_and_serves_it_back() {
         Ok(RemotePreimageLookupSubscribeItem::V1(
             v01::RemotePreimageLookupSubscribeItem { value: Some(value) }
         ))
+    );
+}
+
+/// A product reset concerns that product's grants, not which wallet is
+/// paired, so it no longer drops a session that is being activated.
+#[test]
+fn a_product_reset_during_activation_keeps_the_new_session() {
+    let (host, pairing_host) =
+        ProductRuntimeHost::new_compat_with_pairing(stub_platform(), test_spawner());
+    let session = sso_session_info();
+    let blob = crate::host_logic::session::encode_persisted_session(&session);
+    let (activation_entered, resume_activation) = pairing_host
+        .sso_for_tests()
+        .pause_external_session_activation_for_tests();
+    let activation = std::thread::spawn({
+        let pairing_host = pairing_host.clone();
+        move || {
+            futures::executor::block_on(
+                pairing_host
+                    .sso_for_tests()
+                    .activate_external_session(&blob),
+            )
+        }
+    });
+    futures::executor::block_on(activation_entered)
+        .expect("external activation reached the installation fence");
+
+    futures::executor::block_on(pairing_host.clear_product_state("myapp.dot")).unwrap();
+    resume_activation
+        .send(())
+        .expect("external activation remains in flight");
+    activation
+        .join()
+        .expect("external activation thread panicked")
+        .expect("external activation completes");
+
+    assert_eq!(host.test_session_state().current(), Some(session));
+}
+
+/// Ending the paired session reaches the host that keeps its grants, which
+/// forgets what was allowed once, as a wallet change does on a signing host.
+#[test]
+fn a_paired_disconnect_forgets_allow_once() {
+    let platform = Arc::new(StubPlatform {
+        permission_confirmation_decisions: Mutex::new(
+            [
+                crate::platform::PermissionDecision::AllowOnce,
+                crate::platform::PermissionDecision::Deny,
+            ]
+            .into(),
+        ),
+        ..Default::default()
+    });
+    let (host, pairing_host) =
+        ProductRuntimeHost::new_compat_with_pairing(platform.clone(), test_spawner());
+    install_pairing_session(&host, sso_session_info());
+    let consent = ProductAuthority::consent(pairing_host.as_ref());
+    let first = futures::executor::block_on(consent.account_access("myapp.dot", "other.dot"))
+        .unwrap();
+
+    futures::executor::block_on(pairing_host.sso_for_tests().disconnect());
+    let after_disconnect =
+        futures::executor::block_on(consent.account_access("myapp.dot", "other.dot")).unwrap();
+
+    assert_eq!(
+        (
+            first,
+            after_disconnect,
+            platform.account_access_reviews.lock().unwrap().len()
+        ),
+        (
+            crate::platform::PermissionAuthorizationStatus::Authorized,
+            crate::platform::PermissionAuthorizationStatus::Denied,
+            2
+        ),
     );
 }

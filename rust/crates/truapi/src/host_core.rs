@@ -343,7 +343,7 @@ impl PairingHostRuntime {
     /// presents a new deeplink suitable for another signing host.
     #[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.logout"))]
     pub async fn logout(&self) -> Result<(), v01::GenericError> {
-        self.sso
+        self.pairing_host
             .logout_and_reset_pairing()
             .await
             .map_err(|reason| v01::GenericError { reason })

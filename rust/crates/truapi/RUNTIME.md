@@ -231,7 +231,7 @@ path. Web hosts do not compile the store.
 - `SigningHost` owns retained grants. Wallet activation checks reject private-key use after a lock or wallet change; the grant owner rejects retention after a reset. Resetting a product does not invalidate independent incoming SSO wallet work.
 - Resource approval returns a lazy, ordered stream of wallet receipts. The host retains each successful grant before issuing the next resource; recoverable item failures do not stop later resources.
 
-`SsoAccountHolderClient` translates wallet operations to the existing SSO messages. `SsoRequestService` owns login, session selection and persistence, cancellation and transport. `PairingHost` owns local review and delegated execution; `HostGrantStore` retains its keys and orders persistence against session cleanup. A replacement session is published only after required cleanup succeeds.
+`SsoAccountHolderClient` translates wallet operations to the existing SSO messages. `SsoRequestService` owns login, session selection and persistence, cancellation and transport, with its own session counter. `PairingHost` owns delegated execution and the `HostGrantStore` that retains its keys; the session service tells it, as its `PairedSessionOwner`, when a session ends, and borrows its write barrier so grant writes stay ordered against session cleanup. A product reset touches only grants. A replacement session is published only after required cleanup succeeds.
 
 - **`PairingHost`** (seedless): the user's keys live in an external wallet, so
   signing/aliases/entropy relay over an encrypted SSO channel (statement store
