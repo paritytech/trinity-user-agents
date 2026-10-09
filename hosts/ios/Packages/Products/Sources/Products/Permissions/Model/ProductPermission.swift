@@ -16,6 +16,7 @@ public enum ProductPermission: Equatable, Sendable {
     public static let jamPeersAccessTypeName = "jam_peers"
     public static let userIdentityAccessTypeName = "user_identity_access"
     public static let chatAuthorityTypeName = "chat_authority"
+    public static let profileDisclosureTypeName = "profile_disclosure"
     public static let statementStoreAllowanceTypeName = "statement_store_allowance"
 
     case deviceCapability(DeviceCapabilityType)
@@ -33,6 +34,7 @@ public enum ProductPermission: Equatable, Sendable {
     case jamPeersAccess(genesis: String)
     case userIdentityAccess
     case chatAuthority
+    case profileDisclosure
     /// `nil` is the legacy allowance account, distinct from every product selector.
     case statementStoreAllowance(derivationIndex: ProductAccountSelector?)
 
@@ -41,16 +43,16 @@ public enum ProductPermission: Equatable, Sendable {
     ///
     /// The distinction exists because the core grants a first-party product
     /// every remote permission without prompting, and nothing else. Device
-    /// capabilities, account access, balance, identity disclosure, Chat authority
-    /// and Statement Store allowance always prompt, whoever asks, so they must not ride along on
-    /// that trust.
+    /// capabilities, account access, balance, identity disclosure, Chat authority,
+    /// profile disclosure and Statement Store allowance always prompt, whoever asks,
+    /// so they must not ride along on that trust.
     public var isRemoteAccess: Bool {
         switch self {
         case .networkAccess, .networkAccessBundle, .webRtcAccess, .chainSubmitAccess, .preimageSubmitAccess,
              .statementSubmitAccess:
             true
         case .deviceCapability, .accountAccess, .balanceAccess, .userIdentityAccess,
-             .chatAuthority, .statementStoreAllowance:
+             .chatAuthority, .profileDisclosure, .statementStoreAllowance:
             false
         }
     }
@@ -87,6 +89,8 @@ public enum ProductPermission: Equatable, Sendable {
             Self.userIdentityAccessTypeName
         case .chatAuthority:
             Self.chatAuthorityTypeName
+        case .profileDisclosure:
+            Self.profileDisclosureTypeName
         case .statementStoreAllowance:
             Self.statementStoreAllowanceTypeName
         }
@@ -117,7 +121,8 @@ public enum ProductPermission: Equatable, Sendable {
              .preimageSubmitAccess,
              .statementSubmitAccess,
              .userIdentityAccess,
-             .chatAuthority:
+             .chatAuthority,
+             .profileDisclosure:
             ""
         }
     }
@@ -151,6 +156,8 @@ public enum ProductPermission: Equatable, Sendable {
             return .userIdentityAccess
         case chatAuthorityTypeName:
             return .chatAuthority
+        case profileDisclosureTypeName:
+            return .profileDisclosure
         case statementStoreAllowanceTypeName:
             if key == "legacy" {
                 return .statementStoreAllowance(derivationIndex: nil)

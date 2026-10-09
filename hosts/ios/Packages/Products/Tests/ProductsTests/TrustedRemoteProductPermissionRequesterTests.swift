@@ -54,6 +54,7 @@ struct TrustedRemoteProductPermissionRequesterTests {
             .balanceAccess,
             .userIdentityAccess,
             .chatAuthority,
+            .profileDisclosure,
             .statementStoreAllowance(derivationIndex: nil),
             .statementStoreAllowance(derivationIndex: .index(7)),
             .statementStoreAllowance(derivationIndex: .raw(Data(repeating: 9, count: 32)))
@@ -105,6 +106,17 @@ struct TrustedRemoteProductPermissionRequesterTests {
             permissions: [.networkAccess(domain: "example.com"), .deviceCapability(.camera)]
         )
 
+        #expect(decision == .deny)
+        #expect(wrapped.promptBatchedCalls.count == 1)
+    }
+
+    @Test("Trusted remote batches cannot implicitly grant profile disclosure")
+    func profileDisclosureInRemoteBatchStillPrompts() async {
+        let (sut, wrapped) = makeSUT()
+        let decision = await sut.promptBatched(
+            productId: trusted,
+            permissions: Self.remotePermissions + [.profileDisclosure]
+        )
         #expect(decision == .deny)
         #expect(wrapped.promptBatchedCalls.count == 1)
     }

@@ -19,8 +19,8 @@ protocol TrUAPIConfirmationPresenting: Sendable {
 /// through `ProductRoutersFacadeProtocol`, keyed off the typed
 /// `UserConfirmationReview` so the full payload reaches each prompt.
 /// Cancellation-aware: the rust core dropping its future (e.g. the product
-/// closed mid-prompt) denies immediately; an already presented prompt
-/// stays up and its late decision is discarded.
+/// closed mid-prompt) rejects immediately (throws for permission decisions);
+/// an already presented prompt stays up and its late decision is discarded.
 final class TrUAPIConfirmationPresenter: TrUAPIConfirmationPresenting, @unchecked Sendable {
     private let routerFacade: ProductRoutersFacadeProtocol
     private let promptMapper: TrUAPIReviewPromptMapping
@@ -60,24 +60,25 @@ final class TrUAPIConfirmationPresenter: TrUAPIConfirmationPresenting, @unchecke
         case let .preimageSubmit(preimageReview):
             await presentPreimagePermission(preimageReview)
         case let .identityDisclosure(identityReview):
-            await presentPermission(
+            try await presentPermission(
                 promptMapper.makePermissionRequest(from: identityReview)
             )
         case let .accountAccess(accessReview):
-            await presentPermission(
+            try await presentPermission(
                 promptMapper.makePermissionRequest(from: accessReview)
             )
         case let .accountAlias(aliasReview):
-            await presentPermission(
+            try await presentPermission(
                 promptMapper.makePermissionRequest(from: aliasReview)
             )
         case let .chatAuthority(chatReview):
-            await presentPermission(
+            try await presentPermission(
                 promptMapper.makePermissionRequest(from: chatReview)
             )
-        case .profileDisclosure:
-            // An unavailable prompt is not a user denial and must not be persisted.
-            throw HostRejection.Rejected(reason: "profile disclosure has no prompt on this host")
+        case let .profileDisclosure(profileReview):
+            try await presentPermission(
+                promptMapper.makePermissionRequest(from: profileReview)
+            )
         default:
             .deny
         }
@@ -196,32 +197,30 @@ private extension TrUAPIConfirmationPresenter {
         }
     }
 
-    func presentPreimagePermission(_ review: PreimageSubmitReview) async -> TrUAPIPermissionDecision {
-        await awaitDecision(cancelled: .deny) { [routerFacade] in
-            await withCheckedContinuation { continuation in
-                let context = TrUAPIPreimageConfirmationContext(review: review)
-                context.setContinuation(continuation)
-                let prompt = TrUAPIActionPromptViewFactory.createPreimageView(context: context)
-                if !routerFacade.productsRouter.present(view: prompt) {
-                    context.deliver(.deny)
-                }
-            }
-        }
-    }
-
-    func presentPermission(_ request: TrUAPIPermissionRequest) async -> TrUAPIPermissionDecision {
-        await awaitDecision(cancelled: .deny) { [routerFacade] in
+    func presentPermission(_ request: TrUAPIPermissionRequest) async throws -> TrUAPIPermissionDecision {
+        let result: Result<TrUAPIPermissionDecision, HostRejection> = await awaitDecision(
+            cancelled: .failure(.Rejected(reason: "permission prompt cancelled"))
+        ) { [routerFacade] in
+            var presented = false
             let decision: Products.PermissionDecision = await withCheckedContinuation { continuation in
                 let context = ProductPermissionContext(
                     productId: request.productId,
                     permissions: request.permissions
                 )
                 context.setContinuation(continuation)
-                routerFacade.productsRouter.showPrompt(context: context)
+                let prompt = ProductPermissionPromptViewFactory.createView(context: context)
+                presented = routerFacade.productsRouter.present(view: prompt)
+                if !presented {
+                    // Resolve the UI continuation without turning failure into a user denial.
+                    context.deliver(.deny)
+                }
             }
-
-            return decision.hostDecision
+            guard presented else {
+                return .failure(.Rejected(reason: "permission prompt presentation unavailable"))
+            }
+            return .success(decision.hostDecision)
         }
+        return try result.get()
     }
 
     func confirmAction(_ request: TrUAPIActionConfirmationRequest) async -> Bool {
@@ -296,7 +295,7 @@ private extension TrUAPIConfirmationPresenter {
 
 /// Resume-once state for one confirmation. All mutable state is
 /// MainActor-confined; a cancellation racing ahead of `begin` resolves the
-/// incoming continuation with denial instead of leaking it.
+/// incoming continuation with its cancellation result instead of leaking it.
 @MainActor
 private final class PendingDecision<Decision: Sendable> {
     private var isFinished = false

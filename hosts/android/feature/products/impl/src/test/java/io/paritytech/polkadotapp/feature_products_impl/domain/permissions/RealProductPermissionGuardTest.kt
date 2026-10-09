@@ -52,9 +52,15 @@ class RealProductPermissionGuardTest {
 
     @Test
     fun `canonical feature authority never uses local one-time grants or legacy prompts`() = runBlocking<Unit> {
-        val permissions = listOf(ProductPermission.ChatAuthority, ProductPermission.StatementStoreAllowance(null))
+        val permissions = listOf(
+            ProductPermission.ChatAuthority,
+            ProductPermission.ProfileDisclosure,
+            ProductPermission.StatementStoreAllowance(null),
+        )
         coEvery { repository.hasOneTimeGrant(any(), any()) } returns true
         coEvery { repository.consumeOneTimeGrant(any(), any()) } returns true
+        whenever(remoteHandler.isGranted(any(), any())).thenReturn(true)
+        whenever(remoteHandler.request(any(), any())).thenReturn(true)
         for (feature in permissions) {
             coEvery { repository.isGranted(productId, feature) } returns false
             assertFalse(guard.check(productId, feature))
@@ -68,6 +74,9 @@ class RealProductPermissionGuardTest {
         coVerify(exactly = 0) { repository.grant(any(), any()) }
         coVerify(exactly = 0) { repository.grantOneTime(any(), any()) }
         coVerify(exactly = 0) { repository.consumeOneTimeGrant(any(), any()) }
+        coVerify(exactly = 0) { repository.hasOneTimeGrant(any(), any()) }
+        verify(remoteHandler, never()).isGranted(any(), any())
+        verify(remoteHandler, never()).request(any(), any())
     }
 
     @Test

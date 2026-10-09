@@ -17,6 +17,7 @@ internal fun ProductPermission.canonicalRequest(): PermissionAuthorizationReques
     ProductPermission.BalanceAccess -> null
     ProductPermission.UserIdentityAccess -> PermissionAuthorizationRequest.IdentityDisclosure
     ProductPermission.ChatAuthority -> PermissionAuthorizationRequest.ChatAuthority
+    ProductPermission.ProfileDisclosure -> PermissionAuthorizationRequest.ProfileDisclosure
     is ProductPermission.StatementStoreAllowance -> PermissionAuthorizationRequest.StatementStoreAllowance(
         when (val selector = derivationIndex) {
             null -> null
@@ -41,6 +42,7 @@ internal fun PermissionAuthorizationRequest.legacyPermission(): ProductPermissio
     is PermissionAuthorizationRequest.AccountAccess -> ProductPermission.AccountAccess(targetProductId)
     PermissionAuthorizationRequest.IdentityDisclosure -> ProductPermission.UserIdentityAccess
     PermissionAuthorizationRequest.ChatAuthority -> ProductPermission.ChatAuthority
+    PermissionAuthorizationRequest.ProfileDisclosure -> ProductPermission.ProfileDisclosure
     is PermissionAuthorizationRequest.StatementStoreAllowance -> ProductPermission.StatementStoreAllowance(
         when (val selector = derivationIndex) {
             null -> null
