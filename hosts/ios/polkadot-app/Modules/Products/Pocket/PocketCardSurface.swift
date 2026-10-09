@@ -22,13 +22,6 @@ final class PocketCardSurface: ExpandedCardFaceShowing {
         self.screen = screen
     }
 
-    /// Lets go of `screen`, unless another screen has claimed the surface since.
-    func release(_ screen: PocketCardScreenViewController) {
-        guard self.screen === screen else { return }
-
-        self.screen = nil
-    }
-
     func setFaceShown(_ shown: Bool) -> ExpandedCardFaceOutcome {
         guard let screen, screen.isOnDisplay else { return .notPresented }
 

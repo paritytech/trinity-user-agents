@@ -63,7 +63,7 @@ struct PocketCardScreenTests {
     @Test
     func keepsThePageFittedWhenAskedForTheFaceWhereItIs() throws {
         let product = StubSPAView()
-        let screen = PocketCardScreenViewController(card: loyaltyCard, product: product, surface: PocketCardSurface())
+        let screen = PocketCardScreenViewController(card: loyaltyCard, product: product)
         let window = showing(screen)
         let scrollView = try #require(screen.scrollView)
 
@@ -81,7 +81,7 @@ struct PocketCardScreenTests {
     @Test
     func appliesARequestMadeBeforeTheScreenIsLaidOut() {
         let product = StubSPAView()
-        let screen = PocketCardScreenViewController(card: loyaltyCard, product: product, surface: PocketCardSurface())
+        let screen = PocketCardScreenViewController(card: loyaltyCard, product: product)
 
         let outcome = screen.setFaceShown(false, animated: true)
         screen.view.frame = .zero
@@ -99,7 +99,7 @@ struct PocketCardScreenTests {
     @Test
     func opensWithThePublishedFaceAwayWhenTheAnswerComesFirst() throws {
         let product = StubSPAView()
-        let screen = PocketCardScreenViewController(card: loyaltyCard, product: product, surface: PocketCardSurface())
+        let screen = PocketCardScreenViewController(card: loyaltyCard, product: product)
         let presenter = UIViewController()
         let window = showing(presenter)
         presenter.present(cardNavigation(screen), animated: true)
@@ -249,7 +249,7 @@ struct PocketCardScreenTests {
     @Test
     func fitsThePageOnlyOnceTheFaceItMovedComesToRest() throws {
         let product = StubSPAView()
-        let screen = PocketCardScreenViewController(card: loyaltyCard, product: product, surface: PocketCardSurface())
+        let screen = PocketCardScreenViewController(card: loyaltyCard, product: product)
         let window = showing(screen)
         let scrollView = try #require(screen.scrollView)
         let visibleHeight = scrollView.bounds.height
@@ -278,7 +278,7 @@ struct PocketCardScreenTests {
     @Test
     func endsWhereTheLastRequestPutTheFaceWhenAskedTwiceInOneFrame() throws {
         let product = StubSPAView()
-        let screen = PocketCardScreenViewController(card: loyaltyCard, product: product, surface: PocketCardSurface())
+        let screen = PocketCardScreenViewController(card: loyaltyCard, product: product)
         let window = showing(screen)
         let scrollView = try #require(screen.scrollView)
         let visibleHeight = scrollView.bounds.height
@@ -299,11 +299,7 @@ struct PocketCardScreenTests {
     /// rather than taken as a move already under way.
     @Test
     func honoursARepeatedRequestAfterADragCutsThePageMoveShort() throws {
-        let screen = PocketCardScreenViewController(
-            card: loyaltyCard,
-            product: StubSPAView(),
-            surface: PocketCardSurface()
-        )
+        let screen = PocketCardScreenViewController(card: loyaltyCard, product: StubSPAView())
         let window = showing(screen)
         let scrollView = try #require(screen.scrollView)
         _ = screen.setFaceShown(false, animated: true)
@@ -331,11 +327,7 @@ struct PocketCardScreenTests {
     /// the card rather than to whatever the product later calls itself.
     @Test
     func takesItsTitleFromTheCard() {
-        let screen = PocketCardScreenViewController(
-            card: loyaltyCard,
-            product: StubSPAView(),
-            surface: PocketCardSurface()
-        )
+        let screen = PocketCardScreenViewController(card: loyaltyCard, product: StubSPAView())
 
         screen.loadViewIfNeeded()
 
@@ -343,24 +335,20 @@ struct PocketCardScreenTests {
     }
 
     /// The product is kept warm for the next tap on the same card, which only
-    /// works if closing the card let go of it, and the page left behind must
-    /// no longer reach a screen that is gone. Presented as the app presents
+    /// works if closing the card let go of it. Presented as the app presents
     /// it, inside a navigation controller.
     @Test
     func handsTheProductBackWhenTheCardIsClosed() async {
         let product = StubSPAView()
-        let surface = PocketCardSurface()
-        let screen = PocketCardScreenViewController(card: loyaltyCard, product: product, surface: surface)
+        let screen = PocketCardScreenViewController(card: loyaltyCard, product: product)
         let presenter = UIViewController()
         let window = showing(presenter)
 
         await present(cardNavigation(screen), from: presenter)
-        surface.claim(screen)
         await dismissPresented(from: presenter)
 
         #expect(product.controller.parent == nil)
         #expect(product.controller.view.superview == nil)
-        #expect(!surface.isOnDisplay)
         withExtendedLifetime(window) {}
     }
 
@@ -383,7 +371,7 @@ private let faceHeight = PocketOpenedCardView.height
 
 @MainActor
 private func laidOutScreen(product: SPAViewProtocol) -> PocketCardScreenViewController {
-    let screen = PocketCardScreenViewController(card: loyaltyCard, product: product, surface: PocketCardSurface())
+    let screen = PocketCardScreenViewController(card: loyaltyCard, product: product)
     layOut(screen)
 
     return screen
@@ -400,7 +388,7 @@ private func layOut(_ screen: PocketCardScreenViewController) {
 private func presentedCard(
     product: SPAViewProtocol
 ) async throws -> (screen: PocketCardScreenViewController, window: UIWindow) {
-    let screen = PocketCardScreenViewController(card: loyaltyCard, product: product, surface: PocketCardSurface())
+    let screen = PocketCardScreenViewController(card: loyaltyCard, product: product)
     let presenter = UIViewController()
     let window = try showingInScene(presenter)
     await present(cardNavigation(screen), from: presenter)

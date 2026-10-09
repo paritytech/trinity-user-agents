@@ -69,7 +69,7 @@ struct PocketCardHostsTests {
     func knowsWhetherACardIsOpenOnScreen() async throws {
         let hosts = PocketCardHosts()
         let product = try #require(hosts.product(for: loyalty) { _ in StubSPAView() })
-        let screen = PocketCardScreenViewController(card: loyaltyCard, product: product.view, surface: product.surface)
+        let screen = PocketCardScreenViewController(card: loyaltyCard, product: product.view)
         let presenter = UIViewController()
         let window = showing(presenter)
         let beforeOpening = hosts.isOnDisplay(loyalty)

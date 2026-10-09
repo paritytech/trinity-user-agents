@@ -16,7 +16,7 @@ struct PocketCardSurfaceTests {
     func answersNotPresentedWithNoScreenOnDisplay() {
         let surface = PocketCardSurface()
         let withoutScreen = surface.setFaceShown(false)
-        let screen = PocketCardScreenViewController(card: loyaltyCard, product: StubSPAView(), surface: surface)
+        let screen = PocketCardScreenViewController(card: loyaltyCard, product: StubSPAView())
         screen.loadViewIfNeeded()
         surface.claim(screen)
 
@@ -30,7 +30,7 @@ struct PocketCardSurfaceTests {
     @Test
     func handsTheRequestToAScreenStillBeingPresented() {
         let surface = PocketCardSurface()
-        let screen = PocketCardScreenViewController(card: loyaltyCard, product: StubSPAView(), surface: surface)
+        let screen = PocketCardScreenViewController(card: loyaltyCard, product: StubSPAView())
         let presenter = UIViewController()
         let window = showing(presenter)
         presenter.present(cardNavigation(screen), animated: true)
@@ -47,7 +47,7 @@ struct PocketCardSurfaceTests {
     @Test
     func keepsAnsweringForACardCoveredByAFullScreenView() async throws {
         let surface = PocketCardSurface()
-        let screen = PocketCardScreenViewController(card: loyaltyCard, product: StubSPAView(), surface: surface)
+        let screen = PocketCardScreenViewController(card: loyaltyCard, product: StubSPAView())
         let presenter = UIViewController()
         let window = try showingInScene(presenter)
         let navigation = cardNavigation(screen)
@@ -67,7 +67,7 @@ struct PocketCardSurfaceTests {
     @Test
     func answersNotPresentedOnceTheCardStartsClosing() async throws {
         let surface = PocketCardSurface()
-        let screen = PocketCardScreenViewController(card: loyaltyCard, product: StubSPAView(), surface: surface)
+        let screen = PocketCardScreenViewController(card: loyaltyCard, product: StubSPAView())
         let presenter = UIViewController()
         let window = try showingInScene(presenter)
         await present(cardNavigation(screen), from: presenter)
@@ -83,23 +83,20 @@ struct PocketCardSurfaceTests {
     }
 
     /// The surface outlives its screens. A screen built but never shown must
-    /// not take it from the one the user sees, nor let go of it for that one.
+    /// not take it from the one the user sees.
     @Test
-    func keepsTheScreenOnDisplayWhileAnotherIsBuiltAndHandsBack() async {
+    func keepsTheScreenOnDisplayWhenAnotherIsBuilt() async {
         let surface = PocketCardSurface()
-        let shown = PocketCardScreenViewController(card: loyaltyCard, product: StubSPAView(), surface: surface)
+        let shown = PocketCardScreenViewController(card: loyaltyCard, product: StubSPAView())
         let presenter = UIViewController()
         let window = showing(presenter)
         await present(cardNavigation(shown), from: presenter)
         surface.claim(shown)
+        let neverShown = PocketCardScreenViewController(card: loyaltyCard, product: StubSPAView())
 
-        let neverShown = PocketCardScreenViewController(card: loyaltyCard, product: StubSPAView(), surface: surface)
         surface.claim(neverShown)
-        neverShown.handBackProduct()
-        let afterNeverShown = surface.setFaceShown(false)
-        shown.handBackProduct()
 
-        #expect([afterNeverShown, surface.setFaceShown(false)] == [.applied, .notPresented])
-        withExtendedLifetime(window) {}
+        #expect(surface.setFaceShown(false) == .applied)
+        withExtendedLifetime((window, neverShown)) {}
     }
 }

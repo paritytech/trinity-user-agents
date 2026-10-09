@@ -27,7 +27,7 @@ enum PocketCardOpening {
             })
         else { return }
 
-        let screen = PocketCardScreenViewController(card: card, product: product.view, surface: product.surface)
+        let screen = PocketCardScreenViewController(card: card, product: product.view)
         navigator.presentFullScreen(screen)
         product.surface.claim(screen)
 

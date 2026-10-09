@@ -17,7 +17,6 @@ import UIKit
 final class PocketCardScreenViewController: UIViewController {
     private let card: PocketCardViewModel
     private let product: SPAViewProtocol
-    private let surface: PocketCardSurface
     private let face: UIHostingController<PocketOpenedCardView>
 
     private let scrollView = UIScrollView()
@@ -28,14 +27,9 @@ final class PocketCardScreenViewController: UIViewController {
     private var faceMovedSinceOpening = false
     private var pageMoveTarget: CGPoint?
 
-    init(
-        card: PocketCardViewModel,
-        product: SPAViewProtocol,
-        surface: PocketCardSurface
-    ) {
+    init(card: PocketCardViewModel, product: SPAViewProtocol) {
         self.card = card
         self.product = product
-        self.surface = surface
         let face = UIHostingController(rootView: PocketOpenedCardView(card: card))
         face.view.backgroundColor = .clear
         face.safeAreaRegions = []
@@ -85,8 +79,6 @@ final class PocketCardScreenViewController: UIViewController {
             child.view.removeFromSuperview()
             child.removeFromParent()
         }
-
-        surface.release(self)
     }
 
     func setFaceShown(_ shown: Bool, animated: Bool) -> ExpandedCardFaceOutcome {
