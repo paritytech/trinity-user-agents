@@ -254,13 +254,15 @@ pub fn establish_sso_session_info(
 /// The statement keypair signs every session statement (its public key is the
 /// `identityAccountId` the pairing host binds the session to), and the X25519
 /// secret is the persistent `sso` key both sides feed into the session ECDH.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(derive_more::Debug, Clone, PartialEq, Eq, zeroize::Zeroize, zeroize::ZeroizeOnDrop)]
 pub struct ResponderIdentity {
     /// Expanded sr25519 secret used to sign session statements.
+    #[debug("\"<redacted>\"")]
     pub statement_secret: [u8; 64],
     /// sr25519 public key advertised as the session identity account.
     pub statement_public_key: [u8; 32],
     /// X25519 secret key used to derive the shared session channels.
+    #[debug("\"<redacted>\"")]
     pub encryption_secret_key: [u8; 32],
     /// Raw X25519 public key advertised during pairing.
     pub encryption_public_key: [u8; 32],
