@@ -2941,6 +2941,117 @@ mod tests {
         );
     }
 
+    #[crate::platform::async_trait]
+    impl UserConfirmation for ScriptedPrompt {
+        async fn confirm_permission(
+            &self,
+            _review: UserConfirmationReview,
+        ) -> Result<PermissionDecision, GenericError> {
+            Ok(self.remote_answers.lock().await.remove(0))
+        }
+
+        async fn confirm_user_action(
+            &self,
+            _review: UserConfirmationReview,
+        ) -> Result<bool, GenericError> {
+            unreachable!("permission confirmation uses its decision callback")
+        }
+    }
+
+    #[test]
+    fn administration_cancels_pending_identity_and_chat_consent() {
+        futures::executor::block_on(async {
+            for request in [
+                PermissionAuthorizationRequest::IdentityDisclosure,
+                PermissionAuthorizationRequest::ChatAuthority,
+            ] {
+                let storage = MemStorage::default();
+                let prompt = ScriptedPrompt::decisions(vec![], vec![PermissionDecision::AllowAlways]);
+                let service = PermissionsService::new(&storage, &prompt, &PRODUCT);
+                let pending_answer = prompt.remote_answers.lock().await;
+                let mut consent = Box::pin(async {
+                    match request {
+                        PermissionAuthorizationRequest::IdentityDisclosure => {
+                            assert_eq!(
+                                service.check_or_prompt_identity_disclosure().await.unwrap(),
+                                PermissionAuthorizationStatus::NotDetermined
+                            );
+                        }
+                        PermissionAuthorizationRequest::ChatAuthority => {
+                            assert_eq!(
+                                service.check_or_prompt_chat_authority().await.unwrap(),
+                                ChatAuthorityConsent::Refused
+                            );
+                        }
+                        _ => unreachable!(),
+                    }
+                });
+                assert!(futures::poll!(&mut consent).is_pending());
+                service
+                    .set_authorization_status(&request, PermissionAuthorizationStatus::Denied)
+                    .await
+                    .unwrap();
+                consent.await;
+                drop(pending_answer);
+                assert_eq!(
+                    service.authorization_status(&request).await.unwrap(),
+                    PermissionAuthorizationStatus::Denied
+                );
+            }
+        });
+    }
+
+    #[test]
+    fn trusted_products_still_require_profile_disclosure() {
+        let storage = MemStorage::default();
+        let prompt = ScriptedPrompt::new(vec![], vec![]);
+        let service = trusted_service(&storage, &prompt);
+        assert_eq!(
+            futures::executor::block_on(
+                service.authorization_status(&PermissionAuthorizationRequest::ProfileDisclosure)
+            )
+            .unwrap(),
+            PermissionAuthorizationStatus::NotDetermined
+        );
+    }
+
+    #[test]
+    fn administration_cancels_pending_profile_disclosure() {
+        futures::executor::block_on(async {
+            let storage = MemStorage::default();
+            let prompt = ScriptedPrompt::decisions(vec![], vec![PermissionDecision::AllowAlways]);
+            let service = PermissionsService::new(&storage, &prompt, &PRODUCT);
+            let request = PermissionAuthorizationRequest::ProfileDisclosure;
+            let pending_answer = prompt.remote_answers.lock().await;
+            let mut consent = Box::pin(service.check_or_prompt_profile_disclosure());
+            assert!(futures::poll!(&mut consent).is_pending());
+            service
+                .set_authorization_status(&request, PermissionAuthorizationStatus::Denied)
+                .await
+                .unwrap();
+            assert_eq!(consent.await.unwrap(), PermissionAuthorizationStatus::NotDetermined);
+            drop(pending_answer);
+            assert_eq!(
+                service.authorization_status(&request).await.unwrap(),
+                PermissionAuthorizationStatus::Denied
+            );
+        });
+    }
+
+    #[test]
+    fn trusted_products_still_require_chat_authority() {
+        let storage = MemStorage::default();
+        let prompt = ScriptedPrompt::new(vec![], vec![]);
+        let service = trusted_service(&storage, &prompt);
+        assert_eq!(
+            futures::executor::block_on(
+                service.authorization_status(&PermissionAuthorizationRequest::ChatAuthority)
+            )
+            .unwrap(),
+            PermissionAuthorizationStatus::NotDetermined
+        );
+    }
+
     #[test]
     fn chat_authority_uses_its_own_cached_permission() {
         let platform = StubPlatform {
