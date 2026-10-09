@@ -2181,6 +2181,7 @@ ended. This preserves the child status but bypasses later Rust destructors.
 | `FORCE_COLOR` | Force battery reporter color in non-TTY output. |
 | `TRUAPI_BATTERY_REPORT_PATH` | Override battery report destination. |
 | `TRUAPI_APPROVALS_LOG` | Append one line per decided confirmation to this file. |
+| `TRUAPI_ACCOUNT_REQUESTS_DIR` | In `signing-host --serve`, answer each `<name>.request.json` (`{"productId","index"}`) in this directory with `<name>.response.json` (`{"productId","derivationIndex","publicKey","address"}` or `{"error"}`) from the running session, for the served product only, and remove the request. Read-only. |
 
 ## 22. Current v0.1 operational constraints
 

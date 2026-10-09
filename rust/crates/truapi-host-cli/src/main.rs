@@ -25,6 +25,7 @@ mod game;
 mod network;
 mod platform;
 mod pocket;
+mod product_account_requests;
 mod product_config;
 mod qr_scanner;
 mod register_name;
@@ -1413,6 +1414,7 @@ async fn run_signing_host(
         let serve_deeplink = args.deeplink.clone();
         let serve_frame_url = frame_url.clone();
         let auto_accept = args.auto_accept;
+        let account_product = product.clone();
         return with_frame_server(
             runtime_for_frames,
             product.clone(),
@@ -1423,6 +1425,19 @@ async fn run_signing_host(
                 if let Some(deeplink) = serve_deeplink {
                     start_deeplink_responder(&mut session, deeplink).await?;
                 }
+                // Product-account reads for a harness (TRUAPI_ACCOUNT_REQUESTS_DIR).
+                let account_reader =
+                    product_account_requests::AccountRequests::from_env().map(|requests| {
+                        terminal_ui::output_success(
+                            "Answering product-account reads",
+                            Some(format!(
+                                "{} ({})",
+                                requests.dir().display(),
+                                product_account_requests::ACCOUNT_REQUESTS_DIR_ENV
+                            )),
+                        );
+                        tokio::spawn(requests.serve(account_product, session.runtime.clone()))
+                    });
                 terminal_ui::output_event(SystemEvent::ServeReady {
                     url: serve_frame_url,
                     auto_accept,
@@ -1434,6 +1449,9 @@ async fn run_signing_host(
                         0
                     }
                 };
+                if let Some(reader) = account_reader {
+                    reader.abort();
+                }
                 session.responders.stop_all();
                 Ok(code)
             },
