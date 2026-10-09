@@ -9,6 +9,10 @@ import io.parity.truapi.TrUAPIHostRuntime
 import io.paritytech.polkadotapp.database.dao.ProductPermissionGrantDao
 import io.paritytech.polkadotapp.database.model.ProductPermissionGrantLocal
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
+import io.paritytech.polkadotapp.common.domain.model.toDataByteArray
+import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.models.AllowanceAccountSelector
+import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.models.ProductPermissionStatus
+import io.paritytech.polkadotapp.feature_products_impl.domain.productPermissions.ProductPermissionsInteractor
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.models.DeviceCapabilityType
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.models.ProductPermission
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.TrUAPIHostRuntimeProvider
@@ -20,10 +24,12 @@ import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.runTest
+import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import uniffi.truapi.DerivationIndex
 import uniffi.truapi.PermissionAuthorizationEntry
 import uniffi.truapi.PermissionAuthorizationRequest
 import uniffi.truapi.PermissionAuthorizationStatus
@@ -36,6 +42,90 @@ class ProductPermissionRepositoryTest {
     private val microphone = ProductPermission.DeviceCapability(DeviceCapabilityType.Microphone)
     private val authorized = PermissionAuthorizationStatus.AUTHORIZED
     private val denied = PermissionAuthorizationStatus.DENIED
+
+    @Test
+    fun `feature permissions preserve canonical tags bytes and local keys`() {
+        val requests = listOf(
+            PermissionAuthorizationRequest.ChatAuthority,
+            PermissionAuthorizationRequest.ProfileDisclosure,
+            PermissionAuthorizationRequest.StatementStoreAllowance(null),
+            PermissionAuthorizationRequest.StatementStoreAllowance(DerivationIndex.Index(0u)),
+            PermissionAuthorizationRequest.StatementStoreAllowance(DerivationIndex.Index(UInt.MAX_VALUE)),
+            PermissionAuthorizationRequest.StatementStoreAllowance(DerivationIndex.Raw(ByteArray(32) { it.toByte() })),
+        )
+        val permissions = requests.map { it.legacyPermission() }
+        assertEquals(requests.size, permissions.toSet().size)
+        permissions.forEach { permission ->
+            val restored = ProductPermission.fromLocal(permission.typeName, permission.key)
+            assertEquals(permission, restored)
+            assertEquals(permission.hashCode(), restored.hashCode())
+            assertEquals(permission, restored.canonicalRequest()!!.legacyPermission())
+        }
+        assertEquals(requests.dropLast(1), permissions.dropLast(1).map { it.canonicalRequest() })
+        val raw = permissions.last().canonicalRequest() as PermissionAuthorizationRequest.StatementStoreAllowance
+        assertArrayEquals(ByteArray(32) { it.toByte() }, (raw.derivationIndex as DerivationIndex.Raw).v1)
+        assertTrue(runCatching { ProductPermission.fromLocal("statement_store_allowance", "raw:0x01") }.isFailure)
+        assertTrue(runCatching { ProductPermission.fromLocal("statement_store_allowance", "index:4294967296") }.isFailure)
+        assertTrue(runCatching { ProductPermission.fromLocal("statement_store_allowance", "unknown") }.isFailure)
+    }
+
+    @Test
+    fun `feature settings expose and revoke exact core permissions independently`() = runTest {
+        val f = Fixture()
+        val permissions = listOf(
+            ProductPermission.ChatAuthority,
+            ProductPermission.ProfileDisclosure,
+            ProductPermission.StatementStoreAllowance(null),
+            ProductPermission.StatementStoreAllowance(AllowanceAccountSelector.Index(0u)),
+            ProductPermission.StatementStoreAllowance(AllowanceAccountSelector.Raw(ByteArray(32) { it.toByte() }.toDataByteArray())),
+            ProductPermission.RemotePermission.StatementSubmitAccess,
+        )
+        permissions.forEach {
+            f.saved(product)[it.canonicalRequest()!!] = authorized
+            f.saved(other)[it.canonicalRequest()!!] = authorized
+        }
+        val interactor = ProductPermissionsInteractor(mockk(), f.repository)
+        assertEquals(permissions, f.repository.getAllByProduct(product).map { it.permission })
+        for (permission in permissions) {
+            interactor.togglePermission(product, ProductPermissionStatus(permission, true))
+            assertTrue(f.repository.isDenied(product, permission))
+            assertFalse(f.repository.isGranted(product, permission))
+            assertTrue(f.repository.isGranted(other, permission))
+            assertTrue(f.repository.getAllByProduct(product).filter { it.permission != permission }.all { it.granted })
+            interactor.togglePermission(product, ProductPermissionStatus(permission, false))
+            assertTrue(f.repository.isGranted(product, permission))
+        }
+        coVerify(exactly = 0) { f.dao.insert(any()) }
+    }
+
+    @Test
+    fun `profile disclosure is not implied by Chat allowance or trusted remote grants`() = runTest {
+        val f = Fixture()
+        val profile = ProductPermission.ProfileDisclosure
+        assertEquals("profile_disclosure", profile.typeName)
+        assertEquals("", profile.key)
+        val independent = listOf(
+            ProductPermission.ChatAuthority,
+            ProductPermission.StatementStoreAllowance(null),
+            ProductPermission.StatementStoreAllowance(AllowanceAccountSelector.Index(0u)),
+            ProductPermission.StatementStoreAllowance(AllowanceAccountSelector.Raw(ByteArray(32).toDataByteArray())),
+            ProductPermission.RemotePermission.NetworkAccess("*"),
+            ProductPermission.RemotePermission.WebRtcAccess,
+            ProductPermission.RemotePermission.ChainSubmitAccess,
+            ProductPermission.RemotePermission.StatementSubmitAccess,
+            ProductPermission.RemotePermission.PreimageSubmitAccess,
+        )
+        independent.forEach { f.saved(product)[it.canonicalRequest()!!] = authorized }
+        f.saved(other)[profile.canonicalRequest()!!] = authorized
+
+        assertFalse(f.repository.isGranted(product, profile))
+        assertFalse(f.repository.isDenied(product, profile))
+        assertTrue(f.repository.isGranted(other, profile))
+        f.saved(product)[profile.canonicalRequest()!!] = denied
+        assertFalse(f.repository.isGranted(product, profile))
+        assertTrue(f.repository.isDenied(product, profile))
+        assertTrue(independent.all { f.repository.isGranted(product, it) })
+    }
 
     @Test
     fun `old native grants and legacy-only rows are visible and canonical deny wins migration`() = runTest {

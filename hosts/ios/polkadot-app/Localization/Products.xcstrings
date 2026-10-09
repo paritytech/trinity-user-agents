@@ -276,6 +276,34 @@
         }
       }
     },
+    "app.permission.statementStoreAllowance.title": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Statement Store allowance"
+          }
+        }
+      }
+    },
+    "app.permission.profileDisclosure.title": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Profile sharing"
+          }
+        },
+        "es-ES": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Compartir perfil"
+          }
+        }
+      }
+    },
     "app.permission.chatAuthority.title": {
       "extractionState": "manual",
       "localizations": {
@@ -579,6 +607,56 @@
         }
       }
     },
+    "permission.body.statementStoreAllowance.legacy": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Allows this product to provision Statement Store allowance for its legacy allowance account."
+          }
+        }
+      }
+    },
+    "permission.body.statementStoreAllowance.index": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Allows this product to provision Statement Store allowance for product account index %1$(index)@."
+          }
+        }
+      }
+    },
+    "permission.body.statementStoreAllowance.raw": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Allows this product to provision Statement Store allowance for raw product account selector %1$(selector)@."
+          }
+        }
+      }
+    },
+    "permission.body.profileDisclosure": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Allows this product to share a reference to your profile with every Chat contact. Contacts who receive it can read your profile."
+          }
+        },
+        "es-ES": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Permite que este producto comparta una referencia a tu perfil con todos tus contactos de Chat. Los contactos que la reciban podrán leer tu perfil."
+          }
+        }
+      }
+    },
     "permission.body.chatAuthority": {
       "extractionState": "manual",
       "localizations": {
@@ -834,6 +912,34 @@
           "stringUnit": {
             "state": "translated",
             "value": "%1$(productId)@ would like to access account data"
+          }
+        }
+      }
+    },
+    "permission.title.statementStoreAllowance": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$(productId)@ would like to provision Statement Store allowance"
+          }
+        }
+      }
+    },
+    "permission.title.profileDisclosure": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$(productId)@ would like to share your profile"
+          }
+        },
+        "es-ES": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$(productId)@ quiere compartir tu perfil"
           }
         }
       }

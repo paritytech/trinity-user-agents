@@ -102,9 +102,8 @@ fun UserConfirmationReview.toConfirmation(callingProductId: String): TrUAPIConfi
     is UserConfirmationReview.ProductSubtree ->
         TrUAPIConfirmation.ProductSubtree(requesterProductId = v1.productId)
 
-    // Single actions fail closed; permission callbacks must propagate an error, not persist denial.
     is UserConfirmationReview.ProfileDisclosure ->
-        throw UnsupportedReviewException("profile disclosure has no prompt on this host")
+        TrUAPIConfirmation.ProfileDisclosure(requesterProductId = v1.productId)
 }
 
 @OptIn(ExperimentalStdlibApi::class)

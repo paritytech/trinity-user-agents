@@ -10,6 +10,7 @@ import androidx.compose.ui.res.stringResource
 import io.paritytech.polkadotapp.design.components.compound.NovaSwitch
 import io.paritytech.polkadotapp.design.components.text.NovaText
 import io.paritytech.polkadotapp.design.theme.PolkadotTheme
+import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.models.AllowanceAccountSelector
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.models.DeviceCapabilityType
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.models.ProductPermission
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.models.ProductPermissionStatus
@@ -59,6 +60,16 @@ private fun ProductPermission.displayName(): String {
         is ProductPermission.AccountAccess -> targetProductId
         is ProductPermission.BalanceAccess -> stringResource(RCommon.string.product_permission_type_balance_access)
         is ProductPermission.UserIdentityAccess -> stringResource(RCommon.string.product_permission_type_user_identity_access)
+        ProductPermission.ChatAuthority -> stringResource(RCommon.string.product_permission_type_chat_authority)
+        ProductPermission.ProfileDisclosure -> stringResource(RCommon.string.product_permission_type_profile_disclosure)
+        is ProductPermission.StatementStoreAllowance -> {
+            val account = when (val selector = derivationIndex) {
+                null -> stringResource(RCommon.string.product_permission_allowance_legacy_account)
+                is AllowanceAccountSelector.Index -> stringResource(RCommon.string.product_permission_allowance_index_account, selector.value.toString())
+                is AllowanceAccountSelector.Raw -> stringResource(RCommon.string.product_permission_allowance_raw_account, selector.value.toString())
+            }
+            stringResource(RCommon.string.product_permission_type_allowance, account)
+        }
         is ProductPermission.RemotePermission.NetworkAccess -> domain
         is ProductPermission.RemotePermission.NetworkAccessSet -> domains.joinToString(", ")
         ProductPermission.RemotePermission.WebRtcAccess -> stringResource(RCommon.string.product_permission_type_webrtc)
@@ -98,6 +109,9 @@ private fun ProductPermission.descriptionRes(): Int = when (this) {
     is ProductPermission.AccountAccess -> RCommon.string.product_permission_type_account_access
     is ProductPermission.BalanceAccess -> RCommon.string.product_permission_type_balance_access_description
     is ProductPermission.UserIdentityAccess -> RCommon.string.product_permission_type_user_identity_access_description
+    ProductPermission.ChatAuthority -> RCommon.string.product_permission_chat_authority_description
+    ProductPermission.ProfileDisclosure -> RCommon.string.product_permission_profile_disclosure_description
+    is ProductPermission.StatementStoreAllowance -> RCommon.string.product_permission_allowance_description
     is ProductPermission.RemotePermission.NetworkAccess -> RCommon.string.product_permission_type_network_access
     is ProductPermission.RemotePermission.JamPeersAccess -> RCommon.string.product_permission_type_jam_peers
     is ProductPermission.RemotePermission.NetworkAccessSet -> RCommon.string.product_permission_type_network_access

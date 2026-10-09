@@ -6,6 +6,9 @@ import uniffi.truapi.PermissionDecision
 import uniffi.truapi.ProfileDisclosureReview
 import uniffi.truapi.UserConfirmationReview
 import dagger.Lazy
+import io.mockk.coEvery
+import io.mockk.coVerify
+import io.mockk.mockk
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.PermissionAuthorizationChanges
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.ProductPermissionRepository
 import io.paritytech.polkadotapp.feature_settings_api.domain.language.AppLanguageProvider
@@ -22,6 +25,8 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.navigation
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.PocketCardStore
 import io.paritytech.polkadotapp.feature_products_impl.presentation.spaHost.ExpandedCardFace
 import io.paritytech.polkadotapp.test_shared.whenever
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.async
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
@@ -34,7 +39,6 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.mockito.Mockito.mock
 import org.mockito.Mockito.verify
-import org.mockito.Mockito.verifyNoInteractions
 import org.mockito.stubbing.Answer
 import uniffi.truapi.ExpandedCardFaceOutcome
 import uniffi.truapi.HostRejection
@@ -104,33 +108,69 @@ class ProductTrUAPIHostBridgeTest {
     }
 
     @Test
-    fun `unsupported profile permission throws through product callbacks while actions fail closed`() = runTest {
-        val launcher = mock(TrUAPIConfirmationLauncher::class.java)
+    fun `profile permission and action callbacks await explicit review without optimistic approval`() = runTest {
+        val review = UserConfirmationReview.ProfileDisclosure(ProfileDisclosureReview("seity.paseo"))
+        for (permissionCallback in listOf(true, false)) {
+            for (approved in listOf(true, false)) {
+                val launcher = mockk<TrUAPIConfirmationLauncher>()
+                val prompted = CompletableDeferred<TrUAPIConfirmation>()
+                val answer = CompletableDeferred<Boolean>()
+                coEvery { launcher.awaitDecision(any()) } coAnswers {
+                    prompted.complete(firstArg())
+                    answer.await()
+                }
+                val callbacks = callbacks(launcher)
+                val pending = async {
+                    if (permissionCallback) callbacks.confirmPermission(review) else callbacks.confirmUserAction(review)
+                }
+
+                val confirmation = prompted.await() as TrUAPIConfirmation.ProfileDisclosure
+                assertEquals("seity.paseo", confirmation.requesterProductId)
+                assertFalse(pending.isCompleted)
+                answer.complete(approved)
+                val expected: Any = if (permissionCallback) {
+                    if (approved) PermissionDecision.ALLOW_ALWAYS else PermissionDecision.DENY
+                } else {
+                    approved
+                }
+                assertEquals(expected, pending.await())
+                coVerify(exactly = 1) { launcher.awaitDecision(any()) }
+            }
+        }
+    }
+
+    @Test
+    fun `profile prompt failure propagates rather than becoming a durable permission decision`() = runTest {
+        val launcher = mockk<TrUAPIConfirmationLauncher>()
+        coEvery { launcher.awaitDecision(any()) } throws HostRejection.Rejected("review unavailable")
         val callbacks = callbacks(launcher)
-        val review = UserConfirmationReview.ProfileDisclosure(ProfileDisclosureReview("game.dot"))
+        val review = UserConfirmationReview.ProfileDisclosure(ProfileDisclosureReview("seity.paseo"))
 
         try {
             callbacks.confirmPermission(review)
-            fail("An unavailable prompt must not return a durable denial")
-        } catch (_: HostRejection.Rejected) {
-            // The core maps this callback error to NotDetermined without persisting a decision.
+            fail("A failed prompt must not return a permission decision")
+        } catch (failure: HostRejection.Rejected) {
+            assertEquals("review unavailable", failure.reason)
         }
-        assertFalse(callbacks.confirmUserAction(review))
-        verifyNoInteractions(launcher)
+        coVerify(exactly = 1) { launcher.awaitDecision(any()) }
     }
 
     @Test
     fun `supported permission preserves explicit approval and denial through product callbacks`() = runTest {
         val review = UserConfirmationReview.AccountAccess(AccountAccessReview("game.dot", "target.dot"))
         for (approved in listOf(true, false)) {
-            val launcher = mock(TrUAPIConfirmationLauncher::class.java, Answer { approved })
+            val prompts = mutableListOf<TrUAPIConfirmation>()
+            val launcher = mockk<TrUAPIConfirmationLauncher>()
+            coEvery { launcher.awaitDecision(capture(prompts)) } returns approved
             val callbacks = callbacks(launcher)
 
             assertEquals(
                 if (approved) PermissionDecision.ALLOW_ALWAYS else PermissionDecision.DENY,
                 callbacks.confirmPermission(review),
             )
-            verify(launcher).awaitDecision(review.toConfirmation("game.dot"))
+            val prompt = prompts.single() as TrUAPIConfirmation.AccountAccess
+            assertEquals("game.dot", prompt.requesterProductId)
+            assertEquals("target.dot", prompt.targetProductId)
         }
     }
 

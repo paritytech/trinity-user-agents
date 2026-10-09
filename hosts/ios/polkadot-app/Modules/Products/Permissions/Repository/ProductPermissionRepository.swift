@@ -378,6 +378,23 @@ extension ProductPermission {
             return .accountAccess(targetProductId: target)
         case .userIdentityAccess:
             return .identityDisclosure
+        case .chatAuthority:
+            return .chatAuthority
+        case .profileDisclosure:
+            return .profileDisclosure
+        case let .statementStoreAllowance(derivationIndex):
+            let selector: TrUAPIHostDerivationIndex? = try derivationIndex.map { selector in
+                switch selector {
+                case let .index(index):
+                    return .index(index)
+                case let .raw(bytes):
+                    guard bytes.count == 32 else {
+                        throw TrUAPIReviewMappingError.invalidDerivationIndexLength(bytes.count)
+                    }
+                    return .raw(bytes)
+                }
+            }
+            return .statementStoreAllowance(derivationIndex: selector)
         case .balanceAccess:
             return nil
         case .networkAccess, .networkAccessBundle, .webRtcAccess,
@@ -422,6 +439,12 @@ extension ProductPermission {
             return try remote.permission.toDomainRequest().toDomainPermissions().map { try $0.canonicalPermission() }
         case .identityDisclosure:
             return [.userIdentityAccess]
+        case .chatAuthority:
+            return [.chatAuthority]
+        case .profileDisclosure:
+            return [.profileDisclosure]
+        case let .statementStoreAllowance(derivationIndex):
+            return [try .statementStoreAllowance(derivationIndex: derivationIndex?.toSelector())]
         case let .accountAccess(targetProductId):
             return [.accountAccess(targetProductId: bareProductLabel(targetProductId))]
         }

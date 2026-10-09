@@ -108,6 +108,12 @@ private extension ProductPermissionPromptViewFactory {
         case .chatAuthority:
             title = String(localized: .Products.permissionTitleChatAuthority(productId: productId))
             body = permission.permissionDescription
+        case .profileDisclosure:
+            title = String(localized: .Products.permissionTitleProfileDisclosure(productId: productId))
+            body = permission.permissionDescription
+        case .statementStoreAllowance:
+            title = String(localized: .Products.permissionTitleStatementStoreAllowance(productId: productId))
+            body = permission.permissionDescription
         }
         return PromptContent(title: title, body: body, icon: makeIcon(systemName: permission.permissionIconSystemName))
     }

@@ -435,15 +435,12 @@ internal suspend fun TrUAPIConfirmationLauncher.decide(
     return awaitDecision(confirmation)
 }
 
-/** Unsupported disclosure UI is a callback failure, never a durable user denial. */
+/** Only an explicit user answer becomes authority; mapping and prompt failures propagate. */
 internal suspend fun TrUAPIConfirmationLauncher.decidePermission(
     review: UserConfirmationReview,
     requesterFallback: String,
 ): TrUAPIPermissionDecision {
-    if (review is UserConfirmationReview.ProfileDisclosure) {
-        throw HostRejection.Rejected("profile disclosure has no prompt on this host")
-    }
-    return if (decide(review, requesterFallback)) {
+    return if (awaitDecision(review.toConfirmation(requesterFallback))) {
         TrUAPIPermissionDecision.ALLOW_ALWAYS
     } else {
         TrUAPIPermissionDecision.DENY

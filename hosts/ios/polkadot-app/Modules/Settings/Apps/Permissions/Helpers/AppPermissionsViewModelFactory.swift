@@ -43,6 +43,9 @@ extension ProductPermission {
             String(localized: .Products.permissionLabelJamPeers(genesis: genesis))
         case .userIdentityAccess: String(localized: .Products.permissionBodyUserIdentityAccess)
         case .chatAuthority: String(localized: .Products.permissionBodyChatAuthority)
+        case .profileDisclosure: String(localized: .Products.permissionBodyProfileDisclosure)
+        case let .statementStoreAllowance(derivationIndex):
+            ProductPermission.statementStoreAllowanceDescription(derivationIndex: derivationIndex)
         }
     }
 
@@ -59,6 +62,8 @@ extension ProductPermission {
         case .jamPeersAccess: "point.3.connected.trianglepath.dotted"
         case .userIdentityAccess: "person.text.rectangle"
         case .chatAuthority: "message.badge.shield"
+        case .profileDisclosure: "person.crop.square"
+        case .statementStoreAllowance: "externaldrive.badge.plus"
         }
     }
 
@@ -75,6 +80,8 @@ extension ProductPermission {
         case .jamPeersAccess: String(localized: .Products.appPermissionJamPeersTitle)
         case .userIdentityAccess: String(localized: .Products.appPermissionUserIdentityTitle)
         case .chatAuthority: String(localized: .Products.appPermissionChatAuthorityTitle)
+        case .profileDisclosure: String(localized: .Products.appPermissionProfileDisclosureTitle)
+        case .statementStoreAllowance: String(localized: .Products.appPermissionStatementStoreAllowanceTitle)
         }
     }
 }
@@ -119,6 +126,21 @@ private extension ProductPermission {
         case .clipboard: "doc.on.clipboard.fill"
         case .openUrl: "safari.fill"
         case .biometrics: "faceid"
+        }
+    }
+}
+
+extension ProductPermission {
+    static func statementStoreAllowanceDescription(derivationIndex: ProductAccountSelector?) -> String {
+        switch derivationIndex {
+        case nil:
+            String(localized: .Products.permissionBodyStatementStoreAllowanceLegacy)
+        case let .index(index):
+            String(localized: .Products.permissionBodyStatementStoreAllowanceIndex(index: String(index)))
+        case let .raw(bytes):
+            String(localized: .Products.permissionBodyStatementStoreAllowanceRaw(
+                selector: "0x" + bytes.map { String(format: "%02x", $0) }.joined()
+            ))
         }
     }
 }

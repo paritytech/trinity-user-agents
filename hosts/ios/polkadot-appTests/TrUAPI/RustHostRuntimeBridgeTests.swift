@@ -116,7 +116,7 @@ struct RustHostRuntimeBridgeTests {
     }
 
     @MainActor
-    @Test func unsupportedProfileDisclosurePropagatesWithoutDenial() async throws {
+    @Test func profileDisclosureWithoutPresentationPropagatesWithoutDenial() async throws {
         let presenter = TrUAPIConfirmationPresenter(routerFacade: ProductRoutersFacade.worker())
         let bridge = makeHostBridge(confirmationPresenter: presenter)
         let review = UserConfirmationReview.profileDisclosure(ProfileDisclosureReview(productId: "caller.dot"))

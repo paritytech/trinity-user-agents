@@ -2,9 +2,12 @@ package io.paritytech.polkadotapp.feature_products_impl.domain.permissions
 
 import io.novasama.substrate_sdk_android.extensions.fromHex
 import io.novasama.substrate_sdk_android.extensions.toHexString
+import io.paritytech.polkadotapp.common.domain.model.toDataByteArray
+import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.models.AllowanceAccountSelector
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.models.DeviceCapabilityType
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.models.ProductPermission
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.normalizeProductId
+import uniffi.truapi.DerivationIndex
 import uniffi.truapi.HostDevicePermissionRequest
 import uniffi.truapi.PermissionAuthorizationRequest
 import uniffi.truapi.RemotePermission
@@ -15,6 +18,15 @@ import java.util.Locale
 internal fun ProductPermission.canonicalRequest(): PermissionAuthorizationRequest? = when (this) {
     ProductPermission.BalanceAccess -> null
     ProductPermission.UserIdentityAccess -> PermissionAuthorizationRequest.IdentityDisclosure
+    ProductPermission.ChatAuthority -> PermissionAuthorizationRequest.ChatAuthority
+    ProductPermission.ProfileDisclosure -> PermissionAuthorizationRequest.ProfileDisclosure
+    is ProductPermission.StatementStoreAllowance -> PermissionAuthorizationRequest.StatementStoreAllowance(
+        when (val selector = derivationIndex) {
+            null -> null
+            is AllowanceAccountSelector.Index -> DerivationIndex.Index(selector.value)
+            is AllowanceAccountSelector.Raw -> DerivationIndex.Raw(selector.value.value)
+        }
+    )
     is ProductPermission.AccountAccess -> PermissionAuthorizationRequest.AccountAccess(bareProductLabel(targetProductId))
     is ProductPermission.DeviceCapability -> PermissionAuthorizationRequest.Device(capability.native())
     is ProductPermission.RemotePermission -> PermissionAuthorizationRequest.Remote(RemotePermissionRequest(when (this) {
@@ -34,6 +46,15 @@ internal fun PermissionAuthorizationRequest.legacyPermission(): ProductPermissio
     is PermissionAuthorizationRequest.Device -> ProductPermission.DeviceCapability(DeviceCapabilityType.entries.single { it.native() == v1 })
     is PermissionAuthorizationRequest.AccountAccess -> ProductPermission.AccountAccess(targetProductId)
     PermissionAuthorizationRequest.IdentityDisclosure -> ProductPermission.UserIdentityAccess
+    PermissionAuthorizationRequest.ChatAuthority -> ProductPermission.ChatAuthority
+    PermissionAuthorizationRequest.ProfileDisclosure -> ProductPermission.ProfileDisclosure
+    is PermissionAuthorizationRequest.StatementStoreAllowance -> ProductPermission.StatementStoreAllowance(
+        when (val selector = derivationIndex) {
+            null -> null
+            is DerivationIndex.Index -> AllowanceAccountSelector.Index(selector.v1)
+            is DerivationIndex.Raw -> AllowanceAccountSelector.Raw(selector.v1.toDataByteArray())
+        }
+    )
     is PermissionAuthorizationRequest.Remote -> when (val remote = v1.permission) {
         is RemotePermission.Remote -> {
             val domains = remote.domains.map(::canonicalDomain).distinct().sorted()

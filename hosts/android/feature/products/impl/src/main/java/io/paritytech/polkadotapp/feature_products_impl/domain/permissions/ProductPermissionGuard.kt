@@ -94,6 +94,12 @@ class RealProductPermissionGuard @Inject constructor(
     }
 
     override suspend fun consumePermission(productId: ProductId, permission: ProductPermission): Boolean {
+        if (permission == ProductPermission.ChatAuthority ||
+            permission == ProductPermission.ProfileDisclosure ||
+            permission is ProductPermission.StatementStoreAllowance
+        ) {
+            return check(productId, permission)
+        }
         if (repository.consumeOneTimeGrant(productId, permission)) return true
 
         return requestMutex.withLock {
@@ -108,6 +114,12 @@ class RealProductPermissionGuard @Inject constructor(
     }
 
     override suspend fun check(productId: ProductId, permission: ProductPermission): Boolean {
+        if (permission == ProductPermission.ChatAuthority ||
+            permission == ProductPermission.ProfileDisclosure ||
+            permission is ProductPermission.StatementStoreAllowance
+        ) {
+            return repository.isGranted(productId, permission)
+        }
         if (repository.isDenied(productId, permission)) return false
         if (repository.hasOneTimeGrant(productId, permission)) return true
 
@@ -117,6 +129,9 @@ class RealProductPermissionGuard @Inject constructor(
             is ProductPermission.BalanceAccess -> balanceAccessHandler.isGranted(productId, permission)
             is ProductPermission.DeviceCapability -> deviceCapabilityHandler.isGranted(productId, permission)
             is ProductPermission.UserIdentityAccess -> userIdentityAccessHandler.isGranted(productId, permission)
+            ProductPermission.ChatAuthority,
+            ProductPermission.ProfileDisclosure,
+            is ProductPermission.StatementStoreAllowance -> repository.isGranted(productId, permission)
         }
     }
 
@@ -136,6 +151,11 @@ class RealProductPermissionGuard @Inject constructor(
                 is ProductPermission.BalanceAccess -> balanceAccessHandler.request(productId, permission)
                 is ProductPermission.DeviceCapability -> deviceCapabilityHandler.request(productId, permission)
                 is ProductPermission.UserIdentityAccess -> userIdentityAccessHandler.request(productId, permission)
+                // These operations prompt through the canonical runtime's confirmation flow.
+                // The legacy guard may observe authority, but must not issue a local grant.
+                ProductPermission.ChatAuthority,
+                ProductPermission.ProfileDisclosure,
+                is ProductPermission.StatementStoreAllowance -> repository.isGranted(productId, permission)
             }
         }
     }

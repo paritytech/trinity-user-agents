@@ -255,23 +255,21 @@ impl ContactAvatarPlacement {
         let current = || !self.closed.load(Ordering::Acquire)
             && authority.is_none_or(|authority| authority.is_current(owner));
         let mut own_avatar = None;
-        if current() {
-            if let Some(own) = request.own {
-                let disclosure = read_disclosure(self.storage.as_ref(), owner)
-                    .await
-                    .map_err(unknown)?;
-                if let Some(disclosure) =
-                    disclosure.filter(|disclosure| is_screened_profile_reference(&disclosure.reference))
-                {
-                    own_avatar = Some(PlacedAvatar {
-                        slot: own.slot,
-                        rect: own.rect,
-                        clip: own.clip,
-                        reference: disclosure.reference,
-                        // A newer disclosure revision refreshes the host's cached profile.
-                        shared_at: disclosure.revision,
-                    });
-                }
+        if current() && let Some(own) = request.own {
+            let disclosure = read_disclosure(self.storage.as_ref(), owner)
+                .await
+                .map_err(unknown)?;
+            if let Some(disclosure) =
+                disclosure.filter(|disclosure| is_screened_profile_reference(&disclosure.reference))
+            {
+                own_avatar = Some(PlacedAvatar {
+                    slot: own.slot,
+                    rect: own.rect,
+                    clip: own.clip,
+                    reference: disclosure.reference,
+                    // A newer disclosure revision refreshes the host's cached profile.
+                    shared_at: disclosure.revision,
+                });
             }
         }
         let mut avatars = if current() {

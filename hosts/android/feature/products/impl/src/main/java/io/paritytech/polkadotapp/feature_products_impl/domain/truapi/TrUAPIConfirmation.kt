@@ -57,6 +57,11 @@ sealed interface TrUAPIConfirmation {
         override val requesterProductId: String,
     ) : TrUAPIConfirmation.Prompt
 
+    /** Share a profile reference with the user's Chat contacts. */
+    class ProfileDisclosure(
+        override val requesterProductId: String,
+    ) : TrUAPIConfirmation.Prompt
+
     /** Allocate host resources to the product. */
     class ResourceAllocation(
         override val requesterProductId: String,
