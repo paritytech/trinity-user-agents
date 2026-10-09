@@ -1,14 +1,13 @@
 package io.paritytech.polkadotapp.feature_videogame_impl.data.collectibles
 
 import android.net.Uri
-import androidx.core.net.toUri
 import io.paritytech.polkadotapp.common.utils.FeatureOption
 import io.paritytech.polkadotapp.common.utils.isDisabled
 import io.paritytech.polkadotapp.common.utils.logFailure
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
 import io.paritytech.polkadotapp.feature_dotns_api.domain.getTldRetrying
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
-import io.paritytech.polkadotapp.feature_products_api.model.toUrl
+import io.paritytech.polkadotapp.feature_products_api.model.toUri
 import io.paritytech.polkadotapp.feature_videogame_api.domain.collectibles.CollectiblesUrlResolver
 import io.paritytech.polkadotapp.tools_remoteconfig_api.RemoteConfigService
 import javax.inject.Inject
@@ -20,7 +19,7 @@ class RealCollectiblesUrlResolver @Inject constructor(
     override suspend fun resolveUrl(): Uri? {
         if (!isEnabled()) return null
         val tld = dotNsTldProvider.getTldRetrying()
-        return ProductId.fromStoredValue(PRODUCT_LABEL + tld.suffix).toUrl().toUri()
+        return ProductId.fromStoredValue(PRODUCT_LABEL + tld.suffix).toUri()
     }
 
     private suspend fun isEnabled(): Boolean {

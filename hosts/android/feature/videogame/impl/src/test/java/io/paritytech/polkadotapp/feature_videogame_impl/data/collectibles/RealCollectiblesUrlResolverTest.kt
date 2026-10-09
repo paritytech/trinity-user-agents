@@ -54,13 +54,21 @@ class RealCollectiblesUrlResolverTest {
         assertSame(stashPage, resolverOn(tldReads("paseo", failuresFirst = 1)).resolveUrl())
     }
 
-    // The remote switch is how the card is pulled from every installed app without a release.
+    // The remote switch is how the card is pulled from every installed app without a release. A switched-off
+    // app must not read the chain either, since the suffix read retries for as long as it goes unanswered.
     @Test
-    fun `no page when the remote switch is off`() = runTest {
-        pageAt("https://stash.paseo")
+    fun `no page and no chain read when the remote switch is off`() = runTest {
         coEvery { remoteConfigService.getSyncedBoolean("collectibles_enabled") } returns Result.success(false)
 
-        assertNull(resolverOn(tldReads("paseo")).resolveUrl())
+        assertNull(resolverOn(mockk()).resolveUrl())
+    }
+
+    // Release and safetynet builds ship without collectibles whatever the remote switch says.
+    @Test
+    fun `no page and no chain read in builds without collectibles`() = runTest {
+        every { FeatureFlags.isEnabled(FeatureOption.COLLECTIBLES) } returns false
+
+        assertNull(resolverOn(mockk()).resolveUrl())
     }
 
     private fun pageAt(url: String): Uri = mockk<Uri>().also { every { Uri.parse(url) } returns it }
