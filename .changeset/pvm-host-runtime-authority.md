@@ -28,3 +28,5 @@ Pin the optional native composition to PolkaVM host runtime `0.3.2-rc.9`
 (`959ad63f7312a2f4598b9f718ccc2516927cbbff`) and compose the latest upstream
 native SDK, including expanded-card and game callbacks, without weakening
 canonical permission revocation or stale-prompt fencing.
+The dependency license gate explicitly covers the runtime's MPL-2.0 Wasm compiler,
+alongside the existing per-crate runtime and wire-protocol exceptions.

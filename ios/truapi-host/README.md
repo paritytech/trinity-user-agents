@@ -645,11 +645,13 @@ try TrUAPIHost.installProductScripts(
 )
 webView.load(URLRequest(url: productURL))
 
-// Settings changes apply to subsequent permission-checked operations.
-try execution.setPermissionAuthorizationStatus(
+// Settings denials/resets close affected executions and cancel stale consent.
+try await runtime.setPermissionAuthorizationStatus(
+    productId: "my-product.dot",
     request: .remote(RemotePermissionRequest(permission: .remote(domains: ["api.example.com"]))),
     status: .denied
 )
+// Tear down the closed WebView; open a fresh execution and WebView to continue.
 
 // On view teardown:
 webView.stopLoading()
@@ -671,7 +673,7 @@ Forwarded WebSocket events and XHR failures before sending are synthetic, with `
 
 WebRTC uses the same private transport. Each peer connection asks Rust for permission at its first network method, such as `createOffer`, and shares that decision across later methods on the connection. Allow once permits one connection. New connections check the current permission without requiring a page reload.
 
-To disable WebRTC, call `execution.setPermissionAuthorizationStatus` with a remote `.webRtc` request and `.denied` before loading each product. This overrides saved grants and trusted-product auto-grants, which otherwise skip `remotePermission` callbacks.
+To disable WebRTC, await `runtime.setPermissionAuthorizationStatus(productId:request:status:)` with the product's ID, a remote `.webRtc` request and `.denied` before opening its execution. This overrides saved grants and trusted-product auto-grants, which otherwise skip `remotePermission` callbacks. A denial/reset closes affected existing executions; tear down their WebViews and open fresh executions rather than reusing a closed execution's transport. An ordinary authorization grant does not close an execution.
 
 The installer adds the bootstrap and container scripts before loading. It preserves the host's website data store and navigation delegate. Hosts that assemble their own script lists can keep using `LocalhostBridgeBootstrap.script` followed by `ContainerScriptBundle.load()`, with the container injected into every frame.
 
