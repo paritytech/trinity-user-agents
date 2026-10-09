@@ -46,21 +46,13 @@ struct DebugPocketCardsTests {
         #expect(store.widgetURL(for: loyaltyKey) != nil)
     }
 
-    // MARK: - The face a card opens with
+    // MARK: - What the menu was told
 
-    /// A developer working on the page itself wants it in front, not behind
-    /// the face, so the switch must reach the card the lookup finds on open.
-    @Test
-    func opensWithTheFaceAwayWhenTheCardIsToldTo() {
-        let store = storeHolding(card(faceShown: false))
-
-        #expect(store.cards(for: "game.paseo").map(\.faceShown) == [false])
-    }
-
-    /// What the menu was told must reach the stored card: the face switch, a
-    /// typed page without the whitespace a paste brings along, and an empty
-    /// widget field as no page at all, which leaves the card on its product's
-    /// own page rather than on an address that loads nothing.
+    /// What the menu was told must reach the stored card: a typed page
+    /// without the whitespace a paste brings along, an empty widget field as
+    /// no page at all, which leaves the card on its product's own page rather
+    /// than on an address that loads nothing, and the face switch, which must
+    /// reach the card the lookup finds on open.
     @Test(arguments: [
         ("", nil),
         ("  http://127.0.0.1:5173/index.html \n", "http://127.0.0.1:5173/index.html")
@@ -75,6 +67,7 @@ struct DebugPocketCardsTests {
         viewModel.save()
 
         #expect(store.cards() == [card(widgetUrl: stored, faceShown: false)])
+        #expect(store.cards(for: "game.paseo").map(\.faceShown) == [false])
     }
 
     /// A page address that cannot load would only show up as the card's

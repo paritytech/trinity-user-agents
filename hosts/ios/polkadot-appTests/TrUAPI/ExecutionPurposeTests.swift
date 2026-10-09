@@ -7,12 +7,9 @@ import TrUAPIHost
 @MainActor
 struct ExecutionPurposeTests {
     @Test
-    func opensAPageUnderACardFaceAsTheWidget() {
-        #expect(ExecutionPurpose.page(cardFace: StubCardFace()).executionKind == .widget)
-    }
+    func opensOnlyAPageUnderACardFaceAsTheWidget() {
+        let pages: [ExecutionPurpose] = [.page(cardFace: StubCardFace()), .page(cardFace: nil)]
 
-    @Test
-    func opensAnyOtherPageAsTheApp() {
-        #expect(ExecutionPurpose.page(cardFace: nil).executionKind == .app)
+        #expect(pages.map(\.executionKind) == [.widget, .app])
     }
 }
