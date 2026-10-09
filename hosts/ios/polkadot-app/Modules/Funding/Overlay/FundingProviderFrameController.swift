@@ -10,9 +10,9 @@ import UIKit
 /// The session is already running, so leaving the screen only hides it. A
 /// provider takes a frame that answers before the user acted on it as the user
 /// giving up, so a hidden frame stays unanswered and the CASH card can show it
-/// again. It answers `Closed` once the host sees the provider's part done, the
-/// payment seen or the session over, and `Dismissed` only when it could not be
-/// shown at all.
+/// again. It answers `Closed` when the user says they sent a bank transfer,
+/// or once the host sees the provider's part done, the payment seen or the
+/// session over, and `Dismissed` only when it could not be shown at all.
 final class FundingProviderFrameController: UIViewController {
     private let page: UIViewController
     private let showsSentFunds: Bool
@@ -50,7 +50,7 @@ final class FundingProviderFrameController: UIViewController {
         ]
 
         if showsSentFunds {
-            let bottomBar = hosted(FundingFrameSentFundsBar { [weak self] in self?.hide() })
+            let bottomBar = hosted(FundingFrameSentFundsBar { [weak self] in self?.finish(.closed) })
             embed(bottomBar)
             constraints += [
                 bottomBar.view.leadingAnchor.constraint(equalTo: view.leadingAnchor),
