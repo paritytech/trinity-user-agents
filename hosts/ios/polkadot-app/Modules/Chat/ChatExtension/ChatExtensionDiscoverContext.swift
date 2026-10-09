@@ -80,6 +80,7 @@ actor ChatExtensionDiscoverContext {
     let messageRepository: AnyDataProviderRepository<Chat.LocalMessage>
     let storageFacade: StorageFacadeProtocol
     let chatRepository: AnyDataProviderRepository<Chat.LocalModel>
+    let roomMetadataRepository: AnyDataProviderRepository<Chat.RoomMetadataUpdate>
     let chatsProviderFactory: ChatContactDataProviderMaking
 
     init(
@@ -100,6 +101,12 @@ actor ChatExtensionDiscoverContext {
         chatRepository = AnyDataProviderRepository(
             storageFacade.createRepository(
                 mapper: AnyCoreDataMapper(ChatModelMapper())
+            )
+        )
+
+        roomMetadataRepository = AnyDataProviderRepository(
+            storageFacade.createRepository(
+                mapper: AnyCoreDataMapper(ChatRoomMetadataUpdateMapper())
             )
         )
 
@@ -321,15 +328,22 @@ extension ChatExtensionDiscoverContext: ChatExtensionDiscoverContextProtocol {
             .fetchOperation(by: { chatId.rawRepresentation }, options: RepositoryFetchOptions())
             .asyncExecute()
 
-        if existingChat != nil {
-            return .exists
-        }
-
         let roomMetadata = Chat.RoomMetadata(
             chatRelativeId: roomId,
             name: name,
             icon: icon
         )
+
+        // A product registers its room on every start and truapi has no call that updates one, so
+        // this is how a room placed before the product ran (`HostPlacedRoomPlacer`) gets its icon.
+        if let existingChat {
+            if existingChat.roomMetadata != roomMetadata {
+                let update = Chat.RoomMetadataUpdate(chatId: chatId, metadata: roomMetadata)
+                try await roomMetadataRepository.saveOperation({ [update] }, { [] }).asyncExecute()
+            }
+
+            return .exists
+        }
 
         let chat = Chat.LocalModel.newChatWithRoom(
             extensionId: chatBot.identifier,
