@@ -321,7 +321,10 @@ extension ChatExtensionDiscoverContext: ChatExtensionDiscoverContextProtocol {
             .fetchOperation(by: { chatId.rawRepresentation }, options: RepositoryFetchOptions())
             .asyncExecute()
 
-        if existingChat != nil {
+        // A row HostPlacedRoomPlacer drew before the product ran is a stand-in, not the product's
+        // room: adopt it below and answer `new`, or the room keeps a nil icon for good and the
+        // product never sees its first registration.
+        if let existingChat, !existingChat.isHostPlacedPlaceholder {
             return .exists
         }
 
