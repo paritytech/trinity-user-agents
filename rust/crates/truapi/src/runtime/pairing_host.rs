@@ -2325,16 +2325,19 @@ impl PairingHost {
         let (key_handle, access) = self
             .require_ring_vrf_key_access(&request.calling_product_id, &request.payload.key_handle)
             .await?;
-        // A grant lets the caller act with the owner's key in the caller's own
-        // context. It does not let it choose whose pseudonym to mint: the
-        // contextual alias is a function of (owner key, context), so an
-        // unconstrained context would let a grantee produce the alias the owner
-        // presents to a third product that granted nothing. That third party
-        // cannot consent here and is not a party to the grant.
+        // A grant lets the caller act with the owner's key. It does not let it
+        // choose whose pseudonym to mint: the contextual alias is a function of
+        // (owner key, context), so the product the context names has to consent
+        // too, through its own manifest, unless it is the caller or the owner.
         //
-        // The owner's own calls are unaffected; a cross-product caller is held to
-        // its own context or the granting product's.
-        crate::runtime::product_manifest::require_own_context(&access, &request.payload.context)?;
+        // The owner's own calls are unaffected.
+        crate::runtime::product_manifest::require_context_access(
+            &self.services,
+            self.platform.as_ref(),
+            &access,
+            &request.payload.context,
+        )
+        .await?;
         let private_session = self.current_private_session(session)?;
         if let Some(entropy) = self
             .local_ring_vrf_entropy_for_ring(
