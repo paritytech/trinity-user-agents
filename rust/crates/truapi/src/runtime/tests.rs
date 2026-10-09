@@ -5028,8 +5028,9 @@ fn preimage_read_checks_the_host_value_against_the_key() {
     );
 }
 
-// The SCALE bytes of one read request and one read response. The cache repo's `ctest` mirrors these types until a
-// truapi release has `Preimage.read`, and checks the same bytes (cache `ctest/src/read_report.rs`).
+// The SCALE bytes of one read request and one read response. No truapi release has
+// `Preimage.read` yet, so `ctest` in the cache repository has a copy of these types. It
+// checks the same bytes (cache `ctest/src/read_report.rs`).
 #[test]
 fn preimage_read_wire_vectors() {
     let request = RemotePreimageReadRequest::V1(v01::RemotePreimageReadRequest {

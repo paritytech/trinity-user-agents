@@ -1,25 +1,30 @@
-//! Preimage lookup through cache nodes first, then the Bulletin node.
+//! Preimage reads through cache nodes first, then through the Bulletin node.
 //!
-//! A cache node keeps verified copies of Bulletin blobs near its users and serves them faster than a Bulletin node.
-//! `TRUAPI_CACHE_PROVIDERS` names the provider set file. Each line is one provider: its endpoint id (64 hex digits),
-//! any dial hints, and the base URL of its API (`http://` or `https://`). The host asks only providers with an API URL.
+//! A cache node keeps verified copies of Bulletin blobs near its users. It serves them faster than
+//! a Bulletin node. `TRUAPI_CACHE_PROVIDERS` names the provider set file. Each line is one
+//! provider: its endpoint id (64 hex digits), dial hints, and the base URL of its API (`http://` or
+//! `https://`). The host asks only the providers that have an API URL.
 //!
-//! For each read the host orders the providers. Providers that failed in the last 30 s go last. The host orders the
-//! others by expected latency: the average latency it measured, or a prior for a provider it has not used. The
-//! content's home nodes count at half their latency. These are the providers that rank highest by
-//! `blake2b-256(content id || endpoint id)`, the rank the cache nodes use too, so reads of the same content from many
-//! hosts go to the same nodes. Every fourth read tries an unmeasured provider first.
+//! For each read, the host puts the providers in order. Providers that failed in the last 30 s go
+//! last. The host sorts the other providers by expected latency. This is the average latency that
+//! the host measured, or a prior value for a provider that the host did not use yet. The home nodes
+//! of the content count at half their latency. The home nodes are the providers with the highest
+//! `blake2b-256(content id || endpoint id)`. The cache nodes use the same rank, so reads of the
+//! same content from many hosts go to the same nodes. On every fourth read, an unmeasured provider
+//! goes first.
 //!
-//! The host pays as an sr25519 payer key: `TRUAPI_CACHE_PAYER_SEED`, else `//allowance//cache//{product}` of the
-//! signed-in account. It asks with `POST /acquire` and a read request that the payer signs. The request names the
-//! provider, the content, a new transfer id and the time, so only the payer can take reads in its name, and a node
-//! serves each request once. The host checks the bytes against the CID, and only then signs a receipt for that
-//! delivery and sends it to that provider (`POST /receipt`). A node that sends bad bytes gets no receipt. Without a
-//! payer the host does not ask cache nodes. A node that is down, refuses the payer or does not have the blob costs one
-//! request, and the Bulletin node answers as it would without cache nodes.
+//! The host pays with an sr25519 payer key: `TRUAPI_CACHE_PAYER_SEED`, else
+//! `//allowance//cache//{product}` of the signed-in account. The host sends `POST /acquire` with a
+//! read request that the payer signs. The request names the provider, the content, a new transfer
+//! id and the time. Thus only the payer can ask for reads in its name, and a node serves each
+//! request once. The host checks the bytes against the CID. Only then does it sign a receipt for
+//! that delivery and send it to that provider (`POST /receipt`). A node that sends bad bytes gets
+//! no receipt. Without a payer, the host does not ask cache nodes. A node that is down, refuses the
+//! payer or does not have the blob costs one request. The Bulletin node then answers as it does
+//! without cache nodes.
 //!
-//! The host keeps what it measured in `cache-quality.json` in its state directory, so a restart does not forget which
-//! providers are fast. `/cache` shows the payer and the measurements.
+//! The host keeps its measurements in `cache-quality.json` in its state directory, so a restart
+//! does not lose them. `/cache` shows the payer and the measurements.
 
 use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use core::time::Duration;
@@ -47,20 +52,21 @@ use crate::frame_server::ProductSelection;
 
 const PROVIDERS_ENV: &str = "TRUAPI_CACHE_PROVIDERS";
 const PAYER_SEED_ENV: &str = "TRUAPI_CACHE_PAYER_SEED";
-/// Bound on one request to one cache node. A node that does not have the blob reads it from Bulletin first.
+/// The time limit of one request to one cache node. A node that does not have the blob reads it
+/// from Bulletin first, so the limit is long.
 const NODE_TIMEOUT: Duration = Duration::from_secs(15);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
-/// How many providers are home nodes of each content id. The cache nodes use the same number.
+/// The number of home nodes for each content id. The cache nodes use the same number.
 const HOMES: usize = 3;
-/// A provider that failed less than this long ago goes last.
+/// A provider that failed less than this time ago goes last.
 const FAILURE_COOLDOWN: Duration = Duration::from_secs(30);
 /// The expected latency of a provider without measurements.
 const PRIOR_MS: u64 = 50;
-/// Every this many reads, an unmeasured provider goes first.
+/// An unmeasured provider goes first once in this number of reads.
 const EXPLORE_EVERY: u64 = 4;
-/// The sr25519 signing context of Substrate, which browser and wallet libraries also use, and the message prefixes of a
-/// cache receipt and of a cache read request. The prefixes keep the two kinds of messages apart. The cache nodes check
-/// the same layouts (`cache/src/payment.rs`).
+/// The sr25519 signing context of Substrate. Browser and wallet libraries use it too. A receipt and
+/// a read request have different prefixes, so a signature for one is not valid for the other. The
+/// cache nodes check the same layouts (`cache/src/payment.rs`).
 const SIGNING_CONTEXT: &[u8] = b"substrate";
 const RECEIPT_PREFIX: &[u8] = b"cache-receipt/2";
 const READ_PREFIX: &[u8] = b"cache-read/1";
@@ -76,9 +82,9 @@ pub struct Provider {
     region: Option<String>,
 }
 
-/// Every provider of a provider set file, with an API URL or without. Only the home-node rank uses the providers
-/// without one. After the endpoint id, a line can hold dial hints, an API URL, `name=<text>` and `region=<text>`, in
-/// any order.
+/// The providers of a provider set file: all endpoint ids, and the providers with an API URL. Only
+/// the home-node rank uses the providers without an API URL. After the endpoint id, a line can hold
+/// dial hints, an API URL, `name=<text>` and `region=<text>`, in any order.
 fn parse_providers(text: &str) -> (Vec<[u8; 32]>, Vec<Provider>) {
     let mut ids = Vec::new();
     let mut callable = Vec::new();
@@ -118,8 +124,8 @@ fn parse_providers(text: &str) -> (Vec<[u8; 32]>, Vec<Provider>) {
     (ids, callable)
 }
 
-/// Where a cache node got the content, from its `x-cache-origin` header: `local`, `source`, or `peer:` and the 64
-/// hex digits of the peer's endpoint id. Any other text is `Unknown`.
+/// Where a cache node got the content, from its `x-cache-origin` header: `local`, `source`, or
+/// `peer:` and the 64 hex digits of the endpoint id of the peer. Other text gives `Unknown`.
 fn parse_origin(origin: &str) -> CacheOrigin {
     match origin {
         "local" => CacheOrigin::Local,
@@ -140,7 +146,7 @@ fn elapsed_ms(started: Instant) -> u32 {
 /// What a cache node answered to one `POST /acquire` that it served.
 struct Answer {
     value: Vec<u8>,
-    /// The `x-cache-origin` header, `unknown` when it is missing.
+    /// The `x-cache-origin` header, or `unknown` when the response does not have it.
     origin: String,
     /// The `x-cache-elapsed-ms` header: the time of the node's own work.
     provider_ms: Option<u32>,
@@ -148,14 +154,16 @@ struct Answer {
     trace: Option<String>,
 }
 
-/// One read through the cache nodes: the value, the provider that served it, and every provider asked.
+/// One read through the cache nodes: the value, the provider that served it, and each provider that
+/// the host asked.
 struct CacheRead {
     value: Option<Vec<u8>>,
     served_by: Option<PreimageReadSource>,
     attempts: Vec<PreimageReadAttempt>,
 }
 
-/// The home nodes of a content id: the `HOMES` providers that rank highest by `blake2b-256(content id || endpoint id)`.
+/// The home nodes of a content id: the `HOMES` providers with the highest
+/// `blake2b-256(content id || endpoint id)`.
 fn home_nodes(content_id: &str, providers: &[[u8; 32]]) -> Vec<[u8; 32]> {
     let mut ranked: Vec<([u8; 32], [u8; 32])> = providers
         .iter()
@@ -169,16 +177,18 @@ fn home_nodes(content_id: &str, providers: &[[u8; 32]]) -> Vec<[u8; 32]> {
 /// What the host measured of one provider.
 #[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct Quality {
-    /// Moving average of the request latency of successful reads.
+    /// The average request latency of successful reads, with more weight on recent reads.
     latency_ms: Option<u64>,
     successes: u32,
     failures: u32,
-    /// The last failure since the last success. It is not saved: its cooldown is short.
+    /// The last failure after the last success. The file does not keep it, because its cooldown is
+    /// short.
     #[serde(skip)]
     failed_at: Option<Instant>,
 }
 
-/// The measurements in `path`, by provider. A missing or unreadable file gives none.
+/// The measurements in `path`, by provider. A file that is not there or not valid gives no
+/// measurements.
 fn load_quality(path: &std::path::Path) -> HashMap<[u8; 32], Quality> {
     let Ok(text) = std::fs::read_to_string(path) else {
         return HashMap::new();
@@ -225,7 +235,8 @@ impl Quality {
     }
 }
 
-/// The order in which to ask `providers` for content whose home nodes are `homes`. See the module docs.
+/// The order in which the host asks `providers` for content with the home nodes `homes`. The module
+/// documentation gives the rules.
 fn order(
     providers: &[Provider],
     homes: &[[u8; 32]],
@@ -260,8 +271,9 @@ fn order(
     ordered
 }
 
-/// The fields that a receipt and a read request share, after `prefix`: the transfer id, the payer and provider keys,
-/// and the content id. Text fields have a little-endian u32 length first, and keys are their 32 raw bytes.
+/// The fields that a receipt and a read request share, after `prefix`: the transfer id, the payer
+/// and provider keys, and the content id. A text field starts with its length as a little-endian
+/// u32. A key is its 32 raw bytes.
 fn signed_fields(
     prefix: &[u8],
     transfer: &str,
@@ -279,8 +291,9 @@ fn signed_fields(
     message
 }
 
-/// The bytes that a payer signs for one cache delivery: the shared fields, the service as one byte (0 delivery), and
-/// the retention size, `from` and `until` as little-endian u64s. A delivery has no retention, so all three are 0.
+/// The bytes that a payer signs for one cache delivery: the shared fields, the service as one byte
+/// (0 for a delivery), then the retention size, `from` and `until` as little-endian u64s. A
+/// delivery has no retention, so these three values are 0.
 fn receipt_message(
     transfer: &str,
     payer: &[u8; 32],
@@ -293,8 +306,8 @@ fn receipt_message(
     message
 }
 
-/// The bytes that a payer signs to ask one provider for one read: the shared fields and the issue time in Unix
-/// seconds as a little-endian u64.
+/// The bytes that a payer signs to ask one provider for one read: the shared fields and the issue
+/// time in Unix seconds, as a little-endian u64.
 fn read_message(
     transfer: &str,
     payer: &[u8; 32],
@@ -307,18 +320,19 @@ fn read_message(
     message
 }
 
-/// Where the payer key comes from.
+/// The source of the payer key.
 enum PayerSource {
     /// One fixed key from `TRUAPI_CACHE_PAYER_SEED`, for test hosts without an account.
     Seed(Box<Keypair>),
-    /// The signed-in account: the payer is `//allowance//cache//{product}` for the product served at each read.
+    /// The signed-in account. The payer is `//allowance//cache//{product}` for the product that the
+    /// host serves at each read.
     Account {
         entropy: Zeroizing<Vec<u8>>,
         product: Arc<ProductSelection>,
     },
 }
 
-/// Where the provider set comes from.
+/// The source of the provider set.
 enum ProviderSet {
     File(PathBuf),
     #[cfg(test)]
@@ -330,7 +344,7 @@ pub struct CacheNodes {
     http: reqwest::Client,
     providers: ProviderSet,
     quality: Mutex<HashMap<[u8; 32], Quality>>,
-    /// Where the measurements are kept across restarts, when the host has a state directory.
+    /// The file that keeps the measurements across restarts, when the host has a state directory.
     quality_path: Option<PathBuf>,
     payer: Mutex<Option<PayerSource>>,
     reads: AtomicU64,
@@ -338,9 +352,10 @@ pub struct CacheNodes {
 }
 
 impl CacheNodes {
-    /// The provider set that `TRUAPI_CACHE_PROVIDERS` names, or `None` when it names none. A payer seed in
-    /// `TRUAPI_CACHE_PAYER_SEED` pays for every read; without one, the signed-in account pays once there is one. The
-    /// measurements are kept in `quality_path` when it is set.
+    /// The cache nodes of the provider set that `TRUAPI_CACHE_PROVIDERS` names. The answer is
+    /// `None` when the variable is not set or the HTTP client fails. A payer seed in
+    /// `TRUAPI_CACHE_PAYER_SEED` pays for every read. Without a seed, the signed-in account pays
+    /// when there is one. The host keeps the measurements in `quality_path` when it is set.
     pub fn from_env(quality_path: Option<PathBuf>) -> Option<Self> {
         let path = std::env::var_os(PROVIDERS_ENV).filter(|path| !path.is_empty())?;
         let seed = std::env::var(PAYER_SEED_ENV)
@@ -395,7 +410,8 @@ impl CacheNodes {
         }
     }
 
-    /// Pay as the signed-in account from now on, unless a payer seed is set. `None` removes the account payer.
+    /// Pay as the signed-in account from now on, unless a payer seed is set. `None` removes the
+    /// account payer.
     pub fn set_account(&self, account: Option<(&[u8], Arc<ProductSelection>)>) {
         let mut payer = self.payer.lock().expect("cache payer mutex poisoned");
         if matches!(*payer, Some(PayerSource::Seed(_))) {
@@ -431,7 +447,8 @@ impl CacheNodes {
         }
     }
 
-    /// The blob under `cid` from the first provider, in quality order, that sends bytes that hash to it.
+    /// The blob under `cid` from the first provider, in quality order, that sends bytes that hash
+    /// to it. Without a payer the answer is `None`, and the host gives one warning.
     async fn read(&self, cid: &str) -> Option<Vec<u8>> {
         if self.payer().is_none() {
             if !self.warned_no_payer.swap(true, Ordering::Relaxed) {
@@ -447,10 +464,11 @@ impl CacheNodes {
             .and_then(|read| read.value)
     }
 
-    /// One pass through the cache nodes, in quality order, or through the provider `only`: the value from the first
-    /// provider that sends bytes that hash to `cid`, and an attempt for each provider asked. The host pays the
-    /// provider that served. Without a payer or a callable provider the answer is `NoCacheProviders`, and `only`
-    /// outside the provider set is `UnknownProvider`.
+    /// One pass through the cache nodes in quality order, or through the provider `only`. The
+    /// answer has the value from the first provider that sends bytes that hash to `cid`, and an
+    /// attempt for each provider that the host asked. The host pays the provider that served.
+    /// Without a payer or a callable provider, the answer is `NoCacheProviders`. An `only` outside
+    /// the provider set gives `UnknownProvider`.
     async fn read_reported(
         &self,
         cid: &str,
@@ -574,7 +592,7 @@ impl CacheNodes {
         }
     }
 
-    /// The payer and, for each provider with an API URL, what the host measured of it: the text of `/cache`.
+    /// The text of `/cache`: the payer, and the measurements of each provider with an API URL.
     pub fn status(&self) -> String {
         let (_, providers) = self.load_providers();
         let payer = self.payer().map_or_else(
@@ -607,8 +625,9 @@ impl CacheNodes {
         status
     }
 
-    /// One `POST /acquire` with a read request that the payer signs for this provider: the bytes and what the node
-    /// reports about them, or `None` when the node answers that Bulletin does not hold the blob.
+    /// One `POST /acquire` with a read request that the payer signs for this provider. The answer
+    /// is the bytes and the node's headers about them, or `None` when the node answers 404
+    /// (Bulletin does not hold the blob).
     async fn ask(
         &self,
         provider: &Provider,
@@ -668,8 +687,9 @@ impl CacheNodes {
         }))
     }
 
-    /// Sign the receipt for a verified delivery and send it to the provider that served it. The read does not wait:
-    /// paying is the provider's concern, and the provider keeps the delivery as unpaid until the receipt arrives.
+    /// Sign the receipt for a verified delivery and send it to the provider that served it. The
+    /// read does not wait for the payment. The provider keeps the delivery as unpaid until the
+    /// receipt arrives.
     fn pay(&self, provider: &Provider, cid: &str, payer: &Keypair, transfer: String) {
         let payer_id = payer.public.to_bytes();
         let message = receipt_message(&transfer, &payer_id, &provider.id, cid);
@@ -706,8 +726,8 @@ impl CacheNodes {
         });
     }
 
-    /// A new transfer id for each request to a node. A node serves a transfer id once, and the ledger of the cache
-    /// charges it once.
+    /// A new transfer id for each request to a node. A node serves a transfer id once, and the
+    /// ledger of the cache charges it once.
     fn transfer_id(&self) -> String {
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -716,7 +736,8 @@ impl CacheNodes {
     }
 }
 
-/// A payer from a 32-byte hex seed, expanded the way Substrate expands an sr25519 mini secret key.
+/// A payer from a 32-byte hex seed. The function expands the seed as Substrate expands an sr25519
+/// mini secret key.
 fn payer_from_seed(seed: &str) -> Result<Keypair, String> {
     let bytes =
         hex::decode(seed.trim().trim_start_matches("0x")).map_err(|error| error.to_string())?;
@@ -724,7 +745,7 @@ fn payer_from_seed(seed: &str) -> Result<Keypair, String> {
     Ok(secret.expand_to_keypair(ExpansionMode::Ed25519))
 }
 
-/// A blob source that asks the cache nodes first, when there are any, and then `fallback`.
+/// A blob source that asks the cache nodes first, if there are cache nodes, and then `fallback`.
 pub struct CacheFirst<S> {
     cache: Option<Arc<CacheNodes>>,
     fallback: S,
@@ -738,9 +759,10 @@ impl<S> CacheFirst<S> {
 }
 
 impl<S: BlobSource> CacheFirst<S> {
-    /// One read of `key` through `route`, with a report of every source asked. One pass, with no polling: a miss
-    /// answers no value. `Auto` asks the cache nodes in quality order and then `fallback`, the Bulletin node. `Cache`
-    /// and `CacheProvider` never ask Bulletin, and answer `NoCacheProviders` when there is no cache node to ask.
+    /// One read of `key` through `route`, with a report of each source that the host asked. The
+    /// read makes one pass and does not poll, so a miss gives no value. `Auto` asks the cache nodes
+    /// in quality order and then `fallback`, the Bulletin node. `Cache` and `CacheProvider` never
+    /// ask Bulletin. They answer `NoCacheProviders` when there is no cache node to ask.
     pub async fn read_routed(
         &self,
         key: &[u8],
@@ -854,7 +876,7 @@ mod tests {
         preimage_cid(&preimage_key(&blob()))
     }
 
-    /// A Bulletin node that always holds `value`, and counts how often it is asked.
+    /// A Bulletin node that always holds `value` and counts the requests that it gets.
     struct Bulletin {
         value: Option<Vec<u8>>,
         calls: Mutex<u32>,
@@ -877,8 +899,8 @@ mod tests {
 
     type Requests = Arc<Mutex<Vec<(String, serde_json::Value)>>>;
 
-    /// A cache node on loopback. It answers `POST /acquire` with `status` and `body` and `POST /receipt` with a
-    /// settlement, and keeps every request path and body.
+    /// A cache node on loopback. It answers `POST /acquire` with `status` and `body`, and
+    /// `POST /receipt` with a settlement. It keeps the path and the body of each request.
     async fn fake_node(status: u16, body: Vec<u8>) -> (String, Requests) {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let url = format!("http://{}", listener.local_addr().unwrap());
@@ -953,7 +975,8 @@ mod tests {
         .map(Arc::new)
     }
 
-    /// The answer of `source` for the test blob. These sources never fail a read: they report a miss instead.
+    /// The answer of `source` for the test blob. These sources never fail a read. They report a
+    /// miss instead.
     async fn read<S: BlobSource>(source: &CacheFirst<S>) -> Option<Vec<u8>> {
         match source.get(&cid()).await {
             Ok(value) => value,
@@ -961,7 +984,7 @@ mod tests {
         }
     }
 
-    /// The receipt requests a fake node got, once the receipt task had time to send them.
+    /// The receipt requests that a fake node got, after the receipt task had time to send them.
     async fn receipts(requests: &Requests) -> Vec<serde_json::Value> {
         tokio::time::sleep(Duration::from_millis(200)).await;
         let requests = requests.lock().unwrap();
@@ -982,8 +1005,8 @@ mod tests {
             .is_ok()
     }
 
-    // The same vectors are in the cache (cache/src/logic.rs and cache/src/payment.rs): hosts and nodes must rank the
-    // same home nodes, derive the same payer from a seed and sign the same bytes.
+    // The cache has the same vectors (cache/src/logic.rs and cache/src/payment.rs). Hosts and nodes
+    // must rank the same home nodes, derive the same payer from a seed and sign the same bytes.
     #[test]
     fn vectors_shared_with_the_cache() {
         let key = "bafk2bzaceb2yf3stdn7wptwblupjbssdhdp2czormoqyiwkcrq35uhvzgcgp4";
@@ -1032,7 +1055,7 @@ mod tests {
         );
     }
 
-    /// A node reports `local`, `source`, or `peer:` and a full endpoint id. Anything else is unknown.
+    /// A node reports `local`, `source`, or `peer:` and a full endpoint id. Other text is unknown.
     #[test]
     fn origin_headers() {
         let peer = format!("peer:{}", hex::encode([5u8; 32]));
@@ -1055,7 +1078,7 @@ mod tests {
         );
     }
 
-    /// A read report with every time set to 0, so that tests compare it whole.
+    /// A read report with every time set to 0, so that a test can compare the whole report.
     fn untimed(
         result: Result<RemotePreimageReadResponse, PreimageReadError>,
     ) -> Result<RemotePreimageReadResponse, PreimageReadError> {
@@ -1091,7 +1114,8 @@ mod tests {
         }
     }
 
-    /// Each route asks only the sources it names, and the report says which source served and which were asked.
+    /// Each route asks only the sources that it names. The report shows the source that served and
+    /// the sources that the host asked.
     #[tokio::test]
     async fn reads_report_the_route_that_each_route_takes() {
         let (holder, holder_requests) = fake_node(200, blob()).await;
@@ -1170,7 +1194,8 @@ mod tests {
         );
     }
 
-    /// A provider that sends bad bytes is an attempt with `BadBytes`, gets no receipt, and the next provider serves.
+    /// A provider that sends bad bytes gets a `BadBytes` attempt and no receipt. The next provider
+    /// serves.
     #[tokio::test]
     async fn a_bad_provider_is_reported_and_the_next_one_serves() {
         let (liar, liar_requests) = fake_node(200, b"forged".to_vec()).await;
@@ -1221,8 +1246,8 @@ mod tests {
         );
     }
 
-    /// Measured latency decides, a home node counts at half its latency, a recent failure goes last, and exploring
-    /// puts an unmeasured provider first.
+    /// The measured latency sets the order. A home node counts at half its latency, and a recent
+    /// failure goes last. An exploration read puts an unmeasured provider first.
     #[test]
     fn providers_are_ordered_by_quality() {
         let now = Instant::now();
@@ -1291,8 +1316,9 @@ mod tests {
         );
     }
 
-    /// The host asks with a read request that the payer signs for that provider, and pays for what it verified: one
-    /// receipt for the same transfer, to the provider that served, signed by the payer.
+    /// The host sends a read request that the payer signs for that provider. It pays for what it
+    /// verified: one receipt for the same transfer, to the provider that served, with the signature
+    /// of the payer.
     #[tokio::test]
     async fn a_cache_hit_is_asked_and_paid_with_signatures_and_bulletin_is_not_asked() {
         let (node, requests) = fake_node(200, blob()).await;
@@ -1362,8 +1388,8 @@ mod tests {
         );
     }
 
-    /// A cache node is not trusted: bytes that do not hash to the CID are dropped and not paid, and the next node is
-    /// asked.
+    /// The host does not trust a cache node. It drops bytes that do not hash to the CID, does not
+    /// pay for them, and asks the next node.
     #[tokio::test]
     async fn forged_bytes_get_no_receipt_and_the_next_node_is_asked() {
         let (liar, liar_requests) = fake_node(200, b"forged".to_vec()).await;
@@ -1401,7 +1427,8 @@ mod tests {
         );
     }
 
-    /// Cache nodes only make a read faster: when none of them can help, Bulletin answers as without them.
+    /// Cache nodes only make a read faster. When no cache node can help, Bulletin answers as it
+    /// does without them.
     #[tokio::test]
     async fn nodes_that_miss_refuse_or_are_down_leave_the_read_to_bulletin() {
         let (missing, _) = fake_node(404, b"not found: not held".to_vec()).await;
@@ -1418,7 +1445,7 @@ mod tests {
         );
     }
 
-    /// A host that cannot pay does not take service from a cache node.
+    /// A host that cannot pay does not ask cache nodes.
     #[tokio::test]
     async fn without_a_payer_cache_nodes_are_not_asked() {
         let (node, requests) = fake_node(200, blob()).await;
@@ -1436,7 +1463,8 @@ mod tests {
         );
     }
 
-    /// A restart keeps which providers are fast and how often they failed, but not a recent failure.
+    /// After a restart, the host knows the speed and the failure count of each provider, but not a
+    /// recent failure.
     #[tokio::test]
     async fn measurements_survive_a_restart_and_show_in_the_status() {
         let dir = tempfile::tempdir().unwrap();

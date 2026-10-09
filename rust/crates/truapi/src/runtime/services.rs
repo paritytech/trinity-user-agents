@@ -59,9 +59,10 @@ pub struct RuntimeServices {
     /// Whether a scan is open. Shared by every product runtime of this host,
     /// because the device has one viewfinder.
     scan_open: AtomicBool,
-    /// Host adapter for preimage reads with a route and a report, installed
-    /// once at startup by a host that can read through cache providers. Unset
-    /// leaves every product `Preimage.read` call `Unsupported`.
+    /// The host adapter for preimage reads with a route and a report. A host
+    /// that can read through cache providers installs it once at startup.
+    /// Without it, every `Preimage.read` call of a product answers
+    /// `Unsupported`.
     preimage_read_host: OnceLock<Arc<dyn crate::platform::PreimageReadHost>>,
     /// Host observer told when a device finishes pairing with this signing
     /// host. Unset leaves a paired device unannounced.
@@ -251,8 +252,8 @@ impl RuntimeServices {
 
     /// Install the host's adapter for preimage reads with a route and a report.
     ///
-    /// Set-once, like every optional capability. Returns whether this call
-    /// installed it.
+    /// Like every optional capability, only the first call installs it. Returns
+    /// whether this call installed it.
     pub fn install_preimage_read_host(
         &self,
         host: Arc<dyn crate::platform::PreimageReadHost>,
@@ -260,7 +261,7 @@ impl RuntimeServices {
         self.preimage_read_host.set(host).is_ok()
     }
 
-    /// The host's adapter for preimage reads, when one is installed.
+    /// The host's adapter for preimage reads, if the host installed one.
     pub fn preimage_read_host(&self) -> Option<Arc<dyn crate::platform::PreimageReadHost>> {
         self.preimage_read_host.get().cloned()
     }

@@ -68,7 +68,8 @@ pub struct RemotePreimageReadResponse {
 pub struct PreimageReadReport {
     /// The source of the value. `None` when no source had it.
     pub served_by: Option<PreimageReadSource>,
-    /// Every source that the host asked, in order, the one that served included.
+    /// Every source that the host asked, in order. The list includes the source
+    /// that served.
     pub attempts: Vec<PreimageReadAttempt>,
     /// Time from the request to the response inside the host, in milliseconds.
     pub host_ms: u32,
@@ -96,8 +97,8 @@ pub enum PreimageReadSource {
         home: bool,
         /// Time that the provider reports for its own work, in milliseconds.
         provider_ms: Option<u32>,
-        /// The provider's trace of its steps, as JSON. The host passes it on
-        /// without reading it.
+        /// The trace of the steps of the provider, as JSON. The host does not
+        /// read it and gives it to the product as it is.
         trace: Option<String>,
     },
     /// Bulletin, through the host's own Bulletin client.
@@ -169,14 +170,16 @@ pub enum PreimageReadOutcome {
     Served,
     /// The source does not have the value.
     Miss,
-    /// The bytes did not hash to the key. The host dropped them and paid nothing.
+    /// The bytes did not hash to the key. The host dropped them and paid
+    /// nothing.
     BadBytes,
     /// The source refused, for example a provider that the payer cannot pay.
     Refused {
         /// Human-readable reason.
         reason: String,
     },
-    /// The source failed: unreachable, timed out, or an error.
+    /// The source failed: the host could not reach it, the request took too
+    /// long, or the source answered with an error.
     Failed {
         /// Human-readable reason.
         reason: String,

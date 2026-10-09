@@ -3218,7 +3218,7 @@ pub trait PreimageHost: Send + Sync {
 /// Host preimage reads through a route that the product chooses, with a
 /// report of how the host got the value. `Preimage.read` uses it.
 ///
-/// Optional: a host that omits it leaves `Preimage.read` answered
+/// Optional: when a host does not have it, `Preimage.read` answers
 /// `Unsupported`. See [`OptionalPlatform`].
 ///
 /// The core answers from its own read-after-write cache before it calls this,
@@ -3227,8 +3227,9 @@ pub trait PreimageHost: Send + Sync {
 #[async_trait]
 pub trait PreimageReadHost: Send + Sync {
     /// Read the preimage under `key` once, through `route`, and report every
-    /// source asked. One pass with no polling: a miss answers no value. With
-    /// `skip_host_caches`, the host does not answer from its own caches.
+    /// source asked. The read makes one pass and does not poll, so a miss
+    /// gives no value. With `skip_host_caches`, the host does not answer from
+    /// its own caches.
     async fn read_preimage(
         &self,
         key: Vec<u8>,

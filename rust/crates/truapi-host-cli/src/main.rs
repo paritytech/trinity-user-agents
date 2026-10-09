@@ -1538,8 +1538,9 @@ struct SigningHostSession {
     /// Set when this host serves a Pocket product. Held across runtime rebuilds
     /// so switching session keeps the card set it was seeded with.
     pocket: Option<Arc<pocket::CliPocketHost>>,
-    /// The product this host serves. Cache nodes are paid as the session's
-    /// allowance account for the product selected at each read.
+    /// The product that this host serves. The host pays cache nodes as the
+    /// allowance account of the session, for the product that it selects at each
+    /// read.
     product: Arc<frame_server::ProductSelection>,
 }
 

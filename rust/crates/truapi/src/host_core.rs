@@ -297,9 +297,9 @@ impl PairingHostRuntime {
     /// Install the host's [`PreimageReadHost`], which reads preimages through a
     /// route that the product chooses and reports how it got them.
     ///
-    /// Set-once, so the capability cannot be swapped under a running product.
-    /// Returns whether this call installed it. Call it before serving any
-    /// product runtime.
+    /// Call it before the host serves a product runtime. Only the first call
+    /// installs the capability, so a running product keeps the same one.
+    /// Returns whether this call installed it.
     #[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.set_preimage_read_host"))]
     pub fn set_preimage_read_host(&self, host: Arc<dyn PreimageReadHost>) -> bool {
         self.services.install_preimage_read_host(host)
@@ -756,9 +756,9 @@ impl SigningHostRuntime {
     /// Install the host's [`PreimageReadHost`], which reads preimages through a
     /// route that the product chooses and reports how it got them.
     ///
-    /// Set-once, so the capability cannot be swapped under a running product.
-    /// Returns whether this call installed it. Call it before serving any
-    /// product runtime.
+    /// Call it before the host serves a product runtime. Only the first call
+    /// installs the capability, so a running product keeps the same one.
+    /// Returns whether this call installed it.
     #[instrument(skip_all, fields(runtime.method = "signing_host_runtime.set_preimage_read_host"))]
     pub fn set_preimage_read_host(&self, host: Arc<dyn PreimageReadHost>) -> bool {
         self.services.install_preimage_read_host(host)

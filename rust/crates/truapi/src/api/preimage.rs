@@ -62,7 +62,8 @@ pub trait Preimage: Send + Sync {
     /// report how the host got it: which source served it, and every source
     /// that the host asked. A miss answers no value. A host without this
     /// capability answers `Unsupported`, and the product can use
-    /// `lookupSubscribe` instead. Wire id 2 is kept for `Preimage.retain`.
+    /// `lookupSubscribe` instead. The trait keeps wire id 2 free for
+    /// `Preimage.retain`.
     ///
     /// ```ts
     /// const value = `0x${crypto.getRandomValues(new Uint8Array(4)).toHex()}` as `0x${string}`;

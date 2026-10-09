@@ -200,7 +200,7 @@ impl Preimage for ProductRuntimeHost {
         let started = Instant::now();
 
         // The read-after-write cache answers first, as for a lookup, unless the
-        // product asks to measure the network.
+        // product asks to skip host caches.
         if !skip_host_caches
             && let Ok(key_bytes) = <[u8; 32]>::try_from(key.as_slice())
             && let Some(value) = self.services.cached_preimage(&key_bytes)
@@ -251,7 +251,8 @@ fn elapsed_ms(started: Instant) -> u32 {
 }
 
 /// Record that the source that served a read sent bytes that do not match the
-/// key: its attempt becomes `BadBytes`, and no source served the read.
+/// key. Its attempt becomes `BadBytes`, and the report names no source that
+/// served.
 fn mark_bad_bytes(report: &mut v01::PreimageReadReport) {
     report.served_by = None;
     if let Some(attempt) = report
