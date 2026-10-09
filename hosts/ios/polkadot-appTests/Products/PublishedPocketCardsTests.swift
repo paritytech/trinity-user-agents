@@ -167,11 +167,15 @@ struct PublishedPocketCardsTests {
         #expect(faceShown)
     }
 
-    /// The user is waiting on the card they tapped, so a chain read that hangs
-    /// must not hold it closed: the card opens with its face after the timeout.
+    /// A chain read that hangs must not fold the face long after the card
+    /// opened: an answer past the bound leaves the face shown.
     @Test
     func opensWithItsFaceWhenTheProductDoesNotAnswerInTime() async {
-        let cards = PublishedPocketCards(products: HangingProductResolver())
+        let late = SlowProductResolver(
+            product: gameProduct(worker: workerPublishing([faceAwayLoyalty])),
+            delay: .milliseconds(100)
+        )
+        let cards = PublishedPocketCards(products: late)
         let started = ContinuousClock.now
 
         let faceShown = await PocketCardFaceOnOpen.faceShown(for: loyaltyKey, cards: cards, timeout: .milliseconds(10))
@@ -267,14 +271,18 @@ private func workerPublishing(_ cards: [PocketCardDefinition]) -> ProductExecuta
 /// Answers any id with the one product these tests ask about, including the mixed-casing id one
 /// test deliberately asks under.
 private func gameResolver(worker: ProductExecutable.Worker?) -> StubProductResolver {
-    StubProductResolver(alwaysResolvingTo: ResolvedProduct(
+    StubProductResolver(alwaysResolvingTo: gameProduct(worker: worker))
+}
+
+private func gameProduct(worker: ProductExecutable.Worker?) -> ResolvedProduct {
+    ResolvedProduct(
         id: "game.paseo",
         displayName: "Game",
         description: nil,
         icon: nil,
         executables: ProductExecutables(app: nil, widget: nil, worker: worker),
         hasManifest: true
-    ))
+    )
 }
 
 /// Never answers, and reports being cancelled at the moment it is.

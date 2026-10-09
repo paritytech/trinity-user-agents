@@ -13,23 +13,9 @@ enum PocketCardFaceOnOpen {
         cards: any PublishedPocketCardsResolving,
         timeout: Duration = .seconds(5)
     ) async -> Bool {
-        // Raced through a continuation rather than a task group, which would wait
-        // out a resolver that ignores cancellation.
-        var racers: [Task<Void, Never>] = []
-        let published = try? await withCheckedThrowingContinuation { continuation in
-            let first = CheckedContinuationGuard<Bool?>(continuation)
-            racers = [
-                Task {
-                    let card = try? await cards.find(productId: key.productId, cardId: key.cardId)
-                    first.resume(returning: card?.definition.faceShown)
-                },
-                Task {
-                    try? await Task.sleep(for: timeout)
-                    first.resume(returning: nil)
-                }
-            ]
+        let published = try? await withTimeout(timeout) {
+            try await cards.find(productId: key.productId, cardId: key.cardId).definition.faceShown
         }
-        racers.forEach { $0.cancel() }
 
         return published ?? true
     }
