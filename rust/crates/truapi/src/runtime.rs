@@ -24,6 +24,7 @@ mod host_grants;
 mod host_session;
 mod identity;
 pub mod login_failure;
+mod pairing_host;
 pub mod product_manifest;
 mod product_consent;
 mod product_subtree;
@@ -67,6 +68,7 @@ type ContactsPicker = (
 );
 use futures::{FutureExt, StreamExt, pin_mut};
 pub use host_accounts::HostAccounts;
+pub use pairing_host::PairingHost;
 #[cfg(feature = "test-host")]
 mod test_resource_controls;
 pub use host_grants::HostGrantStore;
@@ -80,7 +82,6 @@ pub use sso_responder_service::{
     AnnouncedPairing, DevicePairingObserver, MAX_PAIRING_METADATA_CHARS, PairedSsoPeer,
     PairingProposal, PairingProposalMetadata, ResponderExit, SsoResponderService,
 };
-pub use sso_request_service::SsoRequestService;
 #[cfg(all(target_arch = "wasm32", feature = "test-host"))]
 pub use vrf::ring_vrf_member;
 // `TrackedStatementRenewalTarget` is only read back by the native renewal
@@ -1450,14 +1451,7 @@ impl ProductRuntimeHost<SsoAccountHolderClient> {
         .0
     }
 
-    fn new_compat_with_pairing(
-        platform: Arc<dyn Platform>,
-        spawner: Spawner,
-    ) -> (
-        Self,
-        Arc<HostAccounts<SsoAccountHolderClient>>,
-        Arc<SsoRequestService>,
-    ) {
+    fn new_compat_with_pairing(platform: Arc<dyn Platform>, spawner: Spawner) -> (Self, PairingHost) {
         let host_config = Self::compat_host_config();
         Self::new_pairing_for_tests(
             platform,
@@ -1473,11 +1467,7 @@ impl ProductRuntimeHost<SsoAccountHolderClient> {
         host_config: crate::platform::PairingHostConfig,
         product: ProductContext,
         spawner: Spawner,
-    ) -> (
-        Self,
-        Arc<HostAccounts<SsoAccountHolderClient>>,
-        Arc<SsoRequestService>,
-    ) {
+    ) -> (Self, PairingHost) {
         let services = RuntimeServices::new(
             platform.clone(),
             host_config.host.host_info.clone(),
@@ -1486,10 +1476,16 @@ impl ProductRuntimeHost<SsoAccountHolderClient> {
             host_config.asset_hub_chain_genesis_hash,
             spawner.clone(),
         );
-        let (accounts, sso) = HostAccounts::pairing(services.clone(), host_config);
+        let pairing = PairingHost::new(services.clone(), host_config);
         let adapters = crate::host_core::ConnectionAdapters::from_services(&services);
-        let host = Self::from_services(services, adapters, accounts.clone(), sso.clone(), product);
-        (host, accounts, sso)
+        let host = Self::from_services(
+            services,
+            adapters,
+            pairing.accounts().clone(),
+            pairing.session().clone(),
+            product,
+        );
+        (host, pairing)
     }
 }
 

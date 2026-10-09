@@ -186,8 +186,8 @@ fn a_blessed_vrf_signature_skips_the_prompt_only_locally_for_its_own_account() {
     let foreign_signed = sign_locally(vrf_request("other.paseo"));
     let Ok(Dispatch::Response(answer)) = futures::executor::block_on(
         SsoAccountHolderService::new(
-            activation.account_holder().clone(),
-            activation.account_holder().current_session().unwrap(),
+            activation.wallet_for_tests().clone(),
+            activation.wallet_for_tests().current_session().unwrap(),
         )
         .answer(RemoteMessage::request(
             "relayed-vrf".to_string(),

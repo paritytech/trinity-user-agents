@@ -15,7 +15,7 @@ fn wallet_signing_requires_the_callers_authorization() {
         });
         let (services, authority) = signing_runtime_with_platform(platform.clone());
         futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec())).unwrap();
-        let session = authority.account_holder().current_session().unwrap();
+        let session = authority.wallet_for_tests().current_session().unwrap();
         auto_signing::grant_auto_signing(&product_runtime(services, authority.clone()));
         let product = ProductContext::new("myapp.dot".to_string()).unwrap();
         let call = CallContext::default();
@@ -38,7 +38,7 @@ fn wallet_signing_requires_the_callers_authorization() {
                 bytes: b"approval".to_vec(),
             },
         };
-        let signed = futures::executor::block_on(authority.account_holder().sign_raw(
+        let signed = futures::executor::block_on(authority.wallet_for_tests().sign_raw(
             invocation(),
             SignRawAuthorityRequest::Product(request.clone()),
             true,
@@ -58,7 +58,7 @@ fn wallet_signing_requires_the_callers_authorization() {
         if remote {
             let statement = futures::executor::block_on(
                 authority
-                    .account_holder()
+                    .wallet_for_tests()
                     .sign_statement_store_product_payload(
                         invocation(),
                         product_account(0),
@@ -98,8 +98,8 @@ fn remote_vrf_cannot_reuse_a_native_auto_signing_grant() {
     auto_signing::grant_auto_signing(&product_runtime(services, authority.clone()));
     let Ok(Dispatch::Response(answer)) = futures::executor::block_on(
         SsoAccountHolderService::new(
-            authority.account_holder().clone(),
-            authority.account_holder().current_session().unwrap(),
+            authority.wallet_for_tests().clone(),
+            authority.wallet_for_tests().current_session().unwrap(),
         )
         .answer(RemoteMessage::request(
             "remote-vrf".to_string(),
@@ -170,7 +170,7 @@ fn remote_account_access_reuses_shared_decisions_and_preserves_their_lifetime() 
                 signing_runtime_with_ring_resolver(platform.clone(), full_person_ring_resolver());
             futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
                 .unwrap();
-            let session = authority.account_holder().current_session().unwrap();
+            let session = authority.wallet_for_tests().current_session().unwrap();
             register_full_person_key(&authority, &session, &full_person_ring_location());
             let owner = if operation == "alias" {
                 "peopl"
@@ -187,8 +187,8 @@ fn remote_account_access_reuses_shared_decisions_and_preserves_their_lifetime() 
                 .unwrap();
             }
             let service = SsoAccountHolderService::new(
-                authority.account_holder().clone(),
-                authority.account_holder().current_session().unwrap(),
+                authority.wallet_for_tests().clone(),
+                authority.wallet_for_tests().current_session().unwrap(),
             );
             let mut outcomes = Vec::new();
             for request_id in ["first", "second"] {
@@ -271,7 +271,7 @@ fn shared_denials_override_published_access_for_local_and_remote_callers() {
         let (_, authority) =
             signing_runtime_with_ring_resolver(platform.clone(), full_person_ring_resolver());
         futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec())).unwrap();
-        let session = authority.account_holder().current_session().unwrap();
+        let session = authority.wallet_for_tests().current_session().unwrap();
         register_full_person_key(&authority, &session, &full_person_ring_location());
         let request = ProductRequest {
             calling_product_id: "myapp.dot".to_string(),
@@ -280,7 +280,7 @@ fn shared_denials_override_published_access_for_local_and_remote_callers() {
                 message: b"published access".to_vec(),
             },
         };
-        let local = futures::executor::block_on(authority.account_holder().ring_vrf_sign(
+        let local = futures::executor::block_on(authority.wallet_for_tests().ring_vrf_sign(
             AccountInvocation {
                 call: &CallContext::default(),
                 session: &session,
@@ -292,8 +292,8 @@ fn shared_denials_override_published_access_for_local_and_remote_callers() {
         ));
         let Ok(Dispatch::Response(answer)) = futures::executor::block_on(
             SsoAccountHolderService::new(
-                authority.account_holder().clone(),
-                authority.account_holder().current_session().unwrap(),
+                authority.wallet_for_tests().clone(),
+                authority.wallet_for_tests().current_session().unwrap(),
             )
             .answer(RemoteMessage::request(
                 "remote-published-access".to_string(),

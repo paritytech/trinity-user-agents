@@ -36,8 +36,7 @@ use crate::runtime::{
     AccountHolder, ActionChannel, AuthorityError,
     DEFAULT_REMOTE_AUTHORITY_RESPONSE_TIMEOUT, DevicePairingObserver, HostAccounts, HostSession,
     LocalActivation, PairedSsoPeer, ProductConnection, ProductRuntimeHost, ResponderExit,
-    RuntimeServices, SigningHostRole, SsoAccountHolderClient, SsoAccountHolderService,
-    SsoRequestService, SsoResponderService,
+    PairingHost, RuntimeServices, SigningHostRole, SsoAccountHolderService, SsoResponderService,
 };
 use crate::subscription::{HostInitiatedSubscriptionManager, Spawner};
 use crate::transport::Transport;
@@ -180,8 +179,7 @@ fn product_context(product_id: &str) -> Result<ProductContext, v01::GenericError
 /// is a signing-host operation and is not present here.
 pub struct PairingHostRuntime {
     services: Arc<RuntimeServices>,
-    accounts: Arc<HostAccounts<SsoAccountHolderClient>>,
-    sso: Arc<SsoRequestService>,
+    pairing: PairingHost,
 }
 
 impl PairingHostRuntime {
@@ -190,7 +188,7 @@ impl PairingHostRuntime {
     /// For test hosts only, with the `test-host` feature enabled.
     #[cfg(feature = "test-host")]
     pub fn set_submit_preimages_locally(&self, local: bool) {
-        self.accounts.set_submit_preimages_locally(local);
+        self.pairing.accounts().set_submit_preimages_locally(local);
     }
 
     /// Build a long-lived pairing-host runtime around a platform implementation.
@@ -245,13 +243,9 @@ impl PairingHostRuntime {
         if let Some(contacts_platform) = contacts_platform {
             services.install_contacts_platform(contacts_platform);
         }
-        let (accounts, sso) = HostAccounts::pairing(services.clone(), config);
-        sso.clone().start_session_store_sync(spawner);
-        Self {
-            services,
-            accounts,
-            sso,
-        }
+        let pairing = PairingHost::new(services.clone(), config);
+        pairing.session().clone().start_session_store_sync(spawner);
+        Self { services, pairing }
     }
 
     /// Install the host's [`PermissionStatusHost`], which carries the reasoning
@@ -314,8 +308,8 @@ impl PairingHostRuntime {
     ) -> ProductRuntime {
         ProductRuntime::new(
             self.services.clone(),
-            self.accounts.clone(),
-            self.sso.clone(),
+            self.pairing.accounts().clone(),
+            self.pairing.session().clone(),
             product,
             ConnectionAdapters::from_services(&self.services),
             sink,
@@ -327,8 +321,8 @@ impl PairingHostRuntime {
     pub fn product_admin(&self, product: ProductContext) -> HostAdmin {
         HostAdmin::new(
             self.services.clone(),
-            self.accounts.clone(),
-            self.sso.clone(),
+            self.pairing.accounts().clone(),
+            self.pairing.session().clone(),
             product,
             ConnectionAdapters::from_services(&self.services),
         )
@@ -337,7 +331,7 @@ impl PairingHostRuntime {
     /// Disconnect the active account-authority session.
     #[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.disconnect_session"))]
     pub async fn disconnect_session(&self) {
-        self.sso.disconnect().await;
+        self.pairing.session().disconnect().await;
     }
 
     /// Log out and discard the old pairing keypair.
@@ -346,15 +340,8 @@ impl PairingHostRuntime {
     /// presents a new deeplink suitable for another signing host.
     #[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.logout"))]
     pub async fn logout(&self) -> Result<(), v01::GenericError> {
-        self.sso.disconnect().await;
-        self.accounts
-            .forget_auto_signing_keys()
-            .await
-            .map_err(|reason| v01::GenericError {
-                reason: format!("session disconnected, but AutoSigning reset failed: {reason}"),
-            })?;
-        self.sso
-            .forget_pairing_identity()
+        self.pairing
+            .logout()
             .await
             .map_err(|reason| v01::GenericError { reason })
     }
@@ -363,7 +350,7 @@ impl PairingHostRuntime {
     /// session and unrelated products.
     #[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.clear_product_state", %product_id))]
     pub async fn clear_product_state(&self, product_id: &str) -> Result<(), v01::GenericError> {
-        self.accounts
+        self.pairing.accounts()
             .clear_product_state(product_id)
             .await
             .map_err(|reason| v01::GenericError { reason })
@@ -374,7 +361,7 @@ impl PairingHostRuntime {
         &self,
         ring: &v01::RingLocation,
     ) -> Result<Vec<v01::ProductAccountId>, v01::GenericError> {
-        self.accounts
+        self.pairing.accounts()
             .ring_vrf_providers(ring)
             .await
             .map_err(ring_vrf_admin_error)
@@ -385,7 +372,7 @@ impl PairingHostRuntime {
         &self,
         ring: &v01::RingLocation,
     ) -> Result<Option<v01::ProductAccountId>, v01::GenericError> {
-        self.accounts
+        self.pairing.accounts()
             .selected_ring_vrf_provider(ring)
             .await
             .map_err(ring_vrf_admin_error)
@@ -397,7 +384,7 @@ impl PairingHostRuntime {
         ring: v01::RingLocation,
         handle: v01::ProductAccountId,
     ) -> Result<(), v01::GenericError> {
-        self.accounts
+        self.pairing.accounts()
             .select_ring_vrf_provider(ring, handle)
             .await
             .map_err(ring_vrf_admin_error)
@@ -413,7 +400,7 @@ impl PairingHostRuntime {
     /// running their own P2P chat channel for the paired identity.
     #[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.session_chat_identity_key"))]
     pub fn session_chat_identity_key(&self) -> Option<[u8; 32]> {
-        self.sso
+        self.pairing.session()
             .session_state()
             .current()?
             .identity_chat_private_key
@@ -423,7 +410,7 @@ impl PairingHostRuntime {
     /// running their own statement-store traffic against the advertised account.
     #[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.device_statement_key"))]
     pub fn device_statement_key(&self) -> Option<[u8; 64]> {
-        Some(self.sso.session_state().current()?.sso?.ss_secret)
+        Some(self.pairing.session().session_state().current()?.sso?.ss_secret)
     }
 
     /// Read this device's X25519 encryption secret, for hosts running device
@@ -444,14 +431,14 @@ impl PairingHostRuntime {
         product_id: &str,
         timeout_ms: Option<u32>,
     ) -> Result<Option<[u8; 32]>, v01::GenericError> {
-        product_subtree_public_key(self.accounts.as_ref(), product_id, timeout_ms).await
+        product_subtree_public_key(self.pairing.accounts().as_ref(), product_id, timeout_ms).await
     }
 
     /// Clear the canonical paired session and all capability caches/storage
     /// without sending a peer-disconnect notice.
     #[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.reset_session_state"))]
     pub async fn reset_session_state(&self) {
-        self.sso.reset_session_state().await;
+        self.pairing.session().reset_session_state().await;
     }
 
     /// Start or join the pairing-host login flow for one product.
@@ -461,7 +448,7 @@ impl PairingHostRuntime {
         product_id: &str,
     ) -> Result<v01::HostRequestLoginResponse, v01::GenericError> {
         let product = product_context(product_id)?;
-        match self.sso.request_login(&product).await {
+        match self.pairing.session().request_login(&product).await {
             Ok(response) => Ok(response),
             Err(error) => Err(v01::GenericError {
                 reason: pairing_login_error_reason(error),
@@ -473,7 +460,7 @@ impl PairingHostRuntime {
     /// active.
     #[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.cancel_pairing"))]
     pub fn cancel_pairing(&self) {
-        self.sso.cancel_login();
+        self.pairing.session().cancel_login();
     }
 
     /// Activate a canonical session blob supplied by an external encrypted
@@ -483,7 +470,7 @@ impl PairingHostRuntime {
     /// connected-session installation have completed.
     #[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.activate_external_session"))]
     pub async fn activate_external_session(&self, blob: &[u8]) -> Result<(), v01::GenericError> {
-        self.sso
+        self.pairing.session()
             .activate_external_session(blob)
             .await
             .map_err(|reason| v01::GenericError { reason })
@@ -496,7 +483,7 @@ impl PairingHostRuntime {
     /// immediately use the restored authority session.
     #[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.activate_stored_session"))]
     pub async fn activate_stored_session(&self) -> Result<(), v01::GenericError> {
-        self.sso
+        self.pairing.session()
             .activate_stored_session()
             .await
             .map_err(|reason| v01::GenericError { reason })
@@ -506,7 +493,7 @@ impl PairingHostRuntime {
     /// have changed and should be re-read.
     #[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.notify_session_store_changed"))]
     pub fn notify_session_store_changed(&self) {
-        self.sso.notify_session_store_changed();
+        self.pairing.session().notify_session_store_changed();
     }
 
     /// Read a stored permission authorization status for a product without prompting.
@@ -620,9 +607,7 @@ impl SigningHostRuntime {
         &self,
         product_id: &str,
     ) -> Result<Option<[u8; 32]>, v01::GenericError> {
-        self.signing_host
-            .account_holder()
-            .derive_subtree_public_key(product_id)
+        self.signing_host.product_subtree_public_key(product_id)
             .map_err(|err| v01::GenericError {
                 reason: err.to_string(),
             })
@@ -839,9 +824,8 @@ impl SigningHostRuntime {
     pub async fn clear_product_state(&self, product_id: &str) -> Result<(), v01::GenericError> {
         self.signing_host
             .clear_product_state(product_id)
-            .map_err(|error| v01::GenericError {
-                reason: error.to_string(),
-            })
+            .await
+            .map_err(|reason| v01::GenericError { reason })
     }
 
     /// Registered providers available for an internal well-known-ring feature.
@@ -1050,9 +1034,7 @@ impl SigningHostRuntime {
         &self,
         targets: Vec<crate::runtime::StatementRenewalTarget>,
     ) -> Result<(), v01::GenericError> {
-        self.signing_host
-            .account_holder()
-            .track_statement_renewal_targets(targets)
+        self.signing_host.track_statement_renewal_targets(targets)
             .await
             .map_err(|reason| v01::GenericError { reason })
     }
@@ -1065,9 +1047,7 @@ impl SigningHostRuntime {
     pub async fn statement_renewal_targets(
         &self,
     ) -> Result<Vec<crate::runtime::TrackedStatementRenewalTarget>, v01::GenericError> {
-        self.signing_host
-            .account_holder()
-            .statement_renewal_targets()
+        self.signing_host.statement_renewal_targets()
             .await
             .map_err(|reason| v01::GenericError { reason })
     }
@@ -1080,9 +1060,7 @@ impl SigningHostRuntime {
     /// from what it will prune.
     #[instrument(skip_all, fields(runtime.method = "signing_host_runtime.statement_renewal_owner_key"))]
     pub fn statement_renewal_owner_key(&self) -> Result<truapi::Bytes32, v01::GenericError> {
-        self.signing_host
-            .account_holder()
-            .statement_renewal_owner_key()
+        self.signing_host.statement_renewal_owner_key()
             .map_err(|reason| v01::GenericError { reason })
     }
 
@@ -1092,9 +1070,7 @@ impl SigningHostRuntime {
         &self,
         account_id: &[u8; 32],
     ) -> Result<bool, v01::GenericError> {
-        self.signing_host
-            .account_holder()
-            .untrack_statement_renewal_account(account_id)
+        self.signing_host.untrack_statement_renewal_account(account_id)
             .await
             .map_err(|reason| v01::GenericError { reason })
     }
@@ -1108,9 +1084,7 @@ impl SigningHostRuntime {
         &self,
     ) -> Result<crate::statement_allowance::renewal::StatementRenewalReport, v01::GenericError>
     {
-        self.signing_host
-            .account_holder()
-            .renew_statement_allowances()
+        self.signing_host.renew_statement_allowances()
             .await
             .map_err(|reason| v01::GenericError { reason })
     }
@@ -1139,9 +1113,7 @@ impl SigningHostRuntime {
     pub fn last_statement_renewal_report(
         &self,
     ) -> Option<crate::statement_allowance::renewal::StatementRenewalReport> {
-        self.signing_host
-            .account_holder()
-            .last_statement_renewal_report()
+        self.signing_host.last_statement_renewal_report()
     }
 }
 
@@ -2025,7 +1997,7 @@ mod tests {
             },
             "the boot reconcile did not report the empty session store",
         );
-        runtime.sso.session_state().set_session(session);
+        runtime.pairing.session().session_state().set_session(session);
     }
 
     fn assert_send<T: Send>(_: T) {}
@@ -2303,7 +2275,8 @@ mod tests {
         let session = crate::test_support::sso_session_info();
         install_session_after_boot(&runtime, &platform, session.clone());
         runtime
-            .accounts
+            .pairing
+            .accounts()
             .cache_product_subtree_for_test(&session, "myapp.dot", [9; 32]);
 
         let key =

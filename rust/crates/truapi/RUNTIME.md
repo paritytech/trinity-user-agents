@@ -49,7 +49,7 @@ Shared RuntimeServices: platform, chain access and RPC clients
 Host Platform: storage, prompts, chain transport and navigation
 ```
 
-`HostAccounts<H>` uses the account session selected before product permission and review. It retains and uses delegated keys or wallet-issued authorization; `AccountHolder` owns wallet execution and grant issuance. Wallet lifecycle and secret helpers remain internal. The native wallet and shared host use the same ring registry. `host_logic` provides pure crypto, codecs and derivation rather than another execution layer.
+`HostAccounts<H>` uses the account session selected before product permission and review. It binds the calling product, so product code passes only its `ProductContext`, and it retains and uses delegated keys; `AccountHolder` owns wallet execution and grant issuance. Wallet lifecycle and secret helpers remain internal. The native wallet and shared host use the same ring registry. `host_logic` provides pure crypto, codecs and derivation rather than another execution layer.
 
 `runtime.rs` owns the product runtime and shared helpers. The trait adapters
 are grouped by surface under `runtime/capabilities/`; cross-capability fixtures
@@ -187,8 +187,9 @@ path. Web hosts do not compile the store.
 ### The two roles
 
 - Native execution uses `HostAccounts<WalletAccountHolder>`; paired execution uses `HostAccounts<SsoAccountHolderClient>`. Both share the same grant acquisition, retention and delegated signing policy.
+- `PairingHost` and `SigningHost` are the role roots: each builds its role's parts and serves the intents that span them. `PairingHost` wires `SsoRequestService` to the `HostAccounts` that keeps the paired session's grants and owns logout. `SigningHost` sends activation, lock and product reset through `HostAccounts` and forwards renewal to the wallet.
 - `WalletAccountHolder` owns entropy, wallet consent, derivation, issuance and renewal. Incoming `SsoAccountHolderService` calls it directly and shares stored account-access decisions but cannot inherit native AutoSigning or populate native grants.
-- `AccountInvocation` carries the selected wallet activation and trusted caller origin. Local callers may carry a wallet-issued authorization; remote signing always requires wallet approval. Local and remote account access share stored decisions, including refusals.
+- `AccountInvocation` carries the selected wallet activation and the caller: a product this host bound or a product id a paired host claims. Remote signing always requires wallet approval. Local and remote account access share stored decisions, including refusals.
 - Product calls keep the selected `AuthoritySession` across review. The account holder validates that activation before wallet execution. `HostAccounts` checks grant revisions when retaining or using delegated keys; product reset clears grants without changing the wallet activation. It does not cancel an independent wallet approval already in progress.
 - `AccountHolder::allocate_grants` returns a lazy, ordered stream. The host retains each success before continuing; recoverable item failures and whole-operation failures remain distinct.
 - `HostGrantStore` owns retained keys and public subtrees. AutoSigning has one form, the product key, which `HostAccounts` signs with on either host. Paired keys use existing storage encodings; native grants remain in memory, and a native AutoSigning key lasts one wallet activation. Both hosts read the retained Bulletin key’s on-chain authorization before submission, checking expiry, transaction count and payload capacity. Insufficient authorization requests an approved Increase and waits for propagation; failure preserves the key. Native Statement Store submissions silently renew only the product’s retained sponsorship signer. Paired renewals use the existing SSO allocation request and its phone approval.

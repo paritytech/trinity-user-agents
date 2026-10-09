@@ -845,14 +845,14 @@ mod tests {
         const SUFFIX: &str = "paseo";
 
         let (_, signing_host) = signing_fixture(Arc::new(StubPlatform::default()));
-        let session = signing_host.account_holder().current_session().unwrap();
+        let session = signing_host.wallet_for_tests().current_session().unwrap();
         let host = generate_pairing_device_identity().unwrap();
         let peer = PairedSsoPeer {
             statement_account_id: host.statement_store_public_key,
             encryption_public_key: host.encryption_public_key,
         };
         let (_, answer) = signing_host
-            .account_holder()
+            .wallet_for_tests()
             .pairing_answer(&session, peer, [0; 32])
             .unwrap();
         let verified =
@@ -1020,9 +1020,9 @@ mod tests {
         // unbounded test would hang instead of reporting. The bound is generous
         // because it is catching a hang, not asserting latency.
         let allocation = futures::executor::block_on(async {
-            let session = signing_host.account_holder().current_session().unwrap();
+            let session = signing_host.wallet_for_tests().current_session().unwrap();
             futures::select! {
-                result = signing_host.account_holder().allocate_statement_store_allowance(
+                result = signing_host.wallet_for_tests().allocate_statement_store_allowance(
                     &session,
                     product_id,
                     OnExistingAllowancePolicy::Ignore,
@@ -1068,7 +1068,7 @@ mod tests {
     fn responder_advertises_and_signs_with_the_local_uid_identity() {
         let (_services, signing_host) = signing_fixture(Arc::new(StubPlatform::default()));
         let local_identity = signing_host
-            .account_holder()
+            .wallet_for_tests()
             .current_session()
             .unwrap()
             .identity_account_id
@@ -1087,9 +1087,9 @@ mod tests {
         let (_, host_encryption_public_key) =
             derive_x25519_keypair_from_entropy(&[0x42; 16], b"sso");
         let session = signing_host
-            .account_holder()
+            .wallet_for_tests()
             .sso_session(
-                &signing_host.account_holder().current_session().unwrap(),
+                &signing_host.wallet_for_tests().current_session().unwrap(),
                 PairedSsoPeer {
                     statement_account_id: [0x55; 32],
                     encryption_public_key: host_encryption_public_key,
@@ -1407,8 +1407,8 @@ mod tests {
         )
         .unwrap();
         let (_, signing_host) = signing_fixture(Arc::new(StubPlatform::default()));
-        let selected = signing_host.account_holder().current_session().unwrap();
-        let resumed = signing_host.account_holder().sso_session(&selected, peer).unwrap();
+        let selected = signing_host.wallet_for_tests().current_session().unwrap();
+        let resumed = signing_host.wallet_for_tests().sso_session(&selected, peer).unwrap();
 
         assert_eq!(
             crate::host_logic::statement_store::statement_public_key_from_secret(resumed.ss_secret)
@@ -1451,8 +1451,8 @@ mod tests {
         request: v1::RemoteMessage,
     ) -> v1::RemoteMessage {
         let service = SsoAccountHolderService::new(
-            signing_host.account_holder().clone(),
-            signing_host.account_holder().current_session().unwrap(),
+            signing_host.wallet_for_tests().clone(),
+            signing_host.wallet_for_tests().current_session().unwrap(),
         );
         let message = RemoteMessage {
             message_id: message_id.to_string(),
@@ -1504,8 +1504,8 @@ mod tests {
             ..StubPlatform::default()
         }));
         let service = SsoAccountHolderService::new(
-            signing_host.account_holder().clone(),
-            signing_host.account_holder().current_session().unwrap(),
+            signing_host.wallet_for_tests().clone(),
+            signing_host.wallet_for_tests().current_session().unwrap(),
         );
         let request = RemoteMessage::request(
             "allocation-1".to_string(),
@@ -1631,7 +1631,7 @@ mod tests {
             ..StubPlatform::default()
         });
         let (_, signing_host) = signing_fixture(platform.clone());
-        let session = signing_host.account_holder().current_session();
+        let session = signing_host.wallet_for_tests().current_session();
         let expected_secret = derive_product_subtree_keypair(
             &derive_root_keypair_from_entropy(&ENTROPY).unwrap(),
             "myapp.dot",
@@ -1641,13 +1641,13 @@ mod tests {
         .to_bytes();
         let expected_domain = derive_ring_vrf_domain_entropy(&ENTROPY, "myapp.dot").unwrap();
         let service = SsoAccountHolderService::new(
-            signing_host.account_holder().clone(),
-            signing_host.account_holder().current_session().unwrap(),
+            signing_host.wallet_for_tests().clone(),
+            signing_host.wallet_for_tests().current_session().unwrap(),
         );
         let answer = service.answer(allocation_request("remote-reset"));
         futures::pin_mut!(answer);
         assert!(answer.as_mut().now_or_never().is_none());
-        signing_host.clear_product_state("myapp.dot").unwrap();
+        futures::executor::block_on(signing_host.clear_product_state("myapp.dot")).unwrap();
         release.send(()).unwrap();
         let Ok(Dispatch::Response(answer)) = futures::executor::block_on(answer) else {
             panic!("expected an allocation response")
@@ -1660,7 +1660,7 @@ mod tests {
         assert_eq!(
             (
                 response.payload,
-                signing_host.account_holder().current_session(),
+                signing_host.wallet_for_tests().current_session(),
                 platform.resource_allocation_reviews.lock().unwrap().len()
             ),
             (
@@ -1687,8 +1687,8 @@ mod tests {
         });
         let (_, signing_host) = signing_fixture(platform.clone());
         let service = SsoAccountHolderService::new(
-            signing_host.account_holder().clone(),
-            signing_host.account_holder().current_session().unwrap(),
+            signing_host.wallet_for_tests().clone(),
+            signing_host.wallet_for_tests().current_session().unwrap(),
         );
         let message = RemoteMessage::request(
             "alloc-stale".to_string(),
@@ -1739,8 +1739,8 @@ mod tests {
             });
             let (_, signing_host) = signing_fixture(platform.clone());
             let service = SsoAccountHolderService::new(
-                signing_host.account_holder().clone(),
-                signing_host.account_holder().current_session().unwrap(),
+                signing_host.wallet_for_tests().clone(),
+                signing_host.wallet_for_tests().current_session().unwrap(),
             );
             futures::executor::block_on(signing_host.activate_local_session(entropy)).unwrap();
             let Ok(Dispatch::Response(answer)) =
@@ -1796,8 +1796,8 @@ mod tests {
         });
         let (_, signing_host) = signing_fixture(platform.clone());
         let service = SsoAccountHolderService::new(
-            signing_host.account_holder().clone(),
-            signing_host.account_holder().current_session().unwrap(),
+            signing_host.wallet_for_tests().clone(),
+            signing_host.wallet_for_tests().current_session().unwrap(),
         );
         let allocation = service.answer(allocation_request("alloc-1"));
         futures::pin_mut!(allocation);
@@ -1836,8 +1836,8 @@ mod tests {
         });
         let (_, signing_host) = signing_fixture(platform.clone());
         let service = SsoAccountHolderService::new(
-            signing_host.account_holder().clone(),
-            signing_host.account_holder().current_session().unwrap(),
+            signing_host.wallet_for_tests().clone(),
+            signing_host.wallet_for_tests().current_session().unwrap(),
         );
 
         futures::executor::block_on(service.answer(cancel("cancel-1", "alloc-1"))).unwrap();

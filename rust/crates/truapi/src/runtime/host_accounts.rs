@@ -15,7 +15,7 @@ use super::signing_host::{
     ChainRingResolver, MemberCandidate, RingResolver, create_proof, development_context_bytes,
 };
 use super::sso_request_service::PairedSessionOwner;
-use super::{HostSession, SsoAccountHolderClient, SsoRequestService, vrf};
+use super::vrf;
 use crate::host_internal::extrinsic::{
     Sr25519Signer, build_signed_transaction, local_transaction_metadata,
 };
@@ -28,10 +28,10 @@ use crate::host_logic::product_account::{
 use crate::host_logic::raw_signing::raw_payload_bytes;
 use crate::host_logic::session::{SessionInfo, SessionState};
 use crate::platform::{
-    PairingHostConfig, PermissionAuthorizationStatus, ProductContext, normalize_product_identifier,
+    PermissionAuthorizationStatus, ProductContext, normalize_product_identifier,
 };
 use futures::StreamExt;
-use std::sync::{Arc, Weak};
+use std::sync::Arc;
 #[cfg(not(target_arch = "wasm32"))]
 use std::time::Instant;
 use truapi::{CallContext, CallError, latest as api};
@@ -54,59 +54,8 @@ pub struct HostAccounts<H: AccountHolder> {
     submit_preimages_locally: core::sync::atomic::AtomicBool,
 }
 
-impl HostAccounts<SsoAccountHolderClient> {
-    /// Bind paired account operations to a session service whose grants this host keeps.
-    pub fn pairing(
-        services: Arc<RuntimeServices>,
-        config: PairingHostConfig,
-    ) -> (Arc<Self>, Arc<SsoRequestService>) {
-        let mut sso = None;
-        let accounts = Arc::new_cyclic(|accounts: &Weak<Self>| {
-            let owner: Weak<dyn PairedSessionOwner> = accounts.clone();
-            let service = SsoRequestService::new(services.clone(), config, owner);
-            sso = Some(service.clone());
-            Self::with_parts(
-                services.clone(),
-                Arc::new(SsoAccountHolderClient::new(service.clone())),
-                service.session_state(),
-                Arc::new(HostGrantStore::new(services.platform.clone())),
-                RingVrfRegistryStore::new(services.platform.clone()),
-                Arc::new(ProductConsent::new(services.platform.clone())),
-                #[cfg(feature = "test-host")]
-                Arc::default(),
-            )
-        });
-        (accounts, sso.expect("the session service is built with its owner"))
-    }
-
-    /// Clear one product's grants while keeping the paired session and other products.
-    pub async fn clear_product_state(&self, product_id: &str) -> Result<(), String> {
-        let product_id = normalize_product_identifier(product_id).map_err(|error| error.to_string())?;
-        self.consent.forget_allowed_once_for(&product_id);
-        let session = {
-            let mut lifecycle = self.grants.lifecycle();
-            lifecycle.revoke_product(&product_id);
-            self.session_state.current()
-        };
-        self.grants
-            .persistence()
-            .await
-            .clear_product(session.as_ref(), &product_id)
-            .await
-    }
-
-    /// Drop the paired host's kept AutoSigning keys, as logout requires.
-    pub async fn forget_auto_signing_keys(&self) -> Result<(), String> {
-        self.grants
-            .persistence()
-            .await
-            .clear_auto_signing_keys()
-            .await
-    }
-}
-
 #[async_trait::async_trait]
-impl PairedSessionOwner for HostAccounts<SsoAccountHolderClient> {
+impl<H: AccountHolder> PairedSessionOwner for HostAccounts<H> {
     async fn write_barrier(&self) -> GrantBarrier {
         self.grants.barrier().await
     }
@@ -149,29 +98,6 @@ impl<H: AccountHolder> HostAccounts<H> {
         #[cfg(feature = "test-host")] resource_controls: Arc<
             super::test_resource_controls::TestResourceControls,
         >,
-    ) -> Arc<Self> {
-        Arc::new(Self::with_parts(
-            services,
-            holder,
-            session_state,
-            grants,
-            ring_vrf_registry,
-            consent,
-            #[cfg(feature = "test-host")]
-            resource_controls,
-        ))
-    }
-
-    fn with_parts(
-        services: Arc<RuntimeServices>,
-        holder: Arc<H>,
-        session_state: Arc<SessionState>,
-        grants: Arc<HostGrantStore>,
-        ring_vrf_registry: Arc<RingVrfRegistryStore>,
-        consent: Arc<ProductConsent>,
-        #[cfg(feature = "test-host")] resource_controls: Arc<
-            super::test_resource_controls::TestResourceControls,
-        >,
     ) -> Self {
         Self {
             ring_resolver: ChainRingResolver::new(services.chain.clone()),
@@ -186,6 +112,41 @@ impl<H: AccountHolder> HostAccounts<H> {
             #[cfg(feature = "test-host")]
             submit_preimages_locally: core::sync::atomic::AtomicBool::new(false),
         }
+    }
+
+    /// Clear one product's grants and Allow once answers, keeping the session and other products.
+    pub async fn clear_product_state(&self, product_id: &str) -> Result<(), String> {
+        let product_id =
+            normalize_product_identifier(product_id).map_err(|error| error.to_string())?;
+        self.consent.forget_allowed_once_for(&product_id);
+        let session = {
+            let mut lifecycle = self.grants.lifecycle();
+            lifecycle.revoke_product(&product_id);
+            self.session_state.current()
+        };
+        self.grants
+            .persistence()
+            .await
+            .clear_product(session.as_ref(), &product_id)
+            .await
+    }
+
+    /// Forget this activation's grants and Allow once answers, then make
+    /// `change` before any grant can be used again.
+    pub fn change_activation<T>(&self, change: impl FnOnce() -> T) -> T {
+        let mut lifecycle = self.grants.lifecycle();
+        lifecycle.clear_memory();
+        self.consent.forget_allowed_once();
+        change()
+    }
+
+    /// Drop the kept AutoSigning keys, as a paired host's logout requires.
+    pub async fn forget_auto_signing_keys(&self) -> Result<(), String> {
+        self.grants
+            .persistence()
+            .await
+            .clear_auto_signing_keys()
+            .await
     }
 
     /// Keep test submissions in memory when no on-chain allowance exists.

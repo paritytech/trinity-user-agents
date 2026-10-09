@@ -548,7 +548,8 @@ mod tests {
     use crate::host_rpc_client::HostRpcClient;
     use crate::platform::{AuthState, ChainProvider, CoreStorageKey};
     use crate::runtime::connected_session_ui_info;
-    use crate::runtime::{ProductRuntimeHost, SsoRequestService};
+    use crate::runtime::ProductRuntimeHost;
+    use crate::runtime::sso_request_service::SsoRequestService;
     use crate::test_support::{
         StubPlatform, core_storage_test_key, pairing_device_from_deeplink, peer_statement_keypair,
         runtime_config, session_info, signed_test_statement, stub_platform, subscribe_ack_frame,
@@ -577,8 +578,9 @@ mod tests {
     #[test]
     fn request_login_presents_pairing_and_rejects_when_cancelled() {
         let platform = stub_platform();
-        let (host, _, sso) =
+        let (host, pairing) =
             ProductRuntimeHost::new_compat_with_pairing(platform.clone(), test_spawner());
+        let sso = pairing.session().clone();
         let host = Arc::new(host);
         cancel_on_pairing(&platform, sso);
         let cx = CallContext::default();
@@ -623,7 +625,7 @@ mod tests {
             pairing_silent_after_subscribe: true,
             ..Default::default()
         });
-        let (host, _, _) =
+        let (host, _pairing) =
             ProductRuntimeHost::new_compat_with_pairing(platform.clone(), test_spawner());
         let host = Arc::new(host);
         let cx = CallContext::default();
@@ -644,7 +646,7 @@ mod tests {
     #[test]
     fn request_login_gives_up_when_the_pairing_topic_never_acks() {
         let platform = stub_platform();
-        let (host, _, _) =
+        let (host, _pairing) =
             ProductRuntimeHost::new_compat_with_pairing(platform.clone(), test_spawner());
         let host = Arc::new(host);
         let cx = CallContext::default();
@@ -692,7 +694,7 @@ mod tests {
             chain_connect_pending: true,
             ..Default::default()
         });
-        let (host, _, _) =
+        let (host, _pairing) =
             ProductRuntimeHost::new_compat_with_pairing(platform.clone(), test_spawner());
         let host = Arc::new(host);
         let cx = CallContext::default();
@@ -710,8 +712,9 @@ mod tests {
     #[test]
     fn request_login_regenerates_unmarked_pairing_device_identity_between_attempts() {
         let platform = stub_platform();
-        let (host, _, sso) =
+        let (host, pairing) =
             ProductRuntimeHost::new_compat_with_pairing(platform.clone(), test_spawner());
+        let sso = pairing.session().clone();
         let host = Arc::new(host);
         cancel_on_pairing(&platform, sso);
         let cx = CallContext::default();
@@ -775,8 +778,9 @@ mod tests {
                 core_storage_test_key(CoreStorageKey::LastProcessedPairingStatement),
                 vec![0xde, 0xad],
             );
-        let (host, _, sso) =
+        let (host, pairing) =
             ProductRuntimeHost::new_compat_with_pairing(platform.clone(), test_spawner());
+        let sso = pairing.session().clone();
         let host = Arc::new(host);
         cancel_on_pairing(&platform, sso);
         let cx = CallContext::default();
@@ -993,8 +997,9 @@ mod tests {
             pairing_pending_response: true,
             ..Default::default()
         });
-        let (host, _, sso) =
+        let (host, pairing) =
             ProductRuntimeHost::new_compat_with_pairing(platform.clone(), test_spawner());
+        let sso = pairing.session().clone();
         let cancel_host = sso.clone();
         *platform
             .on_auth_state
@@ -1076,8 +1081,9 @@ mod tests {
             session_clears: session_clears.clone(),
             ..Default::default()
         });
-        let (host, _, sso) =
+        let (host, pairing) =
             ProductRuntimeHost::new_compat_with_pairing(platform.clone(), test_spawner());
+        let sso = pairing.session().clone();
         let cancel_host = sso.clone();
         *platform
             .on_auth_session_write
@@ -1269,8 +1275,9 @@ mod tests {
             chain_connect_pending: true,
             ..Default::default()
         });
-        let (host, _, sso) =
+        let (host, pairing) =
             ProductRuntimeHost::new_compat_with_pairing(platform.clone(), test_spawner());
+        let sso = pairing.session().clone();
         let host = Arc::new(host);
         let request = HostRequestLoginRequest::V1(api::HostRequestLoginRequest { reason: None });
         let cx = CallContext::default();
@@ -1323,8 +1330,9 @@ mod tests {
             )),
             ..Default::default()
         });
-        let (host, _, sso) =
+        let (host, pairing) =
             ProductRuntimeHost::new_compat_with_pairing(platform.clone(), test_spawner());
+        let sso = pairing.session().clone();
         let host = Arc::new(host);
         cancel_on_pairing(&platform, sso);
         let cx = CallContext::default();
@@ -1346,8 +1354,9 @@ mod tests {
             session_clears: session_clears.clone(),
             ..Default::default()
         });
-        let (host, _, sso) =
+        let (host, pairing) =
             ProductRuntimeHost::new_compat_with_pairing(platform.clone(), test_spawner());
+        let sso = pairing.session().clone();
         let host = Arc::new(host);
         cancel_on_pairing(&platform, sso);
         let cx = CallContext::default();
@@ -1368,8 +1377,9 @@ mod tests {
             session_error: Some("storage failed"),
             ..Default::default()
         });
-        let (host, _, sso) =
+        let (host, pairing) =
             ProductRuntimeHost::new_compat_with_pairing(platform.clone(), test_spawner());
+        let sso = pairing.session().clone();
         let host = Arc::new(host);
         cancel_on_pairing(&platform, sso);
         let cx = CallContext::default();

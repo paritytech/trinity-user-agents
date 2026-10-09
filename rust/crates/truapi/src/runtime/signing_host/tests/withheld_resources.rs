@@ -73,8 +73,8 @@ fn a_paired_request_is_refused_a_withheld_resource() {
     activation.set_withheld_resources(vec!["AutoSigning".to_string()]);
     let Ok(Dispatch::Response(answer)) = futures::executor::block_on(
         SsoAccountHolderService::new(
-            activation.account_holder().clone(),
-            activation.account_holder().current_session().unwrap(),
+            activation.wallet_for_tests().clone(),
+            activation.wallet_for_tests().current_session().unwrap(),
         )
         .answer(RemoteMessage::request(
             "remote-allocation".to_string(),

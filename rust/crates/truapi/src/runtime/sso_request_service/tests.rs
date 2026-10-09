@@ -75,8 +75,9 @@ fn replacement_waits_for_old_session_cleanup() {
         core_storage_override: Some(storage.clone()),
         ..Default::default()
     });
-    let (_, pairing, host) =
+    let (_, pairing) =
         ProductRuntimeHost::new_compat_with_pairing(platform.clone(), test_spawner());
+    let host = pairing.session().clone();
     let session = sso_session_info();
     block_on(host.set_connected_session_for_tests(session.clone()));
     let root =
@@ -84,8 +85,8 @@ fn replacement_waits_for_old_session_cleanup() {
     let subtree =
         crate::host_logic::product_account::derive_product_subtree_keypair(&root, "myapp.dot")
             .unwrap();
-    let revision = pairing.grants_for_tests().lifecycle().revision();
-    block_on(pairing.grants_for_tests().remember_auto_signing_key(
+    let revision = pairing.accounts().grants_for_tests().lifecycle().revision();
+    block_on(pairing.accounts().grants_for_tests().remember_auto_signing_key(
         &host.session_state(),
         &session,
         revision,
@@ -112,12 +113,12 @@ fn replacement_waits_for_old_session_cleanup() {
     block_on(cleanup);
     block_on(activation).unwrap();
     assert!(
-        !block_on(pairing.grants_for_tests().auto_signing_key(&session, "myapp.dot"))
+        !block_on(pairing.accounts().grants_for_tests().auto_signing_key(&session, "myapp.dot"))
             .unwrap()
             .is_some()
     );
-    let revision = pairing.grants_for_tests().lifecycle().revision();
-    block_on(pairing.grants_for_tests().remember_auto_signing_key(
+    let revision = pairing.accounts().grants_for_tests().lifecycle().revision();
+    block_on(pairing.accounts().grants_for_tests().remember_auto_signing_key(
         &host.session_state(),
         &session,
         revision,
@@ -153,7 +154,7 @@ fn replacement_waits_for_old_session_cleanup() {
             ]
         ),
     );
-    let key = block_on(pairing.grants_for_tests().auto_signing_key(&session, "myapp.dot"))
+    let key = block_on(pairing.accounts().grants_for_tests().auto_signing_key(&session, "myapp.dot"))
         .unwrap()
         .unwrap();
     assert_eq!(
@@ -170,7 +171,8 @@ fn interrupted_cleanup_retains_its_scope_and_later_auth_deletion() {
             core_storage_override: Some(storage.clone()),
             ..Default::default()
         });
-        let (_, pairing, host) = ProductRuntimeHost::new_compat_with_pairing(platform, test_spawner());
+        let (_, pairing) = ProductRuntimeHost::new_compat_with_pairing(platform, test_spawner());
+        let host = pairing.session().clone();
         let session = sso_session_info();
         block_on(host.set_connected_session_for_tests(session.clone()));
         let blob = encode_persisted_session(&session);
@@ -188,8 +190,8 @@ fn interrupted_cleanup_retains_its_scope_and_later_auth_deletion() {
             allowances::GrantScope::from_session(&session),
             "myapp.dot".to_string(),
         );
-        let revision = pairing.grants_for_tests().lifecycle().revision();
-        assert!(block_on(pairing.grants_for_tests().persist_product_subtree_if_current(
+        let revision = pairing.accounts().grants_for_tests().lifecycle().revision();
+        assert!(block_on(pairing.accounts().grants_for_tests().persist_product_subtree_if_current(
             &host.session_state(),
             &session,
             revision,
@@ -243,7 +245,8 @@ fn superseded_login_cannot_leave_its_session_in_storage() {
             core_storage_override: Some(storage.clone()),
             ..Default::default()
         });
-        let (_, _accounts, host) = ProductRuntimeHost::new_compat_with_pairing(platform, test_spawner());
+        let (_, pairing) = ProductRuntimeHost::new_compat_with_pairing(platform, test_spawner());
+        let host = pairing.session().clone();
         let session = sso_session_info();
         let generation = host.begin_login_attempt();
         let (release, pause) = oneshot::channel();
@@ -295,7 +298,8 @@ fn login_store_notifications_follow_the_persisted_value() {
             core_storage_override: Some(storage.clone()),
             ..Default::default()
         });
-        let (_, _accounts, host) = ProductRuntimeHost::new_compat_with_pairing(platform, test_spawner());
+        let (_, pairing) = ProductRuntimeHost::new_compat_with_pairing(platform, test_spawner());
+        let host = pairing.session().clone();
         let session = sso_session_info();
         let generation = host.begin_login_attempt();
         let (release, pause) = oneshot::channel();
