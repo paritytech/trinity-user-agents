@@ -1103,6 +1103,14 @@ class TrUAPIProductExecution internal constructor(
         inner.authorizeRemotePermission(request)
 
     /**
+     * Authorize one device capability the web view gates itself, using the
+     * product's saved, one-use, or prompted decision.
+     */
+    @Throws(HostRejection::class)
+    suspend fun authorizeDevicePermission(request: HostDevicePermissionRequest): Boolean =
+        inner.authorizeDevicePermission(request)
+
+    /**
      * Update a stored permission authorization status. Passing `NotDetermined`
      * clears the stored value so the next product request prompts again.
      */

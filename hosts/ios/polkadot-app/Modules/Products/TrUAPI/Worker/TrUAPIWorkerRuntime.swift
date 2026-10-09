@@ -86,7 +86,9 @@ actor TrUAPIWorkerRuntime {
         let jsEngine = engineFactory()
         do {
             await jsEngine.registerJSDeviceCapabilityHandler(
-                executionModel.osPermissionAsker.makeDeviceCapabilityHandler()
+                executionModel.osPermissionAsker.makeDeviceCapabilityHandler(
+                    execution: executionModel.execution
+                )
             )
             try checkNotDisposed()
             try await jsEngine.initialize(with: scripts)

@@ -47,6 +47,9 @@ pub enum HostDevicePermissionRequest {
     /// Biometric authentication.
     #[display("biometrics")]
     Biometrics,
+    /// Device motion and orientation sensor access.
+    #[display("motion")]
+    Motion,
 }
 
 /// One remote-operation permission requested by the product (RFC 0002).

@@ -195,10 +195,17 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
             product: ProductExecutionConfig,
             request: HostDevicePermissionRequest,
         ): TrUAPIPermissionDecision =
-            hostApiInteractor
-                .requestDevicePermissionDecision(callingProductId, request.toCapability())
-                .getOrElse { throw it }
-                .toNative()
+            // Android WebView serves motion sensors without asking, so the
+            // capability is granted without a prompt. Allow once keeps the core
+            // from storing a grant that no settings screen can revoke.
+            if (request == HostDevicePermissionRequest.MOTION) {
+                TrUAPIPermissionDecision.ALLOW_ONCE
+            } else {
+                hostApiInteractor
+                    .requestDevicePermissionDecision(callingProductId, request.toCapability())
+                    .getOrElse { throw it }
+                    .toNative()
+            }
 
         override suspend fun remotePermission(
             product: ProductExecutionConfig,
@@ -380,6 +387,7 @@ private fun HostDevicePermissionRequest.toCapability(): DeviceCapabilityType = w
     HostDevicePermissionRequest.CLIPBOARD -> DeviceCapabilityType.Clipboard
     HostDevicePermissionRequest.OPEN_URL -> DeviceCapabilityType.OpenUrl
     HostDevicePermissionRequest.BIOMETRICS -> DeviceCapabilityType.Biometrics
+    HostDevicePermissionRequest.MOTION -> DeviceCapabilityType.Motion
 }
 
 private fun RemotePermission.toDomain(): RemotePermissionRequest = when (this) {

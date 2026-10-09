@@ -358,6 +358,8 @@ Identity and account access reviews use `confirmPermission(review:)`, which also
 
 Fetch, XHR, WebSocket connections, notification scheduling, external navigation and existing remote-operation gates consume temporary grants. The shared container authorizes each `getUserMedia` call through `authorize_device_permission`, camera before microphone. Each approval consumes its one-use grant for that attempt: a later microphone denial or native capture failure does not restore the camera grant. The returned stream remains usable until stopped; another capture requires new authorization.
 
+Motion has no container gate: WebKit consults its `requestDeviceOrientationAndMotionPermissionFor` delegate only during the product's user gesture, which a round trip through the container would lose. The embedder's delegate answers it with `TrUAPIProductExecution.authorizeDevicePermission(.motion)`, which resolves the saved decision, consumes a one-use grant, or prompts. WebKit caches the answer per origin in the web view's data store and offers no API to clear it, so within one app launch a product's first motion answer also applies to later requests.
+
 The container enforces product consent, while native media delegates resolve OS permission without consuming product consent again. An OS grant does not establish product consent. This boundary requires the container to run before product code in every frame, with its native methods and prototypes locked. SPA and Chat install it at document start. Authorization uses a private transport and response handler with captured browser primitives, so replacing public SDK replies, collection methods or Promise methods cannot approve a pending capture.
 
 ## SSO session handling

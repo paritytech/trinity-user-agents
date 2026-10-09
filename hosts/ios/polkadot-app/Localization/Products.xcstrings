@@ -188,6 +188,17 @@
         }
       }
     },
+    "app.permission.capability.motion": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Motion"
+          }
+        }
+      }
+    },
     "app.permission.capability.nfc": {
       "extractionState": "manual",
       "localizations": {
@@ -672,6 +683,17 @@
         }
       }
     },
+    "permission.capability.description.motion": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Motion access lets the app respond to how you tilt and move your device."
+          }
+        }
+      }
+    },
     "permission.capability.description.nfc": {
       "extractionState": "manual",
       "localizations": {
@@ -723,6 +745,17 @@
           "stringUnit": {
             "state": "translated",
             "value": "the microphone"
+          }
+        }
+      }
+    },
+    "permission.capability.motion": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Motion"
           }
         }
       }

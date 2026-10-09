@@ -264,6 +264,33 @@ extension SPAJSEngine: WKUIDelegate {
             return .deny
         }
     }
+
+    /// Answers WebKit's `DeviceMotionEvent`/`DeviceOrientationEvent`
+    /// `requestPermission()` with the product's Motion decision, so WebKit
+    /// never shows its own prompt. WebKit caches the answer per origin in the
+    /// data store for the rest of the app launch.
+    func webView(
+        _: WKWebView,
+        requestDeviceOrientationAndMotionPermissionFor _: WKSecurityOrigin,
+        initiatedByFrame _: WKFrameInfo,
+        decisionHandler: @escaping @MainActor @Sendable (WKPermissionDecision) -> Void
+    ) {
+        guard let handler = jsDeviceCapabilityHandler else {
+            logger.warning("SPAJSEngine: no device capability handler, denying motion")
+            decisionHandler(.deny)
+            return
+        }
+        Task { @MainActor in
+            do {
+                let decision = try await handler(.motion)
+                self.logger.debug("Motion decision: \(decision)")
+                decisionHandler(decision.toWKPermission)
+            } catch {
+                self.logger.error("SPAJSEngine: motion capability handler failed: \(error)")
+                decisionHandler(.deny)
+            }
+        }
+    }
 }
 
 // MARK: - WKScriptMessageHandler

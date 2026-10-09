@@ -217,6 +217,8 @@ pub struct EventCallbacks {
     /// Counts prompts across the execution's separate connections.
     pub remote_permission_calls: std::sync::atomic::AtomicUsize,
     pub remote_permission_products: Mutex<Vec<(String, ProductExecutionKind)>>,
+    /// Counts device permission prompts.
+    pub device_permission_calls: std::sync::atomic::AtomicUsize,
 }
 
 impl EventCallbacks {
@@ -262,6 +264,7 @@ impl EventCallbacks {
             core_storage: Mutex::default(),
             permission_confirmation_result: PermissionDecision::Deny,
             remote_permission_calls: std::sync::atomic::AtomicUsize::new(0),
+            device_permission_calls: std::sync::atomic::AtomicUsize::new(0),
             remote_permission_products: Mutex::new(Vec::new()),
             face_requests: Mutex::new(Vec::new()),
         }
@@ -303,6 +306,7 @@ impl HostCallbacks for EventCallbacks {
         _product: ProductExecutionConfig,
         _request: v01::HostDevicePermissionRequest,
     ) -> Result<PermissionDecision, HostRejection> {
+        self.device_permission_calls.fetch_add(1, Ordering::SeqCst);
         Ok(PermissionDecision::Deny)
     }
     async fn device_permission_status(
@@ -1121,6 +1125,7 @@ fn permission_authorization_request_mirror_round_trips() {
         v01::HostDevicePermissionRequest::Clipboard,
         v01::HostDevicePermissionRequest::OpenUrl,
         v01::HostDevicePermissionRequest::Biometrics,
+        v01::HostDevicePermissionRequest::Motion,
     ];
     let remote_cases = [
         v01::RemotePermission::Remote {

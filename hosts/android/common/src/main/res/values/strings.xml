@@ -896,6 +896,8 @@ I’m attaching PDF with more information and details regarding the Tattoo Stenc
     <string name="product_permission_device_biometrics_subtitle">Biometric access is required for authentication. %1$s</string>
     <string name="product_permission_device_open_url_title">%1$s would like to open external links</string>
     <string name="product_permission_device_open_url_subtitle">The app will open links in your browser or other apps. %1$s</string>
+    <string name="product_permission_device_motion_title">%1$s would like to use motion sensors</string>
+    <string name="product_permission_device_motion_subtitle">Motion access lets the app respond to how you tilt and move your device. %1$s</string>
     <string name="product_permission_webrtc_title">%1$s would like to use WebRTC</string>
     <string name="product_permission_webrtc_subtitle">WebRTC access can reveal your IP address to remote peers. %1$s</string>
     <string name="product_permission_chain_submit_title">%1$s would like to submit transactions</string>
@@ -1359,6 +1361,7 @@ I’m attaching PDF with more information and details regarding the Tattoo Stenc
     <string name="product_permission_capability_clipboard">Clipboard</string>
     <string name="product_permission_capability_biometrics">Biometrics</string>
     <string name="product_permission_capability_open_url">External links</string>
+    <string name="product_permission_capability_motion">Motion</string>
     <string name="product_permission_type_webrtc">WebRTC</string>
     <string name="product_permission_type_chain_submit">Chain transactions</string>
     <string name="product_permission_type_statement_submit">Statement submission</string>
