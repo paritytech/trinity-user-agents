@@ -2,8 +2,9 @@
 
 `fundtest` is a TrUAPI product that serves the funding modality on the Paseo Next v2 testnet, so the CASH card and the
 funding overlay can be run end to end on a phone. It simulates only the off-chain leg (the card charge, the bank
-transfer, the payout). Everything on chain is real: the deposit lands on a per-session account on Asset Hub, getcash's
-pipeline converts it to CASH and sends it to People, and `payment.topUp` claims it into the user's balance.
+transfer, the payout). Everything on chain is real: the money a payment would bring is PAS from the public Paseo faucet,
+dripped to a per-session account on Asset Hub, getcash's pipeline swaps it to CASH and sends it to People, and
+`payment.topUp` claims it into the user's balance.
 
 The product has two executables:
 
@@ -16,16 +17,16 @@ The dotNS label is `fundtest`, live as `fundtest.paseo`.
 
 ## What is real and what is simulated
 
-| Step                                          | Real or simulated                                                       |
-| --------------------------------------------- | ----------------------------------------------------------------------- |
-| Quotes                                        | Simulated: fixed prices (below), answered from the worker               |
-| Card charge, bank transfer                    | Simulated: a screen and a wait                                          |
-| The deposit reaching Asset Hub                | Real transfer from the provider's faucet account to the session account |
-| A crypto deposit                              | Real: from the user's wallet, or from the faucet in demo mode           |
-| Conversion on Asset Hub, transfer to People   | Real: getcash's pipeline, one transaction signed by the session account |
-| Crediting the user                            | Real: `payment.topUp` with the session account's key                    |
-| Collecting an outbound payment                | Real: `payment.request` to the provider's collection account            |
-| Paying the user out after an outbound session | Simulated: a wait; the CASH stays with the collection account           |
+| Step                                          | Real or simulated                                                          |
+| --------------------------------------------- | -------------------------------------------------------------------------- |
+| Quotes                                        | Simulated: fixed prices (below), answered from the worker                  |
+| Card charge, bank transfer                    | Simulated: a screen and a wait                                             |
+| The deposit reaching Asset Hub                | Real: a public faucet drip of PAS to the session account                   |
+| A crypto deposit                              | Real: from the user's wallet, or a faucet drip of PAS in demo mode         |
+| Conversion on Asset Hub, transfer to People   | Real: getcash's pipeline, one `PolkadotXcm.execute` by the session account |
+| Crediting the user                            | Real: `payment.topUp` with the session account's key                       |
+| Collecting an outbound payment                | Real: `payment.request` to the provider's reserve account                  |
+| Paying the user out after an outbound session | Simulated: a wait; the CASH stays with the reserve account                 |
 
 Prices are fixed so a run is predictable: 1 CASH costs 0.99 EUR, the provider takes 1%, and each rail adds a fixed
 network fee (0.10 EUR on card and bank, a small amount of the asset on crypto). Crypto assets are priced at 1 CASH per
@@ -45,19 +46,22 @@ The cents of the amount choose what goes wrong:
 | `.23` | The credit is split over two top-ups, so the host shows a retry | No change                          |
 | `.33` | The payment arrives only after the quoted ETA has passed        | The payout arrives after the ETA   |
 
-A crypto deposit made from a wallet ignores `.13`: the refund case only runs when the faucet would make the deposit.
+A crypto deposit made from a wallet ignores `.13`: the refund case only runs in demo mode, before any drip.
 
 ## How each rail runs
 
 Every session first derives its own account on Asset Hub from host entropy under this product, with the label
 `onramp:eph:fundtest:<intent>`, the way getcash derives its burners. The host derives the same account for the same
-user, product and label, so the account survives a restart and its secret is never stored.
+user, product and label, so the account survives a restart and its secret is never stored. A second account per user,
+the reserve (label `onramp:eph:fundtest:collection`), collects outbound payments and the PAS a drip leaves over.
 
-**Card in.** `AwaitingPayment` and `Details`, then `/card`. After Pay, a short wait stands in for the card network and
-the session reports `PaymentReceived { finalized: false }`. The worker then picks the route the way getcash's fiat rails
-do (USDT through the PSM when it can serve, PAS through the pool otherwise), sizes the deposit, and has the faucet send
-it to the session account. Once that transfer is final it reports `PaymentReceived { finalized: true }` and
-`Converting`, runs the conversion and the transfer to People, claims the CASH with `payment.topUp`, and reports
+**Card in.** `AwaitingPayment` and `Details`, then `/card`. Pay first asks the user to allow network access to the
+faucet (below), then a short wait stands in for the card network and the session reports
+`PaymentReceived { finalized: false }`. The worker sizes a PAS deposit for the pool route with getcash's sizing, and the
+session account asks the faucet for a drip. Once the drip lands, the session account sends everything above the deposit
+to the reserve, because getcash's pool tier converts the whole native balance. Once the deposit is final it reports
+`PaymentReceived { finalized: true }` and `Converting`, swaps the PAS to CASH through the asset-conversion pool and
+sends the CASH to People in one `PolkadotXcm.execute`, claims it with `payment.topUp`, and reports
 `Crediting { topUpId, amount }` and `Delivered`.
 
 **Bank in.** The same, except that the worker reports `Deposit { Bank }` with a documentation IBAN and a reference
@@ -66,14 +70,14 @@ first, `/bank` shows those details, and the wait after "I've sent funds" is long
 **Crypto in.** The worker sizes the deposit for the chosen asset (CASH needs no conversion, USDT goes through the PSM,
 USDC through the PSM or the pool, PAS through the pool), reports `Deposit { Crypto }` with the session account's address
 on network `polkadot`, and watches the account. A short payment is answered with a new `Deposit` for the rest. In demo
-mode the faucet makes the deposit after 20 seconds; a real transfer from a wallet is taken either way. After 30 minutes
-with nothing received the session fails as `Expired`.
+mode the session account asks the faucet for a drip after 20 seconds, unless a deposit has started to arrive; a session
+that asked for USDT, USDC or CASH switches to the PAS route first, since the faucet gives only PAS. A real transfer from
+a wallet is taken either way. After 30 minutes with nothing received the session fails as `Expired`.
 
 **Out, any rail.** `Details`, then `/payout` for where to send the money. The worker calls `payment.request` for the
-user's CASH to the collection account (the faucet account, so outbound CASH refills it) and reports
-`Collecting { paymentId, amount }`. Once the host reports the payment complete, the session is released and the worker
-simulates the payout. A user who declines the payment ends the session as `Cancelled`, and one without the balance as
-`InsufficientBalance`.
+user's CASH to the reserve account and reports `Collecting { paymentId, amount }`. Once the host reports the payment
+complete, the session is released and the worker simulates the payout. A user who declines the payment ends the session
+as `Cancelled`, and one without the balance as `InsufficientBalance`.
 
 **Cancel.** A cancel is honoured while the user has not paid, and the session ends as `Failed { Cancelled }`. Once a
 payment is seen the host refuses the cancel itself.
@@ -82,6 +86,38 @@ payment is seen the host refuses the cancel itself.
 `fundingProvider.save`. The host hands the session back on `serveSubscribe` after a restart, and the worker continues
 from the saved phase. An action the user took on a screen is in product storage and is taken without showing the screen
 again.
+
+### The faucet
+
+The money a card or bank payment would bring is PAS from the public Paseo faucet,
+`POST https://paseo-faucet.parity-testnet.parity.io/drip/web` (source: `paritytech/polkadot-testnet-faucet`). The worker
+uses its signed form, which needs no captcha:
+
+```json
+{
+  "address": "<session account, SS58>",
+  "parachain_id": "1500",
+  "message": "faucet:<address>:<unix ms>",
+  "signature": "0x…"
+}
+```
+
+The session account signs `message` with its sr25519 key (`<Bytes>`-wrapped, which the faucet accepts along with the raw
+form), and the faucet checks the signature against `address` and that the timestamp is under five minutes old. It sends
+5000 PAS from Paseo Asset Hub, teleported to Asset Hub Next (para 1500), at most once per 20 hours per address; every
+session has a fresh address, so the limit never bites. The answer is NDJSON status lines ending in `{ "hash" }` or
+`{ "error" }`, with HTTP 200 either way. `worker/faucet.ts` holds the request and the parsing.
+
+A drip covers a deposit of up to 4990 PAS. The largest amount the provider takes, 5000 CASH, needed about 2200 PAS at
+the pool's price when this was written; a deposit above one drip fails with code `above_faucet_drip`. Other failures end
+the session with `faucet_refused`, `faucet_timeout` (the PAS did not land within five minutes) or `faucet_blocked`.
+
+The worker calls the faucet with its own `fetch`. A host runs a Worker in a web view with the shared container's network
+gates, so a request to another domain needs the product's `Remote` permission for
+`paseo-faucet.parity-testnet.parity.io`; the manifest has no field for it. The card and bank screens ask for it with
+`permissions.requestRemotePermission` when the user taps Pay or "I've sent funds", since the user is there to answer,
+and a grant is kept per product, so it covers the worker. The worker asks again before each drip, which is a no-op once
+granted and the only ask a demo crypto deposit makes. The faucet answers with `Access-Control-Allow-Origin: *`.
 
 ### How the screens talk to the worker
 
@@ -102,15 +138,15 @@ metadata it commits into `vendor/papi/`. Both are ignored by git and recreated b
 | Import                      | From getcash          | Used for                                                                   |
 | --------------------------- | --------------------- | -------------------------------------------------------------------------- |
 | `@getsome/funding`          | `packages/funding`    | `chooseRoute`, `chooseCashTransfer`, `tickOnce`, `sizeNativeBudget`, pools |
-| `@getsome/ephemeral`        | `packages/ephemeral`  | session account and faucet keys, the top-up secret layout                  |
+| `@getsome/ephemeral`        | `packages/ephemeral`  | session and reserve account keys, the top-up secret layout                 |
 | `@getsome/people`           | `packages/people`     | reading the CASH a session account holds on People                         |
 | `@getsome/core`             | `packages/core`       | `network.json` (Paseo Next v2 chains) and the token table                  |
 | `@getcash/lib/funding-fees` | `lib/funding-fees.ts` | live deposit sizing for each tier                                          |
 | `@polkadot-api/descriptors` | `.papi/` metadata     | typed Asset Hub and People APIs                                            |
 
-Three small pieces follow getcash's worker without importing it, since they are plain JavaScript in its worker bundle:
-opening a host-routed chain client per step (`worker/src/shared.js`), the top-up id per attempt
-(`worker/src/topup-id.js`), and the faucet transfer with the `min_balance` raise (`lib/faucet.ts`).
+Two small pieces follow getcash's worker without importing it, since they are plain JavaScript in its worker bundle:
+opening a host-routed chain client per step (`worker/src/shared.js`) and the top-up id per attempt
+(`worker/src/topup-id.js`).
 
 The checkout is a dependency rather than vendored source because getcash is GPL-3.0-or-later and this repository is MIT:
 none of its code is committed here. The worker bundle that `npm run build` produces contains getcash's code and is
@@ -124,21 +160,17 @@ overridden to this repository's build, so the worker holds one TrUAPI client and
 Configuration is read at build time from `FUNDTEST_*` variables, from the environment or a `.env.local` file in this
 directory (ignored by git):
 
-| Variable                     | Default | Meaning                                                                         |
-| ---------------------------- | ------- | ------------------------------------------------------------------------------- |
-| `FUNDTEST_FAUCET_SEED`       | none    | Mnemonic or 0x-prefixed 32-byte entropy of the faucet account                   |
-| `FUNDTEST_DEMO_CRYPTO`       | `1`     | `0` stops the faucet making crypto deposits; only a wallet transfer then counts |
-| `FUNDTEST_CARD_ARRIVAL_MS`   | `5000`  | Wait between Pay and the card payment arriving                                  |
-| `FUNDTEST_BANK_ARRIVAL_MS`   | `30000` | Wait between "I've sent funds" and the transfer arriving                        |
-| `FUNDTEST_CRYPTO_ARRIVAL_MS` | `20000` | Wait before the faucet makes a demo crypto deposit                              |
-| `FUNDTEST_PAYOUT_MS`         | `15000` | Wait between the release and the simulated payout                               |
+| Variable                     | Default | Meaning                                                                       |
+| ---------------------------- | ------- | ----------------------------------------------------------------------------- |
+| `FUNDTEST_DEMO_CRYPTO`       | `1`     | `0` stops demo crypto deposits from the faucet; only a wallet transfer counts |
+| `FUNDTEST_CARD_ARRIVAL_MS`   | `5000`  | Wait between Pay and the card payment arriving                                |
+| `FUNDTEST_BANK_ARRIVAL_MS`   | `30000` | Wait between "I've sent funds" and the transfer arriving                      |
+| `FUNDTEST_CRYPTO_ARRIVAL_MS` | `20000` | Wait before a demo crypto deposit is asked for                                |
+| `FUNDTEST_PAYOUT_MS`         | `15000` | Wait between the release and the simulated payout                             |
 
-The faucet seed is compiled into the worker bundle, so anyone who fetches the bundle can take the faucet's funds. Use a
-dedicated testnet account holding only what the tests need. The worker refuses to use the faucet unless the build
-targets the Paseo Next v2 testnet (getcash's `network.json` says `testnet` and the Asset Hub genesis is Paseo Next
-v2's). The faucet needs PAS, USDT, USDC and CASH on Paseo Next v2 Asset Hub: card and bank deposits are made in USDT or
-PAS, whichever route the chain offers, and crypto deposits in the asset the user picked. Without a faucet seed the card
-and bank rails fail with code `no_faucet`, and crypto waits for a wallet transfer.
+The bundle carries no secret. The worker asks the faucet only when the build targets the Paseo Next v2 testnet
+(getcash's `network.json` says `testnet` and the Asset Hub genesis is Paseo Next v2's); otherwise card and bank fail
+with code `no_faucet`.
 
 ## Build and test
 
@@ -146,8 +178,8 @@ and bank rails fail with code `no_faucet`, and crypto waits for a wallet transfe
 cd products/fundtest
 npm install      # also fetches getcash and generates the descriptors
 npm run typecheck
-npm test         # pricing, quote ids, triggers and saved state
-FUNDTEST_FAUCET_SEED="…" npm run build   # dist/app and dist/worker
+npm test         # pricing, quote ids, triggers, saved state and the faucet request
+npm run build    # dist/app and dist/worker
 ```
 
 `npm install` builds against `js/packages/truapi`, so that package has to be generated and built first
@@ -157,7 +189,7 @@ FUNDTEST_FAUCET_SEED="…" npm run build   # dist/app and dist/worker
 
 Deploys are manual; no workflow runs them.
 
-1. Build with the faucet seed set (above).
+1. Build (above).
 2. Sign in to `bulletin-deploy` (`bulletin-deploy login`, with the account that should own the name), then from this
    directory:
 
@@ -213,9 +245,13 @@ These are marked `TODO(core)` in the code:
 
 ## Not verified
 
-Nothing here has run against a host or a chain. In particular:
+The chain leg of a card session ran live on Paseo Next v2 outside a host, with the worker's own functions over direct
+WebSocket clients: a signed drip to a fresh account (5000 PAS landed on Asset Hub Next, less 0.0006 PAS of teleport
+fee), the deposit sizing for 10 CASH (4.25 PAS), the sweep of the surplus, and getcash's pipeline, after which People
+held 10.22 CASH claimable by the account. Nothing has run inside a host. In particular:
 
-- the deposit sizing, conversion and transfer to People, which are getcash's code but driven by this worker;
+- the worker's `fetch` reaching the faucet through a host's network gate, and how a host presents the `Remote` prompt
+  when a demo crypto deposit asks for it from the headless worker;
 - whether a host passes `presentFrame`'s query string through to the App, which the `fundtest:active:<route>` key covers
   if not;
 - whether a host prompts for chain access or signing when a worker submits transactions from a session account;

@@ -13,6 +13,7 @@ import {
   type ScreenRoute,
   type SessionView,
 } from "../../shared/channel";
+import { FAUCET_PERMISSION } from "../../shared/faucet";
 import "./style.css";
 
 /** The page's TrUAPI client, or `null` outside a host. */
@@ -68,6 +69,17 @@ export async function act(
       () => true,
       () => false,
     );
+}
+
+/** Asks the user to let this provider reach the public faucet, which the
+ *  worker draws the simulated payment from. Asked here because the user is on
+ *  the screen to answer; the grant covers the worker as well. */
+export async function allowFaucet(): Promise<boolean> {
+  if (!client) return false;
+  return client.permissions.requestRemotePermission(FAUCET_PERMISSION).match(
+    (response) => response.granted,
+    () => false,
+  );
 }
 
 /** `amount` of an asset with `decimals`, as a decimal string. */

@@ -1,19 +1,13 @@
-// The accounts the provider signs with: one session account per session,
-// derived from host entropy under this provider's product as getcash derives
-// its burners (packages/ephemeral), and the faucet that stands in for the
-// fiat leg.
+// The accounts the provider signs with: one session account per session and
+// one reserve account per user, derived from host entropy under this
+// provider's product as getcash derives its burners (packages/ephemeral).
 
 import {
   deriveKeypairWithSecret,
-  deriveSeedKeypair,
   toSchnorrkelSecret,
-  type EphemeralKeypair,
   type EphemeralKeypairWithSecret,
 } from "@getsome/ephemeral";
-import { mnemonicToEntropy } from "@polkadot-labs/hdkd-helpers";
 import { blake2b } from "@noble/hashes/blake2.js";
-import { CONFIG } from "./config";
-import { onTestnet } from "./chain";
 import { fromHex, toHex, truapi, unwrap } from "./host";
 
 /** The entropy label of a session's account, in getcash's `onramp:eph:`
@@ -52,35 +46,6 @@ export function topUpIdFor(
   return toHex(blake2b(input, { dkLen: 32 }));
 }
 
-/** Whether the build carries a faucet seed of a shape it can read. */
-export function faucetConfigured(): boolean {
-  const raw = CONFIG.faucetSeed;
-  const words = raw.split(/\s+/).length;
-  return /^0x[0-9a-fA-F]{64}$/.test(raw) || words === 12 || words === 24;
-}
-
-/** The faucet account. Refused off the testnet, since its seed ships inside
- *  the worker bundle. */
-export function faucetAccount(): EphemeralKeypair {
-  if (!onTestnet())
-    throw new Error("the faucet runs only on the Paseo Next v2 testnet");
-  if (!faucetConfigured()) {
-    throw new Error(
-      "no faucet: build with FUNDTEST_FAUCET_SEED set to a mnemonic or 0x entropy",
-    );
-  }
-  const raw = CONFIG.faucetSeed;
-  const entropy = raw.startsWith("0x")
-    ? fromHex(raw)
-    : mnemonicToEntropy(raw.replace(/\s+/g, " "));
-  return deriveSeedKeypair(entropy);
-}
-
-/** The account a user's outbound payment is collected into: the faucet, so
- *  the CASH stays with the account that funds the inbound sessions, or this
- *  user's own provider account when the build has no faucet. */
-export async function collectionAccount(): Promise<`0x${string}`> {
-  if (faucetConfigured() && onTestnet())
-    return toHex(faucetAccount().publicKey);
-  return toHex((await sessionAccount("collection")).publicKey);
-}
+/** The provider's own account for this user: where an outbound payment is
+ *  collected and where a session sweeps the PAS a faucet drip left over. */
+export const reserveAccount = () => sessionAccount("collection");

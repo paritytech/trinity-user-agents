@@ -99,18 +99,15 @@ const number = (value: string | undefined, fallback: number) => {
 
 /** Build-time configuration, read from `FUNDTEST_*` variables. */
 export const CONFIG = {
-  /** Mnemonic or 0x-prefixed 32-byte entropy of the testnet account that
-   *  stands in for the fiat leg, sending the deposit asset to the session's
-   *  account. Empty disables every simulated arrival. */
-  faucetSeed: String(env.FUNDTEST_FAUCET_SEED ?? "").trim(),
-  /** Whether a crypto deposit is made by the faucet after a short wait, so a
-   *  session completes without a wallet. A real transfer is taken either way. */
+  /** Whether a crypto deposit is made from a faucet drip after a short wait,
+   *  so a session completes without a wallet. A real transfer is taken either
+   *  way. */
   demoCrypto: String(env.FUNDTEST_DEMO_CRYPTO ?? "1") !== "0",
   /** Wait before a card payment arrives, milliseconds. */
   cardArrivalMs: number(env.FUNDTEST_CARD_ARRIVAL_MS, 5_000),
   /** Wait after "I've sent funds" before a bank transfer arrives. */
   bankArrivalMs: number(env.FUNDTEST_BANK_ARRIVAL_MS, 30_000),
-  /** Wait before the faucet makes a demo crypto deposit. */
+  /** Wait before a demo crypto deposit is made. */
   cryptoArrivalMs: number(env.FUNDTEST_CRYPTO_ARRIVAL_MS, 20_000),
   /** Wait between the user's payment completing and the payout arriving. */
   payoutMs: number(env.FUNDTEST_PAYOUT_MS, 15_000),

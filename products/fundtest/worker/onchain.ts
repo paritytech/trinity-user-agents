@@ -189,40 +189,44 @@ export async function depositBalance(
   return held?.balance ?? 0n;
 }
 
+/** Slack left on top of the deposit after a sweep, beyond the sweep's own
+ *  fee: 0.01 PAS. */
+const SWEEP_SLACK = 100_000_000n;
+/** Surplus below this stays on the session account: 1 PAS. */
+const SWEEP_THRESHOLD = 10_000_000_000n;
+
 /**
- * Sends `amount` of `token` from `from` to `address` on Asset Hub, raised to
- * the asset's `min_balance` so the transfer creates the account, as getcash's
- * demo faucet does (lib/faucet.ts). Resolves once it is finalized.
+ * Moves the PAS `account` holds beyond `keep` to `to`, so the conversion,
+ * which spends the session account's whole native balance, converts only what
+ * the session needs. Does nothing when the surplus is under 1 PAS. A sweep
+ * resent after a lost answer fails on chain instead of eating the deposit, as
+ * long as the surplus is larger than what is kept.
  */
-export async function transferDeposit(
+export async function sweepSurplus(
   assetHub: PolkadotClient,
-  from: EphemeralKeypair,
-  token: TokenSpec,
-  address: string,
-  amount: bigint,
-): Promise<void> {
+  account: EphemeralKeypair,
+  keep: bigint,
+  to: string,
+): Promise<bigint> {
   const api = assetHub.getTypedApi(paseo_next_v2);
-  const dest = MultiAddress.Id(address);
-  const tx =
-    token.assetHubId === undefined
-      ? api.tx.Balances.transfer_keep_alive({ dest, value: amount })
-      : await (async () => {
-          const asset = await api.query.Assets.Asset.getValue(
-            token.assetHubId!,
-          );
-          const minBalance = asset?.min_balance ?? 0n;
-          return api.tx.Assets.transfer_keep_alive({
-            id: token.assetHubId!,
-            target: dest,
-            amount: amount < minBalance ? minBalance : amount,
-          });
-        })();
-  const result = await tx.signAndSubmit(from.signer);
-  if (!result.ok) {
-    throw new Error(
-      `the faucet's ${token.symbol} transfer failed on chain; is the faucet funded?`,
-    );
-  }
+  const held = (
+    await api.query.System.Account.getValue(account.address, { at: "best" })
+  ).data.free;
+  if (held <= keep + SWEEP_THRESHOLD) return 0n;
+  const dest = MultiAddress.Id(to);
+  const probe = api.tx.Balances.transfer_keep_alive({
+    dest,
+    value: held - keep,
+  });
+  const fee = await probe.getEstimatedFees(account.address);
+  const value = held - keep - 2n * fee - SWEEP_SLACK;
+  if (value <= 0n) return 0n;
+  const result = await api.tx.Balances.transfer_keep_alive({
+    dest,
+    value,
+  }).signAndSubmit(account.signer);
+  if (!result.ok) throw new Error("the surplus sweep failed on chain");
+  return value;
 }
 
 const restoreTick = (saved: SavedTick | undefined) => {

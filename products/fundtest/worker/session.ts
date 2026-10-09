@@ -10,18 +10,22 @@ import type {
   FundingFailure,
   FundingUpdate,
 } from "@parity/truapi";
-import { FundingHeldError, FundingShortfallError } from "@getsome/funding";
+import {
+  FundingHeldError,
+  FundingShortfallError,
+  PASEO_ASSET_HUB_PARA_ID,
+} from "@getsome/funding";
+import { TOKENS } from "@getsome/core";
 import type { EphemeralKeypairWithSecret } from "@getsome/ephemeral";
 import type { ScreenAction, SessionView } from "../shared/channel";
+import { FAUCET_PERMISSION } from "../shared/faucet";
 import {
-  collectionAccount,
-  faucetAccount,
-  faucetConfigured,
+  reserveAccount,
   sessionAccount,
   topUpIdFor,
   topUpSecret,
 } from "./accounts";
-import { withChains } from "./chain";
+import { onTestnet, withChains } from "./chain";
 import {
   BANK_DETAILS,
   CONFIG,
@@ -40,9 +44,11 @@ import {
   firstOf,
   randomId,
   sleep,
+  toHex,
   truapi,
   unwrap,
 } from "./host";
+import { DRIP_AMOUNT, DRIP_MARGIN, FaucetRefused, requestDrip } from "./faucet";
 import {
   claimable,
   convertOnce,
@@ -50,7 +56,7 @@ import {
   depositToken,
   displaySymbol,
   planConversion,
-  transferDeposit,
+  sweepSurplus,
   CLAIM_UNIT,
   type CryptoSymbol,
 } from "./onchain";
@@ -65,6 +71,8 @@ const TICK_MS = 6_000;
 const MAX_TOP_UPS = 3;
 /** Extra wait past the quoted ETA for a session made slow on purpose. */
 const PAST_ETA_MS = 60_000;
+/** How long a faucet drip may take to land on Asset Hub Next. */
+const DRIP_ARRIVAL_MS = 5 * 60_000;
 
 /** A failure the session ends on rather than retries. */
 class SessionFailure extends Error {
@@ -102,6 +110,11 @@ export class Session {
   /** Whether part of a crypto deposit has reached the session account. */
   private fundsSeen = false;
   private account: Promise<EphemeralKeypairWithSecret> | undefined;
+  /** A demo crypto deposit under way, which the deposit watch waits out so
+   *  the drip's surplus is swept before the conversion starts. */
+  private demoDeposit: Promise<void> | undefined;
+  /** Why the demo deposit could not be made, which ends the session. */
+  private demoFailure: SessionFailure | undefined;
 
   constructor(assignment: FundingAssignment) {
     this.intent = assignment.intent;
@@ -224,6 +237,7 @@ export class Session {
         if (
           error instanceof Aborted ||
           error instanceof SessionFailure ||
+          error instanceof FaucetRefused ||
           error instanceof FundingShortfallError ||
           error instanceof FundingHeldError
         ) {
@@ -341,7 +355,7 @@ export class Session {
       await this.save();
     }
     if (state.phase === "fiat-received") {
-      await this.plan(undefined);
+      await this.plan("PAS");
       state.phase = "funding";
       await this.save();
     }
@@ -453,7 +467,7 @@ export class Session {
       });
     await reportDeposit(deposit);
 
-    if (CONFIG.demoCrypto && faucetConfigured()) {
+    if (CONFIG.demoCrypto) {
       if (this.trigger === "refund") {
         await sleep(this.arrivalMs(CONFIG.cryptoArrivalMs), this.signal);
         await this.report({
@@ -462,10 +476,14 @@ export class Session {
         });
         throw new SessionFailure({ tag: "Refunded" });
       }
-      void sleep(this.arrivalMs(CONFIG.cryptoArrivalMs), this.signal)
-        .then(() => this.retrying("demo deposit", () => this.fundFromFaucet()))
+      this.demoDeposit = sleep(
+        this.arrivalMs(CONFIG.cryptoArrivalMs),
+        this.signal,
+      )
+        .then(() => this.makeDemoDeposit())
         .catch((error: unknown) => {
-          if (!(error instanceof Aborted)) {
+          if (error instanceof SessionFailure) this.demoFailure = error;
+          else if (!(error instanceof Aborted)) {
             console.warn(
               `[fundtest] ${this.intent}: demo deposit: ${describe(error)}`,
             );
@@ -475,10 +493,22 @@ export class Session {
 
     let lastSeen = 0n;
     await this.poll("deposit read", async () => {
+      if (this.demoFailure) throw this.demoFailure;
+      // A demo deposit can switch the plan to PAS, so read it every time.
+      const current = state.plan!;
       const held = await withChains((chains) =>
-        depositBalance(chains.assetHub, token, account.address, "best"),
+        depositBalance(
+          chains.assetHub,
+          depositToken(current),
+          account.address,
+          "best",
+        ),
       );
-      if (held >= deposit) return true;
+      if (held >= BigInt(current.deposit)) {
+        await this.demoDeposit;
+        if (this.demoFailure) throw this.demoFailure;
+        return true;
+      }
       if (held === 0n && Date.now() > state.depositExpiresAt!) {
         throw new SessionFailure({ tag: "Expired" });
       }
@@ -510,35 +540,116 @@ export class Session {
     return state.plan;
   }
 
-  /** The simulated arrival: the faucet sends the deposit asset to the session
-   *  account, unless it already holds enough. */
-  private async fundFromFaucet(): Promise<void> {
-    const plan = this.saved.inbound!.plan!;
-    const token = depositToken(plan);
-    const deposit = BigInt(plan.deposit);
+  /** A demo crypto deposit: the faucet's PAS, unless the user's own deposit
+   *  has started to arrive. A session that asked for another asset switches to
+   *  the PAS route first, since the faucet gives only PAS. */
+  private async makeDemoDeposit(): Promise<void> {
+    const state = this.saved.inbound!;
     const account = await this.sessionAccount();
-    if (!faucetConfigured()) {
+    const asked = state.plan!;
+    if (asked.depositSymbol !== TOKENS.PAS.symbol) {
+      const held = await this.retrying("deposit read", () =>
+        withChains((chains) =>
+          depositBalance(
+            chains.assetHub,
+            depositToken(asked),
+            account.address,
+            "best",
+          ),
+        ),
+      );
+      if (held > 0n) return;
+      const amount = this.requireAmount();
+      state.plan = await this.retrying("route sizing", () =>
+        withChains((chains) =>
+          planConversion(chains, "PAS", amount, account.address),
+        ),
+      );
+      await this.save();
+    }
+    await this.fundFromFaucet();
+  }
+
+  /** Makes sure the host lets this product's `fetch` reach the faucet. A
+   *  card or bank screen asked the user already; a demo crypto deposit asks
+   *  here. */
+  private async allowFaucet(): Promise<void> {
+    const client = await truapi();
+    const granted = await client.permissions
+      .requestRemotePermission(FAUCET_PERMISSION)
+      .match(
+        (response) => response.granted,
+        () => false,
+      );
+    if (!granted) {
       throw new SessionFailure(
-        other("no_faucet", "This build has no faucet to simulate the payment"),
+        other("faucet_blocked", "Network access to the faucet was not allowed"),
       );
     }
-    await this.retrying("faucet transfer", () =>
-      withChains(async (chains) => {
-        const held = await depositBalance(
-          chains.assetHub,
-          token,
-          account.address,
-          "best",
+  }
+
+  /** The simulated arrival: the session account asks the public faucet for
+   *  PAS, waits for the drip to land and sweeps what the deposit does not
+   *  need to the reserve account, so the conversion spends only the deposit.
+   *  Does not ask again once a drip was asked for. */
+  private async fundFromFaucet(): Promise<void> {
+    const state = this.saved.inbound!;
+    const deposit = BigInt(state.plan!.deposit);
+    const account = await this.sessionAccount();
+    if (!onTestnet()) {
+      throw new SessionFailure(
+        other("no_faucet", "The public faucet serves only Paseo"),
+      );
+    }
+    if (deposit > DRIP_AMOUNT - DRIP_MARGIN) {
+      throw new SessionFailure(
+        other(
+          "above_faucet_drip",
+          "The deposit is more PAS than one faucet drip gives",
+        ),
+      );
+    }
+    const held = () =>
+      withChains((chains) =>
+        depositBalance(chains.assetHub, TOKENS.PAS, account.address, "best"),
+      );
+    if ((await this.retrying("deposit read", held)) < deposit && !state.drip) {
+      await this.allowFaucet();
+      const at = Date.now();
+      try {
+        const hash = await this.retrying("faucet drip", () =>
+          requestDrip(
+            { address: account.address, signBytes: account.signer.signBytes },
+            PASEO_ASSET_HUB_PARA_ID,
+          ),
         );
-        if (held >= deposit) return;
-        await transferDeposit(
-          chains.assetHub,
-          faucetAccount(),
-          token,
-          account.address,
-          deposit - held,
+        state.drip = { at, hash };
+      } catch (error) {
+        if (!(error instanceof FaucetRefused)) throw error;
+        // A quota refusal means this account was dripped already, by a
+        // request whose answer was lost: wait for that drip.
+        if (!error.quota) {
+          throw new SessionFailure(other("faucet_refused", error.message));
+        }
+        state.drip = { at };
+      }
+      await this.save();
+    }
+    const drip = state.drip;
+    await this.poll("drip arrival", async () => {
+      if ((await held()) >= deposit) return true;
+      if (drip && Date.now() > drip.at + DRIP_ARRIVAL_MS) {
+        throw new SessionFailure(
+          other("faucet_timeout", "The faucet's PAS did not arrive in time"),
         );
-      }),
+      }
+      return undefined;
+    });
+    const reserve = await reserveAccount();
+    await this.retrying("surplus sweep", () =>
+      withChains((chains) =>
+        sweepSurplus(chains.assetHub, account, deposit, reserve.address),
+      ),
     );
   }
 
@@ -696,7 +807,7 @@ export class Session {
     if (state.phase === "requesting") {
       const amount = this.requireAmount();
       const id = state.paymentId!;
-      const destination = await collectionAccount();
+      const destination = toHex((await reserveAccount()).publicKey);
       try {
         await unwrap(
           client.payment.request({ amount, destination, id }),

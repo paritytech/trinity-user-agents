@@ -1,4 +1,12 @@
-import { act, byId, formatUnits, parseCash, start, status } from "./screen";
+import {
+  act,
+  allowFaucet,
+  byId,
+  formatUnits,
+  parseCash,
+  start,
+  status,
+} from "./screen";
 
 void start("/card", (intent, view) => {
   const pay = byId<HTMLButtonElement>("pay");
@@ -23,6 +31,14 @@ void start("/card", (intent, view) => {
       return;
     }
     pay.disabled = true;
+    if (!(await allowFaucet())) {
+      pay.disabled = false;
+      status(
+        "The test payment is drawn from the public Paseo faucet. Allow network access to it to continue.",
+        "error",
+      );
+      return;
+    }
     status("Paying…");
     const sent = await act(intent, {
       kind: "card-paid",

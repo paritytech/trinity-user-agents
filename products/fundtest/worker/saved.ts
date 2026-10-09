@@ -14,7 +14,7 @@ export type InboundPhase =
   | "fiat-sent"
   /** The fiat payment arrived; the deposit is about to be made on chain. */
   | "fiat-received"
-  /** The faucet's transfer to the session account may be in flight. */
+  /** The faucet's drip to the session account may be in flight. */
   | "funding"
   /** Waiting for the deposit to be final on Asset Hub. */
   | "arriving"
@@ -68,6 +68,14 @@ export interface SavedTick {
   inclusionBlock: number | null;
 }
 
+/** A drip the faucet was asked for. */
+export interface SavedDrip {
+  /** When it was asked for, Unix ms. */
+  at: number;
+  /** The faucet's extrinsic hash on Paseo Asset Hub, when it answered. */
+  hash?: `0x${string}`;
+}
+
 /** One top-up the session started. */
 export interface SavedClaim {
   id: `0x${string}`;
@@ -84,6 +92,8 @@ export interface Saved {
     plan?: SavedPlan;
     /** When a crypto deposit address stops taking payment, Unix ms. */
     depositExpiresAt?: number;
+    /** The faucet drip the session asked for, once asked. */
+    drip?: SavedDrip;
     tick?: SavedTick;
     claims: SavedClaim[];
   };
