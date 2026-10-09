@@ -133,11 +133,15 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
         // Also before any execution opens, so a product's Funding request
         // never answers unsupported. The providers are discovered by the core,
         // so the host ships none of its own.
-        let overlay = fundingOverlay ?? AppFundingOverlay(runtime: runtime) { [confirmationRouterFacade] in
+        let fundingEnvironment: @MainActor () -> FundingOverlayEnvironment = { [confirmationRouterFacade] in
             AppFundingEnvironment(router: confirmationRouterFacade.productsRouter)
         }
+        let overlay = fundingOverlay ?? AppFundingOverlay(runtime: runtime, environment: fundingEnvironment)
         runtime.setFunding(AppFundingHostBridge(overlay: overlay))
         FundingActivityCenter.attach(runtime: runtime)
+        #if DEBUG
+            SampleFundingRuntime.installIfRequested(environment: fundingEnvironment)
+        #endif
         contactsChangeNotifier = ContactsChangeNotifier(
             dataProviderFactory: ChatContactDataProviderFactory(),
             logger: logger,
