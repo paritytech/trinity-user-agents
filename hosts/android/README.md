@@ -164,6 +164,14 @@ full connected CI suites, which must still qualify the app and matching JNI
 artifacts. Normal devices should keep their supported WebView provider updated;
 the app's Android 10+ minimum and production capability check are unchanged.
 
+App instrumentation uses `AndroidJUnitRunner` with the real `App`, including its
+process-lived Hilt graph and WorkManager configuration. These integration tests
+do not replace Hilt bindings. Do not swap in `HiltTestApplication` or add per-test
+`HiltAndroidRule`s: Firebase can create `PushNotificationService` before a rule
+starts or after it tears down its component. Tests needing app dependencies use
+the debug-only `IntegrationTestEntryPoint`; production service injection remains
+unchanged.
+
 The app talks to Polkadot system chains (People Chain, Asset Hub, Bulletin Chain). Which chains
 and RPC nodes it uses is not hard-coded: the `chains` / `chains_v2` Remote Config keys of your
 Firebase project define the set, so a fork can point the same build at Polkadot, at the

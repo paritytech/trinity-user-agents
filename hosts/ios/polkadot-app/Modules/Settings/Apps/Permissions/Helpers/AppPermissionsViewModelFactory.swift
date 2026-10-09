@@ -83,7 +83,6 @@ extension ProductPermission {
 }
 
 private extension ProductPermission {
-
     func capabilityTitle(_ capability: DeviceCapabilityType) -> String {
         switch capability {
         case .notifications: String(localized: .Products.appPermissionCapabilityNotifications)
