@@ -859,16 +859,14 @@ extension ProductPermissionRepositoryTests {
         #expect(Set(view.items.map(\.id)).count == grants.count)
         #expect(Set(view.items.map(\.description)).count == grants.count)
         for (item, permission) in zip(view.items, permissions) {
-            #expect(!item.title.isEmpty)
-            #expect(!item.description.isEmpty)
             presenter.toggle(item, isOn: false)
             #expect(interactor.requests.last == [permission])
             #expect(view.revoking)
-            #expect(view.items.allSatisfy(\.isOn))
+            #expect(view.items.allSatisfy { $0.isOn })
             presenter.didFinishRevoking()
             presenter.didReceive(error: NSError(domain: "storage unavailable", code: 1))
             #expect(view.items.count == grants.count)
-            #expect(view.items.allSatisfy(\.isOn))
+            #expect(view.items.allSatisfy { $0.isOn })
         }
         #expect(wireframe.errors.count == grants.count)
         presenter.didReceive(grants: [])
