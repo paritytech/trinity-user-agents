@@ -1,6 +1,6 @@
 ---
-"@parity/truapi": patch
-"@parity/truapi-host": patch
+"@parity/truapi": minor
+"@parity/truapi-host": minor
 ---
 
 A product that signs with another product's account asks the user once for each kind of signature and each owning
