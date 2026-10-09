@@ -41,7 +41,7 @@ impl ProductRuntimeHost {
         let stop = self
             .services
             .chain
-            .remote_chain_transaction_stop(v01::RemoteChainTransactionStopRequest {
+            .remote_chain_transaction_stop(truapi::latest::RemoteChainTransactionStopRequest {
                 genesis_hash,
                 operation_id: operation_id.clone(),
             })

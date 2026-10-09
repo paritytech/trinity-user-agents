@@ -1670,14 +1670,14 @@ mod tests {
     use super::super::{ProductAuthority, ProductRuntimeHost, RuntimeServices, SigningHostRole};
     use super::TEST_NETWORK_SUFFIX;
     use super::ring_vrf::{MemberCandidate, ResolvedRing, RingResolver};
-    use super::{LocalActivation, RingVrfError, SR25519_SIGNING_CONTEXT};
+    use super::LocalActivation;
     use crate::host_internal::extrinsic::tests::split_v4;
-    use crate::host_internal::sso_messages::ProductRequest;
+    use crate::host_internal::sso_messages::{ProductRequest, RingVrfError};
     use crate::host_internal::transaction::{
         extrinsic_payload_extensions, extrinsic_payload_preimage,
     };
     use crate::host_logic::product_account::{
-        derive_identity_keypair, derive_product_keypair, derive_ring_vrf_entropy,
+        SR25519_SIGNING_CONTEXT, derive_identity_keypair, derive_product_keypair, derive_ring_vrf_entropy,
         derive_root_keypair_from_entropy, index_bytes,
     };
     use crate::platform::{HostInfo, Platform, PlatformInfo, ProductContext, SigningHostConfig};

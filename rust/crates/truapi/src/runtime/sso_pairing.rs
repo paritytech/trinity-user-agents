@@ -39,7 +39,7 @@ use subxt_rpcs::RpcClient;
 use subxt_rpcs::client::RpcSubscription;
 use tracing::{debug, info, instrument};
 use truapi::CallError;
-use truapi::v01;
+use truapi::latest as api;
 use truapi::versioned::account::HostRequestLoginError;
 #[cfg(test)]
 use truapi::versioned::account::HostRequestLoginResponse;
@@ -166,7 +166,7 @@ impl<'a> SsoPairingFlow<'a> {
             .pairing_started(bootstrap.deeplink.clone())
         else {
             return Err(CallError::Domain(HostRequestLoginError::V1(
-                v01::HostRequestLoginError::Unknown {
+                api::HostRequestLoginError::Unknown {
                     reason: "login already in progress".to_string(),
                 },
             )));
@@ -210,7 +210,7 @@ impl<'a> SsoPairingFlow<'a> {
             .auth_state
             .login_failed_before_pairing(reason.clone());
         CallError::Domain(HostRequestLoginError::V1(
-            v01::HostRequestLoginError::Unknown { reason },
+            api::HostRequestLoginError::Unknown { reason },
         ))
     }
 
@@ -622,12 +622,12 @@ mod tests {
         let host = Arc::new(host);
         cancel_on_pairing(&platform, pairing_host);
         let cx = CallContext::default();
-        let request = HostRequestLoginRequest::V1(v01::HostRequestLoginRequest { reason: None });
+        let request = HostRequestLoginRequest::V1(api::HostRequestLoginRequest { reason: None });
         let response = futures::executor::block_on(host.request_login(&cx, request)).unwrap();
 
         assert_eq!(
             response,
-            HostRequestLoginResponse::V1(v01::HostRequestLoginResponse::Rejected)
+            HostRequestLoginResponse::V1(api::HostRequestLoginResponse::Rejected)
         );
         let auth_states = platform
             .auth_states
@@ -667,7 +667,7 @@ mod tests {
             ProductRuntimeHost::new_compat_with_pairing(platform.clone(), test_spawner());
         let host = Arc::new(host);
         let cx = CallContext::default();
-        let request = HostRequestLoginRequest::V1(v01::HostRequestLoginRequest { reason: None });
+        let request = HostRequestLoginRequest::V1(api::HostRequestLoginRequest { reason: None });
         let outcome = futures::executor::block_on(host.request_login(&cx, request));
 
         let error = outcome.expect_err("a pairing nothing answers must not wait forever");
@@ -688,7 +688,7 @@ mod tests {
             ProductRuntimeHost::new_compat_with_pairing(platform.clone(), test_spawner());
         let host = Arc::new(host);
         let cx = CallContext::default();
-        let request = HostRequestLoginRequest::V1(v01::HostRequestLoginRequest { reason: None });
+        let request = HostRequestLoginRequest::V1(api::HostRequestLoginRequest { reason: None });
         let outcome = futures::executor::block_on(host.request_login(&cx, request));
 
         let error = outcome.expect_err("a subscription nothing acknowledges must not wait forever");
@@ -714,7 +714,7 @@ mod tests {
         });
         let host = ProductRuntimeHost::new_compat(platform, test_spawner());
         let cx = CallContext::default();
-        let request = HostRequestLoginRequest::V1(v01::HostRequestLoginRequest { reason: None });
+        let request = HostRequestLoginRequest::V1(api::HostRequestLoginRequest { reason: None });
 
         let error = futures::executor::block_on(host.request_login(&cx, request))
             .expect_err("storage that never answers must not hold the attempt open");
@@ -736,7 +736,7 @@ mod tests {
             ProductRuntimeHost::new_compat_with_pairing(platform.clone(), test_spawner());
         let host = Arc::new(host);
         let cx = CallContext::default();
-        let request = HostRequestLoginRequest::V1(v01::HostRequestLoginRequest { reason: None });
+        let request = HostRequestLoginRequest::V1(api::HostRequestLoginRequest { reason: None });
         let outcome = futures::executor::block_on(host.request_login(&cx, request));
 
         let error = outcome.expect_err("a connect that never opens must not wait forever");
@@ -755,18 +755,18 @@ mod tests {
         let host = Arc::new(host);
         cancel_on_pairing(&platform, pairing_host);
         let cx = CallContext::default();
-        let request = HostRequestLoginRequest::V1(v01::HostRequestLoginRequest { reason: None });
+        let request = HostRequestLoginRequest::V1(api::HostRequestLoginRequest { reason: None });
 
         let first = futures::executor::block_on(host.request_login(&cx, request.clone())).unwrap();
         let second = futures::executor::block_on(host.request_login(&cx, request)).unwrap();
 
         assert_eq!(
             first,
-            HostRequestLoginResponse::V1(v01::HostRequestLoginResponse::Rejected)
+            HostRequestLoginResponse::V1(api::HostRequestLoginResponse::Rejected)
         );
         assert_eq!(
             second,
-            HostRequestLoginResponse::V1(v01::HostRequestLoginResponse::Rejected)
+            HostRequestLoginResponse::V1(api::HostRequestLoginResponse::Rejected)
         );
         let deeplinks: Vec<String> = platform
             .auth_states
@@ -820,13 +820,13 @@ mod tests {
         let host = Arc::new(host);
         cancel_on_pairing(&platform, pairing_host);
         let cx = CallContext::default();
-        let request = HostRequestLoginRequest::V1(v01::HostRequestLoginRequest { reason: None });
+        let request = HostRequestLoginRequest::V1(api::HostRequestLoginRequest { reason: None });
 
         let response = futures::executor::block_on(host.request_login(&cx, request)).unwrap();
 
         assert_eq!(
             response,
-            HostRequestLoginResponse::V1(v01::HostRequestLoginResponse::Rejected)
+            HostRequestLoginResponse::V1(api::HostRequestLoginResponse::Rejected)
         );
         let deeplink = platform
             .auth_states
@@ -879,7 +879,7 @@ mod tests {
         });
         let host = ProductRuntimeHost::new_compat(platform.clone(), test_spawner());
         let cx = CallContext::default();
-        let request = HostRequestLoginRequest::V1(v01::HostRequestLoginRequest { reason: None });
+        let request = HostRequestLoginRequest::V1(api::HostRequestLoginRequest { reason: None });
         let err = futures::executor::block_on(host.request_login(&cx, request)).unwrap_err();
 
         match err {
@@ -929,22 +929,22 @@ mod tests {
         assert_eq!(
             futures::executor::block_on(statuses.next()).unwrap(),
             HostAccountConnectionStatusSubscribeItem::V1(
-                v01::HostAccountConnectionStatusSubscribeItem::Disconnected
+                api::HostAccountConnectionStatusSubscribeItem::Disconnected
             )
         );
 
         let cx = CallContext::default();
-        let request = HostRequestLoginRequest::V1(v01::HostRequestLoginRequest { reason: None });
+        let request = HostRequestLoginRequest::V1(api::HostRequestLoginRequest { reason: None });
         let response = futures::executor::block_on(host.request_login(&cx, request)).unwrap();
 
         assert_eq!(
             response,
-            HostRequestLoginResponse::V1(v01::HostRequestLoginResponse::Success)
+            HostRequestLoginResponse::V1(api::HostRequestLoginResponse::Success)
         );
         assert_eq!(
             futures::executor::block_on(statuses.next()).unwrap(),
             HostAccountConnectionStatusSubscribeItem::V1(
-                v01::HostAccountConnectionStatusSubscribeItem::Connected
+                api::HostAccountConnectionStatusSubscribeItem::Connected
             )
         );
 
@@ -1046,12 +1046,12 @@ mod tests {
         }));
 
         let cx = CallContext::default();
-        let request = HostRequestLoginRequest::V1(v01::HostRequestLoginRequest { reason: None });
+        let request = HostRequestLoginRequest::V1(api::HostRequestLoginRequest { reason: None });
         let response = futures::executor::block_on(host.request_login(&cx, request)).unwrap();
 
         assert_eq!(
             response,
-            HostRequestLoginResponse::V1(v01::HostRequestLoginResponse::Rejected)
+            HostRequestLoginResponse::V1(api::HostRequestLoginResponse::Rejected)
         );
         let auth_states = platform
             .auth_states
@@ -1077,7 +1077,7 @@ mod tests {
             test_spawner(),
         );
         let cx = CallContext::default();
-        let request = HostRequestLoginRequest::V1(v01::HostRequestLoginRequest { reason: None });
+        let request = HostRequestLoginRequest::V1(api::HostRequestLoginRequest { reason: None });
         let err = futures::executor::block_on(host.request_login(&cx, request)).unwrap_err();
 
         let expected_reason =
@@ -1127,12 +1127,12 @@ mod tests {
         }));
 
         let cx = CallContext::default();
-        let request = HostRequestLoginRequest::V1(v01::HostRequestLoginRequest { reason: None });
+        let request = HostRequestLoginRequest::V1(api::HostRequestLoginRequest { reason: None });
         let response = futures::executor::block_on(host.request_login(&cx, request)).unwrap();
 
         assert_eq!(
             response,
-            HostRequestLoginResponse::V1(v01::HostRequestLoginResponse::Rejected)
+            HostRequestLoginResponse::V1(api::HostRequestLoginResponse::Rejected)
         );
         assert!(host.test_session_state().current().is_none());
         assert_eq!(
@@ -1172,12 +1172,12 @@ mod tests {
         }));
 
         let cx = CallContext::default();
-        let request = HostRequestLoginRequest::V1(v01::HostRequestLoginRequest { reason: None });
+        let request = HostRequestLoginRequest::V1(api::HostRequestLoginRequest { reason: None });
         let response = futures::executor::block_on(host.request_login(&cx, request)).unwrap();
 
         assert_eq!(
             response,
-            HostRequestLoginResponse::V1(v01::HostRequestLoginResponse::Success)
+            HostRequestLoginResponse::V1(api::HostRequestLoginResponse::Success)
         );
         assert!(host.test_session_state().current().is_none());
 
@@ -1285,7 +1285,7 @@ mod tests {
         });
         let host = ProductRuntimeHost::new_compat(platform.clone(), test_spawner());
         let cx = CallContext::default();
-        let request = HostRequestLoginRequest::V1(v01::HostRequestLoginRequest { reason: None });
+        let request = HostRequestLoginRequest::V1(api::HostRequestLoginRequest { reason: None });
         let err = futures::executor::block_on(host.request_login(&cx, request)).unwrap_err();
 
         assert!(matches!(err, CallError::Domain(_)));
@@ -1312,7 +1312,7 @@ mod tests {
         let (host, pairing_host) =
             ProductRuntimeHost::new_compat_with_pairing(platform.clone(), test_spawner());
         let host = Arc::new(host);
-        let request = HostRequestLoginRequest::V1(v01::HostRequestLoginRequest { reason: None });
+        let request = HostRequestLoginRequest::V1(api::HostRequestLoginRequest { reason: None });
         let cx = CallContext::default();
         let mut first_login = Box::pin(host.request_login(&cx, request.clone()));
         let waker = futures::task::noop_waker();
@@ -1350,7 +1350,7 @@ mod tests {
         };
         assert_eq!(
             second,
-            HostRequestLoginResponse::V1(v01::HostRequestLoginResponse::Rejected)
+            HostRequestLoginResponse::V1(api::HostRequestLoginResponse::Rejected)
         );
     }
 
@@ -1368,12 +1368,12 @@ mod tests {
         let host = Arc::new(host);
         cancel_on_pairing(&platform, pairing_host);
         let cx = CallContext::default();
-        let request = HostRequestLoginRequest::V1(v01::HostRequestLoginRequest { reason: None });
+        let request = HostRequestLoginRequest::V1(api::HostRequestLoginRequest { reason: None });
         let response = futures::executor::block_on(host.request_login(&cx, request)).unwrap();
 
         assert_eq!(
             response,
-            HostRequestLoginResponse::V1(v01::HostRequestLoginResponse::Rejected)
+            HostRequestLoginResponse::V1(api::HostRequestLoginResponse::Rejected)
         );
         assert!(host.test_session_state().current().is_none());
     }
@@ -1391,12 +1391,12 @@ mod tests {
         let host = Arc::new(host);
         cancel_on_pairing(&platform, pairing_host);
         let cx = CallContext::default();
-        let request = HostRequestLoginRequest::V1(v01::HostRequestLoginRequest { reason: None });
+        let request = HostRequestLoginRequest::V1(api::HostRequestLoginRequest { reason: None });
         let response = futures::executor::block_on(host.request_login(&cx, request)).unwrap();
 
         assert_eq!(
             response,
-            HostRequestLoginResponse::V1(v01::HostRequestLoginResponse::Rejected)
+            HostRequestLoginResponse::V1(api::HostRequestLoginResponse::Rejected)
         );
         assert!(host.test_session_state().current().is_none());
         assert_eq!(*session_clears.lock().unwrap(), 0);
@@ -1413,12 +1413,12 @@ mod tests {
         let host = Arc::new(host);
         cancel_on_pairing(&platform, pairing_host);
         let cx = CallContext::default();
-        let request = HostRequestLoginRequest::V1(v01::HostRequestLoginRequest { reason: None });
+        let request = HostRequestLoginRequest::V1(api::HostRequestLoginRequest { reason: None });
         let response = futures::executor::block_on(host.request_login(&cx, request)).unwrap();
 
         assert_eq!(
             response,
-            HostRequestLoginResponse::V1(v01::HostRequestLoginResponse::Rejected)
+            HostRequestLoginResponse::V1(api::HostRequestLoginResponse::Rejected)
         );
         assert!(host.test_session_state().current().is_none());
     }
@@ -1428,11 +1428,11 @@ mod tests {
         let host = ProductRuntimeHost::new_compat(stub_platform(), test_spawner());
         host.test_session_state().set_session(session_info());
         let cx = CallContext::default();
-        let request = HostRequestLoginRequest::V1(v01::HostRequestLoginRequest { reason: None });
+        let request = HostRequestLoginRequest::V1(api::HostRequestLoginRequest { reason: None });
         let response = futures::executor::block_on(host.request_login(&cx, request)).unwrap();
         assert_eq!(
             response,
-            HostRequestLoginResponse::V1(v01::HostRequestLoginResponse::AlreadyConnected)
+            HostRequestLoginResponse::V1(api::HostRequestLoginResponse::AlreadyConnected)
         );
     }
 }

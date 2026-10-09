@@ -61,7 +61,7 @@ use crate::platform::{
 use futures::StreamExt;
 use tracing::{instrument, warn};
 use truapi::versioned::account::{HostRequestLoginError, HostRequestLoginResponse};
-use truapi::{CallContext, CallError, v01};
+use truapi::{CallContext, CallError, latest};
 use zeroize::Zeroizing;
 
 use super::ring_vrf_registry::{RingVrfRegistryStore, validate_owner_listing};
@@ -428,8 +428,8 @@ impl PairingHost {
     /// Providers registered for this ring under the active account.
     pub async fn ring_vrf_providers(
         &self,
-        ring: &v01::RingLocation,
-    ) -> Result<Vec<v01::ProductAccountId>, RingVrfError> {
+        ring: &latest::RingLocation,
+    ) -> Result<Vec<latest::ProductAccountId>, RingVrfError> {
         let session = self.session_state.current().ok_or(RingVrfError::Unknown {
             reason: "no active session".to_string(),
         })?;
@@ -441,8 +441,8 @@ impl PairingHost {
     /// Provider selected for this ring under the active account.
     pub async fn selected_ring_vrf_provider(
         &self,
-        ring: &v01::RingLocation,
-    ) -> Result<Option<v01::ProductAccountId>, RingVrfError> {
+        ring: &latest::RingLocation,
+    ) -> Result<Option<latest::ProductAccountId>, RingVrfError> {
         let session = self.session_state.current().ok_or(RingVrfError::Unknown {
             reason: "no active session".to_string(),
         })?;
@@ -454,8 +454,8 @@ impl PairingHost {
     /// Persist the provider choice under the active account.
     pub async fn select_ring_vrf_provider(
         &self,
-        ring: v01::RingLocation,
-        handle: v01::ProductAccountId,
+        ring: latest::RingLocation,
+        handle: latest::ProductAccountId,
     ) -> Result<(), RingVrfError> {
         let session = self.session_state.current().ok_or(RingVrfError::Unknown {
             reason: "no active session".to_string(),
@@ -633,7 +633,7 @@ impl PairingHost {
             self.auth_state
                 .connected(&connected_session_ui_info(&session));
             return Ok(HostRequestLoginResponse::V1(
-                v01::HostRequestLoginResponse::AlreadyConnected,
+                latest::HostRequestLoginResponse::AlreadyConnected,
             ));
         }
 
@@ -642,20 +642,20 @@ impl PairingHost {
                 Ok(Ok(())) => {
                     return Ok(HostRequestLoginResponse::V1(
                         if self.session_state.current().is_some() {
-                            v01::HostRequestLoginResponse::AlreadyConnected
+                            latest::HostRequestLoginResponse::AlreadyConnected
                         } else {
-                            v01::HostRequestLoginResponse::Rejected
+                            latest::HostRequestLoginResponse::Rejected
                         },
                     ));
                 }
                 Ok(Err(reason)) => {
                     return Err(CallError::Domain(HostRequestLoginError::V1(
-                        v01::HostRequestLoginError::Unknown { reason },
+                        latest::HostRequestLoginError::Unknown { reason },
                     )));
                 }
                 Err(_) => {
                     return Err(CallError::Domain(HostRequestLoginError::V1(
-                        v01::HostRequestLoginError::Unknown {
+                        latest::HostRequestLoginError::Unknown {
                             reason: "login waiter dropped".to_string(),
                         },
                     )));
@@ -677,11 +677,11 @@ impl PairingHost {
                 login_owner.finish(Ok(()));
                 if self.session_state.current().is_some() {
                     Ok(HostRequestLoginResponse::V1(
-                        v01::HostRequestLoginResponse::AlreadyConnected,
+                        latest::HostRequestLoginResponse::AlreadyConnected,
                     ))
                 } else {
                     Ok(HostRequestLoginResponse::V1(
-                        v01::HostRequestLoginResponse::Rejected,
+                        latest::HostRequestLoginResponse::Rejected,
                     ))
                 }
             }
@@ -693,13 +693,13 @@ impl PairingHost {
                         .await;
                     login_owner.finish(Ok(()));
                     return Ok(HostRequestLoginResponse::V1(
-                        v01::HostRequestLoginResponse::Rejected,
+                        latest::HostRequestLoginResponse::Rejected,
                     ));
                 }
                 self.set_connected_session(*session).await;
                 login_owner.finish(Ok(()));
                 Ok(HostRequestLoginResponse::V1(
-                    v01::HostRequestLoginResponse::Success,
+                    latest::HostRequestLoginResponse::Success,
                 ))
             }
         }
@@ -1015,8 +1015,8 @@ impl PairingHost {
     pub async fn register_ring_vrf_key_for_tests(
         &self,
         session: &SessionInfo,
-        handle: v01::ProductAccountId,
-        ring: v01::RingLocation,
+        handle: latest::ProductAccountId,
+        ring: latest::RingLocation,
         public_key: [u8; 32],
     ) -> Result<(), RingVrfError> {
         self.ring_vrf_registry
@@ -1961,10 +1961,10 @@ impl PairingHost {
     async fn require_ring_vrf_key_access(
         &self,
         calling_product_id: &str,
-        handle: &v01::ProductAccountId,
+        handle: &latest::ProductAccountId,
     ) -> Result<
         (
-            v01::ProductAccountId,
+            latest::ProductAccountId,
             crate::runtime::product_manifest::AuthorizedAccess,
         ),
         RingVrfError,
@@ -1977,7 +1977,7 @@ impl PairingHost {
         )
         .await?;
         Ok((
-            v01::ProductAccountId {
+            latest::ProductAccountId {
                 dot_ns_identifier: access.owner.clone(),
                 derivation_index: handle.derivation_index.clone(),
             },
@@ -1988,7 +1988,7 @@ impl PairingHost {
     async fn local_ring_vrf_entropy(
         &self,
         session: &SessionInfo,
-        handle: &v01::ProductAccountId,
+        handle: &latest::ProductAccountId,
     ) -> Result<Option<Zeroizing<[u8; 32]>>, RingVrfError> {
         let Some(auto_signing) = self
             .auto_signing_key(session, &handle.dot_ns_identifier)
@@ -2019,8 +2019,8 @@ impl PairingHost {
     async fn local_ring_vrf_entropy_for_ring(
         &self,
         session: &SessionInfo,
-        handle: &v01::ProductAccountId,
-        ring: &v01::RingLocation,
+        handle: &latest::ProductAccountId,
+        ring: &latest::RingLocation,
     ) -> Result<Option<Zeroizing<[u8; 32]>>, RingVrfError> {
         let Some(entropy) = self.local_ring_vrf_entropy(session, handle).await? else {
             return Ok(None);
@@ -2089,7 +2089,7 @@ impl PairingHost {
         &self,
         session: &SessionInfo,
         calling_product_id: Option<&str>,
-        account: &v01::ProductAccountId,
+        account: &latest::ProductAccountId,
     ) -> Result<Option<schnorrkel::Keypair>, AuthorityError> {
         if calling_product_id != Some(account.dot_ns_identifier.as_str()) {
             return Ok(None);
@@ -2120,7 +2120,7 @@ impl PairingHost {
         &self,
         session: &AuthoritySession,
         calling_product_id: &str,
-        account: &v01::ProductAccountId,
+        account: &latest::ProductAccountId,
     ) -> Result<AutoSigningGrant, AuthorityError> {
         let session = self.current_private_session(session)?;
         Ok(
@@ -2139,8 +2139,8 @@ impl PairingHost {
         cx: &CallContext,
         session: &AuthoritySession,
         calling_product_id: String,
-        request: v01::HostAccountSignVrfRequest,
-    ) -> Result<v01::VrfSignature, AuthorityError> {
+        request: latest::HostAccountSignVrfRequest,
+    ) -> Result<latest::VrfSignature, AuthorityError> {
         let session = self.current_private_session(session)?;
         if calling_product_id == request.account.dot_ns_identifier
             && let Some(auto_signing_key) = self
@@ -2162,7 +2162,7 @@ impl PairingHost {
                     .iter()
                     .map(|item| (item.label.as_slice(), item.value.as_slice())),
             );
-            return Ok(v01::VrfSignature { pre_output, proof });
+            return Ok(latest::VrfSignature { pre_output, proof });
         }
         if !super::authority::is_blessed_owner(
             &calling_product_id,
@@ -2194,7 +2194,7 @@ impl PairingHost {
         session: &AuthoritySession,
         calling_product_id: Option<&str>,
         request: SignPayloadAuthorityRequest,
-    ) -> Result<v01::HostSignPayloadResponse, AuthorityError> {
+    ) -> Result<latest::HostSignPayloadResponse, AuthorityError> {
         let session = self.current_private_session(session)?;
         if let SignPayloadAuthorityRequest::Product(payload) = &request
             && let Some(keypair) = self
@@ -2213,7 +2213,7 @@ impl PairingHost {
         calling_product_id: Option<&str>,
         request: SignRawAuthorityRequest,
         watermarked: bool,
-    ) -> Result<v01::HostSignPayloadResponse, AuthorityError> {
+    ) -> Result<latest::HostSignPayloadResponse, AuthorityError> {
         let session = self.current_private_session(session)?;
         // The unwatermarked API is never grant-covered, so a local signature
         // here would skip a prompt the gate deliberately raised.
@@ -2228,7 +2228,7 @@ impl PairingHost {
                 .secret
                 .sign_simple(SR25519_SIGNING_CONTEXT, &message, &keypair.public)
                 .to_bytes();
-            return Ok(v01::HostSignPayloadResponse {
+            return Ok(latest::HostSignPayloadResponse {
                 signature: signature.to_vec(),
                 signed_transaction: None,
             });
@@ -2243,7 +2243,7 @@ impl PairingHost {
         session: &AuthoritySession,
         calling_product_id: Option<&str>,
         request: CreateTransactionAuthorityRequest,
-    ) -> Result<v01::HostCreateTransactionResponse, AuthorityError> {
+    ) -> Result<latest::HostCreateTransactionResponse, AuthorityError> {
         let session = self.current_private_session(session)?;
         if let CreateTransactionAuthorityRequest::Product(payload) = &request
             && let Some(keypair) = self
@@ -2283,7 +2283,7 @@ impl PairingHost {
         cx: &CallContext,
         session: &AuthoritySession,
         request: ProductRequest<HostAccountGetAliasRequest>,
-    ) -> Result<v01::ContextualAlias, RingVrfError> {
+    ) -> Result<latest::ContextualAlias, RingVrfError> {
         let private_session = self.current_private_session(session)?;
         if request.calling_product_id == request.payload.key_handle.dot_ns_identifier
             && let Some(entropy) = self
@@ -2301,7 +2301,7 @@ impl PairingHost {
             self.current_private_session(session)?;
             let context = development_context_bytes(&request.payload.context);
             let alias = vrf.alias(&entropy, &context)?;
-            return Ok(v01::ContextualAlias {
+            return Ok(latest::ContextualAlias {
                 context,
                 alias: alias.to_vec(),
             });
@@ -2315,7 +2315,7 @@ impl PairingHost {
         cx: &CallContext,
         session: &AuthoritySession,
         request: ProductRequest<HostAccountCreateProofRequest>,
-    ) -> Result<v01::HostAccountCreateProofResponse, RingVrfError> {
+    ) -> Result<latest::HostAccountCreateProofResponse, RingVrfError> {
         let (key_handle, access) = self
             .require_ring_vrf_key_access(&request.calling_product_id, &request.payload.key_handle)
             .await?;
@@ -2348,9 +2348,9 @@ impl PairingHost {
                 &context,
                 &request.payload.message,
             )?;
-            return Ok(v01::HostAccountCreateProofResponse {
+            return Ok(latest::HostAccountCreateProofResponse {
                 proof,
-                contextual_alias: v01::ContextualAlias {
+                contextual_alias: latest::ContextualAlias {
                     context,
                     alias: alias.to_vec(),
                 },
@@ -2369,7 +2369,7 @@ impl PairingHost {
         request: ProductRequest<HostAccountRegisterRingVrfKeyRequest>,
     ) -> Result<[u8; 32], RingVrfError> {
         let private_session = self.current_private_session(session)?;
-        let handle = v01::ProductAccountId {
+        let handle = latest::ProductAccountId {
             dot_ns_identifier: normalize_product_identifier(&request.calling_product_id).map_err(
                 |error| RingVrfError::Unknown {
                     reason: error.to_string(),
@@ -2422,7 +2422,7 @@ impl PairingHost {
         cx: &CallContext,
         session: &AuthoritySession,
         request: ProductRequest<HostAccountListRingVrfKeysRequest>,
-    ) -> Result<Vec<v01::RegisteredRingVrfKey>, RingVrfError> {
+    ) -> Result<Vec<latest::RegisteredRingVrfKey>, RingVrfError> {
         let private_session = self.current_private_session(session)?;
         let owner = normalize_product_identifier(&request.payload.owner).map_err(|error| {
             RingVrfError::Unknown {
@@ -2442,7 +2442,7 @@ impl PairingHost {
         let requested_disclosure = request.payload.disclosure;
         let mut remote_request = request;
         if remote_request.calling_product_id == owner {
-            remote_request.payload.disclosure = v01::RingVrfKeyDisclosure::PublicKey;
+            remote_request.payload.disclosure = latest::RingVrfKeyDisclosure::PublicKey;
         }
         let mut entries = self
             .remote_list_ring_vrf_keys(cx, &private_session, remote_request)
@@ -2486,8 +2486,8 @@ impl PairingHost {
         cx: &CallContext,
         session: &AuthoritySession,
         product_id: String,
-        request: v01::HostRequestResourceAllocationRequest,
-    ) -> Result<v01::HostRequestResourceAllocationResponse, AuthorityError> {
+        request: latest::HostRequestResourceAllocationRequest,
+    ) -> Result<latest::HostRequestResourceAllocationResponse, AuthorityError> {
         let session = self.current_private_session(session)?;
         self.remote_allocate_resources(cx, &session, product_id, request)
             .await
@@ -2531,7 +2531,7 @@ impl PairingHost {
         _cx: &CallContext,
         session: &AuthoritySession,
         calling_product_id: Option<&str>,
-        account: v01::ProductAccountId,
+        account: latest::ProductAccountId,
         payload: Vec<u8>,
     ) -> Result<[u8; 64], AuthorityError> {
         let session = self.current_private_session(session)?;
@@ -2598,10 +2598,10 @@ impl PairingHost {
 }
 
 fn apply_ring_vrf_disclosure(
-    entries: &mut [v01::RegisteredRingVrfKey],
-    disclosure: v01::RingVrfKeyDisclosure,
+    entries: &mut [latest::RegisteredRingVrfKey],
+    disclosure: latest::RingVrfKeyDisclosure,
 ) {
-    if disclosure == v01::RingVrfKeyDisclosure::Anonymized {
+    if disclosure == latest::RingVrfKeyDisclosure::Anonymized {
         for entry in entries {
             entry.public_key = None;
         }
@@ -2610,7 +2610,7 @@ fn apply_ring_vrf_disclosure(
 
 fn login_error_reason(err: &CallError<HostRequestLoginError>) -> String {
     match err {
-        CallError::Domain(HostRequestLoginError::V1(v01::HostRequestLoginError::Unknown {
+        CallError::Domain(HostRequestLoginError::V1(latest::HostRequestLoginError::Unknown {
             reason,
         }))
         | CallError::HostFailure { reason } => reason.clone(),
@@ -2690,7 +2690,7 @@ impl ProductAuthority for PairingHost {
         &self,
         session: &AuthoritySession,
         calling_product_id: &str,
-        account: &v01::ProductAccountId,
+        account: &latest::ProductAccountId,
     ) -> Result<AutoSigningGrant, AuthorityError> {
         PairingHost::auto_signing_status(self, session, calling_product_id, account).await
     }
@@ -2700,8 +2700,8 @@ impl ProductAuthority for PairingHost {
         cx: &CallContext,
         session: &AuthoritySession,
         calling_product_id: String,
-        request: v01::HostAccountSignVrfRequest,
-    ) -> Result<v01::VrfSignature, AuthorityError> {
+        request: latest::HostAccountSignVrfRequest,
+    ) -> Result<latest::VrfSignature, AuthorityError> {
         PairingHost::sign_vrf(self, cx, session, calling_product_id, request).await
     }
 
@@ -2711,7 +2711,7 @@ impl ProductAuthority for PairingHost {
         session: &AuthoritySession,
         calling_product_id: Option<&str>,
         request: SignPayloadAuthorityRequest,
-    ) -> Result<v01::HostSignPayloadResponse, AuthorityError> {
+    ) -> Result<latest::HostSignPayloadResponse, AuthorityError> {
         PairingHost::sign_payload(self, cx, session, calling_product_id, request).await
     }
 
@@ -2722,7 +2722,7 @@ impl ProductAuthority for PairingHost {
         calling_product_id: Option<&str>,
         request: SignRawAuthorityRequest,
         watermarked: bool,
-    ) -> Result<v01::HostSignPayloadResponse, AuthorityError> {
+    ) -> Result<latest::HostSignPayloadResponse, AuthorityError> {
         PairingHost::sign_raw(self, cx, session, calling_product_id, request, watermarked).await
     }
 
@@ -2732,7 +2732,7 @@ impl ProductAuthority for PairingHost {
         session: &AuthoritySession,
         calling_product_id: Option<&str>,
         request: CreateTransactionAuthorityRequest,
-    ) -> Result<v01::HostCreateTransactionResponse, AuthorityError> {
+    ) -> Result<latest::HostCreateTransactionResponse, AuthorityError> {
         PairingHost::create_transaction(self, cx, session, calling_product_id, request).await
     }
 
@@ -2741,7 +2741,7 @@ impl ProductAuthority for PairingHost {
         cx: &CallContext,
         session: &AuthoritySession,
         request: ProductRequest<HostAccountGetAliasRequest>,
-    ) -> Result<v01::ContextualAlias, RingVrfError> {
+    ) -> Result<latest::ContextualAlias, RingVrfError> {
         PairingHost::account_alias(self, cx, session, request).await
     }
 
@@ -2750,7 +2750,7 @@ impl ProductAuthority for PairingHost {
         cx: &CallContext,
         session: &AuthoritySession,
         request: ProductRequest<HostAccountCreateProofRequest>,
-    ) -> Result<v01::HostAccountCreateProofResponse, RingVrfError> {
+    ) -> Result<latest::HostAccountCreateProofResponse, RingVrfError> {
         PairingHost::create_proof(self, cx, session, request).await
     }
 
@@ -2768,7 +2768,7 @@ impl ProductAuthority for PairingHost {
         cx: &CallContext,
         session: &AuthoritySession,
         request: ProductRequest<HostAccountListRingVrfKeysRequest>,
-    ) -> Result<Vec<v01::RegisteredRingVrfKey>, RingVrfError> {
+    ) -> Result<Vec<latest::RegisteredRingVrfKey>, RingVrfError> {
         PairingHost::list_ring_vrf_keys(self, cx, session, request).await
     }
 
@@ -2786,8 +2786,8 @@ impl ProductAuthority for PairingHost {
         cx: &CallContext,
         session: &AuthoritySession,
         product_id: String,
-        request: v01::HostRequestResourceAllocationRequest,
-    ) -> Result<v01::HostRequestResourceAllocationResponse, AuthorityError> {
+        request: latest::HostRequestResourceAllocationRequest,
+    ) -> Result<latest::HostRequestResourceAllocationResponse, AuthorityError> {
         PairingHost::allocate_resources(self, cx, session, product_id, request).await
     }
 
@@ -2823,7 +2823,7 @@ impl ProductAuthority for PairingHost {
         cx: &CallContext,
         session: &AuthoritySession,
         calling_product_id: Option<&str>,
-        account: v01::ProductAccountId,
+        account: latest::ProductAccountId,
         payload: Vec<u8>,
     ) -> Result<[u8; 64], AuthorityError> {
         PairingHost::sign_statement_store_product_payload(

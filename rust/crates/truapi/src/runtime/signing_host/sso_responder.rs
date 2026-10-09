@@ -21,7 +21,7 @@ use futures::future::{Fuse, FusedFuture};
 use futures::{FutureExt, Stream, StreamExt, pin_mut};
 use parity_scale_codec::Encode;
 use tracing::{debug, instrument, warn};
-use truapi::v01;
+use truapi::latest as api;
 
 use super::sso_replay::{ReplayExecution, SsoReplayScope, execute_once};
 use super::{SigningHost, SigningHostSsoService};
@@ -1200,7 +1200,7 @@ pub async fn allocate_smart_contract_allowance(
     signing_host: &SigningHost,
     session: &AuthoritySession,
     product_id: &str,
-    derivation_index: v01::DerivationIndex,
+    derivation_index: api::DerivationIndex,
     policy: OnExistingAllowancePolicy,
 ) -> Result<(), AllowanceAllocationError> {
     use truapi::latest::ChainIdentifier;
@@ -1212,7 +1212,7 @@ pub async fn allocate_smart_contract_allowance(
 
     // PGAS credits the product account the caller named.
     let target = signing_host
-        .product_keypair(&v01::ProductAccountId {
+        .product_keypair(&api::ProductAccountId {
             dot_ns_identifier: product_id.to_string(),
             derivation_index,
         })?

@@ -3404,7 +3404,7 @@ mod tests {
             host.as_ref(),
             &truapi::CallContext::default(),
             truapi::versioned::worker::HostWorkerBeginOperationRequest::V1(
-                truapi::v01::HostWorkerBeginOperationRequest { label: None },
+                truapi::latest::HostWorkerBeginOperationRequest { label: None },
             ),
         ))
         .expect("begin operation");
@@ -3439,7 +3439,7 @@ mod tests {
             host.as_ref(),
             &truapi::CallContext::default(),
             truapi::versioned::worker::HostWorkerBeginOperationRequest::V1(
-                truapi::v01::HostWorkerBeginOperationRequest { label: None },
+                truapi::latest::HostWorkerBeginOperationRequest { label: None },
             ),
         ))
         .expect("begin operation");

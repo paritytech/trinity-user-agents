@@ -986,7 +986,7 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
   const forgetStoredAuthorization = (permission: string): void => {
     const prefix = "core:PermissionAuthorization:";
     const needle = JSON.stringify(permission);
-    for (const key of [...storage.keys()]) {
+    for (const key of storage.keys()) {
       if (key.startsWith(prefix) && key.includes(needle)) storage.delete(key);
     }
   };
