@@ -123,6 +123,11 @@ The full variable reference, including the optional overrides, is in
 
 Open the project in Android Studio, select the **gp** flavor with a debug build type and an Android 10+ device or emulator, then build and run.
 
+The `android-instrumented-tests` PR label runs the app and JNI-backed binding
+tests on a KVM-accelerated Linux emulator. CI assembles both test APKs before
+booting the emulator, with two Gradle workers and a single 4 GiB compiler JVM,
+so the cold native/app build does not compete with the running device.
+
 The app talks to Polkadot system chains (People Chain, Asset Hub, Bulletin Chain). Which chains
 and RPC nodes it uses is not hard-coded: the `chains` / `chains_v2` Remote Config keys of your
 Firebase project define the set, so a fork can point the same build at Polkadot, at the
