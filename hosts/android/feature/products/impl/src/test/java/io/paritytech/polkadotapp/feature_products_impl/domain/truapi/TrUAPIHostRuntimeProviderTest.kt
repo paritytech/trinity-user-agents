@@ -52,7 +52,10 @@ class TrUAPIHostRuntimeProviderTest {
         knownChains = KnownChains(people = "people", assetHub = "asset-hub", bulletIn = "bullet-in", hydration = null),
         chainDirectory = mockk(relaxed = true),
         localSessionSource = mockk { coEvery { resolve() } returns Result.failure(IllegalStateException()) },
-        accountRepository = mockk { every { walletAccountFlow() } returns emptyFlow() },
+        accountRepository = mockk {
+            coEvery { getWalletAccount() } returns mockk { every { id } returns 1L }
+            every { walletAccountFlow() } returns emptyFlow()
+        },
         dotNsTldProvider = mockk { coEvery { getTld() } returns Result.success(DotNsTld.parse("paseo")!!) },
         encryptedPreferences = mockk(relaxed = true),
         chainHttpClient = mockk(relaxed = true),
