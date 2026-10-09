@@ -180,6 +180,8 @@ pub enum ShellCommand {
     Session(SessionCommand),
     /// Renew tracked statement-store allowances for the current period.
     Renew,
+    /// Show the cache payer and what the host measured of each cache node.
+    Cache,
     /// Shut down the signing host.
     Quit,
 }
@@ -335,6 +337,7 @@ pub fn parse_command(input: &str) -> Result<ShellCommand, String> {
             )))
         }
         "/renew" => no_argument(name, argument, ShellCommand::Renew),
+        "/cache" => no_argument(name, argument, ShellCommand::Cache),
         "/quit" => no_argument(name, argument, ShellCommand::Quit),
         _ => Err(format!(
             "unknown command `{name}`; use /help to list commands"
@@ -380,6 +383,7 @@ const SIGNING_COMMANDS: &[(&str, &str)] = &[
     ("/product", "show or switch the active product"),
     ("/session", "show, switch, or clear sessions"),
     ("/renew", "renew statement-store allowances now"),
+    ("/cache", "show the cache payer and cache node measurements"),
     ("/help", "show commands and keyboard shortcuts"),
     ("/clear", "clear the visible transcript"),
     ("/copy", "copy the transcript to the clipboard"),
@@ -392,6 +396,7 @@ const PAIRING_COMMANDS: &[(&str, &str)] = &[
     ("/logout", "disconnect and reset pairing keys"),
     ("/log", "set error, warn, info, debug, or trace"),
     ("/product", "show or switch the active product"),
+    ("/cache", "show the cache payer and cache node measurements"),
     ("/help", "show commands and keyboard shortcuts"),
     ("/clear", "clear the visible transcript"),
     ("/copy", "copy the transcript to the clipboard"),
@@ -877,6 +882,7 @@ pub const HELP_TEXT: &str = "\
 /session --clear <name> permanently clear one session
 /session --clear-all    permanently clear all sessions for this network
 /renew                  renew statement-store allowances now
+/cache                  show the cache payer and cache node measurements
 /help                   show this help
 /clear                  clear the visible transcript
 /copy                   copy the transcript to the clipboard
@@ -897,6 +903,7 @@ pub const PAIRING_HELP_TEXT: &str = "\
 /log <level>            set error, warn, info, debug, or trace
 /product                show the current product
 /product <id>           switch product and reconnect product clients
+/cache                  show the cache payer and cache node measurements
 /help                   show this help
 /clear                  clear the visible transcript
 /copy                   copy the transcript to the clipboard
@@ -989,6 +996,7 @@ mod tests {
         );
         assert_eq!(parse_command("/copy"), Ok(ShellCommand::Copy));
         assert_eq!(parse_command("/renew"), Ok(ShellCommand::Renew));
+        assert_eq!(parse_command("/cache"), Ok(ShellCommand::Cache));
         assert_eq!(
             parse_command("/devices"),
             Ok(ShellCommand::Devices(DeviceCommand::List))

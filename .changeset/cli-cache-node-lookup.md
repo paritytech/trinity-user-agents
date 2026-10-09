@@ -7,4 +7,5 @@ provider set file; for each read the host orders the providers by recent failure
 home nodes, and tries an unmeasured provider every fourth read. The host checks every value against its CID and pays
 the provider that served it with a delivery receipt signed by `//allowance//cache//{product}` of the signed-in account,
 or by the key in `TRUAPI_CACHE_PAYER_SEED`. Without a payer, or when no cache node supplies the blob, the Bulletin node
-answers as before.
+answers as before. The host keeps its measurements across restarts in `cache-quality.json`, and `/cache`
+shows them with the payer key.

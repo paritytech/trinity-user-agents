@@ -611,6 +611,7 @@ Commands start with `/`. There are no `q`, `quit`, `exit`, or non-slash aliases.
 | `/session --list` | no | yes | List network-scoped user sessions and mark the active one. |
 | `/session --clear <name>` | no | yes | Permanently clear one network-scoped signing session. |
 | `/session --clear-all` | no | yes | Permanently clear all signing sessions for the current network. |
+| `/cache` | yes | yes | Show the cache payer and what the host measured of each cache node. |
 | `/log <level>` | yes | yes | Save and replace the runtime log filter. |
 | `/help` | yes | yes | Show role-specific commands and key bindings. |
 | `/clear` | yes | yes | Clear the retained visible transcript. |
@@ -1841,7 +1842,10 @@ hash to the CID are dropped and the next provider is asked; for bytes that
 pass, the host sends that provider a delivery receipt signed by the payer key,
 `//allowance//cache//{product}` of the signed-in account or the seed in
 `TRUAPI_CACHE_PAYER_SEED`. Without a payer the host does not ask cache nodes.
-When no cache node supplies the blob, the Bulletin node is asked as before. A
+When no cache node supplies the blob, the Bulletin node is asked as before.
+The measured latency, read and failure counts of each provider are kept in
+`cache-quality.json` in the state directory, so a restart keeps the order; a
+recent failure is not kept. A
 miss is asked again every 6 s until the blob lands; a request the node can
 never answer ends the lookup with an error. The core also owns the real Bulletin client and a
 separate 16 MiB insertion-ordered preimage bridge for read-after-write

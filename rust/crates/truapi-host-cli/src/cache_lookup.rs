@@ -15,6 +15,9 @@
 //! that delivery and sends it to that provider (`POST /receipt`). A node that sends bad bytes gets no receipt. Without
 //! a payer the host does not ask cache nodes. A node that is down, refuses the payer or does not have the blob costs
 //! one request, and the Bulletin node answers as it would without cache nodes.
+//!
+//! The host keeps what it measured in `cache-quality.json` in its state directory, so a restart does not forget which
+//! providers are fast. `/cache` shows the payer and the measurements.
 
 use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use core::time::Duration;
@@ -25,6 +28,7 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use async_trait::async_trait;
 use schnorrkel::{ExpansionMode, Keypair, MiniSecretKey};
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tracing::{debug, info, warn};
 use truapi::host_logic::product_account::derive_sr25519_hard_path;
@@ -100,14 +104,46 @@ fn home_nodes(content_id: &str, providers: &[[u8; 32]]) -> Vec<[u8; 32]> {
 }
 
 /// What the host measured of one provider.
-#[derive(Debug, Default, Clone, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct Quality {
     /// Moving average of the request latency of successful reads.
     latency_ms: Option<u64>,
     successes: u32,
     failures: u32,
-    /// The last failure since the last success.
+    /// The last failure since the last success. It is not saved: its cooldown is short.
+    #[serde(skip)]
     failed_at: Option<Instant>,
+}
+
+/// The measurements in `path`, by provider. A missing or unreadable file gives none.
+fn load_quality(path: &std::path::Path) -> HashMap<[u8; 32], Quality> {
+    let Ok(text) = std::fs::read_to_string(path) else {
+        return HashMap::new();
+    };
+    let saved: HashMap<String, Quality> = serde_json::from_str(&text).unwrap_or_else(|error| {
+        warn!(path = %path.display(), %error, "ignored the saved cache measurements");
+        HashMap::new()
+    });
+    saved
+        .into_iter()
+        .filter_map(|(id, quality)| {
+            let id = <[u8; 32]>::try_from(hex::decode(id).ok()?).ok()?;
+            Some((id, quality))
+        })
+        .collect()
+}
+
+fn save_quality(
+    path: &std::path::Path,
+    quality: &HashMap<[u8; 32], Quality>,
+) -> std::io::Result<()> {
+    let saved: HashMap<String, &Quality> = quality
+        .iter()
+        .map(|(id, quality)| (hex::encode(id), quality))
+        .collect();
+    let temp = path.with_extension("json.tmp");
+    std::fs::write(&temp, serde_json::to_vec_pretty(&saved)?)?;
+    std::fs::rename(&temp, path)
 }
 
 impl Quality {
@@ -205,6 +241,8 @@ pub struct CacheNodes {
     http: reqwest::Client,
     providers: ProviderSet,
     quality: Mutex<HashMap<[u8; 32], Quality>>,
+    /// Where the measurements are kept across restarts, when the host has a state directory.
+    quality_path: Option<PathBuf>,
     payer: Mutex<Option<PayerSource>>,
     reads: AtomicU64,
     warned_no_payer: AtomicBool,
@@ -212,8 +250,9 @@ pub struct CacheNodes {
 
 impl CacheNodes {
     /// The provider set that `TRUAPI_CACHE_PROVIDERS` names, or `None` when it names none. A payer seed in
-    /// `TRUAPI_CACHE_PAYER_SEED` pays for every read; without one, the signed-in account pays once there is one.
-    pub fn from_env() -> Option<Self> {
+    /// `TRUAPI_CACHE_PAYER_SEED` pays for every read; without one, the signed-in account pays once there is one. The
+    /// measurements are kept in `quality_path` when it is set.
+    pub fn from_env(quality_path: Option<PathBuf>) -> Option<Self> {
         let path = std::env::var_os(PROVIDERS_ENV).filter(|path| !path.is_empty())?;
         let seed = std::env::var(PAYER_SEED_ENV)
             .ok()
@@ -233,10 +272,14 @@ impl CacheNodes {
             None => None,
         };
         info!(providers = ?path, "preimage lookups ask cache nodes before Bulletin");
-        Self::new(ProviderSet::File(path.into()), payer)
+        Self::new(ProviderSet::File(path.into()), payer, quality_path)
     }
 
-    fn new(providers: ProviderSet, payer: Option<PayerSource>) -> Option<Self> {
+    fn new(
+        providers: ProviderSet,
+        payer: Option<PayerSource>,
+        quality_path: Option<PathBuf>,
+    ) -> Option<Self> {
         let http = reqwest::Client::builder()
             .connect_timeout(CONNECT_TIMEOUT)
             .timeout(NODE_TIMEOUT)
@@ -245,7 +288,13 @@ impl CacheNodes {
             Ok(http) => Some(Self {
                 http,
                 providers,
-                quality: Mutex::new(HashMap::new()),
+                quality: Mutex::new(
+                    quality_path
+                        .as_deref()
+                        .map(load_quality)
+                        .unwrap_or_default(),
+                ),
+                quality_path,
                 payer: Mutex::new(payer),
                 reads: AtomicU64::new(0),
                 warned_no_payer: AtomicBool::new(false),
@@ -334,6 +383,7 @@ impl CacheNodes {
                         "preimage read from a cache node"
                     );
                     drop(quality);
+                    self.save_quality();
                     self.pay(provider, cid, &payer, transfer);
                     return Some(value);
                 }
@@ -354,7 +404,55 @@ impl CacheNodes {
                 }
             }
         }
+        self.save_quality();
         None
+    }
+
+    fn save_quality(&self) {
+        let Some(path) = &self.quality_path else {
+            return;
+        };
+        let quality = self
+            .quality
+            .lock()
+            .expect("cache quality mutex poisoned")
+            .clone();
+        if let Err(error) = save_quality(path, &quality) {
+            warn!(path = %path.display(), %error, "could not save the cache measurements");
+        }
+    }
+
+    /// The payer and, for each provider with an API URL, what the host measured of it: the text of `/cache`.
+    pub fn status(&self) -> String {
+        let (_, providers) = self.load_providers();
+        let payer = self.payer().map_or_else(
+            || format!("none (sign in, or set {PAYER_SEED_ENV})"),
+            |payer| hex::encode(payer.public.to_bytes()),
+        );
+        let quality = self.quality.lock().expect("cache quality mutex poisoned");
+        let now = Instant::now();
+        let mut status = format!("cache payer {payer}\n");
+        if providers.is_empty() {
+            status.push_str("no provider with an API URL in the provider set\n");
+        }
+        for provider in &providers {
+            let measured = quality.get(&provider.id).cloned().unwrap_or_default();
+            let latency = measured
+                .latency_ms
+                .map_or_else(|| "-".to_string(), |ms| format!("{ms} ms"));
+            let failing = measured
+                .failed_at
+                .is_some_and(|at| now.duration_since(at) < FAILURE_COOLDOWN);
+            status.push_str(&format!(
+                "{} {}  latency {latency}  reads {}  failures {}{}\n",
+                &hex::encode(provider.id)[..10],
+                provider.url,
+                measured.successes,
+                measured.failures,
+                if failing { "  failing, asked last" } else { "" },
+            ));
+        }
+        status
     }
 
     /// One `POST /acquire`: the bytes and the source that the node reports, or `None` when the node answers that
@@ -579,6 +677,7 @@ mod tests {
         CacheNodes::new(
             ProviderSet::Fixed(ids, providers),
             payer.map(|payer| PayerSource::Seed(Box::new(payer))),
+            None,
         )
         .map(Arc::new)
     }
@@ -831,6 +930,54 @@ mod tests {
                 requests.lock().unwrap().len()
             ),
             (Some(blob()), 1, 0)
+        );
+    }
+
+    /// A restart keeps which providers are fast and how often they failed, but not a recent failure.
+    #[tokio::test]
+    async fn measurements_survive_a_restart_and_show_in_the_status() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("cache-quality.json");
+        let (node, _) = fake_node(200, blob()).await;
+        let nodes = |path: &std::path::Path| {
+            CacheNodes::new(
+                ProviderSet::Fixed(vec![[1; 32]], vec![provider(1, &node)]),
+                Some(PayerSource::Seed(Box::new(test_payer()))),
+                Some(path.to_path_buf()),
+            )
+            .unwrap()
+        };
+        let first = nodes(&path);
+        assert_eq!(first.read(&cid()).await, Some(blob()));
+        first
+            .quality
+            .lock()
+            .unwrap()
+            .get_mut(&[1; 32])
+            .unwrap()
+            .record_failure(Instant::now());
+        first.save_quality();
+
+        let restarted = nodes(&path);
+        let measured = restarted.quality.lock().unwrap()[&[1; 32]].clone();
+        assert_eq!(
+            (
+                measured.latency_ms.is_some(),
+                measured.successes,
+                measured.failures,
+                measured.failed_at
+            ),
+            (true, 1, 1, None)
+        );
+        let status = restarted.status();
+        assert!(
+            status.contains(&node) && status.contains("reads 1  failures 1"),
+            "{status}"
+        );
+        let payer = hex::encode(test_payer().public.to_bytes());
+        assert!(
+            status.starts_with(&format!("cache payer {payer}")),
+            "{status}"
         );
     }
 
