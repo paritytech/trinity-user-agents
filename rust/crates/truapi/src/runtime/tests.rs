@@ -5,6 +5,7 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use crate::platform::{
+    AccountAccessReview,
     AuthState, CoreStorage as PlatformCoreStorage, CoreStorageKey, PermissionAuthorizationRequest,
 };
 use parity_scale_codec::Encode;
@@ -3562,8 +3563,10 @@ fn get_account_other_product_skips_confirmation_for_a_blessed_product() {
     );
 }
 
+/// Allow once covers the product's later disclosures, as on Android, without
+/// writing a decision.
 #[test]
-fn get_account_allow_once_does_not_authorize_the_next_disclosure() {
+fn get_account_allow_once_answers_later_disclosures_without_saving() {
     futures::executor::block_on(async {
         let platform = Arc::new(StubPlatform {
             permission_confirmation_decisions: Mutex::new(
@@ -3586,39 +3589,30 @@ fn get_account_allow_once_does_not_authorize_the_next_disclosure() {
         let request = HostAccountGetRequest::V1(v01::HostAccountGetRequest {
             product_account_id: account_id("other.dot", 0),
         });
-        let response = host
-            .get_account(&CallContext::default(), request.clone())
-            .await
-            .unwrap();
-        let HostAccountGetResponse::V1(response) = response;
+        let mut disclosed = Vec::new();
+        for _ in 0..3 {
+            let HostAccountGetResponse::V1(response) = host
+                .get_account(&CallContext::default(), request.clone())
+                .await
+                .unwrap();
+            disclosed.push(response.account.public_key);
+        }
         let saved = platform
             .read_core_storage(CoreStorageKey::account_access_authorization(
                 "myapp", "other",
             ))
             .await
             .unwrap();
-        let mut rejected = Vec::new();
-        for _ in 0..2 {
-            rejected.push(matches!(
-                host.get_account(&CallContext::default(), request.clone())
-                    .await,
-                Err(CallError::Domain(HostAccountGetError::V1(
-                    v01::HostAccountGetError::Rejected
-                )))
-            ));
-        }
         assert_eq!(
             (
-                response.account.public_key,
+                disclosed,
                 saved,
-                rejected,
                 platform.account_access_reviews.lock().unwrap().len(),
             ),
             (
-                test_product_account_public("other.dot", 0).to_vec(),
+                vec![test_product_account_public("other.dot", 0).to_vec(); 3],
                 None,
-                vec![true, true],
-                2,
+                1,
             ),
         );
     });

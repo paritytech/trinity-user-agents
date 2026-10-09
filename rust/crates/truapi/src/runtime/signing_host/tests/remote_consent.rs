@@ -151,7 +151,7 @@ fn remote_account_access_reuses_shared_decisions_and_preserves_their_lifetime() 
                 None,
                 PermissionDecision::AllowOnce,
                 PermissionAuthorizationStatus::NotDetermined,
-                2,
+                1,
             ),
             (
                 None,

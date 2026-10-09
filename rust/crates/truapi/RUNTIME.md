@@ -227,6 +227,7 @@ path. Web hosts do not compile the store.
 
 - `WalletAccountHolder` owns active entropy, wallet approval, account derivation, resource issuance and renewal. It validates the selected activation before private-key use and renewal-record mutation.
 - `AccountInvocation` carries the original call, wallet activation and trusted caller origin. Local calls can carry wallet-issued authorization. Remote signing requires wallet approval and cannot inherit native AutoSigning permission. Account-access decisions are shared by local and remote callers.
+- `ProductConsent` holds one runtime's account-access decisions and review rules. The wallet asks it before wallet work and product calls ask it for account access, both on the runtime-wide prompt channel. Allow once answers the same requester and target until the runtime restarts, the wallet locks or changes, or the requesting product is reset, and one account-access prompt runs at a time.
 - `SigningHost` owns retained grants. Wallet activation checks reject private-key use after a lock or wallet change; the grant owner rejects retention after a reset. Resetting a product does not invalidate independent incoming SSO wallet work.
 - Resource approval returns a lazy, ordered stream of wallet receipts. The host retains each successful grant before issuing the next resource; recoverable item failures do not stop later resources.
 
