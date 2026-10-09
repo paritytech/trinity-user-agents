@@ -25,11 +25,8 @@ export const ETA_SECS = { Card: 300n, Bank: 172_800n, Crypto: 600n } as const;
 /** A fiat currency the card and bank routes take. */
 export const FIAT = { symbol: "EUR", decimals: 2 } as const;
 
-/** The network a crypto route moves on, as the manifest names it.
- *
- * TODO(core): the parallel core change adds `network` to the quote ask and
- * reads `networks` from the manifest's crypto route. Once it is in this tree,
- * refuse an ask whose network is not this one. */
+/** The network a crypto route moves on, as the manifest names it. A crypto
+ *  ask for any other network is refused. */
 export const CRYPTO_NETWORK = "polkadot";
 
 /** A crypto asset the provider takes or pays out on Asset Hub. `cashPerUnit`

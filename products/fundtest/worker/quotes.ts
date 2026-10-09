@@ -10,6 +10,7 @@ import type {
 } from "@parity/truapi";
 import {
   CRYPTO_ASSETS,
+  CRYPTO_NETWORK,
   EUR_CENTS_PER_CASH,
   ETA_SECS,
   FIAT,
@@ -133,6 +134,16 @@ export function answerAsk(
     !countries.includes(ask.country.toUpperCase())
   ) {
     return refused({ tag: "CountryUnsupported" });
+  }
+  if (
+    ask.rail === "Crypto" &&
+    ask.network !== undefined &&
+    ask.network !== CRYPTO_NETWORK
+  ) {
+    return refused({
+      tag: "Other",
+      value: { message: `only the ${CRYPTO_NETWORK} network is served` },
+    });
   }
   const rate = rateFor(ask.rail, ask.asset);
   if (!rate) {

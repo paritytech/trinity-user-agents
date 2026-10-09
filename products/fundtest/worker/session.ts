@@ -335,11 +335,7 @@ export class Session {
         value: { finalized: false },
       });
       if (this.trigger === "refund") {
-        // TODO(core): FundingFailure::Refunded is added in the parallel core
-        // change; report `{ tag: "Refunded" }` once it is in this tree.
-        throw new SessionFailure(
-          other("refunded", "The provider refunded the payment"),
-        );
+        throw new SessionFailure({ tag: "Refunded" });
       }
       state.phase = "fiat-received";
       await this.save();
@@ -464,10 +460,7 @@ export class Session {
           tag: "PaymentReceived",
           value: { finalized: false },
         });
-        // TODO(core): report `{ tag: "Refunded" }` once FundingFailure has it.
-        throw new SessionFailure(
-          other("refunded", "The provider refunded the payment"),
-        );
+        throw new SessionFailure({ tag: "Refunded" });
       }
       void sleep(this.arrivalMs(CONFIG.cryptoArrivalMs), this.signal)
         .then(() => this.retrying("demo deposit", () => this.fundFromFaucet()))
@@ -785,20 +778,38 @@ type PayoutOutcome =
   | { outcome: "failed"; reason: string };
 
 /**
- * Reports a released outbound session's payout.
- *
- * TODO(core): `FundingUpdate::Payout { outcome: FundingPayout }` is added in
- * the parallel core change. Once it is in this tree, report
- * `{ tag: "Payout", value: { outcome: { tag: "PaidOut" } } }` or
- * `{ tag: "Payout", value: { outcome: { tag: "Failed", value: { reason } } } }`
- * through `fundingProvider.report`, retrying `NotFound` briefly since the
- * host marks the session released only after the payment completes.
+ * Reports a released outbound session's payout. The host marks the session
+ * released only once the user's payment completes, so a `NotFound` or an
+ * out-of-order refusal right after it is retried briefly.
  */
 async function reportPayout(
   intent: string,
   payout: PayoutOutcome,
 ): Promise<void> {
-  console.info(
-    `[fundtest] ${intent}: payout ${describe(payout)} (not reported: no Payout update yet)`,
-  );
+  const client = await truapi();
+  const outcome =
+    payout.outcome === "paid-out"
+      ? ({ tag: "PaidOut" } as const)
+      : ({ tag: "Failed", value: { reason: payout.reason } } as const);
+  for (let attempt = 0; ; attempt++) {
+    try {
+      await unwrap(
+        client.fundingProvider.report({
+          intent,
+          update: { tag: "Payout", value: { outcome } },
+        }),
+        "report Payout",
+      );
+      return;
+    } catch (error) {
+      const retryable =
+        error instanceof HostCallError &&
+        (error.tag === "NotFound" || error.tag === "OutOfOrder");
+      if (!retryable || attempt >= PAYOUT_REPORT_ATTEMPTS) throw error;
+      await sleep(PAYOUT_REPORT_RETRY_MS);
+    }
+  }
 }
+
+const PAYOUT_REPORT_ATTEMPTS = 10;
+const PAYOUT_REPORT_RETRY_MS = 1_000;

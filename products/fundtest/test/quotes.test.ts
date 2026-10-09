@@ -69,6 +69,24 @@ describe("answerAsk", () => {
     });
   });
 
+  // Every route moves on Asset Hub, so the host's network picker must not
+  // offer another network as served by this provider.
+  test("serves crypto only on the polkadot network", () => {
+    const crypto = ask({ rail: "Crypto", asset: "USDT", country: undefined });
+    expect(answerAsk({ ...crypto, network: "polkadot" }, NOW).tag).toBe(
+      "Quoted",
+    );
+    expect(answerAsk({ ...crypto, network: "ethereum" }, NOW)).toEqual({
+      tag: "Refused",
+      value: {
+        reason: {
+          tag: "Other",
+          value: { message: "only the polkadot network is served" },
+        },
+      },
+    });
+  });
+
   // The excluded country is what exercises CountryUnsupported in the host;
   // crypto declares no countries and stays open there.
   test("refuses a fiat rail outside its countries", () => {
