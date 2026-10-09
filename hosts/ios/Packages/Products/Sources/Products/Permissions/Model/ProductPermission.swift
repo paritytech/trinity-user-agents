@@ -13,6 +13,7 @@ public enum ProductPermission: Equatable, Sendable {
     public static let preimageSubmitAccessTypeName = "preimage_submit"
     public static let balanceAccessTypeName = "balance_access"
     public static let statementSubmitAccessTypeName = "statement_submit"
+    public static let jamPeersAccessTypeName = "jam_peers"
     public static let userIdentityAccessTypeName = "user_identity_access"
     public static let chatAuthorityTypeName = "chat_authority"
     public static let profileDisclosureTypeName = "profile_disclosure"
@@ -28,6 +29,9 @@ public enum ProductPermission: Equatable, Sendable {
     case chainSubmitAccess
     case preimageSubmitAccess
     case statementSubmitAccess
+    /// Peer messaging access to the JAM network whose genesis header hash is
+    /// `genesis` (lowercase `0x`-prefixed hex).
+    case jamPeersAccess(genesis: String)
     case userIdentityAccess
     case chatAuthority
     case profileDisclosure
@@ -45,12 +49,18 @@ public enum ProductPermission: Equatable, Sendable {
     public var isRemoteAccess: Bool {
         switch self {
         case .networkAccess, .networkAccessBundle, .webRtcAccess, .chainSubmitAccess, .preimageSubmitAccess,
-             .statementSubmitAccess:
+             .statementSubmitAccess, .jamPeersAccess:
             true
         case .deviceCapability, .accountAccess, .balanceAccess, .userIdentityAccess,
              .chatAuthority, .profileDisclosure, .statementStoreAllowance:
             false
         }
+    }
+
+    /// A JAM genesis as shown to the user: `0x`, its first 8 hex digits and `…`.
+    public static func shortGenesis(_ genesis: String) -> String {
+        let digits = genesis.hasPrefix("0x") ? genesis.dropFirst(2) : Substring(genesis)
+        return "0x\(digits.prefix(8))…"
     }
 
     public var typeName: String {
@@ -73,6 +83,8 @@ public enum ProductPermission: Equatable, Sendable {
             Self.preimageSubmitAccessTypeName
         case .statementSubmitAccess:
             Self.statementSubmitAccessTypeName
+        case .jamPeersAccess:
+            Self.jamPeersAccessTypeName
         case .userIdentityAccess:
             Self.userIdentityAccessTypeName
         case .chatAuthority:
@@ -94,6 +106,8 @@ public enum ProductPermission: Equatable, Sendable {
             domains.joined(separator: "\n")
         case let .accountAccess(targetProductId):
             targetProductId
+        case let .jamPeersAccess(genesis):
+            genesis
         case let .statementStoreAllowance(derivationIndex):
             switch derivationIndex {
             case nil:
@@ -138,6 +152,8 @@ public enum ProductPermission: Equatable, Sendable {
             return .preimageSubmitAccess
         case statementSubmitAccessTypeName:
             return .statementSubmitAccess
+        case jamPeersAccessTypeName:
+            return .jamPeersAccess(genesis: key)
         case userIdentityAccessTypeName:
             return .userIdentityAccess
         case chatAuthorityTypeName:

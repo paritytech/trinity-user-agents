@@ -74,6 +74,12 @@ impl From<v01::GenericError> for HostRejection {
     }
 }
 
+impl From<crate::latest::HostNotificationReceivingError> for HostRejection {
+    fn from(error: crate::latest::HostNotificationReceivingError) -> Self {
+        Self::Rejected { reason: format!("background receiving: {error:?}") }
+    }
+}
+
 /// Rejection of a card face, read from its declared JSON or from the bytes a
 /// host kept.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error, uniffi::Error)]

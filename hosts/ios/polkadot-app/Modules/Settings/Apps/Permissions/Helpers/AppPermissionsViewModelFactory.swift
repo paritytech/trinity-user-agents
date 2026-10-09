@@ -39,6 +39,8 @@ extension ProductPermission {
         case .chainSubmitAccess: String(localized: .Products.permissionBodyChainSubmit)
         case .preimageSubmitAccess: String(localized: .Products.permissionBodyPreimageSubmit)
         case .statementSubmitAccess: String(localized: .Products.permissionBodyStatementSubmit)
+        case let .jamPeersAccess(genesis):
+            String(localized: .Products.permissionLabelJamPeers(genesis: genesis))
         case .userIdentityAccess: String(localized: .Products.permissionBodyUserIdentityAccess)
         case .chatAuthority: String(localized: .Products.permissionBodyChatAuthority)
         case .profileDisclosure: String(localized: .Products.permissionBodyProfileDisclosure)
@@ -57,6 +59,7 @@ extension ProductPermission {
         case .chainSubmitAccess: "link"
         case .preimageSubmitAccess: "doc.text"
         case .statementSubmitAccess: "text.bubble"
+        case .jamPeersAccess: "point.3.connected.trianglepath.dotted"
         case .userIdentityAccess: "person.text.rectangle"
         case .chatAuthority: "message.badge.shield"
         case .profileDisclosure: "person.crop.square"
@@ -74,6 +77,7 @@ extension ProductPermission {
         case .chainSubmitAccess: String(localized: .Products.appPermissionChainSubmitTitle)
         case .preimageSubmitAccess: String(localized: .Products.appPermissionPreimageSubmitTitle)
         case .statementSubmitAccess: String(localized: .Products.appPermissionStatementSubmitTitle)
+        case .jamPeersAccess: String(localized: .Products.appPermissionJamPeersTitle)
         case .userIdentityAccess: String(localized: .Products.appPermissionUserIdentityTitle)
         case .chatAuthority: String(localized: .Products.appPermissionChatAuthorityTitle)
         case .profileDisclosure: String(localized: .Products.appPermissionProfileDisclosureTitle)

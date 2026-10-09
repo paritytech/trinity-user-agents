@@ -25,7 +25,8 @@ struct TrustedRemoteProductPermissionRequesterTests {
         .webRtcAccess,
         .chainSubmitAccess,
         .preimageSubmitAccess,
-        .statementSubmitAccess
+        .statementSubmitAccess,
+        .jamPeersAccess(genesis: "0x10c123f0" + String(repeating: "0", count: 56))
     ]
 
     /// The core grants a first-party product every remote permission without

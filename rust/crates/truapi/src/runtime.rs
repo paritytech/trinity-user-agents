@@ -30,6 +30,10 @@ mod pairing_host;
 pub mod product_manifest;
 mod product_subtree;
 mod profile;
+/// Durable, host-owned notification registration and activation policy.
+pub mod receiving;
+/// Transport-independent authenticated notification frames.
+pub mod notification_envelope;
 mod renderer;
 mod ring_vrf_registry;
 /// Role-neutral runtime services shared by product-facing runtimes.
@@ -93,6 +97,8 @@ pub use signing_host::{
     respond_to_pairing, resume_pairing,
 };
 pub use signing_host::{LocalIdentity, LocalIdentityContext, WalletAllowanceSnapshot};
+#[cfg(any(test, not(target_arch = "wasm32")))]
+use tracing::Instrument;
 use tracing::{instrument, warn};
 use truapi::api::{Chat, Contacts, Pocket, Profile, Renderer};
 use truapi::versioned::account::{
@@ -105,6 +111,8 @@ use truapi::versioned::chat::{
     HostChatPostMessageError, HostChatPostMessageRequest, HostChatPostMessageResponse,
     HostChatRegisterBotError, HostChatRegisterBotRequest, HostChatRegisterBotResponse,
 };
+#[cfg(any(test, not(target_arch = "wasm32")))]
+use truapi::versioned::jam_peer_transport::HostJamPeerTransportDialError;
 use truapi::versioned::contacts::{
     HostContactsPickError, HostContactsPickManyError, HostContactsPickManyRequest,
     HostContactsPickManyResponse, HostContactsPickRequest, HostContactsPickResponse,
@@ -349,6 +357,9 @@ pub struct ProductRuntimeHost {
     /// operations is the host's call, made in `begin_operation`, since the
     /// host is what the operations keep running.
     open_operations: Mutex<HashSet<u32>>,
+    /// This connection's JAM peer connections, closed on dispose.
+    #[cfg(not(target_arch = "wasm32"))]
+    jam_peers: crate::jam_peer_transport::session::JamPeerSession,
 }
 
 /// A connection that goes away without ending its operations still owes the
@@ -389,6 +400,8 @@ impl ProductRuntimeHost {
             expanded_card: adapters.expanded_card,
             game_platform: adapters.game_platform,
             open_operations: Mutex::new(HashSet::new()),
+            #[cfg(not(target_arch = "wasm32"))]
+            jam_peers: crate::jam_peer_transport::session::JamPeerSession::new(),
         }
     }
 
@@ -523,6 +536,8 @@ impl ProductRuntimeHost {
             expanded_card: None,
             game_platform: None,
             open_operations: Mutex::new(HashSet::new()),
+            #[cfg(not(target_arch = "wasm32"))]
+            jam_peers: crate::jam_peer_transport::session::JamPeerSession::new(),
         };
         (host, pairing_host)
     }
@@ -818,6 +833,67 @@ impl ProductRuntimeHost {
     async fn require_chain_submit<E>(&self, denied_error: E) -> Result<(), CallError<E>> {
         self.require_remote_permission(v01::RemotePermission::ChainSubmit, denied_error)
             .await
+    }
+
+    /// Gate `JamPeerTransport::dial` on
+    /// [`RemotePermission::JamPeers`](v01::RemotePermission::JamPeers) for
+    /// `genesis`, before anything connects.
+    ///
+    /// Like [`Self::require_remote_permission`], this reads the product's
+    /// stored decision, prompts only while it is undetermined and persists the
+    /// answer per product and genesis. Unlike it, a one-use grant is not spent
+    /// by the first dial: it lives as long as the execution's one-use grants,
+    /// so a light client dialing several validators of one chain is asked once
+    /// per genesis. Anything short of a grant, including a dismissed prompt,
+    /// is `NotGranted`.
+    ///
+    /// The check owns what it reads, so it may outlive the dial that started
+    /// it: an answer given after the dial stopped waiting is still persisted.
+    #[cfg(any(test, not(target_arch = "wasm32")))]
+    pub(crate) fn require_jam_peers(
+        &self,
+        genesis: [u8; 32],
+    ) -> impl Future<Output = Result<(), CallError<HostJamPeerTransportDialError>>> + Send + 'static
+    {
+        let platform = self.platform.clone();
+        let product = self.product.clone();
+        let permission_status = self.permission_status.clone();
+        let temporary_permissions = self.temporary_permissions.clone();
+        let permission_authority = self.services.permissions.clone();
+        let request = v01::RemotePermissionRequest {
+            permission: v01::RemotePermission::JamPeers { genesis },
+        };
+        async move {
+            let status = PermissionsService::new(platform.as_ref(), platform.as_ref(), &product)
+                .with_status_host(permission_status.as_deref())
+                .with_temporary_permissions(temporary_permissions)
+                .with_authority(permission_authority)
+                .check_or_prompt_remote(request)
+                .await;
+            match status {
+                Ok(PermissionAuthorizationStatus::Authorized) => Ok(()),
+                Ok(
+                    PermissionAuthorizationStatus::Denied
+                    | PermissionAuthorizationStatus::NotDetermined,
+                ) => Err(CallError::Domain(HostJamPeerTransportDialError::V1(
+                    v01::HostJamPeerTransportDialError::NotGranted,
+                ))),
+                Err(err) => Err(CallError::HostFailure {
+                    reason: format!("permission storage failed: {err:?}"),
+                }),
+            }
+        }
+        .instrument(tracing::info_span!(
+            "require_jam_peers",
+            runtime.method = "jam_peer_transport.require_jam_peers"
+        ))
+    }
+
+    /// Close this connection's JAM peer connections; every later
+    /// `JamPeerTransport` call is `Denied`.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn close_jam_peer_transport(&self) {
+        self.jam_peers.revoke();
     }
 
     #[instrument(skip_all, fields(runtime.method = "permissions.identity_disclosure_authorization"))]
@@ -1431,7 +1507,10 @@ impl ProductRuntimeHost {
         let resolved =
             resolve_contact_accounts(&self.services, platform.as_ref(), &handles, requested)
                 .await?;
-        if self.authority.current_session() != session {
+        if !session.as_ref().is_some_and(|session| {
+            self.authority
+                .session_is_current(session, Some(&self.product.product_id))
+        }) {
             return Err(ContactResolutionError::NotConnected);
         }
         Ok(resolved)
@@ -1546,7 +1625,10 @@ impl Contacts for ProductRuntimeHost {
         // Read before the picker opens: a removal signalled while the user is
         // choosing must not be undone by caching their choice.
         let generation = self.services.contact_handles.generation();
-        if self.authority.current_session() != session {
+        if !session.as_ref().is_some_and(|session| {
+            self.authority
+                .session_is_current(session, Some(&self.product.product_id))
+        }) {
             return Err(CallError::Domain(wrap(
                 v01::HostContactsPickError::NotConnected,
             )));
@@ -1558,7 +1640,10 @@ impl Contacts for ProductRuntimeHost {
                     reason: "contact picker interrupted".into(),
                 })
             })?;
-        if self.authority.current_session() != session {
+        if !session.as_ref().is_some_and(|session| {
+            self.authority
+                .session_is_current(session, Some(&self.product.product_id))
+        }) {
             return Err(CallError::Domain(wrap(
                 v01::HostContactsPickError::NotConnected,
             )));
@@ -1613,7 +1698,10 @@ impl Contacts for ProductRuntimeHost {
             }),
         })?;
         let generation = self.services.contact_handles.generation();
-        if self.authority.current_session() != session {
+        if !session.as_ref().is_some_and(|session| {
+            self.authority
+                .session_is_current(session, Some(&self.product.product_id))
+        }) {
             return Err(error(Error::NotConnected));
         }
         let resolved = until_cancelled(
@@ -1626,7 +1714,10 @@ impl Contacts for ProductRuntimeHost {
                 reason: "contact lookup interrupted".into(),
             })
         })?;
-        if self.authority.current_session() != session {
+        if !session.as_ref().is_some_and(|session| {
+            self.authority
+                .session_is_current(session, Some(&self.product.product_id))
+        }) {
             return Err(error(Error::NotConnected));
         }
         if self.services.contact_handles.generation() != generation || cx.cancel().is_cancelled() {
@@ -1657,7 +1748,10 @@ impl Contacts for ProductRuntimeHost {
                 reason: "contact picker interrupted".into(),
             })
         })?;
-        if self.authority.current_session() != session {
+        if !session.as_ref().is_some_and(|session| {
+            self.authority
+                .session_is_current(session, Some(&self.product.product_id))
+        }) {
             return Err(error(Error::NotConnected));
         }
         if self.services.contact_handles.generation() != generation || cx.cancel().is_cancelled() {
@@ -1732,7 +1826,10 @@ impl Contacts for ProductRuntimeHost {
             return Err(error(Error::NotConnected));
         }
         let generation = self.services.contact_handles.generation();
-        if self.authority.current_session() != session {
+        if !session.as_ref().is_some_and(|session| {
+            self.authority
+                .session_is_current(session, Some(&self.product.product_id))
+        }) {
             return Err(error(Error::NotConnected));
         }
         let requested: Vec<_> = request.slots.iter().map(|slot| slot.handle.bytes).collect();
@@ -1746,7 +1843,10 @@ impl Contacts for ProductRuntimeHost {
                 reason: "contact lookup interrupted".into(),
             })
         })?;
-        if self.authority.current_session() != session {
+        if !session.as_ref().is_some_and(|session| {
+            self.authority
+                .session_is_current(session, Some(&self.product.product_id))
+        }) {
             return Err(error(Error::NotConnected));
         }
         if self.services.contact_handles.generation() != generation || cx.cancel().is_cancelled() {
@@ -1786,10 +1886,12 @@ impl Contacts for ProductRuntimeHost {
                 },
             )
             .await;
-        if self.authority.current_session() != session
-            || cx.cancel().is_cancelled()
-            || placement.is_closed()
-        {
+        let request_closed = !session.as_ref().is_some_and(|session| {
+            self.authority
+                .session_is_current(session, Some(&self.product.product_id))
+        }) || cx.cancel().is_cancelled()
+            || placement.is_closed();
+        if request_closed || self.services.contact_handles.generation() != generation {
             let _ = platform
                 .place_contact_labels(
                     &self.product,
@@ -1800,7 +1902,13 @@ impl Contacts for ProductRuntimeHost {
                     },
                 )
                 .await;
-            return Err(error(Error::NotConnected));
+            return Err(error(if request_closed {
+                Error::NotConnected
+            } else {
+                Error::Unknown {
+                    reason: "contact labels interrupted".into(),
+                }
+            }));
         }
         if matches!(result, Ok(false) | Err(Error::Unsupported)) {
             return Err(CallError::Unsupported);

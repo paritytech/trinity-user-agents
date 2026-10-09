@@ -293,6 +293,19 @@ impl HostCallbacks for EventCallbacks {
     async fn identity_username_candidates(&self, _: String, _: Vec<u8>) -> Result<Vec<Vec<u8>>, HostRejection> { Err(HostRejection::Rejected { reason: "no identity provider in fixture".into() }) }
     async fn allowed_hop_endpoints(&self, _: Vec<u8>) -> Result<Vec<String>, HostRejection> { Ok(Vec::new()) }
     fn hop_connect(&self, _: Vec<u8>, _: String) -> Result<Option<u32>, HostRejection> { Ok(None) }
+    async fn receiver_authority(&self, _: String) -> Result<Option<crate::platform::ReceivingAuthority>, HostRejection> {
+        Ok(None)
+    }
+    async fn receiver_consent(&self, _: crate::platform::ReceivingAuthority, _: Vec<crate::latest::ReceivingWatch>) -> Result<bool, HostRejection> {
+        Err(HostRejection::Rejected { reason: "background receiving unsupported".into() })
+    }
+    async fn receiver_changed(&self) -> Result<(), HostRejection> {
+        Err(HostRejection::Rejected { reason: "background receiving unsupported".into() })
+    }
+    async fn receiver_command(&self, _: String, _: u8, _: Vec<u8>) -> Result<Option<Vec<u8>>, HostRejection> {
+        Ok(None)
+    }
+
     async fn core_storage_keys(&self) -> Result<Vec<Vec<u8>>, HostRejection> {
         if self.core_storage_keys_failure.load(Ordering::SeqCst) {
             return Err(HostRejection::Rejected {
@@ -1994,6 +2007,19 @@ fn start_ws_bridge_twice_returns_already_running() {
         async fn identity_username_candidates(&self, _: String, _: Vec<u8>) -> Result<Vec<Vec<u8>>, HostRejection> { Err(HostRejection::Rejected { reason: "no identity provider in fixture".into() }) }
         async fn allowed_hop_endpoints(&self, _: Vec<u8>) -> Result<Vec<String>, HostRejection> { Ok(Vec::new()) }
         fn hop_connect(&self, _: Vec<u8>, _: String) -> Result<Option<u32>, HostRejection> { Ok(None) }
+        async fn receiver_authority(&self, _: String) -> Result<Option<crate::platform::ReceivingAuthority>, HostRejection> {
+            Ok(None)
+        }
+        async fn receiver_consent(&self, _: crate::platform::ReceivingAuthority, _: Vec<crate::latest::ReceivingWatch>) -> Result<bool, HostRejection> {
+            Err(HostRejection::Rejected { reason: "background receiving unsupported".into() })
+        }
+        async fn receiver_changed(&self) -> Result<(), HostRejection> {
+            Err(HostRejection::Rejected { reason: "background receiving unsupported".into() })
+        }
+        async fn receiver_command(&self, _: String, _: u8, _: Vec<u8>) -> Result<Option<Vec<u8>>, HostRejection> {
+            Ok(None)
+        }
+
         async fn core_storage_keys(&self) -> Result<Vec<Vec<u8>>, HostRejection> {
             Err(HostRejection::Rejected {
                 reason: "storage unavailable in bridge-start fixture".into(),
@@ -2201,6 +2227,19 @@ fn pending_permission_decision_does_not_stall_bridge() {
         async fn identity_username_candidates(&self, _: String, _: Vec<u8>) -> Result<Vec<Vec<u8>>, HostRejection> { Err(HostRejection::Rejected { reason: "no identity provider in fixture".into() }) }
         async fn allowed_hop_endpoints(&self, _: Vec<u8>) -> Result<Vec<String>, HostRejection> { Ok(Vec::new()) }
         fn hop_connect(&self, _: Vec<u8>, _: String) -> Result<Option<u32>, HostRejection> { Ok(None) }
+        async fn receiver_authority(&self, _: String) -> Result<Option<crate::platform::ReceivingAuthority>, HostRejection> {
+            Ok(None)
+        }
+        async fn receiver_consent(&self, _: crate::platform::ReceivingAuthority, _: Vec<crate::latest::ReceivingWatch>) -> Result<bool, HostRejection> {
+            Err(HostRejection::Rejected { reason: "background receiving unsupported".into() })
+        }
+        async fn receiver_changed(&self) -> Result<(), HostRejection> {
+            Err(HostRejection::Rejected { reason: "background receiving unsupported".into() })
+        }
+        async fn receiver_command(&self, _: String, _: u8, _: Vec<u8>) -> Result<Option<Vec<u8>>, HostRejection> {
+            Ok(None)
+        }
+
         async fn core_storage_keys(&self) -> Result<Vec<Vec<u8>>, HostRejection> {
             Err(HostRejection::Rejected {
                 reason: "enumeration unavailable in prompt fixture".into(),

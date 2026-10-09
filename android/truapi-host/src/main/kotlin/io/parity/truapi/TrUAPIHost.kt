@@ -111,6 +111,10 @@ import uniffi.truapi.PlacedContactLabels
 import uniffi.truapi.HostContactsPlaceLabelsException
 import uniffi.truapi.NativeContactsCallbacks
 import uniffi.truapi.SsoRequestOutcome
+import uniffi.truapi.ReceivingAuthority
+import uniffi.truapi.ReceivingWatch
+import uniffi.truapi.ReceivingRegistration
+import uniffi.truapi.ReceivingEvent
 
 /** Package metadata. */
 object TrUAPIHost {
@@ -245,6 +249,21 @@ interface HostBridge : NativeChatFilesHost {
     /** Cancel a previously scheduled notification id. */
     @Throws(HostRejection::class)
     fun cancelNotification(id: UInt) {}
+
+    /** Resident bridge returns current host scope even with products closed.
+     * Product bridge returns immutable verified artifact/account scope captured at execution creation. */
+    suspend fun receiverAuthority(productId: String): ReceivingAuthority? = null
+
+    /** Receiving consent is distinct from OS notification permission. */
+    suspend fun receiverConsent(authority: ReceivingAuthority, watches: List<ReceivingWatch>): Boolean =
+        throw HostRejection.Rejected("background receiving unsupported")
+
+    /** Wake synchronization without waiting for a provider or network. */
+    suspend fun receiverChanged(): Unit =
+        throw HostRejection.Rejected("background receiving unsupported")
+
+    /** Forward to the sole receiving owner, or return null to use the native engine. */
+    suspend fun receiverCommand(productId: String, action: UByte, payload: ByteArray): ByteArray? = null
 
     /** Non-consuming ordered batch (at most 32) for this verified execution. */
     @Throws(HostRejection::class)
@@ -624,6 +643,18 @@ private class HostCallbackAdapter(private val bridge: HostBridge) : HostCallback
 
     override fun cancelNotification(id: UInt) =
         withHostRejection { bridge.cancelNotification(id) }
+
+    override suspend fun receiverAuthority(productId: String): ReceivingAuthority? =
+        withHostRejection { bridge.receiverAuthority(productId) }
+
+    override suspend fun receiverConsent(authority: ReceivingAuthority, watches: List<ReceivingWatch>): Boolean =
+        withHostRejection { bridge.receiverConsent(authority, watches) }
+
+    override suspend fun receiverChanged() =
+        withHostRejection { bridge.receiverChanged() }
+
+    override suspend fun receiverCommand(productId: String, action: UByte, payload: ByteArray): ByteArray? =
+        withHostRejection { bridge.receiverCommand(productId, action, payload) }
 
     override suspend fun activationEvents(): List<NotificationActivation> =
         withHostRejection { bridge.activationEvents() }
@@ -1057,6 +1088,44 @@ class TrUAPIHostRuntime @Throws(NativeRuntimeConfigException::class) constructor
             )
         return TrUAPIProductExecution(execution, adapter, chatAdapter, pocketAdapter, gameAdapter)
     }
+
+    /** All durable registrations; inspect syncPending before synchronizing. */
+    suspend fun receivingPending(): List<ReceivingRegistration> = inner.receivingPending()
+
+    suspend fun receivingSynchronized(productId: String, revision: ULong): Boolean =
+        inner.receivingSynchronized(productId, revision)
+
+    suspend fun receivingIngest(
+        productId: String, revision: ULong, watchId: String,
+        actualGenesis: String, actualChannel: String, actualTopics: List<String>, frame: ByteArray,
+    ): List<ReceivingEvent> = inner.receivingIngest(productId, revision, watchId, actualGenesis, actualChannel, actualTopics, frame)
+
+    suspend fun receivingIngestStatement(
+        productId: String, revision: ULong, watchId: String,
+        actualGenesis: String, statement: ByteArray,
+    ): List<ReceivingEvent> = inner.receivingIngestStatement(productId, revision, watchId, actualGenesis, statement)
+
+    /** Reserve display only after rechecking current authority and receipts. */
+    suspend fun receivingPrepareDisplay(productId: String, revision: ULong, eventId: String): ReceivingEvent? =
+        inner.receivingPrepareDisplay(productId, revision, eventId)
+
+    /** Read-only authorization before opening a verified product, with sequence zero. */
+    suspend fun receivingValidateActivation(productId: String, revision: ULong, eventId: String): ReceivingEvent? =
+        inner.receivingValidateActivation(productId, revision, eventId)
+
+    suspend fun receivingConfirmDisplay(productId: String, revision: ULong, eventId: String) =
+        inner.receivingConfirmDisplay(productId, revision, eventId)
+
+    /** Clear only an explicitly failed display; an unknown outcome remains pending. */
+    suspend fun receivingCancelDisplay(productId: String, revision: ULong, eventId: String) =
+        inner.receivingCancelDisplay(productId, revision, eventId)
+
+    suspend fun receivingActivate(productId: String, revision: ULong, eventId: String): ReceivingEvent? =
+        inner.receivingActivate(productId, revision, eventId)
+
+    suspend fun receivingRevoke(productId: String) = inner.receivingRevoke(productId)
+
+    suspend fun receivingMarkTransportChanged(productId: String) = inner.receivingMarkTransportChanged(productId)
 
     /**
      * Take one reference on the product's worker for a modality holder that is

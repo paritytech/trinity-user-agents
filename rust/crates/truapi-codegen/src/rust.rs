@@ -63,6 +63,7 @@ const TRAIT_MODULE_MAP: &[(&str, &str)] = &[
     ("Chat", "chat"),
     ("Contacts", "contacts"),
     ("Entropy", "entropy"),
+    ("JamPeerTransport", "jam_peer_transport"),
     ("JsonRpc", "jsonrpc"),
     ("LocalStorage", "local_storage"),
     ("Payment", "payment"),

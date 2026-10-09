@@ -16,6 +16,7 @@ import androidx.core.net.toUri
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedFactory
 import dagger.assisted.AssistedInject
+import io.novasama.substrate_sdk_android.extensions.toHexString
 import dagger.Lazy
 import io.parity.truapi.GameHostBridge
 import io.parity.truapi.HostBridge
@@ -237,11 +238,12 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
         override suspend fun remotePermission(
             product: ProductExecutionConfig,
             request: RemotePermission,
-        ): TrUAPIPermissionDecision =
-            hostApiInteractor
+        ): TrUAPIPermissionDecision {
+            return hostApiInteractor
                 .requestRemotePermissionDecision(callingProductId, request.toDomain())
                 .getOrElse { throw it }
                 .toNative()
+        }
 
         /**
          * Answered from the same snapshot [chainConnect] dials rather than the
@@ -473,6 +475,7 @@ private fun RemotePermission.toDomain(): RemotePermissionRequest = when (this) {
     RemotePermission.ChainSubmit -> RemotePermissionRequest.ChainSubmit
     RemotePermission.PreimageSubmit -> RemotePermissionRequest.PreimageSubmit
     RemotePermission.StatementSubmit -> RemotePermissionRequest.StatementSubmit
+    is RemotePermission.JamPeers -> RemotePermissionRequest.JamPeers(genesis.toHexString(withPrefix = true))
 }
 
 private fun PermissionDecision.toNative(): TrUAPIPermissionDecision = when (this) {

@@ -1,6 +1,7 @@
 import Foundation
 import Operation_iOS
 import Products
+import SubstrateSdk
 import TrUAPIHost
 
 protocol ProductPermissionAuthority: Sendable {
@@ -386,8 +387,8 @@ extension ProductPermission {
         case .balanceAccess:
             return nil
         case .networkAccess, .networkAccessBundle, .webRtcAccess,
-             .chainSubmitAccess, .preimageSubmitAccess, .statementSubmitAccess:
-            return permission.remoteAuthorizationRequest()
+             .chainSubmitAccess, .preimageSubmitAccess, .statementSubmitAccess, .jamPeersAccess:
+            return try permission.remoteAuthorizationRequest()
         }
     }
 
@@ -403,7 +404,7 @@ extension ProductPermission {
         }
     }
 
-    private func remoteAuthorizationRequest() -> PermissionAuthorizationRequest {
+    private func remoteAuthorizationRequest() throws -> PermissionAuthorizationRequest {
         switch self {
         case let .networkAccess(domain):
             return .remote(.init(permission: .remote(domains: [domain])))
@@ -417,6 +418,12 @@ extension ProductPermission {
             return .remote(.init(permission: .preimageSubmit))
         case .statementSubmitAccess:
             return .remote(.init(permission: .statementSubmit))
+        case let .jamPeersAccess(genesis):
+            let bytes = try Data(hexString: genesis)
+            guard bytes.count == 32 else {
+                throw ProductPermissionMappingError.unsupported(typeName, genesis)
+            }
+            return .remote(.init(permission: .jamPeers(genesis: bytes)))
         default:
             preconditionFailure("Expected a remote permission")
         }

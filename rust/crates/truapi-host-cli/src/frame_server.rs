@@ -771,6 +771,7 @@ mod tests {
         second_dispatch_finished: Notify,
         dispatch_cancelled: Arc<AtomicBool>,
         dispose_calls: AtomicUsize,
+        ui: Option<crate::terminal_ui::UiHandle>,
     }
 
     struct DispatchCancellation(Arc<AtomicBool>);
@@ -790,7 +791,12 @@ mod tests {
             }
             let _cancellation = DispatchCancellation(self.dispatch_cancelled.clone());
             self.dispatch_started.notify_one();
-            std::future::pending().await
+            if let Some(ui) = &self.ui {
+                ui.confirm("sign raw", "pending product payload").await;
+                Ok(())
+            } else {
+                std::future::pending().await
+            }
         }
 
         fn dispose(&self) {
@@ -1034,7 +1040,17 @@ mod tests {
     async fn disconnect_cancels_pending_dispatch_and_disposes_runtime() -> Result<()> {
         let listener = TcpListener::bind("127.0.0.1:0").await?;
         let address = listener.local_addr()?;
-        let runtime = Arc::new(PendingRuntime::default());
+        let (mut ui, handle) = crate::terminal_ui::TerminalUi::new(
+            "testnet",
+            "localhost:3000",
+            "default",
+            Vec::new(),
+            "info".into(),
+        );
+        let runtime = Arc::new(PendingRuntime {
+            ui: Some(handle),
+            ..PendingRuntime::default()
+        });
         let server_runtime = runtime.clone();
         let product = ProductSelection::new("localhost:3000".into(), ProductExecutionKind::App)?;
         let product_updates = product.subscribe();
@@ -1059,6 +1075,7 @@ mod tests {
         let (mut websocket, _) = client_async("ws://localhost/", stream).await?;
         websocket.send(Message::Binary(vec![0])).await?;
         tokio::time::timeout(Duration::from_secs(1), runtime.dispatch_started.notified()).await?;
+        assert!(ui.has_pending_approval());
         websocket.send(Message::Binary(vec![1])).await?;
         tokio::time::timeout(
             Duration::from_secs(1),
@@ -1068,6 +1085,7 @@ mod tests {
         drop(websocket);
 
         tokio::time::timeout(Duration::from_secs(1), server).await???;
+        assert!(!ui.has_pending_approval());
         assert_eq!(
             (
                 runtime.dispose_calls.load(Ordering::SeqCst),

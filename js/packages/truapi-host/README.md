@@ -20,6 +20,8 @@ The package exposes tree-shakeable subpath exports — import only what your env
 | `@parity/truapi-host/testing/dev-accounts` | Named dev accounts derived from fixed BIP-39 entropy, which sign for real.                                                           |
 | `@parity/truapi-host/testing/host-page`    | The browser half the fixture drives, for a suite that boots its own page.                                                            |
 | `@parity/truapi-host/wasm/testing`         | The raw glue for the signing-enabled bundle the test host runs on.                                                                   |
+| `@parity/truapi-host/browser-receiving` | Trusted host-page client for the durable service-worker receiving owner. |
+| `@parity/truapi-host/browser-receiving-worker` | Service-worker installation helper with an injected canonical WASM factory. |
 
 `scripts/build-wasm.mjs` builds two WASM bundles, both `--no-default-features`. `wasm/web` is the production browser
 host and excludes `WasmSigningHostRuntime`; `wasm/testing` adds the Rust `wasm-signing-host` and `test-host` features,
@@ -121,6 +123,106 @@ usable capacity.
 Activation changes, disconnect, disposal and worker failure invalidate pending reads. The worker API rejects after 30
 seconds rather than leaving the caller pending; native read work may finish later, but cannot populate a replaced
 wallet. Shells must additionally fence their selected network/product context.
+
+## Durable browser receiving
+
+Compose `installBrowserReceivingWorker` into the existing root-scoped host service
+worker. It owns opaque canonical receiving ledger bytes in IndexedDB, serializes
+core access with Web Locks across worker replacement, and uses the generic relay
+v2 WebPush endpoints. Products never receive its authority registry, transport
+credentials, or raw host hooks.
+
+Transport synchronization matches the complete product, account, environment,
+artifact, genesis and generation scope. Disabled records from an older scope do
+not revoke or block acknowledgement of a current enrollment. Explicit product
+revocation and host logout still revoke every applicable enrollment.
+
+```ts
+import init, { WasmNotificationReceiver } from "@parity/truapi-host/wasm/web";
+import { installBrowserReceivingWorker } from "@parity/truapi-host/browser-receiving-worker";
+
+const ready = init({
+  module_or_path: new URL("/receiving/truapi_server_bg.wasm", self.location.origin),
+});
+installBrowserReceivingWorker({
+  scope: self,
+  createReceiver: async callbacks => {
+    await ready;
+    return new WasmNotificationReceiver(callbacks);
+  },
+  relayUrl: RECEIVING_RELAY_URL,
+  pushOrigin: self.location.origin,
+  hostEntryUrl: "/",
+  notificationTitle: "New activity",
+});
+```
+
+Build this entry with the host's existing service-worker build. A classic worker
+can be bundled with `esbuild host-sw.ts --bundle --format=iife --platform=browser
+--outfile=public/sw.js`; preserve existing cache/install/push handlers. Do not use
+dynamic `import()` in a service worker. Copy the matching
+`dist/wasm/web/truapi_server_bg.wasm` to the explicit URL above, permit that
+same-origin asset and WASM compilation in CSP, and keep its cache revision tied
+to the bundled glue. A standalone receiving artifact does not replace a host's
+different PolkaVM runtime artifact.
+
+The page imports `createBrowserReceivingClient` from `/browser-receiving` with its
+existing `ServiceWorkerRegistration`, a real host `consent(authority, watches)`
+prompt, and an `activate(authority, event)` callback. Activation returns true
+only after the exact verified product is ready in the correct unlocked account
+and environment. It must never silently switch accounts or navigate `event.route`
+as a URL. That route is an opaque product token.
+
+Call `setActiveAccount(account, environment, genesis)` only from the host's current,
+authenticated account selection, before updating or binding product authority.
+Fence asynchronous login callbacks and stale tabs before this call. Replacing
+that scope durably revokes mismatched authorities, including products no longer
+open. Passing `undefined` pauses authority without discarding consent; do not use
+it for ordinary page/product closure, suspension, or a transient network outage.
+
+Read `getAuthority(productId)` to recover the durable generation. It returns the
+canonical authority plus `revoked`; reuse a live matching scope's generation
+across reloads, and increment it for account/artifact replacement or explicit
+re-enrollment after revocation. Call `updateAuthority` only with host-verified
+scope, then `bindExecution` with an immutable snapshot. Forward page-core
+`receiverCommand` through that execution's `command(action, payload)`, checking
+the callback product ID against the trusted execution closure. The worker calls
+canonical `commandForExecution`, including its post-consent scope recheck.
+Call execution `ready()` once the verified product is ready and `close()` on
+suspension. Suspension/lock retains enrollment. Explicit logout/account removal
+must await local `revokeAll()` before forgetting identity; it covers closed
+products and retains durable remote-deletion intent. Use scoped `revoke(productId)`
+for artifact replacement or removing one product. Neither waits for relay deletion.
+
+Call `enableWebPush(vapidPublicKey)` directly from a user gesture. Obtain the
+trusted relay's VAPID key from `GET /v2/config`, not a product-provided URL.
+`refresh()` refreshes the browser destination; online, push, worker activation
+and supported background/periodic sync events retry durable transport work.
+Network requests have a ten-second abort deadline and bounded responses; retry
+backoff and pending deletion survive worker termination. Standard WebPush
+subscriptions use `userVisibleOnly: true`. Invalid, stale, revoked or
+foreground-receipted wakes never cause a fabricated notification.
+
+The core alone gates authenticated ingress, foreground receipts, reservations
+and click activation. The worker confirms display only after `showNotification`
+resolves and cancels reservations only on explicit display failure. Retained
+v2 responses contain a carrier and actual source metadata, so this adapter uses
+`receivingIngest`, not `receivingIngestStatement`.
+
+Republishing an identical watch snapshot under the same live authority preserves
+its registration revision, synchronization state, and queued events. This lets
+cold-start products restore their watches without invalidating the click that
+opened them. Stale compare-and-swap tokens still fail; a changed policy, including
+its activation route or expiry, advances the revision and fences old clicks.
+
+Relay watches retain each original core-consent expiry, at most 30 days, without
+a separate 24-hour lease or dependence on periodic browser execution. Transport
+rotation and retries never extend that expiry; renewal beyond it requires fresh
+core consent. Event/header freshness remains independently bounded to 24 hours.
+Browser background scheduling is not guaranteed. Unsupported Web Locks, WebPush, Ed25519
+WebCrypto, denied notification permission, or unavailable WASM are not simulated
+as successful support. Physical page-closed delivery still requires a secure
+origin, valid relay/VAPID configuration and browser/provider qualification.
 
 ## Bundler requirements
 

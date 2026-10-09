@@ -6,6 +6,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use crate::platform::{
     AuthState, CoreStorage as PlatformCoreStorage, CoreStorageKey, PermissionAuthorizationRequest,
 };
+use crate::runtime::signing_host::LocalActivation;
 use parity_scale_codec::Encode;
 use truapi::api::{
     Account, Chain, Entropy, ExpandedCard, Game, LocalStorage, Notifications, Permissions,
@@ -821,6 +822,8 @@ struct AudienceContactsPlatform {
     after_lookup: parking_lot::Mutex<Option<Box<dyn FnOnce() + Send>>>,
     after_pick: parking_lot::Mutex<Option<Box<dyn FnOnce() + Send>>>,
     after_labels: parking_lot::Mutex<Option<Box<dyn FnOnce() + Send>>>,
+    pick_gate: Mutex<Option<futures::channel::oneshot::Receiver<()>>>,
+    labels_gate: Mutex<Option<futures::channel::oneshot::Receiver<()>>>,
 }
 
 impl AudienceContactsPlatform {
@@ -836,6 +839,8 @@ impl AudienceContactsPlatform {
             after_lookup: Default::default(),
             after_pick: Default::default(),
             after_labels: Default::default(),
+            pick_gate: Default::default(),
+            labels_gate: Default::default(),
         })
     }
 }
@@ -860,6 +865,10 @@ impl crate::platform::ContactsPlatform for AudienceContactsPlatform {
         selection: crate::platform::ContactSelection,
     ) -> Result<crate::platform::HostContactsPick, truapi::latest::GenericError> {
         self.selected.lock().push(selection.selected);
+        let gate = self.pick_gate.lock().unwrap().take();
+        if let Some(gate) = gate {
+            let _ = gate.await;
+        }
         if let Some(changed) = self.after_pick.lock().take() {
             changed();
         }
@@ -872,6 +881,10 @@ impl crate::platform::ContactsPlatform for AudienceContactsPlatform {
         placed: crate::platform::PlacedContactLabels,
     ) -> Result<bool, truapi::latest::HostContactsPlaceLabelsError> {
         self.labels.lock().push(placed);
+        let gate = self.labels_gate.lock().unwrap().take();
+        if let Some(gate) = gate {
+            let _ = gate.await;
+        }
         if let Some(changed) = self.after_labels.lock().take() {
             changed();
         }
@@ -888,6 +901,155 @@ fn pick_many(
         &CallContext::default(),
         HostContactsPickManyRequest::V1(truapi::latest::HostContactsPickManyRequest { selected }),
     ))
+}
+
+fn local_contacts_host(
+    contacts: Arc<AudienceContactsPlatform>,
+) -> (ProductRuntimeHost, Arc<SigningHostRole>) {
+    let mut host = contacts_host("seity.dot", stub_platform(), Some(contacts), false);
+    let authority = SigningHostRole::new(host.services.clone(), "dot".into(), None);
+    futures::executor::block_on(authority.activate_local_session(vec![0xAB; 16])).unwrap();
+    host.authority = authority.clone();
+    (host, authority)
+}
+
+fn revoke_contact_authority(authority: &SigningHostRole, product: Option<&str>) {
+    futures::executor::block_on(async {
+        if let Some(product) = product {
+            authority.clear_product_state(product).await.unwrap();
+        } else {
+            authority
+                .activate_local_session(vec![0xAB; 16])
+                .await
+                .unwrap();
+        }
+    });
+}
+
+#[test]
+fn local_contact_selection_preserves_directory_and_authority_fences() {
+    for revoked_product in [Some("other.dot"), Some("seity.dot"), None] {
+        let account = [10; 32];
+        let contacts = AudienceContactsPlatform::new(
+            vec![account],
+            crate::platform::HostContactsPick::Picked {
+                accounts: vec![account],
+            },
+        );
+        let (host, authority) = local_contacts_host(contacts.clone());
+        let (_, handles) = host.contacts_picker().unwrap();
+        let handle = truapi::latest::ContactHandle {
+            bytes: handles.mint(&account),
+        };
+        let (release, gate) = futures::channel::oneshot::channel();
+        *contacts.pick_gate.lock().unwrap() = Some(gate);
+        let cx = CallContext::default();
+        let mut call = Box::pin(Contacts::pick_many(
+            &host,
+            &cx,
+            HostContactsPickManyRequest::V1(truapi::latest::HostContactsPickManyRequest {
+                selected: vec![],
+            }),
+        ));
+        assert!(call.as_mut().now_or_never().is_none());
+        revoke_contact_authority(&authority, revoked_product);
+        release.send(()).unwrap();
+        let result = futures::executor::block_on(call);
+        if revoked_product == Some("other.dot") {
+            // Product clearing also invalidates the shared contact directory.
+            // Retry that selection, but do not report the account disconnected.
+            assert!(matches!(
+                result,
+                Err(CallError::Domain(HostContactsPickManyError::V1(
+                    truapi::latest::HostContactsPickManyError::Unknown { .. }
+                )))
+            ));
+            assert_eq!(
+                host.services.contact_handles.get(&handle.bytes, &handles),
+                None
+            );
+            let HostContactsPickManyResponse::V1(response) = pick_many(&host, vec![]).unwrap();
+            assert_eq!(
+                response.outcome,
+                truapi::latest::ContactPickManyOutcome::Picked {
+                    handles: vec![handle],
+                }
+            );
+            assert_eq!(
+                host.services.contact_handles.get(&handle.bytes, &handles),
+                Some(account)
+            );
+        } else {
+            assert_eq!(
+                result,
+                Err(CallError::Domain(HostContactsPickManyError::V1(
+                    truapi::latest::HostContactsPickManyError::NotConnected,
+                )))
+            );
+            assert_eq!(
+                host.services.contact_handles.get(&handle.bytes, &handles),
+                None
+            );
+        }
+    }
+}
+
+#[test]
+fn local_contact_labels_withdraw_on_product_or_directory_revocation() {
+    for revoked_product in [Some("other.dot"), Some("seity.dot"), None] {
+        let account = [10; 32];
+        let contacts = AudienceContactsPlatform::new(
+            vec![account],
+            crate::platform::HostContactsPick::Dismissed,
+        );
+        let (host, authority) = local_contacts_host(contacts.clone());
+        let (_, handles) = host.contacts_picker().unwrap();
+        let (release, gate) = futures::channel::oneshot::channel();
+        *contacts.labels_gate.lock().unwrap() = Some(gate);
+        let rect = truapi::latest::AvatarRect {
+            x: 0,
+            y: 0,
+            width: 180,
+            height: 24,
+        };
+        let cx = CallContext::default();
+        let mut call = Box::pin(Contacts::place_labels(
+            &host,
+            &cx,
+            HostContactsPlaceLabelsRequest::V1(truapi::latest::HostContactsPlaceLabelsRequest {
+                surface_width: 300,
+                surface_height: 200,
+                slots: vec![truapi::latest::ContactLabelSlot {
+                    slot: 0,
+                    handle: truapi::latest::ContactHandle {
+                        bytes: handles.mint(&account),
+                    },
+                    rect,
+                    clip: rect,
+                }],
+            }),
+        ));
+        assert!(call.as_mut().now_or_never().is_none());
+        revoke_contact_authority(&authority, revoked_product);
+        release.send(()).unwrap();
+        let result = futures::executor::block_on(call);
+        if revoked_product == Some("other.dot") {
+            assert!(matches!(
+                result,
+                Err(CallError::Domain(HostContactsPlaceLabelsError::V1(
+                    truapi::latest::HostContactsPlaceLabelsError::Unknown { .. }
+                )))
+            ));
+        } else {
+            assert_eq!(
+                result,
+                Err(CallError::Domain(HostContactsPlaceLabelsError::V1(
+                    truapi::latest::HostContactsPlaceLabelsError::NotConnected,
+                )))
+            );
+        }
+        assert!(contacts.labels.lock().last().unwrap().labels.is_empty());
+    }
 }
 
 #[test]
@@ -5208,6 +5370,156 @@ fn permission_prompts_name_the_requesting_product_and_execution_kind() {
     );
 }
 
+fn jam_peers(genesis: [u8; 32]) -> v01::RemotePermissionRequest {
+    v01::RemotePermissionRequest {
+        permission: v01::RemotePermission::JamPeers { genesis },
+    }
+}
+
+fn jam_peers_not_granted() -> CallError<HostJamPeerTransportDialError> {
+    CallError::Domain(HostJamPeerTransportDialError::V1(
+        v01::HostJamPeerTransportDialError::NotGranted,
+    ))
+}
+
+#[test]
+fn jam_peer_dials_follow_the_stored_decision_without_prompting() {
+    futures::executor::block_on(async {
+        let platform = stub_platform();
+        let host = ProductRuntimeHost::new_compat(platform.clone(), test_spawner());
+        for (genesis, status) in [
+            ([0x11; 32], PermissionAuthorizationStatus::Authorized),
+            ([0x22; 32], PermissionAuthorizationStatus::Denied),
+        ] {
+            host.set_permission_authorization_status(
+                PermissionAuthorizationRequest::Remote(jam_peers(genesis)),
+                status,
+            )
+            .await
+            .unwrap();
+        }
+
+        assert_eq!(
+            (
+                host.require_jam_peers([0x11; 32]).await,
+                host.require_jam_peers([0x22; 32]).await,
+                platform.remote_permission_requests.lock().unwrap().clone(),
+            ),
+            (Ok(()), Err(jam_peers_not_granted()), vec![]),
+        );
+    });
+}
+
+#[test]
+fn an_undetermined_genesis_prompts_once_per_execution() {
+    futures::executor::block_on(async {
+        let genesis = [0x35; 32];
+        let platform = Arc::new(StubPlatform {
+            remote_permission_decisions: Mutex::new(
+                [
+                    PermissionDecision::AllowOnce,
+                    PermissionDecision::AllowAlways,
+                ]
+                .into(),
+            ),
+            ..Default::default()
+        });
+        // A light client dialing six validators at once is asked once, and a
+        // one-use answer covers the rest of the execution.
+        let first = ProductRuntimeHost::new_compat(platform.clone(), test_spawner());
+        let dials =
+            futures::future::join_all((0..6).map(|_| first.require_jam_peers(genesis))).await;
+        assert_eq!(dials, vec![Ok(()); 6]);
+        assert_eq!(first.require_jam_peers(genesis).await, Ok(()));
+
+        // The next execution holds no one-use grant, so it asks again; a
+        // lasting answer is persisted for the product and not asked again.
+        let second = ProductRuntimeHost::new_compat(platform.clone(), test_spawner());
+        assert_eq!(second.require_jam_peers(genesis).await, Ok(()));
+        let third = ProductRuntimeHost::new_compat(platform.clone(), test_spawner());
+        assert_eq!(third.require_jam_peers(genesis).await, Ok(()));
+
+        assert_eq!(
+            platform.remote_permission_requests.lock().unwrap().clone(),
+            vec![jam_peers(genesis), jam_peers(genesis)],
+        );
+    });
+}
+
+#[test]
+fn jam_peer_one_time_grant_is_revoked_by_canonical_permission_authority() {
+    futures::executor::block_on(async {
+        let genesis = [0x37; 32];
+        let platform = Arc::new(StubPlatform {
+            remote_permission_decisions: Mutex::new([PermissionDecision::AllowOnce].into()),
+            ..Default::default()
+        });
+        let host = ProductRuntimeHost::new_compat(platform.clone(), test_spawner());
+        assert_eq!(host.require_jam_peers(genesis).await, Ok(()));
+
+        host.set_permission_authorization_status(
+            PermissionAuthorizationRequest::Remote(jam_peers(genesis)),
+            PermissionAuthorizationStatus::Denied,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(host.require_jam_peers(genesis).await, Err(jam_peers_not_granted()));
+        assert_eq!(
+            platform.remote_permission_requests.lock().unwrap().clone(),
+            vec![jam_peers(genesis)],
+        );
+    });
+}
+
+#[test]
+fn each_genesis_is_a_separate_jam_peers_decision() {
+    futures::executor::block_on(async {
+        let (granted, refused) = ([0x35; 32], [0x36; 32]);
+        let platform = Arc::new(StubPlatform {
+            remote_permission_decisions: Mutex::new(
+                [PermissionDecision::AllowAlways, PermissionDecision::Deny].into(),
+            ),
+            ..Default::default()
+        });
+        let host = ProductRuntimeHost::new_compat(platform.clone(), test_spawner());
+
+        assert_eq!(host.require_jam_peers(granted).await, Ok(()));
+        // A grant for one chain says nothing about another: it prompts, and
+        // the refusal is persisted for that genesis alone.
+        assert_eq!(
+            host.require_jam_peers(refused).await,
+            Err(jam_peers_not_granted())
+        );
+        assert_eq!(
+            host.require_jam_peers(refused).await,
+            Err(jam_peers_not_granted())
+        );
+        assert_eq!(host.require_jam_peers(granted).await, Ok(()));
+
+        let statuses = host
+            .permission_authorization_statuses(vec![
+                PermissionAuthorizationRequest::Remote(jam_peers(granted)),
+                PermissionAuthorizationRequest::Remote(jam_peers(refused)),
+            ])
+            .await
+            .unwrap();
+        assert_eq!(
+            (
+                platform.remote_permission_requests.lock().unwrap().clone(),
+                statuses,
+            ),
+            (
+                vec![jam_peers(granted), jam_peers(refused)],
+                vec![
+                    PermissionAuthorizationStatus::Authorized,
+                    PermissionAuthorizationStatus::Denied,
+                ],
+            ),
+        );
+    });
+}
+
 #[test]
 fn navigate_to_rejects_invalid_input_without_prompting_or_calling_platform() {
     let platform = stub_platform();
@@ -6769,6 +7081,69 @@ fn get_user_id_rejects_a_cached_name_after_owner_changes_during_consent() {
             )))
         ));
     });
+}
+
+#[test]
+fn get_user_id_accepts_refreshed_names_for_the_same_pairing_identity() {
+    futures::executor::block_on(async {
+        let (release, gate) = futures::channel::oneshot::channel();
+        let platform = Arc::new(StubPlatform {
+            identity_disclosure_confirmed: true,
+            identity_disclosure_confirmation_gate: parking_lot::Mutex::new(Some(gate)),
+            ..Default::default()
+        });
+        let host = ProductRuntimeHost::new_compat(platform, test_spawner());
+        let mut session = session_info();
+        session.full_username = None;
+        session.lite_username = None;
+        install_pairing_session(&host, session.clone());
+        let cx = CallContext::default();
+        let disclosure = host.get_user_id(&cx, HostGetUserIdRequest::V1);
+        futures::pin_mut!(disclosure);
+        assert!(futures::poll!(&mut disclosure).is_pending());
+        session.full_username = Some("refreshed.dot".into());
+        install_pairing_session(&host, session);
+        release.send(()).unwrap();
+        let HostGetUserIdResponse::V1(response) = disclosure.await.unwrap();
+        assert_eq!(response.primary_username, "refreshed.dot");
+    });
+}
+
+#[test]
+fn get_user_id_local_consent_respects_product_and_account_revocation() {
+    for revoked_product in [Some("other.dot"), Some("seity.dot"), None] {
+        let (release, gate) = futures::channel::oneshot::channel();
+        let platform = Arc::new(StubPlatform {
+            identity_disclosure_confirmed: true,
+            identity_disclosure_confirmation_gate: parking_lot::Mutex::new(Some(gate)),
+            ..Default::default()
+        });
+        let mut host = contacts_host("seity.dot", platform, None, false);
+        let authority = SigningHostRole::new(host.services.clone(), "dot".into(), None);
+        futures::executor::block_on(authority.activate_local_session(vec![0xAB; 16])).unwrap();
+        let state = authority.session_state();
+        let mut session = state.current().unwrap();
+        session.full_username = Some("alice.dot".into());
+        state.set_session(session);
+        host.authority = authority.clone();
+        let cx = CallContext::default();
+        let mut disclosure = Box::pin(host.get_user_id(&cx, HostGetUserIdRequest::V1));
+        assert!(disclosure.as_mut().now_or_never().is_none());
+        revoke_contact_authority(&authority, revoked_product);
+        release.send(()).unwrap();
+        let result = futures::executor::block_on(disclosure);
+        if revoked_product == Some("other.dot") {
+            let HostGetUserIdResponse::V1(response) = result.unwrap();
+            assert_eq!(response.primary_username, "alice.dot");
+        } else {
+            assert!(matches!(
+                result,
+                Err(CallError::Domain(HostGetUserIdError::V1(
+                    v01::HostGetUserIdError::NotConnected
+                )))
+            ));
+        }
+    }
 }
 
 #[test]

@@ -1,8 +1,8 @@
 import Foundation
 
 /// Handles simple remote permissions (`webRtcAccess`, `chainSubmitAccess`,
-/// `preimageSubmitAccess`, `statementSubmitAccess`) with a check-or-prompt
-/// pattern. Network-access permissions are routed to
+/// `preimageSubmitAccess`, `statementSubmitAccess`, `jamPeersAccess`) with a
+/// check-or-prompt pattern. Network-access permissions are routed to
 /// ``NetworkAccessPermissionHandler`` instead.
 public final class RemotePermissionHandler: Sendable {
     private let repository: ProductPermissionRepositoryProtocol

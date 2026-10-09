@@ -1,11 +1,13 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.permissions
 
+import io.novasama.substrate_sdk_android.extensions.fromHex
+import io.novasama.substrate_sdk_android.extensions.toHexString
 import io.paritytech.polkadotapp.common.domain.model.toDataByteArray
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.models.AllowanceAccountSelector
-import uniffi.truapi.DerivationIndex
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.models.DeviceCapabilityType
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.models.ProductPermission
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.normalizeProductId
+import uniffi.truapi.DerivationIndex
 import uniffi.truapi.HostDevicePermissionRequest
 import uniffi.truapi.PermissionAuthorizationRequest
 import uniffi.truapi.RemotePermission
@@ -34,6 +36,9 @@ internal fun ProductPermission.canonicalRequest(): PermissionAuthorizationReques
         ProductPermission.RemotePermission.ChainSubmitAccess -> RemotePermission.ChainSubmit
         ProductPermission.RemotePermission.StatementSubmitAccess -> RemotePermission.StatementSubmit
         ProductPermission.RemotePermission.PreimageSubmitAccess -> RemotePermission.PreimageSubmit
+        is ProductPermission.RemotePermission.JamPeersAccess -> RemotePermission.JamPeers(genesis.fromHex().also {
+            require(it.size == 32) { "JAM genesis must contain 32 bytes" }
+        })
     }))
 }
 
@@ -61,6 +66,7 @@ internal fun PermissionAuthorizationRequest.legacyPermission(): ProductPermissio
         RemotePermission.ChainSubmit -> ProductPermission.RemotePermission.ChainSubmitAccess
         RemotePermission.StatementSubmit -> ProductPermission.RemotePermission.StatementSubmitAccess
         RemotePermission.PreimageSubmit -> ProductPermission.RemotePermission.PreimageSubmitAccess
+        is RemotePermission.JamPeers -> ProductPermission.RemotePermission.JamPeersAccess(remote.genesis.toHexString(withPrefix = true))
     }
 }
 

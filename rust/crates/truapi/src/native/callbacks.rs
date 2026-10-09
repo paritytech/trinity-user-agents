@@ -72,6 +72,30 @@ pub trait HostCallbacks: Send + Sync {
     /// Cancel a notification by id.
     fn cancel_notification(&self, id: u32) -> Result<(), HostRejection>;
 
+    /// Runtime callbacks return current host scope, including while products are closed.
+    /// Per-execution callbacks return the immutable verified artifact/account scope
+    /// captured at execution creation, never the latest replacement scope.
+    async fn receiver_authority(
+        &self,
+        product_id: String,
+    ) -> Result<Option<crate::platform::ReceivingAuthority>, HostRejection>;
+
+    /// Request consent distinct from OS notification permission.
+    async fn receiver_consent(
+        &self,
+        authority: crate::platform::ReceivingAuthority,
+        watches: Vec<crate::latest::ReceivingWatch>,
+    ) -> Result<bool, HostRejection>;
+
+    /// Wake asynchronous transport synchronization without awaiting network I/O.
+    async fn receiver_changed(&self) -> Result<(), HostRejection>;
+
+    /// Optionally forward a trusted product receiving command to its sole owner.
+    /// `None` uses the native resident engine; failure must not select another owner.
+    async fn receiver_command(
+        &self, product_id: String, action: u8, payload: Vec<u8>,
+    ) -> Result<Option<Vec<u8>>, HostRejection>;
+
     /// Non-consuming, ordered activation batch for this execution's trusted scope.
     /// Independent of receiving enrollment and OS permission prompts.
     async fn activation_events(&self) -> Result<Vec<v01::NotificationActivation>, HostRejection>;

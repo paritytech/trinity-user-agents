@@ -872,7 +872,7 @@ async function handleChainConnectStart(
   };
   try {
     const conn = await (msg.kind === "hopConnectStart"
-      ? state.rawCallbacks.hopConnect(
+      ? state.rawCallbacks.hopConnect?.(
           msg.genesisHash,
           msg.endpoint,
           onResponse,

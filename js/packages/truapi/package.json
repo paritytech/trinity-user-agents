@@ -35,9 +35,17 @@
       "types": "./dist/internal.d.ts",
       "import": "./dist/internal.js"
     },
+    "./jam-peer-transport": {
+      "types": "./dist/jam-peer-transport.d.ts",
+      "import": "./dist/jam-peer-transport.js"
+    },
     "./scale": {
       "types": "./dist/scale.d.ts",
       "import": "./dist/scale.js"
+    },
+    "./notification-envelope": {
+      "types": "./dist/notification-envelope.d.ts",
+      "import": "./dist/notification-envelope.js"
     },
     "./wire-table": {
       "types": "./dist/generated/wire-table.d.ts",
@@ -87,6 +95,7 @@
     "typescript": "^6.0"
   },
   "dependencies": {
+    "@noble/curves": "^2.0.1",
     "@noble/hashes": "^2.2.0",
     "neverthrow": "^8.2.0",
     "scale-ts": "^1.6.1"

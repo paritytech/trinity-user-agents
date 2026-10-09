@@ -1163,6 +1163,46 @@ pub trait Navigation: Send + Sync {
     async fn navigate_to(&self, url: String) -> Result<(), HostNavigateToError>;
 }
 
+/// Trusted host receiving scope, derived from verified artifact and account state.
+/// It must remain available after the product execution closes.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode, serde::Serialize, serde::Deserialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
+pub struct ReceivingAuthority {
+    /// Verified product identifier.
+    pub product_id: String,
+    /// Opaque stable account identity, encoded as 32-byte lowercase hex.
+    pub account: String,
+    /// Host-selected network environment.
+    pub environment: String,
+    /// Verified artifact digest, encoded as 32-byte lowercase hex.
+    pub artifact: String,
+    /// Host-selected receiving chain genesis, encoded as 32-byte lowercase hex.
+    pub genesis: String,
+    /// Host logout, account and artifact fence.
+    pub generation: u64,
+    /// Current OS notification permission.
+    pub os_permission: bool,
+    /// Whether the explicitly selected transport is ready.
+    pub transport_ready: bool,
+}
+
+/// Host-only durable registration awaiting transport synchronization.
+/// Routes and authority identifiers stay local, not in provider payloads.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode, serde::Serialize, serde::Deserialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
+pub struct ReceivingRegistration {
+    /// Trusted scope under which consent was recorded.
+    pub authority: ReceivingAuthority,
+    /// Durable local revision, distinct from provider token revisions.
+    pub revision: u64,
+    /// Whether this revision enrolls watches or revokes them.
+    pub enabled: bool,
+    /// Locally approved source filters and activation routes.
+    pub watches: Vec<crate::latest::ReceivingWatch>,
+    /// Whether this revision still needs synchronization.
+    pub sync_pending: bool,
+}
+
 /// Deliver push notifications.
 #[async_trait]
 pub trait Notifications: Send + Sync {
@@ -1178,6 +1218,50 @@ pub trait Notifications: Send + Sync {
     async fn cancel_notification(&self, id: u32) -> Result<(), GenericError> {
         let _ = id;
         Ok(())
+    }
+
+    /// Resolve trusted authority without prompting or consulting transport.
+    /// The resident platform returns current host scope, even with product UI closed.
+    /// A product execution's platform returns the immutable scope captured when
+    /// that verified execution opened, never a replacement artifact/account's scope.
+    /// Returning `None` explicitly advertises unsupported receiving.
+    async fn receiver_authority(
+        &self,
+        product_id: &str,
+    ) -> Result<Option<ReceivingAuthority>, GenericError> {
+        let _ = product_id;
+        Ok(None)
+    }
+
+    /// Request distinct consent for this authority and full watch scope.
+    async fn receiver_consent(
+        &self,
+        authority: ReceivingAuthority,
+        watches: Vec<crate::latest::ReceivingWatch>,
+    ) -> Result<bool, GenericError> {
+        let _ = (authority, watches);
+        Err(GenericError { reason: "background receiving unsupported".into() })
+    }
+
+    /// Wake the host's asynchronous synchronization loop, never await network I/O.
+    async fn receiver_changed(&self) -> Result<(), GenericError> {
+        Err(GenericError { reason: "background receiving unsupported".into() })
+    }
+
+    /// Forward receiving actions to the single host-owned receiver, if external.
+    /// The host must bind `product_id` to the trusted execution, not page input.
+    /// Payloads are latest SCALE requests for actions 2..7; the response encodes
+    /// `Result<latest response, HostNotificationReceivingError>` without a version tag.
+    /// `None` selects this runtime's resident engine. An unavailable external
+    /// owner must return an error, never `None`, to avoid a second persistent writer.
+    async fn receiver_command(
+        &self,
+        product_id: String,
+        action: u8,
+        payload: Vec<u8>,
+    ) -> Result<Option<Vec<u8>>, GenericError> {
+        let _ = (product_id, action, payload);
+        Ok(None)
     }
 
     /// Return at most 32 pending activations, ordered by sequence, without
@@ -2011,6 +2095,10 @@ pub enum CoreStorageKey {
         /// Host-selected Chat network.
         genesis_hash: [u8; 32],
     },
+    /// Versioned bounded receiving ledger, shared across product executions.
+    /// Host product/account deletion must invoke ReceivingService::revoke first.
+    #[codec(index = 20)]
+    NotificationReceiving,
 }
 
 /// Stable metadata describing one strictly decoded [`CoreStorageKey`].
@@ -2077,6 +2165,7 @@ pub fn describe_core_storage_key(
         CoreStorageKey::NativeChatFileChunk { product_id, .. } => {
             ("NativeChatFileChunk", Some(product_id))
         }
+        CoreStorageKey::NotificationReceiving => ("NotificationReceiving", None),
     };
     Ok(CoreStorageKeyDescription { kind, product_id })
 }
@@ -3245,6 +3334,14 @@ mod tests {
         let other_target = CoreStorageKey::account_access_authorization("product.dot", "other.dot");
         let chat_authority = CoreStorageKey::chat_authority_authorization("product.dot");
         let other_product_chat = CoreStorageKey::chat_authority_authorization("other.dot");
+        let jam_peers = |product_id: &str, genesis: [u8; 32]| {
+            CoreStorageKey::remote_permission_authorization(
+                product_id,
+                &RemotePermissionRequest {
+                    permission: RemotePermission::JamPeers { genesis },
+                },
+            )
+        };
 
         assert_ne!(camera, other_product);
         assert_ne!(camera, remote);
@@ -3256,6 +3353,16 @@ mod tests {
         assert_ne!(chat_authority, identity);
         assert_ne!(chat_authority, account_access);
         assert_ne!(chat_authority, other_product_chat);
+        // A JAM peer decision is kept per product and per genesis.
+        assert_ne!(jam_peers("product.dot", [0x35; 32]), remote);
+        assert_ne!(
+            jam_peers("product.dot", [0x35; 32]),
+            jam_peers("product.dot", [0x36; 32])
+        );
+        assert_ne!(
+            jam_peers("product.dot", [0x35; 32]),
+            jam_peers("other.dot", [0x35; 32])
+        );
     }
 
     #[test]

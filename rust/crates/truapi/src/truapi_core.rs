@@ -187,6 +187,70 @@ mod tests {
     use crate::frame::{Payload, request_ids, subscription_ids};
     use crate::test_support::{StubPlatform, runtime_config, test_spawner};
 
+    /// A dial needs the user's `JamPeers` grant for its genesis, so a refusal
+    /// answers `NotGranted` before anything connects. The browser core never
+    /// asks: its JavaScript session serves trait 111 before frames reach it.
+    #[test]
+    fn a_dial_the_user_refuses_is_not_granted() {
+        let genesis = [0x35; 32];
+        let platform = Arc::new(StubPlatform {
+            remote_permission_denied: true,
+            ..Default::default()
+        });
+        let asked = platform.remote_permission_requests.clone();
+        let (host_config, product) = runtime_config("dotli.dot");
+        let core =
+            TrUApiCore::from_platform_with_config(platform, host_config, product, test_spawner());
+        let ids = request_ids("jam_peer_transport_dial").expect("registered peer transport");
+        let frame = ProtocolMessage {
+            request_id: "p:peer".into(),
+            payload: Payload {
+                trait_id: ids.trait_id,
+                method_id: ids.method_id,
+                message_type: crate::frame::MESSAGE_TYPE_REQUEST,
+                value: truapi::versioned::jam_peer_transport::HostJamPeerTransportDialRequest::V1(
+                    truapi::latest::HostJamPeerTransportDialRequest {
+                        genesis,
+                        ip: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff, 127, 0, 0, 1],
+                        port: 43000,
+                        ed25519: [0; 32],
+                        p256: None,
+                    },
+                )
+                .encode(),
+            },
+        };
+        let response = futures::executor::block_on(core.receive_from_product(&frame.encode()))
+            .expect("registered method must answer explicitly");
+        let prompted = if cfg!(target_arch = "wasm32") {
+            vec![]
+        } else {
+            vec![v01::RemotePermissionRequest {
+                permission: v01::RemotePermission::JamPeers { genesis },
+            }]
+        };
+        assert_eq!(
+            (
+                ProtocolMessage::decode(&mut &response[..])
+                    .unwrap()
+                    .payload
+                    .value,
+                asked.lock().unwrap().clone(),
+            ),
+            (
+                Err::<truapi::versioned::jam_peer_transport::HostJamPeerTransportDialResponse, _>(
+                    truapi::CallError::Domain(
+                        truapi::versioned::jam_peer_transport::HostJamPeerTransportDialError::V1(
+                            truapi::latest::HostJamPeerTransportDialError::NotGranted,
+                        ),
+                    ),
+                )
+                .encode(),
+                prompted,
+            ),
+        );
+    }
+
     /// A request payload must consume exactly its own bytes. Trailing bytes
     /// mean the sender and this build disagree about the shape, so running the
     /// handler on the prefix would act on a frame neither side agreed to.

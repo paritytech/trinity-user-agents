@@ -490,4 +490,5 @@ private fun RemotePermissionRequest.toDomainPermissions(): List<ProductPermissio
     RemotePermissionRequest.ChainSubmit -> listOf(ProductPermission.RemotePermission.ChainSubmitAccess)
     RemotePermissionRequest.StatementSubmit -> listOf(ProductPermission.RemotePermission.StatementSubmitAccess)
     RemotePermissionRequest.PreimageSubmit -> listOf(ProductPermission.RemotePermission.PreimageSubmitAccess)
+    is RemotePermissionRequest.JamPeers -> listOf(ProductPermission.RemotePermission.JamPeersAccess(genesis))
 }
