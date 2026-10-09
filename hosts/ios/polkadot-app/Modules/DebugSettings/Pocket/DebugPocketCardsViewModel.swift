@@ -47,11 +47,6 @@ final class DebugPocketCardsViewModel {
             return
         }
 
-        guard card.widgetUrl.map(Self.isWebAddress) ?? true else {
-            refusal = "'\(typedWidgetUrl)' is not an http or https address"
-            return
-        }
-
         refusal = nil
         store.save(card)
         cardId = ""
@@ -64,15 +59,5 @@ final class DebugPocketCardsViewModel {
             store.delete(cards[index])
         }
         load()
-    }
-}
-
-private extension DebugPocketCardsViewModel {
-    static func isWebAddress(_ address: String) -> Bool {
-        guard let components = URLComponents(string: address), components.host?.isEmpty == false else {
-            return false
-        }
-
-        return ["http", "https"].contains(components.scheme?.lowercased() ?? "")
     }
 }
