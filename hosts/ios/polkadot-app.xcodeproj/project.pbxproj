@@ -20,6 +20,7 @@
 		0C6058402FB598D70008050F /* AssetsManagement in Frameworks */ = {isa = PBXBuildFile; productRef = 0C60583F2FB598D70008050F /* AssetsManagement */; };
 		0C62514C2F50808100A92259 /* HandoffService in Frameworks */ = {isa = PBXBuildFile; productRef = 0C62514B2F50808100A92259 /* HandoffService */; };
 		0C6EC9602EC629FB00C9B292 /* NotificationServiceExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 0C6EC9592EC629FB00C9B292 /* NotificationServiceExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		D4ED1A000000000000000001 /* MediaBroadcastExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = D4ED1A000000000000000002; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		0C6EC97F2EC635B500C9B292 /* AppDependencies in Frameworks */ = {isa = PBXBuildFile; productRef = 0C6EC97E2EC635B500C9B292 /* AppDependencies */; };
 		0CA3EA882EAA711100C43F10 /* AssetHubSdk in Frameworks */ = {isa = PBXBuildFile; productRef = 0CA3EA872EAA711100C43F10 /* AssetHubSdk */; };
 		0CA60CC22FB20D4D008817A9 /* BulletinChain in Frameworks */ = {isa = PBXBuildFile; productRef = 0CA60CC12FB20D4D008817A9 /* BulletinChain */; };
@@ -51,6 +52,7 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
+		D4ED1A000000000000000003 = {isa = PBXContainerItemProxy; containerPortal = A5EDAACD2E93ECAF005DDA62; proxyType = 1; remoteGlobalIDString = D4ED1A000000000000000004; remoteInfo = MediaBroadcastExtension; };
 		0C6EC95E2EC629FB00C9B292 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
 			containerPortal = A5EDAACD2E93ECAF005DDA62 /* Project object */;
@@ -82,6 +84,7 @@
 			dstSubfolderSpec = 13;
 			files = (
 				0C6EC9602EC629FB00C9B292 /* NotificationServiceExtension.appex in Embed Foundation Extensions */,
+				D4ED1A000000000000000001 /* MediaBroadcastExtension.appex in Embed Foundation Extensions */,
 			);
 			name = "Embed Foundation Extensions";
 			runOnlyForDeploymentPostprocessing = 0;
@@ -89,6 +92,7 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		D4ED1A000000000000000002 = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = MediaBroadcastExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		0C6EC9592EC629FB00C9B292 /* NotificationServiceExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = NotificationServiceExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		65E2C5D62E971DC0004FBA34 /* polkadot-appIntegrationTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "polkadot-appIntegrationTests.xctest"; sourceTree = BUILT_PRODUCTS_DIR; };
 		A5EDAAD52E93ECAF005DDA62 /* polkadot-app.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "polkadot-app.app"; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -96,6 +100,11 @@
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		D4ED1A000000000000000005 = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (Info.plist,);
+			target = D4ED1A000000000000000004;
+		};
 		0C6EC9652EC629FB00C9B292 /* Exceptions for "NotificationServiceExtension" folder in "NotificationServiceExtension" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
@@ -263,6 +272,17 @@
 /* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
+		D4ED1A000000000000000006 = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (D4ED1A000000000000000005,);
+			path = MediaBroadcastExtension;
+			sourceTree = "<group>";
+		};
+		D4ED1A000000000000000007 = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = SharedMedia;
+			sourceTree = "<group>";
+		};
 		0C6EC95A2EC629FB00C9B292 /* NotificationServiceExtension */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			exceptions = (
@@ -307,6 +327,7 @@
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
+		D4ED1A000000000000000008 = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
 		0C6EC9562EC629FB00C9B292 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
@@ -394,6 +415,8 @@
 				A5EDAAE62E93ECB0005DDA62 /* polkadot-appTests */,
 				65E2C5D72E971DC0004FBA34 /* polkadot-appIntegrationTests */,
 				0C6EC95A2EC629FB00C9B292 /* NotificationServiceExtension */,
+				D4ED1A000000000000000006 /* MediaBroadcastExtension */,
+				D4ED1A000000000000000007 /* SharedMedia */,
 				0CEC59AA2F08EBFC0009CC37 /* Frameworks */,
 				A5EDAAD62E93ECAF005DDA62 /* Products */,
 			);
@@ -406,6 +429,7 @@
 				A5EDAAE32E93ECB0005DDA62 /* polkadot-appTests.xctest */,
 				65E2C5D62E971DC0004FBA34 /* polkadot-appIntegrationTests.xctest */,
 				0C6EC9592EC629FB00C9B292 /* NotificationServiceExtension.appex */,
+				D4ED1A000000000000000002 /* MediaBroadcastExtension.appex */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -413,6 +437,18 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
+		D4ED1A000000000000000004 /* MediaBroadcastExtension */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = D4ED1A00000000000000000A;
+			buildPhases = (D4ED1A000000000000000009, D4ED1A000000000000000008,);
+			buildRules = ();
+			dependencies = ();
+			fileSystemSynchronizedGroups = (D4ED1A000000000000000006, D4ED1A000000000000000007,);
+			name = MediaBroadcastExtension;
+			productName = MediaBroadcastExtension;
+			productReference = D4ED1A000000000000000002;
+			productType = "com.apple.product-type.app-extension";
+		};
 		0C6EC9582EC629FB00C9B292 /* NotificationServiceExtension */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = 0C6EC9612EC629FB00C9B292 /* Build configuration list for PBXNativeTarget "NotificationServiceExtension" */;
@@ -484,10 +520,12 @@
 			);
 			dependencies = (
 				0C6EC95F2EC629FB00C9B292 /* PBXTargetDependency */,
+				D4ED1A00000000000000000B /* MediaBroadcastExtension dependency */,
 			);
 			fileSystemSynchronizedGroups = (
 				A5EDAAD72E93ECAF005DDA62 /* polkadot-app */,
 				A5F1EC872E9543A6009C1723 /* Packages */,
+				D4ED1A000000000000000007 /* SharedMedia */,
 			);
 			name = "polkadot-app";
 			packageProductDependencies = (
@@ -595,6 +633,7 @@
 				A5EDAAE22E93ECB0005DDA62 /* polkadot-appTests */,
 				65E2C5D52E971DC0004FBA34 /* polkadot-appIntegrationTests */,
 				0C6EC9582EC629FB00C9B292 /* NotificationServiceExtension */,
+				D4ED1A000000000000000004 /* MediaBroadcastExtension */,
 			);
 		};
 /* End PBXProject section */
@@ -726,6 +765,7 @@
 /* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
+		D4ED1A000000000000000009 = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
 		0C6EC9552EC629FB00C9B292 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -757,6 +797,7 @@
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
+		D4ED1A00000000000000000B = {isa = PBXTargetDependency; target = D4ED1A000000000000000004; targetProxy = D4ED1A000000000000000003; };
 		0C6EC95F2EC629FB00C9B292 /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
 			target = 0C6EC9582EC629FB00C9B292 /* NotificationServiceExtension */;
@@ -775,6 +816,121 @@
 /* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
+		D4ED1A000000000000000010 = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReferenceAnchor = A5C8A5B13020EE3A00A2D0D3;
+			baseConfigurationReferenceRelativePath = "base.debug.xcconfig";
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CODE_SIGN_ENTITLEMENTS = MediaBroadcastExtension/MediaBroadcastExtension.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = P2PX3JU8FT;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = MediaBroadcastExtension/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MARKETING_VERSION = 0.10.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "$(APP_MAIN_BUNDLE).MediaBroadcastExtension";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		D4ED1A000000000000000011 = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReferenceAnchor = A5C8A5B13020EE3A00A2D0D3;
+			baseConfigurationReferenceRelativePath = "base.devci.xcconfig";
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CODE_SIGN_ENTITLEMENTS = MediaBroadcastExtension/MediaBroadcastExtension.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = P2PX3JU8FT;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = MediaBroadcastExtension/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MARKETING_VERSION = 0.10.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "$(APP_MAIN_BUNDLE).MediaBroadcastExtension";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = DevCI;
+		};
+		D4ED1A000000000000000012 = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReferenceAnchor = A5C8A5B13020EE3A00A2D0D3;
+			baseConfigurationReferenceRelativePath = "base.release.xcconfig";
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CODE_SIGN_ENTITLEMENTS = MediaBroadcastExtension/MediaBroadcastExtension.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = P2PX3JU8FT;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = MediaBroadcastExtension/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MARKETING_VERSION = 0.10.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "$(APP_MAIN_BUNDLE).MediaBroadcastExtension";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		D4ED1A000000000000000013 = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReferenceAnchor = A5C8A5B13020EE3A00A2D0D3;
+			baseConfigurationReferenceRelativePath = "base.nightly.xcconfig";
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CODE_SIGN_ENTITLEMENTS = MediaBroadcastExtension/MediaBroadcastExtension.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = P2PX3JU8FT;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = MediaBroadcastExtension/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MARKETING_VERSION = 0.10.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "$(APP_MAIN_BUNDLE).MediaBroadcastExtension";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Nightly;
+		};
+		D4ED1A000000000000000014 = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReferenceAnchor = A5C8A5B13020EE3A00A2D0D3;
+			baseConfigurationReferenceRelativePath = "base.safetynet.xcconfig";
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CODE_SIGN_ENTITLEMENTS = MediaBroadcastExtension/MediaBroadcastExtension.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = P2PX3JU8FT;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = MediaBroadcastExtension/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MARKETING_VERSION = 0.10.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "$(APP_MAIN_BUNDLE).MediaBroadcastExtension";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Safetynet;
+		};
 		0C6EC9622EC629FB00C9B292 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			baseConfigurationReferenceAnchor = 0C6EC95A2EC629FB00C9B292 /* NotificationServiceExtension */;
@@ -1711,6 +1867,12 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
+		D4ED1A00000000000000000A = {
+			isa = XCConfigurationList;
+			buildConfigurations = (D4ED1A000000000000000010, D4ED1A000000000000000011, D4ED1A000000000000000012, D4ED1A000000000000000013, D4ED1A000000000000000014,);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
 		0C6EC9612EC629FB00C9B292 /* Build configuration list for PBXNativeTarget "NotificationServiceExtension" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (

@@ -2,13 +2,16 @@ import Foundation
 import TrUAPIHost
 
 /// Test double for one product execution. Records ws-bridge lifecycle and
-/// chain notify-backs; unused notify surfaces are inert.
+/// chain/theme notify-backs; unused notify surfaces are inert.
 final class MockProductExecution: TrUAPIProductExecutionProtocol, @unchecked Sendable {
     private(set) var startWsBridgeCallCount = 0
     private(set) var stopWsBridgeCallCount = 0
     private(set) var closeCallCount = 0
     private(set) var chainResponses: [(UInt32, String)] = []
     private(set) var chainClosed: [UInt32] = []
+    private(set) var themeChanges: [HostThemeSubscribeItem] = []
+    var onThemeChanged: ((HostThemeSubscribeItem) -> Void)?
+    var onClose: (() -> Void)?
 
     /// Status returned by `permissionAuthorizationStatus`; defaults to
     /// `.notDetermined` so existing tests are unaffected.
@@ -47,6 +50,7 @@ final class MockProductExecution: TrUAPIProductExecutionProtocol, @unchecked Sen
 
     func close() {
         closeCallCount += 1
+        onClose?()
     }
 
     func publishChatAction(_ item: HostChatActionSubscribeItem) throws {
@@ -78,7 +82,10 @@ final class MockProductExecution: TrUAPIProductExecutionProtocol, @unchecked Sen
         return permissionStatus
     }
 
-    func notifyThemeChanged(theme _: HostThemeSubscribeItem) {}
+    func notifyThemeChanged(theme: HostThemeSubscribeItem) {
+        themeChanges.append(theme)
+        onThemeChanged?(theme)
+    }
     func notifyLocaleChanged(locale _: HostLocaleSubscribeItem) {}
     func notifyStorageChanged(key _: String, value _: Data?) {}
     func notifyPreimageChanged(key _: Data, value _: Data?) {}

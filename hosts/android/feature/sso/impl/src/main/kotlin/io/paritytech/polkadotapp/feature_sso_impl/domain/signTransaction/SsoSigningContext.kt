@@ -21,6 +21,7 @@ class SsoSigningContext(
 ) : SigningContext {
     override val requesterName: String = sessionData.name
     override val requesterIconUrl: String = sessionData.icon
+    override val signsOnApproval = true
 
     override suspend fun approve(sign: suspend () -> Result<SignedTransaction>): Result<Unit> =
         sign().flatMap { signedTransaction -> deliverSignedResult(signedTransaction) }
@@ -54,7 +55,7 @@ class SsoSigningContext(
             is SigningRequestBody.RawLegacy -> SsoSessionResponse.Content.FailedToSignRawLegacy("Rejected")
             is SigningRequestBody.TransactionLegacy -> SsoSessionResponse.Content.FailedToSignTransaction("Rejected")
             is SigningRequestBody.CreateTransactionLegacy -> SsoSessionResponse.Content.FailedToCreateTransaction("Rejected")
-            // Unreachable, see deliverSignedResult.
+            // Unreachable, see approve.
             is SigningRequestBody.SignVrf -> return Result.failure(
                 IllegalStateException("VRF rejections are delivered via AccountsProtocol, not SsoSigningContext")
             )

@@ -42,7 +42,16 @@ internal fun ProductPermission.canonicalRequest(): PermissionAuthorizationReques
     }))
 }
 
+/** Account-scoped Media and upload permissions have their own settings surfaces. */
+internal fun PermissionAuthorizationRequest.hasDedicatedSettings(): Boolean = when (this) {
+    is PermissionAuthorizationRequest.Calling, is PermissionAuthorizationRequest.AutomaticPreimageSubmit -> true
+    is PermissionAuthorizationRequest.Remote -> v1.permission == RemotePermission.Calling
+    else -> false
+}
+
 internal fun PermissionAuthorizationRequest.legacyPermission(): ProductPermission = when (this) {
+    is PermissionAuthorizationRequest.Calling, is PermissionAuthorizationRequest.AutomaticPreimageSubmit ->
+        error("Account-scoped permission requires dedicated settings")
     is PermissionAuthorizationRequest.Device -> ProductPermission.DeviceCapability(DeviceCapabilityType.entries.single { it.native() == v1 })
     is PermissionAuthorizationRequest.AccountAccess -> ProductPermission.AccountAccess(targetProductId)
     PermissionAuthorizationRequest.IdentityDisclosure -> ProductPermission.UserIdentityAccess
@@ -63,6 +72,7 @@ internal fun PermissionAuthorizationRequest.legacyPermission(): ProductPermissio
                 else ProductPermission.RemotePermission.NetworkAccessSet(domains)
         }
         RemotePermission.WebRtc -> ProductPermission.RemotePermission.WebRtcAccess
+        RemotePermission.Calling -> error("Calling requires scoped Media settings")
         RemotePermission.ChainSubmit -> ProductPermission.RemotePermission.ChainSubmitAccess
         RemotePermission.StatementSubmit -> ProductPermission.RemotePermission.StatementSubmitAccess
         RemotePermission.PreimageSubmit -> ProductPermission.RemotePermission.PreimageSubmitAccess

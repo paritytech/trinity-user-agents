@@ -11,7 +11,7 @@ use std::fs;
 use std::io::{IsTerminal, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, Weak};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use async_trait::async_trait;
@@ -39,6 +39,24 @@ use crate::terminal_ui::{ApprovalKind, SystemEvent, UiHandle};
 
 static NEXT_STORAGE_TEMP_ID: AtomicU32 = AtomicU32::new(0);
 static NEXT_OPERATION_ID: AtomicU32 = AtomicU32::new(1);
+static CORE_STORAGE_OBSERVERS: Mutex<Vec<CoreStorageObserver>> = Mutex::new(Vec::new());
+
+#[derive(Clone, PartialEq, Eq)]
+enum CoreStorageNamespace {
+    File(PathBuf),
+    Memory(usize),
+}
+
+#[derive(Clone)]
+pub struct CoreStorageChange {
+    pub key: CoreStorageKey,
+    namespace: CoreStorageNamespace,
+}
+
+struct CoreStorageObserver {
+    platform: Weak<CliPlatform>,
+    sender: tokio::sync::mpsc::UnboundedSender<CoreStorageChange>,
+}
 
 /// How the host answers confirmation prompts (the web/iOS "sign?" modals).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -98,6 +116,7 @@ pub struct CliPlatform {
     chains: truapi::platform::HostChainSet,
     product_storage: Mutex<HashMap<String, HashMap<String, Vec<u8>>>>,
     core_storage: Mutex<HashMap<Vec<u8>, Vec<u8>>>,
+    core_storage_gate: Mutex<()>,
     /// Device-scoped core slots, kept outside the per-user namespaces that
     /// [`Self::switch_pairing_user_storage`] swaps. Peers address this install
     /// by the key held here, so a user switch must not regenerate it.
@@ -160,10 +179,6 @@ impl CliPlatform {
             .as_deref()
             .map(load_product_storage)
             .unwrap_or_default();
-        let core_storage = core_storage_path
-            .as_deref()
-            .map(load_hex_key_map)
-            .unwrap_or_default();
         // Anchored to the role-level bootstrap directory rather than the active
         // user's, so switching users keeps this install's device identity.
         let device_storage_path = storage.as_ref().map(|paths| {
@@ -181,17 +196,14 @@ impl CliPlatform {
             }
             directory.join("device-storage.json")
         });
-        let device_storage = device_storage_path
-            .as_deref()
-            .map(load_hex_key_map)
-            .unwrap_or_default();
 
         Arc::new(Self {
             chain: CliChainProvider::new(network),
             chains: network.host_chain_set(),
             product_storage: Mutex::new(product_storage),
-            core_storage: Mutex::new(core_storage),
-            device_storage: Mutex::new(device_storage),
+            core_storage: Mutex::new(HashMap::new()),
+            core_storage_gate: Mutex::new(()),
+            device_storage: Mutex::new(HashMap::new()),
             product_storage_dir: Mutex::new(product_storage_dir),
             core_storage_path: Mutex::new(core_storage_path),
             device_storage_path,
@@ -250,31 +262,127 @@ impl CliPlatform {
         matches!(key, CoreStorageKey::DeviceEncryptionKey)
     }
 
-    fn persist_device_storage(&self) -> Result<(), String> {
-        let Some(path) = self.device_storage_path.as_deref() else {
-            return Ok(());
+    /// Serialize the whole physical map, including disk completion, across
+    /// independent platforms/processes. No await can drop the lock mid-write.
+    fn with_core_storage<R>(
+        &self,
+        key: &CoreStorageKey,
+        notify_on_change: bool,
+        operation: impl FnOnce(&mut HashMap<Vec<u8>, Vec<u8>>) -> (R, bool),
+    ) -> Result<R, String> {
+        let (result, notification) = {
+            let _gate = self
+                .core_storage_gate
+                .lock()
+                .map_err(|error| error.to_string())?;
+            let path_guard = self
+                .core_storage_path
+                .lock()
+                .map_err(|error| error.to_string())?;
+            let (store, path) = if Self::is_device_scoped(key) {
+                (&self.device_storage, self.device_storage_path.as_deref())
+            } else {
+                (&self.core_storage, path_guard.as_deref())
+            };
+            let mut memory = store.lock().map_err(|error| error.to_string())?;
+            if let Some(path) = path {
+                let _file_lock = lock_core_storage_file(path)?;
+                let mut current = read_hex_key_map(path)?;
+                let (result, changed) = operation(&mut current);
+                let notification = if changed && notify_on_change {
+                    Some(self.storage_namespace(Some(path))?)
+                } else {
+                    None
+                };
+                if changed {
+                    save_hex_key_map(path, &current)?;
+                }
+                *memory = current;
+                (result, notification)
+            } else {
+                let (result, changed) = operation(&mut memory);
+                let notification = (changed && notify_on_change)
+                    .then_some(CoreStorageNamespace::Memory(self as *const Self as usize));
+                (result, notification)
+            }
         };
-        let storage = self
-            .device_storage
-            .lock()
-            .expect("device storage mutex poisoned");
-        save_hex_key_map(path, &storage)
+        // Commit and enqueue are synchronous and cannot be split by cancellation.
+        // The captured physical namespace survives a concurrent user switch, and
+        // every storage/file lock is released before touching the observer list.
+        if let Some(namespace) = notification {
+            self.publish_core_storage_change(CoreStorageChange {
+                key: key.clone(),
+                namespace,
+            });
+        }
+        Ok(result)
     }
 
-    fn persist_core_storage(&self) -> Result<(), String> {
-        let Some(path) = self
+    fn storage_namespace(&self, path: Option<&Path>) -> Result<CoreStorageNamespace, String> {
+        let Some(path) = path else {
+            return Ok(CoreStorageNamespace::Memory(self as *const Self as usize));
+        };
+        let parent = path
+            .parent()
+            .ok_or_else(|| "Core storage path has no parent".to_string())?;
+        let name = path
+            .file_name()
+            .ok_or_else(|| "Core storage path has no filename".to_string())?;
+        fs::canonicalize(parent)
+            .map(|parent| CoreStorageNamespace::File(parent.join(name)))
+            .map_err(|error| format!("resolve core storage namespace: {error}"))
+    }
+
+    fn core_storage_namespace(&self, key: &CoreStorageKey) -> Result<CoreStorageNamespace, String> {
+        if Self::is_device_scoped(key) {
+            return self.storage_namespace(self.device_storage_path.as_deref());
+        }
+        let path = self
             .core_storage_path
             .lock()
-            .expect("core storage path mutex poisoned")
-            .clone()
-        else {
-            return Ok(());
-        };
-        let storage = self
-            .core_storage
+            .map_err(|error| error.to_string())?;
+        self.storage_namespace(path.as_deref())
+    }
+
+    pub fn matches_core_storage_change(&self, change: &CoreStorageChange) -> Result<bool, String> {
+        self.core_storage_namespace(&change.key)
+            .map(|namespace| namespace == change.namespace)
+    }
+
+    fn publish_core_storage_change(&self, change: CoreStorageChange) {
+        CORE_STORAGE_OBSERVERS
             .lock()
-            .expect("core storage mutex poisoned");
-        save_hex_key_map(&path, &storage)
+            .unwrap_or_else(|error| error.into_inner())
+            .retain(|observer| {
+                let Some(platform) = observer.platform.upgrade() else {
+                    return false;
+                };
+                if observer.sender.is_closed() {
+                    return false;
+                }
+                // Namespace failures are delivered too: the deferred consumer reports
+                // them and refreshes fail-closed, rather than losing an invalidation.
+                if platform.matches_core_storage_change(&change) != Ok(false) {
+                    return observer.sender.send(change.clone()).is_ok();
+                }
+                true
+            });
+    }
+
+    /// Reliable host-private invalidations shared by every live platform in the
+    /// same physical namespace. Raw writes and unsuccessful CAS never emit.
+    pub fn subscribe_core_storage_changes(
+        self: &Arc<Self>,
+    ) -> tokio::sync::mpsc::UnboundedReceiver<CoreStorageChange> {
+        let (sender, receiver) = tokio::sync::mpsc::unbounded_channel();
+        CORE_STORAGE_OBSERVERS
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .push(CoreStorageObserver {
+                platform: Arc::downgrade(self),
+                sender,
+            });
+        receiver
     }
 
     /// Current identity-owned state directory (or the pairing bootstrap before
@@ -304,6 +412,10 @@ impl CliPlatform {
         let Some(scope) = &self.pairing_scope else {
             return Ok(());
         };
+        let _gate = self
+            .core_storage_gate
+            .lock()
+            .map_err(|error| error.to_string())?;
         let user_id = pairing_storage_name(user_id);
         let user_id = user_id.as_ref();
         let target_state = scope.network_dir.join(format!("{user_id}_pairing_host"));
@@ -343,6 +455,13 @@ impl CliPlatform {
                 .core_storage
                 .lock()
                 .expect("core storage mutex poisoned");
+            let _file_lock = current_path
+                .as_deref()
+                .map(lock_core_storage_file)
+                .transpose()?;
+            if let Some(path) = current_path.as_deref() {
+                *current = read_hex_key_map(path)?;
+            }
             if migrating_bootstrap {
                 current.drain().collect::<Vec<_>>()
             } else {
@@ -357,8 +476,10 @@ impl CliPlatform {
             }
         };
 
-        let mut target_core = load_hex_key_map(&target_core_path);
+        let _target_lock = lock_core_storage_file(&target_core_path)?;
+        let mut target_core = read_hex_key_map(&target_core_path)?;
         target_core.extend(carried);
+        save_hex_key_map(&target_core_path, &target_core)?;
         let mut target_products = load_product_storage(&target_product_dir);
         if migrating_bootstrap {
             target_products.extend(
@@ -392,7 +513,6 @@ impl CliPlatform {
             .lock()
             .expect("product storage path mutex poisoned") = Some(target_product_dir);
         *self.state_dir.lock().expect("state path mutex poisoned") = Some(target_state);
-        self.persist_core_storage()?;
         persist_current_pairing_user(&scope.bootstrap_dir, user_id)
     }
 
@@ -688,16 +808,10 @@ impl CoreStorage for CliPlatform {
         &self,
         key: CoreStorageKey,
     ) -> Result<Option<Vec<u8>>, api::GenericError> {
-        let store = if Self::is_device_scoped(&key) {
-            &self.device_storage
-        } else {
-            &self.core_storage
-        };
-        Ok(store
-            .lock()
-            .expect("core storage mutex poisoned")
-            .get(&Self::core_key(&key))
-            .cloned())
+        self.with_core_storage(&key, false, |storage| {
+            (storage.get(&Self::core_key(&key)).cloned(), false)
+        })
+        .map_err(|reason| api::GenericError { reason })
     }
 
     async fn write_core_storage(
@@ -705,45 +819,46 @@ impl CoreStorage for CliPlatform {
         key: CoreStorageKey,
         value: Vec<u8>,
     ) -> Result<(), api::GenericError> {
-        let device_scoped = Self::is_device_scoped(&key);
-        {
-            let store = if device_scoped {
-                &self.device_storage
-            } else {
-                &self.core_storage
-            };
-            store
-                .lock()
-                .expect("core storage mutex poisoned")
-                .insert(Self::core_key(&key), value);
-        }
-        if device_scoped {
-            self.persist_device_storage()
-        } else {
-            self.persist_core_storage()
-        }
+        self.with_core_storage(&key, false, |storage| {
+            storage.insert(Self::core_key(&key), value);
+            ((), true)
+        })
         .map_err(|reason| api::GenericError { reason })
     }
 
     async fn clear_core_storage(&self, key: CoreStorageKey) -> Result<(), api::GenericError> {
-        let device_scoped = Self::is_device_scoped(&key);
-        {
-            let store = if device_scoped {
-                &self.device_storage
-            } else {
-                &self.core_storage
-            };
-            store
-                .lock()
-                .expect("core storage mutex poisoned")
-                .remove(&Self::core_key(&key));
-        }
-        if device_scoped {
-            self.persist_device_storage()
-        } else {
-            self.persist_core_storage()
-        }
+        self.with_core_storage(&key, false, |storage| {
+            let changed = storage.remove(&Self::core_key(&key)).is_some();
+            ((), changed)
+        })
         .map_err(|reason| api::GenericError { reason })
+    }
+
+    async fn compare_exchange_core_storage(
+        &self,
+        key: CoreStorageKey,
+        expected: Option<Vec<u8>>,
+        replacement: Vec<u8>,
+        notify_on_success: bool,
+    ) -> Result<bool, api::GenericError> {
+        self.with_core_storage(&key, notify_on_success, |storage| {
+            let key = Self::core_key(&key);
+            if storage.get(&key) != expected.as_ref() {
+                return (false, false);
+            }
+            storage.insert(key, replacement);
+            (true, true)
+        })
+        .map_err(|reason| api::GenericError { reason })
+    }
+
+    fn core_storage_changed(&self, key: CoreStorageKey) {
+        match self.core_storage_namespace(&key) {
+            Ok(namespace) => self.publish_core_storage_change(CoreStorageChange { key, namespace }),
+            Err(reason) => {
+                tracing::warn!(%reason, "could not resolve core storage notification namespace")
+            }
+        }
     }
 }
 
@@ -1015,8 +1130,13 @@ impl UserConfirmation for CliPlatform {
         review: UserConfirmationReview,
     ) -> Result<PermissionDecision, api::GenericError> {
         let (action, detail) = approval_summary(&review);
+        let policy = if matches!(review, UserConfirmationReview::PreimageSubmit(_)) {
+            ApprovalPolicy::Prompt
+        } else {
+            self.approval_policy()
+        };
         Ok(self
-            .decide_with(action, detail, ApprovalKind::Permission)
+            .decide_with_policy(action, detail, ApprovalKind::Permission, policy)
             .await)
     }
 
@@ -1148,8 +1268,12 @@ fn approval_summary(review: &UserConfirmationReview) -> (&'static str, String) {
         UserConfirmationReview::PreimageSubmit(review) => (
             "submit preimage",
             format!(
-                "A product requested submission of a {}-byte preimage.",
-                review.size
+                "Product {} requested a {}-byte upload for root 0x{} on Bulletin 0x{}. \
+                 Allow once, or explicitly allow automatic uploads of at most {} bytes, \
+                 {} times per rolling {} seconds. Revoke with --revoke-automatic-uploads {}.",
+                review.product_id, review.size, hex::encode(review.root_public_key),
+                hex::encode(review.genesis_hash), review.automatic_max_bytes,
+                review.automatic_max_uploads, review.automatic_window_seconds, review.product_id
             ),
         ),
         UserConfirmationReview::AccountAccess(review) => (
@@ -1194,6 +1318,15 @@ fn approval_summary(review: &UserConfirmationReview) -> (&'static str, String) {
             format!(
                 "Product {} requested permission to share a reference to your profile with every Chat contact. Contacts who receive it can read that profile.",
                 review.product_id
+            ),
+        ),
+        UserConfirmationReview::Calling(review) => (
+            "allow calling",
+            format!(
+                "Product {} requested calling permission for account 0x{} on network 0x{}. Microphone and camera access are separate permissions.",
+                review.product_id.chars().take(255).flat_map(char::escape_default).collect::<String>(),
+                hex::encode(review.account),
+                hex::encode(review.network),
             ),
         ),
     }
@@ -1388,44 +1521,6 @@ fn product_storage_path(directory: &Path, product_id: &str) -> PathBuf {
     directory.join(format!("{slug}--{}.json", hex::encode(digest)))
 }
 
-/// Extension appended to a storage file that could not be read, so its contents
-/// survive for manual recovery.
-const UNREADABLE_SUFFIX: &str = "unreadable";
-
-/// Load a storage file, treating an unreadable one as empty.
-///
-/// `read_string_map` collects into a `Result`, so one undecodable value fails the
-/// whole file. Returning an empty map on that would be silently destructive: the
-/// caller's next write persists the empty map over the file, taking every intact
-/// entry with it — including keys this run never touched. So the file is first
-/// moved aside to `<name>.unreadable`, which keeps the data recoverable and makes
-/// the warning actionable.
-fn load_string_map(path: &Path) -> HashMap<String, Vec<u8>> {
-    match read_string_map(path) {
-        Ok(values) => values,
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => HashMap::new(),
-        Err(err) => {
-            let preserved = path.with_extension(UNREADABLE_SUFFIX);
-            match fs::rename(path, &preserved) {
-                Ok(()) => tracing::warn!(
-                    path = %path.display(),
-                    preserved = %preserved.display(),
-                    %err,
-                    "could not read CLI storage; moved it aside and started empty"
-                ),
-                Err(rename_err) => tracing::warn!(
-                    path = %path.display(),
-                    %err,
-                    %rename_err,
-                    "could not read CLI storage, and could not move it aside; \
-                     the next write will overwrite it"
-                ),
-            }
-            HashMap::new()
-        }
-    }
-}
-
 fn read_string_map(path: &Path) -> std::io::Result<HashMap<String, Vec<u8>>> {
     let text = fs::read_to_string(path)?;
     let json = serde_json::from_str::<JsonMap>(&text)
@@ -1482,10 +1577,38 @@ pub fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), String> {
     Ok(())
 }
 
-fn load_hex_key_map(path: &Path) -> HashMap<Vec<u8>, Vec<u8>> {
-    load_string_map(path)
+/// Lock a stable sidecar inode: atomic rename replaces the data inode itself.
+fn lock_core_storage_file(path: &Path) -> Result<fs::File, String> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| "Core storage path has no parent".to_string())?;
+    fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+    let file = fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .open(path.with_extension("lock"))
+        .map_err(|error| error.to_string())?;
+    fs2::FileExt::lock_exclusive(&file).map_err(|error| error.to_string())?;
+    Ok(file)
+}
+
+/// Missing is empty; malformed or unavailable policy storage is an error,
+/// never a reason to discard permission generations and accept stale consent.
+fn read_hex_key_map(path: &Path) -> Result<HashMap<Vec<u8>, Vec<u8>>, String> {
+    let values = match read_string_map(path) {
+        Ok(values) => values,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(HashMap::new()),
+        Err(error) => return Err(format!("read {}: {error}", path.display())),
+    };
+    values
         .into_iter()
-        .filter_map(|(key, value)| hex::decode(key).ok().map(|decoded| (decoded, value)))
+        .map(|(key, value)| {
+            hex::decode(key)
+                .map(|key| (key, value))
+                .map_err(|error| error.to_string())
+        })
         .collect()
 }
 
@@ -1798,13 +1921,8 @@ mod tests {
         );
     }
 
-    /// One undecodable value in `core-storage.json` must not cost the host the
-    /// entries it never touched. Before the file was moved aside, a real
-    /// `CliPlatform` discarded `PairingDeviceIdentity` and then overwrote it on
-    /// the next unrelated write.
-    ///
-    /// Keys on disk are hex of the SCALE-encoded `CoreStorageKey`, so
-    /// `AuthSession` is `00` and `PairingDeviceIdentity` is `01`.
+    /// Unreadable permission generations must never become an empty store or
+    /// be overwritten by an unrelated write, clear, or compare-exchange.
     #[tokio::test]
     async fn cli_platform_preserves_unreadable_core_storage() {
         use truapi::platform::CoreStorage;
@@ -1815,11 +1933,8 @@ mod tests {
         std::fs::create_dir_all(&state_dir).expect("state dir");
         let core_path = state_dir.join("core-storage.json");
 
-        std::fs::write(
-            &core_path,
-            r#"{"values":{"00":"cafebabe","01":"deadbeef","ff":"zzzz"}}"#,
-        )
-        .expect("seed core storage");
+        let original = r#"{"values":{"00":"cafebabe","01":"deadbeef","ff":"zzzz"}}"#;
+        std::fs::write(&core_path, original).expect("seed core storage");
 
         let platform = CliPlatform::new(
             test_network(),
@@ -1828,88 +1943,121 @@ mod tests {
             None,
         );
 
-        // Nothing loaded: the good entries went with the bad one.
-        assert_eq!(
+        assert!(
             platform
                 .read_core_storage(CoreStorageKey::AuthSession)
                 .await
-                .expect("read"),
-            None,
-            "AuthSession should have loaded but the file was discarded"
+                .is_err()
+        );
+        assert!(
+            platform
+                .write_core_storage(CoreStorageKey::AuthSession, vec![0x42])
+                .await
+                .is_err()
+        );
+        assert!(
+            platform
+                .clear_core_storage(CoreStorageKey::AuthSession)
+                .await
+                .is_err()
+        );
+        assert!(
+            platform
+                .compare_exchange_core_storage(CoreStorageKey::AuthSession, None, vec![0x42], true,)
+                .await
+                .is_err()
         );
         assert_eq!(
-            platform
-                .read_core_storage(CoreStorageKey::PairingDeviceIdentity)
-                .await
-                .expect("read"),
-            None
-        );
-
-        // The host writes one unrelated key. That persists the whole map.
-        platform
-            .write_core_storage(CoreStorageKey::AuthSession, vec![0x42])
-            .await
-            .expect("write");
-
-        let after = std::fs::read_to_string(&core_path).expect("read back");
-        assert!(
-            after.contains("42"),
-            "the new AuthSession value should be persisted: {after}"
-        );
-
-        // The unreadable original is preserved beside it, so nothing is lost.
-        let preserved = std::fs::read_to_string(core_path.with_extension(UNREADABLE_SUFFIX))
-            .expect("the unreadable file should have been moved aside");
-        assert!(
-            preserved.contains("deadbeef") && preserved.contains("cafebabe"),
-            "the moved-aside file should still hold the original entries: {preserved}"
+            std::fs::read_to_string(&core_path).expect("read original"),
+            original
         );
     }
 
-    /// `read_string_map` collects into a `Result`, so one undecodable value fails
-    /// the whole file and the load yields nothing. That is survivable only
-    /// because the file is moved aside first — otherwise the next write persists
-    /// the empty map over it and every intact entry is gone.
     #[test]
-    fn an_unreadable_storage_file_is_moved_aside_before_the_next_write() {
+    fn independent_file_stores_compare_exchange_one_shared_slot() {
         let dir = tempdir().expect("tempdir");
-        let path = dir.path().join("core-storage.json");
-
-        // Two entries the host cares about, plus one whose value is not hex.
-        let raw = r#"{"values":{
-            "6175746853657373696f6e":"cafebabe",
-            "70616972696e674964656e74697479":"deadbeef",
-            "62726f6b656e":"zzzz"
-        }}"#;
-        std::fs::write(&path, raw).expect("seed");
-
-        // The two good entries are readable in isolation, so nothing about them
-        // is malformed — they are collateral.
-        assert!(raw.contains("cafebabe") && raw.contains("deadbeef"));
-
-        // Load: everything is dropped, not just the bad entry.
-        let loaded = load_hex_key_map(&path);
-        assert!(
-            loaded.is_empty(),
-            "expected the whole file to be discarded, got {} entries",
-            loaded.len()
-        );
-
-        // A later write persists the empty map plus whatever is new. The original
-        // is no longer at `path`, so this must not be able to destroy it.
-        let mut next: HashMap<Vec<u8>, Vec<u8>> = loaded;
-        next.insert(b"fresh".to_vec(), b"\x01".to_vec());
-        save_hex_key_map(&path, &next).expect("save");
-
-        let after = std::fs::read_to_string(&path).expect("read back");
-        assert!(after.contains(&hex::encode(b"fresh")));
-
-        let preserved = std::fs::read_to_string(path.with_extension(UNREADABLE_SUFFIX))
-            .expect("the unreadable file should have been moved aside");
-        assert!(
-            preserved.contains("cafebabe") && preserved.contains("deadbeef"),
-            "the moved-aside file should still hold the original entries: {preserved}"
-        );
+        let platforms = [0, 1].map(|_| {
+            CliPlatform::new(
+                test_network(),
+                Some(CliStoragePaths::new(
+                    dir.path().join("state"),
+                    dir.path().join("products"),
+                )),
+                ApprovalPolicy::AutoAccept,
+                None,
+            )
+        });
+        let mut changes = platforms
+            .each_ref()
+            .map(|platform| platform.subscribe_core_storage_changes());
+        let start = Arc::new(std::sync::Barrier::new(2));
+        let workers = platforms.each_ref().map(|platform| {
+            let platform = platform.clone();
+            let start = start.clone();
+            std::thread::spawn(move || {
+                start.wait();
+                futures::executor::block_on(platform.compare_exchange_core_storage(
+                    CoreStorageKey::AuthSession,
+                    None,
+                    vec![1],
+                    true,
+                ))
+                .expect("compare exchange")
+            })
+        });
+        let results = workers.map(|worker| worker.join().expect("storage thread"));
+        assert_eq!(results.into_iter().filter(|won| *won).count(), 1);
+        for receiver in &mut changes {
+            assert_eq!(
+                receiver.try_recv().unwrap().key,
+                CoreStorageKey::AuthSession
+            );
+        }
+        futures::executor::block_on(async {
+            platforms[0]
+                .write_core_storage(CoreStorageKey::AuthSession, Vec::new())
+                .await
+                .unwrap();
+            assert!(!platforms[1].compare_exchange_core_storage(
+                CoreStorageKey::AuthSession, None, vec![2], true,
+            ).await.unwrap());
+            assert!(
+                platforms[1]
+                    .compare_exchange_core_storage(
+                        CoreStorageKey::AuthSession,
+                        Some(Vec::new()),
+                        vec![3],
+                        false,
+                    )
+                    .await
+                    .unwrap()
+            );
+            assert_eq!(
+                platforms[0]
+                    .read_core_storage(CoreStorageKey::AuthSession)
+                    .await
+                    .unwrap(),
+                Some(vec![3]),
+            );
+            platforms[0]
+                .clear_core_storage(CoreStorageKey::AuthSession)
+                .await
+                .unwrap();
+            assert!(platforms[1].compare_exchange_core_storage(
+                CoreStorageKey::AuthSession, None, vec![4], true,
+            ).await.unwrap());
+            for receiver in &mut changes {
+                assert_eq!(
+                    receiver.try_recv().unwrap().key,
+                    CoreStorageKey::AuthSession
+                );
+            }
+            assert!(
+                changes
+                    .iter_mut()
+                    .all(|receiver| receiver.try_recv().is_err())
+            );
+        });
     }
 
     fn test_storage_paths(root: &Path, session: &str) -> CliStoragePaths {
@@ -2083,23 +2231,6 @@ mod tests {
                 HashMap::from([("theme".to_string(), b"dark".to_vec())]),
             )])
         );
-    }
-
-    #[test]
-    fn approval_summaries_are_concise_and_do_not_dump_payloads() {
-        let review =
-            UserConfirmationReview::PreimageSubmit(truapi::platform::PreimageSubmitReview {
-                size: 4_096,
-            });
-
-        let (action, detail) = approval_summary(&review);
-
-        assert_eq!(action, "submit preimage");
-        assert_eq!(
-            detail,
-            "A product requested submission of a 4096-byte preimage."
-        );
-        assert!(!detail.contains("["));
     }
 
     /// Both products by name, because a signature made with an account the

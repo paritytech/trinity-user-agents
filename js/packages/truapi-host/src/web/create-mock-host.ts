@@ -463,7 +463,9 @@ export interface MockHost {
    * its product subscribes has the statement replayed to it on subscribe
    * rather than losing it.
    */
-  injectStatement(statement: StatementInput | Uint8Array | string): StatementEntry;
+  injectStatement(
+    statement: StatementInput | Uint8Array | string,
+  ): StatementEntry;
   /** Statements injected so far, in order, as `0x` hex. */
   getInjectedStatements(): string[];
   /**
@@ -488,6 +490,8 @@ export interface MockHost {
   sentRpc(): string[];
   /** Auth-state transitions the core emitted, in order. */
   authStates(): AuthState[];
+  /** Explicit core-storage policy notifications, excluding raw writes/clears. */
+  coreStorageChanges(): CoreStorageKey[];
   /**
    * Full confirmation reviews the core requested, in order.
    *
@@ -523,7 +527,9 @@ export interface MockHost {
    */
   getConnectionStatus(): ChainStatus;
   /** Switch the answer both permission prompts fall back to. */
-  setPermissionBehavior(behavior: PermissionPolicy | PermissionPolicyAlias): void;
+  setPermissionBehavior(
+    behavior: PermissionPolicy | PermissionPolicyAlias,
+  ): void;
   /**
    * Release the mock's state and drop every live subscription.
    *
@@ -669,9 +675,15 @@ function normalizeHash(hash: string | Uint8Array): string {
  * other still holds. A single-chain suite is not safe from it.
  */
 /** Record a `statement_submit` the core sent to a real chain. */
-function recordChainSubmission(request: string, into: RetainedStatement[]): void {
+function recordChainSubmission(
+  request: string,
+  into: RetainedStatement[],
+): void {
   try {
-    const frame = JSON.parse(request) as { method?: string; params?: unknown[] };
+    const frame = JSON.parse(request) as {
+      method?: string;
+      params?: unknown[];
+    };
     if (frame.method !== "statement_submit") return;
     const [statement] = frame.params ?? [];
     if (typeof statement !== "string") return;
@@ -705,7 +717,8 @@ function connectToChain(
     socket.addEventListener("open", () => resolve(), { once: true });
     socket.addEventListener(
       "error",
-      () => reject(new Error(`chain proxy failed to connect to ${proxy.rpcUrl}`)),
+      () =>
+        reject(new Error(`chain proxy failed to connect to ${proxy.rpcUrl}`)),
       { once: true },
     );
   });
@@ -760,7 +773,8 @@ function connectToChain(
     ownStatementSubscriptions.clear();
     loopback?.release(deliver);
     // Release every reader, so a stream ends instead of hanging on a drop.
-    while (waiting.length > 0) waiting.shift()?.({ value: undefined, done: true });
+    while (waiting.length > 0)
+      waiting.shift()?.({ value: undefined, done: true });
   };
   disconnectors?.add(finish);
   socket.addEventListener("close", finish, { once: true });
@@ -799,7 +813,8 @@ function connectToChain(
               if (buffered !== undefined) {
                 return Promise.resolve({ value: buffered, done: false });
               }
-              if (closed) return Promise.resolve({ value: undefined, done: true });
+              if (closed)
+                return Promise.resolve({ value: undefined, done: true });
               return new Promise((resolve) => waiting.push(resolve));
             },
           };
@@ -860,6 +875,7 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
   } = config;
 
   const storage = new Map<string, Uint8Array>();
+  const coreStorageChanges: CoreStorageKey[] = [];
   const preimages = new Map<string, Uint8Array>();
   const navigations: string[] = [];
   const pushedNotifications: NotificationLogEntry[] = [];
@@ -1125,15 +1141,33 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
     coreStorage: {
       async readCoreStorage(key) {
         if (faults.storageError) throw new Error(faults.storageError);
-        return storage.get(coreKey(key));
+        return storage.get(coreKey(key))?.slice();
       },
       async writeCoreStorage(key, value) {
         if (faults.storageError) throw new Error(faults.storageError);
-        storage.set(coreKey(key), value);
+        storage.set(coreKey(key), value.slice());
       },
       async clearCoreStorage(key) {
         if (faults.storageError) throw new Error(faults.storageError);
         storage.delete(coreKey(key));
+      },
+      async compareExchangeCoreStorage(key, expected, replacement, notifyOnSuccess) {
+        if (faults.storageError) throw new Error(faults.storageError);
+        const slot = coreKey(key);
+        const current = storage.get(slot);
+        if (current === undefined ? expected !== undefined : (
+          expected === undefined || current.length !== expected.length ||
+          current.some((byte, index) => byte !== expected[index])
+        )) {
+          return false;
+        }
+        // No await between the byte comparison, commit and notification.
+        storage.set(slot, replacement.slice());
+        if (notifyOnSuccess) callbacks.coreStorage.coreStorageChanged(key);
+        return true;
+      },
+      coreStorageChanged(key) {
+        coreStorageChanges.push(structuredClone(key));
       },
     },
 
@@ -1163,10 +1197,18 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
         const entry = pushedNotifications.find((n) => n.id === id);
         if (entry) entry.cancelled = true;
       },
-      async receiverAuthority() { return undefined; },
-      async receiverConsent() { throw new Error("background receiving unsupported"); },
-      async receiverChanged() { throw new Error("background receiving unsupported"); },
-      async receiverCommand() { return undefined; },
+      async receiverAuthority() {
+        return undefined;
+      },
+      async receiverConsent() {
+        throw new Error("background receiving unsupported");
+      },
+      async receiverChanged() {
+        throw new Error("background receiving unsupported");
+      },
+      async receiverCommand() {
+        return undefined;
+      },
       async activationEvents() {
         throw new Error("notification activation is unsupported");
       },
@@ -1224,8 +1266,10 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
           chainProxies.find(
             (candidate) =>
               candidate.genesisHash !== undefined &&
-              normalizeHash(candidate.genesisHash) === normalizeHash(genesisHash),
-          ) ?? chainProxies.find((candidate) => candidate.genesisHash === undefined);
+              normalizeHash(candidate.genesisHash) ===
+                normalizeHash(genesisHash),
+          ) ??
+          chainProxies.find((candidate) => candidate.genesisHash === undefined);
         if (proxy) {
           // After the dial, not before: a proxy that fails to open must leave
           // the status alone rather than report a connection that is not there.
@@ -1298,7 +1342,9 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
       async confirmPermission(review) {
         reviews.push(review);
         if (faults.confirmationError) throw new Error(faults.confirmationError);
-        return decision(confirmUserActions);
+        return review.tag === "PreimageSubmit" && confirmUserActions
+          ? "AllowOnce"
+          : decision(confirmUserActions);
       },
     },
 
@@ -1357,7 +1403,9 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
         // reports it too rather than handing back a stream that looks healthy
         // and never carries the rooms a failing host would refuse to list.
         if (faults.chatError) {
-          return failedSubscription<HostChatListSubscribeItem>(faults.chatError);
+          return failedSubscription<HostChatListSubscribeItem>(
+            faults.chatError,
+          );
         }
         return liveSubscription<HostChatListSubscribeItem>(
           { rooms: byKey(chatRooms) },
@@ -1453,6 +1501,7 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
     },
     sentRpc: () => [...sentRpc],
     authStates: () => [...authStates],
+    coreStorageChanges: () => structuredClone(coreStorageChanges),
     reviews: () => [...reviews],
     confirmations: () => reviews.map((review) => review.tag),
     getSigningLog: () =>
@@ -1470,8 +1519,7 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
           : [{ type, payload: (review as { value: unknown }).value }];
       }),
     getHostCallCount: () => hostCallCount,
-    getIsAuthenticated: () =>
-      authStates.at(-1)?.tag === "Connected",
+    getIsAuthenticated: () => authStates.at(-1)?.tag === "Connected",
     getConnectionStatus: () => chainStatus,
     setPermissionBehavior: (behavior) => {
       const policy = normalizePermissionPolicy(behavior);
@@ -1605,6 +1653,7 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
       this.clearSentRpc();
       this.clearPreimages();
       this.clearStorage();
+      coreStorageChanges.length = 0;
       this.clearChatState();
       this.clearStatements();
       openOperations.length = 0;
@@ -1637,8 +1686,7 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
  * all-zero hash is also the natural placeholder a caller passes by accident.
  */
 export const MOCK_GENESIS = {
-  people:
-    "0x1111111111111111111111111111111111111111111111111111111111111111",
+  people: "0x1111111111111111111111111111111111111111111111111111111111111111",
   bulletin:
     "0x2222222222222222222222222222222222222222222222222222222222222222",
   assetHub:

@@ -29,6 +29,7 @@ use super::callbacks::{
     NativeGameCallbacks,
     NativePocketCallbacks,
 };
+use super::media::{MediaCallbackPlatform, NativeMediaCallbacks};
 use super::config::{
     HostRuntimeConfig, NativeResolvedHostRuntimeConfig, NativeRuntimeConfigError,
     ProductExecutionConfig,
@@ -108,6 +109,7 @@ impl NativeTrUApiHostRuntime {
             native_wallet,
         ));
         runtime.set_identity_backend_host(platform.clone());
+        runtime.set_permission_status_host(platform.clone());
         assert!(
             runtime
                 .worker_ledger()
@@ -150,6 +152,7 @@ impl NativeTrUApiHostRuntime {
         chat_callbacks: Option<Arc<dyn NativeChatCallbacks>>,
         pocket_callbacks: Option<Arc<dyn NativePocketCallbacks>>,
         game_callbacks: Option<Arc<dyn NativeGameCallbacks>>,
+        media_callbacks: Option<Arc<dyn NativeMediaCallbacks>>,
         product: ProductContext,
     ) -> Arc<NativeProductExecution> {
         let events = Arc::new(NativeEventBus::default());
@@ -177,6 +180,9 @@ impl NativeTrUApiHostRuntime {
                     events: events.clone(),
                 })
             });
+        let media = media_callbacks.map(|callbacks| -> Arc<dyn crate::platform::MediaPlatform> {
+            Arc::new(MediaCallbackPlatform { callbacks })
+        });
         let game: Option<Arc<dyn crate::platform::GamePlatform>> =
             game_callbacks.map(|game| -> Arc<dyn crate::platform::GamePlatform> {
                 Arc::new(GameCallbackPlatform { game })
@@ -187,6 +193,7 @@ impl NativeTrUApiHostRuntime {
             platform,
             chat,
             pocket,
+            media,
             game,
             permission_status,
             expanded_card,
@@ -358,13 +365,27 @@ impl NativeTrUApiHostRuntime {
     }
 
     /// Enumerate durable receiving registrations, including synchronized ones.
-    pub async fn receiving_pending(&self) -> Result<Vec<crate::platform::ReceivingRegistration>, HostRejection> {
-        self.runtime.receiving().pending().await.map_err(HostRejection::from)
+    pub async fn receiving_pending(
+        &self,
+    ) -> Result<Vec<crate::platform::ReceivingRegistration>, HostRejection> {
+        self.runtime
+            .receiving()
+            .pending()
+            .await
+            .map_err(HostRejection::from)
     }
 
     /// Acknowledge exactly the durable revision synchronized by the transport.
-    pub async fn receiving_synchronized(&self, product_id: String, revision: u64) -> Result<bool, HostRejection> {
-        self.runtime.receiving().synchronized(&product_id, revision).await.map_err(HostRejection::from)
+    pub async fn receiving_synchronized(
+        &self,
+        product_id: String,
+        revision: u64,
+    ) -> Result<bool, HostRejection> {
+        self.runtime
+            .receiving()
+            .synchronized(&product_id, revision)
+            .await
+            .map_err(HostRejection::from)
     }
 
     /// Verify a complete frame against its independently observed chain and topics.
@@ -373,65 +394,135 @@ impl NativeTrUApiHostRuntime {
         reason = "Preserve the native receiving API shared with generated host bindings"
     )]
     pub async fn receiving_ingest(
-        &self, product_id: String, revision: u64, watch_id: String,
-        actual_genesis: String, actual_channel: String, actual_topics: Vec<String>, frame: Vec<u8>,
+        &self,
+        product_id: String,
+        revision: u64,
+        watch_id: String,
+        actual_genesis: String,
+        actual_channel: String,
+        actual_topics: Vec<String>,
+        frame: Vec<u8>,
     ) -> Result<Vec<crate::latest::ReceivingEvent>, HostRejection> {
-        self.runtime.receiving().ingest(&product_id, revision, watch_id, actual_genesis, actual_channel, actual_topics, frame)
-            .await.map_err(HostRejection::from)
+        self.runtime
+            .receiving()
+            .ingest(
+                &product_id,
+                revision,
+                watch_id,
+                actual_genesis,
+                actual_channel,
+                actual_topics,
+                frame,
+            )
+            .await
+            .map_err(HostRejection::from)
     }
 
     /// Decode and authenticate a raw SCALE statement before receiving its frame.
     pub async fn receiving_ingest_statement(
-        &self, product_id: String, revision: u64, watch_id: String,
-        actual_genesis: String, statement: Vec<u8>,
+        &self,
+        product_id: String,
+        revision: u64,
+        watch_id: String,
+        actual_genesis: String,
+        statement: Vec<u8>,
     ) -> Result<Vec<crate::latest::ReceivingEvent>, HostRejection> {
-        self.runtime.receiving().ingest_statement(&product_id, revision, watch_id, actual_genesis, statement)
-            .await.map_err(HostRejection::from)
+        self.runtime
+            .receiving()
+            .ingest_statement(&product_id, revision, watch_id, actual_genesis, statement)
+            .await
+            .map_err(HostRejection::from)
     }
 
     /// Reserve display after foreground grace, rechecking receipts and authority.
     pub async fn receiving_prepare_display(
-        &self, product_id: String, revision: u64, event_id: String,
+        &self,
+        product_id: String,
+        revision: u64,
+        event_id: String,
     ) -> Result<Option<crate::latest::ReceivingEvent>, HostRejection> {
-        self.runtime.receiving().prepare_display(&product_id, revision, event_id).await.map_err(HostRejection::from)
+        self.runtime
+            .receiving()
+            .prepare_display(&product_id, revision, event_id)
+            .await
+            .map_err(HostRejection::from)
     }
 
     /// Validate a click before loading the verified product, without enqueueing it.
     pub async fn receiving_validate_activation(
-        &self, product_id: String, revision: u64, event_id: String,
+        &self,
+        product_id: String,
+        revision: u64,
+        event_id: String,
     ) -> Result<Option<crate::latest::ReceivingEvent>, HostRejection> {
-        self.runtime.receiving().validate_activation(&product_id, revision, event_id).await.map_err(HostRejection::from)
+        self.runtime
+            .receiving()
+            .validate_activation(&product_id, revision, event_id)
+            .await
+            .map_err(HostRejection::from)
     }
 
     /// Clear a reservation only after explicit display failure, not an unknown outcome.
     pub async fn receiving_cancel_display(
-        &self, product_id: String, revision: u64, event_id: String,
+        &self,
+        product_id: String,
+        revision: u64,
+        event_id: String,
     ) -> Result<(), HostRejection> {
-        self.runtime.receiving().cancel_display(&product_id, revision, event_id).await.map_err(HostRejection::from)
+        self.runtime
+            .receiving()
+            .cancel_display(&product_id, revision, event_id)
+            .await
+            .map_err(HostRejection::from)
     }
 
     /// Record actual platform display, not enrollment or ingestion.
     pub async fn receiving_confirm_display(
-        &self, product_id: String, revision: u64, event_id: String,
+        &self,
+        product_id: String,
+        revision: u64,
+        event_id: String,
     ) -> Result<(), HostRejection> {
-        self.runtime.receiving().confirm_display(&product_id, revision, event_id).await.map_err(HostRejection::from)
+        self.runtime
+            .receiving()
+            .confirm_display(&product_id, revision, event_id)
+            .await
+            .map_err(HostRejection::from)
     }
 
     /// Resolve a click only under current trusted authority, without launching URLs.
     pub async fn receiving_activate(
-        &self, product_id: String, revision: u64, event_id: String,
+        &self,
+        product_id: String,
+        revision: u64,
+        event_id: String,
     ) -> Result<Option<crate::latest::ReceivingEvent>, HostRejection> {
-        self.runtime.receiving().activate(&product_id, revision, event_id).await.map_err(HostRejection::from)
+        self.runtime
+            .receiving()
+            .activate(&product_id, revision, event_id)
+            .await
+            .map_err(HostRejection::from)
     }
 
     /// Revoke locally before logout or destructive account erasure.
     pub async fn receiving_revoke(&self, product_id: String) -> Result<(), HostRejection> {
-        self.runtime.receiving().revoke(&product_id).await.map_err(HostRejection::from)
+        self.runtime
+            .receiving()
+            .revoke(&product_id)
+            .await
+            .map_err(HostRejection::from)
     }
 
     /// Queue synchronization after the host durably rotates its selected transport.
-    pub async fn receiving_mark_transport_changed(&self, product_id: String) -> Result<(), HostRejection> {
-        self.runtime.receiving().mark_transport_changed(&product_id).await.map_err(HostRejection::from)
+    pub async fn receiving_mark_transport_changed(
+        &self,
+        product_id: String,
+    ) -> Result<(), HostRejection> {
+        self.runtime
+            .receiving()
+            .mark_transport_changed(&product_id)
+            .await
+            .map_err(HostRejection::from)
     }
 
     /// Enumerate existing core decisions, including resets. Does not prompt
@@ -464,7 +555,7 @@ impl NativeTrUApiHostRuntime {
             {
                 continue;
             }
-            let canonical = authorization_key(&product.product_id, request);
+            let canonical = authorization_key(&product.product_id, request)?;
             let canonical_id = canonical.encode();
             // Historical full-owner/target account aliases are not authority.
             // Read the normalized slot so aliases never display phantom grants.
@@ -527,8 +618,7 @@ impl NativeTrUApiHostRuntime {
         let admin = self.runtime.product_admin(product.clone());
         let result = admin
             .product_runtime()
-            .permissions_service()
-            .set_canonical_authorization_status(&request, status)
+            .set_canonical_permission_authorization_status(request.clone(), status)
             .await
             .map_err(Into::into);
         if status != PermissionAuthorizationStatus::Authorized {
@@ -612,13 +702,16 @@ impl NativeTrUApiHostRuntime {
     /// Open a connection-scoped execution with immutable trusted context.
     /// `chat_callbacks` installs the host's Chat adapter; hosts without the
     /// Chat modality pass `None`. `pocket_callbacks` does the same for the
-    /// card collection. `game_callbacks` does the same for game reminders.
+    /// card collection. `media_callbacks` installs the entire Media backend;
+    /// hosts without complete capture/RTC/compositing support pass `None`.
+    /// `game_callbacks` installs game reminders.
     pub fn open_product_execution(
         &self,
         callbacks: Arc<dyn HostCallbacks>,
         chat_callbacks: Option<Arc<dyn NativeChatCallbacks>>,
         pocket_callbacks: Option<Arc<dyn NativePocketCallbacks>>,
         game_callbacks: Option<Arc<dyn NativeGameCallbacks>>,
+        media_callbacks: Option<Arc<dyn NativeMediaCallbacks>>,
         execution_config: ProductExecutionConfig,
     ) -> Result<Arc<NativeProductExecution>, NativeRuntimeConfigError> {
         let product: ProductContext = execution_config.try_into()?;
@@ -627,9 +720,33 @@ impl NativeTrUApiHostRuntime {
             chat_callbacks,
             pocket_callbacks,
             game_callbacks,
+            media_callbacks,
             product,
         ))
     }
+
+    /// Root account currently selected by the native authority.
+    pub fn current_session_public_key(&self) -> Option<Bytes32> {
+        self.runtime.current_session_public_key()
+    }
+
+    /// Inspect consent without opening a product execution.
+    pub async fn permission_authorization_status(
+        &self,
+        product_id: String,
+        request: PermissionAuthorizationRequest,
+    ) -> Result<PermissionAuthorizationStatus, HostRejection> {
+        let product = ProductContext::new_with_execution(product_id, ProductExecutionKind::App)
+            .map_err(|error| HostRejection::Rejected {
+                reason: error.to_string(),
+            })?;
+        Ok(self
+            .runtime
+            .product_admin(product)
+            .permission_authorization_status(request)
+            .await?)
+    }
+
 
     /// Take one reference on the product's worker for a modality holder. The
     /// first one reports [`WorkerTransition::Start`] to the runtime's
@@ -751,6 +868,18 @@ impl NativeTrUApiHostRuntime {
     /// Core-owned logout for the process-wide authentication session.
     pub fn disconnect(&self) {
         futures::executor::block_on(self.runtime.disconnect_session());
+    }
+
+    /// Refresh exactly one product's stored policy after another host core writes it.
+    pub async fn refresh_permission_authorization(
+        &self,
+        product_id: String,
+        request: PermissionAuthorizationRequest,
+    ) -> Result<(), HostRejection> {
+        self.runtime
+            .refresh_permission_authorization(&product_id, request)
+            .await?;
+        Ok(())
     }
 
     /// Record the accounts a renewal pass should keep allowed. The ledger
@@ -935,6 +1064,7 @@ pub struct NativeProductExecution {
     platform: Arc<dyn crate::platform::Platform>,
     chat: Option<Arc<dyn crate::platform::ChatPlatform>>,
     pocket: Option<Arc<dyn crate::platform::PocketPlatform>>,
+    media: Option<Arc<dyn crate::platform::MediaPlatform>>,
     game: Option<Arc<dyn crate::platform::GamePlatform>>,
     /// The same `CallbackPlatform` as `platform`, kept separately because
     /// `Arc<dyn Platform>` cannot be downcast to the optional capability.
@@ -979,6 +1109,7 @@ impl NativeProductExecution {
             // Native hosts do not render profiles yet; Profile calls answer
             // `Unsupported` there.
             profile_platform: None,
+            media_platform: self.media.clone(),
             expanded_card: Some(self.expanded_card.clone()),
             game_platform: self.game.clone(),
         }
@@ -1059,6 +1190,24 @@ impl NativeProductExecution {
         Ok(response.into_latest().granted)
     }
 
+    /// Canonical context used by this execution's core permission/storage scope.
+    pub fn product_context(&self) -> ProductContext {
+        self.product.clone()
+    }
+
+    /// Resolve the current authority-derived Calling settings slot, without
+    /// consent UI, backend initialization or signaling.
+    pub async fn calling_permission_authorization_request(
+        &self,
+    ) -> Result<PermissionAuthorizationRequest, HostRejection> {
+        if self.closed.load(Ordering::Acquire) {
+            return Err(HostRejection::Rejected {
+                reason: "Product execution is closed".into(),
+            });
+        }
+        Ok(self.admin().calling_permission_authorization_request().await?)
+    }
+
     /// Read a product-scoped permission authorization without prompting.
     ///
     /// A device capability resolves the host application's OS gate as well as
@@ -1078,6 +1227,15 @@ impl NativeProductExecution {
     /// Whether administration or lifecycle teardown closed this execution.
     pub fn is_closed(&self) -> bool {
         self.closed.load(Ordering::Acquire)
+    }
+
+    /// Re-read stored product authorization without prompting or OS queries.
+    pub async fn refresh_permission_authorization(
+        &self,
+        request: PermissionAuthorizationRequest,
+    ) -> Result<(), HostRejection> {
+        self.admin().refresh_permission_authorization(request).await?;
+        Ok(())
     }
 
     /// Read the active session's X25519 chat identity private key, or `None`
@@ -1359,6 +1517,7 @@ mod tests {
                     None,
                     None,
                     None,
+                    None,
                     native_execution_config("wallet.dot", ProductExecutionKind::Worker),
                 )
                 .expect("product opens without supplying wallet callbacks")
@@ -1425,12 +1584,14 @@ mod tests {
                 None,
                 None,
                 None,
+                None,
                 native_execution_config("myapp.dot", ProductExecutionKind::App),
             )
             .expect("open app execution");
         let worker = host
             .open_product_execution(
                 callbacks.clone(),
+                None,
                 None,
                 None,
                 None,
@@ -1469,6 +1630,7 @@ mod tests {
         let execution = host
             .open_product_execution(
                 callbacks.clone(),
+                None,
                 None,
                 None,
                 None,
@@ -1528,6 +1690,7 @@ mod tests {
                 None,
                 None,
                 None,
+                None,
                 native_execution_config("shared.dot", ProductExecutionKind::App),
             )
             .expect("App execution should open");
@@ -1536,6 +1699,7 @@ mod tests {
             .open_product_execution(
                 chat_host.clone(),
                 Some(chat_host.clone()),
+                None,
                 None,
                 None,
                 native_execution_config("shared.dot", ProductExecutionKind::Worker),
@@ -1554,6 +1718,7 @@ mod tests {
             .open_product_execution(
                 chat_host.clone(),
                 Some(chat_host.clone()),
+                None,
                 None,
                 None,
                 native_execution_config("shared.dot", ProductExecutionKind::Worker),
@@ -1582,6 +1747,7 @@ mod tests {
         let execution = host
             .open_product_execution(
                 Arc::new(EventCallbacks::new()),
+                None,
                 None,
                 None,
                 None,
@@ -1638,6 +1804,7 @@ mod tests {
                     None,
                     None,
                     None,
+                    None,
                     native_execution_config(product_id, ProductExecutionKind::Widget),
                 )
                 .expect("Widget execution should open");
@@ -1684,6 +1851,7 @@ mod tests {
                 None,
                 None,
                 None,
+                None,
                 native_execution_config("chain.dot", ProductExecutionKind::App),
             )
             .expect("App execution should open");
@@ -1724,6 +1892,7 @@ mod tests {
         let open = || {
             host.open_product_execution(
                 callbacks.clone(),
+                None,
                 None,
                 None,
                 None,

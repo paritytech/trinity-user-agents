@@ -58,7 +58,8 @@ use truapi::host_logic::dotns_gateway::{
     MAX_BASE_LABEL_LEN, MIN_PERSON_LABEL_LEN, is_lite_label, is_registrable_full_label,
 };
 use truapi::platform::{
-    ChatPlatform, HostInfo, PermissionStatusHost, PlatformInfo, ProductExecutionKind,
+    ChatPlatform, CoreStorageKey, HostInfo, PermissionAuthorizationRequest, PermissionStatusHost,
+    PlatformInfo, ProductExecutionKind,
 };
 use truapi::statement_allowance as alloc;
 use truapi::subscription::Spawner;
@@ -371,9 +372,12 @@ struct PairingHostArgs {
     /// Network preset that supplies all RPC/backend/genesis config.
     #[arg(long, value_enum, default_value = "paseo-next-v2")]
     network: Network,
-    /// Automatically approve non-payment confirmations. Main-purse payments still require review.
+    /// Approve routine confirmations. Payments and upload consent still require review.
     #[arg(long)]
     auto_accept: bool,
+    /// Revoke automatic uploads for this product in the saved paired account, then exit.
+    #[arg(long, value_name = "PRODUCT", conflicts_with = "script")]
+    revoke_automatic_uploads: Option<String>,
 }
 
 /// Default loopback port for the frame socket and the bridge script.
@@ -434,6 +438,9 @@ struct SigningHostArgs {
     /// Product id used by scripts and product-scoped operations.
     #[arg(long = "product-id", default_value = DEFAULT_PRODUCT_ID)]
     product_id: String,
+    /// Revoke automatic uploads for this product in the selected saved account, then exit.
+    #[arg(long, value_name = "PRODUCT", conflicts_with_all = ["script", "serve", "deeplink"])]
+    revoke_automatic_uploads: Option<String>,
     /// Pairing deeplink to add. Managed interactive and serve sessions also
     /// restore responders for every previously paired host.
     #[arg(long)]
@@ -468,7 +475,7 @@ struct SigningHostArgs {
     /// private per-process Unix-domain socket.
     #[arg(long)]
     frame_listen: Option<SocketAddr>,
-    /// Automatically approve non-payment confirmations. Main-purse payments still require review.
+    /// Approve routine confirmations. Payments and upload consent still require review.
     #[arg(long)]
     auto_accept: bool,
     /// Serve product frames without a terminal UI and stay up until stopped.
@@ -1212,7 +1219,7 @@ async fn run_pairing_host(
     debugger: Option<DebuggerSwitch>,
 ) -> Result<()> {
     let script_projects = script_project_directory(args.base_path.clone());
-    let interactive = args.script.is_none();
+    let interactive = args.script.is_none() && args.revoke_automatic_uploads.is_none();
     if interactive && !terminal_ui::is_interactive_terminal() {
         invalid_invocation(
             "interactive pairing-host requires a TTY; use pairing-host --script <path>",
@@ -1267,6 +1274,30 @@ async fn run_pairing_host(
     pairing_runtime.set_contacts_platform(contacts::CliContactsHost::from_env(
         storage_platform.clone(),
     ));
+    observe_permission_changes(
+        &storage_platform,
+        &pairing_runtime,
+        |runtime, product_id, request| async move {
+            runtime
+                .refresh_permission_authorization(&product_id, request)
+                .await
+        },
+    );
+    if let Some(product_id) = args.revoke_automatic_uploads {
+        pairing_runtime
+            .activate_stored_session()
+            .await
+            .map_err(|error| anyhow::anyhow!("{}", error.reason))?;
+        let root_public_key = pairing_runtime
+            .current_session_public_key()
+            .context("No saved paired account; no upload permission changed")?;
+        let product = truapi::platform::ProductContext::new_with_execution(
+            product_id,
+            ProductExecutionKind::App,
+        )?;
+        revoke_automatic_uploads(pairing_runtime.product_admin(product), root_public_key).await?;
+        return Ok(());
+    }
 
     // Resolved before the port is bound, so a bad URL still fails on the argument
     // rather than half-way through startup - but reported below, once the UI
@@ -1320,6 +1351,25 @@ async fn run_pairing_host(
     .await
 }
 
+async fn revoke_automatic_uploads(
+    admin: truapi::HostAdmin,
+    root_public_key: [u8; 32],
+) -> Result<()> {
+    admin
+        .set_permission_authorization_status(
+            truapi::platform::PermissionAuthorizationRequest::AutomaticPreimageSubmit {
+                root_public_key,
+            },
+            truapi::platform::PermissionAuthorizationStatus::NotDetermined,
+        )
+        .await
+        .map_err(|error| anyhow::anyhow!("{}", error.reason))?;
+    println!(
+        "Automatic upload consent revoked for the selected product and account; rolling usage retained."
+    );
+    Ok(())
+}
+
 async fn run_signing_host(
     args: SigningHostArgs,
     initial_log_filter: String,
@@ -1334,7 +1384,10 @@ async fn run_signing_host(
         .action
         .as_ref()
         .map(|SigningHostAction::Exec { command }| command.clone());
-    let interactive = args.script.is_none() && exec_input.is_none() && !args.serve;
+    let interactive = args.script.is_none()
+        && exec_input.is_none()
+        && !args.serve
+        && args.revoke_automatic_uploads.is_none();
     if interactive && !terminal_ui::is_interactive_terminal() {
         invalid_invocation(
             "interactive signing-host requires a TTY; use --serve to run headless, or `signing-host exec '/script path.ts'`, or --script",
@@ -1373,6 +1426,18 @@ async fn run_signing_host(
         ui_handle.clone(),
     )
     .await?;
+    if let Some(product_id) = args.revoke_automatic_uploads {
+        let root_public_key = session
+            .runtime
+            .current_session_public_key()
+            .context("No active saved account; no upload permission changed")?;
+        let product = truapi::platform::ProductContext::new_with_execution(
+            product_id,
+            ProductExecutionKind::App,
+        )?;
+        revoke_automatic_uploads(session.runtime.product_admin(product), root_public_key).await?;
+        return Ok(());
+    }
     // Resolved before the port is bound, so a bad URL still fails on the argument
     // rather than half-way through startup - but reported below, once the UI
     // exists. A `tracing` line here goes to a stderr that the alternate screen
@@ -1789,6 +1854,42 @@ async fn start_signing_host(
     })
 }
 
+/// Re-read committed policy outside every storage gate. Each host's shared Media
+/// registry fans a precise invalidation out to its matching live executions.
+fn observe_permission_changes<R, F, Fut>(platform: &Arc<CliPlatform>, runtime: &Arc<R>, refresh: F)
+where
+    R: Send + Sync + 'static,
+    F: Fn(Arc<R>, String, PermissionAuthorizationRequest) -> Fut + Send + 'static,
+    Fut: Future<Output = Result<(), truapi::v01::GenericError>> + Send + 'static,
+{
+    let mut changes = platform.subscribe_core_storage_changes();
+    let platform = Arc::downgrade(platform);
+    let runtime = Arc::downgrade(runtime);
+    tokio::spawn(async move {
+        while let Some(change) = changes.recv().await {
+            let (Some(platform), Some(runtime)) = (platform.upgrade(), runtime.upgrade()) else {
+                break;
+            };
+            // The active user can change after enqueue but before this task runs.
+            match platform.matches_core_storage_change(&change) {
+                Ok(false) => continue,
+                Ok(true) => {}
+                Err(reason) => {
+                    tracing::warn!(%reason, "could not resolve permission refresh namespace")
+                }
+            }
+            if let CoreStorageKey::PermissionAuthorization {
+                product_id,
+                request,
+            } = change.key
+                && let Err(error) = refresh(runtime, product_id.clone(), request).await
+            {
+                tracing::warn!(%product_id, reason = %error.reason, "could not refresh committed permission policy");
+            }
+        }
+    });
+}
+
 #[allow(clippy::too_many_arguments)]
 fn build_signing_runtime(
     network: NetworkConfig,
@@ -1840,6 +1941,15 @@ fn build_signing_runtime(
     runtime.set_profile_platform(profile::CliProfileHost::from_env());
     runtime.set_game_platform(Arc::new(game::CliGameHost));
     runtime.set_core_db(core_db);
+    observe_permission_changes(
+        &platform,
+        &runtime,
+        |runtime, product_id, request| async move {
+            runtime
+                .refresh_permission_authorization(&product_id, request)
+                .await
+        },
+    );
     runtime.start_statement_allowance_renewal();
     Ok((runtime, platform))
 }
@@ -1862,6 +1972,9 @@ fn validate_signing_args(args: &SigningHostArgs) -> Result<()> {
     }
     if args.serve && args.action.is_some() {
         bail!("--serve cannot be combined with the exec subcommand");
+    }
+    if args.revoke_automatic_uploads.is_some() && args.action.is_some() {
+        bail!("--revoke-automatic-uploads cannot be combined with the exec subcommand");
     }
     if mnemonic.is_some() && account.is_some() {
         bail!("--account cannot be used when --mnemonic or HOST_CLI_SIGNER_MNEMONIC is set");

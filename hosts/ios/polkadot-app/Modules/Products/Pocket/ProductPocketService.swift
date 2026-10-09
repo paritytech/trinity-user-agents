@@ -3,6 +3,7 @@ import os
 import AsyncExtensions
 import BulletinChain
 import ChainRegistry
+import DesignSystem
 import Products
 import TrUAPIHost
 
@@ -143,6 +144,7 @@ final class ProductPocketService: @unchecked Sendable {
                         gameReminders: gameReminders,
                         ipfsFetcher: IpfsFetcher(ipfsBaseURL: AppConfig.KnownIPFS.main),
                         hostProvider: flowState.hostProvider,
+                        themeManager: ThemeManager.shared,
                         logger: logger
                     )
                 },

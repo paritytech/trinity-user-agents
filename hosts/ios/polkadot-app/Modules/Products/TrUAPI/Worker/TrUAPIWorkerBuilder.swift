@@ -15,14 +15,14 @@ enum TrUAPIWorkerError: Error, CustomStringConvertible {
 /// Assembles one product's worker: its archive, its Worker execution, and the
 /// headless engine its entry module runs in.
 struct TrUAPIWorkerBuilder: TrUAPIWorkerBuilding {
-    private let environment: @Sendable () throws -> RustRuntimeEnvironment
+    private let environment: @MainActor @Sendable () throws -> RustRuntimeEnvironment
     private let products: any ProductResolving
     private let dotNsResolver: any DotNsResolverProtocol
     private let productFileProvider: any ChatProductFileProviding
     private let logger: LoggerProtocol
 
     init(
-        environment: @escaping @Sendable () throws -> RustRuntimeEnvironment,
+        environment: @escaping @MainActor @Sendable () throws -> RustRuntimeEnvironment,
         products: any ProductResolving,
         dotNsResolver: any DotNsResolverProtocol,
         productFileProvider: any ChatProductFileProviding,
@@ -49,14 +49,20 @@ struct TrUAPIWorkerBuilder: TrUAPIWorkerBuilding {
             logger: logger
         )
 
-        return try TrUAPIWorkerRuntime(
-            productUrl: engine.productUrl,
-            executionModel: environment().makeWorkerExecution(
+        // Published workers get only their declared surfaces; a hand-installed
+        // debug worker (no published worker) retains its chat bridge.
+        let includesChat = resolved?.executables.worker?.serves(.chat) != false
+        let executionModel = try await MainActor.run {
+            try environment().makeWorkerExecution(
                 productId: productId,
                 routers: context.routers,
-                chatMessaging: context.chat,
+                chatMessaging: includesChat ? context.chat : nil,
                 pocket: pocket
-            ),
+            )
+        }
+        return TrUAPIWorkerRuntime(
+            productUrl: engine.productUrl,
+            executionModel: executionModel,
             engineFactory: engine.engineFactory,
             logger: logger
         )

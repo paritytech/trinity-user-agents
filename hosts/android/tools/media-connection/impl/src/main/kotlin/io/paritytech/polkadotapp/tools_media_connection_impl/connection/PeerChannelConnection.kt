@@ -19,6 +19,7 @@ import io.paritytech.polkadotapp.tools_media_connection_impl.RealVideoTrack
 import io.paritytech.polkadotapp.tools_media_connection_impl.WebRtcCore
 import io.paritytech.polkadotapp.tools_media_connection_impl.media.MediaTrackProvider
 import io.paritytech.polkadotapp.tools_media_connection_impl.models.ExternalRtcConfig
+import io.paritytech.polkadotapp.tools_media_connection_impl.models.toIceServers
 import io.paritytech.polkadotapp.tools_media_connection_impl.models.MediaStateSignal
 import io.paritytech.polkadotapp.tools_media_connection_impl.models.PeerConnectionCandidate
 import io.paritytech.polkadotapp.tools_media_connection_impl.models.PeerConnectionSignal
@@ -110,22 +111,7 @@ internal abstract class PeerChannelConnection(
         }
     }
 
-    private val iceServers = listOf(
-        PeerConnection.IceServer.builder(
-            listOf(
-                "stun:stun.l.google.com:19302",
-                "stun:stun1.l.google.com:19302",
-                "stun:stun2.l.google.com:19302",
-                "stun:stun3.l.google.com:19302",
-                "stun:stun4.l.google.com:19302"
-            )
-        ).createIceServer()
-    ) + externalRtcConfig.turnCredentials.map { turn ->
-        PeerConnection.IceServer.builder(turn.url)
-            .setUsername(turn.username)
-            .setPassword(turn.password)
-            .createIceServer()
-    }
+    private val iceServers = externalRtcConfig.toIceServers()
 
     private val rtcConfig = PeerConnection.RTCConfiguration(iceServers).apply {
         sdpSemantics = PeerConnection.SdpSemantics.UNIFIED_PLAN

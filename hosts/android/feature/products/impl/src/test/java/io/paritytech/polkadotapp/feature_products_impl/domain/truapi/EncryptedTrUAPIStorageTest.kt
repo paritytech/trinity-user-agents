@@ -126,6 +126,14 @@ private class FakeEncryptedPreferences(
     private val dropWrites: Boolean = false,
 ) : EncryptedPreferences {
     private val values = mutableMapOf<String, String>()
+    override val storageIdentifier = "test-encrypted-${java.util.UUID.randomUUID()}"
+
+    override fun putEncryptedStringCommitted(field: String, value: String) {
+        check(!dropWrites) { "Commit failed" }
+        values[field] = value
+    }
+
+    override fun removeKeyCommitted(field: String) { values.remove(field) }
     override fun keys(): Set<String> = values.keys
 
     /** Mirrors EncryptionUtil storing "" when it cannot encrypt. */

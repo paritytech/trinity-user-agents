@@ -110,7 +110,9 @@ class TrUAPIWorkerSupervisor @Inject constructor(
         }.getOrElse { return Result.failure(it) }
         provider.addOnWebViewDestroyedListener { rebootAfterRendererLoss(productId, worker) }
 
-        return hostBridgeFactory.create(worker.scope)
+        val bridge = hostBridgeFactory.create(worker.scope)
+        provider.bindTrUAPILifecycle(bridge)
+        return bridge
             .attach(
                 runtime,
                 productId,
@@ -121,7 +123,13 @@ class TrUAPIWorkerSupervisor @Inject constructor(
                     provider.disposeRevokedExecution()
                     scope.launch { transitions.withLock { stop(productId) } }
                 },
-            ) { bootstrap -> provider.addWebViewSetup(installBootstrap(bootstrap)) }
+            ) { bootstrap ->
+                val install = installBootstrap(bootstrap)
+                provider.addWebViewSetup { webView ->
+                    install(webView)
+                    bridge.attachMediaView(webView)
+                }
+            }
             .flatMap { execution ->
                 runCatching {
                     provider.useTrUAPIPermissions(execution)

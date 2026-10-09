@@ -6,43 +6,21 @@ import TrUAPIHost
 
 /// One headless worker runtime serves every modality, so a worker script is
 /// given the same engine whichever surface asked for it.
+@MainActor
 struct TrUAPIWorkerRuntimeTests {
-    /// The handler is what turns a `getUserMedia` call into the host's own
-    /// permission prompt. Without it the engine denies the request outright, so
-    /// the same worker script would be prompted under chat and refused here.
+    /// Headless workers cannot capture devices or request host permission.
     @Test
-    func letsTheWorkerAskForTheDeviceCapabilitiesItDeclares() async throws {
-        let engine = MockJSEngine()
-        let runtime = makeRuntime(engine: engine)
-
-        try await runtime.start()
-
-        #expect(engine.mediaHandlerWasInstalledAtInitialization)
-
-        await runtime.dispose()
-    }
-
-    /// The bootstrap carries the loopback port and token, so it has to be in
-    /// place before the page exists rather than evaluated into a live page.
-    @Test
-    func installsTheBootstrapBeforeTheProductLoads() async throws {
+    func deniesDirectProductCapture() async throws {
         let engine = MockJSEngine()
         let execution = MockProductExecution()
         let runtime = makeRuntime(engine: engine, execution: execution)
 
         try await runtime.start()
 
-        #expect(execution.startWsBridgeCallCount == 1)
+        let capture = try #require(engine.deviceCapabilityHandler)
+        #expect(try await capture(.camera) == .denied)
+        #expect(try await capture(.microphone) == .denied)
         #expect(execution.permissionRequests.isEmpty)
-
-        #expect(engine.initializedScripts.count == 2)
-        #expect(engine.initializedScripts[0]
-            .content == #"window.__truapi_localhost = { url: "ws://127.0.0.1:0/?t=test" };"#)
-        #expect(engine.initializedScripts[0].insertionPoint == .atDocStart)
-        #expect(engine.initializedScripts[1].content.contains("freezeAndDelete"))
-        #expect(engine.initializedScripts[1].insertionPoint == .atDocStart)
-        #expect(!engine.evaluatedScripts.contains { $0.contains("__truapi_localhost") })
-        #expect(!engine.evaluatedScripts.contains { $0.contains("freezeAndDelete") })
 
         await runtime.dispose()
     }
@@ -104,6 +82,7 @@ struct TrUAPIWorkerRuntimeTests {
     }
 }
 
+@MainActor
 private func makeRuntime(
     engine: MockJSEngine,
     execution: MockProductExecution = MockProductExecution(),
@@ -111,11 +90,7 @@ private func makeRuntime(
 ) -> TrUAPIWorkerRuntime {
     TrUAPIWorkerRuntime(
         productUrl: URL(string: "https://product.invalid/worker.js")!,
-        executionModel: RustRuntimeEnvironment.ExecutionModel(
-            execution: execution,
-            chainConnections: chainConnections,
-            osPermissionAsker: OSPermissionAsker()
-        ),
+        executionModel: makeExecutionModel(execution: execution, chainConnections: chainConnections),
         engineFactory: { engine }
     )
 }

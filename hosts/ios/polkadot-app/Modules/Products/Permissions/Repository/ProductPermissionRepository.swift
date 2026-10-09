@@ -178,7 +178,17 @@ extension ProductPermissionRepository: ProductPermissionRepositoryProtocol {
 
     func revokeAllByProduct(productId: String) async throws {
         let grants = try await getAllByProduct(productId: productId)
-        try await revoke(productId: productId, permissions: grants.map(\.permission))
+        let runtime = try authority()
+        // Revoke every exact native scope, including Media and automatic uploads
+        // presented by dedicated settings rather than legacy permission rows.
+        for entry in try await runtime.permissionAuthorizations(productId: productId) {
+            try await runtime.setPermissionAuthorizationStatus(
+                productId: productId, request: entry.request, status: .notDetermined
+            )
+        }
+        for grant in grants where grant.permission == .balanceAccess {
+            try await revoke(productId: productId, permission: grant.permission)
+        }
     }
 
     func settingsGrants(legacy: [ProductPermissionGrant]) async throws -> [ProductPermissionGrant] {
@@ -437,7 +447,10 @@ extension ProductPermission {
             if case let .remote(domains) = remote.permission, domains.count != 1 {
                 return [try ProductPermission.networkAccessBundle(domains: domains).canonicalPermission()]
             }
-            return try remote.permission.toDomainRequest().toDomainPermissions().map { try $0.canonicalPermission() }
+            guard let domainRequest = remote.permission.toDomainRequest() else {
+                throw ProductPermissionMappingError.unsupported("remote", "calling")
+            }
+            return try domainRequest.toDomainPermissions().map { try $0.canonicalPermission() }
         case .identityDisclosure:
             return [.userIdentityAccess]
         case .chatAuthority:
@@ -448,6 +461,9 @@ extension ProductPermission {
             return [try .statementStoreAllowance(derivationIndex: derivationIndex?.toSelector())]
         case let .accountAccess(targetProductId):
             return [.accountAccess(targetProductId: bareProductLabel(targetProductId))]
+        case .calling, .automaticPreimageSubmit:
+            // These exact account/network scopes have dedicated native settings.
+            return []
         }
     }
 

@@ -44,9 +44,9 @@ pub fn generate_wasm_bridge(
 
         use super::{{
             WasmPlatform, call_js_function, decode_bytes, decode_js_item, generic, get_function,
-            get_optional_function, invoke_bool, invoke_bytes_return, invoke_js_subscription,
-            invoke_optional_bytes_return, invoke_optional_string_return, invoke_unit, missing_callback, parse_optional_bytes_item,
-            absent_optional_callback,
+            get_optional_function, invoke_bool, invoke_bytes_return, invoke_js_subscription_args,
+            invoke_js_media_subscription, invoke_optional_bytes_return, invoke_optional_string_return,
+            invoke_unit, missing_callback, parse_optional_bytes_item, absent_optional_callback,
         }};
 
         /// JS-side callbacks invoked by the wasm platform bridge. Methods with
@@ -301,7 +301,12 @@ fn emit_trait_impl(
         if idx != 0 {
             out.push('\n');
         }
-        out.push_str(&emit_method(method, ctx, parse_fns)?);
+        out.push_str(&emit_method(
+            method,
+            ctx,
+            parse_fns,
+            trait_def.name == "MediaPlatform",
+        )?);
     }
     out.push_str("}\n");
     Ok(out)
@@ -311,10 +316,15 @@ fn emit_method(
     method: &PlatformMethod,
     ctx: &BridgeCtx<'_>,
     parse_fns: &mut BTreeMap<String, String>,
+    private_media: bool,
 ) -> Result<String> {
     match &method.return_shape.inner {
-        PlatformInner::Result { ok, err } => emit_result_method(method, ok, err, ctx),
-        PlatformInner::Stream(item) => emit_stream_method(method, item, ctx, parse_fns),
+        PlatformInner::Result { ok, err } => {
+            emit_result_method(method, ok, err, ctx, private_media)
+        }
+        PlatformInner::Stream(item) => {
+            emit_stream_method(method, item, ctx, parse_fns, private_media)
+        }
         PlatformInner::Unit => emit_unit_method(method, ctx),
         PlatformInner::Plain(ok) => emit_plain_method(method, ok, ctx),
         PlatformInner::TraitObject(_) => bail!(
@@ -329,12 +339,17 @@ fn emit_result_method(
     ok: &TypeRef,
     err: &TypeRef,
     ctx: &BridgeCtx<'_>,
+    private_media: bool,
 ) -> Result<String> {
     let raw = raw_callback_name(method);
     let args = js_arg_vec(method, ctx)?;
     let ret = format!("Result<{}, {}>", rust_type(ok, ctx)?, rust_type(err, ctx)?);
     let params = rust_params(method, ctx)?;
-    let map_err = error_mapper(err, ctx)?;
+    let map_err = if private_media {
+        ".map_err(|_| generic(\"media backend failure\".to_string()))".to_string()
+    } else {
+        error_mapper(err, ctx)?
+    };
 
     let body = if is_unit(ok) {
         await_chain(
@@ -447,6 +462,7 @@ fn emit_stream_method(
     item: &TypeRef,
     ctx: &BridgeCtx<'_>,
     parse_fns: &mut BTreeMap<String, String>,
+    private_media: bool,
 ) -> Result<String> {
     let raw = raw_callback_name(method);
     let TypeRef::Named { name, args } = item else {
@@ -463,21 +479,17 @@ fn emit_stream_method(
         rust_type(err, ctx)?
     );
     let params = rust_params(method, ctx)?;
-    let payload = subscription_payload(method, ctx)?;
+    let args = js_args(method, ctx)?.join(", ");
     let parser = stream_parser(ok, ctx, parse_fns)?;
-    let body = if payload == "None" {
-        format!(
-            "invoke_js_subscription(&self.bridge.{}, None, {parser})",
-            method.name
-        )
+    let helper = if private_media {
+        "invoke_js_media_subscription"
     } else {
-        bridge_call(
-            "invoke_js_subscription",
-            &method.name,
-            &payload,
-            std::slice::from_ref(&parser),
-        )
+        "invoke_js_subscription_args"
     };
+    let body = format!(
+        "{helper}(&self.bridge.{}, &[{args}], {parser})",
+        method.name,
+    );
     Ok(format!(
         "{header}\n{body}\n    }}\n",
         header = method_header("", &method.name, &params, Some(&ret)),
@@ -641,17 +653,6 @@ fn js_arg_vec(method: &PlatformMethod, ctx: &BridgeCtx<'_>) -> Result<String> {
 }
 
 fn js_arg_expr(name: &str, ty: &TypeRef, ctx: &BridgeCtx<'_>) -> Result<String> {
-    if is_string(ty) {
-        return Ok(format!("JsValue::from_str(&{name})"));
-    }
-    if is_bytes(ty) {
-        return Ok(format!("Uint8Array::from({name}.as_slice()).into()"));
-    }
-    if ctx.is_encoded_codec(ty) {
-        return Ok(format!(
-            "Uint8Array::from({name}.encode().as_slice()).into()"
-        ));
-    }
     if let TypeRef::Option(inner) = ty {
         if ctx.is_encoded_codec(inner) {
             return Ok(format!(
@@ -663,7 +664,23 @@ fn js_arg_expr(name: &str, ty: &TypeRef, ctx: &BridgeCtx<'_>) -> Result<String> 
                 "{name}.as_ref().map_or(JsValue::UNDEFINED, |value| Uint8Array::from(value.as_slice()).into())"
             ));
         }
+        let value = js_arg_expr("value", inner, ctx)?;
+        return Ok(format!(
+            "match {name} {{ Some(value) => {value}, None => JsValue::UNDEFINED }}"
+        ));
     }
+    if is_string(ty) {
+        return Ok(format!("JsValue::from_str(&{name})"));
+    }
+    if is_bytes(ty) {
+        return Ok(format!("Uint8Array::from({name}.as_slice()).into()"));
+    }
+    if ctx.is_encoded_codec(ty) {
+        return Ok(format!(
+            "Uint8Array::from({name}.encode().as_slice()).into()"
+        ));
+    }
+
     if let Some(primitive) = ctx.alias_primitive(ty) {
         return numeric_js_arg(name, primitive);
     }
@@ -681,23 +698,6 @@ fn numeric_js_arg(name: &str, primitive: &str) -> Result<String> {
         "u64" | "i64" | "u128" | "i128" => Ok(format!("js_sys::BigInt::from({name}).into()")),
         "bool" => Ok(format!("JsValue::from_bool({name})")),
         other => bail!("numeric callback parameter `{name}: {other}` is not JS-number safe"),
-    }
-}
-
-/// The `JsValue` a subscription hands its JS callback, or `None` when it takes
-/// no payload. Shares [`js_arg_expr`] with request callbacks, so a subscription
-/// accepts every parameter type a request already does.
-fn subscription_payload(method: &PlatformMethod, ctx: &BridgeCtx<'_>) -> Result<String> {
-    match method.params.as_slice() {
-        [] => Ok("None".to_string()),
-        [param] => Ok(format!(
-            "Some({})",
-            js_arg_expr(&param.name, &param.type_ref, ctx)?
-        )),
-        _ => bail!(
-            "subscription `{}` has more than one payload parameter",
-            method.name
-        ),
     }
 }
 
@@ -936,7 +936,7 @@ mod tests {
             },
             has_default: true,
         };
-        let output = emit_result_method(&method, &ok, &error, &context()).unwrap();
+        let output = emit_result_method(&method, &ok, &error, &context(), false).unwrap();
         assert!(output.contains("product: &str"), "{output}");
         assert!(output.contains(".await.map_err(generic)?;"), "{output}");
         assert!(

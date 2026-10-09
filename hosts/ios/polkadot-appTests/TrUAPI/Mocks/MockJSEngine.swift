@@ -3,19 +3,15 @@ import Products
 
 final class MockJSEngine: JSEngineProtocol, @unchecked Sendable {
     var evaluatedScripts: [String] = []
-    private(set) var initializedScripts: [JSEngineScript] = []
     private(set) var destroyCallCount = 0
     private(set) var deviceCapabilityHandler: JSDeviceCapabilityHandler?
-    private(set) var mediaHandlerWasInstalledAtInitialization = false
     var onInitialize: (@Sendable () async -> Void)?
     var onDestroy: (@Sendable () async -> Void)?
     private var handlers: [String: JSNativeHandler] = [:]
 
     func getState() async -> JSEngineState { .ready }
 
-    func initialize(with scripts: [JSEngineScript]) async throws {
-        mediaHandlerWasInstalledAtInitialization = deviceCapabilityHandler != nil
-        initializedScripts = scripts
+    func initialize(with _: [JSEngineScript]) async throws {
         await onInitialize?()
     }
 

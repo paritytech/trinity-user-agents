@@ -6,6 +6,9 @@ import io.paritytech.polkadotapp.common.data.storage.preferences.encrypted.Encry
 import uniffi.truapi.HostRejection
 import uniffi.truapi.HostLocalStorageReadException
 import java.text.Normalizer
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 
 /**
  * Product-scoped storage for the Rust core, encrypted at rest.
@@ -50,16 +53,30 @@ class EncryptedHostStorage(
 class EncryptedHostCoreStorage(
     private val preferences: EncryptedPreferences,
 ) : HostCoreStorage {
-    override suspend fun read(key: ByteArray): ByteArray? = readValue(preferences, qualify(key))
+    override val storageIdentifier: String = "${preferences.storageIdentifier}/$CORE_NAMESPACE"
 
-    override suspend fun write(key: ByteArray, value: ByteArray) {
-        writeValue(preferences, qualify(key), value)
-            ?.let { throw HostRejection.Rejected("core storage: $it") }
+    override suspend fun read(key: ByteArray): ByteArray? = coreCall {
+        val field = qualify(key)
+        if (!preferences.hasKey(field)) return@coreCall null
+        val stored = requireNotNull(preferences.getDecryptedString(field))
+        check(stored.startsWith(VALUE_TAG)) { "Invalid core storage envelope" }
+        requireNotNull(decodeOrNull(stored.removePrefix(VALUE_TAG))) { "Invalid core storage bytes" }
     }
 
-    override suspend fun clear(key: ByteArray) {
-        runCatching { preferences.removeKey(qualify(key)) }
-            .getOrElse { throw HostRejection.Rejected("failed to clear core storage key: ${it.message}") }
+    override suspend fun write(key: ByteArray, value: ByteArray) = coreCall {
+        preferences.putEncryptedStringCommitted(qualify(key), VALUE_TAG + value.toHex())
+        changes.update { it + 1 }
+    }
+
+    override suspend fun clear(key: ByteArray) = coreCall {
+        preferences.removeKeyCommitted(qualify(key))
+        changes.update { it + 1 }
+    }
+
+    private inline fun <T> coreCall(block: () -> T): T = try {
+        block()
+    } catch (error: Exception) {
+        throw HostRejection.Rejected("Private host storage unavailable")
     }
 
     override suspend fun keys(): List<ByteArray> = preferences.keys()
@@ -71,8 +88,10 @@ class EncryptedHostCoreStorage(
 
     private fun qualify(key: ByteArray) = "$CORE_NAMESPACE/${key.toHex()}"
 
-    private companion object {
-        const val CORE_NAMESPACE = "truapi/core"
+    companion object {
+        private const val CORE_NAMESPACE = "truapi/core"
+        private val changes = MutableStateFlow(0L)
+        val storageChanges = changes.asStateFlow()
     }
 }
 

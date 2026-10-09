@@ -167,6 +167,30 @@ pub trait HostCallbacks: Send + Sync {
     /// [`CoreStorageKey`].
     async fn core_storage_clear(&self, key: Vec<u8>) -> Result<(), HostRejection>;
 
+    /// Atomically compare exact decoded bytes (absent is distinct from empty)
+    /// and replace the slot. Serialize with every write and clear to the same
+    /// physical storage namespace, across runtime/callback instances, through
+    /// durable persistence completion; release storage gates before awaiting
+    /// errors or refresh work.
+    /// On successful persistence with `notify_on_success`, enqueue
+    /// `core_storage_changed` before completion even if the caller is cancelled.
+    /// There must be no cancellation point between persistence and enqueue.
+    async fn compare_exchange_core_storage(
+        &self,
+        key: Vec<u8>,
+        expected: Option<Vec<u8>>,
+        replacement: Vec<u8>,
+        notify_on_success: bool,
+    ) -> Result<bool, HostRejection>;
+
+    /// Queue a deferred stored-policy refresh for all core groups sharing this
+    /// store and exact product, including the writer. Return immediately without
+    /// waiting for or reentering a core.
+    /// For a permission authorization key, the durable deferred job also emits
+    /// `permission_authorizations_changed` on the process bridge, even when its
+    /// requester has gone away or refreshing a core fails.
+    fn core_storage_changed(&self, key: Vec<u8>);
+
     /// Enumerate encoded keys in the existing core store. Hosts must report
     /// unavailable enumeration as an error, never as an empty permission list.
     async fn core_storage_keys(&self) -> Result<Vec<Vec<u8>>, HostRejection>;

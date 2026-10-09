@@ -16,8 +16,7 @@ use std::time::Duration;
 
 use crate::platform::{
     ChatPlatform, CoinageWalletHost, ContactsPlatform, ExpandedCardHost, GamePlatform,
-    PermissionStatusHost, PocketPlatform,
-    ProfilePlatform,
+    MediaPlatform, PermissionStatusHost, PocketPlatform, ProfilePlatform,
 };
 use crate::platform::{
     CoreAdmin, PairingHostAdmin, PairingHostConfig, PermissionAuthorizationRequest,
@@ -325,6 +324,12 @@ impl PairingHostRuntime {
             .contacts_changed(&self.services.spawner);
     }
 
+    /// Install the complete Media backend once, before serving products.
+    #[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.set_media_platform"))]
+    pub fn set_media_platform(&self, platform: Arc<dyn MediaPlatform>) -> bool {
+        self.services.install_media_platform(platform)
+    }
+
     /// Build a product-facing runtime from this pairing host.
     #[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.product_runtime"))]
     pub fn product_runtime(
@@ -366,6 +371,11 @@ impl PairingHostRuntime {
             product,
             ConnectionAdapters::from_services(&self.services),
         )
+    }
+
+    /// Root account used to fence account-scoped host administration.
+    pub fn current_session_public_key(&self) -> Option<[u8; 32]> {
+        self.pairing_host.session_state().current_public_key()
     }
 
     /// Disconnect the active account-authority session.
@@ -546,6 +556,16 @@ impl PairingHostRuntime {
         self.pairing_host.notify_session_store_changed();
     }
 
+    /// Resolve the current immutable Calling slot for trusted host settings.
+    pub async fn calling_permission_authorization_request(
+        &self,
+        product_id: &str,
+    ) -> Result<PermissionAuthorizationRequest, v01::GenericError> {
+        self.product_admin(product_context(product_id)?)
+            .calling_permission_authorization_request()
+            .await
+    }
+
     /// Read a stored permission authorization status for a product without prompting.
     ///
     /// A device capability also resolves the host application's OS gate, so an
@@ -588,6 +608,17 @@ impl PairingHostRuntime {
     ) -> Result<(), v01::GenericError> {
         self.product_admin(product_context(product_id)?)
             .set_permission_authorization_status(request, status)
+            .await
+    }
+
+    /// Re-read a product's stored authorization after another core changes it.
+    pub async fn refresh_permission_authorization(
+        &self,
+        product_id: &str,
+        request: PermissionAuthorizationRequest,
+    ) -> Result<(), v01::GenericError> {
+        self.product_admin(product_context(product_id)?)
+            .refresh_permission_authorization(request)
             .await
     }
 }
@@ -844,6 +875,12 @@ impl SigningHostRuntime {
         self.services.core_db()?.status().await
     }
 
+    /// Install the complete Media backend once, before serving products.
+    #[instrument(skip_all, fields(runtime.method = "signing_host_runtime.set_media_platform"))]
+    pub fn set_media_platform(&self, platform: Arc<dyn MediaPlatform>) -> bool {
+        self.services.install_media_platform(platform)
+    }
+
     /// Build a product-facing runtime from this signing host.
     #[instrument(skip_all, fields(runtime.method = "signing_host_runtime.product_runtime"))]
     pub fn product_runtime(
@@ -913,6 +950,11 @@ impl SigningHostRuntime {
     /// Return whether this host currently has an authenticated signing session.
     pub fn has_active_session(&self) -> bool {
         self.signing_host.session_state().current().is_some()
+    }
+
+    /// Root account used to fence account-scoped host administration.
+    pub fn current_session_public_key(&self) -> Option<[u8; 32]> {
+        self.signing_host.session_state().current_public_key()
     }
 
     /// Disconnect the active account-authority session.
@@ -997,6 +1039,16 @@ impl SigningHostRuntime {
         product_subtree_public_key(self.signing_host.as_ref(), product_id, timeout_ms).await
     }
 
+    /// Resolve the current immutable Calling slot for trusted host settings.
+    pub async fn calling_permission_authorization_request(
+        &self,
+        product_id: &str,
+    ) -> Result<PermissionAuthorizationRequest, v01::GenericError> {
+        self.product_admin(product_context(product_id)?)
+            .calling_permission_authorization_request()
+            .await
+    }
+
     /// Read a stored permission authorization status without prompting.
     #[instrument(skip_all, fields(runtime.method = "signing_host_runtime.permission_authorization_status", product_id = %product_id))]
     pub async fn permission_authorization_status(
@@ -1031,6 +1083,17 @@ impl SigningHostRuntime {
     ) -> Result<(), v01::GenericError> {
         self.product_admin(product_context(product_id)?)
             .set_permission_authorization_status(request, status)
+            .await
+    }
+
+    /// Re-read a product's stored authorization after another core changes it.
+    pub async fn refresh_permission_authorization(
+        &self,
+        product_id: &str,
+        request: PermissionAuthorizationRequest,
+    ) -> Result<(), v01::GenericError> {
+        self.product_admin(product_context(product_id)?)
+            .refresh_permission_authorization(request)
             .await
     }
 
@@ -1353,6 +1416,7 @@ pub struct ConnectionAdapters {
     pub renderer: Arc<ActionChannel<truapi::versioned::renderer::HostRendererActionSubscribeItem>>,
     pub pocket_platform: Option<Arc<dyn PocketPlatform>>,
     pub profile_platform: Option<Arc<dyn ProfilePlatform>>,
+    pub media_platform: Option<Arc<dyn MediaPlatform>>,
     pub game_platform: Option<Arc<dyn GamePlatform>>,
     /// Control of the card face above this connection's Widget, when the host draws one.
     pub expanded_card: Option<Arc<dyn ExpandedCardHost>>,
@@ -1371,6 +1435,7 @@ impl ConnectionAdapters {
             renderer: Arc::new(ActionChannel::renderer()),
             pocket_platform: services.pocket_platform(),
             profile_platform: services.profile_platform(),
+            media_platform: services.media_platform(),
             expanded_card: None,
             game_platform: services.game_platform(),
         }
@@ -1431,6 +1496,13 @@ impl HostAdmin {
         self.authority.disconnect().await;
     }
 
+    /// Resolve Calling's authority-derived scope without prompting or opening Media.
+    pub async fn calling_permission_authorization_request(
+        &self,
+    ) -> Result<PermissionAuthorizationRequest, v01::GenericError> {
+        self.product_runtime.calling_permission_authorization_request().await
+    }
+
     /// Read a stored permission authorization status without prompting.
     ///
     /// A device capability also resolves the host application's OS gate, so an
@@ -1472,6 +1544,14 @@ impl HostAdmin {
             .set_permission_authorization_status(request, status)
             .await
     }
+
+    /// Re-read stored product authorization without prompting or writing.
+    pub async fn refresh_permission_authorization(
+        &self,
+        request: PermissionAuthorizationRequest,
+    ) -> Result<(), v01::GenericError> {
+        self.product_runtime.refresh_permission_authorization(request).await
+    }
 }
 
 #[crate::platform::async_trait]
@@ -1501,6 +1581,13 @@ impl CoreAdmin for HostAdmin {
         status: PermissionAuthorizationStatus,
     ) -> Result<(), v01::GenericError> {
         HostAdmin::set_permission_authorization_status(self, request, status).await
+    }
+
+    async fn refresh_permission_authorization(
+        &self,
+        request: PermissionAuthorizationRequest,
+    ) -> Result<(), v01::GenericError> {
+        HostAdmin::refresh_permission_authorization(self, request).await
     }
 
     async fn get_session_chat_identity_key(&self) -> Result<Option<[u8; 32]>, v01::GenericError> {
@@ -1619,6 +1706,27 @@ impl ProductRuntimeControl {
             return Err(ProductRuntimeError::Closed);
         }
         Ok(&self.runtime)
+    }
+
+    /// Resolve the active connection's immutable Calling scope for host settings.
+    pub async fn calling_permission_authorization_request(
+        &self,
+    ) -> Result<PermissionAuthorizationRequest, v01::GenericError> {
+        let runtime = self.runtime().map_err(|_| v01::GenericError {
+            reason: "Product runtime is closed".into(),
+        })?;
+        runtime.calling_permission_authorization_request().await
+    }
+
+    /// Re-read this connection's stored authorization without starting Media.
+    pub async fn refresh_permission_authorization(
+        &self,
+        request: PermissionAuthorizationRequest,
+    ) -> Result<(), v01::GenericError> {
+        let runtime = self.runtime().map_err(|_| v01::GenericError {
+            reason: "Product runtime is closed".into(),
+        })?;
+        runtime.refresh_permission_authorization(request).await
     }
 
     /// Publish one host-authored Chat action into this connection's action
@@ -1822,6 +1930,11 @@ impl ProductRuntime {
         }
     }
 
+    /// Trusted connection identity for binding host-only adapters.
+    pub fn runtime_id(&self) -> u64 {
+        self.admin.product_runtime.runtime_id()
+    }
+
     /// Push one SCALE-encoded protocol frame into the dispatcher.
     ///
     /// Calls after [`Self::dispose`] are ignored and return `Ok(())` without
@@ -1907,6 +2020,13 @@ impl ProductRuntime {
         self.admin.disconnect_session().await;
     }
 
+    /// Resolve Calling's authority-derived scope without prompting or opening Media.
+    pub async fn calling_permission_authorization_request(
+        &self,
+    ) -> Result<PermissionAuthorizationRequest, v01::GenericError> {
+        self.control().calling_permission_authorization_request().await
+    }
+
     /// Read a stored permission authorization status without prompting.
     ///
     /// A device capability also resolves the host application's OS gate, so an
@@ -1934,7 +2054,7 @@ impl ProductRuntime {
     }
 
     /// Update a stored permission authorization status. `NotDetermined`
-    /// clears the stored value so the next product request prompts again.
+    /// resets the decision so the next product request prompts again.
     #[instrument(skip_all, fields(runtime.method = "product_runtime.set_permission_authorization_status"))]
     pub async fn set_permission_authorization_status(
         &self,
@@ -1944,6 +2064,14 @@ impl ProductRuntime {
         self.admin
             .set_permission_authorization_status(request, status)
             .await
+    }
+
+    /// Re-read stored authorization after a host-private storage notification.
+    pub async fn refresh_permission_authorization(
+        &self,
+        request: PermissionAuthorizationRequest,
+    ) -> Result<(), v01::GenericError> {
+        self.control().refresh_permission_authorization(request).await
     }
 
     /// Install a dev-only [`DebugSink`] that observes every product frame in
@@ -1966,7 +2094,11 @@ impl ProductRuntime {
     /// peer connections.
     #[instrument(skip_all, fields(runtime.method = "product_runtime.dispose"))]
     pub fn dispose(&self) {
-        // Aborting under the lock can wake code that re-enters disposal.
+        if self.disposed.load(Ordering::Acquire) {
+            return;
+        }
+        // Fence Media before transport disposal or in-flight dispatch abortion.
+        self.admin.product_runtime.close_media();
         if self.disposed.load(Ordering::Acquire) {
             return;
         }

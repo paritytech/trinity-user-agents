@@ -48,6 +48,8 @@ class PermissionAdministrationTest {
                     val revision = runtime.permissionAuthorizationRevision("game.paseo")
                     runtime.setPermissionAuthorizationStatus("game.paseo", request, PermissionAuthorizationStatus.DENIED)
                     assertTrue(execution.isClosed())
+                    // The deferred Media fanout must use root authority after canonical closure.
+                    runtime.awaitCoreStorageChanges()
                     assertFalse(other.isClosed())
                     assertTrue(bridge.changed.contains("game.paseo"))
                     assertFalse(runtime.setPermissionAuthorizationStatusIfCurrent(
@@ -65,6 +67,7 @@ class PermissionAdministrationTest {
                 assertEquals(PermissionAuthorizationStatus.NOT_DETERMINED, runtime.permissionAuthorizations("game.paseo").single().status)
                 runtime.setPermissionAuthorizationStatus("game.paseo", request, PermissionAuthorizationStatus.DENIED)
                 assertTrue(reopened.isClosed())
+                runtime.awaitCoreStorageChanges()
             }
             bridge.store.failWrites = true
             assertTrue(runCatching {
@@ -87,14 +90,15 @@ class PermissionAdministrationTest {
     }
 
     private class Storage : HostCoreStorage, HostStorage {
+        override val storageIdentifier = "permission-admin-${java.util.UUID.randomUUID()}"
         private val core = ConcurrentHashMap<List<Byte>, ByteArray>()
         private val product = ConcurrentHashMap<String, ByteArray>()
         @Volatile var failWrites = false
         override suspend fun keys(): List<ByteArray> = core.keys.map { it.toByteArray() }
-        override suspend fun read(key: ByteArray): ByteArray? = core[key.toList()]
+        override suspend fun read(key: ByteArray): ByteArray? = core[key.toList()]?.copyOf()
         override suspend fun write(key: ByteArray, value: ByteArray) {
             if (failWrites) throw HostRejection.Rejected("disk full")
-            core[key.toList()] = value
+            core[key.toList()] = value.copyOf()
         }
         override suspend fun clear(key: ByteArray) { core.remove(key.toList()) }
         override suspend fun read(key: String): ByteArray? = product[key]

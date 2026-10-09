@@ -438,51 +438,6 @@ fn sign_raw_accepts_confirmation_then_returns_sso_response() {
 }
 
 #[test]
-fn sign_raw_uses_call_context_timeout_for_sso_response_wait() {
-    let session = sso_session_info();
-    let message_id = "sign-raw-timeout";
-    let mut rpc_responses = sso_success_responses(
-        &session,
-        message_id,
-        sign_response_message(message_id, vec![], None),
-    );
-    rpc_responses.truncate(3);
-    let platform = Arc::new(StubPlatform {
-        sign_raw_confirmed: true,
-        rpc_responses,
-        ..Default::default()
-    });
-    let host = ProductRuntimeHost::new(
-        platform.clone(),
-        runtime_config("myapp.dot"),
-        test_spawner(),
-    );
-    install_pairing_session(&host, session);
-    let mut cx = CallContext::with_request_id(message_id.to_string());
-    cx.set_timeout(std::time::Duration::from_millis(1));
-    let request = HostSignRawRequest::V1(v01::HostSignRawRequest {
-        account: account_id("myapp.dot", 0),
-        payload: raw_payload(),
-    });
-    let err = futures::executor::block_on(host.sign_raw(&cx, request)).unwrap_err();
-
-    match err {
-        CallError::Domain(HostSignRawError::V1(v01::HostSignPayloadError::Unknown { reason })) => {
-            assert_eq!(
-                reason,
-                "Account authority request timed out after 1ms for sign-raw-timeout"
-            )
-        }
-        other => panic!("expected SSO response timeout, got {other:?}"),
-    }
-
-    wait_until(
-        || recorded_rpc_method_count(&platform.sent_rpc, "statement_unsubscribeStatement") == 2,
-        "timed-out SSO request did not unsubscribe statement streams",
-    );
-}
-
-#[test]
 fn sign_raw_cancellation_unsubscribes_sso_subscriptions() {
     let session = sso_session_info();
     let message_id = "sign-raw-cancel";

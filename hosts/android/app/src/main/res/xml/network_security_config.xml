@@ -1,16 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
 <network-security-config>
+    <!-- Authenticated, ephemeral Rust product bridges are loopback-only. -->
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="false">127.0.0.1</domain>
+        <domain includeSubdomains="false">localhost</domain>
+    </domain-config>
     <!--  temporary solution for video game to work since it uses ws and not wss  -->
     <domain-config cleartextTrafficPermitted="true">
         <domain includeSubdomains="false">163.172.160.22</domain>
         <domain includeSubdomains="false">192.168.100.3</domain>
-    </domain-config>
-    <!-- The TrUAPI loopback WS bridge (ws://127.0.0.1:<port>) is dialed from
-         product WebViews; without this the WebView rejects it with
-         ERR_CLEARTEXT_NOT_PERMITTED. Loopback only, and every connection is
-         gated on a per-session 256-bit token. -->
-    <domain-config cleartextTrafficPermitted="true">
-        <domain includeSubdomains="false">127.0.0.1</domain>
     </domain-config>
     <base-config cleartextTrafficPermitted="false"/>
 </network-security-config>

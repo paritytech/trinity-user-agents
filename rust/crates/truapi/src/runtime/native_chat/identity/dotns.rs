@@ -6,12 +6,14 @@
 //! one finalized pin. The registry, not the append-only LabelStore, owns names.
 
 use super::{NativeChatContext, normalize_username, rpc::Snapshot, schema};
-use crate::dotns_views::{network_tld, protocol_component, tld_node};
+use crate::dotns_views::{LabelOwner, label_owner, network_tld, protocol_component, tld_node};
 #[cfg(test)]
 use crate::host_logic::dotns_gateway as gateway;
+#[cfg(test)]
+use crate::host_logic::dotns_gateway::namehash_under;
 use crate::host_logic::dotns_gateway::{
-    DotnsTransport, account_to_h160, call_bytes32, call_no_args, decode_address, decode_bool,
-    discover_pop_controller, is_dns_label, is_pop_issued, namehash_under, resolve_labels,
+    DotnsTransport, account_to_h160, call_no_args, decode_address, discover_pop_controller,
+    is_dns_label, is_pop_issued, resolve_labels,
 };
 
 pub(super) struct Directory {
@@ -225,46 +227,11 @@ async fn forward_owner<T: DotnsTransport + ?Sized>(
     {
         return Ok(None);
     }
-    let atomic_node = namehash_under(tld, username);
-    let atomic = node_owner(transport, registry, &atomic_node).await?;
-    if !is_lite_username(username) {
-        return Ok(atomic);
+    match label_owner(transport, registry, tld, username).await? {
+        LabelOwner::Missing => Ok(None),
+        LabelOwner::Owned(owner) => Ok(Some(owner)),
+        LabelOwner::Unusable(reason) => Err(reason.to_string()),
     }
-    let (stem, suffix) = username
-        .split_once('.')
-        .ok_or("invalid dotted lite label")?;
-    let subnode = namehash_under(&namehash_under(tld, suffix), stem);
-    let nested = node_owner(transport, registry, &subnode).await?;
-    match (atomic, nested) {
-        (Some(a), Some(b)) if a != b => Err("ambiguous dotNS lite name owner".into()),
-        (Some(owner), _) | (_, Some(owner)) => Ok(Some(owner)),
-        (None, None) => Ok(None),
-    }
-}
-
-async fn node_owner<T: DotnsTransport + ?Sized>(
-    transport: &mut T,
-    registry: &[u8; 20],
-    node: &[u8; 32],
-) -> Result<Option<[u8; 20]>, String> {
-    let exists = transport
-        .view(registry, call_bytes32("recordExists(bytes32)", node))
-        .await?;
-    if exists.len() != 32 {
-        return Err("dotNS recordExists returned a non-word".into());
-    }
-    if !decode_bool(&exists).map_err(|error| error.to_string())? {
-        return Ok(None);
-    }
-    let owner = address(
-        &transport
-            .view(registry, call_bytes32("owner(bytes32)", node))
-            .await?,
-    )?;
-    if owner == [0; 20] {
-        return Err("existing dotNS record has a zero owner".into());
-    }
-    Ok(Some(owner))
 }
 
 fn address(bytes: &[u8]) -> Result<[u8; 20], String> {
@@ -333,6 +300,12 @@ mod tests {
                 Some([4; 20])
             );
             registry.owners.insert(atomic, [1; 20]);
+            assert!(
+                forward_owner(&mut registry, &[2; 20], &[3; 20], &tld, "alice.42")
+                    .await
+                    .is_err()
+            );
+            registry.owners.insert(nested, [0; 20]);
             assert!(
                 forward_owner(&mut registry, &[2; 20], &[3; 20], &tld, "alice.42")
                     .await

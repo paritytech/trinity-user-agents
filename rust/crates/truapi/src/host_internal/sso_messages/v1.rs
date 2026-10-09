@@ -20,6 +20,7 @@ use super::{
     SignRawWithLegacyAccountRequest, SignRawWithLegacyAccountResponse, SignRequest, SignResponse,
     SignVrfResponse, SsoProductDeviceChatOperation, StatementStoreProductSignRequest,
     StatementStoreProductSignResponse, Withdrawal,
+    MediaEndpointCertificationRequest, MediaEndpointCertificationResponse,
 };
 
 /// v1 messages exchanged with the paired signing host over the encrypted SSO channel.
@@ -27,6 +28,7 @@ use super::{
 /// The variant order is part of the SCALE wire protocol used inside
 /// statement-store session statements.
 #[allow(clippy::large_enum_variant)]
+#[truapi_macros::sso_response_indices]
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 pub enum RemoteMessage {
     /// The peer is ending the SSO session.
@@ -112,4 +114,10 @@ pub enum RemoteMessage {
     /// Account Holder's answer after incoming funding has been credited.
     #[codec(index = 205)]
     PaymentTopUpResponse(Response<PaymentTopUpResponse>),
+    /// Certify a core-owned endpoint under the private Media account domain.
+    #[codec(index = 30)]
+    MediaEndpointCertificationRequest(MediaEndpointCertificationRequest),
+    /// Account Holder's fixed-domain endpoint signature.
+    #[codec(index = 31)]
+    MediaEndpointCertificationResponse(Response<MediaEndpointCertificationResponse>),
 }

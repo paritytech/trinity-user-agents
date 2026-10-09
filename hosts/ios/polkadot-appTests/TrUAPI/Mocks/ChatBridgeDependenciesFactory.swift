@@ -1,37 +1,42 @@
 import ChainRegistry
 import Foundation
 import Products
+import DesignSystem
 @testable import polkadot_app
 
 /// Minimal dependencies for a chat bridge under test: only the chat callbacks
 /// are exercised, so the rest are inert stand-ins.
 @MainActor
 func makeChatBridgeDependencies(
-    productId: String = "test.dot"
+    productId: String = "test.dot",
+    chainConnections: TrUAPIChainConnecting? = nil,
+    osPermissionAsker: OSPermissionAsking = MockOSPermissionAsker()
 ) -> RustProductExecutionBridge.Dependencies {
-    let defaults = UserDefaults(suiteName: "io.parity.tests.chat-bridge") ?? .standard
+    let suiteName = "io.parity.tests.chat-bridge"
+    let defaults = UserDefaults(suiteName: suiteName)!
     return .init(
         productId: productId,
         permissionGuard: MockPermissionGuard(),
-        osPermissionAsker: MockOSPermissionAsker(),
+        osPermissionAsker: osPermissionAsker,
         notificationScheduler: MockNotificationScheduler(),
         gameReminders: MockGameReminderScheduler(),
         reminderPermissionAsker: MockReminderPermissionAsker(),
         navigationRouter: MockNavigationRouter(),
         chainRegistry: MockChainRegistry(),
-        chainConnections: TrUAPIChainConnectionPool(
+        chainConnections: chainConnections ?? TrUAPIChainConnectionPool(
             engineResolver: { _ in nil },
             logger: Logger.shared
         ),
         productStorage: TrUAPILocalStorage.createProductLocalStorage(
             productId: productId,
-            defaults: defaults
+            defaults: defaults, storageDomain: suiteName
         ),
-        coreStorage: TrUAPILocalStorage.createCoreLocalStorage(defaults: defaults),
+        coreStorage: TrUAPILocalStorage.createCoreLocalStorage(defaults: defaults, storageDomain: suiteName),
         confirmationPresenter: MockConfirmationPresenter(),
         chatFiles: UnavailableNativeChatFiles(),
         preimageCache: TrUAPIPreimageCache { _ in nil },
         hostProvider: InertHostProvider(),
+        themeManager: ThemeManager.shared,
         logger: Logger.shared
     )
 }

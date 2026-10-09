@@ -562,8 +562,16 @@ private final class PermissionSettingsViewFixture: @MainActor AppPermissionsView
 
 private final class PermissionSettingsInteractorFixture: AppPermissionsInteractorInputProtocol {
     var requests: [[ProductPermission]] = []
+    var mediaRequests: [(TrUAPIMediaPermissionSetting, Bool)] = []
+    var uploadRequests: [(TrUAPIAutomaticUploadScope, Bool)] = []
     func setup() {}
     func revoke(permissions: [ProductPermission]) { requests.append(permissions) }
+    func setMediaPermission(_ setting: TrUAPIMediaPermissionSetting, allowed: Bool) {
+        mediaRequests.append((setting, allowed))
+    }
+    func setAutomaticUploads(allowed: Bool, scope: TrUAPIAutomaticUploadScope) {
+        uploadRequests.append((scope, allowed))
+    }
 }
 
 @MainActor
@@ -645,6 +653,8 @@ extension ProductPermissionRepositoryTests {
 private final class PermissionSettingsOutputFixture: AppPermissionsInteractorOutputProtocol {
     var snapshots: [[ProductPermissionGrant]] = []
     var finished = false
+    var mediaSnapshots: [[TrUAPIMediaPermissionSetting]] = []
+    var uploadSnapshots: [(TrUAPIAutomaticUploadScope?, Bool)] = []
     let errorContinuation: AsyncStream<String>.Continuation
 
     init(errorContinuation: AsyncStream<String>.Continuation) {
@@ -652,6 +662,10 @@ private final class PermissionSettingsOutputFixture: AppPermissionsInteractorOut
     }
 
     func didReceive(grants: [ProductPermissionGrant]) { snapshots.append(grants) }
+    func didReceive(mediaPermissions: [TrUAPIMediaPermissionSetting]) { mediaSnapshots.append(mediaPermissions) }
+    func didReceiveAutomaticUploads(scope: TrUAPIAutomaticUploadScope?, allowed: Bool) {
+        uploadSnapshots.append((scope, allowed))
+    }
     func didFinishRevoking() { finished = true }
     func didReceive(error: Error) { errorContinuation.yield(error.localizedDescription) }
 }
@@ -668,6 +682,7 @@ extension ProductPermissionRepositoryTests {
             productId: "demo.paseo",
             providerFactory: ProductPermissionDataProviderFactory(storageFacade: storage, permissionRepository: repository),
             repository: repository,
+            runtimeProvider: nil,
             notificationScheduler: MockNotificationScheduler()
         )
         let (errors, continuation) = AsyncStream.makeStream(of: String.self)
@@ -728,6 +743,35 @@ extension ProductPermissionRepositoryTests {
         #expect(throws: TrUAPIReviewMappingError.self) {
             try ProductPermission.statementStoreAllowance(derivationIndex: .raw(Data([1]))).authorizationRequest()
         }
+    }
+
+    @Test("Revoke all includes exact Media and automatic-upload scopes")
+    func revokeAllIncludesDedicatedNativeSettings() async throws {
+        let authority = PermissionAuthorityFixture()
+        let repository = ProductPermissionRepository(
+            storageFacade: UserDataStorageTestFacade(), authority: { authority }
+        )
+        let requests: [PermissionAuthorizationRequest] = [
+            .calling(network: Data(repeating: 1, count: 32), account: Data(repeating: 2, count: 32)),
+            .calling(network: Data(repeating: 3, count: 32), account: Data(repeating: 2, count: 32)),
+            .automaticPreimageSubmit(rootPublicKey: Data(repeating: 2, count: 32)),
+            .device(.microphone),
+        ]
+        for productId in ["media.paseo", "other.paseo"] {
+            for request in requests {
+                try await authority.setPermissionAuthorizationStatus(
+                    productId: productId, request: request, status: .authorized
+                )
+            }
+        }
+        try await repository.revokeAllByProduct(productId: "media.paseo")
+        let revoked = try await authority.permissionAuthorizations(productId: "media.paseo")
+        #expect(revoked.count == requests.count)
+        #expect(requests.allSatisfy { request in
+            revoked.contains { $0.request == request && $0.status == .notDetermined }
+        })
+        let untouched = try await authority.permissionAuthorizations(productId: "other.paseo")
+        #expect(untouched.allSatisfy { $0.status == .authorized })
     }
 
     @Test("Native feature grants and denials enumerate and revoke the exact selector")

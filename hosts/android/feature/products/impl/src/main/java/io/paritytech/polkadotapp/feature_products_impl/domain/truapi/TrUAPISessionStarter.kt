@@ -76,9 +76,14 @@ class TrUAPISessionStarter @Inject constructor(
                 card = card,
                 onPermissionRevoked = { provider.disposeRevokedExecution() },
             ) { bootstrap ->
-                provider.addWebViewSetup(installBootstrap(bootstrap))
+                val install = installBootstrap(bootstrap)
+                provider.addWebViewSetup { webView ->
+                    install(webView)
+                    bridge.attachMediaView(webView)
+                }
             }
             .mapCatching { execution ->
+                provider.bindTrUAPILifecycle(bridge)
                 provider.useTrUAPIPermissions(productId, execution)
                 provider.loadInitialContent()
             }

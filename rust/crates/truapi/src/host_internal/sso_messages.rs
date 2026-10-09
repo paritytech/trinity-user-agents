@@ -23,7 +23,7 @@
 use core::fmt;
 use zeroize::Zeroizing;
 
-use parity_scale_codec::{Decode, Encode};
+use parity_scale_codec::{Compact, Decode, Encode, Input};
 use truapi::latest::{
     AllocatableResource, HostAccountCreateProofResponse, HostAccountGetAliasResponse,
     HostAccountSignVrfError, HostSignPayloadRequest, HostSignPayloadResponse, HostSignRawRequest,
@@ -31,6 +31,10 @@ use truapi::latest::{
     RegisteredRingVrfKey, TxPayloadExtension, VrfSignature,
 };
 use truapi::v01;
+
+use crate::host_logic::media_protocol::{
+    MAX_PRODUCT_ID_BYTES, MAX_UNSIGNED_ADVERTISEMENT_BYTES,
+};
 
 use crate::host_logic::session::SsoSessionInfo;
 #[cfg(test)]
@@ -338,6 +342,61 @@ pub struct StatementStoreProductSignRequest {
 /// Account Holder response carrying the product-account sr25519 signature.
 pub type StatementStoreProductSignResponse = Result<[u8; 64], String>;
 
+/// Core-only request for a fixed-domain Media endpoint certificate.
+/// The outer canonical product must exactly match the encoded advertisement;
+/// the signer independently derives its Index(0) account.
+#[derive(Clone, PartialEq, Eq, Encode, derive_more::Debug)]
+#[debug("MediaEndpointCertificationRequest(<redacted>)")]
+pub struct MediaEndpointCertificationRequest {
+    pub product_id: String,
+    pub unsigned_advertisement: Vec<u8>,
+}
+
+impl Decode for MediaEndpointCertificationRequest {
+    fn decode<I: Input>(input: &mut I) -> Result<Self, parity_scale_codec::Error> {
+        fn bounded_bytes<I: Input>(
+            input: &mut I,
+            maximum: usize,
+        ) -> Result<Vec<u8>, parity_scale_codec::Error> {
+            let length = Compact::<u32>::decode(input)?.0 as usize;
+            if length == 0 || length > maximum {
+                return Err("Media certification field exceeds its bound".into());
+            }
+            if input.remaining_len()?.is_some_and(|remaining| remaining < length) {
+                return Err("Truncated Media certification field".into());
+            }
+            input.on_before_alloc_mem(length)?;
+            let mut bytes = vec![0; length];
+            input.read(&mut bytes)?;
+            Ok(bytes)
+        }
+        let product_id = String::from_utf8(bounded_bytes(input, MAX_PRODUCT_ID_BYTES)?)
+            .map_err(|_| parity_scale_codec::Error::from("Invalid Media product encoding"))?;
+        let unsigned_advertisement = bounded_bytes(input, MAX_UNSIGNED_ADVERTISEMENT_BYTES)?;
+        Ok(Self { product_id, unsigned_advertisement })
+    }
+}
+
+/// Finite diagnostics for the private certification channel.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode, derive_more::Display)]
+pub enum MediaEndpointCertificationError {
+    #[display("Disconnected")]
+    Disconnected,
+    #[display("Rejected")]
+    Rejected,
+    #[display("Media certification unavailable")]
+    Unavailable,
+}
+
+impl crate::host_internal::sso_wire::SsoError for MediaEndpointCertificationError {
+    fn not_connected() -> Self {
+        Self::Disconnected
+    }
+}
+
+pub type MediaEndpointCertificationResponse =
+    Result<[u8; 64], MediaEndpointCertificationError>;
+
 /// Request sent when a product asks the signing host to create a transaction
 /// for a product-derived account.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
@@ -519,10 +578,15 @@ pub enum SsoSessionStatement {
 }
 
 /// Decode and classify an inbound encrypted SSO session statement.
+///
+/// A response with a readable foreign correlation id is ignored before its
+/// payload is decoded. Authentication and statement acknowledgements remain
+/// independent of message correlation; `None` decodes every message.
 pub fn decode_sso_session_statement(
     session: &SsoSessionInfo,
     statement: &[u8],
     expected_statement_request_id: &str,
+    expected_remote_message_id: Option<&str>,
 ) -> Result<Option<SsoSessionStatement>, String> {
     let verified =
         decode_verified_statement_data(statement, None).map_err(|err| err.to_string())?;
@@ -560,15 +624,46 @@ pub fn decode_sso_session_statement(
         SsoStatementData::Response { .. } => Ok(None),
         SsoStatementData::Request { data, .. } => Ok(Some(SsoSessionStatement::RemoteMessages(
             data.iter()
-                .map(|message| {
-                    decode_remote_message(message).map(|message| {
-                        let RemoteMessageData::V1(message) = message.data;
-                        message
-                    })
+                .filter_map(|message| {
+                    decode_session_remote_message(message, expected_remote_message_id).transpose()
                 })
                 .collect(),
         ))),
     }
+}
+
+/// Read a SCALE string without allocating an id that the waiter only compares.
+fn decode_correlation_id<'a>(input: &mut &'a [u8]) -> Result<&'a str, String> {
+    let Compact(length) = Compact::<u32>::decode(input)
+        .map_err(|error| format!("invalid SSO remote message: {error}"))?;
+    let (value, rest) = input
+        .split_at_checked(length as usize)
+        .ok_or_else(|| "invalid SSO remote message: truncated correlation id".to_string())?;
+    *input = rest;
+    core::str::from_utf8(value).map_err(|error| format!("invalid SSO remote message: {error}"))
+}
+
+fn decode_session_remote_message(
+    message: &[u8],
+    expected_remote_message_id: Option<&str>,
+) -> Result<Option<v1::RemoteMessage>, String> {
+    let mut input = message;
+    // The outer id identifies this message, not the request it answers.
+    decode_correlation_id(&mut input)?;
+    if let (Some(expected), [0, index, response @ ..]) = (expected_remote_message_id, input)
+        && v1::RemoteMessage::is_response_index(*index)
+    {
+        let mut header = response;
+        if decode_correlation_id(&mut header)? != expected {
+            return Ok(None);
+        }
+    }
+    let RemoteMessageData::V1(decoded) = RemoteMessageData::decode(&mut input)
+        .map_err(|error| format!("invalid SSO remote message: {error}"))?;
+    if !input.is_empty() {
+        return Err("invalid SSO remote message: trailing bytes".to_string());
+    }
+    Ok(Some(decoded))
 }
 
 fn classify_response_ack(
@@ -776,6 +871,20 @@ mod tests {
     };
     use truapi::v01::RingLocationJunction;
     use x25519_dalek::{PublicKey as X25519PublicKey, StaticSecret as X25519SecretKey};
+
+    #[test]
+    fn media_certification_codec_rejects_oversized_fields_before_dispatch() {
+        let oversized_product = MediaEndpointCertificationRequest {
+            product_id: "a".repeat(MAX_PRODUCT_ID_BYTES + 1),
+            unsigned_advertisement: vec![1],
+        }.encode();
+        assert!(MediaEndpointCertificationRequest::decode(&mut oversized_product.as_slice()).is_err());
+        let oversized_payload = MediaEndpointCertificationRequest {
+            product_id: "myapp.dot".to_string(),
+            unsigned_advertisement: vec![1; MAX_UNSIGNED_ADVERTISEMENT_BYTES + 1],
+        }.encode();
+        assert!(MediaEndpointCertificationRequest::decode(&mut oversized_payload.as_slice()).is_err());
+    }
 
     fn account() -> ProductAccountId {
         ProductAccountId {
@@ -1697,7 +1806,8 @@ mod tests {
         )
         .unwrap();
 
-        let decoded = decode_sso_session_statement(&session, &statement, "statement-1").unwrap();
+        let decoded =
+            decode_sso_session_statement(&session, &statement, "statement-1", None).unwrap();
 
         assert_eq!(decoded, None);
     }
@@ -1746,7 +1856,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(
-            decode_sso_session_statement(&host_session, &ack, "statement-1").unwrap(),
+            decode_sso_session_statement(&host_session, &ack, "statement-1", Some("remote-1")).unwrap(),
             Some(SsoSessionStatement::RequestAccepted)
         );
 
@@ -1767,9 +1877,13 @@ mod tests {
             fresh_expiry(),
         )
         .unwrap();
-        let decoded =
-            decode_sso_session_statement(&host_session, &response_statement, "statement-1")
-                .unwrap();
+        let decoded = decode_sso_session_statement(
+            &host_session,
+            &response_statement,
+            "statement-1",
+            Some("remote-1"),
+        )
+        .unwrap();
         assert_eq!(
             decoded,
             Some(SsoSessionStatement::RemoteMessages(vec![Ok(
@@ -1880,7 +1994,8 @@ mod tests {
         let session = session();
         let statement = response_ack_statement(&session, fresh_expiry());
 
-        let decoded = decode_sso_session_statement(&session, &statement, "statement-1").unwrap();
+        let decoded =
+            decode_sso_session_statement(&session, &statement, "statement-1", None).unwrap();
 
         assert_eq!(decoded, Some(SsoSessionStatement::RequestAccepted));
     }
@@ -1892,7 +2007,8 @@ mod tests {
         let session = session();
         let statement = response_ack_statement(&session, elapsed_expiry());
 
-        let decoded = decode_sso_session_statement(&session, &statement, "statement-1").unwrap();
+        let decoded =
+            decode_sso_session_statement(&session, &statement, "statement-1", None).unwrap();
 
         assert_eq!(decoded, None);
     }

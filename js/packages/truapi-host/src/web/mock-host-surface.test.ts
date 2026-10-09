@@ -208,7 +208,7 @@ describe("mock host surface agreement", () => {
     ].map(([, variant, key]) => ({ variant, key }));
 
     // A regex that matched nothing would make this pass forever.
-    expect(arms.length).toBe(15);
+    expect(arms.length).toBe(16);
     expect(arms.filter(({ variant, key }) => variant !== key)).toEqual([]);
   });
 

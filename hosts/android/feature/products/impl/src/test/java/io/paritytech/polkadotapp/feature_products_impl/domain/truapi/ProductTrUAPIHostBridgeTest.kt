@@ -1,6 +1,5 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.truapi
 
-import android.content.Context
 import uniffi.truapi.AccountAccessReview
 import uniffi.truapi.PermissionDecision
 import uniffi.truapi.ProfileDisclosureReview
@@ -9,22 +8,17 @@ import dagger.Lazy
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.mockk
+import io.mockk.every
+import io.paritytech.polkadotapp.tools_media_connection_impl.nativeMedia.NativeMediaBackendFactory
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.PermissionAuthorizationChanges
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.ProductPermissionRepository
 import io.paritytech.polkadotapp.feature_settings_api.domain.language.AppLanguageProvider
 import kotlinx.coroutines.flow.flowOf
 import io.parity.truapi.HostBridge
-import io.parity.truapi.TrUAPIHostRuntime
-import io.paritytech.polkadotapp.common.data.storage.preferences.encrypted.EncryptedPreferences
-import io.paritytech.polkadotapp.common.presentation.AppLifecycleObserver
-import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
 import io.paritytech.polkadotapp.feature_products_api.domain.game.ProductGameReminder
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
-import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.HostApiInteractor
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.navigation.NavigationPolicy
-import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.PocketCardStore
 import io.paritytech.polkadotapp.feature_products_impl.presentation.spaHost.ExpandedCardFace
-import io.paritytech.polkadotapp.test_shared.whenever
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
 import kotlinx.coroutines.CoroutineScope
@@ -37,35 +31,38 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.fail
 import org.junit.Assert.assertTrue
 import org.junit.Test
-import org.mockito.Mockito.mock
-import org.mockito.Mockito.verify
-import org.mockito.stubbing.Answer
 import uniffi.truapi.ExpandedCardFaceOutcome
 import uniffi.truapi.HostRejection
 import uniffi.truapi.ProductExecutionKind
 
 class ProductTrUAPIHostBridgeTest {
-    // The core refuses the open: an unavailable loopback port, or an execution config it rejects.
-    private val refusingCore = Answer<Any> { throw IllegalStateException("loopback port unavailable") }
-
-    private val gameReminder = mock(ProductGameReminder::class.java)
+    private val gameReminder = mockk<ProductGameReminder>(relaxed = true)
     private val game = ProductId.fromStoredValue("game.dot")
 
     private fun TestScope.bridge(
-        launcher: TrUAPIConfirmationLauncher = mock(TrUAPIConfirmationLauncher::class.java),
+        launcher: TrUAPIConfirmationLauncher = mockk(),
     ) = ProductTrUAPIHostBridge(
-        hostApiInteractor = mock(HostApiInteractor::class.java),
+        hostApiInteractor = mockk(),
         chainHttpClient = OkHttpClient(),
-        encryptedPreferences = mock(EncryptedPreferences::class.java),
+        encryptedPreferences = mockk {
+            every { storageIdentifier } returns "bridge-test"
+        },
         confirmationLauncher = launcher,
-        appLifecycleObserver = mock(AppLifecycleObserver::class.java),
-        dotNsTldProvider = mock(DotNsTldProvider::class.java),
-        pocketCardStore = mock(PocketCardStore::class.java),
-        context = mock(Context::class.java),
+        appLifecycleObserver = mockk(),
+        dotNsTldProvider = mockk(),
+        pocketCardStore = mockk(),
+        context = mockk(),
         appLanguageProvider = object : AppLanguageProvider {
             override val languageTag = flowOf("en-US")
         },
-        permissionRepository = Lazy { mock(ProductPermissionRepository::class.java) },
+        mediaFactory = mockk<NativeMediaBackendFactory> {
+            every { create("game.dot") } returns mockk(relaxed = true)
+        },
+        permissionRepository = Lazy {
+            mockk<ProductPermissionRepository> {
+                coEvery { getAllByProduct(game) } returns emptyList()
+            }
+        },
         permissionChanges = PermissionAuthorizationChanges(),
         productGameReminder = gameReminder,
         scope = CoroutineScope(StandardTestDispatcher(testScheduler)),
@@ -75,8 +72,12 @@ class ProductTrUAPIHostBridgeTest {
     // back as the Result the signature promises rather than as a crash.
     @Test
     fun `a core that refuses to open the execution fails the attach instead of throwing`() = runTest {
+        val runtime = mockk<io.parity.truapi.TrUAPIHostRuntime> {
+            every { openProductExecution(any(), any(), any(), any(), any(), any()) } throws
+                IllegalStateException("loopback port unavailable")
+        }
         val outcome = bridge().attach(
-            runtime = mock(TrUAPIHostRuntime::class.java, refusingCore),
+            runtime = runtime,
             productId = ProductId.fromStoredValue("game.dot"),
             chains = EMPTY_CHAINS,
             navigationPolicy = NavigationPolicy.DeeplinkNavigation(onDeeplinkNavigation = {}),
@@ -90,10 +91,12 @@ class ProductTrUAPIHostBridgeTest {
 
     private suspend fun TestScope.callbacks(launcher: TrUAPIConfirmationLauncher): HostBridge {
         var callbacks: HostBridge? = null
-        val runtime = mock(TrUAPIHostRuntime::class.java, Answer<Any> { invocation ->
-            callbacks = invocation.arguments.filterIsInstance<HostBridge>().single()
-            throw IllegalStateException("captured callbacks without opening a native execution")
-        })
+        val runtime = mockk<io.parity.truapi.TrUAPIHostRuntime> {
+            every { openProductExecution(any(), any(), any(), any(), any(), any()) } answers {
+                callbacks = firstArg()
+                throw IllegalStateException("captured callbacks without opening a native execution")
+            }
+        }
         val outcome = bridge(launcher).attach(
             runtime = runtime,
             productId = ProductId.fromStoredValue("game.dot"),
@@ -111,10 +114,10 @@ class ProductTrUAPIHostBridgeTest {
     fun `profile permission and action callbacks await explicit review without optimistic approval`() = runTest {
         val review = UserConfirmationReview.ProfileDisclosure(ProfileDisclosureReview("seity.paseo"))
         for (permissionCallback in listOf(true, false)) {
-            for (approved in listOf(true, false)) {
+            for (decision in PermissionDecision.entries) {
                 val launcher = mockk<TrUAPIConfirmationLauncher>()
                 val prompted = CompletableDeferred<TrUAPIConfirmation>()
-                val answer = CompletableDeferred<Boolean>()
+                val answer = CompletableDeferred<PermissionDecision>()
                 coEvery { launcher.awaitDecision(any()) } coAnswers {
                     prompted.complete(firstArg())
                     answer.await()
@@ -127,12 +130,8 @@ class ProductTrUAPIHostBridgeTest {
                 val confirmation = prompted.await() as TrUAPIConfirmation.ProfileDisclosure
                 assertEquals("seity.paseo", confirmation.requesterProductId)
                 assertFalse(pending.isCompleted)
-                answer.complete(approved)
-                val expected: Any = if (permissionCallback) {
-                    if (approved) PermissionDecision.ALLOW_ALWAYS else PermissionDecision.DENY
-                } else {
-                    approved
-                }
+                answer.complete(decision)
+                val expected: Any = if (permissionCallback) decision else decision != PermissionDecision.DENY
                 assertEquals(expected, pending.await())
                 coVerify(exactly = 1) { launcher.awaitDecision(any()) }
             }
@@ -158,14 +157,14 @@ class ProductTrUAPIHostBridgeTest {
     @Test
     fun `supported permission preserves explicit approval and denial through product callbacks`() = runTest {
         val review = UserConfirmationReview.AccountAccess(AccountAccessReview("game.dot", "target.dot"))
-        for (approved in listOf(true, false)) {
+        for (decision in PermissionDecision.entries) {
             val prompts = mutableListOf<TrUAPIConfirmation>()
             val launcher = mockk<TrUAPIConfirmationLauncher>()
-            coEvery { launcher.awaitDecision(capture(prompts)) } returns approved
+            coEvery { launcher.awaitDecision(capture(prompts)) } returns decision
             val callbacks = callbacks(launcher)
 
             assertEquals(
-                if (approved) PermissionDecision.ALLOW_ALWAYS else PermissionDecision.DENY,
+                decision,
                 callbacks.confirmPermission(review),
             )
             val prompt = prompts.single() as TrUAPIConfirmation.AccountAccess
@@ -176,10 +175,12 @@ class ProductTrUAPIHostBridgeTest {
 
     private suspend fun TestScope.attachCapturingBridge(card: ExpandedCardFace?): HostBridge {
         var opened: HostBridge? = null
-        val runtime = mock(TrUAPIHostRuntime::class.java, Answer<Any> { invocation ->
-            opened = invocation.getArgument(0)
-            throw IllegalStateException("captured")
-        })
+        val runtime = mockk<io.parity.truapi.TrUAPIHostRuntime> {
+            every { openProductExecution(any(), any(), any(), any(), any(), any()) } answers {
+                opened = firstArg()
+                throw IllegalStateException("captured")
+            }
+        }
         bridge().attach(
             runtime = runtime,
             productId = game,
@@ -224,8 +225,8 @@ class ProductTrUAPIHostBridgeTest {
         gameBridge.scheduleReminder(1_000u)
         gameBridge.cancelReminder()
 
-        verify(gameReminder).schedule(game, 1_000)
-        verify(gameReminder).cancel(game)
+        coVerify(exactly = 1) { gameReminder.schedule(game, 1_000) }
+        coVerify(exactly = 1) { gameReminder.cancel(game) }
     }
 
     @Test
@@ -239,6 +240,6 @@ class ProductTrUAPIHostBridgeTest {
     }
 
     private suspend fun withScheduleOutcome(outcome: Result<Unit>) {
-        whenever(gameReminder.schedule(game, 1_000)).thenReturn(outcome)
+        coEvery { gameReminder.schedule(game, 1_000) } returns outcome
     }
 }

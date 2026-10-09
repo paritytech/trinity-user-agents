@@ -394,11 +394,7 @@ private final class StubBuilder: TrUAPIWorkerBuilding, @unchecked Sendable {
         let engineFails = engineFails
         return TrUAPIWorkerRuntime(
             productUrl: URL(string: "https://product.invalid/worker.js")!,
-            executionModel: RustRuntimeEnvironment.ExecutionModel(
-                execution: execution,
-                chainConnections: MockChainConnections(),
-                osPermissionAsker: OSPermissionAsker()
-            ),
+            executionModel: await makeExecutionModel(execution: execution),
             engineFactory: { [weak self] in
                 self?.cardsWhenTheEngineBooted = (try? pocket.listCards()) ?? []
                 if engineFails { return FailingJSEngine() }

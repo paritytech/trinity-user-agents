@@ -5,7 +5,7 @@
 use super::*;
 
 /// Fingerprint of the generated wire contract.
-pub const TRUAPI_WIRE_SCHEMA_HASH: &str = "ec0d28820f74178d";
+pub const TRUAPI_WIRE_SCHEMA_HASH: &str = "0209b3a4920e59a9";
 
 /// `account_connection_status_subscribe` method marker.
 pub struct AccountConnectionStatusSubscribe;
@@ -1627,6 +1627,303 @@ impl RequestMethod for LocaleLocalizeTimestamps {
     const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
 }
 
+/// `media_get_capabilities` method marker.
+pub struct MediaGetCapabilities;
+impl MediaGetCapabilities {
+    /// Canonical metadata and frame ids for this method.
+    pub const DESCRIPTOR: MethodDescriptor = MethodDescriptor {
+        service: "Media",
+        method: "get_capabilities",
+        wire_name: "media_get_capabilities",
+        request_type: "truapi::versioned::media::HostMediaGetCapabilitiesRequest",
+        response_type: "truapi::versioned::media::HostMediaGetCapabilitiesResponse",
+        error_type: Some("truapi::versioned::media::HostMediaGetCapabilitiesError"),
+        kind: MethodKind::Request,
+        direction: Direction::ProductToHost,
+        required_execution: None,
+        wire: MethodWire::Request(MethodIds {
+            trait_id: 218,
+            method_id: 0,
+        }),
+    };
+}
+impl RequestMethod for MediaGetCapabilities {
+    type Request = truapi::versioned::media::HostMediaGetCapabilitiesRequest;
+    type Response = truapi::versioned::media::HostMediaGetCapabilitiesResponse;
+    type Error = truapi::versioned::media::HostMediaGetCapabilitiesError;
+    const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
+}
+
+/// `media_session_subscribe` method marker.
+pub struct MediaSessionSubscribe;
+impl MediaSessionSubscribe {
+    /// Canonical metadata and frame ids for this method.
+    pub const DESCRIPTOR: MethodDescriptor = MethodDescriptor {
+        service: "Media",
+        method: "session_subscribe",
+        wire_name: "media_session_subscribe",
+        request_type: "truapi::versioned::media::HostMediaSessionSubscribeRequest",
+        response_type: "truapi::versioned::media::HostMediaSessionSubscribeItem",
+        error_type: Some("truapi::versioned::media::HostMediaSessionSubscribeError"),
+        kind: MethodKind::Subscription,
+        direction: Direction::ProductToHost,
+        required_execution: None,
+        wire: MethodWire::Subscription(MethodIds {
+            trait_id: 218,
+            method_id: 1,
+        }),
+    };
+}
+impl SubscriptionMethod for MediaSessionSubscribe {
+    type Request = truapi::versioned::media::HostMediaSessionSubscribeRequest;
+    type Error = truapi::versioned::media::HostMediaSessionSubscribeError;
+    type Item = truapi::versioned::media::HostMediaSessionSubscribeItem;
+    const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
+}
+
+/// `media_create_session` method marker.
+pub struct MediaCreateSession;
+impl MediaCreateSession {
+    /// Canonical metadata and frame ids for this method.
+    pub const DESCRIPTOR: MethodDescriptor = MethodDescriptor {
+        service: "Media",
+        method: "create_session",
+        wire_name: "media_create_session",
+        request_type: "truapi::versioned::media::HostMediaCreateSessionRequest",
+        response_type: "truapi::versioned::media::HostMediaCreateSessionResponse",
+        error_type: Some("truapi::versioned::media::HostMediaCreateSessionError"),
+        kind: MethodKind::Request,
+        direction: Direction::ProductToHost,
+        required_execution: None,
+        wire: MethodWire::Request(MethodIds {
+            trait_id: 218,
+            method_id: 2,
+        }),
+    };
+}
+impl RequestMethod for MediaCreateSession {
+    type Request = truapi::versioned::media::HostMediaCreateSessionRequest;
+    type Response = truapi::versioned::media::HostMediaCreateSessionResponse;
+    type Error = truapi::versioned::media::HostMediaCreateSessionError;
+    const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
+}
+
+/// `media_add_participant` method marker.
+pub struct MediaAddParticipant;
+impl MediaAddParticipant {
+    /// Canonical metadata and frame ids for this method.
+    pub const DESCRIPTOR: MethodDescriptor = MethodDescriptor {
+        service: "Media",
+        method: "add_participant",
+        wire_name: "media_add_participant",
+        request_type: "truapi::versioned::media::HostMediaAddParticipantRequest",
+        response_type: "truapi::versioned::media::HostMediaAddParticipantResponse",
+        error_type: Some("truapi::versioned::media::HostMediaAddParticipantError"),
+        kind: MethodKind::Request,
+        direction: Direction::ProductToHost,
+        required_execution: None,
+        wire: MethodWire::Request(MethodIds {
+            trait_id: 218,
+            method_id: 3,
+        }),
+    };
+}
+impl RequestMethod for MediaAddParticipant {
+    type Request = truapi::versioned::media::HostMediaAddParticipantRequest;
+    type Response = truapi::versioned::media::HostMediaAddParticipantResponse;
+    type Error = truapi::versioned::media::HostMediaAddParticipantError;
+    const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
+}
+
+/// `media_respond_incoming` method marker.
+pub struct MediaRespondIncoming;
+impl MediaRespondIncoming {
+    /// Canonical metadata and frame ids for this method.
+    pub const DESCRIPTOR: MethodDescriptor = MethodDescriptor {
+        service: "Media",
+        method: "respond_incoming",
+        wire_name: "media_respond_incoming",
+        request_type: "truapi::versioned::media::HostMediaRespondIncomingRequest",
+        response_type: "truapi::versioned::media::HostMediaRespondIncomingResponse",
+        error_type: Some("truapi::versioned::media::HostMediaRespondIncomingError"),
+        kind: MethodKind::Request,
+        direction: Direction::ProductToHost,
+        required_execution: None,
+        wire: MethodWire::Request(MethodIds {
+            trait_id: 218,
+            method_id: 4,
+        }),
+    };
+}
+impl RequestMethod for MediaRespondIncoming {
+    type Request = truapi::versioned::media::HostMediaRespondIncomingRequest;
+    type Response = truapi::versioned::media::HostMediaRespondIncomingResponse;
+    type Error = truapi::versioned::media::HostMediaRespondIncomingError;
+    const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
+}
+
+/// `media_remove_participant` method marker.
+pub struct MediaRemoveParticipant;
+impl MediaRemoveParticipant {
+    /// Canonical metadata and frame ids for this method.
+    pub const DESCRIPTOR: MethodDescriptor = MethodDescriptor {
+        service: "Media",
+        method: "remove_participant",
+        wire_name: "media_remove_participant",
+        request_type: "truapi::versioned::media::HostMediaRemoveParticipantRequest",
+        response_type: "truapi::versioned::media::HostMediaRemoveParticipantResponse",
+        error_type: Some("truapi::versioned::media::HostMediaRemoveParticipantError"),
+        kind: MethodKind::Request,
+        direction: Direction::ProductToHost,
+        required_execution: None,
+        wire: MethodWire::Request(MethodIds {
+            trait_id: 218,
+            method_id: 5,
+        }),
+    };
+}
+impl RequestMethod for MediaRemoveParticipant {
+    type Request = truapi::versioned::media::HostMediaRemoveParticipantRequest;
+    type Response = truapi::versioned::media::HostMediaRemoveParticipantResponse;
+    type Error = truapi::versioned::media::HostMediaRemoveParticipantError;
+    const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
+}
+
+/// `media_set_local_tracks` method marker.
+pub struct MediaSetLocalTracks;
+impl MediaSetLocalTracks {
+    /// Canonical metadata and frame ids for this method.
+    pub const DESCRIPTOR: MethodDescriptor = MethodDescriptor {
+        service: "Media",
+        method: "set_local_tracks",
+        wire_name: "media_set_local_tracks",
+        request_type: "truapi::versioned::media::HostMediaSetLocalTracksRequest",
+        response_type: "truapi::versioned::media::HostMediaSetLocalTracksResponse",
+        error_type: Some("truapi::versioned::media::HostMediaSetLocalTracksError"),
+        kind: MethodKind::Request,
+        direction: Direction::ProductToHost,
+        required_execution: None,
+        wire: MethodWire::Request(MethodIds {
+            trait_id: 218,
+            method_id: 6,
+        }),
+    };
+}
+impl RequestMethod for MediaSetLocalTracks {
+    type Request = truapi::versioned::media::HostMediaSetLocalTracksRequest;
+    type Response = truapi::versioned::media::HostMediaSetLocalTracksResponse;
+    type Error = truapi::versioned::media::HostMediaSetLocalTracksError;
+    const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
+}
+
+/// `media_set_surfaces` method marker.
+pub struct MediaSetSurfaces;
+impl MediaSetSurfaces {
+    /// Canonical metadata and frame ids for this method.
+    pub const DESCRIPTOR: MethodDescriptor = MethodDescriptor {
+        service: "Media",
+        method: "set_surfaces",
+        wire_name: "media_set_surfaces",
+        request_type: "truapi::versioned::media::HostMediaSetSurfacesRequest",
+        response_type: "truapi::versioned::media::HostMediaSetSurfacesResponse",
+        error_type: Some("truapi::versioned::media::HostMediaSetSurfacesError"),
+        kind: MethodKind::Request,
+        direction: Direction::ProductToHost,
+        required_execution: None,
+        wire: MethodWire::Request(MethodIds {
+            trait_id: 218,
+            method_id: 7,
+        }),
+    };
+}
+impl RequestMethod for MediaSetSurfaces {
+    type Request = truapi::versioned::media::HostMediaSetSurfacesRequest;
+    type Response = truapi::versioned::media::HostMediaSetSurfacesResponse;
+    type Error = truapi::versioned::media::HostMediaSetSurfacesError;
+    const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
+}
+
+/// `media_end_session` method marker.
+pub struct MediaEndSession;
+impl MediaEndSession {
+    /// Canonical metadata and frame ids for this method.
+    pub const DESCRIPTOR: MethodDescriptor = MethodDescriptor {
+        service: "Media",
+        method: "end_session",
+        wire_name: "media_end_session",
+        request_type: "truapi::versioned::media::HostMediaEndSessionRequest",
+        response_type: "truapi::versioned::media::HostMediaEndSessionResponse",
+        error_type: Some("truapi::versioned::media::HostMediaEndSessionError"),
+        kind: MethodKind::Request,
+        direction: Direction::ProductToHost,
+        required_execution: None,
+        wire: MethodWire::Request(MethodIds {
+            trait_id: 218,
+            method_id: 8,
+        }),
+    };
+}
+impl RequestMethod for MediaEndSession {
+    type Request = truapi::versioned::media::HostMediaEndSessionRequest;
+    type Response = truapi::versioned::media::HostMediaEndSessionResponse;
+    type Error = truapi::versioned::media::HostMediaEndSessionError;
+    const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
+}
+
+/// `media_get_operation` method marker.
+pub struct MediaGetOperation;
+impl MediaGetOperation {
+    /// Canonical metadata and frame ids for this method.
+    pub const DESCRIPTOR: MethodDescriptor = MethodDescriptor {
+        service: "Media",
+        method: "get_operation",
+        wire_name: "media_get_operation",
+        request_type: "truapi::versioned::media::HostMediaGetOperationRequest",
+        response_type: "truapi::versioned::media::HostMediaGetOperationResponse",
+        error_type: Some("truapi::versioned::media::HostMediaGetOperationError"),
+        kind: MethodKind::Request,
+        direction: Direction::ProductToHost,
+        required_execution: None,
+        wire: MethodWire::Request(MethodIds {
+            trait_id: 218,
+            method_id: 9,
+        }),
+    };
+}
+impl RequestMethod for MediaGetOperation {
+    type Request = truapi::versioned::media::HostMediaGetOperationRequest;
+    type Response = truapi::versioned::media::HostMediaGetOperationResponse;
+    type Error = truapi::versioned::media::HostMediaGetOperationError;
+    const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
+}
+
+/// `media_cancel_operation` method marker.
+pub struct MediaCancelOperation;
+impl MediaCancelOperation {
+    /// Canonical metadata and frame ids for this method.
+    pub const DESCRIPTOR: MethodDescriptor = MethodDescriptor {
+        service: "Media",
+        method: "cancel_operation",
+        wire_name: "media_cancel_operation",
+        request_type: "truapi::versioned::media::HostMediaCancelOperationRequest",
+        response_type: "truapi::versioned::media::HostMediaCancelOperationResponse",
+        error_type: Some("truapi::versioned::media::HostMediaCancelOperationError"),
+        kind: MethodKind::Request,
+        direction: Direction::ProductToHost,
+        required_execution: None,
+        wire: MethodWire::Request(MethodIds {
+            trait_id: 218,
+            method_id: 10,
+        }),
+    };
+}
+impl RequestMethod for MediaCancelOperation {
+    type Request = truapi::versioned::media::HostMediaCancelOperationRequest;
+    type Response = truapi::versioned::media::HostMediaCancelOperationResponse;
+    type Error = truapi::versioned::media::HostMediaCancelOperationError;
+    const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
+}
+
 /// `notifications_send_push_notification` method marker.
 pub struct NotificationsSendPushNotification;
 impl NotificationsSendPushNotification {
@@ -3126,6 +3423,17 @@ pub const APP_METHODS: &[MethodDescriptor] = &[
     LocalStorageSubscribe::DESCRIPTOR,
     LocaleSubscribe::DESCRIPTOR,
     LocaleLocalizeTimestamps::DESCRIPTOR,
+    MediaGetCapabilities::DESCRIPTOR,
+    MediaSessionSubscribe::DESCRIPTOR,
+    MediaCreateSession::DESCRIPTOR,
+    MediaAddParticipant::DESCRIPTOR,
+    MediaRespondIncoming::DESCRIPTOR,
+    MediaRemoveParticipant::DESCRIPTOR,
+    MediaSetLocalTracks::DESCRIPTOR,
+    MediaSetSurfaces::DESCRIPTOR,
+    MediaEndSession::DESCRIPTOR,
+    MediaGetOperation::DESCRIPTOR,
+    MediaCancelOperation::DESCRIPTOR,
     NotificationsSendPushNotification::DESCRIPTOR,
     NotificationsCancelPushNotification::DESCRIPTOR,
     NotificationsReceiverStatus::DESCRIPTOR,
@@ -3232,6 +3540,17 @@ pub const WIDGET_METHODS: &[MethodDescriptor] = &[
     LocalStorageSubscribe::DESCRIPTOR,
     LocaleSubscribe::DESCRIPTOR,
     LocaleLocalizeTimestamps::DESCRIPTOR,
+    MediaGetCapabilities::DESCRIPTOR,
+    MediaSessionSubscribe::DESCRIPTOR,
+    MediaCreateSession::DESCRIPTOR,
+    MediaAddParticipant::DESCRIPTOR,
+    MediaRespondIncoming::DESCRIPTOR,
+    MediaRemoveParticipant::DESCRIPTOR,
+    MediaSetLocalTracks::DESCRIPTOR,
+    MediaSetSurfaces::DESCRIPTOR,
+    MediaEndSession::DESCRIPTOR,
+    MediaGetOperation::DESCRIPTOR,
+    MediaCancelOperation::DESCRIPTOR,
     NotificationsSendPushNotification::DESCRIPTOR,
     NotificationsCancelPushNotification::DESCRIPTOR,
     NotificationsReceiverStatus::DESCRIPTOR,
@@ -3342,6 +3661,17 @@ pub const WORKER_METHODS: &[MethodDescriptor] = &[
     LocalStorageSubscribe::DESCRIPTOR,
     LocaleSubscribe::DESCRIPTOR,
     LocaleLocalizeTimestamps::DESCRIPTOR,
+    MediaGetCapabilities::DESCRIPTOR,
+    MediaSessionSubscribe::DESCRIPTOR,
+    MediaCreateSession::DESCRIPTOR,
+    MediaAddParticipant::DESCRIPTOR,
+    MediaRespondIncoming::DESCRIPTOR,
+    MediaRemoveParticipant::DESCRIPTOR,
+    MediaSetLocalTracks::DESCRIPTOR,
+    MediaSetSurfaces::DESCRIPTOR,
+    MediaEndSession::DESCRIPTOR,
+    MediaGetOperation::DESCRIPTOR,
+    MediaCancelOperation::DESCRIPTOR,
     NotificationsSendPushNotification::DESCRIPTOR,
     NotificationsCancelPushNotification::DESCRIPTOR,
     NotificationsReceiverStatus::DESCRIPTOR,

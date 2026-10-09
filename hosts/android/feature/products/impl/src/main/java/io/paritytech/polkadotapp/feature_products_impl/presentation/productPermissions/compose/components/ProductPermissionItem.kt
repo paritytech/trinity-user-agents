@@ -15,12 +15,32 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.models
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.models.ProductPermission
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.models.ProductPermissionStatus
 import io.paritytech.polkadotapp.common.R as RCommon
+import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.NativeMediaPermissionStatus
+import uniffi.truapi.HostDevicePermissionRequest
+import uniffi.truapi.PermissionAuthorizationRequest
 
 @Composable
-internal fun ProductPermissionItem(
-    permissionStatus: ProductPermissionStatus,
-    onToggle: () -> Unit
-) {
+internal fun ProductPermissionItem(permissionStatus: ProductPermissionStatus, onToggle: () -> Unit) {
+    PermissionItem(permissionStatus.permission.displayName(), permissionStatus.permission.displayDescription(), permissionStatus.granted, onToggle)
+}
+
+@Composable
+internal fun NativeMediaPermissionItem(permission: NativeMediaPermissionStatus, onToggle: () -> Unit) {
+    fun ByteArray.hex() = joinToString("") { "%02x".format(it) }
+    val (title, description) = when (val request = permission.request) {
+        is PermissionAuthorizationRequest.Calling -> "Calling" to
+            "Product: ${permission.productId}\nNetwork: ${request.network.hex()}\nAccount (sr25519): ${request.account.hex()}"
+        is PermissionAuthorizationRequest.Device -> {
+            val title = if (request.v1 == HostDevicePermissionRequest.CAMERA) "Camera" else "Microphone"
+            title to "Product: ${permission.productId}\nHost-owned calling capture. No raw browser capture access."
+        }
+        else -> error("Not a Media permission")
+    }
+    PermissionItem(title, description, permission.granted, onToggle)
+}
+
+@Composable
+private fun PermissionItem(title: String, description: String, granted: Boolean, onToggle: () -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -34,22 +54,17 @@ internal fun ProductPermissionItem(
     ) {
         Column(modifier = Modifier.weight(1f)) {
             NovaText(
-                text = permissionStatus.permission.displayName(),
+                text = title,
                 style = PolkadotTheme.typography.title.large,
                 color = PolkadotTheme.colors.fg.primary
             )
-
             NovaText(
-                text = permissionStatus.permission.displayDescription(),
+                text = description,
                 style = PolkadotTheme.typography.body.medium,
                 color = PolkadotTheme.colors.fg.tertiary
             )
         }
-
-        NovaSwitch(
-            checked = permissionStatus.granted,
-            onCheckedChange = { onToggle() }
-        )
+        NovaSwitch(checked = granted, onCheckedChange = { onToggle() })
     }
 }
 

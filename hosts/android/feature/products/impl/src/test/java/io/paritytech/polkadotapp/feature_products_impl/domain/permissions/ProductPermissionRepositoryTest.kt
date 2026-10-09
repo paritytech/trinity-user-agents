@@ -84,7 +84,7 @@ class ProductPermissionRepositoryTest {
             f.saved(product)[it.canonicalRequest()!!] = authorized
             f.saved(other)[it.canonicalRequest()!!] = authorized
         }
-        val interactor = ProductPermissionsInteractor(mockk(), f.repository)
+        val interactor = ProductPermissionsInteractor(mockk(), f.repository, mockk(), mockk())
         assertEquals(permissions, f.repository.getAllByProduct(product).map { it.permission })
         for (permission in permissions) {
             interactor.togglePermission(product, ProductPermissionStatus(permission, true))
@@ -306,6 +306,43 @@ class ProductPermissionRepositoryTest {
         assertTrue(f.repository.isDenied(product, single))
     }
 
+    @Test
+    fun `revocation reports deferred cross-core refresh failure after durable denial`() = runTest {
+        val f = Fixture()
+        f.saved(product)[camera.canonicalRequest()!!] = authorized
+        coEvery { f.runtime.awaitCoreStorageChanges() } throws IllegalStateException("refresh failed")
+
+        val outcome = runCatching { f.repository.revoke(product, camera) }
+
+        assertTrue(outcome.isFailure)
+        assertEquals("refresh failed", outcome.exceptionOrNull()?.message)
+        assertTrue(f.repository.isDenied(product, camera))
+    }
+
+    @Test
+    fun `dedicated account scopes survive enumeration and are revoked without broadening`() = runTest {
+        val f = Fixture()
+        val requests = listOf(
+            PermissionAuthorizationRequest.Calling(ByteArray(32) { 1 }, ByteArray(32) { 2 }),
+            PermissionAuthorizationRequest.Calling(ByteArray(32) { 1 }, ByteArray(32) { 3 }),
+            PermissionAuthorizationRequest.AutomaticPreimageSubmit(ByteArray(32) { 4 }),
+        )
+        requests.forEach {
+            f.saved(product)[it] = authorized
+            f.saved(other)[it] = authorized
+        }
+        f.saved(product)[camera.canonicalRequest()!!] = authorized
+
+        assertEquals(listOf(camera), f.repository.getAllByProduct(product).map { it.permission })
+        f.repository.revokeAllByProduct(product)
+
+        requests.forEach {
+            assertEquals(denied, f.saved(product)[it])
+            assertEquals(authorized, f.saved(other)[it])
+        }
+        assertTrue(f.repository.isDenied(product, camera))
+    }
+
     private fun row(permission: ProductPermission) = ProductPermissionGrantLocal(
         product.value, permission.typeName, permission.key, true, 1L,
     )
@@ -324,6 +361,7 @@ class ProductPermissionRepositoryTest {
 
         init {
             coEvery { provider.runtime() } returns Result.success(runtime)
+            coEvery { runtime.awaitCoreStorageChanges() } returns Unit
             coEvery { dao.getAllByProduct(any()) } answers { legacy.value.filter { it.productId == firstArg<String>() } }
             every { dao.observeAllByProduct(any()) } returns legacy
             every { runtime.permissionAuthorizationRevision(any()) } answers { revisions[firstArg<String>()] ?: 0uL }

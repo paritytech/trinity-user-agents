@@ -6,15 +6,17 @@
 
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock, Weak};
 
 use crate::chain_runtime::{ChainRuntime, RuntimeChainProvider, RuntimeFailure};
 use crate::host_logic::worker::WorkerLedger;
 use crate::platform::{
-    CoinageWalletHost, HostInfo, JsonRpcConnection, PermissionStatusHost, Platform,
+    CoinageWalletHost, HostInfo, JsonRpcConnection, PermissionAuthorizationRequest,
+    PermissionStatusHost, Platform,
 };
 use crate::runtime::bulletin_rpc::BulletinRpc;
 use crate::runtime::signing_host::DevicePairingObserver;
+use crate::runtime::media::MediaService;
 use crate::runtime::statement_store_rpc::StatementStoreRpc;
 #[cfg(not(target_arch = "wasm32"))]
 use crate::store::{Db, DbError};
@@ -82,6 +84,16 @@ pub struct RuntimeServices {
     /// [`DbError::NotConfigured`].
     #[cfg(not(target_arch = "wasm32"))]
     core_db: OnceLock<Db>,
+    /// Complete optional capture/RTC/compositor backend; absent is Unsupported.
+    media_platform: OnceLock<Arc<dyn crate::platform::MediaPlatform>>,
+    /// Serializes Media's final authorization/commit with administrative revocation.
+    /// Never held while presenting consent UI.
+    pub(crate) media_permission_gate: futures::lock::Mutex<()>,
+    /// Invalidates outstanding consent on every permission mutation, including
+    /// an undetermined-to-undetermined administrative reset.
+    media_permission_revision: AtomicU64,
+    /// Live product Media services, without retaining product runtimes.
+    media: Mutex<Vec<Weak<MediaService>>>,
     /// Asset Hub the dotNS contracts are deployed on. All-zero says this host
     /// has none, which leaves every manifest unresolvable.
     asset_hub_chain_genesis_hash: [u8; 32],
@@ -95,6 +107,8 @@ pub struct RuntimeServices {
     pub statement_store: StatementStoreRpc,
     /// In-core Bulletin submission over the configured Bulletin chain.
     pub bulletin: BulletinRpc,
+    /// Serializes persisted upload quota and revocation across product executions.
+    pub(crate) automatic_preimage_gate: futures::lock::Mutex<()>,
     /// Runtime metadata and chain state shared by allowance paths, per chain.
     pub chain_context: crate::runtime::statement_allowance::ChainContextCache,
     /// Values from confirmed in-core submissions, served to `lookup_subscribe`
@@ -188,12 +202,17 @@ impl RuntimeServices {
             device_pairing_observer: OnceLock::new(),
             #[cfg(not(target_arch = "wasm32"))]
             core_db: OnceLock::new(),
+            media_platform: OnceLock::new(),
+            media_permission_gate: futures::lock::Mutex::new(()),
+            media_permission_revision: AtomicU64::new(0),
+            media: Mutex::new(Vec::new()),
             asset_hub_chain_genesis_hash,
             worker_ledger: WorkerLedger::default(),
             chain,
             people_chain_genesis_hash,
             statement_store,
             bulletin,
+            automatic_preimage_gate: futures::lock::Mutex::new(()),
             chain_context: crate::runtime::statement_allowance::ChainContextCache::default(),
             preimage_cache: Mutex::new(PreimageCache::default()),
             #[cfg(feature = "test-host")]
@@ -354,6 +373,65 @@ impl RuntimeServices {
     #[cfg(not(target_arch = "wasm32"))]
     pub(crate) fn core_db(&self) -> Result<Db, DbError> {
         self.core_db.get().cloned().ok_or(DbError::NotConfigured)
+    }
+
+    /// Install the complete Media backend once, before serving products.
+    pub(crate) fn install_media_platform(
+        &self,
+        platform: Arc<dyn crate::platform::MediaPlatform>,
+    ) -> bool {
+        self.media_platform.set(platform).is_ok()
+    }
+
+    /// The complete host Media backend, when installed.
+    pub(crate) fn media_platform(&self) -> Option<Arc<dyn crate::platform::MediaPlatform>> {
+        self.media_platform.get().cloned()
+    }
+
+    pub(crate) fn register_media(&self, media: &Arc<MediaService>) {
+        let mut registry = self.media.lock().expect("media registry mutex poisoned");
+        registry.retain(|entry| entry.strong_count() != 0);
+        let media = Arc::downgrade(media);
+        if !registry.iter().any(|entry| entry.ptr_eq(&media)) {
+            registry.push(media);
+        }
+    }
+
+    pub(crate) fn media_permission_revision(&self) -> u64 {
+        self.media_permission_revision.load(Ordering::Acquire)
+    }
+
+    /// Reserve a fresh revision before a permission write while holding the
+    /// gate. Exhaustion fails closed rather than wrapping to an old prompt.
+    pub(crate) fn advance_media_permission_revision(&self) -> Result<(), latest::GenericError> {
+        self.media_permission_revision
+            .try_update(Ordering::AcqRel, Ordering::Acquire, |revision| revision.checked_add(1))
+            .map(|_| ())
+            .map_err(|_| latest::GenericError {
+                reason: "Permission revision exhausted".into(),
+            })
+    }
+
+    /// Called after a successful administrative denial/reset, with the permission
+    /// gate still held. Each service synchronously fences matching resources
+    /// before arranging asynchronous backend cleanup.
+    pub(crate) fn notify_media_permission_revoked(
+        &self,
+        product_id: &str,
+        request: &PermissionAuthorizationRequest,
+    ) {
+        let media = {
+            let mut registry = self.media.lock().expect("media registry mutex poisoned");
+            registry.retain(|entry| entry.strong_count() != 0);
+            registry.iter().filter_map(Weak::upgrade).collect::<Vec<_>>()
+        };
+        // Cleanup may invoke the host's spawner. Do not hold the registry mutex
+        // across callbacks or destruction of the last strong runtime reference.
+        for media in media {
+            if media.product_id() == product_id {
+                media.permissions_revoked(request);
+            }
+        }
     }
 
     /// This device's persisted X25519 encryption secret, created on first use.

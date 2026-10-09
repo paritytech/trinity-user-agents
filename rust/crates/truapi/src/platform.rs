@@ -9,6 +9,15 @@
 //! Async capability traits use `async_trait` so the combined [`Platform`]
 //! surface can be used as a trait object by the runtime.
 
+pub mod media;
+
+pub use media::{
+    MediaBackendCapabilities, MediaBackendCommand, MediaBackendEvent, MediaBackendPeerState,
+    MediaBackendResponse, MediaDescription, MediaDescriptionKind, MediaIceCandidate, MediaPlatform,
+    MediaConsentRequest, MediaRevocationSource,
+    MediaRevokedPermission,
+};
+
 use std::collections::BTreeSet;
 
 use futures::stream::BoxStream;
@@ -122,6 +131,7 @@ pub struct SigningHostConfig {
 // constructor. Not a doc comment: wire-type docs are emitted into the generated
 // host API, and this is a Rust-side implementation note.
 #[derive(Debug, Clone, PartialEq, Eq, Encode)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
 pub struct ProductContext {
     /// Product identifier used for account derivation and product-scoped
     /// storage/permission namespaces.
@@ -325,6 +335,7 @@ pub fn has_dotns_tld(normalized: &str) -> bool {
 ///
 /// These products default to authorized except for device access. Explicit
 /// stored denials still govern their remote, identity and account permissions.
+/// Calling always requires scoped consent.
 pub const REMOTE_PERMISSION_TRUSTED_LABELS: &[&str] = &["peopl", GAME_PRODUCT_LABEL, "stash"];
 
 /// The bare label of the game product, Jollity, on every network.
@@ -333,7 +344,9 @@ const GAME_PRODUCT_LABEL: &str = "dim2";
 /// Hosts available to every product unless a stored permission decision blocks them.
 pub const BLESSED_REMOTE_DOMAINS: &[&str] = &["fonts.googleapis.com", "fonts.gstatic.com"];
 
-/// Whether `product_id` defaults to every [`RemotePermission`] without prompting.
+/// Whether `product_id` holds ordinary remote permissions without prompting.
+///
+/// This never authorizes [`RemotePermission::Calling`], which requires scoped consent.
 ///
 /// Expects the [`normalize_product_identifier`] form. Matches the whole label
 /// and nothing else: `peopl.dot` and `peopl.paseo` are trusted, while
@@ -357,8 +370,8 @@ fn dotns_product_label(product_id: &str) -> Option<&str> {
     product_id.rsplit_once('.').map(|(label, _tld)| label)
 }
 
-/// Whether `product_id` in any accepted spelling defaults to every
-/// [`RemotePermission`] without prompting.
+/// Whether `product_id` in any accepted spelling defaults to ordinary remote
+/// permissions without prompting, excluding [`RemotePermission::Calling`].
 ///
 /// [`has_trusted_remote_permissions`] reads the normalized form, which is what
 /// the core always holds. A host holds whatever spelling it received, so this
@@ -1240,12 +1253,16 @@ pub trait Notifications: Send + Sync {
         watches: Vec<crate::latest::ReceivingWatch>,
     ) -> Result<bool, GenericError> {
         let _ = (authority, watches);
-        Err(GenericError { reason: "background receiving unsupported".into() })
+        Err(GenericError {
+            reason: "background receiving unsupported".into(),
+        })
     }
 
     /// Wake the host's asynchronous synchronization loop, never await network I/O.
     async fn receiver_changed(&self) -> Result<(), GenericError> {
-        Err(GenericError { reason: "background receiving unsupported".into() })
+        Err(GenericError {
+            reason: "background receiving unsupported".into(),
+        })
     }
 
     /// Forward receiving actions to the single host-owned receiver, if external.
@@ -1267,9 +1284,10 @@ pub trait Notifications: Send + Sync {
     /// Return at most 32 pending activations, ordered by sequence, without
     /// consuming them. The embedding host binds this platform to the verified
     /// product, authenticated account and environment; none is caller input.
-    /// Admit only routes starting with exactly one slash, with no backslashes
-    /// or control characters. Polling must not request permissions or enroll
-    /// a background receiver. A missing implementation is an error.
+    /// Destinations may be local absolute paths or HTTP(S)/`polkadot:` links.
+    /// They remain opaque product data, never host navigation authority. Reject
+    /// backslashes and control characters. Polling must not request permissions
+    /// or enroll a background receiver. A missing implementation is an error.
     async fn activation_events(
         &self,
     ) -> Result<truapi::v01::NotificationActivations, GenericError> {
@@ -1353,6 +1371,25 @@ pub enum PermissionAuthorizationRequest {
     /// Chat contacts.
     #[codec(index = 6)]
     ProfileDisclosure,
+    /// Calling consent for this product's authenticated network and account.
+    ///
+    /// The core resolves both fields from the active authority session, never
+    /// from product-supplied identity claims. Unscoped `Remote(Calling)` grants
+    /// do not authorize this request.
+    #[codec(index = 7)]
+    Calling {
+        /// Genesis hash of the authenticated network.
+        network: [u8; 32],
+        /// Product's authority-derived `Index(0)` sr25519 public key.
+        account: [u8; 32],
+    },
+    /// Bounded automatic Bulletin uploads for the rendered account. The core
+    /// rejects an account that is no longer active; product and network are host-owned.
+    #[codec(index = 8)]
+    AutomaticPreimageSubmit {
+        /// Root account whose automatic-upload decision is being edited.
+        root_public_key: Bytes32,
+    },
 }
 
 /// Authorization status for a permission request.
@@ -1408,6 +1445,13 @@ pub trait CoreAdmin: Send + Sync {
         &self,
         request: PermissionAuthorizationRequest,
         status: PermissionAuthorizationStatus,
+    ) -> Result<(), GenericError>;
+
+    /// Re-read a stored product decision and fence revoked Media authorization.
+    /// Host-only, read-only, and never prompts or consults OS permission state.
+    async fn refresh_permission_authorization(
+        &self,
+        request: PermissionAuthorizationRequest,
     ) -> Result<(), GenericError>;
 
     /// Read the active session's X25519 chat identity private key, for hosts
@@ -2099,6 +2143,17 @@ pub enum CoreStorageKey {
     /// Host product/account deletion must invoke ReceivingService::revoke first.
     #[codec(index = 20)]
     NotificationReceiving,
+    /// Bounded upload consent and rolling quota. Revocation retains quota and
+    /// advances a generation so outstanding confirmations cannot restore it.
+    #[codec(index = 21)]
+    AutomaticPreimageUploads {
+        /// Authenticated requesting product.
+        product_id: String,
+        /// Root account that explicitly granted consent.
+        root_public_key: Bytes32,
+        /// Host-selected Bulletin network.
+        genesis_hash: Bytes32,
+    },
 }
 
 /// Stable metadata describing one strictly decoded [`CoreStorageKey`].
@@ -2112,6 +2167,9 @@ pub struct CoreStorageKeyDescription {
     pub kind: &'static str,
     /// Product that owns this exact slot, when the key is product-indexed.
     pub product_id: Option<String>,
+    /// Exact permission scope for an authorization slot, including inactive accounts.
+    /// No current authority, stored value, or secret material is consulted.
+    pub permission_request: Option<PermissionAuthorizationRequest>,
 }
 
 /// Failure to decode exactly one [`CoreStorageKey`].
@@ -2136,10 +2194,12 @@ pub fn describe_core_storage_key(
     if !input.is_empty() {
         return Err(CoreStorageKeyDescriptionError::TrailingBytes);
     }
+    let mut permission_request = None;
     let (kind, product_id) = match key {
         CoreStorageKey::AuthSession => ("AuthSession", None),
         CoreStorageKey::PairingDeviceIdentity => ("PairingDeviceIdentity", None),
-        CoreStorageKey::PermissionAuthorization { product_id, .. } => {
+        CoreStorageKey::PermissionAuthorization { product_id, request } => {
+            permission_request = Some(request);
             ("PermissionAuthorization", Some(product_id))
         }
         CoreStorageKey::AllowanceKeys { .. } => ("AllowanceKeys", None),
@@ -2166,8 +2226,11 @@ pub fn describe_core_storage_key(
             ("NativeChatFileChunk", Some(product_id))
         }
         CoreStorageKey::NotificationReceiving => ("NotificationReceiving", None),
+        CoreStorageKey::AutomaticPreimageUploads { product_id, .. } => {
+            ("AutomaticPreimageUploads", Some(product_id))
+        }
     };
-    Ok(CoreStorageKeyDescription { kind, product_id })
+    Ok(CoreStorageKeyDescription { kind, product_id, permission_request })
 }
 
 impl CoreStorageKey {
@@ -2257,6 +2320,21 @@ impl CoreStorageKey {
         Self::PermissionAuthorization {
             product_id: product_id.to_string(),
             request: PermissionAuthorizationRequest::ProfileDisclosure,
+        }
+    }
+
+    /// Persisted calling consent for one canonical product, network, and account.
+    ///
+    /// Callers supply the authenticated network genesis and the product's
+    /// authority-derived `Index(0)` account, not product-provided selectors.
+    pub fn calling_authorization(
+        product_id: &str,
+        network: [u8; 32],
+        account: [u8; 32],
+    ) -> Self {
+        Self::PermissionAuthorization {
+            product_id: product_id.to_string(),
+            request: PermissionAuthorizationRequest::Calling { network, account },
         }
     }
 }
@@ -3234,6 +3312,9 @@ mod tests {
             Ok(CoreStorageKeyDescription {
                 kind: "PermissionAuthorization",
                 product_id: Some("product.dot".to_string()),
+                permission_request: Some(PermissionAuthorizationRequest::Device(
+                    HostDevicePermissionRequest::Camera,
+                )),
             })
         );
         for (key, kind, product_id) in [
@@ -3594,6 +3675,21 @@ pub trait CoreStorage: Send + Sync {
 
     /// Clear a core-owned value by typed slot.
     async fn clear_core_storage(&self, key: CoreStorageKey) -> Result<(), GenericError>;
+
+    /// Atomically replace exactly `expected` decoded bytes in this physical slot.
+    /// `None` differs from an empty value. Serialize with every write, clear and
+    /// compare-exchange across all cores sharing the store, through actual
+    /// persistence completion even if the requesting future is dropped.
+    /// On persisted success, `notify_on_success` enqueues `core_storage_changed`
+    /// before completion even if the requester was cancelled. Initial unanswered
+    /// snapshots pass false; explicit policy decisions pass true.
+    async fn compare_exchange_core_storage(&self, key: CoreStorageKey, expected: Option<Vec<u8>>, replacement: Vec<u8>, notify_on_success: bool) -> Result<bool, GenericError>;
+
+    /// Nonblocking notification after an explicit policy decision or reset.
+    /// Queue deferred refreshes for every core group sharing the store and exact
+    /// product, including the writer. Never await or reenter a core here. Raw
+    /// writes/clears and CAS with `notify_on_success == false` must not emit this.
+    fn core_storage_changed(&self, key: CoreStorageKey);
 }
 
 /// Decoded session fields a host shell needs to render account UI without
@@ -3900,6 +3996,34 @@ pub struct ProductSubtreeReview {
 pub struct PreimageSubmitReview {
     /// Size of the preimage in bytes.
     pub size: u64,
+    /// Authenticated product requesting this upload.
+    pub product_id: String,
+    /// Root account to which any durable approval is restricted.
+    pub root_public_key: Bytes32,
+    /// Host-selected Bulletin network covered by the approval.
+    pub genesis_hash: Bytes32,
+    /// Maximum bytes per automatically approved upload.
+    pub automatic_max_bytes: u64,
+    /// Maximum automatic upload attempts in the rolling window.
+    pub automatic_max_uploads: u32,
+    /// Length of the rolling automatic-upload window in seconds.
+    pub automatic_window_seconds: u32,
+}
+
+/// Immutable calling-consent context resolved by the trusted core.
+///
+/// Approval applies only to this exact canonical product, authenticated network,
+/// and authority-derived account. It neither grants camera/microphone access nor
+/// carries over to another account or network.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
+pub struct CallingReview {
+    /// Canonical product requesting calling authority.
+    pub product_id: String,
+    /// Genesis hash of the authenticated network.
+    pub network: [u8; 32],
+    /// Product's authority-derived `Index(0)` sr25519 public key.
+    pub account: [u8; 32],
 }
 
 /// Review shown before a user-confirmed core action continues.
@@ -3938,6 +4062,8 @@ pub enum UserConfirmationReview {
     /// Allow a product to disclose a profile reference to the user's Chat
     /// contacts.
     ProfileDisclosure(ProfileDisclosureReview),
+    /// Allow calling only in the immutable authenticated product/account/network scope.
+    Calling(CallingReview),
 }
 
 /// Local user confirmation UI for sensitive core-owned operations.
@@ -3948,8 +4074,14 @@ pub trait UserConfirmation: Send + Sync {
         &self,
         review: UserConfirmationReview,
     ) -> Result<PermissionDecision, GenericError> {
+        // A boolean upload approval has no explicit durable-consent choice.
+        let upload = matches!(review, UserConfirmationReview::PreimageSubmit(_));
         Ok(if self.confirm_user_action(review).await? {
-            PermissionDecision::AllowAlways
+            if upload {
+                PermissionDecision::AllowOnce
+            } else {
+                PermissionDecision::AllowAlways
+            }
         } else {
             PermissionDecision::Deny
         })
@@ -4133,9 +4265,11 @@ pub trait ProfilePlatform: Send + Sync {
         product: &ProductContext,
         presented: PresentedContactProfile,
     ) -> Result<(), HostProfilePresentError> {
-        let shared = presented.shared.ok_or_else(|| HostProfilePresentError::Unknown {
-            reason: "Contact profile feedback is unavailable".to_string(),
-        })?;
+        let shared = presented
+            .shared
+            .ok_or_else(|| HostProfilePresentError::Unknown {
+                reason: "Contact profile feedback is unavailable".to_string(),
+            })?;
         self.present_profile(
             product,
             HostProfilePresentRequest {
@@ -4619,6 +4753,7 @@ pub trait OptionalPlatform:
     + ProfilePlatform
     + IdentityBackendHost
     + CoinageWalletHost
+    + MediaPlatform
     + GamePlatform
 {
 }
@@ -4631,6 +4766,7 @@ impl<T> OptionalPlatform for T where
         + ProfilePlatform
         + IdentityBackendHost
         + CoinageWalletHost
+        + MediaPlatform
         + GamePlatform
 {
 }

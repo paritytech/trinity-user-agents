@@ -34,6 +34,7 @@ fn open(
         None,
         None,
         None,
+        None,
         native_execution_config(product, ProductExecutionKind::App),
     )
     .unwrap()
@@ -636,5 +637,67 @@ fn native_permission_explicit_bundle_denial_overrides_trusted_default_only_for_t
                 .await
                 .unwrap()
         );
+    });
+}
+
+#[test]
+fn native_permission_settings_preserve_stamped_media_resets_and_scoped_calling() {
+    block_on(async {
+        let callbacks = Arc::new(EventCallbacks::new());
+        let runtime = host(&callbacks);
+        let requests = [
+            PermissionAuthorizationRequest::Device(
+                truapi::latest::HostDevicePermissionRequest::Camera,
+            ),
+            PermissionAuthorizationRequest::Calling {
+                network: [1; 32],
+                account: [2; 32],
+            },
+        ];
+        for request in &requests {
+            runtime
+                .set_permission_authorization_status(
+                    "settings.dot".into(),
+                    request.clone(),
+                    PermissionAuthorizationStatus::Authorized,
+                )
+                .await
+                .unwrap();
+            runtime
+                .set_permission_authorization_status(
+                    "settings.dot".into(),
+                    request.clone(),
+                    PermissionAuthorizationStatus::NotDetermined,
+                )
+                .await
+                .unwrap();
+        }
+        let restarted = host(&callbacks);
+        let records = restarted
+            .import_permission_authorizations(
+                "settings.dot".into(),
+                requests.iter().cloned().map(|request| PermissionAuthorizationEntry {
+                    request,
+                    status: PermissionAuthorizationStatus::Authorized,
+                }).collect(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(records.len(), requests.len());
+        for request in &requests {
+            assert!(records.iter().any(|record| &record.request == request
+                && record.status == PermissionAuthorizationStatus::NotDetermined));
+        }
+        assert_eq!(callbacks.storage_changes.lock().unwrap().len(), 4);
+        assert!(restarted
+            .set_permission_authorization_status(
+                "peopl.dot".into(),
+                PermissionAuthorizationRequest::Remote(RemotePermissionRequest {
+                    permission: RemotePermission::Calling,
+                }),
+                PermissionAuthorizationStatus::Authorized,
+            )
+            .await
+            .is_err());
     });
 }
