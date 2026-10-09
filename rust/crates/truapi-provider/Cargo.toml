@@ -105,6 +105,7 @@ getrandom = { workspace = true, features = ["js"], optional = true }
 # first use instead of compiling in 1 MiB of incompressible precomputed points.
 libsecp256k1 = { workspace = true, optional = true }
 js-sys = { workspace = true, optional = true }
+parking_lot = { workspace = true }
 pin-project = { workspace = true, optional = true }
 send_wrapper = { workspace = true, optional = true }
 smoldot = { workspace = true, features = ["std"], optional = true }
@@ -117,7 +118,9 @@ web-sys = { workspace = true, features = [
     "CloseEvent",
     "console",
     "Event",
+    "EventTarget",
     "MessageEvent",
+    "MessageEventInit",
     "WebSocket",
 ], optional = true }
 web-time = { workspace = true, optional = true }

@@ -1,17 +1,18 @@
 // Copyright 2019-2026 Parity Technologies (UK) Ltd.
 // This file is dual-licensed as Apache-2.0 or GPL-3.0; see LICENSE-APACHE.
 // Vendored from subxt-lightclient 0.50.1 (src/platform/wasm_socket.rs), used
-// under Apache-2.0, with one intentional divergence: the `onmessage` handler
-// ignores non-`ArrayBuffer` (text) frames instead of panicking (see below).
+// under Apache-2.0. Local changes ignore non-ArrayBuffer frames, wake outside
+// the state lock, and detach DOM callbacks before closing the socket.
 
 use futures::{io, prelude::*};
+use parking_lot::Mutex;
 use send_wrapper::SendWrapper;
 use wasm_bindgen::{JsCast, prelude::*};
 
 use std::{
     collections::VecDeque,
     pin::Pin,
-    sync::{Arc, Mutex},
+    sync::Arc,
     task::Poll,
     task::{Context, Waker},
 };
@@ -94,10 +95,12 @@ impl WasmSocket {
         let open_callback = Closure::<dyn FnMut()>::new({
             let inner = inner.clone();
             move || {
-                let mut inner = inner.lock().expect("Mutex is poised; qed");
+                let mut inner = inner.lock();
                 inner.state = ConnectionState::Opened;
 
-                if let Some(waker) = inner.waker.take() {
+                let waker = inner.waker.take();
+                drop(inner);
+                if let Some(waker) = waker {
                     waker.wake();
                 }
             }
@@ -116,11 +119,13 @@ impl WasmSocket {
                     return;
                 };
 
-                let mut inner = inner.lock().expect("Mutex is poised; qed");
+                let mut inner = inner.lock();
                 let bytes = js_sys::Uint8Array::new(&buffer).to_vec();
                 inner.data.extend(bytes);
 
-                if let Some(waker) = inner.waker.take() {
+                let waker = inner.waker.take();
+                drop(inner);
+                if let Some(waker) = waker {
                     waker.wake();
                 }
             }
@@ -131,10 +136,12 @@ impl WasmSocket {
             let inner = inner.clone();
             move |_event: web_sys::Event| {
                 // Callback does not provide useful information, signal it back to the stream.
-                let mut inner = inner.lock().expect("Mutex is poised; qed");
+                let mut inner = inner.lock();
                 inner.state = ConnectionState::Error;
 
-                if let Some(waker) = inner.waker.take() {
+                let waker = inner.waker.take();
+                drop(inner);
+                if let Some(waker) = waker {
                     waker.wake();
                 }
             }
@@ -144,10 +151,12 @@ impl WasmSocket {
         let close_callback = Closure::<dyn FnMut(_)>::new({
             let inner = inner.clone();
             move |_event: web_sys::CloseEvent| {
-                let mut inner = inner.lock().expect("Mutex is poised; qed");
+                let mut inner = inner.lock();
                 inner.state = ConnectionState::Closed;
 
-                if let Some(waker) = inner.waker.take() {
+                let waker = inner.waker.take();
+                drop(inner);
+                if let Some(waker) = waker {
                     waker.wake();
                 }
             }
@@ -175,7 +184,7 @@ impl AsyncRead for WasmSocket {
         cx: &mut Context<'_>,
         buf: &mut [u8],
     ) -> Poll<Result<usize, io::Error>> {
-        let mut inner = self.inner.lock().expect("Mutex is poised; qed");
+        let mut inner = self.inner.lock();
         inner.waker = Some(cx.waker().clone());
 
         if self.socket.ready_state() == web_sys::WebSocket::CONNECTING {
@@ -207,7 +216,7 @@ impl AsyncWrite for WasmSocket {
         cx: &mut Context<'_>,
         buf: &[u8],
     ) -> Poll<Result<usize, io::Error>> {
-        let mut inner = self.inner.lock().expect("Mutex is poised; qed");
+        let mut inner = self.inner.lock();
         inner.waker = Some(cx.waker().clone());
 
         match inner.state {
@@ -234,7 +243,7 @@ impl AsyncWrite for WasmSocket {
             let _ = self.socket.close();
         }
 
-        let mut inner = self.inner.lock().expect("Mutex is poised; qed");
+        let mut inner = self.inner.lock();
         inner.waker = Some(cx.waker().clone());
         Poll::Pending
     }
@@ -242,13 +251,99 @@ impl AsyncWrite for WasmSocket {
 
 impl Drop for WasmSocket {
     fn drop(&mut self) {
-        if self.socket.ready_state() != web_sys::WebSocket::CLOSING {
-            let _ = self.socket.close();
-        }
-
+        // close() queues browser events; none may retain a callback whose Rust
+        // owner is about to be dropped.
         self.socket.set_onopen(None);
         self.socket.set_onmessage(None);
         self.socket.set_onerror(None);
         self.socket.set_onclose(None);
+
+        if !matches!(
+            self.socket.ready_state(),
+            web_sys::WebSocket::CLOSING | web_sys::WebSocket::CLOSED
+        ) {
+            let _ = self.socket.close();
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    use futures::task::{ArcWake, waker};
+    use wasm_bindgen_test::wasm_bindgen_test;
+
+    use super::*;
+
+    #[cfg(not(any(feature = "js", feature = "ws")))]
+    wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);
+
+    fn binary_message_event() -> web_sys::MessageEvent {
+        let init = web_sys::MessageEventInit::new();
+        init.set_data(&js_sys::Uint8Array::from(&[1, 2, 3][..]).buffer());
+        web_sys::MessageEvent::new_with_event_init_dict("message", &init).unwrap()
+    }
+
+    struct InspectOnWake {
+        inner: Arc<Mutex<InnerWasmSocket>>,
+        wakes: AtomicUsize,
+    }
+
+    impl ArcWake for InspectOnWake {
+        fn wake_by_ref(this: &Arc<Self>) {
+            // A waker may synchronously re-enter the task polling this socket.
+            // try_lock makes the regression fail rather than deadlock in WASM.
+            assert!(
+                this.inner.try_lock().is_some(),
+                "socket state locked during wake"
+            );
+            this.wakes.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    #[wasm_bindgen_test]
+    fn browser_callbacks_release_state_before_waking() {
+        let socket = WasmSocket::new("ws://127.0.0.1:1").unwrap();
+        let observer = Arc::new(InspectOnWake {
+            inner: socket.inner.clone(),
+            wakes: AtomicUsize::new(0),
+        });
+        let events = [
+            web_sys::Event::new("open").unwrap(),
+            binary_message_event().unchecked_into(),
+            web_sys::Event::new("error").unwrap(),
+            web_sys::CloseEvent::new("close").unwrap().unchecked_into(),
+        ];
+        for (index, event) in events.iter().enumerate() {
+            socket.inner.lock().waker = Some(waker(observer.clone()));
+            socket.socket.dispatch_event(event).unwrap();
+            assert_eq!(observer.wakes.load(Ordering::SeqCst), index + 1);
+        }
+        let inner = socket.inner.lock();
+        assert_eq!(inner.data.iter().copied().collect::<Vec<_>>(), [1, 2, 3]);
+        assert!(inner.state == ConnectionState::Closed);
+    }
+
+    #[wasm_bindgen_test]
+    fn dropping_socket_detaches_and_releases_browser_callbacks() {
+        let socket = WasmSocket::new("ws://127.0.0.1:1").unwrap();
+        let browser_socket = (*socket.socket).clone();
+        let inner = Arc::downgrade(&socket.inner);
+        drop(socket);
+
+        assert!(browser_socket.onopen().is_none());
+        assert!(browser_socket.onmessage().is_none());
+        assert!(browser_socket.onerror().is_none());
+        assert!(browser_socket.onclose().is_none());
+        assert!(
+            inner.upgrade().is_none(),
+            "callbacks must not leak their state"
+        );
+        for event in ["open", "message", "error", "close"] {
+            browser_socket
+                .dispatch_event(&web_sys::Event::new(event).unwrap())
+                .unwrap();
+        }
     }
 }
