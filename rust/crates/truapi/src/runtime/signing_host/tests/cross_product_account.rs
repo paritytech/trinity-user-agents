@@ -166,35 +166,41 @@ fn dim2next_runtime(platform: Arc<StubPlatform>) -> ProductRuntimeHost {
     product_runtime_for(services, activation, "dim2next.paseo")
 }
 
+fn payload_request(account: v01::ProductAccountId) -> HostSignPayloadRequest {
+    HostSignPayloadRequest::V1(v01::HostSignPayloadRequest {
+        account,
+        payload: crate::test_support::sign_payload_data(),
+    })
+}
+
+fn raw_request(account: v01::ProductAccountId) -> HostSignRawRequest {
+    HostSignRawRequest::V1(v01::HostSignRawRequest {
+        account,
+        payload: crate::test_support::raw_payload(),
+    })
+}
+
+fn transaction_request(account: v01::ProductAccountId) -> HostCreateTransactionRequest {
+    let mut payload = crate::test_support::product_tx_payload("dim2.paseo");
+    payload.signer = account;
+    HostCreateTransactionRequest::V1(payload)
+}
+
 fn sign_payload_with(runtime: &ProductRuntimeHost, account: v01::ProductAccountId) {
-    futures::executor::block_on(runtime.sign_payload(
-        &CallContext::default(),
-        HostSignPayloadRequest::V1(v01::HostSignPayloadRequest {
-            account,
-            payload: crate::test_support::sign_payload_data(),
-        }),
-    ))
-    .expect("the grant admits the account and the user approves");
+    futures::executor::block_on(runtime.sign_payload(&CallContext::default(), payload_request(account)))
+        .expect("the grant admits the account and the user approves");
 }
 
 fn sign_raw_with(runtime: &ProductRuntimeHost, account: v01::ProductAccountId) {
-    futures::executor::block_on(runtime.sign_raw(
-        &CallContext::default(),
-        HostSignRawRequest::V1(v01::HostSignRawRequest {
-            account,
-            payload: crate::test_support::raw_payload(),
-        }),
-    ))
-    .expect("the grant admits the account and the user approves");
+    futures::executor::block_on(runtime.sign_raw(&CallContext::default(), raw_request(account)))
+        .expect("the grant admits the account and the user approves");
 }
 
 /// Starts a transaction and leaves it once it has been confirmed and handed to
 /// the authority, which would then wait on a chain these tests do not run.
 fn create_transaction_with(runtime: &ProductRuntimeHost, account: v01::ProductAccountId) {
-    let mut payload = crate::test_support::product_tx_payload("dim2.paseo");
-    payload.signer = account;
     let cx = CallContext::default();
-    let call = runtime.create_transaction(&cx, HostCreateTransactionRequest::V1(payload));
+    let call = runtime.create_transaction(&cx, transaction_request(account));
     assert!(
         call.now_or_never().is_none(),
         "the grant admits the account and the user approves",
@@ -261,10 +267,7 @@ fn a_refused_cross_product_signature_asks_again() {
     for _ in 0..2 {
         futures::executor::block_on(runtime.sign_payload(
             &CallContext::default(),
-            HostSignPayloadRequest::V1(v01::HostSignPayloadRequest {
-                account: account_id("dim2.paseo", 0),
-                payload: crate::test_support::sign_payload_data(),
-            }),
+            payload_request(account_id("dim2.paseo", 0)),
         ))
         .expect_err("the user refused");
     }
@@ -286,10 +289,7 @@ fn unwatermarked_raw_bytes_are_confirmed_every_time() {
         #[allow(deprecated)]
         futures::executor::block_on(runtime.sign_raw_unwatermarked_deprecated(
             &CallContext::default(),
-            HostSignRawRequest::V1(v01::HostSignRawRequest {
-                account: account_id("dim2.paseo", 0),
-                payload: crate::test_support::raw_payload(),
-            }),
+            raw_request(account_id("dim2.paseo", 0)),
         ))
         .expect("the grant admits the account and the user approves");
     }
@@ -313,22 +313,14 @@ fn an_approved_signature_does_not_wait_for_another_prompt() {
     sign_payload_with(&runtime, account_id("dim2.paseo", 0));
 
     let cx = CallContext::default();
-    let mut payload = crate::test_support::product_tx_payload("dim2.paseo");
-    payload.signer = account_id("dim2.paseo", 0);
     let mut transaction = Box::pin(
-        runtime.create_transaction(&cx, HostCreateTransactionRequest::V1(payload)),
+        runtime.create_transaction(&cx, transaction_request(account_id("dim2.paseo", 0))),
     );
     assert!(transaction.as_mut().now_or_never().is_none());
     assert_eq!(prompts(&platform), (1, 0, 1), "the transaction prompt is open");
 
     let signed = runtime
-        .sign_payload(
-            &cx,
-            HostSignPayloadRequest::V1(v01::HostSignPayloadRequest {
-                account: account_id("dim2.paseo", 0),
-                payload: crate::test_support::sign_payload_data(),
-            }),
-        )
+        .sign_payload(&cx, payload_request(account_id("dim2.paseo", 0)))
         .now_or_never();
     assert!(
         matches!(signed, Some(Ok(_))),
