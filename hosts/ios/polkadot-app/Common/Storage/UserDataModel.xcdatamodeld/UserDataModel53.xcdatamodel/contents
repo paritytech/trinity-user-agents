@@ -143,7 +143,6 @@
         <attribute name="createdAt" attributeType="Date" usesScalarValueType="NO"/>
         <attribute name="identifier" attributeType="String"/>
         <attribute name="outcomeTag" optional="YES" attributeType="String"/>
-        <attribute name="ownerId" optional="YES" attributeType="Binary"/>
         <attribute name="paymentId" attributeType="String"/>
         <attribute name="productId" attributeType="String"/>
         <fetchIndex name="byIncomingPaymentIdentifier">
@@ -237,6 +236,14 @@
     </entity>
     <entity name="CDPersonhoodMembership" representedClassName="CDPersonhoodMembership" syncable="YES" codeGenerationType="class">
         <attribute name="memberKey" attributeType="String"/>
+    </entity>
+    <entity name="CDPocketCard" representedClassName="CDPocketCard" syncable="YES" codeGenerationType="class">
+        <attribute name="addedAt" optional="YES" attributeType="Date" usesScalarValueType="NO"/>
+        <attribute name="cardId" attributeType="String"/>
+        <attribute name="face" optional="YES" attributeType="Binary"/>
+        <attribute name="identifier" attributeType="String"/>
+        <attribute name="productId" attributeType="String"/>
+        <attribute name="title" optional="YES" attributeType="String"/>
     </entity>
     <entity name="CDPolkadotSignInHost" representedClassName="CDPolkadotSignInHost" syncable="YES" codeGenerationType="class">
         <attribute name="iconUrl" optional="YES" attributeType="String"/>
@@ -386,14 +393,5 @@
         <attribute name="actualValue" optional="YES" attributeType="String"/>
         <attribute name="status" attributeType="Integer 16" defaultValueString="0" usesScalarValueType="YES"/>
         <relationship name="message" optional="YES" maxCount="1" deletionRule="Nullify" destinationEntity="CDChatMessage" inverseName="outgoingTransferState" inverseEntity="CDChatMessage"/>
-    </entity>
-    <entity name="CDNativeCoinageRecord" representedClassName="NSManagedObject" syncable="YES">
-        <attribute name="identifier" attributeType="String"/>
-        <attribute name="payload" attributeType="Binary"/>
-        <uniquenessConstraints>
-            <uniquenessConstraint>
-                <constraint value="identifier"/>
-            </uniquenessConstraint>
-        </uniquenessConstraints>
     </entity>
 </model>

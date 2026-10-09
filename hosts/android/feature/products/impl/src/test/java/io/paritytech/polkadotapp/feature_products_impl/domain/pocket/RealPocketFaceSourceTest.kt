@@ -5,6 +5,7 @@ import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardKe
 import io.paritytech.polkadotapp.feature_products_api.model.JsImageSource
 import io.paritytech.polkadotapp.feature_products_api.model.JsWidget
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
+import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.renderer.toJsWidget
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.launchIn
@@ -14,14 +15,15 @@ import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Test
+import uniffi.truapi.RendererNode
 
 class RealPocketFaceSourceTest {
     private class FakeStreams : PocketFaceStreams {
-        val faces = MutableSharedFlow<JsWidget>()
+        val faces = MutableSharedFlow<RendererNode>()
         var collectors = 0
         val actions = mutableListOf<Triple<PocketCardKey, String, String>>()
 
-        override fun renderFaces(key: PocketCardKey): Flow<JsWidget> = faces.onStart { collectors++ }
+        override fun renderFaces(key: PocketCardKey): Flow<RendererNode> = faces.onStart { collectors++ }
 
         override fun sendAction(key: PocketCardKey, actionId: String, payload: ByteArray) {
             actions += Triple(key, actionId, payload.decodeToString())
@@ -41,7 +43,7 @@ class RealPocketFaceSourceTest {
     // The store writes to Room, and the flow it feeds is shared into a ViewModel scope with no
     // handler, so a failing write would take the process down rather than the card's freshness.
     private class FailingStore(private val delegate: PocketCardStore) : PocketCardStore by delegate {
-        override suspend fun cacheFace(key: PocketCardKey, face: JsWidget) = throw IllegalStateException("disk full")
+        override suspend fun cacheFace(key: PocketCardKey, face: RendererNode) = throw IllegalStateException("disk full")
     }
 
     @Test
@@ -55,7 +57,7 @@ class RealPocketFaceSourceTest {
         streams.faces.emit(faceOf("live 2"))
         advanceUntilIdle()
 
-        assertEquals(listOf(loyalty.face, faceOf("live 1"), faceOf("live 2")), shown)
+        assertEquals(listOf(loyalty.face, faceOf("live 1"), faceOf("live 2")).map { it.toJsWidget() }, shown)
         assertEquals("the live stream is opened once per face on screen", 1, streams.collectors)
         assertEquals(faceOf("live 2"), store.cachedFace(loyalty.card.key))
         onScreen.cancel()
@@ -70,7 +72,7 @@ class RealPocketFaceSourceTest {
         streams.faces.emit(faceOf("first"))
         advanceUntilIdle()
 
-        assertEquals(listOf(faceOf("first")), shown)
+        assertEquals(listOf(faceOf("first").toJsWidget()), shown)
         onScreen.cancel()
     }
 
@@ -91,7 +93,7 @@ class RealPocketFaceSourceTest {
         streams.faces.emit(faceOf("live"))
         advanceUntilIdle()
 
-        assertEquals(listOf(faceOf("live")), shown)
+        assertEquals(listOf(faceOf("live").toJsWidget()), shown)
         onScreen.cancel()
     }
 
@@ -102,7 +104,7 @@ class RealPocketFaceSourceTest {
     fun `a face is drawn before it is kept`() = runTest {
         val order = mutableListOf<String>()
         val recording = object : PocketCardStore by store {
-            override suspend fun cacheFace(key: PocketCardKey, face: JsWidget) {
+            override suspend fun cacheFace(key: PocketCardKey, face: RendererNode) {
                 order += "kept"
                 store.cacheFace(key, face)
             }

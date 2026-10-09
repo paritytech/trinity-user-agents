@@ -38,6 +38,7 @@ extension AppsListInteractor: AppsListInteractorInputProtocol {
                 }
             } catch {
                 logger.error("Apps list subscription error: \(error)")
+                await self?.presenter?.didReceive(error: error)
             }
         }
     }

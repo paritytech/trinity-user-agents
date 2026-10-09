@@ -250,7 +250,9 @@ jobs:
     # produces distinct job names — check-job-conclusion matches by name suffix and
     # would otherwise resolve both lookups to the same leg.
     name: Check and Build TestFlight (${{ inputs.build_configuration }})
-    runs-on: macos-26
+    # The same runner as the pull request gate, because the app's
+    # timing-sensitive tests exceed their limits on the standard runner.
+    runs-on: macos-26-xlarge
     needs: prepare_build_metadata
     steps:
       - name: Checkout repository

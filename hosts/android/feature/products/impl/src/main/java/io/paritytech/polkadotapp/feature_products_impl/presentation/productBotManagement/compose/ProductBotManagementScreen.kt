@@ -27,6 +27,7 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.paritytech.polkadotapp.design.components.button.default.PolkadotTextButton
+import io.paritytech.polkadotapp.design.components.compound.NovaSwitch
 import io.paritytech.polkadotapp.design.components.icon.NovaIcons
 import io.paritytech.polkadotapp.design.components.icon.vectors.Close
 import io.paritytech.polkadotapp.design.components.icon.vectors.Edit
@@ -63,6 +64,8 @@ fun ProductBotManagementScreen(contract: ProductBotManagementContract) {
         onCardIdChanged = contract::onCardIdChanged,
         onCardTitleChanged = contract::onCardTitleChanged,
         onPreviewUrlChanged = contract::onPreviewUrlChanged,
+        onAppUrlChanged = contract::onAppUrlChanged,
+        onOpenWithFaceAwayChanged = contract::onOpenWithFaceAwayChanged,
         onDialogConfirm = contract::onDialogConfirm,
     )
 }
@@ -82,6 +85,8 @@ private fun ProductBotManagementScreenInternal(
     onCardIdChanged: (String) -> Unit,
     onCardTitleChanged: (String) -> Unit,
     onPreviewUrlChanged: (String) -> Unit,
+    onAppUrlChanged: (String) -> Unit,
+    onOpenWithFaceAwayChanged: (Boolean) -> Unit,
     onDialogConfirm: () -> Unit,
 ) {
     PolkadotSurface {
@@ -150,6 +155,8 @@ private fun ProductBotManagementScreenInternal(
             onCardIdChanged = onCardIdChanged,
             onCardTitleChanged = onCardTitleChanged,
             onPreviewUrlChanged = onPreviewUrlChanged,
+            onAppUrlChanged = onAppUrlChanged,
+            onOpenWithFaceAwayChanged = onOpenWithFaceAwayChanged,
             onConfirm = onDialogConfirm,
         )
     }
@@ -212,6 +219,8 @@ private fun ProductFormDialog(
     onCardIdChanged: (String) -> Unit,
     onCardTitleChanged: (String) -> Unit,
     onPreviewUrlChanged: (String) -> Unit,
+    onAppUrlChanged: (String) -> Unit,
+    onOpenWithFaceAwayChanged: (Boolean) -> Unit,
     onConfirm: () -> Unit,
 ) {
     val isEditing = state.productId != null
@@ -292,6 +301,27 @@ private fun ProductFormDialog(
                     hint = RCommon.string.product_bot_management_preview_url_hint,
                 )
 
+                VerticalSpacer { extraMedium }
+
+                DebugFormField(
+                    value = state.appUrl,
+                    onValueChange = onAppUrlChanged,
+                    hint = RCommon.string.product_bot_management_app_url_hint,
+                )
+
+                VerticalSpacer { extraMedium }
+
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    NovaText(
+                        modifier = Modifier.weight(1f),
+                        text = stringResource(RCommon.string.product_bot_management_face_away_label),
+                        style = PolkadotTheme.typography.body.large,
+                        color = PolkadotTheme.colors.fg.primary,
+                    )
+
+                    NovaSwitch(checked = state.openWithFaceAway, onCheckedChange = onOpenWithFaceAwayChanged)
+                }
+
                 VerticalSpacer { large }
 
                 PolkadotTextButton(
@@ -350,6 +380,8 @@ private fun ProductBotManagementScreenPreview() {
             onCardIdChanged = {},
             onCardTitleChanged = {},
             onPreviewUrlChanged = {},
+            onAppUrlChanged = {},
+            onOpenWithFaceAwayChanged = {},
             onDialogConfirm = {},
         )
     }

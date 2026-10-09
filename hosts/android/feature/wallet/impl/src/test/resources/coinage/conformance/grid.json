@@ -1,0 +1,56 @@
+{
+  "note": "layoutGrid(items, area, options) \u2192 output (src/layout/hexgrid.js); pileLayout(count, heightPx, thickness) and hiddenBand(level) samples",
+  "cases": [
+    {
+      "label": "scenario-16",
+      "area": {"width": 348, "height": 560},
+      "options": {"maxDiameter": 52, "minDiameter": 28, "gap": 5, "header": 34, "blockGap": 14},
+      "input": [
+        {"id": 4, "exponent": 14, "partition": "clearing", "status": "recycling", "level": 2},
+        {"id": 16, "exponent": 9, "partition": "clearing", "status": "recycling", "level": 3},
+        {"id": 11, "exponent": 8, "partition": "clearing", "status": "will-recycle", "level": 0},
+        {"id": 14, "exponent": 5, "partition": "clearing", "status": "will-recycle", "level": 0},
+        {"id": 2, "exponent": 3, "partition": "clearing", "status": "recycling", "level": 4},
+        {"id": 15, "exponent": 14, "partition": "ready", "status": "ready", "level": 10},
+        {"id": 9, "exponent": 13, "partition": "ready", "status": "ready", "level": 9},
+        {"id": 12, "exponent": 8, "partition": "ready", "status": "ready", "level": 8},
+        {"id": 10, "exponent": 7, "partition": "ready", "status": "ready", "level": 9},
+        {"id": 8, "exponent": 7, "partition": "ready", "status": "ready-in-ring", "level": 10},
+        {"id": 13, "exponent": 6, "partition": "ready", "status": "ready", "level": 9},
+        {"id": 5, "exponent": 5, "partition": "ready", "status": "ready", "level": 9},
+        {"id": 7, "exponent": 4, "partition": "ready", "status": "ready", "level": 8},
+        {"id": 6, "exponent": 4, "partition": "ready", "status": "ready-in-ring", "level": 10},
+        {"id": 3, "exponent": 2, "partition": "ready", "status": "ready", "level": 10},
+        {"id": 1, "exponent": 0, "partition": "ready", "status": "ready", "level": 8}
+      ],
+      "output": {
+        "diameter": 52,
+        "pitch": 57,
+        "cols": 5,
+        "cells": [
+          {"ids": [4], "x": 26, "y": 60},
+          {"ids": [16], "x": 83, "y": 60},
+          {"ids": [11], "x": 140, "y": 60},
+          {"ids": [14], "x": 197, "y": 60},
+          {"ids": [2], "x": 254, "y": 60},
+          {"ids": [15], "x": 26, "y": 160},
+          {"ids": [9], "x": 83, "y": 160},
+          {"ids": [12], "x": 140, "y": 160},
+          {"ids": [10], "x": 197, "y": 160},
+          {"ids": [8], "x": 254, "y": 160},
+          {"ids": [13], "x": 54.5, "y": 209.363448},
+          {"ids": [5], "x": 111.5, "y": 209.363448},
+          {"ids": [7], "x": 168.5, "y": 209.363448},
+          {"ids": [6], "x": 225.5, "y": 209.363448},
+          {"ids": [3], "x": 282.5, "y": 209.363448},
+          {"ids": [1], "x": 26, "y": 258.726896}
+        ],
+        "blocks": [
+          {"partition": "clearing", "y": 0, "count": 5},
+          {"partition": "ready", "y": 100, "count": 11}
+        ],
+        "height": 284.726896
+      }
+    }
+  ]
+}

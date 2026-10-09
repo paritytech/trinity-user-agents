@@ -141,6 +141,13 @@ the service, preserve durable native custody before returning an outgoing memo, 
 exception text to a product. Regenerate bindings and rebuild the XCFramework together after changing this callback
 surface; generating Swift alone is not an iOS build or funded-payment qualification.
 
+The reference app's combined Core Data schema is `UserDataModel54`. Keep the shipped base
+`UserDataModel53` and Chat `UserDataModel53Chat` models unchanged for store detection; each migrates
+to version 54. The combined schema retains pocket cards, incoming payment ownership and the durable
+native Coinage ledger. `UserDataModel49Chat` follows the Chat migration path, avoiding an intermediate
+schema that would discard its custody records. Qualify migration from both version-53 stores on iOS
+before release; the Swift migration tests cover their distinct persisted fields.
+
 `HostRuntimeConfig.assetHubChainGenesisHash` is required. Supply the Asset Hub genesis hash from the same network
 configuration, as 32 bytes. Product manifests are read from the dotNS contracts deployed there, so it is what makes a
 `trustedProducts` grant resolvable: without a usable value no manifest resolves, so every cross-product grant not
@@ -307,6 +314,43 @@ resumed pairing reports nothing, so the host keeps its own record of which devic
 the thread answering the handshake, so hand the device off rather than announcing it inline. Defaults to a no-op for a
 host that answers no pairing.
 
+## Game
+
+A host that can hold reminders implements `GameHostBridge`, passed as `game:`
+to `openProductExecution`. Hosts without the bridge pass nothing and Game
+calls answer unsupported, as they do for every product but the game product,
+`dim2`.
+
+```swift
+final class MyGameBridge: GameHostBridge, @unchecked Sendable {
+    private let reminders: ReminderStore
+
+    init(reminders: ReminderStore) { self.reminders = reminders }
+
+    func scheduleReminder(startsAt: UInt64) async throws {
+        try await reminders.hold(startsAt: startsAt)
+    }
+
+    func cancelReminder() async throws {
+        reminders.drop()
+    }
+}
+
+let execution = try runtime.openProductExecution(
+    bridge: bridge,
+    configuration: ProductExecutionConfig(productId: "dim2.dot", executionKind: .worker),
+    game: MyGameBridge(reminders: reminderStore)
+)
+```
+
+The host holds one reminder per product: a `scheduleReminder` replaces the
+reminder the same product already holds. The core asks for no per-product
+consent: the host asks the OS for what it needs, rings an alarm where the OS
+allows one and delivers an ordinary notification otherwise, may add the game to
+the user's calendar, keeps the reminder across app kill and device reboot, and
+drops it once the game has started. A `scheduleReminder` that throws reaches
+the product as a host failure carrying its reason.
+
 ## Architecture
 
 ```text
@@ -325,12 +369,7 @@ host that answers no pairing.
                    Product execution
 ```
 
-The bootstrap supplies the execution endpoint to the shared container, which consumes and removes
-`window.__truapi_localhost` before product scripts run. The container creates one SDK connection for public calls and
-private permission checks, then exposes its public client through `window.__HOST_API_CLIENT__`. The Rust core handles
-the wire protocol directly. Outbound responses and host-side capability callbacks (`navigateTo`, `pushNotification`,
-`cancelNotification`, `devicePermission`, `remotePermission`, `authStateChanged`, core storage, chain JSON-RPC,
-confirmations, preimage, theme, `featureSupported`, `storage`) reach the embedder through `HostCallbacks`.
+The bootstrap supplies the execution endpoint to the shared container, which consumes and removes `window.__truapi_localhost` before product scripts run. The container creates one SDK connection for public calls and private permission checks, then exposes its public client through `window.__HOST_API_CLIENT__`. The Rust core handles the wire protocol directly. Outbound responses and host-side capability callbacks (`navigateTo`, `pushNotification`, `cancelNotification`, `devicePermission`, `setExpandedCardFaceShown`, `remotePermission`, `authStateChanged`, core storage, chain JSON-RPC, confirmations, preimage, theme, `featureSupported`, `storage`) reach the embedder through `HostCallbacks`.
 
 ## Permissions split
 
@@ -342,11 +381,7 @@ The core's `Permissions` platform trait has two methods, and so does `HostCallba
 
 `product` is the requesting execution's `ProductExecutionConfig`.
 
-Both return `PermissionDecision`: `.allowOnce`, `.allowAlways`, or `.deny`. Preserve the user’s choice; the core keeps
-one-use grants in memory and consumes them at the authorized operation. OS refusal after app consent should throw
-instead of returning `.deny`, which records a product denial. The same typed values drive the `TrUAPIProductExecution`
-permission admin API (`permissionAuthorizationStatus`, `setPermissionAuthorizationStatus`), which reads and updates the
-persisted decisions without prompting.
+Both return `PermissionDecision`: `.allowOnce`, `.allowAlways`, or `.deny`. Preserve the user’s choice; the core keeps one-use grants in memory and consumes them at the authorized operation. OS refusal after app consent should throw instead of returning `.deny`, which records a product denial. Executions expose the read-only `permissionAuthorizationStatus`; native settings administration belongs to the process-owned `TrUAPIHostRuntime`.
 
 Identity and account access reviews use `confirmPermission(review:)`, which also returns `PermissionDecision`. Override
 it to preserve Allow once. Its compatibility default maps `confirmUserAction`'s Boolean approval to `.allowAlways`;
@@ -363,6 +398,20 @@ consent again. An OS grant does not establish product consent. This boundary req
 product code in every frame, with its native methods and prototypes locked. SPA and Chat install it at document start.
 Authorization uses a private transport and response handler with captured browser primitives, so replacing public SDK
 replies, collection methods or Promise methods cannot approve a pending capture.
+
+### Native settings and legacy consumers
+
+Use the same runtime supplied by the app's `ServiceCoordinator`, not a second runtime or a settings-owned permission store:
+
+- `permissionAuthorizationProducts()` and `permissionAuthorizations(productId:)` enumerate existing persisted core keys and return canonical `{ request, status }` records. Implement `HostCoreStorageBackend.keys()` over the actual core namespace; the default throws unsupported, never an empty successful snapshot.
+- `importPermissionAuthorizations(productId:entries:)` atomically fills only missing entries. Existing native grants, denials, and reset tombstones win over old legacy rows. Keep legacy-only permission types in their existing repository. Preserve exact multi-domain request identity rather than flattening a bundle denial into singleton denials.
+- `setPermissionAuthorizationStatus(productId:request:status:)` is the explicit settings mutation. Await success before acknowledging removal; show failures while the settings view is still present. `.notDetermined` persists a reset tombstone, permits a future prompt, invalidates pending and one-time grants, and closes affected product executions.
+- Legacy prompt consumers capture `try permissionAuthorizationRevision(productId:)` **before** prompting and commit persistent answers with `setPermissionAuthorizationStatusIfCurrent(..., revision:)`. A false result rejects a stale answer. Temporary legacy grants carry that same revision and are ignored after revocation.
+- Every `HostBridge` implements `permissionAuthorizationsChanged(productId:)`. The process bridge forwards it to settings subscriptions. Shell runtimes inspect `execution.isClosed()` on this notification and tear down the affected WebView/engine and live media; an ordinary grant must not tear down an open execution.
+
+In the iOS app, Chat and Pocket share a worker rather than owning separate engines. `TrUAPIWorkerManager` observes the actual worker execution and removes its published execution, stops Pocket forwarding, and disposes the worker engine and chain connections on revocation. The observer is tied to that worker's boot identity so a delayed closure cannot tear down a replacement. A worker closed while starting must not resume into product code.
+
+The iOS app merges canonical decisions with legacy-only rows both in per-product settings and the apps-with-permissions list. Permission switches remain on and navigation is held while revocation is pending; storage or notification-cancellation errors remain visible and can be retried. Scope remains the existing product/request scope (including bare product labels for account-access decisions), not an account-specific grant.
 
 ## SSO session handling
 
@@ -516,6 +565,7 @@ final class MyCoreStorage: HostCoreStorageBackend, @unchecked Sendable {
     func read(key: Data) throws -> Data? { values[key] }
     func write(key: Data, value: Data) throws { values[key] = value }
     func clear(key: Data) throws { values.removeValue(forKey: key) }
+    func keys() throws -> [Data] { Array(values.keys) }
 }
 
 final class MyBridge: HostBridge, @unchecked Sendable {
@@ -523,6 +573,13 @@ final class MyBridge: HostBridge, @unchecked Sendable {
     let coreStorage: HostCoreStorageBackend = MyCoreStorage()
 
     func onCoreLog(marker: String, detail: String) { /* log */ }
+
+    func permissionAuthorizationsChanged(productId: String) {
+        NotificationCenter.default.post(
+            name: Notification.Name("ProductPermissionAuthorizationsChanged"),
+            object: productId
+        )
+    }
 
     func navigateTo(url: String) async throws {
         await MainActor.run { /* UIApplication.shared.open(...) */ }

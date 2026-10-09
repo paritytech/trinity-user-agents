@@ -57,7 +57,8 @@ final class SPAFlowStateProvider: SPAFlowStateProviding {
         let productResolver = ProductResolver(
             dotNsResolver: resolver,
             hostProvider: hostProvider,
-            logger: Logger.shared
+            logger: Logger.shared,
+            screening: .core
         )
 
         let created = SPAFlowState(

@@ -985,6 +985,9 @@ fn raw_param_ts(
                 raw_param_ts(inner, codec_types, local_codec_types)
             )
         }
+        TypeRef::Primitive(p) if matches!(p.as_str(), "u64" | "u128" | "i64" | "i128") => {
+            "bigint".to_string()
+        }
         TypeRef::Primitive(p) => raw_primitive_ts(p),
         _ => "Uint8Array".to_string(),
     }

@@ -8,8 +8,8 @@ use crate::platform::{
 };
 use parity_scale_codec::Encode;
 use truapi::api::{
-    Account, Chain, Entropy, LocalStorage, Notifications, Permissions, Preimage,
-    ResourceAllocation, Signing, StatementStore, System, Theme, Worker,
+    Account, Chain, Entropy, ExpandedCard, Game, LocalStorage, Notifications, Permissions,
+    Preimage, ResourceAllocation, Scanner, Signing, StatementStore, System, Theme, Worker,
 };
 use truapi::v02;
 use truapi::versioned::account::{
@@ -27,6 +27,11 @@ use truapi::versioned::chain::{
 };
 use truapi::versioned::entropy::{
     HostDeriveEntropyError, HostDeriveEntropyRequest, HostDeriveEntropyResponse,
+};
+use truapi::versioned::expanded_card::HostExpandedCardSetFaceShownRequest;
+use truapi::versioned::game::{
+    HostCancelNextGameError, HostCancelNextGameRequest, HostCancelNextGameResponse,
+    HostRemindNextGameError, HostRemindNextGameRequest, HostRemindNextGameResponse,
 };
 use truapi::versioned::local_storage::{
     HostLocalStorageChangeItem, HostLocalStorageClearRequest, HostLocalStorageReadError,
@@ -46,6 +51,7 @@ use truapi::versioned::resource_allocation::{
     HostRequestResourceAllocationError, HostRequestResourceAllocationRequest,
     HostRequestResourceAllocationResponse,
 };
+use truapi::versioned::scanner::HostScannerScanRequest;
 use truapi::versioned::signing::{
     HostCreateTransactionError, HostCreateTransactionRequest, HostCreateTransactionResponse,
     HostCreateTransactionWithLegacyAccountError, HostCreateTransactionWithLegacyAccountRequest,
@@ -2463,10 +2469,9 @@ impl crate::platform::PocketPlatform for RecordingPocketPlatform {
     }
 }
 
-fn pocket_host(
+fn pocket_dot_host(
     kind: crate::platform::ProductExecutionKind,
-    pocket: Option<Arc<RecordingPocketPlatform>>,
-    with_session: bool,
+    configure: impl FnOnce(&mut crate::host_core::ConnectionAdapters),
 ) -> ProductRuntimeHost {
     let (host_config, _) = runtime_config("pocket.dot");
     let product = ProductContext::new_with_execution("pocket.dot".to_string(), kind)
@@ -2482,9 +2487,19 @@ fn pocket_host(
     );
     let pairing_host = PairingHost::new(services.clone(), host_config);
     let mut adapters = crate::host_core::ConnectionAdapters::from_services(&services);
-    adapters.pocket_platform =
-        pocket.map(|pocket| pocket as Arc<dyn crate::platform::PocketPlatform>);
-    let host = ProductRuntimeHost::from_services(services, adapters, pairing_host, product);
+    configure(&mut adapters);
+    ProductRuntimeHost::from_services(services, adapters, pairing_host, product)
+}
+
+fn pocket_host(
+    kind: crate::platform::ProductExecutionKind,
+    pocket: Option<Arc<RecordingPocketPlatform>>,
+    with_session: bool,
+) -> ProductRuntimeHost {
+    let host = pocket_dot_host(kind, |adapters| {
+        adapters.pocket_platform =
+            pocket.map(|pocket| pocket as Arc<dyn crate::platform::PocketPlatform>);
+    });
     if with_session {
         install_pairing_session(&host, session_info());
     }
@@ -2559,6 +2574,163 @@ fn pocket_list_subscribe_forwards_the_host_list_and_interrupts_on_stream_errors(
         Some(Err(CallError::HostFailure { .. }))
     ));
     assert!(futures::executor::block_on(items.next()).is_none());
+}
+
+/// Records the visibility the host is asked for and answers a configured result.
+struct RecordingExpandedCardHost {
+    answer: Result<crate::platform::ExpandedCardFaceOutcome, truapi::latest::GenericError>,
+    requested: Mutex<Vec<bool>>,
+}
+
+impl RecordingExpandedCardHost {
+    fn answering(
+        answer: Result<crate::platform::ExpandedCardFaceOutcome, truapi::latest::GenericError>,
+    ) -> Arc<Self> {
+        Arc::new(Self {
+            answer,
+            requested: Mutex::new(Vec::new()),
+        })
+    }
+
+    fn requested(&self) -> Vec<bool> {
+        self.requested
+            .lock()
+            .expect("requested mutex poisoned")
+            .clone()
+    }
+}
+
+#[truapi::async_trait]
+impl crate::platform::ExpandedCardHost for RecordingExpandedCardHost {
+    async fn set_expanded_card_face_shown(
+        &self,
+        shown: bool,
+    ) -> Result<crate::platform::ExpandedCardFaceOutcome, truapi::latest::GenericError> {
+        self.requested
+            .lock()
+            .expect("requested mutex poisoned")
+            .push(shown);
+        self.answer.clone()
+    }
+}
+
+fn expanded_card_host(
+    kind: crate::platform::ProductExecutionKind,
+    expanded_card: Option<Arc<RecordingExpandedCardHost>>,
+) -> ProductRuntimeHost {
+    pocket_dot_host(kind, |adapters| {
+        adapters.expanded_card =
+            expanded_card.map(|card| card as Arc<dyn crate::platform::ExpandedCardHost>);
+    })
+}
+
+fn set_face_shown(
+    host: &ProductRuntimeHost,
+    shown: bool,
+) -> Result<
+    truapi::versioned::expanded_card::HostExpandedCardSetFaceShownResponse,
+    CallError<truapi::versioned::expanded_card::HostExpandedCardSetFaceShownError>,
+> {
+    futures::executor::block_on(ExpandedCard::set_face_shown(
+        host,
+        &CallContext::default(),
+        HostExpandedCardSetFaceShownRequest::V1(v01::HostExpandedCardSetFaceShownRequest {
+            shown,
+        }),
+    ))
+}
+
+/// The host must see exactly what the Widget asked for, in order, so a hide
+/// followed by a show never collapses into one state change.
+#[test]
+fn expanded_card_widget_requests_reach_the_host_in_order() {
+    let card = RecordingExpandedCardHost::answering(Ok(
+        crate::platform::ExpandedCardFaceOutcome::Applied,
+    ));
+    let host = expanded_card_host(
+        crate::platform::ProductExecutionKind::Widget,
+        Some(card.clone()),
+    );
+
+    for shown in [false, true, false] {
+        assert!(matches!(
+            set_face_shown(&host, shown),
+            Ok(truapi::versioned::expanded_card::HostExpandedCardSetFaceShownResponse::V1)
+        ));
+    }
+
+    assert_eq!(card.requested(), [false, true, false]);
+}
+
+/// Admin connections call the trait without the dispatcher's execution-kind
+/// filter, so only a Widget may move a face, and nothing else reaches the host.
+#[test]
+fn expanded_card_is_denied_to_non_widgets_without_reaching_the_host() {
+    for kind in [
+        crate::platform::ProductExecutionKind::App,
+        crate::platform::ProductExecutionKind::Worker,
+    ] {
+        let card = RecordingExpandedCardHost::answering(Ok(
+            crate::platform::ExpandedCardFaceOutcome::Applied,
+        ));
+        let host = expanded_card_host(kind, Some(card.clone()));
+
+        assert!(matches!(set_face_shown(&host, false), Err(CallError::Denied)));
+        assert!(card.requested().is_empty());
+    }
+}
+
+/// A host with no adapter, like the browser, must read as "not supported", the
+/// answer a product uses to detect that no expanded cards exist; a
+/// `HostFailure` would read as a real failure.
+#[test]
+fn expanded_card_without_an_adapter_is_unsupported() {
+    let host = expanded_card_host(crate::platform::ProductExecutionKind::Widget, None);
+
+    assert!(matches!(
+        set_face_shown(&host, false),
+        Err(CallError::Unsupported)
+    ));
+}
+
+/// Each host outcome must reach the product as the answer it branches on;
+/// `Unsupported` in particular has to stay distinguishable from a failure.
+#[test]
+fn expanded_card_host_outcomes_map_to_wire_answers() {
+    use crate::platform::ExpandedCardFaceOutcome;
+    use truapi::versioned::expanded_card::HostExpandedCardSetFaceShownError as WireError;
+
+    let answer = |outcome| {
+        let card = RecordingExpandedCardHost::answering(outcome);
+        let host = expanded_card_host(crate::platform::ProductExecutionKind::Widget, Some(card));
+        set_face_shown(&host, false)
+    };
+
+    assert!(matches!(
+        answer(Ok(ExpandedCardFaceOutcome::Unsupported)),
+        Err(CallError::Unsupported)
+    ));
+    assert!(matches!(
+        answer(Ok(ExpandedCardFaceOutcome::NotPresented)),
+        Err(CallError::Domain(WireError::V1(
+            v01::HostExpandedCardSetFaceShownError::NotPresented
+        )))
+    ));
+    assert!(matches!(
+        answer(Ok(ExpandedCardFaceOutcome::UserMoving)),
+        Err(CallError::Domain(WireError::V1(
+            v01::HostExpandedCardSetFaceShownError::UserMoving
+        )))
+    ));
+    let Err(CallError::Domain(WireError::V1(v01::HostExpandedCardSetFaceShownError::Unknown {
+        reason,
+    }))) = answer(Err(truapi::latest::GenericError {
+        reason: "drawer crashed".to_string(),
+    }))
+    else {
+        panic!("a host failure is reported as an unknown domain error");
+    };
+    assert_eq!(reason, "drawer crashed");
 }
 
 #[test]
@@ -2697,6 +2869,60 @@ impl crate::platform::ProfilePlatform for RecordingContactProfilePlatform {
             .lock()
             .expect("contacts mutex poisoned")
             .push((product.product_id.clone(), presented));
+        Ok(())
+    }
+}
+
+/// A game start far enough ahead that no test run reaches it.
+const FUTURE_START: u64 = u64::MAX / 2;
+
+/// The product the Game API serves.
+const GAME_PRODUCT: &str = "dim2.dot";
+
+/// Records every reminder call, and fails every schedule and cancel with
+/// `failure` when it is set.
+#[derive(Default)]
+struct RecordingGamePlatform {
+    scheduled: Mutex<Vec<(String, u64)>>,
+    cancelled: Mutex<Vec<String>>,
+    failure: Option<&'static str>,
+}
+
+impl RecordingGamePlatform {
+    fn check_failure(&self) -> Result<(), truapi::latest::GenericError> {
+        match self.failure {
+            Some(reason) => Err(truapi::latest::GenericError {
+                reason: reason.to_string(),
+            }),
+            None => Ok(()),
+        }
+    }
+}
+
+#[truapi::async_trait]
+impl crate::platform::GamePlatform for RecordingGamePlatform {
+    async fn schedule_game_reminder(
+        &self,
+        product: &ProductContext,
+        starts_at: u64,
+    ) -> Result<(), truapi::latest::GenericError> {
+        self.check_failure()?;
+        self.scheduled
+            .lock()
+            .expect("scheduled mutex poisoned")
+            .push((product.product_id.clone(), starts_at));
+        Ok(())
+    }
+
+    async fn cancel_game_reminder(
+        &self,
+        product: &ProductContext,
+    ) -> Result<(), truapi::latest::GenericError> {
+        self.check_failure()?;
+        self.cancelled
+            .lock()
+            .expect("cancelled mutex poisoned")
+            .push(product.product_id.clone());
         Ok(())
     }
 }
@@ -4482,6 +4708,157 @@ fn contact_avatars_need_an_app_a_host_that_draws_them_and_a_signed_in_user() {
     );
 }
 
+/// The game product's runtime over `platform`, with `game` installed when
+/// given and no session.
+fn game_host(
+    kind: crate::platform::ProductExecutionKind,
+    platform: Arc<StubPlatform>,
+    game: Option<Arc<RecordingGamePlatform>>,
+) -> ProductRuntimeHost {
+    game_host_for(GAME_PRODUCT, kind, platform, game)
+}
+
+/// [`game_host`] for an arbitrary `product_id`.
+fn game_host_for(
+    product_id: &str,
+    kind: crate::platform::ProductExecutionKind,
+    platform: Arc<StubPlatform>,
+    game: Option<Arc<RecordingGamePlatform>>,
+) -> ProductRuntimeHost {
+    let (host_config, _) = runtime_config(product_id);
+    let product = ProductContext::new_with_execution(product_id.to_string(), kind)
+        .expect("test game product context is valid");
+    let platform: Arc<dyn Platform> = platform;
+    let services = RuntimeServices::new(
+        platform,
+        host_config.host.host_info.clone(),
+        host_config.people_chain_genesis_hash,
+        host_config.bulletin_chain_genesis_hash,
+        host_config.asset_hub_chain_genesis_hash,
+        test_spawner(),
+    );
+    let pairing_host = PairingHost::new(services.clone(), host_config);
+    let mut adapters = crate::host_core::ConnectionAdapters::from_services(&services);
+    adapters.game_platform = game.map(|game| game as Arc<dyn crate::platform::GamePlatform>);
+    ProductRuntimeHost::from_services(services, adapters, pairing_host, product)
+}
+
+fn remind(
+    host: &ProductRuntimeHost,
+    starts_at: u64,
+) -> Result<HostRemindNextGameResponse, CallError<HostRemindNextGameError>> {
+    remind_with(host, &CallContext::default(), starts_at)
+}
+
+fn remind_with(
+    host: &ProductRuntimeHost,
+    cx: &CallContext,
+    starts_at: u64,
+) -> Result<HostRemindNextGameResponse, CallError<HostRemindNextGameError>> {
+    futures::executor::block_on(Game::remind_next_game(
+        host,
+        cx,
+        HostRemindNextGameRequest::V1(v01::HostRemindNextGameRequest { starts_at }),
+    ))
+}
+
+fn cancel(
+    host: &ProductRuntimeHost,
+) -> Result<HostCancelNextGameResponse, CallError<HostCancelNextGameError>> {
+    futures::executor::block_on(Game::cancel_next_game(
+        host,
+        &CallContext::default(),
+        HostCancelNextGameRequest::V1(v01::HostCancelNextGameRequest {}),
+    ))
+}
+
+fn scheduled(game: &RecordingGamePlatform) -> Vec<(String, u64)> {
+    game.scheduled
+        .lock()
+        .expect("scheduled mutex poisoned")
+        .clone()
+}
+
+fn prompts(platform: &StubPlatform) -> Vec<v01::HostDevicePermissionRequest> {
+    platform
+        .device_permission_requests
+        .lock()
+        .expect("device permission list mutex poisoned")
+        .clone()
+}
+
+#[test]
+fn game_is_unsupported_without_an_adapter_and_open_to_apps_and_workers_without_a_session() {
+    let no_adapter = game_host(
+        crate::platform::ProductExecutionKind::App,
+        stub_platform(),
+        None,
+    );
+    assert!(matches!(
+        remind(&no_adapter, FUTURE_START),
+        Err(CallError::Unsupported)
+    ));
+    assert!(matches!(cancel(&no_adapter), Err(CallError::Unsupported)));
+
+    for kind in [
+        crate::platform::ProductExecutionKind::App,
+        crate::platform::ProductExecutionKind::Worker,
+    ] {
+        let game = Arc::new(RecordingGamePlatform::default());
+        let host = game_host(kind, stub_platform(), Some(game.clone()));
+        assert_eq!(
+            remind(&host, FUTURE_START),
+            Ok(HostRemindNextGameResponse::V1),
+            "{kind:?}"
+        );
+        assert_eq!(
+            cancel(&host),
+            Ok(HostCancelNextGameResponse::V1),
+            "{kind:?}"
+        );
+        assert_eq!(
+            scheduled(&game),
+            vec![(GAME_PRODUCT.to_string(), FUTURE_START)],
+            "{kind:?}"
+        );
+    }
+}
+
+/// The game product needs no per-product consent: a remembered denial of any
+/// device capability still lets the reminder reach the host, unprompted.
+#[test]
+fn remind_next_game_asks_for_no_permission() {
+    let platform = Arc::new(StubPlatform {
+        device_permission_decisions: Mutex::new(
+            [
+                crate::platform::PermissionDecision::Deny,
+                crate::platform::PermissionDecision::Deny,
+            ]
+            .into(),
+        ),
+        ..Default::default()
+    });
+    let game = Arc::new(RecordingGamePlatform::default());
+    let host = game_host(
+        crate::platform::ProductExecutionKind::Worker,
+        platform.clone(),
+        Some(game.clone()),
+    );
+
+    assert_eq!(
+        (
+            remind(&host, FUTURE_START),
+            scheduled(&game),
+            prompts(&platform)
+        ),
+        (
+            Ok(HostRemindNextGameResponse::V1),
+            vec![(GAME_PRODUCT.to_string(), FUTURE_START)],
+            vec![],
+        )
+    );
+}
+
 #[test]
 fn contact_avatars_are_redrawn_for_their_wallet_and_cleared_when_the_connection_goes() {
     let platform = stub_platform();
@@ -4542,6 +4919,135 @@ fn contact_avatars_are_redrawn_for_their_wallet_and_cleared_when_the_connection_
         3,
         "nothing is redrawn for a connection that is gone"
     );
+}
+
+#[test]
+fn remind_next_game_rejects_a_past_start_without_calling_the_host() {
+    let game = Arc::new(RecordingGamePlatform::default());
+    let host = game_host(
+        crate::platform::ProductExecutionKind::Worker,
+        stub_platform(),
+        Some(game.clone()),
+    );
+
+    assert_eq!(
+        (remind(&host, 0), scheduled(&game)),
+        (
+            Err(CallError::Domain(HostRemindNextGameError::V1(
+                v01::HostRemindNextGameError::StartsInPast
+            ))),
+            vec![],
+        )
+    );
+}
+
+#[test]
+fn remind_next_game_schedules_nothing_for_a_withdrawn_call() {
+    let game = Arc::new(RecordingGamePlatform::default());
+    let host = game_host(
+        crate::platform::ProductExecutionKind::Worker,
+        stub_platform(),
+        Some(game.clone()),
+    );
+    let cx = CallContext::default();
+    cx.cancel().cancel();
+
+    assert_eq!(
+        (remind_with(&host, &cx, FUTURE_START), scheduled(&game)),
+        (Err(CallError::Cancelled), vec![])
+    );
+}
+
+#[test]
+fn cancel_next_game_delegates() {
+    let game = Arc::new(RecordingGamePlatform::default());
+    let host = game_host(
+        crate::platform::ProductExecutionKind::Worker,
+        stub_platform(),
+        Some(game.clone()),
+    );
+
+    assert_eq!(
+        (
+            cancel(&host),
+            game.cancelled
+                .lock()
+                .expect("cancelled mutex poisoned")
+                .clone(),
+        ),
+        (
+            Ok(HostCancelNextGameResponse::V1),
+            vec![GAME_PRODUCT.to_string()],
+        )
+    );
+}
+
+#[test]
+fn game_host_failures_reach_the_product_with_their_reason() {
+    let game = Arc::new(RecordingGamePlatform {
+        failure: Some("alarm store unavailable"),
+        ..Default::default()
+    });
+    let host = game_host(
+        crate::platform::ProductExecutionKind::Worker,
+        stub_platform(),
+        Some(game.clone()),
+    );
+
+    assert_eq!(
+        (remind(&host, FUTURE_START), cancel(&host), scheduled(&game)),
+        (
+            Err(CallError::HostFailure {
+                reason: "alarm store unavailable".to_string(),
+            }),
+            Err(CallError::Domain(HostCancelNextGameError::V1(
+                truapi::latest::GenericError {
+                    reason: "alarm store unavailable".to_string(),
+                }
+            ))),
+            vec![],
+        )
+    );
+}
+
+/// The Game API serves Jollity alone: a subname of the game product is a
+/// different publisher, and so is every other product.
+#[test]
+fn game_is_unsupported_for_every_product_but_the_game() {
+    for product_id in ["game.dot", "app.dim2.dot", "dim2x.paseo"] {
+        let game = Arc::new(RecordingGamePlatform::default());
+        let host = game_host_for(
+            product_id,
+            crate::platform::ProductExecutionKind::App,
+            stub_platform(),
+            Some(game.clone()),
+        );
+
+        assert!(
+            matches!(remind(&host, FUTURE_START), Err(CallError::Unsupported)),
+            "{product_id}"
+        );
+        assert!(
+            matches!(cancel(&host), Err(CallError::Unsupported)),
+            "{product_id}"
+        );
+        assert_eq!(scheduled(&game), vec![], "{product_id}");
+    }
+
+    for product_id in ["dim2.dot", "dim2.paseo", "dim2.testnet"] {
+        let game = Arc::new(RecordingGamePlatform::default());
+        let host = game_host_for(
+            product_id,
+            crate::platform::ProductExecutionKind::App,
+            stub_platform(),
+            Some(game),
+        );
+        assert_eq!(
+            remind(&host, FUTURE_START),
+            Ok(HostRemindNextGameResponse::V1),
+            "{product_id}"
+        );
+    }
 }
 
 #[test]
@@ -9818,4 +10324,80 @@ fn an_internal_cancellation_never_becomes_the_cancelled_variant() {
             transaction_call_error(HostCreateTransactionError::V1, cancelled()),
         );
     }
+}
+
+/// A product tells "no scanner here" by `Unsupported` and falls back to its own
+/// camera code; a `HostFailure` would read as a real failure.
+#[test]
+fn scanner_scan_is_unsupported_until_a_host_implements_it() {
+    let host = ProductRuntimeHost::new_compat(stub_platform(), test_spawner());
+
+    let result = futures::executor::block_on(Scanner::scan(
+        &host,
+        &CallContext::default(),
+        HostScannerScanRequest::V1(v01::HostScannerScanRequest {
+            formats: vec![v01::CodeFormat::Qr],
+            prefix: None,
+            hint: None,
+        }),
+    ));
+
+    assert!(matches!(result, Err(CallError::Unsupported)));
+}
+
+/// A pairing test host, whose wallet answered the Bulletin allowance in-page,
+/// keeps the submission in the core once told to and serves it back, so a
+/// product's submit-then-lookup round trip works without the chain.
+#[cfg(feature = "test-host")]
+#[test]
+fn a_pairing_test_host_keeps_a_submitted_preimage_and_serves_it_back() {
+    use crate::host_internal::bulletin::preimage_key;
+    use truapi::versioned::preimage::RemotePreimageSubmitResponse;
+
+    let session = sso_session_info();
+    let platform = Arc::new(StubPlatform::default());
+    let (host_config, product) = runtime_config("myapp.dot");
+    let (host, pairing_host) = ProductRuntimeHost::new_pairing_for_tests(
+        platform,
+        host_config,
+        product,
+        test_spawner(),
+    );
+    install_pairing_session(&host, session.clone());
+    let lifecycle_epoch = pairing_host.current_session_lifecycle_epoch();
+    futures::executor::block_on(pairing_host.cache_bulletin_allowance_key(
+        &session,
+        lifecycle_epoch,
+        "myapp.dot",
+        [0x42; 64].to_vec(),
+    ))
+    .expect("the wallet's allowance is cached");
+    pairing_host.set_submit_preimages_locally(true);
+    let value = b"pairing test host preimage".to_vec();
+    let cx = CallContext::default();
+
+    // No Bulletin client is configured, so reaching the chain would fail here.
+    let response = futures::executor::block_on(Preimage::submit(
+        &host,
+        &cx,
+        RemotePreimageSubmitRequest::V1(value.clone()),
+    ))
+    .expect("the submission stays in the core");
+    assert_eq!(
+        response,
+        RemotePreimageSubmitResponse::V1(preimage_key(&value).to_vec())
+    );
+
+    let mut lookup = futures::executor::block_on(host.lookup_subscribe(
+        &cx,
+        RemotePreimageLookupSubscribeRequest::V1(v01::RemotePreimageLookupSubscribeRequest {
+            key: preimage_key(&value).to_vec(),
+        }),
+    ));
+    assert_eq!(
+        futures::executor::block_on(lookup.next()).expect("a lookup item"),
+        Ok(RemotePreimageLookupSubscribeItem::V1(
+            v01::RemotePreimageLookupSubscribeItem { value: Some(value) }
+        ))
+    );
 }

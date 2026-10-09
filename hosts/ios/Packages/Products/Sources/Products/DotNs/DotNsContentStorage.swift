@@ -89,32 +89,13 @@ public final class DotNsContentStorage: DotNsContentStorageProtocol {
 }
 
 private extension DotNsContentStorage {
-    /// Rejects entry names that are absolute or contain `..` before anything touches the filesystem.
-    /// Runs ahead of `containedURL` so a malicious archive cannot plant a symlink for a later entry to follow.
-    func validateRelativePath(_ relativePath: String) throws {
-        let components = relativePath.split(separator: "/", omittingEmptySubsequences: true)
-
-        guard !relativePath.hasPrefix("/"), !components.contains("..") else {
-            throw DotNsContentStorageError.pathEscapesContentDirectory(relativePath)
-        }
-    }
-
-    /// Resolves `relativePath` against `base` and verifies the result stays inside `base`.
-    /// Both sides are symlink-resolved and standardized: on iOS the container path is reached via
-    /// the `/var` -> `/private/var` symlink, so a raw comparison would not match.
+    /// Resolves `relativePath` against `base` and verifies the result stays inside it.
     func containedURL(base: URL, relativePath: String) throws -> URL {
-        try validateRelativePath(relativePath)
-
-        let root = base.resolvingSymlinksInPath().standardizedFileURL
-        let candidate = base.appendingPathComponent(relativePath)
-            .resolvingSymlinksInPath()
-            .standardizedFileURL
-
-        guard candidate.path == root.path || candidate.path.hasPrefix(root.path + "/") else {
+        guard let contained = ContentArchivePath.inside(base, path: relativePath) else {
             throw DotNsContentStorageError.pathEscapesContentDirectory(relativePath)
         }
 
-        return candidate
+        return contained
     }
 
     /// `contentHash` is used directly as a path component, so it must be plain hex.

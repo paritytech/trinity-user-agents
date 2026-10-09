@@ -5,7 +5,7 @@
 use super::*;
 
 /// Fingerprint of the generated wire contract.
-pub const TRUAPI_WIRE_SCHEMA_HASH: &str = "fa26034170614fda";
+pub const TRUAPI_WIRE_SCHEMA_HASH: &str = "064ab9d59b73f723";
 
 /// `account_connection_status_subscribe` method marker.
 pub struct AccountConnectionStatusSubscribe;
@@ -1195,6 +1195,87 @@ impl RequestMethod for EntropyDerive {
     const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
 }
 
+/// `expanded_card_set_face_shown` method marker.
+pub struct ExpandedCardSetFaceShown;
+impl ExpandedCardSetFaceShown {
+    /// Canonical metadata and frame ids for this method.
+    pub const DESCRIPTOR: MethodDescriptor = MethodDescriptor {
+        service: "ExpandedCard",
+        method: "set_face_shown",
+        wire_name: "expanded_card_set_face_shown",
+        request_type: "truapi::versioned::expanded_card::HostExpandedCardSetFaceShownRequest",
+        response_type: "truapi::versioned::expanded_card::HostExpandedCardSetFaceShownResponse",
+        error_type: Some("truapi::versioned::expanded_card::HostExpandedCardSetFaceShownError"),
+        kind: MethodKind::Request,
+        direction: Direction::ProductToHost,
+        required_execution: Some(ExecutionKind::Widget),
+        wire: MethodWire::Request(MethodIds {
+            trait_id: 23,
+            method_id: 0,
+        }),
+    };
+}
+impl RequestMethod for ExpandedCardSetFaceShown {
+    type Request = truapi::versioned::expanded_card::HostExpandedCardSetFaceShownRequest;
+    type Response = truapi::versioned::expanded_card::HostExpandedCardSetFaceShownResponse;
+    type Error = truapi::versioned::expanded_card::HostExpandedCardSetFaceShownError;
+    const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
+}
+
+/// `game_remind_next_game` method marker.
+pub struct GameRemindNextGame;
+impl GameRemindNextGame {
+    /// Canonical metadata and frame ids for this method.
+    pub const DESCRIPTOR: MethodDescriptor = MethodDescriptor {
+        service: "Game",
+        method: "remind_next_game",
+        wire_name: "game_remind_next_game",
+        request_type: "truapi::versioned::game::HostRemindNextGameRequest",
+        response_type: "truapi::versioned::game::HostRemindNextGameResponse",
+        error_type: Some("truapi::versioned::game::HostRemindNextGameError"),
+        kind: MethodKind::Request,
+        direction: Direction::ProductToHost,
+        required_execution: None,
+        wire: MethodWire::Request(MethodIds {
+            trait_id: 21,
+            method_id: 0,
+        }),
+    };
+}
+impl RequestMethod for GameRemindNextGame {
+    type Request = truapi::versioned::game::HostRemindNextGameRequest;
+    type Response = truapi::versioned::game::HostRemindNextGameResponse;
+    type Error = truapi::versioned::game::HostRemindNextGameError;
+    const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
+}
+
+/// `game_cancel_next_game` method marker.
+pub struct GameCancelNextGame;
+impl GameCancelNextGame {
+    /// Canonical metadata and frame ids for this method.
+    pub const DESCRIPTOR: MethodDescriptor = MethodDescriptor {
+        service: "Game",
+        method: "cancel_next_game",
+        wire_name: "game_cancel_next_game",
+        request_type: "truapi::versioned::game::HostCancelNextGameRequest",
+        response_type: "truapi::versioned::game::HostCancelNextGameResponse",
+        error_type: Some("truapi::versioned::game::HostCancelNextGameError"),
+        kind: MethodKind::Request,
+        direction: Direction::ProductToHost,
+        required_execution: None,
+        wire: MethodWire::Request(MethodIds {
+            trait_id: 21,
+            method_id: 1,
+        }),
+    };
+}
+impl RequestMethod for GameCancelNextGame {
+    type Request = truapi::versioned::game::HostCancelNextGameRequest;
+    type Response = truapi::versioned::game::HostCancelNextGameResponse;
+    type Error = truapi::versioned::game::HostCancelNextGameError;
+    const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
+}
+
 /// `local_storage_read` method marker.
 pub struct LocalStorageRead;
 impl LocalStorageRead {
@@ -2063,6 +2144,33 @@ impl RequestMethod for ResourceAllocationRequest {
     const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
 }
 
+/// `scanner_scan` method marker.
+pub struct ScannerScan;
+impl ScannerScan {
+    /// Canonical metadata and frame ids for this method.
+    pub const DESCRIPTOR: MethodDescriptor = MethodDescriptor {
+        service: "Scanner",
+        method: "scan",
+        wire_name: "scanner_scan",
+        request_type: "truapi::versioned::scanner::HostScannerScanRequest",
+        response_type: "truapi::versioned::scanner::HostScannerScanResponse",
+        error_type: Some("truapi::versioned::scanner::HostScannerScanError"),
+        kind: MethodKind::Request,
+        direction: Direction::ProductToHost,
+        required_execution: None,
+        wire: MethodWire::Request(MethodIds {
+            trait_id: 25,
+            method_id: 0,
+        }),
+    };
+}
+impl RequestMethod for ScannerScan {
+    type Request = truapi::versioned::scanner::HostScannerScanRequest;
+    type Response = truapi::versioned::scanner::HostScannerScanResponse;
+    type Error = truapi::versioned::scanner::HostScannerScanError;
+    const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
+}
+
 /// `signing_create_transaction` method marker.
 pub struct SigningCreateTransaction;
 impl SigningCreateTransaction {
@@ -2650,6 +2758,8 @@ pub const APP_METHODS: &[MethodDescriptor] = &[
     ContactsPickMany::DESCRIPTOR,
     ContactsPlaceLabels::DESCRIPTOR,
     EntropyDerive::DESCRIPTOR,
+    GameRemindNextGame::DESCRIPTOR,
+    GameCancelNextGame::DESCRIPTOR,
     LocalStorageRead::DESCRIPTOR,
     LocalStorageWrite::DESCRIPTOR,
     LocalStorageClear::DESCRIPTOR,
@@ -2678,6 +2788,7 @@ pub const APP_METHODS: &[MethodDescriptor] = &[
     ProfileOwnStatus::DESCRIPTOR,
     ProfilePresentOwn::DESCRIPTOR,
     ResourceAllocationRequest::DESCRIPTOR,
+    ScannerScan::DESCRIPTOR,
     SigningCreateTransaction::DESCRIPTOR,
     SigningCreateTransactionWithLegacyAccount::DESCRIPTOR,
     SigningSignRawWithLegacyAccount::DESCRIPTOR,
@@ -2739,6 +2850,9 @@ pub const WIDGET_METHODS: &[MethodDescriptor] = &[
     ContactsPickMany::DESCRIPTOR,
     ContactsPlaceLabels::DESCRIPTOR,
     EntropyDerive::DESCRIPTOR,
+    ExpandedCardSetFaceShown::DESCRIPTOR,
+    GameRemindNextGame::DESCRIPTOR,
+    GameCancelNextGame::DESCRIPTOR,
     LocalStorageRead::DESCRIPTOR,
     LocalStorageWrite::DESCRIPTOR,
     LocalStorageClear::DESCRIPTOR,
@@ -2767,6 +2881,7 @@ pub const WIDGET_METHODS: &[MethodDescriptor] = &[
     ProfileOwnStatus::DESCRIPTOR,
     ProfilePresentOwn::DESCRIPTOR,
     ResourceAllocationRequest::DESCRIPTOR,
+    ScannerScan::DESCRIPTOR,
     SigningCreateTransaction::DESCRIPTOR,
     SigningCreateTransactionWithLegacyAccount::DESCRIPTOR,
     SigningSignRawWithLegacyAccount::DESCRIPTOR,
@@ -2833,6 +2948,8 @@ pub const WORKER_METHODS: &[MethodDescriptor] = &[
     ContactsPickMany::DESCRIPTOR,
     ContactsPlaceLabels::DESCRIPTOR,
     EntropyDerive::DESCRIPTOR,
+    GameRemindNextGame::DESCRIPTOR,
+    GameCancelNextGame::DESCRIPTOR,
     LocalStorageRead::DESCRIPTOR,
     LocalStorageWrite::DESCRIPTOR,
     LocalStorageClear::DESCRIPTOR,
@@ -2865,6 +2982,7 @@ pub const WORKER_METHODS: &[MethodDescriptor] = &[
     RendererRender::DESCRIPTOR,
     RendererActionSubscribe::DESCRIPTOR,
     ResourceAllocationRequest::DESCRIPTOR,
+    ScannerScan::DESCRIPTOR,
     SigningCreateTransaction::DESCRIPTOR,
     SigningCreateTransactionWithLegacyAccount::DESCRIPTOR,
     SigningSignRawWithLegacyAccount::DESCRIPTOR,

@@ -37,7 +37,7 @@ private class PreviousPaymentsAddressConverter(
             .filter { it.display.contains(input, ignoreCase = true) }
 
         return ExtractedAddressesSection(
-            category = ExtractedAddressesCategory.Custom(RCommon.string.address_section_previous_payments),
+            category = ExtractedAddressesCategory.Custom(RCommon.string.search_section_recent),
             addresses = relevantPreviousPayments
         )
     }
