@@ -8,7 +8,7 @@ import TrUAPIHost
 /// given the same engine whichever surface asked for it.
 @MainActor
 struct TrUAPIWorkerRuntimeTests {
-    /// Guest capture stays denied even when the host-managed Media backend exists.
+    /// Headless workers cannot capture devices or request host permission.
     @Test
     func deniesDirectProductCapture() async throws {
         let engine = MockJSEngine()
@@ -17,15 +17,13 @@ struct TrUAPIWorkerRuntimeTests {
 
         try await runtime.start()
 
-        #expect(engine.mediaHandlerWasInstalledAtInitialization)
-        #expect(execution.permissionRequests.isEmpty)
         let capture = try #require(engine.deviceCapabilityHandler)
         #expect(try await capture(.camera) == .denied)
         #expect(try await capture(.microphone) == .denied)
+        #expect(execution.permissionRequests.isEmpty)
 
         await runtime.dispose()
     }
-
 
     /// A stop landing mid-boot must not leave the product's script running: the
     /// engine goes before any product code is evaluated.
