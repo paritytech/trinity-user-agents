@@ -3,10 +3,7 @@ import PolkadotUI
 import Products
 
 protocol AppPermissionsViewModelMaking {
-    func createItems(
-        from grants: [ProductPermissionGrant],
-        pendingDeletionIds: Set<String>
-    ) -> [AppPermissionsViewLayout.Item]
+    func createItems(from grants: [ProductPermissionGrant]) -> [AppPermissionsViewLayout.Item]
 }
 
 final class AppPermissionsViewModelFactory {
@@ -14,17 +11,13 @@ final class AppPermissionsViewModelFactory {
 }
 
 extension AppPermissionsViewModelFactory: AppPermissionsViewModelMaking {
-    func createItems(
-        from grants: [ProductPermissionGrant],
-        pendingDeletionIds: Set<String>
-    ) -> [AppPermissionsViewLayout.Item] {
+    func createItems(from grants: [ProductPermissionGrant]) -> [AppPermissionsViewLayout.Item] {
         grants.map { grant in
-            let isOn = !pendingDeletionIds.contains(grant.identifier)
             return AppPermissionsViewLayout.Item(
                 id: grant.identifier,
                 title: grant.permission.settingsTitle,
                 description: grant.permission.permissionDescription,
-                isOn: isOn
+                isOn: true
             )
         }
     }
@@ -37,6 +30,8 @@ extension ProductPermission {
         case let .deviceCapability(capability): capabilityDescription(capability)
         case let .networkAccess(domain):
             String(localized: .Products.permissionBodyNetworkAccess(domain: domain))
+        case let .networkAccessBundle(domains):
+            String(localized: .Products.permissionBodyNetworkAccess(domain: domains.joined(separator: ", ")))
         case let .accountAccess(targetProductId):
             String(localized: .Products.permissionBodyAccountAccess(targetProductId: targetProductId))
         case .balanceAccess: String(localized: .Products.permissionBodyBalanceAccess)
@@ -45,16 +40,19 @@ extension ProductPermission {
         case .preimageSubmitAccess: String(localized: .Products.permissionBodyPreimageSubmit)
         case .statementSubmitAccess: String(localized: .Products.permissionBodyStatementSubmit)
         case let .jamPeersAccess(genesis):
-            String(localized: .Products.permissionLabelJamPeers(shortGenesis: ProductPermission.shortGenesis(genesis)))
+            String(localized: .Products.permissionLabelJamPeers(genesis: genesis))
         case .userIdentityAccess: String(localized: .Products.permissionBodyUserIdentityAccess)
         case .chatAuthority: String(localized: .Products.permissionBodyChatAuthority)
+        case .profileDisclosure: String(localized: .Products.permissionBodyProfileDisclosure)
+        case let .statementStoreAllowance(derivationIndex):
+            ProductPermission.statementStoreAllowanceDescription(derivationIndex: derivationIndex)
         }
     }
 
     var permissionIconSystemName: String {
         switch self {
         case let .deviceCapability(capability): capabilityIcon(capability)
-        case .networkAccess: "globe"
+        case .networkAccess, .networkAccessBundle: "globe"
         case .accountAccess: "person.crop.circle"
         case .balanceAccess: "dollarsign.circle.fill"
         case .webRtcAccess: "video.fill"
@@ -64,13 +62,15 @@ extension ProductPermission {
         case .jamPeersAccess: "point.3.connected.trianglepath.dotted"
         case .userIdentityAccess: "person.text.rectangle"
         case .chatAuthority: "message.badge.shield"
+        case .profileDisclosure: "person.crop.square"
+        case .statementStoreAllowance: "externaldrive.badge.plus"
         }
     }
 
     var settingsTitle: String {
         switch self {
         case let .deviceCapability(capability): capabilityTitle(capability)
-        case .networkAccess: String(localized: .Products.appPermissionNetworkTitle)
+        case .networkAccess, .networkAccessBundle: String(localized: .Products.appPermissionNetworkTitle)
         case .accountAccess: String(localized: .Products.appPermissionAccountTitle)
         case .balanceAccess: String(localized: .Products.appPermissionBalanceTitle)
         case .webRtcAccess: String(localized: .Products.appPermissionWebRtcTitle)
@@ -80,6 +80,8 @@ extension ProductPermission {
         case .jamPeersAccess: String(localized: .Products.appPermissionJamPeersTitle)
         case .userIdentityAccess: String(localized: .Products.appPermissionUserIdentityTitle)
         case .chatAuthority: String(localized: .Products.appPermissionChatAuthorityTitle)
+        case .profileDisclosure: String(localized: .Products.appPermissionProfileDisclosureTitle)
+        case .statementStoreAllowance: String(localized: .Products.appPermissionStatementStoreAllowanceTitle)
         }
     }
 }
@@ -124,6 +126,21 @@ private extension ProductPermission {
         case .clipboard: "doc.on.clipboard.fill"
         case .openUrl: "safari.fill"
         case .biometrics: "faceid"
+        }
+    }
+}
+
+extension ProductPermission {
+    static func statementStoreAllowanceDescription(derivationIndex: ProductAccountSelector?) -> String {
+        switch derivationIndex {
+        case nil:
+            String(localized: .Products.permissionBodyStatementStoreAllowanceLegacy)
+        case let .index(index):
+            String(localized: .Products.permissionBodyStatementStoreAllowanceIndex(index: String(index)))
+        case let .raw(bytes):
+            String(localized: .Products.permissionBodyStatementStoreAllowanceRaw(
+                selector: "0x" + bytes.map { String(format: "%02x", $0) }.joined()
+            ))
         }
     }
 }

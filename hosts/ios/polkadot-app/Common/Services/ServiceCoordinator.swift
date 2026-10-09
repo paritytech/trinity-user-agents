@@ -77,6 +77,9 @@ final class ServiceCoordinator {
     let chainStatusProvider: ChainStatusProviding
     let truapiRuntimeProvider: TrUAPIHostRuntimeProviding
     let tldProvider: DotNsTldProviding
+    /// Held rather than looked up, so the session that started the Pocket is
+    /// the one that stops it. Nil in a build without the products feature.
+    let pocket: ProductPocketService?
     let logger: LoggerProtocol
 
     // Retained so the weakly-held dependency-locator entry stays alive for the product host.
@@ -123,6 +126,7 @@ final class ServiceCoordinator {
         chainStatusProvider: ChainStatusProviding,
         truapiRuntimeProvider: TrUAPIHostRuntimeProviding,
         tldProvider: DotNsTldProviding,
+        pocket: ProductPocketService?,
         logger: LoggerProtocol
     ) {
         self.chatCoordinator = chatCoordinator
@@ -156,6 +160,7 @@ final class ServiceCoordinator {
         self.chainStatusProvider = chainStatusProvider
         self.truapiRuntimeProvider = truapiRuntimeProvider
         self.tldProvider = tldProvider
+        self.pocket = pocket
         self.logger = logger
         self.paymentsSupport = paymentsSupport
         self.turnService = turnService
@@ -282,6 +287,11 @@ extension ServiceCoordinator: ServiceCoordinatorProtocol {
 
         messageExpansionService.stop()
 
+        // The workers and the product behind an opened card belong to this
+        // session's runtime provider, so they go with the session rather than
+        // waiting for a tap that may come after another user has signed in.
+        pocket?.stop()
+
         Task {
             await deviceSyncService.throttle()
             await coinageTransferMonitor.throttle()
@@ -299,6 +309,7 @@ private extension ServiceCoordinator {
 }
 
 extension ServiceCoordinator {
+    @MainActor
     // swiftlint:disable:next function_body_length
     static func createDefault(spaFlowState: SPAFlowState) -> ServiceCoordinatorProtocol? {
         let walletRepo: WalletManagerRepositoryProtocol = .shared
@@ -383,6 +394,35 @@ extension ServiceCoordinator {
         )
         RootDependencyLocator.setDependency(truapiRuntimeProvider as TrUAPIHostRuntimeProviding)
 
+        let gameReminders = ProductGameReminderCenter.makeDefault()
+        RootDependencyLocator.setDependency(gameReminders as ProductGameReminderScheduling)
+        RootDependencyLocator.setDependency(gameReminders as ProductGamePillProviding)
+
+        let productFileProvider = CompositeProductFileProvider(
+            dotNsContentStorage: DotNsContentStorage(),
+            chatScriptStorage: FileChatScriptStorage(),
+            contentHashCache: ContentHashCache.shared
+        )
+
+        // Built here rather than alongside chat: every modality is served from
+        // one worker per product, and hanging the Pocket off chat's assembly
+        // would let any chat service failing take every live card face with it,
+        // silently.
+        var pocket: ProductPocketService?
+        #if FEATURE_PRODUCTS
+            if let service = ProductPocketService.make() {
+                RootDependencyLocator.setDependency(service)
+                service.start(
+                    runtimeProvider: truapiRuntimeProvider,
+                    flowState: spaFlowState,
+                    productFileProvider: productFileProvider,
+                    chainRegistry: ChainRegistryFacade.sharedRegistry,
+                    gameReminders: gameReminders
+                )
+                pocket = service
+            }
+        #endif
+
         guard
             let signInHostCoordinator = createSignInHostCoordinator(
                 factory: chatCoordinatorFactory,
@@ -437,7 +477,9 @@ extension ServiceCoordinator {
             syncService: syncServiceResult.service,
             personhoodRegistrationService: personhoodServices.registrationService,
             audioSessionManager: audioSessionManager,
-            spaFlowState: spaFlowState
+            spaFlowState: spaFlowState,
+            productFileProvider: productFileProvider,
+            pocket: pocket
         )
         // Registered so the SPA screen, opened outside this assembly, resolves the
         // same facade.
@@ -544,6 +586,7 @@ extension ServiceCoordinator {
             chainStatusProvider: chainStatusProvider,
             truapiRuntimeProvider: truapiRuntimeProvider,
             tldProvider: DotNsTldProviderFacade.shared,
+            pocket: pocket,
             logger: logger
         )
     }

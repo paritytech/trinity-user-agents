@@ -6,7 +6,7 @@ use crate::platform::{
     CoinageWalletHost, CoreAdmin, PermissionAuthorizationRequest, PermissionAuthorizationStatus,
     ProductContext, ProductExecutionKind,
 };
-use parity_scale_codec::Encode;
+use parity_scale_codec::{Decode, Encode};
 use truapi::{Bytes32, v01};
 
 use super::reject_undecodable_deeplink;
@@ -26,6 +26,7 @@ use crate::{PairedSsoPeer, ResponderExit, SigningHostRuntime};
 
 use super::callbacks::{
     HostCallbacks, NativeChatCallbacks, NativeCoinageCallbacks, NativeContactsCallbacks,
+    NativeGameCallbacks,
     NativePocketCallbacks,
 };
 use super::media::{MediaCallbackPlatform, NativeMediaCallbacks};
@@ -39,11 +40,20 @@ use super::executor::shared_native_executor;
 #[cfg(doc)]
 use super::parse_pairing_deeplink;
 use super::platform::{
-    CallbackPlatform, ChatCallbackPlatform, ContactsCallbackPlatform,
+    CallbackPlatform, ChatCallbackPlatform, ContactsCallbackPlatform, GameCallbackPlatform,
     NativeCoinageCallbackPlatform, PocketCallbackPlatform,
 };
 #[cfg(doc)]
 use crate::WorkerTransition;
+
+/// One persisted canonical permission decision shown by native host settings.
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct PermissionAuthorizationEntry {
+    /// Permission request in its existing canonical storage scope.
+    pub request: PermissionAuthorizationRequest,
+    /// Persisted decision, including an explicit reset tombstone.
+    pub status: PermissionAuthorizationStatus,
+}
 
 /// Process-owned native TrUAPI runtime shared by all executable connections.
 #[derive(uniffi::Object)]
@@ -54,6 +64,8 @@ pub struct NativeTrUApiHostRuntime {
     ws_bridge: Arc<SharedWsBridge>,
     /// The one Worker execution per product; opening another replaces it.
     worker_executions: Mutex<HashMap<String, Weak<NativeProductExecution>>>,
+    callbacks: Arc<dyn HostCallbacks>,
+    executions: parking_lot::Mutex<Vec<Weak<NativeProductExecution>>>,
 }
 
 impl NativeTrUApiHostRuntime {
@@ -83,6 +95,7 @@ impl NativeTrUApiHostRuntime {
             callbacks: callbacks.clone(),
             events: events.clone(),
             storage_events: events.clone(),
+            permission_callbacks: callbacks.clone(),
         });
         let spawner = executor.spawner();
         let native_wallet = native_wallet.map(|callbacks| -> Arc<dyn CoinageWalletHost> {
@@ -123,6 +136,8 @@ impl NativeTrUApiHostRuntime {
         Ok(Arc::new(Self {
             runtime,
             events,
+            callbacks: callbacks.clone(),
+            executions: parking_lot::Mutex::new(Vec::new()),
             spawner,
             ws_bridge: Arc::new(SharedWsBridge::new(Arc::new(move |marker, detail| {
                 callbacks.on_core_log(marker.to_string(), detail.to_string());
@@ -136,6 +151,7 @@ impl NativeTrUApiHostRuntime {
         callbacks: Arc<dyn HostCallbacks>,
         chat_callbacks: Option<Arc<dyn NativeChatCallbacks>>,
         pocket_callbacks: Option<Arc<dyn NativePocketCallbacks>>,
+        game_callbacks: Option<Arc<dyn NativeGameCallbacks>>,
         media_callbacks: Option<Arc<dyn NativeMediaCallbacks>>,
         product: ProductContext,
     ) -> Arc<NativeProductExecution> {
@@ -144,9 +160,11 @@ impl NativeTrUApiHostRuntime {
             callbacks: callbacks.clone(),
             events: events.clone(),
             storage_events: self.events.clone(),
+            permission_callbacks: self.callbacks.clone(),
         });
         let permission_status: Arc<dyn crate::platform::PermissionStatusHost> =
             callback_platform.clone();
+        let expanded_card: Arc<dyn crate::platform::ExpandedCardHost> = callback_platform.clone();
         let platform: Arc<dyn crate::platform::Platform> = callback_platform;
         let chat: Option<Arc<dyn crate::platform::ChatPlatform>> =
             chat_callbacks.map(|chat| -> Arc<dyn crate::platform::ChatPlatform> {
@@ -165,6 +183,10 @@ impl NativeTrUApiHostRuntime {
         let media = media_callbacks.map(|callbacks| -> Arc<dyn crate::platform::MediaPlatform> {
             Arc::new(MediaCallbackPlatform { callbacks })
         });
+        let game: Option<Arc<dyn crate::platform::GamePlatform>> =
+            game_callbacks.map(|game| -> Arc<dyn crate::platform::GamePlatform> {
+                Arc::new(GameCallbackPlatform { game })
+            });
         let execution = Arc::new(NativeProductExecution {
             runtime: self.runtime.clone(),
             product: product.clone(),
@@ -172,7 +194,9 @@ impl NativeTrUApiHostRuntime {
             chat,
             pocket,
             media,
+            game,
             permission_status,
+            expanded_card,
             permission_grants: Arc::new(TemporaryPermissions::default()),
             events,
             shared_events: self.events.clone(),
@@ -185,6 +209,11 @@ impl NativeTrUApiHostRuntime {
             bridge_token: Mutex::new(None),
             product_control: Arc::new(Mutex::new(None)),
         });
+        {
+            let mut executions = self.executions.lock();
+            executions.retain(|entry| entry.strong_count() != 0);
+            executions.push(Arc::downgrade(&execution));
+        }
 
         if product.execution_kind == ProductExecutionKind::Worker {
             let previous = self
@@ -200,6 +229,67 @@ impl NativeTrUApiHostRuntime {
 
         execution
     }
+
+    fn close_permission_executions(
+        &self,
+        product_id: &str,
+        request: &PermissionAuthorizationRequest,
+    ) {
+        use crate::host_internal::product_manifest::bare_product_label;
+        let account_access = matches!(
+            request,
+            PermissionAuthorizationRequest::AccountAccess { .. }
+        );
+        let executions: Vec<_> = self
+            .executions
+            .lock()
+            .iter()
+            .filter_map(Weak::upgrade)
+            .filter(|execution| {
+                execution.product.product_id == product_id
+                    || (account_access
+                        && bare_product_label(&execution.product.product_id)
+                            == bare_product_label(product_id))
+            })
+            .collect();
+        for execution in executions {
+            execution.shutdown();
+        }
+        // Storage notifications precede shutdown; this final notification lets
+        // shells dispose WebViews/media owned by now-closed executions.
+        self.callbacks
+            .permission_authorizations_changed(product_id.to_owned());
+    }
+
+    async fn permission_storage_keys(
+        &self,
+    ) -> Result<Vec<crate::platform::CoreStorageKey>, HostRejection> {
+        self.callbacks
+            .core_storage_keys()
+            .await?
+            .into_iter()
+            .map(|encoded| {
+                let mut input = encoded.as_slice();
+                let key = crate::platform::CoreStorageKey::decode(&mut input).map_err(|_| {
+                    HostRejection::Rejected {
+                        reason: "invalid encoded core storage key".into(),
+                    }
+                })?;
+                if !input.is_empty() {
+                    return Err(HostRejection::Rejected {
+                        reason: "trailing core storage key bytes".into(),
+                    });
+                }
+                Ok(key)
+            })
+            .collect()
+    }
+}
+
+fn permission_product(product_id: String) -> Result<ProductContext, HostRejection> {
+    ProductContext::new(product_id).map_err(|error| HostRejection::Rejected {
+        reason: error.to_string(),
+    })
 }
 
 /// A refused pairing call on the signing host's responder side.
@@ -435,6 +525,150 @@ impl NativeTrUApiHostRuntime {
             .map_err(HostRejection::from)
     }
 
+    /// Enumerate existing core decisions, including resets. Does not prompt
+    /// and does not substitute the host application's OS permission state.
+    pub async fn permission_authorizations(
+        &self,
+        product_id: String,
+    ) -> Result<Vec<PermissionAuthorizationEntry>, HostRejection> {
+        use crate::host_internal::permissions::{authorization_key, stored_authorization_status};
+        use crate::host_internal::product_manifest::bare_product_label;
+        let product = permission_product(product_id)?;
+        let admin = self.runtime.product_admin(product.clone());
+        let scope = admin.product_runtime().permissions_service().scope();
+        let _mutation = scope.mutation.lock().await;
+        let mut entries =
+            std::collections::BTreeMap::<Vec<u8>, PermissionAuthorizationEntry>::new();
+        for key in self.permission_storage_keys().await? {
+            let crate::platform::CoreStorageKey::PermissionAuthorization {
+                product_id: owner,
+                request,
+            } = &key
+            else {
+                continue;
+            };
+            if owner != &product.product_id
+                && !(matches!(
+                    request,
+                    PermissionAuthorizationRequest::AccountAccess { .. }
+                ) && owner == bare_product_label(&product.product_id))
+            {
+                continue;
+            }
+            let canonical = authorization_key(&product.product_id, request)?;
+            let canonical_id = canonical.encode();
+            // Historical full-owner/target account aliases are not authority.
+            // Read the normalized slot so aliases never display phantom grants.
+            let status = stored_authorization_status(
+                admin.product_runtime().services().platform.as_ref(),
+                canonical.clone(),
+            )
+            .await?
+            .unwrap_or(PermissionAuthorizationStatus::NotDetermined);
+            let crate::platform::CoreStorageKey::PermissionAuthorization { request, .. } =
+                canonical
+            else {
+                unreachable!("permission keys always describe authorizations");
+            };
+            entries.insert(
+                canonical_id,
+                PermissionAuthorizationEntry { request, status },
+            );
+        }
+        Ok(entries.into_values().collect())
+    }
+
+    /// Canonical owners; account-access owners may be bare product labels,
+    /// matching their existing subtree-wide key format.
+    pub async fn permission_authorization_products(&self) -> Result<Vec<String>, HostRejection> {
+        let mut products = std::collections::BTreeSet::new();
+        for key in self.permission_storage_keys().await? {
+            if let crate::platform::CoreStorageKey::PermissionAuthorization { product_id, .. } = key
+            {
+                products.insert(product_id);
+            }
+        }
+        Ok(products.into_iter().collect())
+    }
+
+    /// Capture before a legacy prompt, then use the conditional setter.
+    pub fn permission_authorization_revision(
+        &self,
+        product_id: String,
+    ) -> Result<u64, HostRejection> {
+        let product = permission_product(product_id)?;
+        Ok(self
+            .runtime
+            .product_admin(product)
+            .product_runtime()
+            .permissions_service()
+            .scope()
+            .revision())
+    }
+
+    /// Explicit settings edit. Revocation cancels pending prompts and live
+    /// executions matching the permission's existing product/request scope.
+    pub async fn set_permission_authorization_status(
+        &self,
+        product_id: String,
+        request: PermissionAuthorizationRequest,
+        status: PermissionAuthorizationStatus,
+    ) -> Result<(), HostRejection> {
+        let product = permission_product(product_id)?;
+        let admin = self.runtime.product_admin(product.clone());
+        let result = admin
+            .product_runtime()
+            .set_canonical_permission_authorization_status(request.clone(), status)
+            .await
+            .map_err(Into::into);
+        if status != PermissionAuthorizationStatus::Authorized {
+            self.close_permission_executions(&product.product_id, &request);
+        }
+        result
+    }
+
+    /// Atomically commit a legacy prompt only if no settings edit superseded
+    /// it. Allow grants share a revision across a bundle; denial/reset advances
+    /// it exactly once and invalidates one-use grants.
+    pub async fn set_permission_authorization_status_if_current(
+        &self,
+        product_id: String,
+        request: PermissionAuthorizationRequest,
+        status: PermissionAuthorizationStatus,
+        revision: u64,
+    ) -> Result<bool, HostRejection> {
+        let product = permission_product(product_id)?;
+        let admin = self.runtime.product_admin(product.clone());
+        let result = admin
+            .product_runtime()
+            .permissions_service()
+            .commit_if_current(&request, status, revision)
+            .await;
+        if status != PermissionAuthorizationStatus::Authorized && !matches!(result, Ok(false)) {
+            self.close_permission_executions(&product.product_id, &request);
+        }
+        result.map_err(Into::into)
+    }
+
+    /// Import only absent legacy decisions under the same mutation fence as
+    /// native prompts/settings. Existing canonical values and resets win.
+    pub async fn import_permission_authorizations(
+        &self,
+        product_id: String,
+        entries: Vec<PermissionAuthorizationEntry>,
+    ) -> Result<Vec<PermissionAuthorizationEntry>, HostRejection> {
+        let product = permission_product(product_id)?;
+        let admin = self.runtime.product_admin(product.clone());
+        for entry in entries {
+            admin
+                .product_runtime()
+                .permissions_service()
+                .import_authorization_status(&entry.request, entry.status)
+                .await?;
+        }
+        self.permission_authorizations(product.product_id).await
+    }
+
     /// Install the host's contacts adapter, which owns the contact list and
     /// draws the picker.
     ///
@@ -470,11 +704,13 @@ impl NativeTrUApiHostRuntime {
     /// Chat modality pass `None`. `pocket_callbacks` does the same for the
     /// card collection. `media_callbacks` installs the entire Media backend;
     /// hosts without complete capture/RTC/compositing support pass `None`.
+    /// `game_callbacks` installs game reminders.
     pub fn open_product_execution(
         &self,
         callbacks: Arc<dyn HostCallbacks>,
         chat_callbacks: Option<Arc<dyn NativeChatCallbacks>>,
         pocket_callbacks: Option<Arc<dyn NativePocketCallbacks>>,
+        game_callbacks: Option<Arc<dyn NativeGameCallbacks>>,
         media_callbacks: Option<Arc<dyn NativeMediaCallbacks>>,
         execution_config: ProductExecutionConfig,
     ) -> Result<Arc<NativeProductExecution>, NativeRuntimeConfigError> {
@@ -483,6 +719,7 @@ impl NativeTrUApiHostRuntime {
             callbacks,
             chat_callbacks,
             pocket_callbacks,
+            game_callbacks,
             media_callbacks,
             product,
         ))
@@ -510,23 +747,6 @@ impl NativeTrUApiHostRuntime {
             .await?)
     }
 
-    /// Apply a host settings decision without blocking a UI callback thread.
-    pub async fn set_permission_authorization_status(
-        &self,
-        product_id: String,
-        request: PermissionAuthorizationRequest,
-        status: PermissionAuthorizationStatus,
-    ) -> Result<(), HostRejection> {
-        let product = ProductContext::new_with_execution(product_id, ProductExecutionKind::App)
-            .map_err(|error| HostRejection::Rejected {
-                reason: error.to_string(),
-            })?;
-        Ok(self
-            .runtime
-            .product_admin(product)
-            .set_permission_authorization_status(request, status)
-            .await?)
-    }
 
     /// Take one reference on the product's worker for a modality holder. The
     /// first one reports [`WorkerTransition::Start`] to the runtime's
@@ -845,9 +1065,12 @@ pub struct NativeProductExecution {
     chat: Option<Arc<dyn crate::platform::ChatPlatform>>,
     pocket: Option<Arc<dyn crate::platform::PocketPlatform>>,
     media: Option<Arc<dyn crate::platform::MediaPlatform>>,
+    game: Option<Arc<dyn crate::platform::GamePlatform>>,
     /// The same `CallbackPlatform` as `platform`, kept separately because
     /// `Arc<dyn Platform>` cannot be downcast to the optional capability.
     permission_status: Arc<dyn crate::platform::PermissionStatusHost>,
+    /// The same `CallbackPlatform`, so a Widget's call reaches this execution's callbacks.
+    expanded_card: Arc<dyn crate::platform::ExpandedCardHost>,
     /// One-use grants follow this execution across its product and admin connections.
     permission_grants: Arc<TemporaryPermissions>,
     events: Arc<NativeEventBus>,
@@ -887,6 +1110,8 @@ impl NativeProductExecution {
             // `Unsupported` there.
             profile_platform: None,
             media_platform: self.media.clone(),
+            expanded_card: Some(self.expanded_card.clone()),
+            game_platform: self.game.clone(),
         }
     }
 
@@ -999,17 +1224,9 @@ impl NativeProductExecution {
             .await?)
     }
 
-    /// Update a product-scoped permission authorization.
-    pub fn set_permission_authorization_status(
-        &self,
-        request: PermissionAuthorizationRequest,
-        status: PermissionAuthorizationStatus,
-    ) -> Result<(), HostRejection> {
-        futures::executor::block_on(
-            self.admin()
-                .set_permission_authorization_status(request, status),
-        )?;
-        Ok(())
+    /// Whether administration or lifecycle teardown closed this execution.
+    pub fn is_closed(&self) -> bool {
+        self.closed.load(Ordering::Acquire)
     }
 
     /// Re-read stored product authorization without prompting or OS queries.
@@ -1300,6 +1517,7 @@ mod tests {
                     None,
                     None,
                     None,
+                    None,
                     native_execution_config("wallet.dot", ProductExecutionKind::Worker),
                 )
                 .expect("product opens without supplying wallet callbacks")
@@ -1366,12 +1584,14 @@ mod tests {
                 None,
                 None,
                 None,
+                None,
                 native_execution_config("myapp.dot", ProductExecutionKind::App),
             )
             .expect("open app execution");
         let worker = host
             .open_product_execution(
                 callbacks.clone(),
+                None,
                 None,
                 None,
                 None,
@@ -1410,6 +1630,7 @@ mod tests {
         let execution = host
             .open_product_execution(
                 callbacks.clone(),
+                None,
                 None,
                 None,
                 None,
@@ -1469,6 +1690,7 @@ mod tests {
                 None,
                 None,
                 None,
+                None,
                 native_execution_config("shared.dot", ProductExecutionKind::App),
             )
             .expect("App execution should open");
@@ -1477,6 +1699,7 @@ mod tests {
             .open_product_execution(
                 chat_host.clone(),
                 Some(chat_host.clone()),
+                None,
                 None,
                 None,
                 native_execution_config("shared.dot", ProductExecutionKind::Worker),
@@ -1495,6 +1718,7 @@ mod tests {
             .open_product_execution(
                 chat_host.clone(),
                 Some(chat_host.clone()),
+                None,
                 None,
                 None,
                 native_execution_config("shared.dot", ProductExecutionKind::Worker),
@@ -1523,6 +1747,7 @@ mod tests {
         let execution = host
             .open_product_execution(
                 Arc::new(EventCallbacks::new()),
+                None,
                 None,
                 None,
                 None,
@@ -1564,6 +1789,55 @@ mod tests {
     }
 
     #[test]
+    fn an_expanded_card_face_request_reaches_only_the_execution_that_made_it() {
+        let host = NativeTrUApiHostRuntime::with_runtime_config(
+            Arc::new(EventCallbacks::new()),
+            native_host_runtime_config(),
+            None,
+        )
+        .expect("host runtime config should be valid");
+        let open_widget = |product_id: &str| {
+            let callbacks = Arc::new(EventCallbacks::new());
+            let execution = host
+                .open_product_execution(
+                    callbacks.clone(),
+                    None,
+                    None,
+                    None,
+                    None,
+                    native_execution_config(product_id, ProductExecutionKind::Widget),
+                )
+                .expect("Widget execution should open");
+            (execution, callbacks)
+        };
+        let (card, card_callbacks) = open_widget("card.dot");
+        let (_other, other_callbacks) = open_widget("other.dot");
+
+        let admin = card.admin();
+        let reply = futures::executor::block_on(truapi::api::ExpandedCard::set_face_shown(
+            admin.product_runtime().as_ref(),
+            &truapi::CallContext::default(),
+            truapi::versioned::expanded_card::HostExpandedCardSetFaceShownRequest::V1(
+                v01::HostExpandedCardSetFaceShownRequest { shown: false },
+            ),
+        ));
+
+        assert!(reply.is_ok(), "the card's own host applied the request: {reply:?}");
+        assert_eq!(
+            *card_callbacks.face_requests.lock().expect("face requests"),
+            [false]
+        );
+        assert!(
+            other_callbacks
+                .face_requests
+                .lock()
+                .expect("face requests")
+                .is_empty(),
+            "another product's card must not be asked to move its face"
+        );
+    }
+
+    #[test]
     fn product_execution_routes_chain_events_to_shared_and_scoped_services() {
         let host = NativeTrUApiHostRuntime::with_runtime_config(
             Arc::new(EventCallbacks::new()),
@@ -1574,6 +1848,7 @@ mod tests {
         let execution = host
             .open_product_execution(
                 Arc::new(EventCallbacks::new()),
+                None,
                 None,
                 None,
                 None,
@@ -1617,6 +1892,7 @@ mod tests {
         let open = || {
             host.open_product_execution(
                 callbacks.clone(),
+                None,
                 None,
                 None,
                 None,
@@ -1751,3 +2027,6 @@ mod tests {
         ));
     }
 }
+
+#[cfg(test)]
+mod permission_tests;

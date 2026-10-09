@@ -70,6 +70,8 @@ export interface JamPeerTransportOptions {
    * `RemotePermission::JamPeers` runtime permission. The session asks at most
    * once per genesis and concurrent dials share the pending answer; `false` or
    * a rejection answers `NotGranted` for the rest of the session.
+   * At most eight distinct genesis decisions, including pending/refused ones,
+   * are retained per session; a new ninth genesis answers `Limit`.
    */
   authorize(genesis: string): Promise<boolean>;
   /** Host transport injection; defaults to the browser `WebTransport` constructor. */
@@ -154,9 +156,9 @@ interface PeerStream {
   id: number;
   conn: PeerConnection;
   writer: WritableStreamDefaultWriter<Uint8Array>;
-  reader: ReadableStreamDefaultReader<Uint8Array>;
-  /** Unparsed receive bytes. */
-  rx: Uint8Array;
+  reader: ReadableStreamBYOBReader;
+  /** Reserved receive bytes, including each message's length prefix. */
+  rxBytes: number;
   /** Complete messages not yet delivered by `recv`. */
   messages: Uint8Array[];
   fin: boolean;
@@ -164,15 +166,45 @@ interface PeerStream {
   /** `recv` reported `fin` with an empty queue; further reads are `Closed`. */
   rxConsumed: boolean;
   txClosed: boolean;
-  /** Bytes of frames handed to the writer that have not been accepted yet. */
-  txPending: number;
+  onClose: Set<() => void>;
 }
 
 interface PeerConnection {
   id: number;
   transport: WebTransportLike;
   streams: Map<number, PeerStream>;
+  opening: number;
+  rxBytes: number;
+  /** Outgoing frames retain their reservation until writes settle, even after stream removal. */
+  txBytes: number;
+  rxWaiters: Set<() => void>;
+  onClose: Set<() => void>;
   closed: boolean;
+}
+
+interface PendingRequest {
+  method: number;
+  response?: Uint8Array;
+  promise: Promise<Uint8Array>;
+  withdraw(response: Uint8Array): void;
+}
+
+/** Fill exactly one header/payload without reading or allocating the following message. */
+async function readExact(reader: ReadableStreamBYOBReader, length: number): Promise<Uint8Array | undefined> {
+  let bytes = new Uint8Array(length);
+  let offset = 0;
+  while (offset < length) {
+    const { value, done } = await reader.read(bytes.subarray(offset));
+    if (value !== undefined) {
+      bytes = new Uint8Array(value.buffer);
+      offset += value.byteLength;
+    }
+    if (done) {
+      if (offset !== 0) throw new Error("Truncated peer message");
+      return undefined;
+    }
+  }
+  return bytes;
 }
 
 /**
@@ -185,22 +217,44 @@ interface PeerConnection {
  * permission decision is remembered either way, so a retry does not ask
  * again. The host must fence late replies against execution stop or
  * replacement.
+ * Pending permission/handshake dials share the eight-connection admission
+ * budget with established connections, before any permission request is made.
  */
 export function createJamPeerTransportSession(options: JamPeerTransportOptions): JamPeerTransportSession {
-  const decisions = new Map<string, Promise<boolean>>();
-  const authorized = (genesis: string): Promise<boolean> => {
+  const decisions = new Map<string, {
+    result?: boolean;
+    waiters: Set<(granted: boolean) => void>;
+  }>();
+  const authorized = async (genesis: string, withdrawn: Promise<Uint8Array>): Promise<boolean | Uint8Array> => {
     let decision = decisions.get(genesis);
     if (decision === undefined) {
-      decision = (async (): Promise<boolean> => {
-        try {
-          return (await options.authorize(genesis)) === true;
-        } catch {
-          return false;
-        }
-      })();
+      decision = { waiters: new Set() };
       decisions.set(genesis, decision);
+      const current = decision;
+      void (async () => {
+        let granted = false;
+        try {
+          granted = (await options.authorize(genesis)) === true;
+        } catch {
+          // A failed or dismissed permission request grants nothing.
+        }
+        if (closed) return;
+        current.result = granted;
+        for (const settle of current.waiters) settle(granted);
+        current.waiters.clear();
+      })();
     }
-    return decision;
+    if (decision.result !== undefined) return decision.result;
+    // Only live dials subscribe; repeated cancellation cannot accumulate reactions
+    // on the retained, potentially indefinitely pending permission request.
+    let settle!: (granted: boolean) => void;
+    const answer = new Promise<boolean>((resolve) => { settle = resolve; });
+    decision.waiters.add(settle);
+    try {
+      return await Promise.race([answer, withdrawn]);
+    } finally {
+      decision.waiters.delete(settle);
+    }
   };
   const connect =
     options.connect ??
@@ -210,13 +264,14 @@ export function createJamPeerTransportSession(options: JamPeerTransportOptions):
       }) as unknown as WebTransportLike);
   const now = options.now ?? ((): number => Math.floor(Date.now() / 1000));
   const dialTimeoutMs = options.dialTimeoutMs ?? JAM_PEER_TRANSPORT_DIAL_TIMEOUT_MS;
-  /** In-flight dials by request id; CANCEL or `close` withdraws one with its reply. */
-  const pendingDials = new Map<string, (reply: Uint8Array) => void>();
+  /** Every asynchronous request remains addressable until its reply is settled. */
+  const pendingRequests = new Map<string, PendingRequest>();
   let closed = false;
   let negotiated = false;
   let nextConn = 1;
   let nextStream = 1;
   const connections = new Map<number, PeerConnection>();
+  let pendingDialSlots = 0;
   const streams = new Map<number, PeerStream>();
   const events: T.JamPeerTransportEvent[] = [];
 
@@ -224,10 +279,40 @@ export function createJamPeerTransportSession(options: JamPeerTransportOptions):
     if (events.length < MAX_PENDING_EVENTS) events.push(event);
   };
 
+  const wakeReaders = (conn: PeerConnection): void => {
+    for (const wake of conn.rxWaiters) wake();
+    conn.rxWaiters.clear();
+  };
+
+  const releaseReceived = (stream: PeerStream): void => {
+    stream.conn.rxBytes -= stream.rxBytes;
+    stream.rxBytes = 0;
+    stream.messages.length = 0;
+    wakeReaders(stream.conn);
+  };
+
+  const abortReceive = (stream: PeerStream): void => {
+    stream.reset = true;
+    for (const close of stream.onClose) close();
+    stream.onClose.clear();
+    releaseReceived(stream);
+    void stream.writer.abort().catch(() => undefined);
+    void stream.reader.cancel().catch(() => undefined);
+  };
+
+  const abortBidi = (bidi: WebTransportBidirectionalStreamLike): void => {
+    void bidi.writable.abort().catch(() => undefined);
+    void bidi.readable.cancel().catch(() => undefined);
+  };
+
   const dropStream = (stream: PeerStream, abort: boolean): void => {
     streams.delete(stream.id);
     stream.conn.streams.delete(stream.id);
+    for (const close of stream.onClose) close();
+    stream.onClose.clear();
+    releaseReceived(stream);
     if (abort) {
+      stream.reset = true;
       void stream.writer.abort().catch(() => undefined);
       void stream.reader.cancel().catch(() => undefined);
     }
@@ -237,6 +322,9 @@ export function createJamPeerTransportSession(options: JamPeerTransportOptions):
     if (conn.closed) return;
     conn.closed = true;
     connections.delete(conn.id);
+    for (const close of conn.onClose) close();
+    conn.onClose.clear();
+    wakeReaders(conn);
     for (const stream of [...conn.streams.values()]) dropStream(stream, true);
     try {
       conn.transport.close();
@@ -246,91 +334,111 @@ export function createJamPeerTransportSession(options: JamPeerTransportOptions):
     pushEvent({ tag: "ConnClosed", value: { conn: conn.id } });
   };
 
-  /** Parse complete `u32`-LE framed messages out of `stream.rx`. */
-  const unframe = (stream: PeerStream): void => {
-    while (stream.rx.length >= 4) {
-      const view = new DataView(stream.rx.buffer, stream.rx.byteOffset, stream.rx.byteLength);
-      const length = view.getUint32(0, true);
-      if (length > JAM_PEER_TRANSPORT_MAX_MESSAGE_BYTES) {
-        stream.reset = true;
-        void stream.writer.abort().catch(() => undefined);
-        void stream.reader.cancel().catch(() => undefined);
-        stream.rx = new Uint8Array();
-        return;
+  const reserveReceive = async (stream: PeerStream, bytes: number): Promise<boolean> => {
+    while (!stream.reset && !stream.conn.closed) {
+      if (stream.conn.rxBytes + stream.conn.txBytes + bytes <= JAM_PEER_TRANSPORT_MAX_BUFFERED_BYTES_PER_CONNECTION) {
+        stream.rxBytes += bytes;
+        stream.conn.rxBytes += bytes;
+        return true;
       }
-      if (stream.rx.length < 4 + length) return;
-      stream.messages.push(stream.rx.slice(4, 4 + length));
-      stream.rx = stream.rx.slice(4 + length);
+      // The package targets ES2022, before Promise.withResolvers.
+      await new Promise<void>((resolve) => stream.conn.rxWaiters.add(resolve));
     }
+    return false;
   };
 
-  const pump = async (stream: PeerStream, initial: Uint8Array): Promise<void> => {
-    stream.rx = initial;
-    unframe(stream);
+  const pump = async (stream: PeerStream): Promise<void> => {
     try {
-      while (!stream.reset) {
-        const { value, done } = await stream.reader.read();
-        if (done) break;
-        const next = new Uint8Array(stream.rx.length + value.length);
-        next.set(stream.rx);
-        next.set(value, stream.rx.length);
-        stream.rx = next;
-        unframe(stream);
-      }
-      if (!stream.reset) {
-        stream.fin = true;
-        if (stream.rx.length !== 0) stream.reset = true;
-        if (streams.has(stream.id)) pushEvent({ tag: "StreamFin", value: { stream: stream.id } });
+      while (!stream.reset && !stream.conn.closed) {
+        if (!await reserveReceive(stream, 4)) return;
+        const header = await readExact(stream.reader, 4);
+        if (stream.reset || stream.conn.closed) return;
+        if (header === undefined) {
+          stream.rxBytes -= 4;
+          stream.conn.rxBytes -= 4;
+          wakeReaders(stream.conn);
+          stream.fin = true;
+          if (streams.has(stream.id)) pushEvent({ tag: "StreamFin", value: { stream: stream.id } });
+          return;
+        }
+        const length = new DataView(header.buffer, header.byteOffset, 4).getUint32(0, true);
+        if (length > JAM_PEER_TRANSPORT_MAX_MESSAGE_BYTES) {
+          abortReceive(stream);
+          return;
+        }
+        if (!await reserveReceive(stream, length)) return;
+        const message = await readExact(stream.reader, length);
+        if (stream.reset || stream.conn.closed) return;
+        if (message === undefined) throw new Error("Truncated peer message");
+        stream.messages.push(message);
       }
     } catch {
-      stream.reset = true;
+      if (!stream.reset && !stream.conn.closed) abortReceive(stream);
     }
   };
 
-  const register = (conn: PeerConnection, bidi: WebTransportBidirectionalStreamLike, initial: Uint8Array): PeerStream => {
+  const register = (conn: PeerConnection, bidi: WebTransportBidirectionalStreamLike, reader = bidi.readable.getReader({ mode: "byob" })): PeerStream => {
     const stream: PeerStream = {
       id: nextStream++,
       conn,
       writer: bidi.writable.getWriter(),
-      reader: bidi.readable.getReader(),
-      rx: new Uint8Array(),
+      reader,
+      rxBytes: 0,
       messages: [],
       fin: false,
       reset: false,
       rxConsumed: false,
       txClosed: false,
-      txPending: 0,
+      onClose: new Set(),
     };
     streams.set(stream.id, stream);
     conn.streams.set(stream.id, stream);
-    void pump(stream, initial);
+    void pump(stream);
     return stream;
   };
 
   const acceptLoop = async (conn: PeerConnection): Promise<void> => {
     const incoming = conn.transport.incomingBidirectionalStreams.getReader();
+    const stop = (): void => { void incoming.cancel().catch(() => undefined); };
+    conn.onClose.add(stop);
     try {
       while (!conn.closed) {
         const { value: bidi, done } = await incoming.read();
-        if (done || conn.closed) break;
-        if (conn.streams.size >= JAM_PEER_TRANSPORT_MAX_STREAMS_PER_CONNECTION) {
-          void bidi.writable.abort().catch(() => undefined);
-          void bidi.readable.cancel().catch(() => undefined);
+        if (done) break;
+        if (conn.closed || conn.streams.size + conn.opening >= JAM_PEER_TRANSPORT_MAX_STREAMS_PER_CONNECTION) {
+          abortBidi(bidi);
           continue;
         }
-        // The peer's first byte is the stream kind; anything after it is message data.
-        const reader = bidi.readable.getReader();
-        const first = await reader.read();
-        reader.releaseLock();
-        if (first.done || first.value.length === 0 || conn.closed) {
+        conn.opening++;
+        const reader = bidi.readable.getReader({ mode: "byob" });
+        const cancel = (): void => {
+          void reader.cancel().catch(() => undefined);
           void bidi.writable.abort().catch(() => undefined);
-          continue;
-        }
-        const stream = register(conn, bidi, first.value.subarray(1));
-        pushEvent({ tag: "Accepted", value: { conn: conn.id, stream: stream.id, kind: first.value[0]! } });
+        };
+        conn.onClose.add(cancel);
+        // A peer that withholds one kind byte must not block the other reserved streams.
+        void (async () => {
+          try {
+            const kind = await readExact(reader, 1);
+            if (kind === undefined || conn.closed || events.length >= MAX_PENDING_EVENTS) {
+              cancel();
+              return;
+            }
+            const stream = register(conn, bidi, reader);
+            pushEvent({ tag: "Accepted", value: { conn: conn.id, stream: stream.id, kind: kind[0]! } });
+          } catch {
+            cancel();
+          } finally {
+            conn.opening--;
+            conn.onClose.delete(cancel);
+          }
+        })();
       }
     } catch {
       // The connection is closing; `closed` handling reports it.
+    } finally {
+      conn.onClose.delete(stop);
+      incoming.releaseLock();
     }
   };
 
@@ -340,7 +448,17 @@ export function createJamPeerTransportSession(options: JamPeerTransportOptions):
    * so nothing it opens outlives it or holds a connection slot.
    */
   const dial = async (request: T.HostJamPeerTransportDialRequest, withdrawn: Promise<Uint8Array>): Promise<Uint8Array> => {
-    const granted = await Promise.race([authorized(request.genesis), withdrawn]);
+    if (connections.size + pendingDialSlots >= JAM_PEER_TRANSPORT_MAX_CONNECTIONS ||
+        (!decisions.has(request.genesis) && decisions.size >= JAM_PEER_TRANSPORT_MAX_CONNECTIONS)) {
+      return domain(dialResult, "Limit");
+    }
+    pendingDialSlots++;
+    let granted: boolean | Uint8Array;
+    try {
+      granted = await authorized(request.genesis, withdrawn);
+    } finally {
+      pendingDialSlots--;
+    }
     if (granted instanceof Uint8Array) return granted;
     if (!granted) return domain(dialResult, "NotGranted");
     if (closed) return frameworkResult.enc({ success: false, value: { tag: "Denied" } });
@@ -355,7 +473,10 @@ export function createJamPeerTransportSession(options: JamPeerTransportOptions):
     } catch {
       return domain(dialResult, "Unreachable");
     }
-    const conn: PeerConnection = { id: nextConn++, transport, streams: new Map(), closed: false };
+    const conn: PeerConnection = {
+      id: nextConn++, transport, streams: new Map(), closed: false,
+      opening: 0, rxBytes: 0, txBytes: 0, rxWaiters: new Set(), onClose: new Set(),
+    };
     connections.set(conn.id, conn);
     const failure = await Promise.race([
       transport.ready.then(
@@ -384,61 +505,110 @@ export function createJamPeerTransportSession(options: JamPeerTransportOptions):
     return ok(dialResult, { tag: "V1", value: { conn: conn.id } });
   };
 
-  /** Run one dial frame: register it for CANCEL and arm its deadline. */
-  const dialFrame = async (requestId: string, request: T.HostJamPeerTransportDialRequest): Promise<Uint8Array> => {
-    // Executor form: this package's lib target predates Promise.withResolvers.
-    let withdraw!: (reply: Uint8Array) => void;
-    const withdrawn = new Promise<Uint8Array>((resolve) => {
-      withdraw = resolve;
-    });
-    pendingDials.set(requestId, withdraw);
-    const timer = setTimeout(() => withdraw(domain(dialResult, "Unreachable")), dialTimeoutMs);
+  const requestFrame = async (
+    request: ProtocolMessage,
+    run: (pending: PendingRequest) => Promise<Uint8Array>,
+    timeout?: number,
+  ): Promise<Uint8Array> => {
+    // Executor form is required by this package's ES2022 target.
+    let resolve!: (response: Uint8Array) => void;
+    const promise = new Promise<Uint8Array>((settle) => { resolve = settle; });
+    const pending: PendingRequest = {
+      method: request.payload.methodId,
+      promise,
+      withdraw(response) {
+        if (pending.response !== undefined) return;
+        pending.response = response;
+        resolve(response);
+      },
+    };
+    pendingRequests.set(request.requestId, pending);
+    const timer = timeout === undefined ? undefined :
+      setTimeout(() => pending.withdraw(domain(dialResult, "Unreachable")), timeout);
     try {
-      return await dial(request, withdrawn);
+      return await run(pending);
     } finally {
       clearTimeout(timer);
-      pendingDials.delete(requestId);
+      pendingRequests.delete(request.requestId);
     }
   };
 
-  const open = async (request: T.HostJamPeerTransportOpenRequest): Promise<Uint8Array> => {
+  const open = async (request: T.HostJamPeerTransportOpenRequest, pending: PendingRequest): Promise<Uint8Array> => {
     const conn = connections.get(request.conn);
     if (conn === undefined || conn.closed) return domain(openResult, "Closed");
-    if (conn.streams.size >= JAM_PEER_TRANSPORT_MAX_STREAMS_PER_CONNECTION) return domain(openResult, "Limit");
+    if (conn.streams.size + conn.opening >= JAM_PEER_TRANSPORT_MAX_STREAMS_PER_CONNECTION) return domain(openResult, "Limit");
+    conn.opening++;
+    let reserved = true;
+    const close = (): void => pending.withdraw(domain(openResult, "Closed"));
+    conn.onClose.add(close);
+    let stream: PeerStream | undefined;
     try {
-      const bidi = await conn.transport.createBidirectionalStream();
-      const stream = register(conn, bidi, new Uint8Array());
-      await stream.writer.write(new Uint8Array([request.kind]));
+      const opening = conn.transport.createBidirectionalStream();
+      void opening.then((bidi) => {
+        if (pending.response !== undefined) abortBidi(bidi);
+      }, () => undefined);
+      const bidi = await Promise.race([opening, pending.promise]);
+      if (bidi instanceof Uint8Array) return bidi;
+      if (pending.response !== undefined || conn.closed) {
+        abortBidi(bidi);
+        return pending.response ?? domain(openResult, "Closed");
+      }
+      conn.opening--;
+      reserved = false;
+      stream = register(conn, bidi);
+      stream.onClose.add(close);
+      const result = await Promise.race([stream.writer.write(new Uint8Array([request.kind])), pending.promise]);
+      if (result instanceof Uint8Array) return result;
       return ok(openResult, { tag: "V1", value: { stream: stream.id } });
     } catch {
+      if (stream !== undefined) dropStream(stream, true);
       return domain(openResult, "Closed");
+    } finally {
+      if (reserved) conn.opening--;
+      conn.onClose.delete(close);
+      stream?.onClose.delete(close);
+      if (pending.response !== undefined && stream !== undefined) dropStream(stream, true);
     }
   };
 
-  const send = async (request: T.HostJamPeerTransportSendRequest): Promise<Uint8Array> => {
+  const send = async (request: T.HostJamPeerTransportSendRequest, pending: PendingRequest): Promise<Uint8Array> => {
     const stream = streams.get(request.stream);
     if (stream === undefined || stream.txClosed || stream.reset || stream.conn.closed) return domain(sendResult, "Closed");
     const message = S.hexToBytes(request.message);
     if (message.length > JAM_PEER_TRANSPORT_MAX_MESSAGE_BYTES) return domain(sendResult, "TooLarge");
-    let pending = 0;
-    for (const other of stream.conn.streams.values()) pending += other.txPending;
-    if (pending + message.length + 4 > JAM_PEER_TRANSPORT_MAX_BUFFERED_BYTES_PER_CONNECTION) return domain(sendResult, "Limit");
+    if (stream.conn.rxBytes + stream.conn.txBytes + message.length + 4 > JAM_PEER_TRANSPORT_MAX_BUFFERED_BYTES_PER_CONNECTION) return domain(sendResult, "Limit");
     const frame = new Uint8Array(4 + message.length);
     new DataView(frame.buffer).setUint32(0, message.length, true);
     frame.set(message, 4);
-    stream.txPending += frame.length;
+    stream.conn.txBytes += frame.length;
+    const close = (): void => pending.withdraw(domain(sendResult, "Closed"));
+    stream.onClose.add(close);
+    // Reserve FIN before yielding, so a concurrent send cannot pass it.
+    if (request.fin) stream.txClosed = true;
     try {
-      await stream.writer.write(frame);
+      // Cancellation settles the guest request immediately, but a browser
+      // write can still retain its frame until the underlying sink settles.
+      const writing = stream.writer.write(frame).finally(() => {
+        stream.conn.txBytes -= frame.length;
+        wakeReaders(stream.conn);
+      });
+      let result = await Promise.race([writing, pending.promise]);
+      if (result instanceof Uint8Array) return result;
       if (request.fin) {
-        stream.txClosed = true;
-        await stream.writer.close();
+        result = await Promise.race([stream.writer.close(), pending.promise]);
+        if (result instanceof Uint8Array) return result;
+        if (stream.rxConsumed) {
+          stream.onClose.delete(close);
+          dropStream(stream, false);
+        }
       }
       return ok(sendResult, { tag: "V1" });
     } catch {
       stream.txClosed = true;
       return domain(sendResult, "Closed");
     } finally {
-      stream.txPending -= frame.length;
+      stream.onClose.delete(close);
+      if (pending.response !== undefined) dropStream(stream, true);
     }
   };
 
@@ -448,14 +618,14 @@ export function createJamPeerTransportSession(options: JamPeerTransportOptions):
     const next = stream.messages[0];
     if (next !== undefined && next.length > request.max) {
       // The guest cannot take this message; treat it as a protocol violation.
-      stream.messages.length = 0;
-      stream.reset = true;
-      void stream.writer.abort().catch(() => undefined);
-      void stream.reader.cancel().catch(() => undefined);
+      abortReceive(stream);
     }
     let message: S.HexString | undefined;
     if (!stream.reset && next !== undefined) {
       stream.messages.shift();
+      stream.rxBytes -= next.length + 4;
+      stream.conn.rxBytes -= next.length + 4;
+      wakeReaders(stream.conn);
       message = S.bytesToHex(next);
     }
     const drained = stream.messages.length === 0;
@@ -489,10 +659,8 @@ export function createJamPeerTransportSession(options: JamPeerTransportOptions):
         if (request.payload.traitId !== JAM_PEER_TRANSPORT_DIAL.trait || request.payload.value.length !== 0) {
           throw new Error("Invalid cancellation frame");
         }
-        // Only a dial can outlast one host tick: it may wait on a permission
-        // prompt and a handshake. The dial itself answers `Cancelled`; a
-        // CANCEL naming nothing in flight lost the race and is dropped.
-        if (hasIds(request, JAM_PEER_TRANSPORT_DIAL)) pendingDials.get(request.requestId)?.(cancelledReply);
+        const pending = pendingRequests.get(request.requestId);
+        if (pending?.method === request.payload.methodId) pending.withdraw(cancelledReply);
         return new Uint8Array();
       }
       if (request.payload.messageType !== MESSAGE_TYPE_REQUEST) {
@@ -517,22 +685,20 @@ export function createJamPeerTransportSession(options: JamPeerTransportOptions):
       }
       const malformed = (): Uint8Array =>
         reply(request, frameworkResult.enc({ success: false, value: { tag: "MalformedFrame", value: { reason: "invalid peer-transport request" } } }));
+      if (pendingRequests.has(request.requestId)) return new Uint8Array();
       try {
         if (hasIds(request, JAM_PEER_TRANSPORT_DIAL)) {
           const value = exact(T.VersionedHostJamPeerTransportDialRequest, request.payload.value).value;
           if (!negotiated) return reply(request, domain(dialResult, "NotGranted"));
-          // Two live dials sharing an id leave neither addressable by CANCEL;
-          // like the core dispatcher, the second is dropped unanswered.
-          if (pendingDials.has(request.requestId)) return new Uint8Array();
-          return reply(request, await dialFrame(request.requestId, value));
+          return reply(request, await requestFrame(request, (pending) => dial(value, pending.promise), dialTimeoutMs));
         }
         if (hasIds(request, JAM_PEER_TRANSPORT_OPEN)) {
           const value = exact(T.VersionedHostJamPeerTransportOpenRequest, request.payload.value).value;
-          return reply(request, negotiated ? await open(value) : domain(openResult, "NotGranted"));
+          return reply(request, negotiated ? await requestFrame(request, (pending) => open(value, pending)) : domain(openResult, "NotGranted"));
         }
         if (hasIds(request, JAM_PEER_TRANSPORT_SEND)) {
           const value = exact(T.VersionedHostJamPeerTransportSendRequest, request.payload.value).value;
-          return reply(request, negotiated ? await send(value) : domain(sendResult, "Closed"));
+          return reply(request, negotiated ? await requestFrame(request, (pending) => send(value, pending)) : domain(sendResult, "Closed"));
         }
         if (hasIds(request, JAM_PEER_TRANSPORT_RECV)) {
           const value = exact(T.VersionedHostJamPeerTransportRecvRequest, request.payload.value).value;
@@ -559,8 +725,10 @@ export function createJamPeerTransportSession(options: JamPeerTransportOptions):
     close() {
       closed = true;
       const denied = frameworkResult.enc({ success: false, value: { tag: "Denied" } });
-      for (const withdraw of [...pendingDials.values()]) withdraw(denied);
+      for (const pending of pendingRequests.values()) pending.withdraw(denied);
       for (const conn of [...connections.values()]) dropConnection(conn);
+      for (const decision of decisions.values()) decision.waiters.clear();
+      decisions.clear();
       events.length = 0;
     },
   };

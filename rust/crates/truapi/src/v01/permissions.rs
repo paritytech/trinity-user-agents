@@ -90,12 +90,14 @@ pub enum RemotePermission {
     /// Submitting statements on behalf of the user via `remote_statement_store_submit`.
     #[display("submit statements")]
     StatementSubmit,
-    /// Read-only peer access over JAMNP-S QUIC/WebTransport to the validators
-    /// of one JAM chain, through the `JamPeerTransport` service.
+    /// Peer access over JAMNP-S QUIC/WebTransport, authorized for the full
+    /// genesis hash through the `JamPeerTransport` service.
     ///
-    /// The app names the endpoints it dials; the grant covers only peers of
-    /// `genesis`. Every byte received is untrusted, and the grant carries no
-    /// account, signing or submission authority.
+    /// The app names endpoints and pinned keys. Native QUIC negotiates the
+    /// genesis-derived ALPN; WebTransport negotiates HTTP/3. Neither proves
+    /// chain membership. The guest must verify chain data itself. The grant
+    /// carries no host account, signing or submission authority and does not
+    /// restrict which framed protocol messages the guest sends.
     #[display(
         "connections to JAM network 0x{:02x}{:02x}{:02x}{:02x}…",
         genesis[0],
@@ -104,7 +106,7 @@ pub enum RemotePermission {
         genesis[3]
     )]
     JamPeers {
-        /// Genesis header hash of the JAM chain whose peers may be dialed.
+        /// Genesis header hash under which peer access is authorized.
         genesis: [u8; 32],
     },
     /// Host-owned Media calling, scoped to authenticated product/account/network.

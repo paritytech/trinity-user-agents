@@ -36,6 +36,7 @@ internal fun QrViewfinder(
     surfaceRequestFlow: StateFlow<SurfaceRequest?>,
     invalidCodeEvent: SharedFlow<Unit>,
     cameraPermissionDeniedFlow: StateFlow<Boolean>,
+    cameraActive: Boolean,
     bindToCamera: suspend (LifecycleOwner) -> Unit,
     onInvalidCodeAlertClosed: () -> Unit,
     onPermissionAlertClosed: () -> Unit,
@@ -44,8 +45,8 @@ internal fun QrViewfinder(
 ) {
     val owner = LocalLifecycleOwner.current
     var bindAttempt by remember { mutableIntStateOf(0) }
-    LaunchedEffect(owner, bindAttempt) {
-        bindToCamera(owner)
+    LaunchedEffect(owner, bindAttempt, cameraActive) {
+        if (cameraActive) bindToCamera(owner)
     }
 
     Box(modifier = modifier) {

@@ -51,6 +51,12 @@ final class CoreStorageBackend: HostCoreStorageBackend, @unchecked Sendable {
         notifyPermissionChange(key: key)
     }
 
+    func keys() throws -> [Data] {
+        try withHostRejection {
+            try storage.keys().map { try Data(hexString: $0) }
+        }
+    }
+
     func clear(key: Data) throws {
         if TrUAPIWalletStorage.owns(key) {
             return try withHostRejection { try TrUAPIWalletStorage.shared.clear(key: key) }

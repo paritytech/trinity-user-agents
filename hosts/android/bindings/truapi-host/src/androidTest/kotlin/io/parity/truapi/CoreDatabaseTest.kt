@@ -68,6 +68,7 @@ class CoreDatabaseTest {
     )
 
     private inner class InertBridge : HostBridge {
+        override fun permissionAuthorizationsChanged(productId: String) = Unit
         override val storage = PrefsHostStorage(
             context.getSharedPreferences(productStorageName, android.content.Context.MODE_PRIVATE),
         )

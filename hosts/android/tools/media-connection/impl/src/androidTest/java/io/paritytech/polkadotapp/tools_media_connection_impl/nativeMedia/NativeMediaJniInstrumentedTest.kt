@@ -72,6 +72,7 @@ class NativeMediaJniInstrumentedTest {
             error("Offline Media qualification unexpectedly requested $name")
         }
         val bridge = object : HostBridge {
+            override fun permissionAuthorizationsChanged(productId: String) = Unit
             override val storage = object : HostStorage {
                 private val values = ConcurrentHashMap<String, ByteArray>()
                 override suspend fun read(key: String) = values[key]?.copyOf()
@@ -82,6 +83,7 @@ class NativeMediaJniInstrumentedTest {
                 override val storageIdentifier = "media-jni-regression-${UUID.randomUUID()}"
                 private val values = ConcurrentHashMap<String, ByteArray>()
                 private fun encodedKey(value: ByteArray) = Base64.encodeToString(value, Base64.NO_WRAP)
+                override suspend fun keys(): List<ByteArray> = values.keys.map { Base64.decode(it, Base64.NO_WRAP) }
                 override suspend fun read(key: ByteArray) = values[encodedKey(key)]?.copyOf()
                 override suspend fun write(key: ByteArray, value: ByteArray) { values[encodedKey(key)] = value.copyOf() }
                 override suspend fun clear(key: ByteArray) { values.remove(encodedKey(key)) }

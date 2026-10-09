@@ -68,3 +68,8 @@ cannot place labels. Clearing a session serializes removal of its remembered con
 Host-side interruption returns a Contacts domain error, reserving wire `Cancelled` for a peer's explicit cancellation.
 Failed directory lookups preserve the prior label surface and report a retryable error instead of clearing it as if
 the contacts were missing.
+
+Integrate canonical permission administration from the Chat runtime. Profile
+disclosure remains separately authorized and participates in pending-prompt
+cancellation and stale-decision fencing, while profile roster, privacy and
+avatar/session boundaries coexist with the upstream game and card capabilities.

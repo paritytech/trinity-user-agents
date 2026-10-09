@@ -40,8 +40,11 @@ class PocketNavigator @Inject constructor(
     override fun openCollectibles() =
         performNavigation(R.id.action_global_to_collectiblesFragment)
 
-    override fun openSpaSheet(url: String) = performNavigation(
-        actionId = R.id.action_global_to_spaSheetBottomSheet,
-        args = SpaSheetPayload(url).toPayloadBundle()
-    )
+    override fun openSpaSheet(url: String) {
+        if (isCurrentDestination(R.id.spaSheetBottomSheet)) return
+        performNavigation(
+            actionId = R.id.action_global_to_spaSheetBottomSheet,
+            args = SpaSheetPayload(url).toPayloadBundle()
+        )
+    }
 }

@@ -650,12 +650,12 @@ fn decode_session_remote_message(
     let mut input = message;
     // The outer id identifies this message, not the request it answers.
     decode_correlation_id(&mut input)?;
-    if let (Some(expected), [0, index, response @ ..]) = (expected_remote_message_id, input) {
-        if v1::RemoteMessage::is_response_index(*index) {
-            let mut header = response;
-            if decode_correlation_id(&mut header)? != expected {
-                return Ok(None);
-            }
+    if let (Some(expected), [0, index, response @ ..]) = (expected_remote_message_id, input)
+        && v1::RemoteMessage::is_response_index(*index)
+    {
+        let mut header = response;
+        if decode_correlation_id(&mut header)? != expected {
+            return Ok(None);
         }
     }
     let RemoteMessageData::V1(decoded) = RemoteMessageData::decode(&mut input)

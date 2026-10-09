@@ -75,6 +75,7 @@ class TrUAPIDiagnosticsTest {
         // Grants every prompt without UI — acceptable ONLY here, in a
         // non-interactive diagnostics run; confirmUserAction gates signing.
         val bridge = object : HostBridge {
+            override fun permissionAuthorizationsChanged(productId: String) = Unit
             override val storage = PrefsHostStorage(
                 context.getSharedPreferences("truapi_product_storage", android.content.Context.MODE_PRIVATE),
             )

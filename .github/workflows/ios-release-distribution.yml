@@ -24,12 +24,21 @@ on:
 
 jobs:
   build:
-    # PR trigger covers hotfix pushes to release branches; nightly PRs (marked in the
-    # PR-body metadata) are excluded — a failed nightly is redone via nightly_prepare.
+    # Only an app release opened by ios-prepare-pipeline.yml builds here. It is
+    # identified by both of the things that pipeline writes: the branch name it
+    # creates, `release/release-<version>-<timestamp>`, and the source_ref metadata
+    # it puts in the PR body. Requiring the marker as well as the prefix is what
+    # keeps a hand-named branch out, because the prefix alone is a convention
+    # nothing enforces. Every other `release/` branch belongs to this repository's
+    # package release flow, which ships npm packages and the host XCFramework and
+    # must never reach App Store Connect. The PR trigger covers hotfix pushes to an
+    # app release branch; nightly PRs are excluded by the same metadata block, since
+    # a failed nightly is redone via nightly_prepare.
     if: >-
       github.event_name == 'workflow_dispatch' ||
-      (startsWith(github.head_ref, 'release/') &&
-       !contains(github.event.pull_request.body, 'nightly_build=true'))
+      (startsWith(github.head_ref, 'release/release-') &&
+      contains(github.event.pull_request.body, 'RELEASE_METADATA: source_ref=') &&
+      !contains(github.event.pull_request.body, 'nightly_build=true'))
     uses: ./.github/workflows/ios-build-distribute.yml
     with:
       release_branch: ${{ inputs.release_branch || github.head_ref }}

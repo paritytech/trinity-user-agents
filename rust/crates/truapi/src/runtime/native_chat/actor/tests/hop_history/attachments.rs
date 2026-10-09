@@ -6,6 +6,7 @@ NativeChatPickedFile, PermissionAuthorizationRequest,};
 struct Files {
     bytes: Vec<u8>,
     picks: AtomicUsize,
+    cancelled: AtomicBool,
     released: AtomicBool,
     output: Mutex<Vec<u8>>,
     completed: AtomicBool,
@@ -15,6 +16,7 @@ impl Files {
         Self {
             bytes,
             picks: AtomicUsize::new(0),
+            cancelled: AtomicBool::new(false),
             released: AtomicBool::new(false),
             output: Mutex::new(Vec::new()),
             completed: AtomicBool::new(false),
@@ -29,6 +31,9 @@ impl NativeChatFilesHost for Files {
     ) -> Result<Vec<NativeChatPickedFile>, GenericError> {
         assert_eq!(request.product_id, PRODUCT);
         self.picks.fetch_add(1, Ordering::SeqCst);
+        if self.cancelled.load(Ordering::SeqCst) {
+            return Ok(Vec::new());
+        }
         Ok(vec![NativeChatPickedFile {
             source_id: "immutable-fixture".into(),
             metadata: HostNativeChatAttachmentMetadata {
@@ -105,6 +110,68 @@ async fn authorize_upload(platform: &StubPlatform) {
         )
         .await
         .unwrap();
+}
+
+#[test]
+fn failed_attachment_selection_releases_the_rich_message_quota() {
+    block_on(async {
+        for (with_endpoint, expected) in [
+            (false, Error::AttachmentsUnavailable),
+            (true, Error::UserRejected),
+        ] {
+            let files = Arc::new(Files::new(vec![1, 2, 3]));
+            files.cancelled.store(true, Ordering::SeqCst);
+            let platform = Arc::new(StubPlatform {
+                native_chat_files: Some(files.clone()),
+                hop_provider: with_endpoint
+                    .then(|| Arc::new(Pool::default()) as Arc<dyn crate::platform::HopProvider>),
+                ..Default::default()
+            });
+            authorize_upload(&platform).await;
+            let fixture = Fixture::on_platform(platform);
+            let actor = fixture.actor().await;
+            let identity = IdentityFixture::new();
+            let peer = DeviceFixture::new(1);
+            seed_peer(&actor, &identity, &[&peer]).await;
+            for request in ["cancelled-first", "cancelled-second"] {
+                assert_eq!(
+                    actor
+                        .prepare_attachments(&fixture.context, identity.account, request.into(), None)
+                        .await,
+                    Err(expected.clone()),
+                );
+                assert_eq!(
+                    actor
+                        .store
+                        .read(|state| (state.rich_messages.len(), state.files.len()))
+                        .await
+                        .unwrap(),
+                    (0, 0),
+                    "failed selections must not consume incoming attachment capacity",
+                );
+            }
+            if with_endpoint {
+                files.cancelled.store(false, Ordering::SeqCst);
+                actor
+                    .prepare_attachments(
+                        &fixture.context,
+                        identity.account,
+                        "cancelled-first".into(),
+                        None,
+                    )
+                    .await
+                    .unwrap();
+                assert_eq!(
+                    actor
+                        .store
+                        .read(|state| (state.rich_messages.len(), state.files.len()))
+                        .await
+                        .unwrap(),
+                    (1, 1),
+                );
+            }
+        }
+    });
 }
 
 #[test]

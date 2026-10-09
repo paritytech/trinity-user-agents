@@ -20,6 +20,7 @@ internal class RealEncryptedPreferences @Inject constructor(
     }
 
     override fun removeKeyCommitted(field: String) = preferences.removeFieldCommitted(field)
+    override fun keys(): Set<String> = preferences.keys()
 
     override fun putEncryptedString(
         field: String,

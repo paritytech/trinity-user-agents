@@ -1,4 +1,5 @@
 import Foundation
+import FoundationExt
 import TrUAPIHost
 import Products
 import ChainRegistry
@@ -21,6 +22,8 @@ class RustProductExecutionBridge: HostBridge, @unchecked Sendable {
         let permissionGuard: ProductPermissionGuarding
         let osPermissionAsker: OSPermissionAsking
         let notificationScheduler: ProductNotificationScheduling
+        let gameReminders: ProductGameReminderScheduling?
+        let reminderPermissionAsker: ReminderPermissionAsking
         let navigationRouter: ProductsNavigationRouting
         let chainRegistry: ChainRegistryProtocol
         let chainConnections: TrUAPIChainConnecting
@@ -104,6 +107,12 @@ class RustProductExecutionBridge: HostBridge, @unchecked Sendable {
         if changed {
             execution?.notifyThemeChanged(theme: next)
         }
+    }
+
+    func permissionAuthorizationsChanged(productId: String) {
+        NotificationCenter.default.post(
+            name: .productPermissionAuthorizationsChanged, object: productId
+        )
     }
 
     func onCoreLog(marker: String, detail: String) {
@@ -219,7 +228,7 @@ class RustProductExecutionBridge: HostBridge, @unchecked Sendable {
     }
 
     func confirmPermission(review: UserConfirmationReview) async throws -> TrUAPIPermissionDecision {
-        await dependencies.confirmationPresenter.confirmPermission(review: review, from: dependencies.productId)
+        try await dependencies.confirmationPresenter.confirmPermission(review: review, from: dependencies.productId)
     }
 
     func chainConnect(genesisHash: Data) throws -> UInt32? {
@@ -305,6 +314,32 @@ extension RustProductExecutionBridge: TrUAPIChainEventHandling {
     }
 }
 
+// MARK: - Game reminders
+
+extension RustProductExecutionBridge: GameHostBridge {
+    func scheduleReminder(startsAt: UInt64) async throws {
+        let asker = dependencies.reminderPermissionAsker
+        let ringAlarm: Bool
+        if await asker.askAlarm() {
+            ringAlarm = true
+        } else if await asker.askNotifications() {
+            ringAlarm = false
+        } else {
+            throw HostRejection.Rejected(reason: "alarms and notifications are both turned off")
+        }
+        await dependencies.gameReminders?.schedule(
+            productId: dependencies.productId,
+            startsAt: Date(timeIntervalSince1970: startsAt.millisecondsToSeconds()),
+            ringAlarm: ringAlarm,
+            addCalendarEvent: true
+        )
+    }
+
+    func cancelReminder() async throws {
+        await dependencies.gameReminders?.cancel(productId: dependencies.productId)
+    }
+}
+
 // MARK: - Mappers
 
 extension Products.PermissionDecision {
@@ -352,5 +387,30 @@ extension RemotePermission {
 extension HostPushNotificationRequest {
     func toScheduledNotificationRequest() -> ScheduledNotificationRequest {
         ScheduledNotificationRequest(text: text, deeplink: deeplink, scheduledAtMs: scheduledAt)
+    }
+}
+
+/// Native execution closure is authoritative. Ordinary permission changes must
+/// refresh settings without destroying a still-authorized product's WebView.
+final class ProductExecutionRevocationObserver: @unchecked Sendable {
+    private let token: NSObjectProtocol
+
+    init(
+        execution: TrUAPIProductExecutionProtocol,
+        onClosed: @escaping @Sendable () async -> Void
+    ) {
+        token = NotificationCenter.default.addObserver(
+            forName: .productPermissionAuthorizationsChanged, object: nil, queue: nil
+        ) { [weak execution] _ in
+            guard execution?.isClosed() == true else { return }
+            Task { await onClosed() }
+        }
+        if execution.isClosed() {
+            Task { await onClosed() }
+        }
+    }
+
+    deinit {
+        NotificationCenter.default.removeObserver(token)
     }
 }

@@ -14,6 +14,7 @@ struct RustRuntimeEnvironment {
     let runtime: TrUAPIHostRuntime
     let chainRegistry: ChainRegistryProtocol
     let notificationScheduler: ProductNotificationScheduling
+    let gameReminders: ProductGameReminderScheduling?
     let ipfsFetcher: IpfsFetching
     let hostProvider: ProductHostProviding
     let themeManager: ThemeManagerProtocol
@@ -58,20 +59,25 @@ struct RustRuntimeEnvironment {
         try makeExecution(productId: productId, routers: routers, kind: .app)
     }
 
-    /// Open a background-only worker without installing Chat-specific APIs.
+    /// Open `productId`'s one Worker execution. The core keeps a single Worker
+    /// execution per product and closes the previous one when another opens, so
+    /// every modality is served from this one: both bridges are handed over
+    /// here rather than attached afterwards, because the worker may list its
+    /// cards or post a chat message as soon as it connects.
     @MainActor
-    func makeWorkerExecution(productId: ProductId, routers: ProductRoutersFacadeProtocol) throws -> ExecutionModel {
-        try makeExecution(productId: productId, routers: routers, kind: .worker)
-    }
-
-    /// Open a chat execution for `productId`. Mirrors ``makeSPAExecution``.
-    @MainActor
-    func makeChatExecution(
+    func makeWorkerExecution(
         productId: ProductId,
         routers: ProductRoutersFacadeProtocol,
-        chatMessaging: any ProductChatMessaging
+        chatMessaging: (any ProductChatMessaging)?,
+        pocket: any PocketHostBridge
     ) throws -> ExecutionModel {
-        try makeExecution(productId: productId, routers: routers, kind: .worker, chatMessaging: chatMessaging)
+        try makeExecution(
+            productId: productId,
+            routers: routers,
+            kind: .worker,
+            chatMessaging: chatMessaging,
+            pocket: pocket
+        )
     }
 }
 
@@ -81,7 +87,8 @@ private extension RustRuntimeEnvironment {
         productId: ProductId,
         routers: ProductRoutersFacadeProtocol,
         kind: ProductExecutionKind,
-        chatMessaging: (any ProductChatMessaging)? = nil
+        chatMessaging: (any ProductChatMessaging)? = nil,
+        pocket: (any PocketHostBridge)? = nil
     ) throws -> ExecutionModel {
         let chainConnections = TrUAPIChainConnectionPool(
             chainRegistry: chainRegistry,
@@ -105,6 +112,8 @@ private extension RustRuntimeEnvironment {
             bridge: bridge,
             configuration: ProductExecutionConfig(productId: productId, executionKind: kind),
             chat: chatBridge,
+            pocket: pocket,
+            game: gameReminders == nil ? nil : bridge,
             media: bridge.media
         )
 
@@ -123,7 +132,7 @@ private extension RustRuntimeEnvironment {
         productId: ProductId,
         routers: ProductRoutersFacadeProtocol,
         chainConnections: TrUAPIChainConnecting,
-        osPermissionAsker: OSPermissionAsking
+        osPermissionAsker: OSPermissionAsker
     ) -> RustProductExecutionBridge.Dependencies {
         RustProductExecutionBridge.Dependencies(
             productId: productId,
@@ -134,6 +143,8 @@ private extension RustRuntimeEnvironment {
             ),
             osPermissionAsker: osPermissionAsker,
             notificationScheduler: notificationScheduler,
+            gameReminders: gameReminders,
+            reminderPermissionAsker: osPermissionAsker,
             navigationRouter: routers.navigationRouter,
             chainRegistry: chainRegistry,
             chainConnections: chainConnections,

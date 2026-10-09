@@ -107,9 +107,8 @@ fun UserConfirmationReview.toConfirmation(callingProductId: String): TrUAPIConfi
     is UserConfirmationReview.ProductSubtree ->
         TrUAPIConfirmation.ProductSubtree(requesterProductId = v1.productId)
 
-    // No prompt exists for profile disclosure yet; refusing it is the caller's fallback.
     is UserConfirmationReview.ProfileDisclosure ->
-        throw UnsupportedReviewException("profile disclosure has no prompt on this host")
+        TrUAPIConfirmation.ProfileDisclosure(requesterProductId = v1.productId)
     is UserConfirmationReview.Calling ->
         TrUAPIConfirmation.Calling(v1.productId, v1.network.displayHex(), v1.account.displayHex())
 }
@@ -132,7 +131,6 @@ private fun AllocatableResource.describe(): String = when (this) {
     is AllocatableResource.BulletinAllowance -> "bulletin allowance"
     is AllocatableResource.SmartContractAllowance -> "smart-contract allowance"
     is AllocatableResource.AutoSigning -> "auto-signing"
-    is AllocatableResource.ProductStatementStoreAllowance -> "product statement-store allowance"
 }
 
 private fun NativeProductAccountId.toDomain(): ProductAccountId = ProductAccountId(

@@ -23,6 +23,8 @@ public extension CustomMessageWidgetNode {
         case text(TextProps)
         case button(ButtonProps)
         case textField(TextFieldProps)
+        case image(ImageProps)
+        case effect(EffectProps, children: [CustomMessageWidgetNode])
     }
 }
 
@@ -114,6 +116,46 @@ public extension CustomMessageWidgetNode {
     }
 }
 
+public extension CustomMessageWidgetNode {
+    /// Where an image's bytes come from. The node names the source; fetching it
+    /// belongs to whoever knows about product archives and the Bulletin gateway.
+    enum ImageSource: Hashable {
+        case bulletin(cid: String)
+        case archive(path: String)
+    }
+
+    enum ImageFit {
+        case none
+        case fill
+        case cover
+        case contain
+        case scaleDown
+    }
+
+    struct ImageProps {
+        public let source: ImageSource
+        public let fit: ImageFit
+
+        public init(source: ImageSource, fit: ImageFit = .fill) {
+            self.source = source
+            self.fit = fit
+        }
+    }
+
+    /// A host-drawn effect applied to the children beneath it.
+    enum Effect {
+        case rainbow
+    }
+
+    struct EffectProps {
+        public let effect: Effect
+
+        public init(effect: Effect) {
+            self.effect = effect
+        }
+    }
+}
+
 // MARK: - Supporting Types
 
 public extension CustomMessageWidgetNode {
@@ -180,6 +222,7 @@ public extension CustomMessageWidgetNode {
         public let fillHeight: Bool
         /// `nil` is fully opaque, matching a node that carries no opacity modifier.
         public let opacity: CGFloat?
+        public let blendingMode: BlendMode?
 
         public var hasWidthConstraint: Bool {
             width != nil || minWidth != nil || fillWidth
@@ -199,7 +242,9 @@ public extension CustomMessageWidgetNode {
             minWidth: nil,
             minHeight: nil,
             fillWidth: false,
-            fillHeight: false
+            fillHeight: false,
+            opacity: nil,
+            blendingMode: nil
         )
 
         public init(
@@ -213,7 +258,8 @@ public extension CustomMessageWidgetNode {
             minHeight: CGFloat? = nil,
             fillWidth: Bool = false,
             fillHeight: Bool = false,
-            opacity: CGFloat? = nil
+            opacity: CGFloat? = nil,
+            blendingMode: BlendMode? = nil
         ) {
             self.padding = padding
             self.margin = margin
@@ -226,6 +272,7 @@ public extension CustomMessageWidgetNode {
             self.fillWidth = fillWidth
             self.fillHeight = fillHeight
             self.opacity = opacity
+            self.blendingMode = blendingMode
         }
     }
 }

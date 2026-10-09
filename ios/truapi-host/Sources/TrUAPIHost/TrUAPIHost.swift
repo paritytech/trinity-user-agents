@@ -49,6 +49,13 @@ public protocol HostCoreStorageBackend: AnyObject, Sendable {
     func read(key: Data) throws -> Data?
     func write(key: Data, value: Data) throws
     func clear(key: Data) throws
+    func keys() throws -> [Data]
+}
+
+public extension HostCoreStorageBackend {
+    func keys() throws -> [Data] {
+        throw HostRejection.Rejected(reason: "core storage enumeration unsupported")
+    }
 }
 
 /// Host-private immutable attachment custody. These async callbacks may present
@@ -117,6 +124,7 @@ private final class CoreStorageCoordinator: @unchecked Sendable {
     private var slots: [Slot: NSLock] = [:]
     private var executions: [UUID: Registration] = [:]
     private var refreshes: [UUID: Task<Void, Error>] = [:]
+    private var runtimeGroups: Set<UUID> = []
 
     func transaction<T>(store: String, key: Data, _ body: () throws -> T) rethrows -> T {
         let slot = Slot(store: store, key: key)
@@ -130,6 +138,19 @@ private final class CoreStorageCoordinator: @unchecked Sendable {
         return try body()
     }
 
+    func registerRuntime(group: UUID) {
+        lock.lock(); defer { lock.unlock() }
+        runtimeGroups.insert(group)
+    }
+
+    func unregisterRuntime(group: UUID) {
+        lock.lock(); defer { lock.unlock() }
+        runtimeGroups.remove(group)
+        if !executions.values.contains(where: { $0.group == group }) {
+            refreshes.removeValue(forKey: group)
+        }
+    }
+
     func register(_ execution: TrUAPIProductExecution, id: UUID, group: UUID,
                   store: String, productId: String) {
         lock.lock(); defer { lock.unlock() }
@@ -139,7 +160,7 @@ private final class CoreStorageCoordinator: @unchecked Sendable {
     func unregister(id: UUID, group: UUID) {
         lock.lock(); defer { lock.unlock() }
         executions.removeValue(forKey: id)
-        if !executions.values.contains(where: { $0.group == group }) {
+        if !runtimeGroups.contains(group), !executions.values.contains(where: { $0.group == group }) {
             refreshes.removeValue(forKey: group)
         }
     }
@@ -158,12 +179,11 @@ private final class CoreStorageCoordinator: @unchecked Sendable {
 
     func changed(key: Data, store: String, origin: UUID, bridge: HostBridge) {
         guard let description = try? nativeDescribeCoreStorageKey(encoded: key),
-              let productId = description.productId, let request = description.permissionRequest,
-              Self.isMediaPermission(request) else { return }
+              let productId = description.productId, let request = description.permissionRequest else { return }
         lock.lock()
         var targets: [UUID: [TrUAPIProductExecution]] = [:]
         for registration in executions.values {
-            guard registration.store == store,
+            guard Self.isMediaPermission(request), registration.store == store,
                   registration.productId == productId, let execution = registration.execution else { continue }
             targets[registration.group, default: []].append(execution)
         }
@@ -175,6 +195,7 @@ private final class CoreStorageCoordinator: @unchecked Sendable {
             // its complete write-and-notify critical section has been released.
             self.transaction(store: store, key: key) {}
             if let previous { _ = try? await previous.value }
+            defer { bridge.permissionAuthorizationsChanged(productId: productId) }
             var failed = false
             for group in targets.values {
                 guard let execution = group.first(where: { self.isRegistered($0) }) else { continue }
@@ -191,7 +212,7 @@ private final class CoreStorageCoordinator: @unchecked Sendable {
             }
             if failed { throw HostRejection.Rejected(reason: "Permission refresh failed") }
         }
-        if executions.values.contains(where: { $0.group == origin }) {
+        if runtimeGroups.contains(origin) || executions.values.contains(where: { $0.group == origin }) {
             refreshes[origin] = refresh
         }
         lock.unlock()
@@ -221,6 +242,13 @@ public protocol HostBridge: NativeChatFilesHost {
 
     /// Open a URL in the system browser, suspending for any approval on the main actor.
     func navigateTo(url: String) async throws
+
+    /// Show or hide the face above this execution's expanded card. Answers
+    /// `.notPresented` when the product is not under its card and `.userMoving`
+    /// while the user drags it, and returns without waiting for the animation.
+    /// Defaults to `.unsupported`, so an app without cards says so instead of
+    /// pretending it moved one.
+    func setExpandedCardFaceShown(shown: Bool) async throws -> ExpandedCardFaceOutcome
 
     /// Deliver a push notification (`HostPushNotificationRequest`)
     /// and return the host-assigned notification id. Run any UI work on the main actor.
@@ -345,7 +373,7 @@ public protocol HostBridge: NativeChatFilesHost {
     /// Demand is runtime-wide, so the core invokes this only on the bridge
     /// ``TrUAPIHostRuntime/init(bridge:runtimeConfig:)`` was given, never on
     /// the per-execution bridge passed to
-    /// ``TrUAPIHostRuntime/openProductExecution(bridge:configuration:chat:pocket:media:)``.
+    /// ``TrUAPIHostRuntime/openProductExecution(bridge:configuration:chat:pocket:game:media:)``.
     /// Can arrive on any thread, including synchronously on the calling
     /// thread during `acquireWorker`/`releaseWorker`, often the main thread
     /// and re-entrantly: hand the transition off rather than blocking on
@@ -380,10 +408,13 @@ public protocol HostBridge: NativeChatFilesHost {
     /// and persisted permission decisions.
     var coreStorage: HostCoreStorageBackend { get }
 
+    /// Invalidates native settings and legacy permission consumers.
+    func permissionAuthorizationsChanged(productId: String)
+
 }
 
 /// Native Chat storage and UI surface. Implement and pass to
-/// ``TrUAPIHostRuntime/openProductExecution(bridge:configuration:chat:pocket:media:)``
+/// ``TrUAPIHostRuntime/openProductExecution(bridge:configuration:chat:pocket:game:media:)``
 /// when the host supports the Chat modality; hosts without it pass nothing.
 /// Native Chat storage and UI surface, called from the process-wide dispatch
 /// pool shared by every product execution: implementations must be safe to
@@ -423,7 +454,7 @@ public protocol ChatHostBridge: AnyObject, Sendable {
 }
 
 /// Native Pocket collection surface. Implement and pass to
-/// ``TrUAPIHostRuntime/openProductExecution(bridge:configuration:chat:pocket:media:)``
+/// ``TrUAPIHostRuntime/openProductExecution(bridge:configuration:chat:pocket:game:media:)``
 /// when the host has a Pocket surface; hosts without one pass nothing. Called
 /// from the process-wide dispatch pool shared by every product execution:
 /// implementations must be safe to enter concurrently, and one that blocks
@@ -440,6 +471,32 @@ public protocol PocketHostBridge: AnyObject, Sendable {
     /// remove together, under whatever lock this host holds, so a card cannot
     /// be pinned between the two.
     func removeCard(cardId: String) throws -> NativePocketRemoval
+}
+
+/// Native game-reminder surface. Implement and pass to
+/// ``TrUAPIHostRuntime/openProductExecution(bridge:configuration:chat:pocket:game:)``
+/// when the host can hold reminders; hosts without one pass nothing. Both
+/// calls are async, so an implementation may hop to the main actor to answer;
+/// implementations must be safe to enter concurrently.
+///
+/// The host holds one reminder per product: a schedule replaces the reminder
+/// the same product already holds. The core asks for no per-product consent;
+/// the host asks the OS for what it needs, rings an alarm where the OS allows
+/// one and delivers a notification otherwise, may add the game to the
+/// calendar, keeps the reminder across app kill and reboot, and drops it once
+/// the game starts.
+///
+/// Both calls throw ``HostRejection`` (or an error conforming to
+/// `LocalizedError`) to decline. A failed schedule reaches the product as a
+/// host failure carrying its reason, a failed cancel as its generic error.
+public protocol GameHostBridge: AnyObject, Sendable {
+    /// Hold `startsAt` (Unix milliseconds, UTC) as this product's reminder,
+    /// replacing any it holds. Throw when the OS allows neither alarms nor
+    /// notifications.
+    func scheduleReminder(startsAt: UInt64) async throws
+
+    /// Drop this product's reminder. Dropping none succeeds.
+    func cancelReminder() async throws
 }
 
 /// Host-implemented contacts surface: a lookup from handles to contacts, and
@@ -572,6 +629,9 @@ public extension HostBridge {
     func devicePaired(device: PairedSsoPeer) {}
     func devicePermissionStatus(request: HostDevicePermissionRequest) async throws
         -> DevicePermissionStatus { .notApplicable }
+    func setExpandedCardFaceShown(shown: Bool) async throws -> ExpandedCardFaceOutcome {
+        .unsupported
+    }
     /// Defaults opt out of worker keep-alive; override to run background work
     /// past the product's surface. The id is still distinct per call, because
     /// an `OperationId` names one operation: a host overriding only
@@ -693,6 +753,34 @@ private final class PocketCallbackAdapter: NativePocketCallbacks, @unchecked Sen
     private func withHostRejection<T>(_ operation: () throws -> T) throws -> T {
         do {
             return try operation()
+        } catch let error as HostRejection {
+            throw error
+        } catch {
+            throw HostRejection.Rejected(reason: hostRejectionReason(error))
+        }
+    }
+}
+
+/// Adapter that bridges the public `GameHostBridge` to the generated UniFFI
+/// `NativeGameCallbacks` protocol.
+private final class GameCallbackAdapter: NativeGameCallbacks, @unchecked Sendable {
+    private let bridge: GameHostBridge
+
+    init(bridge: GameHostBridge) {
+        self.bridge = bridge
+    }
+
+    func scheduleReminder(startsAt: UInt64) async throws {
+        try await withHostRejection { try await bridge.scheduleReminder(startsAt: startsAt) }
+    }
+
+    func cancelReminder() async throws {
+        try await withHostRejection { try await bridge.cancelReminder() }
+    }
+
+    private func withHostRejection<T>(_ operation: () async throws -> T) async throws -> T {
+        do {
+            return try await operation()
         } catch let error as HostRejection {
             throw error
         } catch {
@@ -841,6 +929,12 @@ private final class HostCallbackAdapter: HostCallbacks, @unchecked Sendable {
         }
     }
 
+    func setExpandedCardFaceShown(shown: Bool) async throws -> ExpandedCardFaceOutcome {
+        try await withHostRejection {
+            try await bridge.setExpandedCardFaceShown(shown: shown)
+        }
+    }
+
     func remotePermission(
         product: ProductExecutionConfig,
         request: RemotePermission
@@ -855,6 +949,14 @@ private final class HostCallbackAdapter: HostCallbacks, @unchecked Sendable {
 
     func authStateChanged(state: AuthState) {
         bridge.authStateChanged(state: state)
+    }
+
+    func coreStorageKeys() async throws -> [Data] {
+        try withHostRejection { try bridge.coreStorage.keys() }
+    }
+
+    func permissionAuthorizationsChanged(productId: String) {
+        bridge.permissionAuthorizationsChanged(productId: productId)
     }
 
     func coreStorageRead(key: Data) throws -> Data? {
@@ -1163,10 +1265,12 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
                 inner.relistenWsBridge()
             }
         }
+        CoreStorageCoordinator.shared.registerRuntime(group: coreGroup)
     }
 
     deinit {
         notificationCenter.removeObserver(foregroundObserver)
+        CoreStorageCoordinator.shared.unregisterRuntime(group: coreGroup)
     }
 
     /// Install the host's contacts adapter, which owns the contact list and
@@ -1207,39 +1311,85 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
         status: PermissionAuthorizationStatus
     ) async throws {
         try await inner.setPermissionAuthorizationStatus(productId: productId, request: request, status: status)
+        // Await cross-core Media invalidation only after Rust releases its gate.
+        if CoreStorageCoordinator.isMediaPermission(request),
+           let refresh = CoreStorageCoordinator.shared.pendingRefresh(group: coreGroup) {
+            try await refresh.value
+        }
     }
 
     /// Open one executable connection with a host-assigned immutable context.
     /// Pass `chat` to install the host's Chat adapter; hosts without the Chat
     /// modality omit it. Pass `pocket` to install the card collection, and
-    /// omit that where the host has no Pocket surface.
+    /// omit that where the host has no Pocket surface. Pass `game` to hold
+    /// game reminders, and omit it where the host cannot.
     public func openProductExecution(
         bridge: HostBridge,
         configuration: ProductExecutionConfig,
         chat: ChatHostBridge? = nil,
         pocket: PocketHostBridge? = nil,
+        game: GameHostBridge? = nil,
         media: NativeMediaCallbacks? = nil
     ) throws -> TrUAPIProductExecution {
         let adapter = HostCallbackAdapter(bridge: bridge, coreGroup: coreGroup)
         let chatAdapter = chat.map { ChatCallbackAdapter(bridge: $0) }
         let pocketAdapter = pocket.map { PocketCallbackAdapter(bridge: $0) }
+        let gameAdapter = game.map { GameCallbackAdapter(bridge: $0) }
         let execution = try inner.openProductExecution(
             callbacks: adapter,
             chatCallbacks: chatAdapter,
             pocketCallbacks: pocketAdapter,
+            gameCallbacks: gameAdapter,
             mediaCallbacks: media,
             executionConfig: configuration
         )
         return TrUAPIProductExecution(
             inner: execution,
+            runtimeAdmin: inner,
             callbackRetainer: adapter,
             chatRetainer: chatAdapter,
             pocketRetainer: pocketAdapter,
+            gameRetainer: gameAdapter,
             mediaRetainer: media,
             coreGroup: coreGroup,
             storageIdentifier: bridge.coreStorage.storageIdentifier,
             productId: execution.productContext().productId
         )
+    }
+
+    public func permissionAuthorizationProducts() async throws -> [String] {
+        try await inner.permissionAuthorizationProducts()
+    }
+
+    public func permissionAuthorizationRevision(productId: String) throws -> UInt64 {
+        try inner.permissionAuthorizationRevision(productId: productId)
+    }
+
+    public func setPermissionAuthorizationStatusIfCurrent(
+        productId: String,
+        request: PermissionAuthorizationRequest,
+        status: PermissionAuthorizationStatus,
+        revision: UInt64
+    ) async throws -> Bool {
+        let applied = try await inner.setPermissionAuthorizationStatusIfCurrent(
+            productId: productId, request: request, status: status, revision: revision
+        )
+        if applied, CoreStorageCoordinator.isMediaPermission(request),
+           let refresh = CoreStorageCoordinator.shared.pendingRefresh(group: coreGroup) {
+            try await refresh.value
+        }
+        return applied
+    }
+
+    public func permissionAuthorizations(productId: String) async throws -> [PermissionAuthorizationEntry] {
+        try await inner.permissionAuthorizations(productId: productId)
+    }
+
+    public func importPermissionAuthorizations(
+        productId: String,
+        entries: [PermissionAuthorizationEntry]
+    ) async throws -> [PermissionAuthorizationEntry] {
+        try await inner.importPermissionAuthorizations(productId: productId, entries: entries)
     }
 
     public func disconnect() {
@@ -1515,16 +1665,13 @@ public protocol TrUAPIProductExecutionProtocol: AnyObject, Sendable {
     func startWsBridge(bindPort: UInt16) throws -> WsBridgeEndpoint
     func stopWsBridge()
     func close()
+    func isClosed() -> Bool
     func publishChatAction(_ action: HostChatActionSubscribeItem) throws
     func render(_ request: ProductRendererRenderRequest) throws -> AsyncThrowingStream<RendererNode, Error>
     func publishRendererAction(_ item: HostRendererActionSubscribeItem) throws
     func permissionAuthorizationStatus(
         request: PermissionAuthorizationRequest
     ) async throws -> PermissionAuthorizationStatus
-    func setPermissionAuthorizationStatus(
-        request: PermissionAuthorizationRequest,
-        status: PermissionAuthorizationStatus
-    ) async throws
     func notifyThemeChanged(theme: HostThemeSubscribeItem)
     func notifyLocaleChanged(locale: HostLocaleSubscribeItem)
     func notifyStorageChanged(key: String, value: Data?)
@@ -1539,6 +1686,8 @@ public protocol TrUAPIProductExecutionProtocol: AnyObject, Sendable {
 /// One App, Widget, or Worker executable connected to a shared host runtime.
 public final class TrUAPIProductExecution: TrUAPIProductExecutionProtocol, @unchecked Sendable {
     private let inner: NativeProductExecution
+    private let runtimeAdmin: NativeTrUApiHostRuntime
+    private let productId: String
     private let callbackRetainer: HostCallbacks
     private let chatRetainer: NativeChatCallbacks?
     private let pocketRetainer: NativePocketCallbacks?
@@ -1546,18 +1695,23 @@ public final class TrUAPIProductExecution: TrUAPIProductExecutionProtocol, @unch
     private let mediaRetainer: NativeMediaCallbacks?
     fileprivate let registrationId = UUID()
     private let coreGroup: UUID
+    private let gameRetainer: NativeGameCallbacks?
 
     fileprivate init(
         inner: NativeProductExecution,
+        runtimeAdmin: NativeTrUApiHostRuntime,
         callbackRetainer: HostCallbacks,
         chatRetainer: NativeChatCallbacks?,
         pocketRetainer: NativePocketCallbacks?,
+        gameRetainer: NativeGameCallbacks?,
         mediaRetainer: NativeMediaCallbacks?,
         coreGroup: UUID,
         storageIdentifier: String,
         productId: String
     ) {
         self.inner = inner
+        self.runtimeAdmin = runtimeAdmin
+        self.productId = productId
         self.callbackRetainer = callbackRetainer
         self.chatRetainer = chatRetainer
         self.pocketRetainer = pocketRetainer
@@ -1572,6 +1726,7 @@ public final class TrUAPIProductExecution: TrUAPIProductExecutionProtocol, @unch
         }
         self.mediaRetainer = mediaRetainer
         self.coreGroup = coreGroup
+        self.gameRetainer = gameRetainer
         CoreStorageCoordinator.shared.register(self, id: registrationId, group: coreGroup,
             store: storageIdentifier, productId: productId)
     }
@@ -1588,6 +1743,10 @@ public final class TrUAPIProductExecution: TrUAPIProductExecutionProtocol, @unch
 
     public func stopWsBridge() {
         inner.stopWsBridge()
+    }
+
+    public func isClosed() -> Bool {
+        inner.isClosed()
     }
 
     public func close() {
@@ -1630,22 +1789,11 @@ public final class TrUAPIProductExecution: TrUAPIProductExecutionProtocol, @unch
     /// Immutable executable identity canonicalized by the core.
     public func productContext() -> ProductContext { inner.productContext() }
 
-    /// Updates the product decision and awaits deferred refresh outside the core gate.
-    public func setPermissionAuthorizationStatus(
-        request: PermissionAuthorizationRequest,
-        status: PermissionAuthorizationStatus
-    ) async throws {
-        try inner.setPermissionAuthorizationStatus(request: request, status: status)
-        // Only await fanout after the native setter has released its core gate.
-        if CoreStorageCoordinator.isMediaPermission(request),
-           let refresh = CoreStorageCoordinator.shared.pendingRefresh(group: coreGroup) {
-            try await refresh.value
-        }
-    }
-
     /// Re-read persisted policy without a prompt, a write, or an OS query.
     public func refreshPermissionAuthorization(request: PermissionAuthorizationRequest) async throws {
-        try await inner.refreshPermissionAuthorization(request: request)
+        // Settings may have closed this execution already. Refresh the owning
+        // core's product policy, not the now-closed connection's authority.
+        try await runtimeAdmin.refreshPermissionAuthorization(productId: productId, request: request)
     }
 
     public func notifyThemeChanged(theme: HostThemeSubscribeItem) {

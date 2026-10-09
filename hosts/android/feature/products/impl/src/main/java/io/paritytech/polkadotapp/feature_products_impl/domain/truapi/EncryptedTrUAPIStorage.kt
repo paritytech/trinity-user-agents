@@ -79,6 +79,13 @@ class EncryptedHostCoreStorage(
         throw HostRejection.Rejected("Private host storage unavailable")
     }
 
+    override suspend fun keys(): List<ByteArray> = preferences.keys()
+        .filter { it.startsWith("$CORE_NAMESPACE/") }
+        .map { key ->
+            decodeOrNull(key.removePrefix("$CORE_NAMESPACE/"))
+                ?: throw HostRejection.Rejected("invalid persisted core storage key")
+        }
+
     private fun qualify(key: ByteArray) = "$CORE_NAMESPACE/${key.toHex()}"
 
     companion object {

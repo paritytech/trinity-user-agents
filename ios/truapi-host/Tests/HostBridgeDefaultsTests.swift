@@ -61,4 +61,62 @@ struct HostBridgeDefaultsTests {
             ))
         }
     }
+
+    @Test
+    func processPermissionAdministrationListsImportsAndClosesOnlyRevokedExecutions() async throws {
+        let bridge = StubHostBridge()
+        let runtime = try TrUAPIHostRuntime(bridge: bridge, runtimeConfig: HostRuntimeConfig(
+            hostName: "permission-tests",
+            peopleChainGenesisHash: Data(repeating: 0, count: 32),
+            bulletinChainGenesisHash: Data(repeating: 0, count: 32),
+            assetHubChainGenesisHash: Data(repeating: 1, count: 32),
+            networkSuffix: "paseo",
+            databaseDirectory: temporaryDatabaseDirectory()
+        ))
+        let product = try runtime.openProductExecution(
+            bridge: bridge, configuration: .init(productId: "demo.paseo", executionKind: .app)
+        )
+        let other = try runtime.openProductExecution(
+            bridge: bridge, configuration: .init(productId: "other.paseo", executionKind: .app)
+        )
+        defer {
+            product.close()
+            other.close()
+            runtime.disconnect()
+        }
+        let request = PermissionAuthorizationRequest.device(.camera)
+        try await runtime.setPermissionAuthorizationStatus(productId: "demo.paseo", request: request, status: .authorized)
+        #expect(!product.isClosed())
+        #expect(try await runtime.permissionAuthorizationProducts().contains("demo.paseo"))
+        #expect(try await runtime.permissionAuthorizations(productId: "demo.paseo").contains {
+            $0.request == request && $0.status == .authorized
+        })
+        let revision = try runtime.permissionAuthorizationRevision(productId: "demo.paseo")
+        try await runtime.setPermissionAuthorizationStatus(productId: "demo.paseo", request: request, status: .notDetermined)
+        #expect(product.isClosed())
+        #expect(!other.isClosed())
+        // Cross-core storage fanout must still reach the process policy after
+        // canonical revocation has closed the originating connection.
+        try await product.refreshPermissionAuthorization(request: request)
+        #expect(try await runtime.setPermissionAuthorizationStatusIfCurrent(
+            productId: "demo.paseo", request: request, status: .authorized, revision: revision
+        ) == false)
+        _ = try await runtime.importPermissionAuthorizations(
+            productId: "demo.paseo", entries: [.init(request: request, status: .authorized)]
+        )
+        #expect(try await runtime.permissionAuthorizations(productId: "demo.paseo").contains {
+            $0.request == request && $0.status == .notDetermined
+        })
+        #expect(bridge.coreLogs.contains("permissions changed demo.paseo"))
+    }
+
+    /// An app that never implemented cards must say so, not pretend it moved one.
+    @Test
+    func defaultExpandedCardFaceIsUnsupported() async throws {
+        let bridge: HostBridge = StubHostBridge()
+
+        let outcome = try await bridge.setExpandedCardFaceShown(shown: false)
+
+        #expect(outcome == .unsupported)
+    }
 }

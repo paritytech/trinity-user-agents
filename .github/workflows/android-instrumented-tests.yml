@@ -1,6 +1,6 @@
-# Instrumented tests, which need a booted emulator and so cannot run on every
-# commit: the runner is macOS, which bills at several times the Linux rate on a
-# public repository, and a cold emulator costs minutes before the first test.
+# Instrumented tests need a booted, hardware-accelerated emulator. Run on Linux
+# x86_64 with KVM; the cold emulator and full JNI/app build make this an opt-in
+# gate rather than a job on every commit.
 #
 # Started by a label rather than by every push, and by dispatch so the workflow
 # itself can be exercised without opening a pull request to carry the label.
@@ -15,8 +15,10 @@ on:
     types: [labeled, synchronize, opened, reopened]
   workflow_dispatch:
 
+# Ignored label events get their own group: workflow concurrency is evaluated
+# even when the job below is skipped, so they must not cancel a requested run.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}${{ github.event.action == 'labeled' && github.event.label.name != 'android-instrumented-tests' && format('-{0}', github.run_id) || '' }}
   cancel-in-progress: true
 
 permissions:
@@ -25,28 +27,46 @@ permissions:
 jobs:
   test:
     name: Instrumented tests
-    # Narrow deliberately. `labeled` fires for every label, so matching only on
-    # the label being present would let any other label, added by a person or
-    # by labeler.yml, start a second run that cancels the one already booting
-    # an emulator.
+    # Only the requesting label starts tests. Other label events are skipped
+    # here and isolated from active runs by the concurrency group above.
     if: >-
       github.event_name == 'workflow_dispatch'
       || (github.event.action == 'labeled'
           && github.event.label.name == 'android-instrumented-tests')
       || (github.event.action != 'labeled'
           && contains(github.event.pull_request.labels.*.name, 'android-instrumented-tests'))
-    runs-on: macos-15
+    runs-on: ubuntu-24.04
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
+      # GitHub's Linux x86_64 runners expose KVM. Give the runner access using
+      # android-emulator-runner's udev setup, and fail rather than fall back to
+      # software CPU emulation if the device or permissions are unavailable.
+      - name: Enable and require KVM
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ ! -c /dev/kvm ]; then
+            echo "::error::This job requires a Linux x86_64 runner with /dev/kvm."
+            exit 1
+          fi
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          sudo udevadm settle
+          if [ ! -r /dev/kvm ] || [ ! -w /dev/kvm ]; then
+            echo "::error::The runner must have read/write access to /dev/kvm."
+            exit 1
+          fi
+
       # The tests run against the app, which applies the Google Services
       # plugin and signs its debug type, so this needs the configuration and
-      # the key rather than compiling bare. It restores without saving: it
-      # never runs on main, and its key carries the host triple, so no other
-      # job would read the entry.
+      # the key rather than compiling bare. It restores the Linux build cache
+      # without saving; rust-cache includes the runner OS, CPU architecture and
+      # Rust host triples, so it cannot restore macOS host artifacts.
       - name: Set up the Android build
         uses: ./.github/actions/setup-android-build
         with:
@@ -62,13 +82,14 @@ jobs:
       # application id has to match the Google configuration decoded above,
       # and the signing config reads the keystore's credentials.
       #
-      # Hardware acceleration needs the emulator's architecture to match the
-      # runner's, which is why this is arm64 rather than the x86 image the
-      # Linux runners would want.
+      # Match the emulator to the Linux x86_64 runner. The shared setup installs
+      # x86_64-linux-android, and the Gradle Rust convention builds and packages
+      # the x86_64 JNI libraries (including libtruapi.so) for these test APKs.
       - name: Run instrumented tests
         uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2.38.0
         env:
           APPLICATION_ID: ${{ vars.APPLICATION_ID }}
+          IOS_BUNDLE_ID: ${{ vars.IOS_BUNDLE_ID || 'io.parity.polkadotapp' }}
           APPLICATION_NAME: ${{ vars.APPLICATION_NAME }}
           CONTACT_EMAIL: ${{ vars.CONTACT_EMAIL }}
           CURRENCY_SYMBOL: ${{ vars.CURRENCY_SYMBOL }}
@@ -87,15 +108,23 @@ jobs:
           CI_KEYSTORE_KEY_PASS: ${{ secrets.CI_KEYSTORE_KEY_PASS }}
         with:
           api-level: 30
-          arch: arm64-v8a
+          arch: x86_64
           target: google_apis
           profile: pixel_5
           disable-animations: true
+          disable-linux-hw-accel: false
+          # Build before booting: a cold app/JNI build must not compete with the
+          # emulator for memory. Keep the same bounded Gradle settings in both
+          # invocations so connected tests reuse the assembled APKs.
+          pre-emulator-launch-script: |
+            "$ANDROID_HOME/emulator/emulator" -accel-check
+            ./gradlew :bindings:truapi-host:assembleDebugAndroidTest :app:assembleGpDebug :app:assembleGpDebugAndroidTest --no-daemon --max-workers=2 -Dorg.gradle.jvmargs=-Xmx4g -Pkotlin.compiler.execution.strategy=in-process
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -accel on
           working-directory: hosts/android
-          # Flavours are declared only in the app module, so this resolves
-          # there and runs that module's tests. The instrumented tests in the
-          # library modules are not covered, as upstream did not cover them.
-          script: ./gradlew connectedGpDebugAndroidTest --no-daemon
+          # App flavours do not select the bindings library's tests. Run those
+          # explicitly so canonical permission administration is exercised
+          # through the actual Android native library, not only JVM mocks.
+          script: ./gradlew :bindings:truapi-host:connectedDebugAndroidTest :app:connectedGpDebugAndroidTest --no-daemon --max-workers=2 -Dorg.gradle.jvmargs=-Xmx4g -Pkotlin.compiler.execution.strategy=in-process
 
       # The report says which test failed; the job status only says one did.
       - name: Upload the test report
@@ -103,6 +132,8 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: instrumented-test-report
-          path: hosts/android/app/build/reports/androidTests/
+          path: |
+            hosts/android/app/build/reports/androidTests/
+            hosts/android/bindings/truapi-host/build/reports/androidTests/
           retention-days: 5
           if-no-files-found: ignore

@@ -14,6 +14,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
+use futures::stream::{FuturesUnordered, StreamExt};
 use parking_lot::Mutex;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
@@ -104,14 +105,48 @@ pub(super) struct Received {
     pub(super) reset: bool,
 }
 
+/// A frame owns its quota until delivered, flushed, or dropped on any error.
+struct Reservation {
+    buffered: Arc<AtomicUsize>,
+    bytes: usize,
+}
+
+impl Reservation {
+    fn new(buffered: &Arc<AtomicUsize>, bytes: usize) -> Option<Self> {
+        buffered
+            .try_update(Ordering::AcqRel, Ordering::Acquire, |used| {
+                used.checked_add(bytes)
+                    .filter(|&total| total <= MAX_BUFFERED_BYTES_PER_CONNECTION)
+            })
+            .ok()?;
+        Some(Self {
+            buffered: buffered.clone(),
+            bytes,
+        })
+    }
+}
+
+impl Drop for Reservation {
+    fn drop(&mut self) {
+        self.buffered.fetch_sub(self.bytes, Ordering::AcqRel);
+    }
+}
+
+struct Incoming {
+    bytes: Vec<u8>,
+    _reservation: Reservation,
+}
+
 struct Outgoing {
     bytes: Vec<u8>,
     fin: bool,
+    _reservation: Reservation,
 }
 
 struct Conn {
     quic: quinn::Connection,
     streams: Vec<u32>,
+    opening: usize,
     buffered: Arc<AtomicUsize>,
     closed: bool,
     task: JoinHandle<()>,
@@ -119,7 +154,7 @@ struct Conn {
 
 struct Stream {
     conn: u32,
-    inbox: VecDeque<Vec<u8>>,
+    inbox: VecDeque<Incoming>,
     fin: bool,
     reset: bool,
     send_open: bool,
@@ -165,10 +200,6 @@ impl Inner {
         }
         if let Some(conn) = self.conns.get_mut(&entry.conn) {
             conn.streams.retain(|&id| id != stream);
-            conn.buffered.fetch_sub(
-                entry.inbox.iter().map(Vec::len).sum::<usize>(),
-                Ordering::AcqRel,
-            );
         }
     }
 }
@@ -193,6 +224,59 @@ impl Drop for DialSlot<'_> {
         if self.armed {
             self.shared.lock().dialing -= 1;
         }
+    }
+}
+
+/// Both local opens waiting for credit and incoming streams awaiting a kind
+/// byte hold a slot until they register or are cancelled.
+struct StreamSlot {
+    shared: Shared,
+    conn: u32,
+    armed: bool,
+}
+
+impl StreamSlot {
+    fn reserve(shared: &Shared, inner: &mut Inner, conn: u32) -> Result<Self, OpenError> {
+        let entry = inner.conns.get_mut(&conn).filter(|entry| !entry.closed)
+            .ok_or(OpenError::Closed)?;
+        if entry.streams.len() + entry.opening >= MAX_STREAMS_PER_CONNECTION {
+            return Err(OpenError::Limit);
+        }
+        entry.opening += 1;
+        Ok(Self { shared: shared.clone(), conn, armed: true })
+    }
+
+    fn commit(mut self, inner: &mut Inner) {
+        if let Some(entry) = inner.conns.get_mut(&self.conn) {
+            entry.opening -= 1;
+        }
+        self.armed = false;
+    }
+}
+
+impl Drop for StreamSlot {
+    fn drop(&mut self) {
+        if self.armed && let Some(entry) = self.shared.lock().conns.get_mut(&self.conn) {
+            entry.opening -= 1;
+        }
+    }
+}
+
+/// Dropping an awaiting call must cancel, not detach, its driver task.
+struct AbortOnDrop<T>(JoinHandle<T>);
+
+impl<T> Drop for AbortOnDrop<T> {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
+}
+
+/// Quinn implicitly finishes a dropped sender; cancellation must reset it.
+struct ResetOnDrop(quinn::SendStream);
+
+impl Drop for ResetOnDrop {
+    fn drop(&mut self) {
+        let _ = self.0.reset(0u32.into());
     }
 }
 
@@ -232,7 +316,14 @@ impl Transport {
         let endpoint = {
             let _guard = runtime.enter();
             quinn::Endpoint::client(SocketAddr::from((Ipv6Addr::UNSPECIFIED, 0)))
-                .map_err(TransportError::Bind)?
+        };
+        let endpoint = match endpoint {
+            Ok(endpoint) => endpoint,
+            Err(error) => {
+                // Construction may be called from an async runtime too.
+                runtime.shutdown_background();
+                return Err(TransportError::Bind(error));
+            }
         };
         tracing::debug!(
             identity = %peer_id::ed25519_text(identity.public()),
@@ -267,11 +358,25 @@ impl Transport {
         timeout: Duration,
         future: impl Future<Output = T> + Send + 'static,
     ) -> Option<T> {
-        self.runtime()
-            .spawn(async move { tokio::time::timeout(timeout, future).await.ok() })
+        let mut task = AbortOnDrop(self.runtime().spawn(async move {
+            tokio::time::timeout(timeout, future).await.ok()
+        }));
+        (&mut task.0)
             .await
             .ok()
             .flatten()
+    }
+
+    /// Count permission-waiting dials against retained connection handles.
+    /// Keep the connection lock through reservation so a completing handshake
+    /// cannot fall between the connection and pending-count snapshots.
+    pub(super) fn reserve_pending_dial(&self, pending: &AtomicUsize) -> bool {
+        let inner = self.shared.lock();
+        pending
+            .try_update(Ordering::AcqRel, Ordering::Acquire, |used| {
+                (inner.conns.len() + used < MAX_CONNECTIONS).then_some(used + 1)
+            })
+            .is_ok()
     }
 
     /// Connect to one peer, requiring its certificate to carry `ed25519`,
@@ -284,8 +389,7 @@ impl Transport {
     fn connecting(&self, dial: &Dial) -> Result<(DialSlot<'_>, quinn::Connecting), DialError> {
         let slot = {
             let mut inner = self.shared.lock();
-            let open = inner.conns.values().filter(|conn| !conn.closed).count();
-            if open + inner.dialing >= MAX_CONNECTIONS {
+            if inner.conns.len() + inner.dialing >= MAX_CONNECTIONS {
                 return Err(DialError::Limit);
             }
             inner.dialing += 1;
@@ -348,6 +452,7 @@ impl Transport {
             Conn {
                 quic: connection,
                 streams: Vec::new(),
+                opening: 0,
                 buffered,
                 closed: false,
                 task,
@@ -359,31 +464,31 @@ impl Transport {
     /// Open a bidirectional stream and send its kind byte, within
     /// [`OPEN_TIMEOUT`].
     pub(super) async fn open(&self, conn: u32, kind: u8) -> Result<u32, OpenError> {
-        let (quic, buffered) = self.open_target(conn)?;
+        let (slot, quic, buffered) = self.open_target(conn)?;
         let opened = self
-            .run(OPEN_TIMEOUT, async move { quic.open_bi().await })
+            .run(OPEN_TIMEOUT, async move {
+                quic.open_bi()
+                    .await
+                    .map(|(send, recv)| (ResetOnDrop(send), recv))
+            })
             .await;
-        self.opened(conn, kind, buffered, opened)
+        self.opened(slot, conn, kind, buffered, opened)
     }
 
-    fn open_target(&self, conn: u32) -> Result<(quinn::Connection, Arc<AtomicUsize>), OpenError> {
-        let inner = self.shared.lock();
-        let entry = inner.conns.get(&conn).ok_or(OpenError::Closed)?;
-        if entry.closed {
-            return Err(OpenError::Closed);
-        }
-        if entry.streams.len() >= MAX_STREAMS_PER_CONNECTION {
-            return Err(OpenError::Limit);
-        }
-        Ok((entry.quic.clone(), entry.buffered.clone()))
+    fn open_target(&self, conn: u32) -> Result<(StreamSlot, quinn::Connection, Arc<AtomicUsize>), OpenError> {
+        let mut inner = self.shared.lock();
+        let slot = StreamSlot::reserve(&self.shared, &mut inner, conn)?;
+        let entry = &inner.conns[&conn];
+        Ok((slot, entry.quic.clone(), entry.buffered.clone()))
     }
 
     fn opened(
         &self,
+        slot: StreamSlot,
         conn: u32,
         kind: u8,
         buffered: Arc<AtomicUsize>,
-        opened: Option<Result<(quinn::SendStream, quinn::RecvStream), quinn::ConnectionError>>,
+        opened: Option<Result<(ResetOnDrop, quinn::RecvStream), quinn::ConnectionError>>,
     ) -> Result<u32, OpenError> {
         let (send, recv) = match opened {
             Some(Ok(pair)) => pair,
@@ -397,8 +502,8 @@ impl Transport {
         if entry.streams.len() >= MAX_STREAMS_PER_CONNECTION {
             return Err(OpenError::Limit);
         }
-        // The writer subtracts every byte it flushes, so count the kind byte.
-        buffered.fetch_add(1, Ordering::AcqRel);
+        let reservation = Reservation::new(&buffered, 1).ok_or(OpenError::Limit)?;
+        slot.commit(&mut inner);
         let stream = register_stream(
             self.runtime().handle(),
             &self.shared,
@@ -412,6 +517,7 @@ impl Transport {
         let _ = entry.tx.send(Outgoing {
             bytes: vec![kind],
             fin: false,
+            _reservation: reservation,
         });
         Ok(stream)
     }
@@ -432,10 +538,7 @@ impl Transport {
             .map(|conn| conn.buffered.clone())
             .ok_or(SendError::Closed)?;
         let framed_len = message.len() + 4;
-        if buffered.load(Ordering::Acquire) + framed_len > MAX_BUFFERED_BYTES_PER_CONNECTION {
-            return Err(SendError::Limit);
-        }
-        buffered.fetch_add(framed_len, Ordering::AcqRel);
+        let reservation = Reservation::new(&buffered, framed_len).ok_or(SendError::Limit)?;
         let mut bytes = Vec::with_capacity(framed_len);
         bytes.extend_from_slice(&(message.len() as u32).to_le_bytes());
         bytes.extend_from_slice(message);
@@ -445,8 +548,16 @@ impl Transport {
         }
         entry
             .tx
-            .send(Outgoing { bytes, fin })
-            .map_err(|_| SendError::Closed)
+            .send(Outgoing {
+                bytes,
+                fin,
+                _reservation: reservation,
+            })
+            .map_err(|_| SendError::Closed)?;
+        if fin && entry.consumed {
+            inner.forget_stream(stream, false);
+        }
+        Ok(())
     }
 
     /// Pop one complete message if any; report fin or reset once drained.
@@ -461,14 +572,13 @@ impl Transport {
             .get_mut(&stream)
             .filter(|entry| !entry.consumed)
             .ok_or(Closed)?;
-        let mut released = 0;
-        if entry.inbox.front().is_some_and(|front| front.len() > max) {
+        if entry.inbox.front().is_some_and(|front| front.bytes.len() > max) {
             // The guest cannot take this message; the stream cannot progress.
-            released = entry.inbox.drain(..).map(|message| message.len()).sum();
+            entry.inbox.clear();
             entry.reset = true;
             entry.reader.abort();
         }
-        let message = entry.inbox.pop_front();
+        let message = entry.inbox.pop_front().map(|incoming| incoming.bytes);
         let drained = entry.inbox.is_empty();
         let received = Received {
             fin: drained && entry.fin,
@@ -477,11 +587,6 @@ impl Transport {
         };
         entry.consumed = received.message.is_none() && (received.fin || received.reset);
         let forget = entry.consumed && (received.reset || !entry.send_open);
-        let conn = entry.conn;
-        released += received.message.as_ref().map_or(0, Vec::len);
-        if let Some(conn) = inner.conns.get(&conn) {
-            conn.buffered.fetch_sub(released, Ordering::AcqRel);
-        }
         if forget {
             inner.forget_stream(stream, received.reset);
         }
@@ -566,14 +671,14 @@ fn register_stream(
     shared: &Shared,
     inner: &mut Inner,
     conn: u32,
-    send: quinn::SendStream,
+    send: ResetOnDrop,
     recv: quinn::RecvStream,
     buffered: Arc<AtomicUsize>,
 ) -> u32 {
     let stream = inner.allocate();
     let (tx, rx) = mpsc::unbounded_channel();
-    let reader = handle.spawn(read_loop(shared.clone(), stream, recv, buffered.clone()));
-    let writer = handle.spawn(write_loop(shared.clone(), stream, send, rx, buffered));
+    let reader = handle.spawn(read_loop(shared.clone(), stream, recv, buffered));
+    let writer = handle.spawn(write_loop(shared.clone(), stream, send, rx));
     inner.streams.insert(
         stream,
         Stream {
@@ -603,48 +708,76 @@ async fn accept_loop(
     quic: quinn::Connection,
     buffered: Arc<AtomicUsize>,
 ) {
+    let mut accepting = FuturesUnordered::new();
     loop {
-        match quic.accept_bi().await {
-            Ok((send, mut recv)) => {
-                let mut kind = [0u8; 1];
-                let read = tokio::time::timeout(ACCEPT_KIND_TIMEOUT, recv.read_exact(&mut kind));
-                if !matches!(read.await, Ok(Ok(()))) {
-                    // Dropping both halves resets the stream.
-                    continue;
+        tokio::select! {
+            _ = accepting.next(), if !accepting.is_empty() => {}
+            incoming = quic.accept_bi() => match incoming {
+                Ok((send, recv)) => {
+                    let send = ResetOnDrop(send);
+                    let slot = {
+                        let mut inner = shared.lock();
+                        if inner.events.len() >= MAX_PENDING_EVENTS {
+                            continue;
+                        }
+                        match StreamSlot::reserve(&shared, &mut inner, conn) {
+                            Ok(slot) => slot,
+                            Err(OpenError::Closed) => return,
+                            Err(OpenError::Limit) => continue,
+                        }
+                    };
+                    accepting.push(accept_stream(
+                        shared.clone(), slot, conn, send, recv, buffered.clone(),
+                    ));
                 }
-                let mut inner = shared.lock();
-                let Some(entry) = inner.conns.get(&conn).filter(|entry| !entry.closed) else {
+                Err(error) => {
+                    tracing::debug!("JAM peer connection {conn} closed: {error}");
+                    let mut inner = shared.lock();
+                    if let Some(entry) = inner.conns.get_mut(&conn) {
+                        entry.closed = true;
+                        inner.push_event(latest::JamPeerTransportEvent::ConnClosed { conn });
+                    }
                     return;
-                };
-                if entry.streams.len() >= MAX_STREAMS_PER_CONNECTION {
-                    continue;
                 }
-                let stream = register_stream(
-                    &tokio::runtime::Handle::current(),
-                    &shared,
-                    &mut inner,
-                    conn,
-                    send,
-                    recv,
-                    buffered.clone(),
-                );
-                inner.push_event(latest::JamPeerTransportEvent::Accepted {
-                    conn,
-                    stream,
-                    kind: kind[0],
-                });
-            }
-            Err(error) => {
-                tracing::debug!("JAM peer connection {conn} closed: {error}");
-                let mut inner = shared.lock();
-                if let Some(entry) = inner.conns.get_mut(&conn) {
-                    entry.closed = true;
-                    inner.push_event(latest::JamPeerTransportEvent::ConnClosed { conn });
-                }
-                return;
             }
         }
     }
+}
+
+async fn accept_stream(
+    shared: Shared,
+    slot: StreamSlot,
+    conn: u32,
+    send: ResetOnDrop,
+    mut recv: quinn::RecvStream,
+    buffered: Arc<AtomicUsize>,
+) {
+    let mut kind = [0u8; 1];
+    let read = tokio::time::timeout(ACCEPT_KIND_TIMEOUT, recv.read_exact(&mut kind));
+    if !matches!(read.await, Ok(Ok(()))) {
+        return;
+    }
+    let mut inner = shared.lock();
+    if !inner.conns.get(&conn).is_some_and(|entry| !entry.closed)
+        || inner.events.len() >= MAX_PENDING_EVENTS
+    {
+        return;
+    }
+    slot.commit(&mut inner);
+    let stream = register_stream(
+        &tokio::runtime::Handle::current(),
+        &shared,
+        &mut inner,
+        conn,
+        send,
+        recv,
+        buffered,
+    );
+    inner.push_event(latest::JamPeerTransportEvent::Accepted {
+        conn,
+        stream,
+        kind: kind[0],
+    });
 }
 
 async fn read_loop(
@@ -655,9 +788,6 @@ async fn read_loop(
 ) {
     use quinn::ReadExactError;
     loop {
-        while buffered.load(Ordering::Acquire) >= MAX_BUFFERED_BYTES_PER_CONNECTION {
-            tokio::time::sleep(BACKPRESSURE_POLL).await;
-        }
         let mut len = [0u8; 4];
         let clean_fin = match recv.read_exact(&mut len).await {
             Ok(()) => None,
@@ -674,15 +804,25 @@ async fn read_loop(
             finish_read(&shared, stream, false);
             return;
         }
+        // Reserve before allocating or reading the payload. Include framing
+        // so a peer cannot buffer an unbounded number of empty messages.
+        let reservation = loop {
+            if let Some(reservation) = Reservation::new(&buffered, len + 4) {
+                break reservation;
+            }
+            tokio::time::sleep(BACKPRESSURE_POLL).await;
+        };
         let mut message = vec![0u8; len];
         if recv.read_exact(&mut message).await.is_err() {
             finish_read(&shared, stream, false);
             return;
         }
-        buffered.fetch_add(len, Ordering::AcqRel);
         let mut inner = shared.lock();
         match inner.streams.get_mut(&stream) {
-            Some(entry) => entry.inbox.push_back(message),
+            Some(entry) => entry.inbox.push_back(Incoming {
+                bytes: message,
+                _reservation: reservation,
+            }),
             None => return,
         }
     }
@@ -703,28 +843,306 @@ fn finish_read(shared: &Shared, stream: u32, clean: bool) {
 async fn write_loop(
     shared: Shared,
     stream: u32,
-    mut send: quinn::SendStream,
+    mut send: ResetOnDrop,
     mut rx: mpsc::UnboundedReceiver<Outgoing>,
-    buffered: Arc<AtomicUsize>,
 ) {
     while let Some(outgoing) = rx.recv().await {
-        let written = send.write_all(&outgoing.bytes).await;
-        buffered.fetch_sub(outgoing.bytes.len(), Ordering::AcqRel);
+        let Outgoing { bytes, fin, _reservation } = outgoing;
+        let written = send.0.write_all(&bytes).await;
+        drop(bytes);
+        drop(_reservation);
         if written.is_err() {
-            if let Some(entry) = shared.lock().streams.get_mut(&stream) {
+            let mut inner = shared.lock();
+            if let Some(entry) = inner.streams.get_mut(&stream) {
                 entry.send_open = false;
+                if entry.consumed {
+                    inner.forget_stream(stream, true);
+                }
             }
             return;
         }
-        if outgoing.fin {
-            let _ = send.finish();
-            // Keep the handle until the peer acknowledges or the stream is
-            // dropped by `reset`/`close`; dropping early would not reset a
-            // finished stream but would forfeit the stopped notification.
-            let _ = send.stopped().await;
+        if fin {
+            let _ = send.0.finish();
+            // Retain the reset guard until acknowledged, so reset/close can
+            // still abandon buffered transmission after finish.
+            let _ = send.0.stopped().await;
             return;
         }
     }
-    // Channel closed: the stream was reset or its connection closed. Dropping
-    // an unfinished SendStream resets it.
+    // The reset guard also aborts the send side when its queue closes.
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn reservations_bound_empty_frames_and_release_queued_bytes_on_drop() {
+        let buffered = Arc::new(AtomicUsize::new(0));
+        let held = Reservation::new(&buffered, MAX_BUFFERED_BYTES_PER_CONNECTION - 4).unwrap();
+        let (tx, rx) = mpsc::unbounded_channel();
+        tx.send(Outgoing {
+            bytes: vec![0; 4],
+            fin: false,
+            _reservation: Reservation::new(&buffered, 4).unwrap(),
+        })
+        .ok()
+        .unwrap();
+        assert!(Reservation::new(&buffered, 4).is_none());
+        drop(rx);
+        assert_eq!(buffered.load(Ordering::Acquire), MAX_BUFFERED_BYTES_PER_CONNECTION - 4);
+        drop(held);
+        assert_eq!(buffered.load(Ordering::Acquire), 0);
+
+        let mut inbox = VecDeque::new();
+        inbox.push_back(Incoming {
+            bytes: Vec::new(),
+            _reservation: Reservation::new(&buffered, 4).unwrap(),
+        });
+        assert_eq!(buffered.load(Ordering::Acquire), 4);
+        let message = inbox.pop_front().map(|incoming| incoming.bytes);
+        assert_eq!(message, Some(Vec::new()));
+        assert_eq!(buffered.load(Ordering::Acquire), 0);
+    }
+
+    #[test]
+    fn simultaneous_reservations_never_exceed_the_connection_budget() {
+        let buffered = Arc::new(AtomicUsize::new(0));
+        let barrier = std::sync::Barrier::new(16);
+        std::thread::scope(|scope| {
+            let workers: Vec<_> = (0..16)
+                .map(|_| scope.spawn(|| {
+                    let reservation = Reservation::new(&buffered, MAX_MESSAGE_BYTES);
+                    barrier.wait();
+                    let used = buffered.load(Ordering::Acquire);
+                    barrier.wait();
+                    (reservation.is_some(), used)
+                }))
+                .collect();
+            let results: Vec<_> = workers.into_iter().map(|worker| worker.join().unwrap()).collect();
+            assert!(results.iter().all(|&(_, used)| used == MAX_BUFFERED_BYTES_PER_CONNECTION));
+            assert_eq!(results.iter().filter(|&&(granted, _)| granted).count(), 4);
+        });
+        assert_eq!(buffered.load(Ordering::Acquire), 0);
+    }
+
+    #[tokio::test]
+    async fn dropping_a_driver_call_cancels_its_work_and_releases_its_reservations() {
+        let transport = Transport::new().unwrap();
+        let buffered = Arc::new(AtomicUsize::new(0));
+        let reservation = Reservation::new(&buffered, 4).unwrap();
+        let (started, ready) = tokio::sync::oneshot::channel();
+        let mut call = Box::pin(transport.run(Duration::from_secs(60), async move {
+            let _reservation = reservation;
+            let _ = started.send(());
+            std::future::pending::<()>().await;
+        }));
+        tokio::select! {
+            _ = &mut call => panic!("pending work completed"),
+            _ = ready => {}
+        }
+        drop(call);
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while buffered.load(Ordering::Acquire) != 0 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("dropping the caller aborts its driver task");
+    }
+
+    fn server() -> (quinn::Endpoint, Identity) {
+        let identity = Identity::generate().unwrap();
+        let mut tls = rustls::ServerConfig::builder_with_provider(Arc::new(
+            rustls::crypto::ring::default_provider(),
+        ))
+        .with_protocol_versions(&[&rustls::version::TLS13])
+        .unwrap()
+        .with_no_client_auth()
+        .with_single_cert(identity.cert_chain(), identity.private_key())
+        .unwrap();
+        tls.alpn_protocols = vec![super::super::alpn(&[1; 32]).into_bytes()];
+        let config = quinn::ServerConfig::with_crypto(Arc::new(
+            quinn::crypto::rustls::QuicServerConfig::try_from(tls).unwrap(),
+        ));
+        let endpoint = quinn::Endpoint::server(
+            config,
+            (std::net::Ipv4Addr::LOCALHOST, 0).into(),
+        )
+        .unwrap();
+        (endpoint, identity)
+    }
+
+    async fn connect(
+        transport: &Transport,
+        server: &quinn::Endpoint,
+        identity: &Identity,
+    ) -> (u32, quinn::Connection) {
+        let request = Dial {
+            genesis: [1; 32],
+            ip: std::net::Ipv4Addr::LOCALHOST.to_ipv6_mapped().octets(),
+            port: server.local_addr().unwrap().port(),
+            ed25519: *identity.public(),
+        };
+        let (client, peer) = tokio::join!(
+            transport.dial(&request),
+            async { server.accept().await.unwrap().await.unwrap() },
+        );
+        (client.unwrap(), peer)
+    }
+
+    #[tokio::test]
+    async fn sending_fin_after_consuming_peer_fin_releases_the_stream_slot() {
+        let transport = Transport::new().unwrap();
+        let (server, identity) = server();
+        let (conn, peer) = connect(&transport, &server, &identity).await;
+        let stream = transport.open(conn, 0).await.unwrap();
+        let (mut send, mut recv) = peer.accept_bi().await.unwrap();
+        let mut kind = [0];
+        recv.read_exact(&mut kind).await.unwrap();
+        send.finish().unwrap();
+        tokio::time::timeout(Duration::from_secs(1), async {
+            loop {
+                if transport.recv(stream, 1024).unwrap().fin {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        transport.send(stream, b"done", true).unwrap();
+        assert!(!transport.shared.lock().streams.contains_key(&stream));
+        let mut framed = [0; 8];
+        recv.read_exact(&mut framed).await.unwrap();
+        assert_eq!(&framed, b"\x04\0\0\0done");
+    }
+
+    #[tokio::test]
+    async fn remote_closed_handles_still_consume_connection_slots_until_closed() {
+        let transport = Transport::new().unwrap();
+        let (server, identity) = server();
+        let mut conns = Vec::new();
+        for _ in 0..MAX_CONNECTIONS {
+            let (conn, peer) = connect(&transport, &server, &identity).await;
+            peer.close(0u32.into(), b"");
+            tokio::time::timeout(Duration::from_secs(1), async {
+                while !transport.shared.lock().conns[&conn].closed {
+                    tokio::task::yield_now().await;
+                }
+            })
+            .await
+            .unwrap();
+            conns.push(conn);
+        }
+        let request = Dial {
+            genesis: [1; 32],
+            ip: std::net::Ipv4Addr::LOCALHOST.to_ipv6_mapped().octets(),
+            port: server.local_addr().unwrap().port(),
+            ed25519: *identity.public(),
+        };
+        assert_eq!(transport.dial(&request).await, Err(DialError::Limit));
+        transport.close(conns[0]).unwrap();
+        connect(&transport, &server, &identity).await;
+    }
+
+    #[tokio::test]
+    async fn empty_messages_pause_at_quota_and_reset_releases_buffers_and_resets_peer() {
+        let transport = Transport::new().unwrap();
+        let (server, identity) = server();
+        let (conn, peer) = connect(&transport, &server, &identity).await;
+        let stream = transport.open(conn, 0).await.unwrap();
+        let (mut send, mut recv) = peer.accept_bi().await.unwrap();
+        let mut kind = [0];
+        recv.read_exact(&mut kind).await.unwrap();
+        let buffered = transport.shared.lock().conns[&conn].buffered.clone();
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while buffered.load(Ordering::Acquire) != 0 {
+                tokio::task::yield_now().await;
+            }
+        }).await.unwrap();
+        let held = Reservation::new(&buffered, MAX_BUFFERED_BYTES_PER_CONNECTION - 8).unwrap();
+        send.write_all(&[0; 12]).await.unwrap();
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while transport.shared.lock().streams[&stream].inbox.len() != 2 {
+                tokio::task::yield_now().await;
+            }
+        }).await.unwrap();
+        assert_eq!(buffered.load(Ordering::Acquire), MAX_BUFFERED_BYTES_PER_CONNECTION);
+        assert_eq!(transport.recv(stream, 0).unwrap().message, Some(Vec::new()));
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while transport.shared.lock().streams[&stream].inbox.len() != 2 {
+                tokio::task::yield_now().await;
+            }
+        }).await.unwrap();
+        transport.reset(stream).unwrap();
+        drop(held);
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while buffered.load(Ordering::Acquire) != 0 {
+                tokio::task::yield_now().await;
+            }
+        }).await.unwrap();
+        let result = tokio::time::timeout(Duration::from_secs(1), recv.read(&mut kind))
+            .await
+            .unwrap();
+        assert!(matches!(result, Err(quinn::ReadError::Reset(_))));
+    }
+
+    #[tokio::test]
+    async fn an_inbound_stream_is_reset_when_its_handle_cannot_be_announced() {
+        let transport = Transport::new().unwrap();
+        let (server, identity) = server();
+        let (_conn, peer) = connect(&transport, &server, &identity).await;
+        {
+            let mut inner = transport.shared.lock();
+            for _ in 0..MAX_PENDING_EVENTS {
+                inner.push_event(latest::JamPeerTransportEvent::StreamFin { stream: 0 });
+            }
+        }
+        let (mut send, mut recv) = peer.open_bi().await.unwrap();
+        send.write_all(&[0]).await.unwrap();
+        let mut bytes = [0];
+        let result = tokio::time::timeout(Duration::from_secs(1), recv.read(&mut bytes))
+            .await
+            .unwrap();
+        assert!(matches!(result, Err(quinn::ReadError::Reset(_))));
+        assert!(transport.shared.lock().streams.is_empty());
+    }
+
+    #[tokio::test]
+    async fn pending_streams_hold_slots_and_dropping_them_releases_credit() {
+        let transport = Transport::new().unwrap();
+        let (server, identity) = server();
+        let (conn, _peer) = connect(&transport, &server, &identity).await;
+        let pending: Vec<_> = (0..MAX_STREAMS_PER_CONNECTION)
+            .map(|_| transport.open_target(conn).unwrap())
+            .collect();
+        assert!(matches!(transport.open_target(conn), Err(OpenError::Limit)));
+        drop(pending);
+        assert!(transport.open_target(conn).is_ok());
+        assert_eq!(transport.shared.lock().conns[&conn].opening, 0);
+    }
+
+    #[tokio::test]
+    async fn an_inbound_stream_without_a_kind_does_not_block_later_streams() {
+        let transport = Transport::new().unwrap();
+        let (server, identity) = server();
+        let (conn, peer) = connect(&transport, &server, &identity).await;
+        // Sending on the higher stream id implicitly opens this lower id,
+        // but leaves its kind byte unavailable.
+        let (_silent_send, _silent_recv) = peer.open_bi().await.unwrap();
+        let (mut send, _recv) = peer.open_bi().await.unwrap();
+        send.write_all(&[42]).await.unwrap();
+        let stream = tokio::time::timeout(Duration::from_secs(1), async {
+            loop {
+                for event in transport.events() {
+                    if let latest::JamPeerTransportEvent::Accepted { stream, kind: 42, .. } = event {
+                        return stream;
+                    }
+                }
+                tokio::task::yield_now().await;
+            }
+        }).await.expect("one missing kind byte must not stall another stream");
+        assert_eq!(transport.shared.lock().streams[&stream].conn, conn);
+    }
 }

@@ -141,6 +141,13 @@ the service, preserve durable native custody before returning an outgoing memo, 
 exception text to a product. Regenerate bindings and rebuild the XCFramework together after changing this callback
 surface; generating Swift alone is not an iOS build or funded-payment qualification.
 
+The reference app's combined Core Data schema is `UserDataModel54`. Keep the shipped base
+`UserDataModel53` and Chat `UserDataModel53Chat` models unchanged for store detection; each migrates
+to version 54. The combined schema retains pocket cards, incoming payment ownership and the durable
+native Coinage ledger. `UserDataModel49Chat` follows the Chat migration path, avoiding an intermediate
+schema that would discard its custody records. Qualify migration from both version-53 stores on iOS
+before release; the Swift migration tests cover their distinct persisted fields.
+
 `HostRuntimeConfig.assetHubChainGenesisHash` is required. Supply the Asset Hub genesis hash from the same network
 configuration, as 32 bytes. Product manifests are read from the dotNS contracts deployed there, so it is what makes a
 `trustedProducts` grant resolvable: without a usable value no manifest resolves, so every cross-product grant not
@@ -149,7 +156,9 @@ zero bytes only to declare deliberately that this host has no Asset Hub. Include
 embedding app's package upgrade.
 
 Run the package tests in their UIKit host on an iOS simulator (the xcframework has no macOS slice). The helper installs
-pinned XcodeGen under `.agent/tools`, generates the project, and selects an available simulator:
+pinned XcodeGen under `target/tools`, generates the project, and selects an available simulator. CI waits for that
+simulator to finish booting before compiling the test host, keeping OS initialization outside the first WebKit
+page-ready deadline.
 
 ```bash
 # from the repo root
@@ -307,6 +316,43 @@ resumed pairing reports nothing, so the host keeps its own record of which devic
 the thread answering the handshake, so hand the device off rather than announcing it inline. Defaults to a no-op for a
 host that answers no pairing.
 
+## Game
+
+A host that can hold reminders implements `GameHostBridge`, passed as `game:`
+to `openProductExecution`. Hosts without the bridge pass nothing and Game
+calls answer unsupported, as they do for every product but the game product,
+`dim2`.
+
+```swift
+final class MyGameBridge: GameHostBridge, @unchecked Sendable {
+    private let reminders: ReminderStore
+
+    init(reminders: ReminderStore) { self.reminders = reminders }
+
+    func scheduleReminder(startsAt: UInt64) async throws {
+        try await reminders.hold(startsAt: startsAt)
+    }
+
+    func cancelReminder() async throws {
+        reminders.drop()
+    }
+}
+
+let execution = try runtime.openProductExecution(
+    bridge: bridge,
+    configuration: ProductExecutionConfig(productId: "dim2.dot", executionKind: .worker),
+    game: MyGameBridge(reminders: reminderStore)
+)
+```
+
+The host holds one reminder per product: a `scheduleReminder` replaces the
+reminder the same product already holds. The core asks for no per-product
+consent: the host asks the OS for what it needs, rings an alarm where the OS
+allows one and delivers an ordinary notification otherwise, may add the game to
+the user's calendar, keeps the reminder across app kill and device reboot, and
+drops it once the game has started. A `scheduleReminder` that throws reaches
+the product as a host failure carrying its reason.
+
 ## Architecture
 
 ```text
@@ -325,12 +371,7 @@ host that answers no pairing.
                    Product execution
 ```
 
-The bootstrap supplies the execution endpoint to the shared container, which consumes and removes
-`window.__truapi_localhost` before product scripts run. The container creates one SDK connection for public calls and
-private permission checks, then exposes its public client through `window.__HOST_API_CLIENT__`. The Rust core handles
-the wire protocol directly. Outbound responses and host-side capability callbacks (`navigateTo`, `pushNotification`,
-`cancelNotification`, `devicePermission`, `remotePermission`, `authStateChanged`, core storage, chain JSON-RPC,
-confirmations, preimage, theme, `featureSupported`, `storage`) reach the embedder through `HostCallbacks`.
+The bootstrap supplies the execution endpoint to the shared container, which consumes and removes `window.__truapi_localhost` before product scripts run. The container creates one SDK connection for public calls and private permission checks, then exposes its public client through `window.__HOST_API_CLIENT__`. The Rust core handles the wire protocol directly. Outbound responses and host-side capability callbacks (`navigateTo`, `pushNotification`, `cancelNotification`, `devicePermission`, `setExpandedCardFaceShown`, `remotePermission`, `authStateChanged`, core storage, chain JSON-RPC, confirmations, preimage, theme, `featureSupported`, `storage`) reach the embedder through `HostCallbacks`.
 
 ## Permissions split
 
@@ -342,27 +383,36 @@ The core's `Permissions` platform trait has two methods, and so does `HostCallba
 
 `product` is the requesting execution's `ProductExecutionConfig`.
 
-Both return `PermissionDecision`: `.allowOnce`, `.allowAlways`, or `.deny`. Preserve the user’s choice; the core keeps
-one-use grants in memory and consumes them at the authorized operation. OS refusal after app consent should throw
-instead of returning `.deny`, which records a product denial. The same typed values drive the `TrUAPIProductExecution`
-permission admin API (`permissionAuthorizationStatus`, `setPermissionAuthorizationStatus`), which reads and updates the
-persisted decisions without prompting.
+Both return `PermissionDecision`: `.allowOnce`, `.allowAlways`, or `.deny`. Preserve the user’s choice; the core keeps one-use grants in memory and consumes them at the authorized operation. OS refusal after app consent should throw instead of returning `.deny`, which records a product denial. Executions expose the read-only `permissionAuthorizationStatus`; native settings administration belongs to the process-owned `TrUAPIHostRuntime`.
 
 Identity and account access reviews use `confirmPermission(review:)`, which also returns `PermissionDecision`. Override
-it to preserve Allow once. Its compatibility default maps `confirmUserAction`'s Boolean approval to `.allowAlways`;
-signing and other single-action reviews continue to use that Boolean callback.
+it to preserve Allow once and report unavailable/cancelled permission prompts as errors.
+Its default maps Boolean approval to `.allowAlways`, except preimage submission, which
+remains `.allowOnce`; automatic upload consent requires an explicit typed decision.
+Signing and other single-action reviews continue to use the Boolean callback.
 
 Fetch, XHR, WebSocket connections, notification scheduling, external navigation and existing remote-operation gates
-consume temporary grants. The shared container authorizes each `getUserMedia` call through
-`authorize_device_permission`, camera before microphone. Each approval consumes its one-use grant for that attempt: a
-later microphone denial or native capture failure does not restore the camera grant. The returned stream remains usable
-until stopped; another capture requires new authorization.
+consume temporary grants. Direct product `getUserMedia`, `getDisplayMedia` and raw peer connections are blocked;
+neither a saved device decision nor a legacy WebRTC grant can reopen them.
 
-The container enforces product consent, while native media delegates resolve OS permission without consuming product
-consent again. An OS grant does not establish product consent. This boundary requires the container to run before
-product code in every frame, with its native methods and prototypes locked. SPA and Chat install it at document start.
-Authorization uses a private transport and response handler with captured browser primitives, so replacing public SDK
-replies, collection methods or Promise methods cannot approve a pending capture.
+Host-owned Media checks exact Calling authority and separate microphone/camera permissions before native capture,
+and the native backend resolves OS consent. An OS grant does not establish product consent. The lockdown container
+runs before product code in every frame. SPA and shared worker engines deny direct guest capture; the worker retains
+its Media backend until the shared worker closes, rather than ending capture when just its Chat handler releases it.
+
+### Native settings and legacy consumers
+
+Use the same runtime supplied by the app's `ServiceCoordinator`, not a second runtime or a settings-owned permission store:
+
+- `permissionAuthorizationProducts()` and `permissionAuthorizations(productId:)` enumerate existing persisted core keys and return canonical `{ request, status }` records. Implement `HostCoreStorageBackend.keys()` over the actual core namespace; the default throws unsupported, never an empty successful snapshot.
+- `importPermissionAuthorizations(productId:entries:)` atomically fills only missing entries. Existing native grants, denials, and reset tombstones win over old legacy rows. Keep legacy-only permission types in their existing repository. Preserve exact multi-domain request identity rather than flattening a bundle denial into singleton denials.
+- `setPermissionAuthorizationStatus(productId:request:status:)` is the explicit settings mutation. Await success before acknowledging removal; show failures while the settings view is still present. `.notDetermined` persists a reset tombstone, permits a future prompt, invalidates pending and one-time grants, and closes affected product executions.
+- Legacy prompt consumers capture `try permissionAuthorizationRevision(productId:)` **before** prompting and commit persistent answers with `setPermissionAuthorizationStatusIfCurrent(..., revision:)`. A false result rejects a stale answer. Temporary legacy grants carry that same revision and are ignored after revocation.
+- Every `HostBridge` implements `permissionAuthorizationsChanged(productId:)`. The process bridge forwards it to settings subscriptions. Shell runtimes inspect `execution.isClosed()` on this notification and tear down the affected WebView/engine and live media; an ordinary grant must not tear down an open execution.
+
+In the iOS app, Chat and Pocket share a worker rather than owning separate engines. `TrUAPIWorkerManager` observes the actual worker execution and removes its published execution, stops Pocket forwarding, and disposes the worker engine and chain connections on revocation. The observer is tied to that worker's boot identity so a delayed closure cannot tear down a replacement. A worker closed while starting must not resume into product code.
+
+The iOS app merges canonical decisions with legacy-only rows both in per-product settings and the apps-with-permissions list. Permission switches remain on and navigation is held while revocation is pending; storage or notification-cancellation errors remain visible and can be retried. Exact native request scopes remain intact, including bare product labels for account-access decisions, network/account-scoped Calling and root-account-scoped automatic uploads.
 
 ## SSO session handling
 
@@ -507,9 +557,10 @@ policy-change enqueueing. Initial unanswered snapshots never emit revocation.
 It refreshes the exact permission scope in every live core sharing that store,
 including the writer's shared runtime. Authorized refreshes do not invalidate
 ongoing consent; denied, unanswered or unreadable policy fences only its exact
-scope. The async
-`setPermissionAuthorizationStatus` waits for this fanout only after its native
-setter returns. `refreshPermissionAuthorization` is a read-only host admin call;
+scope. The async runtime `setPermissionAuthorizationStatus(productId:request:status:)`
+and revision-guarded setter wait for this fanout only after the native setter returns.
+The durable change also emits `permissionAuthorizationsChanged(productId:)`, including
+when the awaiting Rust future is dropped. `refreshPermissionAuthorization` is a read-only host admin call;
 neither operation exposes storage, SDP, ICE, or media tracks to products.
 
 ```swift
@@ -544,6 +595,10 @@ final class MyCoreStorage: HostCoreStorageBackend, @unchecked Sendable {
         lock.lock(); defer { lock.unlock() }
         values.removeValue(forKey: key)
     }
+    func keys() throws -> [Data] {
+        lock.lock(); defer { lock.unlock() }
+        return Array(values.keys)
+    }
 }
 
 final class MyBridge: HostBridge, @unchecked Sendable {
@@ -551,6 +606,13 @@ final class MyBridge: HostBridge, @unchecked Sendable {
     let coreStorage: HostCoreStorageBackend = MyCoreStorage()
 
     func onCoreLog(marker: String, detail: String) { /* log */ }
+
+    func permissionAuthorizationsChanged(productId: String) {
+        NotificationCenter.default.post(
+            name: Notification.Name("ProductPermissionAuthorizationsChanged"),
+            object: productId
+        )
+    }
 
     func navigateTo(url: String) async throws {
         await MainActor.run { /* UIApplication.shared.open(...) */ }
@@ -672,11 +734,13 @@ try TrUAPIHost.installProductScripts(
 )
 webView.load(URLRequest(url: productURL))
 
-// Settings changes apply to subsequent permission-checked operations.
-try await execution.setPermissionAuthorizationStatus(
+// Settings denials/resets close affected executions and cancel stale consent.
+try await runtime.setPermissionAuthorizationStatus(
+    productId: "my-product.dot",
     request: .remote(RemotePermissionRequest(permission: .remote(domains: ["api.example.com"]))),
     status: .denied
 )
+// Tear down the closed WebView; open a fresh execution and WebView to continue.
 
 // On view teardown:
 webView.stopLoading()
@@ -717,6 +781,10 @@ owns WebRTC, capture and native compositor views. Product JavaScript never recei
 peer connections, media streams, SDP, ICE or native backend handles. Calling consent
 is scoped to the exact product, network and account, independently of microphone,
 camera and system screen-sharing consent.
+Direct guest WebRTC and capture remain unavailable regardless of legacy `.webRtc`
+or device grants. Canonical settings mutations use the runtime's exact typed requests;
+denials and resets close affected executions, whose WebViews/engines and host Media
+must then be torn down. Ordinary grants do not close an open execution.
 
 The installer adds the bootstrap and container scripts before loading. It preserves the host's website data store and
 navigation delegate. Hosts that assemble their own script lists can keep using `LocalhostBridgeBootstrap.script`
@@ -735,9 +803,9 @@ Build the generated JavaScript SDK before the container: from the repository roo
 `npm run build --prefix js/packages/truapi`, then `npm run build --prefix js/container`. A protocol change also requires
 regenerating the SDK through the repository's normal build pipeline.
 
-`ProductNetworkAccessTests` exercises grant/deny/revocation, one-use fetch, WebRTC and media authorization, native
-redirects, stylesheet/font requests, and preserving a persistent store and existing navigation delegate. Media coverage
-uses a capture stub with the actual private Rust permission transport; it does not require simulator camera hardware.
+`ProductNetworkAccessTests` exercises grant/deny/revocation, one-use fetch, direct WebRTC/capture denial, native
+redirects, stylesheet/font requests, and preserving a persistent store and existing navigation delegate. Capture
+coverage verifies that a product stub is never invoked, without requiring simulator camera hardware.
 The tests require the built container, current Rust bindings and a real WKWebView in the UIKit test host. These
 Apple-only tests cannot run on Linux.
 

@@ -1,5 +1,8 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.permissions
 
+import io.mockk.coEvery
+import io.mockk.coVerify
+import io.mockk.mockk
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.handlers.ProductPermissionHandler
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.models.PermissionDecision
@@ -31,7 +34,7 @@ class RealProductPermissionGuardTest {
     private val balanceHandler: ProductPermissionHandler<ProductPermission.BalanceAccess> = mock()
     private val deviceHandler: ProductPermissionHandler<ProductPermission.DeviceCapability> = mock()
     private val identityHandler: ProductPermissionHandler<ProductPermission.UserIdentityAccess> = mock()
-    private val repository: ProductPermissionRepository = mock()
+    private val repository: ProductPermissionRepository = mockk(relaxed = true)
     private val requester: ProductPermissionRequester = mock()
 
     private val productId = ProductId.fromStoredValue("acme.dot")
@@ -41,7 +44,39 @@ class RealProductPermissionGuardTest {
 
     @Before
     fun setUp() {
+        coEvery { repository.withPermissionRequest(any(), any(), any()) } coAnswers {
+            thirdArg<suspend () -> Boolean>().invoke()
+        }
         guard = guardWith(remoteHandler, requester)
+    }
+
+    @Test
+    fun `canonical feature authority never uses local one-time grants or legacy prompts`() = runBlocking<Unit> {
+        val permissions = listOf(
+            ProductPermission.ChatAuthority,
+            ProductPermission.ProfileDisclosure,
+            ProductPermission.StatementStoreAllowance(null),
+        )
+        coEvery { repository.hasOneTimeGrant(any(), any()) } returns true
+        coEvery { repository.consumeOneTimeGrant(any(), any()) } returns true
+        whenever(remoteHandler.isGranted(any(), any())).thenReturn(true)
+        whenever(remoteHandler.request(any(), any())).thenReturn(true)
+        for (feature in permissions) {
+            coEvery { repository.isGranted(productId, feature) } returns false
+            assertFalse(guard.check(productId, feature))
+            assertFalse(guard.requestPermission(productId, feature))
+            assertFalse(guard.consumePermission(productId, feature))
+            coEvery { repository.isGranted(productId, feature) } returns true
+            assertTrue(guard.check(productId, feature))
+            assertTrue(guard.consumePermission(productId, feature))
+            verify(requester, never()).prompt(productId, feature)
+        }
+        coVerify(exactly = 0) { repository.grant(any(), any()) }
+        coVerify(exactly = 0) { repository.grantOneTime(any(), any()) }
+        coVerify(exactly = 0) { repository.consumeOneTimeGrant(any(), any()) }
+        coVerify(exactly = 0) { repository.hasOneTimeGrant(any(), any()) }
+        verify(remoteHandler, never()).isGranted(any(), any())
+        verify(remoteHandler, never()).request(any(), any())
     }
 
     @Test
@@ -94,6 +129,22 @@ class RealProductPermissionGuardTest {
 
         assertTrue(result)
         verifyGrantedPermanently()
+    }
+
+    @Test
+    fun `JAM networks sharing a display prefix are prompted and granted separately`() = runBlocking<Unit> {
+        withNotGranted()
+        withBatchedDecision(PermissionDecision.AllowAlways)
+        val first = RemotePermission.JamPeersAccess("0x10c123f0" + "ab".repeat(28))
+        val second = RemotePermission.JamPeersAccess("0x10c123f0" + "cd".repeat(28))
+
+        assertTrue(guard.requestPermissionsBatched(productId, listOf(first, second)))
+
+        verify(requester).promptBatched(productId, listOf(first, second))
+        coVerify { repository.grant(productId, first) }
+        coVerify { repository.grant(productId, second) }
+        assertEquals(first, ProductPermission.fromLocal(first.typeName, first.key))
+        assertEquals(second, ProductPermission.fromLocal(second.typeName, second.key))
     }
 
     @Test
@@ -161,11 +212,11 @@ class RealProductPermissionGuardTest {
     // region setup helpers
 
     private fun withNoExistingGrant() {
-        whenever(repository.hasOneTimeGrant(any(), any())).thenReturn(false)
+        coEvery { repository.hasOneTimeGrant(any(), any()) } returns false
     }
 
     private fun withAlreadyGranted() {
-        whenever(repository.hasOneTimeGrant(any(), any())).thenReturn(true)
+        coEvery { repository.hasOneTimeGrant(any(), any()) } returns true
     }
 
     private suspend fun withNotGranted() {
@@ -179,17 +230,17 @@ class RealProductPermissionGuardTest {
 
     /** Pre-lock check sees the permission ungranted; the under-lock re-check sees it granted. */
     private suspend fun withGrantedWhileWaitingForLock() {
-        whenever(repository.hasOneTimeGrant(any(), any())).thenReturn(false, true)
+        coEvery { repository.hasOneTimeGrant(any(), any()) } returnsMany listOf(false, true)
         whenever(remoteHandler.isGranted(any(), any())).thenReturn(false)
     }
 
     private fun withExistingOneTimeGrant() {
-        whenever(repository.consumeOneTimeGrant(any(), any())).thenReturn(true)
+        coEvery { repository.consumeOneTimeGrant(any(), any()) } returns true
     }
 
     /** First consume attempt (pre-lock) finds nothing; the under-lock retry finds a freshly issued grant. */
     private fun withOneTimeGrantIssuedWhileWaiting() {
-        whenever(repository.consumeOneTimeGrant(any(), any())).thenReturn(false, true)
+        coEvery { repository.consumeOneTimeGrant(any(), any()) } returnsMany listOf(false, true)
     }
 
     private suspend fun withBatchedDecision(decision: PermissionDecision) {
@@ -213,7 +264,7 @@ class RealProductPermissionGuardTest {
     }
 
     private suspend fun verifyGrantedPermanently() {
-        verify(repository).grant(any(), any())
+        coVerify { repository.grant(any(), any()) }
     }
 
     // endregion

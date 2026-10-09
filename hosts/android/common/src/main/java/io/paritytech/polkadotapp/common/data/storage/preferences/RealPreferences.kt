@@ -54,6 +54,8 @@ class RealPreferences @Inject constructor(
         return sharedPreferences.contains(field)
     }
 
+    override fun keys(): Set<String> = sharedPreferences.all.keys
+
     override fun putString(
         field: String,
         value: String?,

@@ -32,6 +32,10 @@ protocol TrUAPIHostRuntimeProviding: AnyObject, Sendable {
     /// Anchor the host's core confirmations (signing, permission prompts) to
     /// the given view. Until it is attached, host-level prompts deny.
     @MainActor func setPresentationView(_ view: ControllerBackedProtocol)
+
+    /// Attach what runs product workers when the core's reference ledger asks
+    /// for them. Called once at startup, before the runtime is first built.
+    func attach(workerManager: any TrUAPIWorkerManaging)
 }
 
 struct TrUAPIAutomaticUploadScope: Equatable, Sendable {
@@ -61,6 +65,10 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
     private var authorizationAvailable = false
     private var authorizationGeneration = UUID()
     private var authorizationObservers: [UUID: AsyncStream<UUID>.Continuation] = [:]
+
+    /// Set once at startup, before any product opens. The runtime is built on
+    /// first use, which is long after, so the manager is in place by then.
+    private var workerManager: (any TrUAPIWorkerManaging)?
 
     init(
         chainRegistry: ChainRegistryProtocol,
@@ -130,6 +138,13 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
         }
     }
 
+    func attach(workerManager: any TrUAPIWorkerManaging) {
+        lock.lock()
+        defer { lock.unlock() }
+
+        self.workerManager = workerManager
+    }
+
     func sharedRuntime() throws -> TrUAPIHostRuntime {
         lock.lock()
         defer { lock.unlock() }
@@ -160,6 +175,7 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
             chainConnections: chainConnections,
             confirmationPresenter: TrUAPIConfirmationPresenter(routerFacade: confirmationRouterFacade),
             chatFiles: TrUAPINativeChatFiles.shared,
+            workerManager: workerManager,
             logger: logger
         )
 

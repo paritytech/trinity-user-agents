@@ -29,7 +29,11 @@ internal val ProductPermission.icon: ImageVector
         is ProductPermission.AccountAccess -> NovaIcons.PeopleOutline
         is ProductPermission.BalanceAccess -> NovaIcons.Dollar
         is ProductPermission.UserIdentityAccess -> NovaIcons.PeopleOutline
+        ProductPermission.ChatAuthority -> NovaIcons.PeopleOutline
+        ProductPermission.ProfileDisclosure -> NovaIcons.PeopleOutline
+        is ProductPermission.StatementStoreAllowance -> NovaIcons.CloudOn
         is ProductPermission.RemotePermission.NetworkAccess -> NovaIcons.WiFi
+        is ProductPermission.RemotePermission.NetworkAccessSet -> NovaIcons.WiFi
         ProductPermission.RemotePermission.WebRtcAccess -> NovaIcons.CallFilled
         ProductPermission.RemotePermission.ChainSubmitAccess -> NovaIcons.Send
         ProductPermission.RemotePermission.StatementSubmitAccess -> NovaIcons.CloudOn
@@ -56,8 +60,12 @@ internal fun ProductPermission.title(productId: String): String {
         is ProductPermission.AccountAccess -> stringResource(RCommon.string.product_permission_account_title, productId, targetProductId)
         is ProductPermission.BalanceAccess -> stringResource(RCommon.string.product_permission_balance_title, productId)
         is ProductPermission.UserIdentityAccess -> stringResource(RCommon.string.product_permission_user_identity_title, productId)
+        ProductPermission.ChatAuthority -> stringResource(RCommon.string.product_permission_chat_authority_title, productId)
+        ProductPermission.ProfileDisclosure -> stringResource(RCommon.string.product_permission_profile_disclosure_title, productId)
+        is ProductPermission.StatementStoreAllowance -> stringResource(RCommon.string.product_permission_allowance_title, productId)
         is ProductPermission.DeviceCapability -> capability.title(productId)
         is ProductPermission.RemotePermission.NetworkAccess -> stringResource(RCommon.string.product_permission_network_title, productId, domain)
+        is ProductPermission.RemotePermission.NetworkAccessSet -> stringResource(RCommon.string.product_permission_network_title, productId, domains.joinToString(", "))
         ProductPermission.RemotePermission.WebRtcAccess -> stringResource(RCommon.string.product_permission_webrtc_title, productId)
         ProductPermission.RemotePermission.ChainSubmitAccess -> stringResource(RCommon.string.product_permission_chain_submit_title, productId)
         ProductPermission.RemotePermission.StatementSubmitAccess -> stringResource(RCommon.string.product_permission_statement_submit_title, productId)
@@ -89,13 +97,17 @@ internal fun ProductPermission.subtitle(): String {
         is ProductPermission.AccountAccess -> stringResource(RCommon.string.product_permission_account_subtitle, manageLater)
         is ProductPermission.BalanceAccess -> stringResource(RCommon.string.product_permission_balance_subtitle, manageLater)
         is ProductPermission.UserIdentityAccess -> stringResource(RCommon.string.product_permission_user_identity_subtitle, manageLater)
+        ProductPermission.ChatAuthority -> stringResource(RCommon.string.product_permission_chat_authority_description)
+        ProductPermission.ProfileDisclosure -> stringResource(RCommon.string.product_permission_profile_disclosure_description)
+        is ProductPermission.StatementStoreAllowance -> stringResource(RCommon.string.product_permission_allowance_description)
         is ProductPermission.DeviceCapability -> capability.subtitle(manageLater)
         is ProductPermission.RemotePermission.NetworkAccess -> stringResource(RCommon.string.product_permission_network_subtitle, manageLater)
+        is ProductPermission.RemotePermission.NetworkAccessSet -> stringResource(RCommon.string.product_permission_network_subtitle, manageLater)
         ProductPermission.RemotePermission.WebRtcAccess -> stringResource(RCommon.string.product_permission_webrtc_subtitle, manageLater)
         ProductPermission.RemotePermission.ChainSubmitAccess -> stringResource(RCommon.string.product_permission_chain_submit_subtitle, manageLater)
         ProductPermission.RemotePermission.StatementSubmitAccess -> stringResource(RCommon.string.product_permission_statement_submit_subtitle, manageLater)
         ProductPermission.RemotePermission.PreimageSubmitAccess -> stringResource(RCommon.string.product_permission_preimage_submit_subtitle, manageLater)
-        is ProductPermission.RemotePermission.JamPeersAccess -> stringResource(RCommon.string.product_permission_jam_peers_subtitle, manageLater)
+        is ProductPermission.RemotePermission.JamPeersAccess -> stringResource(RCommon.string.product_permission_jam_peers_subtitle, manageLater) + "\n\n" + genesis
     }
 }
 
@@ -119,10 +131,11 @@ private fun DeviceCapabilityType.subtitle(manageLater: String): String {
 internal fun ProductPermission.RemotePermission.shortLabel(): String {
     return when (this) {
         is ProductPermission.RemotePermission.NetworkAccess -> stringResource(RCommon.string.product_permission_network_label, domain)
+        is ProductPermission.RemotePermission.NetworkAccessSet -> stringResource(RCommon.string.product_permission_network_label, domains.joinToString(", "))
         ProductPermission.RemotePermission.WebRtcAccess -> stringResource(RCommon.string.product_permission_webrtc_label)
         ProductPermission.RemotePermission.ChainSubmitAccess -> stringResource(RCommon.string.product_permission_chain_submit_label)
         ProductPermission.RemotePermission.StatementSubmitAccess -> stringResource(RCommon.string.product_permission_statement_submit_label)
         ProductPermission.RemotePermission.PreimageSubmitAccess -> stringResource(RCommon.string.product_permission_preimage_submit_label)
-        is ProductPermission.RemotePermission.JamPeersAccess -> stringResource(RCommon.string.product_permission_jam_peers_label, shortGenesis)
+        is ProductPermission.RemotePermission.JamPeersAccess -> stringResource(RCommon.string.product_permission_jam_peers_label, genesis)
     }
 }

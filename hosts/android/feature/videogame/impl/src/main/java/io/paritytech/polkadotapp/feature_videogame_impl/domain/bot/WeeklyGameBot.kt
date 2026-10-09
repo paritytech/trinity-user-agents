@@ -4,6 +4,7 @@ package io.paritytech.polkadotapp.feature_videogame_impl.domain.bot
 
 import android.content.Context
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import io.paritytech.polkadotapp.common.utils.getResourceUri
 import io.paritytech.polkadotapp.designsystem.colors.BerlinNightPalette
@@ -30,7 +31,8 @@ import io.paritytech.polkadotapp.feature_videogame_impl.domain.interactor.VideoG
 import io.paritytech.polkadotapp.feature_videogame_impl.presentation.bot.background.WeeklyGameBackgroundRenderer
 import io.paritytech.polkadotapp.feature_videogame_impl.presentation.bot.footer.WeeklyGameBotFooterRenderer
 import io.paritytech.polkadotapp.feature_videogame_impl.presentation.bot.menu.WeeklyGameSettingsMenuRenderer
-import io.paritytech.polkadotapp.feature_videogame_impl.presentation.bot.overlay.WeeklyGamePillOverlayRenderer
+import io.paritytech.polkadotapp.feature_videogame_impl.presentation.bot.overlay.GamePillOverlayRenderer
+import io.paritytech.polkadotapp.feature_videogame_impl.presentation.bot.overlay.WeeklyGamePillOverlayViewModel
 import io.paritytech.polkadotapp.feature_videogame_impl.presentation.bot.renderer.GameResultRenderer
 import io.paritytech.polkadotapp.feature_videogame_impl.presentation.bot.theme.WeeklyGamePrizesBubble
 import io.paritytech.polkadotapp.feature_videogame_impl.presentation.bot.theme.WeeklyGamePrizesDateSeparator
@@ -69,7 +71,8 @@ internal class WeeklyGameBot @Inject constructor(
 
     override val customMenuRenderer: CustomChatMenuRenderer = WeeklyGameSettingsMenuRenderer()
 
-    override val customGlobalOverlayRenderer: CustomChatOverlayRenderer = WeeklyGamePillOverlayRenderer()
+    override val customGlobalOverlayRenderer: CustomChatOverlayRenderer =
+        GamePillOverlayRenderer { hiltViewModel<WeeklyGamePillOverlayViewModel>() }
 
     override val customChatAppearance: CustomChatAppearance = CustomChatAppearance(
         backgroundRenderer = WeeklyGameBackgroundRenderer(),

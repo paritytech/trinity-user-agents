@@ -349,6 +349,9 @@ pub struct ProductRuntimeHost {
     media_platform: Option<Arc<dyn crate::platform::MediaPlatform>>,
     media: std::sync::OnceLock<Arc<media::MediaService>>,
     media_closed: std::sync::atomic::AtomicBool,
+    game_platform: Option<Arc<dyn crate::platform::GamePlatform>>,
+    /// Control of the card face above this connection's Widget, when the host draws one.
+    expanded_card: Option<Arc<dyn crate::platform::ExpandedCardHost>>,
     /// Host-assigned ids of this connection's open pending operations, each
     /// holding one worker reference until it ends or the connection is torn
     /// down.
@@ -402,6 +405,8 @@ impl ProductRuntimeHost {
             renderer: adapters.renderer,
             pocket_platform: adapters.pocket_platform,
             profile_platform: adapters.profile_platform,
+            expanded_card: adapters.expanded_card,
+            game_platform: adapters.game_platform,
             open_operations: Mutex::new(HashSet::new()),
             #[cfg(not(target_arch = "wasm32"))]
             jam_peers: crate::jam_peer_transport::session::JamPeerSession::new(),
@@ -427,7 +432,7 @@ impl ProductRuntimeHost {
     /// resolve the same two gates. Remote, identity-disclosure and
     /// account-access decisions have no OS gate and are unaffected by the
     /// status adapter.
-    fn permissions_service(&self) -> PermissionsService<'_, dyn Platform, dyn Platform> {
+    pub(crate) fn permissions_service(&self) -> PermissionsService<'_, dyn Platform, dyn Platform> {
         PermissionsService::new(
             self.platform.as_ref(),
             self.platform.as_ref(),
@@ -435,6 +440,7 @@ impl ProductRuntimeHost {
         )
         .with_status_host(self.permission_status.as_deref())
         .with_temporary_permissions(self.temporary_permissions.clone())
+        .with_authority(self.services.permissions.clone())
     }
 
     /// Trusted executable kind attached to this product connection.
@@ -543,6 +549,8 @@ impl ProductRuntimeHost {
             renderer,
             pocket_platform: None,
             profile_platform: None,
+            expanded_card: None,
+            game_platform: None,
             open_operations: Mutex::new(HashSet::new()),
             #[cfg(not(target_arch = "wasm32"))]
             jam_peers: crate::jam_peer_transport::session::JamPeerSession::new(),
@@ -796,12 +804,30 @@ impl ProductRuntimeHost {
     }
 
     /// Update a stored permission authorization status. `NotDetermined`
-    /// resets the decision so the next product request prompts again.
+    /// resets the decision to ask again without permitting stale legacy re-import.
     #[instrument(skip_all, fields(runtime.method = "permissions.set_authorization_status"))]
     pub async fn set_permission_authorization_status(
         &self,
         request: PermissionAuthorizationRequest,
         status: PermissionAuthorizationStatus,
+    ) -> Result<(), v01::GenericError> {
+        self.set_authorization_status(request, status, false).await
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) async fn set_canonical_permission_authorization_status(
+        &self,
+        request: PermissionAuthorizationRequest,
+        status: PermissionAuthorizationStatus,
+    ) -> Result<(), v01::GenericError> {
+        self.set_authorization_status(request, status, true).await
+    }
+
+    async fn set_authorization_status(
+        &self,
+        request: PermissionAuthorizationRequest,
+        status: PermissionAuthorizationStatus,
+        canonical: bool,
     ) -> Result<(), v01::GenericError> {
         if let PermissionAuthorizationRequest::AutomaticPreimageSubmit { root_public_key } = request
         {
@@ -822,7 +848,11 @@ impl ProductRuntimeHost {
         if contacts_changed {
             self.services.invalidate_contacts();
         }
-        let result = service.set_authorization_status(&request, status).await;
+        let result = if canonical {
+            service.set_canonical_authorization_status(&request, status).await
+        } else {
+            service.set_authorization_status(&request, status).await
+        };
         if contacts_changed {
             self.services.invalidate_contacts();
         }
@@ -937,6 +967,7 @@ impl ProductRuntimeHost {
         let product = self.product.clone();
         let permission_status = self.permission_status.clone();
         let temporary_permissions = self.temporary_permissions.clone();
+        let permission_authority = self.services.permissions.clone();
         let request = v01::RemotePermissionRequest {
             permission: v01::RemotePermission::JamPeers { genesis },
         };
@@ -944,6 +975,7 @@ impl ProductRuntimeHost {
             let status = PermissionsService::new(platform.as_ref(), platform.as_ref(), &product)
                 .with_status_host(permission_status.as_deref())
                 .with_temporary_permissions(temporary_permissions)
+                .with_authority(permission_authority)
                 .check_or_prompt_remote(request)
                 .await;
             match status {
@@ -1040,12 +1072,11 @@ impl ProductRuntimeHost {
 
 async fn account_access_authorization(
     platform: &dyn Platform,
+    permissions: &crate::host_internal::permissions::PermissionAuthority,
     requesting_product_id: &str,
     target_product_id: &str,
 ) -> Result<PermissionAuthorizationStatus, AccountAccessAuthorizationError> {
-    if requesting_product_id == target_product_id
-        || crate::platform::normalizes_to_trusted_remote_permissions(requesting_product_id)
-    {
+    if requesting_product_id == target_product_id {
         return Ok(PermissionAuthorizationStatus::Authorized);
     }
 
@@ -1062,20 +1093,36 @@ async fn account_access_authorization(
     // still names the id the user saw; only the slot it is filed under is the
     // product's.
     let caller = crate::host_internal::product_manifest::bare_product_label(requesting_product_id);
+    let scope = permissions.scope(caller);
+    let mutation = scope.mutation.lock().await;
+    let revision = scope.revision();
     let cached = crate::host_internal::permissions::account_access_status(platform, caller, target)
         .await
         .map_err(AccountAccessAuthorizationError::PermissionStorage)?;
     if cached != PermissionAuthorizationStatus::NotDetermined {
         return Ok(cached);
     }
+    if crate::platform::normalizes_to_trusted_remote_permissions(requesting_product_id) {
+        return Ok(PermissionAuthorizationStatus::Authorized);
+    }
 
-    let decision = platform
-        .confirm_permission(UserConfirmationReview::AccountAccess(AccountAccessReview {
-            requesting_product_id: requesting_product_id.to_string(),
-            target_product_id: target_product_id.to_string(),
-        }))
+    drop(mutation);
+    let decision = scope
+        .prompt(
+            revision,
+            platform.confirm_permission(UserConfirmationReview::AccountAccess(
+                AccountAccessReview {
+                    requesting_product_id: requesting_product_id.to_string(),
+                    target_product_id: target_product_id.to_string(),
+                },
+            )),
+        )
         .await
         .map_err(AccountAccessAuthorizationError::Confirmation)?;
+    let _mutation = scope.mutation.lock().await;
+    scope
+        .require_revision(revision)
+        .map_err(AccountAccessAuthorizationError::PermissionStorage)?;
     let status = match decision {
         PermissionDecision::AllowOnce => return Ok(PermissionAuthorizationStatus::Authorized),
         PermissionDecision::AllowAlways => PermissionAuthorizationStatus::Authorized,
@@ -2513,11 +2560,7 @@ impl Profile for ProductRuntimeHost {
                 v01::HostProfilePlaceContactAvatarsError::NotConnected,
             ));
         };
-        let authority = request
-            .slots
-            .iter()
-            .any(|slot| matches!(slot.contact, truapi::latest::ProfileContact::Handle { .. }))
-            .then(|| Arc::downgrade(&self.authority));
+        let authority = Some(Arc::downgrade(&self.authority));
         placement
             .place(owner, request, authority)
             .await
@@ -2532,12 +2575,16 @@ impl Profile for ProductRuntimeHost {
         _request: HostProfileOwnStatusRequest,
     ) -> Result<HostProfileOwnStatusResponse, CallError<HostProfileOwnStatusError>> {
         let domain = |error| CallError::Domain(HostProfileOwnStatusError::V1(error));
+        let session = self.authority.current_session();
         let owner = self
             .profile_owner()
             .ok_or_else(|| domain(v01::HostProfileOwnStatusError::NotConnected))?;
         let disclosure = profile::read_disclosure(self.platform.as_ref(), owner)
             .await
             .map_err(|reason| domain(v01::HostProfileOwnStatusError::Unknown { reason }))?;
+        if self.authority.current_session() != session {
+            return Err(domain(v01::HostProfileOwnStatusError::NotConnected));
+        }
         if disclosure
             .as_ref()
             .is_some_and(|disclosure| !is_screened_profile_reference(&disclosure.reference))
@@ -2561,12 +2608,17 @@ impl Profile for ProductRuntimeHost {
     ) -> Result<HostProfilePresentOwnResponse, CallError<HostProfilePresentOwnError>> {
         let platform = self.profile_platform()?;
         let domain = |error| CallError::Domain(HostProfilePresentOwnError::V1(error));
+        let session = self.authority.current_session();
         let owner = self
             .profile_owner()
             .ok_or_else(|| domain(v01::HostProfilePresentOwnError::NotConnected))?;
-        let reference = profile::read_disclosure(self.platform.as_ref(), owner)
+        let disclosure = profile::read_disclosure(self.platform.as_ref(), owner)
             .await
-            .map_err(|reason| domain(v01::HostProfilePresentOwnError::Unknown { reason }))?
+            .map_err(|reason| domain(v01::HostProfilePresentOwnError::Unknown { reason }))?;
+        if self.authority.current_session() != session {
+            return Err(domain(v01::HostProfilePresentOwnError::NotConnected));
+        }
+        let reference = disclosure
             .map(|disclosure| disclosure.reference)
             .ok_or_else(|| domain(v01::HostProfilePresentOwnError::NotConfigured))?;
         if !is_screened_profile_reference(&reference) {

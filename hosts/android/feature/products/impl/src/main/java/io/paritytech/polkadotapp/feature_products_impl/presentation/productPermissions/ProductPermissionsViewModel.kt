@@ -4,6 +4,7 @@ import androidx.lifecycle.SavedStateHandle
 import dagger.hilt.android.lifecycle.HiltViewModel
 import io.paritytech.polkadotapp.common.presentation.loading.LoadingState
 import io.paritytech.polkadotapp.common.presentation.screens.BaseViewModel
+import io.paritytech.polkadotapp.common.presentation.ui.errors.UnexpectedPresentationError
 import io.paritytech.polkadotapp.common.utils.flowOf
 import io.paritytech.polkadotapp.common.utils.launchUnit
 import io.paritytech.polkadotapp.common.utils.withLoading
@@ -60,11 +61,19 @@ class ProductPermissionsViewModel @Inject constructor(
     }
 
     fun onPermissionToggle(permissionStatus: ProductPermissionStatus) = launchUnit {
-        interactor.togglePermission(productId, permissionStatus)
+        runCatching { interactor.togglePermission(productId, permissionStatus) }
+            .onFailure {
+                if (it is CancellationException) throw it
+                showPresentationError(UnexpectedPresentationError(it))
+            }
     }
 
     fun onMediaPermissionToggle(permissionStatus: NativeMediaPermissionStatus) = launchUnit {
-        interactor.toggleMediaPermission(productId, permissionStatus)
+        runCatching { interactor.toggleMediaPermission(productId, permissionStatus) }
+            .onFailure {
+                if (it is CancellationException) throw it
+                showPresentationError(UnexpectedPresentationError(it))
+            }
     }
 
     fun onAutomaticUploadsChanged(

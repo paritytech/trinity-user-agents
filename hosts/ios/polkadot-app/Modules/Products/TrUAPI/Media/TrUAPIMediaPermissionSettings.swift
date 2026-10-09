@@ -19,16 +19,17 @@ struct TrUAPIMediaPermissionSettings: Sendable {
     let productId: String
 
     func snapshot() async throws -> [TrUAPIMediaPermissionSetting] {
-        let execution = try openExecution()
+        let runtime = try runtime()
+        let execution = try openExecution(runtime: runtime)
         defer { execution.close() }
         var requests: [PermissionAuthorizationRequest] = [.device(.microphone), .device(.camera)]
-        requests.append(contentsOf: storedRequests())
+        requests.append(contentsOf: try await runtime.permissionAuthorizations(productId: productId).map(\.request))
         if let current = try? await execution.callingPermissionAuthorizationRequest() { requests.append(current) }
         var seen = Set<String>()
         var result: [TrUAPIMediaPermissionSetting] = []
         for request in requests {
             guard let display = display(request), seen.insert(display.id).inserted else { continue }
-            let status = try await execution.permissionAuthorizationStatus(request: request)
+            let status = try await runtime.permissionAuthorizationStatus(productId: productId, request: request)
             var detail = display.detail
             if case let .device(device) = request, NativeMediaBackend.devicePermissionStatus(device) == .denied {
                 detail += "\niOS access is blocked. Enable it in system Settings."
@@ -41,8 +42,8 @@ struct TrUAPIMediaPermissionSettings: Sendable {
 
     func set(_ setting: TrUAPIMediaPermissionSetting, allowed: Bool) async throws {
         guard display(setting.request) != nil else { throw NativeMediaError.BackendFailure }
-        let execution = try openExecution()
-        defer { execution.close() }
+        let runtime = try runtime()
+        let revision = try runtime.permissionAuthorizationRevision(productId: productId)
         let status: PermissionAuthorizationStatus
         if allowed {
             let presentation = await NativeMediaPresentation(productId: productId)
@@ -74,33 +75,26 @@ struct TrUAPIMediaPermissionSettings: Sendable {
             status = .notDetermined
         }
         try Task.checkCancellation()
-        try await execution.setPermissionAuthorizationStatus(request: setting.request, status: status)
-    }
-
-    func revokeAll() async throws {
-        let requests = storedRequests().filter { display($0) != nil }
-        guard !requests.isEmpty else { return }
-        let execution = try openExecution()
-        defer { execution.close() }
-        for request in requests {
-            try await execution.setPermissionAuthorizationStatus(request: request, status: .notDetermined)
+        if allowed {
+            guard try await runtime.setPermissionAuthorizationStatusIfCurrent(
+                productId: productId, request: setting.request, status: status, revision: revision
+            ) else { throw HostRejection.Rejected(reason: "permission decision is no longer current") }
+        } else {
+            try await runtime.setPermissionAuthorizationStatus(
+                productId: productId, request: setting.request, status: status
+            )
         }
     }
 
-    private func storedRequests() -> [PermissionAuthorizationRequest] {
-        TrUAPILocalStorage.createCoreLocalStorage().keys().compactMap { key in
-            guard let encoded = try? Data(hexString: key),
-                  let description = try? nativeDescribeCoreStorageKey(encoded: encoded),
-                  description.productId == productId else { return nil }
-            return description.permissionRequest
-        }
-    }
-
-    private func openExecution() throws -> TrUAPIProductExecution {
+    private func runtime() throws -> TrUAPIHostRuntime {
         guard let provider: TrUAPIHostRuntimeProviding = RootDependencyLocator.getDependency() else {
             throw NativeMediaError.Closed
         }
-        return try provider.sharedRuntime().openProductExecution(
+        return try provider.sharedRuntime()
+    }
+
+    private func openExecution(runtime: TrUAPIHostRuntime) throws -> TrUAPIProductExecution {
+        try runtime.openProductExecution(
             bridge: SettingsBridge(productId: productId),
             configuration: ProductExecutionConfig(productId: productId, executionKind: .app)
         )
@@ -125,6 +119,9 @@ struct TrUAPIMediaPermissionSettings: Sendable {
         init(productId: String) {
             storage = ProductStorageBackend(storage: TrUAPILocalStorage.createProductLocalStorage(productId: productId))
             coreStorage = CoreStorageBackend(storage: TrUAPILocalStorage.createCoreLocalStorage())
+        }
+        func permissionAuthorizationsChanged(productId: String) {
+            NotificationCenter.default.post(name: .productPermissionAuthorizationsChanged, object: productId)
         }
         func navigateTo(url: String) async throws { throw NativeMediaError.Closed }
         func devicePermission(

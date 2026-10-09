@@ -62,6 +62,7 @@ class NativeMediaPermissions @Inject constructor(
     }
 
     suspend fun toggleMediaPermission(product: ProductId, permission: NativeMediaPermissionStatus) {
+        val runtime = runtimeProvider.runtime().getOrThrow()
         withPermissionAdmin(product) { execution ->
             runtimeProvider.withSessionMutation { checkScope(product, permission, execution) }
             val request = permission.request
@@ -79,13 +80,13 @@ class NativeMediaPermissions @Inject constructor(
             runtimeProvider.withSessionMutation {
                 checkScope(product, permission, execution)
                 withContext(Dispatchers.IO) {
-                    execution.setPermissionAuthorizationStatus(request,
+                    runtime.setPermissionAuthorizationStatus(product.value, request,
                         if (granted) PermissionAuthorizationStatus.AUTHORIZED else PermissionAuthorizationStatus.DENIED)
                 }
             }
             // Commit and enqueue happen atomically in the SDK. Never await a refresh under
             // the session mutation gate: refresh may need that same runtime to make progress.
-            execution.awaitCoreStorageChanges()
+            runtime.awaitCoreStorageChanges()
         }
     }
 

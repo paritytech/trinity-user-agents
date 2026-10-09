@@ -39,6 +39,9 @@ class PrefsHostCoreStorage(
         val stored = prefs.getString(bytesToHex(key), null) ?: return null
         return decodeOrNull(stored) ?: throw HostRejection.Rejected("corrupt core storage value")
     }
+    override suspend fun keys(): List<ByteArray> = prefs.all.keys.map { key ->
+        decodeOrNull(key) ?: throw HostRejection.Rejected("corrupt core storage key")
+    }
     override suspend fun write(key: ByteArray, value: ByteArray) {
         if (!prefs.edit().putString(bytesToHex(key), bytesToHex(value)).commit()) {
             throw HostRejection.Rejected("failed to persist core storage key")

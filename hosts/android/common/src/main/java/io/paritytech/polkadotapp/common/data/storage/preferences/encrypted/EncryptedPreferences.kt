@@ -9,6 +9,7 @@ interface EncryptedPreferences {
     /** Return only after durable persistence, throwing if encryption or commit fails. */
     fun putEncryptedStringCommitted(field: String, value: String)
     fun removeKeyCommitted(field: String)
+    fun keys(): Set<String>
 
     fun putEncryptedString(
         field: String,

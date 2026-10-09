@@ -6,6 +6,9 @@
 //! answer, so concurrent dials wait for one prompt and a refusal stays
 //! `NotGranted` without asking again. The check runs on the runtime spawner,
 //! so its answer is kept even when every dial waiting on it has given up.
+//! Pending dials reserve from the eight-connection budget before permission
+//! is awaited. At most eight distinct genesis decisions are kept, including
+//! pending and refused checks; a ninth is `Limit`, with no eviction or prompt.
 //!
 //! A dial answers within [`DIAL_DEADLINE`], prompt included: one still waiting
 //! then answers `Unreachable`, a cancelled one `Cancelled`, and whatever it
@@ -17,7 +20,7 @@
 use core::time::Duration;
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use futures::{FutureExt, pin_mut};
 use parking_lot::Mutex;
@@ -49,8 +52,43 @@ pub(crate) struct JamPeerSession {
     transport: Mutex<Option<Arc<Transport>>>,
     /// Permission answers for this connection, by genesis.
     decisions: Mutex<HashMap<[u8; 32], watch::Receiver<Option<Decision>>>>,
+    /// Dials still awaiting permission or a handshake.
+    pending_dials: AtomicUsize,
     dial_deadline: Duration,
     revoked: AtomicBool,
+    revoked_signal: truapi::CancellationToken,
+}
+
+/// A pending dial reserves capacity before authorization and releases it on
+/// every completion path. Successful connections are then counted by QUIC.
+struct DialAdmission<'a> {
+    slots: &'a AtomicUsize,
+}
+
+impl<'a> DialAdmission<'a> {
+    fn reserve(
+        slots: &'a AtomicUsize,
+        transport: Option<&Transport>,
+    ) -> Result<Self, CallError<wire::HostJamPeerTransportDialError>> {
+        let admitted = match transport {
+            Some(transport) => transport.reserve_pending_dial(slots),
+            None => slots
+                .try_update(Ordering::AcqRel, Ordering::Acquire, |used| {
+                    (used < quic::MAX_CONNECTIONS).then_some(used + 1)
+                })
+                .is_ok(),
+        };
+        if !admitted {
+            return Err(dial_error(latest::HostJamPeerTransportDialError::Limit));
+        }
+        Ok(Self { slots })
+    }
+}
+
+impl Drop for DialAdmission<'_> {
+    fn drop(&mut self) {
+        self.slots.fetch_sub(1, Ordering::AcqRel);
+    }
 }
 
 fn dial_error(
@@ -65,8 +103,10 @@ impl JamPeerSession {
         Self {
             transport: Mutex::new(None),
             decisions: Mutex::new(HashMap::new()),
+            pending_dials: AtomicUsize::new(0),
             dial_deadline: DIAL_DEADLINE,
             revoked: AtomicBool::new(false),
+            revoked_signal: truapi::CancellationToken::default(),
         }
     }
 
@@ -78,6 +118,7 @@ impl JamPeerSession {
             self.revoked.store(true, Ordering::Release);
             transport.take()
         };
+        self.revoked_signal.cancel();
         if let Some(transport) = transport {
             transport.shutdown();
         }
@@ -125,6 +166,9 @@ impl JamPeerSession {
             match decisions.get(&genesis) {
                 Some(decision) => (decision.clone(), None),
                 None => {
+                    if decisions.len() >= quic::MAX_CONNECTIONS {
+                        return Err(dial_error(latest::HostJamPeerTransportDialError::Limit));
+                    }
                     let (answer, decision) = watch::channel(None);
                     decisions.insert(genesis, decision.clone());
                     (decision, Some(answer))
@@ -132,9 +176,15 @@ impl JamPeerSession {
             }
         };
         if let Some(answer) = first {
-            let check = authorize();
+            let check = authorize().fuse();
+            let revoked = self.revoked_signal.cancelled().fuse();
             spawner(Box::pin(async move {
-                let _ = answer.send(Some(check.await));
+                pin_mut!(check, revoked);
+                let result = futures::select_biased! {
+                    _ = revoked => Err(CallError::Denied),
+                    result = check => result,
+                };
+                let _ = answer.send(Some(result));
             }));
         }
         match decision.wait_for(Option::is_some).await {
@@ -158,6 +208,12 @@ impl JamPeerSession {
     where
         F: Future<Output = Decision> + Send + 'static,
     {
+        let _admission = {
+            // Serialize admission with endpoint creation and revocation.
+            let transport = self.transport.lock();
+            self.live()?;
+            DialAdmission::reserve(&self.pending_dials, transport.as_deref())?
+        };
         self.permitted(request.genesis, authorize, spawner).await?;
         let transport = self.endpoint()?;
         // Native hosts speak JAMNP-S QUIC; the P-256 id is for WebTransport hosts.
@@ -210,10 +266,12 @@ impl JamPeerSession {
         let granted = self.dial_granted(request, authorize, spawner).fuse();
         let cancelled = cx.cancel().cancelled().fuse();
         let deadline = futures_timer::Delay::new(self.dial_deadline).fuse();
-        pin_mut!(granted, cancelled, deadline);
+        let revoked = self.revoked_signal.cancelled().fuse();
+        pin_mut!(granted, cancelled, deadline, revoked);
         futures::select_biased! {
-            reply = granted => reply,
+            _ = revoked => Err(CallError::Denied),
             _ = cancelled => Err(CallError::Cancelled),
+            reply = granted => reply,
             () = deadline => Err(dial_error(latest::HostJamPeerTransportDialError::Unreachable)),
         }
     }
@@ -221,6 +279,7 @@ impl JamPeerSession {
     /// Open a stream on a connection a granted dial opened.
     pub(crate) async fn open(
         &self,
+        cx: &CallContext,
         request: wire::HostJamPeerTransportOpenRequest,
     ) -> Result<
         wire::HostJamPeerTransportOpenResponse,
@@ -234,18 +293,23 @@ impl JamPeerSession {
             ))
         };
         let transport = self.existing().ok_or_else(closed)?;
-        let stream =
-            transport
-                .open(request.conn, request.kind)
-                .await
-                .map_err(|error| match error {
-                    quic::OpenError::Closed => closed(),
-                    quic::OpenError::Limit => {
-                        CallError::Domain(wire::HostJamPeerTransportOpenError::V1(
-                            latest::HostJamPeerTransportOpenError::Limit,
-                        ))
-                    }
-                })?;
+        let opened = transport.open(request.conn, request.kind).fuse();
+        let cancelled = cx.cancel().cancelled().fuse();
+        let revoked = self.revoked_signal.cancelled().fuse();
+        pin_mut!(opened, cancelled, revoked);
+        let result = futures::select_biased! {
+            _ = revoked => return Err(CallError::Denied),
+            _ = cancelled => return Err(CallError::Cancelled),
+            result = opened => result,
+        };
+        let stream = result.map_err(|error| match error {
+            quic::OpenError::Closed => closed(),
+            quic::OpenError::Limit => {
+                CallError::Domain(wire::HostJamPeerTransportOpenError::V1(
+                    latest::HostJamPeerTransportOpenError::Limit,
+                ))
+            }
+        })?;
         if self.revoked.load(Ordering::Acquire) {
             let _ = transport.reset(stream);
             return Err(CallError::Denied);
@@ -370,3 +434,9 @@ impl JamPeerSession {
 
 #[cfg(test)]
 mod tests;
+
+impl Drop for JamPeerSession {
+    fn drop(&mut self) {
+        self.revoke();
+    }
+}

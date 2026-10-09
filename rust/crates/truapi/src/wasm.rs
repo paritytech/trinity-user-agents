@@ -17,8 +17,9 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use crate::platform::{
-    ChainProvider, ChatPlatform, ContactsPlatform, HopProvider, HostInfo, JsonRpcConnection,
-    MediaPlatform, PairingHostConfig, PermissionStatusHost, PlatformInfo, PocketPlatform, ProductContext,
+    ChainProvider, ChatPlatform, ContactsPlatform, GamePlatform, HopProvider, HostInfo,
+    JsonRpcConnection, MediaPlatform, PairingHostConfig, PermissionStatusHost, PlatformInfo,
+    PocketPlatform, ProductContext,
     ProductExecutionKind, ProfilePlatform, ProviderError, RuntimeConfigValidationError,
 };
 #[cfg(feature = "wasm-signing-host")]
@@ -1111,6 +1112,7 @@ struct WasmPlatformAdapters {
     #[cfg(feature = "wasm-signing-host")]
     native_wallet: Option<Arc<dyn CoinageWalletHost>>,
     media_platform: Option<Arc<dyn MediaPlatform>>,
+    game_platform: Option<Arc<dyn GamePlatform>>,
 }
 
 /// Build the platform and the optional capability adapters supplied by the host.
@@ -1125,6 +1127,7 @@ fn wasm_platform(bridge: Arc<JsBridge>) -> WasmPlatformAdapters {
     #[cfg(feature = "wasm-signing-host")]
     let has_native_wallet = bridge.has_coinage_wallet();
     let has_media = bridge.has_media();
+    let has_game = bridge.has_game();
     let platform = Arc::new(WasmPlatform::new(bridge));
     let chat = has_chat.then(|| platform.clone() as Arc<dyn ChatPlatform>);
     let contacts = has_contacts.then(|| platform.clone() as Arc<dyn ContactsPlatform>);
@@ -1137,6 +1140,7 @@ fn wasm_platform(bridge: Arc<JsBridge>) -> WasmPlatformAdapters {
     #[cfg(feature = "wasm-signing-host")]
     let native_wallet = has_native_wallet.then(|| platform.clone() as Arc<dyn CoinageWalletHost>);
     let media = has_media.then(|| platform.clone() as Arc<dyn MediaPlatform>);
+    let game = has_game.then(|| platform.clone() as Arc<dyn GamePlatform>);
     WasmPlatformAdapters {
         platform,
         chat_platform: chat,
@@ -1149,6 +1153,7 @@ fn wasm_platform(bridge: Arc<JsBridge>) -> WasmPlatformAdapters {
         #[cfg(feature = "wasm-signing-host")]
         native_wallet,
         media_platform: media,
+        game_platform: game,
     }
 }
 
@@ -1167,6 +1172,7 @@ fn connection_adapters_from_js(
         pocket_platform,
         profile_platform,
         media_platform,
+        game_platform,
         ..
     } = wasm_platform(Arc::new(JsBridge::from_js(callbacks)?));
     Ok(Some(crate::host_core::ConnectionAdapters {
@@ -1179,6 +1185,8 @@ fn connection_adapters_from_js(
         pocket_platform,
         profile_platform,
         media_platform,
+        game_platform,
+        expanded_card: None,
         chat: Arc::new(crate::runtime::ActionChannel::chat()),
         renderer: Arc::new(crate::runtime::ActionChannel::renderer()),
     }))
@@ -1310,6 +1318,19 @@ impl WasmPairingHostRuntime {
         self.runtime.receiving().mark_transport_changed(&product_id).await.map_err(receiving_error_to_js)
     }
 
+    /// Keep preimage submissions in the core instead of the Bulletin chain.
+    ///
+    /// For a test host whose wallet answers allowances in-page: the Bulletin
+    /// allowance it hands out was never authorized on chain, so a real `store`
+    /// would be refused at dry-run. The product gets the content key back and
+    /// reads the value from the core's lookup cache, as after a landed
+    /// submission. A refused Bulletin allowance still refuses the submission.
+    #[cfg(feature = "test-host")]
+    #[wasm_bindgen(js_name = setSubmitPreimagesLocally)]
+    pub fn set_submit_preimages_locally(&self, local: bool) {
+        self.runtime.set_submit_preimages_locally(local);
+    }
+
     /// Build a shared runtime from host-level platform callbacks and host config.
     #[wasm_bindgen(constructor)]
     pub fn new(
@@ -1327,6 +1348,7 @@ impl WasmPairingHostRuntime {
             pocket_platform,
             profile_platform,
             media_platform,
+            game_platform,
             ..
         } = wasm_platform(bridge);
         let spawner: Spawner = Arc::new(|fut| {
@@ -1351,6 +1373,9 @@ impl WasmPairingHostRuntime {
         }
         if let Some(media_platform) = media_platform {
             runtime.set_media_platform(media_platform);
+        }
+        if let Some(game_platform) = game_platform {
+            runtime.set_game_platform(game_platform);
         }
         install_worker_demand_observer(runtime.worker_ledger(), &callbacks)?;
         Ok(Self {
@@ -1735,6 +1760,11 @@ impl WasmSigningHostRuntime {
     /// paths without an on-chain personhood identity. Nothing is allocated, so
     /// a green run says the product handles a grant, not that a host would
     /// have given one.
+    ///
+    /// Preimage submissions then stay in the core: the Bulletin allowance was
+    /// never authorized on chain, so a real `store` would be refused. The
+    /// product gets the content key back and reads the value from the core's
+    /// lookup cache, as after a landed submission.
     #[cfg(feature = "test-host")]
     #[wasm_bindgen(js_name = setGrantAllowancesUnchecked)]
     pub fn set_grant_allowances_unchecked(&self, granted: bool) {
@@ -1751,6 +1781,19 @@ impl WasmSigningHostRuntime {
     #[wasm_bindgen(js_name = setWithheldResources)]
     pub fn set_withheld_resources(&self, tags: Vec<String>) {
         self.runtime.set_withheld_resources(tags);
+    }
+
+    /// Keep preimage submissions in the core instead of the Bulletin chain.
+    ///
+    /// For a test host whose wallet answers allowances in-page: the Bulletin
+    /// allowance it hands out was never authorized on chain, so a real `store`
+    /// would be refused at dry-run. The product gets the content key back and
+    /// reads the value from the core's lookup cache, as after a landed
+    /// submission. A refused Bulletin allowance still refuses the submission.
+    #[cfg(feature = "test-host")]
+    #[wasm_bindgen(js_name = setSubmitPreimagesLocally)]
+    pub fn set_submit_preimages_locally(&self, local: bool) {
+        self.runtime.set_submit_preimages_locally(local);
     }
 
     /// Build a shared signing runtime from host callbacks and host config.
@@ -1772,6 +1815,8 @@ impl WasmSigningHostRuntime {
             identity_backend_host,
             native_wallet,
             media_platform,
+            game_platform,
+            ..
         } = wasm_platform(bridge);
         let spawner: Spawner = Arc::new(|fut| {
             wasm_bindgen_futures::spawn_local(fut);
@@ -1799,6 +1844,9 @@ impl WasmSigningHostRuntime {
         }
         if let Some(media_platform) = media_platform {
             runtime.set_media_platform(media_platform);
+        }
+        if let Some(game_platform) = game_platform {
+            runtime.set_game_platform(game_platform);
         }
         install_worker_demand_observer(runtime.worker_ledger(), &callbacks)?;
         Ok(Self {
@@ -2205,6 +2253,7 @@ impl WasmProductRuntime {
             pocket_platform,
             profile_platform,
             media_platform,
+            game_platform,
             ..
         } = wasm_platform(bridge);
         let spawner: Spawner = Arc::new(|fut| {
@@ -2223,6 +2272,9 @@ impl WasmProductRuntime {
         }
         if let Some(profile_platform) = profile_platform {
             pairing.set_profile_platform(profile_platform);
+        }
+        if let Some(game_platform) = game_platform {
+            pairing.set_game_platform(game_platform);
         }
         if let Some(contacts_platform) = contacts_platform {
             pairing.set_contacts_platform(contacts_platform);

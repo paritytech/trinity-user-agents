@@ -6,6 +6,7 @@ final class MockJSEngine: JSEngineProtocol, @unchecked Sendable {
     private(set) var destroyCallCount = 0
     private(set) var deviceCapabilityHandler: JSDeviceCapabilityHandler?
     var onInitialize: (@Sendable () async -> Void)?
+    var onDestroy: (@Sendable () async -> Void)?
     private var handlers: [String: JSNativeHandler] = [:]
 
     func getState() async -> JSEngineState { .ready }
@@ -49,6 +50,7 @@ final class MockJSEngine: JSEngineProtocol, @unchecked Sendable {
 
     func destroy() async {
         destroyCallCount += 1
+        await onDestroy?()
     }
 
     func registerJSDeviceCapabilityHandler(_ handler: @escaping JSDeviceCapabilityHandler) async {

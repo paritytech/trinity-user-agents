@@ -236,13 +236,14 @@ separate allocator. Snapshot version 3 refuses legacy `//pps` snapshots without 
 allocator state is not shared; same-wallet use requires reconciliation and one owner, not concurrent allocators.
 
 The signing runtime persists initialized Chat products in the wallet/network-owned `CoreStorageKey::NativeChatProducts`
-slot (index 16). Unlock restores their existing devices and background subscriptions only when the current
-`ChatAuthority` and `StatementSubmit` grants remain authorized; it never prompts or generates a replacement for missing
-device state. `clear_product_state` forgets this product from reception without deleting wallet custody or received
-history. This is in-process restoration, not an OS background scheduler.
+slot (index 16) for the trusted contacts directory. Directory reads restore existing devices only when current
+`ChatAuthority` permits access; they never prompt or generate replacements for missing device state.
+`clear_product_state` forgets the indexed product without deleting wallet custody or received history.
+Unlock resumes accepted wallet commitments independently of Chat grants, not ordinary Chat subscriptions. Products own
+ordinary reception and acknowledgments; the Host recovery worker is not an OS background scheduler.
 
 Native `native_describe_core_storage_key` and WASM `describeCoreStorageKey` let embedders route permission slots to the
-same verified-artifact namespace used by their product execution. Root callbacks used by restored receivers must resolve
+same verified-artifact namespace used by their product execution. Root callbacks used by Chat authority must resolve
 that current namespace; copying grants into a broader wallet namespace would defeat artifact revocation. WASM role
 handles accept optional execution-local raw platform callbacks as the third `productRuntime` argument while retaining
 one shared authority and wallet allocator.
@@ -259,20 +260,51 @@ Native product runtimes (iOS, Android, CLI) serve `JamPeerTransport` (trait
 Every `dial` first requires `RemotePermission::JamPeers { genesis }` through the
 flow above. The connection asks once per genesis: concurrent dials wait for the
 same prompt, a refusal stays `NotGranted` for the connection, and the answer is
-persisted even when every dial waiting on it has given up.
+persisted even when every dial waiting on it has timed out. Revoking or dropping
+the session instead cancels its pending permission checks and transport operations.
+
+Pending dials reserve from the eight-connection budget before awaiting permission,
+alongside retained connection handles. The session remembers at most eight distinct
+full-genesis decisions, including pending and denied decisions; a new ninth
+genesis returns `Limit` without prompting or evicting a prior decision. Cancelled,
+timed-out, or dropped dial futures release their pending reservation and subscription.
+The one bounded permission task per genesis remains until its answer or session stop.
 
 - A dial answers within 10 seconds, prompt included. One still waiting then
   answers `Unreachable`, a cancelled one `Cancelled`, and what it would have
-  opened is dropped without holding one of the 8 connection slots.
+  opened is dropped without holding one of the 8 connection slots. Native
+  closed connection handles retain their slot until the guest calls `close`,
+  so their remaining streams and queued data cannot bypass the cap.
 - The ALPN is `jam_peer_transport::alpn(genesis)`, and the peer certificate
   must carry the Ed25519 key the dial names. The P-256 key is for WebTransport
   hosts and is ignored.
 - The first granted dial creates the endpoint, so a refused product binds no
   socket. Disposing the connection closes every peer connection, and later
   calls are `Denied`.
+- Stream opens reserve one of 16 slots before waiting for the transport.
+  Cancellation and session closure cannot publish late stream handles.
+- Incoming and outgoing length-prefixed messages share a 4 MiB per-connection
+  reservation budget. Headers and empty messages consume space too; readers
+  wait for capacity before allocating payloads, and draining/resetting streams
+  releases capacity. Individual payloads remain limited to 1 MiB.
 
 The browser core keeps the trait's `NotGranted` defaults, because its
 JavaScript session answers trait 111 before frames reach the core.
+Browser dials share the eight-connection limit with established connections while
+awaiting permission or the handshake. Its execution-local cache holds at most
+eight distinct genesis decisions, counting pending/refused decisions too; a new
+ninth genesis returns `Limit` without evicting any remembered decision.
+Cancelling a dial releases its operation slot and removes its subscription to a
+pending decision. The shared decision remains available to retries until stop.
+
+The browser uses WebTransport's readable byte streams with BYOB reads to reserve
+space before receiving each payload; its cancellation path handles blocked opens
+and writes as well as dials. WebTransport negotiates HTTP/3, not the native
+genesis-prefix ALPN. The current PolkaJAM CONNECT endpoint has no additional
+genesis negotiation. On both platforms, the full genesis keys permission
+decisions and TLS pins the caller-supplied peer key; neither proves validator
+membership or makes received chain data trustworthy. Guests must verify it.
+
 `cargo test -p truapi --features mock --test live_jam_test_instance -- --include-ignored`
 dials JAM-TEST-INSTANCE through a product runtime.
 ### Core database
@@ -450,16 +482,31 @@ AutoSigning without approval. Legacy-account signing still asks the user.
   decrypts and renders each reference; nothing returns to the product but
   acceptance. Naming the contact is optional and presents the reference alone
   by default; drawing avatars is optional and draws nothing by default.
+- `ExpandedCardHost`: show or hide the card face drawn above an opened card's
+  Widget. It is carried per product connection on `ConnectionAdapters`, so only
+  the Widget under a card reaches that card.
+- `GamePlatform`: hold the game product's next-game reminder and drop it.
+  The core serves Game only to `dim2`, on every network, and answers
+  `Unsupported` to any other product without calling the host. A host
+  keeps one reminder per product: a schedule replaces the reminder the same
+  product already holds. The core asks for no per-product consent: the host
+  asks the OS for what the reminder needs, rings an alarm where the OS allows
+  one and delivers a notification otherwise, may add a calendar event, and
+  keeps the reminder across app kill and reboot. A schedule the host cannot
+  hold fails as a host failure carrying its reason.
 
 `Platform` is a blanket-implemented supertrait that combines the capability
 traits above except `ChatPlatform`, `ContactsPlatform`, `PermissionStatusHost`,
-`PocketPlatform` and `ProfilePlatform`, which `OptionalPlatform` lists instead:
-a host supplies each only when it can serve it. Codegen reads `OptionalPlatform` to emit each listed
-capability as an optional group on the host-callback surface.
+`PocketPlatform`, `ProfilePlatform` and `GamePlatform`, which `OptionalPlatform` lists instead: a
+host supplies each only when it can serve it. `ExpandedCardHost` is in neither,
+because it travels per connection rather than with the platform. Codegen reads
+`OptionalPlatform` to emit each listed capability as an optional group on the
+host-callback surface.
 
 Omitting `ChatPlatform` makes the core answer Chat calls `Unsupported`, and
-omitting `ContactsPlatform`, `PocketPlatform` or `ProfilePlatform` does the same
-for Contacts, Pocket or Profile calls.
+omitting `ContactsPlatform`, `PocketPlatform`, `ProfilePlatform` or `GamePlatform`
+does the same for Contacts, Pocket, Profile or Game calls. A connection without
+an `ExpandedCardHost` answers a Widget's `ExpandedCard` calls `Unsupported`.
 Omitting `PermissionStatusHost` leaves device grants resolving from stored
 state alone, which is what a host with no OS permission model does anyway.
 Serving it gates both halves of the surface: a device permission request and a

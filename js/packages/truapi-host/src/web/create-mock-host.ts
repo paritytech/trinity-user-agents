@@ -1217,6 +1217,11 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
       },
     },
 
+    game: {
+      async scheduleGameReminder() {},
+      async cancelGameReminder() {},
+    },
+
     permissions: {
       async devicePermission(_product, request) {
         if (faults.permissionError) throw new Error(faults.permissionError);

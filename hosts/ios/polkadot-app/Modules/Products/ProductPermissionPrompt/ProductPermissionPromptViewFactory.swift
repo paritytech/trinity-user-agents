@@ -83,7 +83,7 @@ private extension ProductPermissionPromptViewFactory {
                 )
             )
             body = permission.permissionDescription
-        case .networkAccess:
+        case .networkAccess, .networkAccessBundle:
             title = String(localized: .Products.permissionTitleNetworkAccess(productId: productId))
             body = permission.permissionDescription
         case .accountAccess:
@@ -104,9 +104,15 @@ private extension ProductPermissionPromptViewFactory {
                     shortGenesis: ProductPermission.shortGenesis(genesis)
                 )
             )
-            body = String(localized: .Products.permissionBodyJamPeers)
+            body = String(localized: .Products.permissionBodyJamPeers) + "\n\n" + genesis
         case .chatAuthority:
             title = String(localized: .Products.permissionTitleChatAuthority(productId: productId))
+            body = permission.permissionDescription
+        case .profileDisclosure:
+            title = String(localized: .Products.permissionTitleProfileDisclosure(productId: productId))
+            body = permission.permissionDescription
+        case .statementStoreAllowance:
+            title = String(localized: .Products.permissionTitleStatementStoreAllowance(productId: productId))
             body = permission.permissionDescription
         }
         return PromptContent(title: title, body: body, icon: makeIcon(systemName: permission.permissionIconSystemName))

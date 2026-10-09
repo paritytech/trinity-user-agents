@@ -10,13 +10,19 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import uniffi.truapi.HostRejection
+import uniffi.truapi.NativeTrUApiHostRuntime
 import uniffi.truapi.nativeDescribeCoreStorageKey
 
 /** One coordinator for every adapter in this process, including independent Rust roots. */
 internal object CoreStorageAccess {
     // Collisions only serialize unrelated slots. The bounded table never forgets a held slot lock.
     private val locks = Array(256) { Mutex() }
-    private data class Owner(val storageIdentifier: String, val group: Any, val productId: String)
+    private data class Owner(
+        val storageIdentifier: String,
+        val group: Any,
+        val productId: String,
+        val runtime: NativeTrUApiHostRuntime,
+    )
     private val executions = WeakHashMap<TrUAPIProductExecution, Owner>()
     private val failures = WeakHashMap<Any, Boolean>()
     private sealed interface Notice {
@@ -25,6 +31,7 @@ internal object CoreStorageAccess {
             val origin: Any,
             val key: ByteArray,
             val reportFailure: () -> Unit,
+            val authorizationChanged: (String) -> Unit,
         ) : Notice
         class Barrier(val origin: Any, val completion: CompletableDeferred<Unit>) : Notice
     }
@@ -61,16 +68,28 @@ internal object CoreStorageAccess {
         return locks[hash and (locks.size - 1)].withLock { operation() }
     }
 
-    fun register(execution: TrUAPIProductExecution, storageIdentifier: String, group: Any, productId: String) {
-        synchronized(executions) { executions[execution] = Owner(storageIdentifier, group, productId) }
+    fun register(
+        execution: TrUAPIProductExecution,
+        storageIdentifier: String,
+        group: Any,
+        productId: String,
+        runtime: NativeTrUApiHostRuntime,
+    ) {
+        synchronized(executions) { executions[execution] = Owner(storageIdentifier, group, productId, runtime) }
     }
 
     fun unregister(execution: TrUAPIProductExecution) {
         synchronized(executions) { executions.remove(execution) }
     }
 
-    fun changed(storage: HostCoreStorage, origin: Any, key: ByteArray, reportFailure: () -> Unit) {
-        notices.trySend(Notice.Changed(storage, origin, key.copyOf(), reportFailure)).getOrThrow()
+    fun changed(
+        storage: HostCoreStorage,
+        origin: Any,
+        key: ByteArray,
+        reportFailure: () -> Unit,
+        authorizationChanged: (String) -> Unit,
+    ) {
+        notices.trySend(Notice.Changed(storage, origin, key.copyOf(), reportFailure, authorizationChanged)).getOrThrow()
     }
 
     suspend fun awaitChanges(origin: Any) {
@@ -90,28 +109,22 @@ internal object CoreStorageAccess {
             executions.entries.filter { (execution, owner) ->
                 !execution.isClosed && owner.storageIdentifier == notice.storage.storageIdentifier &&
                     owner.productId == productId
-            }.map { it.key to it.value.group }.groupBy({ it.second }, { it.first })
+            }.map { it.value }.distinctBy { it.group }
         }
         var failed = false
-        for (group in targets.values) {
-            for (execution in group) {
-                if (execution.isClosed) continue
-                try {
-                    // A shared root refresh fences every matching execution in that root.
-                    // It re-reads storage; a delayed notice never replays an old decision.
-                    // Include the writer: its CAS can outlive the requesting Rust future.
-                    // A latest stored grant is a core no-op, not a new revision.
-                    execution.refreshPermissionAuthorization(request)
-                    break
-                } catch (_: Throwable) {
-                    if (execution.isClosed) continue
-                    // Rust already fail-closes only the exact affected permission scope.
-                    // Closing the whole execution here could kill another account's call.
-                    failed = true
-                    break
-                }
+        for (owner in targets) {
+            try {
+                // Canonical revocation may already have closed the execution. Refresh through
+                // its process authority, which re-reads storage and fences the exact product scope.
+                // Include the writer: its CAS can outlive the requesting Rust future.
+                owner.runtime.refreshPermissionAuthorization(productId, request)
+            } catch (_: Throwable) {
+                // Do not suppress an unreadable policy or turn it into broader execution closure.
+                failed = true
             }
         }
+        // Notify after refresh so the shell sees canonical closure, including a dropped CAS caller.
+        runCatching { notice.authorizationChanged(productId) }
         return failed
     }
 }

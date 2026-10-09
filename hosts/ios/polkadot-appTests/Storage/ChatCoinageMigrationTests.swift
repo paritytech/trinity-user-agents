@@ -5,10 +5,12 @@ import Testing
 @testable import polkadot_app
 
 struct ChatCoinageMigrationTests {
-    @Test("main and Chat stores retain payments and durable records", arguments: [
+    @Test("main and Chat stores retain payments, durable records and pocket cards", arguments: [
         UserStorageVersion.version49,
         .version49Chat,
-        .version52
+        .version52,
+        .version53,
+        .version53Chat
     ])
     func preservesPaymentOwnershipAndLedger(from version: UserStorageVersion) throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
@@ -27,7 +29,8 @@ struct ChatCoinageMigrationTests {
         )
         let owner = Data(repeating: 0x42, count: 32)
         let payload = Data([0x01, 0x02, 0x03])
-        let isChatStore = version == .version49Chat
+        let isChatStore = version == .version49Chat || version == .version53Chat
+        let hasPocketCards = version == .version53
         try withStore(model: source, url: storeURL) { context in
             let payment = NSEntityDescription.insertNewObject(forEntityName: "CDIncomingPayment", into: context)
             payment.setValue("group-1", forKey: "identifier")
@@ -40,6 +43,15 @@ struct ChatCoinageMigrationTests {
                 let record = NSEntityDescription.insertNewObject(forEntityName: "CDNativeCoinageRecord", into: context)
                 record.setValue("ledger-1", forKey: "identifier")
                 record.setValue(payload, forKey: "payload")
+            }
+            if hasPocketCards {
+                let card = NSEntityDescription.insertNewObject(forEntityName: "CDPocketCard", into: context)
+                card.setValue("card-1", forKey: "identifier")
+                card.setValue("card-1", forKey: "cardId")
+                card.setValue("cards.paseo", forKey: "productId")
+                card.setValue("Saved card", forKey: "title")
+                card.setValue(payload, forKey: "face")
+                card.setValue(Date(timeIntervalSince1970: 100), forKey: "addedAt")
             }
             try context.save()
         }
@@ -67,6 +79,19 @@ struct ChatCoinageMigrationTests {
                 #expect(record.value(forKey: "payload") as? Data == payload)
             } else {
                 #expect(records.isEmpty)
+            }
+            let cards = try context.fetch(NSFetchRequest<NSManagedObject>(entityName: "CDPocketCard"))
+            if hasPocketCards {
+                #expect(cards.count == 1)
+                let card = try #require(cards.first)
+                #expect(card.value(forKey: "identifier") as? String == "card-1")
+                #expect(card.value(forKey: "cardId") as? String == "card-1")
+                #expect(card.value(forKey: "productId") as? String == "cards.paseo")
+                #expect(card.value(forKey: "title") as? String == "Saved card")
+                #expect(card.value(forKey: "face") as? Data == payload)
+                #expect(card.value(forKey: "addedAt") as? Date == Date(timeIntervalSince1970: 100))
+            } else {
+                #expect(cards.isEmpty)
             }
         }
     }

@@ -9,10 +9,39 @@ private struct WidgetActionHandlerKey: EnvironmentKey {
     static let defaultValue: WidgetActionHandler? = nil
 }
 
+/// Resolves where an image node's bytes can be fetched from. A source names a
+/// product archive path or a Bulletin CID, which only the host can turn into
+/// something loadable, so the renderer asks for it rather than knowing.
+///
+/// A named type rather than a function typealias, because the resolver is held
+/// in the environment and read from a view body. A bare function value carries
+/// the isolation of wherever it was formed, which the environment then has to
+/// convert away.
+public struct WidgetImageResolver: Sendable {
+    private let resolve: @Sendable (CustomMessageWidgetNode.ImageSource) async -> URL?
+
+    public init(_ resolve: @escaping @Sendable (CustomMessageWidgetNode.ImageSource) async -> URL?) {
+        self.resolve = resolve
+    }
+
+    public func callAsFunction(_ source: CustomMessageWidgetNode.ImageSource) async -> URL? {
+        await resolve(source)
+    }
+}
+
+private struct WidgetImageResolverKey: EnvironmentKey {
+    static let defaultValue: WidgetImageResolver? = nil
+}
+
 extension EnvironmentValues {
     var widgetActionHandler: WidgetActionHandler? {
         get { self[WidgetActionHandlerKey.self] }
         set { self[WidgetActionHandlerKey.self] = newValue }
+    }
+
+    var widgetImageResolver: WidgetImageResolver? {
+        get { self[WidgetImageResolverKey.self] }
+        set { self[WidgetImageResolverKey.self] = newValue }
     }
 }
 
@@ -21,18 +50,22 @@ extension EnvironmentValues {
 public struct CustomMessageWidgetView: View {
     let node: CustomMessageWidgetNode
     var onAction: WidgetActionHandler?
+    var resolveImage: WidgetImageResolver?
 
     public init(
         node: CustomMessageWidgetNode,
-        onAction: WidgetActionHandler? = nil
+        onAction: WidgetActionHandler? = nil,
+        resolveImage: WidgetImageResolver? = nil
     ) {
         self.node = node
         self.onAction = onAction
+        self.resolveImage = resolveImage
     }
 
     public var body: some View {
         WidgetNodeContent(node: node)
             .environment(\.widgetActionHandler, onAction)
+            .environment(\.widgetImageResolver, resolveImage)
     }
 }
 
@@ -58,6 +91,90 @@ private struct WidgetNodeContent: View {
             NodeButtonView(props: props, modifiers: node.modifiers)
         case let .textField(props):
             NodeTextFieldView(props: props, modifiers: node.modifiers)
+        case let .image(props):
+            NodeImageView(props: props, modifiers: node.modifiers)
+        case let .effect(props, children):
+            NodeEffectView(props: props, children: children, modifiers: node.modifiers)
+        }
+    }
+}
+
+// MARK: - Image
+
+private struct NodeImageView: View {
+    let props: CustomMessageWidgetNode.ImageProps
+    let modifiers: CustomMessageWidgetNode.Modifiers
+
+    @Environment(\.widgetImageResolver) private var resolveImage
+    @State private var url: URL?
+
+    var body: some View {
+        content
+            .applyWidgetNodeModifiers(modifiers)
+            .task(id: props.source) {
+                url = await resolveImage?(props.source)
+            }
+    }
+
+    /// An image the host cannot fetch draws as empty space, so a missing file
+    /// costs the card one node rather than its layout.
+    @ViewBuilder
+    private var content: some View {
+        if let url {
+            AsyncImage(url: url) { image in
+                props.fit.apply(to: image)
+            } placeholder: {
+                Color.clear
+            }
+        } else {
+            Color.clear
+        }
+    }
+}
+
+private extension CustomMessageWidgetNode.ImageFit {
+    @ViewBuilder
+    func apply(to image: Image) -> some View {
+        switch self {
+        case .none:
+            image
+        case .fill:
+            image.resizable()
+        case .cover:
+            image.resizable().aspectRatio(contentMode: .fill)
+        case .contain:
+            image.resizable().aspectRatio(contentMode: .fit)
+        case .scaleDown:
+            image.resizable().aspectRatio(contentMode: .fit).scaledToFit()
+        }
+    }
+}
+
+// MARK: - Effect
+
+private struct NodeEffectView: View {
+    let props: CustomMessageWidgetNode.EffectProps
+    let children: [CustomMessageWidgetNode]
+    let modifiers: CustomMessageWidgetNode.Modifiers
+
+    var body: some View {
+        ZStack {
+            ForEach(children.indices, id: \.self) { index in
+                WidgetNodeContent(node: children[index])
+            }
+        }
+        .modifier(NodeEffectModifier(effect: props.effect))
+        .applyWidgetNodeModifiers(modifiers)
+    }
+}
+
+private struct NodeEffectModifier: ViewModifier {
+    let effect: CustomMessageWidgetNode.Effect
+
+    func body(content: Content) -> some View {
+        switch effect {
+        case .rainbow:
+            content.motionFillingShader(shader: HolographicShaders.iridescentShine)
         }
     }
 }
@@ -75,7 +192,7 @@ private struct NodeBoxView: View {
                 WidgetNodeContent(node: children[index])
             }
         }
-        .applyWidgetNodeModifiers(modifiers)
+        .applyWidgetNodeModifiers(modifiers, alignment: props.alignment)
     }
 }
 
@@ -89,16 +206,20 @@ private struct NodeColumnView: View {
     var body: some View {
         if modifiers.hasWidthConstraint {
             columnContent
-                .applyWidgetNodeModifiers(modifiers)
+                .applyWidgetNodeModifiers(modifiers, alignment: fillAlignment)
         } else {
             ViewThatFits(in: .horizontal) {
                 columnContent
                     .fixedSize(horizontal: true, vertical: false)
-                    .applyWidgetNodeModifiers(modifiers)
+                    .applyWidgetNodeModifiers(modifiers, alignment: fillAlignment)
                 columnContent
-                    .applyWidgetNodeModifiers(modifiers)
+                    .applyWidgetNodeModifiers(modifiers, alignment: fillAlignment)
             }
         }
+    }
+
+    private var fillAlignment: Alignment {
+        Alignment(horizontal: props.alignment, vertical: .top)
     }
 
     private var columnContent: some View {
@@ -159,7 +280,7 @@ private struct NodeRowView: View {
             horizontal: false,
             vertical: !modifiers.hasHeightConstraint
         )
-        .applyWidgetNodeModifiers(modifiers)
+        .applyWidgetNodeModifiers(modifiers, alignment: Alignment(horizontal: .leading, vertical: props.alignment))
     }
 
     @ViewBuilder

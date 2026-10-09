@@ -47,6 +47,9 @@ struct AppPermissionsPresenterTests {
         #expect(interactor.mediaWrites.first?.setting.id == media.id)
         #expect(interactor.mediaWrites.first?.allowed == false)
         #expect(interactor.writes.isEmpty)
+        #expect(view.revoking)
+        #expect(view.items.first { $0.id == media.id }?.isOn == true)
+        presenter.didFinishRevoking()
 
         let second = scope(root: 2)
         presenter.didReceiveAutomaticUploads(scope: second, allowed: false)
@@ -60,12 +63,12 @@ struct AppPermissionsPresenterTests {
         #expect(interactor.writes.first?.scope == second)
 
         presenter.didReceiveAutomaticUploads(scope: second, allowed: true)
+        presenter.didFinishRevoking()
         let enabledRow = try #require(view.items.first { $0.id == newRow.id })
         presenter.toggle(enabledRow, isOn: false)
         #expect(interactor.writes.last?.allowed == false)
         #expect(interactor.writes.last?.scope == second)
         #expect(interactor.mediaWrites.count == 1)
-        presenter.viewWillDisappear()
         #expect(interactor.revoked.isEmpty)
         #expect(view.items.first { $0.id == remote.identifier }?.isOn == true)
     }
@@ -79,8 +82,10 @@ struct AppPermissionsPresenterTests {
 
     private final class View: UIViewController, AppPermissionsViewProtocol {
         var items: [AppPermissionsViewLayout.Item] = []
+        var revoking = false
         func didReceive(items: [AppPermissionsViewLayout.Item]) { self.items = items }
         func setTitle(_: String) {}
+        func setRevoking(_ revoking: Bool) { self.revoking = revoking }
     }
 
     private final class Interactor: AppPermissionsInteractorInputProtocol {
@@ -88,7 +93,7 @@ struct AppPermissionsPresenterTests {
         var mediaWrites: [(setting: TrUAPIMediaPermissionSetting, allowed: Bool)] = []
         var revoked: [ProductPermission] = []
         func setup() {}
-        func revokeOnDisappear(permissions: [ProductPermission]) { revoked = permissions }
+        func revoke(permissions: [ProductPermission]) { revoked = permissions }
         func setAutomaticUploads(allowed: Bool, scope: TrUAPIAutomaticUploadScope) {
             writes.append((allowed, scope))
         }

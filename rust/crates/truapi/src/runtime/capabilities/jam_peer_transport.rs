@@ -56,11 +56,11 @@ mod native {
         #[instrument(skip_all, fields(runtime.method = "jam_peer_transport.open"))]
         async fn open(
             &self,
-            _cx: &CallContext,
+            cx: &CallContext,
             request: HostJamPeerTransportOpenRequest,
         ) -> Result<HostJamPeerTransportOpenResponse, CallError<HostJamPeerTransportOpenError>>
         {
-            self.jam_peers.open(request).await
+            self.jam_peers.open(cx, request).await
         }
 
         #[instrument(skip_all, fields(runtime.method = "jam_peer_transport.send"))]
