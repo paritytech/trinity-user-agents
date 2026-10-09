@@ -8,17 +8,11 @@ import TrUAPIHost
 struct ExecutionPurposeTests {
     @Test
     func opensAPageUnderACardFaceAsTheWidget() {
-        #expect(ExecutionPurpose.page(cardFace: AnyCardFace()).executionKind == .widget)
+        #expect(ExecutionPurpose.page(cardFace: StubCardFace()).executionKind == .widget)
     }
 
     @Test
     func opensAnyOtherPageAsTheApp() {
         #expect(ExecutionPurpose.page(cardFace: nil).executionKind == .app)
-    }
-}
-
-private struct AnyCardFace: ExpandedCardFaceShowing {
-    func setFaceShown(_: Bool) -> ExpandedCardFaceOutcome {
-        .applied
     }
 }

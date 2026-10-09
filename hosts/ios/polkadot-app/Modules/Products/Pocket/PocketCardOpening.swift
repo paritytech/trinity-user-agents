@@ -71,7 +71,6 @@ private extension PocketCardOpening {
             showMoreButton: false,
             page: page,
             contentSource: widgetURL.map(SPAContentSource.directURL) ?? .dotNs,
-            executable: .widget,
             cardFace: surface
         )
 
