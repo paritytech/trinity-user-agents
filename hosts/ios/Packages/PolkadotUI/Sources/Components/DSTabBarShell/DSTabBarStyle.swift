@@ -10,7 +10,7 @@ public enum DSTabBarStyle {
 
     /// Radius of the hole cut from the bar. The centre control sits inside it with a ring gap.
     static let notchRadius: CGFloat = 34
-    /// Hole centre, measured down from the top edge of the bar.
+    /// Hole centre, measured down from the top of the bar row.
     static let notchCenterY: CGFloat = 16
 
     /// Strength of the variable blur. A material property, not a colour.
@@ -28,6 +28,14 @@ public enum DSTabBarStyle {
     static let shadowRadius: CGFloat = 18
     /// Reach of the shadow mask past the bar, so the blurred shadow is not cut off at the bar edge.
     static let shadowMaskSpread: CGFloat = shadowRadius * 4 + 40
+
+    /// Response of the spring that grows and collapses the shelf. Damping sits just under critical,
+    /// so the bar settles with at most a slight overshoot.
+    static let shelfSpringResponse: Double = 0.38
+    static let shelfSpringDamping: Double = 0.85
+    /// Length of the eased shelf reveal under Reduce Motion, growth and fade together. Matches
+    /// the centre control's.
+    static let shelfFadeDuration: Double = 0.2
 
     /// Diameter of the centre control at rest. It sits in the hole with a ring gap.
     static let centerButtonSize: CGFloat = 60

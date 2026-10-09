@@ -24,9 +24,14 @@ struct DSTabBarShadowMask: Shape {
 private extension Path {
     /// Adds the hole as a second subpath, so callers must fill or clip with `FillStyle(eoFill: true)`.
     /// Under the default winding fill the hole reads as a filled disc instead.
+    ///
+    /// The hole is positioned against the bar row at the bottom of the rect, not the top. The rect
+    /// grows upward while the shelf is open, and the hole must stay with the row rather than float
+    /// at the shelf's top edge.
     mutating func addNotch(in rect: CGRect) {
         let radius = DSTabBarStyle.notchRadius
-        let circleTop = rect.minY + DSTabBarStyle.notchCenterY - radius
+        let rowTop = rect.maxY - DSTabBarStyle.height
+        let circleTop = rowTop + DSTabBarStyle.notchCenterY - radius
         addEllipse(in: CGRect(x: rect.midX - radius, y: circleTop, width: radius * 2, height: radius * 2))
     }
 }
