@@ -9,11 +9,11 @@
 use core::cell::RefCell;
 use core::sync::atomic::{AtomicBool, Ordering};
 use std::rc::Rc;
-use std::sync::Mutex;
 
 use crate::platform::JsonRpcConnection;
 use futures::channel::{mpsc, oneshot};
 use futures::stream::{BoxStream, StreamExt};
+use parking_lot::Mutex;
 use send_wrapper::SendWrapper;
 use url::Url;
 
@@ -31,9 +31,38 @@ type SocketCallbacks = (
     Closure<dyn FnMut(CloseEvent)>,
 );
 
-/// The socket and its live JS callbacks, wrapped so the connect future (which
-/// the trait requires to be `Send`) can hold them across the handshake await.
-type StagedSocket = SendWrapper<(WebSocket, SocketCallbacks)>;
+/// Own the DOM registrations for the entire socket lifetime, including while
+/// the handshake future is pending or being cancelled.
+struct Socket {
+    socket: WebSocket,
+    _callbacks: SocketCallbacks,
+}
+
+impl Socket {
+    fn close(&self) {
+        // Detach before closing or dropping any Closure: the browser may still
+        // deliver queued events after close(), including a failed handshake.
+        self.socket.set_onmessage(None);
+        self.socket.set_onopen(None);
+        self.socket.set_onerror(None);
+        self.socket.set_onclose(None);
+        if !matches!(
+            self.socket.ready_state(),
+            WebSocket::CLOSING | WebSocket::CLOSED
+        ) {
+            let _ = self.socket.close();
+        }
+    }
+}
+
+impl Drop for Socket {
+    fn drop(&mut self) {
+        self.close();
+    }
+}
+
+/// The connect future must be `Send`, but only accesses this on its JS thread.
+type StagedSocket = SendWrapper<Socket>;
 
 /// Open a browser WebSocket connection to `url`.
 pub async fn connect(url: Url) -> Result<Box<dyn JsonRpcConnection>, ProviderError> {
@@ -55,10 +84,8 @@ pub async fn connect(url: Url) -> Result<Box<dyn JsonRpcConnection>, ProviderErr
         }
     }
 
-    let (socket, callbacks) = staged.take();
     Ok(Box::new(WebWsConnection {
-        socket: SendWrapper::new(socket),
-        _callbacks: SendWrapper::new(callbacks),
+        socket: staged,
         responses_close: responses_tx,
         responses: Mutex::new(Some(responses_rx.boxed())),
         closed: AtomicBool::new(false),
@@ -116,7 +143,8 @@ fn open_socket(
     let onopen = {
         let handshake = Rc::clone(&handshake);
         Closure::<dyn FnMut(Event)>::new(move |_| {
-            if let Some(sender) = handshake.borrow_mut().take() {
+            let sender = handshake.borrow_mut().take();
+            if let Some(sender) = sender {
                 let _ = sender.send(Ok(()));
             }
         })
@@ -124,7 +152,8 @@ fn open_socket(
     let onerror = {
         let handshake = Rc::clone(&handshake);
         Closure::<dyn FnMut(Event)>::new(move |_| {
-            if let Some(sender) = handshake.borrow_mut().take() {
+            let sender = handshake.borrow_mut().take();
+            if let Some(sender) = sender {
                 let _ = sender.send(Err("WebSocket error during handshake".to_owned()));
             }
         })
@@ -133,7 +162,8 @@ fn open_socket(
         let handshake = Rc::clone(&handshake);
         let responses_tx = responses_tx.clone();
         Closure::<dyn FnMut(CloseEvent)>::new(move |event: CloseEvent| {
-            if let Some(sender) = handshake.borrow_mut().take() {
+            let sender = handshake.borrow_mut().take();
+            if let Some(sender) = sender {
                 let _ = sender.send(Err(format!(
                     "WebSocket closed during handshake (code {})",
                     event.code()
@@ -150,7 +180,10 @@ fn open_socket(
     socket.set_onclose(Some(onclose.as_ref().unchecked_ref()));
 
     Ok((
-        SendWrapper::new((socket, (onmessage, onopen, onerror, onclose))),
+        SendWrapper::new(Socket {
+            socket,
+            _callbacks: (onmessage, onopen, onerror, onclose),
+        }),
         handshake_rx,
         responses_tx,
         responses_rx,
@@ -159,9 +192,7 @@ fn open_socket(
 
 /// A live browser WebSocket connection exposed as a raw JSON-RPC pipe.
 struct WebWsConnection {
-    socket: SendWrapper<WebSocket>,
-    /// Keeps the JS event callbacks alive for the socket's lifetime.
-    _callbacks: SendWrapper<SocketCallbacks>,
+    socket: StagedSocket,
     /// Sender half of the responses channel, kept to end the stream on close.
     responses_close: mpsc::UnboundedSender<String>,
     responses: Mutex<Option<BoxStream<'static, String>>>,
@@ -173,7 +204,7 @@ impl JsonRpcConnection for WebWsConnection {
         if self.closed.load(Ordering::SeqCst) {
             return;
         }
-        if let Err(err) = self.socket.send_with_str(&request) {
+        if let Err(err) = self.socket.socket.send_with_str(&request) {
             // A send failure on a browser WebSocket means the socket is dead.
             // End the responses stream so the consumer — which correlates by
             // id — sees a disconnect instead of hanging on a request that will
@@ -185,12 +216,7 @@ impl JsonRpcConnection for WebWsConnection {
     }
 
     fn responses(&self) -> BoxStream<'static, String> {
-        match self
-            .responses
-            .lock()
-            .expect("responses mutex poisoned")
-            .take()
-        {
+        match self.responses.lock().take() {
             Some(responses) => responses,
             None => futures::stream::empty().boxed(),
         }
@@ -200,17 +226,134 @@ impl JsonRpcConnection for WebWsConnection {
         if self.closed.swap(true, Ordering::SeqCst) {
             return;
         }
-        let _ = self.socket.close();
+        self.socket.close();
         self.responses_close.close_channel();
-        self.responses
-            .lock()
-            .expect("responses mutex poisoned")
-            .take();
+        self.responses.lock().take();
     }
 }
 
 impl Drop for WebWsConnection {
     fn drop(&mut self) {
         self.close();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+    use std::task::{Context, Poll};
+
+    use futures::FutureExt;
+    use futures::task::{ArcWake, waker};
+    use wasm_bindgen::JsValue;
+    use wasm_bindgen_test::wasm_bindgen_test;
+
+    use super::*;
+
+    #[cfg(not(feature = "js"))]
+    wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);
+
+    fn test_url() -> Url {
+        Url::parse("ws://127.0.0.1:1").unwrap()
+    }
+
+    fn assert_detached(socket: &WebSocket) {
+        assert!(socket.onopen().is_none());
+        assert!(socket.onmessage().is_none());
+        assert!(socket.onerror().is_none());
+        assert!(socket.onclose().is_none());
+        // Exercise the real browser EventTarget after Rust has released the
+        // callbacks. Queued browser events must no longer enter dropped WASM.
+        for event in ["open", "message", "error", "close"] {
+            socket.dispatch_event(&Event::new(event).unwrap()).unwrap();
+        }
+    }
+
+    #[wasm_bindgen_test]
+    fn cancelling_handshake_detaches_browser_callbacks() {
+        let (staged, handshake, responses_tx, mut responses) = open_socket(&test_url()).unwrap();
+        let socket = staged.socket.clone();
+        drop(staged);
+        assert_detached(&socket);
+        assert!(matches!(handshake.now_or_never(), Some(Err(_))));
+        drop(responses_tx);
+        assert_eq!(responses.next().now_or_never(), Some(None));
+    }
+
+    #[wasm_bindgen_test]
+    fn failed_handshake_detaches_browser_callbacks() {
+        for event in [
+            Event::new("error").unwrap(),
+            CloseEvent::new("close").unwrap().unchecked_into(),
+        ] {
+            let (staged, handshake, _, _) = open_socket(&test_url()).unwrap();
+            let socket = staged.socket.clone();
+            socket.dispatch_event(&event).unwrap();
+            assert!(matches!(handshake.now_or_never(), Some(Ok(Err(_)))));
+            drop(staged);
+            assert_detached(&socket);
+        }
+    }
+
+    #[wasm_bindgen_test]
+    fn closing_or_dropping_connection_detaches_browser_callbacks() {
+        for explicit_close in [false, true] {
+            let (staged, handshake, responses_tx, responses_rx) = open_socket(&test_url()).unwrap();
+            let socket = staged.socket.clone();
+            socket.dispatch_event(&Event::new("open").unwrap()).unwrap();
+            assert!(matches!(handshake.now_or_never(), Some(Ok(Ok(())))));
+            let connection = WebWsConnection {
+                socket: staged,
+                responses_close: responses_tx,
+                responses: Mutex::new(Some(responses_rx.boxed())),
+                closed: AtomicBool::new(false),
+            };
+            let mut responses = connection.responses();
+            if explicit_close {
+                connection.close();
+                connection.close();
+                assert_detached(&socket);
+                assert_eq!(responses.next().now_or_never(), Some(None));
+            }
+            drop(connection);
+            assert_detached(&socket);
+            assert_eq!(responses.next().now_or_never(), Some(None));
+        }
+    }
+
+    struct DispatchErrorOnWake {
+        socket: SendWrapper<WebSocket>,
+        completed: AtomicBool,
+    }
+
+    impl ArcWake for DispatchErrorOnWake {
+        fn wake_by_ref(this: &Arc<Self>) {
+            // Invoke a second real WASM callback synchronously from the
+            // handshake receiver's waker. Its borrow must already be released.
+            this.socket
+                .onerror()
+                .unwrap()
+                .call1(&JsValue::NULL, &Event::new("error").unwrap())
+                .unwrap();
+            this.completed.store(true, Ordering::SeqCst);
+        }
+    }
+
+    #[wasm_bindgen_test]
+    fn handshake_callback_releases_borrow_before_waking() {
+        let (staged, mut handshake, _, _) = open_socket(&test_url()).unwrap();
+        let observer = Arc::new(DispatchErrorOnWake {
+            socket: SendWrapper::new(staged.socket.clone()),
+            completed: AtomicBool::new(false),
+        });
+        let waker = waker(observer.clone());
+        let mut cx = Context::from_waker(&waker);
+        assert!(matches!(handshake.poll_unpin(&mut cx), Poll::Pending));
+        staged
+            .socket
+            .dispatch_event(&Event::new("open").unwrap())
+            .unwrap();
+        assert!(observer.completed.load(Ordering::SeqCst));
+        assert!(matches!(handshake.now_or_never(), Some(Ok(Ok(())))));
     }
 }
