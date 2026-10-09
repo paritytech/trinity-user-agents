@@ -26,6 +26,13 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import timber.log.Timber
 
+/**
+ * Debug-only entry point the chat e2e drives: seeds an identity, registers a product, and posts a
+ * user message through the real chat path.
+ *
+ * TODO: seeding state through a broadcast is implicit. The explicit alternative is swapping parts
+ * of the DI graph for test implementations, such as an account repository that answers fixtures.
+ */
 class E2EHookReceiver : BroadcastReceiver() {
 
     @EntryPoint
