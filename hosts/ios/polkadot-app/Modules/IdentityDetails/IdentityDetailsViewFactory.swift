@@ -9,13 +9,11 @@ import ChainRegistry
 enum IdentityDetailsViewFactory {
     static func createEmbeddedScene(
         chainModel: ChainModel,
-        wallet: WalletManaging,
-        personDataStore: DetermineStatePersonDataStore
+        wallet: WalletManaging
     ) -> IdentityDetailsScene {
         let scene = createScene(
             chainModel: chainModel,
-            wallet: wallet,
-            personDataStore: personDataStore
+            wallet: wallet
         )
         scene.setup()
 
@@ -24,8 +22,7 @@ enum IdentityDetailsViewFactory {
 
     private static func createScene(
         chainModel: ChainModel,
-        wallet: WalletManaging,
-        personDataStore: DetermineStatePersonDataStore
+        wallet: WalletManaging
     ) -> IdentityDetailsScene {
         let encoder = AddressQREncoder(addressFormat: .substrate(type: chainModel.addressPrefix))
         let operationFactory = QRCreationOperationFactory(chainStyle: nil)
@@ -45,7 +42,6 @@ enum IdentityDetailsViewFactory {
         let profileService = IdentityProfileService(
             usernameStorage: usernameStorage,
             identityService: identityService,
-            personDataStore: personDataStore,
             wallet: wallet,
             logger: logger
         )
@@ -72,11 +68,8 @@ enum IdentityDetailsViewFactory {
         viewModel.username = usernameStorage.username.map {
             .init(value: $0.value, isClaimed: usernameStorage.usernameClaimed)
         }
-        viewModel.isPersonal = usernameStorage.isPerson
 
-        #if !FEATURE_DIMS
-            viewModel.isRankVisible = false
-        #endif
+        viewModel.isRankVisible = false
         let binding = IdentityDetailsViewBinding(viewModel: viewModel)
 
         binding.bind(to: presenter)

@@ -16,34 +16,12 @@ extension Chat.Contact.Own {
         )
     }
 
-    static func gameCandidate(tldProvider: DotNsTldProviding = DotNsTldProviderFacade.shared) throws -> Chat.Contact
-        .Own {
-        try Chat.Contact.Own(
-            signKeyId: WalletDerivationPath.candidate(for: tldProvider.currentTldOrError()),
-            encryptionKeyId: gameEncryptionKeyId()
-        )
-    }
-
-    static func gameExternal(tldProvider: DotNsTldProviding = DotNsTldProviderFacade.shared) throws -> Chat.Contact
-        .Own {
-        try Chat.Contact.Own(
-            signKeyId: WalletDerivationPath.score(for: tldProvider.currentTldOrError()),
-            encryptionKeyId: gameEncryptionKeyId()
-        )
-    }
-
-    static func gameEncryptionKeyId() -> String {
-        ChatEncryptionDomain.game.rawValue
-    }
-
     static func allPossibleIds(
         tldProvider: DotNsTldProviding = DotNsTldProviderFacade.shared
     ) throws -> Set<Chat.Contact.Own> {
         try [
             main(tldProvider: tldProvider),
-            sso(tldProvider: tldProvider),
-            gameCandidate(tldProvider: tldProvider),
-            gameExternal(tldProvider: tldProvider)
+            sso(tldProvider: tldProvider)
         ]
     }
 }

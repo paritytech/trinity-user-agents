@@ -43,6 +43,10 @@ extension ChatCallPresenter: ChatCallPresenterProtocol {
         interactor.toggleMute()
     }
 
+    func toggleVideo() {
+        interactor.toggleVideo()
+    }
+
     func selectAudioRoute(_ route: CallAudioRoute) {
         interactor.selectAudioRoute(route)
     }
@@ -55,6 +59,14 @@ extension ChatCallPresenter: ChatCallInteractorOutputProtocol {
 
     func didRequireMicrophoneAccess() {
         wireframe.presentMicrophoneAccessRequired(from: view)
+    }
+
+    func didRequireCameraAccess() {
+        wireframe.presentCameraAccessRequired(from: view)
+    }
+
+    func didFailVideoCapture() {
+        wireframe.presentVideoCaptureFailed(from: view)
     }
 
     func didUpdateConnectedAt(_ date: Date?) {
@@ -81,8 +93,16 @@ extension ChatCallPresenter: ChatCallInteractorOutputProtocol {
         view?.didUpdateMuteState(muted)
     }
 
+    func didUpdateVideoState(_ isEnabled: Bool) {
+        view?.didUpdateVideoState(isEnabled)
+    }
+
     func didReceiveCapability(_ capability: ChatCallCapability) {
         view?.didReceiveCapability(capability)
+    }
+
+    func didUpdateRemoteMediaState(_ state: CallRemoteMediaState) {
+        view?.didUpdateRemoteMediaState(state)
     }
 }
 

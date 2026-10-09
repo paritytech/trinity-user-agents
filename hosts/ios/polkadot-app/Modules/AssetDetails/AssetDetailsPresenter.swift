@@ -126,11 +126,9 @@ extension AssetDetailsPresenter: AssetDetailsPresenterProtocol {
     }
 
     func onTopUp() {
-        openRampProduct(.topUp)
-    }
+        view?.didReceive(topUpLoading: true)
 
-    func onWithdraw() {
-        openRampProduct(.withdraw)
+        interactor?.openTopUpProduct()
     }
 
     #if TESTNET_FEATURE
@@ -143,15 +141,15 @@ extension AssetDetailsPresenter: AssetDetailsPresenterProtocol {
 }
 
 extension AssetDetailsPresenter: AssetDetailsInteractorOutputProtocol {
-    func didResolveRampProduct(_ action: RampAction, result: Result<ProductPage, Error>) {
-        view?.didReceive(rampLoading: action, isLoading: false)
+    func didResolveTopUpProduct(_ result: Result<ProductPage, Error>) {
+        view?.didReceive(topUpLoading: false)
 
         switch result {
         case let .success(page):
             wireframe.showProduct(page: page)
         case let .failure(error):
             guard !(error is CancellationError) else { return }
-            wireframe.present(error: action.errorContent(for: error), from: view)
+            wireframe.present(error: RampAction.topUp.errorContent(for: error), from: view)
         }
     }
 
@@ -313,13 +311,5 @@ private extension AssetDetailsPresenter {
             strip: strip
         )
         view?.didReceive(coinageBreakdown: breakdown)
-    }
-}
-
-private extension AssetDetailsPresenter {
-    func openRampProduct(_ action: RampAction) {
-        view?.didReceive(rampLoading: action, isLoading: true)
-
-        interactor?.openRampProduct(action)
     }
 }

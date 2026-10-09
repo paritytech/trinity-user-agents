@@ -2,6 +2,7 @@ import AlarmKit
 import AppIntents
 import Foundation
 import Keystore_iOS
+import Products
 import SwiftUI
 import Individuality
 
@@ -17,7 +18,7 @@ final class AlarmKitGameReminder: GameStartReminderServicing {
     init(
         alarmManger: AlarmManager,
         settingsManager: SettingsManagerProtocol,
-        keys: GameReminderStorageKeys = .game,
+        keys: GameReminderStorageKeys,
         logger: LoggerProtocol = Logger.shared
     ) {
         self.alarmManger = alarmManger
@@ -26,11 +27,11 @@ final class AlarmKitGameReminder: GameStartReminderServicing {
         self.logger = logger
     }
 
-    func scheduleReminder(gameDate: Date, target: GameReminderTarget, timingSeconds: Int) {
+    func scheduleReminder(gameDate: Date, productId: ProductId, timingSeconds: Int) {
         enqueue { [weak self] in
             await self?.performScheduleReminder(
                 gameDate: gameDate,
-                target: target,
+                productId: productId,
                 timingSeconds: timingSeconds
             )
         }
@@ -60,7 +61,7 @@ final class AlarmKitGameReminder: GameStartReminderServicing {
 
     private func performScheduleReminder(
         gameDate: Date,
-        target: GameReminderTarget,
+        productId: ProductId,
         timingSeconds: Int
     ) async {
         guard alarmManger.authorizationState == .authorized else {
@@ -93,7 +94,7 @@ final class AlarmKitGameReminder: GameStartReminderServicing {
         let newAlarmId = UUID()
 
         do {
-            try await schedule(id: newAlarmId, at: fireDate, timingSeconds: timingSeconds, target: target)
+            try await schedule(id: newAlarmId, at: fireDate, timingSeconds: timingSeconds, productId: productId)
             settingsManager.set(string: newAlarmId.uuidString, for: keys.alarmId)
             settingsManager.set(value: Int(fireDate.timeIntervalSinceReferenceDate), for: keys.alarmFireDate)
             logger.debug("Alarm scheduled \(newAlarmId) for \(fireDate)")
@@ -135,7 +136,7 @@ final class AlarmKitGameReminder: GameStartReminderServicing {
         id newAlarmId: UUID,
         at date: Date,
         timingSeconds: Int,
-        target: GameReminderTarget
+        productId: ProductId
     ) async throws {
         let attributes = AlarmAttributes(
             presentation: AlarmPresentation(
@@ -155,12 +156,7 @@ final class AlarmKitGameReminder: GameStartReminderServicing {
 
         let playIntent = GameAlarmPlayIntent()
         playIntent.alarmID = newAlarmId.uuidString
-        switch target {
-        case let .game(gameIndex):
-            playIntent.gameIndex = Int(gameIndex)
-        case let .product(productId):
-            playIntent.productId = productId
-        }
+        playIntent.productId = productId
 
         _ = try await alarmManger.schedule(
             id: newAlarmId,

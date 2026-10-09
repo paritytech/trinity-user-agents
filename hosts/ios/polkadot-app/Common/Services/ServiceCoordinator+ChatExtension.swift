@@ -9,15 +9,9 @@ import ChainRegistry
 
 extension ServiceCoordinator {
     @MainActor
-    // swiftlint:disable:next function_parameter_count
     static func createChatExtensionsRegistry(
         accountManager: ProductsAccountManaging,
         truapiRuntimeProvider: TrUAPIHostRuntimeProviding,
-        syncStore: DetermineStateSyncStore,
-        personDataStore: DetermineStatePersonDataStore,
-        syncService: DetermineStateSyncServicing,
-        personhoodRegistrationService: PersonhoodRegistrationServicing,
-        audioSessionManager: AudioSessionManaging,
         spaFlowState: SPAFlowState,
         productFileProvider: any ChatProductFileProviding,
         pocket: ProductPocketService?
@@ -56,12 +50,7 @@ extension ServiceCoordinator {
 
         let registry = MainActor.assumeIsolated {
             ChatExtensionsRegistry.createDefault(
-                syncStateStore: syncStore,
-                personDataStore: personDataStore,
-                syncService: syncService,
-                personhoodRegistrationService: personhoodRegistrationService,
-                productBotProvider: productBotProvider,
-                audioSessionManager: audioSessionManager
+                productBotProvider: productBotProvider
             )
         }
 

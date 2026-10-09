@@ -17,11 +17,7 @@ enum RootPresenterFactory: RootPresenterFactoryProtocol {
             visibilityReporter: foregroundPresentationController
         )
 
-        #if FEATURE_DIMS
-            let chatExtensionRouters: [ChatExtensionPushRouting] = [DIM2ExtensionPushRouter()]
-        #else
-            let chatExtensionRouters: [ChatExtensionPushRouting] = []
-        #endif
+        let chatExtensionRouters: [ChatExtensionPushRouting] = []
 
         let chatExtensionRouteHandler = ChatExtensionPushRouteHandler(
             routers: chatExtensionRouters,
