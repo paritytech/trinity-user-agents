@@ -8,17 +8,12 @@ use crate::chain::{HashAndNumber, Mortality};
 
 /// The domain a transaction belongs to; selects the oracle that decides it.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub struct DomainId(Cow<'static, str>);
+pub struct DomainId(String);
 
 impl DomainId {
-    /// A domain named by a compile-time constant.
-    pub const fn from_static(name: &'static str) -> Self {
-        Self(Cow::Borrowed(name))
-    }
-
-    /// A domain named at run time, such as one read back from the ledger.
+    /// A domain with this name.
     pub fn new(name: impl Into<String>) -> Self {
-        Self(Cow::Owned(name.into()))
+        Self(name.into())
     }
 
     /// The name stored in the ledger.
@@ -148,6 +143,10 @@ pub struct DurableTxEntry {
     pub status: DurableTxStatus,
     /// The block its success was seen at, while that is still the evidence.
     pub success_detected_at: Option<HashAndNumber>,
+    /// Every block from birth through this one was searched and does not
+    /// include the attempt. Only finalized blocks are searched, so no reorg
+    /// can undo it.
+    pub scanned_to: Option<u64>,
 }
 
 /// A transaction waiting for its policy to build an attempt.
@@ -182,4 +181,7 @@ pub struct Verdict {
     pub success_detected_at: Option<HashAndNumber>,
     /// Why it failed, for a [`DurableTxStatus::Failure`].
     pub failure: Option<FailureKind>,
+    /// How far the search has now read without finding the attempt. `None`
+    /// keeps the recorded [`DurableTxEntry::scanned_to`].
+    pub scanned_to: Option<u64>,
 }

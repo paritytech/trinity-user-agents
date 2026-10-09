@@ -81,7 +81,7 @@ mod tests {
         let mut live = engine.live_work();
         assert!(!block_on(live.next()).unwrap().unwrap());
         let request = DurableRequest::presigned(
-            DomainId::from_static("test"),
+            DomainId::new("test"),
             None,
             without_plan(vec![extrinsic(1, 100, 64)]),
         )

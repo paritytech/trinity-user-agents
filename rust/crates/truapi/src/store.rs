@@ -58,6 +58,7 @@ pub fn core_migrations() -> Migrations<'static> {
             period INTEGER,
             success_number INTEGER,
             success_hash BLOB,
+            scanned_number INTEGER,
             status TEXT NOT NULL CHECK (status IN
                 ('PENDING_SUBMISSION', 'PENDING', 'PENDING_SUCCESS', 'FINALIZED_SUCCESS', 'FAILURE')),
             policy_id TEXT,

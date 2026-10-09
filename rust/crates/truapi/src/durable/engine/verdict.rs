@@ -13,6 +13,7 @@ const BACK_TO_POLICY: Verdict = Verdict {
     status: DurableTxStatus::PendingSubmission,
     success_detected_at: None,
     failure: None,
+    scanned_to: None,
 };
 
 /// Writes `verdict` only while `observed` is still the row's status and
@@ -104,7 +105,9 @@ mod tests {
         engine_with_policies, extrinsic, insert, insert_retryable, rebuild_plan,
     };
 
-    const TEST: DomainId = DomainId::from_static("test");
+    fn test_domain() -> DomainId {
+        DomainId::new("test")
+    }
 
     struct Fixture {
         _dir: tempfile::TempDir,
@@ -130,7 +133,7 @@ mod tests {
         registered: Vec<Arc<ScriptedPolicy>>,
     ) -> Fixture {
         let chain = FakeChain::new(130, 140);
-        let (dir, engine, _timer) = engine_with_policies(&chain, &[TEST], registered);
+        let (dir, engine, _timer) = engine_with_policies(&chain, &[test_domain()], registered);
         Fixture {
             _dir: dir,
             engine,
@@ -140,7 +143,7 @@ mod tests {
 
     fn retryable(fixture: &Fixture) -> DurableTxEntry {
         let policy = rebuild_plan(vec![7]);
-        let id = insert_retryable(&fixture.engine.db, &TEST, extrinsic(1, 100, 64), policy);
+        let id = insert_retryable(&fixture.engine.db, &test_domain(), extrinsic(1, 100, 64), policy);
         entry(fixture, id)
     }
 
@@ -159,6 +162,7 @@ mod tests {
             status: DurableTxStatus::Failure,
             success_detected_at: None,
             failure: kind,
+            scanned_to: None,
         }
     }
 
@@ -193,7 +197,7 @@ mod tests {
     #[test]
     fn a_failure_without_a_policy_stays_final() {
         let fixture = fixture(RetryAnswer::Retry);
-        let id = insert(&fixture.engine.db, &TEST, extrinsic(1, 100, 64));
+        let id = insert(&fixture.engine.db, &test_domain(), extrinsic(1, 100, 64));
         let observed = entry(&fixture, id);
 
         write(&fixture, &observed, failure(Some(FailureKind::Expired)));
@@ -253,6 +257,7 @@ mod tests {
             status: DurableTxStatus::FinalizedSuccess,
             success_detected_at: Some(block(120)),
             failure: None,
+            scanned_to: None,
         };
 
         write(&fixture, &observed, success);

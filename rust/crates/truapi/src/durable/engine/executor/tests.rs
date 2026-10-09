@@ -26,8 +26,13 @@ use crate::store::Db;
 use crate::subscription::Spawner;
 use crate::test_support::{test_spawner, wait_until};
 
-const TEST: DomainId = DomainId::from_static("test");
-const OTHER: DomainId = DomainId::from_static("other");
+fn test_domain() -> DomainId {
+    DomainId::new("test")
+}
+
+fn other_domain() -> DomainId {
+    DomainId::new("other")
+}
 
 struct Fixture {
     _dir: tempfile::TempDir,
@@ -85,7 +90,7 @@ impl Fixture {
 /// An engine serving the `test` and `other` domains with `policies`.
 fn fixture(policies: Vec<Arc<ScriptedPolicy>>) -> Fixture {
     let chain = FakeChain::new(130, 140);
-    let (dir, engine, timer) = engine_with_policies(&chain, &[TEST, OTHER], policies);
+    let (dir, engine, timer) = engine_with_policies(&chain, &[test_domain(), other_domain()], policies);
     Fixture {
         _dir: dir,
         chain,
@@ -143,7 +148,7 @@ fn built_by(script: PrepareScript) -> Arc<ScriptedPolicy> {
 
 /// The rows that wait to be built, read straight from the ledger.
 fn waiting_ids(db: &Db) -> Vec<DurableTxId> {
-    let read = db.read(|conn| dao::bucket_submissions(conn, &TEST, &REBUILD_POLICY, None));
+    let read = db.read(|conn| dao::bucket_submissions(conn, &test_domain(), &REBUILD_POLICY, None));
     let rows = block_on(read).unwrap();
     rows.iter().map(|scheduled| scheduled.id).collect()
 }
@@ -152,7 +157,7 @@ fn waiting_ids(db: &Db) -> Vec<DurableTxId> {
 fn a_scheduled_transaction_is_built_broadcast_and_watched() {
     let fixture = fixture(vec![built_by(builds_everything())]);
 
-    let id = fixture.schedule_one(TEST, None, REBUILD_POLICY);
+    let id = fixture.schedule_one(test_domain(), None, REBUILD_POLICY);
 
     fixture.wait_for(id, DurableTxStatus::Pending);
     let built = broadcast_bytes(&[100]);
@@ -168,7 +173,7 @@ fn a_policy_that_gives_up_fails_the_transaction_without_broadcasting() {
     let gives_up = answer_every_batch(|ids| answer_all_with(ids, Preparation::GiveUp));
     let fixture = fixture(vec![built_by(gives_up)]);
 
-    let id = fixture.schedule_one(TEST, None, REBUILD_POLICY);
+    let id = fixture.schedule_one(test_domain(), None, REBUILD_POLICY);
 
     fixture.wait_for(id, DurableTxStatus::Failure);
     assert_eq!(fixture.submitted(), vec![]);
@@ -185,9 +190,9 @@ fn rows_nothing_can_build_are_abandoned() {
         policy: PolicyId::from_static("removed"),
         params: PolicyParams::default(),
     };
-    let unknown_policy = leave_waiting(db, TEST, removed);
+    let unknown_policy = leave_waiting(db, test_domain(), removed);
     let rebuild = rebuild_plan(vec![]);
-    let unknown_domain = leave_waiting(db, DomainId::from_static("removed"), rebuild);
+    let unknown_domain = leave_waiting(db, DomainId::new("removed"), rebuild);
 
     fixture.engine.ensure_submissions_started();
 
@@ -208,7 +213,7 @@ fn starting_the_executor_twice_runs_one_collector() {
         counter.fetch_add(1, Ordering::SeqCst);
         inner(task)
     });
-    let registry = DurableRegistry::new().with_domain(TEST, Arc::new(Unobservable(GENESIS)));
+    let registry = DurableRegistry::new().with_domain(test_domain(), Arc::new(Unobservable(GENESIS)));
     let (_dir, engine, _timer) = engine_with_spawner(&chain, registry, spawner);
 
     engine.ensure_submissions_started();
@@ -224,7 +229,7 @@ fn starting_the_executor_twice_runs_one_collector() {
 fn dropping_the_engine_mid_build_leaves_the_transaction_waiting() {
     let policy = built_by(Box::new(|_| Box::pin(pending())));
     let fixture = fixture(vec![policy.clone()]);
-    let id = fixture.schedule_one(TEST, None, REBUILD_POLICY);
+    let id = fixture.schedule_one(test_domain(), None, REBUILD_POLICY);
     wait_until(|| policy.batches().len() == 1, "the build starts");
     let Fixture { _dir, engine, .. } = fixture;
     let db = engine.db.clone();

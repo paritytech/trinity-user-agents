@@ -41,7 +41,7 @@ fn register_watched(
 ) -> (DurableTxId, mpsc::UnboundedSender<WatchEvent>) {
     let events = fixture.chain.script_watch();
     let submission = DurableSubmission { extrinsic, plan };
-    let request = DurableRequest::presigned(TEST, None, vec![submission]).unwrap();
+    let request = DurableRequest::presigned(test_domain(), None, vec![submission]).unwrap();
     let ids = block_on(fixture.engine.execute(request)).unwrap();
     (ids[0], events)
 }
@@ -66,7 +66,7 @@ fn a_build_for_a_row_that_changed_meanwhile_starts_no_attempt() {
     let ready_now = Preparation::Ready(extrinsic(100, 100, 64));
     let fixture = fixture_racing(ready_now, dao::abandon_submission);
 
-    let id = fixture.schedule_one(TEST, None, REBUILD_POLICY);
+    let id = fixture.schedule_one(test_domain(), None, REBUILD_POLICY);
 
     wait_until(|| fixture.timer.sleeps() == 1, "the bucket backs off");
     assert_eq!(fixture.status(id), DurableTxStatus::Failure);
@@ -82,7 +82,7 @@ fn giving_up_on_a_row_that_changed_meanwhile_fails_nothing() {
         |tx: &rusqlite::Transaction<'_>, id| dao::start_attempt(tx, id, &extrinsic(100, 100, 64));
     let fixture = fixture_racing(Preparation::GiveUp, started_elsewhere);
 
-    let id = fixture.schedule_one(TEST, None, REBUILD_POLICY);
+    let id = fixture.schedule_one(test_domain(), None, REBUILD_POLICY);
 
     wait_until(|| fixture.timer.sleeps() == 1, "the bucket backs off");
     assert_eq!(fixture.status(id), DurableTxStatus::Pending);

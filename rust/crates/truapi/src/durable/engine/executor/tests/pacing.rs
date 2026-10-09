@@ -17,6 +17,7 @@ fn hand_back_first_attempt(fixture: &Fixture, id: DurableTxId) {
         status: DurableTxStatus::PendingSubmission,
         success_detected_at: None,
         failure: None,
+        scanned_to: None,
     };
     block_on(write_verdict(&fixture.engine, &attempt, back)).unwrap();
 }
@@ -34,7 +35,7 @@ fn a_policy_that_cannot_answer_is_asked_again_after_a_growing_backoff() {
         }
     }));
     let fixture = fixture(vec![policy.clone()]);
-    let id = fixture.schedule_one(TEST, None, REBUILD_POLICY);
+    let id = fixture.schedule_one(test_domain(), None, REBUILD_POLICY);
     wait_until(|| fixture.timer.sleeps() == 1, "the bucket backs off");
 
     fixture.timer.advance(INITIAL_BACKOFF);
@@ -53,7 +54,7 @@ fn a_policy_that_cannot_answer_is_asked_again_after_a_growing_backoff() {
 fn a_transaction_the_policy_never_answers_keeps_waiting() {
     let policy = built_by(answer_every_batch(|_| Ok(HashMap::new())));
     let fixture = fixture(vec![policy.clone()]);
-    let id = fixture.schedule_one(TEST, None, REBUILD_POLICY);
+    let id = fixture.schedule_one(test_domain(), None, REBUILD_POLICY);
 
     for round in 1..=3 {
         wait_until(|| fixture.timer.sleeps() == round, "the bucket backs off");
@@ -78,7 +79,7 @@ fn a_build_repeating_a_released_attempt_is_not_broadcast() {
     let repeated_hash = extrinsic(100, 100, 64).extrinsic.hash();
     fixture.engine.ownership.release(next_id, repeated_hash);
 
-    let id = fixture.schedule_one(TEST, None, REBUILD_POLICY);
+    let id = fixture.schedule_one(test_domain(), None, REBUILD_POLICY);
 
     wait_until(|| fixture.timer.sleeps() == 1, "the bucket backs off");
     assert_eq!(id, next_id);
@@ -92,7 +93,7 @@ fn a_build_repeating_a_released_attempt_is_not_broadcast() {
 fn a_transaction_handed_back_is_built_again_after_a_cooldown() {
     let policy = built_by(builds_everything());
     let fixture = fixture(vec![policy.clone()]);
-    let id = fixture.schedule_one(TEST, None, REBUILD_POLICY);
+    let id = fixture.schedule_one(test_domain(), None, REBUILD_POLICY);
     hand_back_first_attempt(&fixture, id);
     wait_until(|| fixture.timer.sleeps() == 2, "the rebuild cools down");
 
@@ -129,7 +130,7 @@ fn builds_once_then_gives_up() -> PrepareScript {
 #[test]
 fn a_finalized_row_leaves_no_attempt_count_behind() {
     let fixture = fixture(vec![built_by(builds_everything())]);
-    let id = fixture.schedule_one(TEST, None, REBUILD_POLICY);
+    let id = fixture.schedule_one(test_domain(), None, REBUILD_POLICY);
     fixture.wait_for(id, DurableTxStatus::Pending);
     let read = fixture.engine.db.read(move |conn| dao::entry(conn, id));
     let attempt = block_on(read).unwrap().unwrap();
@@ -137,6 +138,7 @@ fn a_finalized_row_leaves_no_attempt_count_behind() {
         status: DurableTxStatus::FinalizedSuccess,
         success_detected_at: None,
         failure: None,
+        scanned_to: None,
     };
 
     block_on(write_verdict(&fixture.engine, &attempt, finalized)).unwrap();
@@ -147,7 +149,7 @@ fn a_finalized_row_leaves_no_attempt_count_behind() {
 #[test]
 fn a_row_given_up_after_a_rebuild_leaves_no_attempt_count_behind() {
     let fixture = fixture(vec![built_by(builds_once_then_gives_up())]);
-    let id = fixture.schedule_one(TEST, None, REBUILD_POLICY);
+    let id = fixture.schedule_one(test_domain(), None, REBUILD_POLICY);
     hand_back_first_attempt(&fixture, id);
     wait_until(|| fixture.timer.sleeps() == 2, "the rebuild cools down");
 
@@ -177,7 +179,7 @@ fn a_round_that_decides_one_row_runs_the_next_without_backing_off() {
     let released = extrinsic(200, 100, 64).extrinsic.hash();
     fixture.engine.ownership.release(DurableTxId(2), released);
 
-    let ids = fixture.schedule_together(TEST, None, REBUILD_POLICY, 2);
+    let ids = fixture.schedule_together(test_domain(), None, REBUILD_POLICY, 2);
 
     assert_eq!(ids, vec![DurableTxId(1), DurableTxId(2)]);
     let asked_again = || policy.batches().contains(&vec![ids[1]]);

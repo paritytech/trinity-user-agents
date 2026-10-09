@@ -305,16 +305,19 @@ mod tests {
     };
     use crate::test_support::wait_until;
 
-    const DOMAIN: DomainId = DomainId::from_static("test");
+    fn domain() -> DomainId {
+        DomainId::new("test")
+    }
 
     fn request(extrinsics: Vec<MortalExtrinsic>) -> DurableRequest {
-        DurableRequest::presigned(DOMAIN, Some(GroupId::new("op")), without_plan(extrinsics)).unwrap()
+        DurableRequest::presigned(domain(), Some(GroupId::new("op")), without_plan(extrinsics))
+            .unwrap()
     }
 
     #[test]
     fn a_request_with_no_extrinsic_cannot_be_built() {
         assert!(matches!(
-            DurableRequest::presigned(DOMAIN, None, vec![]),
+            DurableRequest::presigned(domain(), None, vec![]),
             Err(EmptyRequest)
         ));
     }
@@ -329,7 +332,7 @@ mod tests {
 
         assert!(ids[0] < ids[1]);
         assert_eq!(
-            block_on(engine.group(&DOMAIN, &GroupId::new("op"))).unwrap(),
+            block_on(engine.group(&domain(), &GroupId::new("op"))).unwrap(),
             ids.iter()
                 .map(|id| DurableTxState {
                     id: *id,
@@ -443,7 +446,7 @@ mod tests {
         .unwrap();
         assert!(matches!(result, Err(RegistrationError::Db(_))));
         assert_eq!(
-            block_on(engine.group(&DOMAIN, &GroupId::new("op"))).unwrap(),
+            block_on(engine.group(&domain(), &GroupId::new("op"))).unwrap(),
             vec![]
         );
         assert_eq!(tables, 0);
@@ -478,7 +481,7 @@ mod tests {
         let chain = FakeChain::new(130, 140);
         let (_dir, engine, _timer) = test_engine(&chain);
         let orphan = DurableRequest::presigned(
-            DomainId::from_static("orphan"),
+            DomainId::new("orphan"),
             None,
             without_plan(vec![extrinsic(1, 100, 64)]),
         )
@@ -486,7 +489,7 @@ mod tests {
 
         assert!(matches!(
             block_on(engine.execute(orphan)),
-            Err(RegistrationError::UnknownDomain(domain)) if domain == DomainId::from_static("orphan")
+            Err(RegistrationError::UnknownDomain(domain)) if domain == DomainId::new("orphan")
         ));
     }
 
@@ -494,18 +497,18 @@ mod tests {
     /// never builds anything.
     fn engine_with_policy(chain: &Arc<FakeChain>) -> (tempfile::TempDir, Arc<DurableTxEngine>) {
         let policy = ScriptedPolicy::never_building(REBUILD_POLICY, RetryAnswer::Final);
-        let (dir, engine, _timer) = engine_with_policies(chain, &[DOMAIN], vec![policy]);
+        let (dir, engine, _timer) = engine_with_policies(chain, &[domain()], vec![policy]);
         (dir, engine)
     }
 
     fn scheduled(plans: Vec<SubmissionPlan>) -> DurableRequest {
-        DurableRequest::scheduled(DOMAIN, Some(GroupId::new("op")), plans).unwrap()
+        DurableRequest::scheduled(domain(), Some(GroupId::new("op")), plans).unwrap()
     }
 
     #[test]
     fn an_empty_schedule_is_refused() {
         assert!(matches!(
-            DurableRequest::scheduled(DOMAIN, None, vec![]),
+            DurableRequest::scheduled(domain(), None, vec![]),
             Err(EmptyRequest)
         ));
     }
@@ -520,7 +523,7 @@ mod tests {
         let ids = block_on(engine.execute(scheduled(vec![rebuild_plan(vec![1]), rebuild_plan(vec![1])]))).unwrap();
 
         assert_eq!(
-            block_on(engine.group(&DOMAIN, &GroupId::new("op"))).unwrap(),
+            block_on(engine.group(&domain(), &GroupId::new("op"))).unwrap(),
             ids.iter()
                 .map(|id| DurableTxState {
                     id: *id,
@@ -542,7 +545,7 @@ mod tests {
             extrinsic: extrinsic(1, 100, 64),
             plan: Some(rebuild_plan(vec![1])),
         };
-        let request = DurableRequest::presigned(DOMAIN, None, vec![submission]).unwrap();
+        let request = DurableRequest::presigned(domain(), None, vec![submission]).unwrap();
 
         let ids = block_on(engine.execute(request)).unwrap();
 
@@ -573,7 +576,7 @@ mod tests {
             Err(RegistrationError::UnknownPolicy(policy)) if policy == PolicyId::from_static("unknown")
         ));
         assert_eq!(
-            block_on(engine.group(&DOMAIN, &GroupId::new("op"))).unwrap(),
+            block_on(engine.group(&domain(), &GroupId::new("op"))).unwrap(),
             vec![]
         );
     }
@@ -592,7 +595,7 @@ mod tests {
 
         assert!(matches!(result, Err(RegistrationError::Db(_))));
         assert_eq!(
-            block_on(engine.group(&DOMAIN, &GroupId::new("op"))).unwrap(),
+            block_on(engine.group(&domain(), &GroupId::new("op"))).unwrap(),
             vec![]
         );
     }

@@ -1,7 +1,7 @@
 //! [`DurableRegistry`]: the oracle of every domain the engine serves and
 //! every submission policy that builds its transactions.
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::sync::Arc;
 
 use subxt::utils::H256;
@@ -31,12 +31,11 @@ impl DurableRegistry {
     /// When `domain` is already registered: two oracles for one domain is a
     /// wiring bug.
     pub fn with_domain(mut self, domain: DomainId, oracle: Arc<dyn CompletionOracle>) -> Self {
-        let duplicate = domain.clone();
         assert!(
-            self.oracles.insert(domain, oracle).is_none(),
-            "durable domain {} registered twice",
-            duplicate.as_str()
+            !self.oracles.contains_key(&domain),
+            "durable domain {domain:?} registered twice"
         );
+        self.oracles.insert(domain, oracle);
         self
     }
 
@@ -67,11 +66,8 @@ impl DurableRegistry {
     }
 
     /// Genesis hashes of every chain a registered domain lives on.
-    pub fn chains(&self) -> Vec<H256> {
-        let mut chains: Vec<H256> = self.oracles.values().map(|oracle| oracle.chain()).collect();
-        chains.sort();
-        chains.dedup();
-        chains
+    pub fn chains(&self) -> BTreeSet<H256> {
+        self.oracles.values().map(|oracle| oracle.chain()).collect()
     }
 }
 
@@ -86,8 +82,8 @@ mod tests {
     fn a_domain_registered_twice_is_a_wiring_bug() {
         let oracle: Arc<dyn CompletionOracle> = Arc::new(Unobservable(H256::zero()));
         let _ = DurableRegistry::new()
-            .with_domain(DomainId::from_static("test"), oracle.clone())
-            .with_domain(DomainId::from_static("test"), oracle);
+            .with_domain(DomainId::new("test"), oracle.clone())
+            .with_domain(DomainId::new("test"), oracle);
     }
 
     #[test]

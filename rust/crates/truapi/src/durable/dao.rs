@@ -74,7 +74,8 @@ pub fn schedule(
 
 const START_ATTEMPT: &str = "UPDATE durable_tx
     SET status = 'PENDING', tx_hash = :tx_hash, birth_number = :birth_number,
-    birth_hash = :birth_hash, period = :period, success_number = NULL, success_hash = NULL
+    birth_hash = :birth_hash, period = :period, success_number = NULL, success_hash = NULL,
+    scanned_number = NULL
     WHERE id = :id AND status = 'PENDING_SUBMISSION'";
 
 /// Gives a waiting row the attempt `extrinsic` makes. Returns whether the row
@@ -165,7 +166,8 @@ pub fn bucket_submissions(
 }
 
 const COMPARE_AND_SET: &str = "UPDATE durable_tx
-    SET status = :status, success_number = :success_number, success_hash = :success_hash
+    SET status = :status, success_number = :success_number, success_hash = :success_hash,
+        scanned_number = COALESCE(:scanned_number, scanned_number)
     WHERE id = :id AND status = :expected AND tx_hash = :expected_hash
     AND status IN ('PENDING', 'PENDING_SUCCESS')";
 
@@ -181,6 +183,7 @@ pub fn compare_and_set(
         ":status": verdict.status,
         ":success_number": success.map(|block| block.number),
         ":success_hash": success.map(|block| block.hash.0),
+        ":scanned_number": verdict.scanned_to,
         ":id": observed.id.0,
         ":expected": observed.status,
         ":expected_hash": observed.tx_hash.0,
@@ -306,6 +309,7 @@ impl DurableTxEntry {
             mortality: mortality_from_row(row)?,
             status: row.get("status")?,
             success_detected_at: success_from_row(row)?,
+            scanned_to: row.get("scanned_number")?,
         })
     }
 }
@@ -419,11 +423,13 @@ mod tests {
     };
     use crate::test_support::wait_until;
 
-    const DOMAIN: DomainId = DomainId::from_static("test");
+    fn domain() -> DomainId {
+        DomainId::new("test")
+    }
 
     fn register(db: &Db, group: Option<GroupId>, tag: u8) -> DurableTxId {
         block_on(
-            db.write(move |tx| insert(tx, &DOMAIN, group.as_ref(), &extrinsic(tag, 100, 64), None)),
+            db.write(move |tx| insert(tx, &domain(), group.as_ref(), &extrinsic(tag, 100, 64), None)),
         )
         .unwrap()
     }
@@ -444,6 +450,7 @@ mod tests {
             status,
             success_detected_at,
             failure: None,
+            scanned_to: None,
         }
     }
 
@@ -456,12 +463,13 @@ mod tests {
             read(&db, move |conn| entry(conn, id)),
             Some(DurableTxEntry {
                 id,
-                domain: DOMAIN,
+                domain: domain(),
                 group: Some(GroupId::new("payment")),
                 tx_hash: extrinsic(7, 100, 64).extrinsic.hash(),
                 mortality: extrinsic(7, 100, 64).mortality,
                 status: DurableTxStatus::Pending,
                 success_detected_at: None,
+                scanned_to: None,
             })
         );
     }
@@ -563,6 +571,7 @@ mod tests {
                 status: DurableTxStatus::Failure,
                 success_detected_at: None,
                 failure: Some(FailureKind::Expired),
+                scanned_to: None,
             },
         );
         let terminal = DurableTxEntry {
@@ -579,6 +588,30 @@ mod tests {
 
     /// Two domains may pick the same group name, such as an operation id; a
     /// group is only ever read within its domain.
+    /// A watch's verdict knows nothing of what recovery already searched, so
+    /// writing it must not throw that away.
+    #[test]
+    fn a_verdict_without_a_cursor_keeps_the_recorded_one() {
+        let (_dir, db) = open_db();
+        let id = register(&db, None, 7);
+        let observed = read(&db, move |conn| entry(conn, id)).unwrap();
+        let scanned = Verdict {
+            scanned_to: Some(120),
+            ..verdict(DurableTxStatus::Pending, None)
+        };
+        write_verdict(&db, observed, scanned);
+        let scanned_entry = read(&db, move |conn| entry(conn, id)).unwrap();
+
+        write_verdict(
+            &db,
+            scanned_entry,
+            verdict(DurableTxStatus::PendingSuccess, Some(block(125))),
+        );
+
+        let recorded = read(&db, move |conn| entry(conn, id)).unwrap();
+        assert_eq!(recorded.scanned_to, Some(120));
+    }
+
     #[test]
     fn a_group_lists_its_own_domain_in_registration_order() {
         let (_dir, db) = open_db();
@@ -590,7 +623,7 @@ mod tests {
         block_on(db.write(move |tx| {
             insert(
                 tx,
-                &DomainId::from_static("other"),
+                &DomainId::new("other"),
                 Some(&other),
                 &extrinsic(4, 100, 64),
                 None,
@@ -599,7 +632,7 @@ mod tests {
         .unwrap();
 
         assert_eq!(
-            read(&db, move |conn| group(conn, &DOMAIN, &group_id)),
+            read(&db, move |conn| group(conn, &domain(), &group_id)),
             vec![
                 DurableTxState {
                     id: first,
@@ -618,7 +651,7 @@ mod tests {
         let (_dir, db) = open_db();
         let ids = [register(&db, None, 1), register(&db, None, 2)];
 
-        let listed = read(&db, |conn| domain_entries(conn, &DOMAIN));
+        let listed = read(&db, |conn| domain_entries(conn, &domain()));
 
         assert_eq!(listed.iter().map(|entry| entry.id).collect::<Vec<_>>(), ids);
     }
@@ -628,7 +661,7 @@ mod tests {
         let (_dir, db) = open_db();
         assert_eq!(read(&db, live_domains), Vec::<DomainId>::new());
         let id = register(&db, None, 1);
-        assert_eq!(read(&db, live_domains), vec![DOMAIN]);
+        assert_eq!(read(&db, live_domains), vec![domain()]);
 
         let observed = read(&db, move |conn| entry(conn, id)).unwrap();
         write_verdict(
@@ -645,7 +678,7 @@ mod tests {
         let (_dir, db) = open_db();
         let group_id = GroupId::new("payment");
         let mut live = observe_has_live(&db);
-        let mut grouped = observe_group(&db, DOMAIN, group_id.clone());
+        let mut grouped = observe_group(&db, domain(), group_id.clone());
         assert!(!next(&mut live));
         assert_eq!(next(&mut grouped), vec![]);
 
@@ -688,7 +721,7 @@ mod tests {
     fn insert_rebuilt_by(db: &Db, params: u8) -> DurableTxId {
         insert_retryable(
             db,
-            &DOMAIN,
+            &domain(),
             extrinsic(1, 100, 64),
             rebuild_plan(vec![params]),
         )
@@ -697,13 +730,13 @@ mod tests {
     #[test]
     fn a_scheduled_row_waits_for_its_policy_with_no_attempt() {
         let (_dir, db) = open_db();
-        let id = schedule_in(&db, DOMAIN, Some(GroupId::new("payment")));
+        let id = schedule_in(&db, domain(), Some(GroupId::new("payment")));
 
         assert_eq!(
             pending_rows(&db),
             vec![ScheduledDurableTx {
                 id,
-                domain: DOMAIN,
+                domain: domain(),
                 group: Some(GroupId::new("payment")),
                 plan: rebuild_plan(vec![1]),
             }]
@@ -720,30 +753,31 @@ mod tests {
     #[test]
     fn a_transaction_waiting_to_be_built_is_live_but_not_decidable() {
         let (_dir, db) = open_db();
-        schedule_in(&db, DOMAIN, None);
+        schedule_in(&db, domain(), None);
 
         assert!(next(&mut observe_has_live(&db)));
         assert!(read(&db, has_pending_submissions));
         assert_eq!(read(&db, live_domains), Vec::<DomainId>::new());
-        assert_eq!(read(&db, |conn| domain_entries(conn, &DOMAIN)), vec![]);
+        assert_eq!(read(&db, |conn| domain_entries(conn, &domain())), vec![]);
     }
 
     #[test]
     fn starting_an_attempt_gives_a_waiting_row_its_extrinsic() {
         let (_dir, db) = open_db();
-        let id = schedule_in(&db, DOMAIN, None);
+        let id = schedule_in(&db, domain(), None);
 
         assert!(start_attempt_tagged(&db, id, 9));
         assert_eq!(
             read(&db, move |conn| entry(conn, id)),
             Some(DurableTxEntry {
                 id,
-                domain: DOMAIN,
+                domain: domain(),
                 group: None,
                 tx_hash: extrinsic(9, 110, 32).extrinsic.hash(),
                 mortality: extrinsic(9, 110, 32).mortality,
                 status: DurableTxStatus::Pending,
                 success_detected_at: None,
+                scanned_to: None,
             })
         );
         assert_eq!(pending_rows(&db), vec![]);
@@ -754,7 +788,7 @@ mod tests {
     #[test]
     fn an_attempt_starts_only_on_a_row_still_waiting() {
         let (_dir, db) = open_db();
-        let waiting = schedule_in(&db, DOMAIN, None);
+        let waiting = schedule_in(&db, domain(), None);
         let submitted = register(&db, None, 1);
         start_attempt_tagged(&db, waiting, 9);
 
@@ -766,10 +800,32 @@ mod tests {
         );
     }
 
+    /// A rebuilt attempt has its own hash and birth, so the blocks searched
+    /// for the previous one prove nothing about it.
+    #[test]
+    fn a_rebuilt_attempt_starts_with_nothing_searched() {
+        let (_dir, db) = open_db();
+        let id = schedule_in(&db, domain(), None);
+        start_attempt_tagged(&db, id, 9);
+        let first = read(&db, move |conn| entry(conn, id)).unwrap();
+        let scanned = Verdict {
+            scanned_to: Some(120),
+            ..verdict(DurableTxStatus::Pending, None)
+        };
+        write_verdict(&db, first, scanned);
+        let searched = read(&db, move |conn| entry(conn, id)).unwrap();
+        write_verdict(&db, searched, verdict(DurableTxStatus::PendingSubmission, None));
+
+        start_attempt_tagged(&db, id, 10);
+
+        let rebuilt = read(&db, move |conn| entry(conn, id)).unwrap();
+        assert_eq!(rebuilt.scanned_to, None);
+    }
+
     #[test]
     fn only_a_row_still_waiting_can_be_abandoned() {
         let (_dir, db) = open_db();
-        let waiting = schedule_in(&db, DOMAIN, None);
+        let waiting = schedule_in(&db, domain(), None);
         let submitted = register(&db, None, 1);
 
         assert!(abandon_waiting(&db, waiting));
@@ -802,7 +858,7 @@ mod tests {
             pending_rows(&db),
             vec![ScheduledDurableTx {
                 id,
-                domain: DOMAIN,
+                domain: domain(),
                 group: None,
                 plan: rebuild_plan(vec![3]),
             }]
@@ -830,17 +886,17 @@ mod tests {
     #[test]
     fn a_bucket_lists_only_its_domain_policy_and_group() {
         let (_dir, db) = open_db();
-        let grouped = schedule_in(&db, DOMAIN, Some(GroupId::new("g1")));
-        let ungrouped = schedule_in(&db, DOMAIN, None);
+        let grouped = schedule_in(&db, domain(), Some(GroupId::new("g1")));
+        let ungrouped = schedule_in(&db, domain(), None);
         schedule_in(
             &db,
-            DomainId::from_static("other"),
+            DomainId::new("other"),
             Some(GroupId::new("g1")),
         );
-        schedule_in(&db, DOMAIN, Some(GroupId::new("g2")));
+        schedule_in(&db, domain(), Some(GroupId::new("g2")));
         let bucket = |group: Option<GroupId>| {
             read(&db, move |conn| {
-                bucket_submissions(conn, &DOMAIN, &REBUILD_POLICY, group.as_ref())
+                bucket_submissions(conn, &domain(), &REBUILD_POLICY, group.as_ref())
             })
             .iter()
             .map(|scheduled| scheduled.id)
@@ -856,11 +912,11 @@ mod tests {
     #[test]
     fn a_transaction_given_up_before_it_was_built_leaves_its_domain_readable() {
         let (_dir, db) = open_db();
-        let never_built = schedule_in(&db, DOMAIN, None);
+        let never_built = schedule_in(&db, domain(), None);
         abandon_waiting(&db, never_built);
         let live = register(&db, None, 1);
 
-        let listed = read(&db, |conn| domain_entries(conn, &DOMAIN));
+        let listed = read(&db, |conn| domain_entries(conn, &domain()));
 
         assert_eq!(
             listed.iter().map(|entry| entry.id).collect::<Vec<_>>(),
@@ -876,7 +932,7 @@ mod tests {
         let (_dir, db) = open_db();
         let mut waiting = observe_pending_submissions(&db);
         assert_eq!(next(&mut waiting), vec![]);
-        let id = schedule_in(&db, DOMAIN, None);
+        let id = schedule_in(&db, domain(), None);
         assert_eq!(next(&mut waiting).len(), 1);
 
         start_attempt_tagged(&db, id, 9);

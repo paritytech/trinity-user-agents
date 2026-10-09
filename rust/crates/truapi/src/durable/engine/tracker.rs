@@ -204,6 +204,7 @@ impl DurableTxEngine {
                 status: DurableTxStatus::Pending,
                 success_detected_at: None,
                 failure: None,
+                scanned_to: None,
             };
             self.propose(attempt, demoted).await;
         }
@@ -243,6 +244,7 @@ fn success(status: DurableTxStatus, block: HashAndNumber) -> Verdict {
         status,
         success_detected_at: Some(block),
         failure: None,
+        scanned_to: None,
     }
 }
 
@@ -251,6 +253,7 @@ fn failure(kind: FailureKind) -> Verdict {
         status: DurableTxStatus::Failure,
         success_detected_at: None,
         failure: Some(kind),
+        scanned_to: None,
     }
 }
 
@@ -274,7 +277,9 @@ mod tests {
     use crate::test_support::wait_until;
     use subxt::tx::TransactionInvalid;
 
-    const TEST: DomainId = DomainId::from_static("test");
+    fn test_domain() -> DomainId {
+        DomainId::new("test")
+    }
 
     struct Fixture {
         _dir: tempfile::TempDir,
@@ -326,13 +331,13 @@ mod tests {
         let (spawner, finished) = counting_spawner();
         let (dir, engine, timer) = engine_with_spawner(
             &chain,
-            DurableRegistry::new().with_domain(TEST, Arc::new(Unobservable(GENESIS))),
+            DurableRegistry::new().with_domain(test_domain(), Arc::new(Unobservable(GENESIS))),
             spawner,
         );
         let nudges = engine.recovery_wakes.subscribe();
         let tx = extrinsic(1, 100, 64);
         let id = block_on(engine.execute(
-            DurableRequest::presigned(TEST, None, without_plan(vec![tx.clone()])).unwrap(),
+            DurableRequest::presigned(test_domain(), None, without_plan(vec![tx.clone()])).unwrap(),
         ))
         .unwrap()[0];
         (

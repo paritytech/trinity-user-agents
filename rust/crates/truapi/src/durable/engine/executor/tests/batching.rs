@@ -46,10 +46,10 @@ fn each_domain_policy_and_group_is_built_in_its_own_batch() {
     let second = ScriptedPolicy::new(SECOND_POLICY, RetryAnswer::Retry, silent);
     let fixture = fixture(vec![first.clone(), second.clone()]);
 
-    let together = fixture.schedule_together(TEST, Some("g1"), REBUILD_POLICY, 2);
-    let other_policy = fixture.schedule_one(TEST, Some("g1"), SECOND_POLICY);
-    let other_group = fixture.schedule_one(TEST, Some("g2"), REBUILD_POLICY);
-    let other_domain = fixture.schedule_one(OTHER, Some("g1"), REBUILD_POLICY);
+    let together = fixture.schedule_together(test_domain(), Some("g1"), REBUILD_POLICY, 2);
+    let other_policy = fixture.schedule_one(test_domain(), Some("g1"), SECOND_POLICY);
+    let other_group = fixture.schedule_one(test_domain(), Some("g2"), REBUILD_POLICY);
+    let other_domain = fixture.schedule_one(other_domain(), Some("g1"), REBUILD_POLICY);
 
     wait_for_batch(&first, together, "the shared batch");
     wait_for_batch(&first, vec![other_group], "the other group alone");
@@ -71,10 +71,10 @@ fn a_batch_stuck_in_its_policy_does_not_hold_up_another_group() {
         Box::pin(ready(answer_all_with(ids, ready_now)))
     });
     let fixture = fixture(vec![built_by(script)]);
-    let blocked = fixture.schedule_one(TEST, Some("g1"), REBUILD_POLICY);
+    let blocked = fixture.schedule_one(test_domain(), Some("g1"), REBUILD_POLICY);
     assert_eq!(blocked, first_row);
 
-    let free = fixture.schedule_one(TEST, Some("g2"), REBUILD_POLICY);
+    let free = fixture.schedule_one(test_domain(), Some("g2"), REBUILD_POLICY);
 
     fixture.wait_for(free, DurableTxStatus::Pending);
     assert_eq!(fixture.status(blocked), DurableTxStatus::PendingSubmission);
@@ -87,10 +87,10 @@ fn a_transaction_scheduled_during_a_build_is_built_in_the_next_round() {
     let (release, script) = first_build_gated();
     let policy = built_by(script);
     let fixture = fixture(vec![policy.clone()]);
-    let first = fixture.schedule_one(TEST, None, REBUILD_POLICY);
+    let first = fixture.schedule_one(test_domain(), None, REBUILD_POLICY);
     wait_until(|| policy.batches().len() == 1, "the first build starts");
 
-    let second = fixture.schedule_one(TEST, None, REBUILD_POLICY);
+    let second = fixture.schedule_one(test_domain(), None, REBUILD_POLICY);
     release.send(()).unwrap();
 
     fixture.wait_for(second, DurableTxStatus::Pending);
