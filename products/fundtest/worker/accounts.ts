@@ -15,14 +15,18 @@ import { fromHex, toHex, truapi, unwrap } from "./host";
  *  so a restarted worker finds the same account. */
 const sessionLabel = (intent: string) => `onramp:eph:fundtest:${intent}`;
 
+/** The context `entropy.derive` takes for `label`: its 32-byte hash, since
+ *  the host accepts at most 32 bytes and a session label is longer. */
+export const entropyContext = (label: string) =>
+  toHex(blake2b(new TextEncoder().encode(label), { dkLen: 32 }));
+
 /** The session account for `intent`. Its secret is never stored. */
 export async function sessionAccount(
   intent: string,
 ): Promise<EphemeralKeypairWithSecret> {
   const client = await truapi();
-  const label = new TextEncoder().encode(sessionLabel(intent));
   const { entropy } = await unwrap(
-    client.entropy.derive({ context: toHex(label) }),
+    client.entropy.derive({ context: entropyContext(sessionLabel(intent)) }),
     "entropy.derive",
   );
   return deriveKeypairWithSecret(fromHex(entropy));

@@ -107,6 +107,9 @@ export class Session {
   private readonly saved: Saved;
   private readonly abort = new AbortController();
   private cancelRequested = false;
+  /** Set once `run` has returned, including after an error it could not
+   *  report, when nothing is left to act on a cancel. */
+  private stopped = false;
   /** Whether part of a crypto deposit has reached the session account. */
   private fundsSeen = false;
   private account: Promise<EphemeralKeypairWithSecret> | undefined;
@@ -148,7 +151,8 @@ export class Session {
   /** The user asked to cancel. Honoured while nothing has moved. */
   cancel(): void {
     this.cancelRequested = true;
-    if (this.cancellable) this.abort.abort();
+    if (this.cancellable && this.stopped) void this.end({ tag: "Cancelled" });
+    else if (this.cancellable) this.abort.abort();
     else
       console.info(
         `[fundtest] ${this.intent}: cancel ignored, funds are moving`,
@@ -178,6 +182,8 @@ export class Session {
       } else {
         console.error(`[fundtest] ${this.intent} stopped: ${describe(error)}`);
       }
+    } finally {
+      this.stopped = true;
     }
   }
 
