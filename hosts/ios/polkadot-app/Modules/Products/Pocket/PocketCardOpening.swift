@@ -26,6 +26,7 @@ enum PocketCardOpening {
 
         let screen = PocketCardScreenViewController(card: card, product: product.view, surface: product.surface)
         navigator.presentFullScreen(screen)
+        product.surface.claim(screen)
 
         Task {
             await PocketCardFaceOnOpen.apply(

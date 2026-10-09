@@ -321,6 +321,7 @@ struct PocketCardScreenTests {
         let window = showing(presenter)
 
         await present(cardNavigation(screen), from: presenter)
+        surface.claim(screen)
         await dismissPresented(from: presenter)
 
         #expect(product.controller.parent == nil)

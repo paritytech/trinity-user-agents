@@ -42,8 +42,6 @@ final class PocketCardScreenViewController: UIViewController {
         self.face = face
 
         super.init(nibName: nil, bundle: nil)
-
-        surface.screen = self
     }
 
     @available(*, unavailable)
@@ -88,9 +86,7 @@ final class PocketCardScreenViewController: UIViewController {
             child.removeFromParent()
         }
 
-        if surface.screen === self {
-            surface.screen = nil
-        }
+        surface.release(self)
     }
 
     func setFaceShown(_ shown: Bool, animated: Bool) -> ExpandedCardFaceOutcome {

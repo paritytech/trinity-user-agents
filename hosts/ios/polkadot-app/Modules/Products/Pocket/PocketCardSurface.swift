@@ -8,7 +8,22 @@ import UIKit
 /// already loaded under it must find that one.
 @MainActor
 final class PocketCardSurface: ExpandedCardFaceShowing {
-    weak var screen: PocketCardScreenViewController?
+    private(set) weak var screen: PocketCardScreenViewController?
+
+    /// Points the surface at `screen`. Only a screen on display may take it,
+    /// so one built but never shown cannot take it from the one the user sees.
+    func claim(_ screen: PocketCardScreenViewController) {
+        guard screen.isOnDisplay else { return }
+
+        self.screen = screen
+    }
+
+    /// Lets go of `screen`, unless another screen has claimed the surface since.
+    func release(_ screen: PocketCardScreenViewController) {
+        guard self.screen === screen else { return }
+
+        self.screen = nil
+    }
 
     func setFaceShown(_ shown: Bool) -> ExpandedCardFaceOutcome {
         guard let screen, screen.isOnDisplay else { return .notPresented }

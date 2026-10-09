@@ -11,13 +11,14 @@ import UIKit
 @MainActor
 struct PocketCardSurfaceTests {
     /// A screen never built, or built but never presented, is not something
-    /// the user is looking at.
+    /// the user is looking at, and cannot take the surface by claiming it.
     @Test
     func answersNotPresentedWithNoScreenOnDisplay() {
         let surface = PocketCardSurface()
         let withoutScreen = surface.setFaceShown(false)
         let screen = PocketCardScreenViewController(card: loyaltyCard, product: StubSPAView(), surface: surface)
         screen.loadViewIfNeeded()
+        surface.claim(screen)
 
         withExtendedLifetime(screen) {
             #expect([withoutScreen, surface.setFaceShown(false)] == [.notPresented, .notPresented])
@@ -33,6 +34,7 @@ struct PocketCardSurfaceTests {
         let presenter = UIViewController()
         let window = showing(presenter)
         presenter.present(cardNavigation(screen), animated: true)
+        surface.claim(screen)
 
         #expect(surface.setFaceShown(false) == .applied)
         #expect(waitUntil(on: screen) { screen.scrollView?.contentOffset.y == PocketOpenedCardView.height })
@@ -50,6 +52,7 @@ struct PocketCardSurfaceTests {
         let window = try showingInScene(presenter)
         let navigation = cardNavigation(screen)
         await present(navigation, from: presenter)
+        surface.claim(screen)
         let cover = UIViewController()
         cover.modalPresentationStyle = .fullScreen
 
@@ -68,6 +71,7 @@ struct PocketCardSurfaceTests {
         let presenter = UIViewController()
         let window = try showingInScene(presenter)
         await present(cardNavigation(screen), from: presenter)
+        surface.claim(screen)
         let (closed, finishClosing) = AsyncStream<Void>.makeStream()
 
         presenter.dismiss(animated: true) { finishClosing.finish() }
@@ -78,21 +82,24 @@ struct PocketCardSurfaceTests {
         withExtendedLifetime(window) {}
     }
 
-    /// The surface outlives its screens, and the same card reopened gets a new
-    /// screen before the old one is torn down, so only the screen the surface
-    /// points at may let go of it.
+    /// The surface outlives its screens. A screen built but never shown must
+    /// not take it from the one the user sees, nor let go of it for that one.
     @Test
-    func forgetsOnlyTheScreenItPointsAtWhenThatScreenHandsBack() {
+    func keepsTheScreenOnDisplayWhileAnotherIsBuiltAndHandsBack() async {
         let surface = PocketCardSurface()
-        let older = PocketCardScreenViewController(card: loyaltyCard, product: StubSPAView(), surface: surface)
-        let newer = PocketCardScreenViewController(card: loyaltyCard, product: StubSPAView(), surface: surface)
+        let shown = PocketCardScreenViewController(card: loyaltyCard, product: StubSPAView(), surface: surface)
+        let presenter = UIViewController()
+        let window = showing(presenter)
+        await present(cardNavigation(shown), from: presenter)
+        surface.claim(shown)
 
-        older.handBackProduct()
-        #expect(surface.screen === newer)
+        let neverShown = PocketCardScreenViewController(card: loyaltyCard, product: StubSPAView(), surface: surface)
+        surface.claim(neverShown)
+        neverShown.handBackProduct()
+        #expect(surface.screen === shown)
 
-        newer.handBackProduct()
-        withExtendedLifetime(newer) {
-            #expect(surface.screen == nil)
-        }
+        shown.handBackProduct()
+        #expect(surface.screen == nil)
+        withExtendedLifetime(window) {}
     }
 }
