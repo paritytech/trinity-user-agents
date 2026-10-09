@@ -72,9 +72,11 @@ impl<'a> DialAdmission<'a> {
     ) -> Result<Self, CallError<wire::HostJamPeerTransportDialError>> {
         let admitted = match transport {
             Some(transport) => transport.reserve_pending_dial(slots),
-            None => slots.fetch_update(Ordering::AcqRel, Ordering::Acquire, |used| {
-                (used < quic::MAX_CONNECTIONS).then_some(used + 1)
-            }).is_ok(),
+            None => slots
+                .try_update(Ordering::AcqRel, Ordering::Acquire, |used| {
+                    (used < quic::MAX_CONNECTIONS).then_some(used + 1)
+                })
+                .is_ok(),
         };
         if !admitted {
             return Err(dial_error(latest::HostJamPeerTransportDialError::Limit));
