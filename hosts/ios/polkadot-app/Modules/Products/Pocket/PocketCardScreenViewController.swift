@@ -110,10 +110,12 @@ final class PocketCardScreenViewController: UIViewController {
         placeFace(shown: shown, animated: true)
     }
 
-    /// In a window, or on its way into one. It is presented inside a
-    /// navigation controller, so that is what is being presented.
+    /// From the start of its presentation until its dismissal starts, even
+    /// while something it presents covers it. It is presented inside a
+    /// navigation controller, so that is what is presented and dismissed.
     var isOnDisplay: Bool {
-        viewIfLoaded?.window != nil || (navigationController ?? self).isBeingPresented
+        let presented = navigationController ?? self
+        return presented.presentingViewController != nil && !presented.isBeingDismissed
     }
 }
 

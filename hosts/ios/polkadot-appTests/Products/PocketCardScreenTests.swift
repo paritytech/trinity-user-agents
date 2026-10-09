@@ -319,15 +319,9 @@ struct PocketCardScreenTests {
         let screen = PocketCardScreenViewController(card: loyaltyCard, product: product, surface: surface)
         let presenter = UIViewController()
         let window = showing(presenter)
-        let navigation = AppNavigationController(rootViewController: screen)
-        navigation.modalPresentationStyle = .fullScreen
 
-        await withCheckedContinuation { presented in
-            presenter.present(navigation, animated: true) { presented.resume() }
-        }
-        await withCheckedContinuation { dismissed in
-            presenter.dismiss(animated: true) { dismissed.resume() }
-        }
+        await present(cardNavigation(screen), from: presenter)
+        await dismissPresented(from: presenter)
 
         #expect(product.controller.parent == nil)
         #expect(product.controller.view.superview == nil)

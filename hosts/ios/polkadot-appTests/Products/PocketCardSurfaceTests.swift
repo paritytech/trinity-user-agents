@@ -10,7 +10,7 @@ import UIKit
 /// rather than wait on a screen that is gone.
 @MainActor
 struct PocketCardSurfaceTests {
-    /// A screen never built, or built but not in a window, is not something
+    /// A screen never built, or built but never presented, is not something
     /// the user is looking at.
     @Test
     func answersNotPresentedWithNoScreenOnDisplay() {
@@ -24,16 +24,6 @@ struct PocketCardSurfaceTests {
         }
     }
 
-    @Test
-    func handsTheRequestToTheScreenOnDisplay() {
-        let surface = PocketCardSurface()
-        let screen = PocketCardScreenViewController(card: loyaltyCard, product: StubSPAView(), surface: surface)
-
-        withExtendedLifetime(showing(screen)) {
-            #expect(surface.setFaceShown(false) == .applied)
-        }
-    }
-
     /// A warm page hears its card reopen while the new screen is still on its
     /// way up, before it is in a window, and the face must still move.
     @Test
@@ -42,12 +32,49 @@ struct PocketCardSurfaceTests {
         let screen = PocketCardScreenViewController(card: loyaltyCard, product: StubSPAView(), surface: surface)
         let presenter = UIViewController()
         let window = showing(presenter)
-        let navigation = AppNavigationController(rootViewController: screen)
-        navigation.modalPresentationStyle = .fullScreen
-        presenter.present(navigation, animated: true)
+        presenter.present(cardNavigation(screen), animated: true)
 
         #expect(surface.setFaceShown(false) == .applied)
         #expect(waitUntil(on: screen) { screen.scrollView?.contentOffset.y == PocketOpenedCardView.height })
+        withExtendedLifetime(window) {}
+    }
+
+    /// A card's page can cover the card with a full-screen view of its own,
+    /// such as a contact picker. The card is still open under it, so its face
+    /// still moves.
+    @Test
+    func keepsAnsweringForACardCoveredByAFullScreenView() async throws {
+        let surface = PocketCardSurface()
+        let screen = PocketCardScreenViewController(card: loyaltyCard, product: StubSPAView(), surface: surface)
+        let presenter = UIViewController()
+        let window = try showingInScene(presenter)
+        let navigation = cardNavigation(screen)
+        await present(navigation, from: presenter)
+        let cover = UIViewController()
+        cover.modalPresentationStyle = .fullScreen
+
+        await present(cover, from: navigation)
+
+        #expect(surface.setFaceShown(false) == .applied)
+        withExtendedLifetime(window) {}
+    }
+
+    /// A card that has started to close is on its way out, and its face must
+    /// not move as it goes.
+    @Test
+    func answersNotPresentedOnceTheCardStartsClosing() async throws {
+        let surface = PocketCardSurface()
+        let screen = PocketCardScreenViewController(card: loyaltyCard, product: StubSPAView(), surface: surface)
+        let presenter = UIViewController()
+        let window = try showingInScene(presenter)
+        await present(cardNavigation(screen), from: presenter)
+        let (closed, finishClosing) = AsyncStream<Void>.makeStream()
+
+        presenter.dismiss(animated: true) { finishClosing.finish() }
+        let whileClosing = surface.setFaceShown(false)
+        for await _ in closed {}
+
+        #expect(whileClosing == .notPresented)
         withExtendedLifetime(window) {}
     }
 

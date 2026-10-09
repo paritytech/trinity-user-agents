@@ -1,6 +1,7 @@
 import Foundation
 import Products
 import Testing
+import UIKit
 @testable import polkadot_app
 
 struct PublishedPocketCardsTests {
@@ -188,7 +189,9 @@ struct PublishedPocketCardsTests {
             product: StubSPAView(),
             surface: PocketCardSurface()
         )
-        let window = showing(screen)
+        let presenter = UIViewController()
+        let window = try showingInScene(presenter)
+        await present(cardNavigation(screen), from: presenter)
         let scrollView = try #require(screen.scrollView)
         let cards = PublishedPocketCards(products: gameResolver(worker: workerPublishing([faceAwayLoyalty])))
 
