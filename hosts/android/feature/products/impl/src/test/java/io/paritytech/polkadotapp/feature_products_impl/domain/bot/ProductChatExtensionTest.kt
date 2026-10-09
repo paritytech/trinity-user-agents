@@ -151,6 +151,22 @@ class ProductChatExtensionTest {
     )
 
     @Test
+    fun `an empty footer hides the input of that room alone`() = runTest {
+        val refCounter = FakeRefCounter(RecordingWorker())
+        val extension = ProductChatExtension(mockk<Context>(relaxed = true), product, refCounter)
+
+        withChatHost { extension.startGlobalWork() }
+        val messaging = requireNotNull(refCounter.chatSurface)
+
+        assertEquals(true, extension.observeUserInputAllowed(ChatId.forExtensionRoom(extensionId, ROOM)).first())
+
+        messaging.setRoomFooter(ProductChatIdParameter(ROOM), showsTextInput = false)
+
+        assertEquals(false, extension.observeUserInputAllowed(ChatId.forExtensionRoom(extensionId, ROOM)).first())
+        assertEquals(true, extension.observeUserInputAllowed(ChatId.forExtensionRoom(extensionId, "other")).first())
+    }
+
+    @Test
     fun `the roomless default chat is not a product room`() = runTest {
         val refCounter = FakeRefCounter(RecordingWorker())
         val ownRooms = flowOf(listOf(ChatId.forExtension(extensionId), ChatId.forExtensionRoom(extensionId, ROOM)))

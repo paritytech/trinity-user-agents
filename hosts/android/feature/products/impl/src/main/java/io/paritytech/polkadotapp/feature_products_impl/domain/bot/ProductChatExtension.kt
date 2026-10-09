@@ -33,10 +33,14 @@ import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onEach
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import timber.log.Timber
@@ -71,6 +75,14 @@ class ProductChatExtension(
 
     // Strong ref to the messaging target bound weakly onto the shared worker; held for our lifetime.
     private var chatMessaging: ProductChatMessaging? = null
+
+    // Rooms the product asked to show nothing below the messages. Absent means the text input, the default.
+    private val roomsWithoutInput = MutableStateFlow(emptySet<ProductChatIdParameter>())
+
+    override fun observeUserInputAllowed(chatId: ChatId): Flow<Boolean> {
+        val room = chatId.productRoomId(id) ?: return flowOf(true)
+        return roomsWithoutInput.map { room !in it }.distinctUntilChanged()
+    }
 
     override fun customMessageRenderers(): List<CustomChatMessageRenderer<*>> {
         return listOf(messageRenderer)
@@ -155,6 +167,13 @@ class ProductChatExtension(
             val chatId = chatIdParameter.toChatId(id)
             val chatMessage = extensionContext.sendMessage(chatId, message.toChatMessageContent())
             return Result.success(chatMessage.id)
+        }
+
+        override suspend fun setRoomFooter(chatIdParameter: ProductChatIdParameter, showsTextInput: Boolean): Result<Unit> {
+            roomsWithoutInput.update { rooms ->
+                if (showsTextInput) rooms - chatIdParameter else rooms + chatIdParameter
+            }
+            return Result.success(Unit)
         }
 
         override fun subscribeChatRooms(): Flow<List<ProductChatRoom>> {

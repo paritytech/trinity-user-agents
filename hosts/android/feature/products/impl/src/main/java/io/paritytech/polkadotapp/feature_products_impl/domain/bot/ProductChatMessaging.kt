@@ -17,5 +17,8 @@ interface ProductChatMessaging {
 
     suspend fun sendMessage(chatIdParameter: ProductChatIdParameter, message: ProductBotMessage): Result<ChatMessageId>
 
+    /** Sets whether [chatIdParameter] shows the text input below its messages; the core's room footer. */
+    suspend fun setRoomFooter(chatIdParameter: ProductChatIdParameter, showsTextInput: Boolean): Result<Unit>
+
     fun subscribeChatRooms(): Flow<List<ProductChatRoom>>
 }

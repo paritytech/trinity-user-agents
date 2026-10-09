@@ -43,6 +43,13 @@ class BindableProductsBotApi(
         )
     }
 
+    override suspend fun setRoomFooter(chatIdParameter: ProductChatIdParameter, showsTextInput: Boolean): Result<Unit> {
+        return chatSlot.tryUse().fold(
+            onSuccess = { it.setRoomFooter(chatIdParameter, showsTextInput) },
+            onFailure = { messagingNotSupported() },
+        )
+    }
+
     @OptIn(ExperimentalCoroutinesApi::class)
     override fun subscribeChatRooms(): Flow<List<ProductChatRoom>> {
         return chatSlot.bound.flatMapLatest { it?.subscribeChatRooms() ?: flowOf(emptyList()) }

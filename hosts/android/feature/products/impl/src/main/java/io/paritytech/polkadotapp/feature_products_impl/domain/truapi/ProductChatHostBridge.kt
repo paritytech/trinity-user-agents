@@ -13,6 +13,7 @@ import timber.log.Timber
 import uniffi.truapi.ChatBotRegistrationStatus
 import uniffi.truapi.ChatMessageContent
 import uniffi.truapi.ChatRoom
+import uniffi.truapi.ChatRoomFooter
 import uniffi.truapi.ChatRoomRegistrationStatus
 import uniffi.truapi.HostRejection
 
@@ -38,6 +39,15 @@ class ProductChatHostBridge(
                 "this host cannot render a ${content.javaClass.simpleName} message",
             )
         return chatMessaging.sendMessage(ProductChatIdParameter(roomId), message).orReject()
+    }
+
+    override suspend fun setRoomFooter(roomId: String, footer: ChatRoomFooter) {
+        if (roomId.isEmpty()) throw HostRejection.Rejected("a chat room needs an id")
+        val showsTextInput = when (footer) {
+            ChatRoomFooter.TEXT_INPUT -> true
+            ChatRoomFooter.EMPTY -> false
+        }
+        chatMessaging.setRoomFooter(ProductChatIdParameter(roomId), showsTextInput).orReject()
     }
 
     override suspend fun listRooms(): List<ChatRoom> =

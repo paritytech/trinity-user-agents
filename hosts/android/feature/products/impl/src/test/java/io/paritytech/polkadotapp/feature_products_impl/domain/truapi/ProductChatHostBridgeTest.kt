@@ -1,6 +1,7 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.truapi
 
 import io.paritytech.polkadotapp.feature_chats_api.domain.extension.CreateRoomStatus
+import io.paritytech.polkadotapp.feature_products_api.model.ProductChatIdParameter
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_api.model.RoomParticipation
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.FakeChatMessaging
@@ -15,6 +16,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import uniffi.truapi.ChatMessageContent
 import uniffi.truapi.ChatReaction
+import uniffi.truapi.ChatRoomFooter
 import uniffi.truapi.ChatRoomParticipation
 import uniffi.truapi.ChatRoomRegistrationStatus
 import uniffi.truapi.HostRejection
@@ -35,18 +37,22 @@ class ProductChatHostBridgeTest {
     }
 
     @Test
-    fun `an empty room id is rejected, by createRoom and by postMessage alike`() = runTest {
+    fun `an empty room id is rejected by every room-scoped call`() = runTest {
         val api = FakeChatMessaging(onSendMessage = { _, _ -> Result.success("message-id") })
         val bridge = bridge(api)
 
         val posted = runCatching { bridge.postMessage("", ChatMessageContent.Text("hi")) }.exceptionOrNull()
         val created = runCatching { bridge.createRoom("", "Jollity", "icon") }.exceptionOrNull()
+        val footed = runCatching { bridge.setRoomFooter("", ChatRoomFooter.EMPTY) }.exceptionOrNull()
 
         assertTrue(posted is HostRejection)
         assertTrue(posted!!.message!!.contains("a chat message needs a room"))
         assertTrue(created is HostRejection)
         assertTrue(created!!.message!!.contains("a chat room needs an id"))
+        assertTrue(footed is HostRejection)
+        assertTrue(footed!!.message!!.contains("a chat room needs an id"))
         assertTrue(api.sentText.isEmpty())
+        assertTrue(api.footers.isEmpty())
     }
 
     @Test
@@ -107,6 +113,20 @@ class ProductChatHostBridgeTest {
 
         assertEquals(ChatRoomRegistrationStatus.NEW, statusFor(CreateRoomStatus.New))
         assertEquals(ChatRoomRegistrationStatus.EXISTS, statusFor(CreateRoomStatus.Exists))
+    }
+
+    @Test
+    fun `setRoomFooter maps the core footer onto the room's text input`() = runTest {
+        val api = FakeChatMessaging()
+        val bridge = bridge(api)
+
+        bridge.setRoomFooter(ROOM, ChatRoomFooter.EMPTY)
+        bridge.setRoomFooter(ROOM, ChatRoomFooter.TEXT_INPUT)
+
+        assertEquals(
+            listOf(ProductChatIdParameter(ROOM) to false, ProductChatIdParameter(ROOM) to true),
+            api.footers,
+        )
     }
 
     private fun bridge(api: FakeChatMessaging) = ProductChatHostBridge(productId, api)
