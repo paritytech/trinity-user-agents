@@ -8,7 +8,7 @@ Room is the storage layer; SCALE codec is the wire format. Both are migration-se
 2. **`blocking`** — Editing existing hex in a SCALE conformance test is forbidden — the test exists to fail loudly when encoding changes. If the schema must change, add a migration and add a new test.
 3. **`blocking`** — Persisted SCALE schemas changed non-additively (remove / reorder / retype field, insert enum variant in middle, add struct field) must ship a `*V<N>.kt` snapshot of the old shape plus a migration.
 4. **`blocking`** — Room schema bump (`@Database(version = N+1, ...)`) must add a paired `Migration(N, N+1)` and pass `MigrationTest.migrateAll()`.
-5. **`major`** — New SCALE type missing a conformance test.
+5. **`major`** — New persisted SCALE schema, or wire shape shared with iOS, missing a conformance test. Do not add round-trip tests for derived encodings; they only re-run the codec.
 6. **`major`** — Manual binary encoder where `BinaryScale` / `@Serializable` covers it.
 7. **`major`** — Repository accessing `Preferences` directly. Use a typed `XxxStorage` interface.
 8. **`major`** — Feature-specific entity placed in shared `database/.../entity/` without a feature-prefixed class name (e.g. `VideoGameSessionEntity`, not bare `SessionEntity`).
