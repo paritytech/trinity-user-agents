@@ -48,11 +48,34 @@ private fun FundingSheetContent(
     modifier: Modifier = Modifier,
 ) {
     when (state.screen) {
+        FundingScreen.SUMMARY -> FundingSummaryScreen(
+            modifier = modifier,
+            state = state.summary,
+            onBack = viewModel::onBack,
+            onFees = viewModel::onOpenFees,
+            onCountry = viewModel::onOpenCountry,
+            onProviders = viewModel::onOpenProviders,
+            onContinue = viewModel::onStart,
+        )
+
+        FundingScreen.FEES -> FundingFeesScreen(modifier = modifier, state = state.fees, onBack = viewModel::onBack)
+
+        FundingScreen.COUNTRY -> FundingCountryScreen(
+            modifier = modifier,
+            state = state.country,
+            onBack = viewModel::onBack,
+            onQueryChanged = viewModel::onCountryQueryChanged,
+            onCountry = viewModel::onCountryChosen,
+        )
+
+        FundingScreen.PROVIDERS -> FundingProvidersScreen(
+            modifier = modifier,
+            state = state.providers,
+            onBack = viewModel::onBack,
+            onProvider = viewModel::onProviderChosen,
+        )
+
         FundingScreen.AMOUNT,
-        FundingScreen.SUMMARY,
-        FundingScreen.FEES,
-        FundingScreen.COUNTRY,
-        FundingScreen.PROVIDERS,
         FundingScreen.NETWORK,
         FundingScreen.TOKEN,
         FundingScreen.DEPOSIT,

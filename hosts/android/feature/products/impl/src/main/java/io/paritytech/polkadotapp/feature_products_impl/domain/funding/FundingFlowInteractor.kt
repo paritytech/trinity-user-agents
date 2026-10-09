@@ -18,6 +18,7 @@ class FundingFlowInteractor @Inject constructor(
     @param:DigitalDollarChainAssetProvider private val chainAssetProvider: ChainAssetProvider,
     private val balance: FundingBalance,
     private val runtime: FundingRuntime,
+    private val branding: FundingProviderBranding,
 ) {
     suspend fun cash(): FundingCash {
         val asset = chainAssetProvider.asset()
@@ -30,6 +31,8 @@ class FundingFlowInteractor @Inject constructor(
     fun detectedCountry(): FundingCountry? = FundingCountries.detected()
 
     fun countries(): List<FundingCountry> = FundingCountries.all()
+
+    suspend fun brand(providerId: String): FundingProviderBrand = branding.brand(providerId)
 
     suspend fun candidates(intent: String): List<FundingCandidate> = runtime.candidates(intent)
 

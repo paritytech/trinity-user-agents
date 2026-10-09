@@ -12,6 +12,9 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingFlo
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingKey
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingOverlayContext
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingOverlayContexts
+import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingProviderBrand
+import io.paritytech.polkadotapp.feature_products_impl.domain.funding.isPending
+import io.paritytech.polkadotapp.feature_products_impl.domain.funding.quote
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.applying
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.toCore
 import io.paritytech.polkadotapp.feature_products_impl.presentation.productBotManagement.ProductsRouter
@@ -20,7 +23,9 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
@@ -29,7 +34,10 @@ import kotlinx.coroutines.launch
 import uniffi.truapi.FundingRail
 import java.math.BigDecimal
 import javax.inject.Inject
+import kotlin.time.Clock
 import kotlin.time.Duration.Companion.milliseconds
+import kotlin.time.Duration.Companion.seconds
+import io.paritytech.polkadotapp.common.R as RCommon
 
 /** Whether the session has been handed to a provider. */
 data class FundingStartState(
@@ -47,6 +55,8 @@ class FundingViewModel @Inject constructor(
 ) : BaseViewModel() {
     private companion object {
         val REQUOTE_DELAY = 600.milliseconds
+        val TICK = 1.seconds
+        val QUOTED_SCREENS = setOf(FundingScreen.SUMMARY, FundingScreen.PROVIDERS)
     }
 
     private val intent = context.request.intent
@@ -55,16 +65,37 @@ class FundingViewModel @Inject constructor(
     private val start = MutableStateFlow(FundingStartState(isStarting = false, failed = false, started = false))
     private var quoteJob: Job? = null
 
-    val state: StateFlow<LoadingState<FundingSheetUiState>> = combine(flow.filterNotNull(), path, start) { flow, path, _ ->
+    private val brands = MutableStateFlow<Map<String, FundingProviderBrand>>(emptyMap())
+    private val countryQuery = MutableStateFlow("")
+    private val now = MutableStateFlow(Clock.System.now())
+    private val countries by lazy { interactor.countries() }
+    private val detectedCountry by lazy { interactor.detectedCountry() }
+
+    val state: StateFlow<LoadingState<FundingSheetUiState>> = combine(
+        flow.filterNotNull(),
+        path,
+        start,
+        brands,
+        combine(countryQuery, now) { query, now -> query to now },
+    ) { flow, path, start, brands, (query, now) ->
         FundingSheetUiState(
             screen = path.lastOrNull() ?: FundingScreen.AMOUNT,
             amount = flow.toAmountUiState(),
+            summary = flow.toSummaryUiState(brands, start),
+            fees = flow.toFeesUiState(),
+            country = flow.toCountryUiState(countries, detectedCountry, query),
+            providers = flow.toProvidersUiState(brands, now),
         ).asLoaded()
     }.stateIn(this, SharingStarted.Eagerly, LoadingState.Loading)
 
     init {
         launch { interactor.quoteRows(intent).collect { row -> flow.update { it?.receiving(row) } } }
-        launchUnit { flow.value = initialState() }
+        launchUnit {
+            val initial = initialState()
+            flow.value = initial
+            loadBrands(initial)
+        }
+        launch { path.map { it.lastOrNull() in QUOTED_SCREENS }.distinctUntilChanged().collectLatest { if (it) tickWhileQuoted() } }
     }
 
     fun onRailSelected(rail: FundingRail) {
@@ -91,6 +122,51 @@ class FundingViewModel @Inject constructor(
                 if (current.ask != current.currentAsk()) requestQuote()
                 push(FundingScreen.SUMMARY)
             }
+        }
+    }
+
+    fun onOpenFees() {
+        if (flow.value?.selectedQuote != null) push(FundingScreen.FEES)
+    }
+
+    fun onOpenCountry() {
+        countryQuery.value = ""
+        push(FundingScreen.COUNTRY)
+    }
+
+    fun onOpenProviders() = push(FundingScreen.PROVIDERS)
+
+    fun onCountryQueryChanged(query: String) {
+        countryQuery.value = query
+    }
+
+    fun onCountryChosen(code: String) {
+        val chosen = countries.firstOrNull { it.code == code } ?: return
+        flow.update { it?.withCountry(chosen) }
+        pop()
+        requestQuote()
+    }
+
+    fun onProviderChosen(providerId: String) {
+        flow.update { it?.withChosenProvider(providerId) }
+        showMessage(RCommon.string.funding_provider_changed)
+        pop()
+    }
+
+    /** Hands the session to the provider whose quote is on screen, then answers `Started`. */
+    fun onStart() {
+        val current = flow.value ?: return
+        val providerId = current.selectedProviderId ?: return
+        if (start.value.isStarting || start.value.started) return
+
+        start.value = FundingStartState(isStarting = true, failed = false, started = false)
+        launchUnit {
+            val selected = interactor.selectProvider(intent, providerId, current.rows[providerId]?.quote?.quoteId)
+                .logFailure("Funding provider selection failed")
+                .getOrDefault(false)
+
+            start.value = FundingStartState(isStarting = false, failed = !selected, started = selected)
+            if (selected) didStart(current.rail)
         }
     }
 
@@ -127,6 +203,43 @@ class FundingViewModel @Inject constructor(
 
     private fun push(screen: FundingScreen) {
         path.update { it + screen }
+    }
+
+    private fun pop() {
+        path.update { it.dropLast(1) }
+    }
+
+    private fun didStart(rail: FundingRail) {
+        context.answer(FundingOverlayOutcome.STARTED)
+
+        when (rail) {
+            FundingRail.CARD -> router.back()
+            FundingRail.BANK, FundingRail.CRYPTO -> if (path.value.lastOrNull() != FundingScreen.DEPOSIT) push(FundingScreen.DEPOSIT)
+        }
+    }
+
+    private fun loadBrands(state: FundingFlowState) {
+        state.candidates.forEach { candidate ->
+            launchUnit {
+                val brand = interactor.brand(candidate.providerId)
+                brands.update { it + (candidate.providerId to brand) }
+            }
+        }
+    }
+
+    /** Drives the countdown and asks again once the prices on screen expire. */
+    private suspend fun tickWhileQuoted() {
+        while (true) {
+            now.value = Clock.System.now()
+            refreshIfExpired()
+            delay(TICK)
+        }
+    }
+
+    private fun refreshIfExpired() {
+        val current = flow.value ?: return
+        val expiry = current.quoteExpiry ?: return
+        if (expiry <= now.value && current.rows.values.none { it.isPending }) requestQuote()
     }
 
     /** Quotes the new amount once the user pauses, so a provider's limit shows before Continue. */

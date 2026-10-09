@@ -1671,6 +1671,7 @@ I’m attaching PDF with more information and details regarding the Tattoo Stenc
     <string name="funding_cancel_title">Cancel top-up?</string>
     <string name="funding_country_detected">Detected country</string>
     <string name="funding_country_other">Or choose another country</string>
+    <string name="funding_country_refused">Payments here aren\'t supported</string>
     <string name="funding_country_search">Search for a country</string>
     <string name="funding_country_title">Choose payment country</string>
     <string name="funding_country_unsupported">Unsupported country</string>
@@ -1714,7 +1715,7 @@ I’m attaching PDF with more information and details regarding the Tattoo Stenc
     <string name="funding_outside_pocket_title">Outside pocket</string>
     <string name="funding_provider_changed">Provider changed successfully</string>
     <string name="funding_providers_country_unsupported">Not available in your country</string>
-    <string name="funding_providers_for">≈ %1$s for %2$s</string>
+    <string name="funding_providers_for">for %1$s</string>
     <string name="funding_providers_lowest_price">Lowest Price</string>
     <string name="funding_providers_rate_updated_in">Fee rate updated in %1$s</string>
     <string name="funding_providers_title">Change provider</string>
