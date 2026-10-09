@@ -61,6 +61,8 @@ class FundingViewModelTest {
         coEvery { requestQuote("intent", any()) } returns Result.success(Unit)
         coEvery { brand(any()) } answers { FundingProviderBrand(firstArg(), firstArg(), null) }
         coEvery { selectProvider("intent", "ramp.dot", "q-1") } returns Result.success(true)
+        coEvery { progress("intent") } returns null
+        coEvery { session("intent") } returns null
     }
 
     @Before
@@ -125,6 +127,47 @@ class FundingViewModelTest {
         cancelTicker(model)
     }
 
+    @Test
+    fun `a crypto top-up starts with the best quote once every provider answered`() = runTest(testDispatcher) {
+        coEvery { interactor.candidates("intent") } returns listOf(cryptoCandidate("a"), cryptoCandidate("b"))
+        coEvery { interactor.selectProvider("intent", "b", "q-b") } returns Result.success(true)
+        val model = viewModel()
+        advanceUntilIdle()
+        val answer = async { context.awaitOutcome() }
+
+        model.onPreset(BigDecimal("50"))
+        model.onContinueFromAmount()
+        model.onNetworkChosen("ethereum")
+        model.onTokenChosen("USDT")
+        runCurrent()
+        quoteRows.emit(FundingQuoteRow("a", FundingQuoteState.Quoted(quote().copy(quoteId = "q-a", sendAmount = "52000000"))))
+        runCurrent()
+        assertFalse(answer.isCompleted)
+
+        quoteRows.emit(FundingQuoteRow("b", FundingQuoteState.Quoted(quote().copy(quoteId = "q-b", sendAmount = "51800000"))))
+        runCurrent()
+
+        assertEquals(FundingOverlayOutcome.STARTED, answer.await())
+        coVerify(exactly = 0) { router.closeFundingOverlay(any()) }
+    }
+
+    private fun cryptoCandidate(providerId: String) = FundingCandidate(
+        providerId = providerId,
+        routes = listOf(
+            FundingRoute(
+                mode = FundingMode.CRYPTO,
+                directions = listOf(RouteDirection.IN),
+                assets = listOf("USDT"),
+                networks = listOf("ethereum"),
+                countries = null,
+                requiresAccount = false,
+            ),
+        ),
+        unsupported = emptyList(),
+        limits = emptyList(),
+        backend = null,
+    )
+
     private fun TestScope.cancelTicker(model: FundingViewModel) {
         model.onBack()
         advanceUntilIdle()
@@ -140,7 +183,7 @@ class FundingViewModelTest {
         expiresAt = null,
     )
 
-    private fun viewModel() = FundingViewModel(context, contexts, interactor, router)
+    private fun viewModel() = FundingViewModel(context, contexts, interactor, router, mockk(relaxed = true))
 
     private fun cardCandidate() = FundingCandidate(
         providerId = "ramp.dot",

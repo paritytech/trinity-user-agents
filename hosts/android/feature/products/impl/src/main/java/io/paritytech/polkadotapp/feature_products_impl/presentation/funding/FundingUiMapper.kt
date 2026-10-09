@@ -2,14 +2,19 @@ package io.paritytech.polkadotapp.feature_products_impl.presentation.funding
 
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FUNDING_RAIL_ORDER
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingAmountIssue
+import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingAssetUnit
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingCountry
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingFlowState
+import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingNetwork
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingProviderBrand
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.isPending
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.quote
+import kotlinx.collections.immutable.ImmutableList
 import kotlinx.collections.immutable.persistentListOf
 import kotlinx.collections.immutable.toImmutableList
+import uniffi.truapi.FundingDeposit
 import uniffi.truapi.FundingDirection
+import uniffi.truapi.FundingProgress
 import uniffi.truapi.FundingQuote
 import uniffi.truapi.FundingQuoteRefusal
 import uniffi.truapi.FundingQuoteState
@@ -229,3 +234,57 @@ private fun FundingFlowState.providerPrice(state: FundingQuoteState): FundingPro
 
 private fun Map<String, FundingProviderBrand>.brandOf(providerId: String) =
     get(providerId) ?: FundingProviderBrand(providerId = providerId, name = providerId, iconUrl = null)
+
+private const val SHORT_ADDRESS_MIN_LENGTH = 14
+private const val SHORT_ADDRESS_HEAD = 6
+private const val SHORT_ADDRESS_TAIL = 5
+
+/** A network stays closed to amounts below the lowest minimum a provider has refused with there. */
+fun FundingFlowState.toNetworkRows(): ImmutableList<FundingNetworkRow> = networks.map { network ->
+    FundingNetworkRow(
+        id = network.id,
+        name = network.name,
+        monogram = network.monogram,
+        minimum = minimum(network.id)?.takeIf { it > amount }?.let(cash::label),
+    )
+}.toImmutableList()
+
+fun FundingFlowState.toTokensUiState(): FundingTokensUiState {
+    val selected = network?.let(::FundingNetwork)
+    return FundingTokensUiState(
+        networkName = selected?.name,
+        networkMonogram = selected?.monogram,
+        rows = tokens.map { FundingTokenRow(it.symbol, it.monogram) }.toImmutableList(),
+    )
+}
+
+fun FundingFlowState.toDepositUiState(progress: FundingProgress?, start: FundingStartState): FundingDepositUiState {
+    val content = when (val deposit = progress?.deposit) {
+        is FundingDeposit.Crypto -> FundingDepositContent.Crypto(
+            qrPayload = deposit.uri ?: deposit.address,
+            amount = FundingAssetUnit.of(deposit.asset, deposit.decimals.toInt()).format(deposit.amount),
+            exact = deposit.exact,
+            address = deposit.address,
+            shortAddress = shortened(deposit.address),
+            networkName = FundingNetwork(deposit.network).name,
+        )
+
+        is FundingDeposit.Bank -> FundingDepositContent.Bank(
+            amount = FundingAssetUnit.of(deposit.currency, deposit.decimals.toInt()).format(deposit.amount),
+            beneficiary = deposit.beneficiary,
+            account = deposit.account,
+            bankCode = deposit.bankCode,
+            reference = deposit.reference,
+        )
+
+        null -> when {
+            start.failed || (noProviderQuoted && !start.started) -> FundingDepositContent.NoProvider
+            else -> FundingDepositContent.Waiting(preparing = start.started)
+        }
+    }
+
+    return FundingDepositUiState(isBank = rail == FundingRail.BANK, started = start.started, content = content)
+}
+
+private fun shortened(address: String): String =
+    if (address.length <= SHORT_ADDRESS_MIN_LENGTH) address else "${address.take(SHORT_ADDRESS_HEAD)}…${address.takeLast(SHORT_ADDRESS_TAIL)}"

@@ -75,11 +75,35 @@ private fun FundingSheetContent(
             onProvider = viewModel::onProviderChosen,
         )
 
-        FundingScreen.AMOUNT,
-        FundingScreen.NETWORK,
-        FundingScreen.TOKEN,
-        FundingScreen.DEPOSIT,
-        FundingScreen.CANCEL_CONFIRM -> FundingAmountScreen(
+        FundingScreen.NETWORK -> FundingNetworkScreen(
+            modifier = modifier,
+            rows = state.networks,
+            onBack = viewModel::onBack,
+            onNetwork = viewModel::onNetworkChosen,
+        )
+
+        FundingScreen.TOKEN -> FundingTokenScreen(
+            modifier = modifier,
+            state = state.tokens,
+            onBack = viewModel::onBack,
+            onToken = viewModel::onTokenChosen,
+        )
+
+        FundingScreen.DEPOSIT -> FundingDepositScreen(
+            modifier = modifier,
+            state = state.deposit,
+            onBack = viewModel::onBack,
+            onCopy = viewModel::onCopy,
+            onCancel = viewModel::onCancelTopUp,
+        )
+
+        FundingScreen.CANCEL_CONFIRM -> FundingCancelConfirmScreen(
+            modifier = modifier,
+            onBack = viewModel::onBack,
+            onConfirm = viewModel::onConfirmCancel,
+        )
+
+        FundingScreen.AMOUNT -> FundingAmountScreen(
             modifier = modifier,
             state = state.amount,
             onRailSelected = viewModel::onRailSelected,

@@ -25,6 +25,9 @@ data class FundingSheetUiState(
     val fees: FundingFeesUiState?,
     val country: FundingCountryUiState,
     val providers: FundingProvidersUiState,
+    val networks: ImmutableList<FundingNetworkRow>,
+    val tokens: FundingTokensUiState,
+    val deposit: FundingDepositUiState,
 )
 
 data class FundingAmountUiState(
@@ -178,4 +181,52 @@ sealed interface FundingProviderPrice {
     data object Pending : FundingProviderPrice
 
     data class Quoted(val price: String, val forAmount: String) : FundingProviderPrice
+}
+
+data class FundingNetworkRow(
+    val id: String,
+    val name: String,
+    val monogram: String,
+    val minimum: String?,
+)
+
+data class FundingTokenRow(
+    val symbol: String,
+    val monogram: String,
+)
+
+data class FundingTokensUiState(
+    val networkName: String?,
+    val networkMonogram: String?,
+    val rows: ImmutableList<FundingTokenRow>,
+)
+
+data class FundingDepositUiState(
+    val isBank: Boolean,
+    val started: Boolean,
+    val content: FundingDepositContent,
+)
+
+sealed interface FundingDepositContent {
+    data class Crypto(
+        val qrPayload: String,
+        val amount: String,
+        val exact: Boolean,
+        val address: String,
+        val shortAddress: String,
+        val networkName: String,
+    ) : FundingDepositContent
+
+    data class Bank(
+        val amount: String,
+        val beneficiary: String?,
+        val account: String?,
+        val bankCode: String?,
+        val reference: String,
+    ) : FundingDepositContent
+
+    data object NoProvider : FundingDepositContent
+
+    /** No deposit yet: a provider is being found, or the chosen one is preparing it. */
+    data class Waiting(val preparing: Boolean) : FundingDepositContent
 }

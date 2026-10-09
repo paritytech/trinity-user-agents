@@ -4,6 +4,7 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import io.paritytech.polkadotapp.common.presentation.loading.LoadingState
 import io.paritytech.polkadotapp.common.presentation.loading.asLoaded
 import io.paritytech.polkadotapp.common.presentation.screens.BaseViewModel
+import io.paritytech.polkadotapp.common.presentation.clipboard.ClipboardService
 import io.paritytech.polkadotapp.common.utils.launchUnit
 import io.paritytech.polkadotapp.common.utils.logFailure
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingOverlayOutcome
@@ -13,6 +14,7 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingKey
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingOverlayContext
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingOverlayContexts
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingProviderBrand
+import io.paritytech.polkadotapp.feature_products_impl.domain.funding.isOpen
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.isPending
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.quote
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.applying
@@ -31,6 +33,8 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import uniffi.truapi.FundingProgress
+import uniffi.truapi.FundingQuoteRow
 import uniffi.truapi.FundingRail
 import java.math.BigDecimal
 import javax.inject.Inject
@@ -38,6 +42,7 @@ import kotlin.time.Clock
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 import io.paritytech.polkadotapp.common.R as RCommon
+import uniffi.truapi.FundingDirection as CoreFundingDirection
 
 /** Whether the session has been handed to a provider. */
 data class FundingStartState(
@@ -52,18 +57,22 @@ class FundingViewModel @Inject constructor(
     private val contexts: FundingOverlayContexts,
     private val interactor: FundingFlowInteractor,
     private val router: ProductsRouter,
+    private val clipboard: ClipboardService,
 ) : BaseViewModel() {
     private companion object {
         val REQUOTE_DELAY = 600.milliseconds
         val TICK = 1.seconds
         val QUOTED_SCREENS = setOf(FundingScreen.SUMMARY, FundingScreen.PROVIDERS)
+        val DEPOSIT_POLL = 3.seconds
     }
 
     private val intent = context.request.intent
     private val flow = MutableStateFlow<FundingFlowState?>(null)
     private val path = MutableStateFlow<List<FundingScreen>>(emptyList())
     private val start = MutableStateFlow(FundingStartState(isStarting = false, failed = false, started = false))
+    private val progress = MutableStateFlow<FundingProgress?>(null)
     private var quoteJob: Job? = null
+    private var startsWhenQuoted = false
 
     private val brands = MutableStateFlow<Map<String, FundingProviderBrand>>(emptyMap())
     private val countryQuery = MutableStateFlow("")
@@ -74,10 +83,10 @@ class FundingViewModel @Inject constructor(
     val state: StateFlow<LoadingState<FundingSheetUiState>> = combine(
         flow.filterNotNull(),
         path,
-        start,
+        combine(start, progress) { start, progress -> start to progress },
         brands,
         combine(countryQuery, now) { query, now -> query to now },
-    ) { flow, path, start, brands, (query, now) ->
+    ) { flow, path, (start, progress), brands, (query, now) ->
         FundingSheetUiState(
             screen = path.lastOrNull() ?: FundingScreen.AMOUNT,
             amount = flow.toAmountUiState(),
@@ -85,17 +94,53 @@ class FundingViewModel @Inject constructor(
             fees = flow.toFeesUiState(),
             country = flow.toCountryUiState(countries, detectedCountry, query),
             providers = flow.toProvidersUiState(brands, now),
+            networks = flow.toNetworkRows(),
+            tokens = flow.toTokensUiState(),
+            deposit = flow.toDepositUiState(progress, start),
         ).asLoaded()
     }.stateIn(this, SharingStarted.Eagerly, LoadingState.Loading)
 
     init {
-        launch { interactor.quoteRows(intent).collect { row -> flow.update { it?.receiving(row) } } }
+        launch { interactor.quoteRows(intent).collect { onQuoteRow(it) } }
+        launch { interactor.sessionChanges(intent).collect { refreshSession() } }
         launchUnit {
             val initial = initialState()
             flow.value = initial
             loadBrands(initial)
         }
         launch { path.map { it.lastOrNull() in QUOTED_SCREENS }.distinctUntilChanged().collectLatest { if (it) tickWhileQuoted() } }
+        launch { path.map { it.lastOrNull() == FundingScreen.DEPOSIT }.distinctUntilChanged().collectLatest { if (it) followDeposit() } }
+    }
+
+    fun onNetworkChosen(id: String) {
+        flow.update { it?.withNetwork(id) }
+        push(FundingScreen.TOKEN)
+    }
+
+    /** Value in goes straight to the deposit screen, which starts with the best quote once every provider answered. */
+    fun onTokenChosen(symbol: String) {
+        val current = flow.value ?: return
+        flow.value = current.withAsset(symbol)
+        requestQuote()
+
+        if (current.direction == CoreFundingDirection.IN) {
+            startsWhenQuoted = true
+            push(FundingScreen.DEPOSIT)
+        } else {
+            push(FundingScreen.SUMMARY)
+        }
+    }
+
+    fun onCopy(value: String) {
+        clipboard.setPrimaryClip(value)
+        showMessage(RCommon.string.funding_deposit_copied)
+    }
+
+    fun onCancelTopUp() = push(FundingScreen.CANCEL_CONFIRM)
+
+    fun onConfirmCancel() = launchUnit {
+        interactor.cancel(intent).logFailure("Funding cancel failed")
+        onClose()
     }
 
     fun onRailSelected(rail: FundingRail) {
@@ -171,7 +216,8 @@ class FundingViewModel @Inject constructor(
     }
 
     fun onBack() {
-        if (path.value.isEmpty()) onClose() else path.update { it.dropLast(1) }
+        val leavesStartedDeposit = start.value.started && path.value.lastOrNull() == FundingScreen.DEPOSIT
+        if (path.value.isEmpty() || leavesStartedDeposit) onClose() else pop()
     }
 
     /** Before `Started` leaving is the answer the core discards the session on; after it the session runs on. */
@@ -212,8 +258,33 @@ class FundingViewModel @Inject constructor(
         path.update { it.dropLast(1) }
     }
 
+    private fun onQuoteRow(row: FundingQuoteRow) {
+        val updated = flow.value?.receiving(row) ?: return
+        flow.value = updated
+
+        if (startsWhenQuoted && updated.allAnswered) {
+            startsWhenQuoted = false
+            onStart()
+        }
+    }
+
+    /** The core's view of the session moved on: read it again, and leave once it is over. */
+    private suspend fun refreshSession() {
+        progress.value = interactor.progress(intent)
+        val ended = interactor.session(intent)?.stage?.isOpen == false
+        if (start.value.started && ended) closeSheet()
+    }
+
+    private suspend fun followDeposit() {
+        while (true) {
+            if (start.value.started) refreshSession()
+            delay(DEPOSIT_POLL)
+        }
+    }
+
     private fun didStart(rail: FundingRail) {
         context.answer(FundingOverlayOutcome.STARTED)
+        launchUnit { refreshSession() }
 
         when (rail) {
             FundingRail.CARD -> closeSheet()
