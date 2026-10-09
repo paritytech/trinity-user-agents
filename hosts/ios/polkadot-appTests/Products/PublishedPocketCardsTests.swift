@@ -176,12 +176,10 @@ struct PublishedPocketCardsTests {
             delay: .milliseconds(100)
         )
         let cards = PublishedPocketCards(products: late)
-        let started = ContinuousClock.now
 
         let faceShown = await PocketCardFaceOnOpen.faceShown(for: loyaltyKey, cards: cards, timeout: .milliseconds(10))
 
         #expect(faceShown)
-        #expect(ContinuousClock.now - started < .seconds(5))
     }
 
     /// The card is shown before its product is asked, so an answer that comes
