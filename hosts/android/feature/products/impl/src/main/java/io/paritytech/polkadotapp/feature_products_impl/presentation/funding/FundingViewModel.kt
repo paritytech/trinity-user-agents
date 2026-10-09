@@ -178,14 +178,17 @@ class FundingViewModel @Inject constructor(
     fun onClose() {
         quoteJob?.cancel()
         context.answer(FundingOverlayOutcome.DISMISSED)
-        router.back()
+        closeSheet()
     }
 
     override fun onCleared() {
         super.onCleared()
         context.answer(FundingOverlayOutcome.DISMISSED)
+        context.markClosed()
         contexts.remove(intent)
     }
+
+    private fun closeSheet() = launchUnit { router.closeFundingOverlay(intent) }
 
     private suspend fun initialState(): FundingFlowState {
         val cash = interactor.cash()
@@ -213,7 +216,7 @@ class FundingViewModel @Inject constructor(
         context.answer(FundingOverlayOutcome.STARTED)
 
         when (rail) {
-            FundingRail.CARD -> router.back()
+            FundingRail.CARD -> closeSheet()
             FundingRail.BANK, FundingRail.CRYPTO -> if (path.value.lastOrNull() != FundingScreen.DEPOSIT) push(FundingScreen.DEPOSIT)
         }
     }

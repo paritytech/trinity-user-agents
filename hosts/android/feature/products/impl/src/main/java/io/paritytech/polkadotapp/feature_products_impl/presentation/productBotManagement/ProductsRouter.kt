@@ -30,6 +30,15 @@ interface ProductsRouter : ReturnableRouter, SigningRouter {
 
     /** The funding sheet for the session [intent] the core is waiting on. */
     suspend fun openFundingOverlay(intent: String)
+
+    /** Takes down the funding sheet for [intent], when it is the screen on top. */
+    suspend fun closeFundingOverlay(intent: String)
+
+    /** A funding provider's own screen, full height, for the session [intent]. */
+    suspend fun openFundingProviderFrame(intent: String)
+
+    /** Takes down the provider screen for [intent], when it is the screen on top. */
+    suspend fun closeFundingProviderFrame(intent: String)
     fun openProductSettings(productId: ProductId)
     fun openProductPermissions(productId: ProductId)
 

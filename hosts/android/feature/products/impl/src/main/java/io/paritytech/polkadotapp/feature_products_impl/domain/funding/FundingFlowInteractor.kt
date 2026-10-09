@@ -11,6 +11,7 @@ import uniffi.truapi.FundingProgress
 import uniffi.truapi.FundingQuoteAsk
 import uniffi.truapi.FundingQuoteRow
 import uniffi.truapi.FundingSession
+import uniffi.truapi.FundingStep
 import java.math.BigDecimal
 import javax.inject.Inject
 
@@ -46,6 +47,14 @@ class FundingFlowInteractor @Inject constructor(
         runtime.selectProvider(intent, providerId, quoteId)
 
     suspend fun cancel(intent: String): Result<Boolean> = runtime.cancel(intent)
+
+    /** The provider's screen has done its part once the payment is seen or the session is over. */
+    suspend fun paymentMoved(intent: String): Boolean {
+        val session = runtime.session(intent) ?: return true
+        if (!session.stage.isOpen) return true
+
+        return runtime.progress(intent)?.steps.orEmpty().any { it.reachedAtMs != null && it.step != FundingStep.STARTED }
+    }
 
     fun quoteRows(intent: String): Flow<FundingQuoteRow> = runtime.quoteRows(intent)
 

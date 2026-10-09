@@ -12,12 +12,19 @@ class FundingOverlayContext(
     val request: FundingOverlayRequest,
 ) {
     private val outcome = CompletableDeferred<FundingOverlayOutcome>()
+    private val closed = CompletableDeferred<Unit>()
 
     fun answer(answer: FundingOverlayOutcome) {
         outcome.complete(answer)
     }
 
     suspend fun awaitOutcome(): FundingOverlayOutcome = outcome.await()
+
+    fun markClosed() {
+        closed.complete(Unit)
+    }
+
+    suspend fun awaitClosed() = closed.await()
 }
 
 /** The overlays on screen, keyed by session, so a sheet finds the one it was opened for. */

@@ -16,6 +16,7 @@ import io.paritytech.polkadotapp.feature_products_api.presentation.ProductSettin
 import io.paritytech.polkadotapp.feature_products_api.presentation.SpaBrowserPayload
 import io.paritytech.polkadotapp.feature_products_api.presentation.SpaSheetPayload
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.FundingBottomSheet
+import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.frame.FundingProviderFrameBottomSheet
 import io.paritytech.polkadotapp.feature_products_impl.presentation.permissionPrompt.PermissionPromptBottomSheet
 import io.paritytech.polkadotapp.feature_products_impl.presentation.productBotManagement.ProductsRouter
 import kotlinx.coroutines.withContext
@@ -112,6 +113,29 @@ class ProductsNavigator @Inject constructor(
             R.id.action_global_to_fundingBottomSheet,
             bundleOf(FundingBottomSheet.INTENT to intent),
         )
+    }
+
+    override suspend fun closeFundingOverlay(intent: String) = withContext(dispatchers.main) {
+        popIfOnTop(R.id.fundingBottomSheet, FundingBottomSheet.INTENT, intent)
+    }
+
+    override suspend fun openFundingProviderFrame(intent: String) = withContext(dispatchers.main) {
+        performNavigation(
+            R.id.action_global_to_fundingProviderFrameBottomSheet,
+            bundleOf(FundingProviderFrameBottomSheet.INTENT to intent),
+        )
+    }
+
+    override suspend fun closeFundingProviderFrame(intent: String) = withContext(dispatchers.main) {
+        popIfOnTop(R.id.fundingProviderFrameBottomSheet, FundingProviderFrameBottomSheet.INTENT, intent)
+    }
+
+    private fun popIfOnTop(destinationId: Int, argument: String, value: String) {
+        val controller = navigationHolder.navController
+        val entry = controller?.currentBackStackEntry
+        if (entry?.destination?.id == destinationId && entry.arguments?.getString(argument) == value) {
+            controller.popBackStack()
+        }
     }
 
     override fun openPocketAddCard(payload: PocketAddCardPayload) = performNavigation(

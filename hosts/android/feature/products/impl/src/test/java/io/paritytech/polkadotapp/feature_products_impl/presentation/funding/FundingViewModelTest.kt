@@ -3,7 +3,6 @@ package io.paritytech.polkadotapp.feature_products_impl.presentation.funding
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.every
-import io.mockk.verify
 import io.mockk.mockk
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingDirection
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingOverlayOutcome
@@ -122,7 +121,7 @@ class FundingViewModelTest {
         runCurrent()
 
         assertEquals(FundingOverlayOutcome.STARTED, answer.await())
-        verify { router.back() }
+        coVerify { router.closeFundingOverlay("intent") }
         cancelTicker(model)
     }
 
