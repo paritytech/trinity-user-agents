@@ -164,6 +164,8 @@ quota. Settings hide stale account rows on service/session transitions and rejec
 late reads or edits. `ProductsRouterTests` and `AppPermissionsPresenterTests`
 cover decision lifetime, dismissal and account-transition/revocation behavior.
 
+Permission prompts and revocation settings share the `ProductPermission` presentation metadata so capability descriptions stay consistent. JAM peer consent displays the full network genesis and remains scoped to that network and product; it does not grant accounts or signing.
+
 This repository ships a **GitHub Actions + Fastlane CI/CD setup** — PR build and
 tests, plus maintainer-gated TestFlight and Firebase App Distribution. Build-time
 configuration, signing, the required secrets, and the pipeline itself are

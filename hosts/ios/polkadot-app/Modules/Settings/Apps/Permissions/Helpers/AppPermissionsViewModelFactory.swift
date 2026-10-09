@@ -13,7 +13,7 @@ final class AppPermissionsViewModelFactory {
 extension AppPermissionsViewModelFactory: AppPermissionsViewModelMaking {
     func createItems(from grants: [ProductPermissionGrant]) -> [AppPermissionsViewLayout.Item] {
         grants.map { grant in
-            return AppPermissionsViewLayout.Item(
+            AppPermissionsViewLayout.Item(
                 id: grant.identifier,
                 title: grant.permission.settingsTitle,
                 description: grant.permission.permissionDescription,
