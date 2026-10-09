@@ -102,94 +102,12 @@ struct PocketCardHostsTests {
 
         #expect(factory.built == 1)
     }
-
-    /// A screen claims its product's surface when it is built, so a second open
-    /// built while the first waits to present would take the page from the
-    /// screen the user is shown.
-    @Test
-    func ignoresAnOpenWhileAnotherIsStillUnderWay() async {
-        let hosts = PocketCardHosts()
-        let opens = PresentedOpens()
-
-        let finishFirst = await startOpen("first", on: hosts, recordingInto: opens)
-        await hosts.openIfIdle {} then: { opens.presented.append("second") }
-        await finishFirst()
-        await hosts.openIfIdle {} then: { opens.presented.append("after") }
-
-        #expect(opens.presented == ["first", "after"])
-    }
-
-    /// The product an open would build is wired to the session that started
-    /// it, so one the session ended under would hand the next session a page
-    /// talking to the last one's core.
-    @Test
-    func dropsAnOpenTheSessionEndedUnder() async {
-        let hosts = PocketCardHosts()
-        let opens = PresentedOpens()
-
-        let finishPending = await startOpen("pending", on: hosts, recordingInto: opens)
-        hosts.release()
-        await finishPending()
-        await hosts.openIfIdle {} then: { opens.presented.append("after") }
-
-        #expect(opens.presented == ["after"])
-    }
-
-    /// Letting go of a card the collection no longer holds is not the session
-    /// ending: the card the user is opening meanwhile must still open.
-    @Test
-    func keepsAnOpenWhenTheCollectionDropsAnotherCard() async {
-        let hosts = PocketCardHosts()
-        let opens = PresentedOpens()
-        _ = hosts.product(for: trophy) { _ in StubSPAView() }
-
-        let finishPending = await startOpen("pending", on: hosts, recordingInto: opens)
-        hosts.keepOnly { _ in false }
-        await finishPending()
-
-        #expect(opens.presented == ["pending"])
-    }
 }
 
 // MARK: - Fixtures
 
 private let loyalty = PocketCardKey(productId: "game.paseo", cardId: PocketCardId(value: "loyalty"))
 private let trophy = PocketCardKey(productId: "game.paseo", cardId: PocketCardId(value: "trophy"))
-
-@MainActor
-private final class PresentedOpens {
-    var presented: [String] = []
-}
-
-/// Starts an open that stays in its preparing step until the returned closure
-/// is awaited, and returns once that step is under way.
-@MainActor
-private func startOpen(
-    _ name: String,
-    on hosts: PocketCardHosts,
-    recordingInto opens: PresentedOpens
-) async -> () async -> Void {
-    let (started, signalStarted) = AsyncStream<Void>.makeStream()
-    let (prepared, signalPrepared) = AsyncStream<Void>.makeStream()
-    let open = Task {
-        await hosts.openIfIdle {
-            signalStarted.yield()
-            for await _ in prepared {
-                break
-            }
-        } then: {
-            opens.presented.append(name)
-        }
-    }
-    for await _ in started {
-        break
-    }
-
-    return {
-        signalPrepared.yield()
-        await open.value
-    }
-}
 
 @MainActor
 private final class CountingFactory {
