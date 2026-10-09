@@ -11,6 +11,8 @@ final class DebugPocketCardsViewModel {
     var cardId = ""
     var title = ""
     var faceUrl = "http://127.0.0.1:5173/pocket/devicehood.json"
+    var widgetUrl = ""
+    var opensWithFaceAway = false
 
     private let store: any DebugPocketCardsStoring
 
@@ -30,7 +32,15 @@ final class DebugPocketCardsViewModel {
     /// id the core refuses reads as no card at all, which looks like the
     /// card simply never arriving.
     func save() {
-        let card = DebugPocketCard(productId: productId, cardId: cardId, title: title, faceUrl: faceUrl)
+        let typedWidgetUrl = widgetUrl.trimmingCharacters(in: .whitespacesAndNewlines)
+        let card = DebugPocketCard(
+            productId: productId,
+            cardId: cardId,
+            title: title,
+            faceUrl: faceUrl,
+            widgetUrl: typedWidgetUrl.isEmpty ? nil : typedWidgetUrl,
+            faceShown: !opensWithFaceAway
+        )
 
         guard card.definition != nil else {
             refusal = "'\(cardId)' is not a card id the core will accept"

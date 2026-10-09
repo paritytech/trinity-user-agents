@@ -14,6 +14,9 @@ struct DebugPocketCard: Codable, Equatable, Swift.Identifiable {
     let cardId: String
     let title: String
     let faceUrl: String
+    /// The page the card opens instead of its product's widget, even a published one.
+    let widgetUrl: String?
+    let faceShown: Bool?
 
     var id: String { "\(productId)/\(cardId)" }
 
@@ -22,7 +25,12 @@ struct DebugPocketCard: Codable, Equatable, Swift.Identifiable {
         // error, so a typo shows up as the card simply not being offered.
         guard let screened = try? screenPocketCardId(id: cardId) else { return nil }
 
-        return PocketCardDefinition(id: PocketCardId(value: screened), title: title, preview: .url(faceUrl))
+        return PocketCardDefinition(
+            id: PocketCardId(value: screened),
+            title: title,
+            preview: .url(faceUrl),
+            faceShown: faceShown ?? true
+        )
     }
 }
 
@@ -53,9 +61,7 @@ struct DebugPocketCards: DebugPocketCardsStoring {
     }
 
     func cards(for productId: ProductId) -> [PocketCardDefinition] {
-        cards()
-            .filter { $0.productId.lowercased() == productId.lowercased() }
-            .compactMap(\.definition)
+        cards(of: productId).compactMap(\.definition)
     }
 
     func save(_ card: DebugPocketCard) {
@@ -68,9 +74,33 @@ struct DebugPocketCards: DebugPocketCardsStoring {
         write(cards().filter { $0.id != card.id })
     }
 
+    /// The page is loaded as typed rather than through the card's launch
+    /// address, so it is handed the launch address's query in place of any
+    /// typed item of the same name, with the typed encoding kept as it is.
+    func widgetURL(for key: PocketCardKey) -> URL? {
+        guard
+            let widgetUrl = cards(of: key.productId).first(where: { $0.definition?.id == key.cardId })?.widgetUrl,
+            var components = URLComponents(string: widgetUrl),
+            let launchUrl = key.launchUrl,
+            let launchItems = URLComponents(url: launchUrl, resolvingAgainstBaseURL: false)?.percentEncodedQueryItems
+        else { return nil }
+
+        let launchNames = Set(launchItems.map(\.name))
+        let typedItems = (components.percentEncodedQueryItems ?? []).filter { !launchNames.contains($0.name) }
+        components.percentEncodedQueryItems = typedItems + launchItems
+
+        return components.url
+    }
+
     private func write(_ cards: [DebugPocketCard]) {
         guard let data = try? JSONEncoder().encode(cards) else { return }
 
         settingsManager.set(anyValue: data, for: SettingsKey.debugPocketCards.rawValue)
+    }
+}
+
+private extension DebugPocketCards {
+    func cards(of productId: ProductId) -> [DebugPocketCard] {
+        cards().filter { $0.productId.lowercased() == productId.lowercased() }
     }
 }

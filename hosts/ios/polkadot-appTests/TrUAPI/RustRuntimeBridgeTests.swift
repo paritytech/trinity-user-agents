@@ -85,7 +85,8 @@ private func makeBridge(
     confirmationPresenter: MockConfirmationPresenter = MockConfirmationPresenter(),
     preimageCache: TrUAPIPreimageCache = TrUAPIPreimageCache { _ in nil },
     productStorageFails: Bool = false,
-    hostProvider: ProductHostProviding = StubHostProvider()
+    hostProvider: ProductHostProviding = StubHostProvider(),
+    cardFace: (any ExpandedCardFaceShowing)? = nil
 ) -> RustProductExecutionBridge {
     let router = MockNavigationRouter()
     let pool = makeRegistryPool(chainRegistry: chainRegistry)
@@ -111,7 +112,7 @@ private func makeBridge(
         preimageCache: preimageCache,
         hostProvider: hostProvider,
         logger: Logger.shared
-    ))
+    ), cardFace: cardFace)
 }
 
 // MARK: - Tests
@@ -554,6 +555,19 @@ struct RustRuntimeBridgeTests {
         let bridge = makeBridge()
         let theme = try bridge.currentTheme()
         #expect(theme == .dark)
+    }
+
+    // MARK: setExpandedCardFaceShown
+
+    /// The page's request reaches the card's face and its answer comes back.
+    /// Called through `HostBridge` because the core does: an override whose
+    /// signature drifts would lose to the default and answer `.unsupported`.
+    @Test func expandedCardFaceReachesTheCardsFace() async throws {
+        let face = StubCardFace()
+        let bridge: HostBridge = makeBridge(cardFace: face)
+
+        #expect(try await bridge.setExpandedCardFaceShown(shown: false) == .userMoving)
+        #expect(face.requests == [false])
     }
 
     // MARK: attach

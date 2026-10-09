@@ -3,8 +3,9 @@ import SwiftUI
 /// Cards typed in by hand, for driving a product's Pocket before it
 /// publishes a manifest.
 ///
-/// The product must be one with **no published worker**: a published one
-/// always wins, so a card named here would never be reached.
+/// A card named here is only offered for a product with **no published
+/// worker**: a published one always wins. Its widget URL is the exception and
+/// opens even over a published widget.
 struct DebugPocketCardsView: View {
     @State var viewModel = DebugPocketCardsViewModel()
 
@@ -22,6 +23,17 @@ struct DebugPocketCardsView: View {
                             .font(.caption)
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
+                        if let widgetUrl = card.widgetUrl {
+                            Text(widgetUrl)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                        }
+                        if card.faceShown == false {
+                            Text("Opens with the face away")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
                     }
                 }
                 .onDelete { viewModel.delete(at: $0) }
@@ -39,6 +51,11 @@ struct DebugPocketCardsView: View {
                     .keyboardType(.URL)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
+                TextField("Widget URL (optional)", text: $viewModel.widgetUrl)
+                    .keyboardType(.URL)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                Toggle("Open with the face away", isOn: $viewModel.opensWithFaceAway)
 
                 Button("Save") { viewModel.save() }
                     .disabled(!viewModel.canSave)

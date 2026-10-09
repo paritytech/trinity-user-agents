@@ -161,7 +161,8 @@ enum SPAViewFactory {
 // MARK: - Rust runtime assembly
 
 extension SPAViewFactory {
-    /// Internal so the debug playground launcher can assemble a rust SPA view.
+    /// Internal for the pages that only the rust runtime can load by address:
+    /// the debug playground and a debug Pocket card's widget URL.
     /// The shared ``TrUAPIHostRuntime`` is sourced from the process-wide
     /// provider registered by `ServiceCoordinator`.
     @MainActor

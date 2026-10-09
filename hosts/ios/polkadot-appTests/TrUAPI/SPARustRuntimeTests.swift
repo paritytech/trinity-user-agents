@@ -7,7 +7,10 @@ import TrUAPIHost
 
 // MARK: - Helpers
 
-private func makeConfiguration(contentSource: SPAContentSource) throws -> SPAConfiguration {
+private func makeConfiguration(
+    contentSource: SPAContentSource,
+    cardFace: (any ExpandedCardFaceShowing)? = nil
+) throws -> SPAConfiguration {
     let tldProvider = StubTldProvider()
     let factory = ProductHostFactory(tldProvider: tldProvider)
     let host = try #require(factory.host(rawString: "test.dot"))
@@ -17,7 +20,8 @@ private func makeConfiguration(contentSource: SPAContentSource) throws -> SPACon
         isRootScreen: false,
         showMoreButton: false,
         page: ProductPage(host: host),
-        contentSource: contentSource
+        contentSource: contentSource,
+        cardFace: cardFace
     )
 }
 
@@ -99,6 +103,38 @@ struct SPARustRuntimeTests {
         #expect(engine.initializedScripts[0]
             .content == #"window.__truapi_localhost = { url: "ws://127.0.0.1:0/?t=test" };"#)
 
+        await runtime.dispose()
+    }
+
+    /// A card's page loads the product's widget rather than its app, since the
+    /// widget is what an expanded card runs.
+    @Test @MainActor func startForACardsPageLoadsTheWidget() async throws {
+        let configuration = try makeConfiguration(contentSource: .dotNs, cardFace: StubCardFace())
+        let resolver = StubDotNsResolver()
+        let widget = ProductExecutable.Widget(
+            identifier: "widget.test.dot",
+            appVersion: .zero,
+            description: nil,
+            heights: [1],
+            width: 1
+        )
+        let product = ResolvedProduct(
+            id: "test.dot",
+            displayName: "Test",
+            description: nil,
+            icon: nil,
+            executables: ProductExecutables(app: nil, widget: widget, worker: nil),
+            hasManifest: true
+        )
+        let runtime = makeRuntime(
+            configuration: configuration,
+            dotNsResolver: resolver,
+            productResolver: StubProductResolver(alwaysResolvingTo: product)
+        )
+
+        _ = try await runtime.start(with: MockJSEngine())
+
+        #expect(resolver.resolvedNames == ["widget.test.dot"])
         await runtime.dispose()
     }
 
