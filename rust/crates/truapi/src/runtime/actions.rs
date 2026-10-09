@@ -1,5 +1,6 @@
 //! Connection-scoped, host-fed action streams buffered until the product subscribes.
 
+use core::sync::atomic::{AtomicU64, Ordering};
 use std::collections::VecDeque;
 use std::sync::Mutex;
 
@@ -31,6 +32,9 @@ impl<Item> Default for State<Item> {
 pub struct ActionChannel<Item> {
     state: Mutex<State<Item>>,
     closed_reason: &'static str,
+    /// When the host last published an item, in unix seconds, or zero before
+    /// the first.
+    last_published_secs: AtomicU64,
 }
 
 impl<Item: Send + 'static> ActionChannel<Item> {
@@ -40,6 +44,7 @@ impl<Item: Send + 'static> ActionChannel<Item> {
         Self {
             state: Mutex::new(State::default()),
             closed_reason,
+            last_published_secs: AtomicU64::new(0),
         }
     }
 
@@ -76,6 +81,8 @@ impl<Item: Send + 'static> ActionChannel<Item> {
             return Err(ProductRuntimeError::Closed);
         }
         if let Some(sender) = state.subscriber.as_ref() {
+            // Stamped first, so a product reacting to the item already finds it.
+            self.note_published_now();
             match sender.unbounded_send(item) {
                 Ok(()) => return Ok(()),
                 Err(error) => item = error.into_inner(),
@@ -86,7 +93,26 @@ impl<Item: Send + 'static> ActionChannel<Item> {
             return Err(ProductRuntimeError::BufferFull);
         }
         state.buffer.push_back(item);
+        self.note_published_now();
         Ok(())
+    }
+
+    fn note_published_now(&self) {
+        self.last_published_secs
+            .store(crate::unix_time::current_unix_secs(), Ordering::Release);
+    }
+
+    /// Whether the host published an item within the last `window_secs`.
+    pub fn published_within(&self, window_secs: u64) -> bool {
+        let published_at = self.last_published_secs.load(Ordering::Acquire);
+        published_at != 0
+            && crate::unix_time::current_unix_secs().saturating_sub(published_at) <= window_secs
+    }
+
+    /// Backdate the last publish to `unix_secs`.
+    #[cfg(test)]
+    pub fn note_published_at(&self, unix_secs: u64) {
+        self.last_published_secs.store(unix_secs, Ordering::Release);
     }
 
     /// End the current subscriber's stream while keeping buffered items for
@@ -125,6 +151,16 @@ mod tests {
         let mut items = channel.subscribe::<truapi::latest::GenericError>();
         assert_eq!(block_on(items.next()), Some(Ok("first".to_string())));
         assert_eq!(block_on(items.next()), Some(Ok("second".to_string())));
+    }
+
+    #[test]
+    fn a_refused_action_is_not_a_tap() {
+        // A Worker may scan only after a tap it can receive.
+        let channel = channel();
+        channel.close();
+
+        assert!(channel.publish("tap".to_string()).is_err());
+        assert!(!channel.published_within(5));
     }
 
     #[test]

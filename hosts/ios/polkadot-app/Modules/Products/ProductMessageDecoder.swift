@@ -6,6 +6,8 @@ import SwiftUI
 final class ProductMessageDecoder: ChatMessageCustomDecoding {
     let identifier: MessageDecoderIdentifier = .product
 
+    let resolveImage: WidgetImageResolver
+
     private let runtime: ChatRuntimeProtocol
     private let tokenResolver: any WidgetDesignTokenResolving
     private let logger: LoggerProtocol
@@ -14,10 +16,12 @@ final class ProductMessageDecoder: ChatMessageCustomDecoding {
     init(
         runtime: ChatRuntimeProtocol,
         tokenResolver: any WidgetDesignTokenResolving,
+        resolveImage: WidgetImageResolver,
         logger: LoggerProtocol
     ) {
         self.runtime = runtime
         self.tokenResolver = tokenResolver
+        self.resolveImage = resolveImage
         self.logger = logger
     }
 
@@ -38,14 +42,16 @@ final class ProductMessageDecoder: ChatMessageCustomDecoding {
 
         let widgetView = ProductWidgetChatView(
             messageId: messageId,
-            nodeProvider: viewModel
-        ) { actionId, payload in
-            processAction(.customMessage(
-                actionId: actionId,
-                payload: payload,
-                messageId: messageId
-            ))
-        }
+            nodeProvider: viewModel,
+            onAction: { actionId, payload in
+                processAction(.customMessage(
+                    actionId: actionId,
+                    payload: payload,
+                    messageId: messageId
+                ))
+            },
+            resolveImage: resolveImage
+        )
 
         return [SwiftUIContentConfiguration(view: widgetView)]
     }

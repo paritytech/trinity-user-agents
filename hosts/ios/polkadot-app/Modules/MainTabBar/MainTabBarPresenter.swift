@@ -110,6 +110,18 @@ extension MainTabBarPresenter: MainTabBarInteractorOutputProtocol {
     func didReceiveTabBarLabelsEnabled(_ isEnabled: Bool) {
         view?.setLabels(visible: isEnabled)
     }
+
+    func didReceiveProductGamePill(_ pill: ProductGamePill?) {
+        let viewModel = pill.map { pill in
+            ProductGamePillViewModel(
+                productId: pill.productId,
+                configuration: GameRoomPillConfiguration(content: .waiting(gameDate: pill.startsAt)) { [wireframe] in
+                    wireframe.openProduct(productId: pill.productId)
+                }
+            )
+        }
+        view?.showProductGamePill(viewModel)
+    }
 }
 
 private extension MainTabBarPresenter {

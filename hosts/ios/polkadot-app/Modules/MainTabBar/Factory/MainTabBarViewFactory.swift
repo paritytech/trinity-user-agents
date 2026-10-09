@@ -50,7 +50,8 @@ enum MainTabBarViewFactory {
             urlHandlingService: urlHandler,
             deferredLinkHandler: deepLinkHandling,
             mnemonicBackupHelper: mnemonicBackupHelper,
-            browserCoordinator: browserCoordinator
+            browserCoordinator: browserCoordinator,
+            productGamePills: RootDependencyLocator.getDependency()
         )
 
         let qrHandler = WalletQRScanResultHandler(
@@ -173,7 +174,13 @@ enum MainTabBarViewFactory {
             moduleNavigator: moduleNavigator
         )
         #if FEATURE_PRODUCTS
+            // The Pocket handler goes first: it owns the reserved `-` target,
+            // which the SPA handler would otherwise open as a product page.
             let productHandlers: [URLHandlingServiceProtocol] = [
+                PocketOpenService.makeDefault(
+                    flowState: flowState.flowState,
+                    moduleNavigator: moduleNavigator
+                ),
                 ProductSPAOpenService(
                     moduleNavigator: moduleNavigator,
                     hostProvider: hostProvider

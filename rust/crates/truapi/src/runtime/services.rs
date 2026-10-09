@@ -5,7 +5,7 @@
 //! controls live on the concrete role objects.
 
 use std::collections::VecDeque;
-use std::sync::atomic::{AtomicU64, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 
 use crate::chain_runtime::{ChainRuntime, RuntimeChainProvider, RuntimeFailure};
@@ -50,6 +50,15 @@ pub struct RuntimeServices {
     /// Contact handles already resolved, shared by every product runtime of
     /// this host and emptied when the host says its contacts changed.
     pub contact_handles: crate::runtime::contacts::ContactHandleCache,
+    /// Host Game adapter, installed once at startup by a host that can hold
+    /// reminders. Unset leaves every product Game call `Unsupported`.
+    game_platform: OnceLock<Arc<dyn crate::platform::GamePlatform>>,
+    /// Host scanner, installed once at startup by a host that can draw a
+    /// viewfinder. Unset leaves every product scan `Unsupported`.
+    scanner_platform: OnceLock<Arc<dyn crate::platform::ScannerPlatform>>,
+    /// Whether a scan is open. Shared by every product runtime of this host,
+    /// because the device has one viewfinder.
+    scan_open: AtomicBool,
     /// Host observer told when a device finishes pairing with this signing
     /// host. Unset leaves a paired device unannounced.
     device_pairing_observer: OnceLock<Arc<dyn DevicePairingObserver>>,
@@ -75,6 +84,11 @@ pub struct RuntimeServices {
     /// Values from confirmed in-core submissions, served to `lookup_subscribe`
     /// until the host's content backend has them. Byte-bounded, oldest-first.
     preimage_cache: Mutex<PreimageCache>,
+    /// Preimages a test host kept instead of submitting. Unbounded, unlike
+    /// `preimage_cache`: nothing else holds them, so evicting one would leave
+    /// its key unresolvable for the rest of the run.
+    #[cfg(feature = "test-host")]
+    local_preimages: Mutex<std::collections::HashMap<[u8; 32], Vec<u8>>>,
     /// Confirmed submissions served to new subscriptions until the remote
     /// Statement Store reports them.
     statement_cache: Mutex<StatementCache>,
@@ -119,6 +133,9 @@ impl RuntimeServices {
             pocket_platform: OnceLock::new(),
             contacts_platform: OnceLock::new(),
             contact_handles: Default::default(),
+            game_platform: OnceLock::new(),
+            scanner_platform: OnceLock::new(),
+            scan_open: AtomicBool::new(false),
             device_pairing_observer: OnceLock::new(),
             #[cfg(not(target_arch = "wasm32"))]
             core_db: OnceLock::new(),
@@ -129,6 +146,8 @@ impl RuntimeServices {
             bulletin,
             chain_context: crate::runtime::statement_allowance::ChainContextCache::default(),
             preimage_cache: Mutex::new(PreimageCache::default()),
+            #[cfg(feature = "test-host")]
+            local_preimages: Mutex::new(std::collections::HashMap::new()),
             statement_cache: Mutex::new(StatementCache::default()),
             spawner,
             device_encryption_key: futures::lock::Mutex::new(()),
@@ -209,6 +228,22 @@ impl RuntimeServices {
         self.pocket_platform.get().cloned()
     }
 
+    /// Install the host's Game adapter.
+    ///
+    /// Set-once, like every optional capability, so reminders cannot change
+    /// hands under a running product. Returns whether this call installed it.
+    pub fn install_game_platform(
+        &self,
+        platform: Arc<dyn crate::platform::GamePlatform>,
+    ) -> bool {
+        self.game_platform.set(platform).is_ok()
+    }
+
+    /// The host's Game adapter, when one is installed.
+    pub fn game_platform(&self) -> Option<Arc<dyn crate::platform::GamePlatform>> {
+        self.game_platform.get().cloned()
+    }
+
     /// Install the host's contacts adapter. Answers whether this call was the
     /// one that installed it.
     pub fn install_contacts_platform(
@@ -221,6 +256,29 @@ impl RuntimeServices {
     /// The host's contacts adapter, when one is installed.
     pub fn contacts_platform(&self) -> Option<Arc<dyn crate::platform::ContactsPlatform>> {
         self.contacts_platform.get().cloned()
+    }
+
+    /// Install the host's scanner. Answers whether this call was the one that
+    /// installed it.
+    pub fn install_scanner_platform(
+        &self,
+        platform: Arc<dyn crate::platform::ScannerPlatform>,
+    ) -> bool {
+        self.scanner_platform.set(platform).is_ok()
+    }
+
+    /// The host's scanner, when one is installed.
+    pub fn scanner_platform(&self) -> Option<Arc<dyn crate::platform::ScannerPlatform>> {
+        self.scanner_platform.get().cloned()
+    }
+
+    /// Claim the one open scan, or `None` while another holds it. Dropping the
+    /// claim frees it, so a cancelled or failed scan cannot keep it.
+    pub fn claim_scan(&self) -> Option<ScanClaim<'_>> {
+        self.scan_open
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .ok()
+            .map(|_| ScanClaim(&self.scan_open))
     }
 
     /// Install the host's device-pairing observer.
@@ -282,8 +340,26 @@ impl RuntimeServices {
             .insert(key, value);
     }
 
+    /// Keep a preimage a test host did not submit, for the rest of the run.
+    #[cfg(feature = "test-host")]
+    pub fn keep_local_preimage(&self, key: [u8; 32], value: Vec<u8>) {
+        self.local_preimages
+            .lock()
+            .expect("local preimage store mutex poisoned")
+            .insert(key, value);
+    }
+
     /// Return a cached preimage value for `key`, if present.
     pub fn cached_preimage(&self, key: &[u8; 32]) -> Option<Vec<u8>> {
+        #[cfg(feature = "test-host")]
+        if let Some(value) = self
+            .local_preimages
+            .lock()
+            .expect("local preimage store mutex poisoned")
+            .get(key)
+        {
+            return Some(value.clone());
+        }
         self.preimage_cache
             .lock()
             .expect("preimage cache mutex poisoned")
@@ -428,5 +504,14 @@ impl RuntimeChainProvider for HostChainProvider {
             .map_err(|err| {
                 RuntimeFailure::unavailable_with_reason("remote_chain_connect", format!("{err:?}"))
             })
+    }
+}
+
+/// The open scan. Frees the slot when dropped.
+pub struct ScanClaim<'a>(&'a AtomicBool);
+
+impl Drop for ScanClaim<'_> {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::Release);
     }
 }

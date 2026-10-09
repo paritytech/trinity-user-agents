@@ -121,7 +121,9 @@ const callbacks: HostCallbacks = {
   chat, // optional: leave it out and chat products get `Unsupported`
   permissionStatus, // optional: reports live OS permission state
   pocket, // optional: serves the host's Pocket card collection
+  game, // optional: holds the host's game reminders
   contacts, // optional: leave it out and contacts calls get `Unsupported`
+  scanner, // optional: draws the host's QR and barcode viewfinder
 };
 ```
 
@@ -134,6 +136,17 @@ stops reading as usable. Omit it and a stored grant answers on its own.
 calling product's cards and every later replacement, and `removePocketCard`
 takes one out. The host owns the collection: removing an absent card succeeds,
 and a card the host pins is refused with `Privileged`.
+
+`game` holds the host's game reminder. `scheduleGameReminder` replaces the
+product's held reminder, and `cancelGameReminder` drops it. The core asks for
+no per-product consent, so the host asks the platform for what the reminder
+needs, and a rejected schedule reaches the product as a host failure. A host
+keeps one reminder per product. The core serves
+`game` to the game product, `dim2`, alone. The mock test host
+(`@parity/truapi-host/testing`) accepts every reminder and cancel without
+holding them once it runs as that product; its default `mock.dot` gets
+`Unsupported`, so a suite that exercises `game` passes
+`productId: "dim2.dot"`.
 
 Under `createWebWorkerPairingHostRuntime` the presence of each optional group is
 reported to the worker in its `init` message, so the core sees the same
@@ -266,6 +279,11 @@ account (`blake2b(account, { key: handleKey, dkLen: 32 })` in `@noble/hashes`).
 The core re-checks every account returned. It caches what it resolves, so call
 `notifyContactsChanged()` whenever a contact is removed or blocked. Omit blocked
 contacts from both. See the contacts RFC (`docs/rfcs/contacts-api.md`).
+
+`scanner.scanCode(product, request)` opens the host's viewfinder. The rules it
+follows are on `ScannerPlatform` in the generated callbacks. The mock test host
+serves a scanner only when created with `createMockHost({ scanner: answer })`,
+and `setScanAnswer(answer)` changes the next answer.
 
 ## Generated WASM artefacts
 

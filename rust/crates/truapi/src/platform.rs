@@ -27,18 +27,19 @@ pub mod mock;
 
 use truapi::latest::{
     AllocatableResource, ChainIdentifier, ChatAction, ChatActions, ChatCustomMessage, ChatFile,
-    ChatMedia, ChatMessageContent, ChatReaction, ChatRichText, GenericError,
+    ChatMedia, ChatMessageContent, ChatReaction, ChatRichText, CodeFormat, GenericError,
     HostChatCreateRoomError, HostChatCreateRoomRequest, HostChatCreateRoomResponse,
     HostChatListSubscribeItem, HostChatPostMessageError, HostChatPostMessageRequest,
     HostChatPostMessageResponse, HostChatRegisterBotError, HostChatRegisterBotRequest,
-    HostChatRegisterBotResponse, HostDevicePermissionRequest, HostFeatureSupportedRequest,
+    HostChatRegisterBotResponse, HostChatSetRoomFooterRequest, HostDevicePermissionRequest, HostFeatureSupportedRequest,
     HostFeatureSupportedResponse, HostLocalStorageChangeItem, HostLocaleSubscribeItem,
     HostNavigateToError, HostPlatform, HostPocketListSubscribeItem, HostPocketRemoveCardError,
     HostPocketRemoveCardRequest, HostPushNotificationRequest, HostPushNotificationResponse,
-    HostSignPayloadRequest, HostSignPayloadWithLegacyAccountRequest, HostSignRawRequest,
-    HostSignRawWithLegacyAccountRequest, HostThemeSubscribeItem, HostWorkerBeginOperationResponse,
-    HostWorkerOperationError, LegacyAccountTxPayload, ProductAccountId, ProductAccountTxPayload,
-    ProductProofContext, RemotePermission, RemotePermissionRequest, RingLocation,
+    HostScannerScanRequest, HostSignPayloadRequest, HostSignPayloadWithLegacyAccountRequest,
+    HostSignRawRequest, HostSignRawWithLegacyAccountRequest, HostThemeSubscribeItem,
+    HostWorkerBeginOperationResponse, HostWorkerOperationError, LegacyAccountTxPayload,
+    ProductAccountId, ProductAccountTxPayload, ProductProofContext, RemotePermission,
+    RemotePermissionRequest, RingLocation,
 };
 use truapi::v01::HostAccountSignVrfRequest;
 use url::{Host, Url};
@@ -271,6 +272,12 @@ impl ProductContext {
             execution_kind,
         })
     }
+
+    /// Whether this is the game product, Jollity, on any dotNS network. A
+    /// subname such as `app.dim2.dot` is a different product.
+    pub fn is_game_product(&self) -> bool {
+        dotns_product_label(&self.product_id) == Some(GAME_PRODUCT_LABEL)
+    }
 }
 
 /// Decoding routes through [`ProductContext::new_with_execution`] so a frame
@@ -311,7 +318,10 @@ pub fn has_dotns_tld(normalized: &str) -> bool {
 /// Blessed product labels across every network in [`DOTNS_TLDS`].
 ///
 /// These products bypass recorded permissions and prompt only for device access.
-pub const REMOTE_PERMISSION_TRUSTED_LABELS: &[&str] = &["peopl", "dim2", "stash"];
+pub const REMOTE_PERMISSION_TRUSTED_LABELS: &[&str] = &["peopl", GAME_PRODUCT_LABEL, "stash"];
+
+/// The bare label of the game product, Jollity, on every network.
+const GAME_PRODUCT_LABEL: &str = "dim2";
 
 /// Hosts available to every product unless a stored permission decision blocks them.
 pub const BLESSED_REMOTE_DOMAINS: &[&str] = &["fonts.googleapis.com", "fonts.gstatic.com"];
@@ -324,10 +334,20 @@ pub const BLESSED_REMOTE_DOMAINS: &[&str] = &["fonts.googleapis.com", "fonts.gst
 /// not. The label is only read out of an id that [`has_dotns_tld`] accepts, so a
 /// widened product-id policy cannot promote an arbitrary single-label host.
 pub fn has_trusted_remote_permissions(product_id: &str) -> bool {
-    has_dotns_tld(product_id)
-        && product_id
-            .rsplit_once('.')
-            .is_some_and(|(label, _tld)| REMOTE_PERMISSION_TRUSTED_LABELS.contains(&label))
+    dotns_product_label(product_id)
+        .is_some_and(|label| REMOTE_PERMISSION_TRUSTED_LABELS.contains(&label))
+}
+
+/// Everything before the TLD of a dotNS `product_id`: `dim2` for `dim2.dot`,
+/// `app.dim2` for `app.dim2.dot`. `None` when the id does not end in one of
+/// [`DOTNS_TLDS`], so a `localhost` id never yields a label.
+///
+/// Expects the [`normalize_product_identifier`] form.
+fn dotns_product_label(product_id: &str) -> Option<&str> {
+    if !has_dotns_tld(product_id) {
+        return None;
+    }
+    product_id.rsplit_once('.').map(|(label, _tld)| label)
 }
 
 /// Whether `product_id` in any accepted spelling holds every
@@ -3225,8 +3245,8 @@ pub trait PreimageHost: Send + Sync {
 /// answered `Unsupported`. See [`OptionalPlatform`].
 ///
 /// The core bounds and screens the product-supplied fields it forwards. Ids,
-/// names and icons on `create_chat_room`, `register_chat_bot` and
-/// `post_chat_message` are NFC-normalized and rejected for control and bidi
+/// names and icons on `create_chat_room`, `register_chat_bot`,
+/// `post_chat_message` and `set_chat_room_footer` are NFC-normalized and rejected for control and bidi
 /// characters. Message bodies are bounded and screened but pass through
 /// byte-for-byte, keeping line breaks and tabs, so a product reads back the
 /// bytes it sent. Counts and byte budgets are enforced, and any URL a host may
@@ -3269,6 +3289,16 @@ pub trait ChatPlatform: Send + Sync {
         request: HostChatPostMessageRequest,
     ) -> Result<HostChatPostMessageResponse, HostChatPostMessageError>;
 
+    /// Set what a product-scoped room shows below its messages, for the room
+    /// as it is now and every later time it is shown. The core has already
+    /// checked the product created the room. A room the product never set a
+    /// footer on shows the text input.
+    async fn set_chat_room_footer(
+        &self,
+        product: &ProductContext,
+        request: HostChatSetRoomFooterRequest,
+    ) -> Result<(), GenericError>;
+
     /// Emit the current product-scoped room list and later replacements.
     fn subscribe_chat_rooms(
         &self,
@@ -3297,6 +3327,33 @@ pub trait PocketPlatform: Send + Sync {
         product: &ProductContext,
         request: HostPocketRemoveCardRequest,
     ) -> Result<(), HostPocketRemoveCardError>;
+}
+
+/// Host-implemented adapter that holds a product's next-game reminder.
+/// Optional: a host that omits it leaves Game requests answered `Unsupported`.
+/// See [`OptionalPlatform`].
+///
+/// The core serves only the game product and refuses a start that is not in
+/// the future before it calls here; it asks for no per-product consent. The
+/// host asks the OS for what the reminder needs, rings an alarm where the OS
+/// allows one and delivers an ordinary notification otherwise, and may add the
+/// game to the user's calendar. A host keeps one reminder per product: a
+/// schedule replaces the reminder the same product already holds and leaves
+/// other products' reminders alone. The host keeps each reminder across app
+/// kill and device reboot and drops it once its game has started.
+#[async_trait]
+pub trait GamePlatform: Send + Sync {
+    /// Hold `starts_at` (Unix milliseconds, UTC) as the product's reminder,
+    /// replacing any it holds. An error, including an OS that allows neither
+    /// alarms nor notifications, reaches the product as a host failure.
+    async fn schedule_game_reminder(
+        &self,
+        product: &ProductContext,
+        starts_at: u64,
+    ) -> Result<(), GenericError>;
+
+    /// Drop the product's reminder. Idempotent: dropping none succeeds.
+    async fn cancel_game_reminder(&self, product: &ProductContext) -> Result<(), GenericError>;
 }
 
 /// What the operating system currently says about a device capability.
@@ -3342,6 +3399,34 @@ pub trait PermissionStatusHost: Send + Sync {
         &self,
         request: HostDevicePermissionRequest,
     ) -> Result<DevicePermissionStatus, GenericError>;
+}
+
+/// What the host did with a request to show or hide the expanded card face.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
+pub enum ExpandedCardFaceOutcome {
+    /// The face is now in the requested state, including when it already was.
+    Applied,
+    /// The Widget is not shown under its card right now.
+    NotPresented,
+    /// The user is moving the face, so the request had no effect.
+    UserMoving,
+    /// The host cannot move the face at all.
+    Unsupported,
+}
+
+/// Host control of the card face drawn above an opened card's Widget.
+///
+/// Carried per connection on `ConnectionAdapters`, because the host owns one
+/// drawer per product execution. A connection without one tells products
+/// `Unsupported`.
+#[async_trait]
+pub trait ExpandedCardHost: Send + Sync {
+    /// Show (`true`) or hide (`false`) the face above the calling Widget.
+    async fn set_expanded_card_face_shown(
+        &self,
+        shown: bool,
+    ) -> Result<ExpandedCardFaceOutcome, GenericError>;
 }
 
 /// Host store for a product's pending operations, which the host uses to keep
@@ -3472,6 +3557,49 @@ pub trait ContactsPlatform: Send + Sync {
     }
 }
 
+/// How the host's scanner ended.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
+pub enum HostScan {
+    /// The user scanned a code the request accepts.
+    Scanned {
+        /// The code's content.
+        text: String,
+        /// The code's format.
+        format: CodeFormat,
+    },
+    /// The user closed the viewfinder without scanning.
+    Dismissed,
+    /// The device has no camera, or the user refused the host application one.
+    /// The host has already told the user how to turn it on.
+    CameraUnavailable,
+    /// The requesting App or Widget is not the screen the user sees, so the
+    /// host opened nothing. A Worker's request was already checked by the core
+    /// and is never answered this way.
+    NotVisible,
+}
+
+/// Host-owned viewfinder for QR codes and barcodes. Optional. The Swift and
+/// Kotlin bridges and the JS `scanner` callbacks follow the same rules.
+///
+/// - Title the viewfinder with the product id. Show `request.hint` under it as
+///   the product's words.
+/// - Pass every code the camera reads to a `ScanFilter` built from `request`,
+///   and never follow a scanned link.
+/// - Answer [`HostScan::NotVisible`] for an App or Widget that is not on
+///   screen. A Worker reaching the host already passed the core's tap check.
+/// - Close the viewfinder when the core drops the future, and close any still
+///   open before opening another. A JS host is not told about a drop.
+#[async_trait]
+pub trait ScannerPlatform: Send + Sync {
+    /// Open the viewfinder on behalf of `product` and wait for the user.
+    async fn scan_code(
+        &self,
+        product: &ProductContext,
+        request: &HostScannerScanRequest,
+    ) -> Result<HostScan, GenericError>;
+}
+
 /// Combined platform interface. A host must provide every capability trait
 /// listed here. Members marked optional may be omitted; the core answers their
 /// product calls with `Unsupported`. See [`OptionalPlatform`].
@@ -3514,11 +3642,21 @@ impl<T> Platform for T where
 /// with `Unsupported`. Codegen reads this list to emit each capability as an
 /// optional group on the host-callback surface.
 pub trait OptionalPlatform:
-    ChatPlatform + ContactsPlatform + PermissionStatusHost + PocketPlatform
+    ChatPlatform
+    + ContactsPlatform
+    + PermissionStatusHost
+    + PocketPlatform
+    + GamePlatform
+    + ScannerPlatform
 {
 }
 
 impl<T> OptionalPlatform for T where
-    T: ChatPlatform + ContactsPlatform + PermissionStatusHost + PocketPlatform
+    T: ChatPlatform
+        + ContactsPlatform
+        + PermissionStatusHost
+        + PocketPlatform
+        + GamePlatform
+        + ScannerPlatform
 {
 }

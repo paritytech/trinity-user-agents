@@ -31,6 +31,7 @@ pub struct JsBridge {
     pub create_chat_room: Function,
     pub register_chat_bot: Function,
     pub post_chat_message: Function,
+    pub set_chat_room_footer: Function,
     pub subscribe_chat_rooms: Function,
     pub contacts: Function,
     pub pick_contact: Function,
@@ -39,6 +40,8 @@ pub struct JsBridge {
     pub clear_core_storage: Function,
     pub feature_supported: Function,
     pub supported_chains: Function,
+    pub schedule_game_reminder: Function,
+    pub cancel_game_reminder: Function,
     pub subscribe_locale: Function,
     pub navigate_to: Function,
     pub push_notification: Function,
@@ -55,13 +58,16 @@ pub struct JsBridge {
     pub write: Function,
     pub clear: Function,
     pub subscribe_storage: Function,
+    pub scan_code: Function,
     pub subscribe_theme: Function,
     pub confirm_permission: Function,
     pub confirm_user_action: Function,
     pub chat_present: bool,
     pub contacts_present: bool,
+    pub game_present: bool,
     pub permission_status_present: bool,
     pub pocket_present: bool,
+    pub scanner_present: bool,
 }
 
 impl JsBridge {
@@ -75,6 +81,8 @@ impl JsBridge {
                 .unwrap_or_else(|| missing_callback("registerChatBot")),
             post_chat_message: get_optional_function(callbacks, "postChatMessage")?
                 .unwrap_or_else(|| missing_callback("postChatMessage")),
+            set_chat_room_footer: get_optional_function(callbacks, "setChatRoomFooter")?
+                .unwrap_or_else(|| missing_callback("setChatRoomFooter")),
             subscribe_chat_rooms: get_optional_function(callbacks, "subscribeChatRooms")?
                 .unwrap_or_else(|| missing_callback("subscribeChatRooms")),
             contacts: get_optional_function(callbacks, "contacts")?
@@ -86,6 +94,10 @@ impl JsBridge {
             clear_core_storage: get_function(callbacks, "clearCoreStorage")?,
             feature_supported: get_function(callbacks, "featureSupported")?,
             supported_chains: get_function(callbacks, "supportedChains")?,
+            schedule_game_reminder: get_optional_function(callbacks, "scheduleGameReminder")?
+                .unwrap_or_else(|| missing_callback("scheduleGameReminder")),
+            cancel_game_reminder: get_optional_function(callbacks, "cancelGameReminder")?
+                .unwrap_or_else(|| missing_callback("cancelGameReminder")),
             subscribe_locale: get_function(callbacks, "subscribeLocale")?,
             navigate_to: get_function(callbacks, "navigateTo")?,
             push_notification: get_function(callbacks, "pushNotification")?,
@@ -105,19 +117,25 @@ impl JsBridge {
             write: get_function(callbacks, "write")?,
             clear: get_function(callbacks, "clear")?,
             subscribe_storage: get_function(callbacks, "subscribeStorage")?,
+            scan_code: get_optional_function(callbacks, "scanCode")?
+                .unwrap_or_else(|| missing_callback("scanCode")),
             subscribe_theme: get_function(callbacks, "subscribeTheme")?,
             confirm_permission: get_function(callbacks, "confirmPermission")?,
             confirm_user_action: get_function(callbacks, "confirmUserAction")?,
             chat_present: get_optional_function(callbacks, "createChatRoom")?.is_some()
                 && get_optional_function(callbacks, "registerChatBot")?.is_some()
                 && get_optional_function(callbacks, "postChatMessage")?.is_some()
+                && get_optional_function(callbacks, "setChatRoomFooter")?.is_some()
                 && get_optional_function(callbacks, "subscribeChatRooms")?.is_some(),
             contacts_present: get_optional_function(callbacks, "contacts")?.is_some()
                 && get_optional_function(callbacks, "pickContact")?.is_some(),
+            game_present: get_optional_function(callbacks, "scheduleGameReminder")?.is_some()
+                && get_optional_function(callbacks, "cancelGameReminder")?.is_some(),
             permission_status_present: get_optional_function(callbacks, "devicePermissionStatus")?
                 .is_some(),
             pocket_present: get_optional_function(callbacks, "subscribePocketCards")?.is_some()
                 && get_optional_function(callbacks, "removePocketCard")?.is_some(),
+            scanner_present: get_optional_function(callbacks, "scanCode")?.is_some(),
         })
     }
 
@@ -131,6 +149,11 @@ impl JsBridge {
         self.contacts_present
     }
 
+    /// Whether the host supplied every `game` callback.
+    pub fn has_game(&self) -> bool {
+        self.game_present
+    }
+
     /// Whether the host supplied every `permission_status` callback.
     pub fn has_permission_status(&self) -> bool {
         self.permission_status_present
@@ -139,6 +162,11 @@ impl JsBridge {
     /// Whether the host supplied every `pocket` callback.
     pub fn has_pocket(&self) -> bool {
         self.pocket_present
+    }
+
+    /// Whether the host supplied every `scanner` callback.
+    pub fn has_scanner(&self) -> bool {
+        self.scanner_present
     }
 }
 
@@ -216,6 +244,22 @@ impl crate::platform::ChatPlatform for WasmPlatform {
             "postChatMessage response did not decode",
         )
         .map_err(|reason| v01::HostChatPostMessageError::Unknown { reason })
+    }
+
+    async fn set_chat_room_footer(
+        &self,
+        product: &crate::platform::ProductContext,
+        request: v01::HostChatSetRoomFooterRequest,
+    ) -> Result<(), v01::GenericError> {
+        invoke_unit(
+            &self.bridge.set_chat_room_footer,
+            vec![
+                Uint8Array::from(product.encode().as_slice()).into(),
+                Uint8Array::from(request.encode().as_slice()).into(),
+            ],
+        )
+        .await
+        .map_err(generic)
     }
 
     fn subscribe_chat_rooms(
@@ -338,6 +382,37 @@ impl crate::platform::Features for WasmPlatform {
             bytes,
             "supportedChains response did not decode",
         )
+        .map_err(generic)
+    }
+}
+
+#[crate::platform::async_trait]
+impl crate::platform::GamePlatform for WasmPlatform {
+    async fn schedule_game_reminder(
+        &self,
+        product: &crate::platform::ProductContext,
+        starts_at: u64,
+    ) -> Result<(), v01::GenericError> {
+        invoke_unit(
+            &self.bridge.schedule_game_reminder,
+            vec![
+                Uint8Array::from(product.encode().as_slice()).into(),
+                js_sys::BigInt::from(starts_at).into(),
+            ],
+        )
+        .await
+        .map_err(generic)
+    }
+
+    async fn cancel_game_reminder(
+        &self,
+        product: &crate::platform::ProductContext,
+    ) -> Result<(), v01::GenericError> {
+        invoke_unit(
+            &self.bridge.cancel_game_reminder,
+            vec![Uint8Array::from(product.encode().as_slice()).into()],
+        )
+        .await
         .map_err(generic)
     }
 }
@@ -583,6 +658,27 @@ impl crate::platform::ProductStorage for WasmPlatform {
             Some(JsValue::from_str(&key)),
             parse_host_local_storage_change_item_item,
         )
+    }
+}
+
+#[crate::platform::async_trait]
+impl crate::platform::ScannerPlatform for WasmPlatform {
+    async fn scan_code(
+        &self,
+        product: &crate::platform::ProductContext,
+        request: &v01::HostScannerScanRequest,
+    ) -> Result<crate::platform::HostScan, v01::GenericError> {
+        let bytes = invoke_bytes_return(
+            &self.bridge.scan_code,
+            vec![
+                Uint8Array::from(product.encode().as_slice()).into(),
+                Uint8Array::from(request.encode().as_slice()).into(),
+            ],
+        )
+        .await
+        .map_err(generic)?;
+        decode_bytes::<crate::platform::HostScan>(bytes, "scanCode response did not decode")
+            .map_err(generic)
     }
 }
 
