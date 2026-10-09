@@ -15,7 +15,8 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use crate::platform::{
-    ChatPlatform, ContactsPlatform, GamePlatform, PermissionStatusHost, PocketPlatform,
+    ChatPlatform, ContactsPlatform, ExpandedCardHost, GamePlatform, PermissionStatusHost,
+    PocketPlatform,
 };
 use crate::platform::{
     CoreAdmin, PairingHostAdmin, PairingHostConfig, PermissionAuthorizationRequest,
@@ -1218,6 +1219,8 @@ pub struct ConnectionAdapters {
     pub renderer: Arc<ActionChannel<truapi::versioned::renderer::HostRendererActionSubscribeItem>>,
     pub pocket_platform: Option<Arc<dyn PocketPlatform>>,
     pub game_platform: Option<Arc<dyn GamePlatform>>,
+    /// Control of the card face above this connection's Widget, when the host draws one.
+    pub expanded_card: Option<Arc<dyn ExpandedCardHost>>,
 }
 
 impl ConnectionAdapters {
@@ -1231,6 +1234,7 @@ impl ConnectionAdapters {
             chat: Arc::new(ActionChannel::chat()),
             renderer: Arc::new(ActionChannel::renderer()),
             pocket_platform: services.pocket_platform(),
+            expanded_card: None,
             game_platform: services.game_platform(),
         }
     }
