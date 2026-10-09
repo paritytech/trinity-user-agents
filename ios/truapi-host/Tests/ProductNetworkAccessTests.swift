@@ -7,7 +7,7 @@ import UIKit
 import WebKit
 @testable import TrUAPIHost
 
-@Suite(.serialized)
+@Suite(.serialized, WebKitReady())
 @MainActor
 struct ProductNetworkAccessTests {
     @Test(.timeLimit(.minutes(1)))
@@ -227,6 +227,86 @@ struct ProductNetworkAccessTests {
                 arguments: ["url": url.absoluteString], in: nil, contentWorld: .page
             ) as? String ?? "evaluation failed"
         }
+    }
+}
+
+/// Booting the simulator does not launch WebKit's lazy auxiliary processes.
+/// Prepare only stock WebKit, once per suite, before any SDK runtime or scripts.
+private struct WebKitReady: SuiteTrait, TestScoping {
+    let isRecursive = false
+
+    func provideScope(
+        for _: Test, testCase _: Test.Case?, performing function: @Sendable () async throws -> Void
+    ) async throws {
+        try await Self.withReadyWebKit(performing: function)
+    }
+
+    @MainActor
+    private static func withReadyWebKit(performing function: @Sendable () async throws -> Void) async throws {
+        let server = try await NetworkTestServer.start()
+        defer { server.stop() }
+        let probe = WebKitReadinessProbe()
+        let configuration = WKWebViewConfiguration()
+        configuration.preferences.isFraudulentWebsiteWarningEnabled = false
+        configuration.userContentController.add(probe, name: "webkitReady")
+        let webView = WKWebView(frame: .zero, configuration: configuration)
+        webView.navigationDelegate = probe
+        let window = try NetworkTestWindow(webView)
+        defer {
+            webView.stopLoading()
+            webView.navigationDelegate = nil
+            configuration.userContentController.removeScriptMessageHandler(forName: "webkitReady")
+            window.close()
+        }
+
+        let started = ContinuousClock.now
+        print("WebKit prerequisite: waiting for stock loopback navigation and JavaScript")
+        try await probe.load(webView, url: server.url(host: "localhost", path: "/webkit-ready"))
+        print("WebKit prerequisite: ready after \(started.duration(to: .now))")
+        // Keep the probe alive, but every test still creates a fresh product
+        // WKWebView, runtime and bridge under its unchanged operation deadlines.
+        try await function()
+    }
+}
+
+@MainActor
+private final class WebKitReadinessProbe: NSObject, WKScriptMessageHandler, WKNavigationDelegate {
+    private let ready = AsyncThrowingStream<Void, Error>.makeStream()
+
+    func load(_ webView: WKWebView, url: URL) async throws {
+        let timeout = Task {
+            try await Task.sleep(for: .seconds(60))
+            ready.continuation.finish(throwing: NetworkTestTimeout(
+                stage: "stock WebKit readiness (60-second suite prerequisite, before SDK startup)"
+            ))
+        }
+        defer {
+            timeout.cancel()
+            ready.continuation.finish()
+        }
+        webView.load(URLRequest(url: url))
+        var iterator = ready.stream.makeAsyncIterator()
+        guard try await iterator.next() != nil else { throw CancellationError() }
+    }
+
+    func userContentController(_: WKUserContentController, didReceive message: WKScriptMessage) {
+        guard message.frameInfo.isMainFrame, message.body as? String == "webkit-ready" else { return }
+        ready.continuation.yield(())
+        ready.continuation.finish()
+    }
+
+    func webView(_: WKWebView, didFailProvisionalNavigation _: WKNavigation!, withError error: Error) {
+        ready.continuation.finish(throwing: error)
+    }
+
+    func webView(_: WKWebView, didFail _: WKNavigation!, withError error: Error) {
+        ready.continuation.finish(throwing: error)
+    }
+
+    func webViewWebContentProcessDidTerminate(_: WKWebView) {
+        ready.continuation.finish(throwing: NSError(
+            domain: WKError.errorDomain, code: WKError.Code.webContentProcessTerminated.rawValue
+        ))
     }
 }
 
@@ -482,6 +562,8 @@ private final class NetworkTestServer: @unchecked Sendable {
             var body = "allowed"
             if path == "/product" {
                 body = "<script>window.webkit.messageHandlers.testReady.postMessage('ready')</script>"
+            } else if path == "/webkit-ready" {
+                body = "<script>window.webkit.messageHandlers.webkitReady.postMessage('webkit-ready')</script>"
             } else if path == "/style.css" {
                 headers = "Access-Control-Allow-Origin: *\r\nContent-Type: text/css\r\nCache-Control: no-store\r\n"
                 body = "body { color: green; }"

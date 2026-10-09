@@ -393,23 +393,24 @@ extension ProductPermission {
         case .profileDisclosure:
             return .profileDisclosure
         case let .statementStoreAllowance(derivationIndex):
-            let selector: TrUAPIHostDerivationIndex? = try derivationIndex.map { selector in
-                switch selector {
-                case let .index(index):
-                    return .index(index)
-                case let .raw(bytes):
-                    guard bytes.count == 32 else {
-                        throw TrUAPIReviewMappingError.invalidDerivationIndexLength(bytes.count)
-                    }
-                    return .raw(bytes)
-                }
-            }
-            return .statementStoreAllowance(derivationIndex: selector)
+            return .statementStoreAllowance(derivationIndex: try derivationIndex.map(Self.authorizationSelector))
         case .balanceAccess:
             return nil
         case .networkAccess, .networkAccessBundle, .webRtcAccess,
              .chainSubmitAccess, .preimageSubmitAccess, .statementSubmitAccess, .jamPeersAccess:
             return try permission.remoteAuthorizationRequest()
+        }
+    }
+
+    private static func authorizationSelector(_ selector: ProductAccountSelector) throws -> TrUAPIHostDerivationIndex {
+        switch selector {
+        case let .index(index):
+            return .index(index)
+        case let .raw(bytes):
+            guard bytes.count == 32 else {
+                throw TrUAPIReviewMappingError.invalidDerivationIndexLength(bytes.count)
+            }
+            return .raw(bytes)
         }
     }
 
