@@ -78,7 +78,7 @@ internal class PocketDeepLinkHandler @Inject constructor(
 
     private suspend fun dispatch(productId: ProductId, deeplink: PocketDeeplink): Result<DeeplinkProcessingOutcome> =
         when (deeplink) {
-            is PocketDeeplink.Collection -> Result.success(DeeplinkProcessingOutcome.Navigate { router.openPocket() })
+            is PocketDeeplink.Collection -> Result.success(DeeplinkProcessingOutcome.Navigate { router.openWalletTab() })
             is PocketDeeplink.Card -> dispatchCard(PocketCardKey(productId, PocketCardId(deeplink.cardId)))
         }
 
@@ -92,7 +92,7 @@ internal class PocketDeepLinkHandler @Inject constructor(
             Result.success(
                 DeeplinkProcessingOutcome.Navigate {
                     cardOpenRequests.request(key)
-                    router.openPocket()
+                    router.openWalletTab()
                 },
             )
         } else {

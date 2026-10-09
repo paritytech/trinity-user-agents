@@ -23,7 +23,7 @@ internal class PocketTabDeepLinkHandler @Inject constructor(
     override suspend fun handle(data: Uri): Result<DeeplinkProcessingOutcome> = runCancellableCatching {
         accountRepository.awaitAccountsInitialized()
 
-        DeeplinkProcessingOutcome.Navigate { router.openPocket() }
+        DeeplinkProcessingOutcome.Navigate { router.openWalletTab() }
     }
 
     private companion object {

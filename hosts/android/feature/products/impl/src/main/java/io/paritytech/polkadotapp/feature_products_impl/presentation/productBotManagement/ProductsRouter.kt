@@ -1,13 +1,14 @@
 package io.paritytech.polkadotapp.feature_products_impl.presentation.productBotManagement
 
 import io.paritytech.polkadotapp.common.presentation.navigation.ReturnableRouter
+import io.paritytech.polkadotapp.common.presentation.navigation.TabRouter
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatId
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_api.model.signing.SigningRouter
 import io.paritytech.polkadotapp.feature_products_api.presentation.PocketAddCardPayload
 import io.paritytech.polkadotapp.feature_products_api.presentation.SpaBrowserPayload
 
-interface ProductsRouter : ReturnableRouter, SigningRouter {
+interface ProductsRouter : ReturnableRouter, SigningRouter, TabRouter {
     fun openSpaBrowser(payload: SpaBrowserPayload)
 
     /** Leave the browser for the main screen, which resumes on its last selected bottom tab. */
@@ -31,6 +32,4 @@ interface ProductsRouter : ReturnableRouter, SigningRouter {
 
     /** Approval sheet for a card the user was offered through a Pocket deeplink. */
     fun openPocketAddCard(payload: PocketAddCardPayload)
-
-    fun openPocket()
 }

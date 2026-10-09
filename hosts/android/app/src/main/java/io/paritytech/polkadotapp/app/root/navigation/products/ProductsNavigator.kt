@@ -108,10 +108,4 @@ class ProductsNavigator @Inject constructor(
         actionId = R.id.action_global_to_pocketAddCardBottomSheet,
         args = payload.toPayloadBundle(),
     )
-
-    // The tabs live on the main screen; switched from a screen above it, the tab would change out of sight.
-    override fun openPocket() {
-        popBackstack(R.id.mainFragment)
-        openWalletTab()
-    }
 }
