@@ -6,22 +6,12 @@
 
 mod local_activation;
 pub mod ring_vrf;
-mod sso_replay;
-mod sso_responder;
 mod wallet_account_holder;
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 pub use local_activation::LocalActivation;
-pub use sso_responder::{
-    AnnouncedPairing, DevicePairingObserver, MAX_PAIRING_METADATA_CHARS, PairedSsoPeer,
-    PairingProposal, PairingProposalMetadata, ResponderExit,
-};
-pub use sso_responder::{
-    disconnect_paired_host, establish_pairing, notify_pairing_allowance_allocation,
-    notify_pairing_failed, respond_to_pairing, resume_pairing,
-};
 #[cfg(not(target_arch = "wasm32"))]
 pub use wallet_account_holder::TrackedStatementRenewalTarget;
 pub use wallet_account_holder::{StatementRenewalTarget, WalletAccountHolder};
@@ -39,7 +29,7 @@ use crate::runtime::auth_state::AuthStateMachine;
 use crate::runtime::statement_allowance;
 #[cfg(test)]
 use ring_vrf::RingResolver;
-use sso_replay::SsoReplayLocks;
+use super::sso_responder_service::SsoResponderService;
 pub use wallet_account_holder::{AccountGrant, AllowanceAllocationError};
 use wallet_account_holder::{StatementStoreAllocation, current_unix_secs};
 
@@ -124,8 +114,7 @@ pub struct SigningHost {
     submit_preimages_locally: core::sync::atomic::AtomicBool,
     /// Grant changes and wallet replacement share this lifecycle lock.
     local_grants: Mutex<LocalGrantState>,
-    /// Serializes replay-ledger updates within each wallet and peer scope.
-    sso_replay_locks: SsoReplayLocks,
+    sso_responder: Arc<SsoResponderService>,
     #[cfg(not(target_arch = "wasm32"))]
     renewal_loop_started: std::sync::atomic::AtomicBool,
 }
@@ -141,20 +130,21 @@ impl SigningHost {
     pub fn new(services: Arc<RuntimeServices>, network_suffix: String) -> Arc<Self> {
         let platform = services.platform.clone();
         let consent = Arc::new(ProductConsent::new(platform.clone()));
+        let wallet = Arc::new(WalletAccountHolder::new(
+            services.clone(),
+            network_suffix,
+            consent.clone(),
+        ));
         Arc::new(Self {
             #[cfg(any(not(target_arch = "wasm32"), test))]
             services: services.clone(),
-            wallet: Arc::new(WalletAccountHolder::new(
-                services,
-                network_suffix,
-                consent.clone(),
-            )),
+            sso_responder: SsoResponderService::new(services, wallet.clone()),
+            wallet,
             consent,
             #[cfg(feature = "test-host")]
             submit_preimages_locally: core::sync::atomic::AtomicBool::new(false),
             auth_state: AuthStateMachine::new(platform.clone()),
             local_grants: Mutex::new(LocalGrantState::default()),
-            sso_replay_locks: SsoReplayLocks::default(),
             #[cfg(not(target_arch = "wasm32"))]
             renewal_loop_started: std::sync::atomic::AtomicBool::new(false),
         })
@@ -214,20 +204,21 @@ impl SigningHost {
             crate::test_support::test_spawner(),
         );
         let consent = Arc::new(ProductConsent::new(platform.clone()));
+        let wallet = Arc::new(WalletAccountHolder::new_with_ring_resolver(
+            services.clone(),
+            network_suffix.to_string(),
+            consent.clone(),
+            ring_resolver,
+        ));
         Arc::new(Self {
             services: services.clone(),
-            wallet: Arc::new(WalletAccountHolder::new_with_ring_resolver(
-                services,
-                network_suffix.to_string(),
-                consent.clone(),
-                ring_resolver,
-            )),
+            sso_responder: SsoResponderService::new(services, wallet.clone()),
+            wallet,
             consent,
             #[cfg(feature = "test-host")]
             submit_preimages_locally: core::sync::atomic::AtomicBool::new(false),
             auth_state: AuthStateMachine::new(platform.clone()),
             local_grants: Mutex::new(LocalGrantState::default()),
-            sso_replay_locks: SsoReplayLocks::default(),
             #[cfg(not(target_arch = "wasm32"))]
             renewal_loop_started: std::sync::atomic::AtomicBool::new(false),
         })
@@ -238,8 +229,9 @@ impl SigningHost {
         self.wallet.session_state()
     }
 
-    fn sso_replay_locks(&self) -> &SsoReplayLocks {
-        &self.sso_replay_locks
+    /// Incoming SSO for this host's wallet, answered by its runtime.
+    pub fn sso_responder(&self) -> Arc<SsoResponderService> {
+        self.sso_responder.clone()
     }
 
     fn retain_wallet_authorization(

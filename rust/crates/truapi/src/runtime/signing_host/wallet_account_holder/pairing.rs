@@ -5,7 +5,7 @@ use crate::host_logic::sso::pairing::{
 };
 use crate::host_logic::statement_store::build_signed_statement;
 use crate::runtime::authority::{AuthorityError, AuthoritySession};
-use crate::runtime::signing_host::PairedSsoPeer;
+use crate::runtime::sso_responder_service::PairedSsoPeer;
 use crate::runtime::sso_remote::fresh_statement_expiry;
 use parity_scale_codec::Encode;
 

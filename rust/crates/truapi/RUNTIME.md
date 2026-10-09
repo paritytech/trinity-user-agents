@@ -273,7 +273,7 @@ the page.
 `SsoAccountHolderService` serves one peer through the shared wallet and the activation that authenticated its channel. It owns that peer's withdrawals without host grants or per-message wallet selection. Directly dispatched stale requests produce the macro-generated NotConnected response; activation loss during a request discards its result. The transport rejects posts on an expired activation, so even a disconnected response requires a live channel. Native transports first verify their own statement and encryption public keys through `open_sso_session`, then retain independent peer services from that binding. Neither a child service nor an old binding can attach itself to a replacement activation, including the same wallet reactivated. Product reset does not invalidate the wallet binding. Already-dispatched transport writes cannot be recalled.
 
 `PairingHost::call(request)` sends typed requests to
-[`SsoAccountHolderService`](src/runtime/sso_account_holder_service.rs). Handlers forward remote account invocations and encode wallet receipts in the existing SSO messages. Signing consent belongs to the account implementation, resource consent and issuance to `WalletAccountHolder`; `sso_responder.rs` owns the transport loop. Consent is bound to the request's signing session: account changes, disconnects, and reactivation invalidate pending approval before allocation or key return. Allocation failure details stay in local transcripts.
+[`SsoAccountHolderService`](src/runtime/sso_account_holder_service.rs). Handlers forward remote account invocations and encode wallet receipts in the existing SSO messages. Signing consent belongs to the account implementation, resource consent and issuance to `WalletAccountHolder`. [`SsoResponderService`](src/runtime/sso_responder_service.rs) owns the signing host's side of the transport: pairing answers, the serve loop, duplicate detection and binding native transports, each peer answered by its own `SsoAccountHolderService`. Consent is bound to the request's signing session: account changes, disconnects, and reactivation invalidate pending approval before allocation or key return. Allocation failure details stay in local transcripts.
 Allocation requests use the canonical `truapi::latest::AllocatableResource` type.
 Signing uses canonical request and result types. Product-scoped VRF requests use
 `ProductRequest<P>` to attach the caller to a canonical payload. Both product and
@@ -287,7 +287,7 @@ a withdrawn request posts no response. See the
 [SSO request cancellation RFC](../../../docs/rfcs/sso-request-cancellation.md).
 
 When a device finishes pairing, the signing host reports it to the embedder's
-[`DevicePairingObserver`](src/runtime/signing_host/sso_responder.rs), installed
+[`DevicePairingObserver`](src/runtime/sso_responder_service.rs), installed
 once through `SigningHostRuntime::set_device_pairing_observer`, and on a native
 host to `HostCallbacks::device_paired`. It carries the `PairedSsoPeer` that
 pairing produced, which is also what `resume_pairing` and

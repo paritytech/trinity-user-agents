@@ -36,6 +36,7 @@ mod sso_account_holder_service;
 /// SSO remote request/response messaging over the statement store.
 pub mod sso_remote;
 mod sso_request_service;
+mod sso_responder_service;
 pub mod sso_service;
 /// Statement Store and Bulletin allowance allocation.
 pub mod statement_allowance;
@@ -80,16 +81,13 @@ use pairing_host::PairingHost;
 pub use pairing_host::PairingHost as PairingHostRole;
 pub use renderer::renderer_access_for;
 pub use services::RuntimeServices;
-pub use signing_host::{
-    AnnouncedPairing, DevicePairingObserver, MAX_PAIRING_METADATA_CHARS, PairedSsoPeer,
-    PairingProposal, PairingProposalMetadata, ResponderExit,
-};
-pub use signing_host::{
-    LocalActivation, SigningHost as SigningHostRole, disconnect_paired_host, establish_pairing,
-    notify_pairing_allowance_allocation, notify_pairing_failed, respond_to_pairing, resume_pairing,
-};
+pub use signing_host::{LocalActivation, SigningHost as SigningHostRole};
 pub use sso_account_holder_client::SsoAccountHolderClient;
 pub use sso_account_holder_service::SsoAccountHolderService;
+pub use sso_responder_service::{
+    AnnouncedPairing, DevicePairingObserver, MAX_PAIRING_METADATA_CHARS, PairedSsoPeer,
+    PairingProposal, PairingProposalMetadata, ResponderExit, SsoResponderService,
+};
 pub use sso_request_service::SsoRequestService;
 #[cfg(all(target_arch = "wasm32", feature = "test-host"))]
 pub use vrf::ring_vrf_member;
