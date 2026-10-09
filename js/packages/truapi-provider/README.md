@@ -40,6 +40,12 @@ const response = await connection.nextResponse(); // undefined once closed
 connection.close();
 ```
 
+Browser WebSocket callbacks stay owned through connection setup and teardown.
+Failed or cancelled handshakes, explicit close, and connection drop detach DOM
+handlers before releasing their Rust closures, so late socket events cannot call
+freed callbacks. Light-client socket callbacks release their state lock before
+waking consumers.
+
 Warm start is opt-in, because this package stores nothing itself. Hand
 `setStorage` a client to storage you already own:
 
