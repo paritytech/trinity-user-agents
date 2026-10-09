@@ -39,3 +39,4 @@ prompt, including batched requests, and in permission details. Short summary tit
 
 JAM consent uses the shared canonical product permission authority, including revision fences and revocation of
 execution-local grants, while preserving the account-neutral product/genesis scope.
+Quota reservations use the current atomic update API so warning-denied source installs remain supported.

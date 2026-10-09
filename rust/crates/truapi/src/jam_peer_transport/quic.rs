@@ -114,7 +114,7 @@ struct Reservation {
 impl Reservation {
     fn new(buffered: &Arc<AtomicUsize>, bytes: usize) -> Option<Self> {
         buffered
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |used| {
+            .try_update(Ordering::AcqRel, Ordering::Acquire, |used| {
                 used.checked_add(bytes)
                     .filter(|&total| total <= MAX_BUFFERED_BYTES_PER_CONNECTION)
             })
@@ -374,9 +374,11 @@ impl Transport {
     /// cannot fall between the connection and pending-count snapshots.
     pub(super) fn reserve_pending_dial(&self, pending: &AtomicUsize) -> bool {
         let inner = self.shared.lock();
-        pending.fetch_update(Ordering::AcqRel, Ordering::Acquire, |used| {
-            (inner.conns.len() + used < MAX_CONNECTIONS).then_some(used + 1)
-        }).is_ok()
+        pending
+            .try_update(Ordering::AcqRel, Ordering::Acquire, |used| {
+                (inner.conns.len() + used < MAX_CONNECTIONS).then_some(used + 1)
+            })
+            .is_ok()
     }
 
     /// Connect to one peer, requiring its certificate to carry `ed25519`,
