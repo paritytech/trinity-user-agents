@@ -6,10 +6,22 @@ import TrUAPIHost
 protocol ProductPermissionAuthority: Sendable {
     func permissionAuthorizationProducts() async throws -> [String]
     func permissionAuthorizations(productId: String) async throws -> [PermissionAuthorizationEntry]
-    func importPermissionAuthorizations(productId: String, entries: [PermissionAuthorizationEntry]) async throws -> [PermissionAuthorizationEntry]
-    func setPermissionAuthorizationStatus(productId: String, request: PermissionAuthorizationRequest, status: PermissionAuthorizationStatus) async throws
+    func importPermissionAuthorizations(
+        productId: String,
+        entries: [PermissionAuthorizationEntry]
+    ) async throws -> [PermissionAuthorizationEntry]
+    func setPermissionAuthorizationStatus(
+        productId: String,
+        request: PermissionAuthorizationRequest,
+        status: PermissionAuthorizationStatus
+    ) async throws
     func permissionAuthorizationRevision(productId: String) throws -> UInt64
-    func setPermissionAuthorizationStatusIfCurrent(productId: String, request: PermissionAuthorizationRequest, status: PermissionAuthorizationStatus, revision: UInt64) async throws -> Bool
+    func setPermissionAuthorizationStatusIfCurrent(
+        productId: String,
+        request: PermissionAuthorizationRequest,
+        status: PermissionAuthorizationStatus,
+        revision: UInt64
+    ) async throws -> Bool
 }
 
 extension TrUAPIHostRuntime: ProductPermissionAuthority {}
@@ -221,7 +233,9 @@ extension ProductPermissionRepository: ProductPermissionRepositoryProtocol {
             permission: permission
         )
 
-        guard let revision = try? authority().permissionAuthorizationRevision(productId: productId) else { return false }
+        guard let revision = try? authority().permissionAuthorizationRevision(productId: productId) else {
+            return false
+        }
         oneTimeLock.lock()
         defer { oneTimeLock.unlock() }
         return oneTimeGrants.removeValue(forKey: key) == revision
@@ -243,11 +257,15 @@ extension ProductPermissionRepository: ProductPermissionRepositoryProtocol {
         for permission in permissions {
             if let request = try permission.authorizationRequest(), decision != .allowOnce {
                 guard try await runtime.setPermissionAuthorizationStatusIfCurrent(
-                    productId: productId, request: request,
-                    status: decision == .allowAlways ? .authorized : .denied, revision: revision
+                    productId: productId,
+                    request: request,
+                    status: decision == .allowAlways ? .authorized : .denied,
+                    revision: revision
                 ) else { return false }
             } else {
-                guard try runtime.permissionAuthorizationRevision(productId: productId) == revision else { return false }
+                guard try runtime.permissionAuthorizationRevision(productId: productId) == revision else {
+                    return false
+                }
                 switch decision {
                 case .allowAlways:
                     try await grant(productId: productId, permission: permission)
@@ -264,7 +282,9 @@ extension ProductPermissionRepository: ProductPermissionRepositoryProtocol {
 
 private extension ProductPermissionRepository {
     func hasOneTimeGrant(for key: String, productId: String) -> Bool {
-        guard let revision = try? authority().permissionAuthorizationRevision(productId: productId) else { return false }
+        guard let revision = try? authority().permissionAuthorizationRevision(productId: productId) else {
+            return false
+        }
         oneTimeLock.lock()
         defer { oneTimeLock.unlock() }
 
@@ -351,19 +371,7 @@ extension ProductPermission {
     func authorizationRequest() throws -> PermissionAuthorizationRequest? {
         switch try canonicalPermission() {
         case let .deviceCapability(capability):
-            let request: HostDevicePermissionRequest
-            switch capability {
-            case .camera: request = .camera
-            case .microphone: request = .microphone
-            case .notifications: request = .notifications
-            case .bluetooth: request = .bluetooth
-            case .nfc: request = .nfc
-            case .location: request = .location
-            case .clipboard: request = .clipboard
-            case .openUrl: request = .openUrl
-            case .biometrics: request = .biometrics
-            }
-            return .device(request)
+            return .device(capability.authorizationRequest)
         case let .networkAccess(domain):
             return .remote(.init(permission: .remote(domains: [domain])))
         case let .networkAccessBundle(domains):
@@ -418,5 +426,21 @@ extension ProductPermission {
             throw ProductPermissionMappingError.invalidDomain(value)
         }
         return (wildcard ? "*." : "") + normalized.lowercased()
+    }
+}
+
+private extension DeviceCapabilityType {
+    var authorizationRequest: HostDevicePermissionRequest {
+        switch self {
+        case .camera: .camera
+        case .microphone: .microphone
+        case .notifications: .notifications
+        case .bluetooth: .bluetooth
+        case .nfc: .nfc
+        case .location: .location
+        case .clipboard: .clipboard
+        case .openUrl: .openUrl
+        case .biometrics: .biometrics
+        }
     }
 }

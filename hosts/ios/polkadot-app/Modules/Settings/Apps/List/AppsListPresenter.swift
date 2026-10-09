@@ -37,6 +37,11 @@ extension AppsListPresenter: AppsListInteractorOutputProtocol {
     }
 
     func didReceive(error: Error) {
-        wireframe.present(message: error.localizedDescription, title: nil, closeAction: String(localized: "OK"), from: view)
+        wireframe.present(
+            message: error.localizedDescription,
+            title: nil,
+            closeAction: String(localized: "OK"),
+            from: view
+        )
     }
 }
