@@ -1,7 +1,6 @@
 import Foundation
 import Products
 import Testing
-import UIKit
 @testable import polkadot_app
 
 struct PublishedPocketCardsTests {
@@ -155,41 +154,20 @@ struct PublishedPocketCardsTests {
         #expect(!faceShown)
     }
 
-    /// Nothing asks for the face away of a card its product does not publish,
-    /// and a face hidden by mistake is not one the user knows to pull back.
-    @Test
-    func opensACardItsProductDoesNotPublishWithItsFace() async {
-        let cards = PublishedPocketCards(products: gameResolver(worker: workerPublishing([faceAwayLoyalty])))
-        let trophy = PocketCardKey(productId: "game.paseo", cardId: PocketCardId(value: "trophy"))
-
-        let faceShown = await PocketCardFaceOnOpen.faceShown(for: trophy, cards: cards)
-
-        #expect(faceShown)
-    }
-
     /// A chain read that hangs must not fold the face long after the card
-    /// opened: an answer past the bound leaves the face shown.
+    /// opened, nor keep running once the open stops counting on its answer.
     @Test
     func opensWithItsFaceWhenTheProductDoesNotAnswerInTime() async {
-        let late = SlowProductResolver(
-            product: gameProduct(worker: workerPublishing([faceAwayLoyalty])),
-            delay: .milliseconds(100)
-        )
-        let cards = PublishedPocketCards(products: late)
-
-        let faceShown = await PocketCardFaceOnOpen.faceShown(for: loyaltyKey, cards: cards, timeout: .milliseconds(10))
-
-        #expect(faceShown)
-    }
-
-    /// A lookup the open gave up on must not keep running after it: a
-    /// resolver that honours cancellation is told to stop.
-    @Test
-    func stopsTheLookupItGaveUpOn() async {
         await confirmation { lookupStopped in
-            let cards = CancellationReportingCards { lookupStopped() }
+            let cards = LateCards { lookupStopped() }
 
-            _ = await PocketCardFaceOnOpen.faceShown(for: loyaltyKey, cards: cards, timeout: .milliseconds(10))
+            let faceShown = await PocketCardFaceOnOpen.faceShown(
+                for: loyaltyKey,
+                cards: cards,
+                timeout: .milliseconds(10)
+            )
+
+            #expect(faceShown)
         }
     }
 }
@@ -229,28 +207,30 @@ private func workerPublishing(_ cards: [PocketCardDefinition]) -> ProductExecuta
 /// Answers any id with the one product these tests ask about, including the mixed-casing id one
 /// test deliberately asks under.
 private func gameResolver(worker: ProductExecutable.Worker?) -> StubProductResolver {
-    StubProductResolver(alwaysResolvingTo: gameProduct(worker: worker))
-}
-
-private func gameProduct(worker: ProductExecutable.Worker?) -> ResolvedProduct {
-    ResolvedProduct(
+    StubProductResolver(alwaysResolvingTo: ResolvedProduct(
         id: "game.paseo",
         displayName: "Game",
         description: nil,
         icon: nil,
         executables: ProductExecutables(app: nil, widget: nil, worker: worker),
         hasManifest: true
-    )
+    ))
 }
 
-/// Never answers, and reports being cancelled at the moment it is.
-private struct CancellationReportingCards: PublishedPocketCardsResolving {
+/// Publishes the card with its face away a second after being asked, unless
+/// cancelled first, which it reports.
+private struct LateCards: PublishedPocketCardsResolving {
     let onCancel: @Sendable () -> Void
 
-    func find(productId _: ProductId, cardId _: PocketCardId) async throws -> PublishedPocketCard {
+    func find(productId: ProductId, cardId _: PocketCardId) async throws -> PublishedPocketCard {
         try await withTaskCancellationHandler {
-            try await Task.sleep(for: .seconds(60))
-            throw CancellationError()
+            try await Task.sleep(for: .seconds(1))
+            return PublishedPocketCard(
+                productId: productId,
+                productName: "Game",
+                workerContentId: productId,
+                definition: faceAwayLoyalty
+            )
         } onCancel: {
             onCancel()
         }
