@@ -553,7 +553,7 @@ impl<'a> ReadOnlyChain<'a> {
                 })
                 .collect::<Vec<_>>();
             let values = self.storage_many(&keys).await?;
-            for (offset, pair) in values.chunks_exact(2).enumerate() {
+            for (offset, pair) in values.as_chunks::<2>().0.iter().enumerate() {
                 let ring_index = newest - offset as u32;
                 let status = pair[0]
                     .as_deref()
