@@ -369,13 +369,10 @@ extension ProductPermission {
     }
 
     func authorizationRequest() throws -> PermissionAuthorizationRequest? {
-        switch try canonicalPermission() {
+        let permission = try canonicalPermission()
+        switch permission {
         case let .deviceCapability(capability):
             return .device(capability.authorizationRequest)
-        case let .networkAccess(domain):
-            return .remote(.init(permission: .remote(domains: [domain])))
-        case let .networkAccessBundle(domains):
-            return .remote(.init(permission: .remote(domains: domains)))
         case let .accountAccess(target):
             return .accountAccess(targetProductId: target)
         case .userIdentityAccess:
@@ -383,18 +380,33 @@ extension ProductPermission {
         case .chatAuthority:
             return .chatAuthority
         case let .statementStoreAllowance(derivationIndex):
-            let selector: TrUAPIHostDerivationIndex? = try derivationIndex.map { selector in
-                switch selector {
-                case let .index(index):
-                    return .index(index)
-                case let .raw(bytes):
-                    guard bytes.count == 32 else {
-                        throw TrUAPIReviewMappingError.invalidDerivationIndexLength(bytes.count)
-                    }
-                    return .raw(bytes)
-                }
+            return .statementStoreAllowance(derivationIndex: try derivationIndex.map(Self.authorizationSelector))
+        case .balanceAccess:
+            return nil
+        case .networkAccess, .networkAccessBundle, .webRtcAccess,
+             .chainSubmitAccess, .preimageSubmitAccess, .statementSubmitAccess:
+            return permission.remoteAuthorizationRequest()
+        }
+    }
+
+    private static func authorizationSelector(_ selector: ProductAccountSelector) throws -> TrUAPIHostDerivationIndex {
+        switch selector {
+        case let .index(index):
+            return .index(index)
+        case let .raw(bytes):
+            guard bytes.count == 32 else {
+                throw TrUAPIReviewMappingError.invalidDerivationIndexLength(bytes.count)
             }
-            return .statementStoreAllowance(derivationIndex: selector)
+            return .raw(bytes)
+        }
+    }
+
+    private func remoteAuthorizationRequest() -> PermissionAuthorizationRequest {
+        switch self {
+        case let .networkAccess(domain):
+            return .remote(.init(permission: .remote(domains: [domain])))
+        case let .networkAccessBundle(domains):
+            return .remote(.init(permission: .remote(domains: domains)))
         case .webRtcAccess:
             return .remote(.init(permission: .webRtc))
         case .chainSubmitAccess:
@@ -403,8 +415,8 @@ extension ProductPermission {
             return .remote(.init(permission: .preimageSubmit))
         case .statementSubmitAccess:
             return .remote(.init(permission: .statementSubmit))
-        case .balanceAccess:
-            return nil
+        default:
+            preconditionFailure("Expected a remote permission")
         }
     }
 
