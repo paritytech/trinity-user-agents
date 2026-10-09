@@ -40,8 +40,9 @@ use std::sync::Arc;
 
 use parity_scale_codec::{Decode, Encode};
 
+use crate::host_internal::product_manifest::bare_product_label;
 use crate::platform::{
-    BLESSED_REMOTE_DOMAINS, CoreStorage, CoreStorageKey, DevicePermissionStatus,
+    BLESSED_REMOTE_DOMAINS, CoreStorage, CoreStorageKey, CrossProductSignature, DevicePermissionStatus,
     PermissionAuthorizationRequest, PermissionAuthorizationStatus, PermissionDecision,
     PermissionStatusHost, Permissions, ProductContext, has_trusted_remote_permissions,
     is_valid_remote_domain_pattern, normalize_remote_domain, remote_domain_candidates,
@@ -100,11 +101,32 @@ enum BundleResolution {
     Undecided(Vec<String>),
 }
 
+/// The key a cross-product signature approval is granted under. Both products
+/// are reduced to their bare label, as the manifest grant files them, so one
+/// approval covers every account of the owning product.
+pub fn cross_product_signature_key(
+    product_id: &str,
+    target_product_id: &str,
+    kind: CrossProductSignature,
+) -> CoreStorageKey {
+    CoreStorageKey::PermissionAuthorization {
+        product_id: bare_product_label(product_id).to_string(),
+        request: PermissionAuthorizationRequest::CrossProductSignature {
+            target_product_id: bare_product_label(target_product_id).to_string(),
+            kind,
+        },
+    }
+}
+
 /// Permission prompts and one-use grants shared by a product execution's connections.
 #[derive(Default)]
 pub struct TemporaryPermissions {
     authorization: futures::lock::Mutex<()>,
     grants: std::sync::Mutex<HashSet<Vec<u8>>>,
+    /// Held while a signature prompt is open. Separate from `authorization`,
+    /// which every submission check takes, so a signature prompt never holds
+    /// up the product's submissions.
+    signature_prompt: futures::lock::Mutex<()>,
 }
 
 impl TemporaryPermissions {
@@ -116,7 +138,14 @@ impl TemporaryPermissions {
             .clear();
     }
 
-    fn authorize(&self, key: &CoreStorageKey, consume: bool) -> bool {
+    /// Wait until no signature prompt is open, and keep others from opening
+    /// until the returned guard is dropped.
+    pub async fn signature_prompt(&self) -> futures::lock::MutexGuard<'_, ()> {
+        self.signature_prompt.lock().await
+    }
+
+    /// Whether a grant covers `key`, consuming it when `consume` is set.
+    pub fn authorize(&self, key: &CoreStorageKey, consume: bool) -> bool {
         self.authorize_all(core::slice::from_ref(key), consume)
     }
 
@@ -144,7 +173,8 @@ impl TemporaryPermissions {
             .remove(&key.encode());
     }
 
-    fn grant(&self, key: CoreStorageKey) {
+    /// Grant `key` until it is consumed or the product execution closes.
+    pub fn grant(&self, key: CoreStorageKey) {
         self.grants
             .lock()
             .expect("temporary permissions mutex poisoned")
@@ -398,6 +428,19 @@ impl<'a, S: CoreStorage + ?Sized, P: Permissions + ?Sized> PermissionsService<'a
                 )
                 .await
             }
+            PermissionAuthorizationRequest::CrossProductSignature {
+                target_product_id,
+                kind,
+            } => Ok(
+                if self.temporary_permissions.authorize(
+                    &cross_product_signature_key(self.product_id(), target_product_id, *kind),
+                    false,
+                ) {
+                    PermissionAuthorizationStatus::Authorized
+                } else {
+                    PermissionAuthorizationStatus::NotDetermined
+                },
+            ),
         }
     }
 
@@ -451,6 +494,20 @@ impl<'a, S: CoreStorage + ?Sized, P: Permissions + ?Sized> PermissionsService<'a
             }
             PermissionAuthorizationRequest::AccountAccess { target_product_id } => {
                 CoreStorageKey::account_access_authorization(self.product_id(), target_product_id)
+            }
+            // Held in memory for the execution only, so nothing is stored. A
+            // denial is not kept either, like a refusal at the prompt.
+            PermissionAuthorizationRequest::CrossProductSignature {
+                target_product_id,
+                kind,
+            } => {
+                let key = cross_product_signature_key(self.product_id(), target_product_id, *kind);
+                if status == PermissionAuthorizationStatus::Authorized {
+                    self.temporary_permissions.grant(key);
+                } else {
+                    self.temporary_permissions.revoke(&key);
+                }
+                return Ok(());
             }
         };
         self.temporary_permissions.revoke(&key);
@@ -2782,6 +2839,50 @@ mod tests {
                 PermissionAuthorizationStatus::Denied,
                 PermissionAuthorizationStatus::Denied,
             )
+        );
+    }
+
+    /// A host can see and take back a signature approval through the
+    /// administration API. It reaches the key the runtime checks, and nothing
+    /// is stored, because the approval ends when the product closes.
+    #[test]
+    fn a_signature_approval_is_administered_in_memory_only() {
+        let storage = MemStorage::default();
+        let prompt = ScriptedPrompt::new(vec![], vec![]);
+        let grants = Arc::new(TemporaryPermissions::default());
+        let service = PermissionsService::new(&storage, &prompt, &PRODUCT)
+            .with_temporary_permissions(Arc::clone(&grants));
+        let request = PermissionAuthorizationRequest::CrossProductSignature {
+            target_product_id: "dim2.dot".to_string(),
+            kind: CrossProductSignature::Payload,
+        };
+        let checked_by_runtime =
+            cross_product_signature_key("product.dot", "dim2.dot", CrossProductSignature::Payload);
+
+        futures::executor::block_on(
+            service.set_authorization_status(&request, PermissionAuthorizationStatus::Authorized),
+        )
+        .unwrap();
+        assert_eq!(
+            (
+                futures::executor::block_on(service.authorization_status(&request)).unwrap(),
+                grants.authorize(&checked_by_runtime, false),
+            ),
+            (PermissionAuthorizationStatus::Authorized, true),
+        );
+
+        futures::executor::block_on(service.set_authorization_status(
+            &request,
+            PermissionAuthorizationStatus::NotDetermined,
+        ))
+        .unwrap();
+        assert_eq!(
+            (
+                futures::executor::block_on(service.authorization_status(&request)).unwrap(),
+                grants.authorize(&checked_by_runtime, false),
+                futures::executor::block_on(storage.inner.lock()).is_empty(),
+            ),
+            (PermissionAuthorizationStatus::NotDetermined, false, true),
         );
     }
 }

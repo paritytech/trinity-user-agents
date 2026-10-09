@@ -80,7 +80,8 @@ pub use vrf::ring_vrf_member;
 // `TrackedStatementRenewalTarget` is only read back by the native renewal
 // reporting, so re-exporting it on wasm leaves an unused import.
 use crate::platform::{
-    AccountAccessReview, ChatFieldError, IdentityDisclosureReview, PermissionAuthorizationRequest,
+    AccountAccessReview, ChatFieldError, CrossProductSignature, IdentityDisclosureReview,
+    PermissionAuthorizationRequest,
     PermissionAuthorizationStatus, PermissionDecision, Platform, ProductContext, ProductStorageKey,
     SessionUiInfo, UserConfirmationReview, normalize_chat_identifier, normalize_product_identifier,
     validate_chat_icon, validate_chat_message_content, validate_chat_name,
@@ -117,7 +118,9 @@ use web_time::Instant;
 
 use crate::chain_runtime::RuntimeFailure;
 use crate::host_internal::bulletin::preimage_key;
-use crate::host_internal::permissions::{PermissionsService, TemporaryPermissions};
+use crate::host_internal::permissions::{
+    PermissionsService, TemporaryPermissions, cross_product_signature_key,
+};
 use crate::host_internal::product_manifest::Granted;
 use crate::host_internal::sso_messages::RingVrfError;
 use crate::host_logic::product_account::{
@@ -784,6 +787,36 @@ impl ProductRuntimeHost {
             return Ok(true);
         }
         self.platform.confirm_user_action(review).await
+    }
+
+    /// Confirm a signature with `account`. When the account belongs to another
+    /// product, the user is asked once per kind and owning product for the rest
+    /// of this execution. Prompts open one at a time, and a signature the user
+    /// already approved never waits for one.
+    async fn confirm_signature(
+        &self,
+        kind: CrossProductSignature,
+        account: &v01::ProductAccountId,
+        review: impl FnOnce() -> UserConfirmationReview,
+    ) -> Result<bool, v01::GenericError> {
+        if account.dot_ns_identifier == self.product_id() {
+            return self.confirm_product_action(review()).await;
+        }
+        let approval =
+            cross_product_signature_key(&self.product_id(), &account.dot_ns_identifier, kind);
+        let permissions = &self.temporary_permissions;
+        if permissions.authorize(&approval, false) {
+            return Ok(true);
+        }
+        let _prompt = permissions.signature_prompt().await;
+        if permissions.authorize(&approval, false) {
+            return Ok(true);
+        }
+        let approved = self.confirm_product_action(review()).await?;
+        if approved {
+            permissions.grant(approval);
+        }
+        Ok(approved)
     }
 
     async fn require_chain_submit<E>(&self, denied_error: E) -> Result<(), CallError<E>> {

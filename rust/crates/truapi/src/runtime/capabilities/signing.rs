@@ -1,7 +1,8 @@
 //! Product-facing signing capability adapters.
 
 use crate::platform::{
-    CreateTransactionReview, SignPayloadReview, SignRawReview, UserConfirmationReview,
+    CreateTransactionReview, CrossProductSignature, SignPayloadReview, SignRawReview,
+    UserConfirmationReview,
 };
 use tracing::{debug, instrument};
 use truapi::api::Signing;
@@ -67,12 +68,12 @@ impl Signing for ProductRuntimeHost {
         if grant == AutoSigningGrant::Absent {
             let confirmed = until_cancelled(
                 cx,
-                self.confirm_product_action(UserConfirmationReview::SignPayload(
-                    SignPayloadReview::Product {
+                self.confirm_signature(CrossProductSignature::Payload, &inner.account, || {
+                    UserConfirmationReview::SignPayload(SignPayloadReview::Product {
                         calling_product_id: Some(self.product_id()),
                         request: inner.clone(),
-                    },
-                )),
+                    })
+                }),
             )
             .await
             .map_err(|reason| signing_call_error(HostSignPayloadError::V1, reason))?
@@ -180,19 +181,24 @@ impl Signing for ProductRuntimeHost {
             .await
             .map_err(|reason| transaction_call_error(HostCreateTransactionError::V1, reason))?;
         // The signed call goes back to the product with each contact's real
-        // account in it, so naming a contact always asks the user: an
-        // auto-signing grant must not let a product read accounts out of
-        // handles unseen.
+        // account in it, so naming a contact always asks the user: neither an
+        // auto-signing grant nor an earlier approval may let a product read
+        // accounts out of handles unseen.
         if grant == AutoSigningGrant::Absent || names_contacts {
-            let confirmed = until_cancelled(
-                cx,
-                self.confirm_product_action(UserConfirmationReview::CreateTransaction(
-                    CreateTransactionReview::Product {
-                        calling_product_id: Some(self.product_id()),
-                        payload: inner.clone(),
-                    },
-                )),
-            )
+            let review = || {
+                UserConfirmationReview::CreateTransaction(CreateTransactionReview::Product {
+                    calling_product_id: Some(self.product_id()),
+                    payload: inner.clone(),
+                })
+            };
+            let confirmed = until_cancelled(cx, async {
+                if names_contacts {
+                    self.confirm_product_action(review()).await
+                } else {
+                    self.confirm_signature(CrossProductSignature::Transaction, &inner.signer, review)
+                        .await
+                }
+            })
             .await
             .map_err(|reason| transaction_call_error(HostCreateTransactionError::V1, reason))?
             .map_err(|err| CallError::HostFailure {
@@ -449,8 +455,9 @@ impl ProductRuntimeHost {
             )));
         };
         inner.account.dot_ns_identifier = owner;
-        // Ordinary products cannot use an AutoSigning grant for unwatermarked
-        // bytes, which are not separated from transaction signatures.
+        // Ordinary products cannot use an AutoSigning grant or an earlier
+        // approval for unwatermarked bytes, which are not separated from
+        // transaction signatures.
         let grant = if watermarked {
             self.auto_signing_status(&session, &inner.account)
                 .await
@@ -459,16 +466,21 @@ impl ProductRuntimeHost {
             AutoSigningGrant::Absent
         };
         if grant == AutoSigningGrant::Absent {
-            let confirmed = until_cancelled(
-                cx,
-                self.confirm_product_action(UserConfirmationReview::SignRaw(
-                    SignRawReview::Product {
-                        calling_product_id: Some(self.product_id()),
-                        request: inner.clone(),
-                        watermarked,
-                    },
-                )),
-            )
+            let review = || {
+                UserConfirmationReview::SignRaw(SignRawReview::Product {
+                    calling_product_id: Some(self.product_id()),
+                    request: inner.clone(),
+                    watermarked,
+                })
+            };
+            let confirmed = until_cancelled(cx, async {
+                if watermarked {
+                    self.confirm_signature(CrossProductSignature::Raw, &inner.account, review)
+                        .await
+                } else {
+                    self.confirm_product_action(review()).await
+                }
+            })
             .await
             .map_err(|reason| signing_call_error(HostSignRawError::V1, reason))?
             .map_err(|err| CallError::HostFailure {

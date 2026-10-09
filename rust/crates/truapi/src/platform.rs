@@ -1222,6 +1222,32 @@ pub enum PermissionAuthorizationRequest {
         /// Product whose account context may be accessed.
         target_product_id: String,
     },
+    /// Product-scoped approval to make one kind of signature with another
+    /// product's accounts. It is held in memory only and ends when the product
+    /// execution closes.
+    CrossProductSignature {
+        /// Product whose accounts sign.
+        target_product_id: String,
+        /// Kind of signature the user approved.
+        kind: CrossProductSignature,
+    },
+}
+
+/// A kind of signature a product makes with another product's account.
+///
+/// The user approves each kind separately: approving one never lets another
+/// through without a prompt.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
+pub enum CrossProductSignature {
+    /// `sign_payload`.
+    Payload,
+    /// `create_transaction` naming no contacts.
+    Transaction,
+    /// Watermarked `sign_raw`.
+    Raw,
+    /// A Statement Store product proof.
+    StatementProof,
 }
 
 /// Authorization status for a permission request.
