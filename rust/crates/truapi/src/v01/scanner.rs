@@ -1,3 +1,5 @@
+use alloc::{string::String, vec::Vec};
+
 use parity_scale_codec::{Decode, Encode};
 
 /// Code formats the host scanner reads: the set both platform decoders share.

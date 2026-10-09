@@ -26,6 +26,10 @@
 package io.parity.truapi
 
 import java.util.Locale
+import java.time.Instant
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
+import java.time.format.FormatStyle
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.CancellationException
@@ -39,8 +43,12 @@ import uniffi.truapi.HostChatActionSubscribeItem
 import uniffi.truapi.HostDevicePermissionRequest
 import uniffi.truapi.HostFeatureSupportedRequest
 import uniffi.truapi.HostLocaleSubscribeItem
+import uniffi.truapi.HostLocaleLocalizeTimestampsRequest
+import uniffi.truapi.HostLocaleLocalizeTimestampsResponse
+import uniffi.truapi.HostLocaleLocalizedTimestamp
 import uniffi.truapi.PocketCard
 import uniffi.truapi.HostPushNotificationRequest
+import uniffi.truapi.NotificationActivation
 import uniffi.truapi.HostRendererActionSubscribeItem
 import uniffi.truapi.ProductRendererRenderRequest
 import uniffi.truapi.RemotePermission
@@ -52,6 +60,7 @@ import uniffi.truapi.ThemeVariant
 import uniffi.truapi.AuthState
 import uniffi.truapi.HostChainSet
 import uniffi.truapi.PermissionAuthorizationRequest
+import uniffi.truapi.PermissionAuthorizationEntry
 import uniffi.truapi.PermissionAuthorizationStatus
 import uniffi.truapi.PermissionDecision
 import uniffi.truapi.UserConfirmationReview
@@ -90,6 +99,7 @@ import uniffi.truapi.HostContactLookup
 import uniffi.truapi.HostContactMatches
 import uniffi.truapi.HostContactPick
 import uniffi.truapi.NativeContactsCallbacks
+import uniffi.truapi.SsoRequestOutcome
 
 /** Package metadata. */
 object TrUAPIHost {
@@ -127,6 +137,11 @@ interface HostCoreStorage {
 
     @Throws(HostRejection::class)
     suspend fun clear(key: ByteArray)
+
+    /** Enumerate existing core keys; permission settings must include historical grants. */
+    @Throws(HostRejection::class)
+    suspend fun keys(): List<ByteArray> =
+        throw HostRejection.Rejected("core storage key enumeration is unsupported")
 }
 
 /** Ids handed out by the default [HostBridge.beginOperation], distinct for the life of the process. */
@@ -151,6 +166,9 @@ private val defaultOperationIds = AtomicInteger(0)
  * on the main thread, for example with `withContext(Dispatchers.Main) { ... }`.
  */
 interface HostBridge {
+    /** Called on the process bridge after canonical permission decisions change. */
+    fun permissionAuthorizationsChanged(productId: String)
+
     /** Lifecycle logger. Marker is a stable slug, detail is free-form. */
     fun onCoreLog(marker: String, detail: String) {}
 
@@ -170,6 +188,16 @@ interface HostBridge {
     /** Cancel a previously scheduled notification id. */
     @Throws(HostRejection::class)
     fun cancelNotification(id: UInt) {}
+
+    /** Non-consuming ordered batch (at most 32) for this verified execution. */
+    @Throws(HostRejection::class)
+    suspend fun activationEvents(): List<NotificationActivation> =
+        throw HostRejection.Rejected("notification activation unsupported")
+
+    /** Idempotently acknowledge one sequence in this execution's scope. */
+    @Throws(HostRejection::class)
+    suspend fun acknowledgeActivation(sequence: ULong): Unit =
+        throw HostRejection.Rejected("notification activation unsupported")
 
     /**
      * Prompt for a device-level permission [product] requested on the main
@@ -284,7 +312,31 @@ interface HostBridge {
      */
     @Throws(HostRejection::class)
     fun currentLocale(): HostLocaleSubscribeItem =
-        HostLocaleSubscribeItem(Locale.getDefault().toLanguageTag())
+        HostLocaleSubscribeItem(Locale.getDefault().toLanguageTag(), ZoneId.systemDefault().id)
+
+    /** Format instants in the requested language and zone, including timestamp-specific DST. */
+    @Throws(HostRejection::class)
+    suspend fun localizeTimestamps(
+        request: HostLocaleLocalizeTimestampsRequest,
+    ): HostLocaleLocalizeTimestampsResponse = withHostRejection {
+        require(request.languageTag.isNotBlank() && request.timeZone.isNotBlank())
+        require(request.timestampsMs.size <= 128 && request.timestampsMs.all { it <= 253_402_300_799_999uL })
+        val locale = Locale.Builder().setLanguageTag(request.languageTag).build()
+        val zone = ZoneId.of(request.timeZone)
+        val time = DateTimeFormatter.ofLocalizedTime(FormatStyle.SHORT).withLocale(locale)
+        val date = DateTimeFormatter.ofLocalizedDate(FormatStyle.LONG).withLocale(locale)
+        val detail = DateTimeFormatter.ofLocalizedDateTime(FormatStyle.FULL, FormatStyle.LONG).withLocale(locale)
+        HostLocaleLocalizeTimestampsResponse(request.timestampsMs.map { timestamp ->
+            val instant = Instant.ofEpochMilli(timestamp.toLong()).atZone(zone)
+            require(instant.year in 1..9999)
+            HostLocaleLocalizedTimestamp(
+                localDate = instant.toLocalDate().format(DateTimeFormatter.ISO_LOCAL_DATE),
+                time = instant.format(time),
+                date = instant.format(date),
+                dateTime = instant.format(detail),
+            )
+        })
+    }
 
     /**
      * Answer a feature-support query. Invoked on the dispatcher thread; must
@@ -474,6 +526,10 @@ private class HostCallbackAdapter(private val bridge: HostBridge) : HostCallback
         runCatching { bridge.workerDemandChanged(productId, transition) }
     }
 
+    override fun permissionAuthorizationsChanged(productId: String) {
+        runCatching { bridge.permissionAuthorizationsChanged(productId) }
+    }
+
     // Infallible across the FFI for the same reason `onCoreLog` is.
     override fun devicePaired(device: PairedSsoPeer) {
         runCatching { bridge.devicePaired(device) }
@@ -487,6 +543,12 @@ private class HostCallbackAdapter(private val bridge: HostBridge) : HostCallback
 
     override fun cancelNotification(id: UInt) =
         withHostRejection { bridge.cancelNotification(id) }
+
+    override suspend fun activationEvents(): List<NotificationActivation> =
+        withHostRejection { bridge.activationEvents() }
+
+    override suspend fun acknowledgeActivation(sequence: ULong) =
+        withHostRejection { bridge.acknowledgeActivation(sequence) }
 
     override suspend fun devicePermission(
         product: ProductExecutionConfig,
@@ -530,6 +592,9 @@ private class HostCallbackAdapter(private val bridge: HostBridge) : HostCallback
     override suspend fun coreStorageClear(key: ByteArray) =
         withHostRejection { bridge.coreStorage.clear(key) }
 
+    override suspend fun coreStorageKeys(): List<ByteArray> =
+        withHostRejection { bridge.coreStorage.keys() }
+
     override fun chainConnect(genesisHash: ByteArray): UInt? =
         withHostRejection { bridge.chainConnect(genesisHash) }
 
@@ -553,6 +618,11 @@ private class HostCallbackAdapter(private val bridge: HostBridge) : HostCallback
 
     override fun currentLocale(): HostLocaleSubscribeItem =
         withHostRejection { bridge.currentLocale() }
+
+    override suspend fun localizeTimestamps(
+        request: HostLocaleLocalizeTimestampsRequest,
+    ): HostLocaleLocalizeTimestampsResponse =
+        withHostRejection { bridge.localizeTimestamps(request) }
 
     override suspend fun featureSupported(request: HostFeatureSupportedRequest): Boolean =
         withHostRejection { bridge.featureSupported(request) }
@@ -740,6 +810,41 @@ class TrUAPIHostRuntime @Throws(NativeRuntimeConfigException::class) constructor
     // Co-owns the contacts adapter for as long as the runtime holds it.
     private var contactsRetainer: NativeContactsCallbacks? = null
 
+    /** Persisted product permissions, including grants created before this process started. */
+    @Throws(HostRejection::class)
+    suspend fun permissionAuthorizations(productId: String): List<PermissionAuthorizationEntry> =
+        inner.permissionAuthorizations(productId)
+
+    /** Settings edits go through the process authority, not a live product execution. */
+    @Throws(HostRejection::class)
+    suspend fun setPermissionAuthorizationStatus(
+        productId: String,
+        request: PermissionAuthorizationRequest,
+        status: PermissionAuthorizationStatus,
+    ) = inner.setPermissionAuthorizationStatus(productId, request, status)
+
+    /** Import missing legacy decisions only. Existing canonical decisions always win. */
+    @Throws(HostRejection::class)
+    suspend fun importPermissionAuthorizations(
+        productId: String,
+        entries: List<PermissionAuthorizationEntry>,
+    ): List<PermissionAuthorizationEntry> = inner.importPermissionAuthorizations(productId, entries)
+
+    @Throws(HostRejection::class)
+    suspend fun permissionAuthorizationProducts(): List<String> = inner.permissionAuthorizationProducts()
+
+    @Throws(HostRejection::class)
+    fun permissionAuthorizationRevision(productId: String): ULong =
+        inner.permissionAuthorizationRevision(productId)
+
+    @Throws(HostRejection::class)
+    suspend fun setPermissionAuthorizationStatusIfCurrent(
+        productId: String,
+        request: PermissionAuthorizationRequest,
+        status: PermissionAuthorizationStatus,
+        revision: ULong,
+    ): Boolean = inner.setPermissionAuthorizationStatusIfCurrent(productId, request, status, revision)
+
     /**
      * Install the host's contacts adapter, which owns the contact list and
      * draws the picker.
@@ -898,6 +1003,14 @@ class TrUAPIHostRuntime @Throws(NativeRuntimeConfigException::class) constructor
     fun activateLocalSession(secret: ByteArray, liteUsername: String? = null) {
         inner.activateLocalSession(secret, liteUsername)
     }
+
+    /** Handle a paired session's opaque SSO request, awaiting native user consent. */
+    @Throws(HostRejection::class)
+    suspend fun handleSsoRequest(message: ByteArray): SsoRequestOutcome =
+        inner.handleSsoRequest(message)
+
+    /** Encode the disconnect notification; the caller routes it to the ending session. */
+    fun prepareDisconnectRequest(): ByteArray = inner.prepareDisconnectRequest()
 
     /** Push a JSON-RPC response from a native chain connection into the runtime. */
     fun notifyChainResponse(connectionId: UInt, json: String) {
@@ -1102,17 +1215,6 @@ class TrUAPIProductExecution internal constructor(
     suspend fun authorizeRemotePermission(request: RemotePermissionRequest): Boolean =
         inner.authorizeRemotePermission(request)
 
-    /**
-     * Update a stored permission authorization status. Passing `NotDetermined`
-     * clears the stored value so the next product request prompts again.
-     */
-    @Throws(HostRejection::class)
-    fun setPermissionAuthorizationStatus(
-        request: PermissionAuthorizationRequest,
-        status: PermissionAuthorizationStatus,
-    ) {
-        inner.setPermissionAuthorizationStatus(request, status)
-    }
 
     /** Push a host theme update to active TrUAPI theme subscriptions. */
     fun notifyThemeChanged(theme: HostThemeSubscribeItem) {
@@ -1150,6 +1252,9 @@ class TrUAPIProductExecution internal constructor(
     fun notifyChainClosed(connectionId: UInt) {
         inner.notifyChainClosed(connectionId)
     }
+
+    /** The process authority closes executions on revoke/reset, before notifying the shell. */
+    fun isClosed(): Boolean = shutDown.get() || inner.isClosed()
 
     @Synchronized
     override fun close() {

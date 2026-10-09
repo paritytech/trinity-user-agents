@@ -62,6 +62,13 @@ class EncryptedHostCoreStorage(
             .getOrElse { throw HostRejection.Rejected("failed to clear core storage key: ${it.message}") }
     }
 
+    override suspend fun keys(): List<ByteArray> = preferences.keys()
+        .filter { it.startsWith("$CORE_NAMESPACE/") }
+        .map { key ->
+            decodeOrNull(key.removePrefix("$CORE_NAMESPACE/"))
+                ?: throw HostRejection.Rejected("invalid persisted core storage key")
+        }
+
     private fun qualify(key: ByteArray) = "$CORE_NAMESPACE/${key.toHex()}"
 
     private companion object {

@@ -25,7 +25,7 @@ clap = "4"
 console_error_panic_hook = "0.1"
 convert_case = "0.6"
 crossterm = "0.29"
-derive_more = "2"
+derive_more = { version = "2", default-features = false }
 flate2 = "1"
 frame-metadata = { version = "23", default-features = false }
 fs2 = "0.4"
@@ -33,7 +33,7 @@ futures = "0.3"
 futures-timer = "3"
 futures-util = "0.3"
 getrandom = "0.2"
-hex = "0.4"
+hex = { version = "0.4", default-features = false, features = ["alloc"] }
 hkdf = "0.12"
 image = { version = "0.25", default-features = false }
 indoc = "2"
@@ -47,8 +47,9 @@ log = "0.4"
 merlin = "3"
 nanoid = "0.4"
 parking_lot = "0.12"
-parity-scale-codec = "3"
+parity-scale-codec = { version = "3", default-features = false }
 pin-project = "1"
+polkavm-host-runtime = { git = "https://github.com/paritytech/polkavm-host-runtime.git", rev = "959ad63f7312a2f4598b9f718ccc2516927cbbff", version = "=0.3.2-rc.9" }
 proc-macro2 = "1"
 qrcode = { version = "0.14.1", default-features = false }
 quote = "1"
@@ -85,6 +86,7 @@ tokio-stream = "0.1"
 tokio-tungstenite = "0.24"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", default-features = false }
+truapi-provider = { path = "rust/crates/truapi-provider", default-features = false }
 trybuild = "1"
 unicode-normalization = "0.1"
 unicode-width = "0.2"

@@ -1669,6 +1669,13 @@ preset carries without serving them as a role, of which neither preset has any.
 The all-zero SSO sentinel and every genesis hash not present in the active
 route map fall back to the People RPC.
 
+With `TRUAPI_LIGHT_CLIENT=1` the host's `ChainProvider` is the embedded light
+client from `truapi-provider` instead. It resolves every chain of the preset from
+the provider's bundled catalog by genesis hash, answers the all-zero sentinel from
+People, and keeps one idle connection open per chain so a chain stays synced and
+keeps its statement-store peers between the runtime's per-call connections. The
+direct RPC reads made during account setup and dotNS username lookup are unchanged.
+
 A rustls ring crypto provider is installed at process startup for `wss://`
 connections.
 

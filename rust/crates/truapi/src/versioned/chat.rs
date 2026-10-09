@@ -23,6 +23,7 @@ truapi_macros::versioned_type! {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::string::String;
     use parity_scale_codec::{Decode, Encode};
 
     // Fixture is `ChatRegisterBotV1_request` output from triangle-js-sdks

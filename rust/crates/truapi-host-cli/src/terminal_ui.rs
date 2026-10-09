@@ -3858,10 +3858,11 @@ mod tests {
             delivered,
             "the installed sender was cleared by a foreign drop"
         );
-        assert!(matches!(
-            receiver.try_recv(),
-            Ok(UiEvent::Log(line)) if line == "after a foreign drop"
-        ));
+        // Other tests can log through the installed UI without owning its slot.
+        assert!(
+            std::iter::from_fn(|| receiver.try_recv().ok())
+                .any(|event| matches!(event, UiEvent::Log(line) if line == "after a foreign drop"))
+        );
     }
 
     #[test]
@@ -3894,9 +3895,15 @@ mod tests {
         });
         *active_ui().lock().expect("unlock active test UI") = restore;
 
-        let UiEvent::Sso(event) = receiver.try_recv().expect("summary transcript event") else {
-            panic!("expected SSO transcript event");
-        };
+        // Concurrent tests may emit unrelated events through the installed UI.
+        let event = std::iter::from_fn(|| receiver.try_recv().ok())
+            .find_map(|event| match event {
+                UiEvent::Sso(event) if event.statement_request_id.as_deref() == Some("req:1") => {
+                    Some(event)
+                }
+                _ => None,
+            })
+            .expect("summary transcript event");
         assert_eq!(event.kind.as_deref(), Some("response_sent"));
         assert_eq!(event.request.as_deref(), Some("get_account_alias"));
         assert_eq!(event.elapsed_ms, Some(84));

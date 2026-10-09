@@ -201,7 +201,7 @@ pub struct Metadata {
     extension_version: u8,
     registry: PortableRegistry,
     storage_values: HashMap<(String, String), u32>,
-    constants: HashMap<(String, String), Vec<u8>>,
+    constants: HashMap<(String, String), (Vec<u8>, u32)>,
     calls: HashMap<String, (u8, u32)>,
     view_functions: HashMap<(String, String), ViewFunctionDef>,
     view_values: Mutex<HashMap<[u8; 32], u32>>,
@@ -283,7 +283,7 @@ macro_rules! collect_pallets {
             for constant in &pallet.constants {
                 constants.insert(
                     (pallet.name.clone(), constant.name.clone()),
-                    constant.value.clone(),
+                    (constant.value.clone(), constant.ty.id),
                 );
             }
             let Some(storage) = &pallet.storage else {
@@ -455,7 +455,14 @@ impl Metadata {
     pub fn constant(&self, pallet: &str, name: &str) -> Option<&[u8]> {
         self.constants
             .get(&(pallet.to_string(), name.to_string()))
-            .map(Vec::as_slice)
+            .map(|(bytes, _)| bytes.as_slice())
+    }
+
+    /// Declared constant type, for strict metadata-aware inspection decoding.
+    pub(super) fn constant_type(&self, pallet: &str, name: &str) -> Option<u32> {
+        self.constants
+            .get(&(pallet.to_string(), name.to_string()))
+            .map(|(_, type_id)| *type_id)
     }
 
     /// Resolve `pallet::call` by name to its `[pallet_index, call_index]`

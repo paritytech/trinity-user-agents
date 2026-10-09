@@ -11,7 +11,7 @@ pub struct NativeEventBus {
     theme_changes:
         Mutex<Vec<mpsc::UnboundedSender<Result<v01::HostThemeSubscribeItem, v01::GenericError>>>>,
     locale_changes:
-        Mutex<Vec<mpsc::UnboundedSender<Result<v01::HostLocaleSubscribeItem, v01::GenericError>>>>,
+        Mutex<Vec<mpsc::UnboundedSender<Result<crate::latest::HostLocaleSubscribeItem, v01::GenericError>>>>,
     preimage_changes: Mutex<Vec<PreimageSubscription>>,
     storage_changes: Mutex<Vec<StorageSubscription>>,
     chain_events: Mutex<NativeChainEvents>,
@@ -62,8 +62,8 @@ impl NativeEventBus {
     /// Stream the locale: `current` first, then every host change.
     pub fn subscribe_locale(
         &self,
-        current: Result<v01::HostLocaleSubscribeItem, v01::GenericError>,
-    ) -> BoxStream<'static, Result<v01::HostLocaleSubscribeItem, v01::GenericError>> {
+        current: Result<crate::latest::HostLocaleSubscribeItem, v01::GenericError>,
+    ) -> BoxStream<'static, Result<crate::latest::HostLocaleSubscribeItem, v01::GenericError>> {
         let (tx, rx) = mpsc::unbounded();
         self.locale_changes
             .lock()
@@ -73,7 +73,7 @@ impl NativeEventBus {
     }
 
     /// Deliver a host locale change to every live locale subscriber.
-    pub fn notify_locale_changed(&self, locale: v01::HostLocaleSubscribeItem) {
+    pub fn notify_locale_changed(&self, locale: crate::latest::HostLocaleSubscribeItem) {
         self.locale_changes
             .lock()
             .expect("native locale subscribers mutex poisoned")

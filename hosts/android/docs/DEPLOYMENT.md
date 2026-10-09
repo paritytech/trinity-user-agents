@@ -100,6 +100,12 @@ rust.rustcCommand=/Users/me/.cargo/bin/rustc
 rust.pythonCommand=/usr/bin/python3
 ```
 
+The `:bindings:truapi-host` module uses the Rust plugin's `exec` hook to run
+`cargo rustc -p truapi --lib --crate-type cdylib` with the plugin's existing
+Android target, profile and linker settings. Its host binding-generation build
+requests the same crate type with `--profile codegen`. Ordinary `cargo build`
+produces only the Rust library, not the `libtruapi.so` packaged in the APK.
+
 `developer-tools/setup.sh` only installs the Detekt pre-commit hook; it does not install
 any part of the toolchain.
 

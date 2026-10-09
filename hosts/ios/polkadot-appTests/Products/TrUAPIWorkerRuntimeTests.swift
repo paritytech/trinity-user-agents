@@ -66,6 +66,22 @@ struct TrUAPIWorkerRuntimeTests {
         #expect(execution.stopWsBridgeCallCount == 1)
     }
 
+    @Test
+    func refusesProductCodeWhenItsExecutionIsRevokedDuringBoot() async throws {
+        let engine = MockJSEngine()
+        let execution = MockProductExecution()
+        let runtime = makeRuntime(engine: engine, execution: execution)
+        engine.onInitialize = { execution.close() }
+
+        await #expect(throws: CancellationError.self) {
+            try await runtime.start()
+        }
+
+        #expect(engine.destroyCallCount == 1)
+        #expect(engine.evaluatedScripts.isEmpty)
+        await runtime.dispose()
+    }
+
     /// The worker owns the execution, so stopping it is what closes the
     /// execution, its bridge and its chain pool, exactly once.
     @Test

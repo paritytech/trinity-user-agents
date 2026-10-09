@@ -70,7 +70,7 @@ TMP_DIR="$(mktemp -d -t truapi-snapshot.XXXXXX)"
 trap 'rm -rf "$TMP_DIR"' EXIT
 
 NIGHTLY_TOOLCHAIN="${TRUAPI_NIGHTLY_TOOLCHAIN:-$(head -n1 "$ROOT/nightly-toolchain" | tr -d '[:space:]')}"
-cargo +"$NIGHTLY_TOOLCHAIN" rustdoc -p truapi --no-default-features -- -Z unstable-options --output-format json >/dev/null
+cargo +"$NIGHTLY_TOOLCHAIN" rustdoc -p truapi --no-default-features --features host-api -- -Z unstable-options --output-format json >/dev/null
 
 codegen_args=(
   --input target/doc/truapi.json

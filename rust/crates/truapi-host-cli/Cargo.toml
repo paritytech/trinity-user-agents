@@ -18,6 +18,7 @@ unsafe_code = "forbid"
 
 [dependencies]
 truapi = { path = "../truapi" }
+truapi-provider = { workspace = true, features = ["networks"] }
 anyhow = { workspace = true }
 arboard = { workspace = true, features = ["image-data"] }
 async-trait = { workspace = true }

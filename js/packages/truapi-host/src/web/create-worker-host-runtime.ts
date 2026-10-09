@@ -33,6 +33,8 @@ import { isLoopbackWsUrl } from "../worker-protocol.js";
 import type {
   CallbackName,
   HostRole,
+  LocalIdentity,
+  LocalIdentityProgress,
   MainToWorker,
   SubscriptionName,
   WorkerToMain,
@@ -40,11 +42,19 @@ import type {
 import { bytesToHex } from "@parity/truapi/scale";
 import { startRawSubscription } from "../generated/worker-callbacks.js";
 import { errorMessage, toError } from "../error.js";
+import {
+  validateAllowanceProductIds,
+  type WalletAllowanceSnapshot,
+} from "../wallet-allowances.js";
 
 export type WebWorkerHostConfig = Omit<
   ProductRuntimeConfig,
   "productId" | "executionKind"
 >;
+export type WebWorkerSigningHostConfig = WebWorkerHostConfig & {
+  /** Bare dotNS network suffix (`dot`, `paseo`, or `testnet`). */
+  networkSuffix: string;
+};
 
 export interface WorkerPairingHostRuntime {
   /**
@@ -57,10 +67,13 @@ export interface WorkerPairingHostRuntime {
    * should. Undefined for a core built before the export existed.
    */
   readonly coreWireSchemaHash: string | undefined;
-  createProvider(product: {
-    productId: string;
-    executionKind?: ProductExecutionKind;
-  }): Promise<TrUApiProductProvider>;
+  createProvider(
+    product: {
+      productId: string;
+      executionKind?: ProductExecutionKind;
+    },
+    callbacks?: WebWorkerHostCallbacks,
+  ): Promise<TrUApiProductProvider>;
   disconnectSession(): Promise<void>;
   cancelPairing(): void;
   notifySessionStoreChanged(): void;
@@ -163,6 +176,32 @@ export interface WorkerPairingHostRuntime {
   setLogLevel(level: LogLevel): void;
   dispose(): void;
 }
+export interface WorkerSigningHostRuntime extends Omit<
+  WorkerPairingHostRuntime,
+  | "cancelPairing"
+  | "notifySessionStoreChanged"
+  | "activateStoredSession"
+  | "activateExternalSession"
+  | "resetSessionState"
+> {
+  activateLocalSession(secret: Uint8Array): Promise<void>;
+  activateLocalSessionWithIdentity(
+    secret: Uint8Array,
+    liteUsername?: string,
+  ): Promise<void>;
+  /** Read dotNS ownership and install verified metadata into the native session. */
+  refreshLocalIdentity(): Promise<LocalIdentity>;
+  /** Read-only wallet-wide inspection bound to the native local activation. */
+  getWalletAllowanceSnapshot(
+    productIds: string[],
+  ): Promise<WalletAllowanceSnapshot>;
+  /** Complete native UID auth/proofs and wait for on-chain ownership confirmation. */
+  registerLocalLiteUsername(
+    baseUsername: string,
+    identityBackendBaseUrl: string,
+    onProgress?: (progress: LocalIdentityProgress) => void,
+  ): Promise<LocalIdentity>;
+}
 
 interface CoreState {
   coreId: number;
@@ -186,7 +225,13 @@ interface RenderEntry {
 
 interface RuntimeState {
   worker: Worker;
+  role: HostRole;
+  networkSuffix: string | undefined;
+  identityAccountId: string | null;
+  identityGeneration: number;
+  pendingAllowanceSnapshots: Map<number, PendingEntry<WalletAllowanceSnapshot>>;
   rawCallbacks: RawCallbacks;
+  coreCallbacks: Map<number, RawCallbacks>;
   cores: Map<number, CoreState>;
   pendingCores: Map<
     number,
@@ -199,9 +244,9 @@ interface RuntimeState {
   subscriptionDisposers: Map<number, () => void>;
   /**
    * Open `worker.beginOperation` holds. A non-empty set defers `dispose()`.
-   * Worker-wide rather than per-core, since a `callbackRequest` carries no core
-   * id, so entries are product-scoped: `OperationId` is only unique per product
-   * and two products sharing this worker may be handed the same id.
+   * Worker-wide rather than per-core: operation holds can outlive a product
+   * connection. Entries are product-scoped because `OperationId` is only
+   * unique per product and products sharing this worker may use the same id.
    */
   openOperations: Set<string>;
   /** A dispose() arrived while operations were open; run it once they drain. */
@@ -223,6 +268,12 @@ interface RuntimeState {
   pendingSessionActivations: Map<
     number,
     { resolve: () => void; reject: (error: Error) => void }
+  >;
+  pendingLocalIdentities: Map<
+    number,
+    PendingEntry<LocalIdentity> & {
+      onProgress?: (progress: LocalIdentityProgress) => void;
+    }
   >;
   pendingPermissionAuthorizationStatuses: Map<
     number,
@@ -295,6 +346,8 @@ let nextDeviceStatementKeyRequestId = 0;
 let nextDeviceEncryptionKeyRequestId = 0;
 let nextProductSubtreePublicKeyRequestId = 0;
 let nextSessionActivationRequestId = 0;
+let nextLocalIdentityRequestId = 0;
+let nextAllowanceSnapshotRequestId = 0;
 let nextActionRequestId = 0;
 let nextRenderId = 0;
 
@@ -531,6 +584,12 @@ function operationIdFrom(value: unknown): number | null {
   }
 }
 
+/**
+ * Key one pending-operation hold. `OperationId` is unique per product, not per
+ * worker, so the product a `beginOperation`/`endOperation` arrived for has to be
+ * part of the key. Returns null if the encoded product will not decode, which
+ * drops the hold rather than letting it pin the worker forever.
+ */
 function operationHold(encodedProduct: unknown, id: number): string | null {
   if (!(encodedProduct instanceof Uint8Array)) return null;
   try {
@@ -544,18 +603,25 @@ function handleCallbackRequest(
   state: RuntimeState,
   msg: {
     requestId: number;
+    coreId?: number;
     name: CallbackName;
     args: readonly unknown[];
   },
 ): void {
-  const fn = Object.hasOwn(state.rawCallbacks, msg.name)
-    ? (
-        state.rawCallbacks as unknown as Record<
-          string,
-          (...args: readonly unknown[]) => unknown
-        >
-      )[msg.name]
-    : undefined;
+  if (state.disposed) return;
+  const callbacks =
+    msg.coreId === undefined
+      ? state.rawCallbacks
+      : state.coreCallbacks.get(msg.coreId);
+  const fn =
+    callbacks && Object.hasOwn(callbacks, msg.name)
+      ? (
+          callbacks as unknown as Record<
+            string,
+            (...args: readonly unknown[]) => unknown
+          >
+        )[msg.name]
+      : undefined;
   if (!fn) {
     state.worker.postMessage({
       kind: "callbackResponse",
@@ -566,7 +632,12 @@ function handleCallbackRequest(
     return;
   }
   Promise.resolve()
-    .then(() => fn(...msg.args))
+    .then(() => {
+      if (state.disposed) throw new Error("Host runtime is unavailable");
+      if (msg.coreId !== undefined && !state.coreCallbacks.has(msg.coreId))
+        throw new Error("Product callbacks are unavailable");
+      return fn(...msg.args);
+    })
     .then(
       (value) => {
         // Tracked in the success arm only: a rejected begin must not leave a
@@ -608,6 +679,7 @@ function handleSubscriptionStart(
   state: RuntimeState,
   msg: {
     subId: number;
+    coreId?: number;
     name: SubscriptionName;
     payload: Uint8Array | string | null;
   },
@@ -630,15 +702,20 @@ function handleSubscriptionStart(
   };
   let dispose: (() => void) | void = undefined;
   try {
+    const callbacks =
+      msg.coreId === undefined
+        ? state.rawCallbacks
+        : state.coreCallbacks.get(msg.coreId);
+    if (!callbacks) throw new Error("Product callbacks are unavailable");
     dispose = startRawSubscription(
-      state.rawCallbacks,
+      callbacks,
       msg.name,
       msg.payload,
       sendItem,
       sendError,
     );
   } catch (err) {
-    console.error(`[truapi worker] ${msg.name} threw on start:`, err);
+    sendError({ reason: errorMessage(err) });
     return;
   }
   if (typeof dispose === "function") {
@@ -881,6 +958,8 @@ function handleDeviceEncryptionKeyResponse(
 function rejectPendingRuntimeRequests(state: RuntimeState, error: Error): void {
   rejectAll(state.pendingDisconnects, error);
   rejectAll(state.pendingSessionActivations, error);
+  rejectAll(state.pendingLocalIdentities, error);
+  rejectAll(state.pendingAllowanceSnapshots, error);
   rejectAll(state.pendingPermissionAuthorizationStatuses, error);
   rejectAll(state.pendingPermissionAuthorizationStatusBatches, error);
   rejectAll(state.pendingSetPermissionAuthorizationStatuses, error);
@@ -928,10 +1007,12 @@ function sendWorkerRequest<T>(
 function sendSessionActivationRequest(
   state: RuntimeState,
   buildMessage: (requestId: number) => MainToWorker,
+  changesIdentity = true,
 ): Promise<void> {
   if (state.disposed) {
     return Promise.reject(state.closedError ?? new Error("runtime disposed"));
   }
+  if (changesIdentity) invalidateAllowanceIdentity(state);
   return sendWorkerRequest<void>(
     state,
     state.pendingSessionActivations,
@@ -939,6 +1020,111 @@ function sendSessionActivationRequest(
     undefined,
     buildMessage,
   );
+}
+
+function sendLocalIdentityRequest(
+  state: RuntimeState,
+  buildMessage: (requestId: number) => MainToWorker,
+  onProgress?: (progress: LocalIdentityProgress) => void,
+): Promise<LocalIdentity> {
+  if (state.disposed) {
+    return Promise.reject(state.closedError ?? new Error("runtime disposed"));
+  }
+  const generation = state.identityGeneration;
+  const { promise, resolve, reject } = Promise.withResolvers<LocalIdentity>();
+  const requestId = ++nextLocalIdentityRequestId;
+  state.pendingLocalIdentities.set(requestId, {
+    resolve(identity) {
+      if (generation !== state.identityGeneration || state.disposePending) {
+        reject(new Error("local identity activation changed"));
+        return;
+      }
+      state.identityAccountId = identity.identityAccountId;
+      resolve(identity);
+    },
+    reject,
+    onProgress,
+  });
+  try {
+    state.worker.postMessage(buildMessage(requestId));
+  } catch (error) {
+    state.pendingLocalIdentities.delete(requestId);
+    reject(error);
+  }
+  return promise;
+}
+
+function invalidateAllowanceIdentity(state: RuntimeState): void {
+  state.identityGeneration++;
+  state.identityAccountId = null;
+  rejectAll(
+    state.pendingAllowanceSnapshots,
+    new Error("local identity activation changed"),
+  );
+}
+
+async function getWalletAllowanceSnapshot(
+  state: RuntimeState,
+  input: string[],
+): Promise<WalletAllowanceSnapshot> {
+  if (state.disposed || state.disposePending) {
+    throw state.closedError ?? new Error("runtime disposed");
+  }
+  if (
+    state.role !== "signing" ||
+    state.pendingSessionActivations.size > 0 ||
+    state.pendingDisconnects.size > 0
+  ) {
+    throw new Error(
+      "allowance inspection requires a current local signing identity",
+    );
+  }
+  const productIds = validateAllowanceProductIds(input);
+  const accountId = state.identityAccountId;
+  const generation = state.identityGeneration;
+  const requestId = ++nextAllowanceSnapshotRequestId;
+  const { promise, resolve, reject } =
+    Promise.withResolvers<WalletAllowanceSnapshot>();
+  const timeout = setTimeout(() => {
+    state.pendingAllowanceSnapshots.delete(requestId);
+    reject(new Error("wallet allowance inspection timed out after 30000ms"));
+  }, 30_000);
+  state.pendingAllowanceSnapshots.set(requestId, {
+    resolve(snapshot) {
+      clearTimeout(timeout);
+      if (
+        generation !== state.identityGeneration ||
+        snapshot?.schemaVersion !== 1 ||
+        (accountId !== null && snapshot.identityAccountId !== accountId) ||
+        snapshot.networkSuffix !== state.networkSuffix
+      ) {
+        reject(
+          new Error(
+            "wallet allowance snapshot does not match the current identity",
+          ),
+        );
+        return;
+      }
+      resolve(snapshot);
+    },
+    reject(error) {
+      clearTimeout(timeout);
+      reject(error);
+    },
+  });
+  try {
+    state.worker.postMessage({
+      kind: "getWalletAllowanceSnapshot",
+      requestId,
+      productIds,
+    } satisfies MainToWorker);
+  } catch (error) {
+    settlePending(state.pendingAllowanceSnapshots, requestId, {
+      ok: false,
+      error: errorMessage(error),
+    });
+  }
+  return promise;
 }
 
 function closeCoreState(core: CoreState, error: Error): void {
@@ -967,6 +1153,7 @@ function teardown(state: RuntimeState, error: Error, fault: boolean): void {
     closeCoreState(core, error);
   }
   state.cores.clear();
+  state.coreCallbacks.clear();
   for (const fn of state.subscriptionDisposers.values()) {
     try {
       fn();
@@ -1001,9 +1188,13 @@ function teardown(state: RuntimeState, error: Error, fault: boolean): void {
   }
 }
 
-export interface CreateWebWorkerPairingHostRuntimeOptions {
+interface CreateWebWorkerHostRuntimeOptions {
   logLevel?: LogLevel;
-  hostConfig: WebWorkerHostConfig;
+  hostConfig: WebWorkerHostConfig | WebWorkerSigningHostConfig;
+  /**
+   * Maximum inactivity during each worker startup phase. Loading the WASM and
+   * constructing the runtime each get a full interval. Defaults to 30s.
+   */
   initTimeoutMs?: number;
   /**
    * Dev-only: a loopback `ws://` wire debugger to stream tapped frames to.
@@ -1036,6 +1227,14 @@ export interface CreateWebWorkerPairingHostRuntimeOptions {
   operationGraceMs?: number;
 }
 
+export interface CreateWebWorkerPairingHostRuntimeOptions extends CreateWebWorkerHostRuntimeOptions {
+  hostConfig: WebWorkerHostConfig;
+}
+
+export interface CreateWebWorkerSigningHostRuntimeOptions extends CreateWebWorkerHostRuntimeOptions {
+  hostConfig: WebWorkerSigningHostConfig;
+}
+
 export type WebWorkerHostCallbacks = RequiredHostCallbacks;
 
 export function createWebWorkerPairingHostRuntime(
@@ -1043,12 +1242,43 @@ export function createWebWorkerPairingHostRuntime(
   host: WebWorkerHostCallbacks,
   options: CreateWebWorkerPairingHostRuntimeOptions,
 ): Promise<WorkerPairingHostRuntime> {
+  // No role default: a host that asks for none must put exactly what it put
+  // on the wire before the field existed, and the worker reads absent as
+  // "pairing".
+  return createWebWorkerHostRuntime(worker, host, options);
+}
+
+export function createWebWorkerSigningHostRuntime(
+  worker: Worker,
+  host: WebWorkerHostCallbacks,
+  options: CreateWebWorkerSigningHostRuntimeOptions,
+): Promise<WorkerSigningHostRuntime> {
+  return createWebWorkerHostRuntime(worker, host, {
+    ...options,
+    role: options.role ?? "signing",
+  });
+}
+
+function createWebWorkerHostRuntime(
+  worker: Worker,
+  host: WebWorkerHostCallbacks,
+  options: CreateWebWorkerHostRuntimeOptions,
+): Promise<WorkerPairingHostRuntime & WorkerSigningHostRuntime> {
   const callbacks = createWasmRawCallbacks(host);
 
   return new Promise((resolve, reject) => {
     const state: RuntimeState = {
       worker,
+      role: options.role ?? "pairing",
+      networkSuffix:
+        "networkSuffix" in options.hostConfig
+          ? options.hostConfig.networkSuffix
+          : undefined,
+      identityAccountId: null,
+      identityGeneration: 0,
+      pendingAllowanceSnapshots: new Map(),
       rawCallbacks: callbacks,
+      coreCallbacks: new Map(),
       cores: new Map(),
       pendingCores: new Map(),
       subscriptionDisposers: new Map(),
@@ -1059,6 +1289,7 @@ export function createWebWorkerPairingHostRuntime(
       chainConnections: new Map(),
       pendingDisconnects: new Map(),
       pendingSessionActivations: new Map(),
+      pendingLocalIdentities: new Map(),
       pendingPermissionAuthorizationStatuses: new Map(),
       pendingPermissionAuthorizationStatusBatches: new Map(),
       pendingSetPermissionAuthorizationStatuses: new Map(),
@@ -1077,7 +1308,8 @@ export function createWebWorkerPairingHostRuntime(
       coreWireSchemaHash: undefined,
     };
 
-    let runtime: WorkerPairingHostRuntime | null = null;
+    let runtime: (WorkerPairingHostRuntime & WorkerSigningHostRuntime) | null =
+      null;
 
     const notifyFault = (error: Error): void => {
       teardown(state, error, true);
@@ -1119,6 +1351,34 @@ export function createWebWorkerPairingHostRuntime(
           break;
         case "sessionActivationResponse":
           handleSessionActivationResponse(state, msg);
+          break;
+        case "localIdentityProgress":
+          if (state.disposed) break;
+          try {
+            state.pendingLocalIdentities
+              .get(msg.requestId)
+              ?.onProgress?.(msg.progress);
+          } catch {
+            // UI observers cannot fail or settle an identity operation.
+          }
+          break;
+        case "localIdentityResponse":
+          settlePending(
+            state.pendingLocalIdentities,
+            msg.requestId,
+            msg.ok
+              ? { ok: true, value: msg.identity }
+              : { ok: false, error: msg.error },
+          );
+          break;
+        case "walletAllowanceSnapshotResponse":
+          settlePending(
+            state.pendingAllowanceSnapshots,
+            msg.requestId,
+            msg.ok
+              ? { ok: true, value: msg.snapshot }
+              : { ok: false, error: msg.error },
+          );
           break;
         case "permissionAuthorizationStatusResponse":
           handlePermissionAuthorizationStatusResponse(state, msg);
@@ -1257,14 +1517,20 @@ export function createWebWorkerPairingHostRuntime(
       readDebuggerEnablement(options.debugger),
       options.debuggerIndicator,
     );
+    const timeoutMs = options.initTimeoutMs ?? 30_000;
+    let initPhase = "loading WASM";
+    let cancelInitTimeout = (): void => {};
 
     const onInitMessage = (ev: MessageEvent<WorkerToMain>): void => {
       const msg = ev.data;
       if (msg.kind === "loaded") {
+        initPhase = "initializing the runtime";
+        scheduleInitTimeout();
         worker.postMessage({
           kind: "init",
           logLevel: devLogLevelOverride ?? options.logLevel ?? "off",
           hostConfig: options.hostConfig,
+          role: options.role,
           capabilities: {
             chat: host.chat !== undefined,
             permissionStatus: host.permissionStatus !== undefined,
@@ -1273,7 +1539,6 @@ export function createWebWorkerPairingHostRuntime(
             contacts: host.contacts !== undefined,
           },
           debuggerUrl: debuggerDial,
-          role: options.role,
         } satisfies MainToWorker);
       } else if (msg.kind === "ready") {
         state.coreWireSchemaHash = msg.schema;
@@ -1290,16 +1555,25 @@ export function createWebWorkerPairingHostRuntime(
     };
 
     const cleanupInit = (): void => {
-      clearTimeout(initTimeout);
+      cancelInitTimeout();
       worker.removeEventListener("error", onError);
       worker.removeEventListener("messageerror", onInitMessageError);
       worker.removeEventListener("message", onInitMessage);
     };
 
-    const timeoutMs = options.initTimeoutMs ?? 30_000;
-    const initTimeout = setTimeout(() => {
-      failInit(new Error(`worker init timed out after ${timeoutMs}ms`));
-    }, timeoutMs);
+    const scheduleInitTimeout = (): void => {
+      cancelInitTimeout();
+      const timeout = setTimeout(() => {
+        failInit(
+          new Error(
+            `worker init timed out after ${timeoutMs}ms while ${initPhase}`,
+          ),
+        );
+      }, timeoutMs);
+      cancelInitTimeout = () => clearTimeout(timeout);
+    };
+
+    scheduleInitTimeout();
 
     worker.addEventListener("error", onError);
     worker.addEventListener("messageerror", onInitMessageError);
@@ -1335,6 +1609,7 @@ function handleCoreError(
   const pending = state.pendingCores.get(coreId);
   if (!pending) return;
   state.pendingCores.delete(coreId);
+  state.coreCallbacks.delete(coreId);
   pending.reject(new Error(error));
 }
 
@@ -1349,6 +1624,7 @@ function handleFrameError(
   const failure = new Error(`worker frame error: ${error}`);
   closeCoreState(core, failure);
   state.cores.delete(coreId);
+  state.coreCallbacks.delete(coreId);
   // Renders left registered would never settle: the worker cancels them with
   // the core, so nothing further arrives to complete the sink.
   failRendersForCore(state, coreId, failure);
@@ -1362,10 +1638,12 @@ function handleFrameError(
   }
 }
 
-function buildRuntime(state: RuntimeState): WorkerPairingHostRuntime {
-  const runtime: WorkerPairingHostRuntime = {
+function buildRuntime(
+  state: RuntimeState,
+): WorkerPairingHostRuntime & WorkerSigningHostRuntime {
+  const runtime: WorkerPairingHostRuntime & WorkerSigningHostRuntime = {
     coreWireSchemaHash: state.coreWireSchemaHash,
-    createProvider(product): Promise<TrUApiProductProvider> {
+    createProvider(product, callbacks): Promise<TrUApiProductProvider> {
       if (state.disposed) {
         return Promise.reject(
           state.closedError ?? new Error("runtime disposed"),
@@ -1379,18 +1657,33 @@ function buildRuntime(state: RuntimeState): WorkerPairingHostRuntime {
           reject,
         });
         try {
+          if (callbacks)
+            state.coreCallbacks.set(coreId, createWasmRawCallbacks(callbacks));
           state.worker.postMessage({
             kind: "createCore",
             coreId,
             product,
+            ...(callbacks === undefined
+              ? {}
+              : {
+                  capabilities: {
+                    chat: callbacks.chat !== undefined,
+                    contacts: callbacks.contacts !== undefined,
+                    permissionStatus: callbacks.permissionStatus !== undefined,
+                    pocket: callbacks.pocket !== undefined,
+                    game: callbacks.game !== undefined,
+                  },
+                }),
           } satisfies MainToWorker);
         } catch (err) {
           state.pendingCores.delete(coreId);
+          state.coreCallbacks.delete(coreId);
           reject(err instanceof Error ? err : new Error(String(err)));
         }
       });
     },
     disconnectSession(): Promise<void> {
+      invalidateAllowanceIdentity(state);
       return sendWorkerRequest<void>(
         state,
         state.pendingDisconnects,
@@ -1507,31 +1800,79 @@ function buildRuntime(state: RuntimeState): WorkerPairingHostRuntime {
       }));
     },
     setGrantAllowancesUnchecked(granted: boolean): Promise<void> {
-      return sendSessionActivationRequest(state, (requestId) => ({
-        kind: "setGrantAllowancesUnchecked",
-        requestId,
-        granted,
-      }));
+      return sendSessionActivationRequest(
+        state,
+        (requestId) => ({
+          kind: "setGrantAllowancesUnchecked",
+          requestId,
+          granted,
+        }),
+        false,
+      );
     },
     setSubmitPreimagesLocally(local: boolean): Promise<void> {
-      return sendSessionActivationRequest(state, (requestId) => ({
-        kind: "setSubmitPreimagesLocally",
-        requestId,
-        local,
-      }));
+      return sendSessionActivationRequest(
+        state,
+        (requestId) => ({
+          kind: "setSubmitPreimagesLocally",
+          requestId,
+          local,
+        }),
+        false,
+      );
     },
     setWithheldResources(tags: string[]): Promise<void> {
-      return sendSessionActivationRequest(state, (requestId) => ({
-        kind: "setWithheldResources",
-        requestId,
-        tags,
-      }));
+      return sendSessionActivationRequest(
+        state,
+        (requestId) => ({
+          kind: "setWithheldResources",
+          requestId,
+          tags,
+        }),
+        false,
+      );
     },
     resetSessionState(): Promise<void> {
       return sendSessionActivationRequest(state, (requestId) => ({
         kind: "resetSessionState",
         requestId,
       }));
+    },
+    activateLocalSessionWithIdentity(
+      secret: Uint8Array,
+      liteUsername?: string,
+    ): Promise<void> {
+      return sendSessionActivationRequest(state, (requestId) => ({
+        kind: "activateLocalSessionWithIdentity",
+        requestId,
+        secret,
+        liteUsername,
+      }));
+    },
+    refreshLocalIdentity(): Promise<LocalIdentity> {
+      return sendLocalIdentityRequest(state, (requestId) => ({
+        kind: "refreshLocalIdentity",
+        requestId,
+      }));
+    },
+    getWalletAllowanceSnapshot(productIds): Promise<WalletAllowanceSnapshot> {
+      return getWalletAllowanceSnapshot(state, productIds);
+    },
+    registerLocalLiteUsername(
+      baseUsername,
+      identityBackendBaseUrl,
+      onProgress,
+    ): Promise<LocalIdentity> {
+      return sendLocalIdentityRequest(
+        state,
+        (requestId) => ({
+          kind: "registerLocalLiteUsername",
+          requestId,
+          baseUsername,
+          identityBackendBaseUrl,
+        }),
+        onProgress,
+      );
     },
     getPermissionAuthorizationStatus(productId, request) {
       return sendWorkerRequest<PermissionAuthorizationStatus>(
@@ -1585,6 +1926,7 @@ function buildRuntime(state: RuntimeState): WorkerPairingHostRuntime {
       } satisfies MainToWorker);
     },
     dispose(): void {
+      invalidateAllowanceIdentity(state);
       devGlobalTargets.delete(runtime);
       // Let a background task (e.g. a funding transaction) finish; the last
       // endOperation runs the teardown. Fault teardown is never deferred.
@@ -1856,6 +2198,7 @@ function buildProvider(
       if (core.disposed) return;
       closeCoreState(core, new Error("provider disposed"));
       state.cores.delete(core.coreId);
+      state.coreCallbacks.delete(core.coreId);
       // Renders left registered would never settle: the worker cancels them
       // with the core, so nothing further arrives to complete the sink.
       failRendersForCore(state, core.coreId, new Error("provider disposed"));

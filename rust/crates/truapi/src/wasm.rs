@@ -872,6 +872,36 @@ fn wasm_platform(bridge: Arc<JsBridge>) -> WasmPlatformAdapters {
     }
 }
 
+fn connection_adapters_from_js(
+    callbacks: Option<&JsValue>,
+) -> Result<Option<crate::host_core::ConnectionAdapters>, JsValue> {
+    let Some(callbacks) = callbacks.filter(|value| !value.is_null() && !value.is_undefined())
+    else {
+        return Ok(None);
+    };
+    let WasmPlatformAdapters {
+        platform,
+        chat_platform,
+        contacts_platform,
+        status_host,
+        pocket_platform,
+        game_platform,
+    } = wasm_platform(Arc::new(JsBridge::from_js(callbacks)?));
+    Ok(Some(crate::host_core::ConnectionAdapters {
+        platform,
+        chat_platform,
+        contacts_platform,
+        permission_status: status_host,
+        // One-use grants belong to this execution, not the shared host.
+        permission_grants: Arc::default(),
+        pocket_platform,
+        game_platform,
+        expanded_card: None,
+        chat: Arc::new(crate::runtime::ActionChannel::chat()),
+        renderer: Arc::new(crate::runtime::ActionChannel::renderer()),
+    }))
+}
+
 /// Reports every worker demand transition to the host's
 /// `workerDemandChanged(productId, transition)` callback.
 struct WasmWorkerDemand {
@@ -974,11 +1004,13 @@ impl WasmPairingHostRuntime {
     }
 
     /// Build one product-scoped runtime from this pairing host runtime.
+    /// Optional platform callbacks are execution-local; shared authority stays here.
     #[wasm_bindgen(js_name = productRuntime)]
     pub fn product_runtime(
         &self,
         product: JsValue,
         core_callbacks: JsValue,
+        platform_callbacks: Option<JsValue>,
     ) -> Result<WasmProductRuntime, JsValue> {
         let product = product_context_from_js(&product)?;
         let channel = CoreChannel::from_js(&core_callbacks)?;
@@ -987,7 +1019,10 @@ impl WasmPairingHostRuntime {
         let sink = Arc::new(WasmFrameSink {
             emit_frame: SendWrapper::new(channel.emit_frame),
         });
-        let runtime = self.runtime.product_runtime(product, sink);
+        let runtime = match connection_adapters_from_js(platform_callbacks.as_ref())? {
+            Some(adapters) => self.runtime.product_runtime_with(product, adapters, sink),
+            None => self.runtime.product_runtime(product, sink),
+        };
         if let Some(debug_emit) = debug_emit {
             runtime.set_debug_sink(
                 ChannelId(channel_id),
@@ -1238,22 +1273,6 @@ impl WasmSigningHostRuntime {
         self.runtime.set_grant_allowances_unchecked(granted);
     }
 
-    /// The product's hard-subtree public key, derived from the active session
-    /// root, or `undefined` while no session is active.
-    ///
-    /// Paired with `deriveProductAccountPublicKey` and `productAccountAddress`
-    /// this gives a host the product's address without asking the product.
-    #[wasm_bindgen(js_name = productSubtreePublicKey)]
-    pub fn product_subtree_public_key(
-        &self,
-        product_id: String,
-    ) -> Result<Option<Vec<u8>>, JsValue> {
-        self.runtime
-            .product_subtree_public_key(&product_id)
-            .map(|key| key.map(|key| key.to_vec()))
-            .map_err(generic_error_to_js)
-    }
-
     /// Answer these resource tags as refused, replacing any earlier set.
     ///
     /// A suite proving its product survives a refused resource needs that one
@@ -1290,6 +1309,9 @@ impl WasmSigningHostRuntime {
         let bridge = Arc::new(JsBridge::from_js(&callbacks)?);
         let WasmPlatformAdapters {
             platform,
+            chat_platform,
+            contacts_platform,
+            status_host,
             pocket_platform,
             game_platform,
             ..
@@ -1298,7 +1320,16 @@ impl WasmSigningHostRuntime {
             wasm_bindgen_futures::spawn_local(fut);
         });
         let host_config = signing_host_config_from_js(&host_config)?;
-        let runtime = SigningHostRuntime::new(platform, host_config, spawner);
+        let runtime = SigningHostRuntime::with_platforms(
+            platform,
+            host_config,
+            spawner,
+            chat_platform,
+            contacts_platform,
+        );
+        if let Some(status_host) = status_host {
+            runtime.set_permission_status_host(status_host);
+        }
         if let Some(pocket_platform) = pocket_platform {
             runtime.set_pocket_platform(pocket_platform);
         }
@@ -1312,18 +1343,23 @@ impl WasmSigningHostRuntime {
     }
 
     /// Build one product-scoped runtime from this signing host.
+    /// Optional platform callbacks are execution-local; shared authority stays here.
     #[wasm_bindgen(js_name = productRuntime)]
     pub fn product_runtime(
         &self,
         product: JsValue,
         core_callbacks: JsValue,
+        platform_callbacks: Option<JsValue>,
     ) -> Result<WasmProductRuntime, JsValue> {
         let product = product_context_from_js(&product)?;
         let channel = CoreChannel::from_js(&core_callbacks)?;
         let sink = Arc::new(WasmFrameSink {
             emit_frame: SendWrapper::new(channel.emit_frame),
         });
-        let runtime = self.runtime.product_runtime(product, sink);
+        let runtime = match connection_adapters_from_js(platform_callbacks.as_ref())? {
+            Some(adapters) => self.runtime.product_runtime_with(product, adapters, sink),
+            None => self.runtime.product_runtime(product, sink),
+        };
         Ok(WasmProductRuntime::from_parts(runtime, channel.dispose))
     }
 
@@ -1331,6 +1367,99 @@ impl WasmSigningHostRuntime {
     #[wasm_bindgen(js_name = disconnectSession)]
     pub async fn disconnect_session(&self) {
         self.runtime.disconnect_session().await;
+    }
+
+    /// Tell the runtime that the host's contact list changed, so cached
+    /// handles are dropped and the next resolution reads the list.
+    #[wasm_bindgen(js_name = notifyContactsChanged)]
+    pub fn notify_contacts_changed(&self) {
+        self.runtime.notify_contacts_changed();
+    }
+
+    /// Read the active local session's X25519 chat identity private key.
+    #[wasm_bindgen(js_name = sessionChatIdentityKey)]
+    pub fn session_chat_identity_key(&self) -> Option<Vec<u8>> {
+        self.runtime
+            .session_chat_identity_key()
+            .map(|key| key.to_vec())
+    }
+
+    /// Read this browser's X25519 encryption secret, generating and persisting
+    /// it on first read.
+    #[wasm_bindgen(js_name = deviceEncryptionKey)]
+    pub async fn device_encryption_key(&self) -> Result<Vec<u8>, JsValue> {
+        self.runtime
+            .device_encryption_key()
+            .await
+            .map(|key| key.to_vec())
+            .map_err(generic_error_to_js)
+    }
+
+    /// Resolve a product's hard-subtree public key from the active local
+    /// signing session.
+    #[wasm_bindgen(js_name = productSubtreePublicKey)]
+    pub async fn product_subtree_public_key(
+        &self,
+        product_id: String,
+        timeout_ms: Option<u32>,
+    ) -> Result<Option<Vec<u8>>, JsValue> {
+        self.runtime
+            .product_subtree_public_key(&product_id, timeout_ms)
+            .await
+            .map(|key| key.map(|key| key.to_vec()))
+            .map_err(generic_error_to_js)
+    }
+
+    /// Read one permission authorization status for a product.
+    #[wasm_bindgen(js_name = permissionAuthorizationStatus)]
+    pub async fn permission_authorization_status(
+        &self,
+        product_id: String,
+        payload: Vec<u8>,
+    ) -> Result<JsValue, JsValue> {
+        let request = decode_permission_authorization_request(&payload)?;
+        let status = self
+            .runtime
+            .permission_authorization_status(&product_id, request)
+            .await
+            .map_err(generic_error_to_js)?;
+        Ok(permission_authorization_status_to_js(status))
+    }
+
+    /// Read permission authorization statuses for a product.
+    #[wasm_bindgen(js_name = permissionAuthorizationStatuses)]
+    pub async fn permission_authorization_statuses(
+        &self,
+        product_id: String,
+        payloads: Array,
+    ) -> Result<Array, JsValue> {
+        let requests = decode_permission_authorization_requests(&payloads)?;
+        let statuses = self
+            .runtime
+            .permission_authorization_statuses(&product_id, requests)
+            .await
+            .map_err(generic_error_to_js)?;
+        let values = Array::new();
+        for status in statuses {
+            values.push(&permission_authorization_status_to_js(status));
+        }
+        Ok(values)
+    }
+
+    /// Update one stored permission authorization status for a product.
+    #[wasm_bindgen(js_name = setPermissionAuthorizationStatus)]
+    pub async fn set_permission_authorization_status(
+        &self,
+        product_id: String,
+        payload: Vec<u8>,
+        status: String,
+    ) -> Result<(), JsValue> {
+        let request = decode_permission_authorization_request(&payload)?;
+        let status = permission_authorization_status_from_js(&status)?;
+        self.runtime
+            .set_permission_authorization_status(&product_id, request, status)
+            .await
+            .map_err(generic_error_to_js)
     }
 
     /// Activate a wallet-local session from raw BIP-39 entropy.
@@ -1353,6 +1482,78 @@ impl WasmSigningHostRuntime {
             .activate_local_session_with_identity(secret, lite_username)
             .await
             .map_err(generic_error_to_js)
+    }
+
+    /// Capture an opaque activation fence and its UID account.
+    #[wasm_bindgen(js_name = localIdentityContext)]
+    pub fn local_identity_context(&self) -> Result<JsValue, JsValue> {
+        let context = self
+            .runtime
+            .local_identity_context()
+            .map_err(generic_error_to_js)?;
+        let json = serde_json::to_string(&context)
+            .map_err(|error| JsValue::from_str(&error.to_string()))?;
+        js_sys::JSON::parse(&json)
+    }
+
+    /// Return the UID public key followed by its native sr25519 backend-auth proof.
+    #[wasm_bindgen(js_name = localIdentityAuthProof)]
+    pub fn local_identity_auth_proof(
+        &self,
+        activation_id: String,
+        challenge: Vec<u8>,
+    ) -> Result<Vec<u8>, JsValue> {
+        self.runtime
+            .local_identity_auth_proof(&activation_id, &challenge)
+            .map_err(generic_error_to_js)
+    }
+
+    /// Build registration JSON without exporting entropy or implementing proofs in JavaScript.
+    #[wasm_bindgen(js_name = localLiteRegistrationBody)]
+    pub async fn local_lite_registration_body(
+        &self,
+        activation_id: String,
+        username_base: String,
+        verifier: Vec<u8>,
+    ) -> Result<String, JsValue> {
+        let verifier = verifier
+            .as_slice()
+            .try_into()
+            .map_err(|_| JsValue::from_str("attester must be 32 bytes"))?;
+        self.runtime
+            .local_lite_registration_body(&activation_id, &username_base, verifier)
+            .await
+            .map_err(generic_error_to_js)
+    }
+
+    /// Install freshly verified dotNS metadata only for the captured local activation.
+    #[wasm_bindgen(js_name = refreshLocalIdentity)]
+    pub async fn refresh_local_identity(&self, activation_id: String) -> Result<JsValue, JsValue> {
+        let identity = self
+            .runtime
+            .refresh_local_identity_for(&activation_id)
+            .await
+            .map_err(generic_error_to_js)?;
+        let json = serde_json::to_string(&identity)
+            .map_err(|error| JsValue::from_str(&error.to_string()))?;
+        js_sys::JSON::parse(&json)
+    }
+
+    /// Read finalized allowance state for this activation; never allocate or sign.
+    #[wasm_bindgen(js_name = getWalletAllowanceSnapshot)]
+    pub async fn get_wallet_allowance_snapshot(
+        &self,
+        activation_id: String,
+        product_ids: Vec<String>,
+    ) -> Result<JsValue, JsValue> {
+        let snapshot = self
+            .runtime
+            .get_wallet_allowance_snapshot(&activation_id, product_ids)
+            .await
+            .map_err(generic_error_to_js)?;
+        let json = serde_json::to_string(&snapshot)
+            .map_err(|error| JsValue::from_str(&error.to_string()))?;
+        js_sys::JSON::parse(&json)
     }
 
     /// Revoke one product's grants from the current local activation.

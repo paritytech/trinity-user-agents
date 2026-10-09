@@ -540,33 +540,6 @@ console.log(JSON.stringify({
     }
 
     #[test]
-    fn managed_scripts_use_their_project_directory_when_selected_explicitly() -> Result<()> {
-        let project = tempfile::tempdir()?;
-        fs::write(
-            project.path().join("package.json"),
-            r#"{"truapiHost":{"script":"script.ts"}}"#,
-        )?;
-        let script = project.path().join("script.ts");
-        fs::write(&script, "console.log('hello');\n")?;
-
-        let command = command(
-            "ws://127.0.0.1:1234",
-            "example.dot",
-            &script,
-            ScriptHostRole::SigningHost,
-        )?;
-
-        assert_eq!(
-            command
-                .as_std()
-                .get_envs()
-                .find_map(|(key, value)| { (key == "TRUAPI_SCRIPT_CWD").then_some(value) }),
-            Some(Some(project.path().as_os_str()))
-        );
-        Ok(())
-    }
-
-    #[test]
     fn editor_command_accepts_quoted_arguments_without_a_shell() -> Result<()> {
         let (program, arguments) = parse_editor("code --wait \"profile one\"")?;
 

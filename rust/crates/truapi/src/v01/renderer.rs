@@ -1,5 +1,6 @@
 //! Product-rendered body trees and the contexts that name them.
 
+use alloc::{string::String, vec::Vec};
 use parity_scale_codec::{Compact, Decode, Encode, OptionBool};
 
 /// SCALE spells an optional bool as its own type; JSON spells it as an absent
@@ -684,6 +685,7 @@ pub struct HostRendererActionSubscribeItem {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::{string::ToString, vec};
 
     #[derive(Encode)]
     struct RendererWireComponent<P> {

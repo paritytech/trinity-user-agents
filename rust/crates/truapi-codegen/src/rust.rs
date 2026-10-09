@@ -14,10 +14,12 @@ use convert_case::{Case, Casing};
 use crate::platform::PlatformDefinition;
 use crate::rustdoc::*;
 
+mod client;
 mod dispatcher;
 mod wasm_bridge;
 mod wire_table;
 
+pub use client::generate_client;
 pub use dispatcher::generate_dispatcher;
 pub use wasm_bridge::generate_wasm_bridge;
 pub use wire_table::generate_wire_table;

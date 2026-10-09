@@ -6,32 +6,50 @@
 //! the active session and runs the chain-pure pass in
 //! `statement_allowance::renewal`, either once (`renew_now`) or on a periodic
 //! tick (`start_renewal_loop`).
+//!
+//! All signing hosts record the ledger during allocation. The resident renewal
+//! driver belongs to the native host API; browser hosts currently allocate on
+//! demand without starting that driver.
 
+#[cfg(not(target_arch = "wasm32"))]
 use std::sync::Arc;
+#[cfg(not(target_arch = "wasm32"))]
 use std::sync::atomic::{AtomicBool, Ordering};
+#[cfg(not(target_arch = "wasm32"))]
 use std::time::Duration;
 
 use crate::platform::{CoreStorage, CoreStorageKey, normalize_product_identifier};
 use futures::lock::Mutex;
 use parity_scale_codec::{Decode, Encode};
-use tracing::{debug, info, warn};
+#[cfg(not(target_arch = "wasm32"))]
+use tracing::debug;
+#[cfg(any(test, not(target_arch = "wasm32")))]
+use tracing::info;
+use tracing::warn;
 
 use super::SigningHost;
+#[cfg(not(target_arch = "wasm32"))]
 use super::sso_responder::current_unix_secs;
-use crate::host_logic::product_account::{
-    derive_identity_keypair, derive_root_keypair_from_entropy, derive_sr25519_hard_path,
-};
+use crate::host_logic::product_account::derive_root_keypair_from_entropy;
+use crate::host_logic::product_account::{derive_identity_keypair, derive_sr25519_hard_path};
+#[cfg(not(target_arch = "wasm32"))]
 use crate::runtime::RuntimeServices;
+#[cfg(not(target_arch = "wasm32"))]
 use crate::runtime::authority::ProductAuthority;
+use crate::runtime::statement_allowance::renewal::ResolvedRenewalTarget;
+#[cfg(any(test, not(target_arch = "wasm32")))]
+use crate::runtime::statement_allowance::renewal::StatementRenewalReport;
+#[cfg(not(target_arch = "wasm32"))]
 use crate::runtime::statement_allowance::renewal::{
-    RenewalChainContext, ResolvedRenewalTarget, StatementRenewalReport, next_tick_delay,
-    renew_targets,
+    RenewalChainContext, next_tick_delay, renew_targets,
 };
+#[cfg(not(target_arch = "wasm32"))]
 use crate::runtime::statement_allowance::{
     self, fetch_chain_state, fetch_metadata, find_including_rings,
 };
 
 /// Fallback tick delay when the system clock is unusable.
+#[cfg(not(target_arch = "wasm32"))]
 const CLOCK_FAILURE_TICK_DELAY: Duration = Duration::from_secs(3_600);
 
 /// A statement-store account the signing host promised to keep renewed.
@@ -111,6 +129,7 @@ impl TrackedStatementRenewalTarget {
     }
 
     /// Whether this entry belongs to the identity rooted at `owner`.
+    #[cfg(any(test, not(target_arch = "wasm32")))]
     fn is_owned_by(&self, owner: [u8; 32]) -> bool {
         self.owner.is_none_or(|recorded| recorded == owner)
     }
@@ -133,12 +152,14 @@ pub struct RenewalState {
     /// Serializes read-modify-write cycles on the ledger so a concurrent
     /// allocation cannot drop another's entry.
     ledger_lock: Mutex<()>,
+    #[cfg(not(target_arch = "wasm32"))]
     loop_started: AtomicBool,
     /// The most recent pass, so a host that drives the in-process loop can read
     /// what it achieved. The loop computes a report on every tick and has no
     /// caller to hand it to, and exhaustion is the outcome a host most needs to
     /// act on. A blocking lock rather than an async one: every use is a clone or
     /// a store with no await in between.
+    #[cfg(any(test, not(target_arch = "wasm32")))]
     last_report: std::sync::Mutex<Option<StatementRenewalReport>>,
 }
 
@@ -152,6 +173,7 @@ impl RenewalState {
     }
 
     /// Record the pass a host has not seen the return value of.
+    #[cfg(any(test, not(target_arch = "wasm32")))]
     fn record_report(&self, report: &StatementRenewalReport) {
         if let Ok(mut last) = self.last_report.lock() {
             *last = Some(report.clone());
@@ -160,6 +182,7 @@ impl RenewalState {
 
     /// The most recent pass the loop ran. `None` until one has run, which a host
     /// should read as "not yet" rather than as healthy.
+    #[cfg(any(test, not(target_arch = "wasm32")))]
     pub fn last_report(&self) -> Option<StatementRenewalReport> {
         self.last_report.lock().ok().and_then(|last| last.clone())
     }
@@ -218,6 +241,7 @@ async fn track_targets(
 ///
 /// Takes the ledger lock so a listing taken while a track or a prune is running
 /// reports the settled ledger rather than the state it is replacing.
+#[cfg(any(test, not(target_arch = "wasm32")))]
 async fn list_entries(
     storage: &(impl CoreStorage + ?Sized),
     ledger_lock: &Mutex<()>,
@@ -226,6 +250,7 @@ async fn list_entries(
     read_entries(storage).await
 }
 
+#[cfg(any(test, not(target_arch = "wasm32")))]
 async fn untrack_account(
     storage: &(impl CoreStorage + ?Sized),
     ledger_lock: &Mutex<()>,
@@ -318,6 +343,38 @@ fn resolve_target(
     }
 }
 
+/// Resolve attribution without refreshing, pruning, or rewriting the ledger.
+pub async fn inspection_labels(
+    signing_host: &SigningHost,
+    entropy: &[u8],
+    owner: [u8; 32],
+) -> Result<crate::runtime::statement_allowance::inspection::AccountLabels, String> {
+    let _guard = signing_host.renewal.ledger_lock().lock().await;
+    let bytes = signing_host
+        .platform
+        .read_core_storage(CoreStorageKey::StatementRenewalTargets)
+        .await
+        .map_err(|err| format!("renewal ledger read failed: {}", err.reason))?;
+    let entries = bytes
+        .as_deref()
+        .map(decode_entries)
+        .transpose()?
+        .unwrap_or_default();
+    let mut labels = crate::runtime::statement_allowance::inspection::AccountLabels::new();
+    for entry in entries {
+        if entry.owner.is_some_and(|recorded| recorded != owner) {
+            continue;
+        }
+        let resolved = resolve_target(entropy, &signing_host.network_suffix, &entry.target)?;
+        let product = match entry.target {
+            StatementRenewalTarget::ProductStatementAllowance { product_id } => Some(product_id),
+            _ => None,
+        };
+        labels.insert(resolved.account_id, (product, resolved.label));
+    }
+    Ok(labels)
+}
+
 /// Record `targets` in the ledger under the active identity.
 pub async fn track(
     signing_host: &SigningHost,
@@ -342,6 +399,7 @@ pub async fn track(
 /// Reads storage alone. A host that has not unlocked an identity still gets
 /// the list, which is the case a scheduled task runs in: it wakes, asks what
 /// its finite slots are spent on, and decides whether to renew at all.
+#[cfg(any(test, not(target_arch = "wasm32")))]
 pub async fn list(
     signing_host: &SigningHost,
 ) -> Result<Vec<TrackedStatementRenewalTarget>, String> {
@@ -357,12 +415,14 @@ pub async fn list(
 /// Pairs with [`list`], which reports each entry's owner as stored: comparing
 /// the two is how a host tells the entries it will actually renew from the ones
 /// a pass will prune.
+#[cfg(any(test, not(target_arch = "wasm32")))]
 pub fn active_owner_key(signing_host: &SigningHost) -> Result<[u8; 32], String> {
     let entropy = signing_host.root_entropy().map_err(|err| err.to_string())?;
     owner_key(&entropy)
 }
 
 /// Stop renewing one fixed statement account for the active identity.
+#[cfg(not(target_arch = "wasm32"))]
 pub async fn untrack_account_for_signing_host(
     signing_host: &SigningHost,
     account_id: &[u8; 32],
@@ -382,6 +442,7 @@ pub async fn untrack_account_for_signing_host(
 ///
 /// A target is skipped rather than failing the pass: one unusable entry must
 /// not stop every other target from being renewed.
+#[cfg(any(test, not(target_arch = "wasm32")))]
 fn resolve_targets(
     entropy: &[u8],
     network_suffix: &str,
@@ -416,6 +477,7 @@ fn resolve_targets(
 /// The labels are logged here rather than only returned. Every step between this
 /// and the report can fail, and `run_tick` does not read the report at all, so
 /// the log is the one place a prune is recorded unconditionally.
+#[cfg(any(test, not(target_arch = "wasm32")))]
 async fn owned_targets(
     storage: &(impl CoreStorage + ?Sized),
     ledger_lock: &Mutex<()>,
@@ -445,6 +507,7 @@ async fn owned_targets(
 
 /// One renewal pass: resolve the ledger against the active session and renew
 /// every target for the current period.
+#[cfg(not(target_arch = "wasm32"))]
 pub async fn renew_now(
     services: &Arc<RuntimeServices>,
     signing_host: &SigningHost,
@@ -523,6 +586,7 @@ pub async fn renew_now(
 
 /// Spawn the periodic renewal loop; repeated calls are no-ops. The loop holds
 /// only weak references, so it exits when the owning runtime is dropped.
+#[cfg(not(target_arch = "wasm32"))]
 pub fn start_renewal_loop(services: &Arc<RuntimeServices>, signing_host: &Arc<SigningHost>) {
     if signing_host
         .renewal
@@ -553,6 +617,7 @@ pub fn start_renewal_loop(services: &Arc<RuntimeServices>, signing_host: &Arc<Si
     }));
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 async fn run_tick(services: &Arc<RuntimeServices>, signing_host: &SigningHost) {
     if signing_host.root_entropy().is_err() {
         debug!("skipping statement-store renewal tick; no active session");
@@ -569,6 +634,7 @@ async fn run_tick(services: &Arc<RuntimeServices>, signing_host: &SigningHost) {
 /// Split out from [`run_tick`] so the recording is reachable without a runtime: a
 /// loop that logged but forgot to record would leave a host unable to see
 /// exhaustion, and that is exactly the wiring worth a test.
+#[cfg(any(test, not(target_arch = "wasm32")))]
 fn absorb_tick(state: &RenewalState, result: Result<StatementRenewalReport, String>) {
     match result {
         Ok(report) => {

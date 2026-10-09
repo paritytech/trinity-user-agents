@@ -246,6 +246,10 @@ jobs:
         if: steps.version.outputs.proceed == 'true' && (contains(steps.version.outputs.packages, '@parity/truapi-host|') || contains(steps.version.outputs.packages, '@parity/truapi-provider|'))
         run: cargo install wasm-pack --version 0.14.0 --locked
 
+      - name: Install core WASM artifact tools
+        if: steps.version.outputs.proceed == 'true' && contains(steps.version.outputs.packages, '@parity/truapi-host|')
+        run: bash scripts/install-wasm-artifact-tools.sh
+
       - name: Build packages
         if: steps.version.outputs.proceed == 'true'
         run: |

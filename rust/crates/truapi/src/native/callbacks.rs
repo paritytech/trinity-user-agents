@@ -6,12 +6,12 @@ use truapi::v01;
 use crate::PairedSsoPeer;
 use crate::host_logic::worker::WorkerTransition;
 
+#[cfg(doc)]
+use super::NativeTrUApiHostRuntime;
 use super::config::ProductExecutionConfig;
 use super::errors::HostRejection;
 #[cfg(doc)]
 use crate::platform::CoreStorageKey;
-#[cfg(doc)]
-use super::NativeTrUApiHostRuntime;
 
 /// Callback surface that iOS and Android implement.
 ///
@@ -49,6 +49,13 @@ pub trait HostCallbacks: Send + Sync {
 
     /// Cancel a notification by id.
     fn cancel_notification(&self, id: u32) -> Result<(), HostRejection>;
+
+    /// Non-consuming, ordered activation batch for this execution's trusted scope.
+    /// Independent of receiving enrollment and OS permission prompts.
+    async fn activation_events(&self) -> Result<Vec<v01::NotificationActivation>, HostRejection>;
+
+    /// Acknowledge exactly one sequence in the same trusted execution scope.
+    async fn acknowledge_activation(&self, sequence: u64) -> Result<(), HostRejection>;
 
     /// Prompt the user for a device-level permission (camera, mic, ...)
     /// `product` requested; the host preserves whether approval applies once
@@ -114,6 +121,14 @@ pub trait HostCallbacks: Send + Sync {
     /// [`CoreStorageKey`].
     async fn core_storage_clear(&self, key: Vec<u8>) -> Result<(), HostRejection>;
 
+    /// Enumerate encoded keys in the existing core store. Hosts must report
+    /// unavailable enumeration as an error, never as an empty permission list.
+    async fn core_storage_keys(&self) -> Result<Vec<Vec<u8>>, HostRejection>;
+
+    /// A canonical decision changed. Refresh permission settings and invalidate
+    /// legacy one-use decisions for this product. Called on the process bridge.
+    fn permission_authorizations_changed(&self, product_id: String);
+
     /// Open a JSON-RPC connection for a chain. Return a host-assigned
     /// connection id, or `None` when unsupported.
     fn chain_connect(&self, genesis_hash: Vec<u8>) -> Result<Option<u32>, HostRejection>;
@@ -146,7 +161,13 @@ pub trait HostCallbacks: Send + Sync {
 
     /// Locale the host currently presents its interface in. The native shim
     /// emits this as the current item in its subscription stream.
-    fn current_locale(&self) -> Result<v01::HostLocaleSubscribeItem, HostRejection>;
+    fn current_locale(&self) -> Result<crate::latest::HostLocaleSubscribeItem, HostRejection>;
+
+    /// Convert UTC timestamps with the host's calendar and time-zone database.
+    async fn localize_timestamps(
+        &self,
+        request: crate::latest::HostLocaleLocalizeTimestampsRequest,
+    ) -> Result<crate::latest::HostLocaleLocalizeTimestampsResponse, HostRejection>;
 
     /// Answer a feature-support query.
     async fn feature_supported(

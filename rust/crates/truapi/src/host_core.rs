@@ -31,7 +31,6 @@ use tracing::{instrument, warn};
 use truapi::v01;
 use truapi::{CallContext, CancellationReason};
 
-use crate::truapi_core::TrUApiCore;
 use crate::frame::ProtocolMessage;
 use crate::host_internal::sso_messages::{RemoteMessage, SsoRequestOutcome};
 use crate::host_logic::worker::WorkerLedger;
@@ -45,6 +44,7 @@ use crate::runtime::{
 };
 use crate::subscription::{HostInitiatedSubscriptionManager, Spawner};
 use crate::transport::Transport;
+use crate::truapi_core::TrUApiCore;
 
 /// Outgoing frame sink owned by a host adapter.
 ///
@@ -318,6 +318,22 @@ impl PairingHostRuntime {
             self.pairing_host.clone(),
             product,
             ConnectionAdapters::from_services(&self.services),
+            sink,
+        )
+    }
+
+    /// Build one execution with local adapters and shared authentication/services.
+    pub fn product_runtime_with(
+        &self,
+        product: ProductContext,
+        adapters: ConnectionAdapters,
+        sink: Arc<dyn FrameSink>,
+    ) -> ProductRuntime {
+        ProductRuntime::new(
+            self.services.clone(),
+            self.pairing_host.clone(),
+            product,
+            adapters,
             sink,
         )
     }
@@ -602,22 +618,6 @@ impl SigningHostRuntime {
         self.signing_host.set_submit_preimages_locally(local);
     }
 
-    /// The product's hard-subtree public key, derived from the active session
-    /// root, or `None` while no session is active.
-    ///
-    /// A signing host holds the root, so it answers this locally where a
-    /// pairing host has to ask the Account Holder.
-    pub fn product_subtree_public_key(
-        &self,
-        product_id: &str,
-    ) -> Result<Option<[u8; 32]>, v01::GenericError> {
-        self.signing_host
-            .derive_subtree_public_key(product_id)
-            .map_err(|err| v01::GenericError {
-                reason: err.to_string(),
-            })
-    }
-
     /// Answer these resource tags as refused, replacing any earlier set.
     ///
     /// For test hosts only, with the `test-host` feature enabled.
@@ -792,9 +792,8 @@ impl SigningHostRuntime {
         )
     }
 
-    /// Build one product connection with adapters scoped to one native
-    /// executable while sharing this runtime's authentication and services.
-    #[cfg(not(target_arch = "wasm32"))]
+    /// Build one product connection with execution-local adapters while
+    /// sharing this runtime's authentication and services.
     pub fn product_runtime_with(
         &self,
         product: ProductContext,
@@ -899,6 +898,73 @@ impl SigningHostRuntime {
             .map_err(ring_vrf_admin_error)
     }
 
+    /// Read the active local session's X25519 chat identity private key.
+    #[instrument(skip_all, fields(runtime.method = "signing_host_runtime.session_chat_identity_key"))]
+    pub fn session_chat_identity_key(&self) -> Option<[u8; 32]> {
+        self.signing_host
+            .session_state()
+            .current()?
+            .identity_chat_private_key
+    }
+
+    /// Read this browser's X25519 encryption secret, generating and persisting
+    /// it on first read.
+    #[instrument(skip_all, fields(runtime.method = "signing_host_runtime.device_encryption_key"))]
+    pub async fn device_encryption_key(&self) -> Result<[u8; 32], v01::GenericError> {
+        self.services
+            .device_encryption_secret()
+            .await
+            .map_err(|reason| v01::GenericError { reason })
+    }
+
+    /// Resolve `product_id`'s hard-subtree public key from the active local
+    /// signing session.
+    #[instrument(skip_all, fields(runtime.method = "signing_host_runtime.product_subtree_public_key"))]
+    pub async fn product_subtree_public_key(
+        &self,
+        product_id: &str,
+        timeout_ms: Option<u32>,
+    ) -> Result<Option<[u8; 32]>, v01::GenericError> {
+        product_subtree_public_key(self.signing_host.as_ref(), product_id, timeout_ms).await
+    }
+
+    /// Read a stored permission authorization status without prompting.
+    #[instrument(skip_all, fields(runtime.method = "signing_host_runtime.permission_authorization_status", product_id = %product_id))]
+    pub async fn permission_authorization_status(
+        &self,
+        product_id: &str,
+        request: PermissionAuthorizationRequest,
+    ) -> Result<PermissionAuthorizationStatus, v01::GenericError> {
+        self.product_admin(product_context(product_id)?)
+            .permission_authorization_status(request)
+            .await
+    }
+
+    /// Read stored permission authorization statuses without prompting.
+    #[instrument(skip_all, fields(runtime.method = "signing_host_runtime.permission_authorization_statuses", product_id = %product_id))]
+    pub async fn permission_authorization_statuses(
+        &self,
+        product_id: &str,
+        requests: Vec<PermissionAuthorizationRequest>,
+    ) -> Result<Vec<PermissionAuthorizationStatus>, v01::GenericError> {
+        self.product_admin(product_context(product_id)?)
+            .permission_authorization_statuses(requests)
+            .await
+    }
+
+    /// Update one stored permission authorization status.
+    #[instrument(skip_all, fields(runtime.method = "signing_host_runtime.set_permission_authorization_status", product_id = %product_id))]
+    pub async fn set_permission_authorization_status(
+        &self,
+        product_id: &str,
+        request: PermissionAuthorizationRequest,
+        status: PermissionAuthorizationStatus,
+    ) -> Result<(), v01::GenericError> {
+        self.product_admin(product_context(product_id)?)
+            .set_permission_authorization_status(request, status)
+            .await
+    }
+
     /// Activate a wallet-local session from host-held secret material (raw
     /// BIP-39 entropy).
     #[instrument(skip_all, fields(runtime.method = "signing_host_runtime.activate_local_session"))]
@@ -925,6 +991,65 @@ impl SigningHostRuntime {
             .map_err(|err| v01::GenericError {
                 reason: err.to_string(),
             })
+    }
+
+    /// Capture the local activation fence for a multi-step identity operation.
+    pub fn local_identity_context(
+        &self,
+    ) -> Result<crate::runtime::LocalIdentityContext, v01::GenericError> {
+        self.signing_host.local_identity_context()
+    }
+
+    /// Sign a backend challenge as the active UID account, with the exact `{}` token body.
+    pub fn local_identity_auth_proof(
+        &self,
+        activation_id: &str,
+        challenge: &[u8],
+    ) -> Result<Vec<u8>, v01::GenericError> {
+        self.signing_host
+            .local_identity_auth_proof(activation_id, challenge)
+    }
+
+    /// Build the backend registration JSON using native proofs and Asset Hub time.
+    pub async fn local_lite_registration_body(
+        &self,
+        activation_id: &str,
+        username_base: &str,
+        verifier: [u8; 32],
+    ) -> Result<String, v01::GenericError> {
+        self.signing_host
+            .local_lite_registration_body(activation_id, username_base, verifier)
+            .await
+    }
+
+    /// Refresh authoritative metadata, rejecting a result for a replaced activation.
+    pub async fn refresh_local_identity_for(
+        &self,
+        activation_id: &str,
+    ) -> Result<crate::runtime::LocalIdentity, v01::GenericError> {
+        self.signing_host
+            .refresh_local_identity(activation_id)
+            .await
+    }
+
+    /// Resolve and install the active local UID account's on-chain identity.
+    pub async fn refresh_local_identity(
+        &self,
+    ) -> Result<crate::runtime::LocalIdentity, v01::GenericError> {
+        let context = self.local_identity_context()?;
+        self.refresh_local_identity_for(&context.activation_id)
+            .await
+    }
+
+    /// Inspect current wallet allowances without allocating or mutating identity.
+    pub async fn get_wallet_allowance_snapshot(
+        &self,
+        activation_id: &str,
+        product_ids: Vec<String>,
+    ) -> Result<crate::runtime::WalletAllowanceSnapshot, v01::GenericError> {
+        self.signing_host
+            .get_wallet_allowance_snapshot(activation_id, product_ids)
+            .await
     }
 
     /// Answer a pairing host's handshake deeplink and serve the resulting SSO
@@ -1017,10 +1142,7 @@ impl SigningHostRuntime {
     /// even while that request is still being answered by another call, and a
     /// withdrawn request is answered `Ignored`.
     #[instrument(skip_all, fields(runtime.method = "signing_host_runtime.answer_sso_request"))]
-    pub async fn answer_sso_request(
-        &self,
-        message: RemoteMessage,
-    ) -> SsoRequestOutcome {
+    pub async fn answer_sso_request(&self, message: RemoteMessage) -> SsoRequestOutcome {
         let service = SigningHostSsoService::new(self.signing_host.clone());
         match service.answer(message).await {
             Dispatch::Response(answer) => SsoRequestOutcome::Response {
@@ -1132,8 +1254,8 @@ impl SigningHostRuntime {
 }
 
 /// Adapters scoped to one product connection: the platform serving its
-/// syscalls, the optional native Chat adapter, and the connection's
-/// host-fed action streams. Non-native connections use [`Self::from_services`].
+/// syscalls, optional capability adapters, and the connection's host-fed
+/// action streams. Unscoped connections use [`Self::from_services`].
 ///
 /// `pocket_platform` is the same kind of optional adapter for the card
 /// collection, and `game_platform` for the product's game reminder.
@@ -1141,6 +1263,7 @@ impl SigningHostRuntime {
 pub struct ConnectionAdapters {
     pub platform: Arc<dyn Platform>,
     pub chat_platform: Option<Arc<dyn ChatPlatform>>,
+    pub contacts_platform: Option<Arc<dyn ContactsPlatform>>,
     /// Live OS permission state for this connection. It travels here rather
     /// than on the host runtime because a native host builds one platform per
     /// product execution, so the object that reports OS state has to be the
@@ -1162,6 +1285,7 @@ impl ConnectionAdapters {
         Self {
             platform: services.platform.clone(),
             chat_platform: services.chat_platform.clone(),
+            contacts_platform: services.contacts_platform(),
             permission_status: services.permission_status_host(),
             permission_grants: Arc::default(),
             chat: Arc::new(ActionChannel::chat()),
@@ -2192,7 +2316,7 @@ mod tests {
     }
 
     #[test]
-    fn network_access_trusted_products_ignore_recorded_denials() {
+    fn network_access_trusted_products_honor_recorded_denials() {
         futures::executor::block_on(async {
             let platform = Arc::new(StubPlatform::default());
             let (config, _) = runtime_config("peopl.dot");
@@ -2231,7 +2355,7 @@ mod tests {
                         granted: true
                     }),
                     permissions::RemotePermissionResponse::V1(RemotePermissionResponse {
-                        granted: true
+                        granted: false
                     }),
                     vec![],
                 )

@@ -1,3 +1,4 @@
+#![cfg_attr(not(feature = "host-api"), no_std)]
 #![allow(
     clippy::double_must_use,
     reason = "async-trait generates must_use futures for async trait methods"
@@ -11,9 +12,9 @@
 //!
 //! Concrete wire types live in per-version modules. Versioned envelopes are in
 //! [`versioned`].
-//! Async API traits use the `async_trait` macro so their concise `async fn` methods
-//! still guarantee `Send` futures. Implementations must annotate their impl
-//! blocks with `#[truapi::async_trait]`.
+//! Async API traits (feature `host-api`) use the `async_trait` macro so their
+//! concise `async fn` methods still guarantee `Send` futures. Implementations
+//! must annotate their impl blocks with `#[truapi::async_trait]`.
 //!
 //! The runtime: hosts instantiate a role runtime around a `platform::Platform`
 //! implementation, then create product-scoped `ProductRuntime` endpoints that
@@ -31,21 +32,35 @@
 // `truapi`, the way code outside it does.
 extern crate self as truapi;
 
-use core::convert::Infallible;
-use core::fmt;
-use core::future::Future;
-use core::mem;
-use core::pin::Pin;
-use core::task::{Context, Poll, Waker};
-use core::time::Duration;
-use std::sync::Arc;
-use std::sync::Mutex;
+extern crate alloc;
 
+use alloc::string::String;
+#[cfg(feature = "host-api")]
+use alloc::{boxed::Box, format, vec::Vec};
+use core::convert::Infallible;
+#[cfg(feature = "host-api")]
+use core::fmt;
+#[cfg(feature = "host-api")]
+use core::future::Future;
+#[cfg(feature = "host-api")]
+use core::mem;
+#[cfg(feature = "host-api")]
+use core::pin::Pin;
+#[cfg(feature = "host-api")]
+use core::task::{Context, Poll, Waker};
+#[cfg(feature = "host-api")]
+use core::time::Duration;
+#[cfg(feature = "host-api")]
+use std::sync::{Arc, Mutex};
+
+#[cfg(feature = "host-api")]
 use futures::Stream;
 use parity_scale_codec::{Decode, Encode};
 
+#[cfg(feature = "host-api")]
 pub use async_trait::async_trait;
 
+#[cfg(feature = "host-api")]
 pub mod api;
 pub mod v01;
 pub mod v02;
@@ -188,6 +203,13 @@ pub mod latest {
         LatestOf<versioned::local_storage::HostLocalStorageReadError>;
     /// Locale the host currently presents its interface in.
     pub type HostLocaleSubscribeItem = LatestOf<versioned::locale::HostLocaleSubscribeItem>;
+    /// Batched host-local calendar conversion request.
+    pub type HostLocaleLocalizeTimestampsRequest =
+        LatestOf<versioned::locale::HostLocaleLocalizeTimestampsRequest>;
+    /// Batched host-local calendar conversion result.
+    pub type HostLocaleLocalizeTimestampsResponse =
+        LatestOf<versioned::locale::HostLocaleLocalizeTimestampsResponse>;
+    pub use crate::v02::HostLocaleLocalizedTimestamp;
     /// Navigation request error.
     pub type HostNavigateToError = LatestOf<versioned::system::HostNavigateToError>;
     /// The calling product's Pocket cards.
@@ -318,17 +340,20 @@ pub type FrameworkOnlyError = CallError<Infallible>;
 /// when a runtime explicitly cancels it, or when an attached timeout elapses.
 /// Subscription runtimes can cancel this token when the peer sends `_stop` or
 /// disconnects.
+#[cfg(feature = "host-api")]
 #[derive(Clone, Default)]
 pub struct CancellationToken {
     inner: Arc<CancellationInner>,
 }
 
 #[derive(Default)]
+#[cfg(feature = "host-api")]
 struct CancellationInner {
     state: Mutex<CancellationState>,
 }
 
 #[derive(Default)]
+#[cfg(feature = "host-api")]
 struct CancellationState {
     reason: Option<CancellationReason>,
     next_id: u64,
@@ -336,6 +361,7 @@ struct CancellationState {
 }
 
 /// Cause attached to a cancelled call.
+#[cfg(feature = "host-api")]
 #[derive(Debug, Clone, PartialEq, Eq, derive_more::Display)]
 pub enum CancellationReason {
     /// The caller or runtime explicitly cancelled the call.
@@ -350,6 +376,7 @@ pub enum CancellationReason {
 }
 
 /// Render a timeout as whole seconds when possible, milliseconds otherwise.
+#[cfg(feature = "host-api")]
 fn format_timeout(timeout: &Duration) -> String {
     if timeout.subsec_millis() == 0 {
         format!("{}s", timeout.as_secs())
@@ -359,11 +386,13 @@ fn format_timeout(timeout: &Duration) -> String {
 }
 
 /// Future resolved when a [`CancellationToken`] is cancelled.
+#[cfg(feature = "host-api")]
 pub struct CancellationFuture {
     inner: Arc<CancellationInner>,
     id: Option<u64>,
 }
 
+#[cfg(feature = "host-api")]
 impl fmt::Debug for CancellationToken {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("CancellationToken")
@@ -372,6 +401,7 @@ impl fmt::Debug for CancellationToken {
     }
 }
 
+#[cfg(feature = "host-api")]
 impl CancellationToken {
     /// Mark the token as cancelled.
     pub fn cancel(&self) {
@@ -417,6 +447,7 @@ impl CancellationToken {
     }
 }
 
+#[cfg(feature = "host-api")]
 impl Future for CancellationFuture {
     type Output = CancellationReason;
 
@@ -448,6 +479,7 @@ impl Future for CancellationFuture {
     }
 }
 
+#[cfg(feature = "host-api")]
 impl Drop for CancellationFuture {
     fn drop(&mut self) {
         let Some(id) = self.id.take() else {
@@ -462,6 +494,7 @@ impl Drop for CancellationFuture {
 }
 
 /// Ambient context passed to every trait method.
+#[cfg(feature = "host-api")]
 #[derive(Clone, Default)]
 pub struct CallContext {
     request_id: String,
@@ -469,6 +502,7 @@ pub struct CallContext {
     timeout: Option<Duration>,
 }
 
+#[cfg(feature = "host-api")]
 impl CallContext {
     /// Construct a context bound to the given `request_id` with a fresh cancellation token.
     pub fn with_request_id(request_id: String) -> Self {
@@ -516,10 +550,12 @@ impl CallContext {
 /// ends it: the runtime encodes that value as the `_interrupt` payload and
 /// polls no further. A stream that ends without an `Err` interrupts with
 /// `Ok(())`, which the peer reads as a normal completion.
+#[cfg(feature = "host-api")]
 pub struct Subscription<Item, Interrupt> {
     inner: Pin<Box<dyn Stream<Item = Result<Item, Interrupt>> + Send>>,
 }
 
+#[cfg(feature = "host-api")]
 impl<Item, Interrupt> Stream for Subscription<Item, Interrupt> {
     type Item = Result<Item, Interrupt>;
 
@@ -528,6 +564,7 @@ impl<Item, Interrupt> Stream for Subscription<Item, Interrupt> {
     }
 }
 
+#[cfg(feature = "host-api")]
 impl<Item, Interrupt> Subscription<Item, Interrupt> {
     /// Creates a subscription from a stream of items and at most one
     /// terminating interrupt.
@@ -626,6 +663,7 @@ runtime_items! {
         AnnouncedPairing, DevicePairingObserver, MAX_PAIRING_METADATA_CHARS, PairedSsoPeer,
         PairingProposal, PairingProposalMetadata, ResponderExit,
     };
+    pub use runtime::{LocalIdentity, LocalIdentityContext, WalletAllowanceSnapshot};
 
     #[cfg(not(target_arch = "wasm32"))]
     pub use native::{
@@ -643,7 +681,7 @@ runtime_items! {
     };
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "host-api"))]
 mod tests {
     use super::*;
 

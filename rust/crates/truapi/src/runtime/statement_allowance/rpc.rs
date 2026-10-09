@@ -16,10 +16,11 @@ use super::StatementAllowanceError;
 /// Timeout for an allowance registration extrinsic to reach a block.
 const SUBMIT_TIMEOUT: Duration = Duration::from_secs(120);
 
-/// Error from the native JSON-RPC surface used by allowance allocation.
+/// Error from the host-backed JSON-RPC surface used by allowance allocation.
 #[derive(Debug, Error)]
 pub enum RpcError {
     /// Opening a direct RPC URL failed.
+    #[cfg(not(target_arch = "wasm32"))]
     #[error("connect {url}: {source}")]
     Connect {
         /// RPC URL.
@@ -49,6 +50,9 @@ pub enum RpcError {
     /// `chain_getFinalizedHead` did not return a hash string.
     #[error("chain_getFinalizedHead returned non-string")]
     FinalizedHeadNotString,
+    /// A read-only snapshot response was incomplete or malformed.
+    #[error("invalid snapshot RPC response: {0}")]
+    InvalidSnapshot(String),
     /// Extrinsic status subscription ended before inclusion.
     #[error("author_submitAndWatchExtrinsic subscription ended")]
     SubmitSubscriptionEnded,
@@ -125,6 +129,28 @@ impl RpcClient {
         at: &str,
     ) -> Result<Option<Vec<u8>>, StatementAllowanceError> {
         self.get_storage_maybe_at(key, Some(at)).await
+    }
+
+    /// Read a complete storage batch at one block, rejecting ambiguous absence.
+    ///
+    /// Unlike the allocator's best-effort reader, every requested key must be
+    /// explicitly present (with a value or null) exactly once in the response.
+    pub async fn get_storage_many_at(
+        &self,
+        keys: &[Vec<u8>],
+        at: &str,
+    ) -> Result<Vec<Option<Vec<u8>>>, StatementAllowanceError> {
+        if keys.is_empty() {
+            return Ok(Vec::new());
+        }
+        let hex_keys: Vec<String> = keys
+            .iter()
+            .map(|key| format!("0x{}", hex::encode(key)))
+            .collect();
+        let response = self
+            .call("state_queryStorageAt", json!([hex_keys, at]))
+            .await?;
+        decode_storage_batch_at(&hex_keys, at, response)
     }
 
     async fn get_storage_maybe_at(
@@ -260,19 +286,23 @@ enum ExtrinsicStatus {
     Pending,
 }
 
+/// Classify one legacy `author_extrinsicUpdate` payload.
+///
+/// `TransactionStatus` serializes its unit variants (`future`, `ready`,
+/// `dropped`, `invalid`) as bare strings and the rest as single-key objects.
 fn extrinsic_status(status: &Value) -> ExtrinsicStatus {
+    if let Some(unit) = status.as_str() {
+        return match unit {
+            "dropped" | "invalid" => ExtrinsicStatus::Rejected(unit.to_string()),
+            _ => ExtrinsicStatus::Pending,
+        };
+    }
     for key in ["finalized", "inBlock"] {
         if let Some(hash) = status.get(key).and_then(Value::as_str) {
             return ExtrinsicStatus::Included(hash.to_string());
         }
     }
-    for key in [
-        "invalid",
-        "dropped",
-        "usurped",
-        "retracted",
-        "finalityTimeout",
-    ] {
+    for key in ["usurped", "retracted", "finalityTimeout"] {
         if status.get(key).is_some() {
             return ExtrinsicStatus::Rejected(key.to_string());
         }
@@ -294,6 +324,52 @@ fn value_to_params(value: Value) -> Result<RpcParams, StatementAllowanceError> {
 fn decode_hex(value: &str) -> Result<Vec<u8>, StatementAllowanceError> {
     hex::decode(value.strip_prefix("0x").unwrap_or(value))
         .map_err(|err| RpcError::StorageHex(err).into())
+}
+
+fn decode_storage_batch_at(
+    keys: &[String],
+    at: &str,
+    response: Value,
+) -> Result<Vec<Option<Vec<u8>>>, StatementAllowanceError> {
+    let invalid = |reason: &str| RpcError::InvalidSnapshot(reason.to_string());
+    let blocks = response
+        .as_array()
+        .ok_or_else(|| invalid("expected change sets"))?;
+    if blocks.len() != 1 || blocks[0].get("block").and_then(Value::as_str) != Some(at) {
+        return Err(invalid("change set does not name the requested block").into());
+    }
+    let changes = blocks[0]
+        .get("changes")
+        .and_then(Value::as_array)
+        .ok_or_else(|| invalid("missing storage changes"))?;
+    let mut found = HashMap::with_capacity(keys.len());
+    for change in changes {
+        let pair = change
+            .as_array()
+            .ok_or_else(|| invalid("invalid storage change"))?;
+        if pair.len() != 2 {
+            return Err(invalid("invalid storage change length").into());
+        }
+        let key = pair[0]
+            .as_str()
+            .ok_or_else(|| invalid("invalid storage key"))?;
+        if !keys.iter().any(|expected| expected == key) || found.contains_key(key) {
+            return Err(invalid("unexpected or duplicate storage key").into());
+        }
+        let value = match &pair[1] {
+            Value::Null => None,
+            Value::String(value) if value.starts_with("0x") => Some(decode_hex(value)?),
+            _ => return Err(invalid("storage value is neither hex nor null").into()),
+        };
+        found.insert(key, value);
+    }
+    keys.iter()
+        .map(|key| {
+            found
+                .remove(key.as_str())
+                .ok_or_else(|| invalid("incomplete storage batch").into())
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -355,6 +431,10 @@ pub mod testing {
         let params: serde_json::Value =
             serde_json::from_str(params).expect("batched read params are JSON");
         let keys = params[0].as_array().expect("batched read names its keys");
+        let block = params
+            .get(1)
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("0xscripted");
         assert!(
             responses.len() >= keys.len(),
             "unscripted batched read of {} keys",
@@ -368,7 +448,7 @@ pub mod testing {
                 serde_json::json!([key, value])
             })
             .collect();
-        serde_json::json!([{ "block": "0xscripted", "changes": changes }]).to_string()
+        serde_json::json!([{ "block": block, "changes": changes }]).to_string()
     }
 
     fn params_json(params: Option<Box<RawValue>>) -> String {
@@ -444,7 +524,30 @@ mod tests {
     use serde_json::json;
 
     use super::testing::ScriptedRpc;
-    use super::{ExtrinsicStatus, HostRpcClient, RpcClient, extrinsic_status};
+    use super::{
+        ExtrinsicStatus, HostRpcClient, RpcClient, decode_storage_batch_at, extrinsic_status,
+    };
+
+    #[test]
+    fn snapshot_batches_distinguish_explicit_absence_from_incomplete_responses() {
+        let keys = vec!["0x01".to_string(), "0x02".to_string()];
+        let complete = json!([{ "block": "0xat", "changes": [["0x02", "0x"], ["0x01", null]] }]);
+        assert_eq!(
+            decode_storage_batch_at(&keys, "0xat", complete).unwrap(),
+            vec![None, Some(Vec::new())],
+        );
+        for response in [
+            json!([]),
+            json!([{ "block": "0xat", "changes": [["0x01", null]] }]),
+            json!([{ "block": "0xother", "changes": [["0x01", null], ["0x02", null]] }]),
+            json!([{ "block": "0xat", "changes": [["0x01", null], ["0x01", null], ["0x02", null]] }]),
+            json!([{ "block": "0xat", "changes": [["0x01", false], ["0x02", null]] }]),
+            json!([{ "block": "0xat", "changes": [["0x01", "0xzz"], ["0x02", null]] }]),
+            json!([{ "block": "0xat", "changes": [["0x01", null], ["0x02", null], ["0x03", null]] }]),
+        ] {
+            assert!(decode_storage_batch_at(&keys, "0xat", response).is_err());
+        }
+    }
 
     #[test]
     fn in_block_status_completes_submission() {
@@ -463,14 +566,14 @@ mod tests {
     #[test]
     fn terminal_pool_statuses_reject_the_submission() {
         let statuses: Vec<ExtrinsicStatus> = [
-            "invalid",
-            "dropped",
-            "usurped",
-            "retracted",
-            "finalityTimeout",
+            json!("invalid"),
+            json!("dropped"),
+            json!({"usurped": "0x1234"}),
+            json!({"retracted": "0x1234"}),
+            json!({"finalityTimeout": "0x1234"}),
         ]
-        .into_iter()
-        .map(|key| extrinsic_status(&json!({key: "0x1234"})))
+        .iter()
+        .map(extrinsic_status)
         .collect();
 
         assert_eq!(
@@ -483,6 +586,21 @@ mod tests {
                 ExtrinsicStatus::Rejected("finalityTimeout".to_string()),
             ],
         );
+    }
+
+    #[test]
+    fn progress_statuses_keep_waiting() {
+        for status in [
+            json!("future"),
+            json!("ready"),
+            json!({"broadcast": ["12D3KooW"]}),
+        ] {
+            assert_eq!(
+                extrinsic_status(&status),
+                ExtrinsicStatus::Pending,
+                "{status}"
+            );
+        }
     }
 
     #[test]

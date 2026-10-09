@@ -97,9 +97,21 @@ make playground   # rebuild the playground against the refreshed snapshot
 make test     # Rust + TypeScript client tests
 make check    # full suite: build, fmt, clippy, test, TS tests, playground build + lint
 ```
+
+To apply the same Rust formatter as CI, run from the repository root:
+
+```bash
+cargo +"$(cat nightly-toolchain)" fmt --all
+```
+
 Every target that compiles the `truapi` runtime depends on `check-generated`, so a
 missing generated file names itself and points at `make codegen` instead of
 failing inside rustc.
+
+The codegen integration test runs the generator twice to check deterministic
+output. Generated callback contracts are exercised by the Rust/WASM builds,
+TypeScript consumers, and host runtime tests, rather than checked-in copies of
+generated source.
 
 ## Pull requests
 

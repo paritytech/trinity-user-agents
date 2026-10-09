@@ -144,6 +144,7 @@ pub fn generate_wasm_bridge(
 
 struct BridgeCtx<'a> {
     api_types: BTreeMap<&'a str, &'a TypeDef>,
+    api_type_paths: &'a BTreeMap<String, String>,
     codec_types: BTreeSet<&'a str>,
     local_types: BTreeSet<&'a str>,
     local_codec_types: BTreeSet<&'a str>,
@@ -170,6 +171,7 @@ impl<'a> BridgeCtx<'a> {
         let local_codec_types = collect_local_bridge_payload_types(definition);
         Self {
             api_types,
+            api_type_paths: &definition.api_type_paths,
             codec_types,
             local_types,
             local_codec_types,
@@ -531,7 +533,11 @@ fn rust_type(ty: &TypeRef, ctx: &BridgeCtx<'_>) -> Result<String> {
         )),
         TypeRef::Named { name, args } if ctx.api_types.contains_key(name.as_str()) => {
             if args.is_empty() {
-                Ok(format!("v01::{name}"))
+                Ok(match ctx.api_type_paths.get(name) {
+                    Some(path) if path.starts_with("truapi::v01::") => format!("v01::{name}"),
+                    Some(path) => path.clone(),
+                    None => format!("v01::{name}"),
+                })
             } else {
                 bail!("generic API type `{name}` is not supported in wasm bridge")
             }

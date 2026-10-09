@@ -1,4 +1,5 @@
 import type { RequiredHostCallbacks } from "./generated/host-callbacks.js";
+import { localizeTimestamps } from "./locale.js";
 
 /** `HostCallbacks` with every optional member required, for exhaustive test fixtures. */
 export type CompleteHostCallbacks = RequiredHostCallbacks;
@@ -20,6 +21,12 @@ export function makeHostCallbacks(
     notifications: {
       pushNotification: async () => ({ id: 0 }),
       cancelNotification: async () => {},
+      activationEvents: async () => {
+        throw new Error("notification activation is unsupported");
+      },
+      acknowledgeActivation: async () => {
+        throw new Error("notification activation is unsupported");
+      },
     },
     permissions: {
       devicePermission: async () => "Deny",
@@ -53,7 +60,7 @@ export function makeHostCallbacks(
       async *lookupPreimage() {},
     },
     theme: { async *subscribeTheme() {} },
-    locale: { async *subscribeLocale() {} },
+    locale: { async *subscribeLocale() {}, localizeTimestamps },
     chain: {
       connect: async () => ({
         send() {},

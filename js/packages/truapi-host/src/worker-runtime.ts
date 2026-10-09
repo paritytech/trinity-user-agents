@@ -24,12 +24,18 @@ import {
 } from "./worker-permission-authorization.js";
 import type {
   WasmModuleShape,
+  WorkerHostRuntime,
   WorkerPairingHostRuntime,
-  WorkerSigningHostRuntime,
   WorkerProductRuntime,
+  WorkerSigningHostRuntime,
   WorkerTransition,
 } from "./wasm-module.js";
 import { errorMessage } from "./error.js";
+import { resolveLocalIdentity } from "./worker-local-identity.js";
+import {
+  validateAllowanceProductIds,
+  validateWalletAllowanceSnapshot,
+} from "./wallet-allowances.js";
 import {
   CHAT_ACTION_ENTRY_POINT,
   RENDERER_ACTION_ENTRY_POINT,
@@ -82,6 +88,7 @@ const chainResponseListeners = new Map<number, (json: string) => void>();
 function callbackRequest(
   name: CallbackName,
   args: readonly unknown[],
+  coreId?: number,
 ): Promise<unknown> {
   return new Promise((resolve, reject) => {
     const requestId = ++nextRequestId;
@@ -89,7 +96,13 @@ function callbackRequest(
       if (r.ok) resolve(r.value);
       else reject(new Error(r.error));
     });
-    postToMain({ kind: "callbackRequest", requestId, name, args });
+    postToMain({
+      kind: "callbackRequest",
+      requestId,
+      name,
+      args,
+      ...(coreId === undefined ? {} : { coreId }),
+    });
   });
 }
 
@@ -98,13 +111,20 @@ function startSubscription<T>(
   payload: Uint8Array | string | null,
   sendItem: (value: T) => void,
   sendError: (error: GenericError) => void,
+  coreId?: number,
 ): () => void {
   const subId = ++nextSubId;
   subscriptionListeners.set(subId, {
     sendItem: sendItem as (value: unknown) => void,
     sendError: (error) => sendError({ reason: error }),
   });
-  postToMain({ kind: "subscriptionStart", subId, name, payload });
+  postToMain({
+    kind: "subscriptionStart",
+    subId,
+    name,
+    payload,
+    ...(coreId === undefined ? {} : { coreId }),
+  });
   return () => {
     subscriptionListeners.delete(subId);
     postToMain({ kind: "subscriptionStop", subId });
@@ -171,12 +191,16 @@ function chainConnect(
 }
 
 /** Build the host-level callback object passed to the WASM runtime. */
-function buildRawCallbacks(capabilities: OptionalCapabilities) {
+function buildRawCallbacks(
+  capabilities: OptionalCapabilities,
+  coreId?: number,
+) {
   return {
     ...createWorkerRawCallbacks(
       {
-        callbackRequest,
-        startSubscription,
+        callbackRequest: (name, args) => callbackRequest(name, args, coreId),
+        startSubscription: (name, payload, sendItem, sendError) =>
+          startSubscription(name, payload, sendItem, sendError, coreId),
         chainConnect,
       },
       capabilities,
@@ -590,7 +614,7 @@ function buildCoreCallbacks(coreId: number) {
   };
 }
 
-let runtime: WorkerPairingHostRuntime | null = null;
+let runtime: WorkerHostRuntime | null = null;
 const cores = new Map<number, WorkerProductRuntime>();
 // Outstanding receiveFrame calls per core. wasm-bindgen holds a borrow of the
 // core for the whole duration of an async method, so `free()` throws while one
@@ -599,6 +623,127 @@ const inFlightFrames = new Map<number, Set<Promise<void>>>();
 /** Live render subscriptions, keyed by main-thread render id. */
 const renders: RenderSubscriptions = new Map();
 let wasm: WasmModuleShape | null = null;
+let identityAbort: AbortController | null = null;
+const identityOperations = new Set<Promise<void>>();
+let allowanceNetworkSuffix: string | null = null;
+let allowanceGeneration = 0;
+const allowanceOperations = new Set<Promise<void>>();
+
+function handleWalletAllowanceSnapshot(
+  requestId: number,
+  input: string[],
+): void {
+  const rt = runtime;
+  const generation = allowanceGeneration;
+  const operation = (async () => {
+    try {
+      if (!rt || !isSigningRuntime(rt) || allowanceNetworkSuffix === null) {
+        throw new Error(
+          "wallet allowance inspection requires a signing runtime",
+        );
+      }
+      const productIds = validateAllowanceProductIds(input);
+      const context = rt.localIdentityContext();
+      const snapshot = await rt.getWalletAllowanceSnapshot(
+        context.activationId,
+        productIds,
+      );
+      if (
+        runtime !== rt ||
+        generation !== allowanceGeneration ||
+        rt.localIdentityContext().activationId !== context.activationId
+      ) {
+        throw new Error(
+          "local identity activation changed during allowance inspection",
+        );
+      }
+      validateWalletAllowanceSnapshot(
+        snapshot,
+        context.identityAccountId,
+        allowanceNetworkSuffix,
+        productIds,
+      );
+      postToMain({
+        kind: "walletAllowanceSnapshotResponse",
+        requestId,
+        ok: true,
+        snapshot,
+      });
+    } catch (error) {
+      postToMain({
+        kind: "walletAllowanceSnapshotResponse",
+        requestId,
+        ok: false,
+        error: errorMessage(error),
+      });
+    }
+  })();
+  allowanceOperations.add(operation);
+  void operation.finally(() => allowanceOperations.delete(operation));
+}
+
+function handleLocalIdentity(
+  requestId: number,
+  registration?: { baseUsername: string; identityBackendBaseUrl: string },
+): void {
+  const rt = runtime;
+  if (!rt || !isSigningRuntime(rt) || identityAbort) {
+    postToMain({
+      kind: "localIdentityResponse",
+      requestId,
+      ok: false,
+      error: identityAbort
+        ? "local identity operation already in progress"
+        : "signing runtime is not active",
+    });
+    return;
+  }
+  const controller = new AbortController();
+  identityAbort = controller;
+  const operation = (async () => {
+    try {
+      const identity = await resolveLocalIdentity(
+        rt,
+        controller.signal,
+        registration,
+        (progress) => {
+          if (controller.signal.aborted || identityAbort !== controller) return;
+          postToMain({ kind: "localIdentityProgress", requestId, progress });
+        },
+      );
+      controller.signal.throwIfAborted();
+      postToMain({
+        kind: "localIdentityResponse",
+        requestId,
+        ok: true,
+        identity,
+      });
+    } catch (error) {
+      postToMain({
+        kind: "localIdentityResponse",
+        requestId,
+        ok: false,
+        error: errorMessage(error),
+      });
+    } finally {
+      if (identityAbort === controller) identityAbort = null;
+    }
+  })();
+  identityOperations.add(operation);
+  void operation.finally(() => identityOperations.delete(operation));
+}
+
+function isPairingRuntime(
+  candidate: WorkerHostRuntime,
+): candidate is WorkerPairingHostRuntime {
+  return "cancelPairing" in candidate;
+}
+
+function isSigningRuntime(
+  candidate: WorkerHostRuntime,
+): candidate is WorkerSigningHostRuntime {
+  return "activateLocalSession" in candidate;
+}
 
 (async () => {
   try {
@@ -652,6 +797,10 @@ ctx.addEventListener("message", (ev: MessageEvent<MainToWorker>) => {
             });
             break;
           }
+          const hostConfig = msg.hostConfig as { networkSuffix?: unknown };
+          if (typeof hostConfig?.networkSuffix === "string") {
+            allowanceNetworkSuffix = hostConfig.networkSuffix;
+          }
           runtime = new SigningRuntime(
             buildRawCallbacks(msg.capabilities),
             msg.hostConfig,
@@ -680,6 +829,9 @@ ctx.addEventListener("message", (ev: MessageEvent<MainToWorker>) => {
         const core = runtime.productRuntime(
           msg.product,
           buildCoreCallbacks(msg.coreId),
+          msg.capabilities === undefined
+            ? undefined
+            : buildRawCallbacks(msg.capabilities, msg.coreId),
         );
         cores.set(msg.coreId, core);
         postToMain({ kind: "coreReady", coreId: msg.coreId });
@@ -698,10 +850,13 @@ ctx.addEventListener("message", (ev: MessageEvent<MainToWorker>) => {
       void handleFrame(msg.coreId, msg.bytes);
       break;
     case "disconnectSession":
+      identityAbort?.abort(new Error("local identity session disconnected"));
       void handleDisconnectSession(msg.requestId);
       break;
     case "cancelPairing":
-      runtime?.cancelPairing();
+      if (runtime && isPairingRuntime(runtime)) {
+        runtime.cancelPairing();
+      }
       break;
     case "getSessionChatIdentityKey":
       handleGetSessionChatIdentityKey(msg.requestId);
@@ -720,7 +875,9 @@ ctx.addEventListener("message", (ev: MessageEvent<MainToWorker>) => {
       );
       break;
     case "notifySessionStoreChanged":
-      runtime?.notifySessionStoreChanged();
+      if (runtime && isPairingRuntime(runtime)) {
+        runtime.notifySessionStoreChanged();
+      }
       break;
     case "notifyContactsChanged":
       runtime?.notifyContactsChanged();
@@ -735,7 +892,10 @@ ctx.addEventListener("message", (ev: MessageEvent<MainToWorker>) => {
       void handleSessionActivation(
         msg.requestId,
         "activateStoredSession",
-        (rt) => rt.activateStoredSession(),
+        (rt) =>
+          isPairingRuntime(rt)
+            ? rt.activateStoredSession()
+            : Promise.reject(new Error("pairing runtime is not active")),
       );
       break;
     case "activateExternalSession": {
@@ -743,7 +903,10 @@ ctx.addEventListener("message", (ev: MessageEvent<MainToWorker>) => {
       void handleSessionActivation(
         msg.requestId,
         "activateExternalSession",
-        (rt) => rt.activateExternalSession(blob),
+        (rt) =>
+          isPairingRuntime(rt)
+            ? rt.activateExternalSession(blob)
+            : Promise.reject(new Error("pairing runtime is not active")),
       );
       break;
     }
@@ -791,13 +954,14 @@ ctx.addEventListener("message", (ev: MessageEvent<MainToWorker>) => {
             return Promise.reject(
               new Error(
                 "setGrantAllowancesUnchecked needs a signing host built with " +
-                  "`wasm-signing-host`; this core does not carry it",
+                  "`test-host`; this core does not carry it",
               ),
             );
           }
           signing.setGrantAllowancesUnchecked(granted);
           return Promise.resolve();
         },
+        false,
       );
       break;
     }
@@ -818,30 +982,60 @@ ctx.addEventListener("message", (ev: MessageEvent<MainToWorker>) => {
           rt.setSubmitPreimagesLocally(local);
           return Promise.resolve();
         },
+        false,
       );
       break;
     }
     case "setWithheldResources": {
       const { tags } = msg;
-      void handleSessionActivation(msg.requestId, "setWithheldResources", (rt) => {
-        const signing = rt as Partial<WorkerSigningHostRuntime>;
-        if (typeof signing.setWithheldResources !== "function") {
-          return Promise.reject(
-            new Error(
-              "setWithheldResources needs a signing host built with " +
-                "`wasm-signing-host`; this core does not carry it",
-            ),
-          );
-        }
-        signing.setWithheldResources(tags);
-        return Promise.resolve();
-      });
+      void handleSessionActivation(
+        msg.requestId,
+        "setWithheldResources",
+        (rt) => {
+          const signing = rt as Partial<WorkerSigningHostRuntime>;
+          if (typeof signing.setWithheldResources !== "function") {
+            return Promise.reject(
+              new Error(
+                "setWithheldResources needs a signing host built with " +
+                  "`test-host`; this core does not carry it",
+              ),
+            );
+          }
+          signing.setWithheldResources(tags);
+          return Promise.resolve();
+        },
+        false,
+      );
       break;
     }
     case "resetSessionState":
       void handleSessionActivation(msg.requestId, "resetSessionState", (rt) =>
-        rt.resetSessionState(),
+        isPairingRuntime(rt)
+          ? rt.resetSessionState()
+          : Promise.reject(new Error("pairing runtime is not active")),
       );
+      break;
+    case "activateLocalSessionWithIdentity": {
+      identityAbort?.abort(new Error("local identity activation changed"));
+      const { secret, liteUsername } = msg;
+      void handleSessionActivation(
+        msg.requestId,
+        "activateLocalSessionWithIdentity",
+        (rt) =>
+          isSigningRuntime(rt)
+            ? rt.activateLocalSessionWithIdentity(secret, liteUsername)
+            : Promise.reject(new Error("signing runtime is not active")),
+      );
+      break;
+    }
+    case "refreshLocalIdentity":
+      handleLocalIdentity(msg.requestId);
+      break;
+    case "registerLocalLiteUsername":
+      handleLocalIdentity(msg.requestId, msg);
+      break;
+    case "getWalletAllowanceSnapshot":
+      handleWalletAllowanceSnapshot(msg.requestId, msg.productIds);
       break;
     case "getPermissionAuthorizationStatus":
       void handleGetPermissionAuthorizationStatus(
@@ -960,8 +1154,14 @@ ctx.addEventListener("message", (ev: MessageEvent<MainToWorker>) => {
       // down; free the captured handle after the cores finish disposing.
       const disposing = runtime;
       runtime = null;
+      allowanceGeneration++;
+      identityAbort?.abort(new Error("runtime disposed"));
       void (async () => {
         try {
+          if (disposing && isSigningRuntime(disposing))
+            await disposing.disconnectSession();
+          await Promise.allSettled(identityOperations);
+          await Promise.allSettled(allowanceOperations);
           await Promise.all(
             [...cores.keys()].map((coreId) => disposeCore(coreId)),
           );
@@ -997,7 +1197,8 @@ async function disposeCore(coreId: number): Promise<void> {
 async function handleSessionActivation(
   requestId: number,
   label: string,
-  activate: (runtime: WorkerPairingHostRuntime) => Promise<void>,
+  activate: (runtime: WorkerHostRuntime) => Promise<void>,
+  changesIdentity = true,
 ): Promise<void> {
   if (!runtime) {
     postToMain({
@@ -1007,6 +1208,10 @@ async function handleSessionActivation(
       error: `${label} received before runtime is ready`,
     });
     return;
+  }
+  if (changesIdentity) {
+    allowanceGeneration++;
+    identityAbort?.abort(new Error("local identity activation changed"));
   }
   try {
     await activate(runtime);
@@ -1031,6 +1236,8 @@ async function handleDisconnectSession(requestId: number): Promise<void> {
     });
     return;
   }
+  allowanceGeneration++;
+  identityAbort?.abort(new Error("local identity disconnected"));
   try {
     await runtime.disconnectSession();
     postToMain({ kind: "disconnectSessionResponse", requestId, ok: true });

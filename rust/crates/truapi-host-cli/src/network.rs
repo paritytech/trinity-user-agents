@@ -297,6 +297,29 @@ mod tests {
         }
     }
 
+    /// `TRUAPI_LIGHT_CLIENT=1` finds each chain in the provider's bundled catalog by
+    /// the preset's genesis hash, so a network reset applied to only one of the two
+    /// copies leaves the light client unable to connect.
+    #[test]
+    fn every_preset_matches_the_light_client_catalog() {
+        for network in Network::value_variants() {
+            let config = network.config();
+            let (_, catalog) = truapi_provider::EmbeddedChainProviderBuilder::new()
+                .add_network(config.id)
+                .unwrap_or_else(|error| panic!("{} is not in the catalog: {error:?}", config.id));
+            assert_eq!(
+                (catalog.people, catalog.assethub, catalog.bulletin),
+                (
+                    config.people_genesis,
+                    config.asset_hub_genesis,
+                    config.bulletin_genesis
+                ),
+                "{} genesis hashes differ from the light-client catalog",
+                config.id
+            );
+        }
+    }
+
     /// Anchors the served set itself. Every other test that reads it iterates, so
     /// all of them pass on an empty set; this is what notices a dropped role, and it
     /// covers each preset rather than only the default.

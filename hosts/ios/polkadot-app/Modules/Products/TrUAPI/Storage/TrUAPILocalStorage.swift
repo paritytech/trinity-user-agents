@@ -4,6 +4,13 @@ protocol TrUAPILocalStoring: AnyObject, Sendable {
     func read(key: String) throws -> Data?
     func write(key: String, value: Data) throws
     func clear(key: String) throws
+    func keys() throws -> [String]
+}
+
+extension TrUAPILocalStoring {
+    func keys() throws -> [String] {
+        throw NSError(domain: "TrUAPILocalStorage.enumerationUnsupported", code: 1)
+    }
 }
 
 /// UserDefaults-backed KV store for the TrUAPI core; values are stored as
@@ -59,6 +66,13 @@ final class TrUAPILocalStorage: TrUAPILocalStoring, @unchecked Sendable {
 
     func write(key: String, value: Data) throws {
         defaults.set(value, forKey: storageKey(key))
+    }
+
+    func keys() throws -> [String] {
+        let prefix = "\(keyPrefix)."
+        return defaults.dictionaryRepresentation().keys.compactMap {
+            $0.hasPrefix(prefix) ? String($0.dropFirst(prefix.count)) : nil
+        }
     }
 
     func clear(key: String) throws {

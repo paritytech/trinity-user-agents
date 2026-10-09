@@ -6,7 +6,7 @@ license.workspace = true
 description = "TrUAPI trait and type definitions, and the runtime hosts embed"
 
 [lib]
-crate-type = ["rlib", "cdylib", "staticlib"]
+crate-type = ["rlib"]
 
 [package.metadata.wasm-pack.profile.release]
 wasm-opt = [
@@ -29,10 +29,19 @@ dwarf-debug-info = false
 
 [features]
 default = ["runtime", "wasm-signing-host"]
+# Async API traits and their std-backed call and subscription primitives.
+# Codegen enables this without compiling the host implementation.
+host-api = [
+    "dep:async-trait",
+    "dep:futures",
+    "derive_more/std",
+    "hex/std",
+    "parity-scale-codec/std",
+]
 # The host runtime: dispatcher, frames, host logic, native and WASM surfaces.
-# Without it the crate is the protocol definitions alone, which is what
-# codegen reads and builds against.
+# With no features the crate contains only no_std protocol payloads and envelopes.
 runtime = [
+    "host-api",
     # `Size` is a SCALE `Compact`, which reads and writes as a plain JSON number
     # only with codec's own serde support.
     "parity-scale-codec/serde",
@@ -91,11 +100,11 @@ mock = ["runtime"]
 
 [dependencies]
 truapi-macros = { path = "../truapi-macros" }
-async-trait = { workspace = true }
-derive_more = { workspace = true, features = ["debug", "display", "error", "from"] }
-futures = { workspace = true }
-hex = { workspace = true }
-parity-scale-codec = { workspace = true, features = ["derive"] }
+async-trait = { workspace = true, optional = true }
+derive_more = { workspace = true, default-features = false, features = ["debug", "display", "error", "from"] }
+futures = { workspace = true, optional = true }
+hex = { workspace = true, default-features = false, features = ["alloc"] }
+parity-scale-codec = { workspace = true, default-features = false, features = ["derive"] }
 
 truapi-provider = { path = "../truapi-provider", default-features = false, optional = true }
 futures-timer = { workspace = true, optional = true }

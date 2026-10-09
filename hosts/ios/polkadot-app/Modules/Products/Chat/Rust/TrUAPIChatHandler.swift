@@ -232,7 +232,9 @@ private extension TrUAPIChatHandler {
     }
 
     func checkNotDisposed() throws {
-        guard !disposed else { throw CancellationError() }
+        guard !disposed, workers.currentExecution(of: productId)?.isClosed() != true else {
+            throw CancellationError()
+        }
     }
 
     /// A persisted message can decode before the product attaches. `ProductMessageDecoder`

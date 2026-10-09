@@ -10,17 +10,16 @@
 //! signing, v4 transaction construction (payload fields and extensions arrive
 //! pre-encoded, so no chain metadata is needed), RFC-0007 product entropy,
 //! bandersnatch ring-VRF aliases and membership proofs, and product-scoped
-//! Statement Store and Bulletin allowance keys (native only).
-
-// Allocation uses `track`; the renewal loop around it is driven by native
-// entry points only, so on wasm the rest of the module is not reached yet.
-#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+//! Statement Store allowance keys (native and browser), and Bulletin allowance
+//! keys (native only).
 mod allowance_renewal;
 mod local_activation;
+mod local_identity;
 pub mod ring_vrf;
 mod sso_replay;
 mod sso_responder;
 mod sso_service;
+mod wallet_allowances;
 
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
@@ -30,10 +29,12 @@ use truapi::latest::{
     HostAccountRingVrfSignRequest, ProductAccountId, RingLocation, RingLocationJunction,
 };
 
+pub use crate::runtime::statement_allowance::inspection::WalletAllowanceSnapshot;
 pub use allowance_renewal::StatementRenewalTarget;
 #[cfg(not(target_arch = "wasm32"))]
 pub use allowance_renewal::TrackedStatementRenewalTarget;
 pub use local_activation::LocalActivation;
+pub use local_identity::{LocalIdentity, LocalIdentityContext};
 pub use sso_responder::{
     AnnouncedPairing, DevicePairingObserver, MAX_PAIRING_METADATA_CHARS, PairedSsoPeer,
     PairingProposal, PairingProposalMetadata, ResponderExit,
@@ -497,31 +498,6 @@ impl SigningHost {
         Ok(())
     }
 
-    /// The product's hard-subtree public key, derived from the active session
-    /// root.
-    ///
-    /// A signing host holds the root, so it derives this rather than asking an
-    /// Account Holder for it the way a pairing host must, and answers the
-    /// `ProductAuthority` request of the same name from the same derivation.
-    /// `None` when no session is active: there is no root to derive from.
-    pub fn derive_subtree_public_key(
-        &self,
-        product_id: &str,
-    ) -> Result<Option<[u8; 32]>, AuthorityError> {
-        let product_id = normalize_product_identifier(product_id).map_err(|err| {
-            AuthorityError::Unavailable {
-                reason: err.to_string(),
-            }
-        })?;
-        let Ok(entropy) = self.root_entropy() else {
-            return Ok(None);
-        };
-        let root = derive_root_keypair_from_entropy(&entropy).map_err(product_authority_error)?;
-        let subtree =
-            derive_product_subtree_keypair(&root, &product_id).map_err(product_authority_error)?;
-        Ok(Some(subtree.public.to_bytes()))
-    }
-
     /// Derive the product-account keypair for `account` from the root entropy.
     ///
     /// The root keypair is recomputed per call (PBKDF2, 2048 rounds, via
@@ -979,6 +955,22 @@ impl ProductAuthority for SigningHost {
         self.current_local_session()
     }
 
+    async fn refresh_session_identity(&self) -> Result<Option<AuthoritySession>, String> {
+        let Ok(context) = self.local_identity_context() else {
+            return Ok(None);
+        };
+        self.refresh_local_identity(&context.activation_id)
+            .await
+            .map_err(|error| error.reason)?;
+        if !self
+            .local_identity_context()
+            .is_ok_and(|current| current.activation_id == context.activation_id)
+        {
+            return Ok(None);
+        }
+        Ok(self.current_local_session())
+    }
+
     fn session_state(&self) -> Arc<SessionState> {
         SigningHost::session_state(self)
     }
@@ -1251,6 +1243,7 @@ impl ProductAuthority for SigningHost {
                         .map_err(|_| RingVrfError::NotAllowlisted)?;
                 match super::account_access_authorization(
                     self.services.platform.as_ref(),
+                    &self.services.permissions,
                     &requester,
                     &owner,
                 )
@@ -1396,6 +1389,7 @@ impl ProductAuthority for SigningHost {
         if caller != owner {
             match super::account_access_authorization(
                 self.services.platform.as_ref(),
+                &self.services.permissions,
                 &caller,
                 &owner,
             )
@@ -2424,6 +2418,7 @@ mod tests {
         cache_grant(&platform, "peopl.dot", r#"{"ordinary":["context"]}"#);
         futures::executor::block_on(crate::runtime::account_access_authorization(
             platform.as_ref(),
+            &Default::default(),
             "ordinary.dot",
             "peopl.dot",
         ))

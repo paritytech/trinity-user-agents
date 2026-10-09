@@ -6,7 +6,7 @@ use crate::platform::{
     CoreAdmin, PermissionAuthorizationRequest, PermissionAuthorizationStatus, ProductContext,
     ProductExecutionKind,
 };
-use parity_scale_codec::Encode;
+use parity_scale_codec::{Decode, Encode};
 use truapi::{Bytes32, v01};
 
 use super::reject_undecodable_deeplink;
@@ -33,16 +33,25 @@ use super::config::{
     ProductExecutionConfig,
 };
 use super::errors::{HostRejection, NativeCoreDatabaseError};
-use super::executor::shared_native_executor;
 use super::events::NativeEventBus;
+use super::executor::shared_native_executor;
+#[cfg(doc)]
+use super::parse_pairing_deeplink;
 use super::platform::{
     CallbackPlatform, ChatCallbackPlatform, ContactsCallbackPlatform, GameCallbackPlatform,
     PocketCallbackPlatform,
 };
 #[cfg(doc)]
 use crate::WorkerTransition;
-#[cfg(doc)]
-use super::parse_pairing_deeplink;
+
+/// One persisted canonical permission decision shown by native host settings.
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct PermissionAuthorizationEntry {
+    /// Permission request in its existing canonical storage scope.
+    pub request: PermissionAuthorizationRequest,
+    /// Persisted decision, including an explicit reset tombstone.
+    pub status: PermissionAuthorizationStatus,
+}
 
 /// Process-owned native TrUAPI runtime shared by all executable connections.
 #[derive(uniffi::Object)]
@@ -53,6 +62,8 @@ pub struct NativeTrUApiHostRuntime {
     ws_bridge: Arc<SharedWsBridge>,
     /// The one Worker execution per product; opening another replaces it.
     worker_executions: Mutex<HashMap<String, Weak<NativeProductExecution>>>,
+    callbacks: Arc<dyn HostCallbacks>,
+    executions: parking_lot::Mutex<Vec<Weak<NativeProductExecution>>>,
 }
 
 impl NativeTrUApiHostRuntime {
@@ -70,16 +81,18 @@ impl NativeTrUApiHostRuntime {
             }
         })?;
         let directory = &runtime_config.database_directory;
-        let core_db = futures::executor::block_on(Db::open(core_db_config(directory))).map_err(
-            |err| NativeRuntimeConfigError::DatabaseUnavailable {
-                reason: format!("{}: {err}", directory.display()),
-            },
-        )?;
+        let core_db =
+            futures::executor::block_on(Db::open(core_db_config(directory))).map_err(|err| {
+                NativeRuntimeConfigError::DatabaseUnavailable {
+                    reason: format!("{}: {err}", directory.display()),
+                }
+            })?;
         let events = Arc::new(NativeEventBus::default());
         let platform = Arc::new(CallbackPlatform {
             callbacks: callbacks.clone(),
             events: events.clone(),
             storage_events: events.clone(),
+            permission_callbacks: callbacks.clone(),
         });
         let spawner = executor.spawner();
         let runtime = Arc::new(SigningHostRuntime::new(
@@ -113,6 +126,8 @@ impl NativeTrUApiHostRuntime {
         Ok(Arc::new(Self {
             runtime,
             events,
+            callbacks: callbacks.clone(),
+            executions: parking_lot::Mutex::new(Vec::new()),
             spawner,
             ws_bridge: Arc::new(SharedWsBridge::new(Arc::new(move |marker, detail| {
                 callbacks.on_core_log(marker.to_string(), detail.to_string());
@@ -134,6 +149,7 @@ impl NativeTrUApiHostRuntime {
             callbacks: callbacks.clone(),
             events: events.clone(),
             storage_events: self.events.clone(),
+            permission_callbacks: self.callbacks.clone(),
         });
         let permission_status: Arc<dyn crate::platform::PermissionStatusHost> =
             callback_platform.clone();
@@ -178,6 +194,11 @@ impl NativeTrUApiHostRuntime {
             bridge_token: Mutex::new(None),
             product_control: Arc::new(Mutex::new(None)),
         });
+        {
+            let mut executions = self.executions.lock();
+            executions.retain(|entry| entry.strong_count() != 0);
+            executions.push(Arc::downgrade(&execution));
+        }
 
         if product.execution_kind == ProductExecutionKind::Worker {
             let previous = self
@@ -193,6 +214,67 @@ impl NativeTrUApiHostRuntime {
 
         execution
     }
+
+    fn close_permission_executions(
+        &self,
+        product_id: &str,
+        request: &PermissionAuthorizationRequest,
+    ) {
+        use crate::host_internal::product_manifest::bare_product_label;
+        let account_access = matches!(
+            request,
+            PermissionAuthorizationRequest::AccountAccess { .. }
+        );
+        let executions: Vec<_> = self
+            .executions
+            .lock()
+            .iter()
+            .filter_map(Weak::upgrade)
+            .filter(|execution| {
+                execution.product.product_id == product_id
+                    || (account_access
+                        && bare_product_label(&execution.product.product_id)
+                            == bare_product_label(product_id))
+            })
+            .collect();
+        for execution in executions {
+            execution.shutdown();
+        }
+        // Storage notifications precede shutdown; this final notification lets
+        // shells dispose WebViews/media owned by now-closed executions.
+        self.callbacks
+            .permission_authorizations_changed(product_id.to_owned());
+    }
+
+    async fn permission_storage_keys(
+        &self,
+    ) -> Result<Vec<crate::platform::CoreStorageKey>, HostRejection> {
+        self.callbacks
+            .core_storage_keys()
+            .await?
+            .into_iter()
+            .map(|encoded| {
+                let mut input = encoded.as_slice();
+                let key = crate::platform::CoreStorageKey::decode(&mut input).map_err(|_| {
+                    HostRejection::Rejected {
+                        reason: "invalid encoded core storage key".into(),
+                    }
+                })?;
+                if !input.is_empty() {
+                    return Err(HostRejection::Rejected {
+                        reason: "trailing core storage key bytes".into(),
+                    });
+                }
+                Ok(key)
+            })
+            .collect()
+    }
+}
+
+fn permission_product(product_id: String) -> Result<ProductContext, HostRejection> {
+    ProductContext::new(product_id).map_err(|error| HostRejection::Rejected {
+        reason: error.to_string(),
+    })
 }
 
 /// A refused pairing call on the signing host's responder side.
@@ -262,6 +344,151 @@ impl NativeTrUApiHostRuntime {
             "truapi.native.host_runtime.boot",
             "host runtime ready",
         )
+    }
+
+    /// Enumerate existing core decisions, including resets. Does not prompt
+    /// and does not substitute the host application's OS permission state.
+    pub async fn permission_authorizations(
+        &self,
+        product_id: String,
+    ) -> Result<Vec<PermissionAuthorizationEntry>, HostRejection> {
+        use crate::host_internal::permissions::{authorization_key, stored_authorization_status};
+        use crate::host_internal::product_manifest::bare_product_label;
+        let product = permission_product(product_id)?;
+        let admin = self.runtime.product_admin(product.clone());
+        let scope = admin.product_runtime().permissions_service().scope();
+        let _mutation = scope.mutation.lock().await;
+        let mut entries =
+            std::collections::BTreeMap::<Vec<u8>, PermissionAuthorizationEntry>::new();
+        for key in self.permission_storage_keys().await? {
+            let crate::platform::CoreStorageKey::PermissionAuthorization {
+                product_id: owner,
+                request,
+            } = &key
+            else {
+                continue;
+            };
+            if owner != &product.product_id
+                && !(matches!(
+                    request,
+                    PermissionAuthorizationRequest::AccountAccess { .. }
+                ) && owner == bare_product_label(&product.product_id))
+            {
+                continue;
+            }
+            let canonical = authorization_key(&product.product_id, request);
+            let canonical_id = canonical.encode();
+            // Historical full-owner/target account aliases are not authority.
+            // Read the normalized slot so aliases never display phantom grants.
+            let status = stored_authorization_status(
+                admin.product_runtime().services().platform.as_ref(),
+                canonical.clone(),
+            )
+            .await?
+            .unwrap_or(PermissionAuthorizationStatus::NotDetermined);
+            let crate::platform::CoreStorageKey::PermissionAuthorization { request, .. } =
+                canonical
+            else {
+                unreachable!("permission keys always describe authorizations");
+            };
+            entries.insert(
+                canonical_id,
+                PermissionAuthorizationEntry { request, status },
+            );
+        }
+        Ok(entries.into_values().collect())
+    }
+
+    /// Canonical owners; account-access owners may be bare product labels,
+    /// matching their existing subtree-wide key format.
+    pub async fn permission_authorization_products(&self) -> Result<Vec<String>, HostRejection> {
+        let mut products = std::collections::BTreeSet::new();
+        for key in self.permission_storage_keys().await? {
+            if let crate::platform::CoreStorageKey::PermissionAuthorization { product_id, .. } = key
+            {
+                products.insert(product_id);
+            }
+        }
+        Ok(products.into_iter().collect())
+    }
+
+    /// Capture before a legacy prompt, then use the conditional setter.
+    pub fn permission_authorization_revision(
+        &self,
+        product_id: String,
+    ) -> Result<u64, HostRejection> {
+        let product = permission_product(product_id)?;
+        Ok(self
+            .runtime
+            .product_admin(product)
+            .product_runtime()
+            .permissions_service()
+            .scope()
+            .revision())
+    }
+
+    /// Explicit settings edit. Revocation cancels pending prompts and live
+    /// executions matching the permission's existing product/request scope.
+    pub async fn set_permission_authorization_status(
+        &self,
+        product_id: String,
+        request: PermissionAuthorizationRequest,
+        status: PermissionAuthorizationStatus,
+    ) -> Result<(), HostRejection> {
+        let product = permission_product(product_id)?;
+        let admin = self.runtime.product_admin(product.clone());
+        let result = admin
+            .product_runtime()
+            .permissions_service()
+            .set_canonical_authorization_status(&request, status)
+            .await
+            .map_err(Into::into);
+        if status != PermissionAuthorizationStatus::Authorized {
+            self.close_permission_executions(&product.product_id, &request);
+        }
+        result
+    }
+
+    /// Atomically commit a legacy prompt only if no settings edit superseded
+    /// it. Allow grants share a revision across a bundle; denial/reset advances
+    /// it exactly once and invalidates one-use grants.
+    pub async fn set_permission_authorization_status_if_current(
+        &self,
+        product_id: String,
+        request: PermissionAuthorizationRequest,
+        status: PermissionAuthorizationStatus,
+        revision: u64,
+    ) -> Result<bool, HostRejection> {
+        let product = permission_product(product_id)?;
+        let admin = self.runtime.product_admin(product.clone());
+        let result = admin
+            .product_runtime()
+            .permissions_service()
+            .commit_if_current(&request, status, revision)
+            .await;
+        if status != PermissionAuthorizationStatus::Authorized && !matches!(result, Ok(false)) {
+            self.close_permission_executions(&product.product_id, &request);
+        }
+        result.map_err(Into::into)
+    }
+
+    /// Import only absent legacy decisions under the same mutation fence as
+    /// native prompts/settings. Existing canonical values and resets win.
+    pub async fn import_permission_authorizations(
+        &self,
+        product_id: String,
+        entries: Vec<PermissionAuthorizationEntry>,
+    ) -> Result<Vec<PermissionAuthorizationEntry>, HostRejection> {
+        let product = permission_product(product_id)?;
+        let admin = self.runtime.product_admin(product.clone());
+        for entry in entries {
+            admin
+                .product_runtime()
+                .permissions_service()
+                .import_authorization_status(&entry.request, entry.status)
+                .await?;
+        }
+        self.permission_authorizations(product.product_id).await
     }
 
     /// Install the host's contacts adapter, which owns the contact list and
@@ -645,6 +872,7 @@ impl NativeProductExecution {
         crate::host_core::ConnectionAdapters {
             platform: self.platform.clone(),
             chat_platform: self.chat.clone(),
+            contacts_platform: None,
             permission_status: Some(self.permission_status.clone()),
             permission_grants: self.permission_grants.clone(),
             chat: self.chat_connection.clone(),
@@ -746,17 +974,9 @@ impl NativeProductExecution {
             .await?)
     }
 
-    /// Update a product-scoped permission authorization.
-    pub fn set_permission_authorization_status(
-        &self,
-        request: PermissionAuthorizationRequest,
-        status: PermissionAuthorizationStatus,
-    ) -> Result<(), HostRejection> {
-        futures::executor::block_on(
-            self.admin()
-                .set_permission_authorization_status(request, status),
-        )?;
-        Ok(())
+    /// Whether administration or lifecycle teardown closed this execution.
+    pub fn is_closed(&self) -> bool {
+        self.closed.load(Ordering::Acquire)
     }
 
     /// Read the active session's X25519 chat identity private key, or `None`
@@ -796,7 +1016,7 @@ impl NativeProductExecution {
     }
 
     /// Push a host locale replacement to this execution's subscriptions.
-    pub fn notify_locale_changed(&self, locale: v01::HostLocaleSubscribeItem) {
+    pub fn notify_locale_changed(&self, locale: crate::latest::HostLocaleSubscribeItem) {
         self.events.notify_locale_changed(locale);
     }
 
@@ -1412,3 +1632,6 @@ mod tests {
         ));
     }
 }
+
+#[cfg(test)]
+mod permission_tests;

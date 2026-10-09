@@ -1,4 +1,5 @@
 //! Versioned wrappers for [`Account`](crate::api::Account) methods.
+use alloc::vec::Vec;
 
 use crate::v01;
 

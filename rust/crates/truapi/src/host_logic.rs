@@ -4,8 +4,8 @@
 //! storage, URL handler, notification center). Everything else lives here so
 //! iOS, Android, and web hosts share one canonical implementation.
 
-// Links `verifiable` directly, which the browser core loads on demand instead.
-#[cfg(not(target_arch = "wasm32"))]
+// Its `verifiable` steps are native-only; the browser core supplies them from
+// the module it loads on demand.
 pub mod attestation;
 pub mod contact_substitution;
 pub mod device_key;

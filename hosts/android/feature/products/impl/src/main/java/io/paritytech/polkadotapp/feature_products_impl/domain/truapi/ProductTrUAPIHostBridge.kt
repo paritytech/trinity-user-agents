@@ -1,9 +1,22 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.truapi
 
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
+import androidx.core.content.ContextCompat
+import dagger.hilt.android.qualifiers.ApplicationContext
+import io.paritytech.polkadotapp.feature_settings_api.domain.language.AppLanguageProvider
+import java.time.ZoneId
+import java.util.Locale
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.first
+import uniffi.truapi.HostLocaleSubscribeItem
 import androidx.core.net.toUri
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedFactory
 import dagger.assisted.AssistedInject
+import dagger.Lazy
 import io.parity.truapi.GameHostBridge
 import io.parity.truapi.HostBridge
 import io.parity.truapi.HostCoreStorage
@@ -29,6 +42,8 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.ProductThe
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.ThemeVariant
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.navigation.NavigationPolicy
 import io.paritytech.polkadotapp.feature_products_impl.domain.notifications.NotificationId
+import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.ProductPermissionRepository
+import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.PermissionAuthorizationChanges
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.models.DeviceCapabilityType
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.models.PermissionDecision
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.models.RemotePermissionRequest
@@ -79,6 +94,10 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
     private val appLifecycleObserver: AppLifecycleObserver,
     private val dotNsTldProvider: DotNsTldProvider,
     private val pocketCardStore: PocketCardStore,
+    @param:ApplicationContext private val context: Context,
+    private val appLanguageProvider: AppLanguageProvider,
+    private val permissionRepository: Lazy<ProductPermissionRepository>,
+    private val permissionChanges: PermissionAuthorizationChanges,
     private val productGameReminder: ProductGameReminder,
     @Assisted private val scope: CoroutineScope,
 ) {
@@ -108,6 +127,13 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
 
     private var execution: TrUAPIProductExecution? = null
     private var pocketBridge: ProductPocketHostBridge? = null
+    private val cachedLanguageTag = AtomicReference(Locale.getDefault().toLanguageTag())
+    private var localeJob: Job? = null
+    private var localeReceiver: BroadcastReceiver? = null
+    private var permissionChangesJob: Job? = null
+
+    private fun currentLocale() =
+        HostLocaleSubscribeItem(cachedLanguageTag.get(), ZoneId.systemDefault().id)
 
     init {
         // Tear the execution down with the owning scope: otherwise a closed
@@ -126,10 +152,15 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
         navigation: NavigationPolicy,
         card: ExpandedCardFace?,
     ) = object : HostBridge {
+        // Core permission writes are reported to the process bridge, not execution bridges.
+        override fun permissionAuthorizationsChanged(productId: String) = Unit
         override val storage: HostStorage =
             EncryptedHostStorage(encryptedPreferences, callingProductId.value)
 
         override val coreStorage: HostCoreStorage = EncryptedHostCoreStorage(encryptedPreferences)
+
+        override fun currentLocale(): HostLocaleSubscribeItem =
+            this@ProductTrUAPIHostBridge.currentLocale()
 
         override fun onCoreLog(marker: String, detail: String) {
             Timber.tag("truapi.core").d("%s: %s", marker, detail)
@@ -259,6 +290,7 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
         navigationPolicy: NavigationPolicy,
         kind: ProductExecutionKind,
         card: ExpandedCardFace? = null,
+        onPermissionRevoked: suspend () -> Unit,
         onReadyToInject: suspend (bootstrap: String) -> Unit,
     ): Result<TrUAPIProductExecution> {
         execution?.let {
@@ -268,7 +300,9 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
         // Opening the execution is inside the Result too: it reaches the core and can be refused,
         // and the callers launch this into scopes that have no handler for a throw.
         return runCatching {
+            permissionRepository.get().getAllByProduct(productId)
             cachedChains.set(chains)
+            cachedLanguageTag.set(appLanguageProvider.languageTag.first())
             val pocket = ProductPocketHostBridge(productId, pocketCardStore, scope)
             val opened = runtime.openProductExecution(
                 bridge = buildBridge(productId, navigationPolicy, card),
@@ -287,7 +321,16 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
             )
             val endpoint = opened.startWsBridge()
             observeAppTheme()
+            observeAppLocale()
             observeAppLifecycle()
+            permissionChangesJob = scope.launch(Dispatchers.Main.immediate) {
+                permissionChanges.observe(productId.value).collect {
+                    if (execution === opened && opened.isClosed()) {
+                        onPermissionRevoked()
+                        stop()
+                    }
+                }
+            }
             onReadyToInject(LocalhostBridgeBootstrap.script(endpoint.port, endpoint.token))
             opened
         }.onFailure { stop() }
@@ -312,6 +355,27 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
         }
     }
 
+    private fun observeAppLocale() {
+        val receiver = object : BroadcastReceiver() {
+            override fun onReceive(context: Context, intent: Intent) {
+                execution?.notifyLocaleChanged(currentLocale())
+            }
+        }
+        ContextCompat.registerReceiver(
+            context,
+            receiver,
+            IntentFilter(Intent.ACTION_TIMEZONE_CHANGED),
+            ContextCompat.RECEIVER_NOT_EXPORTED,
+        )
+        localeReceiver = receiver
+        localeJob = scope.launch {
+            appLanguageProvider.languageTag.collect { languageTag ->
+                cachedLanguageTag.set(languageTag)
+                execution?.notifyLocaleChanged(currentLocale())
+            }
+        }
+    }
+
     private fun setTheme(theme: HostThemeSubscribeItem) {
         cachedTheme.set(theme)
         execution?.notifyThemeChanged(theme)
@@ -326,6 +390,12 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
     fun stop() {
         val opened = execution ?: return
         execution = null
+        permissionChangesJob?.cancel()
+        permissionChangesJob = null
+        localeJob?.cancel()
+        localeJob = null
+        localeReceiver?.let(context::unregisterReceiver)
+        localeReceiver = null
         // Before the execution closes: a card change arriving afterwards would republish through a
         // handle that no longer exists.
         pocketBridge?.stop()

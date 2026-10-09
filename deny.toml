@@ -41,6 +41,13 @@ exceptions = [
     # BSL-1.0 is permissive, but scope it so it cannot spread to other crates.
     { name = "clipboard-win", allow = ["BSL-1.0"] },
     { name = "error-code", allow = ["BSL-1.0"] },
+    # The host-neutral PolkaVM runtime, Wasm compiler and wire protocols are
+    # intentionally MPL-2.0 so their implementations retain file-level copyleft.
+    { name = "polkavm-gpu-wire", allow = ["MPL-2.0"] },
+    { name = "polkavm-motion-wire", allow = ["MPL-2.0"] },
+    { name = "polkavm-ui-wire", allow = ["MPL-2.0"] },
+    { name = "polkavm-host-runtime", allow = ["MPL-2.0"] },
+    { name = "polkavm-wasm-compiler", allow = ["MPL-2.0"] },
     { name = "uniffi", allow = ["MPL-2.0"] },
     { name = "uniffi_bindgen", allow = ["MPL-2.0"] },
     { name = "uniffi_checksum_derive", allow = ["MPL-2.0"] },

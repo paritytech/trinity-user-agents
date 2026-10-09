@@ -316,7 +316,8 @@ pub fn has_dotns_tld(normalized: &str) -> bool {
 
 /// Blessed product labels across every network in [`DOTNS_TLDS`].
 ///
-/// These products bypass recorded permissions and prompt only for device access.
+/// These products default to authorized except for device access. Explicit
+/// stored denials still govern their remote, identity and account permissions.
 pub const REMOTE_PERMISSION_TRUSTED_LABELS: &[&str] = &["peopl", GAME_PRODUCT_LABEL, "stash"];
 
 /// The bare label of the game product, Jollity, on every network.
@@ -325,7 +326,7 @@ const GAME_PRODUCT_LABEL: &str = "dim2";
 /// Hosts available to every product unless a stored permission decision blocks them.
 pub const BLESSED_REMOTE_DOMAINS: &[&str] = &["fonts.googleapis.com", "fonts.gstatic.com"];
 
-/// Whether `product_id` holds every [`RemotePermission`] without prompting.
+/// Whether `product_id` defaults to every [`RemotePermission`] without prompting.
 ///
 /// Expects the [`normalize_product_identifier`] form. Matches the whole label
 /// and nothing else: `peopl.dot` and `peopl.paseo` are trusted, while
@@ -349,7 +350,7 @@ fn dotns_product_label(product_id: &str) -> Option<&str> {
     product_id.rsplit_once('.').map(|(label, _tld)| label)
 }
 
-/// Whether `product_id` in any accepted spelling holds every
+/// Whether `product_id` in any accepted spelling defaults to every
 /// [`RemotePermission`] without prompting.
 ///
 /// [`has_trusted_remote_permissions`] reads the normalized form, which is what
@@ -357,7 +358,7 @@ fn dotns_product_label(product_id: &str) -> Option<&str> {
 /// normalizes first and answers `false` for an id that does not normalize at
 /// all: an unrecognised spelling is never read as trusted.
 ///
-/// Recorded permission decisions do not affect this policy.
+/// This identifies the default only; authorization still checks stored denials.
 pub fn normalizes_to_trusted_remote_permissions(product_id: &str) -> bool {
     normalize_product_identifier(product_id)
         .is_ok_and(|normalized| has_trusted_remote_permissions(&normalized))
@@ -1171,6 +1172,33 @@ pub trait Notifications: Send + Sync {
         let _ = id;
         Ok(())
     }
+
+    /// Return at most 32 pending activations, ordered by sequence, without
+    /// consuming them. The embedding host binds this platform to the verified
+    /// product, authenticated account and environment; none is caller input.
+    /// Admit only routes starting with exactly one slash, with no backslashes
+    /// or control characters. Polling must not request permissions or enroll
+    /// a background receiver. A missing implementation is an error.
+    async fn activation_events(
+        &self,
+    ) -> Result<truapi::v01::NotificationActivations, GenericError> {
+        Err(GenericError {
+            reason: "notification activation is unsupported".to_string(),
+        })
+    }
+
+    /// Remove exactly this sequence from the bound activation queue after
+    /// successful product routing. Unknown sequences are idempotent; never
+    /// acknowledge another product/account/environment or a sequence range.
+    async fn acknowledge_activation(
+        &self,
+        request: truapi::v01::NotificationActivationAcknowledgeRequest,
+    ) -> Result<(), GenericError> {
+        let _ = request;
+        Err(GenericError {
+            reason: "notification activation is unsupported".to_string(),
+        })
+    }
 }
 
 /// User decision including how long an authorization should last.
@@ -1270,8 +1298,8 @@ pub trait CoreAdmin: Send + Sync {
         requests: Vec<PermissionAuthorizationRequest>,
     ) -> Result<Vec<PermissionAuthorizationStatus>, GenericError>;
 
-    /// Update a stored permission authorization status. `NotDetermined` clears
-    /// the stored value so the next product request prompts again.
+    /// Update a stored permission authorization status. `NotDetermined` resets
+    /// the decision to ask again, retaining a tombstone against legacy re-import.
     async fn set_permission_authorization_status(
         &self,
         request: PermissionAuthorizationRequest,
@@ -3195,10 +3223,21 @@ pub trait ThemeHost: Send + Sync {
 }
 
 /// Host locale source.
+#[async_trait]
 pub trait LocaleHost: Send + Sync {
     /// Emits the currently selected locale immediately, then future changes.
     fn subscribe_locale(&self)
     -> BoxStream<'static, Result<HostLocaleSubscribeItem, GenericError>>;
+
+    /// Convert a bounded UTC batch using the supplied host locale snapshot.
+    async fn localize_timestamps(
+        &self,
+        _request: crate::latest::HostLocaleLocalizeTimestampsRequest,
+    ) -> Result<crate::latest::HostLocaleLocalizeTimestampsResponse, GenericError> {
+        Err(GenericError {
+            reason: "Local time conversion is unavailable".into(),
+        })
+    }
 }
 
 /// Host preimage backend. The core builds, signs, and submits the Bulletin

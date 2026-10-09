@@ -5,5 +5,7 @@
 //! envelope, so this module stays a delta rather than a copy of the protocol.
 
 mod local_storage;
+mod locale;
 
 pub use local_storage::*;
+pub use locale::*;

@@ -110,6 +110,9 @@ pub trait ProductRuntimeFactory: Send + Sync + 'static {
     }
 }
 
+// async-trait's generated boxed Future is already must-use; newer Clippy
+// otherwise reports the macro's duplicate annotation on this private trait.
+#[allow(clippy::double_must_use)]
 #[async_trait::async_trait]
 trait ConnectionRuntime: Send + Sync + 'static {
     async fn receive_frame(&self, frame: Vec<u8>) -> Result<(), ProductRuntimeError>;

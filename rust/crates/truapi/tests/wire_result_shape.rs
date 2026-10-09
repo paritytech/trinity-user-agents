@@ -50,6 +50,97 @@ fn dispatch(core: &TrUApiCore, frame: ProtocolMessage) -> ProtocolMessage {
 }
 
 #[test]
+fn notification_activation_requests_cannot_select_foreign_scope() {
+    use truapi::versioned::notifications::{
+        NotificationActivationAcknowledgeError, NotificationActivationAcknowledgeRequest,
+        NotificationActivationAcknowledgeResponse, NotificationActivationEventsError,
+        NotificationActivationEventsRequest, NotificationActivationEventsResponse,
+    };
+
+    let core = make_core();
+    let requests = [
+        (8, NotificationActivationEventsRequest::V1.encode()),
+        (
+            9,
+            NotificationActivationAcknowledgeRequest::V1(
+                v01::NotificationActivationAcknowledgeRequest { sequence: 42 },
+            )
+            .encode(),
+        ),
+    ];
+    // Only the version tag and (for acknowledgement) the sequence are input.
+    assert_eq!(requests[0].1, vec![0]);
+    assert_eq!(requests[1].1.len(), 9);
+
+    for (method_id, request) in requests {
+        let unsupported = dispatch(
+            &core,
+            ProtocolMessage {
+                request_id: format!("activation:{method_id}:unsupported"),
+                payload: Payload {
+                    trait_id: 8,
+                    method_id,
+                    message_type: MESSAGE_TYPE_REQUEST,
+                    value: request.clone(),
+                },
+            },
+        );
+        let error = v01::GenericError {
+            reason: "notification activation is unsupported".to_string(),
+        };
+        let expected = if method_id == 8 {
+            Result::<NotificationActivationEventsResponse, _>::Err(CallError::Domain(
+                NotificationActivationEventsError::V1(error),
+            ))
+            .encode()
+        } else {
+            Result::<NotificationActivationAcknowledgeResponse, _>::Err(CallError::Domain(
+                NotificationActivationAcknowledgeError::V1(error),
+            ))
+            .encode()
+        };
+        assert_eq!(unsupported.payload.message_type, MESSAGE_TYPE_RESPONSE);
+        assert_eq!(unsupported.payload.value, expected);
+        for foreign_scope in [
+            "another-product.paseo",
+            "another-account",
+            "another-environment",
+        ] {
+            let mut value = request.clone();
+            value.extend(foreign_scope.encode());
+            let response = dispatch(
+                &core,
+                ProtocolMessage {
+                    request_id: format!("activation:{method_id}:{foreign_scope}"),
+                    payload: Payload {
+                        trait_id: 8,
+                        method_id,
+                        message_type: MESSAGE_TYPE_REQUEST,
+                        value,
+                    },
+                },
+            );
+            assert_eq!(response.payload.message_type, MESSAGE_TYPE_RESPONSE);
+            if method_id == 8 {
+                let result = Result::<
+                    NotificationActivationEventsResponse,
+                    CallError<NotificationActivationEventsError>,
+                >::decode(&mut &response.payload.value[..])
+                .unwrap();
+                assert!(matches!(result, Err(CallError::MalformedFrame { .. })));
+            } else {
+                let result = Result::<
+                    NotificationActivationAcknowledgeResponse,
+                    CallError<NotificationActivationAcknowledgeError>,
+                >::decode(&mut &response.payload.value[..])
+                .unwrap();
+                assert!(matches!(result, Err(CallError::MalformedFrame { .. })));
+            }
+        }
+    }
+}
+
+#[test]
 fn feature_supported_ok_response_uses_ok_discriminant() {
     let core = make_core();
     let request = v01::HostFeatureSupportedRequest::Chain {

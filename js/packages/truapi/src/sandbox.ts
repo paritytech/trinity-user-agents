@@ -228,10 +228,12 @@ function createIframeCompatibilityProvider(
     adoptPort(existing);
   } else {
     win.addEventListener("message", onMessage);
-    // The host and product load independently. Repeat the data-free ready
-    // signal until a valid parent response establishes either transport.
+    // One public identifier per connection lets hosts distinguish a retry from
+    // a new product execution without replacing an already-adopted port.
+    const connectionId = crypto.randomUUID();
+    // The host and product load independently; retry until a response arrives.
     const postReady = (): void => {
-      target.postMessage({ type: "truapi-ready" }, hostOrigin ?? "*");
+      target.postMessage({ type: "truapi-ready", connectionId }, hostOrigin ?? "*");
     };
     const interval = win.setInterval(postReady, IFRAME_READY_INTERVAL_MS);
     cancelReadyRetry = () => win.clearInterval(interval);

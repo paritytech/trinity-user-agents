@@ -50,6 +50,42 @@ struct TrUAPIWorkerManagerTests {
         #expect(manager.currentExecution(of: "game.paseo") == nil)
     }
 
+    @Test
+    func revocationDestroysOnlyTheClosedWorkersEngine() async throws {
+        let builder = StubBuilder()
+        let manager = makeManager(builder: builder, collection: collectionHolding([loyalty]))
+
+        manager.demandChanged(productId: "game.paseo", transition: .start)
+        try await settle()
+        let execution = try #require(builder.execution)
+        let engine = try #require(builder.engine)
+        manager.demandChanged(productId: "other.paseo", transition: .start)
+        try await settle()
+
+        // A permission grant notification does not close either worker.
+        NotificationCenter.default.post(name: .productPermissionAuthorizationsChanged, object: nil)
+        try await settle()
+        #expect(manager.currentExecution(of: "game.paseo") === execution)
+        #expect(engine.destroyCallCount == 0)
+
+        execution.close()
+        NotificationCenter.default.post(name: .productPermissionAuthorizationsChanged, object: nil)
+        try await settle()
+
+        #expect(manager.currentExecution(of: "game.paseo") == nil)
+        #expect(engine.destroyCallCount == 1)
+        #expect(execution.stopWsBridgeCallCount == 1)
+        #expect(manager.currentExecution(of: "other.paseo") != nil)
+
+        manager.demandChanged(productId: "game.paseo", transition: .start)
+        try await settle()
+        let replacement = try #require(manager.currentExecution(of: "game.paseo"))
+        NotificationCenter.default.post(name: .productPermissionAuthorizationsChanged, object: nil)
+        try await settle()
+        #expect(manager.currentExecution(of: "game.paseo") === replacement)
+        await manager.shutdown()
+    }
+
     /// A worker whose engine fails once it is already in the running map must
     /// leave nothing behind: the core keeps counting the reference the card
     /// holds, so no further stop arrives to clear a half-started entry, and
@@ -296,6 +332,7 @@ private final class StubBuilder: TrUAPIWorkerBuilding, @unchecked Sendable {
     /// The execution of the worker built last, so a test can read what the core
     /// was told through it.
     private(set) var execution: MockProductExecution?
+    private(set) var engine: MockJSEngine?
     /// What the bridge would have answered the moment the worker's engine came
     /// up, which is when its script subscribes to the card list.
     private(set) var cardsWhenTheEngineBooted: [PocketCard] = []
@@ -368,7 +405,9 @@ private final class StubBuilder: TrUAPIWorkerBuilding, @unchecked Sendable {
                 if isFirstBuild, let firstStartFailsAfter {
                     return SlowFailingJSEngine(after: firstStartFailsAfter)
                 }
-                return MockJSEngine()
+                let engine = MockJSEngine()
+                self?.engine = engine
+                return engine
             }
         )
     }

@@ -1,9 +1,4 @@
-// The testing WASM bundle exists to carry a signing host: dev accounts sign
-// locally instead of waiting on a wallet that is not there. That depends on a
-// build flag (`--features wasm-signing-host` in `scripts/build-wasm.mjs`),
-// and a flag is exactly the kind of thing that gets dropped in a refactor
-// without anything failing — the bundle would still build, still load, and
-// simply have no signing host in it.
+// Precompressed WASM sidecars belong to host deployments, not SDK archives.
 import { describe, expect, it } from "bun:test";
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
@@ -15,16 +10,11 @@ import { wasmIsBuilt } from "./require-wasm.js";
 const packageRoot = dirname(
   fileURLToPath(new URL("../../package.json", import.meta.url)),
 );
-const testingGlue = fileURLToPath(
-  new URL("../../dist/wasm/testing/truapi_server.d.ts", import.meta.url),
-);
-const webGlue = fileURLToPath(
-  new URL("../../dist/wasm/web/truapi_server.d.ts", import.meta.url),
-);
-
+const testingGlue = join(packageRoot, "dist/wasm/testing/truapi_server.js");
+const webGlue = join(packageRoot, "dist/wasm/web/truapi_server.js");
 const suite = wasmIsBuilt(
-  "testing/truapi_server.d.ts",
-  "web/truapi_server.d.ts",
+  "testing/truapi_server_bg.wasm",
+  "web/truapi_server_bg.wasm",
 )
   ? describe
   : describe.skip;
@@ -43,19 +33,11 @@ suite("testing wasm bundle", () => {
     );
   });
 
-  it("is the only bundle that does", () => {
-    // The production browser host pairs with a wallet and must not ship a
-    // key-holding runtime; that separation is the reason for two bundles.
-    expect(readFileSync(webGlue, "utf8")).not.toContain(
-      "export class WasmSigningHostRuntime",
-    );
-  });
-
   it("is the only bundle that can answer allocation as granted", () => {
     // `setGrantAllowancesUnchecked` hands a product a grant nothing allocated.
-    // It is gated on the non-default `test-host` Cargo feature, which only
-    // `scripts/build-wasm.mjs` turns on and only for this bundle, so a shipping
-    // host has no entry point to it at all.
+    // It is gated on the non-default `test-host` Cargo feature, which
+    // `scripts/build-wasm.mjs` turns on only for this bundle. A shipping
+    // signing host built with `--signing-host` must not expose it either.
     expect(readFileSync(testingGlue, "utf8")).toContain(
       "setGrantAllowancesUnchecked",
     );

@@ -56,6 +56,8 @@ jobs:
       - name: cargo build
         run: cargo build --workspace --all-targets --all-features
 
+      - name: Build no-std guest SDK
+        run: cargo build --locked -p truapi -p truapi-client --no-default-features
       - name: Check Rust library documentation
         env:
           RUSTDOCFLAGS: "-D warnings"
@@ -236,6 +238,7 @@ jobs:
             js/packages/truapi-host/src/generated
             playground/test/generated
             rust/crates/truapi-host-cli/js/script-types.d.ts
+            rust/crates/truapi-client/src/generated.rs
             rust/crates/truapi/src/generated
             rust/crates/truapi/src/wasm
 
@@ -459,6 +462,9 @@ jobs:
           set -euo pipefail
           simulator="$(node --input-type=module -e 'import { selectSimulator } from "./scripts/lib/ios-simulator.mjs"; console.log(selectSimulator().udid)')"
           echo "TRUAPI_TEST_SIMULATOR=$simulator" >> "$GITHUB_ENV"
+          # Finish OS boot before compilation. The test suite separately checks
+          # stock WebKit readiness: bootstatus does not start its lazy processes.
+          xcrun simctl bootstatus "$simulator" -b
           probe="$RUNNER_TEMP/tag-probe"
           mkdir -p "$probe/ios/truapi-host/Binaries" "$probe/ios/truapi-provider/Binaries"
           cp -R ios/truapi-host/Binaries/truapi_server.xcframework "$probe/ios/truapi-host/Binaries/"
@@ -816,7 +822,10 @@ jobs:
       - uses: ./.github/actions/rust-cache
 
       - name: Install wasm-pack
-        run: cargo install wasm-pack --locked
+        run: cargo install wasm-pack --version 0.14.0 --locked
+
+      - name: Install core WASM artifact tools
+        run: bash scripts/install-wasm-artifact-tools.sh
 
       - name: Download codegen output
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
@@ -913,6 +922,9 @@ jobs:
       # wasm-pack also picks the wasm-opt that shapes their size.
       - name: Install wasm-pack
         run: cargo install wasm-pack --version 0.14.0 --locked
+
+      - name: Install core WASM artifact tools
+        run: bash scripts/install-wasm-artifact-tools.sh
 
       - name: Download codegen output
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1

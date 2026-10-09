@@ -68,13 +68,13 @@ const MEMBER_LEN: usize = 32;
 
 /// Fields read from `Members.Collections`.
 #[derive(Debug, PartialEq, Eq, DecodeAsType)]
-struct CollectionInfo {
-    ring_size: RingExponent,
+pub(super) struct CollectionInfo {
+    pub(super) ring_size: RingExponent,
 }
 
 /// Supported LitePeople ring domain sizes.
 #[derive(Debug, PartialEq, Eq, DecodeAsType)]
-enum RingExponent {
+pub(super) enum RingExponent {
     R2e9,
     R2e10,
     R2e14,
@@ -82,7 +82,7 @@ enum RingExponent {
 
 impl RingExponent {
     /// Return the exponent represented by the runtime enum variant.
-    fn exponent(self) -> u8 {
+    pub(super) fn exponent(self) -> u8 {
         match self {
             Self::R2e9 => 9,
             Self::R2e10 => 10,
@@ -118,7 +118,7 @@ pub struct RingParams {
 }
 
 /// `Members.CurrentRingIndex[id]` storage key.
-fn current_ring_index_key(collection: PersonhoodCollection) -> Vec<u8> {
+pub(super) fn current_ring_index_key(collection: PersonhoodCollection) -> Vec<u8> {
     [
         twox_128(b"Members").as_slice(),
         twox_128(b"CurrentRingIndex").as_slice(),
@@ -128,7 +128,7 @@ fn current_ring_index_key(collection: PersonhoodCollection) -> Vec<u8> {
 }
 
 /// `Members.Collections[id]` storage key.
-fn collections_key(collection: PersonhoodCollection) -> Vec<u8> {
+pub(super) fn collections_key(collection: PersonhoodCollection) -> Vec<u8> {
     [
         twox_128(b"Members").as_slice(),
         twox_128(b"Collections").as_slice(),
@@ -138,7 +138,7 @@ fn collections_key(collection: PersonhoodCollection) -> Vec<u8> {
 }
 
 /// `Members.RingKeysStatus[(id, ring_index)]` storage key.
-fn ring_keys_status_key(collection: PersonhoodCollection, ring_index: u32) -> Vec<u8> {
+pub(super) fn ring_keys_status_key(collection: PersonhoodCollection, ring_index: u32) -> Vec<u8> {
     [
         twox_128(b"Members").as_slice(),
         twox_128(b"RingKeysStatus").as_slice(),
@@ -160,7 +160,11 @@ fn ring_root_key(collection: PersonhoodCollection, ring_index: u32) -> Vec<u8> {
 }
 
 /// `Members.RingKeys[(id, ring_index, page)]` storage key.
-fn ring_keys_key(collection: PersonhoodCollection, ring_index: u32, page: u32) -> Vec<u8> {
+pub(super) fn ring_keys_key(
+    collection: PersonhoodCollection,
+    ring_index: u32,
+    page: u32,
+) -> Vec<u8> {
     [
         twox_128(b"Members").as_slice(),
         twox_128(b"RingKeys").as_slice(),

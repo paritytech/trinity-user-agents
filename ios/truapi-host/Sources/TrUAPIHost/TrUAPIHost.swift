@@ -44,6 +44,13 @@ public protocol HostCoreStorageBackend: AnyObject, Sendable {
     func read(key: Data) throws -> Data?
     func write(key: Data, value: Data) throws
     func clear(key: Data) throws
+    func keys() throws -> [Data]
+}
+
+public extension HostCoreStorageBackend {
+    func keys() throws -> [Data] {
+        throw HostRejection.Rejected(reason: "core storage enumeration unsupported")
+    }
 }
 
 /// Host-side callback bundle that the Rust core invokes for capabilities the
@@ -79,6 +86,12 @@ public protocol HostBridge: AnyObject, Sendable {
 
     /// Cancel a previously scheduled notification id.
     func cancelNotification(id: UInt32) throws
+
+    /// Non-consuming ordered batch (at most 32), bound to the verified execution.
+    /// Must not enroll receiving or request notification permission.
+    func activationEvents() async throws -> [NotificationActivation]
+    /// Idempotently acknowledge one sequence, never a notification id or range.
+    func acknowledgeActivation(sequence: UInt64) async throws
 
     /// Prompt for a device-level permission `product` requested on the main
     /// actor, suspending until the user decides. Preserve the approval lifetime.
@@ -147,6 +160,10 @@ public protocol HostBridge: AnyObject, Sendable {
     /// tag. Hosts with no in-app language picker report the system language.
     func currentLocale() throws -> HostLocaleSubscribeItem
 
+    /// Format timestamps using the requested language and time zone.
+    func localizeTimestamps(request: HostLocaleLocalizeTimestampsRequest) async throws
+        -> HostLocaleLocalizeTimestampsResponse
+
     /// Answer a feature-support query. Invoked on the dispatcher thread; must
     /// return promptly.
     func featureSupported(request: HostFeatureSupportedRequest) async throws -> Bool
@@ -197,6 +214,9 @@ public protocol HostBridge: AnyObject, Sendable {
     /// Core-owned host-private storage for auth session, pairing identity,
     /// and persisted permission decisions.
     var coreStorage: HostCoreStorageBackend { get }
+
+    /// Invalidates native settings and legacy permission consumers.
+    func permissionAuthorizationsChanged(productId: String)
 
 }
 
@@ -315,6 +335,12 @@ public extension HostBridge {
     func onCoreLog(marker: String, detail: String) {}
     func pushNotification(request: HostPushNotificationRequest) async throws -> UInt32 { 0 }
     func cancelNotification(id: UInt32) throws {}
+    func activationEvents() async throws -> [NotificationActivation] {
+        throw HostRejection.Rejected(reason: "notification activation unsupported")
+    }
+    func acknowledgeActivation(sequence: UInt64) async throws {
+        throw HostRejection.Rejected(reason: "notification activation unsupported")
+    }
     func authStateChanged(state: AuthState) {}
     func chainConnect(genesisHash: Data) throws -> UInt32? { nil }
     func chainSend(connectionId: UInt32, request: String) throws {}
@@ -329,8 +355,50 @@ public extension HostBridge {
     }
     func currentLocale() throws -> HostLocaleSubscribeItem {
         HostLocaleSubscribeItem(
-            languageTag: Locale.current.language.languageCode?.identifier ?? "en"
+            languageTag: Locale.current.identifier(.bcp47),
+            timeZone: TimeZone.current.identifier
         )
+    }
+    func localizeTimestamps(request: HostLocaleLocalizeTimestampsRequest) async throws
+        -> HostLocaleLocalizeTimestampsResponse {
+        guard !request.languageTag.isEmpty,
+              let zone = TimeZone(identifier: request.timeZone),
+              request.timestampsMs.count <= 128,
+              request.timestampsMs.allSatisfy({ $0 <= 253_402_300_799_999 }) else {
+            throw HostRejection.Rejected(reason: "Invalid timestamp localization request")
+        }
+        let locale = Locale(identifier: request.languageTag)
+        let key = DateFormatter()
+        key.locale = Locale(identifier: "en_US_POSIX")
+        key.calendar = Calendar(identifier: .gregorian)
+        key.timeZone = zone
+        key.dateFormat = "yyyy-MM-dd"
+        let time = DateFormatter()
+        time.locale = locale
+        time.timeZone = zone
+        time.timeStyle = .short
+        let date = DateFormatter()
+        date.locale = locale
+        date.timeZone = zone
+        date.dateStyle = .long
+        let detail = DateFormatter()
+        detail.locale = locale
+        detail.timeZone = zone
+        detail.dateStyle = .full
+        detail.timeStyle = .long
+        return try HostLocaleLocalizeTimestampsResponse(timestamps: request.timestampsMs.map {
+            let instant = Date(timeIntervalSince1970: Double($0) / 1_000)
+            let localDate = key.string(from: instant)
+            guard localDate.count == 10 else {
+                throw HostRejection.Rejected(reason: "Local date is outside the four-digit year range")
+            }
+            return HostLocaleLocalizedTimestamp(
+                localDate: localDate,
+                time: time.string(from: instant),
+                date: date.string(from: instant),
+                dateTime: detail.string(from: instant)
+            )
+        })
     }
     func supportedChains() throws -> HostChainSet { HostChainSet(network: "", chains: []) }
     func workerDemandChanged(productId: String, transition: WorkerTransition) {}
@@ -547,6 +615,14 @@ private final class HostCallbackAdapter: HostCallbacks, @unchecked Sendable {
         }
     }
 
+    func activationEvents() async throws -> [NotificationActivation] {
+        try await withHostRejection { try await bridge.activationEvents() }
+    }
+
+    func acknowledgeActivation(sequence: UInt64) async throws {
+        try await withHostRejection { try await bridge.acknowledgeActivation(sequence: sequence) }
+    }
+
     func devicePermission(
         product: ProductExecutionConfig,
         request: HostDevicePermissionRequest
@@ -587,6 +663,14 @@ private final class HostCallbackAdapter: HostCallbacks, @unchecked Sendable {
 
     func authStateChanged(state: AuthState) {
         bridge.authStateChanged(state: state)
+    }
+
+    func coreStorageKeys() async throws -> [Data] {
+        try withHostRejection { try bridge.coreStorage.keys() }
+    }
+
+    func permissionAuthorizationsChanged(productId: String) {
+        bridge.permissionAuthorizationsChanged(productId: productId)
     }
 
     func coreStorageRead(key: Data) throws -> Data? {
@@ -652,6 +736,13 @@ private final class HostCallbackAdapter: HostCallbacks, @unchecked Sendable {
     func currentLocale() throws -> HostLocaleSubscribeItem {
         try withHostRejection {
             try bridge.currentLocale()
+        }
+    }
+
+    func localizeTimestamps(request: HostLocaleLocalizeTimestampsRequest) async throws
+        -> HostLocaleLocalizeTimestampsResponse {
+        try await withHostRejection {
+            try await bridge.localizeTimestamps(request: request)
         }
     }
 
@@ -841,6 +932,44 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
             pocketRetainer: pocketAdapter,
             gameRetainer: gameAdapter
         )
+    }
+
+    public func permissionAuthorizationProducts() async throws -> [String] {
+        try await inner.permissionAuthorizationProducts()
+    }
+
+    public func permissionAuthorizationRevision(productId: String) throws -> UInt64 {
+        try inner.permissionAuthorizationRevision(productId: productId)
+    }
+
+    public func setPermissionAuthorizationStatusIfCurrent(
+        productId: String,
+        request: PermissionAuthorizationRequest,
+        status: PermissionAuthorizationStatus,
+        revision: UInt64
+    ) async throws -> Bool {
+        try await inner.setPermissionAuthorizationStatusIfCurrent(
+            productId: productId, request: request, status: status, revision: revision
+        )
+    }
+
+    public func permissionAuthorizations(productId: String) async throws -> [PermissionAuthorizationEntry] {
+        try await inner.permissionAuthorizations(productId: productId)
+    }
+
+    public func setPermissionAuthorizationStatus(
+        productId: String,
+        request: PermissionAuthorizationRequest,
+        status: PermissionAuthorizationStatus
+    ) async throws {
+        try await inner.setPermissionAuthorizationStatus(productId: productId, request: request, status: status)
+    }
+
+    public func importPermissionAuthorizations(
+        productId: String,
+        entries: [PermissionAuthorizationEntry]
+    ) async throws -> [PermissionAuthorizationEntry] {
+        try await inner.importPermissionAuthorizations(productId: productId, entries: entries)
     }
 
     public func disconnect() {
@@ -1053,16 +1182,13 @@ public protocol TrUAPIProductExecutionProtocol: AnyObject, Sendable {
     func startWsBridge(bindPort: UInt16) throws -> WsBridgeEndpoint
     func stopWsBridge()
     func close()
+    func isClosed() -> Bool
     func publishChatAction(_ action: HostChatActionSubscribeItem) throws
     func render(_ request: ProductRendererRenderRequest) throws -> AsyncThrowingStream<RendererNode, Error>
     func publishRendererAction(_ item: HostRendererActionSubscribeItem) throws
     func permissionAuthorizationStatus(
         request: PermissionAuthorizationRequest
     ) async throws -> PermissionAuthorizationStatus
-    func setPermissionAuthorizationStatus(
-        request: PermissionAuthorizationRequest,
-        status: PermissionAuthorizationStatus
-    ) throws
     func notifyThemeChanged(theme: HostThemeSubscribeItem)
     func notifyLocaleChanged(locale: HostLocaleSubscribeItem)
     func notifyStorageChanged(key: String, value: Data?)
@@ -1080,6 +1206,7 @@ public final class TrUAPIProductExecution: TrUAPIProductExecutionProtocol, @unch
     private let callbackRetainer: HostCallbacks
     private let chatRetainer: NativeChatCallbacks?
     private let pocketRetainer: NativePocketCallbacks?
+    private let localeObservers: [NSObjectProtocol]
     private let gameRetainer: NativeGameCallbacks?
 
     fileprivate init(
@@ -1093,10 +1220,20 @@ public final class TrUAPIProductExecution: TrUAPIProductExecutionProtocol, @unch
         self.callbackRetainer = callbackRetainer
         self.chatRetainer = chatRetainer
         self.pocketRetainer = pocketRetainer
+        localeObservers = [
+            NSLocale.currentLocaleDidChangeNotification,
+            NSNotification.Name.NSSystemTimeZoneDidChange,
+        ].map { name in
+            NotificationCenter.default.addObserver(forName: name, object: nil, queue: nil) { _ in
+                guard let locale = try? callbackRetainer.currentLocale() else { return }
+                inner.notifyLocaleChanged(locale: locale)
+            }
+        }
         self.gameRetainer = gameRetainer
     }
 
     deinit {
+        localeObservers.forEach(NotificationCenter.default.removeObserver)
         inner.shutdown()
     }
 
@@ -1108,7 +1245,12 @@ public final class TrUAPIProductExecution: TrUAPIProductExecutionProtocol, @unch
         inner.stopWsBridge()
     }
 
+    public func isClosed() -> Bool {
+        inner.isClosed()
+    }
+
     public func close() {
+        localeObservers.forEach(NotificationCenter.default.removeObserver)
         inner.shutdown()
     }
 
@@ -1136,14 +1278,6 @@ public final class TrUAPIProductExecution: TrUAPIProductExecutionProtocol, @unch
         request: PermissionAuthorizationRequest
     ) async throws -> PermissionAuthorizationStatus {
         try await inner.permissionAuthorizationStatus(request: request)
-    }
-
-    /// Updates the product decision used by subsequent permission checks.
-    public func setPermissionAuthorizationStatus(
-        request: PermissionAuthorizationRequest,
-        status: PermissionAuthorizationStatus
-    ) throws {
-        try inner.setPermissionAuthorizationStatus(request: request, status: status)
     }
 
     public func notifyThemeChanged(theme: HostThemeSubscribeItem) {

@@ -1,14 +1,19 @@
 //! On-chain statement-store allowance registration (`set_statement_store_account`).
 //!
-//! Mirrors how an iOS/web client obtains statement-store allowance from the real
-//! People chain: build the `Resources.set_statement_store_account` call, prove
-//! personhood ring membership with the caller's registry-selected ring-VRF key,
-//! and submit the resulting unsigned General (v5) extrinsic. Native only
-//! (needs the `verifiable` prover and live chain reads).
+//! Mirrors how iOS and browser account holders obtain statement-store
+//! allowance from the real People chain: build the
+//! `Resources.set_statement_store_account` call, prove personhood ring
+//! membership with the caller's registry-selected ring-VRF key, and submit the
+//! resulting unsigned General (v5) extrinsic.
+//!
+//! These helpers accept host-backed RPC clients on native and browser targets;
+//! the host supplies the chain connections and controls which claims it offers.
+//! Opening a direct RPC URL is only available on native targets.
 
 pub mod collection;
 pub mod extension;
 pub mod extrinsic;
+pub mod inspection;
 mod key_hash;
 pub mod pgas;
 pub mod proof;
@@ -28,8 +33,6 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 #[cfg(not(target_arch = "wasm32"))]
 use std::time::Instant;
-#[cfg(target_arch = "wasm32")]
-use web_time::Instant;
 
 use futures::FutureExt;
 use parity_scale_codec::{Decode, Encode};
@@ -37,6 +40,8 @@ use serde_json::{Value, json};
 use sp_crypto_hashing::twox_128;
 use thiserror::Error;
 use tracing::{debug, warn};
+#[cfg(target_arch = "wasm32")]
+use web_time::Instant;
 
 use collection::PersonhoodCollection;
 use extension::{ChainState, Metadata, MetadataError};

@@ -15,6 +15,8 @@ and calls it like any product would. With `--script`, the CLI runs the script
 and exits with its status. Without `--script`, both roles open a full-screen
 terminal UI when stdin and stdout are TTYs.
 
+The headless host reports its English interface language but has no native locale/time-zone formatting engine. Its locale subscription therefore reports no time zone, and `locale.localizeTimestamps` returns a domain error explaining that local time conversion is unavailable. Products must not interpret that absence as UTC or use a fixed offset as local time.
+
 One binary, `truapi-host`:
 
 | Command | Role |
@@ -1055,6 +1057,11 @@ one-shot modes.
   Every role the preset serves is routed unconditionally; `E2E_LIVE_CHAIN=1` only
   widens routing to endpoints it carries without serving. A rustls crypto provider is
   installed at startup for the TLS connections.
+- **`TRUAPI_LIGHT_CLIENT=1`** sends the host's own chain traffic (statement store,
+  allowance renewal, preimages, PGAS claims) through the embedded smoldot light
+  client instead of the public nodes, for CI runners those nodes rate-limit. Account
+  setup and dotNS username reads still use RPC. The first connection to a chain
+  waits for it to sync.
 - **Ring-VRF product-account aliases and proofs** are implemented by the
   signing host via the `verifiable` crate (`get_account_alias` and
   `create_account_proof`).

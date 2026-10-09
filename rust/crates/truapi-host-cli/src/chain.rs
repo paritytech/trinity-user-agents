@@ -1,11 +1,12 @@
-//! Native WebSocket `ChainProvider` / `JsonRpcConnection`.
+//! Native `ChainProvider`s: WebSocket JSON-RPC to the preset's public nodes, or
+//! the embedded smoldot light client.
 //!
-//! The headless hosts reach the real People-chain statement store over
-//! WebSocket JSON-RPC (the same node an iOS/web client uses). Every `connect`
-//! opens a fresh socket; the runtime's `HostRpcClient` sits on top and speaks
-//! statement-store RPC.
+//! The headless hosts reach the real People-chain statement store. Over RPC
+//! every `connect` opens a fresh socket; the runtime's `HostRpcClient` sits on
+//! top and speaks statement-store RPC.
 
 use std::collections::HashMap;
+use std::collections::hash_map::Entry;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -18,8 +19,9 @@ use tokio_tungstenite::connect_async;
 use tokio_tungstenite::tungstenite::Message;
 use tracing::{debug, warn};
 use truapi::platform::{ChainProvider, JsonRpcConnection, ProviderError};
+use truapi_provider::EmbeddedChainProvider;
 
-use crate::network::ChainEndpoint;
+use crate::network::{ChainEndpoint, NetworkConfig};
 
 /// Broadcast backlog for inbound JSON-RPC frames per connection.
 const INBOUND_CHANNEL_CAPACITY: usize = 1024;
@@ -98,6 +100,74 @@ impl ChainProvider for WsChainProvider {
             .await
             .map_err(|reason| ProviderError::Transport { reason })?;
         Ok(Box::new(connection))
+    }
+}
+
+/// How the headless hosts reach the chains.
+///
+/// RPC dials the preset's public nodes. `TRUAPI_LIGHT_CLIENT=1` runs the embedded
+/// light client instead, which needs no node, so a public node rate-limiting a
+/// shared address (a CI runner) cannot refuse the host.
+pub enum CliChainProvider {
+    /// The preset's public nodes, the default.
+    Rpc(WsChainProvider),
+    /// Resolves every chain of the preset from the provider's bundled network
+    /// catalog by genesis hash.
+    LightClient {
+        provider: Box<EmbeddedChainProvider>,
+        people_genesis: [u8; 32],
+        /// One idle connection per chain for the life of the process. The light
+        /// client stops a chain when its last connection closes and the runtime
+        /// connects once per call, so without it every call would sync again and
+        /// start with no peers to broadcast a statement to.
+        kept_open: tokio::sync::Mutex<HashMap<[u8; 32], Box<dyn JsonRpcConnection>>>,
+    },
+}
+
+impl CliChainProvider {
+    /// Light client when `TRUAPI_LIGHT_CLIENT=1`, RPC otherwise.
+    pub fn new(network: NetworkConfig) -> Self {
+        if std::env::var("TRUAPI_LIGHT_CLIENT").as_deref() == Ok("1") {
+            Self::LightClient {
+                provider: Box::new(EmbeddedChainProvider::builder().build()),
+                people_genesis: network.people_genesis,
+                kept_open: tokio::sync::Mutex::default(),
+            }
+        } else {
+            Self::Rpc(WsChainProvider::new(
+                network.people_ws,
+                network.live_chain_endpoints,
+            ))
+        }
+    }
+}
+
+#[async_trait]
+impl ChainProvider for CliChainProvider {
+    async fn connect(
+        &self,
+        genesis_hash: [u8; 32],
+    ) -> Result<Box<dyn JsonRpcConnection>, ProviderError> {
+        match self {
+            Self::Rpc(provider) => provider.connect(genesis_hash).await,
+            Self::LightClient {
+                provider,
+                people_genesis,
+                kept_open,
+            } => {
+                // The all-zero SSO sentinel is answered by People, as over RPC.
+                let genesis = if genesis_hash == [0; 32] {
+                    *people_genesis
+                } else {
+                    genesis_hash
+                };
+                debug!(genesis = %hex::encode(genesis), "light client connect");
+                if let Entry::Vacant(slot) = kept_open.lock().await.entry(genesis) {
+                    slot.insert(provider.connect(genesis).await?);
+                }
+                provider.connect(genesis).await
+            }
+        }
     }
 }
 

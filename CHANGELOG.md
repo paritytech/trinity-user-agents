@@ -5,6 +5,42 @@ All notable changes to the TrUAPI protocol are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 generated from [Conventional Commits](https://www.conventionalcommits.org/).
 
+## [Unreleased]
+
+### Changed
+
+- isolate the optional PolkaVM runtime in `truapi-polkavm-host`; keep the base
+  server and browser asset distribution independent, and pin cooperative update
+  deadlines, multi-touch input, and image clipboard output (#540)
+- let browser signing hosts request personhood-backed Statement Store
+  allowances for products instead of reporting the allocator as native-only
+- migrate the generic runtime and Rust client to SDK 0.16's scoped wire codec 2;
+  product guests must be rebuilt rather than sending codec-1 frames
+- integrate the current native SDK with PolkaVM host runtime `0.3.2-rc.9`,
+  pinned to `959ad63f7312a2f4598b9f718ccc2516927cbbff`, retaining canonical
+  permission administration and live-execution revocation (#540)
+
+### Added
+
+- report local-wallet registration stages and retryable chain-read errors through
+  a request-scoped browser callback without resubmitting accepted claims
+- expose local signing-wallet username registration and chain-verified identity
+  refresh through the browser worker, with native UID proofs and RFC-0004
+  X25519 identifier keys
+- Generate a transport-neutral `no_std` Rust client with typed request responses,
+  subscription interrupts, and host-initiated Renderer subscription codecs.
+- Generate complete App, Widget, Worker, and Worker-only method catalogs from
+  the canonical protocol schema.
+
+### Fixed
+
+- keep host-backed allowance helpers available on Wasm with browser-compatible
+  polling clocks, while excluding the native-only renewal driver (#540)
+- report the immutable PolkaVM runtime revision actually pinned by the optional
+  composition crate (#540)
+- return a decode error instead of trapping when subscription helpers receive a
+  request descriptor
+
 ## [0.24.0] - 2026-10-07
 
 ### Added
@@ -79,7 +115,6 @@ generated from [Conventional Commits](https://www.conventionalcommits.org/).
 - recover products after the app returns from the background (#974)
 - protect permission checks without breaking libraries (#916)
 - give the Android preview the real backend identifiers (#975)
-
 ## [0.21.0] - 2026-09-24
 
 ### Added
@@ -100,7 +135,6 @@ generated from [Conventional Commits](https://www.conventionalcommits.org/).
 
 - mark the debugger private, since it is not published (#911)
 - initialize built-in personhood keys (#924)
-
 ## [0.20.0] - 2026-09-23
 
 ### Added

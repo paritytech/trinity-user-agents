@@ -16,6 +16,16 @@ It defines:
 
 The TypeScript client and the host dispatcher are both generated from this crate.
 
+The default `runtime` feature includes the host implementation. `host-api` exposes
+the async host traits and call primitives without the dispatcher, which lets
+code generation bootstrap before generating runtime sources. Protocol payloads
+and envelopes remain available without either feature for guest clients.
+
+Normal Rust builds emit an `rlib`, so a `no_std` guest can provide its own
+allocator and panic handler. Native packaging targets request `cdylib` or
+`staticlib` explicitly with `cargo rustc`; the browser build likewise requests
+`cdylib` before running `wasm-bindgen` and `wasm-opt`.
+
 ## Architecture
 
 The crate has two layers:

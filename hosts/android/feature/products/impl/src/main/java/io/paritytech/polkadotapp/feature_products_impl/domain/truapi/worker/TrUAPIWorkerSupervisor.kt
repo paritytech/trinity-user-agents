@@ -117,6 +117,10 @@ class TrUAPIWorkerSupervisor @Inject constructor(
                 chainDirectory.resolve(),
                 ignoredNavigation(),
                 ProductExecutionKind.WORKER,
+                onPermissionRevoked = {
+                    provider.disposeRevokedExecution()
+                    scope.launch { transitions.withLock { stop(productId) } }
+                },
             ) { bootstrap -> provider.addWebViewSetup(installBootstrap(bootstrap)) }
             .flatMap { execution ->
                 runCatching {

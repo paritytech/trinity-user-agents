@@ -31,6 +31,7 @@
 
 import type { OptionalCapabilities } from "./generated/worker-callbacks.js";
 import type { LogLevel, PermissionAuthorizationStatus } from "./runtime.js";
+import type { WalletAllowanceSnapshot } from "./wallet-allowances.js";
 import type {
   CallbackName,
   SubscriptionName,
@@ -49,6 +50,18 @@ export type {
  * at a fixed arity; a uniform `unknown[]` keeps the wire protocol simple.
  */
 export type CallbackArgs = readonly unknown[];
+
+/** Chain-verified identity metadata for the wallet's network-specific UID account. */
+export interface LocalIdentity {
+  /** Canonical lowercase 0x-prefixed 32-byte account identifier. */
+  identityAccountId: string;
+  liteUsername?: string;
+}
+
+/** Observable registration stages; acceptance is not verified ownership. */
+export type LocalIdentityProgress =
+  | { stage: "checking" | "authenticating" | "submitting" | "confirming" }
+  | { stage: "retrying"; error: string };
 
 /**
  * Messages posted by the main window to the WASM worker. These either control
@@ -81,7 +94,12 @@ export type MainToWorker =
        */
       role?: HostRole;
     }
-  | { kind: "createCore"; coreId: number; product: unknown }
+  | {
+      kind: "createCore";
+      coreId: number;
+      product: unknown;
+      capabilities?: OptionalCapabilities;
+    }
   | { kind: "disposeCore"; coreId: number }
   | { kind: "setLogLevel"; level: LogLevel }
   | { kind: "frame"; coreId: number; bytes: Uint8Array }
@@ -127,6 +145,24 @@ export type MainToWorker =
       tags: string[];
     }
   | { kind: "resetSessionState"; requestId: number }
+  | {
+      kind: "activateLocalSessionWithIdentity";
+      requestId: number;
+      secret: Uint8Array;
+      liteUsername?: string;
+    }
+  | { kind: "refreshLocalIdentity"; requestId: number }
+  | {
+      kind: "getWalletAllowanceSnapshot";
+      requestId: number;
+      productIds: string[];
+    }
+  | {
+      kind: "registerLocalLiteUsername";
+      requestId: number;
+      baseUsername: string;
+      identityBackendBaseUrl: string;
+    }
   | {
       kind: "getPermissionAuthorizationStatus";
       productId: string;
@@ -223,6 +259,35 @@ export type WorkerToMain =
   | { kind: "sessionActivationResponse"; requestId: number; ok: true }
   | {
       kind: "sessionActivationResponse";
+      requestId: number;
+      ok: false;
+      error: string;
+    }
+  | {
+      kind: "localIdentityProgress";
+      requestId: number;
+      progress: LocalIdentityProgress;
+    }
+  | {
+      kind: "localIdentityResponse";
+      requestId: number;
+      ok: true;
+      identity: LocalIdentity;
+    }
+  | {
+      kind: "localIdentityResponse";
+      requestId: number;
+      ok: false;
+      error: string;
+    }
+  | {
+      kind: "walletAllowanceSnapshotResponse";
+      requestId: number;
+      ok: true;
+      snapshot: WalletAllowanceSnapshot;
+    }
+  | {
+      kind: "walletAllowanceSnapshotResponse";
       requestId: number;
       ok: false;
       error: string;
@@ -337,12 +402,14 @@ export type WorkerToMain =
   | {
       kind: "callbackRequest";
       requestId: number;
+      coreId?: number;
       name: CallbackName;
       args: CallbackArgs;
     }
   | {
       kind: "subscriptionStart";
       subId: number;
+      coreId?: number;
       name: SubscriptionName;
       payload: Uint8Array | string | null;
     }

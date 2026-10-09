@@ -1,4 +1,4 @@
-//! Lite-person username registration parameters (signing host, native only).
+//! Lite-person username registration parameters for signing hosts.
 //!
 //! Builds the client-side proofs the identity backend needs to
 //! attest a lite username for an account: an sr25519 proof-of-ownership, a
@@ -13,14 +13,19 @@
 
 use parity_scale_codec::{Decode, Encode};
 use thiserror::Error;
-use verifiable::Error as VerifiableError;
+// Native builds link `verifiable`; the browser core loads it on demand, so a
+// browser caller supplies the ring-VRF steps to `build_lite_registration_with`.
+#[cfg(not(target_arch = "wasm32"))]
 use verifiable::GenerateVerifiable;
+#[cfg(not(target_arch = "wasm32"))]
 use verifiable::ring::bandersnatch::BandersnatchVrfVerifiable;
 
 use crate::host_logic::dotns_gateway::build_reservation_message;
+#[cfg(not(target_arch = "wasm32"))]
+use crate::host_logic::product_account::derive_lite_person_ring_vrf_entropy;
 use crate::host_logic::product_account::{
     ProductAccountError, SR25519_SIGNING_CONTEXT, derive_identity_keypair,
-    derive_lite_person_ring_vrf_entropy, product_public_key_to_address,
+    product_public_key_to_address,
 };
 use crate::host_logic::sso::pairing::{derive_identity_chat_private_key, x25519_public_key};
 
@@ -69,6 +74,57 @@ pub struct LiteRegistration {
     pub dotns_signature: [u8; 64],
 }
 
+impl LiteRegistration {
+    /// Encode the identity backend's registration body, sharing CLI and browser wire bytes.
+    pub fn request_body(
+        &self,
+        username_base: &str,
+        reserved_username: Option<&str>,
+        signed_at: u64,
+    ) -> serde_json::Value {
+        let hex0x = |bytes: &[u8]| format!("0x{}", hex::encode(bytes));
+        let mut dotns = serde_json::json!({
+            "signature": hex0x(&self.dotns_signature),
+            "signedAt": signed_at,
+        });
+        if let Some(reserved) = reserved_username {
+            dotns["reservedUsername"] = serde_json::json!(reserved);
+        }
+        serde_json::json!({
+            "username": username_base,
+            "candidateAccountId": self.candidate_account_id,
+            "candidateSignature": hex0x(&self.candidate_signature),
+            "ringVrfKey": hex0x(&self.ring_vrf_key),
+            "proofOfOwnership": hex0x(&self.proof_of_ownership),
+            "identifierKey": hex0x(&self.identifier_key),
+            "consumerRegistrationSignature": hex0x(&self.consumer_registration_signature),
+            "dotns": dotns,
+        })
+    }
+}
+
+/// Sign the backend auth challenge as the network's UID account, covering the exact body.
+pub fn sign_backend_challenge(
+    entropy: &[u8],
+    network_suffix: &str,
+    challenge: &[u8],
+    body: &[u8],
+) -> Result<([u8; 32], [u8; 64]), ProductAccountError> {
+    use sha2::{Digest as _, Sha256};
+    let keypair = derive_identity_keypair(entropy, network_suffix)?;
+    let client_id = keypair.public.to_bytes();
+    let mut hasher = Sha256::new();
+    hasher.update(challenge);
+    hasher.update(client_id);
+    hasher.update(Sha256::digest(body));
+    let message: [u8; 32] = hasher.finalize().into();
+    let proof = keypair
+        .secret
+        .sign_simple(SR25519_SIGNING_CONTEXT, &message, &keypair.public)
+        .to_bytes();
+    Ok((client_id, proof))
+}
+
 /// Error while building lite-person registration parameters.
 #[derive(Debug, Error)]
 pub enum LiteRegistrationError {
@@ -76,8 +132,8 @@ pub enum LiteRegistrationError {
     #[error("uid identity derivation failed: {0}")]
     CandidateDerivation(#[from] ProductAccountError),
     /// Ring-VRF proof-of-ownership failed.
-    #[error("ring-VRF proof-of-ownership failed: {0:?}")]
-    ProofOfOwnership(VerifiableError),
+    #[error("ring-VRF proof-of-ownership failed: {0}")]
+    ProofOfOwnership(String),
 }
 
 /// Build the lite-person registration parameters for `username_base`
@@ -90,6 +146,7 @@ pub enum LiteRegistrationError {
 /// claim on dotNS. `dotns_signed_at_secs` must be Asset Hub chain time, meaning
 /// `Timestamp.Now` in seconds. The local wall clock will not do: the gateway
 /// rejects signatures more than 30 seconds in the chain's future.
+#[cfg(not(target_arch = "wasm32"))]
 pub fn build_lite_registration(
     entropy: &[u8],
     network_suffix: &str,
@@ -98,14 +155,44 @@ pub fn build_lite_registration(
     reserved_username: Option<&str>,
     dotns_signed_at_secs: u64,
 ) -> Result<LiteRegistration, LiteRegistrationError> {
+    let vrf_secret = BandersnatchVrfVerifiable::new_secret(derive_lite_person_ring_vrf_entropy(
+        entropy,
+        network_suffix,
+    ));
+    build_lite_registration_with(
+        entropy,
+        network_suffix,
+        verifier_account_id,
+        username_base,
+        reserved_username,
+        dotns_signed_at_secs,
+        BandersnatchVrfVerifiable::member_from_secret(&vrf_secret),
+        |message| {
+            BandersnatchVrfVerifiable::sign(&vrf_secret, message).map_err(|err| format!("{err:?}"))
+        },
+    )
+}
+
+/// [`build_lite_registration`] with the two ring-VRF steps supplied by the
+/// caller, for a target that does not link `verifiable`. `ring_vrf_key` is the
+/// member key of the lite-person ring-VRF entropy for this entropy and suffix
+/// (`product_account::derive_lite_person_ring_vrf_entropy`), and
+/// `sign_proof_of_ownership` signs a message with that same key.
+#[allow(clippy::too_many_arguments)]
+pub fn build_lite_registration_with(
+    entropy: &[u8],
+    network_suffix: &str,
+    verifier_account_id: [u8; 32],
+    username_base: &str,
+    reserved_username: Option<&str>,
+    dotns_signed_at_secs: u64,
+    ring_vrf_key: [u8; 32],
+    sign_proof_of_ownership: impl FnOnce(&[u8]) -> Result<[u8; 64], String>,
+) -> Result<LiteRegistration, LiteRegistrationError> {
     // Registration, local activation, and the SSO responder all use the
     // RFC-0022 `uid.<suffix>` default product account.
     let candidate = derive_identity_keypair(entropy, network_suffix)?;
     let candidate_public_key = candidate.public.to_bytes();
-
-    let vrf_entropy = derive_lite_person_ring_vrf_entropy(entropy, network_suffix);
-    let vrf_secret = BandersnatchVrfVerifiable::new_secret(vrf_entropy);
-    let ring_vrf_key = BandersnatchVrfVerifiable::member_from_secret(&vrf_secret);
 
     let mut proof_message = Vec::with_capacity(REGISTER_PREFIX.len() + 64);
     proof_message.extend_from_slice(REGISTER_PREFIX);
@@ -116,8 +203,8 @@ pub fn build_lite_registration(
         .secret
         .sign_simple(SR25519_SIGNING_CONTEXT, &proof_message, &candidate.public)
         .to_bytes();
-    let proof_of_ownership = BandersnatchVrfVerifiable::sign(&vrf_secret, &proof_message)
-        .map_err(LiteRegistrationError::ProofOfOwnership)?;
+    let proof_of_ownership =
+        sign_proof_of_ownership(&proof_message).map_err(LiteRegistrationError::ProofOfOwnership)?;
 
     let identifier_key = derive_identifier_key(entropy);
 

@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "bun:test";
+import { afterEach, describe, expect, it, jest } from "bun:test";
 import { err, ok } from "neverthrow";
 
 import {
@@ -39,8 +39,16 @@ import {
   runtimeConfig,
 } from "./worker-test-harness.js";
 import type { WorkerMessage } from "./worker-test-harness.js";
-import { createWebWorkerPairingHostRuntime } from "./index.js";
-import type { CreateWebWorkerPairingHostRuntimeOptions } from "./index.js";
+import {
+  createWebWorkerPairingHostRuntime,
+  createWebWorkerSigningHostRuntime,
+} from "./index.js";
+import type {
+  CreateWebWorkerPairingHostRuntimeOptions,
+  CreateWebWorkerSigningHostRuntimeOptions,
+  LocalIdentityProgress,
+  WorkerSigningHostRuntime,
+} from "./index.js";
 
 function renderRequest(): ProductRendererRenderRequest {
   return {
@@ -104,6 +112,21 @@ async function createProviderFromRuntime(
   };
 }
 
+async function readySigningRuntime(worker: FakeWorker) {
+  const runtimePromise = createWebWorkerSigningHostRuntime(
+    asWorker(worker),
+    makeHostCallbacks(),
+    {
+      hostConfig: {
+        ...hostConfigFromRuntimeConfig(runtimeConfig()),
+        networkSuffix: "paseo",
+      },
+    },
+  );
+  worker.emit({ kind: "loaded" });
+  worker.emit({ kind: "ready" });
+  return runtimePromise;
+}
 async function readyProvider(worker: FakeWorker, options: ReadyOptions = {}) {
   const providerPromise = createProviderFromRuntime(
     asWorker(worker),
@@ -125,6 +148,98 @@ const devGlobal = globalThis as typeof globalThis & {
 };
 
 describe("createWebWorkerPairingHostRuntime", () => {
+  it("isolates interactive callbacks across replacement connections on one host", async () => {
+    const worker = new FakeWorker();
+    const deliveries: string[] = [];
+    const callbacks = (owner: string) =>
+      makeHostCallbacks({
+        notifications: {
+          pushNotification: async (request) => {
+            deliveries.push(`${owner}:${request.text}`);
+            return { id: 42 };
+          },
+        },
+      });
+    const runtimePromise = createWebWorkerPairingHostRuntime(
+      asWorker(worker),
+      callbacks("host"),
+      { hostConfig: hostConfigFromRuntimeConfig(runtimeConfig()) },
+    );
+    worker.emit({ kind: "loaded" });
+    worker.emit({ kind: "ready" });
+    const runtime = await runtimePromise;
+    const old = await finishProviderReady(
+      worker,
+      runtime.createProvider({ productId: "test.dot" }, callbacks("old")),
+    );
+    const oldId = lastMessageOfKind(worker, "createCore").coreId;
+    const replacement = await finishProviderReady(
+      worker,
+      runtime.createProvider(
+        { productId: "test.dot" },
+        callbacks("replacement"),
+      ),
+    );
+    const replacementId = lastMessageOfKind(worker, "createCore").coreId;
+    let requestId = 0;
+    const notify = async (coreId?: unknown) => {
+      worker.emit({
+        kind: "callbackRequest",
+        requestId: ++requestId,
+        ...(coreId === undefined ? {} : { coreId }),
+        name: "pushNotification",
+        args: [
+          HostPushNotificationRequest.enc({
+            text: "Hello!",
+            deeplink: undefined,
+            scheduledAt: undefined,
+          }),
+        ],
+      });
+      await settle();
+      return lastMessageOfKind(worker, "callbackResponse");
+    };
+    expect((await notify(oldId)).ok).toBe(true);
+    expect((await notify(replacementId)).ok).toBe(true);
+    old.dispose();
+    expect((await notify(oldId)).ok).toBe(false);
+    expect((await notify(replacementId)).ok).toBe(true);
+    expect((await notify()).ok).toBe(true);
+    expect(deliveries).toEqual([
+      "old:Hello!",
+      "replacement:Hello!",
+      "replacement:Hello!",
+      "host:Hello!",
+    ]);
+    worker.emit({
+      kind: "frameError",
+      coreId: replacementId,
+      error: "connection lost",
+    });
+    expect((await notify(replacementId)).ok).toBe(false);
+    replacement.dispose();
+    const failed = runtime.createProvider(
+      { productId: "test.dot" },
+      callbacks("failed"),
+    );
+    const failedId = lastMessageOfKind(worker, "createCore").coreId;
+    worker.emit({
+      kind: "coreError",
+      coreId: failedId,
+      error: "creation failed",
+    });
+    await expect(failed).rejects.toThrow("creation failed");
+    expect((await notify(failedId)).ok).toBe(false);
+    runtime.dispose();
+    await notify(replacementId);
+    expect(deliveries).toEqual([
+      "old:Hello!",
+      "replacement:Hello!",
+      "replacement:Hello!",
+      "host:Hello!",
+    ]);
+  });
+
   it("initializes the worker without a callback manifest", async () => {
     const worker = new FakeWorker();
     const config = runtimeConfig();
@@ -143,6 +258,9 @@ describe("createWebWorkerPairingHostRuntime", () => {
       kind: "init",
       logLevel: "debug",
       hostConfig: hostConfigFromRuntimeConfig(config),
+      // A host that asks for no role sends none: the worker reads absent as
+      // "pairing", so the message stays what it was before the field existed.
+      role: undefined,
       capabilities: {
         chat: false,
         permissionStatus: false,
@@ -169,6 +287,143 @@ describe("createWebWorkerPairingHostRuntime", () => {
 
     provider.dispose();
   });
+
+  it("activates a browser-local signing session in the worker", async () => {
+    const worker = new FakeWorker();
+    const hostConfig = {
+      ...hostConfigFromRuntimeConfig(runtimeConfig()),
+      networkSuffix: "paseo",
+    } satisfies CreateWebWorkerSigningHostRuntimeOptions["hostConfig"];
+    const runtimePromise = createWebWorkerSigningHostRuntime(
+      asWorker(worker),
+      makeHostCallbacks(),
+      { hostConfig },
+    );
+
+    worker.emit({ kind: "loaded" });
+    expect(worker.messages[0]).toMatchObject({
+      kind: "init",
+      hostConfig,
+      role: "signing",
+    });
+    worker.emit({ kind: "ready" });
+    const runtime = await runtimePromise;
+
+    const secret = new Uint8Array(32).fill(7);
+    const activation = runtime.activateLocalSession(secret);
+    const request = lastMessageOfKind(worker, "activateLocalSession");
+    expect(request).toMatchObject({
+      kind: "activateLocalSession",
+      secret,
+    });
+    worker.emit({
+      kind: "sessionActivationResponse",
+      requestId: request.requestId,
+      ok: true,
+    });
+    await activation;
+    runtime.dispose();
+  });
+
+  it("scopes identity progress to pending requests and isolates observer failures", async () => {
+    const worker = new FakeWorker();
+    const runtime = await readySigningRuntime(worker);
+    const progress: LocalIdentityProgress[] = [];
+    const identity = {
+      identityAccountId: `0x${"11".repeat(32)}`,
+      liteUsername: "alice.paseo",
+    };
+    const claim = runtime.registerLocalLiteUsername(
+      "alice",
+      "https://identity.invalid",
+      (event) => {
+        progress.push(event);
+        throw new Error("observer failed");
+      },
+    );
+    const request = lastMessageOfKind(worker, "registerLocalLiteUsername");
+    let settled = false;
+    void claim.then(() => {
+      settled = true;
+    });
+    worker.emit({
+      kind: "localIdentityProgress",
+      requestId: request.requestId,
+      progress: { stage: "confirming" },
+    });
+    await settle();
+    expect(settled).toBe(false);
+    worker.emit({
+      kind: "localIdentityResponse",
+      requestId: request.requestId,
+      ok: true,
+      identity,
+    });
+    await expect(claim).resolves.toEqual(identity);
+
+    const nextProgress: LocalIdentityProgress[] = [];
+    const nextClaim = runtime.registerLocalLiteUsername(
+      "bob",
+      "https://identity.invalid",
+      (event) => nextProgress.push(event),
+    );
+    const next = lastMessageOfKind(worker, "registerLocalLiteUsername");
+    worker.emit({
+      kind: "localIdentityProgress",
+      requestId: request.requestId,
+      progress: { stage: "retrying", error: "late response" },
+    });
+    worker.emit({
+      kind: "localIdentityProgress",
+      requestId: next.requestId,
+      progress: { stage: "checking" },
+    });
+    worker.emit({
+      kind: "localIdentityResponse",
+      requestId: next.requestId,
+      ok: false,
+      error: "claim rejected",
+    });
+    await expect(nextClaim).rejects.toThrow("claim rejected");
+    worker.emit({
+      kind: "localIdentityProgress",
+      requestId: next.requestId,
+      progress: { stage: "confirming" },
+    });
+    expect(progress).toEqual([{ stage: "confirming" }]);
+    expect(nextProgress).toEqual([{ stage: "checking" }]);
+    runtime.dispose();
+  });
+
+  for (const close of ["dispose", "fault"] as const) {
+    it(`ignores late identity progress after runtime ${close}`, async () => {
+      const worker = new FakeWorker();
+      const runtime = await readySigningRuntime(worker);
+      const progress: LocalIdentityProgress[] = [];
+      const claim = runtime.registerLocalLiteUsername(
+        "alice",
+        "https://identity.invalid",
+        (event) => progress.push(event),
+      );
+      const request = lastMessageOfKind(worker, "registerLocalLiteUsername");
+      worker.emit({
+        kind: "localIdentityProgress",
+        requestId: request.requestId,
+        progress: { stage: "confirming" },
+      });
+      if (close === "dispose") runtime.dispose();
+      else worker.emitError("worker stopped");
+      await expect(claim).rejects.toThrow(
+        close === "dispose" ? "runtime disposed" : "worker stopped",
+      );
+      worker.emit({
+        kind: "localIdentityProgress",
+        requestId: request.requestId,
+        progress: { stage: "retrying", error: "late response" },
+      });
+      expect(progress).toEqual([{ stage: "confirming" }]);
+    });
+  }
 
   it("reports the chat capability to the worker when the host serves it", async () => {
     const worker = new FakeWorker();
@@ -238,6 +493,30 @@ describe("createWebWorkerPairingHostRuntime", () => {
       game: true,
       contacts: false,
     });
+  });
+
+  it("reports the game capability for product-specific callbacks", async () => {
+    const worker = new FakeWorker();
+    const runtime = await readyRuntime(worker);
+    const providerPromise = runtime.createProvider(
+      { productId: "dim2.dot" },
+      makeHostCallbacks({
+        game: {
+          scheduleGameReminder: async () => {},
+          cancelGameReminder: async () => {},
+        },
+      }),
+    );
+    expect(lastMessageOfKind(worker, "createCore").capabilities).toEqual({
+      chat: false,
+      contacts: false,
+      permissionStatus: false,
+      pocket: false,
+      game: true,
+    });
+    const provider = await finishProviderReady(worker, providerPromise);
+    provider.dispose();
+    runtime.dispose();
   });
 
   it("creates multiple product cores on one worker runtime", async () => {
@@ -1305,21 +1584,57 @@ describe("createWebWorkerPairingHostRuntime", () => {
     provider.dispose();
   });
 
-  it("rejects when init times out", async () => {
-    const worker = new FakeWorker();
-    const providerPromise = createProviderFromRuntime(
-      asWorker(worker),
-      makeHostCallbacks(),
-      {
-        runtimeConfig: runtimeConfig(),
-        initTimeoutMs: 20,
-      },
-    );
-    worker.emit({ kind: "loaded" });
-    await expect(providerPromise).rejects.toThrow(
-      /worker init timed out after 20ms/,
-    );
-    expect(worker.terminated).toBe(true);
+  it("terminates the worker when WASM loading times out", async () => {
+    jest.useFakeTimers();
+    try {
+      const worker = new FakeWorker();
+      const providerPromise = createProviderFromRuntime(
+        asWorker(worker),
+        makeHostCallbacks(),
+        {
+          runtimeConfig: runtimeConfig(),
+          initTimeoutMs: 20,
+        },
+      );
+      const initErrorPromise = providerPromise.catch((error: unknown) => error);
+
+      jest.advanceTimersByTime(20);
+      const initError = await initErrorPromise;
+      expect(initError).toEqual(
+        new Error("worker init timed out after 20ms while loading WASM"),
+      );
+      expect(worker.terminated).toBe(true);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it("gives WASM loading and runtime initialization separate deadlines", async () => {
+    jest.useFakeTimers();
+    try {
+      const worker = new FakeWorker();
+      const providerPromise = createProviderFromRuntime(
+        asWorker(worker),
+        makeHostCallbacks(),
+        {
+          runtimeConfig: runtimeConfig(),
+          initTimeoutMs: 200,
+        },
+      );
+
+      jest.advanceTimersByTime(120);
+      worker.emit({ kind: "loaded" });
+      jest.advanceTimersByTime(120);
+      worker.emit({ kind: "ready" });
+      await Promise.resolve();
+      const createCore = lastMessageOfKind(worker, "createCore");
+      worker.emit({ kind: "coreReady", coreId: createCore.coreId });
+      await providerPromise;
+
+      expect(worker.terminated).toBe(false);
+    } finally {
+      jest.useRealTimers();
+    }
   });
 
   it("rejects on messageerror during init", async () => {
@@ -1820,5 +2135,165 @@ describe("worker host role", () => {
     worker.emit({ kind: "ready" });
     await settle();
     await finishProviderReady(worker, providerPromise).catch(() => {});
+  });
+});
+
+describe("wallet allowance inspection isolation", () => {
+  const account = `0x${"11".repeat(32)}`;
+
+  async function resolvedRuntime(worker: FakeWorker) {
+    const runtime = await readySigningRuntime(worker);
+    const identity = runtime.refreshLocalIdentity();
+    worker.emit({
+      kind: "localIdentityResponse",
+      requestId: lastMessageOfKind(worker, "refreshLocalIdentity").requestId,
+      ok: true,
+      identity: { identityAccountId: account, liteUsername: "alice.paseo" },
+    });
+    await identity;
+    return runtime;
+  }
+
+  it("denies wallet-wide inspection to pairing hosts", async () => {
+    const pairingWorker = new FakeWorker();
+    const pairing = await readyRuntime(pairingWorker);
+    await expect(
+      (
+        pairing as unknown as WorkerSigningHostRuntime
+      ).getWalletAllowanceSnapshot([]),
+    ).rejects.toThrow("local signing identity");
+    expect(indexOfKind(pairingWorker, "getWalletAllowanceSnapshot")).toBe(-1);
+    pairing.dispose();
+  });
+
+  it("rejects an oversized or ambiguous product scope before dispatch", async () => {
+    const worker = new FakeWorker();
+    const runtime = await resolvedRuntime(worker);
+    for (const ids of [
+      ["a.dot", "a.dot"],
+      [""],
+      Array.from({ length: 33 }, (_, i) => `app${i}.dot`),
+    ]) {
+      await expect(runtime.getWalletAllowanceSnapshot(ids)).rejects.toThrow(
+        "product IDs",
+      );
+    }
+    expect(indexOfKind(worker, "getWalletAllowanceSnapshot")).toBe(-1);
+    runtime.dispose();
+  });
+
+  it.each(["dispose", "error", "messageerror"] as const)(
+    "settles pending reads when the worker closes through %s",
+    async (close) => {
+      const worker = new FakeWorker();
+      const runtime = await resolvedRuntime(worker);
+      const read = runtime.getWalletAllowanceSnapshot([]);
+      const rejected = read.catch((error: unknown) => error);
+      if (close === "dispose") runtime.dispose();
+      else if (close === "error") worker.emitError("worker stopped");
+      else worker.emitMessageError();
+      expect(await rejected).toBeInstanceOf(Error);
+      await expect(runtime.getWalletAllowanceSnapshot([])).rejects.toThrow();
+      runtime.dispose();
+    },
+  );
+
+  it("rejects an in-flight snapshot immediately when another wallet activates", async () => {
+    const worker = new FakeWorker();
+    const runtime = await resolvedRuntime(worker);
+    const read = runtime.getWalletAllowanceSnapshot([]);
+    const requestId = lastMessageOfKind(
+      worker,
+      "getWalletAllowanceSnapshot",
+    ).requestId;
+    const rejected = read.catch((error: unknown) => error);
+    const activation = runtime.activateLocalSession(new Uint8Array(32));
+    await expect(runtime.getWalletAllowanceSnapshot([])).rejects.toThrow(
+      "local signing identity",
+    );
+    expect(await rejected).toBeInstanceOf(Error);
+    worker.emit({
+      kind: "walletAllowanceSnapshotResponse",
+      requestId,
+      ok: true,
+      snapshot: {
+        schemaVersion: 1,
+        identityAccountId: account,
+        networkSuffix: "paseo",
+      },
+    });
+    worker.emit({
+      kind: "sessionActivationResponse",
+      requestId: lastMessageOfKind(worker, "activateLocalSession").requestId,
+      ok: true,
+    });
+    await activation;
+    runtime.dispose();
+  });
+
+  it("does not accept a late identity refresh from a different activation", async () => {
+    const worker = new FakeWorker();
+    const runtime = await readySigningRuntime(worker);
+    const identity = runtime.refreshLocalIdentity();
+    const rejected = identity.catch((error: unknown) => error);
+    const activation = runtime.activateLocalSession(new Uint8Array(32));
+    worker.emit({
+      kind: "localIdentityResponse",
+      requestId: lastMessageOfKind(worker, "refreshLocalIdentity").requestId,
+      ok: true,
+      identity: { identityAccountId: account },
+    });
+    worker.emit({
+      kind: "sessionActivationResponse",
+      requestId: lastMessageOfKind(worker, "activateLocalSession").requestId,
+      ok: true,
+    });
+    expect(await rejected).toBeInstanceOf(Error);
+    await activation;
+    runtime.dispose();
+  });
+
+  it.each([
+    "setGrantAllowancesUnchecked",
+    "setSubmitPreimagesLocally",
+    "setWithheldResources",
+  ] as const)("retains wallet binding when only %s changes", async (policy) => {
+    const worker = new FakeWorker();
+    const runtime = await resolvedRuntime(worker);
+    const refresh = runtime.refreshLocalIdentity();
+    const toggle =
+      policy === "setWithheldResources"
+        ? runtime.setWithheldResources([])
+        : runtime[policy](false);
+    worker.emit({
+      kind: "sessionActivationResponse",
+      requestId: lastMessageOfKind(worker, policy).requestId,
+      ok: true,
+    });
+    await toggle;
+    const read = runtime.getWalletAllowanceSnapshot([]);
+    worker.emit({
+      kind: "walletAllowanceSnapshotResponse",
+      requestId: lastMessageOfKind(worker, "getWalletAllowanceSnapshot")
+        .requestId,
+      ok: true,
+      snapshot: {
+        schemaVersion: 1,
+        identityAccountId: `0x${"22".repeat(32)}`,
+        networkSuffix: "paseo",
+      },
+    });
+    await expect(read).rejects.toThrow("current identity");
+    worker.emit({
+      kind: "localIdentityResponse",
+      requestId: lastMessageOfKind(worker, "refreshLocalIdentity").requestId,
+      ok: true,
+      identity: { identityAccountId: account, liteUsername: "alice.paseo" },
+    });
+    await expect(refresh).resolves.toEqual({
+      identityAccountId: account,
+      liteUsername: "alice.paseo",
+    });
+    runtime.dispose();
   });
 });

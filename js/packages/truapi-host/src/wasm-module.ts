@@ -4,6 +4,8 @@
 // these interfaces so the worker can name it in a statically analysable import.
 
 import type { PermissionAuthorizationRuntime } from "./worker-permission-authorization.js";
+import type { LocalIdentity } from "./worker-protocol.js";
+import type { WalletAllowanceSnapshot } from "./wallet-allowances.js";
 
 /** Cancellable handle on one live render stream inside the core. */
 export interface WorkerRendererSubscription {
@@ -45,15 +47,14 @@ export interface WorkerProductRuntime {
 /** What the host does with a product's worker after demand on it changed. */
 export type WorkerTransition = "Start" | "Stop";
 
-/** The long-lived pairing-host runtime product cores are created from. */
-export interface WorkerPairingHostRuntime extends PermissionAuthorizationRuntime {
+/** Runtime operations shared by paired and browser-local signing hosts. */
+export interface WorkerHostRuntime extends PermissionAuthorizationRuntime {
   productRuntime(
     product: unknown,
     coreCallbacks: unknown,
+    platformCallbacks?: unknown,
   ): WorkerProductRuntime;
   disconnectSession(): Promise<void>;
-  cancelPairing(): void;
-  notifySessionStoreChanged(): void;
   notifyContactsChanged(): void;
   sessionChatIdentityKey(): Uint8Array | undefined;
   deviceStatementKey(): Uint8Array | undefined;
@@ -62,9 +63,7 @@ export interface WorkerPairingHostRuntime extends PermissionAuthorizationRuntime
     productId: string,
     timeoutMs?: number,
   ): Promise<Uint8Array | undefined>;
-  activateStoredSession(): Promise<void>;
-  activateExternalSession(blob: Uint8Array): Promise<void>;
-  resetSessionState(): Promise<void>;
+  clearProductState(productId: string): Promise<void>;
   /** Only on a core built with `test-host`. */
   setSubmitPreimagesLocally?(local: boolean): void;
   /**
@@ -79,28 +78,52 @@ export interface WorkerPairingHostRuntime extends PermissionAuthorizationRuntime
   free(): void;
 }
 
+/** The long-lived pairing-host runtime product cores are created from. */
+export interface WorkerPairingHostRuntime extends WorkerHostRuntime {
+  cancelPairing(): void;
+  notifySessionStoreChanged(): void;
+  activateStoredSession(): Promise<void>;
+  activateExternalSession(blob: Uint8Array): Promise<void>;
+  resetSessionState(): Promise<void>;
+}
+
 /**
- * The signing-host runtime, present only in the `testing` WASM bundle.
+ * A browser-local signing host activated from caller-owned entropy.
  *
  * A signing host owns the user's keys and establishes sessions from local
- * entropy rather than by pairing with a wallet. The production `web` bundle is
- * built without it on purpose, so this is optional on the module surface.
+ * entropy rather than by pairing with a wallet. It is present only in a core
+ * built with `wasm-signing-host`: the testing bundle or a production `web`
+ * bundle built with `--signing-host`. The constructor is otherwise absent.
  */
-export interface WorkerSigningHostRuntime extends WorkerPairingHostRuntime {
+export interface WorkerSigningHostRuntime extends WorkerHostRuntime {
   activateLocalSession(secret: Uint8Array): Promise<void>;
   /**
    * Activate and give the session a display name, which is what
-   * `account.get_user_id` answers with. Optional: a core built before this
-   * entry point existed exposes only {@link activateLocalSession}.
+   * `account.get_user_id` answers with.
    */
-  /** Only on a core built with `wasm-signing-host`. */
-  setGrantAllowancesUnchecked?(granted: boolean): void;
-  /** Only on a core built with `wasm-signing-host`. */
-  setWithheldResources?(tags: string[]): void;
-  activateLocalSessionWithIdentity?(
+  activateLocalSessionWithIdentity(
     secret: Uint8Array,
-    liteUsername?: string | null,
+    liteUsername?: string,
   ): Promise<void>;
+  /** Only on a core built with `test-host`. */
+  setGrantAllowancesUnchecked?(granted: boolean): void;
+  localIdentityContext(): { activationId: string; identityAccountId: string };
+  localIdentityAuthProof(
+    activationId: string,
+    challenge: Uint8Array,
+  ): Uint8Array;
+  localLiteRegistrationBody(
+    activationId: string,
+    usernameBase: string,
+    verifier: Uint8Array,
+  ): Promise<string>;
+  refreshLocalIdentity(activationId: string): Promise<LocalIdentity>;
+  getWalletAllowanceSnapshot(
+    activationId: string,
+    productIds: string[],
+  ): Promise<WalletAllowanceSnapshot>;
+  /** Only on a core built with `test-host`. */
+  setWithheldResources?(tags: string[]): void;
 }
 
 /** Module surface the wasm-pack glue exports. */
@@ -110,7 +133,7 @@ export interface WasmModuleShape {
     callbacks: unknown,
     hostConfig: unknown,
   ) => WorkerPairingHostRuntime;
-  /** Only in the `testing` bundle; see {@link WorkerSigningHostRuntime}. */
+  /** Only with `wasm-signing-host`; see {@link WorkerSigningHostRuntime}. */
   WasmSigningHostRuntime?: new (
     callbacks: unknown,
     hostConfig: unknown,

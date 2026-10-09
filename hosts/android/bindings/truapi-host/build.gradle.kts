@@ -114,6 +114,13 @@ cargo {
     // workspace target dir, not a crate-local one. Point the plugin there so it
     // can find and copy the per-ABI .so into rustJniLibs.
     targetDirectory = "$truapiDir/target"
+    // The shared plugin defaults to `cargo build`; truapi packaging needs a cdylib.
+    exec = { spec, _ ->
+        val args = spec.args!!.toMutableList()
+        args[args.indexOf("build")] = "rustc"
+        args.addAll(listOf("-p", "truapi", "--lib", "--crate-type", "cdylib"))
+        spec.setArgs(args)
+    }
 }
 
 // The nightly rustdoc the core's codegen runs on, pinned by date in
@@ -179,7 +186,7 @@ val generateCoreDispatcher by tasks.registering(Exec::class) {
 val buildHostCdylib by tasks.registering(Exec::class) {
     dependsOn(generateCoreDispatcher)
     workingDir = file(truapiDir)
-    commandLine("cargo", "build", "-p", "truapi", "--profile", "codegen")
+    commandLine("cargo", "rustc", "-p", "truapi", "--lib", "--crate-type", "cdylib", "--profile", "codegen")
     inputs.files(
         fileTree("$truapiDir/rust/crates") { include("**/*.rs", "**/*.js", "**/Cargo.toml") },
         "$truapiDir/Cargo.toml",

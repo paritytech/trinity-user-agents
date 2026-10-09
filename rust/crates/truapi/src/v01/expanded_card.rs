@@ -1,3 +1,5 @@
+use alloc::string::String;
+
 use parity_scale_codec::{Decode, Encode};
 
 /// Request to show or hide the face above the calling Widget.

@@ -1,5 +1,11 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.truapi
 
+import android.content.Context
+import dagger.Lazy
+import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.PermissionAuthorizationChanges
+import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.ProductPermissionRepository
+import io.paritytech.polkadotapp.feature_settings_api.domain.language.AppLanguageProvider
+import kotlinx.coroutines.flow.flowOf
 import io.parity.truapi.HostBridge
 import io.parity.truapi.TrUAPIHostRuntime
 import io.paritytech.polkadotapp.common.data.storage.preferences.encrypted.EncryptedPreferences
@@ -42,6 +48,12 @@ class ProductTrUAPIHostBridgeTest {
         appLifecycleObserver = mock(AppLifecycleObserver::class.java),
         dotNsTldProvider = mock(DotNsTldProvider::class.java),
         pocketCardStore = mock(PocketCardStore::class.java),
+        context = mock(Context::class.java),
+        appLanguageProvider = object : AppLanguageProvider {
+            override val languageTag = flowOf("en-US")
+        },
+        permissionRepository = Lazy { mock(ProductPermissionRepository::class.java) },
+        permissionChanges = PermissionAuthorizationChanges(),
         productGameReminder = gameReminder,
         scope = CoroutineScope(StandardTestDispatcher(testScheduler)),
     )
@@ -56,6 +68,7 @@ class ProductTrUAPIHostBridgeTest {
             chains = EMPTY_CHAINS,
             navigationPolicy = NavigationPolicy.DeeplinkNavigation(onDeeplinkNavigation = {}),
             kind = ProductExecutionKind.APP,
+            onPermissionRevoked = {},
             onReadyToInject = {},
         )
 
@@ -75,6 +88,7 @@ class ProductTrUAPIHostBridgeTest {
             navigationPolicy = NavigationPolicy.DeeplinkNavigation(onDeeplinkNavigation = {}),
             kind = ProductExecutionKind.WIDGET,
             card = card,
+            onPermissionRevoked = {},
             onReadyToInject = {},
         )
         return checkNotNull(opened)

@@ -84,6 +84,9 @@ jobs:
       - name: Install wasm-pack
         run: cargo install wasm-pack --version 0.14.0 --locked
 
+      - name: Install core WASM artifact tools
+        run: bash scripts/install-wasm-artifact-tools.sh
+
       # Stamp <next-patch>-dev-<date>[-suffix].N (sorts below any future stable)
       # into package.json; never committed.
       - name: Compute dev version and dist-tag

@@ -85,7 +85,7 @@ class TrUAPIWorkerSupervisorTest {
 
     private fun bridge(): ProductTrUAPIHostBridge = mockk {
         val execution = mockk<TrUAPIProductExecution>().also { executions += it }
-        coEvery { attach(any(), any(), any(), any(), any(), any(), any()) } returns Result.success(execution)
+        coEvery { attach(any(), any(), any(), any(), any(), any(), any(), any()) } returns Result.success(execution)
     }
 
     // Stands in for the hidden WebView: its page reports finished once loaded, and a renderer

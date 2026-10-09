@@ -3549,6 +3549,81 @@ fn cancel_notification_delegates_host_id() {
 }
 
 #[test]
+fn notification_activation_unsupported_does_not_request_permission() {
+    use truapi::versioned::notifications::{
+        NotificationActivationAcknowledgeError, NotificationActivationAcknowledgeRequest,
+        NotificationActivationEventsError, NotificationActivationEventsRequest,
+    };
+
+    let platform = Arc::new(StubPlatform {
+        device_permission_decisions: Mutex::new([crate::platform::PermissionDecision::Deny].into()),
+        ..Default::default()
+    });
+    let host = ProductRuntimeHost::new_compat(platform.clone(), test_spawner());
+    let cx = CallContext::default();
+    let unsupported = v01::GenericError {
+        reason: "notification activation is unsupported".to_string(),
+    };
+
+    assert_eq!(
+        futures::executor::block_on(
+            host.activation_events(&cx, NotificationActivationEventsRequest::V1)
+        ),
+        Err(CallError::Domain(NotificationActivationEventsError::V1(
+            unsupported.clone()
+        )))
+    );
+    for sequence in [0, 1, u64::MAX] {
+        assert_eq!(
+            futures::executor::block_on(host.acknowledge_activation(
+                &cx,
+                NotificationActivationAcknowledgeRequest::V1(
+                    v01::NotificationActivationAcknowledgeRequest { sequence }
+                ),
+            )),
+            Err(CallError::Domain(NotificationActivationAcknowledgeError::V1(
+                unsupported.clone()
+            )))
+        );
+    }
+    assert!(platform.device_permission_requests.lock().is_ok_and(|calls| calls.is_empty()));
+    assert!(platform.remote_permission_requests.lock().is_ok_and(|calls| calls.is_empty()));
+    assert!(platform.pushed_notifications.lock().is_ok_and(|calls| calls.is_empty()));
+    assert!(platform.cancelled_notifications.lock().is_ok_and(|calls| calls.is_empty()));
+}
+
+#[test]
+fn notification_activation_rejects_oversized_platform_batch() {
+    use truapi::versioned::notifications::NotificationActivationEventsRequest;
+
+    for count in [0, 32, 33] {
+        let platform = Arc::new(StubPlatform {
+            notification_activations: Some(v01::NotificationActivations {
+                events: (0..count)
+                    .map(|sequence| v01::NotificationActivation {
+                        sequence,
+                        notification_id: 42,
+                        route: "/inbox".to_string(),
+                    })
+                    .collect(),
+            }),
+            ..Default::default()
+        });
+        let host = ProductRuntimeHost::new_compat(platform.clone(), test_spawner());
+        let response = futures::executor::block_on(
+            host.activation_events(&CallContext::default(), NotificationActivationEventsRequest::V1),
+        );
+        if count > 32 {
+            assert!(matches!(response, Err(CallError::HostFailure { .. })));
+        } else {
+            assert!(response.is_ok());
+        }
+        assert!(platform.device_permission_requests.lock().is_ok_and(|calls| calls.is_empty()));
+        assert!(platform.remote_permission_requests.lock().is_ok_and(|calls| calls.is_empty()));
+    }
+}
+
+#[test]
 fn get_account_requires_session() {
     let host =
         ProductRuntimeHost::new(stub_platform(), runtime_config("myapp.dot"), test_spawner());
@@ -3798,6 +3873,51 @@ fn get_account_derives_rfc0022_product_key() {
     assert_eq!(
         hex::encode(inner.account.public_key),
         "1c1ae478b564572f806ffa6352b4273d612beb01610b19f4e5bf444521cd5b5c"
+    );
+}
+
+#[test]
+fn get_account_answers_when_host_storage_never_returns() {
+    // A host whose storage never answers must not be able to park the request.
+    // Resolving an own-product account reads the persisted subtree first, and
+    // that read is a host callback: without a deadline the call never settles,
+    // so the product waits forever with no response and no error frame
+    // (paritytech/dotli-community#271).
+    let host = ProductRuntimeHost::new(
+        Arc::new(StubPlatform {
+            core_storage_pending: true,
+            ..Default::default()
+        }),
+        runtime_config("myapp.dot"),
+        test_spawner(),
+    );
+    host.test_session_state().set_session(sso_session_info());
+    let request = HostAccountGetRequest::V1(v01::HostAccountGetRequest {
+        product_account_id: account_id("myapp.dot", 0),
+    });
+    // The caller's deadline is what bounds it; a short one keeps the test fast
+    // and proves the bound is the context's rather than a fixed sleep.
+    let mut cx = CallContext::default();
+    cx.set_timeout(std::time::Duration::from_millis(200));
+
+    let outcome = futures::executor::block_on(async {
+        use futures::FutureExt;
+        use futures::pin_mut;
+        let call = host.get_account(&cx, request).fuse();
+        let guard = futures_timer::Delay::new(std::time::Duration::from_secs(10)).fuse();
+        pin_mut!(call, guard);
+        futures::select! {
+            result = call => Some(result),
+            () = guard => None,
+        }
+    });
+
+    let Some(result) = outcome else {
+        panic!("get_account never answered a host whose storage does not return");
+    };
+    assert!(
+        result.is_err(),
+        "a host that cannot answer its own storage must not resolve an account"
     );
 }
 
@@ -4288,7 +4408,7 @@ fn get_user_id_checks_identity_disclosure_before_username() {
 }
 
 #[test]
-fn get_user_id_reports_missing_username_after_identity_disclosure() {
+fn get_user_id_reports_lookup_unavailability_after_identity_disclosure() {
     let platform = Arc::new(StubPlatform {
         identity_disclosure_confirmed: true,
         ..Default::default()
@@ -4305,11 +4425,42 @@ fn get_user_id_reports_missing_username_after_identity_disclosure() {
 
     assert!(matches!(
         err,
-        CallError::Domain(HostGetUserIdError::V1(
-            v01::HostGetUserIdError::Unknown { ref reason }
-        )) if reason == "No primary username for this session"
+        CallError::HostFailure { ref reason }
+            if reason.contains("username lookup unavailable")
     ));
     assert_eq!(platform.identity_disclosure_calls.load(Ordering::SeqCst), 1);
+}
+
+#[test]
+fn get_user_id_rejects_a_cached_name_after_owner_changes_during_consent() {
+    futures::executor::block_on(async {
+        let (release, gate) = futures::channel::oneshot::channel();
+        let platform = Arc::new(StubPlatform {
+            identity_disclosure_confirmed: true,
+            identity_disclosure_confirmation_gate: parking_lot::Mutex::new(Some(gate)),
+            ..Default::default()
+        });
+        let host = ProductRuntimeHost::new_compat(platform.clone(), test_spawner());
+        let original = session_info();
+        install_pairing_session(&host, original.clone());
+        let cx = CallContext::default();
+        let disclosure = host.get_user_id(&cx, HostGetUserIdRequest::V1);
+        futures::pin_mut!(disclosure);
+        assert!(futures::poll!(&mut disclosure).is_pending());
+        assert_eq!(platform.identity_disclosure_calls.load(Ordering::SeqCst), 1);
+        let mut replacement = original;
+        // Keep the root/session token, but change the trusted username owner.
+        replacement.identity_account_id = Some([0x99; 32]);
+        replacement.full_username = Some("Other Owner".to_string());
+        install_pairing_session(&host, replacement);
+        release.send(()).unwrap();
+        assert!(matches!(
+            disclosure.await,
+            Err(CallError::Domain(HostGetUserIdError::V1(
+                v01::HostGetUserIdError::NotConnected
+            )))
+        ));
+    });
 }
 
 #[test]

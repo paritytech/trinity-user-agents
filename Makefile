@@ -163,7 +163,7 @@ UNIFFI_SWIFT_TMP := target/uniffi-swift-out
 PROVIDER_SWIFT_TMP := target/uniffi-provider-swift-out
 
 uniffi: check-generated ## Generate Swift bindings from the truapi cdylib into target/uniffi-swift-out (consumed by ios/truapi-host/scripts/rebuild.sh).
-	$(CARGO) build -p truapi --profile codegen
+	$(CARGO) rustc -p truapi --lib --crate-type cdylib --profile codegen
 	rm -rf $(UNIFFI_SWIFT_TMP)
 	mkdir -p $(UNIFFI_SWIFT_TMP)
 	$(CARGO) run -p uniffi-bindgen-cli -- generate \
@@ -261,7 +261,7 @@ ios-chat-all: ios-chat-run ios-chat-host-playground-run ## Run both local iOS Ch
 UNIFFI_KOTLIN_OUT := android/truapi-host/src/main/kotlin/generated
 
 uniffi-kotlin: check-generated ## Regenerate Kotlin UniFFI bindings from the truapi cdylib.
-	$(CARGO) build -p truapi --profile codegen
+	$(CARGO) rustc -p truapi --lib --crate-type cdylib --profile codegen
 	rm -rf $(UNIFFI_KOTLIN_OUT)
 	mkdir -p $(UNIFFI_KOTLIN_OUT)
 	$(CARGO) run -p uniffi-bindgen-cli -- generate \
@@ -278,7 +278,7 @@ android-jni: check-generated ## Cross-compile libtruapi.so for Android ABIs into
 	@command -v cargo-ndk >/dev/null || { echo "cargo-ndk not found: cargo install cargo-ndk"; exit 1; }
 	$(CARGO) ndk $(foreach abi,$(ANDROID_ABIS),-t $(abi)) \
 		-o $(ANDROID_JNILIBS) \
-		build --release -p truapi
+		rustc -p truapi --lib --crate-type cdylib --release
 	# cargo-ndk also copies dependency cdylib intermediates (hash-suffixed,
 	# statically linked into libtruapi.so already); keep only ours.
 	find $(ANDROID_JNILIBS) -name '*.so' ! -name 'libtruapi.so' -delete
@@ -504,14 +504,13 @@ XCFRAMEWORK_TARGETS ?= $(if $(SIM_ONLY_ON),$(IOS_SIM_TARGET),$(IOS_DEVICE_TARGET
 XCFRAMEWORK_PROFILE ?= release
 XCFRAMEWORK_CARGO_FLAGS := $(if $(filter release,$(XCFRAMEWORK_PROFILE)),--release,)
 
-# One cargo invocation carrying every slice, so the target graphs are scheduled
-# together: the release profile's single codegen unit and fat LTO leave a long
-# serial tail per slice, which the other slice fills.
+# Explicit crate types require one target per cargo rustc invocation.
 xcframework: uniffi ## Build truapi_server.xcframework for iOS device + simulator (SIM_ONLY=1 for simulator only).
 	rustup target add $(XCFRAMEWORK_TARGETS)
-	IPHONEOS_DEPLOYMENT_TARGET=$(IOS_DEPLOYMENT_TARGET) $(CARGO) build -p truapi \
-		$(XCFRAMEWORK_CARGO_FLAGS) \
-		$(XCFRAMEWORK_TARGETS:%=--target %)
+	set -e; for target in $(XCFRAMEWORK_TARGETS); do \
+		IPHONEOS_DEPLOYMENT_TARGET=$(IOS_DEPLOYMENT_TARGET) $(CARGO) rustc -p truapi --lib --crate-type staticlib \
+			$(XCFRAMEWORK_CARGO_FLAGS) --target "$$target"; \
+	done
 	rm -rf $(XCFRAMEWORK_OUT) $(XCFRAMEWORK_HEADERS)
 	mkdir -p $(XCFRAMEWORK_HEADERS)
 	cp $(UNIFFI_SWIFT_TMP)/truapiFFI.h $(XCFRAMEWORK_HEADERS)/

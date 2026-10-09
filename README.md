@@ -54,9 +54,20 @@ handles discoverable; proof creation still checks permission and ring membership
 The `listRingVrfKeys` example checks that both built-in keys are discoverable
 under `peopl.paseo` on Paseo.
 
+Preimage lookups that miss the core's cache read the selected network's Bulletin
+node through `bitswap_v1_get`. The CLI verifies the returned bytes against the
+requested key and keeps missing lookups subscribed until the blob arrives.
+
+Bulletin submissions read the nonce and runtime metadata from current best-block
+state, but bind the 64-block mortal signature to a finalized checkpoint. A best
+block abandoned after dry-run therefore cannot invalidate the mortality anchor.
+If finality lags beyond that window, submission fails before broadcast rather
+than silently signing against an expired checkpoint. Existing submission
+deadlines and bounded rejection retries are unchanged.
+
 Product scripts and `truapi-host dev` use the same web API permission checks from `js/container`. Dev loads the container through a blocking script tag in your existing browser. Scripts run in Bun and retain filesystem, environment and process access.
 
-To build from source, run `make headless install` with stable Rust, nightly Rust with rustfmt, Node.js 22 or newer, and
+To build from source, run `make headless install` with stable Rust, the nightly pinned in `nightly-toolchain` with rustfmt, Node.js 22 or newer, and
 Bun installed. The target installs missing workspace build tools and regenerates the Rust and TypeScript sources before
 compiling. CI tests this command in both a fresh checkout and one with stale generated files, then runs a product script
 through the installed CLI. Code generation and the workspace documentation check reject rustdoc warnings. These checks
@@ -106,9 +117,11 @@ rust/crates/
   truapi/                Rust traits, versioned envelopes, latest payload re-exports, and the
                          host runtime (feature `runtime`): dispatcher, typed SCALE logic,
                          chain signing, WASM surface, host syscall traits
+  truapi-client/         generated transport-neutral no-std client codecs and execution catalogs
   truapi-codegen/        rustdoc JSON to TypeScript client + Rust dispatcher
   truapi-macros/         TrUAPI wire annotations and inter-host SSO proc macros
   truapi-provider/       Network provider backends (WebSocket RPC or smoldot light-client) and chain-access traits
+  truapi-polkavm-host/   Optional native composition of truapi and a pinned PolkaVM runtime
   truapi-verifiable/     Ring-VRF operations over `verifiable`; a lazily loaded WASM module in the browser
 js/packages/
   truapi/                  @parity/truapi TypeScript client
@@ -141,6 +154,17 @@ scripts/battery.sh         Run the generated battery against both headless CLI h
                            plus the Pocket phase a Worker execution serves
 scripts/bundle-size.mjs    Measure the JS and WASM the truapi-* packages ship, against a baseline
 ```
+
+The PolkaVM application runtime, GPU/UI wire contracts, and browser runtime
+live in
+[`paritytech/polkavm-host-runtime`](https://github.com/paritytech/polkavm-host-runtime).
+Native hosts that need both runtimes link the optional `truapi-polkavm-host`
+composition crate; the base `truapi` remains PolkaVM-free. Browser hosts
+consume `@parity/polkavm-browser-runtime` directly; browser assets are not
+shipped from this repository.
+The native composition pins release `v0.3.2-rc.9` at immutable source revision
+`959ad63f7312a2f4598b9f718ccc2516927cbbff`; `Cargo.toml`, `Cargo.lock`, and
+`truapi-polkavm-host`'s public provenance constants identify the same runtime.
 
 Taking a screenshot opens **Report app issue** wherever the shake-opened Debug
 menu is, which is every build except the store submission: `DEBUG_TOOLS_ENABLED`
@@ -179,6 +203,12 @@ The [container permission boundary](js/container/README.md) documents the protec
 operations and the built-ins that remain mutable for product compatibility.
 Native bindings expose the canonical Rust domain and protocol value types;
 native-only adapter types are limited to lifecycle and callback behavior.
+Native hosts must create an app-private directory excluded from device backups
+and pass its path as `HostRuntimeConfig.database_directory` (`databaseDirectory`
+in Swift and Kotlin). The shared core opens SQLite once; product executions keep
+their own callbacks and consent scope while sharing that database. The store is
+not compiled into the browser WASM bundles. See the
+[core database contract](rust/crates/truapi/RUNTIME.md#core-database).
 On iOS, a wallet host that manages its own statement-store SSO session can call
 `handleSsoRequest` (routes one decrypted remote message through the core,
 returning a typed outcome: response bytes to post back, a disconnect marker, or
@@ -201,6 +231,10 @@ a single package with tree-shakeable subpath entries:
   MessageChannel handshake (`createIframeHost`) plus `createWebWorkerProvider`.
 - `@parity/truapi-host/worker-runtime` is the Web Worker entrypoint so the WASM core can
   run off the page main thread.
+
+`createWorkerHostRuntime` shares the native core while `createProvider(product, callbacks)` binds platform callbacks to
+one product execution. The host UI disposes that execution's pending consent when its provider closes; wallet
+authentication and storage remain core-owned. See the [host SDK](js/packages/truapi-host/README.md) for lifecycle details.
 
 ### Chain transport
 
@@ -262,8 +296,8 @@ so `make dev` leaves the board empty with no error.
 ## How it works
 
 1. The protocol is defined as Rust traits in [`rust/crates/truapi/`](rust/crates/truapi/), with each trait tagged `#[wire_trait(id = N)]` and each method tagged `#[wire(id = N)]` for a stable byte-level `(trait, method)` dispatch table. Every method's doc comment must carry a ` ```ts ` example, which codegen extracts into the playground's EXAMPLE tab; the build fails if any method is missing one.
-2. `truapi-codegen` reads rustdoc JSON for that crate and generates the TypeScript client under git-ignored paths in `js/packages/truapi/`.
-3. Higher-level SDKs wrap the typed client; the transport encodes SCALE frames and ships them over WebSocket, `MessagePort`, or `postMessage` in iframe mode to the host.
+2. `truapi-codegen` reads rustdoc JSON for that crate and generates the TypeScript client under git-ignored paths in `js/packages/truapi/`, the Rust host dispatcher, and the transport-neutral `no_std` Rust client. The Rust client exports typed method markers plus complete App, Widget, Worker, and Worker-only catalogs from the same wire schema.
+3. Higher-level SDKs wrap the generated client; each runtime provides only its native frame transport. Browser products use `MessagePort` (or `postMessage` in iframe mode), while sandboxed runtimes such as PolkaVM supply explicit host imports.
 4. The host decodes the frame, dispatches to the matching trait method, encodes the response, and ships it back.
 
 Wire ids are append-only per trait: a trait id is never reassigned and a method id is never renumbered or reused within its trait, so deployed products stay compatible across protocol revisions. New methods take the next free method ids in their own trait and leave every other trait untouched. Trait 255 is permanently reserved for a correlated protocol error, allowing either peer to reject API messages introduced after it was released instead of leaving the caller pending.
@@ -282,6 +316,10 @@ make wasm     # rebuild truapi WASM artifacts under js/packages/truapi-host/dist
 
 CI regenerates the shared bindings before building and testing both npm
 packages, so generated client and host callback changes are checked together.
+
+CLI transcript tests share process-wide UI output. Match captured events by
+request identity rather than queue position: other tests may emit unrelated
+logs through the installed UI while the suite runs in parallel.
 
 The native `truapi-host` utility runs pairing and signing hosts against the real
 SSO transport for local end-to-end work. See [Install the CLI](#install-the-cli)

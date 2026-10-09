@@ -1,3 +1,4 @@
+use alloc::string::String;
 use parity_scale_codec::{Decode, Encode};
 
 /// Identifies a named theme.

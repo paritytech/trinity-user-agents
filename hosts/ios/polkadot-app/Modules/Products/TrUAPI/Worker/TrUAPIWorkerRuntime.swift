@@ -54,6 +54,7 @@ actor TrUAPIWorkerRuntime {
         moduleBridge = bridge
 
         try await bridge.executeScript(url: productUrl)
+        try checkNotDisposed()
 
         logger.debug("[truapi] worker running: \(productUrl)")
     }
@@ -110,6 +111,6 @@ actor TrUAPIWorkerRuntime {
     }
 
     private func checkNotDisposed() throws {
-        guard !disposed else { throw CancellationError() }
+        guard !disposed, !executionModel.execution.isClosed() else { throw CancellationError() }
     }
 }

@@ -2,7 +2,7 @@
 # Regenerate js/packages/truapi/src/generated/* from rust/crates/truapi.
 #
 # Pipeline:
-#   1. cargo +<pinned nightly> doc -p truapi --no-default-features
+#   1. cargo +<pinned nightly> doc -p truapi --no-default-features --features host-api
 #      -> target/doc/truapi.json, the protocol definitions alone, kept as
 #      target/doc/truapi_protocol.json
 #   2. cargo run -p truapi-codegen -- --input target/doc/truapi_protocol.json
@@ -47,7 +47,7 @@ unset DYLD_LIBRARY_PATH
 RUSTDOCFLAGS="${RUSTDOCFLAGS:-} -D warnings -Z unstable-options --output-format json"
 export RUSTDOCFLAGS
 
-cargo +"$NIGHTLY_TOOLCHAIN" doc -p truapi --no-deps --no-default-features
+cargo +"$NIGHTLY_TOOLCHAIN" doc -p truapi --no-deps --no-default-features --features host-api
 cp target/doc/truapi.json target/doc/truapi_protocol.json
 cargo run -p truapi-codegen -- \
   --input target/doc/truapi_protocol.json \
@@ -60,6 +60,7 @@ cargo run -p truapi-codegen -- \
   --playground-output js/packages/truapi/src/playground \
   --client-examples-output playground/test/generated/examples \
   --rust-output rust/crates/truapi/src/generated \
+  --rust-client-output rust/crates/truapi-client/src/generated.rs \
   --platform-input target/doc/truapi.json \
   --platform-input target/doc/truapi_provider.json \
   --platform-ts-output js/packages/truapi-host/src/generated \
@@ -68,6 +69,7 @@ cargo run -p truapi-codegen -- \
   --explorer-output js/packages/truapi/src/explorer
 
 rustfmt +"$NIGHTLY_TOOLCHAIN" --edition 2024 \
+  rust/crates/truapi-client/src/generated.rs \
   rust/crates/truapi/src/generated/dispatcher.rs \
   rust/crates/truapi/src/generated/wire_table.rs \
   rust/crates/truapi/src/wasm/generated_bridge.rs
@@ -105,5 +107,6 @@ echo "Generated client at js/packages/truapi/src/generated/"
 echo "Generated playground metadata at js/packages/truapi/src/playground/codegen/"
 echo "Generated client examples at playground/test/generated/examples/"
 echo "Generated Rust dispatcher at rust/crates/truapi/src/generated/"
+echo "Generated no-std Rust client catalog at rust/crates/truapi-client/src/generated.rs"
 echo "Generated host-callbacks WASM adapter at js/packages/truapi-host/src/generated/"
 echo "Generated Rust WASM bridge at rust/crates/truapi/src/wasm/generated_bridge.rs"

@@ -1,5 +1,16 @@
 # @parity/truapi-host
 
+## Unreleased
+
+### Patch Changes
+
+- Keep monitoring accepted Lite username claims until chain ownership is confirmed
+  or the wallet activation is disposed. Recover from transient chain-read failures
+  without resubmitting registration or reporting a fixed polling cutoff as failure.
+- Preserve per-product game reminder callbacks across the worker boundary, and
+  keep test-host resource/preimage policy changes from invalidating the active
+  local identity or interrupting an in-flight Lite username claim.
+
 ## 0.24.0
 
 ### Minor Changes
@@ -122,7 +133,6 @@
 - Updated dependencies [de343d4]
 - Updated dependencies [3ef2191]
   - @parity/truapi@0.22.0
-
 ## 0.21.0
 
 ### Minor Changes
@@ -177,7 +187,6 @@
 - Updated dependencies [5a9f4b9]
 - Updated dependencies [cf1702f]
   - @parity/truapi@0.21.0
-
 ## 0.20.0
 
 ### Patch Changes

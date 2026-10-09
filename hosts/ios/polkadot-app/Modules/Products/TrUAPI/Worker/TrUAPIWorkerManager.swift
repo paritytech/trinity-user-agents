@@ -58,6 +58,7 @@ actor TrUAPIWorkerManager: TrUAPIWorkerManaging {
         let boot: Boot
         let runtime: TrUAPIWorkerRuntime
         let pocket: ProductPocketHostBridge
+        let revocationObserver: ProductExecutionRevocationObserver
     }
 
     /// What the manager holds for one product. A boot claims the product
@@ -82,7 +83,7 @@ actor TrUAPIWorkerManager: TrUAPIWorkerManaging {
     /// One attempt to bring a product's worker up, as an identity. A stop and a
     /// restart can both land while an attempt is still in flight, and the one
     /// that finishes last must not clear what the others left.
-    private final class Boot {}
+    private final class Boot: Sendable {}
 
     private let builder: any TrUAPIWorkerBuilding
     private let collection: any PocketCardStore
@@ -232,7 +233,14 @@ actor TrUAPIWorkerManager: TrUAPIWorkerManaging {
                 await runtime.dispose()
                 return
             }
-            held[productId] = .running(Running(boot: boot, runtime: runtime, pocket: bridge))
+            // The worker owns the engine shared by Chat and Pocket. Revocation
+            // tears down that owner, not a handler's obsolete private engine.
+            let revocationObserver = ProductExecutionRevocationObserver(execution: runtime.execution) { [weak self] in
+                await self?.stopRevoked(productId, boot: boot)
+            }
+            held[productId] = .running(Running(
+                boot: boot, runtime: runtime, pocket: bridge, revocationObserver: revocationObserver
+            ))
 
             // The worker's card list is served from the bridge's snapshot, and
             // the script that subscribes to it comes up inside `start()`.
@@ -259,6 +267,12 @@ actor TrUAPIWorkerManager: TrUAPIWorkerManaging {
             // so never sends another stop to clear it.
             await stop(productId)
         }
+    }
+
+    private func stopRevoked(_ productId: ProductId, boot: Boot) async {
+        // A delayed callback from the previous execution cannot stop a new one.
+        guard held[productId]?.belongsTo(boot) == true else { return }
+        await stop(productId)
     }
 
     private func stop(_ productId: ProductId) async {

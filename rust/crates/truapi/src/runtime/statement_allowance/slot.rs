@@ -130,11 +130,11 @@ pub enum SlotError {
     },
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
-struct StatementStoreAllowanceEntry {
-    account_id: [u8; 32],
-    seq: u32,
-    since: u64,
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode, scale_decode::DecodeAsType)]
+pub(super) struct StatementStoreAllowanceEntry {
+    pub(super) account_id: [u8; 32],
+    pub(super) seq: u32,
+    pub(super) since: u64,
 }
 
 /// A slot that is occupied, as observed by a scan.
@@ -256,7 +256,7 @@ async fn alias_in_context(
 
 /// `Resources.StatementStoreAllowances[period][alias]` storage key.
 /// key1 = Identity(u32be period); key2 = Blake2_128Concat(alias).
-fn statement_store_allowance_key(period: u32, alias: &[u8; 32]) -> Vec<u8> {
+pub(super) fn statement_store_allowance_key(period: u32, alias: &[u8; 32]) -> Vec<u8> {
     [
         twox_128(b"Resources").as_slice(),
         twox_128(b"StatementStoreAllowances").as_slice(),
@@ -269,7 +269,7 @@ fn statement_store_allowance_key(period: u32, alias: &[u8; 32]) -> Vec<u8> {
 /// `Pgas.ClaimedGasAliases[day][alias]` storage key on Asset Hub.
 /// key1 = Identity(u32be day); key2 = Blake2_128Concat(alias). Presence alone
 /// marks the slot spent; the value is unit.
-fn claimed_gas_alias_key(day: u32, alias: &[u8; 32]) -> Vec<u8> {
+pub(super) fn claimed_gas_alias_key(day: u32, alias: &[u8; 32]) -> Vec<u8> {
     [
         twox_128(b"Pgas").as_slice(),
         twox_128(b"ClaimedGasAliases").as_slice(),
@@ -281,7 +281,7 @@ fn claimed_gas_alias_key(day: u32, alias: &[u8; 32]) -> Vec<u8> {
 
 /// `Resources.SpentLongTermStorageAliases[period][alias]` storage key.
 /// key1 = Identity(u32be period); key2 = Blake2_128Concat(alias).
-fn spent_long_term_storage_alias_key(period: u32, alias: &[u8; 32]) -> Vec<u8> {
+pub(super) fn spent_long_term_storage_alias_key(period: u32, alias: &[u8; 32]) -> Vec<u8> {
     [
         twox_128(b"Resources").as_slice(),
         twox_128(b"SpentLongTermStorageAliases").as_slice(),
@@ -362,7 +362,7 @@ pub fn replaceable_slot(
 }
 
 /// `Timestamp.Now` storage key.
-fn timestamp_now_key() -> Vec<u8> {
+pub(super) fn timestamp_now_key() -> Vec<u8> {
     [
         twox_128(b"Timestamp").as_slice(),
         twox_128(b"Now").as_slice(),

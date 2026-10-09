@@ -1261,6 +1261,7 @@ impl LocaleHost for MockPlatform {
     ) -> BoxStream<'static, Result<latest::HostLocaleSubscribeItem, latest::GenericError>> {
         let item = latest::HostLocaleSubscribeItem {
             language_tag: self.config.language_tag.clone(),
+            time_zone: None,
         };
         Box::pin(
             stream::once(async move {

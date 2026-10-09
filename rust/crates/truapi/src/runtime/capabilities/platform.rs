@@ -13,11 +13,16 @@ use truapi::versioned::local_storage::{
 };
 use truapi::versioned::locale::{
     HostLocaleSubscribeError, HostLocaleSubscribeItem, HostLocaleSubscribeRequest,
+    HostLocaleLocalizeTimestampsError, HostLocaleLocalizeTimestampsRequest,
+    HostLocaleLocalizeTimestampsResponse,
 };
 use truapi::versioned::notifications::{
     HostPushNotificationCancelError, HostPushNotificationCancelRequest,
     HostPushNotificationCancelResponse, HostPushNotificationError, HostPushNotificationRequest,
     HostPushNotificationResponse,
+    NotificationActivationAcknowledgeError, NotificationActivationAcknowledgeRequest,
+    NotificationActivationAcknowledgeResponse, NotificationActivationEventsError,
+    NotificationActivationEventsRequest, NotificationActivationEventsResponse,
 };
 use truapi::versioned::permissions::{
     HostDevicePermissionError, HostDevicePermissionRequest, HostDevicePermissionResponse,
@@ -400,7 +405,7 @@ impl Locale for ProductRuntimeHost {
         _request: HostLocaleSubscribeRequest,
     ) -> Subscription<HostLocaleSubscribeItem, CallError<HostLocaleSubscribeError>> {
         let stream = self.platform.subscribe_locale().map(|item| match item {
-            Ok(item) => Ok(HostLocaleSubscribeItem::V1(item)),
+            Ok(item) => Ok(HostLocaleSubscribeItem::V2(item)),
             Err(error) => {
                 warn!(reason = %error.reason, "locale platform stream failed");
                 Err(CallError::HostFailure {
@@ -409,6 +414,34 @@ impl Locale for ProductRuntimeHost {
             }
         });
         Subscription::new(stream)
+    }
+
+    #[instrument(skip_all, fields(runtime.method = "locale.localize_timestamps"))]
+    async fn localize_timestamps(
+        &self,
+        _cx: &CallContext,
+        request: HostLocaleLocalizeTimestampsRequest,
+    ) -> Result<HostLocaleLocalizeTimestampsResponse, CallError<HostLocaleLocalizeTimestampsError>> {
+        let request = request.into_latest();
+        if request.timestamps_ms.len() > 128
+            || request.timestamps_ms.iter().any(|timestamp| *timestamp > 253_402_300_799_999)
+            || request.language_tag.is_empty()
+            || request.time_zone.is_empty()
+        {
+            return Err(CallError::Domain(HostLocaleLocalizeTimestampsError::V1(
+                truapi::latest::GenericError { reason: "Invalid local time conversion request".into() },
+            )));
+        }
+        let count = request.timestamps_ms.len();
+        let response = self.platform.localize_timestamps(request).await.map_err(|error| {
+            CallError::Domain(HostLocaleLocalizeTimestampsError::V1(error))
+        })?;
+        if response.timestamps.len() != count {
+            return Err(CallError::HostFailure {
+                reason: "Host returned an incomplete local time conversion".into(),
+            });
+        }
+        Ok(HostLocaleLocalizeTimestampsResponse::V1(response))
     }
 }
 
@@ -474,5 +507,39 @@ impl Notifications for ProductRuntimeHost {
                     reason: err.reason,
                 }))
             })
+    }
+
+    #[instrument(skip_all, fields(runtime.method = "notifications.activation_events"))]
+    async fn activation_events(
+        &self,
+        _cx: &CallContext,
+        request: NotificationActivationEventsRequest,
+    ) -> Result<NotificationActivationEventsResponse, CallError<NotificationActivationEventsError>> {
+        let NotificationActivationEventsRequest::V1 = request;
+        let events = self.platform.activation_events().await.map_err(|err| {
+            CallError::Domain(NotificationActivationEventsError::V1(err))
+        })?;
+        if events.events.len() > 32 {
+            return Err(CallError::HostFailure {
+                reason: "notification activation batch exceeds 32 events".to_string(),
+            });
+        }
+        Ok(NotificationActivationEventsResponse::V1(events))
+    }
+
+    #[instrument(skip_all, fields(runtime.method = "notifications.acknowledge_activation"))]
+    async fn acknowledge_activation(
+        &self,
+        _cx: &CallContext,
+        request: NotificationActivationAcknowledgeRequest,
+    ) -> Result<NotificationActivationAcknowledgeResponse, CallError<NotificationActivationAcknowledgeError>> {
+        let NotificationActivationAcknowledgeRequest::V1(
+            v01::NotificationActivationAcknowledgeRequest { sequence },
+        ) = request;
+        self.platform
+            .acknowledge_activation(v01::NotificationActivationAcknowledgeRequest { sequence })
+            .await
+            .map(|()| NotificationActivationAcknowledgeResponse::V1)
+            .map_err(|err| CallError::Domain(NotificationActivationAcknowledgeError::V1(err)))
     }
 }

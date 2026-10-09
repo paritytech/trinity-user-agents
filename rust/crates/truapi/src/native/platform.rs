@@ -66,6 +66,8 @@ pub struct CallbackPlatform {
     /// and the screen share one namespace, so they subscribe and publish on
     /// the runtime-wide bus instead of this execution's own.
     pub storage_events: Arc<NativeEventBus>,
+    /// Process bridge observing permission writes from every execution.
+    pub permission_callbacks: Arc<dyn HostCallbacks>,
 }
 
 impl crate::host_logic::worker::WorkerDemandObserver for CallbackPlatform {
@@ -118,6 +120,24 @@ impl Notifications for CallbackPlatform {
         );
         self.callbacks
             .cancel_notification(id)
+            .map_err(v01::GenericError::from)
+    }
+
+    async fn activation_events(&self) -> Result<v01::NotificationActivations, v01::GenericError> {
+        self.callbacks
+            .activation_events()
+            .await
+            .map(|events| v01::NotificationActivations { events })
+            .map_err(v01::GenericError::from)
+    }
+
+    async fn acknowledge_activation(
+        &self,
+        request: v01::NotificationActivationAcknowledgeRequest,
+    ) -> Result<(), v01::GenericError> {
+        self.callbacks
+            .acknowledge_activation(request.sequence)
+            .await
             .map_err(v01::GenericError::from)
     }
 }
@@ -321,14 +341,24 @@ impl CoreStorage for CallbackPlatform {
         self.callbacks
             .core_storage_write(key.encode(), value)
             .await
-            .map_err(v01::GenericError::from)
+            .map_err(v01::GenericError::from)?;
+        if let CoreStorageKey::PermissionAuthorization { product_id, .. } = key {
+            self.permission_callbacks
+                .permission_authorizations_changed(product_id);
+        }
+        Ok(())
     }
 
     async fn clear_core_storage(&self, key: CoreStorageKey) -> Result<(), v01::GenericError> {
         self.callbacks
             .core_storage_clear(key.encode())
             .await
-            .map_err(v01::GenericError::from)
+            .map_err(v01::GenericError::from)?;
+        if let CoreStorageKey::PermissionAuthorization { product_id, .. } = key {
+            self.permission_callbacks
+                .permission_authorizations_changed(product_id);
+        }
+        Ok(())
     }
 }
 
@@ -476,15 +506,27 @@ impl ThemeHost for CallbackPlatform {
     }
 }
 
+#[async_trait]
 impl LocaleHost for CallbackPlatform {
     fn subscribe_locale(
         &self,
-    ) -> BoxStream<'static, Result<v01::HostLocaleSubscribeItem, v01::GenericError>> {
+    ) -> BoxStream<'static, Result<crate::latest::HostLocaleSubscribeItem, v01::GenericError>> {
         let current = self
             .callbacks
             .current_locale()
             .map_err(v01::GenericError::from);
         self.events.subscribe_locale(current)
+    }
+
+    async fn localize_timestamps(
+        &self,
+        request: crate::latest::HostLocaleLocalizeTimestampsRequest,
+    ) -> Result<crate::latest::HostLocaleLocalizeTimestampsResponse, crate::latest::GenericError>
+    {
+        self.callbacks
+            .localize_timestamps(request)
+            .await
+            .map_err(Into::into)
     }
 }
 

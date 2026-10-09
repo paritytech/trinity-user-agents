@@ -16,6 +16,8 @@ rust/crates/
                          One implementation module per macro; lib.rs holds entry points
   truapi-provider/       network provider backends (WebSocket RPC or smoldot light-client);
                          its `platform` module holds the chain-access traits
+  truapi-polkavm-host/   optional native composition pinned to
+                        paritytech/polkavm-host-runtime
   truapi-verifiable/     ring-VRF operations over `verifiable`; a lazily loaded WASM module in the browser
   truapi-host-cli/       CLI pairing/signing hosts; Bun scripts share the container web API gates
 js/packages/
@@ -88,6 +90,13 @@ nightly-toolchain          the dated nightly for rustfmt, CI clippy and rustdoc 
 .github/registry-drift-exceptions.json
                            documents intentionally unpublished npm package versions
 ```
+
+The PolkaVM runtime implementation, wire crates, browser package, and ABI
+contract live in `paritytech/polkavm-host-runtime`. The base `truapi`
+must remain PolkaVM-free. Native integrations use the optional
+`truapi-polkavm-host` composition crate; browser integrations consume
+`@parity/polkavm-browser-runtime` directly. Never copy or export browser assets
+from this repository.
 
 ### Crate + binding invariants
 

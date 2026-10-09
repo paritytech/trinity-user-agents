@@ -96,6 +96,8 @@ private extension ProductPermissionPromptViewFactory {
                 ),
                 icon: makeIcon(systemName: "globe")
             )
+        case let .networkAccessBundle(domains):
+            makeSingleContent(productId: productId, permission: .networkAccess(domain: domains.joined(separator: ", ")))
         case let .accountAccess(targetProductId):
             PromptContent(
                 title: String(
@@ -168,6 +170,8 @@ private extension ProductPermissionPromptViewFactory {
             "- " + String(
                 localized: .Products.permissionBodyNetworkAccess(domain: domain)
             )
+        case let .networkAccessBundle(domains):
+            permissionDescription(for: .networkAccess(domain: domains.joined(separator: ", ")))
         case .balanceAccess:
             "- " + String(localized: .Products.permissionBodyBalanceAccess)
         case .webRtcAccess:

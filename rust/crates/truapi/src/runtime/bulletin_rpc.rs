@@ -1,9 +1,9 @@
 //! In-core Bulletin preimage submission over the shared Subxt client.
 //!
 //! One submission at a time: build + sign the `TransactionStorage.store`
-//! extrinsic against the current best block (Subxt resolves metadata, nonce,
-//! and the mortality anchor), dry-run it via Subxt's typed transaction
-//! validation, then submit through Subxt's transaction watch and classify the
+//! extrinsic using current best-block metadata and nonce with a finalized
+//! mortality anchor, dry-run it via Subxt's typed transaction validation, then
+//! submit through Subxt's transaction watch and classify the
 //! dispatch outcome from the inclusion block's events.
 
 use std::sync::Mutex as StdMutex;
@@ -14,7 +14,8 @@ use web_time::{Duration, Instant};
 
 use crate::chain_runtime::{ChainRuntime, RuntimeFailure};
 use crate::host_internal::bulletin::{
-    STORE_PALLET_NAME, allowance_signer, build_signed_store_transaction, preimage_key,
+    MORTAL_PERIOD_BLOCKS, STORE_PALLET_NAME, allowance_signer, build_signed_store_transaction,
+    preimage_key,
 };
 use crate::host_internal::extrinsic::Sr25519Signer;
 use crate::runtime::BulletinAllowanceKey;
@@ -126,6 +127,9 @@ pub enum BulletinSubmitError {
     /// The runtime could not determine transaction validity.
     #[display("unknown transaction validity: {_0:?}")]
     UnknownTransaction(#[error(not(source))] TransactionUnknown),
+    /// Finality has fallen outside the fixed mortality window.
+    #[display("Bulletin finalized checkpoint {finalized} is too old for best block {best}")]
+    MortalityCheckpointTooOld { finalized: u64, best: u64 },
     /// The allowance account was rejected; refresh + one retry may help.
     #[display("allowance rejected: {phase}")]
     AllowanceRejected { phase: AllowanceRejectionPhase },
@@ -242,6 +246,11 @@ impl BulletinRpc {
             allowance_propagation_window: ALLOWANCE_DRY_RUN_PROPAGATION_WINDOW,
             allowance_block_wait_timeout: ALLOWANCE_DRY_RUN_BLOCK_WAIT_TIMEOUT,
         }
+    }
+
+    /// The chain used by the allowance reader and submission service.
+    pub(crate) fn genesis_hash(&self) -> [u8; 32] {
+        self.genesis_hash
     }
 
     /// Open a raw RPC client over the configured Bulletin chain.
@@ -423,7 +432,25 @@ impl BulletinRpc {
                 .at()
                 .await
                 .map_err(|error| BulletinSubmitError::Subxt(Box::new(error.into())))?;
-            let signed = build_signed_store_transaction(&at_block, signer, value)
+            let finalized = at_block
+                .online_client()
+                .at_current_block()
+                .await
+                .map_err(|error| BulletinSubmitError::Subxt(Box::new(error.into())))?;
+            // Finality can advance while the previously selected best block
+            // is being read. Never sign against state older than the anchor.
+            let signing_state = if finalized.block_number() >= at_block.block_number() {
+                &finalized
+            } else {
+                &at_block
+            };
+            if signing_state.block_number() - finalized.block_number() >= MORTAL_PERIOD_BLOCKS {
+                return Err(BulletinSubmitError::MortalityCheckpointTooOld {
+                    finalized: finalized.block_number(),
+                    best: signing_state.block_number(),
+                });
+            }
+            let signed = build_signed_store_transaction(signing_state, &finalized, signer, value)
                 .await
                 .map_err(|error| BulletinSubmitError::Subxt(Box::new(error.into())))?;
 
@@ -921,7 +948,10 @@ mod tests {
     mod orchestration {
         use super::*;
         use crate::chain_runtime::{RuntimeChainProvider, RuntimeFailure};
-        use crate::host_internal::extrinsic::tests::{bulletin_runtime_call, system_events};
+        use crate::host_internal::extrinsic::tests::{
+            OfflineChainState, bulletin_chain_state, bulletin_runtime_call, split_v4, system_events,
+        };
+        use crate::host_logic::product_account::SR25519_SIGNING_CONTEXT;
         use crate::platform::JsonRpcConnection;
         use crate::subscription::thread_per_subscription_spawner;
         use async_trait::async_trait;
@@ -929,9 +959,14 @@ mod tests {
         use futures::channel::mpsc;
         use futures::stream::BoxStream;
         use parity_scale_codec::{Compact, Encode};
+        use parking_lot::Mutex;
+        use schnorrkel::{PublicKey, Signature};
         use serde_json::{Value as JsonValue, json};
         use std::collections::VecDeque;
-        use std::sync::{Arc, Mutex};
+        use std::sync::Arc;
+        use subxt::config::DefaultExtrinsicParamsBuilder;
+        use subxt::ext::scale_value::Value as ScaleValue;
+        use subxt::utils::H256;
 
         const FOLLOW_ID: &str = "bulletin-follow";
         const BLOCK_HASH: &str =
@@ -963,6 +998,7 @@ mod tests {
             next_transaction: usize,
             next_best_block: usize,
             current_best_hash: String,
+            best_block_number: Option<u32>,
             advance_best_block_after_rejection: bool,
             stall_headers: bool,
             last_transaction: Option<String>,
@@ -995,6 +1031,7 @@ mod tests {
                         next_transaction: 0,
                         next_best_block: 0,
                         current_best_hash: BLOCK_HASH.to_string(),
+                        best_block_number: None,
                         advance_best_block_after_rejection: false,
                         stall_headers,
                         last_transaction: None,
@@ -1012,13 +1049,23 @@ mod tests {
                 self
             }
 
+            fn with_best_block(self, number: u32) -> Self {
+                {
+                    let mut state = self.state.lock();
+                    state.best_block_number = Some(number);
+                    state.next_best_block = 1;
+                    state.current_best_hash = scripted_block_hash(1);
+                }
+                self
+            }
+
             fn with_validation_outcomes(
                 self,
                 outcomes: impl IntoIterator<Item = ValidationOutcome>,
                 advance_best_block_after_rejection: bool,
             ) -> Self {
                 {
-                    let mut state = self.state.lock().unwrap();
+                    let mut state = self.state.lock();
                     state.validation_outcomes = outcomes.into_iter().collect();
                     state.advance_best_block_after_rejection = advance_best_block_after_rejection;
                 }
@@ -1026,9 +1073,7 @@ mod tests {
             }
 
             fn method_count(&self, method: &str) -> usize {
-                self.sent
-                    .lock()
-                    .unwrap()
+                self.sent.lock()
                     .iter()
                     .filter(|request| {
                         serde_json::from_str::<JsonValue>(request)
@@ -1046,9 +1091,7 @@ mod tests {
             }
 
             fn submitted_transactions(&self) -> Vec<String> {
-                self.sent
-                    .lock()
-                    .unwrap()
+                self.sent.lock()
                     .iter()
                     .filter_map(|request| {
                         let value: JsonValue = serde_json::from_str(request).ok()?;
@@ -1061,9 +1104,7 @@ mod tests {
             }
 
             fn runtime_call_count(&self, runtime_method: &str) -> usize {
-                self.sent
-                    .lock()
-                    .unwrap()
+                self.sent.lock()
                     .iter()
                     .filter(|request| {
                         serde_json::from_str::<JsonValue>(request)
@@ -1097,10 +1138,10 @@ mod tests {
 
         impl JsonRpcConnection for BulletinScriptedConnection {
             fn send(&self, request: String) {
-                self.sent.lock().unwrap().push(request.clone());
+                self.sent.lock().push(request.clone());
                 let frames =
-                    scripted_frames(&request, &self.events, &mut self.state.lock().unwrap());
-                if let Some(sender) = self.sender.lock().unwrap().as_ref() {
+                    scripted_frames(&request, &self.events, &mut self.state.lock());
+                if let Some(sender) = self.sender.lock().as_ref() {
                     for frame in frames {
                         sender.unbounded_send(frame).unwrap();
                     }
@@ -1108,16 +1149,14 @@ mod tests {
             }
 
             fn responses(&self) -> BoxStream<'static, String> {
-                self.receiver
-                    .lock()
-                    .unwrap()
+                self.receiver.lock()
                     .take()
                     .expect("responses called once")
                     .boxed()
             }
 
             fn close(&self) {
-                self.sender.lock().unwrap().take();
+                self.sender.lock().take();
             }
         }
 
@@ -1131,7 +1170,7 @@ mod tests {
                     state: self.state.clone(),
                     sent: self.sent.clone(),
                     sender: self.sender.clone(),
-                    receiver: Mutex::new(self.receiver.lock().unwrap().take()),
+                    receiver: Mutex::new(self.receiver.lock().take()),
                     events: self.events.clone(),
                 }))
             }
@@ -1154,16 +1193,38 @@ mod tests {
             };
 
             match method {
-                "chainHead_v1_follow" => vec![
-                    response(json!(FOLLOW_ID)),
-                    follow_event(json!({
-                        "event": "initialized",
-                        "finalizedBlockHashes": [BLOCK_HASH],
-                        "finalizedBlockRuntime": null
-                    })),
-                ],
+                "chainHead_v1_follow" => {
+                    let mut frames = vec![
+                        response(json!(FOLLOW_ID)),
+                        follow_event(json!({
+                            "event": "initialized",
+                            "finalizedBlockHashes": [BLOCK_HASH],
+                            "finalizedBlockRuntime": null
+                        })),
+                    ];
+                    if state.best_block_number.is_some() {
+                        frames.push(follow_event(json!({
+                            "event": "newBlock",
+                            "blockHash": state.current_best_hash,
+                            "parentBlockHash": BLOCK_HASH,
+                            "newRuntime": null
+                        })));
+                        frames.push(follow_event(json!({
+                            "event": "bestBlockChanged",
+                            "bestBlockHash": state.current_best_hash
+                        })));
+                    }
+                    frames
+                }
                 "chainHead_v1_header" if state.stall_headers => Vec::new(),
-                "chainHead_v1_header" => vec![response(json!(encoded_header()))],
+                "chainHead_v1_header" => {
+                    let number = if request["params"][1] == BLOCK_HASH {
+                        1
+                    } else {
+                        state.best_block_number.unwrap_or(1)
+                    };
+                    vec![response(json!(encoded_header(number)))]
+                }
                 "chainHead_v1_call" => {
                     state.next_operation += 1;
                     let operation_id = format!("call-{}", state.next_operation);
@@ -1177,7 +1238,14 @@ mod tests {
                         } else {
                             ValidationOutcome::Valid
                         };
-                    let output = runtime_call_output(runtime_method, validation_outcome);
+                    let output = if runtime_method == "AccountNonceApi_account_nonce"
+                        && state.best_block_number.is_some()
+                        && request["params"][1] == state.current_best_hash
+                    {
+                        7u32.encode()
+                    } else {
+                        runtime_call_output(runtime_method, validation_outcome)
+                    };
                     let mut frames = vec![
                         response(json!({"result": "started", "operationId": operation_id})),
                         follow_event(json!({
@@ -1312,10 +1380,10 @@ mod tests {
             }
         }
 
-        fn encoded_header() -> String {
+        fn encoded_header(number: u32) -> String {
             let mut bytes = Vec::new();
             [0u8; 32].encode_to(&mut bytes);
-            Compact(1u32).encode_to(&mut bytes);
+            Compact(number).encode_to(&mut bytes);
             [0u8; 32].encode_to(&mut bytes);
             [0u8; 32].encode_to(&mut bytes);
             Vec::<u8>::new().encode_to(&mut bytes);
@@ -1403,6 +1471,78 @@ mod tests {
                 1
             );
             assert_eq!(provider.method_count("chainHead_v1_storage"), 1);
+        }
+
+        #[test]
+        fn submit_uses_best_nonce_with_finalized_mortality_checkpoint() {
+            let provider = Arc::new(
+                BulletinScriptedProvider::new([TransactionOutcome::Included]).with_best_block(2),
+            );
+            let value = b"survives an abandoned best-block checkpoint";
+            let key = futures::executor::block_on(rpc(provider.clone()).submit_preimage(
+                &CallContext::default(),
+                Instant::now() + Duration::from_secs(2),
+                &allowance_fixture(),
+                value,
+            ))
+            .unwrap();
+            assert_eq!(key, preimage_key(value));
+
+            let transactions = provider.submitted_transactions();
+            assert_eq!(transactions.len(), 1);
+            let encoded = hex::decode(transactions[0].trim_start_matches("0x")).unwrap();
+            let (account, signature, _) = split_v4(&encoded);
+            let state = OfflineChainState {
+                genesis_hash: [0x42; 32],
+                spec_version: 1,
+                transaction_version: 1,
+                ..bulletin_chain_state()
+            };
+            let client = state.client_at(2).unwrap();
+            let params = DefaultExtrinsicParamsBuilder::<SubstrateConfig>::new()
+                .nonce(7)
+                .mortal_from_unchecked(MORTAL_PERIOD_BLOCKS, 1, H256([0x11; 32]))
+                .build();
+            let payload = subxt::dynamic::tx(
+                STORE_PALLET_NAME,
+                "store",
+                vec![ScaleValue::from_bytes(value)],
+            );
+            let expected = client
+                .tx()
+                .create_v4_signable_offline(&payload, params)
+                .unwrap()
+                .signer_payload()
+                .unwrap();
+            // This signature cannot verify with the stale finalized nonce (0)
+            // or the unfinalized best hash, even though dry-run accepted both.
+            PublicKey::from_bytes(&account)
+                .unwrap()
+                .verify_simple(
+                    SR25519_SIGNING_CONTEXT,
+                    &expected,
+                    &Signature::from_bytes(&signature).unwrap(),
+                )
+                .unwrap();
+        }
+
+        #[test]
+        fn submit_refuses_a_checkpoint_outside_the_mortality_window() {
+            let provider = Arc::new(BulletinScriptedProvider::new([]).with_best_block(65));
+            let result = futures::executor::block_on(rpc(provider.clone()).submit_preimage(
+                &CallContext::default(),
+                Instant::now() + Duration::from_secs(2),
+                &allowance_fixture(),
+                b"expired checkpoint",
+            ));
+            assert!(matches!(
+                result,
+                Err(BulletinSubmitError::MortalityCheckpointTooOld {
+                    finalized: 1,
+                    best: 65
+                })
+            ));
+            assert!(provider.submitted_transactions().is_empty());
         }
 
         #[test]

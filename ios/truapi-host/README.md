@@ -50,6 +50,11 @@ targets:
 make uniffi && ./ios/truapi-host/scripts/sync-bindings.sh
 ```
 
+Synchronization also removes generated Swift sources and FFI headers from the
+former `truapi_server` and `truapi_platform` namespaces. Only the unified `truapi`
+bindings belong in the package and its release tag. The binary asset remains
+`truapi_server.xcframework`, and its Swift FFI module is `truapiFFI`.
+
 CI's `iOS bindings (uniffi)` job runs the same two commands. With nothing
 committed to diff against, what it gates is that bindgen still produces a
 binding for every UniFFI-exposed type. It runs on Linux, so it never compiles
@@ -71,6 +76,22 @@ Run `rebuild.sh` after changing anything host-visible — the `NativeTrUApiHostR
 For local iteration without publishing, set `TRUAPI_USE_LOCAL_BINARY=1` so the root `Package.swift` builds against `Binaries/` directly.
 
 The embedding app implements `HostBridge` (defined in `TrUAPIHost.swift`): navigation, push, permissions, auth state, scoped + core storage, chain JSON-RPC, confirmations, preimage, theme, feature support, and the served chain set. UI-decision callbacks are `async` and awaited by the Rust core. `HostCallbackAdapter` translates it to the UniFFI-generated `HostCallbacks` protocol; `TrUAPIHostRuntime` and each product execution retain their own adapter. Conform to `HostBridge` rather than to the generated protocol: its extension defaults the optional callbacks, so a newly added one does not break the build. Storage arrives as the `storage` and `coreStorage` sub-objects, which the adapter flattens.
+
+The default `currentLocale` includes the system BCP 47 language tag and actual time-zone identifier. `localizeTimestamps` uses Foundation to format each instant in the requested language and zone, including historical daylight-saving offsets; grouping keys are always Gregorian `YYYY-MM-DD`. Product executions observe system locale and time-zone changes and remove those observers on close. Hosts with an in-app language picker override `currentLocale` and call `notifyLocaleChanged` when that selection changes, preserving the actual time zone. Direct users of generated callbacks must implement `localizeTimestamps`, either supplying a formatter or throwing `HostRejection.Rejected` when conversion is unavailable.
+
+Ordinary notification taps use `HostBridge.activationEvents()` and
+`acknowledgeActivation(sequence:)`, independently of background receiver enrollment.
+The embedder persists a tap before opening or focusing the verified product and
+returns a non-consuming, sequence-ordered batch of at most 32 events. Bind events
+and exact, idempotent acknowledgements to the execution's verified product,
+artifact, account and environment; an event sequence is not a notification id.
+Do not change accounts or navigate an arbitrary URL from an OS payload. Neither
+callback requests notification permission. Hosts without activation support
+reject these callbacks explicitly.
+
+Rebuild the Rust library, UniFFI bindings and Swift/Kotlin adapters together after
+changing these callbacks. Successful binding generation on Linux does not verify
+Swift compilation, OS notification presentation or physical-device APNs delivery.
 
 ## Integrating in an iOS app
 
@@ -106,12 +127,16 @@ indistinguishable from the other product having granted nothing. Pass 32 zero
 bytes only to declare deliberately that this host has no Asset Hub. Include this
 configuration update in the embedding app's package upgrade.
 
-Run the package tests in their UIKit host on an iOS simulator (the xcframework has no macOS slice). The helper installs pinned XcodeGen under `.agent/tools`, generates the project, and selects an available simulator:
+Run the package tests in their UIKit host on an iOS simulator using Xcode 16.3 or newer (the xcframework has no macOS slice). The helper installs pinned XcodeGen under `target/tools`, generates the project, and selects an available simulator. CI waits for that simulator to finish booting before compiling the test host. This completes OS boot, not WebKit's lazy auxiliary-process startup.
 
 ```bash
 # from the repo root
 ./ios/truapi-host/scripts/test.sh
 ```
+
+`ProductNetworkAccessTests` has a separate, once-per-suite stock WebKit readiness prerequisite. It loads a loopback page and waits for that page's JavaScript message in an uninstrumented WKWebView, before creating any TrUAPI runtime, bridge, or SDK scripts. This prerequisite has a 60-second limit and reports navigation errors or a terminated WebContent process as suite failures; it never retries failed tests. The probe remains alive until suite teardown, while every product test still creates its own WKWebView and runs the real SDK/permission path with the unchanged 15-second page/operation deadlines and one-minute test limits. The prerequisite uses Swift Testing's suite-scoping API (Xcode 16.3+).
+
+The separation is necessary even on the prebooted device: [a cold iOS 18.5 CI run](https://github.com/paritytech/trinity-user-agents/actions/runs/37877467238/job/113649679663) recorded GPU/Networking launches taking 40.46/40.36 seconds, after the first two product pages had already exhausted their 15-second deadlines; the remaining four tests passed. Simulator boot completion alone therefore cannot establish WebKit readiness. Neither the readiness probe nor the local product fixtures query Safari's Safe Browsing database. This prerequisite is not a cold-device SDK startup benchmark; product initialization and authorization are still exercised without preinitializing the SDK.
 
 ## Chat
 
@@ -159,7 +184,8 @@ let runtime = try TrUAPIHostRuntime(
         peopleChainGenesisHash: peopleChainGenesisHash,   // exactly 32 bytes
         bulletinChainGenesisHash: bulletinChainGenesisHash,
         assetHubChainGenesisHash: assetHubChainGenesisHash,
-        networkSuffix: "dot"
+        networkSuffix: "dot",
+        databaseDirectory: databaseDirectory // existing app-private directory, excluded from backups
     )
 )
 // Chat needs an active session; without one every Chat call answers denied.
@@ -352,13 +378,27 @@ The core's `Permissions` platform trait has two methods, and so does `HostCallba
 
 `product` is the requesting execution's `ProductExecutionConfig`.
 
-Both return `PermissionDecision`: `.allowOnce`, `.allowAlways`, or `.deny`. Preserve the user’s choice; the core keeps one-use grants in memory and consumes them at the authorized operation. OS refusal after app consent should throw instead of returning `.deny`, which records a product denial. The same typed values drive the `TrUAPIProductExecution` permission admin API (`permissionAuthorizationStatus`, `setPermissionAuthorizationStatus`), which reads and updates the persisted decisions without prompting.
+Both return `PermissionDecision`: `.allowOnce`, `.allowAlways`, or `.deny`. Preserve the user’s choice; the core keeps one-use grants in memory and consumes them at the authorized operation. OS refusal after app consent should throw instead of returning `.deny`, which records a product denial. Executions expose the read-only `permissionAuthorizationStatus`; native settings administration belongs to the process-owned `TrUAPIHostRuntime`.
 
 Identity and account access reviews use `confirmPermission(review:)`, which also returns `PermissionDecision`. Override it to preserve Allow once. Its compatibility default maps `confirmUserAction`'s Boolean approval to `.allowAlways`; signing and other single-action reviews continue to use that Boolean callback.
 
 Fetch, XHR, WebSocket connections, notification scheduling, external navigation and existing remote-operation gates consume temporary grants. The shared container authorizes each `getUserMedia` call through `authorize_device_permission`, camera before microphone. Each approval consumes its one-use grant for that attempt: a later microphone denial or native capture failure does not restore the camera grant. The returned stream remains usable until stopped; another capture requires new authorization.
 
 The container enforces product consent, while native media delegates resolve OS permission without consuming product consent again. An OS grant does not establish product consent. This boundary requires the container to run before product code in every frame, with its native methods and prototypes locked. SPA and Chat install it at document start. Authorization uses a private transport and response handler with captured browser primitives, so replacing public SDK replies, collection methods or Promise methods cannot approve a pending capture.
+
+### Native settings and legacy consumers
+
+Use the same runtime supplied by the app's `ServiceCoordinator`, not a second runtime or a settings-owned permission store:
+
+- `permissionAuthorizationProducts()` and `permissionAuthorizations(productId:)` enumerate existing persisted core keys and return canonical `{ request, status }` records. Implement `HostCoreStorageBackend.keys()` over the actual core namespace; the default throws unsupported, never an empty successful snapshot.
+- `importPermissionAuthorizations(productId:entries:)` atomically fills only missing entries. Existing native grants, denials, and reset tombstones win over old legacy rows. Keep legacy-only permission types in their existing repository. Preserve exact multi-domain request identity rather than flattening a bundle denial into singleton denials.
+- `setPermissionAuthorizationStatus(productId:request:status:)` is the explicit settings mutation. Await success before acknowledging removal; show failures while the settings view is still present. `.notDetermined` persists a reset tombstone, permits a future prompt, invalidates pending and one-time grants, and closes affected product executions.
+- Legacy prompt consumers capture `try permissionAuthorizationRevision(productId:)` **before** prompting and commit persistent answers with `setPermissionAuthorizationStatusIfCurrent(..., revision:)`. A false result rejects a stale answer. Temporary legacy grants carry that same revision and are ignored after revocation.
+- Every `HostBridge` implements `permissionAuthorizationsChanged(productId:)`. The process bridge forwards it to settings subscriptions. Shell runtimes inspect `execution.isClosed()` on this notification and tear down the affected WebView/engine and live media; an ordinary grant must not tear down an open execution.
+
+In the iOS app, Chat and Pocket share a worker rather than owning separate engines. `TrUAPIWorkerManager` observes the actual worker execution and removes its published execution, stops Pocket forwarding, and disposes the worker engine and chain connections on revocation. The observer is tied to that worker's boot identity so a delayed closure cannot tear down a replacement. A worker closed while starting must not resume into product code.
+
+The iOS app merges canonical decisions with legacy-only rows both in per-product settings and the apps-with-permissions list. Permission switches remain on and navigation is held while revocation is pending; storage or notification-cancellation errors remain visible and can be retried. Scope remains the existing product/request scope (including bare product labels for account-access decisions), not an account-specific grant.
 
 ## SSO session handling
 
@@ -473,6 +513,7 @@ final class MyCoreStorage: HostCoreStorageBackend, @unchecked Sendable {
     func read(key: Data) throws -> Data? { values[key] }
     func write(key: Data, value: Data) throws { values[key] = value }
     func clear(key: Data) throws { values.removeValue(forKey: key) }
+    func keys() throws -> [Data] { Array(values.keys) }
 }
 
 final class MyBridge: HostBridge, @unchecked Sendable {
@@ -480,6 +521,13 @@ final class MyBridge: HostBridge, @unchecked Sendable {
     let coreStorage: HostCoreStorageBackend = MyCoreStorage()
 
     func onCoreLog(marker: String, detail: String) { /* log */ }
+
+    func permissionAuthorizationsChanged(productId: String) {
+        NotificationCenter.default.post(
+            name: Notification.Name("ProductPermissionAuthorizationsChanged"),
+            object: productId
+        )
+    }
 
     func navigateTo(url: String) async throws {
         await MainActor.run { /* UIApplication.shared.open(...) */ }
@@ -565,7 +613,8 @@ let runtimeConfig = HostRuntimeConfig(
     // all-zero is the "no Asset Hub" sentinel and refuses every cross-product
     // `trustedProducts` grant.
     assetHubChainGenesisHash: Data(repeating: 1, count: 32),
-    networkSuffix: "dot"
+    networkSuffix: "dot",
+    databaseDirectory: databaseDirectory // existing app-private directory, excluded from backups
 )
 let runtime = try TrUAPIHostRuntime(bridge: bridge, runtimeConfig: runtimeConfig)
 try runtime.activateLocalSession(secret: entropyBytes, liteUsername: nil)
@@ -600,11 +649,13 @@ try TrUAPIHost.installProductScripts(
 )
 webView.load(URLRequest(url: productURL))
 
-// Settings changes apply to subsequent permission-checked operations.
-try execution.setPermissionAuthorizationStatus(
+// Settings denials/resets close affected executions and cancel stale consent.
+try await runtime.setPermissionAuthorizationStatus(
+    productId: "my-product.dot",
     request: .remote(RemotePermissionRequest(permission: .remote(domains: ["api.example.com"]))),
     status: .denied
 )
+// Tear down the closed WebView; open a fresh execution and WebView to continue.
 
 // On view teardown:
 webView.stopLoading()
@@ -626,7 +677,7 @@ Forwarded WebSocket events and XHR failures before sending are synthetic, with `
 
 WebRTC uses the same private transport. Each peer connection asks Rust for permission at its first network method, such as `createOffer`, and shares that decision across later methods on the connection. Allow once permits one connection. New connections check the current permission without requiring a page reload.
 
-To disable WebRTC, call `execution.setPermissionAuthorizationStatus` with a remote `.webRtc` request and `.denied` before loading each product. This overrides saved grants and trusted-product auto-grants, which otherwise skip `remotePermission` callbacks.
+To disable WebRTC, await `runtime.setPermissionAuthorizationStatus(productId:request:status:)` with the product's ID, a remote `.webRtc` request and `.denied` before opening its execution. This overrides saved grants and trusted-product auto-grants, which otherwise skip `remotePermission` callbacks. A denial/reset closes affected existing executions; tear down their WebViews and open fresh executions rather than reusing a closed execution's transport. An ordinary authorization grant does not close an execution.
 
 The installer adds the bootstrap and container scripts before loading. It preserves the host's website data store and navigation delegate. Hosts that assemble their own script lists can keep using `LocalhostBridgeBootstrap.script` followed by `ContainerScriptBundle.load()`, with the container injected into every frame.
 
@@ -642,6 +693,8 @@ Build the generated JavaScript SDK before the container: from the repository roo
 ## Build outputs in detail
 
 `./scripts/rebuild.sh` orchestrates everything; the underlying pieces, should you need one in isolation:
+
+Ordinary `cargo build -p truapi` produces only the Rust library. The packaging targets explicitly request a `staticlib` with `cargo rustc -p truapi --lib --crate-type staticlib` for each iOS slice, and a `cdylib` with `cargo rustc -p truapi --lib --crate-type cdylib --profile codegen` for binding generation. Use the Make targets to retain their profiles, target selection and deployment settings.
 
 - **xcframework** — `make xcframework` (repo root) builds `truapi` for `aarch64-apple-ios` and `aarch64-apple-ios-sim` and bundles `target/truapi_server.xcframework`; the script copies it into `Binaries/` and strips the per-slice `module.modulemap` (module resolution comes from the `systemLibrary` target; the slice copy collides with other xcframeworks in Xcode's flat include dir).
 - **bindings** — `make uniffi` (run automatically by `make xcframework`) emits the Swift bindings into `target/uniffi-swift-out/` via the workspace `uniffi-bindgen-cli`; `scripts/sync-bindings.sh` copies them into `Sources/TrUAPIHost/truapi.swift` and `Sources/truapiFFI/include/`, renaming the emitted `truapiFFI.modulemap` to `module.modulemap` so the SwiftPM `systemLibrary` target picks it up. `rebuild.sh` calls it, and so does the `iOS package (Swift + WebKit)` job, which is what puts Swift sources into the package before `xcodebuild` runs.
