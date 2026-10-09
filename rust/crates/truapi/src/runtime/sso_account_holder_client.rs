@@ -3,13 +3,16 @@
 use super::HostSession;
 use super::allowances::AllowanceResource;
 use super::authority::{
-    AccountCaller, AccountGrant, AccountGrantOutcome, AccountHolder, AccountInvocation,
+    AccountGrant, AccountGrantOutcome, AccountHolder, AccountInvocation,
     AuthorityCancelError, AuthorityError, AuthoritySession, AutoSigningKey, BulletinAllowanceKey,
     CreateTransactionAuthorityRequest, SignPayloadAuthorityRequest, SignRawAuthorityRequest,
     StatementStoreAllowanceKey, require_current_session,
 };
 use super::sso_remote::{
     SSO_LOCAL_DISCONNECT_REASON, SSO_PEER_DISCONNECT_REASON, SsoRemoteResponseError,
+};
+use super::ring_vrf_registry::{
+    RingVrfRegistryStore, apply_ring_vrf_disclosure, validate_owner_listing,
 };
 use super::sso_request_service::SsoRequestService;
 use crate::host_internal::sso_messages::{
@@ -21,22 +24,98 @@ use crate::host_internal::sso_messages::{
 };
 use crate::host_internal::sso_wire::SsoRequest;
 use crate::host_logic::entropy::derive_product_entropy_from_source;
+use crate::platform::normalize_product_identifier;
+use crate::subscription::Spawner;
 use futures::{
     StreamExt,
     stream::{self, BoxStream},
 };
 use std::sync::Arc;
-use truapi::latest;
+use truapi::{CallContext, latest};
 
 /// Account-holder requests over one runtime's selected SSO channel.
 pub struct SsoAccountHolderClient {
     service: Arc<SsoRequestService>,
+    registry: Arc<RingVrfRegistryStore>,
+    spawner: Spawner,
 }
 
 impl SsoAccountHolderClient {
-    /// Use the runtime's existing session and outbound transport.
-    pub fn new(service: Arc<SsoRequestService>) -> Self {
-        Self { service }
+    /// Use the runtime's existing session and outbound transport, and keep
+    /// `registry` as this host's copy of the phone's ring-VRF registrations.
+    pub fn new(
+        service: Arc<SsoRequestService>,
+        registry: Arc<RingVrfRegistryStore>,
+        spawner: Spawner,
+    ) -> Self {
+        Self {
+            service,
+            registry,
+            spawner,
+        }
+    }
+
+    async fn remember_registration(
+        &self,
+        invocation: &AccountInvocation<'_>,
+        request: latest::HostAccountRegisterRingVrfKeyRequest,
+        public_key: [u8; 32],
+    ) -> Result<(), RingVrfError> {
+        let owner = invocation
+            .caller
+            .product_id()
+            .ok_or(RingVrfError::NotAllowlisted)?;
+        let handle = latest::ProductAccountId {
+            dot_ns_identifier: normalize_product_identifier(owner).map_err(|error| {
+                RingVrfError::Unknown {
+                    reason: error.to_string(),
+                }
+            })?,
+            derivation_index: request.index,
+        };
+        let mut update = self
+            .registry
+            .prepare_update(invocation.session.public_key)
+            .await?;
+        self.require_current_session(invocation.session)?;
+        update.register(handle, request.ring, public_key)?;
+        update.persist().await
+    }
+
+    /// Register on the phone in the background; the host already answered from its kept key.
+    fn forward_registration(
+        &self,
+        invocation: &AccountInvocation<'_>,
+        request: latest::HostAccountRegisterRingVrfKeyRequest,
+    ) -> Result<(), RingVrfError> {
+        let calling_product_id = invocation
+            .caller
+            .product_id()
+            .ok_or(RingVrfError::NotAllowlisted)?
+            .to_string();
+        let service = Arc::downgrade(&self.service);
+        let session = invocation.session.clone();
+        (self.spawner)(Box::pin(async move {
+            let Some(service) = service.upgrade() else {
+                return;
+            };
+            let cx = CallContext::with_request_id(format!(
+                "ring-vrf-registration-mirror:{}",
+                super::sso_remote::sso_message_id()
+            ));
+            let request = ProductRequest {
+                calling_product_id,
+                payload: request,
+            };
+            let result = forward(&service, &cx, &session, request)
+                .await
+                .map_err(RingVrfError::from)
+                .and_then(|answer| answer);
+            if let Err(error) = result {
+                tracing::warn!(?error, "ring-VRF registration mirror failed");
+            }
+        }));
+        Ok(())
     }
 
     async fn call_product<R: Send, T>(
@@ -66,20 +145,26 @@ impl SsoAccountHolderClient {
         invocation: &AccountInvocation<'_>,
         request: R,
     ) -> Result<R::Response, AuthorityError> {
-        self.require_current_session(invocation.session)?;
-        let session = require_current_session(&self.service.session_state(), invocation.session)?;
-        let cx = match invocation.caller {
-            AccountCaller::Local { .. } => super::remote_authority_context(invocation.call),
-            AccountCaller::Remote { .. } => invocation.call.clone(),
-        };
-        super::remote_authority_call(&cx, async {
-            self.service
-                .call(&cx, &session, request)
-                .await
-                .map_err(remote_authority_error)
-        })
-        .await
+        forward(&self.service, invocation.call, invocation.session, request).await
     }
+}
+
+/// Send `request` over `service`'s channel while `session` stays selected.
+async fn forward<R: SsoRequest>(
+    service: &SsoRequestService,
+    cx: &CallContext,
+    session: &AuthoritySession,
+    request: R,
+) -> Result<R::Response, AuthorityError> {
+    let session = require_current_session(&service.session_state(), session)?;
+    let cx = super::remote_authority_context(cx);
+    super::remote_authority_call(&cx, async {
+        service
+            .call(&cx, &session, request)
+            .await
+            .map_err(remote_authority_error)
+    })
+    .await
 }
 
 #[async_trait::async_trait]
@@ -281,15 +366,51 @@ impl AccountHolder for SsoAccountHolderClient {
         invocation: AccountInvocation<'_>,
         request: latest::HostAccountRegisterRingVrfKeyRequest,
     ) -> Result<latest::HostAccountRegisterRingVrfKeyResponse, RingVrfError> {
-        self.call_product(&invocation, request).await
+        let public_key = self.call_product(&invocation, request.clone()).await?;
+        self.remember_registration(&invocation, request, public_key)
+            .await?;
+        Ok(public_key)
+    }
+
+    async fn record_ring_vrf_key(
+        &self,
+        invocation: AccountInvocation<'_>,
+        request: latest::HostAccountRegisterRingVrfKeyRequest,
+        public_key: [u8; 32],
+    ) -> Result<(), RingVrfError> {
+        self.remember_registration(&invocation, request.clone(), public_key)
+            .await?;
+        self.forward_registration(&invocation, request)
     }
 
     async fn list_ring_vrf_keys(
         &self,
         invocation: AccountInvocation<'_>,
-        request: latest::HostAccountListRingVrfKeysRequest,
+        mut request: latest::HostAccountListRingVrfKeysRequest,
     ) -> Result<latest::HostAccountListRingVrfKeysResponse, RingVrfError> {
-        self.call_product(&invocation, request).await
+        let owner = normalize_product_identifier(&request.owner).map_err(|error| {
+            RingVrfError::Unknown {
+                reason: error.to_string(),
+            }
+        })?;
+        let disclosure = request.disclosure;
+        if invocation.caller.product_id() == Some(owner.as_str()) {
+            request.disclosure = latest::RingVrfKeyDisclosure::PublicKey;
+        }
+        let mut entries: Vec<latest::RegisteredRingVrfKey> =
+            self.call_product(&invocation, request).await?;
+        validate_owner_listing(&owner, &entries)?;
+        if entries.iter().all(|entry| entry.public_key.is_some()) {
+            let mut update = self
+                .registry
+                .prepare_update(invocation.session.public_key)
+                .await?;
+            self.require_current_session(invocation.session)?;
+            entries = update.reconcile_owner(&owner, entries)?;
+            update.persist().await?;
+        }
+        apply_ring_vrf_disclosure(&mut entries, disclosure);
+        Ok(entries)
     }
 
     async fn ring_vrf_sign(

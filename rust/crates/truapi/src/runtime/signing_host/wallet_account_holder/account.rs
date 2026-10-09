@@ -41,6 +41,53 @@ use truapi::latest::{
 };
 
 impl WalletAccountHolder {
+    fn caller_key_handle(
+        invocation: &AccountInvocation<'_>,
+        index: DerivationIndex,
+    ) -> Result<ProductAccountId, RingVrfError> {
+        let owner = invocation
+            .caller
+            .product_id()
+            .ok_or(RingVrfError::NotAllowlisted)?;
+        Ok(ProductAccountId {
+            dot_ns_identifier: normalize_product_identifier(owner).map_err(|err| {
+                RingVrfError::Unknown {
+                    reason: err.to_string(),
+                }
+            })?,
+            derivation_index: index,
+        })
+    }
+
+    async fn derive_ring_vrf_member(
+        &self,
+        session: &AuthoritySession,
+        handle: &ProductAccountId,
+    ) -> Result<[u8; 32], RingVrfError> {
+        let vrf = vrf::load().await?;
+        self.with_keys(session, |keys| {
+            vrf.member(&*keys.ring_vrf_entropy(handle)?)
+        })
+    }
+
+    async fn record_registration(
+        &self,
+        session: &AuthoritySession,
+        handle: ProductAccountId,
+        ring: RingLocation,
+        public_key: [u8; 32],
+    ) -> Result<(), RingVrfError> {
+        let mut update = self
+            .ring_vrf_registry
+            .prepare_update(session.public_key)
+            .await?;
+        self.require_current_session(session)?;
+        update.register(handle, ring, public_key)?;
+        update.persist().await?;
+        self.require_current_session(session)?;
+        Ok(())
+    }
+
     /// Derive the product's hard-subtree public key from the active session root.
     /// Returns `None` when no session is active.
     pub fn derive_subtree_public_key(
@@ -734,35 +781,36 @@ impl AccountHolder for WalletAccountHolder {
         invocation: AccountInvocation<'_>,
         request: HostAccountRegisterRingVrfKeyRequest,
     ) -> Result<[u8; 32], RingVrfError> {
-        let session = invocation.session;
-        self.require_current_session(session)?;
+        self.require_current_session(invocation.session)?;
         self.ring_resolver.validate(&request.ring).await?;
-
-        let handle = api::ProductAccountId {
-            dot_ns_identifier: normalize_product_identifier(
-                invocation
-                    .caller
-                    .product_id()
-                    .ok_or(RingVrfError::NotAllowlisted)?,
-            )
-            .map_err(|err| RingVrfError::Unknown {
-                reason: err.to_string(),
-            })?,
-            derivation_index: request.index,
-        };
-        let vrf = vrf::load().await?;
-        let public_key = self.with_keys(session, |keys| {
-            vrf.member(&*keys.ring_vrf_entropy(&handle)?)
-        })?;
-        let mut update = self
-            .ring_vrf_registry
-            .prepare_update(session.public_key)
+        let handle = Self::caller_key_handle(&invocation, request.index)?;
+        let public_key = self
+            .derive_ring_vrf_member(invocation.session, &handle)
             .await?;
-        self.require_current_session(session)?;
-        update.register(handle, request.ring, public_key)?;
-        update.persist().await?;
-        self.require_current_session(session)?;
+        self.record_registration(invocation.session, handle, request.ring, public_key)
+            .await?;
         Ok(public_key)
+    }
+
+    async fn record_ring_vrf_key(
+        &self,
+        invocation: AccountInvocation<'_>,
+        request: HostAccountRegisterRingVrfKeyRequest,
+        public_key: [u8; 32],
+    ) -> Result<(), RingVrfError> {
+        self.require_current_session(invocation.session)?;
+        let handle = Self::caller_key_handle(&invocation, request.index)?;
+        if self
+            .derive_ring_vrf_member(invocation.session, &handle)
+            .await?
+            != public_key
+        {
+            return Err(RingVrfError::Unknown {
+                reason: "the kept AutoSigning key derives a different ring-VRF key".to_string(),
+            });
+        }
+        self.record_registration(invocation.session, handle, request.ring, public_key)
+            .await
     }
 
     async fn list_ring_vrf_keys(

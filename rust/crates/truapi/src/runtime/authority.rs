@@ -548,14 +548,24 @@ pub trait AccountHolder: Send + Sync + 'static {
         request: HostAccountCreateProofRequest,
     ) -> Result<HostAccountCreateProofResponse, RingVrfError>;
 
-    /// Register a ring-VRF key owned by the calling product.
+    /// Register a ring-VRF key owned by the calling product and record it in
+    /// the registry this host reads.
     async fn register_ring_vrf_key(
         &self,
         invocation: AccountInvocation<'_>,
         request: HostAccountRegisterRingVrfKeyRequest,
     ) -> Result<HostAccountRegisterRingVrfKeyResponse, RingVrfError>;
 
-    /// List registered ring-VRF keys.
+    /// Record a key the host derived from the calling product's kept
+    /// AutoSigning key, so the holder stays the registry's only writer.
+    async fn record_ring_vrf_key(
+        &self,
+        invocation: AccountInvocation<'_>,
+        request: HostAccountRegisterRingVrfKeyRequest,
+        public_key: [u8; 32],
+    ) -> Result<(), RingVrfError>;
+
+    /// List an owner's registered ring-VRF keys, keeping the registry this host reads current.
     async fn list_ring_vrf_keys(
         &self,
         invocation: AccountInvocation<'_>,

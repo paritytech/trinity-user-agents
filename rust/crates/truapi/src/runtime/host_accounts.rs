@@ -9,7 +9,9 @@ use super::authority::{
 };
 use super::host_grants::{GrantBarrier, HostGrantGuard, HostGrantStore};
 use super::product_consent::ProductConsent;
-use super::ring_vrf_registry::{RingVrfRegistryStore, validate_owner_listing};
+use super::ring_vrf_registry::{
+    RingVrfRegistryStore, apply_ring_vrf_disclosure, validate_owner_listing,
+};
 use super::services::RuntimeServices;
 use super::signing_host::{
     ChainRingResolver, MemberCandidate, RingResolver, create_proof, development_context_bytes,
@@ -1141,7 +1143,7 @@ impl<H: AccountHolder + 'static> HostAccounts<H> {
         .await
     }
 
-    /// Retain and mirror registrations under the account selected before any awaits.
+    /// Register with a kept AutoSigning key when one exists; the account holder records it either way.
     pub async fn register_ring_vrf_key(
         &self,
         authority_session: &AuthoritySession,
@@ -1155,86 +1157,37 @@ impl<H: AccountHolder + 'static> HostAccounts<H> {
             session: authority_session,
             caller: AccountCaller::Local { product },
         };
-        let handle = api::ProductAccountId {
-            dot_ns_identifier: product.product_id.clone(),
-            derivation_index: request.index.clone(),
-        };
         let (session, revision) = self.grant_session(authority_session)?;
-        let grant = self
+        let Some(grant) = self
             .grants
-            .auto_signing_key(&session, &handle.dot_ns_identifier)
-            .await?;
-        let public_key = if let Some(grant) = &grant {
-            self.ring_resolver.validate(&request.ring).await?;
-            let vrf = vrf::load().await?;
+            .auto_signing_key(&session, &product.product_id)
+            .await?
+        else {
+            return self.holder.register_ring_vrf_key(invocation, request).await;
+        };
+        self.ring_resolver.validate(&request.ring).await?;
+        let vrf = vrf::load().await?;
+        let public_key = {
             let _lifecycle = self.hold_grant(authority_session, revision)?;
             let entropy = Zeroizing::new(derive_ring_vrf_entropy_from_domain(
                 grant.ring_vrf_domain_entropy(),
                 &request.index,
             ));
             vrf.member(&entropy)?
-        } else {
-            self.holder
-                .register_ring_vrf_key(invocation, request.clone())
-                .await?
         };
-        let mut update = self
-            .ring_vrf_registry
-            .prepare_update(session.public_key)
+        self.holder
+            .record_ring_vrf_key(invocation, request, public_key)
             .await?;
-        {
-            let _lifecycle = self.hold_grant(authority_session, revision)?;
-            update.register(handle, request.ring.clone(), public_key)?;
-        }
-        update.persist().await?;
-        if grant.is_some() {
-            let holder = Arc::downgrade(&self.holder);
-            let grants = Arc::downgrade(&self.grants);
-            let authority_session = authority_session.clone();
-            let product = product.clone();
-            (self.services.spawner)(Box::pin(async move {
-                let (Some(holder), Some(grants)) = (holder.upgrade(), grants.upgrade()) else {
-                    return;
-                };
-                let result = async {
-                    {
-                        let lifecycle = grants.lifecycle();
-                        lifecycle.require_revision(revision)?;
-                        holder.require_current_session(&authority_session)?;
-                    }
-                    let cx = CallContext::with_request_id(format!(
-                        "ring-vrf-registration-mirror:{}",
-                        super::sso_remote::sso_message_id()
-                    ));
-                    holder
-                        .register_ring_vrf_key(
-                            AccountInvocation {
-                                call: &cx,
-                                session: &authority_session,
-                                caller: AccountCaller::Local {
-                                    product: &product,
-                                },
-                            },
-                            request,
-                        )
-                        .await
-                }
-                .await;
-                if let Err(error) = result {
-                    tracing::warn!(?error, "ring-VRF registration mirror failed");
-                }
-            }));
-        }
         Ok(public_key)
     }
 
-    /// Merge complete owner listings without discarding accepted local registrations.
+    /// Answer an own complete listing locally; otherwise the account holder lists and keeps the registry current.
     pub async fn list_ring_vrf_keys(
         &self,
         authority_session: &AuthoritySession,
         cx: &CallContext,
         product: &ProductContext,
-        mut request: api::HostAccountListRingVrfKeysRequest,
+        request: api::HostAccountListRingVrfKeysRequest,
     ) -> Result<Vec<api::RegisteredRingVrfKey>, RingVrfError> {
         self.holder.require_current_session(authority_session)?;
         let invocation = AccountInvocation {
@@ -1247,8 +1200,7 @@ impl<H: AccountHolder + 'static> HostAccounts<H> {
                 reason: error.to_string(),
             }
         })?;
-        let own = product.product_id == owner;
-        if own
+        if product.product_id == owner
             && let Some(mut entries) = self
                 .ring_vrf_registry
                 .complete_owner_entries(authority_session.public_key, &owner)
@@ -1258,25 +1210,9 @@ impl<H: AccountHolder + 'static> HostAccounts<H> {
             apply_ring_vrf_disclosure(&mut entries, request.disclosure);
             return Ok(entries);
         }
-        let disclosure = request.disclosure;
-        if own {
-            request.disclosure = api::RingVrfKeyDisclosure::PublicKey;
-        }
-        let mut entries = self.holder.list_ring_vrf_keys(invocation, request).await?;
+        let entries = self.holder.list_ring_vrf_keys(invocation, request).await?;
         validate_owner_listing(&owner, &entries)?;
-        if entries.iter().all(|entry| entry.public_key.is_some()) {
-            let mut update = self
-                .ring_vrf_registry
-                .prepare_update(authority_session.public_key)
-                .await?;
-            entries = {
-                let _lifecycle = self.hold_session(authority_session)?;
-                update.reconcile_owner(&owner, entries)?
-            };
-            update.persist().await?;
-        }
         self.holder.require_current_session(authority_session)?;
-        apply_ring_vrf_disclosure(&mut entries, disclosure);
         Ok(entries)
     }
 
@@ -1309,17 +1245,6 @@ impl<H: AccountHolder + 'static> HostAccounts<H> {
             self.holder.ring_vrf_sign(invocation, request).await
         })
         .await
-    }
-}
-
-fn apply_ring_vrf_disclosure(
-    entries: &mut [api::RegisteredRingVrfKey],
-    disclosure: api::RingVrfKeyDisclosure,
-) {
-    if disclosure == api::RingVrfKeyDisclosure::Anonymized {
-        for entry in entries {
-            entry.public_key = None;
-        }
     }
 }
 

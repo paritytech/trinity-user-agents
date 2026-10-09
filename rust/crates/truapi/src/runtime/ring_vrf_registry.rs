@@ -5,7 +5,7 @@ use std::sync::{Arc, Mutex};
 
 use crate::platform::{CoreStorageKey, Platform, normalize_product_identifier};
 use parity_scale_codec::{Decode, Encode};
-use truapi::latest::{ProductAccountId, RegisteredRingVrfKey, RingLocation};
+use truapi::latest::{ProductAccountId, RegisteredRingVrfKey, RingLocation, RingVrfKeyDisclosure};
 
 use crate::host_internal::sso_messages::RingVrfError;
 
@@ -458,6 +458,18 @@ fn validate_snapshot(snapshot: &RegistrySnapshot) -> Result<(), RingVrfError> {
         }
     }
     Ok(())
+}
+
+/// Hide public keys from a listing that asked for anonymized entries.
+pub fn apply_ring_vrf_disclosure(
+    entries: &mut [RegisteredRingVrfKey],
+    disclosure: RingVrfKeyDisclosure,
+) {
+    if disclosure == RingVrfKeyDisclosure::Anonymized {
+        for entry in entries {
+            entry.public_key = None;
+        }
+    }
 }
 
 pub fn validate_owner_listing(

@@ -8001,3 +8001,50 @@ fn a_paired_disconnect_forgets_allow_once() {
         (true, false, 2),
     );
 }
+
+/// The paired host's account holder keeps its copy of what the phone
+/// registered, so the host's own provider list shows the phone's answer.
+#[test]
+fn a_paired_registration_records_the_phones_key_locally() {
+    let session = sso_session_info();
+    let public_key = [7; 32];
+    let platform = Arc::new(StubPlatform {
+        sso_response_script: Some(sso_success_response_script(
+            &session,
+            RemoteMessage {
+                message_id: "wallet-register".to_string(),
+                data: RemoteMessageData::V1(v1::RemoteMessage::RegisterRingVrfKeyResponse(
+                    Response {
+                        responding_to: "register".to_string(),
+                        payload: Ok(public_key),
+                    },
+                )),
+            },
+        )),
+        ..Default::default()
+    });
+    let (host_config, product) = runtime_config("myapp.dot");
+    let (host, pairing) =
+        ProductRuntimeHost::new_pairing_for_tests(platform, host_config, product, test_spawner());
+    install_pairing_session(&host, session);
+    let accounts = pairing.accounts();
+    let authority_session = accounts.current_session().unwrap();
+
+    let registered = futures::executor::block_on(accounts.register_ring_vrf_key(
+        &authority_session,
+        &CallContext::with_request_id("register".to_string()),
+        &ProductContext::new("myapp.dot".to_string()).unwrap(),
+        v01::HostAccountRegisterRingVrfKeyRequest {
+            index: v01::DerivationIndex::Index(0),
+            ring: ring_location_fixture(),
+        },
+    ));
+
+    assert_eq!(
+        (
+            registered,
+            futures::executor::block_on(accounts.ring_vrf_providers(&ring_location_fixture())),
+        ),
+        (Ok(public_key), Ok(vec![account_id("myapp.dot", 0)])),
+    );
+}

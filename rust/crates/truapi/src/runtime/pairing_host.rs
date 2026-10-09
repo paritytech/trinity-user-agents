@@ -20,6 +20,7 @@ pub struct PairingHost {
 impl PairingHost {
     /// Bind account calls to a paired session whose changes reach the host that keeps its grants.
     pub fn new(services: Arc<RuntimeServices>, config: PairingHostConfig) -> Self {
+        let registry = RingVrfRegistryStore::new(services.platform.clone());
         let mut session = None;
         let accounts = Arc::new_cyclic(|accounts: &Weak<HostAccounts<SsoAccountHolderClient>>| {
             let owner: Weak<dyn PairedSessionOwner> = accounts.clone();
@@ -27,10 +28,14 @@ impl PairingHost {
             session = Some(service.clone());
             HostAccounts::new(
                 services.clone(),
-                Arc::new(SsoAccountHolderClient::new(service.clone())),
+                Arc::new(SsoAccountHolderClient::new(
+                    service.clone(),
+                    registry.clone(),
+                    services.spawner.clone(),
+                )),
                 service.session_state(),
                 Arc::new(HostGrantStore::new(services.platform.clone())),
-                RingVrfRegistryStore::new(services.platform.clone()),
+                registry,
                 Arc::new(ProductConsent::new(services.platform.clone())),
                 #[cfg(feature = "test-host")]
                 Arc::default(),
