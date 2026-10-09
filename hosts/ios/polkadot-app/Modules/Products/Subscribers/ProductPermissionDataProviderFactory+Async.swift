@@ -30,7 +30,8 @@ extension ProductPermissionDataProviderMaking {
                 let providerHolder = AnyObjectHolder<AnyObject>()
                 let observerHolder = AnyObjectHolder<NSObjectProtocol>()
                 let provider = subscribePermissionGrantsSnapshot(
-                    for: nil, deliverOn: queue,
+                    for: nil,
+                    deliverOn: queue,
                     update: { updates.yield($0) },
                     failure: { updates.finish(throwing: $0) }
                 )
