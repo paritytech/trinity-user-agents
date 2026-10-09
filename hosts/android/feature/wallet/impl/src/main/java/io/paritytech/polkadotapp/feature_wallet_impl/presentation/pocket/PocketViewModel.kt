@@ -1,13 +1,9 @@
 package io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket
 
-import android.content.Context
 import android.net.Uri
 import dagger.hilt.android.lifecycle.HiltViewModel
-import dagger.hilt.android.qualifiers.ApplicationContext
 import io.paritytech.polkadotapp.common.presentation.loading.dataOrNull
 import io.paritytech.polkadotapp.common.presentation.screens.BaseViewModel
-import io.paritytech.polkadotapp.common.presentation.sharing.SharingManager
-import io.paritytech.polkadotapp.common.utils.ContentSharing
 import io.paritytech.polkadotapp.common.utils.CoroutineDispatchers
 import io.paritytech.polkadotapp.common.utils.flowOf
 import io.paritytech.polkadotapp.common.utils.launchUnit
@@ -50,7 +46,6 @@ import kotlinx.coroutines.launch
 import timber.log.Timber
 import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
-import io.paritytech.polkadotapp.common.R as RCommon
 
 @HiltViewModel
 class PocketViewModel @Inject constructor(
@@ -59,11 +54,8 @@ class PocketViewModel @Inject constructor(
     private val tokenAmountFormatter: TokenAmountFormatter,
     private val router: PocketRouter,
     private val collectiblesUrlResolver: CollectiblesUrlResolver,
-    private val idShareImageRenderer: IdShareImageRenderer,
-    private val sharingManager: SharingManager,
     private val dispatchers: CoroutineDispatchers,
     spaHost: SpaHost,
-    @param:ApplicationContext private val context: Context
 ) : BaseViewModel() {
     private val selectedCardId = MutableStateFlow<String?>(null)
     private val expandedProduct = ExpandedProductPage(this) { scope, url -> with(scope) { spaHost.createSession(url, underCard = true) } }
@@ -95,19 +87,11 @@ class PocketViewModel @Inject constructor(
         )
     }
 
-    private val addressCard = combine<_, _, _, PocketCardUiModel.IdCard?>(
-        interactor.observeUsername(),
-        interactor.observeRank(),
-        interactor.observeAddress()
-    ) { username, rank, address ->
-        PocketCardUiModel.IdCard(username = username, address = address, rank = rank)
-    }.onStart { emit(null) }
-
     private val warmedPrivilegedProducts = ConcurrentHashMap.newKeySet<ProductId>()
 
-    // Native cards keep their place; the product-backed collection follows, pinned cards first.
-    // A collection the host cannot read costs the user their product cards, never the balance and
-    // identity cards standing beside them.
+    // The balance card keeps its place; the product-backed collection follows, pinned cards first.
+    // A collection the host cannot read costs the user their product cards, never the balance card
+    // standing beside them.
     private val productCards = interactor.observeProductCards()
         .map { cards -> cards.map { it.toUiModel() } }
         .onEach(::warmUpPrivilegedProducts)
@@ -117,8 +101,8 @@ class PocketViewModel @Inject constructor(
         }
         .onStart { emit(emptyList()) }
 
-    val cards = combine(balanceCard, addressCard, productCards) { balance, address, products ->
-        (listOfNotNull(balance, address) + products).toImmutableList()
+    val cards = combine(balanceCard, productCards) { balance, products ->
+        (listOf(balance) + products).toImmutableList()
     }
         .distinctUntilChangedBy { cards -> cards.map(::cardDisplayKey) }
         .onEach(::forgetCardsNoLongerHeld)
@@ -208,8 +192,6 @@ class PocketViewModel @Inject constructor(
                 amounts?.notFullyReady
             ).joinToString("|")
         }
-
-        is PocketCardUiModel.IdCard -> listOf(card.username, card.address, card.rank).joinToString("|")
 
         is PocketCardUiModel.ProductCard -> listOf(card.id, card.title, card.pinned).joinToString("|")
     }
@@ -349,31 +331,6 @@ class PocketViewModel @Inject constructor(
         expandedProduct.release()
         forgetOpeningFace()
         selectedCardId.value = null
-    }
-
-    fun onShareId() = launchUnit {
-        val idCard = cards.value.filterIsInstance<PocketCardUiModel.IdCard>().firstOrNull() ?: return@launchUnit
-
-        interactor.getAppSharingUrl()
-            .onSuccess { url -> shareId(idCard, url) }
-            .onFailure { showPresentationError(ShareIdFailedPresentationError(it)) }
-    }
-
-    private suspend fun shareId(idCard: PocketCardUiModel.IdCard, appSharingUrl: String) {
-        val text = context.getString(RCommon.string.pocket_id_share_message, appSharingUrl, idCard.username)
-
-        idShareImageRenderer.render(idCard.address)
-            .logFailure("PocketViewModel: failed to render ID share image")
-            .onSuccess { uri ->
-                sharingManager.shareContent(
-                    ContentSharing.file(
-                        text = text,
-                        uri = uri,
-                        mimeType = "image/jpeg"
-                    )
-                )
-            }
-            .onFailure { sharingManager.shareText(text) }
     }
 
     private companion object {

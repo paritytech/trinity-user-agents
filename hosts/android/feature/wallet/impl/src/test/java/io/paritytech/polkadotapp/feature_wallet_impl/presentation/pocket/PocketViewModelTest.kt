@@ -1,9 +1,7 @@
 package io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket
 
-import android.content.Context
 import android.webkit.WebView
 import androidx.lifecycle.viewModelScope
-import io.paritytech.polkadotapp.common.presentation.sharing.SharingManager
 import io.paritytech.polkadotapp.feature_coinage_api.domain.model.BackupProgress
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsLoadProgress
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCard
@@ -18,7 +16,6 @@ import io.paritytech.polkadotapp.feature_tokens_api.presentation.mapper.TokenAmo
 import io.paritytech.polkadotapp.feature_videogame_api.domain.collectibles.CollectiblesUrlResolver
 import io.paritytech.polkadotapp.feature_wallet_impl.PocketRouter
 import io.paritytech.polkadotapp.feature_wallet_impl.domain.interactor.PocketInteractor
-import io.paritytech.polkadotapp.feature_wallet_impl.domain.model.PocketRank
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.PocketCardUiModel
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.PocketScreenState
 import io.paritytech.polkadotapp.test_shared.TestCoroutineDispatchers
@@ -52,11 +49,9 @@ import kotlin.coroutines.intrinsics.COROUTINE_SUSPENDED
 
 class PocketViewModelTest {
     // Every flow the screen combines answers empty unless a test says otherwise, so each test names
-    // only the source it is about. observeRank is answered here rather than stubbed because its
-    // context parameter cannot be named from a call site that does not have one.
+    // only the source it is about.
     private val quietFlows = Answer { invocation ->
         when {
-            invocation.method.name == "observeRank" -> flowOf(PocketRank.Basic)
             invocation.method.name == "warmUpProduct" -> Result.success(Unit)
             invocation.method.name == "faceShownOnOpen" -> true
             invocation.method.returnType == Flow::class.java -> emptyFlow<Any>()
@@ -97,11 +92,8 @@ class PocketViewModelTest {
         tokenAmountFormatter = mock(TokenAmountFormatter::class.java),
         router = mock(PocketRouter::class.java),
         collectiblesUrlResolver = mock(CollectiblesUrlResolver::class.java),
-        idShareImageRenderer = mock(IdShareImageRenderer::class.java),
-        sharingManager = mock(SharingManager::class.java),
         dispatchers = dispatchers,
         spaHost = spaHost,
-        context = mock(Context::class.java),
     ).also { created += it }
 
     /** The cards the screen holds once everything the view model started has run. */
@@ -114,8 +106,6 @@ class PocketViewModelTest {
     @Before
     fun setUp() {
         Dispatchers.setMain(testDispatcher)
-        whenever(interactor.observeUsername()).thenReturn(flowOf("alicent"))
-        whenever(interactor.observeAddress()).thenReturn(flowOf("15oF4u"))
         whenever(interactor.observeBackupProgress()).thenReturn(flowOf(BackupProgress.Unknown))
         whenever(interactor.observeAccountBackupPending()).thenReturn(flowOf(false))
     }
@@ -139,25 +129,25 @@ class PocketViewModelTest {
     )
 
     // The collection is stored, decoded and served by a product's worker, so it has failure modes
-    // the balance and identity cards do not share. Before the product cards joined this screen
+    // the balance card does not share. Before the product cards joined this screen
     // nothing product-side could empty it; that must stay true.
     @Test
-    fun `a failing product collection costs the product cards alone, not the native ones`() = runTest(testDispatcher) {
+    fun `a failing product collection costs the product cards alone, not the balance card`() = runTest(testDispatcher) {
         whenever(interactor.observeProductCards()).thenReturn(flow { throw IllegalStateException("unreadable") })
 
         val cards = settledCards(createViewModel())
 
-        assertEquals(listOf("digital_dollar_card", "id_card"), cards.map { it.id })
+        assertEquals(listOf("digital_dollar_card"), cards.map { it.id })
     }
 
     @Test
-    fun `product cards follow the native ones once the collection loads`() = runTest(testDispatcher) {
+    fun `product cards follow the balance card once the collection loads`() = runTest(testDispatcher) {
         whenever(interactor.observeProductCards()).thenReturn(flowOf(listOf(productCard("loyalty"))))
 
         val cards = settledCards(createViewModel())
 
         assertEquals(
-            listOf("digital_dollar_card", "id_card", "product_card:game.dot:loyalty"),
+            listOf("digital_dollar_card", "product_card:game.dot:loyalty"),
             cards.map { it.id },
         )
         assertEquals("loyalty", cards.filterIsInstance<PocketCardUiModel.ProductCard>().single().title)

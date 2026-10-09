@@ -17,7 +17,6 @@ object FeatureFlags {
             FeatureOption.ARBITRARY_PRODUCTS,
             FeatureOption.BROWSE_TAB,
             FeatureOption.FULL_TAB_BAR,
-            FeatureOption.ID_CARD_RANK,
             FeatureOption.ALL_CHAT_EXTENSIONS,
             FeatureOption.LINKED_DEVICES,
             FeatureOption.PRODUCT_SETTINGS,
@@ -53,10 +52,6 @@ enum class FeatureOption {
     // The tab bar in its full form: item labels, and the scanner wrapped in the center pill next to the
     // open-tabs button. Off, the bar is icons only and the scanner is a bare icon.
     FULL_TAB_BAR,
-
-    // The rank label and value under the username on the identity card. Off, the card carries the
-    // username alone, aligned with the avatar.
-    ID_CARD_RANK,
 
     // The "Debug features" card under the balance card: the holdings breakdown, the faucet top-up and
     // log sharing. Off on release alone — hence its own BuildConfig field rather than SAFETY_MODE, which
