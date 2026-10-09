@@ -437,6 +437,9 @@ export class Session {
     if (!action) throw new SessionFailure({ tag: "Cancelled" });
     const hadAmount = this.amount !== undefined;
     this.adoptAmount(action);
+    if (this.trigger === "decline") {
+      throw new SessionFailure({ tag: "Declined" });
+    }
     if (isBank && !hadAmount) await reportBankDeposit();
     state.phase = "fiat-sent";
     await this.save();
@@ -869,6 +872,7 @@ export class Session {
         () => undefined,
       );
     try {
+      await reportAfterRelease(this.intent, { tag: "Converting" });
       await sleep(this.arrivalMs(CONFIG.payoutMs), this.signal);
       await reportPayout(
         this.intent,
@@ -903,30 +907,41 @@ async function reportPayout(
   intent: string,
   payout: PayoutOutcome,
 ): Promise<void> {
-  const client = await truapi();
   const outcome =
     payout.outcome === "paid-out"
       ? ({ tag: "PaidOut" } as const)
       : ({ tag: "Failed", value: { reason: payout.reason } } as const);
+  await reportAfterRelease(intent, { tag: "Payout", value: { outcome } });
+}
+
+/**
+ * Reports an update on a released outbound session: `Converting` while the
+ * payout is prepared, then `Payout`. The host marks the session released only
+ * once the user's payment completes, so a `NotFound` right after it is
+ * retried briefly; `OutOfOrder` means it was already reported before a
+ * restart.
+ */
+async function reportAfterRelease(
+  intent: string,
+  update: FundingUpdate,
+): Promise<void> {
+  const client = await truapi();
   for (let attempt = 0; ; attempt++) {
     try {
       await unwrap(
-        client.fundingProvider.report({
-          intent,
-          update: { tag: "Payout", value: { outcome } },
-        }),
-        "report Payout",
+        client.fundingProvider.report({ intent, update }),
+        `report ${update.tag}`,
       );
       return;
     } catch (error) {
-      const retryable =
-        error instanceof HostCallError &&
-        (error.tag === "NotFound" || error.tag === "OutOfOrder");
-      if (!retryable || attempt >= PAYOUT_REPORT_ATTEMPTS) throw error;
-      await sleep(PAYOUT_REPORT_RETRY_MS);
+      if (!(error instanceof HostCallError)) throw error;
+      if (error.tag === "OutOfOrder") return;
+      if (error.tag !== "NotFound" || attempt >= RELEASED_REPORT_ATTEMPTS)
+        throw error;
+      await sleep(RELEASED_REPORT_RETRY_MS);
     }
   }
 }
 
-const PAYOUT_REPORT_ATTEMPTS = 10;
-const PAYOUT_REPORT_RETRY_MS = 1_000;
+const RELEASED_REPORT_ATTEMPTS = 10;
+const RELEASED_REPORT_RETRY_MS = 1_000;
