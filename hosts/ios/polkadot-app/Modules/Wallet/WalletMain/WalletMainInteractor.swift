@@ -3,7 +3,6 @@ import Foundation
 final class WalletMainInteractor {
     weak var presenter: WalletMainInteractorOutputProtocol?
 
-    private let collectiblesURLProvider: CollectiblesURLProviding
     private let networkStatusObserver: NetworkStatusObserving
     private let pocketPrewarmer: PocketPrewarmer
     private let pocket: ProductPocketService?
@@ -12,12 +11,10 @@ final class WalletMainInteractor {
     private var warming: Task<Void, Never>?
 
     init(
-        collectiblesURLProvider: CollectiblesURLProviding,
         networkStatusObserver: NetworkStatusObserving,
         pocketPrewarmer: PocketPrewarmer,
         pocket: ProductPocketService?
     ) {
-        self.collectiblesURLProvider = collectiblesURLProvider
         self.networkStatusObserver = networkStatusObserver
         self.pocketPrewarmer = pocketPrewarmer
         self.pocket = pocket
@@ -37,16 +34,6 @@ extension WalletMainInteractor: WalletMainInteractorInputProtocol {
         networkStatusObserver.start { [weak self] status in
             self?.presenter?.didReceive(networkStatus: status)
         }
-
-        #if FEATURE_DIMS
-            resolutionTask = Task { [weak self, collectiblesURLProvider] in
-                let url = await collectiblesURLProvider.resolveURL()
-
-                guard !Task.isCancelled else { return }
-
-                await self?.presenter?.didReceiveCollectibles(url: url)
-            }
-        #endif
 
         followPocket()
     }

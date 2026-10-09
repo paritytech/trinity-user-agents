@@ -43,7 +43,6 @@ private func makeConfig(appSharingUrl: URL?) -> RemoteAppConfig {
     RemoteAppConfig(
         identityBackendUrl: nil,
         ipfsGatewayUrl: nil,
-        gameDashboardUrl: nil,
         dotNsResolver: nil,
         dotNsNameRegistry: nil,
         coinageInstanceId: nil,

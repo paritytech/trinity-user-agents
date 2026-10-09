@@ -17,7 +17,6 @@ public protocol IdentityDetailsViewModelProtocol: Observation.Observable {
     var onCopy: (() -> Void)? { get set }
     var onShare: (() -> Void)? { get set }
     var onQrCode: (() -> Void)? { get set }
-    var isPersonal: Bool { get set }
     /// Rank reflects personhood state, which not every build can reach. Hosts that cannot
     /// resolve it set this to false so the card omits the rank instead of showing "Basic".
     var isRankVisible: Bool { get set }
@@ -30,7 +29,6 @@ public class IdentityDetailsViewModel: IdentityDetailsViewModelProtocol {
     public var onCopy: (() -> Void)?
     public var onShare: (() -> Void)?
     public var onQrCode: (() -> Void)?
-    public var isPersonal: Bool = false
     public var isRankVisible: Bool = true
 
     public init() {}

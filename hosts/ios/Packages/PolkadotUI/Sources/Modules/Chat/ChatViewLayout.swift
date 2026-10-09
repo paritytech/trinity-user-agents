@@ -114,9 +114,6 @@ public final class ChatViewLayout: DiffableCollectionViewProviderView<String, St
             ChatCallMessageConfiguration.defaultReuseIdentifier,
             ChatSystemMessageConfiguration.defaultReuseIdentifier,
             ChatMessageMediaViewConfiguration.defaultReuseIdentifier,
-            TattooCommitmentMessageViewConfiguration.defaultReuseIdentifier,
-            EvidenceMessageViewConfiguration.defaultReuseIdentifier,
-            MobRuleMessageConfiguration.defaultReuseIdentifier,
             ChatRichTextMessageConfiguration.reuseIdentifier,
             SwiftUIContentConfiguration.defaultReuseIdentifier,
         ]

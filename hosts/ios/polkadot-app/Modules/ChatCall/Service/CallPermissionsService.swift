@@ -15,31 +15,35 @@ enum MicrophonePromptPolicy {
 
 protocol CallPermissionsServicing: AnyObject {
     var isMicrophoneGranted: Bool { get }
+    var isCameraGranted: Bool { get }
+    var isCameraDenied: Bool { get }
 
     var isMicrophoneDenied: Bool { get }
 
     func resolveMicrophoneAccess(prompting policy: MicrophonePromptPolicy) async -> CallMicrophoneAccess
 
-    func requestCameraAccessIfNeeded(for callType: ChatCallType) async
-
-    func ensurePermissions(for callType: ChatCallType) async -> Bool
+    func ensurePermissions() async -> Bool
+    func ensureCameraAccess() async -> Bool
 }
 
 final class CallPermissionsService {
     private let applicationStateProvider: @MainActor () -> UIApplication.State
     private let recordPermissionProvider: RecordPermissionProviding
     private let recordPermissionRequester: RecordPermissionRequesting
+    private let cameraPermissionService: CameraPermissionServicing
 
     init(
         applicationStateProvider: @escaping @MainActor () -> UIApplication.State = {
             UIApplication.shared.applicationState
         },
         recordPermissionProvider: RecordPermissionProviding = RecordPermissionService(),
-        recordPermissionRequester: RecordPermissionRequesting = RecordPermissionService()
+        recordPermissionRequester: RecordPermissionRequesting = RecordPermissionService(),
+        cameraPermissionService: CameraPermissionServicing = CameraPermissionService()
     ) {
         self.applicationStateProvider = applicationStateProvider
         self.recordPermissionProvider = recordPermissionProvider
         self.recordPermissionRequester = recordPermissionRequester
+        self.cameraPermissionService = cameraPermissionService
     }
 }
 
@@ -88,27 +92,30 @@ extension CallPermissionsService: CallPermissionsServicing {
         }
     }
 
-    func requestCameraAccessIfNeeded(for callType: ChatCallType) async {
-        guard
-            callType == .video,
-            AVCaptureDevice.authorizationStatus(for: .video) == .notDetermined,
-            await canPresentPermissionPrompt
-        else {
-            return
-        }
-
-        _ = await AVCaptureDevice.requestAccess(for: .video)
+    var isCameraGranted: Bool {
+        cameraPermissionService.permission() == .authorized
     }
 
-    func ensurePermissions(for callType: ChatCallType) async -> Bool {
-        guard await resolveMicrophoneAccess(prompting: .whenActive) == .granted else {
+    var isCameraDenied: Bool {
+        cameraPermissionService.permission() == .denied
+    }
+
+    func ensurePermissions() async -> Bool {
+        await resolveMicrophoneAccess(prompting: .whenActive) == .granted
+    }
+
+    func ensureCameraAccess() async -> Bool {
+        switch cameraPermissionService.permission() {
+        case .authorized:
+            return true
+        case .notDetermined:
+            guard await canPresentPermissionPrompt else {
+                return false
+            }
+
+            return await cameraPermissionService.requestPermission() == .authorized
+        case .denied:
             return false
         }
-
-        // Camera denial is tolerated: the call degrades to audio-only,
-        // so only the microphone is a hard requirement.
-        await requestCameraAccessIfNeeded(for: callType)
-
-        return true
     }
 }

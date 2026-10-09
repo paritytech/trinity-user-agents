@@ -21,8 +21,7 @@ extension Chat.RemoteContact {
             accountId: consumer.accountId,
             username: username,
             chatPublicKey: chatPublicKey,
-            imageData: nil,
-            source: .chat
+            imageData: nil
         )
     }
 }

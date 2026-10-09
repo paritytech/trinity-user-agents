@@ -8,8 +8,6 @@ final class WalletMainPresenter {
     let interactor: WalletMainInteractorInputProtocol
     let titleViewModelFactory: NetworkStatusTitleViewModelMaking
 
-    private var collectiblesURL: URL?
-
     init(
         interactor: WalletMainInteractorInputProtocol,
         wireframe: WalletMainWireframeProtocol,
@@ -27,11 +25,6 @@ extension WalletMainPresenter: WalletMainPresenterProtocol {
         interactor.setup()
     }
 
-    func showCollectibles() {
-        guard let collectiblesURL else { return }
-        wireframe.showCollectibles(from: view, url: collectiblesURL)
-    }
-
     func showPocketCard(_ card: PocketCardViewModel) {
         wireframe.showPocketCard(card)
     }
@@ -46,11 +39,6 @@ extension WalletMainPresenter: WalletMainPresenterProtocol {
 }
 
 extension WalletMainPresenter: WalletMainInteractorOutputProtocol {
-    func didReceiveCollectibles(url: URL?) {
-        collectiblesURL = url
-        view?.didReceive(isCollectiblesAvailable: url != nil)
-    }
-
     func didReceive(pocketCards: [PocketCardViewModel]) {
         view?.didReceive(pocketCards: pocketCards)
     }

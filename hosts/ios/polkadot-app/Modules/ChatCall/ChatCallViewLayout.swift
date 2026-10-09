@@ -30,6 +30,7 @@ struct ChatCallViewLayout: View {
                         .ignoresSafeArea() // extend under safe areas
                         .aspectRatio(contentMode: .fill) // SwiftUI side fill
                         .clipped()
+                        .opacity(viewModel.shouldShowRemoteVideo ? 1 : 0)
                 }
 
                 if let localModel = viewModel.localRenderingModel, localModel.hasVideo {
@@ -46,6 +47,7 @@ struct ChatCallViewLayout: View {
                                 .stroke(.white.opacity(0.4), lineWidth: 1)
                         )
                         .shadow(radius: 6)
+                        .opacity(viewModel.isVideoEnabled ? 1 : 0)
                         // Center-based positioning in the top-right corner
                         .position(
                             x: proxy.size.width - pipWidth / 2 - trailingPadding,
@@ -53,9 +55,7 @@ struct ChatCallViewLayout: View {
                         )
                 }
 
-                // Show avatar only when video is not available or call is not connected
-                if viewModel.remoteRenderingModel == nil ||
-                    viewModel.remoteRenderingModel?.hasVideo == false {
+                if !viewModel.shouldShowRemoteVideo {
                     // Overlay content
                     VStack(spacing: 0) {
                         // Avatar with animated rings
@@ -81,8 +81,11 @@ struct ChatCallViewLayout: View {
             VStack {
                 Spacer()
 
+                micOffBanners
+                    .padding(.bottom, 24)
+
                 // Call action buttons
-                HStack(spacing: 40) {
+                HStack(spacing: 24) {
                     // Accept button (only for incoming calls in ringing state)
                     if viewModel.isIncoming, viewModel.callState == .ringing {
                         Button {
@@ -121,6 +124,21 @@ struct ChatCallViewLayout: View {
                                 )
                         }
                         .accessibilityId(AccessibilityID.InCall.muteButton)
+                    }
+
+                    if viewModel.shouldDisplayVideoToggle {
+                        Button {
+                            viewModel.onToggleVideo?()
+                        } label: {
+                            Image(systemName: viewModel.isVideoEnabled ? "video.fill" : "video.slash.fill")
+                                .font(.system(size: 24, weight: .semibold))
+                                .foregroundStyle(Color.fgPrimary)
+                                .frame(width: 64, height: 64)
+                                .background(
+                                    Color.bgActionTertiary,
+                                    in: Circle()
+                                )
+                        }
                     }
 
                     if viewModel.canEndCall {
@@ -163,6 +181,18 @@ struct ChatCallViewLayout: View {
                 .typography(.bodyLarge)
                 .foregroundStyle(Color(.fgTertiary))
                 .accessibilityId(viewModel.statusAccessibilityId)
+        }
+    }
+
+    private var micOffBanners: some View {
+        VStack(spacing: 8) {
+            if viewModel.shouldShowSelfMicOffBanner {
+                MicOffBanner(text: String(localized: .chatCallSelfMicOff))
+            }
+
+            if viewModel.shouldShowRemoteMicOffBanner {
+                MicOffBanner(text: String(localized: .chatCallRemoteMicOff(viewModel.username)))
+            }
         }
     }
 }
@@ -279,6 +309,21 @@ private struct RingView: View {
                 width: DSLetterAvatar.Size.s136.dimension,
                 height: DSLetterAvatar.Size.s136.dimension
             )
+    }
+}
+
+// MARK: - Mic Off Banner
+
+private struct MicOffBanner: View {
+    let text: String
+
+    var body: some View {
+        Label(text, systemImage: "mic.slash.fill")
+            .typography(.bodyLarge)
+            .foregroundStyle(Color.fgPrimary)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 8)
+            .background(Color.bgActionTertiary, in: Capsule())
     }
 }
 

@@ -53,14 +53,19 @@ final class RustChatExecutionBridge: RustProductExecutionBridge, ChatHostBridge,
             throw HostRejection.Rejected(reason: "a chat message needs a room")
         }
 
-        let message: ProductBotMessage = switch content {
-        case let .text(text):
-            .text(text)
-        case let .custom(custom):
-            .custom(messageType: custom.messageType, data: custom.payload)
-        case .richText, .actions, .file, .reaction, .reactionRemoved:
-            throw HostRejection.Rejected(reason: "this host renders text and custom messages only")
-        }
+        let message: ProductBotMessage =
+            switch content {
+            case let .text(text):
+                .text(text)
+            case let .custom(custom):
+                .custom(messageType: custom.messageType, data: custom.payload)
+            case .richText,
+                 .actions,
+                 .file,
+                 .reaction,
+                 .reactionRemoved:
+                throw HostRejection.Rejected(reason: "this host renders text and custom messages only")
+            }
         return try await chatMessaging.sendMessage(message, roomId: roomId)
     }
 
@@ -77,10 +82,11 @@ final class RustChatExecutionBridge: RustProductExecutionBridge, ChatHostBridge,
 
 extension RoomInfo {
     func toChatRoom() -> ChatRoom {
-        let participatingAs: ChatRoomParticipation = switch participation {
-        case .roomHost: .roomHost
-        case .bot: .bot
-        }
+        let participatingAs: ChatRoomParticipation =
+            switch participation {
+            case .roomHost: .roomHost
+            case .bot: .bot
+            }
         return ChatRoom(roomId: roomId, participatingAs: participatingAs)
     }
 }

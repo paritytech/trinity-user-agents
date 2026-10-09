@@ -6,18 +6,40 @@ import StructuredConcurrency
 enum CallEngineError: Error {
     case peerConnectionClosed
     case endOfStream
+    case frontCameraUnavailable
+    case videoCaptureParamsUnavailable
 }
 
 protocol CallEngineProtocol: AnyObject {
     func observeState() -> AnyAsyncSequence<CallEngineState>
+    func observeRemoteMediaState() -> AnyAsyncSequence<CallRemoteMediaState>
     func connect()
     func endCall(notifiesRemote: Bool) async
 
     func attach(localRenderer: RTCVideoRenderer)
     func attach(remoteRenderer: RTCVideoRenderer)
 
+    func observeVideoState() -> AnyAsyncSequence<Bool>
+    func observeVideoCaptureFailure() -> AnyAsyncSequence<Void>
+
     var isMuted: Bool { get async }
     func setMuted(_ isMuted: Bool) async -> Bool
+
+    var isVideoEnabled: Bool { get async }
+    func setVideoEnabled(_ isEnabled: Bool) async
+}
+
+private extension RTCVideoCapturer {
+    func stopAnyCapture() {
+        switch self {
+        case let cameraCapturer as RTCCameraVideoCapturer:
+            cameraCapturer.stopCapture()
+        case let fileCapturer as RTCFileVideoCapturer:
+            fileCapturer.stopCapture()
+        default:
+            break
+        }
+    }
 }
 
 private actor CallEngineActor {
@@ -31,9 +53,15 @@ private actor CallEngineActor {
 
     var callCreator: CallCreatorProtocol?
     var connectionWrapper: AsyncPeerConnectionWrapper?
+    var mediaStateChannel: CallMediaStateChannel?
 
     var isMuted: Bool = false
+    var isVideoEnabled: Bool
     var hasEnded: Bool = false
+
+    init(isVideoEnabled: Bool) {
+        self.isVideoEnabled = isVideoEnabled
+    }
 
     func markEndedIfFirst() -> Bool {
         guard !hasEnded else { return false }
@@ -47,14 +75,27 @@ private actor CallEngineActor {
         if let audioTrack = localTracks?.audioTrack {
             audioTrack.isEnabled = !isMuted
         }
+
+        applyVideoEnabledState()
     }
 
     func getLocalTracks() -> CallTracks? {
         localTracks
     }
 
-    func setVideoCapturer(_ capturer: RTCVideoCapturer) {
+    func makeVideoCapturerIfNeeded(for track: RTCVideoTrack) -> RTCVideoCapturer? {
+        guard isVideoEnabled, videoCapturer == nil, localRenderer != nil else {
+            return nil
+        }
+
+        #if targetEnvironment(simulator)
+            let capturer = RTCFileVideoCapturer(delegate: track.source)
+        #else
+            let capturer = RTCCameraVideoCapturer(delegate: track.source)
+        #endif
+
         videoCapturer = capturer
+        return capturer
     }
 
     func setLocalRenderer(_ renderer: RTCVideoRenderer) {
@@ -90,12 +131,21 @@ private actor CallEngineActor {
         self.connectionWrapper = connectionWrapper
     }
 
+    func setMediaStateChannel(_ channel: CallMediaStateChannel) {
+        mediaStateChannel = channel
+    }
+
     func clearVideoCapture() {
-        if let cameraCapturer = videoCapturer as? RTCCameraVideoCapturer {
-            cameraCapturer.stopCapture()
+        videoCapturer?.stopAnyCapture()
+        videoCapturer = nil
+    }
+
+    func clearVideoCapture(_ capturer: RTCVideoCapturer) {
+        guard videoCapturer === capturer else {
+            return
         }
 
-        videoCapturer = nil
+        clearVideoCapture()
     }
 
     func clearTracks() {
@@ -111,6 +161,7 @@ private actor CallEngineActor {
         remoteTracks = nil
         remoteRenderer = nil
 
+        mediaStateChannel = nil
         videoCapturer = nil
     }
 
@@ -137,6 +188,18 @@ private actor CallEngineActor {
     func getMuteState() -> Bool {
         isMuted
     }
+
+    func setVideoEnabled(_ isEnabled: Bool) {
+        isVideoEnabled = isEnabled
+    }
+
+    func applyVideoEnabledState() {
+        localTracks?.videoTrack?.isEnabled = isVideoEnabled
+    }
+
+    func isCurrentVideoCapturer(_ capturer: RTCVideoCapturer) -> Bool {
+        videoCapturer === capturer
+    }
 }
 
 final class CallEngine {
@@ -152,17 +215,17 @@ final class CallEngine {
     private var callType: ChatCallType
 
     private let stateSubject: AsyncCurrentValueSubject<CallEngineState>
-    private let stateModel = CallEngineActor()
+    private let stateModel: CallEngineActor
     private let videoCaptureStrategy: VideoCaptureStrategyProtocol
 
     private var connectionTask: Task<Void, Never>?
     private var remoteCloseTask: Task<Void, Never>?
     private var offerDeliveryTask: Task<Void, Never>?
     private var iceFailureTask: Task<Void, Never>?
-
-    var supportsVideo: Bool {
-        callType == .video
-    }
+    private let remoteMediaStateSubject: AsyncCurrentValueSubject<CallRemoteMediaState>
+    private let videoStateSubject: AsyncCurrentValueSubject<Bool>
+    private let videoCaptureFailureSubject = AsyncPassthroughSubject<Void>()
+    private var remoteMediaStateTask: Task<Void, Never>?
 
     var supportsAudio: Bool {
         #if targetEnvironment(simulator)
@@ -189,6 +252,7 @@ final class CallEngine {
         self.configFactory = configFactory
         self.peerConnectionFactory = peerConnectionFactory
         self.logger = logger
+        stateModel = CallEngineActor(isVideoEnabled: initialCallType == .video)
 
         videoCaptureStrategy = VideoCaptureStrategy(preferences: .init(profile: .call))
 
@@ -198,6 +262,12 @@ final class CallEngine {
         case .acceptor:
             stateSubject = .init(.waiting)
         }
+
+        remoteMediaStateSubject = .init(
+            CallRemoteMediaState(isCameraEnabled: initialCallType == .video, isMicrophoneEnabled: true)
+        )
+
+        videoStateSubject = .init(initialCallType == .video)
 
         observeRemoteClose()
     }
@@ -223,7 +293,7 @@ private extension CallEngine {
 private extension CallEngine {
     func createTracks() -> CallTracks {
         let audioTrack = createAudioTrackIfNeeded()
-        let videoTrack = createVideoTrackIfNeeded()
+        let videoTrack = createVideoTrack()
 
         return CallTracks(audioTrack: audioTrack, videoTrack: videoTrack)
     }
@@ -238,11 +308,7 @@ private extension CallEngine {
         return peerConnectionFactory.audioTrack(with: audioSource, trackId: "audio0")
     }
 
-    func createVideoTrackIfNeeded() -> RTCVideoTrack? {
-        guard supportsVideo else {
-            return nil
-        }
-
+    func createVideoTrack() -> RTCVideoTrack {
         let videoSource = peerConnectionFactory.videoSource()
         return peerConnectionFactory.videoTrack(with: videoSource, trackId: "video0")
     }
@@ -388,6 +454,8 @@ private extension CallEngine {
 
         let callCreator = makeCallCreator(for: dataChannelConnected, tracks: localTracks)
 
+        await startMediaStateExchange(on: callCreator.multiplexedChannel)
+
         logger.debug("Upgrading to call")
 
         callCreator.setup()
@@ -399,32 +467,78 @@ private extension CallEngine {
         RTCAudioSessionConfiguration.webRTC()
     }
 
-    private func startVideoCapture(from track: RTCVideoTrack) async throws {
-        #if targetEnvironment(simulator)
-            try await startFileCapturer(for: track)
-        #else
-            try await startCameraVideoCapture(for: track)
-        #endif
+    private func startVideoCaptureIfNeeded(from track: RTCVideoTrack) async -> Bool {
+        guard let capturer = await stateModel.makeVideoCapturerIfNeeded(for: track) else {
+            return true
+        }
+
+        do {
+            switch capturer {
+            case let fileCapturer as RTCFileVideoCapturer:
+                fileCapturer.startCapturing(fromFileNamed: "test.mp4")
+            case let cameraCapturer as RTCCameraVideoCapturer:
+                try await startCameraVideoCapture(cameraCapturer)
+            default:
+                break
+            }
+        } catch {
+            // Capture failure degrades the call to audio only: the caller rolls
+            // video state back, the connection itself must stay up
+            logger.error("Failed to start video capture: \(error)")
+            await stateModel.clearVideoCapture(capturer)
+            return false
+        }
+
+        if await !stateModel.isCurrentVideoCapturer(capturer) {
+            capturer.stopAnyCapture()
+        }
+
+        return true
     }
 
-    private func startFileCapturer(for track: RTCVideoTrack) async throws {
-        let capturer = RTCFileVideoCapturer(delegate: track.source)
-        await stateModel.setVideoCapturer(capturer)
-        capturer.startCapturing(fromFileNamed: "test.mp4")
+    private func startLocalVideoCapture() async -> Bool {
+        if let videoTrack = await stateModel.localTracks?.videoTrack {
+            guard await startVideoCaptureIfNeeded(from: videoTrack) else {
+                return false
+            }
+        }
+
+        await stateModel.applyVideoEnabledState()
+
+        return true
     }
 
-    private func startCameraVideoCapture(for track: RTCVideoTrack) async throws {
-        let capturer = RTCCameraVideoCapturer(delegate: track.source)
-        await stateModel.setVideoCapturer(capturer)
+    // The call survives a camera that won't start, but the user asked for video
+    // and must learn it is off, so the rollback is reported alongside the state.
+    private func handleVideoCaptureFailure() async {
+        await disableVideo()
 
+        videoCaptureFailureSubject.send(())
+    }
+
+    private func disableVideo() async {
+        await stateModel.setVideoEnabled(false)
+        await stateModel.applyVideoEnabledState()
+        await stateModel.clearVideoCapture()
+
+        await publishVideoState()
+    }
+
+    private func publishVideoState() async {
+        let isEnabled = await stateModel.isVideoEnabled
+        logger.debug("Video enabled: \(isEnabled)")
+
+        videoStateSubject.send(isEnabled)
+        await sendMediaState(.cameraEnabled(isEnabled))
+    }
+
+    private func startCameraVideoCapture(_ capturer: RTCCameraVideoCapturer) async throws {
         guard let frontCamera = (RTCCameraVideoCapturer.captureDevices().first { $0.position == .front }) else {
-            logger.error("Front camera not found")
-            return
+            throw CallEngineError.frontCameraUnavailable
         }
 
         guard let params = videoCaptureStrategy.deriveParams(for: frontCamera) else {
-            logger.error("Can't derive camera params")
-            return
+            throw CallEngineError.videoCaptureParamsUnavailable
         }
 
         try await capturer.startCapture(
@@ -455,6 +569,11 @@ private extension CallEngine {
     func clearIceFailureTask() {
         iceFailureTask?.cancel()
         iceFailureTask = nil
+    }
+
+    func clearRemoteMediaStateTask() {
+        remoteMediaStateTask?.cancel()
+        remoteMediaStateTask = nil
     }
 
     func observeOfferDelivery() {
@@ -512,6 +631,54 @@ private extension CallEngine {
             } catch {
                 logger.error("Remote close observation failed: \(error)")
             }
+        }
+    }
+
+    func startMediaStateExchange(on multiplexedChannel: MultiplexedDataChannel) async {
+        let channel = CallMediaStateChannel(multiplexedChannel: multiplexedChannel, logger: logger)
+        await stateModel.setMediaStateChannel(channel)
+        receiveRemoteMediaState(from: channel)
+
+        let isVideoEnabled = await stateModel.isVideoEnabled
+
+        if isVideoEnabled != (callType == .video) {
+            await sendMediaState(.cameraEnabled(isVideoEnabled))
+        }
+
+        if await stateModel.isMuted {
+            await sendMediaState(.microphoneEnabled(false))
+        }
+    }
+
+    func receiveRemoteMediaState(from channel: CallMediaStateChannel) {
+        remoteMediaStateTask = Task { [remoteMediaStateSubject, logger] in
+            // The multiplexer back-pressures on send, so dropping this subscriber would stall
+            // every use case on the connection. Only cancellation or the stream finishing
+            // may end this loop.
+            while !Task.isCancelled {
+                do {
+                    for try await signal in channel.signals {
+                        logger.debug("Remote media state signal: \(signal)")
+                        remoteMediaStateSubject.send(remoteMediaStateSubject.value.applying(signal))
+                    }
+
+                    return
+                } catch {
+                    logger.error("Remote media state observation failed, resuming: \(error)")
+                }
+            }
+        }
+    }
+
+    func sendMediaState(_ signal: CallMediaStateSignal) async {
+        guard let channel = await stateModel.mediaStateChannel else {
+            return
+        }
+
+        do {
+            try await channel.send(signal)
+        } catch {
+            logger.error("Media state send failed: \(error)")
         }
     }
 
@@ -592,6 +759,7 @@ extension CallEngine: CallEngineProtocol {
         clearRemoteCloseTask()
         clearOfferDeliveryTask()
         clearIceFailureTask()
+        clearRemoteMediaStateTask()
 
         let closedSentTask = notifiesRemote ? await sendRemoteClosed() : nil
 
@@ -625,7 +793,6 @@ extension CallEngine: CallEngineProtocol {
             }
 
             await stateModel.setLocalRenderer(localRenderer)
-            let maybeCapturer = await stateModel.videoCapturer
 
             if let currentRenderer {
                 videoTrack.remove(currentRenderer)
@@ -633,15 +800,8 @@ extension CallEngine: CallEngineProtocol {
 
             videoTrack.add(localRenderer)
 
-            guard maybeCapturer == nil else {
-                return
-            }
-
-            do {
-                try await startVideoCapture(from: videoTrack)
-            } catch {
-                logger.error("Failed to start video capture: \(error)")
-                // Video capture failure doesn't break the call, but should be logged
+            if await !startVideoCaptureIfNeeded(from: videoTrack) {
+                await handleVideoCaptureFailure()
             }
         }
     }
@@ -670,6 +830,38 @@ extension CallEngine: CallEngineProtocol {
     func setMuted(_ isMuted: Bool) async -> Bool {
         let result = await stateModel.setMuted(isMuted)
         logger.debug("Audio muted: \(result)")
+        await sendMediaState(.microphoneEnabled(!result))
         return result
+    }
+
+    var isVideoEnabled: Bool {
+        get async { await stateModel.isVideoEnabled }
+    }
+
+    func setVideoEnabled(_ isEnabled: Bool) async {
+        guard isEnabled else {
+            await disableVideo()
+            return
+        }
+
+        await stateModel.setVideoEnabled(true)
+
+        if await startLocalVideoCapture() {
+            await publishVideoState()
+        } else {
+            await handleVideoCaptureFailure()
+        }
+    }
+
+    func observeRemoteMediaState() -> AnyAsyncSequence<CallRemoteMediaState> {
+        remoteMediaStateSubject.eraseToAnyAsyncSequence()
+    }
+
+    func observeVideoState() -> AnyAsyncSequence<Bool> {
+        videoStateSubject.eraseToAnyAsyncSequence()
+    }
+
+    func observeVideoCaptureFailure() -> AnyAsyncSequence<Void> {
+        videoCaptureFailureSubject.eraseToAnyAsyncSequence()
     }
 }

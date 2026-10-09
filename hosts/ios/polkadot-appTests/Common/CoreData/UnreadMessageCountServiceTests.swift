@@ -21,7 +21,6 @@ struct UnreadMessageCountServiceTests {
         chatRequest: nil,
         ownKeyId: .init(signKeyId: "sign-key", encryptionKeyId: "encryption-key"),
         imageData: nil,
-        source: .chat,
         isBlocked: false,
         devices: [],
         pendingDevicesFanOut: false
@@ -40,7 +39,6 @@ struct UnreadMessageCountServiceTests {
         chatRequest: nil,
         ownKeyId: .init(signKeyId: "bob-sign-key", encryptionKeyId: "bob-encryption-key"),
         imageData: nil,
-        source: .chat,
         isBlocked: false,
         devices: [],
         pendingDevicesFanOut: false
@@ -59,7 +57,6 @@ struct UnreadMessageCountServiceTests {
         chatRequest: nil,
         ownKeyId: .init(signKeyId: "charlie-sign-key", encryptionKeyId: "charlie-encryption-key"),
         imageData: nil,
-        source: .chat,
         isBlocked: false,
         devices: [],
         pendingDevicesFanOut: false

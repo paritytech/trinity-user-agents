@@ -19,6 +19,12 @@ final class ProductGameReminderCenter: ProductGameReminderScheduling, ProductGam
         var calendarStartsAt: Date?
     }
 
+    /// How long before the start the countdown pill appears.
+    static let pillLeadTime: TimeInterval = 5 * TimeInterval.secondsInMinute
+
+    /// How long before the start the alarm rings.
+    static let alarmLeadSeconds = 20
+
     struct Dependencies {
         let services: ProductGameReminderServicesMaking
         let settingsManager: SettingsManagerProtocol
@@ -158,7 +164,7 @@ final class ProductGameReminderCenter: ProductGameReminderScheduling, ProductGam
                 continue
             }
 
-            let pillAt = slot.startsAt.addingTimeInterval(-GameRoomPillState.Constants.startingPillLeadTime)
+            let pillAt = slot.startsAt.addingTimeInterval(-Self.pillLeadTime)
             if pill == nil, now >= pillAt {
                 pill = slot
             }
@@ -198,8 +204,8 @@ private extension ProductGameReminderCenter {
 
         delivery.scheduleReminder(
             gameDate: next.startsAt,
-            target: .product(next.productId),
-            timingSeconds: settingsManager.gameAlarmTimingSeconds
+            productId: next.productId,
+            timingSeconds: Self.alarmLeadSeconds
         )
     }
 

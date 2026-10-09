@@ -6,13 +6,11 @@ enum CameraPermissionResult {
     case notDetermined
 }
 
-@MainActor
 protocol CameraPermissionServicing: AnyObject {
     func permission() -> CameraPermissionResult
     func requestPermission() async -> CameraPermissionResult
 }
 
-@MainActor
 final class CameraPermissionService: CameraPermissionServicing {
     func permission() -> CameraPermissionResult {
         switch AVCaptureDevice.authorizationStatus(for: .video) {

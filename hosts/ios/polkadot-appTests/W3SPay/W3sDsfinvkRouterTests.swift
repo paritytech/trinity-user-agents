@@ -96,10 +96,6 @@ private final class StubRemoteConfig: RemoteConfigManaging, @unchecked Sendable 
         self.merchants = merchants
     }
 
-    func syncedCollectiblesEnabled() -> Bool {
-        true
-    }
-
     func syncedTxExtensionVersions() -> [ChainModel.Id: UInt8] {
         [:]
     }
@@ -122,7 +118,6 @@ private final class StubRemoteConfig: RemoteConfigManaging, @unchecked Sendable 
         RemoteAppConfig(
             identityBackendUrl: URL(string: "https://polkadot-app-stg.parity.io/"),
             ipfsGatewayUrl: nil,
-            gameDashboardUrl: nil,
             dotNsResolver: nil,
             dotNsNameRegistry: nil,
             coinageInstanceId: nil,

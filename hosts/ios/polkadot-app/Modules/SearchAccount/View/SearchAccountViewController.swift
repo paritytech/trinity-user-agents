@@ -19,12 +19,14 @@ final class SearchAccountViewController: UIViewController, ViewHolder {
         case account(SearchAccountViewModel.AccountType)
         case recentContact(RecipientViewModel)
         case globalContact(SearchAccountViewModel.AccountType)
+        case selfTransfer(isLoading: Bool)
 
-        var accountType: SearchAccountViewModel.AccountType {
+        var accountType: SearchAccountViewModel.AccountType? {
             switch self {
             case let .account(accountType): accountType
             case let .recentContact(recentContact): recentContact.accountType
             case let .globalContact(accountType): accountType
+            case .selfTransfer: nil
             }
         }
     }
@@ -35,6 +37,7 @@ final class SearchAccountViewController: UIViewController, ViewHolder {
     private(set) var viewModel = SearchAccountViewModel()
     private lazy var dataSource = configureDataSource()
     private var statusMessage: String?
+    private var isSelfTransferLoading = false
 
     // MARK: Initial methods
 
@@ -122,13 +125,25 @@ final class SearchAccountViewController: UIViewController, ViewHolder {
     private func configureTableView() {
         rootView.tableView.delegate = self
         rootView.tableView.registerClassForCell(SearchAccountTableViewCell.self)
+        rootView.tableView.registerClassForCell(SelfTransferTableViewCell.self)
     }
 
     private func configureDataSource() -> DataSource {
         let dataSource = DataSource(tableView: rootView.tableView) { tableView, _, item in
-            let cell = tableView.dequeueReusableCellWithType(SearchAccountTableViewCell.self)
-            cell?.bind(cellType: item)
+            let cell: UITableViewCell?
+
+            if case let .selfTransfer(isLoading) = item {
+                let selfTransferCell = tableView.dequeueReusableCellWithType(SelfTransferTableViewCell.self)
+                selfTransferCell?.bind(isLoading: isLoading)
+                cell = selfTransferCell
+            } else {
+                let accountCell = tableView.dequeueReusableCellWithType(SearchAccountTableViewCell.self)
+                accountCell?.bind(cellType: item)
+                cell = accountCell
+            }
+
             cell?.backgroundColor = .clear
+
             return cell
         }
         dataSource.defaultRowAnimation = .fade
@@ -142,6 +157,10 @@ final class SearchAccountViewController: UIViewController, ViewHolder {
 
     private func prepareData(_ content: SearchAccountViewModel.Content) -> Snapshot {
         var snapshot = SearchAccountViewController.Snapshot()
+
+        if content.showsSelfTransfer {
+            appendSection(.selfTransfer, items: [.selfTransfer(isLoading: isSelfTransferLoading)], to: &snapshot)
+        }
 
         appendSection(.recentContacts, items: content.recent.map { .recentContact($0) }, to: &snapshot)
         appendSection(.contacts, items: content.contacts.map { .account($0) }, to: &snapshot)
@@ -203,6 +222,11 @@ extension SearchAccountViewController: SearchAccountViewProtocol {
             rootView.loadingView.isHidden = true
         }
     }
+
+    func didReceive(selfTransferLoading: Bool) {
+        isSelfTransferLoading = selfTransferLoading
+        applySnapshot(prepareData(viewModel.content))
+    }
 }
 
 // MARK: - UITableViewDelegate
@@ -252,7 +276,15 @@ extension SearchAccountViewController: UITableViewDelegate {
         guard let item = items[safe: indexPath.row] else { return }
 
         rootView.addressInputView.textField.resignFirstResponder()
-        presenter.selectAccount(item)
+
+        switch item {
+        case .selfTransfer:
+            guard !isSelfTransferLoading else { return }
+
+            presenter.selectSelfTransfer()
+        default:
+            presenter.selectAccount(item)
+        }
     }
 }
 

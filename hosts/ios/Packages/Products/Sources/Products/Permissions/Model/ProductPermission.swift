@@ -33,10 +33,16 @@ public enum ProductPermission: Equatable, Sendable {
     /// prompt, whoever asks, so they must not ride along on that trust.
     public var isRemoteAccess: Bool {
         switch self {
-        case .networkAccess, .webRtcAccess, .chainSubmitAccess, .preimageSubmitAccess,
+        case .networkAccess,
+             .webRtcAccess,
+             .chainSubmitAccess,
+             .preimageSubmitAccess,
              .statementSubmitAccess:
             true
-        case .deviceCapability, .accountAccess, .balanceAccess, .userIdentityAccess:
+        case .deviceCapability,
+             .accountAccess,
+             .balanceAccess,
+             .userIdentityAccess:
             false
         }
     }
