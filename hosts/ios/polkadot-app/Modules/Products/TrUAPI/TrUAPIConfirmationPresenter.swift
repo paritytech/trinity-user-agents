@@ -15,8 +15,8 @@ protocol TrUAPIConfirmationPresenting: Sendable {
 /// through `ProductRoutersFacadeProtocol`, keyed off the typed
 /// `UserConfirmationReview` so the full payload reaches each prompt.
 /// Cancellation-aware: the rust core dropping its future (e.g. the product
-/// closed mid-prompt) denies immediately; an already presented prompt
-/// stays up and its late decision is discarded.
+/// closed mid-prompt, or a paired host withdrawing its SSO request) denies
+/// immediately and closes the prompt.
 final class TrUAPIConfirmationPresenter: TrUAPIConfirmationPresenting, @unchecked Sendable {
     private let routerFacade: ProductRoutersFacadeProtocol
     private let promptMapper: TrUAPIReviewPromptMapping
@@ -198,24 +198,31 @@ private extension TrUAPIConfirmationPresenter {
 
     /// Bridges a prompt decision to the rust-core future, resolving exactly
     /// once. Rust-side cancellation denies without waiting for the
-    /// prompt; a decision arriving afterwards is discarded.
+    /// prompt and dismisses it; the dismissed prompt's own decision is
+    /// discarded.
     func awaitDecision<Decision: Sendable>(
         cancelled: Decision,
         present: @escaping @MainActor () async -> Decision
     ) async -> Decision {
         let pending = PendingDecision(cancelled: cancelled)
+        let scope = PromptPresentationScope()
         return await withTaskCancellationHandler {
             await withCheckedContinuation { continuation in
                 Task { @MainActor in
                     guard pending.begin(continuation) else {
                         return
                     }
-                    let verdict = await present()
+                    let verdict = await scope.bind {
+                        await present()
+                    }
                     pending.finish(verdict)
                 }
             }
         } onCancel: {
-            Task { @MainActor in pending.finish(cancelled) }
+            Task { @MainActor in
+                pending.finish(cancelled)
+                scope.withdraw()
+            }
         }
     }
 }

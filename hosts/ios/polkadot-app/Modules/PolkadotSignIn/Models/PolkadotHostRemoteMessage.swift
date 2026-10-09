@@ -44,6 +44,7 @@ extension PolkadotHostRemoteMessage {
         case signVrfResponse(requestMessageId: String, result: SignVrfHostResult)
         case productSubtreeRequest(ProductSubtreeRequest)
         case productSubtreeResponse(requestMessageId: String, result: ProductSubtreeResult)
+        case cancel(withdrawnMessageId: String)
     }
 
     enum HostResult<Success, Failure> {
@@ -57,6 +58,25 @@ extension PolkadotHostRemoteMessage {
 }
 
 extension PolkadotHostRemoteMessage: HostMessageIdentifiable {}
+
+extension PolkadotHostRemoteMessage {
+    /// The request this message answers; `nil` unless it is a response.
+    var respondingTo: String? {
+        switch latestContent() {
+        case let .signingResponse(requestMessageId, _),
+             let .aliasResponse(requestMessageId, _),
+             let .resourceAllocationResponse(requestMessageId, _),
+             let .createTransactionResponse(requestMessageId, _),
+             let .signRawLegacyResponse(requestMessageId, _),
+             let .createProofResponse(requestMessageId, _),
+             let .signVrfResponse(requestMessageId, _),
+             let .productSubtreeResponse(requestMessageId, _):
+            requestMessageId
+        default:
+            nil
+        }
+    }
+}
 
 extension PolkadotHostRemoteMessage: MessageExchange.CodableMessage {
     init(scaleDecoder: any ScaleDecoding) throws {
@@ -119,6 +139,7 @@ extension PolkadotHostRemoteMessage.ContentV1: MessageExchange.CodableMessage {
         case .signVrfResponse: 15
         case .productSubtreeRequest: 16
         case .productSubtreeResponse: 17
+        case .cancel: 24
         }
     }
 
@@ -188,6 +209,8 @@ extension PolkadotHostRemoteMessage.ContentV1: MessageExchange.CodableMessage {
             let requestMessageId = try String(scaleDecoder: scaleDecoder)
             let result = try PolkadotHostRemoteMessage.ProductSubtreeResult(scaleDecoder: scaleDecoder)
             self = .productSubtreeResponse(requestMessageId: requestMessageId, result: result)
+        case 24:
+            self = try .cancel(withdrawnMessageId: String(scaleDecoder: scaleDecoder))
         default:
             throw ScaleCodingError.unexpectedDecodedValue
         }
@@ -242,6 +265,8 @@ extension PolkadotHostRemoteMessage.ContentV1: MessageExchange.CodableMessage {
         case let .productSubtreeResponse(requestMessageId, result):
             try requestMessageId.encode(scaleEncoder: scaleEncoder)
             try result.encode(scaleEncoder: scaleEncoder)
+        case let .cancel(withdrawnMessageId):
+            try withdrawnMessageId.encode(scaleEncoder: scaleEncoder)
         }
     }
 }

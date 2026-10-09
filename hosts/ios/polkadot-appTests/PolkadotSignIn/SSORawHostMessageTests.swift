@@ -41,4 +41,22 @@ struct SSORawHostMessageTests {
             try SSORawHostMessage(rawBytes: Data([0xFF]))
         }
     }
+
+    @Test("Names the request a Cancel withdraws")
+    func recognisesCancel() throws {
+        // RemoteMessage { message_id: "c1", V1(Cancel(Withdrawal { message_id: "m9" })) }
+        let bytes = Data([0x08, 0x63, 0x31, 0x00, 0x18, 0x08, 0x6D, 0x39])
+        let message = try SSORawHostMessage(rawBytes: bytes)
+        #expect(message.messageId == "c1")
+        #expect(message.withdrawnMessageId == "m9")
+        #expect(message.rawBytes == bytes)
+    }
+
+    @Test("Does not take another request for a Cancel")
+    func otherRequestIsNotCancel() throws {
+        // RemoteMessage { message_id: "r1", V1(ProductSubtreeRequest { product_id: "m9" }) }
+        let bytes = Data([0x08, 0x72, 0x31, 0x00, 0x10, 0x08, 0x6D, 0x39])
+        let message = try SSORawHostMessage(rawBytes: bytes)
+        #expect(message.withdrawnMessageId == nil)
+    }
 }

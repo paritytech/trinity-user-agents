@@ -96,6 +96,8 @@ private extension ProductsAccountManager {
         var outcomes: [AllocationOutcome] = []
 
         for resource in resources {
+            try Task.checkCancellation()
+
             let outcome = await allocate(
                 allowanceSupport: allowanceSupport,
                 productId: productId,

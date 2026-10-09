@@ -7,22 +7,6 @@ import SubstrateSdk
 
 // MARK: - In-Memory Repository Factories
 
-private final class MockHostRepositoryFactory: PolkadotSignInHostRepositoryMaking {
-    private let repository = InMemoryDataProviderRepository<PolkadotSignInHost>()
-
-    var databaseService: CoreDataServiceProtocol {
-        fatalError("Core Data not available in disconnect applier tests")
-    }
-
-    func createRepository(forFilter _: NSPredicate?) -> AnyDataProviderRepository<PolkadotSignInHost> {
-        AnyDataProviderRepository(repository)
-    }
-
-    func fetchAll() async throws -> [PolkadotSignInHost] {
-        try await repository.fetchAllOperation(with: .init()).asyncExecute()
-    }
-}
-
 private final class ApplierLocalDeviceRepositoryFactory: LocalDeviceRepositoryMaking {
     private let repository = InMemoryDataProviderRepository<Chat.LocalDevice>()
 

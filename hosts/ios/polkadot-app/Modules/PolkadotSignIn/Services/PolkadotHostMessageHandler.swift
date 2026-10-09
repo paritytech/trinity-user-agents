@@ -45,6 +45,11 @@ extension PolkadotHostMessageHandler: PolkadotHostMessageHandling {
                 continue
             }
 
+            if case let .cancel(withdrawnMessageId) = content {
+                await processingContext.withdraw(requestId: withdrawnMessageId)
+                continue
+            }
+
             await processingContext.enqueue(message: message, from: host)
         }
 

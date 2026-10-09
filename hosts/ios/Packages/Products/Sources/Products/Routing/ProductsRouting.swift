@@ -4,7 +4,8 @@ import UIKitExt
 /// Anchored presentation surface shared by every product flow. Flows add their
 /// concrete `show…` methods as extensions that build a view and hand it to
 /// `present(view:)`; when no view is anchored `present` returns `false` and the
-/// flow delivers its own rejection so callers never hang.
+/// flow delivers its own rejection so callers never hang. It does the same when
+/// the task's `PromptPresentationScope` has been withdrawn.
 @MainActor
 public protocol ProductsRouting: AnyObject {
     func setPresentationView(_ view: ControllerBackedProtocol)
@@ -32,7 +33,7 @@ public final class ProductsRouter: ProductsRouting {
 
     @discardableResult
     public func present(view: ControllerBackedProtocol) -> Bool {
-        guard let presentationView else {
+        guard let presentationView, PromptPresentationScope.current?.admit(view.controller) ?? true else {
             return false
         }
 

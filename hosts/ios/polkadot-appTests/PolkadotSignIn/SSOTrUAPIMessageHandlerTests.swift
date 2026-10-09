@@ -7,24 +7,6 @@ import SubstrateSdk
 
 // MARK: - Mocks
 
-private final class InMemoryHandledRequestRepositoryFactory: SSOHandledRequestRepositoryMaking {
-    let repository = InMemoryDataProviderRepository<SSOHandledRequest>()
-
-    func createRepository() -> AnyDataProviderRepository<SSOHandledRequest> {
-        AnyDataProviderRepository(repository)
-    }
-
-    func fetchAll() async throws -> [SSOHandledRequest] {
-        try await repository.fetchAllOperation(with: .init()).asyncExecute()
-    }
-
-    func seed(messageId: String) async throws {
-        try await repository
-            .saveOperation({ [SSOHandledRequest(messageId: messageId)] }, { [] })
-            .asyncExecute()
-    }
-}
-
 /// Records the messages the processing context dispatches to it and lets tests
 /// suspend until a target count has been handled (the context processes on a
 /// detached task, so `handleMessages` returning does not imply completion).
@@ -74,6 +56,12 @@ private func makeRawMessage(messageId: String, body: [UInt8] = [0xAA]) throws ->
     var data = encoder.encode()
     data.append(contentsOf: body)
     return try SSORawHostMessage(rawBytes: data)
+}
+
+private func makeCancelMessage(messageId: String, withdrawing withdrawnId: String) throws -> SSORawHostMessage {
+    let encoder = ScaleEncoder()
+    try withdrawnId.encode(scaleEncoder: encoder)
+    return try makeRawMessage(messageId: messageId, body: [0x00, 0x18] + encoder.encode())
 }
 
 private func makeMessageHandler(
@@ -130,5 +118,33 @@ struct SSOTrUAPIMessageHandlerTests {
 
         let handledIds = await spy.handledIds
         #expect(handledIds == ["fresh"])
+    }
+
+    @Test("A Cancel reaches the runtime while the queue waits on another request")
+    func cancelBypassesBusyQueue() async throws {
+        let gated = GatedRequestHandler<SSORawHostMessage>(gatedIds: ["request"])
+        let handler = SSOTrUAPIMessageHandler(
+            processingContext: SSORequestProcessingContext(handlers: [gated], logger: MockLogger()),
+            handledRequestRepositoryFactory: InMemoryHandledRequestRepositoryFactory(),
+            logger: MockLogger()
+        )
+        let host = makeHost()
+
+        try await handler.handleMessages([makeRawMessage(messageId: "request")], from: host)
+        await gated.waitUntilStarted("request")
+
+        try await handler.handleMessages(
+            [makeCancelMessage(messageId: "cancel", withdrawing: "request"), makeRawMessage(messageId: "next")],
+            from: host
+        )
+
+        let startedWhileBusy = await gated.startedIds
+        #expect(startedWhileBusy == ["request", "cancel"])
+
+        await gated.release("request")
+        await gated.waitUntilFinished("next")
+
+        let started = await gated.startedIds
+        #expect(started == ["request", "cancel", "next"])
     }
 }

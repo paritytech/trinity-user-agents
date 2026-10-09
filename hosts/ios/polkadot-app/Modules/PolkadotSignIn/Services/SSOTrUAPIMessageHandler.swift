@@ -27,7 +27,11 @@ extension SSOTrUAPIMessageHandler: PolkadotHostMessageHandling {
         logger.info("New raw messages: \(newMessages.count)")
 
         for message in newMessages {
-            await processingContext.enqueue(message: message, from: host)
+            if message.withdrawnMessageId != nil {
+                await processingContext.processImmediately(message: message, from: host)
+            } else {
+                await processingContext.enqueue(message: message, from: host)
+            }
         }
 
         await markMessagesAsHandled(newMessages)

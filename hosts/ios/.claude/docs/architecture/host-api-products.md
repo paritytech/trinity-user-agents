@@ -146,8 +146,14 @@ Rules:
    uses the statement-sign prompt router, identity/preimage/account-access/alias reviews
    reuse the permission prompt (prompt-only — nothing is persisted, the core owns
    permission memory), and proof/allowance/VRF reviews reuse their native prompt routers.
-   Rust-side cancellation of a pending confirmation resolves false immediately; an
-   already-presented prompt stays up and its late decision is discarded.
+   Rust-side cancellation of a pending confirmation resolves false immediately and
+   dismisses the prompt, unless another prompt is presented above it. Prompts are
+   registered with the task's `PromptPresentationScope` when `ProductsRouter` presents
+   them; withdrawing the scope dismisses them and refuses later ones. The SSO
+   coordinators use this for a pairing host's `Cancel`: the native queue withdraws the
+   named request (drops it if queued, cancels it if running, remembers up to 64 not yet
+   received) and drops any response to it; the TrUAPI coordinator hands `Cancel` to the
+   core ahead of its queue.
    No router presents on `topmostViewController`: every routing protocol has
    `setPresentationView`, and prompts deliver denial/rejection when no view is attached.
    The SPA runtime factory receives the view (`setPresentationView`) and anchors the

@@ -17,6 +17,10 @@ public final class ProductPermissionContext {
         self.permissions = permissions
     }
 
+    deinit {
+        continuation?.resume(returning: .deny)
+    }
+
     /// Convenience for a single permission prompt.
     public convenience init(productId: String, permission: ProductPermission) {
         self.init(productId: productId, permissions: [permission])

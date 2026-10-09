@@ -12,6 +12,7 @@ final class MockProductsAccountManager: ProductsAccountManaging, @unchecked Send
     let subtreePublicKey = Data.random(of: 32)!
     var subtreeError: Error?
     private(set) var requestedProductIds: [ProductId] = []
+    var onRequestResourceAllocation: () async -> Void = {}
 
     var isAllowanceSupported: Bool { false }
 
@@ -34,7 +35,8 @@ final class MockProductsAccountManager: ProductsAccountManaging, @unchecked Send
         resources: [AllocatableResource],
         policy _: OnExistingAllowancePolicy
     ) async throws -> [AllocationOutcome] {
-        resources.map { _ in .notAvailable }
+        await onRequestResourceAllocation()
+        return resources.map { _ in .notAvailable }
     }
 
     @MainActor func setPresentationView(_: ControllerBackedProtocol) {}

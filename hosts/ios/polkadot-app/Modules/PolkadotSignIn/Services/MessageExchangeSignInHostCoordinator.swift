@@ -42,6 +42,7 @@ final class MessageExchangeSignInHostCoordinator {
         hostRepositoryFactory: PolkadotSignInHostRepositoryMaking = PolkadotSignInHostRepositoryFactory(),
         messageSender: any PolkadotHostMessageSending<PolkadotHostRemoteMessage> =
             PolkadotHostMessageSender<PolkadotHostRemoteMessage>(),
+        handledRequestRepositoryFactory: SSOHandledRequestRepositoryMaking = SSOHandledRequestRepositoryFactory(),
         logger: LoggerProtocol = Logger.shared
     ) {
         self.ownKeyId = ownKeyId
@@ -67,19 +68,27 @@ final class MessageExchangeSignInHostCoordinator {
             logger: logger
         )
 
+        let withdrawnRequests = SSOWithdrawnRequests()
+
         let processingContext = SSORequestProcessingContext(
             handlers: Self.makeHandlers(
                 accountManager: accountManager,
                 personhoodHandlerFactory: personhoodHandlerFactory,
-                messageSender: messageSender,
+                messageSender: SSOWithdrawalGuardedSender(
+                    sender: messageSender,
+                    withdrawnRequests: withdrawnRequests,
+                    logger: logger
+                ),
                 signingHandler: signingHandler,
                 logger: logger
             ),
+            withdrawnRequests: withdrawnRequests,
             logger: logger
         )
 
         messageHandler = PolkadotHostMessageHandler(
             processingContext: processingContext,
+            handledRequestRepositoryFactory: handledRequestRepositoryFactory,
             logger: logger
         )
     }

@@ -26,6 +26,10 @@ final class CreateProofConfirmationContext {
         self.request = request
     }
 
+    deinit {
+        continuation?.resume(returning: .rejected)
+    }
+
     func setContinuation(_ continuation: CheckedContinuation<CreateProofDecision, Never>) {
         self.continuation = continuation
     }
