@@ -49,6 +49,7 @@ import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.CoinageBalanceBreakdownUiModel
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.CoinageUiState
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.DigitalDollarCardDetailsUiState
+import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.FundingActivityUiState
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.PocketCardUiModel
 import kotlinx.collections.immutable.persistentListOf
 import io.paritytech.polkadotapp.common.R as RCommon
@@ -64,6 +65,7 @@ fun DigitalDollarCardDetails(
     val viewModel = hiltViewModel<DigitalDollarCardDetailsViewModel>()
     val loadingState by viewModel.coinageState.collectAsStateWithLifecycle()
     val state by viewModel.state.collectAsStateWithLifecycle()
+    val fundingActivity by viewModel.fundingActivity.collectAsStateWithLifecycle()
 
     BackHandler { onBack() }
 
@@ -73,6 +75,7 @@ fun DigitalDollarCardDetails(
         cardIndex = cardIndex,
         coinageLoadingState = loadingState,
         state = state,
+        fundingActivity = fundingActivity,
         onSendClick = viewModel::onSendClick,
         onGetCashClick = viewModel::onGetCashClick,
         onWithdrawClick = viewModel::onWithdrawClick,
@@ -91,6 +94,7 @@ private fun DigitalDollarCardDetailsContent(
     cardIndex: Int,
     coinageLoadingState: LoadingState<CoinageUiState>,
     state: DigitalDollarCardDetailsUiState,
+    fundingActivity: FundingActivityUiState,
     onSendClick: () -> Unit,
     onGetCashClick: () -> Unit,
     onWithdrawClick: () -> Unit,
@@ -179,6 +183,13 @@ private fun DigitalDollarCardDetailsContent(
                         onShareLogsClick = onShareLogsClick
                     )
                 }
+
+                VerticalSpacer { large }
+
+                FundingActivitySection(
+                    modifier = Modifier.fillMaxWidth(),
+                    state = fundingActivity,
+                )
             }
         }
     }
@@ -267,6 +278,7 @@ private fun DigitalDollarCardDetailsPreview() {
                 state = DigitalDollarCardDetailsUiState(
                     balanceRestore = BalanceRestoreUiState.SendCash
                 ),
+                fundingActivity = FundingActivityUiState(inFlight = persistentListOf(), days = persistentListOf()),
                 onSendClick = {},
                 onGetCashClick = {},
                 onWithdrawClick = {},

@@ -42,6 +42,7 @@ import io.paritytech.polkadotapp.database.dao.ProductDao
 import io.paritytech.polkadotapp.database.dao.ProductFundingOperationDao
 import io.paritytech.polkadotapp.database.dao.ProductIntegrationDao
 import io.paritytech.polkadotapp.database.dao.ProductPermissionGrantDao
+import io.paritytech.polkadotapp.database.dao.ProductFundingRecordDao
 import io.paritytech.polkadotapp.database.dao.ProductTopUpDao
 import io.paritytech.polkadotapp.database.dao.RecyclerVoucherDao
 import io.paritytech.polkadotapp.database.dao.RemovedChatDao
@@ -93,6 +94,7 @@ import io.paritytech.polkadotapp.database.migrations.Migration62To63
 import io.paritytech.polkadotapp.database.migrations.Migration63To64
 import io.paritytech.polkadotapp.database.migrations.Migration65To66
 import io.paritytech.polkadotapp.database.migrations.Migration68To69
+import io.paritytech.polkadotapp.database.migrations.Migration69To70
 import io.paritytech.polkadotapp.database.model.BrowserTabLocal
 import io.paritytech.polkadotapp.database.model.ChatBotStateLocal
 import io.paritytech.polkadotapp.database.model.ChatDraftLocal
@@ -127,6 +129,7 @@ import io.paritytech.polkadotapp.database.model.ProductFundingOperationLocal
 import io.paritytech.polkadotapp.database.model.ProductIntegrationLocal
 import io.paritytech.polkadotapp.database.model.ProductLocal
 import io.paritytech.polkadotapp.database.model.ProductPermissionGrantLocal
+import io.paritytech.polkadotapp.database.model.ProductFundingRecordLocal
 import io.paritytech.polkadotapp.database.model.ProductTopUpLocal
 import io.paritytech.polkadotapp.database.model.RecyclerVoucherLocal
 import io.paritytech.polkadotapp.database.model.RemovedChatLocal
@@ -153,7 +156,7 @@ import io.paritytech.polkadotapp.database.model.chain.ChainNodeLocal
 import io.paritytech.polkadotapp.database.model.chain.ChainRuntimeInfoLocal
 
 @Database(
-    version = 69,
+    version = 70,
     entities = [
         ProductFundingOperationLocal::class,
         ChainLocal::class,
@@ -213,6 +216,7 @@ import io.paritytech.polkadotapp.database.model.chain.ChainRuntimeInfoLocal
         ProductTopUpLocal::class,
         PocketCardLocal::class,
         PocketCardFaceLocal::class,
+        ProductFundingRecordLocal::class,
     ],
     autoMigrations = [
         // Add ChatMessageReactionLocal
@@ -349,6 +353,7 @@ abstract class AppDatabase : RoomDatabase() {
                 Migration63To64(),
                 Migration65To66(),
                 Migration68To69(),
+                Migration69To70(),
                 *chatMessageContentMigrations.toTypedArray() // 25 -> 26, 31 -> 32, 37 -> 38, 44 -> 45
             )
         }
@@ -449,4 +454,6 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun coinageInstallationDao(): CoinageInstallationDao
 
     abstract fun pocketCardDao(): PocketCardDao
+
+    abstract fun productFundingRecordDao(): ProductFundingRecordDao
 }

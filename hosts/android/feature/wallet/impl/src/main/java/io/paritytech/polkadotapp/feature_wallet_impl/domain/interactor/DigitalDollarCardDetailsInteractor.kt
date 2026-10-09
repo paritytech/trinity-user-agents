@@ -11,6 +11,7 @@ import io.paritytech.polkadotapp.feature_coinage_api.domain.usecase.CoinageHoldi
 import io.paritytech.polkadotapp.feature_coinage_api.domain.usecase.CoinageHoldingsUseCase
 import io.paritytech.polkadotapp.feature_coinage_api.domain.usecase.CoinageTestnetFundUseCase
 import io.paritytech.polkadotapp.feature_coinage_api.domain.usecase.ShareCoinageLogsUseCase
+import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingActivity
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingDirection
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.HostFunding
 import io.paritytech.polkadotapp.feature_tokens_api.di.DigitalDollarChainAssetProvider
@@ -39,6 +40,8 @@ class DigitalDollarCardDetailsInteractor @Inject constructor(
     suspend fun openFunding(direction: FundingDirection): Result<Unit> = hostFunding.openFunding(direction, amount = null).map { }
 
     suspend fun asset(): Chain.Asset = chainAssetProvider.asset()
+
+    fun observeFundingActivity(): Flow<FundingActivity> = hostFunding.observeActivity()
 
     /**
      * The four figures and the rows beneath them, off one classification.

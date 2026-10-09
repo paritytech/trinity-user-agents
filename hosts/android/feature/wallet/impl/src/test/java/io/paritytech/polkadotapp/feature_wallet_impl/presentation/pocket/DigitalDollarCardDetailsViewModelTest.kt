@@ -45,6 +45,7 @@ class DigitalDollarCardDetailsViewModelTest {
         coEvery { openFunding(any(), null) } coAnswers {
             CompletableDeferred<Result<String?>>().also(pendingOpens::addLast).await()
         }
+        every { observeActivity() } returns emptyFlow()
     }
 
     private val interactor = DigitalDollarCardDetailsInteractor(

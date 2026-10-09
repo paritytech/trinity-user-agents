@@ -22,6 +22,7 @@ class TrUAPIHostFundingTest {
     private val funding = TrUAPIHostFunding(
         runtimeProvider = mockk { coEvery { runtime() } returns Result.success(runtime) },
         bridge = AppFundingHostBridge(mockk()),
+        activityCenter = mockk(),
     )
 
     @Test

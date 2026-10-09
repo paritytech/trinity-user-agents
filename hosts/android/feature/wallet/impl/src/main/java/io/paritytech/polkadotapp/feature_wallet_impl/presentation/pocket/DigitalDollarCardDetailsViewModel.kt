@@ -19,10 +19,13 @@ import io.paritytech.polkadotapp.feature_wallet_impl.domain.interactor.DigitalDo
 import io.paritytech.polkadotapp.feature_wallet_impl.domain.model.CoinageHoldingsInfo
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.coins.CoinageBreakdownFactory
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.coins.clearing
+import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.funding.FundingActivityMapper
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.BalanceRestoreUiState
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.CoinageBalanceBreakdownUiModel
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.CoinageUiState
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.DigitalDollarCardDetailsUiState
+import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.FundingActivityUiState
+import kotlinx.collections.immutable.persistentListOf
 import kotlinx.collections.immutable.toImmutableList
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -32,6 +35,7 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import javax.inject.Inject
+import kotlin.time.Clock
 
 @HiltViewModel
 class DigitalDollarCardDetailsViewModel @Inject constructor(
@@ -39,6 +43,10 @@ class DigitalDollarCardDetailsViewModel @Inject constructor(
     private val router: PocketRouter,
     private val tokenAmountMapper: TokenAmountMapper
 ) : BaseViewModel() {
+    private companion object {
+        const val FUNDING_ACTIVITY_STOP_TIMEOUT = 5_000L
+    }
+
     private val fundInProgress = MutableStateFlow(false)
     private val fundingInProgress = MutableStateFlow(false)
 
@@ -84,6 +92,14 @@ class DigitalDollarCardDetailsViewModel @Inject constructor(
             initialValue = DigitalDollarCardDetailsUiState(
                 balanceRestore = BalanceRestoreUiState.NotDetermined
             )
+        )
+
+    val fundingActivity: StateFlow<FundingActivityUiState> = interactor.observeFundingActivity()
+        .map { activity -> FundingActivityMapper(interactor.asset(), tokenAmountMapper, Clock.System.now()).map(activity) }
+        .stateIn(
+            scope = this,
+            started = SharingStarted.WhileSubscribed(FUNDING_ACTIVITY_STOP_TIMEOUT),
+            initialValue = FundingActivityUiState(inFlight = persistentListOf(), days = persistentListOf())
         )
 
     fun onGetCashClick() = openFunding(FundingDirection.IN, ::GetCashUnavailablePresentationError)

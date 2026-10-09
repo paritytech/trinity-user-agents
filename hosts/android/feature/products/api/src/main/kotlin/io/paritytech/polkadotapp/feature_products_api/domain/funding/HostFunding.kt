@@ -29,4 +29,10 @@ interface HostFunding {
 
     /** Every session the core keeps, in flight first, re-read whenever one changes. */
     fun observeSessions(): Flow<List<HostFundingSession>>
+
+    /**
+     * The sessions in flight and the ended ones the host keeps. Observing it also hands each ended session to
+     * the host's store and lets the core drop it.
+     */
+    fun observeActivity(): Flow<FundingActivity>
 }

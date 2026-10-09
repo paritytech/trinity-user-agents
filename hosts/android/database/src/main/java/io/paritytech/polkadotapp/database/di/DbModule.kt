@@ -28,6 +28,7 @@ import io.paritytech.polkadotapp.database.dao.ProductDao
 import io.paritytech.polkadotapp.database.dao.ProductFundingOperationDao
 import io.paritytech.polkadotapp.database.dao.ProductIntegrationDao
 import io.paritytech.polkadotapp.database.dao.ProductPermissionGrantDao
+import io.paritytech.polkadotapp.database.dao.ProductFundingRecordDao
 import io.paritytech.polkadotapp.database.dao.ProductTopUpDao
 import io.paritytech.polkadotapp.database.dao.RecyclerVoucherDao
 import io.paritytech.polkadotapp.database.dao.RemovedChatDao
@@ -170,6 +171,11 @@ class DbModule {
     @Singleton
     fun provideProductTopUpDao(appDatabase: AppDatabase): ProductTopUpDao =
         appDatabase.productTopUpDao()
+
+    @Provides
+    @Singleton
+    fun provideProductFundingRecordDao(appDatabase: AppDatabase): ProductFundingRecordDao =
+        appDatabase.productFundingRecordDao()
 
     @Provides
     @Singleton
