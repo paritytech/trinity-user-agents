@@ -30,6 +30,12 @@
   // poll rather than held, since a re-render can replace the element.
   const newest = () => entries()[0] ?? null;
 
+  // Tests that navigate within the product, by the path they land on. The
+  // client navigation can land before the log entry settles, which takes the
+  // log away, or after it, which takes the next test's buttons away, so these
+  // pass once the page reaches the path.
+  const IN_APP_DESTINATIONS = { "navigate-internal": "/navigation" };
+
   async function runOne(id, timeoutMs = 60000) {
     const started = Date.now();
     const result = (fields) => ({ id, durationMs: Date.now() - started, ...fields });
@@ -45,18 +51,30 @@
     const enabled = await waitFor(() => !button.disabled, 15000);
     if (!enabled) return result({ status: "skipped", message: "run button stayed disabled" });
 
+    const destination = IN_APP_DESTINATIONS[id];
+    const arrived = () => destination !== undefined && location.pathname.startsWith(destination);
+    const navigated = () =>
+      result({ status: "success", outcome: "navigated", message: `${location.pathname}${location.search}${location.hash} opened` });
+
     const before = entries().length;
     button.scrollIntoView({ block: "center" });
     button.click();
 
-    const appeared = await waitFor(() => entries().length > before, 10000);
+    const appeared = await waitFor(() => arrived() || entries().length > before, 10000);
+    if (arrived()) return navigated();
     if (!appeared) return result({ status: "error", message: "the click added no log entry" });
 
     const settled = await waitFor(() => {
+      if (arrived()) return true;
       const entry = newest();
       return entry && entry.dataset.status !== "pending" ? entry : null;
     }, timeoutMs, 250);
+    if (arrived()) return navigated();
     if (!settled) return result({ status: "timeout", message: `no result within ${timeoutMs} ms` });
+    if (destination !== undefined && settled.dataset.status === "success") {
+      if (await waitFor(arrived, timeoutMs, 100)) return navigated();
+      return result({ status: "error", message: `${destination} never opened` });
+    }
 
     return result({
       status: settled.dataset.status,
