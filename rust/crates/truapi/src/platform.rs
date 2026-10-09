@@ -27,18 +27,19 @@ pub mod mock;
 
 use truapi::latest::{
     AllocatableResource, ChainIdentifier, ChatAction, ChatActions, ChatCustomMessage, ChatFile,
-    ChatMedia, ChatMessageContent, ChatReaction, ChatRichText, GenericError,
+    ChatMedia, ChatMessageContent, ChatReaction, ChatRichText, CodeFormat, GenericError,
     HostChatCreateRoomError, HostChatCreateRoomRequest, HostChatCreateRoomResponse,
     HostChatListSubscribeItem, HostChatPostMessageError, HostChatPostMessageRequest,
     HostChatPostMessageResponse, HostChatRegisterBotError, HostChatRegisterBotRequest,
-    HostChatRegisterBotResponse, HostDevicePermissionRequest, HostFeatureSupportedRequest,
+    HostChatRegisterBotResponse, HostChatSetRoomFooterRequest, HostDevicePermissionRequest, HostFeatureSupportedRequest,
     HostFeatureSupportedResponse, HostLocalStorageChangeItem, HostLocaleSubscribeItem,
     HostNavigateToError, HostPlatform, HostPocketListSubscribeItem, HostPocketRemoveCardError,
     HostPocketRemoveCardRequest, HostPushNotificationRequest, HostPushNotificationResponse,
-    HostSignPayloadRequest, HostSignPayloadWithLegacyAccountRequest, HostSignRawRequest,
-    HostSignRawWithLegacyAccountRequest, HostThemeSubscribeItem, HostWorkerBeginOperationResponse,
-    HostWorkerOperationError, LegacyAccountTxPayload, ProductAccountId, ProductAccountTxPayload,
-    ProductProofContext, RemotePermission, RemotePermissionRequest, RingLocation,
+    HostScannerScanRequest, HostSignPayloadRequest, HostSignPayloadWithLegacyAccountRequest,
+    HostSignRawRequest, HostSignRawWithLegacyAccountRequest, HostThemeSubscribeItem,
+    HostWorkerBeginOperationResponse, HostWorkerOperationError, LegacyAccountTxPayload,
+    ProductAccountId, ProductAccountTxPayload, ProductProofContext, RemotePermission,
+    RemotePermissionRequest, RingLocation,
 };
 use truapi::v01::HostAccountSignVrfRequest;
 use url::{Host, Url};
@@ -3218,8 +3219,8 @@ pub trait PreimageHost: Send + Sync {
 /// answered `Unsupported`. See [`OptionalPlatform`].
 ///
 /// The core bounds and screens the product-supplied fields it forwards. Ids,
-/// names and icons on `create_chat_room`, `register_chat_bot` and
-/// `post_chat_message` are NFC-normalized and rejected for control and bidi
+/// names and icons on `create_chat_room`, `register_chat_bot`,
+/// `post_chat_message` and `set_chat_room_footer` are NFC-normalized and rejected for control and bidi
 /// characters. Message bodies are bounded and screened but pass through
 /// byte-for-byte, keeping line breaks and tabs, so a product reads back the
 /// bytes it sent. Counts and byte budgets are enforced, and any URL a host may
@@ -3261,6 +3262,16 @@ pub trait ChatPlatform: Send + Sync {
         product: &ProductContext,
         request: HostChatPostMessageRequest,
     ) -> Result<HostChatPostMessageResponse, HostChatPostMessageError>;
+
+    /// Set what a product-scoped room shows below its messages, for the room
+    /// as it is now and every later time it is shown. The core has already
+    /// checked the product created the room. A room the product never set a
+    /// footer on shows the text input.
+    async fn set_chat_room_footer(
+        &self,
+        product: &ProductContext,
+        request: HostChatSetRoomFooterRequest,
+    ) -> Result<(), GenericError>;
 
     /// Emit the current product-scoped room list and later replacements.
     fn subscribe_chat_rooms(
@@ -3520,6 +3531,49 @@ pub trait ContactsPlatform: Send + Sync {
     }
 }
 
+/// How the host's scanner ended.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
+pub enum HostScan {
+    /// The user scanned a code the request accepts.
+    Scanned {
+        /// The code's content.
+        text: String,
+        /// The code's format.
+        format: CodeFormat,
+    },
+    /// The user closed the viewfinder without scanning.
+    Dismissed,
+    /// The device has no camera, or the user refused the host application one.
+    /// The host has already told the user how to turn it on.
+    CameraUnavailable,
+    /// The requesting App or Widget is not the screen the user sees, so the
+    /// host opened nothing. A Worker's request was already checked by the core
+    /// and is never answered this way.
+    NotVisible,
+}
+
+/// Host-owned viewfinder for QR codes and barcodes. Optional. The Swift and
+/// Kotlin bridges and the JS `scanner` callbacks follow the same rules.
+///
+/// - Title the viewfinder with the product id. Show `request.hint` under it as
+///   the product's words.
+/// - Pass every code the camera reads to a `ScanFilter` built from `request`,
+///   and never follow a scanned link.
+/// - Answer [`HostScan::NotVisible`] for an App or Widget that is not on
+///   screen. A Worker reaching the host already passed the core's tap check.
+/// - Close the viewfinder when the core drops the future, and close any still
+///   open before opening another. A JS host is not told about a drop.
+#[async_trait]
+pub trait ScannerPlatform: Send + Sync {
+    /// Open the viewfinder on behalf of `product` and wait for the user.
+    async fn scan_code(
+        &self,
+        product: &ProductContext,
+        request: &HostScannerScanRequest,
+    ) -> Result<HostScan, GenericError>;
+}
+
 /// Combined platform interface. A host must provide every capability trait
 /// listed here. Members marked optional may be omitted; the core answers their
 /// product calls with `Unsupported`. See [`OptionalPlatform`].
@@ -3562,11 +3616,21 @@ impl<T> Platform for T where
 /// with `Unsupported`. Codegen reads this list to emit each capability as an
 /// optional group on the host-callback surface.
 pub trait OptionalPlatform:
-    ChatPlatform + ContactsPlatform + PermissionStatusHost + PocketPlatform + GamePlatform
+    ChatPlatform
+    + ContactsPlatform
+    + PermissionStatusHost
+    + PocketPlatform
+    + GamePlatform
+    + ScannerPlatform
 {
 }
 
 impl<T> OptionalPlatform for T where
-    T: ChatPlatform + ContactsPlatform + PermissionStatusHost + PocketPlatform + GamePlatform
+    T: ChatPlatform
+        + ContactsPlatform
+        + PermissionStatusHost
+        + PocketPlatform
+        + GamePlatform
+        + ScannerPlatform
 {
 }

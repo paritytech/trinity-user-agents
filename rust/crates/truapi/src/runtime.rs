@@ -97,6 +97,7 @@ use truapi::versioned::chat::{
     HostChatListSubscribeError, HostChatListSubscribeItem, HostChatListSubscribeRequest,
     HostChatPostMessageError, HostChatPostMessageRequest, HostChatPostMessageResponse,
     HostChatRegisterBotError, HostChatRegisterBotRequest, HostChatRegisterBotResponse,
+    HostChatSetRoomFooterError, HostChatSetRoomFooterRequest, HostChatSetRoomFooterResponse,
 };
 use truapi::versioned::contacts::{
     HostContactsPickError, HostContactsPickRequest, HostContactsPickResponse,
@@ -325,6 +326,10 @@ pub struct ProductRuntimeHost {
     open_operations: Mutex<HashSet<u32>>,
 }
 
+/// How long after a tap a Worker may still open the scanner, as browsers bound
+/// transient user activation.
+pub const USER_TAP_WINDOW_SECS: u64 = 5;
+
 /// A connection that goes away without ending its operations still owes the
 /// ledger their references, so the host is told to stop rather than keeping a
 /// worker alive for a product that is gone.
@@ -360,6 +365,13 @@ impl ProductRuntimeHost {
             game_platform: adapters.game_platform,
             open_operations: Mutex::new(HashSet::new()),
         }
+    }
+
+    /// Whether the host published a renderer action, which only the user
+    /// causes, within the last [`USER_TAP_WINDOW_SECS`]. A Worker may scan only
+    /// shortly after one, because it has no screen the user could be looking at.
+    pub fn recently_tapped(&self) -> bool {
+        self.renderer.published_within(USER_TAP_WINDOW_SECS)
     }
 
     /// Role-neutral services shared with the owning host runtime.
@@ -1383,7 +1395,7 @@ impl Contacts for ProductRuntimeHost {
     #[instrument(skip_all, fields(runtime.method = "contacts.pick"))]
     async fn pick(
         &self,
-        _cx: &CallContext,
+        cx: &CallContext,
         _request: HostContactsPickRequest,
     ) -> Result<HostContactsPickResponse, CallError<HostContactsPickError>> {
         let wrap = HostContactsPickError::V1;
@@ -1400,9 +1412,13 @@ impl Contacts for ProductRuntimeHost {
         // Read before the picker opens: a removal signalled while the user is
         // choosing must not be undone by caching their choice.
         let generation = self.services.contact_handles.generation();
-        let outcome = match platform
-            .pick_contact(&self.product)
+        let outcome = match until_cancelled(cx, platform.pick_contact(&self.product))
             .await
+            .map_err(|cancelled| {
+                CallError::Domain(wrap(v01::HostContactsPickError::Unknown {
+                    reason: cancelled.to_string(),
+                }))
+            })?
             .map_err(unknown)?
         {
             crate::platform::HostContactPick::Picked { account } => {
@@ -1534,6 +1550,46 @@ impl Chat for ProductRuntimeHost {
             .await
             .map(HostChatPostMessageResponse::V1)
             .map_err(|error| CallError::Domain(HostChatPostMessageError::V1(error)))
+    }
+
+    #[instrument(skip_all, fields(runtime.method = "chat.set_room_footer"))]
+    async fn set_room_footer(
+        &self,
+        _cx: &CallContext,
+        request: HostChatSetRoomFooterRequest,
+    ) -> Result<HostChatSetRoomFooterResponse, CallError<HostChatSetRoomFooterError>> {
+        let platform = self.chat_platform()?;
+        let HostChatSetRoomFooterRequest::V1(mut request) = request;
+        let failure = |reason: String| {
+            CallError::Domain(HostChatSetRoomFooterError::V1(
+                v01::HostChatSetRoomFooterError::Unknown { reason },
+            ))
+        };
+        request.room_id = normalize_chat_identifier("roomId", &request.room_id)
+            .map_err(|error| failure(error.to_string()))?;
+
+        // Checked here rather than by each host, so every host answers a room
+        // the product never created the same way.
+        let rooms = match platform.subscribe_chat_rooms(&self.product).next().await {
+            Some(Ok(item)) => item.rooms,
+            Some(Err(error)) => return Err(failure(error.reason)),
+            None => return Err(failure("the host published no room list".to_string())),
+        };
+        let created = rooms.iter().any(|room| {
+            room.room_id == request.room_id
+                && room.participating_as == v01::ChatRoomParticipation::RoomHost
+        });
+        if !created {
+            return Err(CallError::Domain(HostChatSetRoomFooterError::V1(
+                v01::HostChatSetRoomFooterError::UnknownRoom,
+            )));
+        }
+
+        platform
+            .set_chat_room_footer(&self.product, request)
+            .await
+            .map(|()| HostChatSetRoomFooterResponse::V1)
+            .map_err(|error| failure(error.reason))
     }
 
     #[instrument(skip_all, fields(runtime.method = "chat.action_subscribe"))]

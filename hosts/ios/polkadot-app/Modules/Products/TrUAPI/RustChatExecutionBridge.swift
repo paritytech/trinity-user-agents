@@ -69,6 +69,19 @@ final class RustChatExecutionBridge: RustProductExecutionBridge, ChatHostBridge,
         return try await chatMessaging.sendMessage(message, roomId: roomId)
     }
 
+    func setRoomFooter(roomId: String, footer: ChatRoomFooter) async throws {
+        logger.debug("[truapi:chat-bridge] setRoomFooter \(roomId)")
+        guard let roomId = roomId.nilIfEmpty else {
+            throw HostRejection.Rejected(reason: "a chat room needs an id")
+        }
+
+        let roomFooter: Chat.RoomFooter = switch footer {
+        case .textInput: .textInput
+        case .empty: .empty
+        }
+        try await chatMessaging.setRoomFooter(roomId: roomId, footer: roomFooter)
+    }
+
     func listRooms() async throws -> [ChatRoom] {
         logger.debug("[truapi:chat-bridge] listRooms")
         // An empty result matches what the core publishes on failure anyway

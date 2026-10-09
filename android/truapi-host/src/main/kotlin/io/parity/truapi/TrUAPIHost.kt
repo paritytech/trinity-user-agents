@@ -35,6 +35,7 @@ import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.flow.conflate
 import uniffi.truapi.ChatMessageContent
 import uniffi.truapi.ChatRoom
+import uniffi.truapi.ChatRoomFooter
 import uniffi.truapi.HostChatActionSubscribeItem
 import uniffi.truapi.HostDevicePermissionRequest
 import uniffi.truapi.HostFeatureSupportedRequest
@@ -90,6 +91,10 @@ import uniffi.truapi.HostContactLookup
 import uniffi.truapi.HostContactMatches
 import uniffi.truapi.HostContactPick
 import uniffi.truapi.NativeContactsCallbacks
+import uniffi.truapi.HostScan
+import uniffi.truapi.HostScannerScanRequest
+import uniffi.truapi.NativeScannerCallbacks
+import uniffi.truapi.ProductExecutionKind
 
 /** Package metadata. */
 object TrUAPIHost {
@@ -396,6 +401,13 @@ interface ChatHostBridge {
     @Throws(HostRejection::class)
     suspend fun postMessage(roomId: String, content: ChatMessageContent): String
 
+    /**
+     * Set what a product's native Chat room shows below its messages, and keep
+     * it until the product sets another.
+     */
+    @Throws(HostRejection::class)
+    suspend fun setRoomFooter(roomId: String, footer: ChatRoomFooter)
+
     /** Return the current product-scoped native Chat rooms. */
     @Throws(HostRejection::class)
     suspend fun listRooms(): List<ChatRoom>
@@ -643,6 +655,9 @@ private class ChatCallbackAdapter(private val bridge: ChatHostBridge) : NativeCh
     override suspend fun postMessage(roomId: String, content: ChatMessageContent): String =
         withHostRejection { bridge.postMessage(roomId, content) }
 
+    override suspend fun setRoomFooter(roomId: String, footer: ChatRoomFooter) =
+        withHostRejection { bridge.setRoomFooter(roomId, footer) }
+
     override suspend fun listRooms(): List<ChatRoom> = withHostRejection { bridge.listRooms() }
 }
 
@@ -684,13 +699,28 @@ private class ContactsCallbackAdapter(private val bridge: ContactsHostBridge) : 
         withHostRejection { bridge.contacts(lookup) }
 
     override suspend fun pickContact(productId: String): HostContactPick =
-        try {
-            bridge.pickContact(productId)
-        } catch (error: HostRejection) {
-            throw error
-        } catch (error: Throwable) {
-            throw HostRejection.Rejected(hostRejectionReason(error))
-        }
+        withHostRejection { bridge.pickContact(productId) }
+}
+
+/**
+ * Draws the viewfinder for `scanner.scan`, following the rules on the core's
+ * `ScannerPlatform`. Closes it when the coroutine is cancelled.
+ */
+interface ScannerHostBridge {
+    @Throws(HostRejection::class)
+    suspend fun scanCode(
+        productId: String,
+        executionKind: ProductExecutionKind,
+        request: HostScannerScanRequest,
+    ): HostScan
+}
+
+private class ScannerCallbackAdapter(private val bridge: ScannerHostBridge) : NativeScannerCallbacks {
+    override suspend fun scanCode(
+        productId: String,
+        executionKind: ProductExecutionKind,
+        request: HostScannerScanRequest,
+    ): HostScan = withHostRejection { bridge.scanCode(productId, executionKind, request) }
 }
 
 private class PocketCallbackAdapter(private val bridge: PocketHostBridge) : NativePocketCallbacks {
@@ -752,6 +782,19 @@ class TrUAPIHostRuntime @Throws(NativeRuntimeConfigException::class) constructor
         val adapter = ContactsCallbackAdapter(contacts)
         contactsRetainer = adapter
         return inner.setContactsCallbacks(adapter)
+    }
+
+    // Co-owns the scanner adapter for as long as the runtime holds it.
+    private var scannerRetainer: NativeScannerCallbacks? = null
+
+    /**
+     * Install the host's scanner before opening any product execution.
+     * Set-once: returns whether this call installed it.
+     */
+    fun setScanner(scanner: ScannerHostBridge): Boolean {
+        val adapter = ScannerCallbackAdapter(scanner)
+        scannerRetainer = adapter
+        return inner.setScannerCallbacks(adapter)
     }
 
     /**

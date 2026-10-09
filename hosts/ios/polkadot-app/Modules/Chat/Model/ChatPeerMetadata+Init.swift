@@ -11,7 +11,7 @@ extension Chat.LocalModel {
             return Chat.PeerMetadata(
                 name: roomMetadata?.name ?? extMetadata.name,
                 icon: extMetadata.icon,
-                input: extMetadata.input,
+                input: roomFooter == .empty ? .empty : extMetadata.input,
                 moreActions: extMetadata.moreActions
             )
         }

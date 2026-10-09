@@ -252,6 +252,16 @@ pub trait NativeChatCallbacks: Send + Sync {
         content: v01::ChatMessageContent,
     ) -> Result<String, HostRejection>;
 
+    /// Set what a product's native Chat room shows below its messages, and keep
+    /// it until the product sets another. The core has already checked the
+    /// product created the room. A room the product never set a footer on shows
+    /// the text input.
+    async fn set_room_footer(
+        &self,
+        room_id: String,
+        footer: v01::ChatRoomFooter,
+    ) -> Result<(), HostRejection>;
+
     /// Return the current product-scoped native Chat room list.
     async fn list_rooms(&self) -> Result<Vec<v01::ChatRoom>, HostRejection>;
 }
@@ -335,4 +345,19 @@ pub trait NativeContactsCallbacks: Send + Sync {
         &self,
         product_id: String,
     ) -> Result<crate::platform::HostContactPick, HostRejection>;
+}
+
+/// Native form of [`crate::platform::ScannerPlatform`], whose rules it follows.
+/// Installed with [`NativeTrUApiHostRuntime::set_scanner_callbacks`].
+#[uniffi::export(rust, foreign)]
+#[async_trait::async_trait]
+pub trait NativeScannerCallbacks: Send + Sync {
+    /// Open the viewfinder on behalf of `product_id`'s execution of
+    /// `execution_kind` and report how it ended.
+    async fn scan_code(
+        &self,
+        product_id: String,
+        execution_kind: crate::platform::ProductExecutionKind,
+        request: truapi::latest::HostScannerScanRequest,
+    ) -> Result<crate::platform::HostScan, HostRejection>;
 }

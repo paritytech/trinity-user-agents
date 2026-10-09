@@ -189,6 +189,7 @@ pub struct EventCallbacks {
     pub chat_bot_rejection: Mutex<Option<String>>,
     pub chat_post_rejection: Mutex<Option<String>>,
     pub chat_posted: Mutex<Vec<(String, v01::ChatMessageContent)>>,
+    pub chat_room_footers: Mutex<Vec<(String, v01::ChatRoomFooter)>>,
     pub pocket_cards: Mutex<Vec<v01::PocketCard>>,
     pub pocket_removed: Mutex<Vec<String>>,
     pub theme: Mutex<v01::HostThemeSubscribeItem>,
@@ -237,6 +238,7 @@ impl EventCallbacks {
             chat_registered_bots: Mutex::new(Vec::new()),
             chat_bot_rejection: Mutex::new(None),
             chat_post_rejection: Mutex::new(None),
+            chat_room_footers: Mutex::new(Vec::new()),
             chat_posted: Mutex::new(Vec::new()),
             pocket_cards: Mutex::new(Vec::new()),
             pocket_removed: Mutex::new(Vec::new()),
@@ -552,6 +554,18 @@ impl NativeChatCallbacks for EventCallbacks {
         // Distinct per message: a correlation assertion must not pass on a
         // constant the host happens to return every time.
         Ok(format!("message-{}", posted.len()))
+    }
+
+    async fn set_room_footer(
+        &self,
+        room_id: String,
+        footer: v01::ChatRoomFooter,
+    ) -> Result<(), HostRejection> {
+        self.chat_room_footers
+            .lock()
+            .expect("room footers mutex poisoned")
+            .push((room_id, footer));
+        Ok(())
     }
 
     async fn list_rooms(&self) -> Result<Vec<v01::ChatRoom>, HostRejection> {
@@ -1727,6 +1741,38 @@ fn native_chat_adapter_preserves_room_status_and_message_room() {
                 text: "Echo: hello".to_string(),
             },
         )]
+    );
+}
+
+#[test]
+fn native_chat_adapter_hands_the_room_footer_to_the_host() {
+    let callbacks = Arc::new(EventCallbacks::new());
+    let platform = ChatCallbackPlatform {
+        chat: callbacks.clone(),
+        events: Arc::new(NativeEventBus::default()),
+    };
+    let product = ProductContext::new_with_execution(
+        "chat.dot".to_string(),
+        ProductExecutionKind::Worker,
+    )
+    .unwrap();
+
+    futures::executor::block_on(crate::platform::ChatPlatform::set_chat_room_footer(
+        &platform,
+        &product,
+        v01::HostChatSetRoomFooterRequest {
+            room_id: "support".to_string(),
+            footer: v01::ChatRoomFooter::Empty,
+        },
+    ))
+    .unwrap();
+
+    assert_eq!(
+        *callbacks
+            .chat_room_footers
+            .lock()
+            .expect("room footers mutex poisoned"),
+        [("support".to_string(), v01::ChatRoomFooter::Empty)]
     );
 }
 

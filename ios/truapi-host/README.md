@@ -149,6 +149,10 @@ final class MyChatBridge: ChatHostBridge, @unchecked Sendable {
         return store.append(roomId, content: content)
     }
 
+    func setRoomFooter(roomId: String, footer: ChatRoomFooter) throws {
+        store.setFooter(roomId, footer: footer)
+    }
+
     func listRooms() throws -> [ChatRoom] { store.rooms() }
 }
 
