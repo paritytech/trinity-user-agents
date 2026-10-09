@@ -271,6 +271,10 @@ pub enum SystemEvent {
     NotificationCancelled {
         id: u32,
     },
+    /// A product asked the host to open a destination (`navigate_to`).
+    NavigationRequested {
+        url: String,
+    },
     PairingDeeplink {
         url: String,
     },
@@ -1827,6 +1831,9 @@ impl App {
                 format!("Notification #{id} cancelled"),
                 None,
             ),
+            SystemEvent::NavigationRequested { url } => {
+                self.notice(NoticeTone::Info, "Navigation requested".to_string(), Some(url))
+            }
             SystemEvent::PairingDeeplink { url } => {
                 self.start_activity(
                     "pairing".to_string(),
@@ -3958,6 +3965,18 @@ mod tests {
         };
 
         assert!(event.human().contains("polkadotapp://pair?handshake=0123"));
+    }
+
+    #[test]
+    fn navigation_request_shows_the_destination() {
+        let event = SystemEvent::NavigationRequested {
+            url: "polkadot://dim2.dot/recover".to_string(),
+        };
+
+        assert_eq!(
+            event.human(),
+            "• Navigation requested\n  polkadot://dim2.dot/recover"
+        );
     }
 
     #[test]
