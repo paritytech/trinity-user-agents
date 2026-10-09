@@ -2,6 +2,7 @@ import Foundation
 import FoundationExt
 import UIKit
 import Keystore_iOS
+import PolkadotUI
 import Products
 
 /// Creates ``ProductBot`` instances for a given product.
@@ -16,6 +17,7 @@ final class ProductBotFactory {
     private let runtimeProvider: TrUAPIHostRuntimeProviding
     private let workers: @Sendable () -> (any TrUAPIWorkerManaging)?
     private let workerManager: ProductWorkerManaging
+    private let productImages: ProductImageSources
     private let logger: LoggerProtocol
 
     init(
@@ -23,6 +25,7 @@ final class ProductBotFactory {
         runtimeProvider: TrUAPIHostRuntimeProviding,
         workers: @Sendable @escaping () -> (any TrUAPIWorkerManaging)?,
         workerManager: ProductWorkerManaging,
+        productImages: ProductImageSources,
         settingsManager: SettingsManagerProtocol = SettingsManager.shared,
         logger: LoggerProtocol = Logger.shared
     ) {
@@ -31,6 +34,7 @@ final class ProductBotFactory {
         self.runtimeProvider = runtimeProvider
         self.workers = workers
         self.workerManager = workerManager
+        self.productImages = productImages
         self.logger = logger
     }
 
@@ -39,6 +43,8 @@ final class ProductBotFactory {
 
         let product = resolved.product
         let description = resolved.description?.nilIfEmpty
+        let images = productImages.resolver(contentId: { resolved.contentId(for: .worker) })
+        let resolveImage = WidgetImageResolver.cached { await images.resolve($0) }
 
         if settingsManager.isTrUAPIRuntimeEnabled, let workers = workers() {
             let runtime = TrUAPIChatHandler(
@@ -50,6 +56,7 @@ final class ProductBotFactory {
                 product: product,
                 description: description,
                 runtime: runtime,
+                resolveImage: resolveImage,
                 logger: logger
             )
         }
@@ -59,6 +66,7 @@ final class ProductBotFactory {
             product: product,
             description: description,
             runtime: runtime,
+            resolveImage: resolveImage,
             logger: logger
         )
     }

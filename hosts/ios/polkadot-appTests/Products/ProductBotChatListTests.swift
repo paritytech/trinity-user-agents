@@ -1,4 +1,5 @@
 import Foundation
+import PolkadotUI
 import Products
 import Testing
 import TrUAPIHost
@@ -37,7 +38,8 @@ private extension ProductBotChatListTests {
         ProductBot(
             product: Product(id: "dim2.paseo", name: "Jollity"),
             description: description,
-            runtime: IdleChatRuntime()
+            runtime: IdleChatRuntime(),
+            resolveImage: WidgetImageResolver { _ in nil }
         )
     }
 }
