@@ -23,6 +23,7 @@ mod identity;
 pub mod login_failure;
 mod pairing_host;
 pub mod product_manifest;
+mod product_consent;
 mod product_subtree;
 mod renderer;
 mod ring_vrf_registry;
@@ -91,7 +92,7 @@ pub use vrf::ring_vrf_member;
 // `TrackedStatementRenewalTarget` is only read back by the native renewal
 // reporting, so re-exporting it on wasm leaves an unused import.
 use crate::platform::{
-    AccountAccessReview, ChatFieldError, IdentityDisclosureReview, PermissionAuthorizationRequest,
+    ChatFieldError, IdentityDisclosureReview, PermissionAuthorizationRequest,
     PermissionAuthorizationStatus, PermissionDecision, Platform, ProductContext, ProductStorageKey,
     SessionUiInfo, UserConfirmationReview, normalize_chat_identifier, normalize_product_identifier,
     validate_chat_icon, validate_chat_message_content, validate_chat_name,
@@ -859,63 +860,6 @@ impl ProductRuntimeHost {
         }
         Err(LegacySignerError::Unavailable)
     }
-}
-
-async fn account_access_authorization(
-    platform: &dyn Platform,
-    requesting_product_id: &str,
-    target_product_id: &str,
-) -> Result<PermissionAuthorizationStatus, AccountAccessAuthorizationError> {
-    if requesting_product_id == target_product_id
-        || crate::platform::normalizes_to_trusted_remote_permissions(requesting_product_id)
-    {
-        return Ok(PermissionAuthorizationStatus::Authorized);
-    }
-
-    // Both sides bare-labelled, matching the grant this decision overrides and
-    // the key `user_denied_account_access` reads back. A decision filed against
-    // the full target would not be found when the grant is resolved for a
-    // subname of it.
-    let target = crate::host_internal::product_manifest::bare_product_label(target_product_id);
-    // Stored per product, not per executable, because that is the granularity a
-    // manifest grant uses: `dim2.dot`, `app.dim2.dot` and `worker.dim2.dot` are
-    // one grantee. A decision filed under the full id could be missed by the
-    // same product arriving under a subname it already owns, which would let a
-    // refused product keep a `context` grant by respelling itself. The prompt
-    // still names the id the user saw; only the slot it is filed under is the
-    // product's.
-    let caller = crate::host_internal::product_manifest::bare_product_label(requesting_product_id);
-    let cached = crate::host_internal::permissions::account_access_status(platform, caller, target)
-        .await
-        .map_err(AccountAccessAuthorizationError::PermissionStorage)?;
-    if cached != PermissionAuthorizationStatus::NotDetermined {
-        return Ok(cached);
-    }
-
-    let decision = platform
-        .confirm_permission(UserConfirmationReview::AccountAccess(AccountAccessReview {
-            requesting_product_id: requesting_product_id.to_string(),
-            target_product_id: target_product_id.to_string(),
-        }))
-        .await
-        .map_err(AccountAccessAuthorizationError::Confirmation)?;
-    let status = match decision {
-        PermissionDecision::AllowOnce => return Ok(PermissionAuthorizationStatus::Authorized),
-        PermissionDecision::AllowAlways => PermissionAuthorizationStatus::Authorized,
-        PermissionDecision::Deny => PermissionAuthorizationStatus::Denied,
-    };
-    crate::host_internal::permissions::set_account_access_status(platform, caller, target, status)
-        .await
-        .map_err(AccountAccessAuthorizationError::PermissionStorage)?;
-    Ok(status)
-}
-
-#[derive(Debug, thiserror::Error)]
-enum AccountAccessAuthorizationError {
-    #[error("permission storage failed: {0:?}")]
-    PermissionStorage(v01::GenericError),
-    #[error("account access confirmation failed: {0:?}")]
-    Confirmation(v01::GenericError),
 }
 
 fn parse_legacy_signer_hex(signer: &str) -> Option<[u8; 32]> {

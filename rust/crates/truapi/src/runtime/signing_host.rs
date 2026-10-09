@@ -33,6 +33,7 @@ use super::authority::{
     AccountCaller, AccountHolder, AccountInvocation, AuthorityError, AuthoritySession,
     BulletinAllowanceKey, ProductAuthority, StatementStoreAllowanceKey,
 };
+use super::product_consent::ProductConsent;
 use super::{RuntimeServices, connected_session_ui_info};
 use crate::host_internal::sso_messages::OnExistingAllowancePolicy;
 use crate::host_logic::session::SessionState;
@@ -121,6 +122,7 @@ pub struct SigningHost {
     #[cfg(any(not(target_arch = "wasm32"), test))]
     services: Arc<RuntimeServices>,
     wallet: Arc<WalletAccountHolder>,
+    consent: Arc<ProductConsent>,
     auth_state: AuthStateMachine,
     #[cfg(feature = "test-host")]
     submit_preimages_locally: core::sync::atomic::AtomicBool,
@@ -144,10 +146,16 @@ impl SigningHost {
     /// dotNS TLD is `network_suffix`.
     pub fn new(services: Arc<RuntimeServices>, network_suffix: String) -> Arc<Self> {
         let platform = services.platform.clone();
+        let consent = Arc::new(ProductConsent::new(platform.clone()));
         Arc::new(Self {
             #[cfg(any(not(target_arch = "wasm32"), test))]
             services: services.clone(),
-            wallet: Arc::new(WalletAccountHolder::new(services, network_suffix)),
+            wallet: Arc::new(WalletAccountHolder::new(
+                services,
+                network_suffix,
+                consent.clone(),
+            )),
+            consent,
             #[cfg(feature = "test-host")]
             submit_preimages_locally: core::sync::atomic::AtomicBool::new(false),
             auth_state: AuthStateMachine::new(platform.clone()),
@@ -212,13 +220,16 @@ impl SigningHost {
             [0xcc; 32],
             crate::test_support::test_spawner(),
         );
+        let consent = Arc::new(ProductConsent::new(platform.clone()));
         Arc::new(Self {
             services: services.clone(),
             wallet: Arc::new(WalletAccountHolder::new_with_ring_resolver(
                 services,
                 network_suffix.to_string(),
+                consent.clone(),
                 ring_resolver,
             )),
+            consent,
             #[cfg(feature = "test-host")]
             submit_preimages_locally: core::sync::atomic::AtomicBool::new(false),
             auth_state: AuthStateMachine::new(platform.clone()),
@@ -295,6 +306,7 @@ impl SigningHost {
             .lock()
             .expect("local AutoSigning grant mutex poisoned")
             .revoke_product(&product_id);
+        self.consent.forget_allowed_once_for(&product_id);
         Ok(())
     }
 
@@ -305,6 +317,7 @@ impl SigningHost {
             .expect("local AutoSigning grant mutex poisoned");
         state.clear_grants();
         self.wallet.clear();
+        self.consent.forget_allowed_once();
     }
 }
 
@@ -343,6 +356,10 @@ impl SigningHost {
 impl ProductAuthority for SigningHost {
     fn account_holder(&self) -> &dyn AccountHolder {
         self.wallet.as_ref()
+    }
+
+    fn consent(&self) -> &ProductConsent {
+        &self.consent
     }
 
     async fn allocate_resources(
@@ -887,7 +904,7 @@ mod tests {
     /// Persist a user refusal of `caller`'s access to `target`'s account.
     fn deny_account_access(platform: &StubPlatform, caller: &str, target: &str) {
         futures::executor::block_on(
-            // Bare-labelled on both sides, as `account_access_authorization`
+            // Bare-labelled on both sides, as `ProductConsent::account_access`
             // writes it in production.
             crate::host_internal::permissions::set_account_access_status(
                 platform,
@@ -1407,16 +1424,15 @@ mod tests {
         let platform = Arc::new(StubPlatform {
             // The user declines, so the refusal is written by the production
             // path rather than by a test helper: this has to pin where
-            // `account_access_authorization` files it, not where a fixture does.
+            // `ProductConsent::account_access` files it, not where a fixture does.
             account_access_confirmed: false,
             ..StubPlatform::default()
         });
         cache_grant(&platform, "peopl.dot", r#"{"ordinary":["context"]}"#);
-        futures::executor::block_on(crate::runtime::account_access_authorization(
-            platform.as_ref(),
-            "ordinary.dot",
-            "peopl.dot",
-        ))
+        futures::executor::block_on(
+            crate::runtime::product_consent::ProductConsent::new(platform.clone())
+                .account_access("ordinary.dot", "peopl.dot"),
+        )
         .expect("the stub records the declined decision");
         let (services, _authority) =
             signing_runtime_with_ring_resolver(platform.clone(), full_person_ring_resolver());
@@ -1673,7 +1689,7 @@ mod tests {
     /// The stored `AccountAccess` decision is the only thing that can override a
     /// publisher's grant. Reading a storage fault as "not refused" would let a
     /// locked keychain turn the user's explicit no into a yes, on the strength
-    /// of a manifest the publisher controls. `account_access_authorization`,
+    /// of a manifest the publisher controls. `ProductConsent::account_access`,
     /// which writes that same decision, already fails closed; this is the read
     /// side agreeing with it.
     ///

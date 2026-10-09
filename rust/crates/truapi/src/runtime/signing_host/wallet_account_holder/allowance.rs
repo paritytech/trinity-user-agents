@@ -5,7 +5,7 @@ use crate::chain_runtime::RuntimeFailure;
 use crate::host_internal::sso_messages::OnExistingAllowancePolicy;
 use crate::host_logic::product_account::ProductAccountError;
 use crate::platform::{
-    ResourceAllocationReview, UserConfirmationReview, has_trusted_remote_permissions,
+    ResourceAllocationReview, UserConfirmationReview,
     normalize_product_identifier,
 };
 use crate::runtime::authority::{
@@ -129,27 +129,16 @@ impl WalletAccountHolder {
             .caller
             .product_id()
             .ok_or(AuthorityError::Rejected)?;
-        let confirmed = crate::runtime::until_cancelled(invocation.call, async {
-            if matches!(invocation.caller, AccountCaller::Local { .. })
-                && has_trusted_remote_permissions(caller)
-            {
-                return Ok(true);
-            }
-            self.services
-                .platform
-                .confirm_user_action(UserConfirmationReview::ResourceAllocation(
-                    ResourceAllocationReview {
-                        calling_product_id: caller.to_string(),
-                        resources: request.resources.clone(),
-                    },
-                ))
-                .await
-        })
-        .await?
-        .map_err(AuthorityError::ConfirmationFailed)?;
-        if !confirmed {
-            return Err(AuthorityError::Rejected);
-        }
+        self.consent
+            .review(
+                invocation.call,
+                invocation.caller,
+                UserConfirmationReview::ResourceAllocation(ResourceAllocationReview {
+                    calling_product_id: caller.to_string(),
+                    resources: request.resources.clone(),
+                }),
+            )
+            .await?;
         self.require_current_session(invocation.session)?;
         let product_id = caller.to_string();
         Ok(stream::unfold(

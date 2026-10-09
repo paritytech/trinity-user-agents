@@ -37,6 +37,7 @@ impl LocalActivation for SigningHost {
                 .lock()
                 .expect("local AutoSigning grant mutex poisoned");
             state.clear_grants();
+            self.consent.forget_allowed_once();
             self.wallet.install(activation)
         };
         self.auth_state

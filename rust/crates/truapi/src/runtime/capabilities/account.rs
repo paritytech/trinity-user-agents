@@ -29,7 +29,7 @@ use truapi::{CallContext, CallError, Subscription, latest, v01};
 
 use crate::host_internal::product_manifest::Granted;
 use crate::runtime::{
-    AccountCaller, AccountInvocation, ProductRuntimeHost, account_access_authorization,
+    AccountCaller, AccountInvocation, ProductRuntimeHost,
     account_get_authority_error, remote_authority_context, ring_vrf_alias_error,
     ring_vrf_list_error, ring_vrf_proof_error, ring_vrf_register_error, ring_vrf_sign_error,
     until_cancelled, validate_vrf_transcript, vrf_call_error,
@@ -59,12 +59,11 @@ impl Account for ProductRuntimeHost {
 
         let product_id = self.product_id();
         if product_account_id.dot_ns_identifier != product_id {
-            match account_access_authorization(
-                self.platform.as_ref(),
-                &product_id,
-                &product_account_id.dot_ns_identifier,
-            )
-            .await
+            match self
+                .authority
+                .consent()
+                .account_access(&product_id, &product_account_id.dot_ns_identifier)
+                .await
             {
                 Ok(PermissionAuthorizationStatus::Authorized) => {}
                 Ok(

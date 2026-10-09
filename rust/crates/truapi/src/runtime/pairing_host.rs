@@ -31,6 +31,7 @@ use super::authority::{
 };
 use super::connected_session_ui_info;
 use super::identity::resolve_session_identity_with_chain;
+use super::product_consent::ProductConsent;
 use super::product_subtree;
 use super::services::RuntimeServices;
 use super::sso_pairing::{SsoPairingFlow, SsoPairingOutcome};
@@ -244,6 +245,7 @@ pub struct PairingHost {
     services: Arc<RuntimeServices>,
     /// Host platform backing all syscalls.
     pub platform: Arc<dyn Platform>,
+    consent: Arc<ProductConsent>,
     /// Pairing configuration supplied by the embedding host.
     pub host_config: PairingHostConfig,
     /// Shared chain runtime, used to resolve session identity.
@@ -317,6 +319,7 @@ impl PairingHost {
         let auth_state = AuthStateMachine::new(platform.clone());
         Arc::new_cyclic(|weak_self| Self {
             services: services.clone(),
+            consent: Arc::new(ProductConsent::new(platform.clone())),
             platform,
             host_config,
             chain: services.chain.clone(),
@@ -770,6 +773,7 @@ impl PairingHost {
     pub async fn clear_product_state(&self, product_id: &str) -> Result<(), String> {
         let product_id =
             normalize_product_identifier(product_id).map_err(|error| error.to_string())?;
+        self.consent.forget_allowed_once_for(&product_id);
         let session = {
             let mut lifecycle = self
                 .session_lifecycle
@@ -892,6 +896,7 @@ impl PairingHost {
 
     #[instrument(skip_all, fields(runtime.method = "session_store.clear_disconnected"))]
     async fn clear_disconnected_session(&self, clear_auth_session: bool) {
+        self.consent.forget_allowed_once();
         let previous = {
             let mut lifecycle = self
                 .session_lifecycle
@@ -2176,21 +2181,22 @@ impl PairingHost {
             calling_product_id,
             &request.account.dot_ns_identifier,
         ) {
-            let confirmed = super::until_cancelled(
-                cx,
-                self.platform
-                    .confirm_user_action(UserConfirmationReview::SignVrf(SignVrfReview {
+            self.consent
+                .review(
+                    cx,
+                    invocation.caller,
+                    UserConfirmationReview::SignVrf(SignVrfReview {
                         calling_product_id: calling_product_id.to_string(),
                         request: request.clone(),
-                    })),
-            )
-            .await?
-            .map_err(|err| AuthorityError::Unknown {
-                reason: format!("VRF signing confirmation failed: {err:?}"),
-            })?;
-            if !confirmed {
-                return Err(AuthorityError::Rejected);
-            }
+                    }),
+                )
+                .await
+                .map_err(|error| match error {
+                    AuthorityError::ConfirmationFailed(err) => AuthorityError::Unknown {
+                        reason: format!("VRF signing confirmation failed: {err:?}"),
+                    },
+                    error => error,
+                })?;
         }
         self.remote_sign_vrf(cx, &session, calling_product_id.to_string(), request)
             .await
@@ -2489,21 +2495,15 @@ impl PairingHost {
         payload: Vec<u8>,
     ) -> Result<[u8; 64], AuthorityError> {
         let (session, revision) = self.grant_session(invocation.session)?;
-        if !matches!(invocation.caller, AccountCaller::Local { product, .. } if product.product_id == account.dot_ns_identifier)
-        {
-            invocation
-                .confirm(
-                    self.platform.as_ref(),
-                    UserConfirmationReview::StatementStoreProductSign(
+        self.consent
+            .review(invocation.call, invocation.caller, UserConfirmationReview::StatementStoreProductSign(
                         crate::platform::StatementStoreProductSignReview {
                             calling_product_id: invocation.caller.product_id().map(str::to_string),
                             account: account.clone(),
                             payload: payload.clone(),
                         },
-                    ),
-                )
-                .await?;
-        }
+                    ))
+            .await?;
         let cx = match invocation.caller {
             AccountCaller::Local { .. } => super::remote_authority_context(invocation.call),
             AccountCaller::Remote { .. } => invocation.call.clone(),
@@ -2595,6 +2595,10 @@ impl ProductAuthority for PairingHost {
         self
     }
 
+    fn consent(&self) -> &ProductConsent {
+        &self.consent
+    }
+
     async fn allocate_resources(
         &self,
         cx: &CallContext,
@@ -2603,25 +2607,30 @@ impl ProductAuthority for PairingHost {
         request: latest::HostRequestResourceAllocationRequest,
     ) -> Result<latest::HostRequestResourceAllocationResponse, AuthorityError> {
         let (session, lifecycle_epoch) = self.grant_session(authority_session)?;
-        let confirmed = super::until_cancelled(cx, async {
-            if crate::platform::has_trusted_remote_permissions(&product.product_id) {
-                return Ok(true);
-            }
-            self.platform
-                .confirm_user_action(UserConfirmationReview::ResourceAllocation(
+        match self
+            .consent
+            .review(
+                cx,
+                AccountCaller::Local {
+                    product,
+                    authorization: None,
+                },
+                UserConfirmationReview::ResourceAllocation(
                     crate::platform::ResourceAllocationReview {
                         calling_product_id: product.product_id.clone(),
                         resources: request.resources.clone(),
                     },
-                ))
-                .await
-        })
-        .await?
-        .map_err(AuthorityError::ConfirmationFailed)?;
-        if !confirmed {
-            return Ok(latest::HostRequestResourceAllocationResponse {
-                outcomes: vec![latest::AllocationOutcome::Rejected; request.resources.len()],
-            });
+                ),
+            )
+            .await
+        {
+            Ok(()) => {}
+            Err(AuthorityError::Rejected) => {
+                return Ok(latest::HostRequestResourceAllocationResponse {
+                    outcomes: vec![latest::AllocationOutcome::Rejected; request.resources.len()],
+                });
+            }
+            Err(error) => return Err(error),
         }
         let cx = super::remote_authority_context_with_default(
             cx,
@@ -2804,8 +2813,8 @@ impl AccountHolder for PairingHost {
             None
         };
         if keypair.is_none() && matches!(invocation.caller, AccountCaller::Local { .. }) {
-            invocation
-                .confirm(self.platform.as_ref(), request.review(invocation.caller))
+            self.consent
+                .review(invocation.call, invocation.caller, request.review(invocation.caller))
                 .await?;
         }
         let cx = match invocation.caller {
@@ -2840,11 +2849,8 @@ impl AccountHolder for PairingHost {
         if !matches!(request, SignRawAuthorityRequest::Product(_))
             && matches!(invocation.caller, AccountCaller::Local { .. })
         {
-            invocation
-                .confirm(
-                    self.platform.as_ref(),
-                    request.review(invocation.caller, watermarked),
-                )
+            self.consent
+                .review(invocation.call, invocation.caller, request.review(invocation.caller, watermarked))
                 .await?;
         }
         let keypair = if let AccountCaller::Local { product, .. } = invocation.caller
@@ -2870,11 +2876,8 @@ impl AccountHolder for PairingHost {
             && matches!(request, SignRawAuthorityRequest::Product(_))
             && matches!(invocation.caller, AccountCaller::Local { .. })
         {
-            invocation
-                .confirm(
-                    self.platform.as_ref(),
-                    request.review(invocation.caller, watermarked),
-                )
+            self.consent
+                .review(invocation.call, invocation.caller, request.review(invocation.caller, watermarked))
                 .await?;
         }
         let cx = match invocation.caller {
@@ -2928,8 +2931,8 @@ impl AccountHolder for PairingHost {
         if (keypair.is_none() || names_contacts)
             && matches!(invocation.caller, AccountCaller::Local { .. })
         {
-            invocation
-                .confirm(self.platform.as_ref(), request.review(invocation.caller))
+            self.consent
+                .review(invocation.call, invocation.caller, request.review(invocation.caller))
                 .await?;
         }
         let cx = match invocation.caller {
