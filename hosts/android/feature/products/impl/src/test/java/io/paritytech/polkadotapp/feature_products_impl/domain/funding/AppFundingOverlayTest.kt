@@ -116,6 +116,7 @@ class AppFundingOverlayTest {
             quote = FundingQuote("q", "5100", "50000000", "90", "10", null, null),
             rail = rail,
             asset = "EUR",
+            amount = "50000000",
         ),
         saved = null,
     )
