@@ -541,7 +541,7 @@ extension ProductPermissionRepositoryTests {
     @Test("JAM permission mapping preserves the full genesis and rejects short keys")
     func canonicalJamPermissionMapping() throws {
         let permission = ProductPermission.jamPeersAccess(genesis: "0x" + String(repeating: "ab", count: 32))
-        let request = try #require(permission.authorizationRequest())
+        let request = try #require(try permission.authorizationRequest())
         #expect(try ProductPermission.fromAuthorization(request) == [permission])
         #expect(throws: ProductPermissionMappingError.self) {
             try ProductPermission.jamPeersAccess(genesis: "0xab").authorizationRequest()
