@@ -262,8 +262,8 @@ describe("createWebWorkerPairingHostRuntime", () => {
 
     worker.emit({ kind: "loaded" });
 
-    // Without this the worker never builds the preimage read callback, so a
-    // host that serves Preimage.read is answered `Unsupported` anyway.
+    // Without this flag, the worker does not make the preimage read callback, and
+    // a host that serves Preimage.read answers `Unsupported`.
     expect(lastMessageOfKind(worker, "init").capabilities).toEqual({
       chat: false,
       permissionStatus: false,

@@ -110,7 +110,7 @@ pub struct CliPlatform {
 	state_dir: Mutex<Option<PathBuf>>,
 	pairing_scope: Option<PairingStorageScope>,
 	bulletin: Arc<BulletinLookup<CacheFirst<BitswapRpc>>>,
-	/// The cache nodes that preimage lookups ask first, when `TRUAPI_CACHE_PROVIDERS` names a
+	/// The cache nodes that preimage reads ask first, when `TRUAPI_CACHE_PROVIDERS` names a
 	/// provider set.
 	cache: Option<Arc<CacheNodes>>,
 	next_notification_id: AtomicU32,
@@ -208,8 +208,9 @@ impl CliPlatform {
 		})
 	}
 
-	/// Pay the cache nodes as the signed-in account, whose root entropy is `entropy`: the payer is
-	/// `//allowance//cache//{product}` for the product that `product` selects at each read.
+	/// Pay the cache nodes as the signed-in account, which has the root entropy `entropy`. The
+	/// payer is `//allowance//cache//{product}` for the product that `product` selects at each
+	/// read.
 	pub fn set_cache_account(
 		&self,
 		entropy: &[u8],
@@ -965,8 +966,8 @@ impl PreimageHost for CliPlatform {
 
 #[async_trait]
 impl PreimageReadHost for CliPlatform {
-	/// One read through the cache nodes, Bulletin, or both, as `route` says. The CLI platform keeps
-	/// no cache of its own, so `skip_host_caches` changes nothing here: the core skips its
+	/// One read through the cache nodes, Bulletin, or both, as `route` says. The CLI platform has
+	/// no cache of its own, so `skip_host_caches` changes nothing here. The core skips its
 	/// read-after-write cache.
 	async fn read_preimage(
 		&self,
