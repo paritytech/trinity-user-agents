@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Expanded card</title>
+    <style>
+      html, body { background: #fff; color: #111; }
+      body { margin: 0; padding: 16px 16px 72px; font: 16px sans-serif; }
+      button { display: block; width: 100%; min-height: 64px; margin-bottom: 12px; font-size: 20px; }
+      #height { font-weight: bold; }
+      #log { padding: 0; list-style: none; font: 14px monospace; }
+      #bottom-edge {
+        position: fixed;
+        bottom: 0;
+        left: 0;
+        right: 0;
+        padding: 12px;
+        background: red;
+        color: white;
+        font-weight: bold;
+        text-align: center;
+      }
+    </style>
+  </head>
+  <body>
+    <button id="hide">Hide face</button>
+    <button id="show">Show face</button>
+    <button id="hide-later">Hide face in 2 s</button>
+    <p>innerHeight: <span id="height"></span></p>
+    <ul id="log"></ul>
+    <div id="bottom-edge">BOTTOM EDGE</div>
+    <script type="module" src="widget.js"></script>
+  </body>
+</html>

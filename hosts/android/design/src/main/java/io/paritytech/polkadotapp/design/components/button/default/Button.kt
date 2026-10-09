@@ -1,6 +1,7 @@
 package io.paritytech.polkadotapp.design.components.button.default
 
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.background
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -222,6 +223,7 @@ internal fun PolkadotButtonInternal(
     rippleColor: Color,
     contentPadding: PaddingValues,
     interactionSource: MutableInteractionSource?,
+    border: BorderStroke? = null,
     content: @Composable RowScope.() -> Unit
 ) {
     val resolvedInteractionSource = interactionSource ?: remember { MutableInteractionSource() }
@@ -236,6 +238,7 @@ internal fun PolkadotButtonInternal(
             shape = shape,
             brush = containerBrush,
             contentColor = contentColor,
+            border = border,
             interactionSource = resolvedInteractionSource
         ) {
             Row(

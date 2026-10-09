@@ -145,6 +145,7 @@ internal class RealContactChatSessionManager @Inject constructor(
                 chatPushNotificationsSender.sendPushNotificationOnce(
                     messageId = messageId,
                     platformToken = platformToken,
+                    operatingSystem = contact.operatingSystem,
                     pushId = pushId.value,
                     encryptedMessage = encryptedMessage,
                     isVoIP = useVoipToken

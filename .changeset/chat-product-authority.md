@@ -98,3 +98,13 @@ the native product index when actors open; historical unindexed products need on
 against actor commits and session changes, invalidate contact handles on trusted mutations, and reject late worker
 responses. Preserve provider-scoped Contacts UI callbacks without replacing the shared owner directory. Pairing hosts
 remain unsupported; no product wire or SSO directory API is added.
+
+Forward the canonical native permission administration and rc9 runtime into Chat.
+Identity and Chat consent participate in administrative prompt cancellation and
+stale-decision fencing; Chat AllowOnce remains bound to the authority session,
+never a durable or execution-cached grant. Keep upstream worker Chat and generic
+game, card and scanner capabilities separate from product Chat authority.
+
+The test host's `ProductStatementStoreAllowance` resource withholds product-account
+allowances at every derivation index without withholding the separate
+`StatementStoreAllowance` resource.

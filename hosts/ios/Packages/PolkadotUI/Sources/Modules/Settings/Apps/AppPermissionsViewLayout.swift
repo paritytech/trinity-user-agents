@@ -85,6 +85,7 @@ private extension AppPermissionsViewLayout {
                     }
                 )
             )
+            .disabled(viewModel.isRevoking)
             .labelsHidden()
             .tint(Color(.fgSuccess))
         }

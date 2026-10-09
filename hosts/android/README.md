@@ -1,5 +1,5 @@
 > [!WARNING]
-> This is an experimental proof-of-concept: a prototype and reference implementation developed and published by Parity. This open source code is provided for research, experimentation, and developer education only. It has not been audited, is actively experimental, and may contain bugs, vulnerabilities, or incomplete features. The app is a self-custodial wallet that can hold real assets — use at your own risk.
+> This is an experimental proof-of-concept: a prototype and reference implementation developed and published by Parity. This open source code is provided for research, experimentation, and developer education only. It has not been audited, is actively experimental, and may contain bugs, vulnerabilities, or incomplete features. The app is a self-custodial wallet that can hold real assets — use at your own risk and obtain legal advice as appropriate — DYOR.
 >
 > Parity does not deploy or operate this code and does not run any service behind it; it may update the code based on community feedback. If you experience problems with an app that was built from or distributed using this code, contact the party who built and distributed it, not Parity.
 
@@ -78,6 +78,7 @@ sdk.dir=/path/to/android-sdk
 
 # Build identity (public values, compiled into the APK)
 APPLICATION_ID=com.example.polkadot
+IOS_BUNDLE_ID=com.example.polkadot
 APPLICATION_NAME=Polkadot
 PRIVACY_POLICY_URL=https://example.com/privacy
 TERMS_OF_USE_URL=https://example.com/terms

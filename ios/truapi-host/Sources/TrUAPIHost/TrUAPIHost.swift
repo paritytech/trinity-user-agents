@@ -44,6 +44,13 @@ public protocol HostCoreStorageBackend: AnyObject, Sendable {
     func read(key: Data) throws -> Data?
     func write(key: Data, value: Data) throws
     func clear(key: Data) throws
+    func keys() throws -> [Data]
+}
+
+public extension HostCoreStorageBackend {
+    func keys() throws -> [Data] {
+        throw HostRejection.Rejected(reason: "core storage enumeration unsupported")
+    }
 }
 
 /// Host-private immutable attachment custody. These async callbacks may present
@@ -111,6 +118,13 @@ public protocol HostBridge: NativeChatFilesHost {
 
     /// Open a URL in the system browser, suspending for any approval on the main actor.
     func navigateTo(url: String) async throws
+
+    /// Show or hide the face above this execution's expanded card. Answers
+    /// `.notPresented` when the product is not under its card and `.userMoving`
+    /// while the user drags it, and returns without waiting for the animation.
+    /// Defaults to `.unsupported`, so an app without cards says so instead of
+    /// pretending it moved one.
+    func setExpandedCardFaceShown(shown: Bool) async throws -> ExpandedCardFaceOutcome
 
     /// Deliver a push notification (`HostPushNotificationRequest`)
     /// and return the host-assigned notification id. Run any UI work on the main actor.
@@ -225,7 +239,7 @@ public protocol HostBridge: NativeChatFilesHost {
     /// Demand is runtime-wide, so the core invokes this only on the bridge
     /// ``TrUAPIHostRuntime/init(bridge:runtimeConfig:)`` was given, never on
     /// the per-execution bridge passed to
-    /// ``TrUAPIHostRuntime/openProductExecution(bridge:configuration:chat:pocket:)``.
+    /// ``TrUAPIHostRuntime/openProductExecution(bridge:configuration:chat:pocket:game:)``.
     /// Can arrive on any thread, including synchronously on the calling
     /// thread during `acquireWorker`/`releaseWorker`, often the main thread
     /// and re-entrantly: hand the transition off rather than blocking on
@@ -260,10 +274,13 @@ public protocol HostBridge: NativeChatFilesHost {
     /// and persisted permission decisions.
     var coreStorage: HostCoreStorageBackend { get }
 
+    /// Invalidates native settings and legacy permission consumers.
+    func permissionAuthorizationsChanged(productId: String)
+
 }
 
 /// Native Chat storage and UI surface. Implement and pass to
-/// ``TrUAPIHostRuntime/openProductExecution(bridge:configuration:chat:pocket:)``
+/// ``TrUAPIHostRuntime/openProductExecution(bridge:configuration:chat:pocket:game:)``
 /// when the host supports the Chat modality; hosts without it pass nothing.
 /// Native Chat storage and UI surface, called from the process-wide dispatch
 /// pool shared by every product execution: implementations must be safe to
@@ -303,7 +320,7 @@ public protocol ChatHostBridge: AnyObject, Sendable {
 }
 
 /// Native Pocket collection surface. Implement and pass to
-/// ``TrUAPIHostRuntime/openProductExecution(bridge:configuration:chat:pocket:)``
+/// ``TrUAPIHostRuntime/openProductExecution(bridge:configuration:chat:pocket:game:)``
 /// when the host has a Pocket surface; hosts without one pass nothing. Called
 /// from the process-wide dispatch pool shared by every product execution:
 /// implementations must be safe to enter concurrently, and one that blocks
@@ -320,6 +337,32 @@ public protocol PocketHostBridge: AnyObject, Sendable {
     /// remove together, under whatever lock this host holds, so a card cannot
     /// be pinned between the two.
     func removeCard(cardId: String) throws -> NativePocketRemoval
+}
+
+/// Native game-reminder surface. Implement and pass to
+/// ``TrUAPIHostRuntime/openProductExecution(bridge:configuration:chat:pocket:game:)``
+/// when the host can hold reminders; hosts without one pass nothing. Both
+/// calls are async, so an implementation may hop to the main actor to answer;
+/// implementations must be safe to enter concurrently.
+///
+/// The host holds one reminder per product: a schedule replaces the reminder
+/// the same product already holds. The core asks for no per-product consent;
+/// the host asks the OS for what it needs, rings an alarm where the OS allows
+/// one and delivers a notification otherwise, may add the game to the
+/// calendar, keeps the reminder across app kill and reboot, and drops it once
+/// the game starts.
+///
+/// Both calls throw ``HostRejection`` (or an error conforming to
+/// `LocalizedError`) to decline. A failed schedule reaches the product as a
+/// host failure carrying its reason, a failed cancel as its generic error.
+public protocol GameHostBridge: AnyObject, Sendable {
+    /// Hold `startsAt` (Unix milliseconds, UTC) as this product's reminder,
+    /// replacing any it holds. Throw when the OS allows neither alarms nor
+    /// notifications.
+    func scheduleReminder(startsAt: UInt64) async throws
+
+    /// Drop this product's reminder. Dropping none succeeds.
+    func cancelReminder() async throws
 }
 
 /// Host-implemented contacts surface: a lookup from handles to contacts, and
@@ -426,6 +469,9 @@ public extension HostBridge {
     func devicePaired(device: PairedSsoPeer) {}
     func devicePermissionStatus(request: HostDevicePermissionRequest) async throws
         -> DevicePermissionStatus { .notApplicable }
+    func setExpandedCardFaceShown(shown: Bool) async throws -> ExpandedCardFaceOutcome {
+        .unsupported
+    }
     /// Defaults opt out of worker keep-alive; override to run background work
     /// past the product's surface. The id is still distinct per call, because
     /// an `OperationId` names one operation: a host overriding only
@@ -555,6 +601,34 @@ private final class PocketCallbackAdapter: NativePocketCallbacks, @unchecked Sen
     }
 }
 
+/// Adapter that bridges the public `GameHostBridge` to the generated UniFFI
+/// `NativeGameCallbacks` protocol.
+private final class GameCallbackAdapter: NativeGameCallbacks, @unchecked Sendable {
+    private let bridge: GameHostBridge
+
+    init(bridge: GameHostBridge) {
+        self.bridge = bridge
+    }
+
+    func scheduleReminder(startsAt: UInt64) async throws {
+        try await withHostRejection { try await bridge.scheduleReminder(startsAt: startsAt) }
+    }
+
+    func cancelReminder() async throws {
+        try await withHostRejection { try await bridge.cancelReminder() }
+    }
+
+    private func withHostRejection<T>(_ operation: () async throws -> T) async throws -> T {
+        do {
+            return try await operation()
+        } catch let error as HostRejection {
+            throw error
+        } catch {
+            throw HostRejection.Rejected(reason: hostRejectionReason(error))
+        }
+    }
+}
+
 /// Adapter that bridges the public `ContactsHostBridge` to the generated
 /// UniFFI `NativeContactsCallbacks` protocol.
 private final class ContactsCallbackAdapter: NativeContactsCallbacks, @unchecked Sendable {
@@ -653,6 +727,12 @@ private final class HostCallbackAdapter: HostCallbacks, @unchecked Sendable {
         }
     }
 
+    func setExpandedCardFaceShown(shown: Bool) async throws -> ExpandedCardFaceOutcome {
+        try await withHostRejection {
+            try await bridge.setExpandedCardFaceShown(shown: shown)
+        }
+    }
+
     func remotePermission(
         product: ProductExecutionConfig,
         request: RemotePermission
@@ -667,6 +747,14 @@ private final class HostCallbackAdapter: HostCallbacks, @unchecked Sendable {
 
     func authStateChanged(state: AuthState) {
         bridge.authStateChanged(state: state)
+    }
+
+    func coreStorageKeys() async throws -> [Data] {
+        try withHostRejection { try bridge.coreStorage.keys() }
+    }
+
+    func permissionAuthorizationsChanged(productId: String) {
+        bridge.permissionAuthorizationsChanged(productId: productId)
     }
 
     func coreStorageRead(key: Data) throws -> Data? {
@@ -979,28 +1067,71 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
     /// Open one executable connection with a host-assigned immutable context.
     /// Pass `chat` to install the host's Chat adapter; hosts without the Chat
     /// modality omit it. Pass `pocket` to install the card collection, and
-    /// omit that where the host has no Pocket surface.
+    /// omit that where the host has no Pocket surface. Pass `game` to hold
+    /// game reminders, and omit it where the host cannot.
     public func openProductExecution(
         bridge: HostBridge,
         configuration: ProductExecutionConfig,
         chat: ChatHostBridge? = nil,
-        pocket: PocketHostBridge? = nil
+        pocket: PocketHostBridge? = nil,
+        game: GameHostBridge? = nil
     ) throws -> TrUAPIProductExecution {
         let adapter = HostCallbackAdapter(bridge: bridge)
         let chatAdapter = chat.map { ChatCallbackAdapter(bridge: $0) }
         let pocketAdapter = pocket.map { PocketCallbackAdapter(bridge: $0) }
+        let gameAdapter = game.map { GameCallbackAdapter(bridge: $0) }
         let execution = try inner.openProductExecution(
             callbacks: adapter,
             chatCallbacks: chatAdapter,
             pocketCallbacks: pocketAdapter,
+            gameCallbacks: gameAdapter,
             executionConfig: configuration
         )
         return TrUAPIProductExecution(
             inner: execution,
             callbackRetainer: adapter,
             chatRetainer: chatAdapter,
-            pocketRetainer: pocketAdapter
+            pocketRetainer: pocketAdapter,
+            gameRetainer: gameAdapter
         )
+    }
+
+    public func permissionAuthorizationProducts() async throws -> [String] {
+        try await inner.permissionAuthorizationProducts()
+    }
+
+    public func permissionAuthorizationRevision(productId: String) throws -> UInt64 {
+        try inner.permissionAuthorizationRevision(productId: productId)
+    }
+
+    public func setPermissionAuthorizationStatusIfCurrent(
+        productId: String,
+        request: PermissionAuthorizationRequest,
+        status: PermissionAuthorizationStatus,
+        revision: UInt64
+    ) async throws -> Bool {
+        try await inner.setPermissionAuthorizationStatusIfCurrent(
+            productId: productId, request: request, status: status, revision: revision
+        )
+    }
+
+    public func permissionAuthorizations(productId: String) async throws -> [PermissionAuthorizationEntry] {
+        try await inner.permissionAuthorizations(productId: productId)
+    }
+
+    public func setPermissionAuthorizationStatus(
+        productId: String,
+        request: PermissionAuthorizationRequest,
+        status: PermissionAuthorizationStatus
+    ) async throws {
+        try await inner.setPermissionAuthorizationStatus(productId: productId, request: request, status: status)
+    }
+
+    public func importPermissionAuthorizations(
+        productId: String,
+        entries: [PermissionAuthorizationEntry]
+    ) async throws -> [PermissionAuthorizationEntry] {
+        try await inner.importPermissionAuthorizations(productId: productId, entries: entries)
     }
 
     public func disconnect() {
@@ -1213,16 +1344,13 @@ public protocol TrUAPIProductExecutionProtocol: AnyObject, Sendable {
     func startWsBridge(bindPort: UInt16) throws -> WsBridgeEndpoint
     func stopWsBridge()
     func close()
+    func isClosed() -> Bool
     func publishChatAction(_ action: HostChatActionSubscribeItem) throws
     func render(_ request: ProductRendererRenderRequest) throws -> AsyncThrowingStream<RendererNode, Error>
     func publishRendererAction(_ item: HostRendererActionSubscribeItem) throws
     func permissionAuthorizationStatus(
         request: PermissionAuthorizationRequest
     ) async throws -> PermissionAuthorizationStatus
-    func setPermissionAuthorizationStatus(
-        request: PermissionAuthorizationRequest,
-        status: PermissionAuthorizationStatus
-    ) throws
     func notifyThemeChanged(theme: HostThemeSubscribeItem)
     func notifyLocaleChanged(locale: HostLocaleSubscribeItem)
     func notifyStorageChanged(key: String, value: Data?)
@@ -1241,12 +1369,14 @@ public final class TrUAPIProductExecution: TrUAPIProductExecutionProtocol, @unch
     private let chatRetainer: NativeChatCallbacks?
     private let pocketRetainer: NativePocketCallbacks?
     private let localeObservers: [NSObjectProtocol]
+    private let gameRetainer: NativeGameCallbacks?
 
     fileprivate init(
         inner: NativeProductExecution,
         callbackRetainer: HostCallbacks,
         chatRetainer: NativeChatCallbacks?,
-        pocketRetainer: NativePocketCallbacks?
+        pocketRetainer: NativePocketCallbacks?,
+        gameRetainer: NativeGameCallbacks?
     ) {
         self.inner = inner
         self.callbackRetainer = callbackRetainer
@@ -1261,6 +1391,7 @@ public final class TrUAPIProductExecution: TrUAPIProductExecutionProtocol, @unch
                 inner.notifyLocaleChanged(locale: locale)
             }
         }
+        self.gameRetainer = gameRetainer
     }
 
     deinit {
@@ -1274,6 +1405,10 @@ public final class TrUAPIProductExecution: TrUAPIProductExecutionProtocol, @unch
 
     public func stopWsBridge() {
         inner.stopWsBridge()
+    }
+
+    public func isClosed() -> Bool {
+        inner.isClosed()
     }
 
     public func close() {
@@ -1305,14 +1440,6 @@ public final class TrUAPIProductExecution: TrUAPIProductExecutionProtocol, @unch
         request: PermissionAuthorizationRequest
     ) async throws -> PermissionAuthorizationStatus {
         try await inner.permissionAuthorizationStatus(request: request)
-    }
-
-    /// Updates the product decision used by subsequent permission checks.
-    public func setPermissionAuthorizationStatus(
-        request: PermissionAuthorizationRequest,
-        status: PermissionAuthorizationStatus
-    ) throws {
-        try inner.setPermissionAuthorizationStatus(request: request, status: status)
     }
 
     public func notifyThemeChanged(theme: HostThemeSubscribeItem) {

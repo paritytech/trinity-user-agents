@@ -11,6 +11,10 @@ let package = Package(
         .library(
             name: "StructuredConcurrency",
             targets: ["StructuredConcurrency"]
+        ),
+        .library(
+            name: "StructuredConcurrencyTestSupport",
+            targets: ["StructuredConcurrencyTestSupport"]
         )
     ],
     dependencies: [
@@ -47,14 +51,20 @@ let package = Package(
                 .product(name: "Foundation-iOS", package: "foundation-ios"),
                 .product(name: "SDKLogger", package: "logger-ios"),
                 "OperationExt",
-            ]
+            ],
+            path: "Sources"
+        ),
+        .target(
+            name: "StructuredConcurrencyTestSupport",
+            path: "TestSupport"
         ),
         .testTarget(
             name: "StructuredConcurrencyTests",
             dependencies: [
                 "StructuredConcurrency",
                 .product(name: "Operation-iOS", package: "operation-ios"),
-            ]
+            ],
+            path: "Tests"
         )
     ]
 )

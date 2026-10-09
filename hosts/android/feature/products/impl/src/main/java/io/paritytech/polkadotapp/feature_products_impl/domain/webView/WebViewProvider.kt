@@ -25,6 +25,7 @@ abstract class WebViewProvider(
     private val onPageFinishedListeners = mutableListOf<() -> Unit>()
     private val onPageStartedListeners = mutableListOf<(String) -> Unit>()
     private val onWebViewDestroyedListeners = mutableListOf<() -> Unit>()
+    private var permissionRevoked = false
 
     abstract val callingProductIdProvider: CallingProductIdProvider
 
@@ -38,6 +39,7 @@ abstract class WebViewProvider(
 
     suspend fun getWebView(): WebView {
         return mutex.withLock {
+            check(!permissionRevoked) { "Product permissions changed; reopen the product to continue" }
             cachedWebView.value?.let { return it }
 
             withContext(dispatchers.main) {
@@ -90,6 +92,19 @@ abstract class WebViewProvider(
         dead.destroy()
         cachedWebView.compareAndSet(dead, null)
         onWebViewDestroyedListeners.forEach { it.invoke() }
+    }
+
+    /** Permission revocation is not renderer loss: never auto-reload the old execution. */
+    suspend fun disposeRevokedExecution() = withContext(dispatchers.main) {
+        mutex.withLock {
+            permissionRevoked = true
+            cachedWebView.value?.let { view ->
+                view.stopLoading()
+                (view.parent as? ViewGroup)?.removeView(view)
+                view.destroy()
+            }
+            cachedWebView.value = null
+        }
     }
 
     /**

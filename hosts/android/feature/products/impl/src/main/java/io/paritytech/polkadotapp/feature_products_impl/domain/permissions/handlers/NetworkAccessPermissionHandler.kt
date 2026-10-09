@@ -3,6 +3,7 @@ package io.paritytech.polkadotapp.feature_products_impl.domain.permissions.handl
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.ProductPermissionRepository
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.ProductPermissionRequester
+import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.canonicalDomain
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.models.PermissionDecision
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.models.ProductPermission.RemotePermission.NetworkAccess
 import java.net.URI
@@ -19,6 +20,7 @@ class NetworkAccessPermissionHandler @Inject constructor(
     )
 
     override suspend fun isGranted(productId: ProductId, permission: NetworkAccess): Boolean {
+        if (repository.isDenied(productId, permission)) return false
         if (permission.domain in allowedDomains) return true
 
         val candidates = generateDomainCandidates(permission.domain)
@@ -69,10 +71,12 @@ class NetworkAccessPermissionHandler @Inject constructor(
          * Stops at second-level domains to avoid matching TLDs.
          */
         fun generateDomainCandidates(domain: String): List<String> {
-            val candidates = mutableListOf<String>()
-            candidates.add(domain)
-
-            val parts = domain.split('.')
+            val normalized = canonicalDomain(domain)
+            val parts = normalized.split('.')
+            if (':' in normalized || (parts.size == 4 && parts.all { part -> part.toIntOrNull()?.let { it in 0..255 } == true })) {
+                return listOf(normalized, "*")
+            }
+            val candidates = mutableListOf(normalized)
             for (i in 1..parts.size - 2) {
                 val parent = parts.drop(i).joinToString(".")
                 candidates.add("*.$parent")

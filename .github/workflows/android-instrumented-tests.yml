@@ -69,6 +69,7 @@ jobs:
         uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2.38.0
         env:
           APPLICATION_ID: ${{ vars.APPLICATION_ID }}
+          IOS_BUNDLE_ID: ${{ vars.IOS_BUNDLE_ID || 'io.parity.polkadotapp' }}
           APPLICATION_NAME: ${{ vars.APPLICATION_NAME }}
           CONTACT_EMAIL: ${{ vars.CONTACT_EMAIL }}
           CURRENCY_SYMBOL: ${{ vars.CURRENCY_SYMBOL }}
@@ -92,10 +93,10 @@ jobs:
           profile: pixel_5
           disable-animations: true
           working-directory: hosts/android
-          # Flavours are declared only in the app module, so this resolves
-          # there and runs that module's tests. The instrumented tests in the
-          # library modules are not covered, as upstream did not cover them.
-          script: ./gradlew connectedGpDebugAndroidTest --no-daemon
+          # App flavours do not select the bindings library's tests. Run those
+          # explicitly so canonical permission administration is exercised
+          # through the actual Android native library, not only JVM mocks.
+          script: ./gradlew :bindings:truapi-host:connectedDebugAndroidTest :app:connectedGpDebugAndroidTest --no-daemon
 
       # The report says which test failed; the job status only says one did.
       - name: Upload the test report
@@ -103,6 +104,8 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: instrumented-test-report
-          path: hosts/android/app/build/reports/androidTests/
+          path: |
+            hosts/android/app/build/reports/androidTests/
+            hosts/android/bindings/truapi-host/build/reports/androidTests/
           retention-days: 5
           if-no-files-found: ignore
