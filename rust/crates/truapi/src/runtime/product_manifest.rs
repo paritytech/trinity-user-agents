@@ -277,7 +277,7 @@ pub async fn grants_scope(
         .is_ok()
 }
 
-/// `grants_scope`, keeping the reason for an operator.
+/// Published access subject to this host's stored account-access refusals.
 pub async fn scope_grant(
     services: &RuntimeServices,
     platform: &dyn Platform,
@@ -285,17 +285,7 @@ pub async fn scope_grant(
     target: &str,
     scope: Granted,
 ) -> Result<(), RefusedBecause> {
-    // Bounded here, not by the caller.
-    //
-    // The product-facing door runs this inside `remote_authority_call` and so
-    // carries the deadline its caller asked for. The wire door does not: the
-    // authority is the remote end, nothing races `cx.timeout()` there, and the
-    // peer sets no deadline of its own. The responder also dispatches serially,
-    // so one message naming enough uncached products would hold every other
-    // product's signing on this device behind it.
-    //
-    // A ceiling on the resolution itself covers both doors. Where a caller's
-    // deadline is shorter it still wins, because that race is applied outside.
+    // Incoming SSO has no caller deadline, so manifest resolution has its own ceiling.
     let Some(json) = with_ceiling(
         MANIFEST_RESOLUTION_CEILING,
         root_manifest(services, platform, target),

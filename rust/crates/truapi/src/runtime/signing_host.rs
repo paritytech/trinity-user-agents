@@ -209,8 +209,7 @@ pub struct SigningHost {
 }
 
 impl SigningHost {
-    /// Build a signing host with no active session, serving the network whose
-    /// dotNS TLD is `network_suffix`.
+    /// Build a locked signing host for the network's dotNS suffix.
     pub fn new(services: Arc<RuntimeServices>, network_suffix: String) -> Arc<Self> {
         let platform = services.platform.clone();
         let ring_resolver = ChainRingResolver::new(services.chain.clone());
@@ -252,17 +251,14 @@ impl SigningHost {
             .store(local, core::sync::atomic::Ordering::Relaxed);
     }
 
-    /// Answer resource allocation as granted without performing it.
+    /// Answer resource allocation as granted without performing it in test hosts.
     #[cfg(feature = "test-host")]
     pub fn set_grant_allowances_unchecked(&self, granted: bool) {
         self.grant_allowances_unchecked
             .store(granted, std::sync::atomic::Ordering::Relaxed);
     }
 
-    /// Answer these resource tags as refused, replacing any earlier set.
-    ///
-    /// The tag is the `AllocatableResource` variant name, so
-    /// `SmartContractAllowance` withholds every derivation index.
+    /// Replace refused resource tags; SmartContractAllowance covers every index.
     #[cfg(feature = "test-host")]
     pub(crate) fn set_withheld_resources(&self, tags: Vec<String>) {
         *self
@@ -497,13 +493,8 @@ impl SigningHost {
         Ok(())
     }
 
-    /// The product's hard-subtree public key, derived from the active session
-    /// root.
-    ///
-    /// A signing host holds the root, so it derives this rather than asking an
-    /// Account Holder for it the way a pairing host must, and answers the
-    /// `ProductAuthority` request of the same name from the same derivation.
-    /// `None` when no session is active: there is no root to derive from.
+    /// Derive the product's hard-subtree public key from the active session root.
+    /// Returns `None` when no session is active.
     pub fn derive_subtree_public_key(
         &self,
         product_id: &str,
@@ -994,8 +985,7 @@ impl ProductAuthority for SigningHost {
                 v01::HostRequestLoginResponse::AlreadyConnected,
             ))
         } else {
-            // The host activates a local session out of band once the wallet
-            // is unlocked; there is no in-core login prompt to drive.
+            // Wallet unlock and session activation are platform-owned.
             Ok(HostRequestLoginResponse::V1(
                 v01::HostRequestLoginResponse::Rejected,
             ))
@@ -1209,17 +1199,8 @@ impl ProductAuthority for SigningHost {
         request: ProductRequest<HostAccountGetAliasRequest>,
     ) -> Result<v01::ContextualAlias, RingVrfError> {
         self.require_current_session(session)?;
-        // A `context` grant covers this. RFC-0024 defines the scope as "acting
-        // as the granting product's account: reading it and the identity that
-        // follows from it", and the contextual alias is that identity: it and
-        // the proof come out of one VRF evaluation, so a grantee that may
-        // `create_proof` already holds the alias the proof attests. Prompting
-        // here would ask the user to approve what the publisher's grant has
-        // already authorized, and would leave the two calls disagreeing about
-        // what `context` means.
-        //
-        // The gate is the same one `create_proof` uses, including stored refusals
-        // for ordinary products. Ungranted calls take the account-access path.
+        // Aliases expose the same identity as `create_proof`, so both must enforce
+        // the same RFC-0024 grant and context restrictions.
         let granted = match self
             .require_ring_vrf_key_access(&request.calling_product_id, &request.payload.key_handle)
             .await
@@ -1241,9 +1222,7 @@ impl ProductAuthority for SigningHost {
                 key_handle
             }
             None => {
-                // No grant: the prompt path, as before. Both arguments are
-                // normalized first so the decision is filed under, and read
-                // back from, the identity the gate would have decided about.
+                // Permission lookups and prompts must use the same canonical identifiers.
                 let requester = normalize_product_identifier(&request.calling_product_id)
                     .map_err(|_| RingVrfError::NotAllowlisted)?;
                 let owner =
@@ -1303,15 +1282,7 @@ impl ProductAuthority for SigningHost {
         let (key_handle, access) = self
             .require_ring_vrf_key_access(&request.calling_product_id, &request.payload.key_handle)
             .await?;
-        // A grant lets the caller act with the owner's key in the caller's own
-        // context. It does not let it choose whose pseudonym to mint: the
-        // contextual alias is a function of (owner key, context), so an
-        // unconstrained context would let a grantee produce the alias the owner
-        // presents to a third product that granted nothing. That third party
-        // cannot consent here and is not a party to the grant.
-        //
-        // The owner's own calls are unaffected; a cross-product caller is held to
-        // its own context or the granting product's.
+        // A grant must not expose the owner's alias in an unrelated product's context.
         crate::runtime::product_manifest::require_own_context(&access, &request.payload.context)?;
         let vrf = vrf::load().await?;
         let entropy = self
@@ -1386,11 +1357,7 @@ impl ProductAuthority for SigningHost {
                 reason: err.to_string(),
             }
         })?;
-        // Normalized before comparing, and before the prompt. `sso_responder`
-        // hands `calling_product_id` through untouched, so comparing it raw
-        // asks an owner to consent to its own account for spelling itself
-        // differently, and files that decision under the spelling the peer
-        // chose rather than the one the grant path reads back.
+        // Ownership checks and permission decisions must use canonical identifiers.
         let caller = normalize_product_identifier(&request.calling_product_id)
             .map_err(|_| RingVrfError::NotAllowlisted)?;
         if caller != owner {

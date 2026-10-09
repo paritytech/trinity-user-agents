@@ -941,6 +941,7 @@ pub struct StatementStoreAllocation {
     pub period: u32,
 }
 
+/// Issue a statement allowance with the period actually found or registered.
 pub async fn allocate_statement_store_allowance(
     services: &RuntimeServices,
     signing_host: &SigningHost,
@@ -958,10 +959,7 @@ pub async fn allocate_statement_store_allowance(
     let entropy = signing_host.root_entropy()?;
     let allowance =
         derive_sr25519_hard_path(&entropy, &["allowance", "statement-store", product_id])?;
-    // The key is derived locally; only its registration needs the chain. A
-    // host answering allocation as granted hands back the derived key so a
-    // product can sign with it, and skips the registration, so nothing it
-    // signs is accepted by a real statement store.
+    // Test signatures use real keys without claiming on-chain registration.
     #[cfg(feature = "test-host")]
     if signing_host.grants_allowances_unchecked() {
         return Ok(StatementStoreAllocation {
@@ -981,15 +979,10 @@ pub async fn allocate_statement_store_allowance(
     let period = statement_allowance::slot::current_period(current_unix_secs()?);
     let reuse_existing = matches!(policy, OnExistingAllowancePolicy::Ignore);
 
-    // Held from the scan through the submission, not just around the submission:
-    // the scan is what picks the free slot, so a renewal pass scanning in the gap
-    // would choose the same one. Released on the early return below, which
-    // submits nothing.
+    // Hold through scan and submission so renewal cannot select the same slot.
     let _registration = signing_host.renewal.registration_lock().lock().await;
 
-    // One read of the period's slot tables, reused below rather than rescanned:
-    // when an allowance is already recorded on chain neither a proof nor a
-    // submission is needed, and a ring snapshot pages in every member key.
+    // Existing allocations need no proof or costly ring snapshot.
     let scans = scan_collections(
         rpc,
         &chain.metadata,
@@ -1035,9 +1028,7 @@ pub async fn allocate_statement_store_allowance(
             period,
             network_suffix: &network_suffix,
             reuse_existing,
-            // Connecting a product must not revoke another product's allowance.
-            // A full period is reported as exhaustion; reclaiming space is the
-            // renewal pass's job, which only ever replaces for its own ledger.
+            // Only renewal may reclaim slots belonging to its own ledger.
             allow_eviction: false,
             protected: &[],
         },
@@ -1086,6 +1077,7 @@ pub async fn allocate_statement_store_allowance(
     })
 }
 
+/// Issue the product's Bulletin allowance key.
 pub async fn allocate_bulletin_allowance(
     services: &RuntimeServices,
     signing_host: &SigningHost,
@@ -1134,14 +1126,7 @@ pub async fn allocate_bulletin_allowance(
     let chain = services.chain_context.get(&people_client).await?;
     let network_suffix = statement_allowance::slot::read_network_suffix(people_rpc).await?;
     let candidates = signing_host.reserved_person_collection_candidates(session)?;
-    // Statement-store slots and PGAS claims are each bounded by a per-collection
-    // constant, so their budgets are meant to be spent per collection. Long-term
-    // storage is bounded by `Resources.LongTermStorageClaimsPerPeriod` alone, with
-    // no per-collection variant, so the budget reads as per person. Its spent
-    // counters are still keyed by a collection-scoped alias, which means changing
-    // collection silently restarts the count at zero. Staying in the light
-    // collection keeps one person to one count; full personhood is the fallback
-    // for a device without light personhood.
+    // Prefer light membership so switching collections cannot reset the person's budget.
     let memberships =
         find_including_rings(people_rpc, &chain.metadata, &candidates, u32::MAX).await?;
     let membership = memberships
@@ -1254,8 +1239,7 @@ pub async fn allocate_smart_contract_allowance(
     );
     let asset_hub = services.chain_context.get(&asset_hub_client).await?;
 
-    // A claim spends one of the day's slots, so honour a caller that asked to leave
-    // an existing allowance alone rather than topping up an already-warm account.
+    // Reusing a funded account preserves the person's daily claim slots.
     if matches!(policy, OnExistingAllowancePolicy::Ignore)
         && pgas::holds_a_full_claim(asset_hub_client.rpc(), &asset_hub.metadata, &target).await?
     {
@@ -1274,8 +1258,7 @@ pub async fn allocate_smart_contract_allowance(
     let people = services.chain_context.get(&people_client).await?;
 
     let candidates = signing_host.reserved_person_collection_candidates(session)?;
-    // A single claim needs one collection, so take the strongest membership the
-    // person actually holds rather than assuming light personhood.
+    // A PGAS claim uses the strongest available membership.
     let membership = find_including_rings(people_rpc, &people.metadata, &candidates, u32::MAX)
         .await?
         .into_iter()
@@ -1306,10 +1289,7 @@ pub async fn allocate_smart_contract_allowance(
     Ok(())
 }
 
-/// Wall-clock seconds since the UNIX epoch, used to pick the allowance period.
-///
-/// `std::time::SystemTime` compiles for wasm32 but panics when read, so the
-/// browser takes its clock from `web-time` instead.
+/// Allowance period clock, using web-time on browsers to avoid SystemTime panics.
 pub fn current_unix_secs() -> Result<u64, AllowanceAllocationError> {
     #[cfg(not(target_arch = "wasm32"))]
     use std::time::{SystemTime, UNIX_EPOCH};

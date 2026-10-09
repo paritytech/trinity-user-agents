@@ -5,7 +5,7 @@ use std::sync::{Arc, Mutex};
 
 use crate::platform::{CoreStorageKey, Platform, normalize_product_identifier};
 use parity_scale_codec::{Decode, Encode};
-use truapi::v01::{ProductAccountId, RegisteredRingVrfKey, RingLocation};
+use truapi::latest::{ProductAccountId, RegisteredRingVrfKey, RingLocation};
 
 use crate::host_internal::sso_messages::RingVrfError;
 
@@ -85,6 +85,7 @@ impl RingVrfRegistryStore {
             .collect())
     }
 
+    /// Persist a registration without replacing an existing key.
     pub async fn register(
         &self,
         root_public_key: [u8; 32],

@@ -34,11 +34,7 @@ use crate::runtime::statement_allowance::{
 /// Fallback tick delay when the system clock is unusable.
 const CLOCK_FAILURE_TICK_DELAY: Duration = Duration::from_secs(3_600);
 
-/// A statement-store account the signing host promised to keep renewed.
-///
-/// Entropy-derived variants are recipes, not raw account ids, so the ledger
-/// survives root-entropy rotation (the CLI rotates auto-managed accounts on
-/// slot exhaustion).
+/// A statement account or derivation recipe the wallet keeps renewed.
 #[derive(Clone, Debug, PartialEq, Eq, Encode, Decode)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
 pub enum StatementRenewalTarget {
@@ -58,16 +54,7 @@ pub enum StatementRenewalTarget {
     },
 }
 
-/// One persisted ledger entry, which is also what a host reads back.
-///
-/// A derivation recipe resolves under whatever root entropy is active, so it
-/// carries no owner and keeps working across a rotation. A raw account id does
-/// not re-derive, so it records the root public key that promised it and is
-/// ignored under any other identity: without that, a later account would spend
-/// its own slot-table capacity keeping a previous account's peer allowed.
-///
-/// Reading it back does not resolve it: resolution needs root entropy, and a
-/// host inspecting its slots may hold none.
+/// Renewal recipes follow the active wallet; fixed accounts belong to their recorded owner.
 #[derive(Clone, Debug, PartialEq, Eq, Encode, Decode)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
 pub struct TrackedStatementRenewalTarget {
@@ -79,11 +66,7 @@ pub struct TrackedStatementRenewalTarget {
 }
 
 impl StatementRenewalTarget {
-    /// This target with its product identifier in canonical form.
-    ///
-    /// The renewal account is derived from `product_id`, and a product
-    /// connection derives its own from the normalized form, so an unnormalized
-    /// id renews an account no product uses while the real one lapses.
+    /// Match the product identifier used by account derivation.
     fn normalized(self) -> Result<Self, String> {
         match self {
             Self::ProductStatementAllowance { product_id } => {
@@ -143,6 +126,7 @@ pub struct RenewalState {
 }
 
 impl RenewalState {
+    /// Serialize registration scans with competing issuers.
     pub fn registration_lock(&self) -> &Mutex<()> {
         &self.registration_lock
     }
@@ -214,10 +198,7 @@ async fn track_targets(
     write_entries(storage, &entries).await
 }
 
-/// Read the ledger without resolving anything.
-///
-/// Takes the ledger lock so a listing taken while a track or a prune is running
-/// reports the settled ledger rather than the state it is replacing.
+/// Read a settled ledger while competing writes hold the same lock.
 async fn list_entries(
     storage: &(impl CoreStorage + ?Sized),
     ledger_lock: &Mutex<()>,
@@ -272,9 +253,7 @@ fn decode_entries(blob: &[u8]) -> Result<Vec<TrackedStatementRenewalTarget>, Str
     Ok(entries)
 }
 
-/// Resolve a ledger entry into a concrete account for this session's entropy.
-/// The label a target reports under, derivable without an active session so a
-/// pruned entry reads the same as a renewed one.
+/// Stable labels identify pruned entries even without an active wallet.
 fn target_label(target: &StatementRenewalTarget) -> String {
     match target {
         StatementRenewalTarget::ProductStatementAllowance { product_id } => {
@@ -337,11 +316,7 @@ pub async fn track(
     .await
 }
 
-/// Every entry the ledger holds, in the order it was tracked.
-///
-/// Reads storage alone. A host that has not unlocked an identity still gets
-/// the list, which is the case a scheduled task runs in: it wakes, asks what
-/// its finite slots are spent on, and decides whether to renew at all.
+/// List tracked entries without requiring wallet unlock.
 pub async fn list(
     signing_host: &SigningHost,
 ) -> Result<Vec<TrackedStatementRenewalTarget>, String> {
@@ -352,11 +327,7 @@ pub async fn list(
     .await
 }
 
-/// Root public key the active identity records its fixed entries under.
-///
-/// Pairs with [`list`], which reports each entry's owner as stored: comparing
-/// the two is how a host tells the entries it will actually renew from the ones
-/// a pass will prune.
+/// Identify which fixed ledger entries belong to the active wallet.
 pub fn active_owner_key(signing_host: &SigningHost) -> Result<[u8; 32], String> {
     let entropy = signing_host.root_entropy().map_err(|err| err.to_string())?;
     owner_key(&entropy)
@@ -377,11 +348,7 @@ pub async fn untrack_account_for_signing_host(
     .await
 }
 
-/// Resolve every ledger target under `entropy`, skipping any that cannot be
-/// resolved.
-///
-/// A target is skipped rather than failing the pass: one unusable entry must
-/// not stop every other target from being renewed.
+/// Skip unusable entries so they cannot prevent renewal of other targets.
 fn resolve_targets(
     entropy: &[u8],
     network_suffix: &str,
@@ -564,11 +531,7 @@ async fn run_tick(services: &Arc<RuntimeServices>, signing_host: &SigningHost) {
     );
 }
 
-/// Record and log what one tick achieved.
-///
-/// Split out from [`run_tick`] so the recording is reachable without a runtime: a
-/// loop that logged but forgot to record would leave a host unable to see
-/// exhaustion, and that is exactly the wiring worth a test.
+/// Preserve the last completed pass when a later tick fails.
 fn absorb_tick(state: &RenewalState, result: Result<StatementRenewalReport, String>) {
     match result {
         Ok(report) => {

@@ -54,7 +54,7 @@ pub async fn member_key(entropy: [u8; 32]) -> Result<[u8; 32], StatementAllowanc
     Ok(vrf.member(&entropy).map_err(vrf_error)?)
 }
 
-/// [`member_key`], blocking on the load.
+/// The ring member for fixed test entropy.
 #[cfg(test)]
 pub fn member_key_now(entropy: [u8; 32]) -> [u8; 32] {
     futures::executor::block_on(member_key(entropy)).expect("the ring member derives")

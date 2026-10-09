@@ -256,9 +256,9 @@ pub fn establish_sso_session_info(
 /// secret is the persistent `sso` key both sides feed into the session ECDH.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResponderIdentity {
-    /// Expanded Ed25519 secret used to sign session statements.
+    /// Expanded sr25519 secret used to sign session statements.
     pub statement_secret: [u8; 64],
-    /// Ed25519 public key advertised as the session identity account.
+    /// sr25519 public key advertised as the session identity account.
     pub statement_public_key: [u8; 32],
     /// X25519 secret key used to derive the shared session channels.
     pub encryption_secret_key: [u8; 32],

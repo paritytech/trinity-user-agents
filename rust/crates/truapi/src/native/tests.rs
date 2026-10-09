@@ -2027,10 +2027,7 @@ fn start_ws_bridge_twice_returns_already_running() {
             Ok(PermissionDecision::Deny)
         }
         fn auth_state_changed(&self, _state: AuthState) {}
-        async fn core_storage_read(
-            &self,
-            _key: Vec<u8>,
-        ) -> Result<Option<Vec<u8>>, HostRejection> {
+        async fn core_storage_read(&self, _key: Vec<u8>) -> Result<Option<Vec<u8>>, HostRejection> {
             Ok(None)
         }
         async fn core_storage_write(
@@ -2215,10 +2212,7 @@ fn pending_permission_decision_does_not_stall_bridge() {
             Ok(PermissionDecision::Deny)
         }
         fn auth_state_changed(&self, _state: AuthState) {}
-        async fn core_storage_read(
-            &self,
-            _key: Vec<u8>,
-        ) -> Result<Option<Vec<u8>>, HostRejection> {
+        async fn core_storage_read(&self, _key: Vec<u8>) -> Result<Option<Vec<u8>>, HostRejection> {
             Ok(None)
         }
         async fn core_storage_write(

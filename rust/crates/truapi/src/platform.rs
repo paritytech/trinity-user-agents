@@ -2860,6 +2860,7 @@ mod tests {
 /// product-indexed variants, which are `PermissionAuthorization`,
 /// `AutoSigningKey`, and `ProductSubtree`. Keying host storage by that value
 /// makes the sweep a prefix delete rather than a scan.
+// TODO: introduce SecretStorage to make protection a separate contract.
 #[async_trait]
 pub trait CoreStorage: Send + Sync {
     /// Read a core-owned value by typed slot.

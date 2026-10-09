@@ -45,9 +45,9 @@ use serde::Deserialize;
 use truapi::latest;
 
 use crate::PairingProposal;
-use crate::host_logic::dotns;
 #[cfg(doc)]
 use crate::SigningHostRuntime;
+use crate::host_logic::dotns;
 
 /// Classify a navigation input exactly like the core's internal navigate host
 /// call: dotNS first, then `localhost`, then normalized external, with

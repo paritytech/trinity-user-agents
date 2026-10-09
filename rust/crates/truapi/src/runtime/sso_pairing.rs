@@ -69,7 +69,6 @@ const PAIRING_DEADLINE: Duration = Duration::from_secs(300);
 #[cfg(test)]
 const PAIRING_DEADLINE: Duration = Duration::from_millis(200);
 
-/// Why a pairing attempt was abandoned, named the same way wherever it expires.
 fn pairing_deadline_reason() -> String {
     let seconds = PAIRING_DEADLINE.as_secs();
     format!(

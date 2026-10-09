@@ -425,13 +425,9 @@ pub struct RegistrationParams<'a> {
     pub ring: &'a RingParams,
     /// Whether an existing registration for this period may be reused.
     pub reuse_existing: bool,
-    /// A slot the caller's own scan already selected, used for the first attempt
-    /// so the scan is not repeated. The duplicate-submit retry rescans, so this
-    /// only ever shortcuts the first submission.
+    /// Reuse the caller's first scan; duplicate submissions still need a fresh scan.
     pub preselected: Option<Preselected>,
-    /// Slots the caller has already claimed in this batch and must not lose.
-    /// A multi-target pass would otherwise take a slot back off a target it
-    /// registered moments earlier and never settle.
+    /// A batch must not revoke allowances it just registered for earlier targets.
     pub protected: &'a [u32],
 }
 

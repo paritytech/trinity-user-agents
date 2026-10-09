@@ -9,11 +9,7 @@ use crate::runtime::connected_session_ui_info;
 
 use zeroize::Zeroizing;
 
-/// Establish a wallet-local session from host-held secret material.
-///
-/// A signing host owns the user's keys, so it establishes sessions directly
-/// rather than through the SSO pairing flow. Only [`SigningHost`] implements
-/// this; pairing hosts have no local secret to activate.
+/// Activate the wallet from entropy supplied by the embedding host.
 #[async_trait::async_trait]
 pub trait LocalActivation: Send + Sync {
     /// Activate a local session from raw BIP-39 entropy, deriving the root

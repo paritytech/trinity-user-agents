@@ -206,9 +206,7 @@ enum StoredSessionActivationError {
 /// State carried across the reconciles of one session store sync task.
 #[derive(Default)]
 struct SessionStoreSync {
-    /// Clearing the store can itself notify the sync subscription; clear at
-    /// most once per read-error streak so a persistently failing read cannot
-    /// spin the task through its own clear notifications.
+    // Storage clears can notify this subscription; clear at most once per read-error streak.
     cleared_after_read_error: bool,
 }
 
@@ -396,6 +394,7 @@ impl PairingHost {
         self.start_remote_monitor_for_current_session();
     }
 
+    /// Pause replacement before the guarded installation for race tests.
     #[cfg(test)]
     pub fn pause_external_session_activation_for_tests(
         &self,
@@ -426,6 +425,7 @@ impl PairingHost {
         self.session_state.current().as_ref().map(authority_session)
     }
 
+    /// Providers registered for this ring under the active account.
     pub async fn ring_vrf_providers(
         &self,
         ring: &v01::RingLocation,
@@ -438,6 +438,7 @@ impl PairingHost {
             .await
     }
 
+    /// Provider selected for this ring under the active account.
     pub async fn selected_ring_vrf_provider(
         &self,
         ring: &v01::RingLocation,
@@ -450,6 +451,7 @@ impl PairingHost {
             .await
     }
 
+    /// Persist the provider choice under the active account.
     pub async fn select_ring_vrf_provider(
         &self,
         ring: v01::RingLocation,
@@ -498,10 +500,7 @@ impl PairingHost {
         Ok(())
     }
 
-    /// Read, validate, resolve, and install the persisted auth session before
-    /// returning. Product frames may use the connected session once this
-    /// future resolves. Reports the resulting auth state to the host, including
-    /// when there was no session to restore.
+    /// Restore the persisted session and report the resulting connection state.
     pub async fn activate_stored_session(&self) -> Result<(), String> {
         let restored = self
             .reconcile_stored_session(true, false)
@@ -597,10 +596,7 @@ impl PairingHost {
         Ok(())
     }
 
-    /// Spawn the background task that keeps the in-memory session in step
-    /// with the persisted auth session. It reconciles once at boot and
-    /// announces the outcome, so the host always receives an opening auth
-    /// state, then reconciles again on every change notification.
+    /// Reconcile at boot and after storage notifications, reporting auth state.
     #[instrument(skip_all, fields(runtime.method = "session_store.sync"))]
     pub fn start_session_store_sync(self: Arc<Self>, spawner: Spawner) {
         let pairing_host = Arc::downgrade(&self);
@@ -976,6 +972,7 @@ impl PairingHost {
         true
     }
 
+    /// Install a selected session through the real lifecycle.
     #[cfg(test)]
     pub async fn set_connected_session_for_tests(&self, session: SessionInfo) {
         self.set_connected_session(session).await;
@@ -1013,6 +1010,7 @@ impl PairingHost {
         .await
     }
 
+    /// Register fixture material in the actual durable registry.
     #[cfg(test)]
     pub async fn register_ring_vrf_key_for_tests(
         &self,
@@ -1026,6 +1024,7 @@ impl PairingHost {
             .await
     }
 
+    /// Cache sizes for lifecycle regression checks.
     #[cfg(test)]
     pub fn capability_cache_sizes_for_tests(&self) -> (usize, usize, usize, usize) {
         (
@@ -1127,12 +1126,7 @@ impl PairingHost {
             .is_none()
     }
 
-    /// Read a product subtree public key from the memory cache, falling back to
-    /// the slot an earlier launch persisted. `None` when neither holds it.
-    ///
-    /// This is the consent-free half of the resolution order. Splitting it out
-    /// lets a host read what the core already knows without the wire request
-    /// that follows a miss, which has no timeout of its own.
+    /// Load a retained public subtree without contacting the account holder.
     pub async fn known_product_subtree(
         &self,
         session: &SessionInfo,
@@ -1152,8 +1146,7 @@ impl PairingHost {
             .await
     }
 
-    /// Read a product subtree public key persisted by an earlier launch, and
-    /// re-populate the memory cache from it. `None` when nothing is stored.
+    /// Restore a public subtree only into the selected live session.
     pub async fn stored_product_subtree(
         &self,
         session: &SessionInfo,
@@ -1218,6 +1211,7 @@ impl PairingHost {
         false
     }
 
+    /// Cache a public subtree only for the selected live session.
     pub fn cache_product_subtree_if_current(
         &self,
         session: &SessionInfo,
@@ -2325,15 +2319,7 @@ impl PairingHost {
         let (key_handle, access) = self
             .require_ring_vrf_key_access(&request.calling_product_id, &request.payload.key_handle)
             .await?;
-        // A grant lets the caller act with the owner's key in the caller's own
-        // context. It does not let it choose whose pseudonym to mint: the
-        // contextual alias is a function of (owner key, context), so an
-        // unconstrained context would let a grantee produce the alias the owner
-        // presents to a third product that granted nothing. That third party
-        // cannot consent here and is not a party to the grant.
-        //
-        // The owner's own calls are unaffected; a cross-product caller is held to
-        // its own context or the granting product's.
+        // A publisher's grant cannot expose its alias in an unrelated product's context.
         crate::runtime::product_manifest::require_own_context(&access, &request.payload.context)?;
         let private_session = self.current_private_session(session)?;
         if let Some(entropy) = self

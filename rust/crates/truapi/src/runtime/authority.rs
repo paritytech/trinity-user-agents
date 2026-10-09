@@ -369,8 +369,7 @@ pub trait ProductAuthority: Send + Sync {
     /// Disconnect the current account-authority session.
     async fn disconnect(&self);
 
-    /// Refresh identity fields for the current session if the authority can do
-    /// so without user interaction.
+    /// Refresh session identity without user interaction.
     async fn refresh_session_identity(&self) -> Option<AuthoritySession> {
         self.current_session()
     }
@@ -386,11 +385,9 @@ pub trait ProductAuthority: Send + Sync {
         product_id: String,
     ) -> Result<[u8; 32], AuthorityError>;
 
-    /// Whether resolving `product_id`'s subtree would reach the Account Holder
-    /// over SSO rather than resolve locally. Gates a host consent prompt: a
-    /// pairing host returns `true` only on a cold cache; a signing host derives
-    /// locally and returns `false`. Required rather than defaulted, so a new
-    /// authority cannot skip the consent gate by omission.
+    /// Whether subtree resolution needs SSO and therefore host consent.
+    ///
+    /// True for a paired cache miss; false for local derivation or a cached subtree.
     async fn subtree_resolution_reaches_account_holder(
         &self,
         session: &AuthoritySession,
@@ -536,9 +533,8 @@ pub trait ProductAuthority: Send + Sync {
         product_id: String,
     ) -> Result<StatementStoreAllowanceKey, AuthorityError>;
 
-    /// Drop the product's cached statement-store allowance key if it is
-    /// `public_key`. Only the local signing host caches that key; the default
-    /// does nothing.
+    /// Forget the cached key only if it matches `public_key`, preserving any
+    /// replacement. Hosts without a local cache use the no-op default.
     fn forget_statement_store_allowance_key(&self, _product_id: &str, _public_key: [u8; 32]) {}
 
     /// Whether a preimage submission is kept in the core instead of being sent
@@ -560,11 +556,8 @@ pub trait ProductAuthority: Send + Sync {
         product_id: String,
     ) -> Result<BulletinAllowanceKey, AuthorityError>;
 
-    /// Evict any cached Bulletin allowance key for the product and allocate a
-    /// fresh one, increasing the existing allowance.
-    ///
-    /// Called after a submission is rejected for an exhausted/missing
-    /// allowance, where reusing the cached key would loop forever.
+    /// Invalidate the cached Bulletin key and increase or recreate its allowance
+    /// after a submission is rejected for an exhausted or missing allowance.
     async fn refresh_bulletin_allowance_key(
         &self,
         cx: &CallContext,
@@ -592,11 +585,9 @@ pub trait ProductAuthority: Send + Sync {
 
     /// Key material for minting contact handles.
     ///
-    /// Product-independent by construction, unlike [`Self::derive_entropy`]: one
-    /// contact must hash to the same handle in every product. Derived from the
-    /// session's root entropy source, which both roles hold and which no product
-    /// can reach — a handle keyed on anything public would be recoverable by
-    /// hashing candidate accounts.
+    /// Uses the session's secret root entropy source so handles match across
+    /// products and host roles. The key must remain inaccessible to products
+    /// to prevent recovering contacts by hashing candidate accounts.
     fn contacts_handle_key(&self, session: &AuthoritySession) -> Result<[u8; 32], AuthorityError>;
 }
 

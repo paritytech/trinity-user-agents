@@ -695,11 +695,7 @@ impl ProductRuntimeHost {
 }
 
 impl ProductRuntimeHost {
-    /// Read a stored permission authorization status without prompting.
-    ///
-    /// A device capability also resolves the host application's OS gate, so an
-    /// OS refusal reads as `Denied` whatever is stored. Remote,
-    /// identity-disclosure and account-access decisions have no OS gate.
+    /// Read stored authorization without prompting, including the device OS gate.
     #[instrument(skip_all, fields(runtime.method = "permissions.authorization_status"))]
     pub async fn permission_authorization_status(
         &self,
@@ -709,11 +705,7 @@ impl ProductRuntimeHost {
         service.authorization_status(&request).await
     }
 
-    /// Read stored permission authorization statuses without prompting.
-    ///
-    /// A device capability also resolves the host application's OS gate, so an
-    /// OS refusal reads as `Denied` whatever is stored. Remote,
-    /// identity-disclosure and account-access decisions have no OS gate.
+    /// Read stored authorizations without prompting, including device OS gates.
     #[instrument(skip_all, fields(runtime.method = "permissions.authorization_statuses"))]
     pub async fn permission_authorization_statuses(
         &self,
@@ -723,8 +715,7 @@ impl ProductRuntimeHost {
         service.authorization_statuses(&requests).await
     }
 
-    /// Update a stored permission authorization status. `NotDetermined`
-    /// clears the stored value so the next product request prompts again.
+    /// Store authorization; `NotDetermined` clears the saved decision.
     #[instrument(skip_all, fields(runtime.method = "permissions.set_authorization_status"))]
     pub async fn set_permission_authorization_status(
         &self,
@@ -747,8 +738,7 @@ impl ProductRuntimeHost {
             .map_err(|err| format!("permission storage failed: {err:?}"))
     }
 
-    /// Gate a remote call on `permission`, prompting the user when it is
-    /// undetermined. Anything short of `Authorized` fails with `denied_error`.
+    /// Require remote authorization, prompting only when no decision is stored.
     pub async fn require_remote_permission<E>(
         &self,
         permission: v01::RemotePermission,
@@ -794,9 +784,7 @@ impl ProductRuntimeHost {
             return Ok(cached);
         }
 
-        // A dismissed/unavailable confirmation has no durable user decision.
-        // Fail the current disclosure request closed but keep authorization in
-        // the ask/default state so the next request can prompt again.
+        // A dismissed confirmation must not persist a refusal.
         let decision = match self
             .platform
             .confirm_permission(UserConfirmationReview::IdentityDisclosure(
@@ -1114,6 +1102,7 @@ impl ProductRuntimeHost {
         })
     }
 
+    /// End this connection's Chat action stream.
     pub fn detach_chat(&self) {
         self.chat.detach();
     }
@@ -1133,9 +1122,7 @@ impl ProductRuntimeHost {
         renderer_access_for(self.product.execution_kind)
     }
 
-    /// Take one core-held reference on this connection's product worker, for
-    /// a body the product is drawing. Pair every call with one
-    /// [`Self::release_worker_reference`].
+    /// Hold worker demand until the matching [`Self::release_worker_reference`].
     pub fn acquire_worker_reference(&self) {
         self.services
             .worker_ledger
@@ -1149,14 +1136,7 @@ impl ProductRuntimeHost {
             .release(&self.product.product_id);
     }
 
-    /// Begin a pending operation with the host, on a task this dispatch's
-    /// cancellation cannot reach.
-    ///
-    /// A cancelled dispatch drops whatever it is awaiting, and dropping the
-    /// host's call mid-answer would leave the host holding an operation the
-    /// core never counted and the product never learned the id of, which
-    /// nothing could then end. The call runs to completion either way, and
-    /// ends the operation itself when nobody is left to receive it.
+    /// Begin off-dispatch so cancellation cannot strand an unreported host operation.
     pub async fn begin_operation_with_host(
         &self,
         label: String,
@@ -1177,8 +1157,7 @@ impl ProductRuntimeHost {
         })
     }
 
-    /// Record a pending operation and take the worker reference it holds, so
-    /// an operation outliving the product's surface still reads as demand.
+    /// Hold worker demand until this operation ends or the connection closes.
     pub fn hold_worker_for_operation(&self, id: u32) {
         if self
             .open_operations
@@ -1227,8 +1206,7 @@ impl ProductRuntimeHost {
         }));
     }
 
-    /// Drop the worker reference a pending operation held. An id that is not
-    /// open releases nothing, which is what keeps `end_operation` idempotent.
+    /// Release one open operation's demand; unknown ids leave demand unchanged.
     pub fn release_worker_for_operation(&self, id: u32) {
         if self
             .open_operations
