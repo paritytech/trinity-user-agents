@@ -27,6 +27,8 @@ struct PocketDeeplink: Equatable {
 enum PocketLinkClassification: Equatable {
     /// A Pocket action this core serves, with its card id already screened.
     case pocket(PocketDeeplink)
+    /// A bare `/-/pocket`: the collection itself, with no card named.
+    case collection
     /// A link the core refused. The reserved `-` target belongs to the host, so
     /// this is answered here rather than left to open a page nobody asked for.
     case malformed
@@ -54,6 +56,8 @@ struct PocketDeeplinkParser {
                 cardId: PocketCardId(value: cardId),
                 canonicalUrl: canonicalUrl
             ))
+        case .pocketCollection:
+            return .collection
         case .reject:
             return .malformed
         default:

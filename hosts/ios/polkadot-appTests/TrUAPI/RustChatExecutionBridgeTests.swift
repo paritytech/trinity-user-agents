@@ -37,6 +37,28 @@ struct RustChatExecutionBridgeTests {
         #expect(api.createdRooms.last?.icon == "icon")
     }
 
+    /// A room the product drives through actions alone asks for an empty footer,
+    /// and can ask for the text input back.
+    @Test func setRoomFooterForwardsTheFooter() async throws {
+        let api = RecordingChatMessaging()
+        let bridge = await makeBridge(api: api)
+        try await bridge.setRoomFooter(roomId: "r", footer: .empty)
+        try await bridge.setRoomFooter(roomId: "r", footer: .textInput)
+
+        #expect(api.roomFooters.map(\.footer) == [.empty, .textInput])
+        #expect(api.roomFooters.map(\.roomId) == ["r", "r"])
+    }
+
+    @Test func setRoomFooterRejectsAnEmptyRoom() async throws {
+        let api = RecordingChatMessaging()
+        let bridge = await makeBridge(api: api)
+
+        await #expect(throws: HostRejection.self) {
+            try await bridge.setRoomFooter(roomId: "", footer: .empty)
+        }
+        #expect(api.roomFooters.isEmpty)
+    }
+
     @Test func postMessageForwardsTextAndCustomOnly() async throws {
         let api = RecordingChatMessaging()
         let bridge = await makeBridge(api: api)
