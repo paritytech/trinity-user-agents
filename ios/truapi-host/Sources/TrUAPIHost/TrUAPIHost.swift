@@ -239,6 +239,10 @@ public protocol ChatHostBridge: AnyObject, Sendable {
     /// trimmed and screened, for places that list it without drawing it.
     func postMessage(roomId: String, content: ChatMessageContent, alt: String?) async throws -> String
 
+    /// Set what a product's native Chat room shows below its messages, and
+    /// keep it until the product sets another.
+    func setRoomFooter(roomId: String, footer: ChatRoomFooter) async throws
+
     /// Return the current product-scoped native Chat rooms.
     func listRooms() async throws -> [ChatRoom]
 }
@@ -416,6 +420,12 @@ private final class ChatCallbackAdapter: NativeChatCallbacks, @unchecked Sendabl
     func postMessage(roomId: String, content: ChatMessageContent, alt: String?) async throws -> String {
         try await withHostRejection {
             try await bridge.postMessage(roomId: roomId, content: content, alt: alt)
+        }
+    }
+
+    func setRoomFooter(roomId: String, footer: ChatRoomFooter) async throws {
+        try await withHostRejection {
+            try await bridge.setRoomFooter(roomId: roomId, footer: footer)
         }
     }
 

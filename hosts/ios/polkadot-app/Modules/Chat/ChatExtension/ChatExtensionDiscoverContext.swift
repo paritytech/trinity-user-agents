@@ -35,6 +35,12 @@ protocol ChatExtensionDiscoverContextProtocol {
         icon: String?
     ) async throws -> CreateRoomStatus
 
+    func setRoomFooter(
+        for chatBot: ChatExtensionBotProtocol,
+        roomId: String,
+        footer: Chat.RoomFooter
+    ) async throws
+
     func subscribeRooms(
         for chatBot: ChatExtensionBotProtocol
     ) async -> AnyAsyncSequence<[RoomInfo]>
@@ -81,6 +87,7 @@ actor ChatExtensionDiscoverContext {
     let storageFacade: StorageFacadeProtocol
     let chatRepository: AnyDataProviderRepository<Chat.LocalModel>
     let roomMetadataRepository: AnyDataProviderRepository<Chat.RoomMetadataUpdate>
+    let roomFooterRepository: AnyDataProviderRepository<Chat.RoomFooterUpdate>
     let chatsProviderFactory: ChatContactDataProviderMaking
 
     init(
@@ -107,6 +114,12 @@ actor ChatExtensionDiscoverContext {
         roomMetadataRepository = AnyDataProviderRepository(
             storageFacade.createRepository(
                 mapper: AnyCoreDataMapper(ChatRoomMetadataUpdateMapper())
+            )
+        )
+
+        roomFooterRepository = AnyDataProviderRepository(
+            storageFacade.createRepository(
+                mapper: AnyCoreDataMapper(ChatRoomFooterMapper())
             )
         )
 
@@ -356,6 +369,29 @@ extension ChatExtensionDiscoverContext: ChatExtensionDiscoverContextProtocol {
         return .new
     }
 
+    func setRoomFooter(
+        for chatBot: ChatExtensionBotProtocol,
+        roomId: String,
+        footer: Chat.RoomFooter
+    ) async throws {
+        let chatId = Chat.Id.chatExtension(chatBot.identifier, roomId: roomId)
+
+        let existingChat = try await chatRepository
+            .fetchOperation(by: { chatId.rawRepresentation }, options: RepositoryFetchOptions())
+            .asyncExecute()
+
+        guard let existingChat else {
+            throw RoomFooterError.unknownRoom(roomId)
+        }
+
+        guard (existingChat.roomFooter ?? .textInput) != footer else {
+            return
+        }
+
+        let update = Chat.RoomFooterUpdate(chatId: chatId, footer: footer)
+        try await roomFooterRepository.saveOperation({ [update] }, { [] }).asyncExecute()
+    }
+
     func subscribeRooms(
         for chatBot: ChatExtensionBotProtocol
     ) async -> AnyAsyncSequence<[RoomInfo]> {
@@ -394,5 +430,16 @@ extension ChatExtensionDiscoverContext: ChatExtensionDiscoverContextProtocol {
         try await messageRepository.saveOperation({ [message] }, { [] }).asyncExecute()
 
         return message
+    }
+}
+
+enum RoomFooterError: LocalizedError {
+    case unknownRoom(String)
+
+    var errorDescription: String? {
+        switch self {
+        case let .unknownRoom(roomId):
+            "no chat room \(roomId)"
+        }
     }
 }

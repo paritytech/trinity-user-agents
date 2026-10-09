@@ -1350,6 +1350,8 @@ struct RecordingChatPlatform {
     posted_rooms: Mutex<Vec<String>>,
     posted_payloads: Mutex<Vec<v01::ChatMessageContent>>,
     posted_alts: Mutex<Vec<Option<String>>>,
+    room_footers: Mutex<Vec<(String, v01::ChatRoomFooter)>>,
+    bot_rooms: Vec<String>,
 }
 
 #[truapi::async_trait]
@@ -1407,6 +1409,18 @@ impl crate::platform::ChatPlatform for RecordingChatPlatform {
         })
     }
 
+    async fn set_chat_room_footer(
+        &self,
+        _product: &ProductContext,
+        request: truapi::latest::HostChatSetRoomFooterRequest,
+    ) -> Result<(), truapi::latest::GenericError> {
+        self.room_footers
+            .lock()
+            .expect("room footers mutex poisoned")
+            .push((request.room_id, request.footer));
+        Ok(())
+    }
+
     fn subscribe_chat_rooms(
         &self,
         _product: &ProductContext,
@@ -1414,7 +1428,24 @@ impl crate::platform::ChatPlatform for RecordingChatPlatform {
         'static,
         Result<truapi::latest::HostChatListSubscribeItem, truapi::latest::GenericError>,
     > {
-        Box::pin(futures::stream::empty())
+        let bot_rooms = self.bot_rooms.iter().map(|room_id| v01::ChatRoom {
+            room_id: room_id.clone(),
+            participating_as: v01::ChatRoomParticipation::Bot,
+        });
+        let rooms = self
+            .created_rooms
+            .lock()
+            .expect("created rooms mutex poisoned")
+            .iter()
+            .map(|room_id| v01::ChatRoom {
+                room_id: room_id.clone(),
+                participating_as: v01::ChatRoomParticipation::RoomHost,
+            })
+            .chain(bot_rooms)
+            .collect();
+        Box::pin(futures::stream::iter([Ok(
+            truapi::latest::HostChatListSubscribeItem { rooms },
+        )]))
     }
 }
 
@@ -1782,6 +1813,113 @@ fn chat_post_message_screens_content_before_it_reaches_a_host() {
                 text: None,
             }),
         ]
+    );
+}
+
+#[test]
+fn a_room_footer_reaches_the_host_for_the_room_the_product_created() {
+    let (host_config, _) = runtime_config("chat.dot");
+    let product = ProductContext::new_with_execution(
+        "chat.dot".to_string(),
+        crate::platform::ProductExecutionKind::Worker,
+    )
+    .expect("test chat product context is valid");
+    let spawner = test_spawner();
+    let platform: Arc<dyn Platform> = stub_platform();
+    let services = RuntimeServices::new(
+        platform.clone(),
+        host_config.host.host_info.clone(),
+        host_config.people_chain_genesis_hash,
+        host_config.bulletin_chain_genesis_hash,
+        host_config.asset_hub_chain_genesis_hash,
+        spawner.clone(),
+    );
+    let chat_platform = Arc::new(RecordingChatPlatform {
+        bot_rooms: vec!["guest".to_string()],
+        ..Default::default()
+    });
+    let pairing_host = PairingHost::new(services.clone(), host_config);
+    let mut adapters = crate::host_core::ConnectionAdapters::from_services(&services);
+    adapters.chat_platform = Some(chat_platform.clone());
+    let host = ProductRuntimeHost::from_services(services, adapters, pairing_host, product);
+    install_pairing_session(&host, session_info());
+
+    futures::executor::block_on(Chat::create_room(
+        &host,
+        &CallContext::default(),
+        HostChatCreateRoomRequest::V1(v01::HostChatCreateRoomRequest {
+            room_id: "caf\u{e9}".to_string(),
+            name: "Cafe".to_string(),
+            icon: String::new(),
+        }),
+    ))
+    .expect("create_room accepts the room");
+
+    // Decomposed here, precomposed when the room was created: the host must
+    // see the id it stored, or the footer lands on a room that does not exist.
+    futures::executor::block_on(Chat::set_room_footer(
+        &host,
+        &CallContext::default(),
+        HostChatSetRoomFooterRequest::V1(v01::HostChatSetRoomFooterRequest {
+            room_id: "cafe\u{301}".to_string(),
+            footer: v01::ChatRoomFooter::Empty,
+        }),
+    ))
+    .expect("set_room_footer accepts a normalizable id");
+
+    let rejected = futures::executor::block_on(Chat::set_room_footer(
+        &host,
+        &CallContext::default(),
+        HostChatSetRoomFooterRequest::V1(v01::HostChatSetRoomFooterRequest {
+            room_id: "room\u{202e}".to_string(),
+            footer: v01::ChatRoomFooter::Empty,
+        }),
+    ));
+
+    assert!(
+        matches!(rejected, Err(CallError::Domain(_))),
+        "a bidi room id must be a domain error, got {rejected:?}"
+    );
+
+    // A product that never created the room gets a reason it can act on, and
+    // the host is never asked to style a room it does not have.
+    let unknown = futures::executor::block_on(Chat::set_room_footer(
+        &host,
+        &CallContext::default(),
+        HostChatSetRoomFooterRequest::V1(v01::HostChatSetRoomFooterRequest {
+            room_id: "elsewhere".to_string(),
+            footer: v01::ChatRoomFooter::Empty,
+        }),
+    ));
+    assert_eq!(
+        unknown,
+        Err(CallError::Domain(HostChatSetRoomFooterError::V1(
+            v01::HostChatSetRoomFooterError::UnknownRoom
+        )))
+    );
+
+    // The product only takes part in this room as a bot, so the footer is not
+    // for it to set.
+    let joined = futures::executor::block_on(Chat::set_room_footer(
+        &host,
+        &CallContext::default(),
+        HostChatSetRoomFooterRequest::V1(v01::HostChatSetRoomFooterRequest {
+            room_id: "guest".to_string(),
+            footer: v01::ChatRoomFooter::Empty,
+        }),
+    ));
+    assert_eq!(
+        joined,
+        Err(CallError::Domain(HostChatSetRoomFooterError::V1(
+            v01::HostChatSetRoomFooterError::UnknownRoom
+        )))
+    );
+    assert_eq!(
+        *chat_platform
+            .room_footers
+            .lock()
+            .expect("room footers mutex poisoned"),
+        [("caf\u{e9}".to_string(), v01::ChatRoomFooter::Empty)]
     );
 }
 
@@ -3105,6 +3243,7 @@ fn navigate_to_internal_targets_do_not_consume_open_url_permission() {
         "mytestapp.dot",
         "localhost:3000",
         "polkadot://mytestapp.dot/-/pocket/open?card=loyalty",
+        "polkadot://mytestapp.dot/-/pocket",
     ] {
         let request = HostNavigateToRequest::V1(v01::HostNavigateToRequest {
             url: url.to_string(),

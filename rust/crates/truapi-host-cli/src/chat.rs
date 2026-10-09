@@ -25,7 +25,7 @@ use truapi::latest::{
     HostChatCreateRoomError, HostChatCreateRoomRequest, HostChatCreateRoomResponse,
     HostChatListSubscribeItem, HostChatPostMessageError, HostChatPostMessageRequest,
     HostChatPostMessageResponse, HostChatRegisterBotError, HostChatRegisterBotRequest,
-    HostChatRegisterBotResponse,
+    HostChatRegisterBotResponse, HostChatSetRoomFooterRequest,
 };
 use truapi::platform::{ChatPlatform, ProductContext, async_trait};
 use truapi::v01::{ChatRoom, ChatRoomParticipation};
@@ -212,6 +212,14 @@ impl ChatPlatform for CliChatHost {
         drop(state);
         self.record_message(&message_id, &request);
         Ok(HostChatPostMessageResponse { message_id })
+    }
+
+    async fn set_chat_room_footer(
+        &self,
+        _product: &ProductContext,
+        _request: HostChatSetRoomFooterRequest,
+    ) -> Result<(), GenericError> {
+        Ok(())
     }
 
     fn subscribe_chat_rooms(

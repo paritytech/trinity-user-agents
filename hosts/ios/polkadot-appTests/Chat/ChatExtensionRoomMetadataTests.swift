@@ -111,8 +111,6 @@ private extension ChatExtensionRoomMetadataTests {
     }
 }
 
-extension InMemorySettingsManager: @retroactive ChatExtensionBotSettings {}
-
 private final class StubRoomBot: ChatExtensionBotProtocol {
     let identifier: ChatExtension.Id = "dim2.paseo"
 

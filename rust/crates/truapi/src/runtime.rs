@@ -98,6 +98,7 @@ use truapi::versioned::chat::{
     HostChatListSubscribeError, HostChatListSubscribeItem, HostChatListSubscribeRequest,
     HostChatPostMessageError, HostChatPostMessageRequest, HostChatPostMessageResponse,
     HostChatRegisterBotError, HostChatRegisterBotRequest, HostChatRegisterBotResponse,
+    HostChatSetRoomFooterError, HostChatSetRoomFooterRequest, HostChatSetRoomFooterResponse,
 };
 use truapi::versioned::contacts::{
     HostContactsPickError, HostContactsPickRequest, HostContactsPickResponse,
@@ -1556,6 +1557,46 @@ impl Chat for ProductRuntimeHost {
             .await
             .map(HostChatPostMessageResponse::V2)
             .map_err(|error| CallError::Domain(HostChatPostMessageError::V2(error)))
+    }
+
+    #[instrument(skip_all, fields(runtime.method = "chat.set_room_footer"))]
+    async fn set_room_footer(
+        &self,
+        _cx: &CallContext,
+        request: HostChatSetRoomFooterRequest,
+    ) -> Result<HostChatSetRoomFooterResponse, CallError<HostChatSetRoomFooterError>> {
+        let platform = self.chat_platform()?;
+        let HostChatSetRoomFooterRequest::V1(mut request) = request;
+        let failure = |reason: String| {
+            CallError::Domain(HostChatSetRoomFooterError::V1(
+                v01::HostChatSetRoomFooterError::Unknown { reason },
+            ))
+        };
+        request.room_id = normalize_chat_identifier("roomId", &request.room_id)
+            .map_err(|error| failure(error.to_string()))?;
+
+        // Checked here rather than by each host, so every host answers a room
+        // the product never created the same way.
+        let rooms = match platform.subscribe_chat_rooms(&self.product).next().await {
+            Some(Ok(item)) => item.rooms,
+            Some(Err(error)) => return Err(failure(error.reason)),
+            None => return Err(failure("the host published no room list".to_string())),
+        };
+        let created = rooms.iter().any(|room| {
+            room.room_id == request.room_id
+                && room.participating_as == v01::ChatRoomParticipation::RoomHost
+        });
+        if !created {
+            return Err(CallError::Domain(HostChatSetRoomFooterError::V1(
+                v01::HostChatSetRoomFooterError::UnknownRoom,
+            )));
+        }
+
+        platform
+            .set_chat_room_footer(&self.product, request)
+            .await
+            .map(|()| HostChatSetRoomFooterResponse::V1)
+            .map_err(|error| failure(error.reason))
     }
 
     #[instrument(skip_all, fields(runtime.method = "chat.action_subscribe"))]

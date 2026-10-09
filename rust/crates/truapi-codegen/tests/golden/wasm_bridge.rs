@@ -31,6 +31,7 @@ pub struct JsBridge {
     pub create_chat_room: Function,
     pub register_chat_bot: Function,
     pub post_chat_message: Function,
+    pub set_chat_room_footer: Function,
     pub subscribe_chat_rooms: Function,
     pub contacts: Function,
     pub pick_contact: Function,
@@ -80,6 +81,8 @@ impl JsBridge {
                 .unwrap_or_else(|| missing_callback("registerChatBot")),
             post_chat_message: get_optional_function(callbacks, "postChatMessage")?
                 .unwrap_or_else(|| missing_callback("postChatMessage")),
+            set_chat_room_footer: get_optional_function(callbacks, "setChatRoomFooter")?
+                .unwrap_or_else(|| missing_callback("setChatRoomFooter")),
             subscribe_chat_rooms: get_optional_function(callbacks, "subscribeChatRooms")?
                 .unwrap_or_else(|| missing_callback("subscribeChatRooms")),
             contacts: get_optional_function(callbacks, "contacts")?
@@ -122,6 +125,7 @@ impl JsBridge {
             chat_present: get_optional_function(callbacks, "createChatRoom")?.is_some()
                 && get_optional_function(callbacks, "registerChatBot")?.is_some()
                 && get_optional_function(callbacks, "postChatMessage")?.is_some()
+                && get_optional_function(callbacks, "setChatRoomFooter")?.is_some()
                 && get_optional_function(callbacks, "subscribeChatRooms")?.is_some(),
             contacts_present: get_optional_function(callbacks, "contacts")?.is_some()
                 && get_optional_function(callbacks, "pickContact")?.is_some(),
@@ -240,6 +244,22 @@ impl crate::platform::ChatPlatform for WasmPlatform {
             "postChatMessage response did not decode",
         )
         .map_err(|reason| latest::HostChatPostMessageError::Unknown { reason })
+    }
+
+    async fn set_chat_room_footer(
+        &self,
+        product: &crate::platform::ProductContext,
+        request: latest::HostChatSetRoomFooterRequest,
+    ) -> Result<(), latest::GenericError> {
+        invoke_unit(
+            &self.bridge.set_chat_room_footer,
+            vec![
+                Uint8Array::from(product.encode().as_slice()).into(),
+                Uint8Array::from(request.encode().as_slice()).into(),
+            ],
+        )
+        .await
+        .map_err(generic)
     }
 
     fn subscribe_chat_rooms(

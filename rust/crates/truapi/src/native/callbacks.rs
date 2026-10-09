@@ -256,6 +256,16 @@ pub trait NativeChatCallbacks: Send + Sync {
         alt: Option<String>,
     ) -> Result<String, HostRejection>;
 
+    /// Set what a product's native Chat room shows below its messages, and keep
+    /// it until the product sets another. The core has already checked the
+    /// product created the room. A room the product never set a footer on shows
+    /// the text input.
+    async fn set_room_footer(
+        &self,
+        room_id: String,
+        footer: v01::ChatRoomFooter,
+    ) -> Result<(), HostRejection>;
+
     /// Return the current product-scoped native Chat room list.
     async fn list_rooms(&self) -> Result<Vec<v01::ChatRoom>, HostRejection>;
 }

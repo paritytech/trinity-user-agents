@@ -12,7 +12,7 @@ extension Chat.LocalModel {
                 name: roomMetadata?.name ?? extMetadata.name,
                 contactSource: extMetadata.contactSource,
                 icon: roomMetadata?.inlineIcon ?? extMetadata.icon,
-                input: extMetadata.input,
+                input: roomFooter == .empty ? .empty : extMetadata.input,
                 moreActions: extMetadata.moreActions
             )
         }

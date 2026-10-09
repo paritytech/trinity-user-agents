@@ -295,6 +295,8 @@ final class StubChatHostBridge: ChatHostBridge {
         "message-id"
     }
 
+    func setRoomFooter(roomId _: String, footer _: ChatRoomFooter) async throws {}
+
     func listRooms() async throws -> [ChatRoom] { [] }
 }
 

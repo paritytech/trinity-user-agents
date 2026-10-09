@@ -601,6 +601,17 @@ impl crate::platform::ChatPlatform for ChatCallbackPlatform {
         Ok(truapi::latest::HostChatPostMessageResponse { message_id })
     }
 
+    async fn set_chat_room_footer(
+        &self,
+        _product: &ProductContext,
+        request: v01::HostChatSetRoomFooterRequest,
+    ) -> Result<(), v01::GenericError> {
+        self.chat
+            .set_room_footer(request.room_id, request.footer)
+            .await
+            .map_err(v01::GenericError::from)
+    }
+
     fn subscribe_chat_rooms(
         &self,
         _product: &ProductContext,

@@ -123,9 +123,14 @@ The first path segment `-` is reserved for host-handled targets and cannot be an
 
 ```text
 polkadot://<product_id>.<tld>/<path>                     App, unchanged
+polkadot://<product_id>.<tld>/-/pocket                   Open the Pocket
 polkadot://<product_id>.<tld>/-/pocket/add?card=<id>     Offer to add a published card
 polkadot://<product_id>.<tld>/-/pocket/open?card=<id>    Expand a card that is present
 ```
+
+`/-/pocket` with no action opens the Pocket itself, for a product that sends the user to the collection without naming a
+card. Arguments are ignored. Expanding a card opens the Pocket on that card, the same view a tap on it gives (see
+[Expanded card](#expanded-card)).
 
 A host without the named modality, or one that does not know the action, opens the App instead. Products reach a
 deeplink from their own web UI through `system.navigate_to`, which already lets `polkadot:` through without a grant, so
