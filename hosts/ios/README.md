@@ -122,6 +122,8 @@ Polkadot iOS is a self-custodial superapp: your keys are created on your phone, 
 
 Built with **UIKit** and programmatic layout (no Storyboards), using **VIPER** for every feature module: code is split between the main app target and 28 local Swift packages under [`Packages/`](./Packages) with `AppDependencies` as the root package, chain access goes through [substrate-sdk-ios](https://github.com/novasamatech/substrate-sdk-ios) (JSON-RPC, storage subscriptions, extrinsics), and local data lives in CoreData.
 
+Permission prompts and revocation settings share the `ProductPermission` presentation metadata so capability descriptions stay consistent. JAM peer consent displays the full network genesis and remains scoped to that network and product; it does not grant accounts or signing.
+
 This repository ships a **GitHub Actions + Fastlane CI/CD setup** — PR build and
 tests, plus maintainer-gated TestFlight and Firebase App Distribution. Build-time
 configuration, signing, the required secrets, and the pipeline itself are
