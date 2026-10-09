@@ -93,61 +93,101 @@ struct AssetDetailsView: View {
     }
 
     private func actions() -> some View {
-        HStack(spacing: DSSpacings.small) {
-            DSButton(.actionSendCash, expands: true) {
-                viewModel.onSendMoney?()
-            }
-            .accessibilityId(AccessibilityID.Wallet.sendPaymentButton)
-
-            circleButton(.add24, isLoading: viewModel.isTopUpInProgress) {
+        HStack(spacing: DSSpacings.extraLarge) {
+            circleButton(
+                .add24,
+                title: String(localized: .Funding.cardAdd),
+                style: .add,
+                isLoading: viewModel.isTopUpInProgress
+            ) {
                 viewModel.onTopUp?()
             }
             .accessibilityId(AccessibilityID.Wallet.addFundsButton)
 
-            withdrawButton()
+            circleButton(
+                systemImage: "arrow.up",
+                title: String(localized: .actionSendCash),
+                style: .send,
+                isLoading: false
+            ) {
+                viewModel.onSendMoney?()
+            }
+            .accessibilityId(AccessibilityID.Wallet.sendPaymentButton)
         }
+        .frame(maxWidth: .infinity)
     }
 
-    private func withdrawButton() -> some View {
-        Button {
-            viewModel.onWithdraw?()
-        } label: {
-            Group {
-                if viewModel.isWithdrawInProgress {
-                    ProgressView()
-                        .progressViewStyle(.circular)
-                        .tint(.fgPrimaryInverted)
-                } else {
-                    Text(String(localized: .actionWithdraw))
-                }
-            }
-            .frame(maxWidth: .infinity)
-        }
-        .buttonStyle(.ds(style: .primary, shape: .pill, size: .large))
-        .disabled(viewModel.isWithdrawInProgress)
-        .accessibilityId(AccessibilityID.Wallet.withdrawButton)
+    private enum CircleStyle {
+        case add
+        case send
     }
 
     private func circleButton(
         _ icon: ImageResource,
+        title: String,
+        style: CircleStyle,
         isLoading: Bool,
         action: @escaping () -> Void
     ) -> some View {
-        Button(action: action) {
-            Group {
-                if isLoading {
-                    ProgressView()
-                        .progressViewStyle(.circular)
-                        .tint(.fgPrimaryInverted)
-                } else {
-                    Image(icon)
-                        .renderingMode(.template)
+        circleButton(
+            image: Image(icon).renderingMode(.template),
+            title: title,
+            style: style,
+            isLoading: isLoading,
+            action: action
+        )
+    }
+
+    private func circleButton(
+        systemImage: String,
+        title: String,
+        style: CircleStyle,
+        isLoading: Bool,
+        action: @escaping () -> Void
+    ) -> some View {
+        circleButton(
+            image: Image(systemName: systemImage),
+            title: title,
+            style: style,
+            isLoading: isLoading,
+            action: action
+        )
+    }
+
+    private func circleButton(
+        image: Image,
+        title: String,
+        style: CircleStyle,
+        isLoading: Bool,
+        action: @escaping () -> Void
+    ) -> some View {
+        let foreground: Color = style == .add ? .fgPrimaryInverted : .fgPrimary
+        return Button(action: action) {
+            VStack(spacing: DSSpacings.small) {
+                Group {
+                    if isLoading {
+                        ProgressView()
+                            .progressViewStyle(.circular)
+                            .tint(foreground)
+                    } else {
+                        image
+                    }
                 }
+                .frame(width: 56, height: 56)
+                .foregroundStyle(foreground)
+                .background(style == .add ? Color.bgActionPrimary : Color.bgSurfaceContainer, in: Circle())
+                .overlay {
+                    if style == .send {
+                        Circle().strokeBorder(Color.fgPrimary.opacity(0.12))
+                    }
+                }
+
+                Text(title)
+                    .typography(.labelMedium)
+                    .foregroundStyle(Color.fgPrimary)
             }
-            .frame(width: 56, height: 56)
-            .foregroundStyle(Color.fgPrimaryInverted)
-            .background(.bgActionPrimary, in: Circle())
         }
+        .buttonStyle(.plain)
         .disabled(isLoading)
     }
 

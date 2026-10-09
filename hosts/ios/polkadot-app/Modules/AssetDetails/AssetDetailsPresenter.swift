@@ -117,10 +117,6 @@ extension AssetDetailsPresenter: AssetDetailsPresenterProtocol {
         openFunding(.in)
     }
 
-    func onWithdraw() {
-        openFunding(.out)
-    }
-
     #if TESTNET_FEATURE
         func onTestnetTopUp() {
             view?.didReceive(testnetTopUpLoading: true)

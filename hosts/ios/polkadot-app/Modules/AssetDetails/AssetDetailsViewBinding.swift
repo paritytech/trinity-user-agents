@@ -63,10 +63,6 @@ final class AssetDetailsViewBinding: AssetDetailsViewProtocol {
             presenter?.onTopUp()
         }
 
-        viewModel.onWithdraw = { [weak presenter] in
-            presenter?.onWithdraw()
-        }
-
         #if TESTNET_FEATURE
             viewModel.onTestnetTopUp = { [weak presenter] in
                 presenter?.onTestnetTopUp()
@@ -156,10 +152,8 @@ final class AssetDetailsViewBinding: AssetDetailsViewProtocol {
     }
 
     func didReceive(fundingLoading direction: FundingDirection, isLoading: Bool) {
-        switch direction {
-        case .in: viewModel.isTopUpInProgress = isLoading
-        case .out: viewModel.isWithdrawInProgress = isLoading
-        }
+        guard direction == .in else { return }
+        viewModel.isTopUpInProgress = isLoading
     }
 
     private func emitCardUpdate() {

@@ -34,7 +34,6 @@ protocol AssetDetailsPresenterProtocol: AnyObject {
     func onBackupCancel()
     func onBackupWhyUpdate()
     func onTopUp()
-    func onWithdraw()
 
     #if TESTNET_FEATURE
         func onTestnetTopUp()
