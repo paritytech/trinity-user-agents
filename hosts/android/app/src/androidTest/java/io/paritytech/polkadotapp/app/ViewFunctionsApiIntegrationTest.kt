@@ -1,26 +1,19 @@
 package io.paritytech.polkadotapp.app
 
-import android.content.Context
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
-import androidx.work.testing.WorkManagerTestInitHelper
-import dagger.hilt.android.testing.HiltAndroidRule
-import dagger.hilt.android.testing.HiltAndroidTest
+import dagger.hilt.android.EntryPointAccessors
 import io.novasama.substrate_sdk_android.koltinx_serialization_scale.serializers.BigIntegerSerializable
 import io.paritytech.polkadotapp.chains.call.MultiChainViewFunctionsApi
 import io.paritytech.polkadotapp.chains.call.call
-import io.paritytech.polkadotapp.chains.multiNetwork.ChainRegistry
-import io.paritytech.polkadotapp.chains.multiNetwork.connection.ChainConnectionRefCounter
 import io.paritytech.polkadotapp.chains.multiNetwork.connection.withConnectionEnabled
 import io.paritytech.polkadotapp.chains.util.EncodedArguments.Companion.noArgs
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertTrue
 import org.junit.Before
-import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import timber.log.Timber
-import javax.inject.Inject
 
 private const val LABEL = "ViewFunctionsApiIntegrationTest"
 
@@ -34,22 +27,31 @@ private const val VIEW_FUNCTION = "current_stmt_store_period"
  * This runs on the device's persisted state, not an isolated fixture. Prerequisites:
  *  - The debug app (io.paritytech.polkadotapp.debug) must have been launched and onboarded once on the same
  *    device/emulator, so the `chains` table is synced.
- *  - App initializers do not run under HiltTestApplication; the chain socket is enabled explicitly via
- *    [withConnectionEnabled].
+ *  - The production application and its Hilt graph run throughout instrumentation; the chain socket
+ *    is enabled explicitly via [withConnectionEnabled].
  *
- * Not wired into CI — it depends on a live endpoint.
+ * Depends on a live endpoint as well as the onboarded device state.
  */
 
-@HiltAndroidTest
 @RunWith(AndroidJUnit4::class)
-class ViewFunctionsApiIntegrationTest: BaseIntegrationTest() {
+class ViewFunctionsApiIntegrationTest {
 
-    @Inject lateinit var chainRegistry: ChainRegistry
-    @Inject lateinit var chainConnectionRefCounter: ChainConnectionRefCounter
-    @Inject lateinit var viewFunctionsApi: MultiChainViewFunctionsApi
+    private lateinit var dependencies: IntegrationTestEntryPoint
+
+    @Before
+    fun setUp() = runBlocking<Unit> {
+        dependencies = EntryPointAccessors.fromApplication(
+            ApplicationProvider.getApplicationContext<App>(),
+            IntegrationTestEntryPoint::class.java,
+        )
+        dependencies.remoteConfigService().sync()
+    }
 
     @Test
     fun decodesViewFunctionOutputFromThePeopleChain() = runBlocking<Unit> {
+        val chainRegistry = dependencies.chainRegistry()
+        val chainConnectionRefCounter = dependencies.chainConnectionRefCounter()
+        val viewFunctionsApi = dependencies.viewFunctionsApi()
         val chain = chainRegistry.peopleChain()
 
         chainConnectionRefCounter.withConnectionEnabled(chain.id, LABEL) {
