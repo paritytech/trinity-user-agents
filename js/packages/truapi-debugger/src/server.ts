@@ -893,6 +893,25 @@ export function startDebugServer(
       }
       if (srv.upgrade(req)) return undefined;
     }
+    if (url.pathname === "/clear") {
+      // The only mutating route, so a cross-origin page must not reach it.
+      if (req.method !== "POST") {
+        return new Response("method not allowed", { status: 405 });
+      }
+      if (!originAllowed(req.headers.get("origin"))) {
+        return new Response("forbidden origin", { status: 403 });
+      }
+      const target = optionalChannel(url.searchParams.get("channel"));
+      if (target === null) {
+        return new Response("channel required", { status: 400 });
+      }
+      const key = normalizeId(target);
+      const dropped = session.traceEngine.clearChannel(key);
+      channels.delete(key);
+      return new Response(JSON.stringify({ cleared: dropped, channel: key }), {
+        headers: { "content-type": "application/json" },
+      });
+    }
     if (url.pathname === "/traces") {
       return new Response(tracesJson(), {
         headers: { "content-type": "application/json" },
@@ -1090,6 +1109,7 @@ ${INSPECTOR_LAYOUT_CSS}
     <option value="duration">slowest</option>
     <option value="frames">most frames</option>
   </select>
+  <button class="ins-sort" id="clear" type="button" disabled title="Pick a channel to clear its operations">clear</button>
   <span class="ins-channels" id="channels"></span>
 </div>
 <div class="ins-summary empty" id="summary">waiting for frames…</div>
@@ -1409,7 +1429,32 @@ ${INSPECTOR_LAYOUT_CSS}
     var c = btn.getAttribute("data-chan");
     channel = c === "" ? null : decodeURIComponent(c);
     lastListHtml = "";   // force a rebuild under the new filter
+    syncClear();
     poll();
+  });
+
+  // Clear acts on one channel, so it stays disabled on "all".
+  var clearEl = document.getElementById("clear");
+  function syncClear() {
+    clearEl.disabled = channel === null;
+    clearEl.title = channel === null
+      ? "Pick a channel to clear its operations"
+      : "Clear the operations recorded for " + channel;
+  }
+  clearEl.addEventListener("click", function () {
+    if (channel === null) return;
+    fetch("/clear?channel=" + encodeURIComponent(channel), { method: "POST" })
+      .then(function (response) {
+        // fetch resolves on a refusal too; only a real clear may reset the view.
+        if (!response.ok) return;
+        channel = null;
+        selectedId = null; selectedChannel = null;
+        detailEl.innerHTML = "";
+        lastListHtml = "";   // the list shrank; force a rebuild
+        syncClear();
+        poll();
+      })
+      .catch(function () {});
   });
 
   // Splitter drag.

@@ -304,6 +304,12 @@ export interface WireDebugger {
   evictedTraces(): number;
   /** Drop all retained traces. */
   clear(): void;
+  /**
+   * Drop the retained traces for one channel, returning how many were dropped.
+   * {@link evictedTraces} is session-wide rather than per channel, so it is left
+   * alone: zeroing it here would under-report every other channel.
+   */
+  clearChannel(channelId: string): number;
 }
 
 function formatFrame(
@@ -586,6 +592,17 @@ export function createWireDebugger(
       traces.clear();
       current.clear();
       evictedCount = 0;
+    },
+    clearChannel: (channelId) => {
+      let dropped = 0;
+      for (const [key, trace] of traces) {
+        if (trace.channelId !== channelId) continue;
+        traces.delete(key);
+        dropped += 1;
+        const idKey = keyOf(trace.channelId, trace.requestId);
+        if (current.get(idKey) === key) current.delete(idKey);
+      }
+      return dropped;
     },
   };
 }

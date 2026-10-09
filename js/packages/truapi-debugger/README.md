@@ -112,10 +112,12 @@ frame, with no "sensitive" special-casing. Its contract:
 | `GET /stats?channel=`                 | Aggregate roll-up: counts, bytes, durations, health, busiest methods. Payload-blind. |
 | `GET /traces`                         | The grouped traces as JSON. Payload-blind — never serializes bytes or values. |
 | `GET /frame?id=&i=&channel=`          | One frame's decode as JSON (the programmatic drill-down).  |
+| `POST /clear?channel=`                | Drops the operations recorded for one channel and leaves the others. Refuses a GET (405) and a request with no channel (400). |
 
 Loopback is enforced on more than the bind: a request whose `Host` header is not
 a loopback name gets a 403 (DNS-rebinding guard), and a WebSocket upgrade from a
-foreign browser `Origin` is refused (CSWSH).
+foreign browser `Origin` is refused (CSWSH). `POST /clear`, the only route that
+mutates, takes the same Origin gate.
 
 ## Run
 

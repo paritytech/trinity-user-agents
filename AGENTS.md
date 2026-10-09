@@ -40,7 +40,7 @@ js/packages/
                           mounts over them: server.ts (standalone WS+HTTP app on
                           127.0.0.1:9231 that hosts dial into, `npm run serve`;
                           endpoints /, /op-list, /op, /view, /channels, /stats,
-                          /traces, /frame) and in-app.ts (createInAppDebugger:
+                          /traces, /frame, POST /clear) and in-app.ts (createInAppDebugger:
                           same-page host, no server, no dial). @parity/truapi has
                           no debug seam. Where the app ultimately lives is still
                           an open decision.

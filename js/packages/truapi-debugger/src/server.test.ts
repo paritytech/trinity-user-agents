@@ -9,7 +9,11 @@ import {
 } from "@parity/truapi";
 import * as REAL_W from "@parity/truapi/wire-table";
 
-import { WIRE_ENVELOPE_VERSION } from "./ingest.js";
+import {
+  DEFAULT_MAX_ID_CHARS,
+  normalizeId,
+  WIRE_ENVELOPE_VERSION,
+} from "./ingest.js";
 import {
   decodeValuesFromEnv,
   hostHeaderAllowed,
@@ -1460,6 +1464,146 @@ test("a matching schema with a wrong envelope version is refused", async () => {
     const body = await res.text();
     expect(body).not.toContain('"kind":"decoded"');
     expect(body).toContain("decode refused");
+  } finally {
+    server.stop();
+  }
+});
+
+/** Feed one frame on `channelId` and wait for the server to record it. */
+async function sendFrame(port: number, channelId: string): Promise<void> {
+  const encoded = encodeWireMessage({
+    requestId: "p:1",
+    payload: {
+      traitId: REAL_W.SYSTEM_HANDSHAKE.trait,
+      methodId: REAL_W.SYSTEM_HANDSHAKE.method,
+      messageType: MESSAGE_TYPE_REQUEST,
+      value: new Uint8Array([0, 1, 2, 3]),
+    },
+  });
+  if (encoded.isErr()) throw encoded.error;
+  const ws = new WebSocket(`ws://localhost:${port}`);
+  await new Promise<void>((resolve, reject) => {
+    ws.onopen = () => resolve();
+    ws.onerror = () => reject(new Error("ws failed to open"));
+  });
+  ws.send(
+    JSON.stringify({
+      v: WIRE_ENVELOPE_VERSION,
+      codec: TRUAPI_CODEC_VERSION,
+      channelId,
+      dir: "out",
+      frame: Buffer.from(encoded.value).toString("base64"),
+      schema: TRUAPI_WIRE_SCHEMA_HASH,
+    }),
+  );
+  const base = `http://localhost:${port}`;
+  const want = normalizeId(channelId);
+  for (let i = 0; i < 50 && !(await channelIds(base)).includes(want); i++) {
+    await new Promise((r) => setTimeout(r, 20));
+  }
+  ws.close();
+}
+
+const channelIds = async (base: string): Promise<string[]> => {
+  const body = (await (await fetch(`${base}/channels`)).json()) as {
+    channels: { channelId: string }[];
+  };
+  return body.channels.map((c) => c.channelId);
+};
+
+const traceChannels = async (base: string): Promise<string[]> => {
+  const rows = (await (await fetch(`${base}/traces`)).json()) as {
+    channelId: string;
+  }[];
+  return [...new Set(rows.map((t) => t.channelId))].sort();
+};
+
+// The board can serve several hosts at once. Clearing the one being worked on
+// must not take the others with it, which is the whole point of scoping it.
+test("clear drops one channel and leaves the others", async () => {
+  const server = startDebugServer({ port: 0 });
+  const base = `http://localhost:${server.port}`;
+  try {
+    await sendFrame(server.port, "a.dot");
+    await sendFrame(server.port, "b.dot");
+    expect((await channelIds(base)).sort()).toEqual(["a.dot", "b.dot"]);
+
+    const res = await fetch(`${base}/clear?channel=a.dot`, { method: "POST" });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ cleared: 1, channel: "a.dot" });
+    expect(await channelIds(base)).toEqual(["b.dot"]);
+    // The registry entry alone proves nothing: the retained operations are what
+    // the clear acts on, so assert those directly or a whole-board wipe passes.
+    expect(await traceChannels(base)).toEqual(["b.dot"]);
+  } finally {
+    server.stop();
+  }
+});
+
+// The only mutating route, so it does not answer a bare GET a link could make.
+test("clear refuses a GET", async () => {
+  const server = startDebugServer({ port: 0 });
+  try {
+    const res = await fetch(
+      `http://localhost:${server.port}/clear?channel=a.dot`,
+    );
+    expect(res.status).toBe(405);
+  } finally {
+    server.stop();
+  }
+});
+
+// Same Origin gate as the WebSocket upgrade: a page in the developer's own
+// browser must not be able to wipe a board they are reading.
+test("clear refuses a foreign browser Origin", async () => {
+  const server = startDebugServer({ port: 0 });
+  try {
+    const res = await fetch(
+      `http://localhost:${server.port}/clear?channel=a.dot`,
+      {
+        method: "POST",
+        headers: { origin: "https://evil.example" },
+      },
+    );
+    expect(res.status).toBe(403);
+  } finally {
+    server.stop();
+  }
+});
+
+// Unscoped clear is refused rather than treated as "all": the button says it
+// clears one channel, so the route must not have a whole-board mode.
+test("clear requires a channel", async () => {
+  const server = startDebugServer({ port: 0 });
+  try {
+    const res = await fetch(`http://localhost:${server.port}/clear`, {
+      method: "POST",
+    });
+    expect(res.status).toBe(400);
+    // The route dispatcher turns any thrown exception into a 400 as well, so the
+    // status alone would also pass for a crash. The reason is what separates them.
+    expect(await res.text()).toBe("channel required");
+  } finally {
+    server.stop();
+  }
+});
+
+// Every other channel route resolves its query through `normalizeId`, so a
+// caller holding the host's real id reaches the same channel the board shows
+// under a digest. Clear has to agree with them: resolving the raw id one way on
+// `/stats` and another on `/clear` reports success while dropping nothing.
+test("clear resolves an over-long channel id like the read routes", async () => {
+  const server = startDebugServer({ port: 0 });
+  const base = `http://localhost:${server.port}`;
+  const raw = `${"h".repeat(DEFAULT_MAX_ID_CHARS)}.dot`;
+  try {
+    await sendFrame(server.port, raw);
+    expect(await channelIds(base)).toEqual([normalizeId(raw)]);
+
+    const q = `channel=${encodeURIComponent(raw)}`;
+    const res = await fetch(`${base}/clear?${q}`, { method: "POST" });
+    expect(await res.json()).toMatchObject({ cleared: 1 });
+    expect(await channelIds(base)).toEqual([]);
   } finally {
     server.stop();
   }

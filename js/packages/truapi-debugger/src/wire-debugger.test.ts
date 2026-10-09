@@ -414,3 +414,23 @@ describe("trace key injection", () => {
     for (const t of traces) expect(t.frames).toHaveLength(1);
   });
 });
+
+describe("clearChannel", () => {
+  // One board serves several hosts, so clearing one must not take the others.
+  test("drops one channel's traces and leaves the others", () => {
+    const wd = createWireDebugger({ sink: () => {} });
+    wd.observe(frame("a", "p:1", 1, 1));
+    wd.observe(frame("b", "p:1", 1, 1));
+
+    expect(wd.clearChannel("a")).toBe(1);
+    expect(wd.tracesForChannel("a")).toHaveLength(0);
+    expect(wd.tracesForChannel("b")).toHaveLength(1);
+  });
+
+  test("clearing an unknown channel drops nothing", () => {
+    const wd = createWireDebugger({ sink: () => {} });
+    wd.observe(frame("a", "p:1", 1, 1));
+    expect(wd.clearChannel("nope")).toBe(0);
+    expect(wd.tracesForChannel("a")).toHaveLength(1);
+  });
+});
