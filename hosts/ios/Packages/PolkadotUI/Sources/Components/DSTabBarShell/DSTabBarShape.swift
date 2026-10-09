@@ -1,7 +1,6 @@
 import SwiftUI
 
-/// Bar outline with a circular hole at centre. Filled with `FillStyle(eoFill: true)` so the
-/// hole reads as empty rather than as a second filled disc.
+/// Bar outline with a circular hole at centre.
 struct DSTabBarShape: Shape {
     func path(in rect: CGRect) -> Path {
         var path = Path(roundedRect: rect, cornerRadius: DSTabBarStyle.cornerRadius, style: .continuous)
@@ -23,7 +22,8 @@ struct DSTabBarShadowMask: Shape {
 }
 
 private extension Path {
-    /// Adds the hole as its own subpath. It only reads as a hole under an even-odd fill.
+    /// Adds the hole as a second subpath, so callers must fill or clip with `FillStyle(eoFill: true)`.
+    /// Under the default winding fill the hole reads as a filled disc instead.
     mutating func addNotch(in rect: CGRect) {
         let radius = DSTabBarStyle.notchRadius
         let circleTop = rect.minY + DSTabBarStyle.notchCenterY - radius

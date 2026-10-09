@@ -20,6 +20,11 @@ public enum DSTabBarStyle {
     /// a fill, so the bar stays translucent in every theme.
     static let tintOpacity: Double = 0.018
 
+    /// Opacity of the rim at the top of the bar, where it reads as catching the light.
+    static let rimTopOpacity: Double = 0.14
+    /// Opacity of the rim at the foot, where it has all but faded out.
+    static let rimBottomOpacity: Double = 0.035
+
     static let shadowRadius: CGFloat = 18
     /// Reach of the shadow mask past the bar, so the blurred shadow is not cut off at the bar edge.
     static let shadowMaskSpread: CGFloat = shadowRadius * 4 + 40

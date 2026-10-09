@@ -32,14 +32,10 @@ struct DSTabBarVariableBlur: UIViewRepresentable {
         private var animator: UIViewPropertyAnimator?
 
         func seek(_ view: UIVisualEffectView, to intensity: Double) {
-            if animator == nil {
-                let animator = UIViewPropertyAnimator(duration: 1, curve: .linear)
-                animator.addAnimations { view.effect = UIBlurEffect(style: .systemUltraThinMaterial) }
-                animator.pausesOnCompletion = true
-                self.animator = animator
-            }
-
-            animator?.fractionComplete = max(0.001, min(1, intensity))
+            let animator = animator ?? makeAnimator(blurring: view)
+            self.animator = animator
+            // A fraction of exactly zero drops the effect rather than leaving a faint blur.
+            animator.fractionComplete = min(max(intensity, 0.001), 1)
         }
 
         /// A running animator that outlives its view traps in UIKit, so it is
@@ -47,6 +43,13 @@ struct DSTabBarVariableBlur: UIViewRepresentable {
         func cancel() {
             animator?.stopAnimation(true)
             animator = nil
+        }
+
+        private func makeAnimator(blurring view: UIVisualEffectView) -> UIViewPropertyAnimator {
+            let animator = UIViewPropertyAnimator(duration: 1, curve: .linear)
+            animator.addAnimations { view.effect = UIBlurEffect(style: .systemUltraThinMaterial) }
+            animator.pausesOnCompletion = true
+            return animator
         }
     }
 }
