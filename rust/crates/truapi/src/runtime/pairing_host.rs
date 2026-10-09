@@ -2,7 +2,6 @@
 
 use std::sync::{Arc, Weak};
 
-use super::host_grants::HostGrantStore;
 use super::product_consent::ProductConsent;
 use super::ring_vrf_registry::RingVrfRegistryStore;
 use super::services::RuntimeServices;
@@ -34,7 +33,6 @@ impl PairingHost {
                     services.spawner.clone(),
                 )),
                 service.session_state(),
-                Arc::new(HostGrantStore::new(services.platform.clone())),
                 registry,
                 Arc::new(ProductConsent::new(services.platform.clone())),
                 #[cfg(feature = "test-host")]

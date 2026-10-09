@@ -157,7 +157,8 @@ fn storage_error(error: crate::latest::GenericError) -> AuthorityError {
 mod tests {
     use super::*;
     use crate::platform::CoreStorage;
-    use crate::runtime::HostGrantStore;
+    use super::super::HostGrantStore;
+    use crate::runtime::authority::GrantKeeping;
     use crate::test_support::StubPlatform;
     use futures::executor::block_on;
     use std::sync::Arc;
@@ -166,7 +167,7 @@ mod tests {
     fn corrupt_grants_are_isolated_and_removable_by_product_or_owner() {
         block_on(async {
             let platform = Arc::new(StubPlatform::default());
-            let store = HostGrantStore::new(platform.clone());
+            let store = HostGrantStore::new(platform.clone(), GrantKeeping::Wallet);
             let guard = store.persistence().await;
             let secret = crate::host_logic::product_account::derive_sr25519_hard_path(
                 &[7; 16],

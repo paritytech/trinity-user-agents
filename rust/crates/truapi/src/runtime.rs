@@ -71,7 +71,6 @@ pub use host_accounts::HostAccounts;
 pub use pairing_host::PairingHost;
 #[cfg(feature = "test-host")]
 mod test_resource_controls;
-pub use host_grants::HostGrantStore;
 pub use host_session::HostSession;
 pub use renderer::renderer_access_for;
 pub use services::RuntimeServices;

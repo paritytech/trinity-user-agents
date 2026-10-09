@@ -15,7 +15,7 @@ use crate::platform::{
 };
 use crate::platform::ResourceAllocationReview;
 use crate::runtime::authority::{
-    AccountCaller, AccountGrant, AccountGrantOutcome, AccountHolder, AccountInvocation,
+    AccountCaller, AccountGrant, AccountGrantOutcome, AccountHolder, AccountInvocation, GrantKeeping,
     AuthorityError, AuthoritySession, AutoSigningKey, BulletinAllowanceKey,
     CreateTransactionAuthorityRequest, SignPayloadAuthorityRequest, SignRawAuthorityRequest,
     StatementStoreAllowanceKey,
@@ -308,6 +308,8 @@ impl WalletAccountHolder {
 
 #[async_trait::async_trait]
 impl AccountHolder for WalletAccountHolder {
+    const GRANT_KEEPING: GrantKeeping = GrantKeeping::Wallet;
+
     fn current_session(&self) -> Option<AuthoritySession> {
         let state = self
             .lifecycle

@@ -462,9 +462,22 @@ pub enum AccountGrantOutcome {
     },
 }
 
+/// How a host keeps the grants its account holder issues.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GrantKeeping {
+    /// The wallet's own host: allowances persist per wallet and product, and
+    /// AutoSigning keys last one wallet activation.
+    Wallet,
+    /// A host paired with a wallet on another device: grants persist under the pairing.
+    Paired,
+}
+
 /// Wallet account operations bound to a selected session.
 #[async_trait]
 pub trait AccountHolder: Send + Sync + 'static {
+    /// How the host keeps the grants this holder issues.
+    const GRANT_KEEPING: GrantKeeping;
+
     /// Current account-authority session, if connected.
     fn current_session(&self) -> Option<AuthoritySession>;
 

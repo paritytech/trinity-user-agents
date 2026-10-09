@@ -21,7 +21,7 @@ use super::allowances::current_unix_secs;
 use super::authority::AuthorityError;
 use super::ring_vrf_registry::RingVrfRegistryStore;
 use super::{
-    AccountHolder, HostAccounts, HostGrantStore, HostSession, RuntimeServices,
+    AccountHolder, HostAccounts, HostSession, RuntimeServices,
     connected_session_ui_info,
 };
 use super::product_consent::ProductConsent;
@@ -86,7 +86,6 @@ impl SigningHost {
             services.clone(),
             wallet.clone(),
             wallet.session_state(),
-            Arc::new(HostGrantStore::new(platform.clone())),
             registry,
             consent,
             #[cfg(feature = "test-host")]
@@ -171,7 +170,7 @@ impl SigningHost {
 
     /// Revoke one product's grants while preserving the active wallet.
     pub async fn clear_product_state(&self, product_id: &str) -> Result<(), String> {
-        self.accounts.clear_native_product_state(product_id).await
+        self.accounts.clear_product_state(product_id).await
     }
 
     /// Delete persisted grants when their wallet is removed, including while locked.

@@ -94,7 +94,6 @@ impl<H: AccountHolder> HostAccounts<H> {
         services: Arc<RuntimeServices>,
         holder: Arc<H>,
         session_state: Arc<SessionState>,
-        grants: Arc<HostGrantStore>,
         ring_vrf_registry: Arc<RingVrfRegistryStore>,
         consent: Arc<ProductConsent>,
         #[cfg(feature = "test-host")] resource_controls: Arc<
@@ -103,10 +102,13 @@ impl<H: AccountHolder> HostAccounts<H> {
     ) -> Self {
         Self {
             ring_resolver: ChainRingResolver::new(services.chain.clone()),
+            grants: Arc::new(HostGrantStore::new(
+                services.platform.clone(),
+                H::GRANT_KEEPING,
+            )),
             services,
             holder,
             session_state,
-            grants,
             ring_vrf_registry,
             consent,
             #[cfg(feature = "test-host")]
@@ -121,28 +123,9 @@ impl<H: AccountHolder> HostAccounts<H> {
         let product_id =
             normalize_product_identifier(product_id).map_err(|error| error.to_string())?;
         self.consent.forget_allowed_once_for(&product_id);
-        let session = {
-            let mut lifecycle = self.grants.lifecycle();
-            lifecycle.revoke_product(&product_id);
-            self.session_state.current()
-        };
         self.grants
-            .persistence()
+            .clear_product_grants(&self.session_state, &product_id)
             .await
-            .clear_product(session.as_ref(), &product_id)
-            .await
-    }
-
-    /// Clear one product's grants under every wallet this host keeps them for,
-    /// locked or not, and the Allow once answers it received.
-    pub async fn clear_native_product_state(&self, product_id: &str) -> Result<(), String> {
-        let product_id =
-            normalize_product_identifier(product_id).map_err(|error| error.to_string())?;
-        self.consent.forget_allowed_once_for(&product_id);
-        self.grants.lifecycle().revoke_native_product(&product_id);
-        let storage = self.grants.persistence().await;
-        storage.begin_cleanup();
-        storage.drain_cleanup().await
     }
 
     /// Revoke the grants `owner`'s wallet left on this host. When that wallet

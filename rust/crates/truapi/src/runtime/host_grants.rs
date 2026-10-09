@@ -6,7 +6,7 @@ use native_allowances::NativeAllowanceDeletion;
 
 use super::allowances::{self, AllowanceCacheKey, AllowanceResource, GrantScope};
 use super::authority::{
-    AccountGrant, AuthorityError, AutoSigningKey, BulletinAllowanceKey,
+    AccountGrant, AuthorityError, AutoSigningKey, BulletinAllowanceKey, GrantKeeping,
     StatementStoreAllowanceKey,
 };
 use super::product_subtree;
@@ -110,6 +110,7 @@ impl GrantState {
 /// Retained grants, host revision and unfinished durable revocation.
 pub struct HostGrantStore {
     storage: Arc<dyn CoreStorage>,
+    keeping: GrantKeeping,
     state: Mutex<GrantState>,
     persistence: Arc<futures::lock::Mutex<()>>,
     statement_store_allowances:
@@ -142,10 +143,11 @@ enum Barrier<'a> {
 }
 
 impl HostGrantStore {
-    /// Bind retained capabilities to the host's storage.
-    pub fn new(storage: Arc<dyn CoreStorage>) -> Self {
+    /// Bind retained capabilities to the host's storage, kept as `keeping` says.
+    pub fn new(storage: Arc<dyn CoreStorage>, keeping: GrantKeeping) -> Self {
         Self {
             storage,
+            keeping,
             state: Mutex::new(GrantState::default()),
             persistence: Arc::new(futures::lock::Mutex::new(())),
             statement_store_allowances: Mutex::new(HashMap::new()),
@@ -181,7 +183,7 @@ impl HostGrantStore {
         product_id: &str,
     ) -> Result<HostGrantPersistence<'_>, AuthorityError> {
         let storage = self.persistence().await;
-        if session.sso.is_none()
+        if self.keeping == GrantKeeping::Wallet
             && let Err(reason) = storage.drain_cleanup().await
             && self.lifecycle().state.pending_deletions.iter().any(|deletion| {
                 matches!(deletion, PendingDeletion::NativeAllowance(scope) if scope.includes(session.public_key, product_id))
@@ -193,6 +195,34 @@ impl HostGrantStore {
             return Err(AuthorityError::Disconnected);
         }
         Ok(storage)
+    }
+
+    /// Revoke one product's grants: under every wallet a wallet's own host
+    /// keeps them for, locked or not, or under the current pairing.
+    pub async fn clear_product_grants(
+        &self,
+        session_state: &SessionState,
+        product_id: &str,
+    ) -> Result<(), String> {
+        match self.keeping {
+            GrantKeeping::Wallet => {
+                self.lifecycle().revoke_native_product(product_id);
+                let storage = self.persistence().await;
+                storage.begin_cleanup();
+                storage.drain_cleanup().await
+            }
+            GrantKeeping::Paired => {
+                let session = {
+                    let mut lifecycle = self.lifecycle();
+                    lifecycle.revoke_product(product_id);
+                    session_state.current()
+                };
+                self.persistence()
+                    .await
+                    .clear_product(session.as_ref(), product_id)
+                    .await
+            }
+        }
     }
 
     /// Hold back grant writes across another component's session change.
@@ -285,7 +315,9 @@ impl HostGrantStore {
         lifecycle_epoch: u64,
         cache_key: (GrantScope, String),
     ) -> Option<[u8; 32]> {
-        session.sso.as_ref()?;
+        if self.keeping == GrantKeeping::Wallet {
+            return None;
+        }
         let public_key = match product_subtree::read_product_subtree(
             &*self.storage,
             session,
@@ -321,7 +353,7 @@ impl HostGrantStore {
         public_key: [u8; 32],
     ) -> bool {
         let product_id = cache_key.1.clone();
-        if session.sso.is_none() {
+        if self.keeping == GrantKeeping::Wallet {
             return self.cache_product_subtree_if_current(
                 session_state,
                 session,
@@ -406,7 +438,7 @@ impl HostGrantStore {
         let storage = self
             .allowance_persistence(session_state, session, lifecycle_epoch, product_id)
             .await?;
-        if session.sso.is_none() {
+        if self.keeping == GrantKeeping::Wallet {
             native_allowances::retain_native_allowance(
                 &storage,
                 session_state,
@@ -433,7 +465,7 @@ impl HostGrantStore {
             product_id,
             allowance,
         ) {
-            if session.sso.is_some() {
+            if self.keeping == GrantKeeping::Paired {
                 let _ =
                     allowances::remove_allowance_key(&*self.storage, session, product_id, resource)
                         .await;
@@ -517,7 +549,7 @@ impl HostGrantStore {
         if cached.is_some() {
             return Ok(cached);
         }
-        let allowance = if session.sso.is_none() {
+        let allowance = if self.keeping == GrantKeeping::Wallet {
             let Some(allowance) = native_allowances::native_allowance(
                 &storage,
                 session.public_key,
@@ -607,7 +639,7 @@ impl HostGrantStore {
         )?;
         let owner = AutoSigningOwner::from_session(session);
         let cache_key = (owner.clone(), product_id.to_string());
-        if session.sso.is_none() {
+        if self.keeping == GrantKeeping::Wallet {
             let kept = self.cache_auto_signing_key_if_current(
                 session_state,
                 session,
@@ -689,7 +721,7 @@ impl HostGrantStore {
         {
             return Ok(Some(key));
         }
-        if session.sso.is_none() {
+        if self.keeping == GrantKeeping::Wallet {
             return Ok(None);
         }
 
@@ -747,13 +779,12 @@ impl HostGrantStore {
                 Ok(None)
             };
         };
-        let current_expected_subtree = session.sso.as_ref().and_then(|_| {
-            self.product_subtrees
-                .lock()
-                .expect("product subtree cache mutex poisoned")
-                .get(&(GrantScope::from_session(session), product_id.to_string()))
-                .copied()
-        });
+        let current_expected_subtree = self
+            .product_subtrees
+            .lock()
+            .expect("product subtree cache mutex poisoned")
+            .get(&(GrantScope::from_session(session), product_id.to_string()))
+            .copied();
         if current_expected_subtree
             .is_some_and(|expected| expected != persisted.expected_product_subtree_public_key)
         {
@@ -1064,8 +1095,8 @@ impl HostGrantPersistence<'_> {
         }
     }
 
-    /// Remove one product's capabilities without changing session selection.
-    pub async fn clear_product(
+    /// Remove one paired product's capabilities without changing session selection.
+    async fn clear_product(
         &self,
         session: Option<&SessionInfo>,
         product_id: &str,
@@ -1093,7 +1124,6 @@ impl HostGrantPersistence<'_> {
 
         let mut first_error = self.clear_auto_signing_product(product_id).await.err();
         if let Some(session) = session
-            && session.sso.is_some()
             && let Err(error) =
                 allowances::clear_product_allowance_keys(&*self.store.storage, session, product_id)
                     .await

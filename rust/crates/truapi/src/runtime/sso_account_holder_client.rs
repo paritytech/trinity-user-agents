@@ -3,7 +3,7 @@
 use super::HostSession;
 use super::allowances::AllowanceResource;
 use super::authority::{
-    AccountGrant, AccountGrantOutcome, AccountHolder, AccountInvocation,
+    AccountGrant, AccountGrantOutcome, AccountHolder, AccountInvocation, GrantKeeping,
     AuthorityCancelError, AuthorityError, AuthoritySession, AutoSigningKey, BulletinAllowanceKey,
     CreateTransactionAuthorityRequest, SignPayloadAuthorityRequest, SignRawAuthorityRequest,
     StatementStoreAllowanceKey, require_current_session,
@@ -169,6 +169,8 @@ async fn forward<R: SsoRequest>(
 
 #[async_trait::async_trait]
 impl AccountHolder for SsoAccountHolderClient {
+    const GRANT_KEEPING: GrantKeeping = GrantKeeping::Paired;
+
     fn current_session(&self) -> Option<AuthoritySession> {
         self.service.current_session()
     }
