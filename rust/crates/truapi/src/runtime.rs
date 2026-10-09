@@ -55,9 +55,7 @@ use std::time::Instant;
 
 pub use actions::ActionChannel;
 use authority::AuthorityCancelError;
-pub use authority::{
-    AccountCaller, AccountHolder, AuthorityError, AuthoritySession, BulletinAllowanceKey,
-};
+pub use authority::{AccountHolder, AuthorityError, AuthoritySession, BulletinAllowanceKey};
 pub use chat::chat_platform_for;
 pub use contacts::ContactResolutionError;
 

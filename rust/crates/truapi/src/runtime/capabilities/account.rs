@@ -24,7 +24,7 @@ use truapi::versioned::account::{
 use truapi::{CallContext, CallError, Subscription, latest, v01};
 
 use crate::runtime::{
-    AccountCaller, AccountHolder, ProductRuntimeHost, remote_authority_call,
+    AccountHolder, ProductRuntimeHost, remote_authority_call,
     remote_authority_context, ring_vrf_alias_error, ring_vrf_list_error, ring_vrf_proof_error,
     ring_vrf_register_error, ring_vrf_sign_error, validate_vrf_transcript, vrf_call_error,
 };
@@ -85,9 +85,7 @@ impl<H: AccountHolder> Account for ProductRuntimeHost<H> {
             self.accounts.account_alias(
                 &authority_session,
                 &cx,
-                AccountCaller::Local {
-                    product: &self.connection.product,
-                },
+                &self.connection.product,
                 request,
             ),
         )
@@ -122,9 +120,7 @@ impl<H: AccountHolder> Account for ProductRuntimeHost<H> {
             .create_proof(
                 &authority_session,
                 &cx,
-                AccountCaller::Local {
-                    product: &self.connection.product,
-                },
+                &self.connection.product,
                 request,
             )
             .await
@@ -153,9 +149,7 @@ impl<H: AccountHolder> Account for ProductRuntimeHost<H> {
             self.accounts.register_ring_vrf_key(
                 &authority_session,
                 &cx,
-                AccountCaller::Local {
-                    product: &self.connection.product,
-                },
+                &self.connection.product,
                 request,
             ),
         )
@@ -194,9 +188,7 @@ impl<H: AccountHolder> Account for ProductRuntimeHost<H> {
             self.accounts.list_ring_vrf_keys(
                 &authority_session,
                 &cx,
-                AccountCaller::Local {
-                    product: &self.connection.product,
-                },
+                &self.connection.product,
                 request,
             ),
         )
@@ -234,9 +226,7 @@ impl<H: AccountHolder> Account for ProductRuntimeHost<H> {
             .ring_vrf_sign(
                 &authority_session,
                 &cx,
-                AccountCaller::Local {
-                    product: &self.connection.product,
-                },
+                &self.connection.product,
                 request,
             )
             .await
@@ -276,9 +266,7 @@ impl<H: AccountHolder> Account for ProductRuntimeHost<H> {
             self.accounts.sign_vrf(
                 &authority_session,
                 &cx,
-                AccountCaller::Local {
-                    product: &self.connection.product,
-                },
+                &self.connection.product,
                 request,
             ),
         )

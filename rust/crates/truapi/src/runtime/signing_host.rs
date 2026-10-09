@@ -2018,9 +2018,7 @@ mod tests {
         futures::executor::block_on(authority.accounts().sign_vrf(
             &session,
             &CallContext::default(),
-            AccountCaller::Local {
-                product: &ProductContext::new("myapp.dot".to_string()).unwrap(),
-            },
+            &ProductContext::new("myapp.dot".to_string()).unwrap(),
             vrf_request("myapp.dot"),
         ))
         .expect("granted product signs with its kept key");
@@ -2036,9 +2034,7 @@ mod tests {
         let error = futures::executor::block_on(authority.accounts().sign_vrf(
             &session,
             &CallContext::default(),
-            AccountCaller::Local {
-                product: &ProductContext::new("other.dot".to_string()).unwrap(),
-            },
+            &ProductContext::new("other.dot".to_string()).unwrap(),
             vrf_request("myapp.dot"),
         ))
         .expect_err("different calling product remains confirmation-bound");

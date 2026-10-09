@@ -388,9 +388,7 @@ impl<H: super::AccountHolder> ProductRuntimeHost<H> {
             .sign_statement_store_product_payload(
                 authority_session,
                 cx,
-                crate::runtime::authority::AccountCaller::Local {
-                    product: &self.connection.product,
-                },
+                &self.connection.product,
                 product_account_id,
                 payload,
             )

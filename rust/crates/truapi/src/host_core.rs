@@ -33,7 +33,7 @@ use truapi::{CallContext, CancellationReason};
 use crate::frame::ProtocolMessage;
 use crate::host_logic::worker::WorkerLedger;
 use crate::runtime::{
-    AccountCaller, AccountHolder, ActionChannel, AuthorityError,
+    AccountHolder, ActionChannel, AuthorityError,
     DEFAULT_REMOTE_AUTHORITY_RESPONSE_TIMEOUT, DevicePairingObserver, HostAccounts, HostSession,
     LocalActivation, PairedSsoPeer, ProductConnection, ProductRuntimeHost, ResponderExit,
     RuntimeServices, SigningHostRole, SsoAccountHolderClient, SsoAccountHolderService,
@@ -1414,9 +1414,7 @@ async fn product_subtree_public_key<H: AccountHolder>(
         .product_subtree_public_key(
             &authority_session,
             &cx,
-            AccountCaller::Local {
-                product: &product,
-            },
+            &product,
             product_id,
         )
         .fuse();

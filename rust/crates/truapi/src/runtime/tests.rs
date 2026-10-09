@@ -1,7 +1,7 @@
 //! Shared runtime fixtures and cross-capability integration tests.
 
 use super::allowances::AllowanceResource;
-use super::authority::{AccountCaller, AccountGrant, AutoSigningKey, StatementStoreAllowanceKey};
+use super::authority::{AccountGrant, AutoSigningKey, StatementStoreAllowanceKey};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -7623,9 +7623,7 @@ fn host_accounts_refuse_a_foreign_ring_vrf_key_without_a_grant() {
     let proof = futures::executor::block_on(accounts.create_proof(
         &authority_session,
         &CallContext::default(),
-        AccountCaller::Local {
-            product: &ProductContext::new("dim2.dot".to_string()).unwrap(),
-        },
+        &ProductContext::new("dim2.dot".to_string()).unwrap(),
         v01::HostAccountCreateProofRequest {
             key_handle: v01::ProductAccountId {
                 dot_ns_identifier: "peopl.dot".to_string(),
@@ -7648,9 +7646,7 @@ fn host_accounts_refuse_a_foreign_ring_vrf_key_without_a_grant() {
     let signed = futures::executor::block_on(accounts.ring_vrf_sign(
         &authority_session,
         &CallContext::default(),
-        AccountCaller::Local {
-            product: &ProductContext::new("dim2.dot".to_string()).unwrap(),
-        },
+        &ProductContext::new("dim2.dot".to_string()).unwrap(),
         v01::HostAccountRingVrfSignRequest {
             key_handle: v01::ProductAccountId {
                 dot_ns_identifier: "peopl.dot".to_string(),
