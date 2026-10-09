@@ -123,7 +123,7 @@ product                 host core / CLI platform                      cache prov
    |------------------------------->| permission, confirmation              |                          |
    |                                | sign authorization:                   |                          |
    |                                |   {transfer, payer, provider, cid,    |                          |
-   |                                |    Retention, from = now,             |                          |
+   |                                |    Retention, size, from = now,       |                          |
    |                                |    until = now + period}              |                          |
    |                                |---- POST /pin {bulletin:<cid>, ------>|                          |
    |                                |     authorization}                    | fetch: local, peers,     |
@@ -135,10 +135,14 @@ product                 host core / CLI platform                      cache prov
 ```
 
 The authorization is the receipt that the prototype defines in `cache/src/payment.rs`: an sr25519 signature by the payer
-over the transfer id, the payer and provider keys, the CID, the service and the window `from` and `until`. The retention
-ends at `until`, a fixed time, so a replay of the authorization cannot extend it. The provider charges only for the time
-after now and after the current end, and never more than `until - from`. The ledger charges each transfer id once, and
-a transfer id signed again for another window is a conflict, not a free retry.
+over the transfer id, the payer and provider keys, the CID, the service, the size of the content and the window `from`
+and `until`. The ledger charges by the signed size, so a provider cannot charge for a larger size, and the provider
+refuses the authorization when the content has another size. The host knows the size, because it shows the price in
+the confirmation. The retention ends at `until`, a fixed time, so a replay of the authorization cannot extend it. The
+provider charges only for the time after now and after the current end, and never more than `until - from`. Only the
+provider that the authorization names can ask the ledger for the charge: it signs the request with its endpoint key.
+The ledger charges each transfer id once, and a transfer id signed again for another window is a conflict, not a free
+retry.
 
 ## Trade-offs
 
