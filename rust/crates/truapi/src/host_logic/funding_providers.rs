@@ -25,6 +25,9 @@ pub struct FundingProviderEntry {
     /// The Worker manifest JSON the host shipped for it, used until the core
     /// has read the live one. `None` waits for that read.
     pub worker_manifest: Option<String>,
+    /// The host ships the provider itself, so `worker_manifest` is what the
+    /// core goes by and dotNS is never read for it.
+    pub bundled: bool,
 }
 
 /// How long what a quote answer showed about a provider is trusted over its

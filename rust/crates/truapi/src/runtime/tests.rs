@@ -8233,6 +8233,7 @@ fn offer_provider(services: &Arc<RuntimeServices>, provider_id: &str, manifest: 
         .set_funding_providers(vec![crate::host_logic::funding_providers::FundingProviderEntry {
             product_id: provider_id.to_string(),
             worker_manifest: Some(manifest.to_string()),
+            bundled: false,
         }])
         .expect("provider offered");
 }
@@ -8563,6 +8564,7 @@ fn quotes_resolve_row_by_row_and_a_silent_provider_times_out() {
                 .map(|product_id| crate::host_logic::funding_providers::FundingProviderEntry {
                     product_id: product_id.to_string(),
                     worker_manifest: Some(RAMP_MANIFEST.to_string()),
+                    bundled: false,
                 })
                 .to_vec(),
         )
@@ -8641,10 +8643,12 @@ fn quotes_ask_every_provider_and_learn_what_it_serves() {
                 crate::host_logic::funding_providers::FundingProviderEntry {
                     product_id: "ramp.dot".to_string(),
                     worker_manifest: Some(germany_only),
+                    bundled: false,
                 },
                 crate::host_logic::funding_providers::FundingProviderEntry {
                     product_id: "chain.dot".to_string(),
                     worker_manifest: Some(crypto_only),
+                    bundled: false,
                 },
             ])
             .expect("providers offered");
