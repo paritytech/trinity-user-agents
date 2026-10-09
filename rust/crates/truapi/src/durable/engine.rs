@@ -157,10 +157,12 @@ mod tests {
     use crate::chain::MortalExtrinsic;
     use crate::durable::testing::{FakeChain, extrinsic, test_engine};
 
-    const DOMAIN: DomainId = DomainId::from_static("test");
+    fn domain() -> DomainId {
+        DomainId::new("test")
+    }
 
     fn request(extrinsics: Vec<MortalExtrinsic>) -> DurableRequest {
-        DurableRequest::presigned(DOMAIN, Some(GroupId::new("op")), extrinsics).unwrap()
+        DurableRequest::presigned(domain(), Some(GroupId::new("op")), extrinsics).unwrap()
     }
 
     #[test]
@@ -169,7 +171,7 @@ mod tests {
         let (_dir, engine, _timer) = test_engine(&chain);
         let id = block_on(engine.execute(request(vec![extrinsic(1, 100, 64)]))).unwrap()[0];
         let mut status = engine.observe_status(id);
-        let mut group = engine.observe_group(&DOMAIN, &GroupId::new("op"));
+        let mut group = engine.observe_group(&domain(), &GroupId::new("op"));
 
         assert_eq!(
             block_on(status.next()).unwrap().unwrap(),

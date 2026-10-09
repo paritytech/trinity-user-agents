@@ -200,16 +200,18 @@ mod tests {
     use crate::durable::testing::{FakeChain, extrinsic, test_engine};
     use crate::test_support::wait_until;
 
-    const DOMAIN: DomainId = DomainId::from_static("test");
+    fn domain() -> DomainId {
+        DomainId::new("test")
+    }
 
     fn request(extrinsics: Vec<MortalExtrinsic>) -> DurableRequest {
-        DurableRequest::presigned(DOMAIN, Some(GroupId::new("op")), extrinsics).unwrap()
+        DurableRequest::presigned(domain(), Some(GroupId::new("op")), extrinsics).unwrap()
     }
 
     #[test]
     fn a_request_with_no_extrinsic_cannot_be_built() {
         assert!(matches!(
-            DurableRequest::presigned(DOMAIN, None, vec![]),
+            DurableRequest::presigned(domain(), None, vec![]),
             Err(EmptyRequest)
         ));
     }
@@ -225,7 +227,7 @@ mod tests {
 
         assert!(ids[0] < ids[1]);
         assert_eq!(
-            block_on(engine.group(&DOMAIN, &GroupId::new("op"))).unwrap(),
+            block_on(engine.group(&domain(), &GroupId::new("op"))).unwrap(),
             ids.iter()
                 .map(|id| DurableTxState {
                     id: *id,
@@ -339,7 +341,7 @@ mod tests {
         .unwrap();
         assert!(matches!(result, Err(RegistrationError::Db(_))));
         assert_eq!(
-            block_on(engine.group(&DOMAIN, &GroupId::new("op"))).unwrap(),
+            block_on(engine.group(&domain(), &GroupId::new("op"))).unwrap(),
             vec![]
         );
         assert_eq!(tables, 0);
@@ -373,16 +375,13 @@ mod tests {
     fn a_domain_without_an_oracle_cannot_register() {
         let chain = FakeChain::new(130, 140);
         let (_dir, engine, _timer) = test_engine(&chain);
-        let orphan = DurableRequest::presigned(
-            DomainId::from_static("orphan"),
-            None,
-            vec![extrinsic(1, 100, 64)],
-        )
-        .unwrap();
+        let orphan =
+            DurableRequest::presigned(DomainId::new("orphan"), None, vec![extrinsic(1, 100, 64)])
+                .unwrap();
 
         assert!(matches!(
             block_on(engine.execute(orphan)),
-            Err(RegistrationError::UnknownDomain(domain)) if domain == DomainId::from_static("orphan")
+            Err(RegistrationError::UnknownDomain(domain)) if domain == DomainId::new("orphan")
         ));
     }
 }

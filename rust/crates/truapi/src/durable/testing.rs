@@ -63,7 +63,7 @@ pub fn extrinsic(tag: u8, birth: u64, period: u64) -> MortalExtrinsic {
 pub fn entry(id: DurableTxId, birth: u64, period: u64) -> DurableTxEntry {
     DurableTxEntry {
         id,
-        domain: DomainId::from_static("test"),
+        domain: DomainId::new("test"),
         group: None,
         tx_hash: H256::repeat_byte(id.0 as u8),
         mortality: Mortality::new(block(birth), period).unwrap(),
@@ -421,10 +421,7 @@ impl Timer for ManualTimer {
 pub fn test_engine(chain: &Arc<FakeChain>) -> (TempDir, Arc<DurableTxEngine>, Arc<ManualTimer>) {
     engine_with(
         chain,
-        DurableRegistry::new().with_domain(
-            DomainId::from_static("test"),
-            Arc::new(Unobservable(GENESIS)),
-        ),
+        DurableRegistry::new().with_domain(DomainId::new("test"), Arc::new(Unobservable(GENESIS))),
     )
 }
 

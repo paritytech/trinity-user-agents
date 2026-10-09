@@ -241,11 +241,15 @@ mod tests {
     use crate::durable::model::FailureKind;
     use crate::durable::testing::{block, extrinsic, open_db};
 
-    const DOMAIN: DomainId = DomainId::from_static("test");
+    fn domain() -> DomainId {
+        DomainId::new("test")
+    }
 
     fn register(db: &Db, group: Option<GroupId>, tag: u8) -> DurableTxId {
-        block_on(db.write(move |tx| insert(tx, &DOMAIN, group.as_ref(), &extrinsic(tag, 100, 64))))
-            .unwrap()
+        block_on(
+            db.write(move |tx| insert(tx, &domain(), group.as_ref(), &extrinsic(tag, 100, 64))),
+        )
+        .unwrap()
     }
 
     fn read<T: Send + 'static>(
@@ -276,7 +280,7 @@ mod tests {
             read(&db, move |conn| entry(conn, id)),
             Some(DurableTxEntry {
                 id,
-                domain: DOMAIN,
+                domain: domain(),
                 group: Some(GroupId::new("payment")),
                 tx_hash: extrinsic(7, 100, 64).extrinsic.hash(),
                 mortality: extrinsic(7, 100, 64).mortality,
@@ -410,7 +414,7 @@ mod tests {
         block_on(db.write(move |tx| {
             insert(
                 tx,
-                &DomainId::from_static("other"),
+                &DomainId::new("other"),
                 Some(&other),
                 &extrinsic(4, 100, 64),
             )
@@ -418,7 +422,7 @@ mod tests {
         .unwrap();
 
         assert_eq!(
-            read(&db, move |conn| group(conn, &DOMAIN, &group_id)),
+            read(&db, move |conn| group(conn, &domain(), &group_id)),
             vec![
                 DurableTxState {
                     id: first,
@@ -437,7 +441,7 @@ mod tests {
         let (_dir, db) = open_db();
         let ids = [register(&db, None, 1), register(&db, None, 2)];
 
-        let listed = read(&db, |conn| domain_entries(conn, &DOMAIN));
+        let listed = read(&db, |conn| domain_entries(conn, &domain()));
 
         assert_eq!(listed.iter().map(|entry| entry.id).collect::<Vec<_>>(), ids);
     }
@@ -447,7 +451,7 @@ mod tests {
         let (_dir, db) = open_db();
         assert_eq!(read(&db, live_domains), Vec::<DomainId>::new());
         let id = register(&db, None, 1);
-        assert_eq!(read(&db, live_domains), vec![DOMAIN]);
+        assert_eq!(read(&db, live_domains), vec![domain()]);
 
         let observed = read(&db, move |conn| entry(conn, id)).unwrap();
         write_verdict(
@@ -464,7 +468,7 @@ mod tests {
         let (_dir, db) = open_db();
         let group_id = GroupId::new("payment");
         let mut live = observe_has_live(&db);
-        let mut grouped = observe_group(&db, DOMAIN, group_id.clone());
+        let mut grouped = observe_group(&db, domain(), group_id.clone());
         assert!(!next(&mut live));
         assert_eq!(next(&mut grouped), vec![]);
 

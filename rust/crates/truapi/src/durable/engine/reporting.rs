@@ -79,12 +79,9 @@ mod tests {
         let (_dir, engine, _timer) = test_engine(&chain);
         let mut live = engine.live_work();
         assert!(!block_on(live.next()).unwrap().unwrap());
-        let request = DurableRequest::presigned(
-            DomainId::from_static("test"),
-            None,
-            vec![extrinsic(1, 100, 64)],
-        )
-        .unwrap();
+        let request =
+            DurableRequest::presigned(DomainId::new("test"), None, vec![extrinsic(1, 100, 64)])
+                .unwrap();
         block_on(engine.execute(request)).unwrap();
         assert!(block_on(live.next()).unwrap().unwrap());
 

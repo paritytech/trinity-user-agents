@@ -1,24 +1,17 @@
 //! What the ledger records about a durable transaction.
 
-use std::borrow::Cow;
-
 use subxt::utils::H256;
 
 use crate::chain::{HashAndNumber, Mortality};
 
 /// The domain a transaction belongs to; selects the oracle that decides it.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub struct DomainId(Cow<'static, str>);
+pub struct DomainId(String);
 
 impl DomainId {
-    /// A domain named by a compile-time constant.
-    pub const fn from_static(name: &'static str) -> Self {
-        Self(Cow::Borrowed(name))
-    }
-
-    /// A domain named at run time, such as one read back from the ledger.
+    /// A domain with this name.
     pub fn new(name: impl Into<String>) -> Self {
-        Self(Cow::Owned(name.into()))
+        Self(name.into())
     }
 
     /// The name stored in the ledger.

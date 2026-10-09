@@ -44,9 +44,14 @@ impl<E: MonotoneEffect> CompletionOracle for Monotone<E> {
         _ledger: &LedgerView,
         heads: &Heads,
     ) -> Result<Box<dyn PassScope>, RuntimeFailure> {
+        let (at_finalized, at_best) = futures::future::try_join(
+            self.0.effects_at(transactions, heads.finalized),
+            self.0.effects_at(transactions, heads.best),
+        )
+        .await?;
         Ok(Box::new(MonotoneScope {
-            at_finalized: self.0.effects_at(transactions, heads.finalized).await?,
-            at_best: self.0.effects_at(transactions, heads.best).await?,
+            at_finalized,
+            at_best,
         }))
     }
 }

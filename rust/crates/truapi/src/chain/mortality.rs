@@ -84,7 +84,7 @@ mod tests {
 
     fn block(number: u64) -> HashAndNumber {
         HashAndNumber {
-            hash: H256::repeat_byte(number as u8),
+            hash: H256::from_low_u64_be(number),
             number,
         }
     }
