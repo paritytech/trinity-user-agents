@@ -330,24 +330,28 @@ struct ProductManifestParserTests {
         return worker
     }
 
-    @Test func rejectsWorkerMissingEntrypointOrIncludes() {
+    @Test func rejectsWorkerMissingEntrypoint() {
         #expect(parser.parseExecutable(
             #"{"$v":1,"kind":"worker","appVersion":[1,0,0],"includes":{"chat":true,"pocket":false}}"#,
             kind: .worker,
             identifier: "w"
         ) == nil)
+    }
 
-        #expect(parser.parseExecutable(
-            #"{"$v":1,"kind":"worker","appVersion":[1,0,0],"entrypoint":"i.js"}"#,
-            kind: .worker,
-            identifier: "w"
-        ) == nil)
+    @Test func readsAnUnlistedModalityAsNotServed() {
+        let chatOnly = parsedWorker(
+            #"{"$v":1,"kind":"worker","appVersion":[1,0,0],"entrypoint":"i.js","includes":{"chat":true}}"#
+        )
+        #expect(chatOnly?.serves(.chat) == true)
+        #expect(chatOnly?.serves(.pocket) == false)
 
-        #expect(parser.parseExecutable(
-            #"{"$v":1,"kind":"worker","appVersion":[1,0,0],"entrypoint":"i.js","includes":{"chat":true}}"#,
-            kind: .worker,
-            identifier: "w"
-        ) == nil)
+        let fundingOnly = parsedWorker(
+            #"{"$v":1,"kind":"worker","appVersion":[1,0,0],"entrypoint":"i.js","includes":{"funding":{"routes":[]}}}"#
+        )
+        #expect(fundingOnly?.modalities.isEmpty == true)
+
+        let noIncludes = parsedWorker(#"{"$v":1,"kind":"worker","appVersion":[1,0,0],"entrypoint":"i.js"}"#)
+        #expect(noIncludes?.modalities.isEmpty == true)
     }
 }
 
