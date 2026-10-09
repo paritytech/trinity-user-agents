@@ -6,12 +6,12 @@ use truapi::v01;
 use crate::PairedSsoPeer;
 use crate::host_logic::worker::WorkerTransition;
 
+#[cfg(doc)]
+use super::NativeTrUApiHostRuntime;
 use super::config::ProductExecutionConfig;
 use super::errors::HostRejection;
 #[cfg(doc)]
 use crate::platform::CoreStorageKey;
-#[cfg(doc)]
-use super::NativeTrUApiHostRuntime;
 
 /// Callback surface that iOS and Android implement.
 ///
@@ -81,6 +81,17 @@ pub trait HostCallbacks: Send + Sync {
         request: v01::HostDevicePermissionRequest,
     ) -> Result<DevicePermissionStatus, HostRejection>;
 
+    /// Show (`true`) or hide (`false`) the face above this execution's
+    /// expanded card.
+    ///
+    /// Answer `NotPresented` when the execution is not under its card and
+    /// `UserMoving` while the user drags it. Return without waiting for the
+    /// animation to finish.
+    async fn set_expanded_card_face_shown(
+        &self,
+        shown: bool,
+    ) -> Result<crate::platform::ExpandedCardFaceOutcome, HostRejection>;
+
     /// Prompt the user for a remote permission `product` requested.
     async fn remote_permission(
         &self,
@@ -109,6 +120,14 @@ pub trait HostCallbacks: Send + Sync {
     /// Clear a core-owned host-private storage slot. `key` is a SCALE-encoded
     /// [`CoreStorageKey`].
     async fn core_storage_clear(&self, key: Vec<u8>) -> Result<(), HostRejection>;
+
+    /// Enumerate encoded keys in the existing core store. Hosts must report
+    /// unavailable enumeration as an error, never as an empty permission list.
+    async fn core_storage_keys(&self) -> Result<Vec<Vec<u8>>, HostRejection>;
+
+    /// A canonical decision changed. Refresh permission settings and invalidate
+    /// legacy one-use decisions for this product. Called on the process bridge.
+    fn permission_authorizations_changed(&self, product_id: String);
 
     /// Open a JSON-RPC connection for a chain. Return a host-assigned
     /// connection id, or `None` when unsupported.
@@ -288,6 +307,25 @@ pub enum NativePocketRemoval {
     Absent,
     /// The host pins the card and keeps it.
     Privileged,
+}
+
+/// Native game-reminder adapter. Hosts that can hold reminders pass an
+/// implementation to [`NativeTrUApiHostRuntime::open_product_execution`];
+/// hosts without one pass `None`. Both callbacks are async, so a host may hop
+/// to its own thread to answer without blocking the core's dispatch pool.
+///
+/// The execution is bound to one product, so neither call names it. The host
+/// owns the reminder: see [`crate::platform::GamePlatform`] for what it must
+/// do with one.
+#[uniffi::export(rust, foreign)]
+#[async_trait::async_trait]
+pub trait NativeGameCallbacks: Send + Sync {
+    /// Hold `starts_at` (Unix milliseconds, UTC) as this product's reminder,
+    /// replacing any it holds.
+    async fn schedule_reminder(&self, starts_at: u64) -> Result<(), HostRejection>;
+
+    /// Drop this product's reminder. Idempotent.
+    async fn cancel_reminder(&self) -> Result<(), HostRejection>;
 }
 
 /// Native contacts adapter. A host with a contact list and a picker passes an

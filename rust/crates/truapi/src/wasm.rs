@@ -19,9 +19,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 #[cfg(feature = "wasm-signing-host")]
 use crate::platform::SigningHostConfig;
 use crate::platform::{
-    ChainProvider, ChatPlatform, ContactsPlatform, HostInfo, JsonRpcConnection, PairingHostConfig,
-    PermissionStatusHost, PlatformInfo, PocketPlatform, ProductContext, ProductExecutionKind,
-    ProviderError, RuntimeConfigValidationError,
+    ChainProvider, ChatPlatform, ContactsPlatform, GamePlatform, HostInfo, JsonRpcConnection,
+    PairingHostConfig, PermissionStatusHost, PlatformInfo, PocketPlatform, ProductContext,
+    ProductExecutionKind, ProviderError, RuntimeConfigValidationError,
 };
 use futures::channel::mpsc;
 use futures::future::{AbortHandle, Abortable};
@@ -846,6 +846,7 @@ struct WasmPlatformAdapters {
     contacts_platform: Option<Arc<dyn ContactsPlatform>>,
     status_host: Option<Arc<dyn PermissionStatusHost>>,
     pocket_platform: Option<Arc<dyn PocketPlatform>>,
+    game_platform: Option<Arc<dyn GamePlatform>>,
 }
 
 /// Build the platform and the optional capability adapters supplied by the host.
@@ -854,17 +855,20 @@ fn wasm_platform(bridge: Arc<JsBridge>) -> WasmPlatformAdapters {
     let has_contacts = bridge.has_contacts();
     let has_permission_status = bridge.has_permission_status();
     let has_pocket = bridge.has_pocket();
+    let has_game = bridge.has_game();
     let platform = Arc::new(WasmPlatform::new(bridge));
     let chat = has_chat.then(|| platform.clone() as Arc<dyn ChatPlatform>);
     let contacts = has_contacts.then(|| platform.clone() as Arc<dyn ContactsPlatform>);
     let status = has_permission_status.then(|| platform.clone() as Arc<dyn PermissionStatusHost>);
     let pocket = has_pocket.then(|| platform.clone() as Arc<dyn PocketPlatform>);
+    let game = has_game.then(|| platform.clone() as Arc<dyn GamePlatform>);
     WasmPlatformAdapters {
         platform,
         chat_platform: chat,
         contacts_platform: contacts,
         status_host: status,
         pocket_platform: pocket,
+        game_platform: game,
     }
 }
 
@@ -881,6 +885,7 @@ fn connection_adapters_from_js(
         contacts_platform,
         status_host,
         pocket_platform,
+        game_platform,
     } = wasm_platform(Arc::new(JsBridge::from_js(callbacks)?));
     Ok(Some(crate::host_core::ConnectionAdapters {
         platform,
@@ -890,6 +895,8 @@ fn connection_adapters_from_js(
         // One-use grants belong to this execution, not the shared host.
         permission_grants: Arc::default(),
         pocket_platform,
+        game_platform,
+        expanded_card: None,
         chat: Arc::new(crate::runtime::ActionChannel::chat()),
         renderer: Arc::new(crate::runtime::ActionChannel::renderer()),
     }))
@@ -940,6 +947,19 @@ pub struct WasmPairingHostRuntime {
 
 #[wasm_bindgen]
 impl WasmPairingHostRuntime {
+    /// Keep preimage submissions in the core instead of the Bulletin chain.
+    ///
+    /// For a test host whose wallet answers allowances in-page: the Bulletin
+    /// allowance it hands out was never authorized on chain, so a real `store`
+    /// would be refused at dry-run. The product gets the content key back and
+    /// reads the value from the core's lookup cache, as after a landed
+    /// submission. A refused Bulletin allowance still refuses the submission.
+    #[cfg(feature = "test-host")]
+    #[wasm_bindgen(js_name = setSubmitPreimagesLocally)]
+    pub fn set_submit_preimages_locally(&self, local: bool) {
+        self.runtime.set_submit_preimages_locally(local);
+    }
+
     /// Build a shared runtime from host-level platform callbacks and host config.
     #[wasm_bindgen(constructor)]
     pub fn new(
@@ -955,6 +975,7 @@ impl WasmPairingHostRuntime {
             contacts_platform,
             status_host,
             pocket_platform,
+            game_platform,
         } = wasm_platform(bridge);
         let spawner: Spawner = Arc::new(|fut| {
             wasm_bindgen_futures::spawn_local(fut);
@@ -972,6 +993,9 @@ impl WasmPairingHostRuntime {
         }
         if let Some(pocket_platform) = pocket_platform {
             runtime.set_pocket_platform(pocket_platform);
+        }
+        if let Some(game_platform) = game_platform {
+            runtime.set_game_platform(game_platform);
         }
         install_worker_demand_observer(runtime.worker_ledger(), &callbacks)?;
         Ok(Self {
@@ -1238,6 +1262,11 @@ impl WasmSigningHostRuntime {
     /// paths without an on-chain personhood identity. Nothing is allocated, so
     /// a green run says the product handles a grant, not that a host would
     /// have given one.
+    ///
+    /// Preimage submissions then stay in the core: the Bulletin allowance was
+    /// never authorized on chain, so a real `store` would be refused. The
+    /// product gets the content key back and reads the value from the core's
+    /// lookup cache, as after a landed submission.
     #[cfg(feature = "test-host")]
     #[wasm_bindgen(js_name = setGrantAllowancesUnchecked)]
     pub fn set_grant_allowances_unchecked(&self, granted: bool) {
@@ -1256,6 +1285,19 @@ impl WasmSigningHostRuntime {
         self.runtime.set_withheld_resources(tags);
     }
 
+    /// Keep preimage submissions in the core instead of the Bulletin chain.
+    ///
+    /// For a test host whose wallet answers allowances in-page: the Bulletin
+    /// allowance it hands out was never authorized on chain, so a real `store`
+    /// would be refused at dry-run. The product gets the content key back and
+    /// reads the value from the core's lookup cache, as after a landed
+    /// submission. A refused Bulletin allowance still refuses the submission.
+    #[cfg(feature = "test-host")]
+    #[wasm_bindgen(js_name = setSubmitPreimagesLocally)]
+    pub fn set_submit_preimages_locally(&self, local: bool) {
+        self.runtime.set_submit_preimages_locally(local);
+    }
+
     /// Build a shared signing runtime from host callbacks and host config.
     #[wasm_bindgen(constructor)]
     pub fn new(
@@ -1271,6 +1313,8 @@ impl WasmSigningHostRuntime {
             contacts_platform,
             status_host,
             pocket_platform,
+            game_platform,
+            ..
         } = wasm_platform(bridge);
         let spawner: Spawner = Arc::new(|fut| {
             wasm_bindgen_futures::spawn_local(fut);
@@ -1288,6 +1332,9 @@ impl WasmSigningHostRuntime {
         }
         if let Some(pocket_platform) = pocket_platform {
             runtime.set_pocket_platform(pocket_platform);
+        }
+        if let Some(game_platform) = game_platform {
+            runtime.set_game_platform(game_platform);
         }
         install_worker_demand_observer(runtime.worker_ledger(), &callbacks)?;
         Ok(Self {
@@ -1653,6 +1700,7 @@ impl WasmProductRuntime {
             contacts_platform,
             status_host,
             pocket_platform,
+            game_platform,
         } = wasm_platform(bridge);
         let spawner: Spawner = Arc::new(|fut| {
             wasm_bindgen_futures::spawn_local(fut);
@@ -1667,6 +1715,9 @@ impl WasmProductRuntime {
         }
         if let Some(pocket_platform) = pocket_platform {
             pairing.set_pocket_platform(pocket_platform);
+        }
+        if let Some(game_platform) = game_platform {
+            pairing.set_game_platform(game_platform);
         }
         if let Some(contacts_platform) = contacts_platform {
             pairing.set_contacts_platform(contacts_platform);

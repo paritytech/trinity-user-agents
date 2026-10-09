@@ -32,6 +32,9 @@ class PrefsHostStorage(private val prefs: SharedPreferences) : HostStorage {
  * not be lost on process death; failures surface as the declared [HostRejection].
  */
 class PrefsHostCoreStorage(private val prefs: SharedPreferences) : HostCoreStorage {
+    override suspend fun keys(): List<ByteArray> = prefs.all.keys.map { key ->
+        decodeOrNull(key) ?: error("Invalid core storage key")
+    }
     override suspend fun read(key: ByteArray): ByteArray? =
         decodeOrNull(prefs.getString(bytesToHex(key), null))
     override suspend fun write(key: ByteArray, value: ByteArray) {

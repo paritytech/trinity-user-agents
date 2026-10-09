@@ -36,3 +36,6 @@ permits sending as well as receiving peer messages and is not read-only.
 
 Android and iOS consent now describe bidirectional messaging and display the complete genesis in the permission
 prompt, including batched requests, and in permission details. Short summary titles do not replace the full identity.
+
+JAM consent uses the shared canonical product permission authority, including revision fences and revocation of
+execution-local grants, while preserving the account-neutral product/genesis scope.

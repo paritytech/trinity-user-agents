@@ -26,6 +26,18 @@ final class DebugSettingsWireframe: DebugSettingsWireframeProtocol {
         view?.controller.navigationController?.pushViewController(hostingController, animated: true)
     }
 
+    /// The face loop: a URL, a decode and a draw, with no worker, no manifest
+    /// and no product in the way.
+    func showPocketFacePreview(from view: ControllerBackedProtocol?) {
+        let controller = UIHostingController(rootView: DebugPocketFacePreviewView())
+        view?.controller.navigationController?.pushViewController(controller, animated: true)
+    }
+
+    func showPocketCards(from view: ControllerBackedProtocol?) {
+        let controller = UIHostingController(rootView: DebugPocketCardsView())
+        view?.controller.navigationController?.pushViewController(controller, animated: true)
+    }
+
     func showThemeSelection(from view: ControllerBackedProtocol?) {
         let themeView = DebugThemeSelectionView(
             themeManager: ThemeManager.shared,

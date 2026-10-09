@@ -93,7 +93,9 @@ private extension GameRoomPillState {
 
         return .starting(gameDate: gameDate)
     }
+}
 
+extension GameRoomPillState {
     enum Constants {
         static let startingPillLeadTime: TimeInterval = 5 * TimeInterval.secondsInMinute
     }

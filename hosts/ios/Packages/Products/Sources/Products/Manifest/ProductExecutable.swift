@@ -41,25 +41,46 @@ public enum ProductExecutable: Hashable, Sendable {
     }
 
     public struct Worker: Hashable, Sendable {
+        /// One surface a worker declares, with whatever that surface is
+        /// declared with. A worker that declares none is valid: it runs as
+        /// background logic with no user-facing surface.
+        public enum Modality: Hashable, Sendable {
+            case chat
+            case pocket([PocketCardDefinition])
+
+            public var kind: ProductWorkerModality {
+                switch self {
+                case .chat: .chat
+                case .pocket: .pocket
+                }
+            }
+        }
+
         public let identifier: ProductId
         public let appVersion: SemVer
         /// Entry module path relative to the executable directory root.
         public let entrypoint: String
-        public let includesChat: Bool
-        public let includesPocket: Bool
+        public let modalities: [Modality]
 
         public init(
             identifier: ProductId,
             appVersion: SemVer,
             entrypoint: String,
-            includesChat: Bool,
-            includesPocket: Bool
+            modalities: [Modality]
         ) {
             self.identifier = identifier
             self.appVersion = appVersion
             self.entrypoint = entrypoint
-            self.includesChat = includesChat
-            self.includesPocket = includesPocket
+            self.modalities = modalities
+        }
+
+        /// The Pocket cards this worker offers, none unless it serves a Pocket.
+        public var pocketCards: [PocketCardDefinition] {
+            modalities
+                .compactMap { modality in
+                    if case let .pocket(cards) = modality { cards } else { nil }
+                }
+                .first ?? []
         }
     }
 }

@@ -14,7 +14,10 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use crate::platform::{ChatPlatform, ContactsPlatform, PermissionStatusHost, PocketPlatform};
+use crate::platform::{
+    ChatPlatform, ContactsPlatform, ExpandedCardHost, GamePlatform, PermissionStatusHost,
+    PocketPlatform,
+};
 use crate::platform::{
     CoreAdmin, PairingHostAdmin, PairingHostConfig, PermissionAuthorizationRequest,
     PermissionAuthorizationStatus, Platform, ProductContext, SigningHostConfig,
@@ -184,6 +187,14 @@ pub struct PairingHostRuntime {
 }
 
 impl PairingHostRuntime {
+    /// Keep preimage submissions in the core instead of the Bulletin chain.
+    ///
+    /// For test hosts only, with the `test-host` feature enabled.
+    #[cfg(feature = "test-host")]
+    pub fn set_submit_preimages_locally(&self, local: bool) {
+        self.pairing_host.set_submit_preimages_locally(local);
+    }
+
     /// Build a long-lived pairing-host runtime around a platform implementation.
     #[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.new"))]
     pub fn new<P>(platform: Arc<P>, config: PairingHostConfig, spawner: Spawner) -> Self
@@ -263,6 +274,17 @@ impl PairingHostRuntime {
     #[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.set_pocket_platform"))]
     pub fn set_pocket_platform(&self, platform: Arc<dyn PocketPlatform>) -> bool {
         self.services.install_pocket_platform(platform)
+    }
+
+    /// Install the host's [`GamePlatform`], which holds each product's game
+    /// reminder.
+    ///
+    /// Set-once, so reminders cannot change hands under a running product.
+    /// Returns whether this call installed it. Call it before serving any
+    /// product runtime.
+    #[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.set_game_platform"))]
+    pub fn set_game_platform(&self, platform: Arc<dyn GamePlatform>) -> bool {
+        self.services.install_game_platform(platform)
     }
 
     /// Install the host's [`ContactsPlatform`], which owns the contact list and
@@ -588,6 +610,14 @@ impl SigningHostRuntime {
         self.signing_host.set_grant_allowances_unchecked(granted);
     }
 
+    /// Keep preimage submissions in the core instead of the Bulletin chain.
+    ///
+    /// For test hosts only, with the `test-host` feature enabled.
+    #[cfg(feature = "test-host")]
+    pub fn set_submit_preimages_locally(&self, local: bool) {
+        self.signing_host.set_submit_preimages_locally(local);
+    }
+
     /// Answer these resource tags as refused, replacing any earlier set.
     ///
     /// For test hosts only, with the `test-host` feature enabled.
@@ -685,6 +715,17 @@ impl SigningHostRuntime {
     #[instrument(skip_all, fields(runtime.method = "signing_host_runtime.set_pocket_platform"))]
     pub fn set_pocket_platform(&self, platform: Arc<dyn PocketPlatform>) -> bool {
         self.services.install_pocket_platform(platform)
+    }
+
+    /// Install the host's [`GamePlatform`], which holds each product's game
+    /// reminder.
+    ///
+    /// Set-once, so reminders cannot change hands under a running product.
+    /// Returns whether this call installed it. Call it before serving any
+    /// product runtime.
+    #[instrument(skip_all, fields(runtime.method = "signing_host_runtime.set_game_platform"))]
+    pub fn set_game_platform(&self, platform: Arc<dyn GamePlatform>) -> bool {
+        self.services.install_game_platform(platform)
     }
 
     /// Install the host's [`ContactsPlatform`], which owns the contact list and
@@ -1217,7 +1258,7 @@ impl SigningHostRuntime {
 /// action streams. Unscoped connections use [`Self::from_services`].
 ///
 /// `pocket_platform` is the same kind of optional adapter for the card
-/// collection.
+/// collection, and `game_platform` for the product's game reminder.
 #[derive(Clone)]
 pub struct ConnectionAdapters {
     pub platform: Arc<dyn Platform>,
@@ -1233,6 +1274,9 @@ pub struct ConnectionAdapters {
     pub chat: Arc<ActionChannel<truapi::versioned::chat::HostChatActionSubscribeItem>>,
     pub renderer: Arc<ActionChannel<truapi::versioned::renderer::HostRendererActionSubscribeItem>>,
     pub pocket_platform: Option<Arc<dyn PocketPlatform>>,
+    pub game_platform: Option<Arc<dyn GamePlatform>>,
+    /// Control of the card face above this connection's Widget, when the host draws one.
+    pub expanded_card: Option<Arc<dyn ExpandedCardHost>>,
 }
 
 impl ConnectionAdapters {
@@ -1247,6 +1291,8 @@ impl ConnectionAdapters {
             chat: Arc::new(ActionChannel::chat()),
             renderer: Arc::new(ActionChannel::renderer()),
             pocket_platform: services.pocket_platform(),
+            expanded_card: None,
+            game_platform: services.game_platform(),
         }
     }
 }
@@ -2273,7 +2319,7 @@ mod tests {
     }
 
     #[test]
-    fn network_access_trusted_products_ignore_recorded_denials() {
+    fn network_access_trusted_products_honor_recorded_denials() {
         futures::executor::block_on(async {
             let platform = Arc::new(StubPlatform::default());
             let (config, _) = runtime_config("peopl.dot");
@@ -2312,7 +2358,7 @@ mod tests {
                         granted: true
                     }),
                     permissions::RemotePermissionResponse::V1(RemotePermissionResponse {
-                        granted: true
+                        granted: false
                     }),
                     vec![],
                 )

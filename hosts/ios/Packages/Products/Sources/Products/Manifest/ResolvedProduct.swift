@@ -56,4 +56,18 @@ public struct ResolvedProduct: Hashable, Sendable {
     public var appContentId: ProductId {
         executables.app?.identifier ?? id
     }
+
+    /// The archive `kind` is served from.
+    ///
+    /// A product that publishes no executable of that kind is served from its
+    /// base name, which is where a legacy product and a script installed by
+    /// hand through debug settings both live. Everything that asks which
+    /// archive backs a surface asks here, so no two callers can disagree.
+    public func contentId(for kind: ExecutableKind) -> ProductId {
+        switch kind {
+        case .app: appContentId
+        case .widget: executables.widget?.identifier ?? id
+        case .worker: executables.worker?.identifier ?? id
+        }
+    }
 }

@@ -1,11 +1,11 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.pocket
 
 import io.paritytech.polkadotapp.common.utils.flatMap
-import io.paritytech.polkadotapp.feature_products_api.model.JsWidget
 import io.paritytech.polkadotapp.feature_products_api.model.PocketCardDefinition
 import io.paritytech.polkadotapp.feature_products_api.model.PocketCardPreview
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_impl.domain.product.ProductWorkerArchive
+import uniffi.truapi.RendererNode
 import java.io.File
 import javax.inject.Inject
 
@@ -13,13 +13,12 @@ import javax.inject.Inject
 class PocketPreviewLoader @Inject constructor(
     private val archive: ProductWorkerArchive,
     private val remoteFaces: RemoteFaceSource,
-    private val faceDecoder: PocketFaceJsonDecoder,
 ) {
-    suspend fun load(productId: ProductId, definition: PocketCardDefinition): Result<JsWidget> =
+    suspend fun load(productId: ProductId, definition: PocketCardDefinition): Result<RendererNode> =
         when (val preview = definition.preview) {
             is PocketCardPreview.Archive -> archive.file(productId, preview.path)
                 .mapCatching { it.readWithinBound() }
-                .flatMap(faceDecoder::decode)
+                .flatMap(::readPocketFace)
 
             is PocketCardPreview.Url -> remoteFaces.fetch(preview.url)
         }

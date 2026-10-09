@@ -1,6 +1,6 @@
 [package]
 name = "truapi"
-version = "0.23.0"
+version = "0.24.0"
 edition.workspace = true
 license.workspace = true
 description = "TrUAPI trait and type definitions, and the runtime hosts embed"
@@ -42,6 +42,9 @@ host-api = [
 # With no features the crate contains only no_std protocol payloads and envelopes.
 runtime = [
     "host-api",
+    # `Size` is a SCALE `Compact`, which reads and writes as a plain JSON number
+    # only with codec's own serde support.
+    "parity-scale-codec/serde",
     "dep:truapi-provider",
     "dep:futures-timer",
     "dep:scale-decode",

@@ -17,6 +17,7 @@ dependencies {
     implementation(libs.androidx.fragment.ktx)
 
     implementation(libs.nova.substrate.sdk)
+    implementation(libs.kotlinx.serialization.json)
 
     implementation(project(":common"))
     implementation(project(":chains"))
@@ -39,4 +40,10 @@ dependencies {
 
     testImplementation(project(":test-shared"))
     testImplementation(libs.mockk)
+
+    androidTestImplementation(platform(libs.androidx.compose.bom))
+    androidTestImplementation(libs.androidx.compose.ui.test.junit4)
+    androidTestImplementation(libs.androidx.compose.ui.test.manifest)
+    androidTestImplementation(libs.androidx.junit)
+    androidTestImplementation(libs.androidx.test.runner)
 }

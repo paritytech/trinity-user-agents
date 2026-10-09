@@ -3,13 +3,18 @@ package io.paritytech.polkadotapp.feature_chats_impl.data.notifications
 import android.content.Context
 import io.mockk.coEvery
 import io.mockk.coVerify
+import io.mockk.coVerifyOrder
 import io.mockk.every
 import io.mockk.mockk
 import io.mockk.verify
+import io.paritytech.polkadotapp.chains.multiNetwork.ChainRegistry
+import io.paritytech.polkadotapp.chains.multiNetwork.KnownChains
 import io.paritytech.polkadotapp.chains.network.binding.intoBalance
 import io.paritytech.polkadotapp.common.data.app.AppLifecycleState
 import io.paritytech.polkadotapp.common.domain.model.intoAccountId
 import io.paritytech.polkadotapp.common.presentation.AppLifecycleObserver
+import io.paritytech.polkadotapp.feature_account_api.data.repository.AccountRepository
+import io.paritytech.polkadotapp.feature_account_api.domain.model.MetaAccount
 import io.paritytech.polkadotapp.feature_calls_api.domain.CallController
 import io.paritytech.polkadotapp.feature_chats_api.domain.ChatActiveTracker
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatId
@@ -22,9 +27,15 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.notifications.Incoming
 import io.paritytech.polkadotapp.feature_chats_api.domain.notifications.IncomingChatPushDecoder.Companion.MESSAGE_KEY
 import io.paritytech.polkadotapp.feature_chats_api.domain.notifications.IncomingChatPushDecoder.Companion.PUSH_ID_KEY
 import io.paritytech.polkadotapp.feature_chats_api.domain.notifications.StrippedChatPushContent
+import io.paritytech.polkadotapp.feature_chats_impl.data.model.toEncodedMessage
+import io.paritytech.polkadotapp.feature_chats_impl.data.repository.ChatMessageRepository
+import io.paritytech.polkadotapp.feature_chats_impl.data.repository.ContactsRepository
 import io.paritytech.polkadotapp.feature_chats_impl.data.repository.ProcessedChatMessageRepository
 import io.paritytech.polkadotapp.feature_chats_impl.domain.ChatEngine
+import io.paritytech.polkadotapp.feature_chats_impl.domain.ChatMessagePlacement
+import io.paritytech.polkadotapp.feature_chats_impl.domain.ChatMessageSaveConflictStrategy
 import io.paritytech.polkadotapp.feature_chats_impl.utils.ChatMessageMappingHelper
+import io.paritytech.polkadotapp.feature_statement_store_api.data.StatementRequestDecoder
 import io.paritytech.polkadotapp.feature_tokens_api.presentation.formatter.TokenAmountFormatter
 import kotlinx.coroutines.runBlocking
 import org.junit.Before
@@ -42,24 +53,30 @@ class ChatPushNotificationHandlerTest {
     private val callController: CallController = mockk(relaxed = true)
     private val processedChatMessageRepository: ProcessedChatMessageRepository = mockk()
     private val appContext: Context = mockk(relaxed = true)
+    private val chatMessageRepository: ChatMessageRepository = mockk()
+    private val statementRequestDecoder: StatementRequestDecoder = mockk()
+    private val contactsRepository: ContactsRepository = mockk()
+    private val accountRepository: AccountRepository = mockk()
+    private val chainRegistry: ChainRegistry = mockk()
+    private val knownChains: KnownChains = mockk()
 
     private val handler = ChatPushNotificationHandler(
         incomingChatPushDecoder = incomingChatPushDecoder,
-        chatMessageRepository = mockk(),
+        chatMessageRepository = chatMessageRepository,
         chatNotificationPublisher = chatNotificationPublisher,
         tokenAmountFormatter = tokenAmountFormatter,
         messageMappingHelper = messageMappingHelper,
-        statementRequestDecoder = mockk(),
+        statementRequestDecoder = statementRequestDecoder,
         chatActiveTracker = chatActiveTracker,
         appLifecycleObserver = appLifecycleObserver,
         chatEngine = chatEngine,
         fallbackUsernameGenerator = mockk(),
         callController = callController,
         processedChatMessageRepository = processedChatMessageRepository,
-        contactsRepository = mockk(),
-        accountRepository = mockk(),
-        chainRegistry = mockk(),
-        knownChains = mockk(),
+        contactsRepository = contactsRepository,
+        accountRepository = accountRepository,
+        chainRegistry = chainRegistry,
+        knownChains = knownChains,
         compactionExpansionStarter = mockk(),
         appContext = appContext,
     )
@@ -71,7 +88,7 @@ class ChatPushNotificationHandlerTest {
     fun setUp() {
         every { appLifecycleObserver.getCurrentState() } returns AppLifecycleState.BACKGROUND
         every { chatActiveTracker.getActive() } returns null
-        coEvery { chatEngine.saveMessage(any(), any(), any()) } returns true
+        coEvery { chatEngine.saveMessage(any(), any(), any(), any()) } returns true
     }
 
     @Test
@@ -128,6 +145,44 @@ class ChatPushNotificationHandlerTest {
         coVerify { callController.initiateIncomingCall(chatId, MESSAGE_ID, CALLER_NAME, true) }
     }
 
+    @Test
+    fun `statement messages are saved oldest first`() = runBlocking<Unit> {
+        withStatementMessages(textMessage(NEWER_ID, timestamp = 2_000L), textMessage(OLDER_ID, timestamp = 1_000L))
+
+        handler.handle(NEW_SPEC_PUSH)
+
+        coVerifyOrder {
+            chatEngine.saveMessage(match { it.id == OLDER_ID }, ChatMessageSaveConflictStrategy.IGNORE, ChatMessagePlacement.Latest, any())
+            chatEngine.saveMessage(match { it.id == NEWER_ID }, ChatMessageSaveConflictStrategy.IGNORE, ChatMessagePlacement.Latest, any())
+        }
+    }
+
+    private fun withStatementMessages(vararg messages: ChatMessage) {
+        val contact = mockk<Contact>(relaxed = true) {
+            every { username } returns CALLER_NAME
+            every { accountId } returns contactAccountId
+            every { isBlocked } returns false
+            every { ourMetaAccountId } returns OUR_META_ACCOUNT_ID
+        }
+        val ownAccount = mockk<MetaAccount> { every { accountIdIn(any()) } returns contactAccountId }
+        coEvery { contactsRepository.getContact(any()) } returns contact
+        coEvery { accountRepository.getAccountById(OUR_META_ACCOUNT_ID) } returns ownAccount
+        every { knownChains.people } returns PEOPLE_CHAIN_ID
+        coEvery { chainRegistry.getChain(PEOPLE_CHAIN_ID) } returns mockk()
+        coEvery { statementRequestDecoder.decodeMessages(any(), any(), any(), any()) } returns
+            Result.success(messages.map { it.toEncodedMessage().getOrThrow() })
+        coEvery { chatMessageRepository.getMessageStatuses(any()) } returns emptyMap()
+    }
+
+    private fun textMessage(id: String, timestamp: Long) = ChatMessage(
+        id = id,
+        chatId = chatId,
+        timestamp = timestamp,
+        origin = ChatMessageOrigin.Contact(contactAccountId),
+        content = ChatMessage.Content.Text(id),
+        status = ChatMessage.Status.NEW,
+    )
+
     private fun withDecodedPush(content: ChatPushContent) {
         val contact = mockk<Contact> {
             every { username } returns CALLER_NAME
@@ -149,11 +204,11 @@ class ChatPushNotificationHandlerTest {
     }
 
     private fun verifyMessageSaved() {
-        coVerify(exactly = 1) { chatEngine.saveMessage(match { it.id == MESSAGE_ID }, any(), any()) }
+        coVerify(exactly = 1) { chatEngine.saveMessage(match { it.id == MESSAGE_ID }, any(), any(), any()) }
     }
 
     private fun verifyNothingSaved() {
-        coVerify(exactly = 0) { chatEngine.saveMessage(any(), any(), any()) }
+        coVerify(exactly = 0) { chatEngine.saveMessage(any(), any(), any(), any()) }
     }
 
     private fun verifyNotificationPublished(text: String) {
@@ -181,6 +236,16 @@ class ChatPushNotificationHandlerTest {
         const val PAYMENT_TEXT = "is sending you $5"
         const val UNSUPPORTED_TEXT = "unsupported"
 
+        const val OLDER_ID = "older"
+        const val NEWER_ID = "newer"
+        const val OUR_META_ACCOUNT_ID = 1L
+        const val PEOPLE_CHAIN_ID = "people"
+
         val LEGACY_PUSH = mapOf(PUSH_ID_KEY to "00", MESSAGE_KEY to "00")
+        val NEW_SPEC_PUSH = mapOf(
+            "sender_pubkey" to "01".repeat(32),
+            "statement_topic" to "00",
+            "statement_data" to "00",
+        )
     }
 }

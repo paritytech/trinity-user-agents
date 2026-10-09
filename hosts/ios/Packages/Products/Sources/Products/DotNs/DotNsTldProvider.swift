@@ -24,6 +24,14 @@ public protocol DotNsTldProviding: Sendable {
 
     /// Kicks a background re-read of the TLD, subject to the backoff window. Non-blocking.
     func refresh()
+
+    /// Forgets the cached and persisted-at-launch TLD, so the next access reads the chain again.
+    /// A read in flight when this is called neither caches nor persists its result.
+    func reset()
+}
+
+public enum DotNsTldProviderError: Error {
+    case resetDuringRead
 }
 
 public final class DotNsTldProvider: DotNsTldProviding {
@@ -31,8 +39,7 @@ public final class DotNsTldProvider: DotNsTldProviding {
     private let now: @Sendable () -> Date
     private let store: DotNsTldStoring?
     private let logger: SDKLoggerProtocol?
-    private let persistedTld: String?
-    private let state = OSAllocatedUnfairLock(initialState: State())
+    private let state: OSAllocatedUnfairLock<State>
     private let coalescer = CoalescingTask<String>()
 
     private static let minimumInterAttemptInterval: TimeInterval = 1
@@ -40,6 +47,9 @@ public final class DotNsTldProvider: DotNsTldProviding {
 
     private struct State {
         var tld: String?
+        var persistedTld: String?
+        /// Bumped by reset(), so a read started before it cannot write its result back.
+        var generation: Int = 0
         var failureCount: Int = 0
         var nextAttemptAt: Date = .distantPast
         var nextStartAllowedAt: Date = .distantPast
@@ -54,13 +64,15 @@ public final class DotNsTldProvider: DotNsTldProviding {
         self.reader = reader
         self.store = store
         self.logger = logger
-        persistedTld = store?.loadTld()
+        let persistedTld = store?.loadTld()
+        state = OSAllocatedUnfairLock(initialState: State(persistedTld: persistedTld))
         self.now = now
         logger?.debug("DotNs TLD provider started, persisted: \(persistedTld ?? "none")")
     }
 
     public func currentTld() -> String? {
-        if let tld = state.withLock({ $0.tld }) { return tld }
+        let (tld, persistedTld) = state.withLock { ($0.tld, $0.persistedTld) }
+        if let tld { return tld }
         refreshIfNeeded()
         return persistedTld
     }
@@ -82,6 +94,13 @@ public final class DotNsTldProvider: DotNsTldProviding {
     public func refresh() {
         refreshIfNeeded()
     }
+
+    public func reset() {
+        state.withLock { state in
+            state = State(generation: state.generation + 1)
+        }
+        logger?.debug("DotNs TLD provider reset")
+    }
 }
 
 private extension DotNsTldProvider {
@@ -101,17 +120,24 @@ private extension DotNsTldProvider {
     func performRead() async throws -> String {
         logger?.debug("DotNs TLD chain read started")
 
+        let generation = state.withLock { $0.generation }
+        let tld: String
+
         do {
-            let tld = try await reader.readTld()
-            finish(.success(tld))
-            store?.saveTld(tld)
-            logger?.debug("DotNs TLD resolved: \(tld)")
-            return tld
+            tld = try await reader.readTld()
         } catch {
-            finish(.failure(error))
+            finish(.failure(error), generation: generation)
             logger?.error("DotNs TLD read failed: \(error)")
             throw error
         }
+
+        guard finish(.success(tld), generation: generation) else {
+            logger?.debug("DotNs TLD read discarded after reset: \(tld)")
+            throw DotNsTldProviderError.resetDuringRead
+        }
+
+        logger?.debug("DotNs TLD resolved: \(tld)")
+        return tld
     }
 
     func refreshIfNeeded() {
@@ -125,18 +151,26 @@ private extension DotNsTldProvider {
         }
     }
 
-    func finish(_ result: Result<String, Error>) {
+    /// - Returns: `false` when a reset happened since the read started, leaving the state and store untouched.
+    @discardableResult
+    func finish(_ result: Result<String, Error>, generation: Int) -> Bool {
         state.withLock { state in
+            guard state.generation == generation else { return false }
+
             switch result {
             case let .success(tld):
                 state.tld = tld
                 state.failureCount = 0
                 state.nextAttemptAt = .distantPast
+                // Saved under the lock so a concurrent reset() cannot land between caching and persisting.
+                store?.saveTld(tld)
             case .failure:
                 state.failureCount += 1
                 let backoff = min(pow(2.0, Double(state.failureCount)), Self.maximumBackoff)
                 state.nextAttemptAt = now().addingTimeInterval(backoff)
             }
+
+            return true
         }
     }
 }

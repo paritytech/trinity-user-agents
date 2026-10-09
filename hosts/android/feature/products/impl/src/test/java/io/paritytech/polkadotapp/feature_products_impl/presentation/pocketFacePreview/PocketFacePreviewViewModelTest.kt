@@ -18,6 +18,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.mockito.Mockito.mock
+import uniffi.truapi.RendererNode
 
 private const val FACE_URL = "http://127.0.0.1:5173/pocket/devicehood.json"
 
@@ -25,9 +26,9 @@ class PocketFacePreviewViewModelTest {
     private val testDispatcher = StandardTestDispatcher()
 
     private val fetched = mutableListOf<String>()
-    private var answer: Result<JsWidget> = Result.success(JsWidget.Text(text = "drawn"))
+    private var answer: Result<RendererNode> = Result.success(RendererNode.String("drawn"))
     private val remoteFaces = object : RemoteFaceSource {
-        override suspend fun fetch(url: String): Result<JsWidget> {
+        override suspend fun fetch(url: String): Result<RendererNode> {
             fetched += url
             return answer
         }

@@ -5,6 +5,7 @@ import Products
 protocol ModuleNavigating: AnyObject {
     func openChat(_ model: ChatOpenModel)
     func presentModally(_ viewController: UIViewController)
+    func presentFullScreen(_ viewController: UIViewController)
     func openProduct(page: ProductPage)
     func openScanPanel()
 }
@@ -21,6 +22,13 @@ extension ModuleNavigator: ModuleNavigating {
     func presentModally(_ viewController: UIViewController) {
         let navigationController = AppNavigationController(rootViewController: viewController)
         navigationController.modalPresentationStyle = .pageSheet
+        UIWindow.topWindow?.topmostViewController?.present(navigationController, animated: true)
+    }
+
+    func presentFullScreen(_ viewController: UIViewController) {
+        let navigationController = AppNavigationController(rootViewController: viewController)
+        navigationController.modalPresentationStyle = .fullScreen
+
         UIWindow.topWindow?.topmostViewController?.present(navigationController, animated: true)
     }
 

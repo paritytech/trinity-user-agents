@@ -16,8 +16,8 @@ use crate::host_logic::worker::WorkerTransition;
 use crate::{DevicePairingObserver, PairedSsoPeer};
 
 use super::callbacks::{
-    HostCallbacks, NativeChatCallbacks, NativeContactsCallbacks, NativePocketCallbacks,
-    NativePocketRemoval,
+    HostCallbacks, NativeChatCallbacks, NativeContactsCallbacks, NativeGameCallbacks,
+    NativePocketCallbacks, NativePocketRemoval,
 };
 use super::errors::HostRejection;
 use super::events::NativeEventBus;
@@ -66,6 +66,8 @@ pub struct CallbackPlatform {
     /// and the screen share one namespace, so they subscribe and publish on
     /// the runtime-wide bus instead of this execution's own.
     pub storage_events: Arc<NativeEventBus>,
+    /// Process bridge observing permission writes from every execution.
+    pub permission_callbacks: Arc<dyn HostCallbacks>,
 }
 
 impl crate::host_logic::worker::WorkerDemandObserver for CallbackPlatform {
@@ -122,7 +124,9 @@ impl Notifications for CallbackPlatform {
     }
 
     async fn activation_events(&self) -> Result<v01::NotificationActivations, v01::GenericError> {
-        self.callbacks.activation_events().await
+        self.callbacks
+            .activation_events()
+            .await
             .map(|events| v01::NotificationActivations { events })
             .map_err(v01::GenericError::from)
     }
@@ -131,7 +135,9 @@ impl Notifications for CallbackPlatform {
         &self,
         request: v01::NotificationActivationAcknowledgeRequest,
     ) -> Result<(), v01::GenericError> {
-        self.callbacks.acknowledge_activation(request.sequence).await
+        self.callbacks
+            .acknowledge_activation(request.sequence)
+            .await
             .map_err(v01::GenericError::from)
     }
 }
@@ -149,6 +155,24 @@ impl crate::platform::PermissionStatusHost for CallbackPlatform {
 
         self.callbacks
             .device_permission_status(request)
+            .await
+            .map_err(v01::GenericError::from)
+    }
+}
+
+#[async_trait]
+impl crate::platform::ExpandedCardHost for CallbackPlatform {
+    async fn set_expanded_card_face_shown(
+        &self,
+        shown: bool,
+    ) -> Result<crate::platform::ExpandedCardFaceOutcome, v01::GenericError> {
+        self.callbacks.on_core_log(
+            "truapi.native.callback.set_expanded_card_face_shown".to_string(),
+            format!("{shown}"),
+        );
+
+        self.callbacks
+            .set_expanded_card_face_shown(shown)
             .await
             .map_err(v01::GenericError::from)
     }
@@ -317,14 +341,24 @@ impl CoreStorage for CallbackPlatform {
         self.callbacks
             .core_storage_write(key.encode(), value)
             .await
-            .map_err(v01::GenericError::from)
+            .map_err(v01::GenericError::from)?;
+        if let CoreStorageKey::PermissionAuthorization { product_id, .. } = key {
+            self.permission_callbacks
+                .permission_authorizations_changed(product_id);
+        }
+        Ok(())
     }
 
     async fn clear_core_storage(&self, key: CoreStorageKey) -> Result<(), v01::GenericError> {
         self.callbacks
             .core_storage_clear(key.encode())
             .await
-            .map_err(v01::GenericError::from)
+            .map_err(v01::GenericError::from)?;
+        if let CoreStorageKey::PermissionAuthorization { product_id, .. } = key {
+            self.permission_callbacks
+                .permission_authorizations_changed(product_id);
+        }
+        Ok(())
     }
 }
 
@@ -487,8 +521,12 @@ impl LocaleHost for CallbackPlatform {
     async fn localize_timestamps(
         &self,
         request: crate::latest::HostLocaleLocalizeTimestampsRequest,
-    ) -> Result<crate::latest::HostLocaleLocalizeTimestampsResponse, crate::latest::GenericError> {
-        self.callbacks.localize_timestamps(request).await.map_err(Into::into)
+    ) -> Result<crate::latest::HostLocaleLocalizeTimestampsResponse, crate::latest::GenericError>
+    {
+        self.callbacks
+            .localize_timestamps(request)
+            .await
+            .map_err(Into::into)
     }
 }
 
@@ -652,5 +690,36 @@ impl crate::platform::PocketPlatform for PocketCallbackPlatform {
                 Ok(())
             }
         }
+    }
+}
+
+/// [`crate::platform::GamePlatform`] served by host-provided
+/// [`NativeGameCallbacks`]; constructed only when the host passed one.
+pub struct GameCallbackPlatform {
+    /// Host game-reminder surface.
+    pub game: Arc<dyn NativeGameCallbacks>,
+}
+
+#[async_trait]
+impl crate::platform::GamePlatform for GameCallbackPlatform {
+    async fn schedule_game_reminder(
+        &self,
+        _product: &ProductContext,
+        starts_at: u64,
+    ) -> Result<(), v01::GenericError> {
+        self.game
+            .schedule_reminder(starts_at)
+            .await
+            .map_err(v01::GenericError::from)
+    }
+
+    async fn cancel_game_reminder(
+        &self,
+        _product: &ProductContext,
+    ) -> Result<(), v01::GenericError> {
+        self.game
+            .cancel_reminder()
+            .await
+            .map_err(v01::GenericError::from)
     }
 }

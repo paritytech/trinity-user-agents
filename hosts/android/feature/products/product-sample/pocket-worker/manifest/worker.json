@@ -6,7 +6,7 @@
   "includes": { "chat": false, "pocket": true },
   "pocket": {
     "cards": [
-      { "id": "loyalty", "title": "Loyalty", "preview": "faces/loyalty.json" }
+      { "id": "loyalty", "title": "Loyalty", "preview": "faces/loyalty.json", "faceShown": true }
     ]
   }
 }

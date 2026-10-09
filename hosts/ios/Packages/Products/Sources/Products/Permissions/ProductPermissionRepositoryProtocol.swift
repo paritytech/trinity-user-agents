@@ -28,4 +28,21 @@ public protocol ProductPermissionRepositoryProtocol: Sendable {
     func deny(productId: String, permission: ProductPermission) async throws
 
     func getAllByProduct(productId: String) async throws -> [ProductPermissionGrant]
+
+    /// Captures revocation state before presenting and refuses stale decisions.
+    func promptPermissions(
+        productId: String,
+        permissions: [ProductPermission],
+        requester: ProductPermissionRequesting
+    ) async throws -> Bool
+}
+
+public extension ProductPermissionRepositoryProtocol {
+    func promptPermission(
+        productId: String,
+        permission: ProductPermission,
+        requester: ProductPermissionRequesting
+    ) async throws -> Bool {
+        try await promptPermissions(productId: productId, permissions: [permission], requester: requester)
+    }
 }
