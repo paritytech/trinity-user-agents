@@ -29,6 +29,7 @@ struct FundingActivityView: View {
             }
         }
         .task { await follow() }
+        .onDisappear { isStackExpanded = false }
     }
 }
 
@@ -51,8 +52,33 @@ private extension FundingActivityView {
         return result
     }
 
+    var isStacked: Bool {
+        center.inFlight.count > 1
+    }
+
     var inProgress: some View {
         VStack(alignment: .leading, spacing: DSSpacings.small) {
+            inProgressHeader
+
+            if isStacked, !isStackExpanded {
+                stacked
+            } else {
+                ForEach(center.inFlight) { item in
+                    card(item)
+                        .contentShape(RoundedRectangle(cornerRadius: DSRadii.large))
+                        .onTapGesture { center.open(intent: item.id) }
+                }
+            }
+        }
+    }
+
+    /// "In Progress (N)"; with a stack, tapping it folds the stack open or
+    /// shut.
+    var inProgressHeader: some View {
+        Button {
+            guard isStacked else { return }
+            withAnimation(.spring) { isStackExpanded.toggle() }
+        } label: {
             HStack(spacing: DSSpacings.small) {
                 Text(.Funding.activityInProgress)
                     .typography(.titleSmall)
@@ -63,18 +89,17 @@ private extension FundingActivityView {
                     .padding(.horizontal, 7)
                     .frame(height: 20)
                     .background(.bgSurfaceNested, in: Capsule())
-            }
-
-            if center.inFlight.count > 1, !isStackExpanded {
-                stacked
-            } else {
-                ForEach(center.inFlight) { item in
-                    card(item)
-                        .contentShape(RoundedRectangle(cornerRadius: DSRadii.large))
-                        .onTapGesture { center.open(intent: item.id) }
+                if isStacked {
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(.fgSecondary)
+                        .rotationEffect(.degrees(isStackExpanded ? 180 : 0))
                 }
+                Spacer(minLength: 0)
             }
+            .contentShape(Rectangle())
         }
+        .buttonStyle(.plain)
     }
 
     /// The first session on top of the edges of the ones behind it.
