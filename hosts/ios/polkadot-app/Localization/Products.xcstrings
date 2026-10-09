@@ -265,6 +265,17 @@
         }
       }
     },
+    "app.permission.statementStoreAllowance.title": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Statement Store allowance"
+          }
+        }
+      }
+    },
     "app.permission.chatAuthority.title": {
       "extractionState": "manual",
       "localizations": {
@@ -557,6 +568,39 @@
         }
       }
     },
+    "permission.body.statementStoreAllowance.legacy": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Allows this product to provision Statement Store allowance for its legacy allowance account."
+          }
+        }
+      }
+    },
+    "permission.body.statementStoreAllowance.index": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Allows this product to provision Statement Store allowance for product account index %1$(index)@."
+          }
+        }
+      }
+    },
+    "permission.body.statementStoreAllowance.raw": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Allows this product to provision Statement Store allowance for raw product account selector %1$(selector)@."
+          }
+        }
+      }
+    },
     "permission.body.chatAuthority": {
       "extractionState": "manual",
       "localizations": {
@@ -801,6 +845,17 @@
           "stringUnit": {
             "state": "translated",
             "value": "%1$(productId)@ would like to access account data"
+          }
+        }
+      }
+    },
+    "permission.title.statementStoreAllowance": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$(productId)@ would like to provision Statement Store allowance"
           }
         }
       }

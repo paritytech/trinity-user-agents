@@ -904,22 +904,6 @@ impl crate::platform::PocketPlatform for PocketCallbackPlatform {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::decode_identity_candidates;
-
-    #[test]
-    fn native_identity_candidates_reject_malformed_accounts_and_oversized_sets() {
-        assert_eq!(
-            decode_identity_candidates(vec![vec![3; 32]]).unwrap(),
-            vec![[3; 32]]
-        );
-        assert!(decode_identity_candidates(vec![vec![3; 31]]).is_err());
-        assert!(decode_identity_candidates(vec![vec![3; 33]]).is_err());
-        assert!(decode_identity_candidates(vec![vec![3; 32]; 33]).is_err());
-    }
-}
-
 /// [`crate::platform::GamePlatform`] served by host-provided
 /// [`NativeGameCallbacks`]; constructed only when the host passed one.
 pub struct GameCallbackPlatform {
@@ -948,5 +932,21 @@ impl crate::platform::GamePlatform for GameCallbackPlatform {
             .cancel_reminder()
             .await
             .map_err(v01::GenericError::from)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::decode_identity_candidates;
+
+    #[test]
+    fn native_identity_candidates_reject_malformed_accounts_and_oversized_sets() {
+        assert_eq!(
+            decode_identity_candidates(vec![vec![3; 32]]).unwrap(),
+            vec![[3; 32]]
+        );
+        assert!(decode_identity_candidates(vec![vec![3; 31]]).is_err());
+        assert!(decode_identity_candidates(vec![vec![3; 33]]).is_err());
+        assert!(decode_identity_candidates(vec![vec![3; 32]; 33]).is_err());
     }
 }

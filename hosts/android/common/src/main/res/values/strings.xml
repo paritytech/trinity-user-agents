@@ -1364,6 +1364,15 @@ I’m attaching PDF with more information and details regarding the Tattoo Stenc
     <string name="product_permission_type_statement_submit">Statement submission</string>
     <string name="product_permission_type_preimage_submit">Preimage submission</string>
     <string name="product_permission_type_remote">Remote permission</string>
+    <string name="product_permission_type_chat_authority">Chat identity access</string>
+    <string name="product_permission_chat_authority_title">%1$s wants to use your Chat identity</string>
+    <string name="product_permission_chat_authority_description">Bind and use your wallet-held Chat identity. Revoking access prevents this product from using that authority.</string>
+    <string name="product_permission_type_allowance">Statement Store allowance — %1$s</string>
+    <string name="product_permission_allowance_title">%1$s wants to ensure Statement Store quota</string>
+    <string name="product_permission_allowance_description">Ensure existing Statement Store quota for this account, without increasing it. This does not grant statement submission permission.</string>
+    <string name="product_permission_allowance_legacy_account">Legacy allowance account</string>
+    <string name="product_permission_allowance_index_account">Product account %1$s</string>
+    <string name="product_permission_allowance_raw_account">Raw product account %1$s</string>
 
     <string name="notification_channel_name_chat">Chat messages</string>
     <string name="notification_channel_description_chat">Notifications for new chat messages</string>

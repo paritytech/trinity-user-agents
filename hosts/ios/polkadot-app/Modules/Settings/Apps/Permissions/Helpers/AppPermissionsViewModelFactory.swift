@@ -82,6 +82,11 @@ private extension AppPermissionsViewModelFactory {
                 String(localized: .Products.appPermissionChatAuthorityTitle),
                 String(localized: .Products.permissionBodyChatAuthority)
             )
+        case let .statementStoreAllowance(derivationIndex):
+            (
+                String(localized: .Products.appPermissionStatementStoreAllowanceTitle),
+                ProductPermission.statementStoreAllowanceDescription(derivationIndex: derivationIndex)
+            )
         }
     }
 
@@ -110,6 +115,21 @@ private extension AppPermissionsViewModelFactory {
         case .clipboard: String(localized: .Products.permissionCapabilityDescriptionClipboard)
         case .openUrl: String(localized: .Products.permissionCapabilityDescriptionOpenUrl)
         case .biometrics: String(localized: .Products.permissionCapabilityDescriptionBiometrics)
+        }
+    }
+}
+
+extension ProductPermission {
+    static func statementStoreAllowanceDescription(derivationIndex: ProductAccountSelector?) -> String {
+        switch derivationIndex {
+        case nil:
+            String(localized: .Products.permissionBodyStatementStoreAllowanceLegacy)
+        case let .index(index):
+            String(localized: .Products.permissionBodyStatementStoreAllowanceIndex(index: String(index)))
+        case let .raw(bytes):
+            String(localized: .Products.permissionBodyStatementStoreAllowanceRaw(
+                selector: "0x" + bytes.map { String(format: "%02x", $0) }.joined()
+            ))
         }
     }
 }
