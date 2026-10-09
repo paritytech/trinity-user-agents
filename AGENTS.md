@@ -334,7 +334,7 @@ belongs to an existing type rather than adding another free-standing export.
 Preserve the local style. Do not add semicolons to `return`, `break` or
 `continue` where the file omits them, do not add braces to match arms or
 `if`/`else` written without them, and do not move operators between the end of
-one line and the start of the next, except where the repository formatter requires it. Format with `./scripts/format-rust.sh`; it uses the pinned nightly and includes runtime modules declared inside macros. Keep formatting limited to files you changed.
+one line and the start of the next, except where the repository formatter requires it. Format with `make fmt`; it uses the pinned nightly and includes runtime modules declared inside macros. Keep formatting limited to files you changed.
 
 ## Rust style
 
@@ -415,7 +415,7 @@ Move the date in that one file, and in `truapi.rustNightly` in
 
 ```bash
 cargo build --workspace
-./scripts/format-rust.sh --check
+make fmt-check
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test --workspace
 ```

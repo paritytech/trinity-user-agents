@@ -17,22 +17,22 @@ use crate::frame::VersionedProtocolError;
 /// A payload this build does recognise stays strict: a truncated or over-long
 /// `V1(UnsupportedMessage)` is corruption, not a newer peer, and still fails.
 pub fn decode_protocol_error_payload(
-    payload: &[u8],
+	payload: &[u8],
 ) -> Result<Option<VersionedProtocolError>, CodecError> {
-    match (payload.first(), payload.get(1)) {
-        (None, _) => Err("protocol error payload is empty".into()),
-        // A version from a later protocol.
-        (Some(version), _) if *version != 0 => Ok(None),
-        // A `V1` variant from a later protocol.
-        (Some(_), Some(variant)) if *variant != 0 => Ok(None),
-        // `V1(UnsupportedMessage)`, the only shape this build knows.
-        _ => {
-            let mut input = payload;
-            let error = VersionedProtocolError::decode(&mut input)?;
-            if !input.is_empty() {
-                return Err("protocol error payload has trailing bytes".into());
-            }
-            Ok(Some(error))
-        }
-    }
+	match (payload.first(), payload.get(1)) {
+		(None, _) => Err("protocol error payload is empty".into()),
+		// A version from a later protocol.
+		(Some(version), _) if *version != 0 => Ok(None),
+		// A `V1` variant from a later protocol.
+		(Some(_), Some(variant)) if *variant != 0 => Ok(None),
+		// `V1(UnsupportedMessage)`, the only shape this build knows.
+		_ => {
+			let mut input = payload;
+			let error = VersionedProtocolError::decode(&mut input)?;
+			if !input.is_empty() {
+				return Err("protocol error payload has trailing bytes".into());
+			}
+			Ok(Some(error))
+		},
+	}
 }

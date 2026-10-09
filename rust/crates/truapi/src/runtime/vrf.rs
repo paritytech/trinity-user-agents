@@ -26,7 +26,7 @@ pub struct Vrf(());
 /// Ring-VRF operations, which native builds link in.
 #[cfg(not(target_arch = "wasm32"))]
 pub async fn load() -> Result<Vrf, RingVrfError> {
-    Ok(Vrf(()))
+	Ok(Vrf(()))
 }
 
 /// Native builds link the operations in, so there is nothing to prefetch.
@@ -39,79 +39,69 @@ pub use module::{load, prefetch};
 /// The ring member for `entropy`, loading the operations first.
 #[cfg(all(target_arch = "wasm32", feature = "test-host"))]
 pub async fn ring_vrf_member(entropy: &[u8; 32]) -> Result<[u8; 32], RingVrfError> {
-    load().await?.member(entropy)
+	load().await?.member(entropy)
 }
 
 impl Vrf {
-    /// The ring member, a 32-byte public key, for `entropy`.
-    pub fn member(&self, entropy: &[u8; 32]) -> Result<[u8; 32], RingVrfError> {
-        answer(&module::member(entropy))
-    }
+	/// The ring member, a 32-byte public key, for `entropy`.
+	pub fn member(&self, entropy: &[u8; 32]) -> Result<[u8; 32], RingVrfError> {
+		answer(&module::member(entropy))
+	}
 
-    /// A signature over `message` with the key for `entropy`.
-    pub fn sign(&self, entropy: &[u8; 32], message: &[u8]) -> Result<Vec<u8>, RingVrfError> {
-        answer(&module::sign(entropy, message))
-    }
+	/// A signature over `message` with the key for `entropy`.
+	pub fn sign(&self, entropy: &[u8; 32], message: &[u8]) -> Result<Vec<u8>, RingVrfError> {
+		answer(&module::sign(entropy, message))
+	}
 
-    /// The alias of the key for `entropy` in `context`.
-    pub fn alias(&self, entropy: &[u8; 32], context: &[u8]) -> Result<[u8; 32], RingVrfError> {
-        answer(&module::alias(entropy, context))
-    }
+	/// The alias of the key for `entropy` in `context`.
+	pub fn alias(&self, entropy: &[u8; 32], context: &[u8]) -> Result<[u8; 32], RingVrfError> {
+		answer(&module::alias(entropy, context))
+	}
 
-    /// Prove, with the key for `entropy`, that `member` belongs to the ring
-    /// `members` of the ring domain of size `domain`, in `context`. Returns the
-    /// encoded proof and the member's alias in that context.
-    pub fn prove(
-        &self,
-        entropy: &[u8; 32],
-        domain: u32,
-        member: &[u8; 32],
-        members: &[[u8; 32]],
-        context: &[u8],
-        message: &[u8],
-    ) -> Result<(Vec<u8>, [u8; 32]), RingVrfError> {
-        answer(&module::prove(
-            entropy,
-            domain,
-            member,
-            &members.concat(),
-            context,
-            message,
-        ))
-    }
+	/// Prove, with the key for `entropy`, that `member` belongs to the ring
+	/// `members` of the ring domain of size `domain`, in `context`. Returns the
+	/// encoded proof and the member's alias in that context.
+	pub fn prove(
+		&self,
+		entropy: &[u8; 32],
+		domain: u32,
+		member: &[u8; 32],
+		members: &[[u8; 32]],
+		context: &[u8],
+		message: &[u8],
+	) -> Result<(Vec<u8>, [u8; 32]), RingVrfError> {
+		answer(&module::prove(entropy, domain, member, &members.concat(), context, message))
+	}
 }
 
 /// A `truapi-verifiable` answer: `Result<T, String>`, SCALE-encoded.
 fn answer<T: Decode>(encoded: &[u8]) -> Result<T, RingVrfError> {
-    Result::<T, String>::decode_all(&mut &encoded[..])
-        .map_err(|error| {
-            RingVrfError::Unknown {
-                reason: format!("undecodable ring-VRF answer: {error}"),
-            }
-        })?
-        .map_err(|reason| RingVrfError::Unknown { reason })
+	Result::<T, String>::decode_all(&mut &encoded[..])
+		.map_err(|error| RingVrfError::Unknown {
+			reason: format!("undecodable ring-VRF answer: {error}"),
+		})?
+		.map_err(|reason| RingVrfError::Unknown { reason })
 }
 
 #[cfg(target_arch = "wasm32")]
 mod module {
-    use super::Vrf;
+	use super::Vrf;
 
-    use futures::lock::Mutex;
-    use js_sys::Uint8Array;
-    use send_wrapper::SendWrapper;
-    use sha2::{Digest, Sha256};
-    use std::sync::OnceLock;
-    use wasm_bindgen::JsCast;
-    use wasm_bindgen::prelude::*;
-    use wasm_bindgen_futures::JsFuture;
+	use futures::lock::Mutex;
+	use js_sys::Uint8Array;
+	use send_wrapper::SendWrapper;
+	use sha2::{Digest, Sha256};
+	use std::sync::OnceLock;
+	use wasm_bindgen::{JsCast, prelude::*};
+	use wasm_bindgen_futures::JsFuture;
 
-    use crate::host_internal::sso_messages::RingVrfError;
+	use crate::host_internal::sso_messages::RingVrfError;
 
-    // wasm-bindgen writes this snippet to `snippets/<crate>-<hash>/`, two levels
-    // below the core's glue, beside which `make wasm` publishes
-    // `truapi-verifiable`. The URLs are literals relative to this file so
-    // bundlers that follow `new URL(…, import.meta.url)` emit the module.
-    #[wasm_bindgen(inline_js = r#"
+	// wasm-bindgen writes this snippet to `snippets/<crate>-<hash>/`, two levels
+	// below the core's glue, beside which `make wasm` publishes
+	// `truapi-verifiable`. The URLs are literals relative to this file so
+	// bundlers that follow `new URL(…, import.meta.url)` emit the module.
+	#[wasm_bindgen(inline_js = r#"
 let module;
 export async function read() {
   const url = new URL("../../truapi_verifiable_bg.wasm", import.meta.url);
@@ -129,88 +119,77 @@ export const sign = (...args) => module.sign(...args);
 export const alias = (...args) => module.alias(...args);
 export const prove = (...args) => module.prove(...args);
 "#)]
-    extern "C" {
-        fn read() -> js_sys::Promise;
-        fn start(wasm: &Uint8Array) -> js_sys::Promise;
-        pub fn member(entropy: &[u8]) -> Vec<u8>;
-        pub fn sign(entropy: &[u8], message: &[u8]) -> Vec<u8>;
-        pub fn alias(entropy: &[u8], context: &[u8]) -> Vec<u8>;
-        pub fn prove(
-            entropy: &[u8],
-            domain: u32,
-            member: &[u8],
-            members: &[u8],
-            context: &[u8],
-            message: &[u8],
-        ) -> Vec<u8>;
-    }
+	extern "C" {
+		fn read() -> js_sys::Promise;
+		fn start(wasm: &Uint8Array) -> js_sys::Promise;
+		pub fn member(entropy: &[u8]) -> Vec<u8>;
+		pub fn sign(entropy: &[u8], message: &[u8]) -> Vec<u8>;
+		pub fn alias(entropy: &[u8], context: &[u8]) -> Vec<u8>;
+		pub fn prove(
+			entropy: &[u8],
+			domain: u32,
+			member: &[u8],
+			members: &[u8],
+			context: &[u8],
+			message: &[u8],
+		) -> Vec<u8>;
+	}
 
-    /// SHA-256 of the module `make wasm` built beside this core, the only one
-    /// it loads.
-    const PINNED: Option<&str> = option_env!("TRUAPI_VERIFIABLE_SHA256");
+	/// SHA-256 of the module `make wasm` built beside this core, the only one
+	/// it loads.
+	const PINNED: Option<&str> = option_env!("TRUAPI_VERIFIABLE_SHA256");
 
-    /// Whether the module has started, behind an async lock so concurrent
-    /// calls wait on one load.
-    static STARTED: OnceLock<Mutex<bool>> = OnceLock::new();
+	/// Whether the module has started, behind an async lock so concurrent
+	/// calls wait on one load.
+	static STARTED: OnceLock<Mutex<bool>> = OnceLock::new();
 
-    /// Ring-VRF operations, loading the module on first use. A failed load is
-    /// not remembered, so a later call tries again.
-    pub async fn load() -> Result<Vrf, RingVrfError> {
-        let mut started = STARTED.get_or_init(|| Mutex::new(false)).lock().await;
-        if !*started {
-            SendWrapper::new(start_module())
-                .await
-                .map_err(|reason| RingVrfError::Unknown { reason })?;
-            *started = true;
-        }
-        Ok(Vrf(()))
-    }
+	/// Ring-VRF operations, loading the module on first use. A failed load is
+	/// not remembered, so a later call tries again.
+	pub async fn load() -> Result<Vrf, RingVrfError> {
+		let mut started = STARTED.get_or_init(|| Mutex::new(false)).lock().await;
+		if !*started {
+			SendWrapper::new(start_module())
+				.await
+				.map_err(|reason| RingVrfError::Unknown { reason })?;
+			*started = true;
+		}
+		Ok(Vrf(()))
+	}
 
-    /// Load the module in the background, so a later call does not wait on
-    /// it. A call made while it loads waits on this load instead of starting
-    /// another.
-    pub fn prefetch(spawner: &crate::subscription::Spawner) {
-        spawner(Box::pin(async {
-            if let Err(error) = load().await {
-                tracing::warn!(%error, "truapi-verifiable prefetch failed");
-            }
-        }));
-    }
+	/// Load the module in the background, so a later call does not wait on
+	/// it. A call made while it loads waits on this load instead of starting
+	/// another.
+	pub fn prefetch(spawner: &crate::subscription::Spawner) {
+		spawner(Box::pin(async {
+			if let Err(error) = load().await {
+				tracing::warn!(%error, "truapi-verifiable prefetch failed");
+			}
+		}));
+	}
 
-    async fn start_module() -> Result<(), String> {
-        let pinned = PINNED.ok_or("this core was built without truapi-verifiable")?;
-        let wasm: Uint8Array = JsFuture::from(read())
-            .await
-            .map_err(|error| format!("{error:?}"))?
-            .unchecked_into();
-        if hex::encode(Sha256::digest(wasm.to_vec())) != pinned {
-            return Err("truapi-verifiable is not the build this core pins".to_owned());
-        }
-        JsFuture::from(start(&wasm))
-            .await
-            .map_err(|error| format!("{error:?}"))?;
-        Ok(())
-    }
+	async fn start_module() -> Result<(), String> {
+		let pinned = PINNED.ok_or("this core was built without truapi-verifiable")?;
+		let wasm: Uint8Array = JsFuture::from(read())
+			.await
+			.map_err(|error| format!("{error:?}"))?
+			.unchecked_into();
+		if hex::encode(Sha256::digest(wasm.to_vec())) != pinned {
+			return Err("truapi-verifiable is not the build this core pins".to_owned());
+		}
+		JsFuture::from(start(&wasm)).await.map_err(|error| format!("{error:?}"))?;
+		Ok(())
+	}
 }
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests {
-    use super::{DOMAIN_2E11, DOMAIN_2E12, DOMAIN_2E16};
-    use verifiable::ring::RingDomainSize;
+	use super::{DOMAIN_2E11, DOMAIN_2E12, DOMAIN_2E16};
+	use verifiable::ring::RingDomainSize;
 
-    #[test]
-    fn domain_sizes_are_the_ones_verifiable_accepts() {
-        assert_eq!(
-            RingDomainSize::try_from(DOMAIN_2E11),
-            Ok(RingDomainSize::Domain11)
-        );
-        assert_eq!(
-            RingDomainSize::try_from(DOMAIN_2E12),
-            Ok(RingDomainSize::Domain12)
-        );
-        assert_eq!(
-            RingDomainSize::try_from(DOMAIN_2E16),
-            Ok(RingDomainSize::Domain16)
-        );
-    }
+	#[test]
+	fn domain_sizes_are_the_ones_verifiable_accepts() {
+		assert_eq!(RingDomainSize::try_from(DOMAIN_2E11), Ok(RingDomainSize::Domain11));
+		assert_eq!(RingDomainSize::try_from(DOMAIN_2E12), Ok(RingDomainSize::Domain12));
+		assert_eq!(RingDomainSize::try_from(DOMAIN_2E16), Ok(RingDomainSize::Domain16));
+	}
 }

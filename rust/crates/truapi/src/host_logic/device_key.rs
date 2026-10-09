@@ -18,48 +18,47 @@ use crate::host_logic::sso::pairing::generate_x25519_keypair;
 /// concurrent generations would each persist and advertise a different key.
 #[instrument(skip_all, fields(runtime.method = "device_key.read_or_create"))]
 pub async fn read_or_create_device_encryption_secret(
-    storage: &(impl CoreStorage + ?Sized),
+	storage: &(impl CoreStorage + ?Sized),
 ) -> Result<[u8; 32], String> {
-    let stored = storage
-        .read_core_storage(CoreStorageKey::DeviceEncryptionKey)
-        .await
-        .map_err(|err| format!("device encryption key read failed: {err:?}"))?;
-    if let Some(stored) = stored {
-        match <[u8; 32]>::try_from(stored.as_slice()) {
-            Ok(secret) => return Ok(secret),
-            Err(_) => warn!("discarding malformed stored device encryption key"),
-        }
-    }
+	let stored = storage
+		.read_core_storage(CoreStorageKey::DeviceEncryptionKey)
+		.await
+		.map_err(|err| format!("device encryption key read failed: {err:?}"))?;
+	if let Some(stored) = stored {
+		match <[u8; 32]>::try_from(stored.as_slice()) {
+			Ok(secret) => return Ok(secret),
+			Err(_) => warn!("discarding malformed stored device encryption key"),
+		}
+	}
 
-    let (secret, _) =
-        generate_x25519_keypair().map_err(|err| format!("device encryption key failed: {err}"))?;
-    storage
-        .write_core_storage(CoreStorageKey::DeviceEncryptionKey, secret.to_vec())
-        .await
-        .map_err(|err| format!("device encryption key write failed: {err:?}"))?;
-    Ok(secret)
+	let (secret, _) =
+		generate_x25519_keypair().map_err(|err| format!("device encryption key failed: {err}"))?;
+	storage
+		.write_core_storage(CoreStorageKey::DeviceEncryptionKey, secret.to_vec())
+		.await
+		.map_err(|err| format!("device encryption key write failed: {err:?}"))?;
+	Ok(secret)
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::platform::Platform;
-    use crate::test_support::StubPlatform;
-    use std::sync::Arc;
+	use super::*;
+	use crate::{platform::Platform, test_support::StubPlatform};
+	use std::sync::Arc;
 
-    #[test]
-    fn secret_is_generated_once_and_then_reused() {
-        let storage: Arc<dyn Platform> = Arc::new(StubPlatform::default());
+	#[test]
+	fn secret_is_generated_once_and_then_reused() {
+		let storage: Arc<dyn Platform> = Arc::new(StubPlatform::default());
 
-        let first =
-            futures::executor::block_on(read_or_create_device_encryption_secret(storage.as_ref()))
-                .unwrap();
-        let second =
-            futures::executor::block_on(read_or_create_device_encryption_secret(storage.as_ref()))
-                .unwrap();
+		let first =
+			futures::executor::block_on(read_or_create_device_encryption_secret(storage.as_ref()))
+				.unwrap();
+		let second =
+			futures::executor::block_on(read_or_create_device_encryption_secret(storage.as_ref()))
+				.unwrap();
 
-        // Peers address this device by the matching public key, so regenerating
-        // it would strand everyone still holding the old one.
-        assert_eq!(first, second);
-    }
+		// Peers address this device by the matching public key, so regenerating
+		// it would strand everyone still holding the old one.
+		assert_eq!(first, second);
+	}
 }

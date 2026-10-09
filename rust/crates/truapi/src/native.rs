@@ -26,19 +26,21 @@ mod renderer;
 mod runtime;
 mod ws_bridge;
 
-pub use crate::host_internal::sso_messages::SsoRequestOutcome;
-pub use crate::host_logic::dotns::{NavigateDecision, PocketDeeplinkAction};
+pub use crate::{
+	host_internal::sso_messages::SsoRequestOutcome,
+	host_logic::dotns::{NavigateDecision, PocketDeeplinkAction},
+};
 pub use callbacks::{
-    HostCallbacks, NativeChatCallbacks, NativeContactsCallbacks, NativeGameCallbacks,
-    NativePocketCallbacks, NativePocketRemoval,
+	HostCallbacks, NativeChatCallbacks, NativeContactsCallbacks, NativeGameCallbacks,
+	NativePocketCallbacks, NativePocketRemoval,
 };
 pub use config::{HostRuntimeConfig, NativeRuntimeConfigError, ProductExecutionConfig};
 pub use errors::{
-    HostRejection, NativeChatFieldError, NativeCoreDatabaseError, NativeRendererError,
+	HostRejection, NativeChatFieldError, NativeCoreDatabaseError, NativeRendererError,
 };
 pub use renderer::{NativeRendererObserver, NativeRendererSubscription};
 pub use runtime::{
-    NativeAnnouncedPairing, NativePairingError, NativeProductExecution, NativeTrUApiHostRuntime,
+	NativeAnnouncedPairing, NativePairingError, NativeProductExecution, NativeTrUApiHostRuntime,
 };
 pub use ws_bridge::{WsBridgeEndpoint, WsBridgeStartError};
 
@@ -46,10 +48,9 @@ use parity_scale_codec::{DecodeLimit, Encode};
 use serde::Deserialize;
 use truapi::latest;
 
-use crate::PairingProposal;
 #[cfg(doc)]
 use crate::SigningHostRuntime;
-use crate::host_logic::dotns;
+use crate::{PairingProposal, host_logic::dotns};
 
 /// Classify a navigation input exactly like the core's internal navigate host
 /// call: dotNS first, then `localhost`, then normalized external, with
@@ -57,7 +58,7 @@ use crate::host_logic::dotns;
 /// webview-internal navigation.
 #[uniffi::export]
 pub fn parse_navigate(input: String) -> NavigateDecision {
-    dotns::parse_navigate(&input)
+	dotns::parse_navigate(&input)
 }
 
 /// The bridge script a host injects into a product's web view, for the `port`
@@ -67,7 +68,7 @@ pub fn parse_navigate(input: String) -> NavigateDecision {
 /// lockdown container, which reads the endpoint this publishes.
 #[uniffi::export]
 pub fn localhost_bridge_bootstrap_script(port: u16, token: String) -> String {
-    crate::bootstrap::script(&format!("ws://127.0.0.1:{port}/?t={token}"))
+	crate::bootstrap::script(&format!("ws://127.0.0.1:{port}/?t={token}"))
 }
 
 /// Read what a pairing deeplink offers: the peer it advertises, and how that
@@ -90,17 +91,17 @@ pub fn localhost_bridge_bootstrap_script(port: u16, token: String) -> String {
 /// deeplink this rejects is one no pairing call would have accepted either.
 #[uniffi::export]
 pub fn parse_pairing_deeplink(deeplink: String) -> Result<PairingProposal, NativePairingError> {
-    PairingProposal::from_deeplink(&deeplink)
-        .map_err(|reason| NativePairingError::UndecodableDeeplink { reason })
+	PairingProposal::from_deeplink(&deeplink)
+		.map_err(|reason| NativePairingError::UndecodableDeeplink { reason })
 }
 
 /// Refuse a deeplink the core's decoder would refuse anyway, so the caller
 /// hears [`NativePairingError::UndecodableDeeplink`] rather than the
 /// [`NativePairingError::Rejected`] every later failure shares.
 fn reject_undecodable_deeplink(deeplink: &str) -> Result<(), NativePairingError> {
-    PairingProposal::from_deeplink(deeplink)
-        .map(|_| ())
-        .map_err(|reason| NativePairingError::UndecodableDeeplink { reason })
+	PairingProposal::from_deeplink(deeplink)
+		.map(|_| ())
+		.map_err(|reason| NativePairingError::UndecodableDeeplink { reason })
 }
 
 /// Largest nesting a face may carry, matching what the core accepts on the
@@ -127,114 +128,101 @@ const FACE_READER_STACK_BYTES: usize = 8 * 1024 * 1024;
 /// about which faces are drawable, and about how deep one may nest.
 #[uniffi::export]
 pub fn parse_renderer_node_json(json: String) -> Result<latest::RendererNode, NativeRendererError> {
-    read_face_on_stack(json, FACE_READER_STACK_BYTES)
+	read_face_on_stack(json, FACE_READER_STACK_BYTES)
 }
 
 /// [`parse_renderer_node_json`] on a thread of its own carrying `stack_bytes`.
 fn read_face_on_stack(
-    json: String,
-    stack_bytes: usize,
+	json: String,
+	stack_bytes: usize,
 ) -> Result<latest::RendererNode, NativeRendererError> {
-    std::thread::Builder::new()
-        .name("truapi-face-reader".to_string())
-        .stack_size(stack_bytes)
-        .spawn(move || read_renderer_node_json(&json))
-        .map_err(|error| {
-            NativeRendererError::ReaderUnavailable {
-                reason: error.to_string(),
-            }
-        })?
-        .join()
-        .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
+	std::thread::Builder::new()
+		.name("truapi-face-reader".to_string())
+		.stack_size(stack_bytes)
+		.spawn(move || read_renderer_node_json(&json))
+		.map_err(|error| NativeRendererError::ReaderUnavailable { reason: error.to_string() })?
+		.join()
+		.unwrap_or_else(|panic| std::panic::resume_unwind(panic))
 }
 
 /// [`parse_renderer_node_json`] on the calling thread, which must carry
 /// [`FACE_READER_STACK_BYTES`].
 fn read_renderer_node_json(json: &str) -> Result<latest::RendererNode, NativeRendererError> {
-    // Bounded before it is parsed, not after: serde_json recurses as it reads,
-    // so a tree built to exhaust the stack would do so before any check on the
-    // value it produced. Counting brackets needs no recursion at all.
-    if json_nesting_exceeds(json, MAX_FACE_JSON_NESTING) {
-        return Err(NativeRendererError::TooDeep {
-            limit: MAX_FACE_DEPTH,
-        });
-    }
+	// Bounded before it is parsed, not after: serde_json recurses as it reads,
+	// so a tree built to exhaust the stack would do so before any check on the
+	// value it produced. Counting brackets needs no recursion at all.
+	if json_nesting_exceeds(json, MAX_FACE_JSON_NESTING) {
+		return Err(NativeRendererError::TooDeep { limit: MAX_FACE_DEPTH });
+	}
 
-    // With the text bounded above, the reader's own limit would only impose a
-    // second, stricter bound in JSON levels rather than in renderer levels.
-    let mut reader = serde_json::Deserializer::from_str(json);
-    reader.disable_recursion_limit();
-    let node = latest::RendererNode::deserialize(&mut reader).map_err(|error| {
-        NativeRendererError::Malformed {
-            reason: error.to_string(),
-        }
-    })?;
+	// With the text bounded above, the reader's own limit would only impose a
+	// second, stricter bound in JSON levels rather than in renderer levels.
+	let mut reader = serde_json::Deserializer::from_str(json);
+	reader.disable_recursion_limit();
+	let node = latest::RendererNode::deserialize(&mut reader)
+		.map_err(|error| NativeRendererError::Malformed { reason: error.to_string() })?;
 
-    match node_depth(&node, MAX_FACE_DEPTH) {
-        Some(_) => Ok(node),
-        None => {
-            Err(NativeRendererError::TooDeep {
-                limit: MAX_FACE_DEPTH,
-            })
-        }
-    }
+	match node_depth(&node, MAX_FACE_DEPTH) {
+		Some(_) => Ok(node),
+		None => Err(NativeRendererError::TooDeep { limit: MAX_FACE_DEPTH }),
+	}
 }
 
 /// Whether `json` nests deeper than `limit` braces or brackets, ignoring the
 /// ones inside strings. Iterative, so measuring a hostile tree costs no stack.
 fn json_nesting_exceeds(json: &str, limit: u32) -> bool {
-    let (mut depth, mut in_string, mut escaped) = (0u32, false, false);
+	let (mut depth, mut in_string, mut escaped) = (0u32, false, false);
 
-    for byte in json.bytes() {
-        if in_string {
-            match byte {
-                _ if escaped => escaped = false,
-                b'\\' => escaped = true,
-                b'"' => in_string = false,
-                _ => {}
-            }
-            continue;
-        }
+	for byte in json.bytes() {
+		if in_string {
+			match byte {
+				_ if escaped => escaped = false,
+				b'\\' => escaped = true,
+				b'"' => in_string = false,
+				_ => {},
+			}
+			continue;
+		}
 
-        match byte {
-            b'"' => in_string = true,
-            b'{' | b'[' => {
-                depth += 1;
-                if depth > limit {
-                    return true;
-                }
-            }
-            b'}' | b']' => depth = depth.saturating_sub(1),
-            _ => {}
-        }
-    }
+		match byte {
+			b'"' => in_string = true,
+			b'{' | b'[' => {
+				depth += 1;
+				if depth > limit {
+					return true;
+				}
+			},
+			b'}' | b']' => depth = depth.saturating_sub(1),
+			_ => {},
+		}
+	}
 
-    false
+	false
 }
 
 /// Depth of `node`, or `None` once it passes `remaining`. Bounded rather than
 /// measured, so a tree built to exhaust the stack is refused before it does.
 fn node_depth(node: &latest::RendererNode, remaining: u32) -> Option<u32> {
-    if remaining == 0 {
-        return None;
-    }
+	if remaining == 0 {
+		return None;
+	}
 
-    let children: &[latest::RendererNode] = match node {
-        latest::RendererNode::Box { children, .. }
-        | latest::RendererNode::Column { children, .. }
-        | latest::RendererNode::Row { children, .. }
-        | latest::RendererNode::Text { children, .. }
-        | latest::RendererNode::Button { children, .. }
-        | latest::RendererNode::Effect { children, .. } => children,
-        _ => &[],
-    };
+	let children: &[latest::RendererNode] = match node {
+		latest::RendererNode::Box { children, .. } |
+		latest::RendererNode::Column { children, .. } |
+		latest::RendererNode::Row { children, .. } |
+		latest::RendererNode::Text { children, .. } |
+		latest::RendererNode::Button { children, .. } |
+		latest::RendererNode::Effect { children, .. } => children,
+		_ => &[],
+	};
 
-    let deepest = children
-        .iter()
-        .map(|child| node_depth(child, remaining - 1))
-        .try_fold(0, |deepest: u32, depth| depth.map(|d| deepest.max(d)))?;
+	let deepest = children
+		.iter()
+		.map(|child| node_depth(child, remaining - 1))
+		.try_fold(0, |deepest: u32, depth| depth.map(|d| deepest.max(d)))?;
 
-    Some(deepest + 1)
+	Some(deepest + 1)
 }
 
 /// The bytes to keep a face under, so it can be drawn again at a cold start.
@@ -244,18 +232,14 @@ fn node_depth(node: &latest::RendererNode, remaining: u32) -> Option<u32> {
 /// the protocol later adds, and two hosts disagree about what they kept.
 #[uniffi::export]
 pub fn encode_renderer_node(node: latest::RendererNode) -> Vec<u8> {
-    node.encode()
+	node.encode()
 }
 
 /// Read back a face kept as [`encode_renderer_node`] wrote it.
 #[uniffi::export]
 pub fn decode_renderer_node(bytes: Vec<u8>) -> Result<latest::RendererNode, NativeRendererError> {
-    latest::RendererNode::decode_all_with_depth_limit(MAX_FACE_DEPTH, &mut bytes.as_slice())
-        .map_err(|error| {
-            NativeRendererError::Malformed {
-                reason: error.to_string(),
-            }
-        })
+	latest::RendererNode::decode_all_with_depth_limit(MAX_FACE_DEPTH, &mut bytes.as_slice())
+		.map_err(|error| NativeRendererError::Malformed { reason: error.to_string() })
 }
 
 /// Screen a product-supplied Pocket card id with the rules every Pocket call
@@ -266,7 +250,7 @@ pub fn decode_renderer_node(bytes: Vec<u8>) -> Result<latest::RendererNode, Nati
 /// core's, and a host that guesses at them refuses links the core accepted.
 #[uniffi::export]
 pub fn screen_pocket_card_id(id: String) -> Result<String, NativeChatFieldError> {
-    crate::platform::normalize_chat_identifier("cardId", &id).map_err(Into::into)
+	crate::platform::normalize_chat_identifier("cardId", &id).map_err(Into::into)
 }
 
 /// Screen the display title a product gives one of its cards.
@@ -277,7 +261,7 @@ pub fn screen_pocket_card_id(id: String) -> Result<String, NativeChatFieldError>
 /// would cost a product every card it publishes.
 #[uniffi::export]
 pub fn screen_pocket_card_title(title: String) -> Result<String, NativeChatFieldError> {
-    crate::platform::validate_chat_name("title", &title).map_err(Into::into)
+	crate::platform::validate_chat_name("title", &title).map_err(Into::into)
 }
 
 /// Whether `product_id` is a first-party product the host grants every
@@ -290,7 +274,7 @@ pub fn screen_pocket_card_title(title: String) -> Result<String, NativeChatField
 /// normalize, so an unknown spelling is never read as trusted.
 #[uniffi::export]
 pub fn has_trusted_remote_permissions(product_id: String) -> bool {
-    crate::platform::normalizes_to_trusted_remote_permissions(&product_id)
+	crate::platform::normalizes_to_trusted_remote_permissions(&product_id)
 }
 
 /// Set the live log level (`off`/`error`/`warn`/`info`/`debug`/`trace`) for
@@ -299,7 +283,7 @@ pub fn has_trusted_remote_permissions(product_id: String) -> bool {
 /// this controls the cross-platform `tracing` events shared with wasm.
 #[uniffi::export]
 pub fn set_log_level(level: String) {
-    crate::logging::set_level_from_str(&level);
+	crate::logging::set_level_from_str(&level);
 }
 
 #[cfg(test)]

@@ -73,7 +73,7 @@ jobs:
         run: cargo +"$TRUAPI_NIGHTLY_TOOLCHAIN" clippy -p truapi-provider --no-default-features --features uniffi --all-targets -- -D warnings
 
       - name: cargo (pinned nightly) fmt --check
-        run: ./scripts/format-rust.sh --check
+        run: make fmt-check
 
       - name: cargo (pinned nightly) clippy
         run: cargo +"$TRUAPI_NIGHTLY_TOOLCHAIN" clippy --workspace --all-targets --all-features -- -D warnings

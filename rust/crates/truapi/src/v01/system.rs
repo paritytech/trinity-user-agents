@@ -6,42 +6,36 @@ use super::common::GenericError;
 /// Response containing the product context bound to the current host runtime.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 pub struct HostGetProductContextResponse {
-    /// Full canonical identifier used for authorization and account derivation.
-    pub product_id: String,
+	/// Full canonical identifier used for authorization and account derivation.
+	pub product_id: String,
 }
 
 /// Request to query whether a feature is supported by the host.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
-#[cfg_attr(
-    all(feature = "runtime", not(target_arch = "wasm32")),
-    derive(uniffi::Enum)
-)]
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
 pub enum HostFeatureSupportedRequest {
-    /// Ask whether the host can interact with the chain identified by genesis hash.
-    Chain {
-        /// Chain genesis hash.
-        genesis_hash: Vec<u8>,
-    },
+	/// Ask whether the host can interact with the chain identified by genesis hash.
+	Chain {
+		/// Chain genesis hash.
+		genesis_hash: Vec<u8>,
+	},
 }
 
 /// Error from [`crate::api::System::navigate_to`].
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode, Display)]
-#[cfg_attr(
-    all(feature = "runtime", not(target_arch = "wasm32")),
-    derive(uniffi::Error)
-)]
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Error))]
 pub enum HostNavigateToError {
-    /// The target host is not authorized for outbound access: the user answered
-    /// no to the prompt, a stored decision already refused it, or no prompt
-    /// could be put to the user.
-    #[display("navigation to this host is not authorized")]
-    PermissionDenied,
-    /// Catch-all.
-    #[display("{reason}")]
-    Unknown {
-        /// Human-readable failure reason.
-        reason: String,
-    },
+	/// The target host is not authorized for outbound access: the user answered
+	/// no to the prompt, a stored decision already refused it, or no prompt
+	/// could be put to the user.
+	#[display("navigation to this host is not authorized")]
+	PermissionDenied,
+	/// Catch-all.
+	#[display("{reason}")]
+	Unknown {
+		/// Human-readable failure reason.
+		reason: String,
+	},
 }
 
 /// Error from [`crate::api::System::handshake`] (RFC 0009).
@@ -50,54 +44,51 @@ pub enum HostNavigateToError {
 /// user authentication and is used to negotiate the wire codec version.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 pub enum HostHandshakeError {
-    /// Host did not complete the handshake in time.
-    Timeout,
-    /// Host does not speak the codec version requested by the product.
-    UnsupportedProtocolVersion,
-    /// Catch-all.
-    Unknown(GenericError),
+	/// Host did not complete the handshake in time.
+	Timeout,
+	/// Host does not speak the codec version requested by the product.
+	UnsupportedProtocolVersion,
+	/// Catch-all.
+	Unknown(GenericError),
 }
 
 /// Wire-codec negotiation payload sent by the product (RFC 0009).
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 pub struct HostHandshakeRequest {
-    /// Wire codec version requested by the product.
-    pub codec_version: u8,
+	/// Wire codec version requested by the product.
+	pub codec_version: u8,
 }
 
 /// Response to a feature-support query.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 pub struct HostFeatureSupportedResponse {
-    /// Whether the feature is supported.
-    pub supported: bool,
+	/// Whether the feature is supported.
+	pub supported: bool,
 }
 
 /// Request to navigate the host to an external URL.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 pub struct HostNavigateToRequest {
-    /// URL to open.
-    pub url: String,
+	/// URL to open.
+	pub url: String,
 }
 
 /// Platform category a host runs on.
-#[cfg_attr(
-    all(feature = "runtime", not(target_arch = "wasm32")),
-    derive(uniffi::Enum)
-)]
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 pub enum HostPlatform {
-    /// Browser-embedded product (an iframe inside a web host).
-    Web,
-    /// Android application.
-    Android,
-    /// iOS application.
-    Ios,
-    /// Desktop application.
-    Desktop,
-    /// Command-line host running in a terminal or headless environment.
-    Cli,
-    /// Host could not classify its platform.
-    Unknown,
+	/// Browser-embedded product (an iframe inside a web host).
+	Web,
+	/// Android application.
+	Android,
+	/// iOS application.
+	Ios,
+	/// Desktop application.
+	Desktop,
+	/// Command-line host running in a terminal or headless environment.
+	Cli,
+	/// Host could not classify its platform.
+	Unknown,
 }
 
 /// Identity and version of the host currently running the product.
@@ -108,13 +99,13 @@ pub enum HostPlatform {
 /// bug reports.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 pub struct HostInfo {
-    /// Platform category the host runs on.
-    pub platform: HostPlatform,
-    /// Human-readable name of the host implementation, e.g. `"Polkadot
-    /// Desktop"`, `"Polkadot Mobile"`, or `"dotli"`. Hosts should report a
-    /// stable, non-empty name.
-    pub name: String,
-    /// Host-native version string, e.g. a semver such as `"1.2.3"`. Hosts
-    /// should report a non-empty value; the format is the host's own.
-    pub version: String,
+	/// Platform category the host runs on.
+	pub platform: HostPlatform,
+	/// Human-readable name of the host implementation, e.g. `"Polkadot
+	/// Desktop"`, `"Polkadot Mobile"`, or `"dotli"`. Hosts should report a
+	/// stable, non-empty name.
+	pub name: String,
+	/// Host-native version string, e.g. a semver such as `"1.2.3"`. Hosts
+	/// should report a non-empty value; the format is the host's own.
+	pub version: String,
 }

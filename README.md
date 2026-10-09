@@ -284,7 +284,7 @@ make wasm     # rebuild truapi WASM artifacts under js/packages/truapi-host/dist
 CI regenerates the shared bindings before building and testing both npm
 packages, so generated client and host callback changes are checked together.
 
-CI and `make check` enforce Rust formatting, including runtime modules declared inside macros, and Prettier formatting for the JS host package. Run `./scripts/format-rust.sh` and `npm run format --prefix js/packages/truapi-host` to apply the same rules locally. Add `--check` to the Rust command or use `format:check` for the JS package to check without writing. Rust uses the nightly in `nightly-toolchain` and requires blocks around multiline closure and match-arm bodies.
+CI and `make check` enforce Rust formatting, including runtime modules declared inside macros, and Prettier formatting for the JS host package. Run `make fmt` and `npm run format --prefix js/packages/truapi-host` to apply the same rules locally. Use `make fmt-check` or `format:check` for the JS package to check without writing. Rust uses the nightly in `nightly-toolchain` and the [Polkadot SDK formatting rules](https://github.com/paritytech/polkadot-sdk/blob/master/.rustfmt.toml) with edition 2024.
 
 Rust runtime tests live beside their components; [native binding tests](rust/crates/truapi/src/native/tests.rs) exercise the exported host API.
 

@@ -1,7 +1,9 @@
 //! Parse rustdoc JSON output to extract API definitions.
 
-use std::cmp::Ordering;
-use std::collections::{BTreeMap, HashMap};
+use std::{
+	cmp::Ordering,
+	collections::{BTreeMap, HashMap},
+};
 
 use anyhow::{Context, Result, bail};
 use serde::Deserialize;
@@ -14,108 +16,108 @@ const MIN_FORMAT_VERSION: u32 = 57;
 /// Parsed rustdoc crate. IDs are integers but serialized as string keys in JSON maps.
 #[derive(Debug, Deserialize)]
 pub struct Crate {
-    /// rustdoc JSON format version stamped into the document.
-    #[serde(default)]
-    pub format_version: Option<u32>,
-    /// All items in the crate, keyed by stringified item id.
-    pub index: HashMap<String, Item>,
-    /// Path and kind lookup for item ids, including external crates.
-    #[serde(default)]
-    pub paths: HashMap<String, ItemPath>,
+	/// rustdoc JSON format version stamped into the document.
+	#[serde(default)]
+	pub format_version: Option<u32>,
+	/// All items in the crate, keyed by stringified item id.
+	pub index: HashMap<String, Item>,
+	/// Path and kind lookup for item ids, including external crates.
+	#[serde(default)]
+	pub paths: HashMap<String, ItemPath>,
 }
 
 /// Single rustdoc index entry: a name, its docs, and the raw `inner` payload
 /// whose shape depends on the item kind (struct, enum, function, ...).
 #[derive(Debug, Deserialize)]
 pub struct Item {
-    /// Local item name as it appears in source.
-    pub name: Option<String>,
-    /// Rustdoc comment on the item, if any.
-    pub docs: Option<String>,
-    /// Kind-dependent rustdoc payload, parsed lazily by helpers in this module.
-    pub inner: serde_json::Value,
-    /// Attributes rustdoc recorded on the item, e.g. `#[codec(index = 0)]`.
-    /// Needed because the SCALE discriminant a variant ships on is the explicit
-    /// `codec(index = N)`, not its declaration order.
-    #[serde(default)]
-    pub attrs: Vec<serde_json::Value>,
+	/// Local item name as it appears in source.
+	pub name: Option<String>,
+	/// Rustdoc comment on the item, if any.
+	pub docs: Option<String>,
+	/// Kind-dependent rustdoc payload, parsed lazily by helpers in this module.
+	pub inner: serde_json::Value,
+	/// Attributes rustdoc recorded on the item, e.g. `#[codec(index = 0)]`.
+	/// Needed because the SCALE discriminant a variant ships on is the explicit
+	/// `codec(index = N)`, not its declaration order.
+	#[serde(default)]
+	pub attrs: Vec<serde_json::Value>,
 }
 
 /// Resolves a rustdoc id to its fully-qualified path and item kind.
 #[derive(Debug, Deserialize)]
 pub struct ItemPath {
-    /// Numeric id of the crate that owns the item.
-    pub crate_id: u32,
-    /// Fully-qualified path segments (`["truapi", "api", "Foo"]`).
-    pub path: Vec<String>,
-    /// Item kind string from rustdoc (e.g. `"struct"`, `"enum"`, `"trait"`).
-    pub kind: String,
+	/// Numeric id of the crate that owns the item.
+	pub crate_id: u32,
+	/// Fully-qualified path segments (`["truapi", "api", "Foo"]`).
+	pub path: Vec<String>,
+	/// Item kind string from rustdoc (e.g. `"struct"`, `"enum"`, `"trait"`).
+	pub kind: String,
 }
 
 /// Extracted API definition ready for code generation.
 #[derive(Debug, PartialEq, Eq)]
 pub struct ApiDefinition {
-    /// Service traits extracted from the crate.
-    pub traits: Vec<TraitDef>,
-    /// Names of the public service traits in `TrUApi` super-trait declaration
-    /// order (excluding `Send`/`Sync`). Drives stable, source-order emission of
-    /// services in the playground, examples, and client modules.
-    pub public_trait_order: Vec<String>,
-    /// Data types referenced by the trait surface.
-    pub types: Vec<TypeDef>,
-    /// Framework types that are deliberately not emitted, but whose own shape is
-    /// still on the wire - `CallError`'s variants are the discriminant of every
-    /// error response. Kept so the wire schema hash can see them: excluding them
-    /// from the fingerprint let a variant be inserted, renumbering every error
-    /// discriminant, with no signal anywhere.
-    pub framework_types: Vec<TypeDef>,
+	/// Service traits extracted from the crate.
+	pub traits: Vec<TraitDef>,
+	/// Names of the public service traits in `TrUApi` super-trait declaration
+	/// order (excluding `Send`/`Sync`). Drives stable, source-order emission of
+	/// services in the playground, examples, and client modules.
+	pub public_trait_order: Vec<String>,
+	/// Data types referenced by the trait surface.
+	pub types: Vec<TypeDef>,
+	/// Framework types that are deliberately not emitted, but whose own shape is
+	/// still on the wire - `CallError`'s variants are the discriminant of every
+	/// error response. Kept so the wire schema hash can see them: excluding them
+	/// from the fingerprint let a variant be inserted, renumbering every error
+	/// discriminant, with no signal anywhere.
+	pub framework_types: Vec<TypeDef>,
 }
 
 /// Trait extracted from the rustdoc index: name, methods, and rustdoc.
 #[derive(Debug, PartialEq, Eq)]
 pub struct TraitDef {
-    /// Trait name as it appears in source.
-    pub name: String,
-    /// Module path leading to the trait, excluding the trait name itself
-    /// (e.g. `["truapi", "api", "account"]`).
-    pub module_path: Vec<String>,
-    /// Wire-protocol trait discriminant from the `#[wire_trait(id = N)]`
-    /// attribute: the first byte of the `(trait, method)` pair on the wire.
-    pub wire_trait_id: Option<u8>,
-    /// Methods declared on the trait, in declaration order.
-    pub methods: Vec<MethodDef>,
-    /// Rustdoc comment on the trait. Service markers are retained for codegen.
-    pub docs: Option<String>,
+	/// Trait name as it appears in source.
+	pub name: String,
+	/// Module path leading to the trait, excluding the trait name itself
+	/// (e.g. `["truapi", "api", "account"]`).
+	pub module_path: Vec<String>,
+	/// Wire-protocol trait discriminant from the `#[wire_trait(id = N)]`
+	/// attribute: the first byte of the `(trait, method)` pair on the wire.
+	pub wire_trait_id: Option<u8>,
+	/// Methods declared on the trait, in declaration order.
+	pub methods: Vec<MethodDef>,
+	/// Rustdoc comment on the trait. Service markers are retained for codegen.
+	pub docs: Option<String>,
 }
 
 impl TraitDef {
-    /// Required trusted execution kind declared by `#[truapi::service]`.
-    pub fn required_execution(&self) -> Option<&str> {
-        let docs = self.docs.as_deref()?;
-        extract_marker_value(docs, "@service_required_execution=")
-    }
+	/// Required trusted execution kind declared by `#[truapi::service]`.
+	pub fn required_execution(&self) -> Option<&str> {
+		let docs = self.docs.as_deref()?;
+		extract_marker_value(docs, "@service_required_execution=")
+	}
 
-    /// User-facing trait documentation with codegen markers removed.
-    pub fn public_docs(&self) -> Option<String> {
-        clean_docs(self.docs.as_deref())
-    }
+	/// User-facing trait documentation with codegen markers removed.
+	pub fn public_docs(&self) -> Option<String> {
+		clean_docs(self.docs.as_deref())
+	}
 }
 
 /// Trait method extracted from rustdoc, including its wire ids.
 #[derive(Debug, PartialEq, Eq)]
 pub struct MethodDef {
-    /// Method name as it appears in source.
-    pub name: String,
-    /// What shape the method has on the wire (request, stream, ...).
-    pub kind: MethodKind,
-    /// Parameter list with names preserved (excluding `&self` / `CallContext`).
-    pub params: Vec<ParamDef>,
-    /// Return shape, decoded from the method signature.
-    pub return_type: ReturnType,
-    /// Wire-protocol discriminant ids from the `#[wire(...)]` attribute.
-    pub wire: WireAttrs,
-    /// Rustdoc comment on the method, with hidden codegen markers stripped.
-    pub docs: Option<String>,
+	/// Method name as it appears in source.
+	pub name: String,
+	/// What shape the method has on the wire (request, stream, ...).
+	pub kind: MethodKind,
+	/// Parameter list with names preserved (excluding `&self` / `CallContext`).
+	pub params: Vec<ParamDef>,
+	/// Return shape, decoded from the method signature.
+	pub return_type: ReturnType,
+	/// Wire-protocol discriminant ids from the `#[wire(...)]` attribute.
+	pub wire: WireAttrs,
+	/// Rustdoc comment on the method, with hidden codegen markers stripped.
+	pub docs: Option<String>,
 }
 
 /// Raw wire id extracted from `#[wire(...)]`. One id addresses the method
@@ -124,741 +126,677 @@ pub struct MethodDef {
 /// the outer wire's own `message_type` byte, not a separate id.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct WireAttrs {
-    /// This subscription is started by the host and served by the product.
-    pub host_initiated: bool,
-    /// Excluded from the public SDK; available to container and host bindings.
-    pub internal: bool,
-    /// Method frame discriminant.
-    pub id: Option<u8>,
+	/// This subscription is started by the host and served by the product.
+	pub host_initiated: bool,
+	/// Excluded from the public SDK; available to container and host bindings.
+	pub internal: bool,
+	/// Method frame discriminant.
+	pub id: Option<u8>,
 }
 
 /// Wire-shape classification of a trait method.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MethodKind {
-    /// One request, one response.
-    Request,
-    /// One request, a stream of items terminated by interrupt.
-    Subscription,
+	/// One request, one response.
+	Request,
+	/// One request, a stream of items terminated by interrupt.
+	Subscription,
 }
 
 /// Trait method parameter (name + type).
 #[derive(Debug, PartialEq, Eq)]
 pub struct ParamDef {
-    /// Parameter name as written in the trait method signature.
-    pub name: String,
-    /// Parameter type expressed as a [`TypeRef`].
-    pub type_ref: TypeRef,
+	/// Parameter name as written in the trait method signature.
+	pub name: String,
+	/// Parameter type expressed as a [`TypeRef`].
+	pub type_ref: TypeRef,
 }
 
 /// Return shape of a trait method, after stripping wrappers like `Result` /
 /// `Pin<Box<dyn Future>>` that rustdoc surfaces literally.
 #[derive(Debug, PartialEq, Eq)]
 pub enum ReturnType {
-    /// `Result<ok, err>`-shaped return.
-    Result { ok: TypeRef, err: TypeRef },
-    /// Subscription that yields `item`s and ends with an `interrupt`.
-    Subscription { item: TypeRef, interrupt: TypeRef },
+	/// `Result<ok, err>`-shaped return.
+	Result { ok: TypeRef, err: TypeRef },
+	/// Subscription that yields `item`s and ends with an `interrupt`.
+	Subscription { item: TypeRef, interrupt: TypeRef },
 }
 
 /// Type reference parsed from rustdoc into a structural form codegen can emit.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TypeRef {
-    /// Primitive scalar (`u8`, `bool`, `String`, ...).
-    Primitive(String),
-    /// Named type, optionally generic (`HostFoo`, `Vec<T>`, `Option<T>`).
-    Named {
-        /// Type name in source order.
-        name: String,
-        /// Generic arguments, if any.
-        args: Vec<TypeRef>,
-    },
-    /// Sugar for `Vec<T>` extracted from rustdoc.
-    Vec(Box<TypeRef>),
-    /// Sugar for `Option<T>` extracted from rustdoc.
-    Option(Box<TypeRef>),
-    /// Tuple of arbitrary arity (zero-tuple represents unit only via [`TypeRef::Unit`]).
-    Tuple(Vec<TypeRef>),
-    /// Fixed-length array `[T; N]`.
-    Array(Box<TypeRef>, usize),
-    /// Generic placeholder bound somewhere up the trait hierarchy.
-    Generic(String),
-    /// Unit type `()`.
-    Unit,
+	/// Primitive scalar (`u8`, `bool`, `String`, ...).
+	Primitive(String),
+	/// Named type, optionally generic (`HostFoo`, `Vec<T>`, `Option<T>`).
+	Named {
+		/// Type name in source order.
+		name: String,
+		/// Generic arguments, if any.
+		args: Vec<TypeRef>,
+	},
+	/// Sugar for `Vec<T>` extracted from rustdoc.
+	Vec(Box<TypeRef>),
+	/// Sugar for `Option<T>` extracted from rustdoc.
+	Option(Box<TypeRef>),
+	/// Tuple of arbitrary arity (zero-tuple represents unit only via [`TypeRef::Unit`]).
+	Tuple(Vec<TypeRef>),
+	/// Fixed-length array `[T; N]`.
+	Array(Box<TypeRef>, usize),
+	/// Generic placeholder bound somewhere up the trait hierarchy.
+	Generic(String),
+	/// Unit type `()`.
+	Unit,
 }
 
 /// User-defined type (struct/enum/alias) discovered while walking the API.
 #[derive(Debug, PartialEq, Eq)]
 pub struct TypeDef {
-    /// Type name as it appears in source.
-    pub name: String,
-    /// Module path leading to the type, excluding the type name itself
-    /// (e.g. `["truapi", "api", "account"]`). Used by the explorer codegen
-    /// to bucket types by category.
-    pub module_path: Vec<String>,
-    /// Generic parameter names declared on the type, in declaration order.
-    pub generic_params: Vec<String>,
-    /// Type body shape (alias, struct, tuple struct, or enum).
-    pub kind: TypeDefKind,
-    /// Rustdoc comment on the type itself.
-    pub docs: Option<String>,
+	/// Type name as it appears in source.
+	pub name: String,
+	/// Module path leading to the type, excluding the type name itself
+	/// (e.g. `["truapi", "api", "account"]`). Used by the explorer codegen
+	/// to bucket types by category.
+	pub module_path: Vec<String>,
+	/// Generic parameter names declared on the type, in declaration order.
+	pub generic_params: Vec<String>,
+	/// Type body shape (alias, struct, tuple struct, or enum).
+	pub kind: TypeDefKind,
+	/// Rustdoc comment on the type itself.
+	pub docs: Option<String>,
 }
 
 /// Body shape of a [`TypeDef`].
 #[derive(Debug, PartialEq, Eq)]
 pub enum TypeDefKind {
-    /// `type Foo = Bar;`-style alias.
-    Alias(TypeRef),
-    /// Struct with named fields.
-    Struct(Vec<FieldDef>),
-    /// Tuple struct with positional fields.
-    TupleStruct(Vec<TypeRef>),
-    /// Enum with named variants.
-    Enum(Vec<VariantDef>),
+	/// `type Foo = Bar;`-style alias.
+	Alias(TypeRef),
+	/// Struct with named fields.
+	Struct(Vec<FieldDef>),
+	/// Tuple struct with positional fields.
+	TupleStruct(Vec<TypeRef>),
+	/// Enum with named variants.
+	Enum(Vec<VariantDef>),
 }
 
 /// Named field of a struct or struct-style enum variant.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FieldDef {
-    /// Field name.
-    pub name: String,
-    /// Field type expressed as a [`TypeRef`].
-    pub type_ref: TypeRef,
-    /// Rustdoc comment on the field.
-    pub docs: Option<String>,
+	/// Field name.
+	pub name: String,
+	/// Field type expressed as a [`TypeRef`].
+	pub type_ref: TypeRef,
+	/// Rustdoc comment on the field.
+	pub docs: Option<String>,
 }
 
 /// Enum variant extracted from rustdoc.
 #[derive(Debug, PartialEq, Eq)]
 pub struct VariantDef {
-    /// Variant name.
-    pub name: String,
-    /// Variant payload shape.
-    pub fields: VariantFields,
-    /// Rustdoc comment on the variant.
-    pub docs: Option<String>,
-    /// Explicit SCALE discriminant from `#[codec(index = N)]`, when the variant
-    /// carries one. `None` means the codec falls back to declaration order.
-    ///
-    /// This is the byte that actually ships. Fingerprinting the positional index
-    /// instead cannot see a renumbering that keeps declaration order - which is
-    /// exactly how RFC-0024 moved `Rejected` from `0x02` to `0x04`.
-    pub codec_index: Option<u8>,
+	/// Variant name.
+	pub name: String,
+	/// Variant payload shape.
+	pub fields: VariantFields,
+	/// Rustdoc comment on the variant.
+	pub docs: Option<String>,
+	/// Explicit SCALE discriminant from `#[codec(index = N)]`, when the variant
+	/// carries one. `None` means the codec falls back to declaration order.
+	///
+	/// This is the byte that actually ships. Fingerprinting the positional index
+	/// instead cannot see a renumbering that keeps declaration order - which is
+	/// exactly how RFC-0024 moved `Rejected` from `0x02` to `0x04`.
+	pub codec_index: Option<u8>,
 }
 
 /// Payload shape of an enum variant.
 #[derive(Debug, PartialEq, Eq)]
 pub enum VariantFields {
-    /// `VariantName,`
-    Unit,
-    /// `VariantName(T1, T2, ...)`
-    Unnamed(Vec<TypeRef>),
-    /// `VariantName { a: T1, b: T2, ... }`
-    Named(Vec<FieldDef>),
+	/// `VariantName,`
+	Unit,
+	/// `VariantName(T1, T2, ...)`
+	Unnamed(Vec<TypeRef>),
+	/// `VariantName { a: T1, b: T2, ... }`
+	Named(Vec<FieldDef>),
 }
 
 #[derive(Debug, Clone)]
 struct ItemCandidate {
-    item_id: String,
-    path: Vec<String>,
-    kind: String,
+	item_id: String,
+	path: Vec<String>,
+	kind: String,
 }
 
 /// Maps rustdoc item ids and full paths to the output type names used in
 /// generated code, disambiguated when several types share a simple name.
 #[derive(Debug, Default)]
 pub struct NameContext {
-    by_item_id: HashMap<String, String>,
-    by_path: HashMap<String, String>,
+	by_item_id: HashMap<String, String>,
+	by_path: HashMap<String, String>,
 }
 
 impl NameContext {
-    fn name_for_item(&self, item_id: &str, fallback: &str) -> String {
-        self.by_item_id
-            .get(item_id)
-            .cloned()
-            .unwrap_or_else(|| fallback.to_string())
-    }
+	fn name_for_item(&self, item_id: &str, fallback: &str) -> String {
+		self.by_item_id.get(item_id).cloned().unwrap_or_else(|| fallback.to_string())
+	}
 
-    fn name_for_path(&self, path: &str) -> String {
-        self.by_path
-            .get(path)
-            .cloned()
-            .unwrap_or_else(|| path_suffix(path).to_string())
-    }
+	fn name_for_path(&self, path: &str) -> String {
+		self.by_path.get(path).cloned().unwrap_or_else(|| path_suffix(path).to_string())
+	}
 }
 
 /// Parses rustdoc JSON output into the minimal crate model used by the code
 /// generator. Rejects documents older than [`MIN_FORMAT_VERSION`] because the
 /// untyped walkers in this crate assume the format of recent nightlies.
 pub fn parse(json: &str) -> Result<Crate> {
-    let krate: Crate = serde_json::from_str(json).context("Failed to parse rustdoc JSON")?;
-    let Some(version) = krate.format_version else {
-        bail!(
-            "rustdoc JSON is missing `format_version`; regenerate it with \
+	let krate: Crate = serde_json::from_str(json).context("Failed to parse rustdoc JSON")?;
+	let Some(version) = krate.format_version else {
+		bail!(
+			"rustdoc JSON is missing `format_version`; regenerate it with \
              `cargo +$(cat nightly-toolchain) rustdoc --output-format json` (nightly 2026-02-23 or later)"
-        );
-    };
-    if version < MIN_FORMAT_VERSION {
-        bail!(
-            "rustdoc JSON format_version {version} is older than the tested minimum \
+		);
+	};
+	if version < MIN_FORMAT_VERSION {
+		bail!(
+			"rustdoc JSON format_version {version} is older than the tested minimum \
              {MIN_FORMAT_VERSION}; regenerate with nightly 2026-02-23 or later"
-        );
-    }
-    Ok(krate)
+		);
+	}
+	Ok(krate)
 }
 
 /// Extracts the public traits and types that make up the generated API surface
 /// from a parsed rustdoc crate.
 pub fn extract_api(krate: &Crate) -> Result<ApiDefinition> {
-    let trait_candidates = collect_public_candidates(krate, &["trait"]);
-    let type_candidates = collect_public_candidates(krate, &["struct", "enum", "type_alias"]);
-    let names = build_name_context(&type_candidates);
-    let public_trait_order = extract_public_trait_order(krate)?;
+	let trait_candidates = collect_public_candidates(krate, &["trait"]);
+	let type_candidates = collect_public_candidates(krate, &["struct", "enum", "type_alias"]);
+	let names = build_name_context(&type_candidates);
+	let public_trait_order = extract_public_trait_order(krate)?;
 
-    let mut traits = Vec::new();
-    for (name, candidates) in trait_candidates {
-        // `Versioned`, `IntoLatest`, and `FromLatest` are runtime-helper traits
-        // on the wrapper enums, not protocol-method traits. The codegen only
-        // cares about the protocol surface (TrUAPI methods); skip anything
-        // declared outside `truapi::api::*`.
-        let candidate = select_candidate(&name, &candidates)?;
-        if !candidate.path.iter().any(|s| s == "api") {
-            continue;
-        }
-        let item = krate
-            .index
-            .get(&candidate.item_id)
-            .with_context(|| format!("Missing rustdoc item `{}`", candidate.item_id))?;
-        // `path` ends in the trait's own name; the parent module path is
-        // everything except the last segment.
-        let module_path = candidate
-            .path
-            .iter()
-            .take(candidate.path.len().saturating_sub(1))
-            .cloned()
-            .collect();
-        traits.push(extract_trait(
-            &candidate.item_id,
-            item,
-            krate,
-            &names,
-            module_path,
-        )?);
-    }
+	let mut traits = Vec::new();
+	for (name, candidates) in trait_candidates {
+		// `Versioned`, `IntoLatest`, and `FromLatest` are runtime-helper traits
+		// on the wrapper enums, not protocol-method traits. The codegen only
+		// cares about the protocol surface (TrUAPI methods); skip anything
+		// declared outside `truapi::api::*`.
+		let candidate = select_candidate(&name, &candidates)?;
+		if !candidate.path.iter().any(|s| s == "api") {
+			continue;
+		}
+		let item = krate
+			.index
+			.get(&candidate.item_id)
+			.with_context(|| format!("Missing rustdoc item `{}`", candidate.item_id))?;
+		// `path` ends in the trait's own name; the parent module path is
+		// everything except the last segment.
+		let module_path = candidate
+			.path
+			.iter()
+			.take(candidate.path.len().saturating_sub(1))
+			.cloned()
+			.collect();
+		traits.push(extract_trait(&candidate.item_id, item, krate, &names, module_path)?);
+	}
 
-    let mut types = Vec::new();
-    let mut framework_types = Vec::new();
-    let mut generated_names = BTreeMap::new();
-    for (name, candidates) in type_candidates {
-        if should_skip_type_name(&name) {
-            // Not emitted, but still fingerprinted: a shape change here changes
-            // the wire. Parse failures are ignored - several skipped names are
-            // markers or lifetimes with no data shape to record.
-            for candidate in &candidates {
-                let Some(item) = krate.index.get(&candidate.item_id) else {
-                    continue;
-                };
-                let module_path: Vec<String> = candidate
-                    .path
-                    .iter()
-                    .take(candidate.path.len().saturating_sub(1))
-                    .cloned()
-                    .collect();
-                let extracted = if candidate.kind == "struct" {
-                    extract_struct(&candidate.item_id, item, krate, &names, module_path)
-                } else if candidate.kind == "enum" {
-                    extract_enum(&candidate.item_id, item, krate, &names, module_path)
-                } else {
-                    continue;
-                };
-                if let Ok(def) = extracted {
-                    framework_types.push(def);
-                    break;
-                }
-            }
-            continue;
-        }
+	let mut types = Vec::new();
+	let mut framework_types = Vec::new();
+	let mut generated_names = BTreeMap::new();
+	for (name, candidates) in type_candidates {
+		if should_skip_type_name(&name) {
+			// Not emitted, but still fingerprinted: a shape change here changes
+			// the wire. Parse failures are ignored - several skipped names are
+			// markers or lifetimes with no data shape to record.
+			for candidate in &candidates {
+				let Some(item) = krate.index.get(&candidate.item_id) else {
+					continue;
+				};
+				let module_path: Vec<String> = candidate
+					.path
+					.iter()
+					.take(candidate.path.len().saturating_sub(1))
+					.cloned()
+					.collect();
+				let extracted = if candidate.kind == "struct" {
+					extract_struct(&candidate.item_id, item, krate, &names, module_path)
+				} else if candidate.kind == "enum" {
+					extract_enum(&candidate.item_id, item, krate, &names, module_path)
+				} else {
+					continue;
+				};
+				if let Ok(def) = extracted {
+					framework_types.push(def);
+					break;
+				}
+			}
+			continue;
+		}
 
-        for candidate in candidates {
-            if should_skip_type_candidate(&name, &candidate) {
-                continue;
-            }
-            let item = krate
-                .index
-                .get(&candidate.item_id)
-                .with_context(|| format!("Missing rustdoc item `{}`", candidate.item_id))?;
+		for candidate in candidates {
+			if should_skip_type_candidate(&name, &candidate) {
+				continue;
+			}
+			let item = krate
+				.index
+				.get(&candidate.item_id)
+				.with_context(|| format!("Missing rustdoc item `{}`", candidate.item_id))?;
 
-            let module_path: Vec<String> = candidate
-                .path
-                .iter()
-                .take(candidate.path.len().saturating_sub(1))
-                .cloned()
-                .collect();
-            let type_def = if candidate.kind == "struct" {
-                extract_struct(&candidate.item_id, item, krate, &names, module_path)?
-            } else if candidate.kind == "enum" {
-                extract_enum(&candidate.item_id, item, krate, &names, module_path)?
-            } else if candidate.kind == "type_alias" {
-                extract_type_alias(&candidate.item_id, item, &names, module_path)?
-            } else {
-                bail!(
-                    "Unsupported rustdoc item kind `{}` for `{}`",
-                    candidate.kind,
-                    candidate.path.join("::")
-                );
-            };
+			let module_path: Vec<String> = candidate
+				.path
+				.iter()
+				.take(candidate.path.len().saturating_sub(1))
+				.cloned()
+				.collect();
+			let type_def = if candidate.kind == "struct" {
+				extract_struct(&candidate.item_id, item, krate, &names, module_path)?
+			} else if candidate.kind == "enum" {
+				extract_enum(&candidate.item_id, item, krate, &names, module_path)?
+			} else if candidate.kind == "type_alias" {
+				extract_type_alias(&candidate.item_id, item, &names, module_path)?
+			} else {
+				bail!(
+					"Unsupported rustdoc item kind `{}` for `{}`",
+					candidate.kind,
+					candidate.path.join("::")
+				);
+			};
 
-            if let Some(existing) =
-                generated_names.insert(type_def.name.clone(), candidate.path.join("::"))
-            {
-                bail!(
-                    "Generated type name `{}` is ambiguous between `{}` and `{}`",
-                    type_def.name,
-                    existing,
-                    candidate.path.join("::")
-                );
-            }
-            types.push(type_def);
-        }
-    }
+			if let Some(existing) =
+				generated_names.insert(type_def.name.clone(), candidate.path.join("::"))
+			{
+				bail!(
+					"Generated type name `{}` is ambiguous between `{}` and `{}`",
+					type_def.name,
+					existing,
+					candidate.path.join("::")
+				);
+			}
+			types.push(type_def);
+		}
+	}
 
-    traits.sort_by(|a, b| a.name.cmp(&b.name));
-    types.sort_by(|a, b| a.name.cmp(&b.name));
+	traits.sort_by(|a, b| a.name.cmp(&b.name));
+	types.sort_by(|a, b| a.name.cmp(&b.name));
 
-    framework_types.sort_by(|a, b| a.name.cmp(&b.name));
+	framework_types.sort_by(|a, b| a.name.cmp(&b.name));
 
-    Ok(ApiDefinition {
-        traits,
-        public_trait_order,
-        types,
-        framework_types,
-    })
+	Ok(ApiDefinition { traits, public_trait_order, types, framework_types })
 }
 
 fn extract_public_trait_order(krate: &Crate) -> Result<Vec<String>> {
-    let Some((item_id, _)) = krate.paths.iter().find(|(_, item_path)| {
-        item_path.crate_id == 0 && item_path.path == ["truapi", "api", "TrUApi"]
-    }) else {
-        bail!("Missing rustdoc path for `truapi::api::TrUApi`");
-    };
+	let Some((item_id, _)) = krate.paths.iter().find(|(_, item_path)| {
+		item_path.crate_id == 0 && item_path.path == ["truapi", "api", "TrUApi"]
+	}) else {
+		bail!("Missing rustdoc path for `truapi::api::TrUApi`");
+	};
 
-    let item = krate
-        .index
-        .get(item_id)
-        .with_context(|| format!("Missing rustdoc item `{item_id}` for `TrUApi`"))?;
-    let trait_inner = item
-        .inner
-        .get("trait")
-        .with_context(|| "Trait `TrUApi` missing rustdoc trait body")?;
-    let bounds = trait_inner
-        .get("bounds")
-        .and_then(|value| value.as_array())
-        .with_context(|| "Trait `TrUApi` missing rustdoc bounds array")?;
+	let item = krate
+		.index
+		.get(item_id)
+		.with_context(|| format!("Missing rustdoc item `{item_id}` for `TrUApi`"))?;
+	let trait_inner = item
+		.inner
+		.get("trait")
+		.with_context(|| "Trait `TrUApi` missing rustdoc trait body")?;
+	let bounds = trait_inner
+		.get("bounds")
+		.and_then(|value| value.as_array())
+		.with_context(|| "Trait `TrUApi` missing rustdoc bounds array")?;
 
-    let mut order = Vec::new();
-    for bound in bounds {
-        let Some(trait_bound) = bound.get("trait_bound") else {
-            continue;
-        };
-        let Some(path) = trait_bound
-            .get("trait")
-            .and_then(|value| value.get("path"))
-            .and_then(|value| value.as_str())
-        else {
-            continue;
-        };
-        if path == "Send" || path == "Sync" {
-            continue;
-        }
-        order.push(path.to_string());
-    }
+	let mut order = Vec::new();
+	for bound in bounds {
+		let Some(trait_bound) = bound.get("trait_bound") else {
+			continue;
+		};
+		let Some(path) = trait_bound
+			.get("trait")
+			.and_then(|value| value.get("path"))
+			.and_then(|value| value.as_str())
+		else {
+			continue;
+		};
+		if path == "Send" || path == "Sync" {
+			continue;
+		}
+		order.push(path.to_string());
+	}
 
-    Ok(order)
+	Ok(order)
 }
 
 fn should_skip_type_name(name: &str) -> bool {
-    matches!(
-        name,
-        "Subscription"
-            | "Request"
-            | "CallContext"
-            | "CallError"
-            | "CancellationFuture"
-            | "CancellationReason"
-            | "CancellationToken"
-            | "FrameworkOnlyError"
-            | "Infallible"
-            | "LatestOf"
-            | "RequestId"
-            | "RuntimeFailure"
-            | "RuntimeFailureKind"
-    )
+	matches!(
+		name,
+		"Subscription" |
+			"Request" | "CallContext" |
+			"CallError" |
+			"CancellationFuture" |
+			"CancellationReason" |
+			"CancellationToken" |
+			"FrameworkOnlyError" |
+			"Infallible" |
+			"LatestOf" |
+			"RequestId" |
+			"RuntimeFailure" |
+			"RuntimeFailureKind"
+	)
 }
 
 fn should_skip_type_candidate(name: &str, candidate: &ItemCandidate) -> bool {
-    should_skip_type_name(name) || candidate.path.iter().any(|segment| segment == "latest")
+	should_skip_type_name(name) || candidate.path.iter().any(|segment| segment == "latest")
 }
 
 fn build_name_context(type_candidates: &BTreeMap<String, Vec<ItemCandidate>>) -> NameContext {
-    let mut ctx = NameContext::default();
-    for (simple_name, candidates) in type_candidates {
-        let candidates = candidates
-            .iter()
-            .filter(|candidate| !should_skip_type_candidate(simple_name, candidate))
-            .collect::<Vec<_>>();
-        let has_conflict = candidates.len() > 1;
-        for candidate in candidates {
-            let output_name = if has_conflict {
-                disambiguated_type_name(simple_name, &candidate.path)
-            } else {
-                simple_name.clone()
-            };
-            ctx.by_item_id
-                .insert(candidate.item_id.clone(), output_name.clone());
-            ctx.by_path.insert(candidate.path.join("::"), output_name);
-        }
-    }
-    ctx
+	let mut ctx = NameContext::default();
+	for (simple_name, candidates) in type_candidates {
+		let candidates = candidates
+			.iter()
+			.filter(|candidate| !should_skip_type_candidate(simple_name, candidate))
+			.collect::<Vec<_>>();
+		let has_conflict = candidates.len() > 1;
+		for candidate in candidates {
+			let output_name = if has_conflict {
+				disambiguated_type_name(simple_name, &candidate.path)
+			} else {
+				simple_name.clone()
+			};
+			ctx.by_item_id.insert(candidate.item_id.clone(), output_name.clone());
+			ctx.by_path.insert(candidate.path.join("::"), output_name);
+		}
+	}
+	ctx
 }
 
 fn disambiguated_type_name(simple_name: &str, path: &[String]) -> String {
-    if path.iter().any(|segment| segment == "versioned") {
-        return simple_name.to_string();
-    }
-    if let Some(version) = path
-        .iter()
-        .find_map(|segment| version_module_number(segment))
-    {
-        return format!("V{version:02}{simple_name}");
-    }
-    let module = path
-        .iter()
-        .rev()
-        .nth(1)
-        .map(|segment| to_pascal_case(segment))
-        .unwrap_or_default();
-    format!("{module}{simple_name}")
+	if path.iter().any(|segment| segment == "versioned") {
+		return simple_name.to_string();
+	}
+	if let Some(version) = path.iter().find_map(|segment| version_module_number(segment)) {
+		return format!("V{version:02}{simple_name}");
+	}
+	let module = path
+		.iter()
+		.rev()
+		.nth(1)
+		.map(|segment| to_pascal_case(segment))
+		.unwrap_or_default();
+	format!("{module}{simple_name}")
 }
 
 fn version_module_number(segment: &str) -> Option<u32> {
-    segment
-        .strip_prefix('v')
-        .and_then(|value| value.parse::<u32>().ok())
+	segment.strip_prefix('v').and_then(|value| value.parse::<u32>().ok())
 }
 
 fn to_pascal_case(value: &str) -> String {
-    value
-        .split('_')
-        .filter(|part| !part.is_empty())
-        .map(|part| {
-            let mut chars = part.chars();
-            match chars.next() {
-                Some(first) => first.to_uppercase().chain(chars).collect::<String>(),
-                None => String::new(),
-            }
-        })
-        .collect()
+	value
+		.split('_')
+		.filter(|part| !part.is_empty())
+		.map(|part| {
+			let mut chars = part.chars();
+			match chars.next() {
+				Some(first) => first.to_uppercase().chain(chars).collect::<String>(),
+				None => String::new(),
+			}
+		})
+		.collect()
 }
 
 fn collect_public_candidates(
-    krate: &Crate,
-    allowed_kinds: &[&str],
+	krate: &Crate,
+	allowed_kinds: &[&str],
 ) -> BTreeMap<String, Vec<ItemCandidate>> {
-    let mut grouped: BTreeMap<String, Vec<ItemCandidate>> = BTreeMap::new();
+	let mut grouped: BTreeMap<String, Vec<ItemCandidate>> = BTreeMap::new();
 
-    for (item_id, item_path) in &krate.paths {
-        if item_path.crate_id != 0 || !allowed_kinds.contains(&item_path.kind.as_str()) {
-            continue;
-        }
+	for (item_id, item_path) in &krate.paths {
+		if item_path.crate_id != 0 || !allowed_kinds.contains(&item_path.kind.as_str()) {
+			continue;
+		}
 
-        let Some(name) = item_path.path.last() else {
-            continue;
-        };
+		let Some(name) = item_path.path.last() else {
+			continue;
+		};
 
-        grouped
-            .entry(name.clone())
-            .or_default()
-            .push(ItemCandidate {
-                item_id: item_id.clone(),
-                path: item_path.path.clone(),
-                kind: item_path.kind.clone(),
-            });
-    }
+		grouped.entry(name.clone()).or_default().push(ItemCandidate {
+			item_id: item_id.clone(),
+			path: item_path.path.clone(),
+			kind: item_path.kind.clone(),
+		});
+	}
 
-    for candidates in grouped.values_mut() {
-        candidates.sort_by(compare_candidates);
-    }
+	for candidates in grouped.values_mut() {
+		candidates.sort_by(compare_candidates);
+	}
 
-    grouped
+	grouped
 }
 
 fn compare_candidates(a: &ItemCandidate, b: &ItemCandidate) -> Ordering {
-    version_rank(&a.path)
-        .cmp(&version_rank(&b.path))
-        .then_with(|| a.path.cmp(&b.path))
-        .then_with(|| a.item_id.cmp(&b.item_id))
+	version_rank(&a.path)
+		.cmp(&version_rank(&b.path))
+		.then_with(|| a.path.cmp(&b.path))
+		.then_with(|| a.item_id.cmp(&b.item_id))
 }
 
 fn version_rank(path: &[String]) -> u32 {
-    // The unified contract lives under `api::` for sub-traits and
-    // `versioned::` for request/response wrappers; both must outrank the
-    // version-numbered `v0N` legacy modules.
-    if path
-        .iter()
-        .any(|segment| segment == "api" || segment == "versioned")
-    {
-        return u32::MAX;
-    }
-    path.iter()
-        .find_map(|segment| {
-            segment
-                .strip_prefix('v')
-                .and_then(|value| value.parse::<u32>().ok())
-        })
-        .unwrap_or(0)
+	// The unified contract lives under `api::` for sub-traits and
+	// `versioned::` for request/response wrappers; both must outrank the
+	// version-numbered `v0N` legacy modules.
+	if path.iter().any(|segment| segment == "api" || segment == "versioned") {
+		return u32::MAX;
+	}
+	path.iter()
+		.find_map(|segment| segment.strip_prefix('v').and_then(|value| value.parse::<u32>().ok()))
+		.unwrap_or(0)
 }
 
 fn select_candidate<'a>(name: &str, candidates: &'a [ItemCandidate]) -> Result<&'a ItemCandidate> {
-    let Some(selected) = candidates.last() else {
-        bail!("No rustdoc candidates found for `{name}`");
-    };
+	let Some(selected) = candidates.last() else {
+		bail!("No rustdoc candidates found for `{name}`");
+	};
 
-    let selected_rank = version_rank(&selected.path);
-    let ambiguous = candidates
-        .iter()
-        .rev()
-        .skip(1)
-        .take_while(|candidate| version_rank(&candidate.path) == selected_rank)
-        .collect::<Vec<_>>();
+	let selected_rank = version_rank(&selected.path);
+	let ambiguous = candidates
+		.iter()
+		.rev()
+		.skip(1)
+		.take_while(|candidate| version_rank(&candidate.path) == selected_rank)
+		.collect::<Vec<_>>();
 
-    if !ambiguous.is_empty() {
-        let mut paths = ambiguous
-            .iter()
-            .map(|candidate| candidate.path.join("::"))
-            .collect::<Vec<_>>();
-        paths.push(selected.path.join("::"));
-        paths.sort();
-        bail!(
-            "Ambiguous rustdoc candidates for `{}` at version rank {}: {}",
-            name,
-            selected_rank,
-            paths.join(", ")
-        );
-    }
+	if !ambiguous.is_empty() {
+		let mut paths =
+			ambiguous.iter().map(|candidate| candidate.path.join("::")).collect::<Vec<_>>();
+		paths.push(selected.path.join("::"));
+		paths.sort();
+		bail!(
+			"Ambiguous rustdoc candidates for `{}` at version rank {}: {}",
+			name,
+			selected_rank,
+			paths.join(", ")
+		);
+	}
 
-    Ok(selected)
+	Ok(selected)
 }
 
 fn extract_trait(
-    item_id: &str,
-    item: &Item,
-    krate: &Crate,
-    names: &NameContext,
-    module_path: Vec<String>,
+	item_id: &str,
+	item: &Item,
+	krate: &Crate,
+	names: &NameContext,
+	module_path: Vec<String>,
 ) -> Result<TraitDef> {
-    let name = item
-        .name
-        .as_ref()
-        .cloned()
-        .with_context(|| format!("Trait item `{item_id}` has no name"))?;
-    let trait_inner = item
-        .inner
-        .get("trait")
-        .with_context(|| format!("Trait `{name}` missing rustdoc trait body"))?;
-    let item_ids = trait_inner
-        .get("items")
-        .and_then(|value| value.as_array())
-        .with_context(|| format!("Trait `{name}` missing rustdoc items array"))?;
+	let name = item
+		.name
+		.as_ref()
+		.cloned()
+		.with_context(|| format!("Trait item `{item_id}` has no name"))?;
+	let trait_inner = item
+		.inner
+		.get("trait")
+		.with_context(|| format!("Trait `{name}` missing rustdoc trait body"))?;
+	let item_ids = trait_inner
+		.get("items")
+		.and_then(|value| value.as_array())
+		.with_context(|| format!("Trait `{name}` missing rustdoc items array"))?;
 
-    let mut methods = Vec::new();
-    for method_id in item_ids {
-        let method_id = value_id(method_id)
-            .with_context(|| format!("Trait `{name}` contained a non-item method id"))?;
-        let method_item = krate
-            .index
-            .get(&method_id)
-            .with_context(|| format!("Trait `{name}` references missing item `{method_id}`"))?;
-        if let Some(method_def) = extract_method(&method_id, method_item, names)? {
-            methods.push(method_def);
-        }
-    }
+	let mut methods = Vec::new();
+	for method_id in item_ids {
+		let method_id = value_id(method_id)
+			.with_context(|| format!("Trait `{name}` contained a non-item method id"))?;
+		let method_item = krate
+			.index
+			.get(&method_id)
+			.with_context(|| format!("Trait `{name}` references missing item `{method_id}`"))?;
+		if let Some(method_def) = extract_method(&method_id, method_item, names)? {
+			methods.push(method_def);
+		}
+	}
 
-    let wire_trait_id = match item.docs.as_deref() {
-        Some(docs) => extract_wire_trait_id(&name, docs)?,
-        None => None,
-    };
+	let wire_trait_id = match item.docs.as_deref() {
+		Some(docs) => extract_wire_trait_id(&name, docs)?,
+		None => None,
+	};
 
-    Ok(TraitDef {
-        name,
-        module_path,
-        wire_trait_id,
-        methods,
-        docs: item.docs.clone(),
-    })
+	Ok(TraitDef { name, module_path, wire_trait_id, methods, docs: item.docs.clone() })
 }
 
 fn extract_method(item_id: &str, item: &Item, names: &NameContext) -> Result<Option<MethodDef>> {
-    let Some(fn_inner) = item.inner.get("function") else {
-        return Ok(None);
-    };
+	let Some(fn_inner) = item.inner.get("function") else {
+		return Ok(None);
+	};
 
-    let name = item
-        .name
-        .as_ref()
-        .cloned()
-        .with_context(|| format!("Method item `{item_id}` has no name"))?;
-    let sig = fn_inner
-        .get("sig")
-        .with_context(|| format!("Method `{name}` missing rustdoc signature"))?;
-    let raw_output = sig
-        .get("output")
-        .with_context(|| format!("Method `{name}` missing rustdoc return type"))?;
-    let wire = item
-        .docs
-        .as_deref()
-        .map(extract_wire_attrs)
-        .unwrap_or_default();
-    let output = if wire.host_initiated {
-        raw_output
-    } else {
-        unwrap_future_output(raw_output)
-    };
+	let name = item
+		.name
+		.as_ref()
+		.cloned()
+		.with_context(|| format!("Method item `{item_id}` has no name"))?;
+	let sig = fn_inner
+		.get("sig")
+		.with_context(|| format!("Method `{name}` missing rustdoc signature"))?;
+	let raw_output = sig
+		.get("output")
+		.with_context(|| format!("Method `{name}` missing rustdoc return type"))?;
+	let wire = item.docs.as_deref().map(extract_wire_attrs).unwrap_or_default();
+	let output = if wire.host_initiated { raw_output } else { unwrap_future_output(raw_output) };
 
-    let (kind, return_type) = if is_result_subscription_return(output) {
-        bail!(
-            "Method `{name}` returns Result<Subscription<..>, E>. A subscription declares its \
+	let (kind, return_type) = if is_result_subscription_return(output) {
+		bail!(
+			"Method `{name}` returns Result<Subscription<..>, E>. A subscription declares its \
              failure as its own interrupt type: Subscription<Item, CallError<E>>"
-        )
-    } else if is_subscription_return(output) {
-        let item = extract_generic_arg(output, 0, names).with_context(|| {
-            format!("Method `{name}` is missing the Subscription<Item, Interrupt> item type")
-        })?;
-        let interrupt = extract_generic_arg(output, 1, names).with_context(|| {
-            format!("Method `{name}` is missing the Subscription<Item, Interrupt> interrupt type")
-        })?;
-        // The framework puts `MalformedFrame`, `Denied` and `Unsupported` on
-        // the interrupt leg of every method, so it has to be able to construct
-        // one in whatever the method declared.
-        if !matches!(&interrupt, TypeRef::Named { name, args } if name == "CallError" && args.len() == 1)
-        {
-            bail!(
-                "Method `{name}` declares an interrupt type that is not `CallError<E>`, which the \
+		)
+	} else if is_subscription_return(output) {
+		let item = extract_generic_arg(output, 0, names).with_context(|| {
+			format!("Method `{name}` is missing the Subscription<Item, Interrupt> item type")
+		})?;
+		let interrupt = extract_generic_arg(output, 1, names).with_context(|| {
+			format!("Method `{name}` is missing the Subscription<Item, Interrupt> interrupt type")
+		})?;
+		// The framework puts `MalformedFrame`, `Denied` and `Unsupported` on
+		// the interrupt leg of every method, so it has to be able to construct
+		// one in whatever the method declared.
+		if !matches!(&interrupt, TypeRef::Named { name, args } if name == "CallError" && args.len() == 1)
+		{
+			bail!(
+				"Method `{name}` declares an interrupt type that is not `CallError<E>`, which the \
                  framework cannot put its own failures in"
-            )
-        }
-        (
-            MethodKind::Subscription,
-            ReturnType::Subscription { item, interrupt },
-        )
-    } else if is_result_return(output) {
-        (
-            MethodKind::Request,
-            ReturnType::Result {
-                ok: extract_generic_arg(output, 0, names)
-                    .with_context(|| format!("Method `{name}` is missing Result<T, E> ok type"))?,
-                err: extract_generic_arg(output, 1, names).with_context(|| {
-                    format!("Method `{name}` is missing Result<T, E> error type")
-                })?,
-            },
-        )
-    } else {
-        bail!(
-            "Unsupported method return type for `{}`: {}",
-            name,
-            summarize_json(output)
-        );
-    };
+			)
+		}
+		(MethodKind::Subscription, ReturnType::Subscription { item, interrupt })
+	} else if is_result_return(output) {
+		(
+			MethodKind::Request,
+			ReturnType::Result {
+				ok: extract_generic_arg(output, 0, names)
+					.with_context(|| format!("Method `{name}` is missing Result<T, E> ok type"))?,
+				err: extract_generic_arg(output, 1, names).with_context(|| {
+					format!("Method `{name}` is missing Result<T, E> error type")
+				})?,
+			},
+		)
+	} else {
+		bail!("Unsupported method return type for `{}`: {}", name, summarize_json(output));
+	};
 
-    let inputs = sig
-        .get("inputs")
-        .and_then(|value| value.as_array())
-        .with_context(|| format!("Method `{name}` missing rustdoc inputs array"))?;
-    let mut params = Vec::new();
-    let mut saw_call_context = false;
-    for input in inputs {
-        let arr = input
-            .as_array()
-            .with_context(|| format!("Method `{name}` has an invalid input entry"))?;
-        let param_name = arr
-            .first()
-            .and_then(|value| value.as_str())
-            .with_context(|| format!("Method `{name}` has an unnamed input"))?
-            .to_string();
-        if param_name == "self" {
-            continue;
-        }
+	let inputs = sig
+		.get("inputs")
+		.and_then(|value| value.as_array())
+		.with_context(|| format!("Method `{name}` missing rustdoc inputs array"))?;
+	let mut params = Vec::new();
+	let mut saw_call_context = false;
+	for input in inputs {
+		let arr = input
+			.as_array()
+			.with_context(|| format!("Method `{name}` has an invalid input entry"))?;
+		let param_name = arr
+			.first()
+			.and_then(|value| value.as_str())
+			.with_context(|| format!("Method `{name}` has an unnamed input"))?
+			.to_string();
+		if param_name == "self" {
+			continue;
+		}
 
-        let ty = arr
-            .get(1)
-            .with_context(|| format!("Method `{name}` input `{param_name}` is missing a type"))?;
-        if is_call_context_ref(ty) {
-            saw_call_context = true;
-            continue;
-        }
-        let type_ref = resolve_type(ty, names).with_context(|| {
-            format!("Method `{name}` input `{param_name}` has an unsupported type")
-        })?;
+		let ty = arr
+			.get(1)
+			.with_context(|| format!("Method `{name}` input `{param_name}` is missing a type"))?;
+		if is_call_context_ref(ty) {
+			saw_call_context = true;
+			continue;
+		}
+		let type_ref = resolve_type(ty, names).with_context(|| {
+			format!("Method `{name}` input `{param_name}` has an unsupported type")
+		})?;
 
-        params.push(ParamDef {
-            name: param_name,
-            type_ref,
-        });
-    }
-    if !saw_call_context {
-        // Every TrUAPI trait method must take `&CallContext` as its first
-        // non-self parameter. If we did not detect one, either the trait is
-        // wrong or rustdoc changed how `&CallContext` is encoded; fail loudly
-        // rather than silently emitting `cx` as a public client parameter.
-        bail!(
-            "Method `{name}` did not declare `&CallContext`; \
+		params.push(ParamDef { name: param_name, type_ref });
+	}
+	if !saw_call_context {
+		// Every TrUAPI trait method must take `&CallContext` as its first
+		// non-self parameter. If we did not detect one, either the trait is
+		// wrong or rustdoc changed how `&CallContext` is encoded; fail loudly
+		// rather than silently emitting `cx` as a public client parameter.
+		bail!(
+			"Method `{name}` did not declare `&CallContext`; \
              trait method shape may have drifted from rustdoc"
-        );
-    }
+		);
+	}
 
-    if wire.host_initiated && !matches!(kind, MethodKind::Subscription) {
-        bail!("Host-initiated method `{name}` must return Subscription<Item, Interrupt>");
-    }
+	if wire.host_initiated && !matches!(kind, MethodKind::Subscription) {
+		bail!("Host-initiated method `{name}` must return Subscription<Item, Interrupt>");
+	}
 
-    Ok(Some(MethodDef {
-        name,
-        kind,
-        params,
-        return_type,
-        wire,
-        docs: clean_docs(item.docs.as_deref()),
-    }))
+	Ok(Some(MethodDef {
+		name,
+		kind,
+		params,
+		return_type,
+		wire,
+		docs: clean_docs(item.docs.as_deref()),
+	}))
 }
 
 /// Strips hidden codegen marker lines from a rustdoc comment so it can be
 /// emitted as user-facing JSDoc. Returns `None` when the remaining text is
 /// empty.
 pub fn clean_docs(docs: Option<&str>) -> Option<String> {
-    let raw = docs?;
-    let cleaned = raw
-        .lines()
-        .filter(|line| !is_codegen_doc_marker(line))
-        .collect::<Vec<_>>()
-        .join("\n");
-    let trimmed = cleaned.trim_end_matches('\n').to_string();
-    if trimmed.trim().is_empty() {
-        None
-    } else {
-        Some(trimmed)
-    }
+	let raw = docs?;
+	let cleaned = raw
+		.lines()
+		.filter(|line| !is_codegen_doc_marker(line))
+		.collect::<Vec<_>>()
+		.join("\n");
+	let trimmed = cleaned.trim_end_matches('\n').to_string();
+	if trimmed.trim().is_empty() { None } else { Some(trimmed) }
 }
 
 fn is_codegen_doc_marker(line: &str) -> bool {
-    let line = line.trim_start();
-    line.starts_with("@wire_") || line.starts_with("@service_")
+	let line = line.trim_start();
+	line.starts_with("@wire_") || line.starts_with("@service_")
 }
 
 fn extract_marker_value<'a>(docs: &'a str, marker: &str) -> Option<&'a str> {
-    docs.lines().find_map(|line| {
-        line.trim_start()
-            .strip_prefix(marker)
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-    })
+	docs.lines().find_map(|line| {
+		line.trim_start()
+			.strip_prefix(marker)
+			.map(str::trim)
+			.filter(|value| !value.is_empty())
+	})
 }
 
 /// Extracts the `@wire_trait_id=N` marker from a trait's doc comment block.
@@ -872,26 +810,26 @@ fn extract_marker_value<'a>(docs: &'a str, marker: &str) -> Option<&'a str> {
 /// hand-written doc line could quietly outrank the attribute and move a
 /// trait's whole method block to a different address on the wire.
 fn extract_wire_trait_id(trait_name: &str, docs: &str) -> Result<Option<u8>> {
-    let mut found = None;
-    for line in docs.lines() {
-        let Some(value) = line.trim().strip_prefix("@wire_trait_id=") else {
-            continue;
-        };
-        let id: u8 = value.trim().parse().with_context(|| {
-            format!(
-                "Trait `{trait_name}` has a malformed `@wire_trait_id={value}` marker; \
+	let mut found = None;
+	for line in docs.lines() {
+		let Some(value) = line.trim().strip_prefix("@wire_trait_id=") else {
+			continue;
+		};
+		let id: u8 = value.trim().parse().with_context(|| {
+			format!(
+				"Trait `{trait_name}` has a malformed `@wire_trait_id={value}` marker; \
                  expected a value in 0..=255"
-            )
-        })?;
-        if found.is_some() {
-            bail!(
-                "Trait `{trait_name}` carries more than one `@wire_trait_id` marker; \
+			)
+		})?;
+		if found.is_some() {
+			bail!(
+				"Trait `{trait_name}` carries more than one `@wire_trait_id` marker; \
                  exactly one `#[wire_trait(id = N)]` attribute must own the trait id"
-            );
-        }
-        found = Some(id);
-    }
-    Ok(found)
+			);
+		}
+		found = Some(id);
+	}
+	Ok(found)
 }
 
 /// Extracts the wire id and flags from a doc comment block.
@@ -899,52 +837,50 @@ fn extract_wire_trait_id(trait_name: &str, docs: &str) -> Result<Option<u8>> {
 /// proc-macro, which appends hidden doc strings so they propagate through
 /// rustdoc JSON.
 fn extract_wire_attrs(docs: &str) -> WireAttrs {
-    let mut attrs = WireAttrs::default();
-    for line in docs.lines() {
-        let line = line.trim_start();
-        if line.starts_with("@wire_host_initiated") {
-            attrs.host_initiated = true;
-        }
-        if line.trim_end() == "@wire_internal" {
-            attrs.internal = true;
-        }
-        const NEEDLE: &str = "@wire_id=";
-        let Some(start) = line.find(NEEDLE).map(|index| index + NEEDLE.len()) else {
-            continue;
-        };
-        let end = line[start..]
-            .find(|c: char| !c.is_ascii_digit())
-            .map_or(line.len(), |offset| start + offset);
-        if let Ok(id) = line[start..end].parse::<u8>() {
-            attrs.id = Some(id);
-        }
-    }
-    attrs
+	let mut attrs = WireAttrs::default();
+	for line in docs.lines() {
+		let line = line.trim_start();
+		if line.starts_with("@wire_host_initiated") {
+			attrs.host_initiated = true;
+		}
+		if line.trim_end() == "@wire_internal" {
+			attrs.internal = true;
+		}
+		const NEEDLE: &str = "@wire_id=";
+		let Some(start) = line.find(NEEDLE).map(|index| index + NEEDLE.len()) else {
+			continue;
+		};
+		let end = line[start..]
+			.find(|c: char| !c.is_ascii_digit())
+			.map_or(line.len(), |offset| start + offset);
+		if let Ok(id) = line[start..end].parse::<u8>() {
+			attrs.id = Some(id);
+		}
+	}
+	attrs
 }
 
 fn path_suffix(path: &str) -> &str {
-    path.rsplit("::").next().unwrap_or(path)
+	path.rsplit("::").next().unwrap_or(path)
 }
 
 /// Whether `ty` is a `&CallContext` rustdoc param. Used to filter the ambient
 /// `CallContext` out of generated API signatures because it is a
 /// framework-level dependency, not part of the public wire contract.
 fn is_call_context_ref(ty: &serde_json::Value) -> bool {
-    let Some(inner) = ty.get("borrowed_ref").and_then(|r| r.get("type")) else {
-        return false;
-    };
-    inner
-        .get("resolved_path")
-        .and_then(|r| r.get("path"))
-        .and_then(|p| p.as_str())
-        .map(|p| path_suffix(p) == "CallContext")
-        .unwrap_or(false)
+	let Some(inner) = ty.get("borrowed_ref").and_then(|r| r.get("type")) else {
+		return false;
+	};
+	inner
+		.get("resolved_path")
+		.and_then(|r| r.get("path"))
+		.and_then(|p| p.as_str())
+		.map(|p| path_suffix(p) == "CallContext")
+		.unwrap_or(false)
 }
 
 fn is_subscription_return(output: &serde_json::Value) -> bool {
-    get_resolved_name(output)
-        .map(|name| name == "Subscription")
-        .unwrap_or(false)
+	get_resolved_name(output).map(|name| name == "Subscription").unwrap_or(false)
 }
 
 /// Resolve the `Output = T` binding from a Send future method return, or the
@@ -953,415 +889,375 @@ fn is_subscription_return(output: &serde_json::Value) -> bool {
 /// `async_trait` represents `async fn` as
 /// `Pin<Box<dyn Future<Output = T> + Send + 'async_trait>>` in rustdoc JSON.
 fn unwrap_future_output(output: &serde_json::Value) -> &serde_json::Value {
-    extract_async_trait_future_output(output).unwrap_or(output)
+	extract_async_trait_future_output(output).unwrap_or(output)
 }
 
 fn extract_async_trait_future_output(output: &serde_json::Value) -> Option<&serde_json::Value> {
-    let pin = output.get("resolved_path")?;
-    if resolved_path_leaf(pin) != Some("Pin") {
-        return None;
-    }
-    let boxed = generic_type_arg(pin, 0)?.get("resolved_path")?;
-    if resolved_path_leaf(boxed) != Some("Box") {
-        return None;
-    }
-    let dyn_trait = generic_type_arg(boxed, 0)?.get("dyn_trait")?;
-    let traits = dyn_trait.get("traits")?.as_array()?;
-    traits
-        .iter()
-        .filter_map(|entry| entry.get("trait"))
-        .find(|trait_| resolved_path_leaf(trait_) == Some("Future"))?
-        .get("args")?
-        .get("angle_bracketed")?
-        .get("constraints")?
-        .as_array()?
-        .iter()
-        .find(|constraint| constraint.get("name").and_then(|name| name.as_str()) == Some("Output"))?
-        .get("binding")?
-        .get("equality")?
-        .get("type")
+	let pin = output.get("resolved_path")?;
+	if resolved_path_leaf(pin) != Some("Pin") {
+		return None;
+	}
+	let boxed = generic_type_arg(pin, 0)?.get("resolved_path")?;
+	if resolved_path_leaf(boxed) != Some("Box") {
+		return None;
+	}
+	let dyn_trait = generic_type_arg(boxed, 0)?.get("dyn_trait")?;
+	let traits = dyn_trait.get("traits")?.as_array()?;
+	traits
+		.iter()
+		.filter_map(|entry| entry.get("trait"))
+		.find(|trait_| resolved_path_leaf(trait_) == Some("Future"))?
+		.get("args")?
+		.get("angle_bracketed")?
+		.get("constraints")?
+		.as_array()?
+		.iter()
+		.find(|constraint| constraint.get("name").and_then(|name| name.as_str()) == Some("Output"))?
+		.get("binding")?
+		.get("equality")?
+		.get("type")
 }
 
 fn resolved_path_leaf(resolved: &serde_json::Value) -> Option<&str> {
-    let path = resolved.get("path")?.as_str()?;
-    Some(path_suffix(path))
+	let path = resolved.get("path")?.as_str()?;
+	Some(path_suffix(path))
 }
 
 fn generic_type_arg(resolved: &serde_json::Value, index: usize) -> Option<&serde_json::Value> {
-    resolved
-        .get("args")?
-        .get("angle_bracketed")?
-        .get("args")?
-        .as_array()?
-        .iter()
-        .filter_map(|entry| entry.get("type"))
-        .nth(index)
+	resolved
+		.get("args")?
+		.get("angle_bracketed")?
+		.get("args")?
+		.as_array()?
+		.iter()
+		.filter_map(|entry| entry.get("type"))
+		.nth(index)
 }
 
 fn is_result_subscription_return(output: &serde_json::Value) -> bool {
-    if !is_result_return(output) {
-        return false;
-    }
+	if !is_result_return(output) {
+		return false;
+	}
 
-    get_generic_arg_value(output, 0)
-        .and_then(|ok| get_resolved_name(&ok))
-        .map(|name| name == "Subscription")
-        .unwrap_or(false)
+	get_generic_arg_value(output, 0)
+		.and_then(|ok| get_resolved_name(&ok))
+		.map(|name| name == "Subscription")
+		.unwrap_or(false)
 }
 
 fn is_result_return(output: &serde_json::Value) -> bool {
-    get_resolved_name(output)
-        .map(|name| name == "Result")
-        .unwrap_or(false)
+	get_resolved_name(output).map(|name| name == "Result").unwrap_or(false)
 }
 
 fn get_resolved_name(ty: &serde_json::Value) -> Option<String> {
-    ty.get("resolved_path")?
-        .get("path")?
-        .as_str()
-        .map(ToString::to_string)
+	ty.get("resolved_path")?.get("path")?.as_str().map(ToString::to_string)
 }
 
 fn get_generic_arg_value(ty: &serde_json::Value, index: usize) -> Option<serde_json::Value> {
-    let args = ty
-        .get("resolved_path")?
-        .get("args")?
-        .get("angle_bracketed")?
-        .get("args")?
-        .as_array()?;
-    args.get(index)?.get("type").cloned()
+	let args = ty
+		.get("resolved_path")?
+		.get("args")?
+		.get("angle_bracketed")?
+		.get("args")?
+		.as_array()?;
+	args.get(index)?.get("type").cloned()
 }
 
 fn extract_generic_arg(
-    ty: &serde_json::Value,
-    index: usize,
-    names: &NameContext,
+	ty: &serde_json::Value,
+	index: usize,
+	names: &NameContext,
 ) -> Result<TypeRef> {
-    let generic = get_generic_arg_value(ty, index).with_context(|| {
-        format!(
-            "Missing generic argument {} in {}",
-            index,
-            summarize_json(ty)
-        )
-    })?;
-    resolve_type(&generic, names)
+	let generic = get_generic_arg_value(ty, index)
+		.with_context(|| format!("Missing generic argument {} in {}", index, summarize_json(ty)))?;
+	resolve_type(&generic, names)
 }
 
 /// Resolve a rustdoc JSON type node into the internal type reference model.
 pub fn resolve_type(ty: &serde_json::Value, names: &NameContext) -> Result<TypeRef> {
-    if let Some(name) = ty.get("generic").and_then(|value| value.as_str()) {
-        return Ok(TypeRef::Generic(name.to_string()));
-    }
+	if let Some(name) = ty.get("generic").and_then(|value| value.as_str()) {
+		return Ok(TypeRef::Generic(name.to_string()));
+	}
 
-    if let Some(primitive) = ty.get("primitive").and_then(|value| value.as_str()) {
-        return Ok(TypeRef::Primitive(primitive.to_string()));
-    }
+	if let Some(primitive) = ty.get("primitive").and_then(|value| value.as_str()) {
+		return Ok(TypeRef::Primitive(primitive.to_string()));
+	}
 
-    if let Some(resolved) = ty.get("resolved_path") {
-        let raw_name = resolved
-            .get("path")
-            .and_then(|value| value.as_str())
-            .with_context(|| format!("resolved_path missing path in {}", summarize_json(ty)))?;
-        let name = raw_name.rsplit("::").next().unwrap_or(raw_name);
-        let args = resolve_resolved_path_args(resolved, names)?;
+	if let Some(resolved) = ty.get("resolved_path") {
+		let raw_name = resolved
+			.get("path")
+			.and_then(|value| value.as_str())
+			.with_context(|| format!("resolved_path missing path in {}", summarize_json(ty)))?;
+		let name = raw_name.rsplit("::").next().unwrap_or(raw_name);
+		let args = resolve_resolved_path_args(resolved, names)?;
 
-        return match name {
-            "Vec" => Ok(TypeRef::Vec(Box::new(expect_single_arg("Vec", args)?))),
-            "Option" => {
-                Ok(TypeRef::Option(Box::new(expect_single_arg(
-                    "Option", args,
-                )?)))
-            }
-            "Compact" => {
-                // The width is carried in the primitive's NAME, not discarded.
-                // Emission still keys on the `compact` prefix, so generated
-                // output is unchanged - but the wire schema hash can now see the
-                // difference between `Compact<u32>` and `Compact<u64>`. Dropping
-                // it made every compact site render identically, so widening one
-                // left the fingerprint byte-identical while changing which values
-                // a peer can decode.
-                let inner = expect_single_arg("Compact", args)?;
-                let TypeRef::Primitive(width) = &inner else {
-                    bail!("Compact must wrap a primitive integer, found {inner:?}");
-                };
-                Ok(TypeRef::Primitive(format!("compact<{width}>")))
-            }
-            "OptionBool" => Ok(TypeRef::Primitive("optionBool".to_string())),
-            "String" => {
-                if !args.is_empty() {
-                    bail!(
-                        "String should not carry generic arguments in {}",
-                        summarize_json(ty)
-                    );
-                }
-                Ok(TypeRef::Primitive("str".to_string()))
-            }
-            "Box" => expect_single_arg("Box", args),
-            _ => {
-                Ok(TypeRef::Named {
-                    name: resolved
-                        .get("id")
-                        .and_then(|id| value_id(id).ok())
-                        .map(|id| names.name_for_item(&id, path_suffix(raw_name)))
-                        .unwrap_or_else(|| names.name_for_path(raw_name)),
-                    args,
-                })
-            }
-        };
-    }
+		return match name {
+			"Vec" => Ok(TypeRef::Vec(Box::new(expect_single_arg("Vec", args)?))),
+			"Option" => Ok(TypeRef::Option(Box::new(expect_single_arg("Option", args)?))),
+			"Compact" => {
+				// The width is carried in the primitive's NAME, not discarded.
+				// Emission still keys on the `compact` prefix, so generated
+				// output is unchanged - but the wire schema hash can now see the
+				// difference between `Compact<u32>` and `Compact<u64>`. Dropping
+				// it made every compact site render identically, so widening one
+				// left the fingerprint byte-identical while changing which values
+				// a peer can decode.
+				let inner = expect_single_arg("Compact", args)?;
+				let TypeRef::Primitive(width) = &inner else {
+					bail!("Compact must wrap a primitive integer, found {inner:?}");
+				};
+				Ok(TypeRef::Primitive(format!("compact<{width}>")))
+			},
+			"OptionBool" => Ok(TypeRef::Primitive("optionBool".to_string())),
+			"String" => {
+				if !args.is_empty() {
+					bail!("String should not carry generic arguments in {}", summarize_json(ty));
+				}
+				Ok(TypeRef::Primitive("str".to_string()))
+			},
+			"Box" => expect_single_arg("Box", args),
+			_ => Ok(TypeRef::Named {
+				name: resolved
+					.get("id")
+					.and_then(|id| value_id(id).ok())
+					.map(|id| names.name_for_item(&id, path_suffix(raw_name)))
+					.unwrap_or_else(|| names.name_for_path(raw_name)),
+				args,
+			}),
+		};
+	}
 
-    if let Some(tuple) = ty.get("tuple") {
-        let items = tuple.as_array().with_context(|| {
-            format!(
-                "tuple rustdoc shape was not an array: {}",
-                summarize_json(ty)
-            )
-        })?;
-        if items.is_empty() {
-            return Ok(TypeRef::Unit);
-        }
-        let types = items
-            .iter()
-            .map(|item| resolve_type(item, names))
-            .collect::<Result<Vec<_>>>()?;
-        return Ok(TypeRef::Tuple(types));
-    }
+	if let Some(tuple) = ty.get("tuple") {
+		let items = tuple.as_array().with_context(|| {
+			format!("tuple rustdoc shape was not an array: {}", summarize_json(ty))
+		})?;
+		if items.is_empty() {
+			return Ok(TypeRef::Unit);
+		}
+		let types =
+			items.iter().map(|item| resolve_type(item, names)).collect::<Result<Vec<_>>>()?;
+		return Ok(TypeRef::Tuple(types));
+	}
 
-    if let Some(array) = ty.get("array") {
-        let inner = array
-            .get("type")
-            .context("array rustdoc shape is missing its inner type")
-            .and_then(|ty| resolve_type(ty, names))?;
-        let len = array
-            .get("len")
-            .and_then(|value| value.as_str())
-            .with_context(|| {
-                format!(
-                    "array rustdoc shape is missing its length in {}",
-                    summarize_json(ty)
-                )
-            })?
-            .parse::<usize>()
-            .with_context(|| format!("array length was not a usize in {}", summarize_json(ty)))?;
-        return Ok(TypeRef::Array(Box::new(inner), len));
-    }
+	if let Some(array) = ty.get("array") {
+		let inner = array
+			.get("type")
+			.context("array rustdoc shape is missing its inner type")
+			.and_then(|ty| resolve_type(ty, names))?;
+		let len = array
+			.get("len")
+			.and_then(|value| value.as_str())
+			.with_context(|| {
+				format!("array rustdoc shape is missing its length in {}", summarize_json(ty))
+			})?
+			.parse::<usize>()
+			.with_context(|| format!("array length was not a usize in {}", summarize_json(ty)))?;
+		return Ok(TypeRef::Array(Box::new(inner), len));
+	}
 
-    if let Some(borrowed_ref) = ty.get("borrowed_ref") {
-        let inner = borrowed_ref
-            .get("type")
-            .context("borrowed_ref rustdoc shape is missing its inner type")?;
-        return resolve_type(inner, names);
-    }
+	if let Some(borrowed_ref) = ty.get("borrowed_ref") {
+		let inner = borrowed_ref
+			.get("type")
+			.context("borrowed_ref rustdoc shape is missing its inner type")?;
+		return resolve_type(inner, names);
+	}
 
-    bail!("Unsupported rustdoc type shape: {}", summarize_json(ty))
+	bail!("Unsupported rustdoc type shape: {}", summarize_json(ty))
 }
 
 fn resolve_resolved_path_args(
-    resolved: &serde_json::Value,
-    names: &NameContext,
+	resolved: &serde_json::Value,
+	names: &NameContext,
 ) -> Result<Vec<TypeRef>> {
-    let Some(args) = resolved.get("args") else {
-        return Ok(Vec::new());
-    };
-    if args.is_null() {
-        return Ok(Vec::new());
-    }
+	let Some(args) = resolved.get("args") else {
+		return Ok(Vec::new());
+	};
+	if args.is_null() {
+		return Ok(Vec::new());
+	}
 
-    let values = args
-        .get("angle_bracketed")
-        .and_then(|value| value.get("args"))
-        .and_then(|value| value.as_array())
-        .with_context(|| {
-            format!(
-                "Unsupported resolved_path generic args shape: {}",
-                summarize_json(resolved)
-            )
-        })?;
+	let values = args
+		.get("angle_bracketed")
+		.and_then(|value| value.get("args"))
+		.and_then(|value| value.as_array())
+		.with_context(|| {
+			format!("Unsupported resolved_path generic args shape: {}", summarize_json(resolved))
+		})?;
 
-    values
-        .iter()
-        .map(|arg| {
-            let ty = arg.get("type").with_context(|| {
-                format!(
-                    "Unsupported generic argument entry without `type`: {}",
-                    summarize_json(arg)
-                )
-            })?;
-            resolve_type(ty, names)
-        })
-        .collect()
+	values
+		.iter()
+		.map(|arg| {
+			let ty = arg.get("type").with_context(|| {
+				format!(
+					"Unsupported generic argument entry without `type`: {}",
+					summarize_json(arg)
+				)
+			})?;
+			resolve_type(ty, names)
+		})
+		.collect()
 }
 
 fn expect_single_arg(type_name: &str, mut args: Vec<TypeRef>) -> Result<TypeRef> {
-    if args.len() != 1 {
-        bail!(
-            "Expected exactly one generic argument for `{}`, got {}",
-            type_name,
-            args.len()
-        );
-    }
-    Ok(args.remove(0))
+	if args.len() != 1 {
+		bail!("Expected exactly one generic argument for `{}`, got {}", type_name, args.len());
+	}
+	Ok(args.remove(0))
 }
 
 /// Extract a struct item, including field docs and generic parameters.
 pub fn extract_struct(
-    item_id: &str,
-    item: &Item,
-    krate: &Crate,
-    names: &NameContext,
-    module_path: Vec<String>,
+	item_id: &str,
+	item: &Item,
+	krate: &Crate,
+	names: &NameContext,
+	module_path: Vec<String>,
 ) -> Result<TypeDef> {
-    let rust_name = item
-        .name
-        .as_ref()
-        .cloned()
-        .with_context(|| format!("Struct item `{item_id}` has no name"))?;
-    let name = names.name_for_item(item_id, &rust_name);
-    let struct_inner = item
-        .inner
-        .get("struct")
-        .with_context(|| format!("Struct `{name}` missing rustdoc body"))?;
-    let generic_params = extract_generic_params(struct_inner.get("generics"))
-        .with_context(|| format!("Struct `{name}` has unsupported generic parameters"))?;
-    let kind = struct_inner
-        .get("kind")
-        .with_context(|| format!("Struct `{name}` missing rustdoc kind"))?;
+	let rust_name = item
+		.name
+		.as_ref()
+		.cloned()
+		.with_context(|| format!("Struct item `{item_id}` has no name"))?;
+	let name = names.name_for_item(item_id, &rust_name);
+	let struct_inner = item
+		.inner
+		.get("struct")
+		.with_context(|| format!("Struct `{name}` missing rustdoc body"))?;
+	let generic_params = extract_generic_params(struct_inner.get("generics"))
+		.with_context(|| format!("Struct `{name}` has unsupported generic parameters"))?;
+	let kind = struct_inner
+		.get("kind")
+		.with_context(|| format!("Struct `{name}` missing rustdoc kind"))?;
 
-    if let Some(field_ids) = kind.get("tuple").and_then(|tuple| {
-        tuple.as_array().cloned().or_else(|| {
-            tuple
-                .get("fields")
-                .and_then(|fields| fields.as_array())
-                .cloned()
-        })
-    }) {
-        let mut fields = Vec::new();
-        for field_id in field_ids {
-            let field_id = value_id(&field_id)
-                .with_context(|| format!("Tuple struct `{name}` had a non-item field id"))?;
-            let field_item = krate.index.get(&field_id).with_context(|| {
-                format!("Tuple struct `{name}` references missing field `{field_id}`")
-            })?;
-            let field_type = field_item.inner.get("struct_field").with_context(|| {
-                format!("Tuple struct `{name}` field `{field_id}` is missing rustdoc type info")
-            })?;
-            fields.push(resolve_type(field_type, names).with_context(|| {
-                format!("Tuple struct `{name}` field `{field_id}` has an unsupported type")
-            })?);
-        }
+	if let Some(field_ids) = kind.get("tuple").and_then(|tuple| {
+		tuple
+			.as_array()
+			.cloned()
+			.or_else(|| tuple.get("fields").and_then(|fields| fields.as_array()).cloned())
+	}) {
+		let mut fields = Vec::new();
+		for field_id in field_ids {
+			let field_id = value_id(&field_id)
+				.with_context(|| format!("Tuple struct `{name}` had a non-item field id"))?;
+			let field_item = krate.index.get(&field_id).with_context(|| {
+				format!("Tuple struct `{name}` references missing field `{field_id}`")
+			})?;
+			let field_type = field_item.inner.get("struct_field").with_context(|| {
+				format!("Tuple struct `{name}` field `{field_id}` is missing rustdoc type info")
+			})?;
+			fields.push(resolve_type(field_type, names).with_context(|| {
+				format!("Tuple struct `{name}` field `{field_id}` has an unsupported type")
+			})?);
+		}
 
-        return Ok(TypeDef {
-            name,
-            module_path,
-            generic_params,
-            kind: TypeDefKind::TupleStruct(fields),
-            docs: clean_docs(item.docs.as_deref()),
-        });
-    }
+		return Ok(TypeDef {
+			name,
+			module_path,
+			generic_params,
+			kind: TypeDefKind::TupleStruct(fields),
+			docs: clean_docs(item.docs.as_deref()),
+		});
+	}
 
-    let field_ids = kind
-        .get("plain")
-        .and_then(|value| value.get("fields"))
-        .and_then(|value| value.as_array())
-        .with_context(|| {
-            format!(
-                "Unsupported struct shape for `{}`: {}",
-                name,
-                summarize_json(kind)
-            )
-        })?;
+	let field_ids = kind
+		.get("plain")
+		.and_then(|value| value.get("fields"))
+		.and_then(|value| value.as_array())
+		.with_context(|| {
+			format!("Unsupported struct shape for `{}`: {}", name, summarize_json(kind))
+		})?;
 
-    let mut fields = Vec::new();
-    for field_id in field_ids {
-        let field_id = value_id(field_id)
-            .with_context(|| format!("Struct `{name}` had a non-item field id"))?;
-        let field_item = krate
-            .index
-            .get(&field_id)
-            .with_context(|| format!("Struct `{name}` references missing field `{field_id}`"))?;
-        let field_name = field_item
-            .name
-            .as_ref()
-            .cloned()
-            .with_context(|| format!("Struct `{name}` field `{field_id}` has no name"))?;
-        let field_type = field_item.inner.get("struct_field").with_context(|| {
-            format!("Struct `{name}` field `{field_name}` is missing rustdoc type info")
-        })?;
-        fields.push(FieldDef {
-            name: field_name,
-            type_ref: resolve_type(field_type, names).with_context(|| {
-                format!("Struct `{name}` field `{field_id}` has an unsupported type")
-            })?,
-            docs: clean_docs(field_item.docs.as_deref()),
-        });
-    }
+	let mut fields = Vec::new();
+	for field_id in field_ids {
+		let field_id = value_id(field_id)
+			.with_context(|| format!("Struct `{name}` had a non-item field id"))?;
+		let field_item = krate
+			.index
+			.get(&field_id)
+			.with_context(|| format!("Struct `{name}` references missing field `{field_id}`"))?;
+		let field_name = field_item
+			.name
+			.as_ref()
+			.cloned()
+			.with_context(|| format!("Struct `{name}` field `{field_id}` has no name"))?;
+		let field_type = field_item.inner.get("struct_field").with_context(|| {
+			format!("Struct `{name}` field `{field_name}` is missing rustdoc type info")
+		})?;
+		fields.push(FieldDef {
+			name: field_name,
+			type_ref: resolve_type(field_type, names).with_context(|| {
+				format!("Struct `{name}` field `{field_id}` has an unsupported type")
+			})?,
+			docs: clean_docs(field_item.docs.as_deref()),
+		});
+	}
 
-    Ok(TypeDef {
-        name,
-        module_path,
-        generic_params,
-        kind: TypeDefKind::Struct(fields),
-        docs: clean_docs(item.docs.as_deref()),
-    })
+	Ok(TypeDef {
+		name,
+		module_path,
+		generic_params,
+		kind: TypeDefKind::Struct(fields),
+		docs: clean_docs(item.docs.as_deref()),
+	})
 }
 
 /// Extract an enum item, including variant docs and field payloads.
 pub fn extract_enum(
-    item_id: &str,
-    item: &Item,
-    krate: &Crate,
-    names: &NameContext,
-    module_path: Vec<String>,
+	item_id: &str,
+	item: &Item,
+	krate: &Crate,
+	names: &NameContext,
+	module_path: Vec<String>,
 ) -> Result<TypeDef> {
-    let rust_name = item
-        .name
-        .as_ref()
-        .cloned()
-        .with_context(|| format!("Enum item `{item_id}` has no name"))?;
-    let name = names.name_for_item(item_id, &rust_name);
-    let enum_inner = item
-        .inner
-        .get("enum")
-        .with_context(|| format!("Enum `{name}` missing rustdoc body"))?;
-    let generic_params = extract_generic_params(enum_inner.get("generics"))
-        .with_context(|| format!("Enum `{name}` has unsupported generic parameters"))?;
-    let variant_ids = enum_inner
-        .get("variants")
-        .and_then(|value| value.as_array())
-        .with_context(|| format!("Enum `{name}` missing rustdoc variants"))?;
+	let rust_name = item
+		.name
+		.as_ref()
+		.cloned()
+		.with_context(|| format!("Enum item `{item_id}` has no name"))?;
+	let name = names.name_for_item(item_id, &rust_name);
+	let enum_inner = item
+		.inner
+		.get("enum")
+		.with_context(|| format!("Enum `{name}` missing rustdoc body"))?;
+	let generic_params = extract_generic_params(enum_inner.get("generics"))
+		.with_context(|| format!("Enum `{name}` has unsupported generic parameters"))?;
+	let variant_ids = enum_inner
+		.get("variants")
+		.and_then(|value| value.as_array())
+		.with_context(|| format!("Enum `{name}` missing rustdoc variants"))?;
 
-    let mut variants = Vec::new();
-    for variant_id in variant_ids {
-        let variant_id = value_id(variant_id)
-            .with_context(|| format!("Enum `{name}` had a non-item variant id"))?;
-        let variant_item = krate
-            .index
-            .get(&variant_id)
-            .with_context(|| format!("Enum `{name}` references missing variant `{variant_id}`"))?;
-        let variant_name = variant_item
-            .name
-            .as_ref()
-            .cloned()
-            .with_context(|| format!("Enum `{name}` variant `{variant_id}` has no name"))?;
-        let fields = extract_variant_fields(variant_item.inner.get("variant"), krate, names)
-            .with_context(|| {
-                format!("Enum `{name}` variant `{variant_name}` has an unsupported shape")
-            })?;
-        variants.push(VariantDef {
-            name: variant_name,
-            fields,
-            docs: clean_docs(variant_item.docs.as_deref()),
-            codec_index: codec_index_attr(&variant_item.attrs),
-        });
-    }
+	let mut variants = Vec::new();
+	for variant_id in variant_ids {
+		let variant_id = value_id(variant_id)
+			.with_context(|| format!("Enum `{name}` had a non-item variant id"))?;
+		let variant_item = krate
+			.index
+			.get(&variant_id)
+			.with_context(|| format!("Enum `{name}` references missing variant `{variant_id}`"))?;
+		let variant_name = variant_item
+			.name
+			.as_ref()
+			.cloned()
+			.with_context(|| format!("Enum `{name}` variant `{variant_id}` has no name"))?;
+		let fields = extract_variant_fields(variant_item.inner.get("variant"), krate, names)
+			.with_context(|| {
+				format!("Enum `{name}` variant `{variant_name}` has an unsupported shape")
+			})?;
+		variants.push(VariantDef {
+			name: variant_name,
+			fields,
+			docs: clean_docs(variant_item.docs.as_deref()),
+			codec_index: codec_index_attr(&variant_item.attrs),
+		});
+	}
 
-    Ok(TypeDef {
-        name,
-        module_path,
-        generic_params,
-        kind: TypeDefKind::Enum(variants),
-        docs: clean_docs(item.docs.as_deref()),
-    })
+	Ok(TypeDef {
+		name,
+		module_path,
+		generic_params,
+		kind: TypeDefKind::Enum(variants),
+		docs: clean_docs(item.docs.as_deref()),
+	})
 }
 
 /// Read `#[codec(index = N)]` off a variant's rustdoc attributes.
@@ -1369,392 +1265,363 @@ pub fn extract_enum(
 /// Rustdoc renders each attribute as a JSON object whose `other` key holds the
 /// source text, so this matches on that text rather than a structured field.
 fn codec_index_attr(attrs: &[serde_json::Value]) -> Option<u8> {
-    for attr in attrs {
-        let text = attr
-            .get("other")
-            .and_then(|value| value.as_str())
-            .or_else(|| attr.as_str())?;
-        let Some(rest) = text.split("codec(index").nth(1) else {
-            continue;
-        };
-        let digits: String = rest
-            .trim_start()
-            .trim_start_matches('=')
-            .trim_start()
-            .chars()
-            .take_while(char::is_ascii_digit)
-            .collect();
-        if let Ok(index) = digits.parse::<u8>() {
-            return Some(index);
-        }
-    }
-    None
+	for attr in attrs {
+		let text = attr.get("other").and_then(|value| value.as_str()).or_else(|| attr.as_str())?;
+		let Some(rest) = text.split("codec(index").nth(1) else {
+			continue;
+		};
+		let digits: String = rest
+			.trim_start()
+			.trim_start_matches('=')
+			.trim_start()
+			.chars()
+			.take_while(char::is_ascii_digit)
+			.collect();
+		if let Ok(index) = digits.parse::<u8>() {
+			return Some(index);
+		}
+	}
+	None
 }
 
 fn extract_variant_fields(
-    variant_inner: Option<&serde_json::Value>,
-    krate: &Crate,
-    names: &NameContext,
+	variant_inner: Option<&serde_json::Value>,
+	krate: &Crate,
+	names: &NameContext,
 ) -> Result<VariantFields> {
-    let inner = variant_inner.context("variant rustdoc entry is missing its body")?;
-    let kind = inner
-        .get("kind")
-        .context("variant rustdoc entry is missing its kind")?;
+	let inner = variant_inner.context("variant rustdoc entry is missing its body")?;
+	let kind = inner.get("kind").context("variant rustdoc entry is missing its kind")?;
 
-    if kind.as_str() == Some("plain") {
-        return Ok(VariantFields::Unit);
-    }
+	if kind.as_str() == Some("plain") {
+		return Ok(VariantFields::Unit);
+	}
 
-    if let Some(field_ids) = kind.get("tuple").and_then(|tuple| {
-        tuple.as_array().cloned().or_else(|| {
-            tuple
-                .get("fields")
-                .and_then(|fields| fields.as_array())
-                .cloned()
-        })
-    }) {
-        let mut types = Vec::new();
-        for field_id in &field_ids {
-            let field_id =
-                value_id(field_id).context("tuple variant field id was not an item id")?;
-            let item = krate
-                .index
-                .get(&field_id)
-                .with_context(|| format!("Missing tuple variant field `{field_id}`"))?;
-            let ty = item.inner.get("struct_field").with_context(|| {
-                format!("Tuple variant field `{field_id}` is missing rustdoc type info")
-            })?;
-            types.push(resolve_type(ty, names)?);
-        }
-        return if types.is_empty() {
-            Ok(VariantFields::Unit)
-        } else {
-            Ok(VariantFields::Unnamed(types))
-        };
-    }
+	if let Some(field_ids) = kind.get("tuple").and_then(|tuple| {
+		tuple
+			.as_array()
+			.cloned()
+			.or_else(|| tuple.get("fields").and_then(|fields| fields.as_array()).cloned())
+	}) {
+		let mut types = Vec::new();
+		for field_id in &field_ids {
+			let field_id =
+				value_id(field_id).context("tuple variant field id was not an item id")?;
+			let item = krate
+				.index
+				.get(&field_id)
+				.with_context(|| format!("Missing tuple variant field `{field_id}`"))?;
+			let ty = item.inner.get("struct_field").with_context(|| {
+				format!("Tuple variant field `{field_id}` is missing rustdoc type info")
+			})?;
+			types.push(resolve_type(ty, names)?);
+		}
+		return if types.is_empty() {
+			Ok(VariantFields::Unit)
+		} else {
+			Ok(VariantFields::Unnamed(types))
+		};
+	}
 
-    if let Some(struct_value) = kind.get("struct") {
-        let field_ids = struct_value
-            .get("fields")
-            .and_then(|value| value.as_array())
-            .context("struct variant is missing its field list")?;
-        let mut fields = Vec::new();
-        for field_id in field_ids {
-            let field_id =
-                value_id(field_id).context("struct variant field id was not an item id")?;
-            let item = krate
-                .index
-                .get(&field_id)
-                .with_context(|| format!("Missing struct variant field `{field_id}`"))?;
-            let name = item
-                .name
-                .as_ref()
-                .cloned()
-                .with_context(|| format!("Struct variant field `{field_id}` has no name"))?;
-            let ty = item.inner.get("struct_field").with_context(|| {
-                format!("Struct variant field `{field_id}` is missing rustdoc type info")
-            })?;
-            fields.push(FieldDef {
-                name,
-                type_ref: resolve_type(ty, names)?,
-                docs: clean_docs(item.docs.as_deref()),
-            });
-        }
-        return Ok(VariantFields::Named(fields));
-    }
+	if let Some(struct_value) = kind.get("struct") {
+		let field_ids = struct_value
+			.get("fields")
+			.and_then(|value| value.as_array())
+			.context("struct variant is missing its field list")?;
+		let mut fields = Vec::new();
+		for field_id in field_ids {
+			let field_id =
+				value_id(field_id).context("struct variant field id was not an item id")?;
+			let item = krate
+				.index
+				.get(&field_id)
+				.with_context(|| format!("Missing struct variant field `{field_id}`"))?;
+			let name = item
+				.name
+				.as_ref()
+				.cloned()
+				.with_context(|| format!("Struct variant field `{field_id}` has no name"))?;
+			let ty = item.inner.get("struct_field").with_context(|| {
+				format!("Struct variant field `{field_id}` is missing rustdoc type info")
+			})?;
+			fields.push(FieldDef {
+				name,
+				type_ref: resolve_type(ty, names)?,
+				docs: clean_docs(item.docs.as_deref()),
+			});
+		}
+		return Ok(VariantFields::Named(fields));
+	}
 
-    bail!("Unsupported enum variant kind: {}", summarize_json(kind))
+	bail!("Unsupported enum variant kind: {}", summarize_json(kind))
 }
 
 fn extract_type_alias(
-    item_id: &str,
-    item: &Item,
-    names: &NameContext,
-    module_path: Vec<String>,
+	item_id: &str,
+	item: &Item,
+	names: &NameContext,
+	module_path: Vec<String>,
 ) -> Result<TypeDef> {
-    let rust_name = item
-        .name
-        .as_ref()
-        .cloned()
-        .with_context(|| format!("Type alias item `{item_id}` has no name"))?;
-    let name = names.name_for_item(item_id, &rust_name);
-    let type_alias = item
-        .inner
-        .get("type_alias")
-        .with_context(|| format!("Type alias `{name}` missing rustdoc body"))?;
-    let generic_params = extract_generic_params(type_alias.get("generics"))
-        .with_context(|| format!("Type alias `{name}` has unsupported generic parameters"))?;
-    let ty = type_alias
-        .get("type")
-        .with_context(|| format!("Type alias `{name}` is missing its target type"))?;
-    let target = resolve_type(ty, names)
-        .with_context(|| format!("Type alias `{name}` has an unsupported target type"))?;
+	let rust_name = item
+		.name
+		.as_ref()
+		.cloned()
+		.with_context(|| format!("Type alias item `{item_id}` has no name"))?;
+	let name = names.name_for_item(item_id, &rust_name);
+	let type_alias = item
+		.inner
+		.get("type_alias")
+		.with_context(|| format!("Type alias `{name}` missing rustdoc body"))?;
+	let generic_params = extract_generic_params(type_alias.get("generics"))
+		.with_context(|| format!("Type alias `{name}` has unsupported generic parameters"))?;
+	let ty = type_alias
+		.get("type")
+		.with_context(|| format!("Type alias `{name}` is missing its target type"))?;
+	let target = resolve_type(ty, names)
+		.with_context(|| format!("Type alias `{name}` has an unsupported target type"))?;
 
-    Ok(TypeDef {
-        name,
-        module_path,
-        generic_params,
-        kind: TypeDefKind::Alias(target),
-        docs: clean_docs(item.docs.as_deref()),
-    })
+	Ok(TypeDef {
+		name,
+		module_path,
+		generic_params,
+		kind: TypeDefKind::Alias(target),
+		docs: clean_docs(item.docs.as_deref()),
+	})
 }
 
 fn extract_generic_params(generics: Option<&serde_json::Value>) -> Result<Vec<String>> {
-    let Some(generics) = generics else {
-        return Ok(Vec::new());
-    };
+	let Some(generics) = generics else {
+		return Ok(Vec::new());
+	};
 
-    let params = generics
-        .get("params")
-        .and_then(|value| value.as_array())
-        .context("generic params rustdoc shape was not an array")?;
+	let params = generics
+		.get("params")
+		.and_then(|value| value.as_array())
+		.context("generic params rustdoc shape was not an array")?;
 
-    params
-        .iter()
-        .map(|param| {
-            param
-                .get("name")
-                .and_then(|value| value.as_str())
-                .map(ToString::to_string)
-                .with_context(|| {
-                    format!(
-                        "Generic parameter is missing its name: {}",
-                        summarize_json(param)
-                    )
-                })
-        })
-        .collect()
+	params
+		.iter()
+		.map(|param| {
+			param
+				.get("name")
+				.and_then(|value| value.as_str())
+				.map(ToString::to_string)
+				.with_context(|| {
+					format!("Generic parameter is missing its name: {}", summarize_json(param))
+				})
+		})
+		.collect()
 }
 
 fn value_id(value: &serde_json::Value) -> Result<String> {
-    if let Some(id) = value.as_str() {
-        return Ok(id.to_string());
-    }
-    if let Some(id) = value.as_u64() {
-        return Ok(id.to_string());
-    }
-    bail!("Expected rustdoc item id, got {}", summarize_json(value))
+	if let Some(id) = value.as_str() {
+		return Ok(id.to_string());
+	}
+	if let Some(id) = value.as_u64() {
+		return Ok(id.to_string());
+	}
+	bail!("Expected rustdoc item id, got {}", summarize_json(value))
 }
 
 /// Render a bounded JSON snippet for diagnostics.
 pub fn summarize_json(value: &serde_json::Value) -> String {
-    const LIMIT: usize = 200;
+	const LIMIT: usize = 200;
 
-    let mut text =
-        serde_json::to_string(value).unwrap_or_else(|_| "<unserializable json>".to_string());
-    if text.len() > LIMIT {
-        text.truncate(LIMIT);
-        text.push_str("...");
-    }
-    text
+	let mut text =
+		serde_json::to_string(value).unwrap_or_else(|_| "<unserializable json>".to_string());
+	if text.len() > LIMIT {
+		text.truncate(LIMIT);
+		text.push_str("...");
+	}
+	text
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+	use super::*;
 
-    #[test]
-    fn clean_docs_strips_wire_markers() {
-        let docs = "Trait summary.\n\n@wire_id=7\n@wire_trait_id=3\n\
+	#[test]
+	fn clean_docs_strips_wire_markers() {
+		let docs = "Trait summary.\n\n@wire_id=7\n@wire_trait_id=3\n\
                     @wire_host_initiated\n@wire_internal\n\
                     @service_required_execution=Chat\n";
 
-        assert_eq!(clean_docs(Some(docs)).as_deref(), Some("Trait summary."));
-    }
+		assert_eq!(clean_docs(Some(docs)).as_deref(), Some("Trait summary."));
+	}
 
-    #[test]
-    fn internal_wire_metadata_preserves_method_address_and_direction() {
-        assert_eq!(
-            extract_wire_attrs(
-                "Method summary.\n@wire_id=2\n@wire_host_initiated\n@wire_internal\n"
-            ),
-            WireAttrs {
-                host_initiated: true,
-                internal: true,
-                id: Some(2),
-            }
-        );
-    }
+	#[test]
+	fn internal_wire_metadata_preserves_method_address_and_direction() {
+		assert_eq!(
+			extract_wire_attrs(
+				"Method summary.\n@wire_id=2\n@wire_host_initiated\n@wire_internal\n"
+			),
+			WireAttrs { host_initiated: true, internal: true, id: Some(2) }
+		);
+	}
 
-    #[test]
-    fn public_methods_require_no_visibility_marker() {
-        assert_eq!(
-            extract_wire_attrs("Method summary.\n@wire_id=1\n"),
-            WireAttrs {
-                id: Some(1),
-                ..WireAttrs::default()
-            }
-        );
-    }
+	#[test]
+	fn public_methods_require_no_visibility_marker() {
+		assert_eq!(
+			extract_wire_attrs("Method summary.\n@wire_id=1\n"),
+			WireAttrs { id: Some(1), ..WireAttrs::default() }
+		);
+	}
 
-    #[test]
-    fn trait_exposes_required_execution_without_leaking_marker() {
-        let trait_def = TraitDef {
-            name: "Chat".into(),
-            module_path: Vec::new(),
-            wire_trait_id: None,
-            methods: Vec::new(),
-            docs: Some("Chat operations.\n\n@service_required_execution=Chat".into()),
-        };
+	#[test]
+	fn trait_exposes_required_execution_without_leaking_marker() {
+		let trait_def = TraitDef {
+			name: "Chat".into(),
+			module_path: Vec::new(),
+			wire_trait_id: None,
+			methods: Vec::new(),
+			docs: Some("Chat operations.\n\n@service_required_execution=Chat".into()),
+		};
 
-        assert_eq!(trait_def.required_execution(), Some("Chat"));
-        assert_eq!(trait_def.public_docs().as_deref(), Some("Chat operations."));
-    }
+		assert_eq!(trait_def.required_execution(), Some("Chat"));
+		assert_eq!(trait_def.public_docs().as_deref(), Some("Chat operations."));
+	}
 
-    #[test]
-    fn extract_wire_trait_id_reads_marker() {
-        assert_eq!(
-            extract_wire_trait_id("Theme", "Trait summary.\n\n@wire_trait_id=14\n").unwrap(),
-            Some(14)
-        );
-        assert_eq!(
-            extract_wire_trait_id("Theme", "Trait summary.").unwrap(),
-            None
-        );
-    }
+	#[test]
+	fn extract_wire_trait_id_reads_marker() {
+		assert_eq!(
+			extract_wire_trait_id("Theme", "Trait summary.\n\n@wire_trait_id=14\n").unwrap(),
+			Some(14)
+		);
+		assert_eq!(extract_wire_trait_id("Theme", "Trait summary.").unwrap(), None);
+	}
 
-    /// A value the attribute could never emit must fail loudly instead of
-    /// truncating to a valid id or degrading into "missing annotation".
-    #[test]
-    fn extract_wire_trait_id_rejects_malformed_markers() {
-        for docs in [
-            "@wire_trait_id=300",
-            "@wire_trait_id=",
-            "@wire_trait_id=12abc",
-            "@wire_trait_id=-1",
-            "@wire_trait_id=1 2",
-        ] {
-            let err = extract_wire_trait_id("Theme", docs)
-                .expect_err("malformed marker must be rejected");
-            assert!(
-                format!("{err:#}").contains("malformed"),
-                "unexpected error for {docs:?}: {err:#}"
-            );
-        }
-    }
+	/// A value the attribute could never emit must fail loudly instead of
+	/// truncating to a valid id or degrading into "missing annotation".
+	#[test]
+	fn extract_wire_trait_id_rejects_malformed_markers() {
+		for docs in [
+			"@wire_trait_id=300",
+			"@wire_trait_id=",
+			"@wire_trait_id=12abc",
+			"@wire_trait_id=-1",
+			"@wire_trait_id=1 2",
+		] {
+			let err = extract_wire_trait_id("Theme", docs)
+				.expect_err("malformed marker must be rejected");
+			assert!(
+				format!("{err:#}").contains("malformed"),
+				"unexpected error for {docs:?}: {err:#}"
+			);
+		}
+	}
 
-    /// A hand-written doc line must not be able to outrank the attribute: the
-    /// proc-macro appends its marker last, so a silent first-wins or last-wins
-    /// rule would let prose move the trait's whole method block on the wire.
-    #[test]
-    fn extract_wire_trait_id_rejects_a_second_marker() {
-        let err = extract_wire_trait_id("Theme", "@wire_trait_id=99\n@wire_trait_id=14\n")
-            .expect_err("a forged second marker must be rejected");
-        assert!(
-            format!("{err:#}").contains("more than one"),
-            "unexpected error: {err:#}"
-        );
-    }
+	/// A hand-written doc line must not be able to outrank the attribute: the
+	/// proc-macro appends its marker last, so a silent first-wins or last-wins
+	/// rule would let prose move the trait's whole method block on the wire.
+	#[test]
+	fn extract_wire_trait_id_rejects_a_second_marker() {
+		let err = extract_wire_trait_id("Theme", "@wire_trait_id=99\n@wire_trait_id=14\n")
+			.expect_err("a forged second marker must be rejected");
+		assert!(format!("{err:#}").contains("more than one"), "unexpected error: {err:#}");
+	}
 
-    #[test]
-    fn parse_accepts_tested_format_version() {
-        let json = format!(r#"{{ "format_version": {MIN_FORMAT_VERSION}, "index": {{}} }}"#);
+	#[test]
+	fn parse_accepts_tested_format_version() {
+		let json = format!(r#"{{ "format_version": {MIN_FORMAT_VERSION}, "index": {{}} }}"#);
 
-        assert!(parse(&json).is_ok());
-    }
+		assert!(parse(&json).is_ok());
+	}
 
-    #[test]
-    fn parse_rejects_missing_format_version() {
-        let err = parse(r#"{ "index": {} }"#).expect_err("missing format_version must error");
+	#[test]
+	fn parse_rejects_missing_format_version() {
+		let err = parse(r#"{ "index": {} }"#).expect_err("missing format_version must error");
 
-        assert!(
-            format!("{err}").contains("missing `format_version`"),
-            "unexpected error: {err}"
-        );
-    }
+		assert!(format!("{err}").contains("missing `format_version`"), "unexpected error: {err}");
+	}
 
-    #[test]
-    fn parse_rejects_old_format_version() {
-        let json = format!(
-            r#"{{ "format_version": {}, "index": {{}} }}"#,
-            MIN_FORMAT_VERSION - 1
-        );
-        let err = parse(&json).expect_err("old format_version must error");
+	#[test]
+	fn parse_rejects_old_format_version() {
+		let json = format!(r#"{{ "format_version": {}, "index": {{}} }}"#, MIN_FORMAT_VERSION - 1);
+		let err = parse(&json).expect_err("old format_version must error");
 
-        assert!(
-            format!("{err}").contains("older than the tested minimum"),
-            "unexpected error: {err}"
-        );
-    }
+		assert!(
+			format!("{err}").contains("older than the tested minimum"),
+			"unexpected error: {err}"
+		);
+	}
 
-    #[test]
-    fn unwraps_async_trait_send_future_output() {
-        let output = serde_json::json!({
-            "resolved_path": {
-                "path": "::core::pin::Pin",
-                "args": {
-                    "angle_bracketed": {
-                        "args": [{
-                            "type": {
-                                "resolved_path": {
-                                    "path": "Box",
-                                    "args": {
-                                        "angle_bracketed": {
-                                            "args": [{
-                                                "type": {
-                                                    "dyn_trait": {
-                                                        "traits": [
-                                                            {
-                                                                "trait": {
-                                                                    "path": "::core::future::Future",
-                                                                    "args": {
-                                                                        "angle_bracketed": {
-                                                                            "args": [],
-                                                                            "constraints": [{
-                                                                                "name": "Output",
-                                                                                "binding": {
-                                                                                    "equality": {
-                                                                                        "type": {
-                                                                                            "resolved_path": {
-                                                                                                "path": "Result",
-                                                                                                "id": 1,
-                                                                                                "args": null
-                                                                                            }
-                                                                                        }
-                                                                                    }
-                                                                                }
-                                                                            }]
-                                                                        }
-                                                                    }
-                                                                }
-                                                            },
-                                                            {
-                                                                "trait": {
-                                                                    "path": "::core::marker::Send",
-                                                                    "args": null
-                                                                }
-                                                            }
-                                                        ],
-                                                        "lifetime": "'async_trait"
-                                                    }
-                                                }
-                                            }],
-                                            "constraints": []
-                                        }
-                                    }
-                                }
-                            }
-                        }],
-                        "constraints": []
-                    }
-                }
-            }
-        });
+	#[test]
+	fn unwraps_async_trait_send_future_output() {
+		let output = serde_json::json!({
+			"resolved_path": {
+				"path": "::core::pin::Pin",
+				"args": {
+					"angle_bracketed": {
+						"args": [{
+							"type": {
+								"resolved_path": {
+									"path": "Box",
+									"args": {
+										"angle_bracketed": {
+											"args": [{
+												"type": {
+													"dyn_trait": {
+														"traits": [
+															{
+																"trait": {
+																	"path": "::core::future::Future",
+																	"args": {
+																		"angle_bracketed": {
+																			"args": [],
+																			"constraints": [{
+																				"name": "Output",
+																				"binding": {
+																					"equality": {
+																						"type": {
+																							"resolved_path": {
+																								"path": "Result",
+																								"id": 1,
+																								"args": null
+																							}
+																						}
+																					}
+																				}
+																			}]
+																		}
+																	}
+																}
+															},
+															{
+																"trait": {
+																	"path": "::core::marker::Send",
+																	"args": null
+																}
+															}
+														],
+														"lifetime": "'async_trait"
+													}
+												}
+											}],
+											"constraints": []
+										}
+									}
+								}
+							}
+						}],
+						"constraints": []
+					}
+				}
+			}
+		});
 
-        let unwrapped = unwrap_future_output(&output);
+		let unwrapped = unwrap_future_output(&output);
 
-        assert_eq!(get_resolved_name(unwrapped).as_deref(), Some("Result"));
-    }
+		assert_eq!(get_resolved_name(unwrapped).as_deref(), Some("Result"));
+	}
 
-    /// A return that is not an `async_trait` future is the method's own type, so
-    /// it has to pass through untouched. Rejecting it here would turn every
-    /// non-async method into a parse failure instead of a plain return type.
-    #[test]
-    fn a_return_that_is_not_a_future_passes_through() {
-        let output = serde_json::json!({
-            "resolved_path": { "path": "Result", "id": 1, "args": null }
-        });
+	/// A return that is not an `async_trait` future is the method's own type, so
+	/// it has to pass through untouched. Rejecting it here would turn every
+	/// non-async method into a parse failure instead of a plain return type.
+	#[test]
+	fn a_return_that_is_not_a_future_passes_through() {
+		let output = serde_json::json!({
+			"resolved_path": { "path": "Result", "id": 1, "args": null }
+		});
 
-        assert_eq!(unwrap_future_output(&output), &output);
-    }
+		assert_eq!(unwrap_future_output(&output), &output);
+	}
 }
