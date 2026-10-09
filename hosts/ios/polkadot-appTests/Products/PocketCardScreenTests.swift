@@ -360,7 +360,7 @@ struct PocketCardScreenTests {
 
         #expect(product.controller.parent == nil)
         #expect(product.controller.view.superview == nil)
-        #expect(surface.screen == nil)
+        #expect(!surface.isOnDisplay)
         withExtendedLifetime(window) {}
     }
 

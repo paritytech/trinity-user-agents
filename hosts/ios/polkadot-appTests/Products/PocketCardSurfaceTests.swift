@@ -96,10 +96,10 @@ struct PocketCardSurfaceTests {
         let neverShown = PocketCardScreenViewController(card: loyaltyCard, product: StubSPAView(), surface: surface)
         surface.claim(neverShown)
         neverShown.handBackProduct()
-        #expect(surface.screen === shown)
-
+        let afterNeverShown = surface.setFaceShown(false)
         shown.handBackProduct()
-        #expect(surface.screen == nil)
+
+        #expect([afterNeverShown, surface.setFaceShown(false)] == [.applied, .notPresented])
         withExtendedLifetime(window) {}
     }
 }

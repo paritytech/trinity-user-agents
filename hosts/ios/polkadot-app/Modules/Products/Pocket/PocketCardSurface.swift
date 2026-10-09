@@ -8,7 +8,11 @@ import UIKit
 /// already loaded under it must find that one.
 @MainActor
 final class PocketCardSurface: ExpandedCardFaceShowing {
-    private(set) weak var screen: PocketCardScreenViewController?
+    private weak var screen: PocketCardScreenViewController?
+
+    var isOnDisplay: Bool {
+        screen?.isOnDisplay == true
+    }
 
     /// Points the surface at `screen`. Only a screen on display may take it,
     /// so one built but never shown cannot take it from the one the user sees.

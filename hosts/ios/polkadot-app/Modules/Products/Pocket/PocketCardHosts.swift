@@ -43,7 +43,7 @@ final class PocketCardHosts {
     func isOnDisplay(_ key: PocketCardKey) -> Bool {
         guard let held, held.key == key else { return false }
 
-        return held.surface.screen?.isOnDisplay == true
+        return held.surface.isOnDisplay
     }
 
     /// Gives up a product held for a card the collection no longer has, since a
