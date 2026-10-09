@@ -731,16 +731,6 @@ I’m attaching PDF with more information and details regarding the Tattoo Stenc
         <item quantity="other">%d Designs</item>
     </plurals>
 
-    <string name="identity_details_description_text">Use your ID to start a chat or\nreceive digital dollars.</string>
-    <string name="identity_details_share_button_label">Share ID</string>
-    <string name="identity_details_copy_username_description">Copy username</string>
-    <string name="identity_card_top_bar_title">ID card</string>
-    <string name="identity_card_rank_label">Rank</string>
-    <string name="identity_card_rank_basic">Basic</string>
-    <string name="identity_card_rank_member">Member</string>
-    <string name="pocket_id_share_subtitle">Show this QR to someone who wants to add you as a contact or send you %1$s</string>
-    <string name="pocket_id_share_scan_title">Scan with a camera</string>
-    <string name="pocket_id_share_message">Hey! I’m using the Polkadot app for chat. It’s private and easy to use. Download it at %1$s and add me – my username is %2$s.</string>
 
     <string name="send_payment_toolbar_title">Send Payment</string>
     <string name="send_payment_search_placeholder">Type username or wallet address</string>
@@ -1538,7 +1528,6 @@ I’m attaching PDF with more information and details regarding the Tattoo Stenc
     <string name="pocket_deeplink_unknown_card">This product doesn\'t publish that card.</string>
     <string name="pocket_deeplink_no_pocket">This product has no Pocket cards.</string>
     <string name="pocket_deeplink_malformed">That Pocket link is incomplete.</string>
-    <string name="pocket_error_share_id_failed">Couldn\'t share your ID. Try again.</string>
     <string name="pocket_coinage_balance_title">Total</string>
     <string name="pocket_coinage_ready">Ready</string>
     <string name="pocket_coinage_clearing">Clearing</string>
