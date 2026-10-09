@@ -1349,6 +1349,7 @@ struct RecordingChatPlatform {
     created_rooms: Mutex<Vec<String>>,
     posted_rooms: Mutex<Vec<String>>,
     posted_payloads: Mutex<Vec<v01::ChatMessageContent>>,
+    posted_alts: Mutex<Vec<Option<String>>>,
     room_footers: Mutex<Vec<(String, v01::ChatRoomFooter)>>,
     bot_rooms: Vec<String>,
 }
@@ -1399,6 +1400,10 @@ impl crate::platform::ChatPlatform for RecordingChatPlatform {
             .lock()
             .expect("posted payloads mutex poisoned")
             .push(request.payload);
+        self.posted_alts
+            .lock()
+            .expect("posted alts mutex poisoned")
+            .push(request.alt);
         Ok(truapi::latest::HostChatPostMessageResponse {
             message_id: "message-id".to_string(),
         })
@@ -1715,7 +1720,7 @@ fn chat_post_message_screens_content_before_it_reaches_a_host() {
     .expect_err("a javascript: file url must not reach the host");
     assert!(matches!(
         rejected,
-        CallError::Domain(HostChatPostMessageError::V1(
+        CallError::Domain(HostChatPostMessageError::V2(
             v01::HostChatPostMessageError::Unknown { .. }
         ))
     ));
@@ -1727,7 +1732,7 @@ fn chat_post_message_screens_content_before_it_reaches_a_host() {
     .expect_err("an over-budget body must not reach the host");
     assert!(matches!(
         too_large,
-        CallError::Domain(HostChatPostMessageError::V1(
+        CallError::Domain(HostChatPostMessageError::V2(
             v01::HostChatPostMessageError::MessageTooLarge
         ))
     ));
@@ -1740,7 +1745,7 @@ fn chat_post_message_screens_content_before_it_reaches_a_host() {
     .expect_err("an over-budget custom payload must not reach the host");
     assert!(matches!(
         big_payload,
-        CallError::Domain(HostChatPostMessageError::V1(
+        CallError::Domain(HostChatPostMessageError::V2(
             v01::HostChatPostMessageError::MessageTooLarge
         ))
     ));
@@ -1759,7 +1764,7 @@ fn chat_post_message_screens_content_before_it_reaches_a_host() {
     .expect_err("an over-long room id must be rejected");
     assert!(matches!(
         long_room,
-        CallError::Domain(HostChatPostMessageError::V1(
+        CallError::Domain(HostChatPostMessageError::V2(
             v01::HostChatPostMessageError::Unknown { .. }
         ))
     ));
@@ -1915,6 +1920,92 @@ fn a_room_footer_reaches_the_host_for_the_room_the_product_created() {
             .lock()
             .expect("room footers mutex poisoned"),
         [("caf\u{e9}".to_string(), v01::ChatRoomFooter::Empty)]
+    );
+}
+
+#[test]
+fn chat_post_message_screens_the_alt_before_it_reaches_a_host() {
+    let (host_config, _) = runtime_config("chat.dot");
+    let product = ProductContext::new_with_execution(
+        "chat.dot".to_string(),
+        crate::platform::ProductExecutionKind::Worker,
+    )
+    .expect("test chat product context is valid");
+    let spawner = test_spawner();
+    let platform: Arc<dyn Platform> = stub_platform();
+    let services = RuntimeServices::new(
+        platform.clone(),
+        host_config.host.host_info.clone(),
+        host_config.people_chain_genesis_hash,
+        host_config.bulletin_chain_genesis_hash,
+        host_config.asset_hub_chain_genesis_hash,
+        spawner.clone(),
+    );
+    let chat_platform = Arc::new(RecordingChatPlatform::default());
+    let pairing_host = PairingHost::new(services.clone(), host_config);
+    let mut adapters = crate::host_core::ConnectionAdapters::from_services(&services);
+    adapters.chat_platform = Some(chat_platform.clone());
+    let host = ProductRuntimeHost::from_services(services, adapters, pairing_host, product);
+    install_pairing_session(&host, session_info());
+
+    let card = || {
+        v01::ChatMessageContent::Custom(v01::ChatCustomMessage {
+            message_type: "results".to_string(),
+            payload: vec![1],
+        })
+    };
+    let post = |payload: v01::ChatMessageContent, alt: Option<String>| {
+        futures::executor::block_on(Chat::post_message(
+            &host,
+            &CallContext::default(),
+            HostChatPostMessageRequest::V2(truapi::latest::HostChatPostMessageRequest {
+                room_id: "support".to_string(),
+                payload,
+                alt,
+            }),
+        ))
+    };
+
+    // A host lists the alt as it arrives, so it gets the trimmed value, and a
+    // blank one is no description at all rather than an empty preview.
+    post(card(), Some("  Week 12 results  ".to_string())).expect("a short alt is accepted");
+    post(card(), Some("   ".to_string())).expect("a blank alt is accepted");
+    post(card(), None).expect("a message without an alt is accepted");
+    // Only a custom message needs a description, so a host never sees an alt
+    // for any other kind.
+    post(
+        v01::ChatMessageContent::Text {
+            text: "hello".to_string(),
+        },
+        Some("Greeting".to_string()),
+    )
+    .expect("a text message with an alt is accepted");
+    post(
+        v01::ChatMessageContent::Actions(v01::ChatActions {
+            text: None,
+            actions: Vec::new(),
+            layout: v01::ChatActionLayout::Column,
+        }),
+        Some("Pick one".to_string()),
+    )
+    .expect("an action set with an alt is accepted");
+
+    let too_long = post(card(), Some("x".repeat(crate::platform::CHAT_FIELD_MAX_BYTES + 1)))
+        .expect_err("an over-long alt must be rejected");
+    assert!(matches!(
+        too_long,
+        CallError::Domain(HostChatPostMessageError::V2(
+            v01::HostChatPostMessageError::Unknown { .. }
+        ))
+    ));
+
+    assert_eq!(
+        chat_platform
+            .posted_alts
+            .lock()
+            .expect("posted alts mutex poisoned")
+            .as_slice(),
+        &[Some("Week 12 results".to_string()), None, None, None, None]
     );
 }
 

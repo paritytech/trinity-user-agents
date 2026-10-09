@@ -246,7 +246,7 @@ private extension ContainerBridge {
 
             let data = try Data(hexString: payloadHex)
             let messageId = try await nativeApi.sendMessage(
-                .custom(messageType: messageType, data: data),
+                .custom(messageType: messageType, data: data, alt: nil),
                 roomId: roomId
             )
             return JSON.dictionaryValue(["messageId": JSON.stringValue(messageId)])
