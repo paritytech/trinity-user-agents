@@ -72,6 +72,9 @@
     "navigate-http"
   ],
   "knownFailures": {
-    "contract-store-value-if-person": "peopl.paseo's manifest does not grant host-playground the context scope, so the host refuses the personhood proof"
+    "contract-store-value-if-person": {
+      "message": "createRingVRFProof NotAllowlisted",
+      "reason": "peopl.paseo's manifest does not grant host-playground the context scope, so the host refuses the personhood proof"
+    }
   }
 }

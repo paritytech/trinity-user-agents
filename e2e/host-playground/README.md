@@ -2,7 +2,7 @@
 
 Runs the public `host-playground` product inside the iOS and Android host apps and reports how each of its tests ended.
 
-- `tests.json` names the product, the host-playground commit the suite was written against, the tests to run in order, and under `knownFailures` the tests expected to fail for a reason outside the hosts, each with that reason. A known failure is reported apart and does not fail the run.
+- `tests.json` names the product, the host-playground commit the suite was written against, the tests to run in order, and under `knownFailures` the tests expected to fail for a reason outside the hosts, each with the error message it fails with and the reason. A test failing with exactly that message is reported apart and does not fail the run; any other failure of it still does.
 - `page-runner.js` is injected into the product page by each driver and runs one test per call. A test that navigates within the product passes once the page reaches its destination.
 - `report.mjs` turns a run's `results.json` into `report.md` and a one-line summary.
 
@@ -33,7 +33,7 @@ node e2e/host-playground/android/run.mjs \
 
 The runner reinstalls the app, grants its runtime permissions, copies the mnemonic into the app's data directory through `run-as` and waits for the `HostPlaygroundE2E` logcat line that reports the outcome. It then relaunches the app, opens `polkadotapp://host-playground.paseo` and attaches to the product's WebView page over the DevTools protocol. It needs only Node 22 or later and `adb`, found through `ADB`, `ANDROID_HOME` or `PATH`. While the tests run it taps the native approval sheets they raise; the accepted labels are `APPROVE_LABELS` in `android/run.mjs`. The package is `${APPLICATION_ID}.nightly`, with `APPLICATION_ID` defaulting to `io.parity.polkadotapp`.
 
-`--out` receives `results.json` and `report.md`, a screenshot for each failed test, and, when anything failed, `logcat.txt` holding only the app's own lines with long hex strings and addresses masked. The runner exits 0 when nothing failed, 1 when a test failed and 2 when the run could not start.
+`--out` receives `results.json` and `report.md`, a screenshot for each failed test, and, when anything failed, `logcat.txt` holding only the app's own lines with long hex strings and addresses masked. The runner exits 0 when nothing failed, 1 when a test failed and 2 when the run stopped early, either before the first test or partway through, in which case the tests it did not reach are listed as not run.
 
 ## iOS
 
