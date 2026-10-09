@@ -21,6 +21,7 @@ import io.paritytech.polkadotapp.feature_account_api.data.repository.AccountRepo
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
 import io.paritytech.polkadotapp.feature_dotns_api.domain.getTldRetrying
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
+import io.paritytech.polkadotapp.feature_products_impl.domain.bundled.BundledProducts
 import io.paritytech.polkadotapp.feature_products_impl.di.TrUAPIChainHttpClient
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.worker.TrUAPIWorkerSupervisor
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.worker.WorkerDemand
@@ -74,6 +75,7 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
     private val appLifecycleObserver: AppLifecycleObserver,
     private val contactsBridge: AppContactsHostBridge,
     private val fundingBridge: AppFundingHostBridge,
+    private val bundledProducts: BundledProducts,
     // Lazy: the supervisor boots workers on this runtime, and reports back through this bridge.
     private val workerSupervisor: Lazy<TrUAPIWorkerSupervisor>,
     dispatchers: CoroutineDispatchers,
@@ -123,6 +125,11 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
         // window where the host lists no contacts or answers funding unsupported.
         runtime.setContacts(contactsBridge)
         runtime.setFunding(fundingBridge)
+        // The core discovers the published providers; the host lists only the ones it ships itself.
+        bundledProducts.fundingProviders()
+            .takeIf { it.isNotEmpty() }
+            ?.let { providers -> runCatching { runtime.setFundingProviders(providers) } }
+            ?.logFailure("TrUAPI refused the bundled funding providers")
         observeContactRemovals(runtime)
         chainProvider.attach(
             onResponse = runtime::notifyChainResponse,

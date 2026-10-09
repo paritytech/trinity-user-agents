@@ -1,6 +1,7 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.funding
 
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
+import io.paritytech.polkadotapp.feature_products_impl.domain.bundled.BundledProducts
 import io.paritytech.polkadotapp.feature_products_impl.domain.product.gatewayUrlOf
 import io.paritytech.polkadotapp.feature_products_impl.domain.usecase.ResolveProductUseCase
 import io.paritytech.polkadotapp.tools_ipfs_api.IpfsContentLookup
@@ -13,12 +14,18 @@ data class FundingProviderBrand(
     val iconUrl: String?,
 )
 
-/** Reads a provider's brand from its product's root manifest; the bare id stands in until it resolves. */
+/**
+ * Reads a provider's brand from its product's root manifest; the bare id stands in until it resolves. A
+ * provider the app ships has no manifest read for it.
+ */
 class FundingProviderBranding @Inject constructor(
     private val resolveProductUseCase: ResolveProductUseCase,
     private val ipfsContentLookup: IpfsContentLookup,
+    private val bundledProducts: BundledProducts,
 ) {
     suspend fun brand(providerId: String): FundingProviderBrand {
+        if (bundledProducts.product(providerId) != null) return placeholder(providerId)
+
         val product = resolveProductUseCase.resolve(ProductId.fromStoredValue(providerId)).getOrNull()?.product
             ?: return placeholder(providerId)
 

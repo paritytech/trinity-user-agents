@@ -31,10 +31,11 @@ class TrUAPISessionStarter @Inject constructor(
         productUrl: String,
         scope: CoroutineScope,
         hostApiNavigation: NavigationPolicy,
+        bundledProductId: ProductId?,
     ): ProductTrUAPIHostBridge {
         val bridge = hostBridgeFactory.create(scope)
         scope.launch {
-            attachAndLoad(bridge, provider, productUrl, hostApiNavigation)
+            attachAndLoad(bridge, provider, productUrl, hostApiNavigation, bundledProductId)
                 .logFailure("Failed to start TrUAPI host bridge for $productUrl")
         }
         return bridge
@@ -45,11 +46,12 @@ class TrUAPISessionStarter @Inject constructor(
         provider: BrowserWebViewProvider,
         productUrl: String,
         navigation: NavigationPolicy,
+        bundledProductId: ProductId?,
     ): Result<Unit> {
-        val tld = dotNsTldProvider.getTld().getOrElse { return Result.failure(it) }
-        // A page that is not a product (the debug SPA browser opening any URL) has no bridge to
-        // attach, but it is still a page to show.
-        val productId = ProductId.fromUrl(productUrl.toUri(), tld).getOrNull() ?: run {
+        // A product the app ships keeps its own id, which need not end in the network's TLD. A page
+        // that is not a product (the debug SPA browser opening any URL) has no bridge to attach, but
+        // it is still a page to show.
+        val productId = bundledProductId ?: urlProductId(productUrl).getOrElse { return Result.failure(it) } ?: run {
             Timber.d("Loading %s without a TrUAPI bridge: not a product URL", productUrl)
             return runCatching { provider.loadInitialContent() }
         }
@@ -71,6 +73,9 @@ class TrUAPISessionStarter @Inject constructor(
                 provider.loadInitialContent()
             }
     }
+
+    private suspend fun urlProductId(productUrl: String): Result<ProductId?> =
+        dotNsTldProvider.getTld().map { tld -> ProductId.fromUrl(productUrl.toUri(), tld).getOrNull() }
 
     private fun Uri.origin(): String = buildString {
         append(scheme).append("://").append(host)

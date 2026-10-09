@@ -14,6 +14,7 @@ import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_api.presentation.spaHost.SpaHost
 import io.paritytech.polkadotapp.feature_products_api.presentation.spaHost.SpaHostSession
+import io.paritytech.polkadotapp.feature_products_impl.domain.bundled.BundledProducts
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.navigation.NavigationPolicy
 import io.paritytech.polkadotapp.feature_products_impl.domain.product.ProductRegistrar
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.ProductTrUAPIHostBridge
@@ -36,10 +37,13 @@ class TrUAPISpaHost @Inject constructor(
     private val deepLinkHandler: DeepLinkHandler,
     @param:ApplicationContext private val context: Context,
     private val dotNsTldProvider: DotNsTldProvider,
+    private val bundledProducts: BundledProducts,
 ) : SpaHost {
     context(scope: ComputationalScope, messageDisplay: MessageDisplay)
     override fun createSession(initialUrl: String): SpaHostSession {
         lateinit var webViewProvider: BrowserWebViewProvider
+        // A product the app ships opens from its own files, under its own id.
+        val bundled = bundledProducts.appFor(initialUrl)
 
         val webViewNavigation = NavigationPolicy.InlineNavigation(
             onDeeplinkNavigation = { launchDeeplinkNavigation(it) }
@@ -49,7 +53,8 @@ class TrUAPISpaHost @Inject constructor(
             initialUrl = initialUrl,
             navigationPolicy = webViewNavigation,
             allowIframes = true,
-            scope = scope
+            scope = scope,
+            bundledProduct = bundled,
         )
 
         val hostApiNavigation = NavigationPolicy.HostApiNavigation(
@@ -58,7 +63,7 @@ class TrUAPISpaHost @Inject constructor(
             dotNsTldProvider = dotNsTldProvider,
         )
 
-        val bridge = sessionStarter.start(webViewProvider, initialUrl, scope, hostApiNavigation)
+        val bridge = sessionStarter.start(webViewProvider, initialUrl, scope, hostApiNavigation, bundled?.id)
 
         val currentUrlFlow = MutableStateFlow(initialUrl)
         webViewProvider.addOnPageStartedListener { url ->

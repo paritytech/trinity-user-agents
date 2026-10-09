@@ -73,6 +73,8 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.browser.RealProduc
 import io.paritytech.polkadotapp.feature_products_impl.domain.deriveEntropy.RealDeriveEntropyUseCase
 import io.paritytech.polkadotapp.feature_products_impl.domain.exploreProducts.ExploreProductsService
 import io.paritytech.polkadotapp.feature_products_impl.domain.exploreProducts.RealExploreProductsService
+import io.paritytech.polkadotapp.feature_products_impl.domain.bundled.AssetBundledProductFiles
+import io.paritytech.polkadotapp.feature_products_impl.domain.bundled.BundledProductFiles
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.AppFundingOverlay
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingRuntime
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.allowance.AllowanceKeyStorage
@@ -360,6 +362,9 @@ internal interface ProductsModule {
 
     @Binds
     fun bindHostFunding(impl: TrUAPIHostFunding): HostFunding
+
+    @Binds
+    fun bindBundledProductFiles(impl: AssetBundledProductFiles): BundledProductFiles
 
     @Binds
     fun bindFundingOverlay(impl: AppFundingOverlay): FundingOverlay

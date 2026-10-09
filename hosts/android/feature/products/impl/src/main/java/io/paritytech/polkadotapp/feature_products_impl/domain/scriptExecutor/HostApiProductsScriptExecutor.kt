@@ -88,7 +88,7 @@ class HostApiProductsScriptExecutor @AssistedInject constructor(
             if (initialized.value) return@withLock
 
             val webViewProvider = chatWebViewProviderFactory.create(
-                config = ChatWebViewConfig(productId = productId, workerScript = workerScript),
+                config = ChatWebViewConfig(productId = productId, workerScript = workerScript, bundledContent = null),
                 scope = scope,
             )
             val webViewRuntime = WebViewRuntime(webViewProvider)

@@ -97,7 +97,7 @@ class ExploreProductsViewModel @Inject constructor(
 
         val navigationPolicy = NavigationPolicy.CatalogNavigation(::onProductSelected, dotNsTldProvider)
 
-        val webViewProvider = browserWebViewProviderFactory.create(exploreUrl, navigationPolicy, allowIframes = false, viewModelScope)
+        val webViewProvider = browserWebViewProviderFactory.create(exploreUrl, navigationPolicy, allowIframes = false, viewModelScope, bundledProduct = null)
         webViewProvider.addOnPageStartedListener { url ->
             dotNsTldProvider.currentTldOrNull()
                 ?.let { tld -> ProductId.fromUrl(url.toUri(), tld).getOrNull() }
@@ -157,7 +157,7 @@ class ExploreProductsViewModel @Inject constructor(
             dotNsTldProvider = dotNsTldProvider,
         )
 
-        val bridge = sessionStarter.start(webViewProvider, exploreUrl, viewModelScope, hostApiNavigation)
+        val bridge = sessionStarter.start(webViewProvider, exploreUrl, viewModelScope, hostApiNavigation, bundledProductId = null)
         return SessionComponents.TrUAPI(webViewProvider, bridge)
     }
 }

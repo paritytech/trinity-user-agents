@@ -65,7 +65,8 @@ class NativeSpaHost @Inject constructor(
             initialUrl = initialUrl,
             navigationPolicy = webViewNavigation,
             allowIframes = true,
-            scope = scope
+            scope = scope,
+            bundledProduct = null,
         )
 
         val callingProductIdProvider = webViewProvider.callingProductIdProvider

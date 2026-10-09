@@ -10,6 +10,12 @@ plugins {
 
 android {
     namespace = "io.paritytech.polkadotapp.feature_products_impl"
+
+    // Products the testnet builds ship, which scripts/bundle-funding-provider.sh builds into this
+    // ignored directory. Release never packages it, and a build without it ships none.
+    listOf("debug", "nightly", "safetynet").forEach { buildType ->
+        sourceSets.getByName(buildType).assets.srcDir("bundled-assets")
+    }
 }
 
 val containerDir = rootProject.file("feature/products/product-container")

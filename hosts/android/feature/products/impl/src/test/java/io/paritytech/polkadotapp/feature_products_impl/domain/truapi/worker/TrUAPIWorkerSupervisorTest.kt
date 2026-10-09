@@ -1,5 +1,7 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.truapi.worker
 
+import io.paritytech.polkadotapp.feature_products_impl.domain.bundled.BundledProducts
+import io.paritytech.polkadotapp.feature_products_impl.domain.bundled.InMemoryBundledProductFiles
 import android.net.Uri
 import io.mockk.coEvery
 import io.mockk.every
@@ -80,6 +82,7 @@ class TrUAPIWorkerSupervisorTest {
             override fun create(config: ChatWebViewConfig, scope: CoroutineScope) = provider()
         },
         bootstrapInstaller = mockk(relaxed = true),
+        bundledProducts = BundledProducts(InMemoryBundledProductFiles(emptyMap()), enabled = true),
         dispatchers = testDispatchers(),
     )
 
