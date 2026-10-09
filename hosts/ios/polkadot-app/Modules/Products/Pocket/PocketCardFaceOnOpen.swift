@@ -20,15 +20,10 @@ enum PocketCardFaceOnOpen {
         return published ?? true
     }
 
-    /// Gives an opened card's screen the face its product published, once the
-    /// product answers, unless the card has been closed meanwhile.
+    /// Gives an opened card's screen the face its product published, unless
+    /// the card has been closed while its product was asked.
     @MainActor
-    static func apply(
-        to screen: PocketCardScreenViewController,
-        for key: PocketCardKey,
-        cards: any PublishedPocketCardsResolving
-    ) async {
-        let shown = await faceShown(for: key, cards: cards)
+    static func apply(_ shown: Bool, to screen: PocketCardScreenViewController) {
         guard screen.isOnDisplay else { return }
 
         screen.applyOpeningFace(shown: shown)

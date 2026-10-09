@@ -28,12 +28,12 @@ enum PocketCardOpening {
         navigator.presentFullScreen(screen)
         product.surface.claim(screen)
 
-        Task {
-            await PocketCardFaceOnOpen.apply(
-                to: screen,
+        Task { [weak screen] in
+            let shown = await PocketCardFaceOnOpen.faceShown(
                 for: card.key,
                 cards: PublishedPocketCards.makeDefault(products: flowState.productResolver)
             )
+            if let screen { PocketCardFaceOnOpen.apply(shown, to: screen) }
         }
     }
 

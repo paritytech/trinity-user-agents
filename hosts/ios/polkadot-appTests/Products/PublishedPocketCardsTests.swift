@@ -199,7 +199,8 @@ struct PublishedPocketCardsTests {
         let scrollView = try #require(screen.scrollView)
         let cards = PublishedPocketCards(products: gameResolver(worker: workerPublishing([faceAwayLoyalty])))
 
-        await PocketCardFaceOnOpen.apply(to: screen, for: loyaltyKey, cards: cards)
+        let shown = await PocketCardFaceOnOpen.faceShown(for: loyaltyKey, cards: cards)
+        PocketCardFaceOnOpen.apply(shown, to: screen)
 
         #expect(waitUntil(on: screen) { scrollView.contentOffset.y == PocketOpenedCardView.height })
         withExtendedLifetime(window) {}
@@ -218,7 +219,8 @@ struct PublishedPocketCardsTests {
         screen.view.layoutIfNeeded()
         let cards = PublishedPocketCards(products: gameResolver(worker: workerPublishing([faceAwayLoyalty])))
 
-        await PocketCardFaceOnOpen.apply(to: screen, for: loyaltyKey, cards: cards)
+        let shown = await PocketCardFaceOnOpen.faceShown(for: loyaltyKey, cards: cards)
+        PocketCardFaceOnOpen.apply(shown, to: screen)
         screen.view.layoutIfNeeded()
 
         #expect(screen.scrollView?.contentOffset.y == 0)
