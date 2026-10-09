@@ -123,9 +123,10 @@ product                 host core / CLI platform                      cache prov
    |------------------------------->| permission, confirmation              |                          |
    |                                | sign authorization:                   |                          |
    |                                |   {transfer, payer, provider, cid,    |                          |
-   |                                |    Retention, secs = period}          |                          |
+   |                                |    Retention, from = now,             |                          |
+   |                                |    until = now + period}              |                          |
    |                                |---- POST /pin {bulletin:<cid>, ------>|                          |
-   |                                |     retain_secs, authorization}       | fetch: local, peers,     |
+   |                                |     authorization}                    | fetch: local, peers,     |
    |                                |                                       | Bulletin; check the CID  |
    |                                |                                       |-- settle (signed) ------>|
    |                                |                                       |<-- charged --------------|
@@ -134,8 +135,10 @@ product                 host core / CLI platform                      cache prov
 ```
 
 The authorization is the receipt that the prototype defines in `cache/src/payment.rs`: an sr25519 signature by the payer
-over the transfer id, the payer and provider keys, the CID, the service and the most seconds. The provider can charge no
-more than it allows, and the ledger charges each transfer id once.
+over the transfer id, the payer and provider keys, the CID, the service and the window `from` and `until`. The retention
+ends at `until`, a fixed time, so a replay of the authorization cannot extend it. The provider charges only for the time
+after now and after the current end, and never more than `until - from`. The ledger charges each transfer id once, and
+a transfer id signed again for another window is a conflict, not a free retry.
 
 ## Trade-offs
 

@@ -978,7 +978,9 @@ node keeps verified copies of Bulletin blobs close to its users and answers
 faster than a Bulletin node. Each line of the file is one provider: its endpoint
 id (64 hex digits), any `ip:port` dial hints, and the base URL of its API. The
 host asks the providers that have an API URL, each with `POST /acquire` for
-`bulletin:<cid>`.
+`bulletin:<cid>` and a read request that the payer key signs. The request
+names that provider, the CID, a new transfer id and the time, so no one else
+can take reads in the payer's name, and a provider serves each request once.
 
 ```bash
 TRUAPI_CACHE_PROVIDERS=providers.txt truapi-host signing-host --frame-listen 127.0.0.1:9955
@@ -993,8 +995,8 @@ the same nodes. Every fourth read tries a provider without measurements first.
 
 The host trusts no cache node. Bytes that do not hash to the CID are dropped
 and the next provider is asked. Only for bytes that pass, the host signs a
-delivery receipt and sends it to that provider (`POST /receipt`); a provider
-gets no receipt for bad bytes. The payer key is
+delivery receipt for the same transfer id and sends it to that provider
+(`POST /receipt`); a provider gets no receipt for bad bytes. The payer key is
 `//allowance//cache//{product}` of the signed-in account, derived like the
 other per-product allowance accounts, or the sr25519 seed in
 `TRUAPI_CACHE_PAYER_SEED` for a host without an account. Without a payer the
