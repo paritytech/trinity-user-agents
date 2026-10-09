@@ -82,9 +82,15 @@ export async function presentScreen<K extends ScreenAction["kind"]>(
       route: screenUrl(route, intent),
     }),
     `present ${route}`,
-  ).then(async () => {
+  ).then(async (response) => {
     const action = await readAction(intent);
-    return isWanted(action) ? action : undefined;
+    if (isWanted(action)) return action;
+    // The host's own "I've sent funds" closes the bank screen with Closed:
+    // the user saying they paid, as the page's own button does.
+    if (kind === "bank-sent" && response.outcome === "Closed") {
+      return { kind: "bank-sent" } as Wanted;
+    }
+    return undefined;
   });
   try {
     // Whichever settles first: the action, or the frame closing without one.
