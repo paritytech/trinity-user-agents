@@ -492,9 +492,11 @@ pub async fn require_context_access(
         return Ok(());
     }
     // The manifest is resolved by bare label on the host's network, so
-    // `dim2.dot` and `dim2.paseo` read one document. Holding the context to the
-    // owner's network keeps a namesake's grant from admitting a pseudonym on the
-    // network the namesake does not publish on.
+    // `dim2.dot` and `dim2.paseo` read one document. The context is held to the
+    // owner's network, so a grant read for one TLD does not admit the pseudonym
+    // named under another. This is the owner's TLD as the handle spells it, not
+    // the host's: an owner id from another network reads this host's manifests,
+    // as `ring_vrf_key_access_granted` already does for the key grant.
     if !on_one_network(&context_id, &access.owner) {
         return Err(RingVrfError::NotAllowlisted);
     }

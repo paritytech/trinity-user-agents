@@ -2670,13 +2670,14 @@ mod tests {
         }
     }
 
-    /// The identity read is held to the caller's own context, like the proof.
+    /// The identity read is held to the same contexts as the proof.
     ///
     /// The alias and the proof come out of one VRF evaluation, so a guard on
     /// `create_proof` alone leaves the same bytes reachable through
     /// `account_alias`: a grantee could read the alias the owner presents to a
     /// third product that granted nothing. Both calls refuse it, and both admit
-    /// the granting product's own context.
+    /// the granting product's own context. A third product's own grant is
+    /// covered by `a_product_may_grant_a_grantee_its_context`.
     #[test]
     fn a_grantee_cannot_read_the_owners_alias_in_a_third_partys_context() {
         let platform = Arc::new(StubPlatform::default());
