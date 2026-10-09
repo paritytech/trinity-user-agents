@@ -29,9 +29,9 @@ internal fun Modifier.motionShineFallback(
 
     return drawBehind {
         val tilt = tiltState.value
-        val shift = tilt.x * HOLO_RAMP_TILT_X - tilt.y * HOLO_RAMP_TILT_Y
-        drawRect(brush = axisGradient(dimStops, HoloMainAxis, size, shift))
-        drawRect(brush = axisGradient(shineStops, HoloMainAxis, size, shift))
+        val shift = tilt.x * SHINE_MAIN_TILT_X - tilt.y * SHINE_MAIN_TILT_Y
+        drawRect(brush = axisGradient(dimStops, ShineMainAxis, size, shift))
+        drawRect(brush = axisGradient(shineStops, ShineMainAxis, size, shift))
     }
 }
 
@@ -46,7 +46,7 @@ internal fun Modifier.maskedMotionShineFallback(
 
     return drawWithContent {
         val tilt = tiltState.value
-        val shift = tilt.x * HOLO_RAMP_TILT_X - tilt.y * HOLO_RAMP_TILT_Y
+        val shift = tilt.x * SHINE_MAIN_TILT_X - tilt.y * SHINE_MAIN_TILT_Y
         val layerRect = Rect(Offset.Zero, size)
 
         drawIntoCanvas { canvas ->
@@ -57,8 +57,8 @@ internal fun Modifier.maskedMotionShineFallback(
             canvas.saveLayer(layerRect, Paint())
             drawContent()
             canvas.saveLayer(layerRect, Paint().apply { blendMode = BlendMode.SrcIn })
-            drawRect(brush = axisGradient(dimStops, HoloMainAxis, size, shift))
-            drawRect(brush = axisGradient(shineStops, HoloMainAxis, size, shift))
+            drawRect(brush = axisGradient(dimStops, ShineMainAxis, size, shift))
+            drawRect(brush = axisGradient(shineStops, ShineMainAxis, size, shift))
             canvas.restore()
             canvas.restore()
         }
