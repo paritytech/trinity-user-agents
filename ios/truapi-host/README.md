@@ -155,7 +155,16 @@ already cached is refused, and the refusal is indistinguishable from the other p
 zero bytes only to declare deliberately that this host has no Asset Hub. Include this configuration update in the
 embedding app's package upgrade.
 
-Run the package tests against an iOS simulator (the xcframework has no macOS slice):
+`HostRuntimeConfig.assetHubChainGenesisHash` is required. Supply the Asset Hub
+genesis hash from the same network configuration, as 32 bytes. Product manifests
+are read from the dotNS contracts deployed there, so it is what makes a
+`trustedProducts` grant resolvable: without a usable value no manifest resolves,
+so every cross-product grant not already cached is refused, and the refusal is
+indistinguishable from the other product having granted nothing. Pass 32 zero
+bytes only to declare deliberately that this host has no Asset Hub. Include this
+configuration update in the embedding app's package upgrade.
+
+Run the package tests in their UIKit host on an iOS simulator (the xcframework has no macOS slice). The helper installs pinned XcodeGen under `target/tools`, generates the project, and selects an available simulator. CI waits for that simulator to finish booting before compiling the test host, keeping OS initialization outside the first WebKit page-ready deadline.
 
 ```bash
 # from the repo root
