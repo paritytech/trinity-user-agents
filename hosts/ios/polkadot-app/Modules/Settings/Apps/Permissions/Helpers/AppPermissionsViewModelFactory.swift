@@ -3,10 +3,7 @@ import PolkadotUI
 import Products
 
 protocol AppPermissionsViewModelMaking {
-    func createItems(
-        from grants: [ProductPermissionGrant],
-        pendingDeletionIds: Set<String>
-    ) -> [AppPermissionsViewLayout.Item]
+    func createItems(from grants: [ProductPermissionGrant]) -> [AppPermissionsViewLayout.Item]
 }
 
 final class AppPermissionsViewModelFactory {
@@ -14,17 +11,14 @@ final class AppPermissionsViewModelFactory {
 }
 
 extension AppPermissionsViewModelFactory: AppPermissionsViewModelMaking {
-    func createItems(
-        from grants: [ProductPermissionGrant],
-        pendingDeletionIds: Set<String>
-    ) -> [AppPermissionsViewLayout.Item] {
+    func createItems(from grants: [ProductPermissionGrant]) -> [AppPermissionsViewLayout.Item] {
         grants.map { grant in
-            let isOn = !pendingDeletionIds.contains(grant.identifier)
+            let display = displayInfo(for: grant.permission)
             return AppPermissionsViewLayout.Item(
                 id: grant.identifier,
-                title: grant.permission.settingsTitle,
-                description: grant.permission.permissionDescription,
-                isOn: isOn
+                title: display.title,
+                description: display.description,
+                isOn: true
             )
         }
     }
@@ -36,7 +30,12 @@ extension ProductPermission {
         switch self {
         case let .deviceCapability(capability): capabilityDescription(capability)
         case let .networkAccess(domain):
-            String(localized: .Products.permissionBodyNetworkAccess(domain: domain))
+            (
+                String(localized: .Products.appPermissionNetworkTitle),
+                String(localized: .Products.permissionBodyNetworkAccess(domain: domain))
+            )
+        case let .networkAccessBundle(domains):
+            displayInfo(for: .networkAccess(domain: domains.joined(separator: ", ")))
         case let .accountAccess(targetProductId):
             String(localized: .Products.permissionBodyAccountAccess(targetProductId: targetProductId))
         case .balanceAccess: String(localized: .Products.permissionBodyBalanceAccess)

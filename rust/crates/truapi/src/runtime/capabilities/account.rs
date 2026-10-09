@@ -283,11 +283,67 @@ impl Account for ProductRuntimeHost {
                 latest::HostProductDeviceChatError::NotConnected,
             )));
         };
-        // A session-only grant lives with the authority, so a new execution of
-        // the same product reuses it without prompting again.
-        let consent = if self.authority.chat_session_granted(&session, &calling_product_id)
-            && self
-                .permission_authorization_status(PermissionAuthorizationRequest::ChatAuthority)
+
+        let product_id = self.product_id();
+        if product_account_id.dot_ns_identifier != product_id {
+            match account_access_authorization(
+                self.platform.as_ref(),
+                &self.services.permissions,
+                &product_id,
+                &product_account_id.dot_ns_identifier,
+            )
+            .await
+            {
+                Ok(PermissionAuthorizationStatus::Authorized) => {}
+                Ok(
+                    PermissionAuthorizationStatus::Denied
+                    | PermissionAuthorizationStatus::NotDetermined,
+                ) => {
+                    return Err(CallError::Domain(HostAccountGetError::V1(
+                        v01::HostAccountGetError::Rejected,
+                    )));
+                }
+                Err(err) => {
+                    return Err(CallError::HostFailure {
+                        reason: err.to_string(),
+                    });
+                }
+            }
+        } else {
+            // Own-account resolution walks two host callbacks before the
+            // bounded SSO call: a persisted subtree read, then a confirmation.
+            // Neither had a deadline, so a host that never answered its own
+            // storage parked the request forever, with no response and no
+            // error frame (host-rust-core#954). Both are bounded by the
+            // caller's context, falling back to the same default the SSO call
+            // uses, so an unresponsive host surfaces a typed error instead.
+            let authority_cx = remote_authority_context(cx);
+            let reaches_account_holder = remote_authority_call(&authority_cx, async {
+                Ok::<_, AuthorityError>(
+                    self.authority
+                        .subtree_resolution_reaches_account_holder(
+                            &session,
+                            &product_account_id.dot_ns_identifier,
+                        )
+                        .await,
+                )
+            })
+            .await
+            .map_err(account_get_authority_error)?;
+
+            if reaches_account_holder {
+                // Own-account resolution has no access review, so a cold
+                // subtree that must reach the Account Holder is the one point
+                // a host can surface and reject before the SSO call.
+                let approved = remote_authority_call(&authority_cx, async {
+                    self.confirm_product_action(UserConfirmationReview::ProductSubtree(
+                        ProductSubtreeReview {
+                            product_id: product_account_id.dot_ns_identifier.clone(),
+                        },
+                    ))
+                    .await
+                    .map_err(|err| AuthorityError::Unavailable { reason: err.reason })
+                })
                 .await
                 .map_err(|error| CallError::HostFailure {
                     reason: error.reason,

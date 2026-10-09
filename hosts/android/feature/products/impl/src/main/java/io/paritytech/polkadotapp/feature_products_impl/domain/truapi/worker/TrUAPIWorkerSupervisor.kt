@@ -145,13 +145,11 @@ class TrUAPIWorkerSupervisor @Inject constructor(
                 chainDirectory.resolve(),
                 ignoredNavigation(),
                 ProductExecutionKind.WORKER,
-            ) { bootstrap ->
-                val install = installBootstrap(bootstrap)
-                provider.addWebViewSetup { webView ->
-                    install(webView)
-                    bridge.attachMediaView(webView)
-                }
-            }
+                onPermissionRevoked = {
+                    provider.disposeRevokedExecution()
+                    scope.launch { transitions.withLock { stop(productId) } }
+                },
+            ) { bootstrap -> provider.addWebViewSetup(installBootstrap(bootstrap)) }
             .flatMap { execution ->
                 runCatching {
                     provider.useTrUAPIPermissions(execution)

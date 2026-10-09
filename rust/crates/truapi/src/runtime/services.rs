@@ -34,8 +34,8 @@ const STATEMENT_CACHE_MAX_ENTRIES: usize = 64;
 pub struct RuntimeServices {
     /// Host platform backing all syscalls.
     pub platform: Arc<dyn Platform>,
-    /// Durable receiving survives all product connections closing.
-    pub receiving: Arc<crate::runtime::receiving::ReceivingService>,
+    /// Permission decisions and prompt cancellation shared by every execution.
+    pub(crate) permissions: Arc<crate::host_internal::permissions::PermissionAuthority>,
     /// Host identity reported to products via `System::host_info`.
     pub host_info: HostInfo,
     /// Host chat adapter, when the host serves the Chat capability. `None`
@@ -208,6 +208,7 @@ impl RuntimeServices {
                 spawner.clone(),
             )),
             platform,
+            permissions: Arc::default(),
             host_info,
             chat_platform,
             native_wallet,

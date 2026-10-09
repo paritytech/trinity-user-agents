@@ -454,7 +454,7 @@ impl ProductRuntimeHost {
     /// resolve the same two gates. Remote, identity-disclosure and
     /// account-access decisions have no OS gate and are unaffected by the
     /// status adapter.
-    fn permissions_service(&self) -> PermissionsService<'_, dyn Platform, dyn Platform> {
+    pub(crate) fn permissions_service(&self) -> PermissionsService<'_, dyn Platform, dyn Platform> {
         PermissionsService::new(
             self.platform.as_ref(),
             self.platform.as_ref(),
@@ -462,6 +462,7 @@ impl ProductRuntimeHost {
         )
         .with_status_host(self.permission_status.as_deref())
         .with_temporary_permissions(self.temporary_permissions.clone())
+        .with_authority(self.services.permissions.clone())
     }
 
 	/// Compatibility constructor used only by tests that do not exercise
@@ -884,7 +885,7 @@ impl ProductRuntimeHost {
     }
 
     /// Update a stored permission authorization status. `NotDetermined`
-    /// resets the decision so the next product request prompts again.
+    /// resets the decision to ask again without permitting stale legacy re-import.
     #[instrument(skip_all, fields(runtime.method = "permissions.set_authorization_status"))]
     pub async fn set_permission_authorization_status(
         &self,
@@ -998,20 +999,47 @@ impl ProductRuntimeHost {
     async fn identity_disclosure_authorization(
         &self,
     ) -> Result<PermissionAuthorizationStatus, String> {
-        self.permissions_service()
-            .check_or_prompt_identity_disclosure()
+        let product_id = self.product_id();
+        let request = PermissionAuthorizationRequest::IdentityDisclosure;
+        let service = self.permissions_service();
+        let scope = service.scope();
+        let revision = scope.revision();
+        let cached = service
+            .authorization_status(&request)
             .await
             .map_err(|err| format!("permission storage failed: {err:?}"))
     }
 
-    #[instrument(skip_all, fields(runtime.method = "permissions.chat_authority_authorization"))]
-    async fn chat_authority_authorization(
-        &self,
-    ) -> Result<crate::host_internal::permissions::ChatAuthorityConsent, String> {
-        self.permissions_service()
-            .check_or_prompt_chat_authority()
+        // A dismissed/unavailable confirmation has no durable user decision.
+        // Fail the current disclosure request closed but keep authorization in
+        // the ask/default state so the next request can prompt again.
+        let decision = match scope
+            .prompt(
+                revision,
+                self.platform
+                    .confirm_permission(UserConfirmationReview::IdentityDisclosure(
+                        IdentityDisclosureReview {
+                            product_id: product_id.clone(),
+                        },
+                    )),
+            )
             .await
-            .map_err(|err| format!("permission storage failed: {err:?}"))
+        {
+            Ok(decision) => decision,
+            Err(_) => return Ok(PermissionAuthorizationStatus::NotDetermined),
+        };
+        let _mutation = scope.mutation.lock().await;
+        scope.require_revision(revision).map_err(|err| err.reason)?;
+        let status = match decision {
+            PermissionDecision::AllowOnce => return Ok(PermissionAuthorizationStatus::Authorized),
+            PermissionDecision::AllowAlways => PermissionAuthorizationStatus::Authorized,
+            PermissionDecision::Deny => PermissionAuthorizationStatus::Denied,
+        };
+        service
+            .write_authorization_status(&request, status)
+            .await
+            .map_err(|err| format!("permission storage failed: {err:?}"))?;
+        Ok(status)
     }
 
     async fn classify_legacy_address_signer(
@@ -1048,41 +1076,67 @@ impl ProductRuntimeHost {
 }
 
 async fn account_access_authorization(
-	platform: &dyn Platform,
-	requesting_product_id: &ProductId,
-	target_product_id: &ProductId,
+    platform: &dyn Platform,
+    permissions: &crate::host_internal::permissions::PermissionAuthority,
+    requesting_product_id: &str,
+    target_product_id: &str,
 ) -> Result<PermissionAuthorizationStatus, AccountAccessAuthorizationError> {
-	if requesting_product_id == target_product_id ||
-		requesting_product_id.has_trusted_remote_permissions()
-	{
-		return Ok(PermissionAuthorizationStatus::Authorized);
-	}
+    if requesting_product_id == target_product_id {
+        return Ok(PermissionAuthorizationStatus::Authorized);
+    }
 
-	let target = target_product_id.bare_label();
-	let caller = requesting_product_id.bare_label();
-	let cached = crate::host_internal::permissions::account_access_status(platform, caller, target)
-		.await
-		.map_err(AccountAccessAuthorizationError::PermissionStorage)?;
-	if cached != PermissionAuthorizationStatus::NotDetermined {
-		return Ok(cached);
-	}
+    // Both sides bare-labelled, matching the grant this decision overrides and
+    // the key `user_denied_account_access` reads back. A decision filed against
+    // the full target would not be found when the grant is resolved for a
+    // subname of it.
+    let target = crate::host_internal::product_manifest::bare_product_label(target_product_id);
+    // Stored per product, not per executable, because that is the granularity a
+    // manifest grant uses: `dim2.dot`, `app.dim2.dot` and `worker.dim2.dot` are
+    // one grantee. A decision filed under the full id could be missed by the
+    // same product arriving under a subname it already owns, which would let a
+    // refused product keep a `context` grant by respelling itself. The prompt
+    // still names the id the user saw; only the slot it is filed under is the
+    // product's.
+    let caller = crate::host_internal::product_manifest::bare_product_label(requesting_product_id);
+    let scope = permissions.scope(caller);
+    let mutation = scope.mutation.lock().await;
+    let revision = scope.revision();
+    let cached = crate::host_internal::permissions::account_access_status(platform, caller, target)
+        .await
+        .map_err(AccountAccessAuthorizationError::PermissionStorage)?;
+    if cached != PermissionAuthorizationStatus::NotDetermined {
+        return Ok(cached);
+    }
+    if crate::platform::normalizes_to_trusted_remote_permissions(requesting_product_id) {
+        return Ok(PermissionAuthorizationStatus::Authorized);
+    }
 
-	let decision = platform
-		.confirm_permission(UserConfirmationReview::AccountAccess(AccountAccessReview {
-			requesting_product_id: requesting_product_id.clone(),
-			target_product_id: target_product_id.clone(),
-		}))
-		.await
-		.map_err(AccountAccessAuthorizationError::Confirmation)?;
-	let status = match decision {
-		PermissionDecision::AllowOnce => return Ok(PermissionAuthorizationStatus::Authorized),
-		PermissionDecision::AllowAlways => PermissionAuthorizationStatus::Authorized,
-		PermissionDecision::Deny => PermissionAuthorizationStatus::Denied,
-	};
-	crate::host_internal::permissions::set_account_access_status(platform, caller, target, status)
-		.await
-		.map_err(AccountAccessAuthorizationError::PermissionStorage)?;
-	Ok(status)
+    drop(mutation);
+    let decision = scope
+        .prompt(
+            revision,
+            platform.confirm_permission(UserConfirmationReview::AccountAccess(
+                AccountAccessReview {
+                    requesting_product_id: requesting_product_id.to_string(),
+                    target_product_id: target_product_id.to_string(),
+                },
+            )),
+        )
+        .await
+        .map_err(AccountAccessAuthorizationError::Confirmation)?;
+    let _mutation = scope.mutation.lock().await;
+    scope
+        .require_revision(revision)
+        .map_err(AccountAccessAuthorizationError::PermissionStorage)?;
+    let status = match decision {
+        PermissionDecision::AllowOnce => return Ok(PermissionAuthorizationStatus::Authorized),
+        PermissionDecision::AllowAlways => PermissionAuthorizationStatus::Authorized,
+        PermissionDecision::Deny => PermissionAuthorizationStatus::Denied,
+    };
+    crate::host_internal::permissions::set_account_access_status(platform, caller, target, status)
+        .await
+        .map_err(AccountAccessAuthorizationError::PermissionStorage)?;
+    Ok(status)
 }
 
 #[derive(Debug, thiserror::Error)]

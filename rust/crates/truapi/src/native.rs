@@ -46,17 +46,15 @@ pub use errors::{HostRejection, NativeCoreDatabaseError};
 pub use media::{NativeMediaCallbacks, NativeMediaError, NativeMediaEventSink};
 pub use renderer::{NativeRendererObserver, NativeRendererSubscription};
 pub use runtime::{
-	NativeAnnouncedPairing, NativePairingError, NativeProductExecution, NativeTrUApiHostRuntime,
+    NativeAnnouncedPairing, NativePairingError, NativeProductExecution, NativeTrUApiHostRuntime,
+    PermissionAuthorizationEntry,
 };
 pub use ws_bridge::{WsBridgeEndpoint, WsBridgeStartError};
 
-use parity_scale_codec::{DecodeLimit, Encode};
-use serde::Deserialize;
-use truapi::latest;
-
+use crate::PairingProposal;
 #[cfg(doc)]
 use crate::SigningHostRuntime;
-use crate::{PairingProposal, host_logic::dotns};
+use crate::host_logic::dotns;
 
 /// Classify a navigation input exactly like the core's internal navigate host
 /// call: the Pocket deeplink first, then dotNS, then `localhost`, then

@@ -74,12 +74,10 @@ class TrUAPISessionStarter @Inject constructor(
 
         val kind = if (card != null) ProductExecutionKind.WIDGET else ProductExecutionKind.APP
         return bridge
-            .attach(runtime, productId, chainDirectory.resolve(), navigation, ProductExecutionKind.APP) { bootstrap ->
-                val install = installBootstrap(bootstrap)
-                provider.addWebViewSetup { webView ->
-                    install(webView)
-                    bridge.attachMediaView(webView)
-                }
+            .attach(runtime, productId, chainDirectory.resolve(), navigation, ProductExecutionKind.APP,
+                onPermissionRevoked = { provider.disposeRevokedExecution() },
+            ) { bootstrap ->
+                provider.addWebViewSetup(installBootstrap(bootstrap))
             }
             .mapCatching { execution ->
                 provider.bindTrUAPILifecycle(bridge)

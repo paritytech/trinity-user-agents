@@ -212,14 +212,16 @@ impl crate::platform::ContactsPlatform for ContactsCallbackPlatform {
 /// Every [`crate::platform::Platform`] trait served by one execution's
 /// [`HostCallbacks`].
 pub struct CallbackPlatform {
-	/// Host callbacks this execution was opened with.
-	pub callbacks: Arc<dyn HostCallbacks>,
-	/// Events scoped to this execution.
-	pub events: Arc<NativeEventBus>,
-	/// Storage changes are product-wide rather than per-execution: a worker
-	/// and the screen share one namespace, so they subscribe and publish on
-	/// the runtime-wide bus instead of this execution's own.
-	pub storage_events: Arc<NativeEventBus>,
+    /// Host callbacks this execution was opened with.
+    pub callbacks: Arc<dyn HostCallbacks>,
+    /// Events scoped to this execution.
+    pub events: Arc<NativeEventBus>,
+    /// Storage changes are product-wide rather than per-execution: a worker
+    /// and the screen share one namespace, so they subscribe and publish on
+    /// the runtime-wide bus instead of this execution's own.
+    pub storage_events: Arc<NativeEventBus>,
+    /// Process bridge observing permission writes from every execution.
+    pub permission_callbacks: Arc<dyn HostCallbacks>,
 }
 
 impl crate::host_logic::worker::WorkerDemandObserver for CallbackPlatform {
@@ -279,7 +281,9 @@ impl Notifications for CallbackPlatform {
     }
 
     async fn activation_events(&self) -> Result<v01::NotificationActivations, v01::GenericError> {
-        self.callbacks.activation_events().await
+        self.callbacks
+            .activation_events()
+            .await
             .map(|events| v01::NotificationActivations { events })
             .map_err(v01::GenericError::from)
     }
@@ -288,7 +292,9 @@ impl Notifications for CallbackPlatform {
         &self,
         request: v01::NotificationActivationAcknowledgeRequest,
     ) -> Result<(), v01::GenericError> {
-        self.callbacks.acknowledge_activation(request.sequence).await
+        self.callbacks
+            .acknowledge_activation(request.sequence)
+            .await
             .map_err(v01::GenericError::from)
     }
 }
@@ -471,22 +477,32 @@ impl CoreStorage for CallbackPlatform {
 			.map_err(v01::GenericError::from)
 	}
 
-	async fn write_core_storage(
-		&self,
-		key: CoreStorageKey,
-		value: Vec<u8>,
-	) -> Result<(), v01::GenericError> {
-		self.callbacks
-			.core_storage_write(key.encode(), value)
-			.await
-			.map_err(v01::GenericError::from)
-	}
+    async fn write_core_storage(
+        &self,
+        key: CoreStorageKey,
+        value: Vec<u8>,
+    ) -> Result<(), v01::GenericError> {
+        self.callbacks
+            .core_storage_write(key.encode(), value)
+            .await
+            .map_err(v01::GenericError::from)?;
+        if let CoreStorageKey::PermissionAuthorization { product_id, .. } = key {
+            self.permission_callbacks
+                .permission_authorizations_changed(product_id);
+        }
+        Ok(())
+    }
 
     async fn clear_core_storage(&self, key: CoreStorageKey) -> Result<(), v01::GenericError> {
         self.callbacks
             .core_storage_clear(key.encode())
             .await
-            .map_err(v01::GenericError::from)
+            .map_err(v01::GenericError::from)?;
+        if let CoreStorageKey::PermissionAuthorization { product_id, .. } = key {
+            self.permission_callbacks
+                .permission_authorizations_changed(product_id);
+        }
+        Ok(())
     }
 
     async fn compare_exchange_core_storage(
@@ -667,8 +683,12 @@ impl LocaleHost for CallbackPlatform {
     async fn localize_timestamps(
         &self,
         request: crate::latest::HostLocaleLocalizeTimestampsRequest,
-    ) -> Result<crate::latest::HostLocaleLocalizeTimestampsResponse, crate::latest::GenericError> {
-        self.callbacks.localize_timestamps(request).await.map_err(Into::into)
+    ) -> Result<crate::latest::HostLocaleLocalizeTimestampsResponse, crate::latest::GenericError>
+    {
+        self.callbacks
+            .localize_timestamps(request)
+            .await
+            .map_err(Into::into)
     }
 }
 

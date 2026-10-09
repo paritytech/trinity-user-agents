@@ -96,6 +96,8 @@ final class MockProductExecution: TrUAPIProductExecutionProtocol, @unchecked Sen
         stopWsBridgeCallCount += 1
     }
 
+    func isClosed() -> Bool { closeCallCount > 0 }
+
     func close() {
         closeCallCount += 1
         onClose?()
@@ -134,25 +136,7 @@ final class MockProductExecution: TrUAPIProductExecutionProtocol, @unchecked Sen
         return permissionStatus
     }
 
-    func authorizeDevicePermission(_ request: HostDevicePermissionRequest) async throws -> Bool {
-        devicePermissionRequests.append(request)
-        return devicePermissionGranted
-    }
-
-    func setPermissionAuthorizationStatus(
-        request _: PermissionAuthorizationRequest,
-        status _: PermissionAuthorizationStatus
-    ) async throws {}
-
-    func notifyThemeChanged(theme: HostThemeSubscribeItem) {
-        themeChanges.append(theme)
-        themeSignal.yield()
-    }
-
-    func notifyThemeChanged(theme: HostThemeSubscribeItem) {
-        themeChanges.append(theme)
-        onThemeChanged?(theme)
-    }
+    func notifyThemeChanged(theme _: HostThemeSubscribeItem) {}
     func notifyLocaleChanged(locale _: HostLocaleSubscribeItem) {}
     func notifyStorageChanged(key _: String, value _: Data?) {}
     func notifyPreimageChanged(key _: Data, value _: Data?) {}

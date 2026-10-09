@@ -82,27 +82,69 @@ private extension ProductPermissionPromptViewFactory {
                     capability: capabilityDisplayName(capability)
                 )
             )
-            body = permission.permissionDescription
-        case .networkAccess:
-            title = String(localized: .Products.permissionTitleNetworkAccess(productId: productId))
-            body = permission.permissionDescription
-        case .accountAccess:
-            title = String(localized: .Products.permissionTitleAccountAccess(productId: productId))
-            body = permission.permissionDescription
-        case .balanceAccess,
-             .webRtcAccess,
-             .chainSubmitAccess,
-             .preimageSubmitAccess,
-             .statementSubmitAccess,
-             .userIdentityAccess:
-            title = String(localized: .Products.permissionTitleRemote(productId: productId))
-            body = permission.permissionDescription
-        case let .jamPeersAccess(genesis):
-            title = String(
-                localized: .Products.permissionTitleJamPeers(
-                    productId: productId,
-                    shortGenesis: ProductPermission.shortGenesis(genesis)
-                )
+        case let .networkAccess(domain):
+            PromptContent(
+                title: String(
+                    localized: .Products.permissionTitleNetworkAccess(
+                        productId: productId
+                    )
+                ),
+                body: String(
+                    localized: .Products.permissionBodyNetworkAccess(domain: domain)
+                ),
+                icon: makeIcon(systemName: "globe")
+            )
+        case let .networkAccessBundle(domains):
+            makeSingleContent(productId: productId, permission: .networkAccess(domain: domains.joined(separator: ", ")))
+        case let .accountAccess(targetProductId):
+            PromptContent(
+                title: String(
+                    localized: .Products.permissionTitleAccountAccess(
+                        productId: productId
+                    )
+                ),
+                body: String(
+                    localized: .Products.permissionBodyAccountAccess(
+                        targetProductId: targetProductId
+                    )
+                ),
+                icon: makeIcon(systemName: "person.crop.circle")
+            )
+        case .balanceAccess:
+            PromptContent(
+                title: String(localized: .Products.permissionTitleRemote(productId: productId)),
+                body: String(localized: .Products.permissionBodyBalanceAccess),
+                icon: makeIcon(systemName: "dollarsign.circle.fill")
+            )
+        case .webRtcAccess:
+            PromptContent(
+                title: String(localized: .Products.permissionTitleRemote(productId: productId)),
+                body: String(localized: .Products.permissionBodyWebRtc),
+                icon: makeIcon(systemName: "video.fill")
+            )
+        case .chainSubmitAccess:
+            PromptContent(
+                title: String(localized: .Products.permissionTitleRemote(productId: productId)),
+                body: String(localized: .Products.permissionBodyChainSubmit),
+                icon: makeIcon(systemName: "link")
+            )
+        case .preimageSubmitAccess:
+            PromptContent(
+                title: String(localized: .Products.permissionTitleRemote(productId: productId)),
+                body: String(localized: .Products.permissionBodyPreimageSubmit),
+                icon: makeIcon(systemName: "doc.text")
+            )
+        case .statementSubmitAccess:
+            PromptContent(
+                title: String(localized: .Products.permissionTitleRemote(productId: productId)),
+                body: String(localized: .Products.permissionBodyStatementSubmit),
+                icon: makeIcon(systemName: "text.bubble")
+            )
+        case .userIdentityAccess:
+            PromptContent(
+                title: String(localized: .Products.permissionTitleRemote(productId: productId)),
+                body: String(localized: .Products.permissionBodyUserIdentityAccess),
+                icon: makeIcon(systemName: "person.text.rectangle")
             )
             body = String(localized: .Products.permissionBodyJamPeers)
         case .chatAuthority:
@@ -126,7 +168,34 @@ private extension ProductPermissionPromptViewFactory {
     }
 
     static func permissionDescription(for permission: ProductPermission) -> String {
-        "- " + permission.permissionDescription
+        switch permission {
+        case let .networkAccess(domain):
+            "- " + String(
+                localized: .Products.permissionBodyNetworkAccess(domain: domain)
+            )
+        case let .networkAccessBundle(domains):
+            permissionDescription(for: .networkAccess(domain: domains.joined(separator: ", ")))
+        case .balanceAccess:
+            "- " + String(localized: .Products.permissionBodyBalanceAccess)
+        case .webRtcAccess:
+            "- " + String(localized: .Products.permissionBodyWebRtc)
+        case .chainSubmitAccess:
+            "- " + String(localized: .Products.permissionBodyChainSubmit)
+        case .preimageSubmitAccess:
+            "- " + String(localized: .Products.permissionBodyPreimageSubmit)
+        case .statementSubmitAccess:
+            "- " + String(localized: .Products.permissionBodyStatementSubmit)
+        case let .deviceCapability(capability):
+            "- " + capabilityDescription(capability)
+        case let .accountAccess(targetProductId):
+            "- " + String(
+                localized: .Products.permissionBodyAccountAccess(
+                    targetProductId: targetProductId
+                )
+            )
+        case .userIdentityAccess:
+            "- " + String(localized: .Products.permissionBodyUserIdentityAccess)
+        }
     }
 
     static func makeAction(

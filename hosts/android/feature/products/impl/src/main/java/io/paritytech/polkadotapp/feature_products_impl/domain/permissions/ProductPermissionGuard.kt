@@ -76,16 +76,19 @@ class RealProductPermissionGuard @Inject constructor(
             val stillNotGranted = notYetGranted.filterNot { check(productId, it) }
             if (stillNotGranted.isEmpty()) return@withLock true
 
-            when (requester.promptBatched(productId, stillNotGranted)) {
-                PermissionDecision.AllowAlways -> {
-                    stillNotGranted.forEach { repository.grant(productId, it) }
-                    true
+            repository.withPermissionRequest(productId, stillNotGranted) {
+                if (stillNotGranted.any { repository.isDenied(productId, it) }) return@withPermissionRequest false
+                when (requester.promptBatched(productId, stillNotGranted)) {
+                    PermissionDecision.AllowAlways -> {
+                        stillNotGranted.forEach { repository.grant(productId, it) }
+                        true
+                    }
+                    PermissionDecision.AllowOnce -> {
+                        stillNotGranted.forEach { repository.grantOneTime(productId, it) }
+                        true
+                    }
+                    PermissionDecision.Deny -> false
                 }
-                PermissionDecision.AllowOnce -> {
-                    stillNotGranted.forEach { repository.grantOneTime(productId, it) }
-                    true
-                }
-                PermissionDecision.Deny -> false
             }
         }
     }
@@ -105,6 +108,7 @@ class RealProductPermissionGuard @Inject constructor(
     }
 
     override suspend fun check(productId: ProductId, permission: ProductPermission): Boolean {
+        if (repository.isDenied(productId, permission)) return false
         if (repository.hasOneTimeGrant(productId, permission)) return true
 
         return when (permission) {
@@ -124,12 +128,15 @@ class RealProductPermissionGuard @Inject constructor(
         // A concurrent request may have granted this while we waited for the lock
         if (check(productId, permission)) return true
 
-        return when (permission) {
-            is RemotePermission -> remotePermissionHandler.request(productId, permission)
-            is ProductPermission.AccountAccess -> accountAccessHandler.request(productId, permission)
-            is ProductPermission.BalanceAccess -> balanceAccessHandler.request(productId, permission)
-            is ProductPermission.DeviceCapability -> deviceCapabilityHandler.request(productId, permission)
-            is ProductPermission.UserIdentityAccess -> userIdentityAccessHandler.request(productId, permission)
+        return repository.withPermissionRequest(productId, listOf(permission)) {
+            if (repository.isDenied(productId, permission)) return@withPermissionRequest false
+            when (permission) {
+                is RemotePermission -> remotePermissionHandler.request(productId, permission)
+                is ProductPermission.AccountAccess -> accountAccessHandler.request(productId, permission)
+                is ProductPermission.BalanceAccess -> balanceAccessHandler.request(productId, permission)
+                is ProductPermission.DeviceCapability -> deviceCapabilityHandler.request(productId, permission)
+                is ProductPermission.UserIdentityAccess -> userIdentityAccessHandler.request(productId, permission)
+            }
         }
     }
 }

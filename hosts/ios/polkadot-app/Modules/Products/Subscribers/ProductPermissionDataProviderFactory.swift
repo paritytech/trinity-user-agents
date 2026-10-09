@@ -5,6 +5,7 @@ import OperationExt
 import Products
 
 protocol ProductPermissionDataProviderMaking {
+    var permissionRepository: ProductPermissionRepository { get }
     func subscribePermissionGrantsSnapshot(
         for predicate: NSPredicate?,
         deliverOn queue: DispatchQueue,
@@ -16,13 +17,16 @@ protocol ProductPermissionDataProviderMaking {
 final class ProductPermissionDataProviderFactory {
     private let storageFacade: StorageFacadeProtocol
     private let logger: LoggerProtocol
+    let permissionRepository: ProductPermissionRepository
 
     init(
         storageFacade: StorageFacadeProtocol = UserDataStorageFacade.shared,
-        logger: LoggerProtocol = Logger.shared
+        logger: LoggerProtocol = Logger.shared,
+        permissionRepository: ProductPermissionRepository? = nil
     ) {
         self.storageFacade = storageFacade
         self.logger = logger
+        self.permissionRepository = permissionRepository ?? ProductPermissionRepository(storageFacade: storageFacade)
     }
 }
 

@@ -71,6 +71,7 @@ import uniffi.truapi.NativeCoinageCallbackResult
 import uniffi.truapi.AuthState
 import uniffi.truapi.HostChainSet
 import uniffi.truapi.PermissionAuthorizationRequest
+import uniffi.truapi.PermissionAuthorizationEntry
 import uniffi.truapi.PermissionAuthorizationStatus
 import uniffi.truapi.PermissionDecision
 import uniffi.truapi.UserConfirmationReview
@@ -262,6 +263,11 @@ interface HostCoreStorage {
 
     @Throws(HostRejection::class)
     suspend fun clear(key: ByteArray)
+
+    /** Enumerate existing core keys; permission settings must include historical grants. */
+    @Throws(HostRejection::class)
+    suspend fun keys(): List<ByteArray> =
+        throw HostRejection.Rejected("core storage key enumeration is unsupported")
 }
 
 /** Ids handed out by the default [HostBridge.beginOperation], distinct for the life of the process. */
@@ -331,7 +337,10 @@ interface NativeCoinageHost {
  * other TrUAPI traffic. Synchronous callbacks must return promptly. Run UI work
  * on the main thread, for example with `withContext(Dispatchers.Main) { ... }`.
  */
-interface HostBridge : NativeChatFilesHost {
+interface HostBridge {
+    /** Called on the process bridge after canonical permission decisions change. */
+    fun permissionAuthorizationsChanged(productId: String)
+
     /** Lifecycle logger. Marker is a stable slug, detail is free-form. */
     fun onCoreLog(marker: String, detail: String) {}
 
@@ -737,6 +746,10 @@ private class HostCallbackAdapter(
         runCatching { bridge.workerDemandChanged(productId, transition) }
     }
 
+    override fun permissionAuthorizationsChanged(productId: String) {
+        runCatching { bridge.permissionAuthorizationsChanged(productId) }
+    }
+
     // Infallible across the FFI for the same reason `onCoreLog` is.
     override fun devicePaired(device: PairedSsoPeer) {
         runCatching { bridge.devicePaired(device) }
@@ -836,6 +849,9 @@ private class HostCallbackAdapter(
             onCoreLog("host.permission_refresh.failed", "Permission refresh failed")
         }
     }
+
+    override suspend fun coreStorageKeys(): List<ByteArray> =
+        withHostRejection { bridge.coreStorage.keys() }
 
     override fun chainConnect(genesisHash: ByteArray): UInt? =
         withHostRejection { bridge.chainConnect(genesisHash) }
@@ -1261,6 +1277,41 @@ class TrUAPIHostRuntime @Throws(NativeRuntimeConfigException::class) constructor
 
     // Co-owns the contacts adapter for as long as the runtime holds it.
     private var contactsRetainer: NativeContactsCallbacks? = null
+
+    /** Persisted product permissions, including grants created before this process started. */
+    @Throws(HostRejection::class)
+    suspend fun permissionAuthorizations(productId: String): List<PermissionAuthorizationEntry> =
+        inner.permissionAuthorizations(productId)
+
+    /** Settings edits go through the process authority, not a live product execution. */
+    @Throws(HostRejection::class)
+    suspend fun setPermissionAuthorizationStatus(
+        productId: String,
+        request: PermissionAuthorizationRequest,
+        status: PermissionAuthorizationStatus,
+    ) = inner.setPermissionAuthorizationStatus(productId, request, status)
+
+    /** Import missing legacy decisions only. Existing canonical decisions always win. */
+    @Throws(HostRejection::class)
+    suspend fun importPermissionAuthorizations(
+        productId: String,
+        entries: List<PermissionAuthorizationEntry>,
+    ): List<PermissionAuthorizationEntry> = inner.importPermissionAuthorizations(productId, entries)
+
+    @Throws(HostRejection::class)
+    suspend fun permissionAuthorizationProducts(): List<String> = inner.permissionAuthorizationProducts()
+
+    @Throws(HostRejection::class)
+    fun permissionAuthorizationRevision(productId: String): ULong =
+        inner.permissionAuthorizationRevision(productId)
+
+    @Throws(HostRejection::class)
+    suspend fun setPermissionAuthorizationStatusIfCurrent(
+        productId: String,
+        request: PermissionAuthorizationRequest,
+        status: PermissionAuthorizationStatus,
+        revision: ULong,
+    ): Boolean = inner.setPermissionAuthorizationStatusIfCurrent(productId, request, status, revision)
 
     /**
      * Install the host's contacts adapter, which owns the contact list and
@@ -1713,47 +1764,6 @@ class TrUAPIProductExecution internal constructor(
     suspend fun authorizeRemotePermission(request: RemotePermissionRequest): Boolean =
         inner.authorizeRemotePermission(request)
 
-    /** Current core-derived Calling scope for trusted permission settings. */
-    @Throws(HostRejection::class)
-    suspend fun callingPermissionAuthorizationRequest(): PermissionAuthorizationRequest =
-        inner.callingPermissionAuthorizationRequest()
-
-    /** Re-read shared policy and fence this core's exact affected Media scope, without prompting. */
-    @Throws(HostRejection::class)
-    suspend fun refreshPermissionAuthorization(request: PermissionAuthorizationRequest) {
-        inner.refreshPermissionAuthorization(request)
-    }
-
-    /**
-     * Wait for already-enqueued cross-core permission refreshes from this runtime.
-     * Call only after a policy setter returns, outside host lifecycle/storage locks.
-     * A failed refresh has already fenced its affected core scope and is reported here.
-     */
-    @Throws(HostRejection::class)
-    suspend fun awaitCoreStorageChanges() {
-        CoreStorageAccess.awaitChanges(storageGroup)
-    }
-
-    /**
-     * Authorize one device capability the web view gates itself, using the
-     * product's saved, one-use, or prompted decision.
-     */
-    @Throws(HostRejection::class)
-    suspend fun authorizeDevicePermission(request: HostDevicePermissionRequest): Boolean =
-        inner.authorizeDevicePermission(request)
-
-    /**
-     * Update a stored permission authorization status. Passing `NotDetermined`
-     * records a fresh Ask generation so the next product request prompts again.
-     * UI callers may then await [awaitCoreStorageChanges] outside their own locks.
-     */
-    @Throws(HostRejection::class)
-    fun setPermissionAuthorizationStatus(
-        request: PermissionAuthorizationRequest,
-        status: PermissionAuthorizationStatus,
-    ) {
-        inner.setPermissionAuthorizationStatus(request, status)
-    }
 
     /** Push a host theme update to active TrUAPI theme subscriptions. */
     fun notifyThemeChanged(theme: HostThemeSubscribeItem) {
@@ -1791,6 +1801,9 @@ class TrUAPIProductExecution internal constructor(
     fun notifyChainClosed(connectionId: UInt) {
         inner.notifyChainClosed(connectionId)
     }
+
+    /** The process authority closes executions on revoke/reset, before notifying the shell. */
+    fun isClosed(): Boolean = shutDown.get() || inner.isClosed()
 
     @Synchronized
     override fun close() {

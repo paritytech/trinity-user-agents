@@ -5,6 +5,8 @@ import kotlinx.coroutines.flow.Flow
 typealias InitialValueProducer<T> = suspend () -> T
 
 interface Preferences {
+    fun keys(): Set<String>
+
     fun contains(field: String): Boolean
 
     fun putString(

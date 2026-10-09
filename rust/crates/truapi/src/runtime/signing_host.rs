@@ -1406,6 +1406,7 @@ impl ProductAuthority for SigningHost {
                         .map_err(|_| RingVrfError::NotAllowlisted)?;
                 match super::account_access_authorization(
                     self.services.platform.as_ref(),
+                    &self.services.permissions,
                     &requester,
                     &owner,
                 )
@@ -1556,6 +1557,7 @@ impl ProductAuthority for SigningHost {
         if caller != owner {
             match super::account_access_authorization(
                 self.services.platform.as_ref(),
+                &self.services.permissions,
                 &caller,
                 &owner,
             )
@@ -2353,37 +2355,26 @@ mod tests {
             resource_allocation_confirmed: true,
             ..Default::default()
         });
-        *platform
-            .resource_allocation_confirmation_gate
-            .lock()
-            .expect("gate") = Some(gate);
-        let (services, authority) = signing_runtime_with_platform(platform.clone());
-        futures::executor::block_on(async {
-            authority
-                .activate_local_session(ENTROPY.to_vec())
-                .await
-                .unwrap();
-            let runtime = product_runtime(services, authority.clone());
-            let session = authority.current_session().unwrap();
-            let first = runtime.require_statement_store_allowance(&session, None);
-            futures::pin_mut!(first);
-            assert!(first.as_mut().now_or_never().is_none());
-            runtime
-                .require_statement_store_allowance(&session, None)
-                .await
-                .unwrap();
-            release.send(()).unwrap();
-            first.await.unwrap();
-            assert_eq!(
-                runtime
-                    .permission_authorization_status(
-                        PermissionAuthorizationRequest::StatementStoreAllowance {
-                            derivation_index: None,
-                        },
-                    )
-                    .await
-                    .unwrap(),
-                PermissionAuthorizationStatus::Authorized,
+        cache_grant(&platform, "peopl.dot", r#"{"ordinary":["context"]}"#);
+        futures::executor::block_on(crate::runtime::account_access_authorization(
+            platform.as_ref(),
+            &Default::default(),
+            "ordinary.dot",
+            "peopl.dot",
+        ))
+        .expect("the stub records the declined decision");
+        let (services, _authority) =
+            signing_runtime_with_ring_resolver(platform.clone(), full_person_ring_resolver());
+        for target in ["peopl.dot", "app.peopl.dot", "worker.peopl.dot"] {
+            assert!(
+                !futures::executor::block_on(crate::runtime::product_manifest::grants_scope(
+                    &services,
+                    platform.as_ref(),
+                    "ordinary.dot",
+                    target,
+                    Granted::Context,
+                )),
+                "{target} is the refused product wearing another name"
             );
         });
     }

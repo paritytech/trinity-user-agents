@@ -23,7 +23,7 @@ import androidx.core.net.toUri
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedFactory
 import dagger.assisted.AssistedInject
-import io.novasama.substrate_sdk_android.extensions.toHexString
+import dagger.Lazy
 import io.parity.truapi.HostBridge
 import io.parity.truapi.HostCoreStorage
 import io.parity.truapi.HostStorage
@@ -46,6 +46,8 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.ProductThe
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.ThemeVariant
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.navigation.NavigationPolicy
 import io.paritytech.polkadotapp.feature_products_impl.domain.notifications.NotificationId
+import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.ProductPermissionRepository
+import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.PermissionAuthorizationChanges
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.models.DeviceCapabilityType
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.models.PermissionDecision
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.models.RemotePermissionRequest
@@ -100,7 +102,8 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
     private val pocketCardStore: PocketCardStore,
     @param:ApplicationContext private val context: Context,
     private val appLanguageProvider: AppLanguageProvider,
-    private val mediaFactory: NativeMediaBackendFactory,
+    private val permissionRepository: Lazy<ProductPermissionRepository>,
+    private val permissionChanges: PermissionAuthorizationChanges,
     @Assisted private val scope: CoroutineScope,
 ) {
     @AssistedFactory
@@ -132,6 +135,7 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
     private val cachedLanguageTag = AtomicReference(Locale.getDefault().toLanguageTag())
     private var localeJob: Job? = null
     private var localeReceiver: BroadcastReceiver? = null
+    private var permissionChangesJob: Job? = null
 
     private fun currentLocale() =
         HostLocaleSubscribeItem(cachedLanguageTag.get(), ZoneId.systemDefault().id)
@@ -154,6 +158,8 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
         navigation: NavigationPolicy,
         card: ExpandedCardFace?,
     ) = object : HostBridge {
+        // Core permission writes are reported to the process bridge, not execution bridges.
+        override fun permissionAuthorizationsChanged(productId: String) = Unit
         override val storage: HostStorage =
             EncryptedHostStorage(encryptedPreferences, callingProductId.value)
 
@@ -306,8 +312,7 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
         chains: TrUAPIChains,
         navigationPolicy: NavigationPolicy,
         kind: ProductExecutionKind,
-        chat: ChatHostBridge? = null,
-        card: ExpandedCardFace? = null,
+        onPermissionRevoked: suspend () -> Unit,
         onReadyToInject: suspend (bootstrap: String) -> Unit,
     ): Result<TrUAPIProductExecution> {
         execution?.let {
@@ -317,6 +322,7 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
         // Opening the execution is inside the Result too: it reaches the core and can be refused,
         // and the callers launch this into scopes that have no handler for a throw.
         return runCatching {
+            permissionRepository.get().getAllByProduct(productId)
             cachedChains.set(chains)
             cachedLanguageTag.set(appLanguageProvider.languageTag.first())
             val pocket = ProductPocketHostBridge(productId, pocketCardStore, scope)
@@ -342,6 +348,14 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
             observeAppTheme()
             observeAppLocale()
             observeAppLifecycle()
+            permissionChangesJob = scope.launch(Dispatchers.Main.immediate) {
+                permissionChanges.observe(productId.value).collect {
+                    if (execution === opened && opened.isClosed()) {
+                        onPermissionRevoked()
+                        stop()
+                    }
+                }
+            }
             onReadyToInject(LocalhostBridgeBootstrap.script(endpoint.port, endpoint.token))
             opened
         }.onFailure { stop() }
@@ -424,6 +438,8 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
         releaseMedia()
         val opened = execution ?: return
         execution = null
+        permissionChangesJob?.cancel()
+        permissionChangesJob = null
         localeJob?.cancel()
         localeJob = null
         localeReceiver?.let(context::unregisterReceiver)

@@ -28,6 +28,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -68,6 +69,14 @@ class MediaPermissionIntegrationTest {
             databaseDirectory = createTempDirectory("truapi").toString(),
         )
         TrUAPIHostRuntime(bridge, config).use { runtime ->
+            runBlocking {
+                for (capability in listOf(HostDevicePermissionRequest.CAMERA, HostDevicePermissionRequest.MICROPHONE)) {
+                    runtime.setPermissionAuthorizationStatus(
+                        "media.paseo", PermissionAuthorizationRequest.Device(capability),
+                        PermissionAuthorizationStatus.NOT_DETERMINED,
+                    )
+                }
+            }
             runtime.openProductExecution(bridge, ProductExecutionConfig("media.paseo", ProductExecutionKind.APP)).use { execution ->
                 for (capability in listOf(HostDevicePermissionRequest.CAMERA, HostDevicePermissionRequest.MICROPHONE)) {
                     execution.setPermissionAuthorizationStatus(PermissionAuthorizationRequest.Device(capability), PermissionAuthorizationStatus.AUTHORIZED)
@@ -104,8 +113,29 @@ class MediaPermissionIntegrationTest {
                 }
                 try {
                     assertTrue("fixture did not load", reports.ready.await(15, TimeUnit.SECONDS))
-                    instrumentation.runOnMainSync {
-                        webView.evaluateJavascript("probe().then(value => mediaReport.result(value)).catch(error => mediaReport.result(String(error)));", null)
+                    for ((capability, manifest) in listOf(
+                        HostDevicePermissionRequest.CAMERA to Manifest.permission.CAMERA,
+                        HostDevicePermissionRequest.MICROPHONE to Manifest.permission.RECORD_AUDIO,
+                    )) {
+                        bridge.events.clear()
+                        val name = if (capability == HostDevicePermissionRequest.CAMERA) "Camera" else "Microphone"
+                        bridge.decisions.add(PermissionDecision.ALLOW_ONCE)
+                        call(
+                            "window.__HOST_API_CLIENT__.client.permissions.requestDevicePermission('$name')" +
+                                ".match(value => value.granted, error => { throw error; })",
+                            "true",
+                        )
+                        call("capture('$name')", "captured")
+                        assertEquals(
+                            listOf("prompt:$capability", "native:$manifest"),
+                            bridge.events.toList(),
+                        )
+                        bridge.decisions.add(PermissionDecision.DENY)
+                        call("capture('$name')", "NotAllowedError")
+                        assertEquals(
+                            listOf("prompt:$capability", "native:$manifest", "prompt:$capability"),
+                            bridge.events.toList(),
+                        )
                     }
                     assertEquals("camera:denied,microphone:denied,display:denied,rtc:denied,fullscreen:denied",
                         reports.results.poll(15, TimeUnit.SECONDS))
@@ -118,12 +148,16 @@ class MediaPermissionIntegrationTest {
     }
 
     private class PermissionBridge : HostBridge {
+        override fun permissionAuthorizationsChanged(productId: String) = Unit
+        val decisions = LinkedBlockingQueue<PermissionDecision>()
+        val events = LinkedBlockingQueue<String>()
         override val storage: HostStorage = unused()
         override val coreStorage = object : HostCoreStorage {
             override val storageIdentifier = "media-isolation-${UUID.randomUUID()}"
             private val values = ConcurrentHashMap<List<Byte>, ByteArray>()
-            override suspend fun read(key: ByteArray): ByteArray? = values[key.toList()]?.copyOf()
-            override suspend fun write(key: ByteArray, value: ByteArray) { values[key.toList()] = value.copyOf() }
+            override suspend fun keys(): List<ByteArray> = values.keys.map { it.toByteArray() }
+            override suspend fun read(key: ByteArray): ByteArray? = values[key.toList()]
+            override suspend fun write(key: ByteArray, value: ByteArray) { values[key.toList()] = value }
             override suspend fun clear(key: ByteArray) { values.remove(key.toList()) }
         }
         override suspend fun navigateTo(url: String) = Unit

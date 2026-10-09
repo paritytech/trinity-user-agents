@@ -190,6 +190,10 @@ final class StubCoreStorage: HostCoreStorageBackend, @unchecked Sendable {
     private var store: [Data: Data] = [:]
     private let lock = NSLock()
 
+    func keys() throws -> [Data] {
+        lock.withLock { Array(store.keys) }
+    }
+
     func read(key: Data) throws -> Data? {
         lock.withLock { store[key] }
     }
@@ -203,10 +207,9 @@ final class StubCoreStorage: HostCoreStorageBackend, @unchecked Sendable {
     }
 }
 
-// Conforms to HostBridge rather than the generated HostCallbacks, so the
-// protocol extension supplies every optional callback and a new one cannot
-// leave this file behind. Only the six requirements without a default are
-// written out, plus the core log recorder.
+// Conforms to HostBridge rather than the generated HostCallbacks. Required
+// storage enumeration and permission-change callbacks are explicit fixtures;
+// optional host capabilities use the high-level protocol's defaults.
 /// A fresh directory for one runtime's core database.
 func temporaryDatabaseDirectory() throws -> String {
     let directory = FileManager.default.temporaryDirectory
@@ -224,6 +227,10 @@ final class StubHostBridge: HostBridge, @unchecked Sendable {
     private var remoteDecisions: [PermissionDecision]
     private var deviceDecisions: [PermissionDecision]
     private var deviceRequests: [HostDevicePermissionRequest] = []
+
+    func permissionAuthorizationsChanged(productId: String) {
+        logLock.withLock { logs.append("permissions changed \(productId)") }
+    }
 
     init(remoteDecisions: [PermissionDecision] = [], deviceDecisions: [PermissionDecision] = []) {
         self.remoteDecisions = remoteDecisions

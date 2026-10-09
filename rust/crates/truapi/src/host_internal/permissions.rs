@@ -30,17 +30,13 @@
 //! its set-shaped key is that domain's key, so it persists per-domain with no
 //! special case.
 //!
-//! Remote permissions have one product-scoped exception. A product whose label
-//! is listed in [`crate::platform::REMOTE_PERMISSION_TRUSTED_LABELS`] reads as
-//! authorized for ordinary remote permissions while nothing is stored, and never
-//! reaches the prompt callback. A stored decision still wins, so a denial
-//! written through the admin surface revokes the grant. Device permissions,
-//! identity disclosure, account access, Chat authority, and calling are never
-//! covered. Calling requires immutable product/network/account consent; an
-//! unscoped remote calling request always fails closed.
+//! Remote permissions, identity disclosure and account access have one exception.
+//! A product listed in [`crate::platform::REMOTE_PERMISSION_TRUSTED_LABELS`]
+//! is authorized without a prompt when no explicit denial is stored. An
+//! administrative denial overrides that default. Device permissions are never covered.
 
-use std::collections::HashMap;
-use std::sync::Arc;
+use std::collections::{HashMap, HashSet};
+use std::sync::{Arc, Weak};
 
 use parity_scale_codec::{Decode, Encode};
 use rand_core::{OsRng, RngCore};
@@ -61,27 +57,22 @@ use truapi::latest::{
 /// encoding.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
 enum StoredAuthorizationStatus {
-	/// User authorized the permission.
-	Authorized,
-	/// User denied the permission.
-	Denied,
+    /// User authorized the permission.
+    Authorized,
+    /// User denied the permission.
+    Denied,
+    /// Explicit reset: ask again, but never re-import an obsolete legacy grant.
+    NotDetermined,
 }
 
 impl From<StoredAuthorizationStatus> for PermissionAuthorizationStatus {
-	fn from(status: StoredAuthorizationStatus) -> Self {
-		match status {
-			StoredAuthorizationStatus::Authorized => PermissionAuthorizationStatus::Authorized,
-			StoredAuthorizationStatus::Denied => PermissionAuthorizationStatus::Denied,
-		}
-	}
-}
-
-impl From<bool> for StoredAuthorizationStatus {
-    fn from(granted: bool) -> Self {
-        if granted {
-            Self::Authorized
-        } else {
-            Self::Denied
+    fn from(status: StoredAuthorizationStatus) -> Self {
+        match status {
+            StoredAuthorizationStatus::Authorized => PermissionAuthorizationStatus::Authorized,
+            StoredAuthorizationStatus::Denied => PermissionAuthorizationStatus::Denied,
+            StoredAuthorizationStatus::NotDetermined => {
+                PermissionAuthorizationStatus::NotDetermined
+            }
         }
     }
 }
@@ -186,19 +177,141 @@ pub enum ChatAuthorityConsent {
     Refused,
 }
 
+/// Runtime-owned serialization and cancellation for permission decisions.
+/// Prompts never hold the mutation lock; administration can cancel them while
+/// serializing its check/write with every decision that might otherwise win late.
+#[derive(Default)]
+pub struct PermissionAuthority {
+    scopes: parking_lot::Mutex<HashMap<String, Arc<PermissionScope>>>,
+    mutation: Arc<futures::lock::Mutex<()>>,
+}
+
+impl PermissionAuthority {
+    pub(crate) fn scope(&self, product: &str) -> Arc<PermissionScope> {
+        self.scopes
+            .lock()
+            .entry(product.to_owned())
+            .or_insert_with(|| {
+                Arc::new(PermissionScope {
+                    mutation: self.mutation.clone(),
+                    state: Default::default(),
+                })
+            })
+            .clone()
+    }
+
+    fn invalidate(&self, product: &str, request: &PermissionAuthorizationRequest) {
+        use crate::host_internal::product_manifest::bare_product_label;
+        let account_access = matches!(
+            request,
+            PermissionAuthorizationRequest::AccountAccess { .. }
+        );
+        for (owner, scope) in self.scopes.lock().iter() {
+            if owner == product
+                || (account_access && bare_product_label(owner) == bare_product_label(product))
+            {
+                scope.invalidate();
+            }
+        }
+    }
+}
+
+#[derive(Default)]
+pub(crate) struct PermissionScope {
+    pub(crate) mutation: Arc<futures::lock::Mutex<()>>,
+    state: parking_lot::Mutex<PermissionScopeState>,
+}
+
+#[derive(Default)]
+struct PermissionScopeState {
+    revision: u64,
+    prompts: Vec<Weak<futures::future::AbortHandle>>,
+    temporary: Vec<Weak<TemporaryPermissions>>,
+}
+
+impl PermissionScope {
+    pub(crate) fn revision(&self) -> u64 {
+        self.state.lock().revision
+    }
+
+    pub(crate) fn require_revision(&self, revision: u64) -> Result<(), GenericError> {
+        if self.revision() == revision {
+            Ok(())
+        } else {
+            Err(GenericError {
+                reason: "permission decision was superseded".into(),
+            })
+        }
+    }
+
+    fn register(&self, permissions: &Arc<TemporaryPermissions>) {
+        let mut state = self.state.lock();
+        state.temporary.retain(|entry| entry.strong_count() != 0);
+        if !state
+            .temporary
+            .iter()
+            .any(|entry| entry.as_ptr() == Arc::as_ptr(permissions))
+        {
+            state.temporary.push(Arc::downgrade(permissions));
+        }
+    }
+
+    /// Called under `mutation`, before a host administrative write.
+    pub(crate) fn invalidate(&self) {
+        let mut state = self.state.lock();
+        state.revision = state
+            .revision
+            .checked_add(1)
+            .expect("permission revision exhausted");
+        for prompt in state.prompts.drain(..).filter_map(|entry| entry.upgrade()) {
+            prompt.abort();
+        }
+        state.temporary.retain(|entry| {
+            if let Some(permissions) = entry.upgrade() {
+                permissions.clear();
+                true
+            } else {
+                false
+            }
+        });
+    }
+
+    pub(crate) async fn prompt<T>(
+        &self,
+        revision: u64,
+        future: impl Future<Output = Result<T, GenericError>>,
+    ) -> Result<T, GenericError> {
+        let (handle, registration) = futures::future::AbortHandle::new_pair();
+        let handle = Arc::new(handle);
+        {
+            let mut state = self.state.lock();
+            if state.revision != revision {
+                return Err(GenericError {
+                    reason: "permission decision was superseded".into(),
+                });
+            }
+            state.prompts.retain(|entry| entry.strong_count() != 0);
+            state.prompts.push(Arc::downgrade(&handle));
+        }
+        futures::future::Abortable::new(future, registration)
+            .await
+            .map_err(|_| GenericError {
+                reason: "permission decision was superseded".into(),
+            })?
+    }
+}
+
 /// Permission prompts and one-use grants shared by a product execution's connections.
 #[derive(Default)]
 pub(crate) struct TemporaryPermissions {
     authorization: futures::lock::Mutex<()>,
-    /// Device grants carry the persisted generation that accepted their answer.
-    grants: std::sync::Mutex<HashMap<Vec<u8>, Option<Vec<u8>>>>,
+    grants: parking_lot::Mutex<HashSet<Vec<u8>>>,
 }
 
 impl TemporaryPermissions {
-	#[cfg(not(target_arch = "wasm32"))]
-	pub fn clear(&self) {
-		self.grants.lock().expect("temporary permissions mutex poisoned").clear();
-	}
+    pub fn clear(&self) {
+        self.grants.lock().clear();
+    }
 
     fn authorize(&self, key: &CoreStorageKey, generation: Option<&[u8]>, consume: bool) -> bool {
         let key = key.encode();
@@ -215,11 +328,8 @@ impl TemporaryPermissions {
 
     fn authorize_all(&self, keys: &[CoreStorageKey], consume: bool) -> bool {
         let keys: Vec<_> = keys.iter().map(Encode::encode).collect();
-        let mut grants = self
-            .grants
-            .lock()
-            .expect("temporary permissions mutex poisoned");
-        if !keys.iter().all(|key| grants.get(key) == Some(&None)) {
+        let mut grants = self.grants.lock();
+        if !keys.iter().all(|key| grants.contains(key)) {
             return false;
         }
         if consume {
@@ -230,25 +340,12 @@ impl TemporaryPermissions {
         true
     }
 
-	fn authorize_all(&self, keys: &[CoreStorageKey], consume: bool) -> bool {
-		let keys: Vec<_> = keys.iter().map(Encode::encode).collect();
-		let mut grants = self.grants.lock().expect("temporary permissions mutex poisoned");
-		if !keys.iter().all(|key| grants.contains(key)) {
-			return false;
-		}
-		if consume {
-			for key in keys {
-				grants.remove(&key);
-			}
-		}
-		true
-	}
+    fn revoke(&self, key: &CoreStorageKey) {
+        self.grants.lock().remove(&key.encode());
+    }
 
-    fn grant(&self, key: CoreStorageKey, generation: Option<Vec<u8>>) {
-        self.grants
-            .lock()
-            .expect("temporary permissions mutex poisoned")
-            .insert(key.encode(), generation);
+    fn grant(&self, key: CoreStorageKey) {
+        self.grants.lock().insert(key.encode());
     }
 }
 
@@ -264,33 +361,47 @@ pub struct PermissionsService<'a, S: CoreStorage + ?Sized, P: Permissions + ?Siz
     remote_auto_granted: bool,
     /// One-use grants remain local to the execution that requested them.
     temporary_permissions: Arc<TemporaryPermissions>,
+    authority: Arc<PermissionAuthority>,
 }
 
 impl<'a, S: CoreStorage + ?Sized, P: Permissions + ?Sized> PermissionsService<'a, S, P> {
-	/// Construct a service backed by the given storage + prompt callbacks.
-	///
-	/// Device grants resolve without an OS check by default. Use
-	/// [`Self::with_status_host`] on paths that enforce a device capability, so
-	/// a grant the OS has since withdrawn stops reading as usable.
-	pub fn new(storage: &'a S, prompt: &'a P, product: &'a ProductContext) -> Self {
-		Self {
-			storage,
-			prompt,
-			product,
-			status: None,
-			trusted_product: product.product_id.has_trusted_remote_permissions(),
-			temporary_permissions: Arc::default(),
-		}
-	}
+    /// Construct a service backed by the given storage + prompt callbacks.
+    ///
+    /// Device grants resolve without an OS check by default. Use
+    /// [`Self::with_status_host`] on paths that enforce a device capability, so
+    /// a grant the OS has since withdrawn stops reading as usable.
+    pub fn new(storage: &'a S, prompt: &'a P, product: &'a ProductContext) -> Self {
+        Self {
+            storage,
+            prompt,
+            product,
+            status: None,
+            trusted_product: has_trusted_remote_permissions(&product.product_id),
+            temporary_permissions: Arc::default(),
+            authority: Arc::default(),
+        }
+    }
 
 	pub fn with_temporary_permissions(mut self, permissions: Arc<TemporaryPermissions>) -> Self {
 		self.temporary_permissions = permissions;
 		self
 	}
 
-	fn product_id(&self) -> &str {
-		self.product.product_id.as_str()
-	}
+    pub fn with_authority(mut self, authority: Arc<PermissionAuthority>) -> Self {
+        authority
+            .scope(self.product_id())
+            .register(&self.temporary_permissions);
+        self.authority = authority;
+        self
+    }
+
+    pub(crate) fn scope(&self) -> Arc<PermissionScope> {
+        self.authority.scope(self.product_id())
+    }
+
+    fn product_id(&self) -> &str {
+        &self.product.product_id
+    }
 
 	/// Revalidate device capabilities against the OS state `status` reports.
 	pub fn with_status_host(mut self, status: Option<&'a dyn PermissionStatusHost>) -> Self {
@@ -356,40 +467,46 @@ impl<'a, S: CoreStorage + ?Sized, P: Permissions + ?Sized> PermissionsService<'a
         }
     }
 
-	/// Resolve a bundle against the per-domain decisions alone.
-	async fn resolve_domains(
-		&self,
-		domains: &[String],
-	) -> Result<(BundleResolution, Vec<CoreStorageKey>), GenericError> {
-		if domains.is_empty() ||
-			domains.iter().any(|domain| !is_valid_remote_domain_pattern(domain))
-		{
-			return Ok((BundleResolution::Denied, Vec::new()));
-		}
-		if self.trusted_product {
-			return Ok((BundleResolution::Authorized, Vec::new()));
-		}
-		let mut undecided = Vec::new();
-		let mut temporary_keys = Vec::new();
-		for domain in domains {
-			let (status, temporary_key) = self.effective_domain_status(domain).await?;
-			match status {
-				PermissionAuthorizationStatus::Denied => {
-					return Ok((BundleResolution::Denied, Vec::new()));
-				},
-				PermissionAuthorizationStatus::NotDetermined => undecided.push(domain.clone()),
-				PermissionAuthorizationStatus::Authorized => {},
-			}
-			if let Some(key) = temporary_key {
-				temporary_keys.push(key);
-			}
-		}
-		if undecided.is_empty() {
-			Ok((BundleResolution::Authorized, temporary_keys))
-		} else {
-			Ok((BundleResolution::Undecided(undecided), temporary_keys))
-		}
-	}
+    /// Resolve a bundle against the per-domain decisions alone.
+    async fn resolve_domains(
+        &self,
+        domains: &[String],
+    ) -> Result<(BundleResolution, Vec<CoreStorageKey>), GenericError> {
+        if domains.is_empty()
+            || domains
+                .iter()
+                .any(|domain| !is_valid_remote_domain_pattern(domain))
+        {
+            return Ok((BundleResolution::Denied, Vec::new()));
+        }
+        if self.trusted_product
+            && domains.len() > 1
+            && peek_stored(self.storage, self.bundle_key(domains)).await?
+                == Some(StoredAuthorizationStatus::Denied)
+        {
+            return Ok((BundleResolution::Denied, Vec::new()));
+        }
+        let mut undecided = Vec::new();
+        let mut temporary_keys = Vec::new();
+        for domain in domains {
+            let (status, temporary_key) = self.effective_domain_status(domain).await?;
+            match status {
+                PermissionAuthorizationStatus::Denied => {
+                    return Ok((BundleResolution::Denied, Vec::new()));
+                }
+                PermissionAuthorizationStatus::NotDetermined => undecided.push(domain.clone()),
+                PermissionAuthorizationStatus::Authorized => {}
+            }
+            if let Some(key) = temporary_key {
+                temporary_keys.push(key);
+            }
+        }
+        if undecided.is_empty() {
+            Ok((BundleResolution::Authorized, temporary_keys))
+        } else {
+            Ok((BundleResolution::Undecided(undecided), temporary_keys))
+        }
+    }
 
 	/// Key holding the answer to a bundle taken as a whole, which is where a
 	/// multi-domain denial lives. For one domain this is that domain's own key.
@@ -412,14 +529,16 @@ impl<'a, S: CoreStorage + ?Sized, P: Permissions + ?Sized> PermissionsService<'a
     ) -> Result<(PermissionAuthorizationStatus, Option<CoreStorageKey>), GenericError> {
         let blessed = BLESSED_REMOTE_DOMAINS.contains(&normalize_remote_domain(domain).as_str());
         let mut temporary_keys = Vec::new();
-        let mut fallback = if blessed {
+        let mut fallback = if blessed || self.trusted_product {
             PermissionAuthorizationStatus::Authorized
         } else {
             self.default_remote_status()
         };
         for candidate in remote_domain_candidates(domain) {
             let key = CoreStorageKey::remote_domain_authorization(self.product_id(), &candidate);
-            if let Some(stored) = peek_stored(self.storage, key.clone()).await? {
+            if let Some(stored) = peek_stored(self.storage, key.clone()).await?
+                && stored != StoredAuthorizationStatus::NotDetermined
+            {
                 fallback = stored.into();
                 break;
             }
@@ -441,8 +560,9 @@ impl<'a, S: CoreStorage + ?Sized, P: Permissions + ?Sized> PermissionsService<'a
         key: &CoreStorageKey,
         consume: bool,
     ) -> Result<PermissionAuthorizationStatus, GenericError> {
-        let raw = self.storage.read_core_storage(key.clone()).await?;
-        if let Some(stored) = raw.as_deref().and_then(decode_authorization).and_then(status_into_stored) {
+        if let Some(stored) = peek_stored(self.storage, key.clone()).await?
+            && stored != StoredAuthorizationStatus::NotDetermined
+        {
             return Ok(stored.into());
         }
         let generation = if matches!(key, CoreStorageKey::PermissionAuthorization {
@@ -459,58 +579,20 @@ impl<'a, S: CoreStorage + ?Sized, P: Permissions + ?Sized> PermissionsService<'a
         })
     }
 
-	/// Returns the current authorization status for a permission request
-	/// without prompting.
-	pub async fn authorization_status(
-		&self,
-		request: &PermissionAuthorizationRequest,
-	) -> Result<PermissionAuthorizationStatus, GenericError> {
-		if self.trusted_product &&
-			matches!(
-				request,
-				PermissionAuthorizationRequest::IdentityDisclosure |
-					PermissionAuthorizationRequest::AccountAccess { .. }
-			) {
-			return Ok(PermissionAuthorizationStatus::Authorized);
-		}
-		match request {
-			PermissionAuthorizationRequest::Device(permission) => {
-				self.peek_device(permission).await
-			},
-			PermissionAuthorizationRequest::Remote(request) => self.peek_remote(request).await,
-			PermissionAuthorizationRequest::IdentityDisclosure => {
-				authorization_status(
-					self.storage,
-					CoreStorageKey::identity_disclosure_authorization(self.product_id()),
-				)
-				.await
-			},
-			PermissionAuthorizationRequest::AccountAccess { target_product_id } => {
-				authorization_status(
-					self.storage,
-					CoreStorageKey::account_access_authorization(
-						self.product_id(),
-						target_product_id,
-					),
-				)
-				.await
-			},
-			PermissionAuthorizationRequest::CrossProductSignature { target_product_id, kind } => {
-				// An id that names no product owns no account, so nothing was approved for it.
-				let approved = target_product_id.parse::<ProductId>().is_ok_and(|target| {
-					self.temporary_permissions.authorize(
-						&cross_product_signature_key(&self.product.product_id, &target, *kind),
-						false,
-					)
-				});
-				Ok(if approved {
-					PermissionAuthorizationStatus::Authorized
-				} else {
-					PermissionAuthorizationStatus::NotDetermined
-				})
-			},
-		}
-	}
+    async fn cached_remote_authorization(
+        &self,
+        key: &CoreStorageKey,
+        consume: bool,
+    ) -> Result<PermissionAuthorizationStatus, GenericError> {
+        let status = self.cached_authorization(key, consume).await?;
+        Ok(
+            if self.trusted_product && status == PermissionAuthorizationStatus::NotDetermined {
+                PermissionAuthorizationStatus::Authorized
+            } else {
+                status
+            },
+        )
+    }
 
 	/// Returns the current authorization statuses for permission requests
 	/// without prompting. Results follow the same order as `requests`.
@@ -531,27 +613,29 @@ impl<'a, S: CoreStorage + ?Sized, P: Permissions + ?Sized> PermissionsService<'a
         &self,
         request: &PermissionAuthorizationRequest,
     ) -> Result<PermissionAuthorizationStatus, GenericError> {
+        let scope = self.scope();
+        let _mutation = scope.mutation.lock().await;
         match request {
             PermissionAuthorizationRequest::Device(permission) => {
                 self.peek_device(permission).await
             }
             PermissionAuthorizationRequest::Remote(request) => self.peek_remote(request).await,
-            PermissionAuthorizationRequest::IdentityDisclosure => {
-                authorization_status(
+            PermissionAuthorizationRequest::IdentityDisclosure
+            | PermissionAuthorizationRequest::AccountAccess { .. } => {
+                let status = authorization_status(
                     self.storage,
-                    CoreStorageKey::identity_disclosure_authorization(self.product_id()),
+                    authorization_key(self.product_id(), request),
                 )
-                .await
-            }
-            PermissionAuthorizationRequest::AccountAccess { target_product_id } => {
-                authorization_status(
-                    self.storage,
-                    CoreStorageKey::account_access_authorization(
-                        self.product_id(),
-                        target_product_id,
-                    ),
+                .await?;
+                Ok(
+                    if self.trusted_product
+                        && status == PermissionAuthorizationStatus::NotDetermined
+                    {
+                        PermissionAuthorizationStatus::Authorized
+                    } else {
+                        status
+                    },
                 )
-                .await
             }
             PermissionAuthorizationRequest::ChatAuthority => {
                 authorization_status(
@@ -585,11 +669,79 @@ impl<'a, S: CoreStorage + ?Sized, P: Permissions + ?Sized> PermissionsService<'a
 
     /// Update the stored authorization status for a permission request.
     ///
-    /// Setting `NotDetermined` stamps a fresh Ask for Calling/Device, or clears
-    /// other scopes, so the next product request prompts again.
-    /// Unscoped remote calling grants are rejected; calling consent must name
-    /// the authenticated network and authority-derived account.
+    /// `NotDetermined` restores the default and retains a legacy-import tombstone.
     pub async fn set_authorization_status(
+        &self,
+        request: &PermissionAuthorizationRequest,
+        status: PermissionAuthorizationStatus,
+    ) -> Result<(), GenericError> {
+        let scope = self.scope();
+        let _mutation = scope.mutation.lock().await;
+        self.authority.invalidate(self.product_id(), request);
+        self.write_authorization_status(request, status).await
+    }
+
+    /// Edit one canonical settings row without broadening a bundle denial.
+    pub(crate) async fn set_canonical_authorization_status(
+        &self,
+        request: &PermissionAuthorizationRequest,
+        status: PermissionAuthorizationStatus,
+    ) -> Result<(), GenericError> {
+        let scope = self.scope();
+        let _mutation = scope.mutation.lock().await;
+        self.authority.invalidate(self.product_id(), request);
+        set_authorization_status(
+            self.storage,
+            authorization_key(self.product_id(), request),
+            status,
+        )
+        .await
+    }
+
+    pub(crate) async fn commit_if_current(
+        &self,
+        request: &PermissionAuthorizationRequest,
+        status: PermissionAuthorizationStatus,
+        revision: u64,
+    ) -> Result<bool, GenericError> {
+        let scope = self.scope();
+        let _mutation = scope.mutation.lock().await;
+        if scope.revision() != revision {
+            return Ok(false);
+        }
+        if status != PermissionAuthorizationStatus::Authorized {
+            self.authority.invalidate(self.product_id(), request);
+        }
+        set_authorization_status(
+            self.storage,
+            authorization_key(self.product_id(), request),
+            status,
+        )
+        .await?;
+        Ok(true)
+    }
+
+    pub(crate) async fn import_authorization_status(
+        &self,
+        request: &PermissionAuthorizationRequest,
+        status: PermissionAuthorizationStatus,
+    ) -> Result<(), GenericError> {
+        let scope = self.scope();
+        let _mutation = scope.mutation.lock().await;
+        let key = authorization_key(self.product_id(), request);
+        if stored_authorization_status(self.storage, key.clone())
+            .await?
+            .is_some()
+        {
+            return Ok(());
+        }
+        self.authority.invalidate(self.product_id(), request);
+        set_authorization_status(self.storage, key, status).await?;
+        Ok(())
+    }
+
+    /// Caller holds the shared mutation lock. Used by imports and fenced prompts.
+    pub(crate) async fn write_authorization_status(
         &self,
         request: &PermissionAuthorizationRequest,
         status: PermissionAuthorizationStatus,
@@ -629,7 +781,12 @@ impl<'a, S: CoreStorage + ?Sized, P: Permissions + ?Sized> PermissionsService<'a
                 CoreStorageKey::identity_disclosure_authorization(self.product_id())
             }
             PermissionAuthorizationRequest::AccountAccess { target_product_id } => {
-                CoreStorageKey::account_access_authorization(self.product_id(), target_product_id)
+                authorization_key(
+                    self.product_id(),
+                    &PermissionAuthorizationRequest::AccountAccess {
+                        target_product_id: target_product_id.clone(),
+                    },
+                )
             }
             PermissionAuthorizationRequest::ChatAuthority => {
                 CoreStorageKey::chat_authority_authorization(self.product_id())
@@ -826,6 +983,10 @@ impl<'a, S: CoreStorage + ?Sized, P: Permissions + ?Sized> PermissionsService<'a
         Fut: core::future::Future<Output = Result<PermissionAuthorizationStatus, GenericError>>,
     {
         let _guard = self.temporary_permissions.authorization.lock().await;
+        let scope = self.scope();
+        let mutation = scope.mutation.lock().await;
+        let revision = scope.revision();
+        let key = CoreStorageKey::device_permission_authorization(self.product_id(), &permission);
         if self.os_refuses(permission).await {
             return Ok(PermissionAuthorizationStatus::Denied);
         }
@@ -834,19 +995,23 @@ impl<'a, S: CoreStorage + ?Sized, P: Permissions + ?Sized> PermissionsService<'a
             PermissionAuthorizationStatus::NotDetermined => {}
             decided => return Ok(decided),
         }
-        let request = PermissionAuthorizationRequest::Device(permission);
-        let snapshot = self.authorization_snapshot(&request).await?;
-        if snapshot.status != PermissionAuthorizationStatus::NotDetermined {
-            return Ok(snapshot.status);
-        }
-        let decision = match self.prompt.device_permission(self.product, permission).await {
+        // Only a genuine user authorization is persisted. A prompt-callback
+        // error is transient (dismissed UI, unavailable UI, IPC timeout), not
+        // a denial, so leave the authorization ask/default.
+        drop(mutation);
+        let authorization = match scope
+            .prompt(
+                revision,
+                self.prompt.device_permission(self.product, permission),
+            )
+            .await
+        {
             Ok(decision) => decision,
             Err(_) => return Ok(PermissionAuthorizationStatus::NotDetermined),
         };
-        if self.os_refuses(permission).await {
-            return Ok(PermissionAuthorizationStatus::Denied);
-        }
-        commit(snapshot, decision).await
+        let _mutation = scope.mutation.lock().await;
+        scope.require_revision(revision)?;
+        self.record_decision(key, authorization, consume).await
     }
 
     /// Persist a durable answer or reserve a one-use grant against the displayed generation.
@@ -925,9 +1090,9 @@ impl<'a, S: CoreStorage + ?Sized, P: Permissions + ?Sized> PermissionsService<'a
         consume: bool,
     ) -> Result<PermissionAuthorizationStatus, GenericError> {
         let _guard = self.temporary_permissions.authorization.lock().await;
-        if matches!(request.permission, RemotePermission::Calling) {
-            return Ok(PermissionAuthorizationStatus::Denied);
-        }
+        let scope = self.scope();
+        let mutation = scope.mutation.lock().await;
+        let revision = scope.revision();
         let Some(domains) = requested_domains(&request).map(<[String]>::to_vec) else {
             let key = CoreStorageKey::remote_permission_authorization(self.product_id(), &request);
             match self.cached_remote_authorization(&key, consume).await? {
@@ -936,10 +1101,19 @@ impl<'a, S: CoreStorage + ?Sized, P: Permissions + ?Sized> PermissionsService<'a
             }
             // See `check_or_prompt_device`: persist only a genuine user decision;
             // transient callback errors leave the authorization ask/default.
-            let authorization = match self.prompt.remote_permission(self.product, request).await {
+            drop(mutation);
+            let authorization = match scope
+                .prompt(
+                    revision,
+                    self.prompt.remote_permission(self.product, request),
+                )
+                .await
+            {
                 Ok(decision) => decision,
                 Err(_) => return Ok(PermissionAuthorizationStatus::NotDetermined),
             };
+            let _mutation = scope.mutation.lock().await;
+            scope.require_revision(revision)?;
             return self.record_decision(key, authorization, consume).await;
         };
 
@@ -961,21 +1135,28 @@ impl<'a, S: CoreStorage + ?Sized, P: Permissions + ?Sized> PermissionsService<'a
         };
         // A refusal of this exact set is already an answer to this exact prompt.
         let bundle_key = self.bundle_key(&undecided);
-        if let Some(cached) = peek_stored(self.storage, bundle_key.clone()).await? {
-            return Ok(match cached {
-                StoredAuthorizationStatus::Authorized => authorize(),
-                StoredAuthorizationStatus::Denied => PermissionAuthorizationStatus::Denied,
-            });
+        match peek_stored(self.storage, bundle_key.clone()).await? {
+            Some(StoredAuthorizationStatus::Authorized) => return Ok(authorize()),
+            Some(StoredAuthorizationStatus::Denied) => {
+                return Ok(PermissionAuthorizationStatus::Denied);
+            }
+            Some(StoredAuthorizationStatus::NotDetermined) | None => {}
         }
 
-        let authorization = match self
-            .prompt
-            .remote_permission(self.product, remote_bundle_request(&undecided))
+        drop(mutation);
+        let authorization = match scope
+            .prompt(
+                revision,
+                self.prompt
+                    .remote_permission(self.product, remote_bundle_request(&undecided)),
+            )
             .await
         {
             Ok(decision) => decision,
             Err(_) => return Ok(PermissionAuthorizationStatus::NotDetermined),
         };
+        let _mutation = scope.mutation.lock().await;
+        scope.require_revision(revision)?;
         match authorization {
             // Each granted domain is independently reachable afterwards, and
             // enforcement only ever looks one host up, so a grant fans out.
@@ -1050,7 +1231,7 @@ pub async fn account_access_status<S: CoreStorage + ?Sized>(
 }
 
 /// Store a decision on `caller_id` reaching `target_product_id`'s account.
-/// `NotDetermined` clears it.
+/// `NotDetermined` resets it while retaining a legacy-import tombstone.
 pub async fn set_account_access_status<S: CoreStorage + ?Sized>(
 	storage: &S,
 	caller_id: &str,
@@ -1063,6 +1244,50 @@ pub async fn set_account_access_status<S: CoreStorage + ?Sized>(
 		status,
 	)
 	.await
+}
+
+/// Canonical key for host administration, matching the product-call paths.
+pub(crate) fn authorization_key(
+    product: &str,
+    request: &PermissionAuthorizationRequest,
+) -> CoreStorageKey {
+    use crate::host_internal::product_manifest::bare_product_label;
+    match request {
+        PermissionAuthorizationRequest::Device(permission) => {
+            CoreStorageKey::device_permission_authorization(product, permission)
+        }
+        PermissionAuthorizationRequest::Remote(remote) => {
+            CoreStorageKey::remote_permission_authorization(product, remote)
+        }
+        PermissionAuthorizationRequest::IdentityDisclosure => {
+            CoreStorageKey::identity_disclosure_authorization(product)
+        }
+        PermissionAuthorizationRequest::AccountAccess { target_product_id } => {
+            CoreStorageKey::account_access_authorization(
+                bare_product_label(product),
+                bare_product_label(target_product_id),
+            )
+        }
+    }
+}
+
+pub(crate) async fn stored_authorization_status<S: CoreStorage + ?Sized>(
+    storage: &S,
+    key: CoreStorageKey,
+) -> Result<Option<PermissionAuthorizationStatus>, GenericError> {
+    let Some(raw) = storage.read_core_storage(key).await? else {
+        return Ok(None);
+    };
+    let mut input = raw.as_slice();
+    let status = StoredAuthorizationStatus::decode(&mut input).map_err(|_| GenericError {
+        reason: "invalid stored permission decision".into(),
+    })?;
+    if !input.is_empty() {
+        return Err(GenericError {
+            reason: "trailing stored permission decision bytes".into(),
+        });
+    }
+    Ok(Some(status.into()))
 }
 
 async fn authorization_status<S: CoreStorage + ?Sized>(
@@ -1090,20 +1315,17 @@ async fn set_authorization_status<S: CoreStorage + ?Sized>(
 	key: CoreStorageKey,
 	status: PermissionAuthorizationStatus,
 ) -> Result<(), GenericError> {
-    match status_into_stored(status) {
-        Some(stored) => storage.write_core_storage(key.clone(), stored.encode()).await?,
-        None => storage.clear_core_storage(key.clone()).await?,
-    }
-    storage.core_storage_changed(key);
-    Ok(())
+    storage
+        .write_core_storage(key, status_into_stored(status).encode())
+        .await
 }
 
-fn status_into_stored(status: PermissionAuthorizationStatus) -> Option<StoredAuthorizationStatus> {
-	match status {
-		PermissionAuthorizationStatus::NotDetermined => None,
-		PermissionAuthorizationStatus::Denied => Some(StoredAuthorizationStatus::Denied),
-		PermissionAuthorizationStatus::Authorized => Some(StoredAuthorizationStatus::Authorized),
-	}
+fn status_into_stored(status: PermissionAuthorizationStatus) -> StoredAuthorizationStatus {
+    match status {
+        PermissionAuthorizationStatus::NotDetermined => StoredAuthorizationStatus::NotDetermined,
+        PermissionAuthorizationStatus::Denied => StoredAuthorizationStatus::Denied,
+        PermissionAuthorizationStatus::Authorized => StoredAuthorizationStatus::Authorized,
+    }
 }
 
 #[cfg(test)]
@@ -2374,7 +2596,7 @@ mod tests {
     }
 
     #[test]
-    fn a_stored_denial_outranks_a_trusted_product_grant() {
+    fn a_trusted_product_honours_explicit_remote_revocation() {
         let storage = MemStorage::default();
         let prompt = ScriptedPrompt::new(vec![], vec![]);
         let service = trusted_service(&storage, &prompt);
@@ -2402,7 +2624,7 @@ mod tests {
     }
 
     #[test]
-    fn a_wildcard_denial_revokes_every_domain_for_a_trusted_product() {
+    fn a_trusted_product_honours_explicit_wildcard_revocation() {
         let storage = MemStorage::default();
         let prompt = ScriptedPrompt::new(vec![], vec![]);
         let service = trusted_service(&storage, &prompt);
@@ -2418,7 +2640,7 @@ mod tests {
                 futures::executor::block_on(service.peek_remote(&remote_domains(&[domain])))
                     .unwrap(),
                 PermissionAuthorizationStatus::Denied,
-                "the wildcard denial must be how a trusted product's domain access is revoked"
+                "an explicit user denial outranks the automatic trusted default"
             );
         }
     }
@@ -2543,26 +2765,24 @@ mod tests {
     }
 
     #[test]
-    fn a_trusted_product_does_not_bypass_sensitive_permissions() {
-        let storage = MemStorage::default();
+    fn a_trusted_product_cannot_ignore_unreadable_revocation_state() {
+        let storage = FailingStorage;
         let prompt = ScriptedPrompt::new(vec![], vec![]);
-        let service = trusted_service(&storage, &prompt);
-
+        let service = PermissionsService::new(&storage, &prompt, &PEOPL);
+        let status = |request| futures::executor::block_on(service.authorization_status(&request));
         for request in [
+            PermissionAuthorizationRequest::Remote(remote(RemotePermission::ChainSubmit)),
             PermissionAuthorizationRequest::IdentityDisclosure,
             PermissionAuthorizationRequest::AccountAccess {
                 target_product_id: "other.dot".to_string(),
             },
-            PermissionAuthorizationRequest::ChatAuthority,
-            PermissionAuthorizationRequest::Calling {
-                network: [1; 32],
-                account: [2; 32],
-            },
+            PermissionAuthorizationRequest::Device(HostDevicePermissionRequest::Camera),
         ] {
             assert_eq!(
-                futures::executor::block_on(service.authorization_status(&request)).unwrap(),
-                PermissionAuthorizationStatus::NotDetermined,
-                "{request:?} is outside the remote-permission whitelist"
+                status(request),
+                Err(GenericError {
+                    reason: "read failed".to_string()
+                })
             );
         }
     }

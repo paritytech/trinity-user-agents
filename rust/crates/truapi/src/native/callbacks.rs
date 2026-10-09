@@ -12,26 +12,6 @@ use super::errors::HostRejection;
 #[cfg(doc)]
 use crate::platform::CoreStorageKey;
 
-/// Host-private native Coinage response. It may contain bearer memo material.
-#[derive(Clone, uniffi::Record)]
-pub struct NativeCoinageCallbackResult {
-    /// Typed result, including private memo material when preparing a payment.
-    pub response: NativeCoinageResponse,
-}
-
-/// Optional process-wide native custody, installed only at runtime construction.
-/// Absence selects built-in Rust custody. A registered wallet's failure or
-/// unavailability never changes that dependency or permits fallback.
-#[uniffi::export(rust, foreign)]
-#[async_trait::async_trait]
-pub trait NativeCoinageCallbacks: Send + Sync {
-    /// Host-private wallet operation; bearer material must never reach a product.
-    async fn native_coinage(
-        &self,
-        request: NativeCoinageRequest,
-    ) -> Result<NativeCoinageCallbackResult, HostRejection>;
-}
-
 /// Callback surface that iOS and Android implement.
 ///
 /// Threading contract: every callback executes on the shared bridge
@@ -180,6 +160,14 @@ pub trait HostCallbacks: Send + Sync {
     /// store and exact product, including the writer. Return immediately without
     /// waiting for or reentering a core.
     fn core_storage_changed(&self, key: Vec<u8>);
+
+    /// Enumerate encoded keys in the existing core store. Hosts must report
+    /// unavailable enumeration as an error, never as an empty permission list.
+    async fn core_storage_keys(&self) -> Result<Vec<Vec<u8>>, HostRejection>;
+
+    /// A canonical decision changed. Refresh permission settings and invalidate
+    /// legacy one-use decisions for this product. Called on the process bridge.
+    fn permission_authorizations_changed(&self, product_id: String);
 
     /// Open a JSON-RPC connection for a chain. Return a host-assigned
     /// connection id, or `None` when unsupported.

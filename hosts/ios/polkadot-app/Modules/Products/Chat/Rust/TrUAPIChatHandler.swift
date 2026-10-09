@@ -48,14 +48,10 @@ actor TrUAPIChatHandler: ChatRuntimeProtocol {
     private let renderStartupWindow: Duration
     private let logger: LoggerProtocol
 
-    /// How often a cell asks again while the product is still coming up. The
-    /// worker's own refusals are waited out by ``renderWhenConnected``; this
-    /// one covers the window before there is a worker to ask at all.
-    private static let renderRetryInterval = Duration.milliseconds(25)
-
-    /// What this session holds of the product's worker request, so dispose
-    /// gives back exactly what start asked for and never more.
-    private var request = WorkerRequest.none
+    private var engine: JSEngineProtocol?
+    private var engineMonitor: JSEngineMonitor?
+    private var revocationObserver: ProductExecutionRevocationObserver?
+    private var moduleBridge: JSESModuleBridge?
     private var roomsForwardingTask: Task<Void, Never>?
     private var started = false
     private var disposed = false
@@ -185,6 +181,7 @@ actor TrUAPIChatHandler: ChatRuntimeProtocol {
         // Flipped before the first suspension: any start resuming after this
         // point observes it and unwinds.
         disposed = true
+        revocationObserver = nil
 
         roomsForwardingTask?.cancel()
         roomsForwardingTask = nil
@@ -219,6 +216,9 @@ private extension TrUAPIChatHandler {
             throw CancellationError()
         }
         executionModel = model
+        revocationObserver = ProductExecutionRevocationObserver(execution: model.execution) { [weak self] in
+            await self?.dispose()
+        }
         startRoomsForwarding(chatMessaging: chatSurface, execution: model.execution)
 
         let bootstrapScript = try model.startBridge()
@@ -291,7 +291,7 @@ private extension TrUAPIChatHandler {
     }
 
     func checkNotDisposed() throws {
-        guard !disposed else { throw CancellationError() }
+        guard !disposed, executionModel?.execution.isClosed() != true else { throw CancellationError() }
     }
 
     /// A persisted message can decode before the product attaches. `ProductMessageDecoder`

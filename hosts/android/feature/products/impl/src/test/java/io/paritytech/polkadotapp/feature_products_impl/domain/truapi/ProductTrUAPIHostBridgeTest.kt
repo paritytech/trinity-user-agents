@@ -1,12 +1,9 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.truapi
 
 import android.content.Context
-import io.parity.truapi.HostBridge
-import uniffi.truapi.AccountAccessReview
-import uniffi.truapi.HostRejection
-import uniffi.truapi.PermissionDecision
-import uniffi.truapi.ProfileDisclosureReview
-import uniffi.truapi.UserConfirmationReview
+import dagger.Lazy
+import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.PermissionAuthorizationChanges
+import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.ProductPermissionRepository
 import io.paritytech.polkadotapp.feature_settings_api.domain.language.AppLanguageProvider
 import kotlinx.coroutines.flow.flowOf
 import uniffi.truapi.ProductExecutionKind
@@ -58,10 +55,8 @@ class ProductTrUAPIHostBridgeTest {
         appLanguageProvider = object : AppLanguageProvider {
             override val languageTag = flowOf("en-US")
         },
-        mediaFactory = mock(io.paritytech.polkadotapp.tools_media_connection_impl.nativeMedia.NativeMediaBackendFactory::class.java).also {
-            org.mockito.Mockito.`when`(it.create("game.dot"))
-                .thenReturn(mock(io.paritytech.polkadotapp.tools_media_connection_impl.nativeMedia.NativeMediaBackend::class.java))
-        },
+        permissionRepository = Lazy { mock(ProductPermissionRepository::class.java) },
+        permissionChanges = PermissionAuthorizationChanges(),
         scope = CoroutineScope(StandardTestDispatcher(testScheduler)),
     )
 
@@ -73,6 +68,7 @@ class ProductTrUAPIHostBridgeTest {
             chains = EMPTY_CHAINS,
             navigationPolicy = NavigationPolicy.DeeplinkNavigation(onDeeplinkNavigation = {}),
             kind = ProductExecutionKind.APP,
+            onPermissionRevoked = {},
             onReadyToInject = {},
         )
 

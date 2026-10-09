@@ -23,6 +23,7 @@ actor SPARustRuntime {
 
     private var engine: JSEngineProtocol?
     private var engineMonitor: JSEngineMonitor?
+    private var revocationObserver: ProductExecutionRevocationObserver?
     private var started = false
     private var disposed = false
 
@@ -58,6 +59,9 @@ extension SPARustRuntime: SPARuntimeProtocol {
         // matching teardown; a post-dispose start must not run at all.
         guard !started, !disposed else { throw CancellationError() }
         started = true
+        revocationObserver = ProductExecutionRevocationObserver(execution: executionModel.execution) { [weak self] in
+            await self?.dispose()
+        }
 
         let initialURL: URL =
             switch configuration.contentSource {
@@ -120,6 +124,7 @@ extension SPARustRuntime: SPARuntimeProtocol {
         // Flipped before the first suspension: any start resuming after this
         // point observes it and unwinds.
         disposed = true
+        revocationObserver = nil
 
         engineMonitor?.stop()
         engineMonitor = nil
@@ -164,6 +169,6 @@ private extension SPARustRuntime {
     }
 
     func checkNotDisposed() throws {
-        guard !disposed else { throw CancellationError() }
+        guard !disposed, !executionModel.execution.isClosed() else { throw CancellationError() }
     }
 }
