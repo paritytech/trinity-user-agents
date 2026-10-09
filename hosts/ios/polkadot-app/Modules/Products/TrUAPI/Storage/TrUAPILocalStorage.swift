@@ -74,13 +74,6 @@ final class TrUAPILocalStorage: TrUAPILocalStoring, @unchecked Sendable {
         TrUAPILocalStorage(keyPrefix: coreKeyPrefix, defaults: defaults, storageDomain: storageDomain)
     }
 
-    func keys() -> [String] {
-        let prefix = "\(keyPrefix)."
-        return defaults.dictionaryRepresentation().keys.compactMap { key in
-            key.hasPrefix(prefix) ? String(key.dropFirst(prefix.count)) : nil
-        }
-    }
-
     func read(key: String) throws -> Data? {
         guard let value = defaults.object(forKey: "\(readPrefix(key)).\(key)") else { return nil }
         guard let data = value as? Data else { throw StorageFailure.invalidValue }
