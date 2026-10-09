@@ -2734,6 +2734,20 @@ mod tests {
     }
 
     #[test]
+    fn trusted_products_still_require_profile_disclosure() {
+        let storage = MemStorage::default();
+        let prompt = ScriptedPrompt::new(vec![], vec![]);
+        let service = trusted_service(&storage, &prompt);
+        assert_eq!(
+            futures::executor::block_on(
+                service.authorization_status(&PermissionAuthorizationRequest::ProfileDisclosure)
+            )
+            .unwrap(),
+            PermissionAuthorizationStatus::NotDetermined
+        );
+    }
+
+    #[test]
     fn administration_cancels_pending_profile_disclosure() {
         futures::executor::block_on(async {
             let storage = MemStorage::default();
