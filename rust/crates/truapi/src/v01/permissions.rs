@@ -52,8 +52,9 @@ pub enum HostDevicePermissionRequest {
 
 /// One remote-operation permission requested by the product (RFC 0002).
 ///
-/// `ChainSubmit`, `PreimageSubmit`, and `StatementSubmit` are also triggered
-/// implicitly by the corresponding business calls when not yet granted.
+/// `ChainSubmit`, `PreimageSubmit`, `StatementSubmit` and `JamPeers` are also
+/// triggered implicitly by the corresponding business calls when not yet
+/// granted (`JamPeerTransport::dial` for `JamPeers`).
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode, Display)]
 #[cfg_attr(
     all(feature = "runtime", not(target_arch = "wasm32")),
@@ -89,6 +90,25 @@ pub enum RemotePermission {
     /// Submitting statements on behalf of the user via `remote_statement_store_submit`.
     #[display("submit statements")]
     StatementSubmit,
+    /// Peer access over JAMNP-S QUIC/WebTransport, authorized for the full
+    /// genesis hash through the `JamPeerTransport` service.
+    ///
+    /// The app names endpoints and pinned keys. Native QUIC negotiates the
+    /// genesis-derived ALPN; WebTransport negotiates HTTP/3. Neither proves
+    /// chain membership. The guest must verify chain data itself. The grant
+    /// carries no host account, signing or submission authority and does not
+    /// restrict which framed protocol messages the guest sends.
+    #[display(
+        "connections to JAM network 0x{:02x}{:02x}{:02x}{:02x}…",
+        genesis[0],
+        genesis[1],
+        genesis[2],
+        genesis[3]
+    )]
+    JamPeers {
+        /// Genesis header hash under which peer access is authorized.
+        genesis: [u8; 32],
+    },
 }
 
 /// remote-permission request (RFC 0002).

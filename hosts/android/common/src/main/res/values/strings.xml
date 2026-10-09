@@ -904,12 +904,15 @@ I’m attaching PDF with more information and details regarding the Tattoo Stenc
     <string name="product_permission_statement_submit_subtitle">Statements will be published to the statement store. %1$s</string>
     <string name="product_permission_preimage_submit_title">%1$s would like to submit preimages</string>
     <string name="product_permission_preimage_submit_subtitle">Preimages will be uploaded to the bulletin chain. %1$s</string>
+    <string name="product_permission_jam_peers_title">%1$s would like to connect to JAM network %2$s</string>
+    <string name="product_permission_jam_peers_subtitle">Send and receive messages with peers selected by this app, with no access to your accounts or signing keys. %1$s</string>
     <string name="product_permission_batched_title">%1$s Would Like Access to:</string>
     <string name="product_permission_network_label">Access %1$s</string>
     <string name="product_permission_webrtc_label">Use WebRTC</string>
     <string name="product_permission_chain_submit_label">Submit transactions</string>
     <string name="product_permission_statement_submit_label">Submit statements</string>
     <string name="product_permission_preimage_submit_label">Submit preimages</string>
+    <string name="product_permission_jam_peers_label">Connect to JAM network %1$s</string>
     <string name="product_permission_allow_always_all">Allow always all</string>
     <string name="product_permission_allow_once_all">Allow once all</string>
     <string name="product_permission_deny_all">Deny all</string>
@@ -1363,6 +1366,7 @@ I’m attaching PDF with more information and details regarding the Tattoo Stenc
     <string name="product_permission_type_chain_submit">Chain transactions</string>
     <string name="product_permission_type_statement_submit">Statement submission</string>
     <string name="product_permission_type_preimage_submit">Preimage submission</string>
+    <string name="product_permission_type_jam_peers">JAM network peers</string>
     <string name="product_permission_type_remote">Remote permission</string>
 
     <string name="notification_channel_name_chat">Chat messages</string>

@@ -52,6 +52,21 @@ sealed interface ProductPermission {
             override val typeName: String get() = TYPE_NAME
             override val key: String get() = ""
         }
+
+        /** Stored per network; [genesis] is the lowercase `0x`-prefixed genesis hash. */
+        data class JamPeersAccess(
+            val genesis: String,
+        ) : RemotePermission {
+            override val typeName: String get() = TYPE_NAME
+            override val key: String get() = genesis
+
+            /** `0x` plus the first 8 hex digits, as shown in prompts and the permissions list. */
+            val shortGenesis: String get() = genesis.take(10) + "…"
+
+            companion object {
+                const val TYPE_NAME = "jam_peers"
+            }
+        }
     }
 
     data class DeviceCapability(
@@ -100,6 +115,7 @@ sealed interface ProductPermission {
                 RemotePermission.ChainSubmitAccess.TYPE_NAME -> RemotePermission.ChainSubmitAccess
                 RemotePermission.StatementSubmitAccess.TYPE_NAME -> RemotePermission.StatementSubmitAccess
                 RemotePermission.PreimageSubmitAccess.TYPE_NAME -> RemotePermission.PreimageSubmitAccess
+                RemotePermission.JamPeersAccess.TYPE_NAME -> RemotePermission.JamPeersAccess(key)
                 else -> error("Unknown permission type: $typeName")
             }
         }

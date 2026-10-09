@@ -8,6 +8,7 @@ pub mod contacts;
 pub mod entropy;
 pub mod expanded_card;
 pub mod game;
+pub mod jam_peer_transport;
 pub mod local_storage;
 pub mod locale;
 pub mod notifications;
@@ -32,6 +33,7 @@ pub use contacts::Contacts;
 pub use entropy::Entropy;
 pub use expanded_card::ExpandedCard;
 pub use game::Game;
+pub use jam_peer_transport::JamPeerTransport;
 pub use local_storage::LocalStorage;
 pub use locale::Locale;
 pub use notifications::Notifications;
@@ -56,6 +58,7 @@ pub trait TrUApi:
     + CoinPayment
     + Contacts
     + Entropy
+    + JamPeerTransport
     + ExpandedCard
     + Game
     + LocalStorage
@@ -85,6 +88,7 @@ impl<T> TrUApi for T where
         + CoinPayment
         + Contacts
         + Entropy
+        + JamPeerTransport
         + ExpandedCard
         + Game
         + LocalStorage

@@ -87,6 +87,11 @@ runtime = [
     "dep:base64",
     "dep:rand",
     "dep:libc",
+    "dep:quinn",
+    "dep:rcgen",
+    "dep:ring",
+    "dep:rustls",
+    "dep:x509-parser",
     "dep:rusqlite",
     "dep:async-sqlite",
     "dep:rusqlite_migration",
@@ -148,6 +153,12 @@ uniffi = { workspace = true, optional = true }
 subxt = { workspace = true, features = ["native"], optional = true }
 subxt-rpcs = { workspace = true, features = ["jsonrpsee", "native"], optional = true }
 base64 = { workspace = true, optional = true }
+# JAMNP-S QUIC is native-only; browsers dial WebTransport in JavaScript.
+quinn = { version = "0.11", default-features = false, features = ["runtime-tokio", "rustls-ring"], optional = true }
+rcgen = { version = "0.14", default-features = false, features = ["crypto", "ring"], optional = true }
+ring = { version = "0.17", optional = true }
+rustls = { version = "0.23", default-features = false, features = ["std", "ring"], optional = true }
+x509-parser = { version = "0.17", optional = true }
 rusqlite = { workspace = true, features = ["bundled", "hooks"], optional = true }
 async-sqlite = { workspace = true, features = ["bundled"], optional = true }
 rusqlite_migration = { workspace = true, optional = true }
@@ -189,6 +200,14 @@ required-features = ["runtime"]
 
 [[test]]
 name = "signing_host_mock_platform"
+required-features = ["mock"]
+
+[[test]]
+name = "jam_peer_transport_contract"
+required-features = ["runtime"]
+
+[[test]]
+name = "live_jam_test_instance"
 required-features = ["mock"]
 
 [target.'cfg(target_arch = "wasm32")'.dev-dependencies]

@@ -232,6 +232,17 @@
         }
       }
     },
+    "app.permission.jamPeers.title": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "JAM network peers"
+          }
+        }
+      }
+    },
     "app.permission.network.title": {
       "extractionState": "manual",
       "localizations": {
@@ -492,6 +503,17 @@
           "stringUnit": {
             "state": "translated",
             "value": "Chain submission access is required to broadcast transactions."
+          }
+        }
+      }
+    },
+    "permission.body.jamPeers": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Send and receive messages with peers selected by this app, with no access to your accounts or signing keys."
           }
         }
       }
@@ -760,6 +782,17 @@
         }
       }
     },
+    "permission.label.jamPeers": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Connect to JAM network %1$(genesis)@"
+          }
+        }
+      }
+    },
     "permission.title.accountAccess": {
       "extractionState": "manual",
       "localizations": {
@@ -778,6 +811,17 @@
           "stringUnit": {
             "state": "translated",
             "value": "%1$(productId)@ would like to access %2$(capability)@"
+          }
+        }
+      }
+    },
+    "permission.title.jamPeers": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$(productId)@ would like to connect to JAM network %2$(shortGenesis)@"
           }
         }
       }

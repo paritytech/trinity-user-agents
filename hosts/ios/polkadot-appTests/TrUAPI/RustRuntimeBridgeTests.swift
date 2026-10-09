@@ -267,6 +267,24 @@ struct RustRuntimeBridgeTests {
         #expect(guard_.requestedBatchedPermissions == [.webRtcAccess])
     }
 
+    /// `remotePermission`: JamPeers asks for access keyed by its genesis as
+    /// lowercase `0x` hex, so each network is granted separately.
+    @Test func remotePermissionJamPeers() async throws {
+        let guard_ = MockPermissionGuard()
+        let bridge = makeBridge(permissionGuard: guard_)
+        let genesis = Data([0x10, 0xC1, 0x23, 0xF0] + [UInt8](repeating: 0xAB, count: 28))
+
+        let result = try await bridge.remotePermission(
+            product: testProduct,
+            request: .jamPeers(genesis: genesis)
+        )
+
+        #expect(result == .allowAlways)
+        #expect(guard_.requestedBatchedPermissions == [
+            .jamPeersAccess(genesis: "0x10c123f0" + String(repeating: "ab", count: 28))
+        ])
+    }
+
     // MARK: pushNotification
 
     /// `pushNotification` maps text/deeplink/scheduledAt onto the scheduler

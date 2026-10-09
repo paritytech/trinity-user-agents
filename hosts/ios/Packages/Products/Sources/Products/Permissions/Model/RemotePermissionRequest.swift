@@ -7,6 +7,9 @@ public enum RemotePermissionRequest: Equatable, Sendable {
     case chainSubmit
     case preimageSubmit
     case statementSubmit
+    /// Peer messaging access to the JAM network whose genesis header hash is
+    /// `genesis` (lowercase `0x`-prefixed hex).
+    case jamPeers(genesis: String)
 
     /// Converts to domain-level permissions used by the permission guard.
     /// `Remote` expands into one `networkAccess` per domain (lowercased).
@@ -22,6 +25,8 @@ public enum RemotePermissionRequest: Equatable, Sendable {
             [.preimageSubmitAccess]
         case .statementSubmit:
             [.statementSubmitAccess]
+        case let .jamPeers(genesis):
+            [.jamPeersAccess(genesis: genesis)]
         }
     }
 }

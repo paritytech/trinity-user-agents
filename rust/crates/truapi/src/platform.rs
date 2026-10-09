@@ -2664,6 +2664,14 @@ mod tests {
         let account_access =
             CoreStorageKey::account_access_authorization("product.dot", "target.dot");
         let other_target = CoreStorageKey::account_access_authorization("product.dot", "other.dot");
+        let jam_peers = |product_id: &str, genesis: [u8; 32]| {
+            CoreStorageKey::remote_permission_authorization(
+                product_id,
+                &RemotePermissionRequest {
+                    permission: RemotePermission::JamPeers { genesis },
+                },
+            )
+        };
 
         assert_ne!(camera, other_product);
         assert_ne!(camera, remote);
@@ -2672,6 +2680,16 @@ mod tests {
         assert_ne!(identity, other_product_identity);
         assert_ne!(account_access, other_target);
         assert_ne!(account_access, camera);
+        // A JAM peer decision is kept per product and per genesis.
+        assert_ne!(jam_peers("product.dot", [0x35; 32]), remote);
+        assert_ne!(
+            jam_peers("product.dot", [0x35; 32]),
+            jam_peers("product.dot", [0x36; 32])
+        );
+        assert_ne!(
+            jam_peers("product.dot", [0x35; 32]),
+            jam_peers("other.dot", [0x35; 32])
+        );
     }
 
     #[test]

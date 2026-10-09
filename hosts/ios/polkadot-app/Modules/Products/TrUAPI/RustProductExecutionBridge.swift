@@ -273,6 +273,7 @@ extension RemotePermission {
         case .chainSubmit: .chainSubmit
         case .preimageSubmit: .preimageSubmit
         case .statementSubmit: .statementSubmit
+        case let .jamPeers(genesis): .jamPeers(genesis: genesis.toHex(includePrefix: true))
         }
     }
 }

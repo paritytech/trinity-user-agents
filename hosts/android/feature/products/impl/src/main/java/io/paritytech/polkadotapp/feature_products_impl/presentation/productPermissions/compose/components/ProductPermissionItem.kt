@@ -65,12 +65,18 @@ private fun ProductPermission.displayName(): String {
         ProductPermission.RemotePermission.ChainSubmitAccess -> stringResource(RCommon.string.product_permission_type_chain_submit)
         ProductPermission.RemotePermission.StatementSubmitAccess -> stringResource(RCommon.string.product_permission_type_statement_submit)
         ProductPermission.RemotePermission.PreimageSubmitAccess -> stringResource(RCommon.string.product_permission_type_preimage_submit)
+        is ProductPermission.RemotePermission.JamPeersAccess -> stringResource(RCommon.string.product_permission_jam_peers_label, shortGenesis)
     }
 }
 
 @Composable
 private fun ProductPermission.displayDescription(): String {
-    return stringResource(descriptionRes())
+    val description = stringResource(descriptionRes())
+    return if (this is ProductPermission.RemotePermission.JamPeersAccess) {
+        "$description\n$genesis"
+    } else {
+        description
+    }
 }
 
 @StringRes
@@ -93,6 +99,7 @@ private fun ProductPermission.descriptionRes(): Int = when (this) {
     is ProductPermission.BalanceAccess -> RCommon.string.product_permission_type_balance_access_description
     is ProductPermission.UserIdentityAccess -> RCommon.string.product_permission_type_user_identity_access_description
     is ProductPermission.RemotePermission.NetworkAccess -> RCommon.string.product_permission_type_network_access
+    is ProductPermission.RemotePermission.JamPeersAccess -> RCommon.string.product_permission_type_jam_peers
     is ProductPermission.RemotePermission.NetworkAccessSet -> RCommon.string.product_permission_type_network_access
     ProductPermission.RemotePermission.WebRtcAccess,
     ProductPermission.RemotePermission.ChainSubmitAccess,

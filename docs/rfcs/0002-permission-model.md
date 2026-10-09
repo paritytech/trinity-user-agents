@@ -154,7 +154,12 @@ enum RemotePermission {
   PreimageSubmit,
   // Submit statements to the statement store via
   // remote_statement_store_submit.
-  StatementSubmit
+  StatementSubmit,
+  // Bidirectional JAMNP-S QUIC/WebTransport peer messaging via
+  // jam_peer_transport_dial. The product names endpoints and peer keys;
+  // every byte received is untrusted. Decided per product and full genesis,
+  // without granting account access or signing authority.
+  JamPeers { genesis: [u8; 32] }
 }
 ```
 
@@ -253,6 +258,7 @@ The following business methods gate on a specific permission and MUST internally
 | `remote_chain_transaction_broadcast` | `RemotePermission::ChainSubmit`           |
 | `remote_preimage_submit`             | `RemotePermission::PreimageSubmit`        |
 | `remote_statement_store_submit`      | `RemotePermission::StatementSubmit`       |
+| `jam_peer_transport_dial`            | `RemotePermission::JamPeers { genesis }`  |
 | `host_navigate_to`                   | `DevicePermission::OpenUrl`               |
 | `send_push_notification`             | `DevicePermission::Notifications`         |
 
@@ -296,7 +302,8 @@ enum RemotePermission {
   WebRTC,
   ChainSubmit,
   PreimageSubmit,
-  StatementSubmit
+  StatementSubmit,
+  JamPeers { genesis: [u8; 32] }
 }
 
 // Single-permission device request (unchanged semantics, updated type name)
@@ -343,7 +350,7 @@ This RFC introduces breaking changes:
 
 3. **New `DevicePermission` variants**: `NFC`, `Clipboard`, `OpenUrl`, and `Biometrics` are new enum variants appended after the existing four. Older hosts that receive an unrecognized variant SHOULD return `false` (permission not granted) rather than an error, to allow graceful degradation.
 
-4. **New `RemotePermission` variants**: `PreimageSubmit` and `StatementSubmit` are new variants. Older hosts that receive an unrecognized variant in a batch SHOULD treat it as denied and return `false`.
+4. **New `RemotePermission` variants**: `PreimageSubmit`, `StatementSubmit` and `JamPeers` are new variants, appended so earlier indices are unchanged. Older hosts that receive an unrecognized variant in a batch SHOULD treat it as denied and return `false`.
 
 Migration is straightforward for implementors following semantic versioning: bump the major version, update type names, and wrap single-permission calls in a `vec![...]`.
 
