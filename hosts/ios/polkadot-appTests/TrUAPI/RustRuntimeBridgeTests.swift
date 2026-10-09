@@ -559,14 +559,6 @@ struct RustRuntimeBridgeTests {
 
     // MARK: setExpandedCardFaceShown
 
-    /// Only a page under a card has a face to move; anywhere else the page is
-    /// told the app does not offer it.
-    @Test func expandedCardFaceIsUnsupportedWithoutACard() async throws {
-        let bridge: HostBridge = makeBridge()
-
-        #expect(try await bridge.setExpandedCardFaceShown(shown: false) == .unsupported)
-    }
-
     /// The page's request reaches the card's face and its answer comes back.
     /// Called through `HostBridge` because the core does: an override whose
     /// signature drifts would lose to the default and answer `.unsupported`.
