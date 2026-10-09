@@ -5,6 +5,8 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import io.paritytech.polkadotapp.common.presentation.clipboard.ClipboardService
 import io.paritytech.polkadotapp.common.presentation.screens.BaseViewModel
 import io.paritytech.polkadotapp.common.utils.OneShotEventChannel
+import io.paritytech.polkadotapp.common.utils.disable
+import io.paritytech.polkadotapp.common.utils.enable
 import io.paritytech.polkadotapp.common.utils.flowOf
 import io.paritytech.polkadotapp.common.utils.launchUnit
 import io.paritytech.polkadotapp.common.utils.shareInBackground
@@ -24,8 +26,10 @@ import io.paritytech.polkadotapp.feature_usernames_api.presentation.filterAvaila
 import io.paritytech.polkadotapp.feature_wallet_api.presentation.enterAmount.SendEnterAmountPayload
 import io.paritytech.polkadotapp.feature_wallet_api.presentation.enterAmount.TransferMethodPayload
 import io.paritytech.polkadotapp.feature_wallet_impl.PocketRouter
+import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.WithdrawUnavailablePresentationError
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.scanAddressQr.ScanAddressQrResultPayload
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.sendPayment.domain.SendPaymentInteractor
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
@@ -33,10 +37,6 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
-import io.paritytech.polkadotapp.common.utils.disable
-import io.paritytech.polkadotapp.common.utils.enable
-import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.WithdrawUnavailablePresentationError
-import kotlinx.coroutines.flow.MutableStateFlow
 import javax.inject.Inject
 import io.paritytech.polkadotapp.common.R as RCommon
 

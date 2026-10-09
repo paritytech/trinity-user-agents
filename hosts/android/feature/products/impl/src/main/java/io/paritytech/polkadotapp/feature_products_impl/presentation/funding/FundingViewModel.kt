@@ -1,10 +1,10 @@
 package io.paritytech.polkadotapp.feature_products_impl.presentation.funding
 
 import dagger.hilt.android.lifecycle.HiltViewModel
+import io.paritytech.polkadotapp.common.presentation.clipboard.ClipboardService
 import io.paritytech.polkadotapp.common.presentation.loading.LoadingState
 import io.paritytech.polkadotapp.common.presentation.loading.asLoaded
 import io.paritytech.polkadotapp.common.presentation.screens.BaseViewModel
-import io.paritytech.polkadotapp.common.presentation.clipboard.ClipboardService
 import io.paritytech.polkadotapp.common.utils.launchUnit
 import io.paritytech.polkadotapp.common.utils.logFailure
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingOverlayOutcome
@@ -14,10 +14,10 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingKey
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingOverlayContext
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingOverlayContexts
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingProviderBrand
+import io.paritytech.polkadotapp.feature_products_impl.domain.funding.applying
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.isOpen
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.isPending
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.quote
-import io.paritytech.polkadotapp.feature_products_impl.domain.funding.applying
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.toCore
 import io.paritytech.polkadotapp.feature_products_impl.presentation.productBotManagement.ProductsRouter
 import kotlinx.coroutines.Job

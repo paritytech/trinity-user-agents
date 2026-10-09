@@ -40,9 +40,9 @@ import io.paritytech.polkadotapp.database.dao.PocketCardDao
 import io.paritytech.polkadotapp.database.dao.ProcessedChatMessageDao
 import io.paritytech.polkadotapp.database.dao.ProductDao
 import io.paritytech.polkadotapp.database.dao.ProductFundingOperationDao
+import io.paritytech.polkadotapp.database.dao.ProductFundingRecordDao
 import io.paritytech.polkadotapp.database.dao.ProductIntegrationDao
 import io.paritytech.polkadotapp.database.dao.ProductPermissionGrantDao
-import io.paritytech.polkadotapp.database.dao.ProductFundingRecordDao
 import io.paritytech.polkadotapp.database.dao.ProductTopUpDao
 import io.paritytech.polkadotapp.database.dao.RecyclerVoucherDao
 import io.paritytech.polkadotapp.database.dao.RemovedChatDao
@@ -126,10 +126,10 @@ import io.paritytech.polkadotapp.database.model.PocketCardFaceLocal
 import io.paritytech.polkadotapp.database.model.PocketCardLocal
 import io.paritytech.polkadotapp.database.model.ProcessedChatMessageLocal
 import io.paritytech.polkadotapp.database.model.ProductFundingOperationLocal
+import io.paritytech.polkadotapp.database.model.ProductFundingRecordLocal
 import io.paritytech.polkadotapp.database.model.ProductIntegrationLocal
 import io.paritytech.polkadotapp.database.model.ProductLocal
 import io.paritytech.polkadotapp.database.model.ProductPermissionGrantLocal
-import io.paritytech.polkadotapp.database.model.ProductFundingRecordLocal
 import io.paritytech.polkadotapp.database.model.ProductTopUpLocal
 import io.paritytech.polkadotapp.database.model.RecyclerVoucherLocal
 import io.paritytech.polkadotapp.database.model.RemovedChatLocal
