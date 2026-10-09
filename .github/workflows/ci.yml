@@ -462,6 +462,9 @@ jobs:
           set -euo pipefail
           simulator="$(node --input-type=module -e 'import { selectSimulator } from "./scripts/lib/ios-simulator.mjs"; console.log(selectSimulator().udid)')"
           echo "TRUAPI_TEST_SIMULATOR=$simulator" >> "$GITHUB_ENV"
+          # Finish simulator boot before compilation and the first WebKit test;
+          # the page-ready deadline must not compete with OS initialization.
+          xcrun simctl bootstatus "$simulator" -b
           probe="$RUNNER_TEMP/tag-probe"
           mkdir -p "$probe/ios/truapi-host/Binaries" "$probe/ios/truapi-provider/Binaries"
           cp -R ios/truapi-host/Binaries/truapi_server.xcframework "$probe/ios/truapi-host/Binaries/"

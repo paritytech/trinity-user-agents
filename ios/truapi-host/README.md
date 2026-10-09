@@ -156,7 +156,9 @@ zero bytes only to declare deliberately that this host has no Asset Hub. Include
 embedding app's package upgrade.
 
 Run the package tests in their UIKit host on an iOS simulator (the xcframework has no macOS slice). The helper installs
-pinned XcodeGen under `.agent/tools`, generates the project, and selects an available simulator:
+pinned XcodeGen under `target/tools`, generates the project, and selects an available simulator. CI waits for that
+simulator to finish booting before compiling the test host, keeping OS initialization outside the first WebKit
+page-ready deadline.
 
 ```bash
 # from the repo root
