@@ -113,15 +113,18 @@ jobs:
           profile: pixel_5
           disable-animations: true
           disable-linux-hw-accel: false
-          # Check the installed emulator's KVM support before launching, and
-          # require acceleration even if its own automatic fallback changes.
-          pre-emulator-launch-script: $ANDROID_HOME/emulator/emulator -accel-check
+          # Build before booting: a cold app/JNI build must not compete with the
+          # emulator for memory. Keep the same bounded Gradle settings in both
+          # invocations so connected tests reuse the assembled APKs.
+          pre-emulator-launch-script: |
+            "$ANDROID_HOME/emulator/emulator" -accel-check
+            ./gradlew :bindings:truapi-host:assembleDebugAndroidTest :app:assembleGpDebug :app:assembleGpDebugAndroidTest --no-daemon --max-workers=2 -Dorg.gradle.jvmargs=-Xmx4g -Pkotlin.compiler.execution.strategy=in-process
           emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -accel on
           working-directory: hosts/android
           # App flavours do not select the bindings library's tests. Run those
           # explicitly so canonical permission administration is exercised
           # through the actual Android native library, not only JVM mocks.
-          script: ./gradlew :bindings:truapi-host:connectedDebugAndroidTest :app:connectedGpDebugAndroidTest --no-daemon
+          script: ./gradlew :bindings:truapi-host:connectedDebugAndroidTest :app:connectedGpDebugAndroidTest --no-daemon --max-workers=2 -Dorg.gradle.jvmargs=-Xmx4g -Pkotlin.compiler.execution.strategy=in-process
 
       # The report says which test failed; the job status only says one did.
       - name: Upload the test report
