@@ -66,7 +66,7 @@ private extension FundingProgressView {
                 } else {
                     .upcoming
                 }
-            return FundingStepBar.Step(title: FundingStepBar.title(step.step), state: state)
+            return FundingStepBar.Step(title: FundingStepBar.title(step.step, direction: model.direction), state: state)
         }
     }
 
@@ -296,14 +296,20 @@ struct FundingStepBar: View {
 
     private static let size: CGFloat = 28
 
-    static func title(_ step: FundingStep) -> String {
-        switch step {
+    /// A step's name: a withdrawal's read as the money leaves, reaches the
+    /// provider, is prepared and paid out.
+    static func title(_ step: FundingStep, direction: FundingDirection) -> String {
+        let out = direction == .out
+        return switch step {
         case .started: String(localized: .Funding.progressStepStarted)
-        case .payment: String(localized: .Funding.progressStepPayment)
+        case .payment:
+            out ? String(localized: .Funding.progressStepSending) : String(localized: .Funding.progressStepPayment)
         case .approved: String(localized: .Funding.progressStepApproved)
-        case .conversion: String(localized: .Funding.progressStepConversion)
+        case .conversion:
+            out ? String(localized: .Funding.progressStepPreparing) : String(localized: .Funding.progressStepConversion)
         case .added: String(localized: .Funding.progressStepAdded)
-        case .sent: String(localized: .Funding.progressStepSent)
+        case .sent: String(localized: .Funding.progressStepReceived)
+        case .payout: String(localized: .Funding.progressStepPayout)
         }
     }
 

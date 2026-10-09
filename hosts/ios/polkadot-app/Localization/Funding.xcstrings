@@ -1266,6 +1266,17 @@
         }
       }
     },
+    "failure.declined" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Payment declined"
+          }
+        }
+      }
+    },
     "failure.refunded" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -1387,13 +1398,46 @@
         }
       }
     },
-    "progress.stepSent" : {
+    "progress.stepSending" : {
       "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Sent"
+            "value" : "Sending"
+          }
+        }
+      }
+    },
+    "progress.stepReceived" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Received"
+          }
+        }
+      }
+    },
+    "progress.stepPreparing" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Preparing"
+          }
+        }
+      }
+    },
+    "progress.stepPayout" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Payout"
           }
         }
       }

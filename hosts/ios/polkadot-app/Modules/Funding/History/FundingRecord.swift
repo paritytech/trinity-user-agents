@@ -28,7 +28,8 @@ struct FundingRecord: Identifiable, Equatable {
     /// screen can show it once the core has dropped the quote.
     let paidAmount: U128?
     let paidAsset: String?
-    /// The crypto network the value moved on, when the provider named one.
+    /// The crypto network the value moved on: the one the provider named for
+    /// the deposit, or the one the quote was asked for.
     let paidNetwork: String?
     let outcome: Outcome
     let payout: Payout?
@@ -67,7 +68,7 @@ extension FundingRecord {
             session.direction == .in ? choice.quote.sendAmount : choice.quote.receiveAmount
         }
         paidAsset = session.choice?.asset
-        paidNetwork = progress?.deposit.flatMap(\.network)
+        paidNetwork = progress?.deposit.flatMap(\.network) ?? session.choice?.network
         outcome = settled.outcome
         payout = progress?.payout.map(Payout.init)
         transactionId = progress?.transactionId
@@ -123,6 +124,7 @@ extension FundingFailure {
         case .providerTimeout: "providerTimeout"
         case .cancelled: "cancelled"
         case .refunded: "refunded"
+        case .declined: "declined"
         case let .other(code, _): code
         }
     }
@@ -132,7 +134,8 @@ extension FundingFailure {
     init(code: String, message: String?) {
         let named: [FundingFailure] = [
             .regionUnavailable, .verificationRequired, .verificationRefused, .belowMinimum, .aboveMaximum,
-            .insufficientBalance, .expired, .wrongAssetOrChain, .providerTimeout, .cancelled, .refunded
+            .insufficientBalance, .expired, .wrongAssetOrChain, .providerTimeout, .cancelled, .refunded,
+            .declined
         ]
         self = named.first { $0.code == code } ?? .other(code: code, message: message ?? "")
     }

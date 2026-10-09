@@ -24,7 +24,7 @@ struct FundingEndedView: View {
             ScrollView {
                 VStack(spacing: DSSpacings.medium) {
                     headline
-                    if !ended.succeeded {
+                    if !ended.succeeded || ended.waitingAt != nil {
                         stepCard
                     }
                     rows
@@ -91,13 +91,15 @@ private extension FundingEndedView {
                 .padding(.vertical, DSSpacings.medium)
                 .background(.bgSurfaceMain, in: RoundedRectangle(cornerRadius: DSRadii.large))
 
-            Text(verbatim: note)
-                .typography(.bodySmall)
-                .foregroundStyle(.fgSecondary)
-                .multilineTextAlignment(.center)
-                .frame(maxWidth: .infinity)
-                .padding(.horizontal, DSSpacings.medium)
-                .padding(.vertical, DSSpacings.smallIncreased)
+            if !note.isEmpty {
+                Text(verbatim: note)
+                    .typography(.bodySmall)
+                    .foregroundStyle(.fgSecondary)
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: .infinity)
+                    .padding(.horizontal, DSSpacings.medium)
+                    .padding(.vertical, DSSpacings.smallIncreased)
+            }
         }
         .background(.bgSurfaceNested, in: RoundedRectangle(cornerRadius: DSRadii.large))
     }
@@ -201,33 +203,42 @@ private extension FundingEndedView {
 
 private extension FundingEndedView {
     var steps: [FundingStepBar.Step] {
+        if let waitingAt = ended.waitingAt {
+            return ended.steps.enumerated().map { index, step in
+                let state: FundingStepBar.State =
+                    index < waitingAt ? .done : index == waitingAt ? .current(isAmber: false) : .upcoming
+                return FundingStepBar.Step(title: title(step), state: state)
+            }
+        }
         let stoppedAt = ended.stoppedAt ?? ended.steps.count
         return ended.steps.enumerated().map { index, step in
             if index < stoppedAt {
-                FundingStepBar.Step(title: FundingStepBar.title(step), state: .done)
+                FundingStepBar.Step(title: title(step), state: .done)
             } else if index == stoppedAt {
                 FundingStepBar.Step(title: stoppedTitle(step), state: .failed)
             } else {
-                FundingStepBar.Step(title: FundingStepBar.title(step), state: .upcoming)
+                FundingStepBar.Step(title: title(step), state: .upcoming)
             }
         }
+    }
+
+    func title(_ step: FundingStep) -> String {
+        FundingStepBar.title(step, direction: ended.direction)
     }
 
     /// The failed step, named for what went wrong on it.
     func stoppedTitle(_ step: FundingStep) -> String {
         switch ended.outcome {
         case .succeeded:
-            return FundingStepBar.title(step)
+            return title(step)
         case .payoutFailed:
             return String(localized: .Funding.activityPayoutFailed)
         case .failed(.refunded):
             return String(localized: .Funding.activityRefunded)
         case .failed:
-            guard step == .payment else { return FundingStepBar.title(step) }
+            guard step == .payment else { return title(step) }
             if ended.direction == .out { return String(localized: .Funding.endedStepSendingFailed) }
-            if ended.isDeclined, ended.record.rail == .bank {
-                return String(localized: .Funding.endedStepPaymentDeclined)
-            }
+            if ended.isDeclined { return String(localized: .Funding.endedStepPaymentDeclined) }
             return String(localized: .Funding.endedStepPaymentFailed)
         }
     }

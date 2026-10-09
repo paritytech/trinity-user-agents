@@ -16,6 +16,7 @@ extension FundingFailure {
         case .providerTimeout: String(localized: .Funding.failureProviderTimeout)
         case .cancelled: String(localized: .Funding.failureCancelled)
         case .refunded: String(localized: .Funding.failureRefunded)
+        case .declined: String(localized: .Funding.failureDeclined)
         case let .other(_, message):
             message.isEmpty ? String(localized: .Funding.failureUnknown) : message
         }

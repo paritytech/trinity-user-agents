@@ -91,37 +91,47 @@ extension FundingEndedSession {
     }
 
     /// The step the session stopped on: the first one a failed session did
-    /// not reach, or the last one when the payout failed.
+    /// not reach, or the payout when it failed.
     var stoppedAt: Int? {
         switch outcome {
         case .succeeded:
             nil
         case .payoutFailed:
-            steps.indices.last
+            steps.firstIndex(of: .payout) ?? steps.indices.last
         case .failed:
-            reportedSteps?.firstIndex { $0.reachedAtMs == nil } ?? steps.firstIndex(of: .payment)
+            firstUnreached ?? steps.firstIndex(of: .payment)
         }
     }
 
-    /// The provider said the card or bank turned the payment down. The core
-    /// has no failure of its own for it, so it arrives as `Other`.
+    /// The step a released withdrawal waits on: the first one the provider
+    /// has not reported, which is the payout once it has converted.
+    var waitingAt: Int? {
+        guard payoutState == .pending else { return nil }
+        return firstUnreached ?? steps.firstIndex(of: .payout)
+    }
+
+    /// The card or bank turned the payment down.
     var isDeclined: Bool {
-        guard case let .failed(.other(code, _)) = outcome else { return false }
-        return code.lowercased().contains("declin")
+        outcome == .failed(.declined)
     }
 }
 
 private extension FundingEndedSession {
-    /// The steps the core reports for a session of this direction and rail.
+    var firstUnreached: Int? {
+        reportedSteps?.firstIndex { $0.reachedAtMs == nil }
+    }
+
+    /// The steps the core reports for a session of this direction and rail,
+    /// for a record the core has dropped.
     static func steps(direction: FundingDirection, rail: FundingRail?) -> [FundingStep] {
         switch (direction, rail) {
         case (.out, _):
-            [.started, .payment, .sent]
+            [.started, .payment, .sent, .conversion, .payout]
+        case (.in, .bank):
+            [.started, .payment, .added]
         case (.in, .card),
+             (.in, .crypto),
              (.in, nil):
-            [.started, .payment, .conversion, .added]
-        case (.in, .bank),
-             (.in, .crypto):
             [.started, .payment, .approved, .conversion, .added]
         }
     }
