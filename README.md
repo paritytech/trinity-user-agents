@@ -18,6 +18,7 @@ TypeScript client, and hosts and products implement against the same shared type
 - [TrUAPI reference](https://docs.polkadot.com/reference/apps/protocol/truapi/)
 - [Rust API reference](https://paritytech.github.io/trinity-user-agents/)
 - [Draft: Host-owned native Chat and main-purse payments](docs/rfcs/native-chat-main-purse.md)
+- [Draft: Profile disclosure audiences and host-rendered contacts](docs/rfcs/profile-disclosure.md)
 
 <!-- TODO: Add hero screenshot of the playground showing methods + a live call/response. Capture with a screenshot tool, save to `assets/screenshots/playground.png`, then place it here. -->
 
@@ -130,6 +131,19 @@ Signing hosts can use the host-private `getNativeChatContacts()` directory for t
 authenticated, ready peers from authorized native Chat products, scopes them to the active wallet and People chain,
 and never exposes a product or SSO directory method. Actors opened on this version are durably indexed; historical
 unindexed Chat products must be opened once before their peers can appear. Pairing hosts do not supply this directory.
+
+Contacts trait 20 retains the single picker at method 0, adds `pickMany({ selected })` at method 1, and
+`placeLabels({ surfaceWidth, surfaceHeight, slots })` at method 2. Multi-select confirmation returns only
+wallet-scoped handles, including a confirmed empty selection; dismissal never edits the audience. Host-owned
+labels show directory usernames or account fallbacks independently of Profile photos, without returning names,
+accounts or per-slot availability. Selections and placements are bounded to 256 entries; unresolved initial
+selections fail closed. Hosts implement `pickContacts(product, ContactSelection)` and
+`placeContactLabels(product, PlacedContactLabels)` through the canonical native/WASM/worker callbacks.
+
+Profile V2 presentation opens host-owned feedback even when no live contact reference has arrived.
+`PresentedContactProfile.shared` holds the reference and freshness timestamp when present; `None` requests an
+empty-profile view. The host receives the verified contact name, while the product receives the same success reply
+for shared and absent information. Storage failures and invalid handles are not presented as an empty profile.
 
 The [native Chat/main-purse RFC](docs/rfcs/native-chat-main-purse.md) specifies the method 12 request/response and
 compatibility contract, device eligibility, custody-before-ACK rule, and delivery versus clearing semantics. It is a

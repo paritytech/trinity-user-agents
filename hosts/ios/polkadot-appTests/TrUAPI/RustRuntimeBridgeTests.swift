@@ -82,7 +82,7 @@ private func makeBridge(
     gameReminders: MockGameReminderScheduler? = nil,
     reminderPermissionAsker: MockReminderPermissionAsker = MockReminderPermissionAsker(),
     chainRegistry: MockChainRegistry = MockChainRegistry(),
-    confirmationPresenter: MockConfirmationPresenter = MockConfirmationPresenter(),
+    confirmationPresenter: any TrUAPIConfirmationPresenting = MockConfirmationPresenter(),
     preimageCache: TrUAPIPreimageCache = TrUAPIPreimageCache { _ in nil },
     productStorageFails: Bool = false,
     hostProvider: ProductHostProviding = StubHostProvider()
@@ -446,6 +446,29 @@ struct RustRuntimeBridgeTests {
         #expect(result == decision)
         #expect(presenter.receivedReview == review)
         #expect(presenter.receivedRequesterName == "caller.dot")
+    }
+
+    @Test func profileDisclosureWithoutPresentationPropagatesWithoutDenial() async throws {
+        let presenter = TrUAPIConfirmationPresenter(routerFacade: ProductRoutersFacade.worker())
+        let bridge = makeBridge(confirmationPresenter: presenter)
+        let review = UserConfirmationReview.profileDisclosure(ProfileDisclosureReview(productId: "caller.dot"))
+
+        await #expect(throws: HostRejection.self) {
+            try await bridge.confirmPermission(review: review)
+        }
+        #expect(try await bridge.confirmUserAction(review: review) == false)
+    }
+
+    @Test func supportedPermissionWithoutPresentationThrowsWithoutDenial() async throws {
+        let presenter = TrUAPIConfirmationPresenter(routerFacade: ProductRoutersFacade.worker())
+        let bridge = makeBridge(confirmationPresenter: presenter)
+        let review = UserConfirmationReview.accountAccess(
+            AccountAccessReview(requestingProductId: "caller.dot", targetProductId: "target.dot")
+        )
+
+        await #expect(throws: HostRejection.self) {
+            try await bridge.confirmPermission(review: review)
+        }
     }
 
     // MARK: lookupPreimage

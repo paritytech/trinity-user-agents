@@ -225,6 +225,13 @@ revocations write to the shared Rust authorization store, not an Android-only
 grant. These operations obtain consent through the canonical runtime confirmation
 flow; the legacy permission guard only observes their stored authorization.
 
+Profile sharing is a separate canonical permission, displayed and revocable per
+product in settings. Neither Chat identity access nor trusted remote defaults
+grant profile-disclosure authority. The native confirmation identifies the
+requesting product and asks before sharing a profile reference with all Chat
+contacts. Permission and single-action callbacks both await user review; prompt
+failures propagate rather than becoming a persisted permission decision.
+
 GitHub Actions validate pull requests. The remaining workflows are the maintainers'
 own build and distribution flows; a fork does not need them. Build-time
 configuration and the steps to sign and publish the app are documented in

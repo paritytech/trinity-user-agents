@@ -1,0 +1,200 @@
+//! Unified [`Profile`] trait.
+
+use crate::versioned::profile::{
+    HostProfileDiscloseError, HostProfileDiscloseRequest, HostProfileDiscloseResponse,
+    HostProfileOwnStatusError, HostProfileOwnStatusRequest, HostProfileOwnStatusResponse,
+    HostProfilePlaceContactAvatarsError, HostProfilePlaceContactAvatarsRequest,
+    HostProfilePlaceContactAvatarsResponse, HostProfilePresentContactError,
+    HostProfilePresentContactRequest, HostProfilePresentContactResponse, HostProfilePresentError,
+    HostProfilePresentOwnError, HostProfilePresentOwnRequest, HostProfilePresentOwnResponse,
+    HostProfilePresentRequest, HostProfilePresentResponse, HostProfileRetractError,
+    HostProfileRetractRequest, HostProfileRetractResponse,
+};
+use crate::{CallContext, CallError};
+use crate::{wire, wire_trait};
+
+/// Profiles shown in host-owned UI.
+///
+/// The product hands over an opaque reference; the host resolves, decrypts and
+/// renders it. Profile bytes never return to the product.
+#[wire_trait(id = 69)]
+#[crate::async_trait]
+pub trait Profile: Send + Sync {
+    /// Show the referenced profile in host-owned UI.
+    ///
+    /// Resolves once the host has taken the presentation, not when the user
+    /// dismisses it. Loading and fetch failures are shown to the user, not
+    /// returned; a reference this host cannot parse is `InvalidReference`.
+    ///
+    /// ```ts
+    /// const result = await truapi.profile.present({
+    ///   reference: "bafkreigh2akiscaildc6ybwhxslp6rx2u4m2vpbhgvzhpsfkyzxiezxcnq#" + "00".repeat(44),
+    /// });
+    /// console.log("profile presentation:", result);
+    /// ```
+    #[wire(id = 0)]
+    async fn present(
+        &self,
+        _cx: &CallContext,
+        _request: HostProfilePresentRequest,
+    ) -> Result<HostProfilePresentResponse, CallError<HostProfilePresentError>> {
+        Err(CallError::unavailable())
+    }
+    /// Store the user's profile and replace its independent delivery audiences.
+    ///
+    /// `ChatApps` shares within every ready Chat App. `App` selects one Chat
+    /// App's audience. `Contacts` shares personally with picked opaque handles;
+    /// those received profiles may render in any App. An empty audience list
+    /// retains the own profile but withdraws all grants. Unknown handles reject
+    /// the whole disclosure. App executions only. The first disclosure asks
+    /// the user once per product; a refusal is `PermissionDenied`.
+    /// v0.1 callers retain the `ChatApps` audience.
+    ///
+    /// ```ts
+    /// const result = await truapi.profile.disclose({
+    ///   reference: "seity-contacts:v1:" + "00".repeat(64),
+    ///   audiences: [{ tag: "ChatApps" }],
+    /// });
+    /// console.log("profile disclosed:", result);
+    /// ```
+    #[wire(id = 1)]
+    async fn disclose(
+        &self,
+        _cx: &CallContext,
+        _request: HostProfileDiscloseRequest,
+    ) -> Result<HostProfileDiscloseResponse, CallError<HostProfileDiscloseError>> {
+        Err(CallError::unavailable())
+    }
+
+    /// Withdraw the reference this product disclosed. Contacts are told to
+    /// drop what they hold. A product that did not disclose it is refused.
+    ///
+    /// ```ts
+    /// const result = await truapi.profile.retract();
+    /// console.log("profile retracted:", result);
+    /// ```
+    #[wire(id = 2)]
+    async fn retract(
+        &self,
+        _cx: &CallContext,
+        _request: HostProfileRetractRequest,
+    ) -> Result<HostProfileRetractResponse, CallError<HostProfileRetractError>> {
+        Err(CallError::unavailable())
+    }
+
+    /// Show a contact's available profile in host-owned UI.
+    ///
+    /// The selector names a Chat peer or a picked opaque handle. App-scoped
+    /// profiles take precedence over personal profiles. References, names,
+    /// resolved accounts and availability never return to the product. Unknown
+    /// handles, absent profiles and host presentation failures return the same
+    /// success. v0.1 callers retain their `NotShared` and presentation errors
+    /// for App-scoped shares only; personal drawers require v0.2 so a legacy
+    /// raw-peer request cannot disclose personal sharing availability.
+    ///
+    /// ```ts
+    /// const result = await truapi.profile.presentContact({
+    ///   contact: { tag: "Peer", value: {
+    ///     peerIdentity: "0x0000000000000000000000000000000000000000000000000000000000000000",
+    ///   } },
+    /// });
+    /// console.log("contact profile presentation:", result);
+    /// ```
+    #[wire(id = 3)]
+    async fn present_contact(
+        &self,
+        _cx: &CallContext,
+        _request: HostProfilePresentContactRequest,
+    ) -> Result<HostProfilePresentContactResponse, CallError<HostProfilePresentContactError>> {
+        Err(CallError::unavailable())
+    }
+
+    /// Tell the host where this product draws contacts' avatars, and
+    /// optionally the signed-in user's own, so it can draw each shared photo
+    /// and mood ring over them on its own layer.
+    ///
+    /// Each call replaces the product's placement; an empty `slots` and no
+    /// `own` clears it. The own slot is filled only while the user has
+    /// disclosed a profile, and redrawn when they disclose or retract one.
+    /// The host draws only for contacts who shared a profile with the user,
+    /// and keeps the placement current as they share or withdraw one, until
+    /// the product replaces it or goes away. The answer is the same whoever
+    /// shared: nothing about any slot, and no profile data, returns to the
+    /// product. Taps still reach the product, which opens a profile with
+    /// `presentContact`.
+    ///
+    /// App executions only. Rects are in the units of the surface size the
+    /// product gives: framebuffer pixels for a PolkaVM product, CSS pixels of
+    /// its viewport for a web product. A placement with more than 64 slots, a
+    /// surface side outside 1 to 16384, an avatar that is not square or is
+    /// outside 1 to 1024 a side, or a `slot` repeated across `own` and `slots`
+    /// is `Unknown`. A host that cannot draw over the product is
+    /// `Unsupported`; with no user signed in the call is `NotConnected`.
+    ///
+    /// ```ts
+    /// const result = await truapi.profile.placeContactAvatars({
+    ///   surfaceWidth: 360,
+    ///   surfaceHeight: 640,
+    ///   own: {
+    ///     slot: 1,
+    ///     rect: { x: 300, y: 16, width: 44, height: 44 },
+    ///     clip: { x: 0, y: 0, width: 360, height: 640 },
+    ///   },
+    ///   slots: [
+    ///     {
+    ///       slot: 0,
+    ///       contact: { tag: "Peer", value: {
+    ///         peerIdentity: "0x0000000000000000000000000000000000000000000000000000000000000000",
+    ///       } },
+    ///       rect: { x: 16, y: 80, width: 44, height: 44 },
+    ///       clip: { x: 0, y: 64, width: 360, height: 576 },
+    ///     },
+    ///   ],
+    /// });
+    /// console.log("contact avatars placed:", result);
+    /// ```
+    #[wire(id = 4)]
+    async fn place_contact_avatars(
+        &self,
+        _cx: &CallContext,
+        _request: HostProfilePlaceContactAvatarsRequest,
+    ) -> Result<
+        HostProfilePlaceContactAvatarsResponse,
+        CallError<HostProfilePlaceContactAvatarsError>,
+    > {
+        Err(CallError::unavailable())
+    }
+
+    /// Report whether the signed-in user has configured a profile.
+    ///
+    /// Only the boolean status returns. The profile reference and contents
+    /// remain host-owned.
+    ///
+    /// ```ts
+    /// const result = await truapi.profile.ownStatus();
+    /// console.log("own profile configured:", result);
+    /// ```
+    #[wire(id = 5)]
+    async fn own_status(
+        &self,
+        _cx: &CallContext,
+        _request: HostProfileOwnStatusRequest,
+    ) -> Result<HostProfileOwnStatusResponse, CallError<HostProfileOwnStatusError>> {
+        Err(CallError::unavailable())
+    }
+
+    /// Show the signed-in user's profile in host-owned UI.
+    ///
+    /// ```ts
+    /// const result = await truapi.profile.presentOwn();
+    /// console.log("own profile presentation:", result);
+    /// ```
+    #[wire(id = 6)]
+    async fn present_own(
+        &self,
+        _cx: &CallContext,
+        _request: HostProfilePresentOwnRequest,
+    ) -> Result<HostProfilePresentOwnResponse, CallError<HostProfilePresentOwnError>> {
+        Err(CallError::unavailable())
+    }
+}

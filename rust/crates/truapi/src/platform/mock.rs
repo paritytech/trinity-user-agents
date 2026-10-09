@@ -41,7 +41,8 @@ use crate::platform::{
     HopProvider, JsonRpcConnection, LocaleHost, NativeChatFileExportRequest,
     NativeChatFilePickRequest, NativeChatFilesHost, NativeChatPickedFile, Navigation,
     Notifications, PermissionDecision, Permissions, PreimageHost, ProductContext,
-    ProductOperations, ProductStorage, ProviderError, ThemeHost, UserConfirmation, UserConfirmationReview,
+    ProductOperations, ProductStorage, ProviderError, ThemeHost, UserConfirmation,
+    UserConfirmationReview,
 };
 
 /// How the mock answers a permission prompt for one capability.
@@ -93,6 +94,8 @@ pub enum ConfirmKind {
     ChatAuthority,
     /// [`UserConfirmationReview::MainPurseChatPayment`].
     MainPurseChatPayment,
+    /// [`UserConfirmationReview::ProfileDisclosure`].
+    ProfileDisclosure,
 }
 
 impl ConfirmKind {
@@ -114,6 +117,7 @@ impl ConfirmKind {
             UserConfirmationReview::ProductSubtree(_) => ConfirmKind::ProductSubtree,
             UserConfirmationReview::ChatAuthority(_) => ConfirmKind::ChatAuthority,
             UserConfirmationReview::MainPurseChatPayment(_) => ConfirmKind::MainPurseChatPayment,
+            UserConfirmationReview::ProfileDisclosure(_) => ConfirmKind::ProfileDisclosure,
         }
     }
 }
@@ -824,6 +828,31 @@ fn core_key(key: &CoreStorageKey) -> String {
             genesis_hash,
         } => format!(
             "core:native-chat-products:{}:{}",
+            hex_key(root_public_key),
+            hex_key(genesis_hash)
+        ),
+        CoreStorageKey::ProfileDisclosure {
+            root_public_key,
+            genesis_hash,
+        } => format!(
+            "core:profile-disclosure:{}:{}",
+            hex_key(root_public_key),
+            hex_key(genesis_hash)
+        ),
+        CoreStorageKey::ProfileReferencesReceived {
+            root_public_key,
+            genesis_hash,
+            product_id,
+        } => format!(
+            "core:profile-references-received:{}:{}:{product_id}",
+            hex_key(root_public_key),
+            hex_key(genesis_hash)
+        ),
+        CoreStorageKey::ProfilePersonalReferencesReceived {
+            root_public_key,
+            genesis_hash,
+        } => format!(
+            "core:profile-personal-references-received:{}:{}",
             hex_key(root_public_key),
             hex_key(genesis_hash)
         ),

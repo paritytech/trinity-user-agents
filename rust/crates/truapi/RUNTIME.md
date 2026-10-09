@@ -410,16 +410,27 @@ AutoSigning without approval. Legacy-account signing still asks the user.
 - `PocketPlatform`: stream the product's Pocket card collection and remove a
   card from it. The host owns the collection and decides which cards are
   privileged.
+- `ContactsPlatform`: resolve opaque handles to contacts, render single or multiple
+  selection pickers, and place host-owned contact names over product surfaces.
+  `contacts` is the only required method; `pick_contact` and `pick_contacts`
+  default to `Unsupported`, never a fake selection. The multi-picker receives a
+  host-private `ContactSelection` record of resolved accounts. Confirmed empty
+  selection is distinct from dismissal, and unresolved initial handles fail closed.
+  Session and directory generations are checked across host calls.
+  `place_contact_labels` is independent of Profile grants; products receive neither
+  names nor availability. Placements are serialized and cleared at connection
+  teardown and session change. Hosts call `notify_contacts_changed` when a contact
+  is removed or blocked, invalidating cached handles. Their label layers clear stale
+  names and refresh the live placement from the current directory.
+- `ProfilePlatform`: show a product-referenced profile in host-owned UI, show
+  a contact's shared profile naming the contact who sent it, and draw the
+  avatars of contacts who shared one over a chat product. The host resolves,
+  decrypts and renders each reference; nothing returns to the product but
+  acceptance. Naming the contact is optional and presents the reference alone
+  by default; drawing avatars is optional and draws nothing by default.
 - `ExpandedCardHost`: show or hide the card face drawn above an opened card's
   Widget. It is carried per product connection on `ConnectionAdapters`, so only
   the Widget under a card reaches that card.
-- `ContactsPlatform`: resolve the handles a transaction names to contacts, and
-  render the picker that selects one. `contacts` is the only required method; `pick_contact`
-  defaults to `Unsupported`, so a host serving no picker says so rather than
-  looking like a user who declined. The host owns the UI, so the list never
-  reaches the product — only a handle for the selection does. The core caches
-  resolved handles; a host calls `notify_contacts_changed` on its runtime when
-  a contact is removed or blocked.
 - `GamePlatform`: hold the game product's next-game reminder and drop it.
   The core serves Game only to `dim2`, on every network, and answers
   `Unsupported` to any other product without calling the host. A host
@@ -432,16 +443,16 @@ AutoSigning without approval. Legacy-account signing still asks the user.
 
 `Platform` is a blanket-implemented supertrait that combines the capability
 traits above except `ChatPlatform`, `ContactsPlatform`, `PermissionStatusHost`,
-`PocketPlatform` and `GamePlatform`, which `OptionalPlatform` lists instead: a
+`PocketPlatform`, `ProfilePlatform` and `GamePlatform`, which `OptionalPlatform` lists instead: a
 host supplies each only when it can serve it. `ExpandedCardHost` is in neither,
 because it travels per connection rather than with the platform. Codegen reads
 `OptionalPlatform` to emit each listed capability as an optional group on the
 host-callback surface.
 
 Omitting `ChatPlatform` makes the core answer Chat calls `Unsupported`, and
-omitting `ContactsPlatform`, `PocketPlatform` or `GamePlatform` does the same
-for Contacts, Pocket or Game calls. A connection without an `ExpandedCardHost`
-answers a Widget's `ExpandedCard` calls `Unsupported`.
+omitting `ContactsPlatform`, `PocketPlatform`, `ProfilePlatform` or `GamePlatform`
+does the same for Contacts, Pocket, Profile or Game calls. A connection without
+an `ExpandedCardHost` answers a Widget's `ExpandedCard` calls `Unsupported`.
 Omitting `PermissionStatusHost` leaves device grants resolving from stored
 state alone, which is what a host with no OS permission model does anyway.
 Serving it gates both halves of the surface: a device permission request and a

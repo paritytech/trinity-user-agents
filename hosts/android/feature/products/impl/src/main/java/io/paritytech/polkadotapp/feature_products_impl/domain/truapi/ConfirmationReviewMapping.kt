@@ -101,6 +101,9 @@ fun UserConfirmationReview.toConfirmation(callingProductId: String): TrUAPIConfi
 
     is UserConfirmationReview.ProductSubtree ->
         TrUAPIConfirmation.ProductSubtree(requesterProductId = v1.productId)
+
+    is UserConfirmationReview.ProfileDisclosure ->
+        TrUAPIConfirmation.ProfileDisclosure(requesterProductId = v1.productId)
 }
 
 @OptIn(ExperimentalStdlibApi::class)

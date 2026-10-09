@@ -12,10 +12,29 @@ import type { ChainConnect, ChainConnection, HopConnect } from "./runtime.js";
 import type {
   ChainProvider,
   CoinageWalletHost,
+  ContactsPlatform,
   HopProvider,
   JsonRpcConnection,
   NativeChatFilesHost,
+  ProfilePlatform,
 } from "./generated/host-callbacks.js";
+
+/** Optional Contacts UI stays unsupported rather than confirming an empty selection. */
+export function contactsHostAdapter(
+  host: ContactsPlatform | undefined,
+): Required<ContactsPlatform> | undefined {
+  if (host === undefined) return undefined;
+  return {
+    contacts: (lookup) => host.contacts(lookup),
+    pickContact: (product) =>
+      host.pickContact?.(product) ?? Promise.resolve({ tag: "Unsupported" }),
+    pickContacts: (product, selection) =>
+      host.pickContacts?.(product, selection) ??
+      Promise.resolve({ tag: "Unsupported" }),
+    placeContactLabels: (product, placed) =>
+      host.placeContactLabels?.(product, placed) ?? Promise.resolve(false),
+  };
+}
 
 type WireResult<T, E> =
   | { success: true; value: T }
@@ -168,6 +187,41 @@ export function coinageWalletHostAdapter(
         throw new Error("Native Coinage wallet operation failed");
       }
     },
+  };
+}
+
+/**
+ * A profile host built before `presentContactProfile` still shows a contact's
+ * profile: without it, the contact's reference is presented as
+ * `presentProfile` would. Empty-profile feedback requires the contact callback.
+ * Missing avatar placement draws nothing, matching the Rust platform default;
+ * resolving does not promise that any avatar was rendered.
+ */
+export function profileHostAdapter(
+  host: ProfilePlatform | undefined,
+): Required<ProfilePlatform> | undefined {
+  if (host === undefined) return undefined;
+  if (
+    typeof host.presentContactProfile === "function" &&
+    typeof host.placeContactAvatars === "function"
+  ) return host as Required<ProfilePlatform>;
+  return {
+    presentProfile: (product, request) => host.presentProfile(product, request),
+    presentContactProfile: (product, presented) => {
+      if (typeof host.presentContactProfile === "function")
+        return host.presentContactProfile(product, presented);
+      if (presented.shared === undefined)
+        return Promise.reject(
+          new Error("Contact profile feedback is unavailable"),
+        );
+      return host.presentProfile(product, {
+        reference: presented.shared.reference,
+      });
+    },
+    placeContactAvatars: (product, placed) =>
+      typeof host.placeContactAvatars === "function"
+        ? host.placeContactAvatars(product, placed)
+        : Promise.resolve(),
   };
 }
 

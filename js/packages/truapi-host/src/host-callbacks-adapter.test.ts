@@ -21,6 +21,7 @@ import type {
 } from "@parity/truapi";
 
 import { createWasmRawCallbacks } from "./generated/host-callbacks-adapter.js";
+import { profileHostAdapter } from "./adapter-support.js";
 import {
   AuthState,
   CoreStorageKey,
@@ -30,6 +31,8 @@ import {
   NativeCoinageRequest,
   NativeCoinageResponse,
   PermissionDecision,
+  PlacedAvatars,
+  PresentedContactProfile,
   ProductContext,
   ProductExecutionKind,
   UserConfirmationReview,
@@ -906,6 +909,124 @@ describe("createWasmRawCallbacks", () => {
     expect(received).toEqual([]);
     expect(closes).toBe(1);
     expect(returns).toBe(1);
+  });
+
+  describe("contact profile presentation", () => {
+    const product = ProductContext.enc({
+      productId: "egui-chat.dot",
+      executionKind: "App",
+    });
+    const presented = {
+      shared: {
+        reference: "seity-contacts:v1:ab",
+        sharedAt: 1_700_000_000_500n,
+      },
+      peerIdentity: new Uint8Array(32).fill(0xa1),
+      username: "alice.01",
+    };
+
+    const placed = { surfaceWidth: 640, surfaceHeight: 480, avatars: [] };
+
+    it("keeps an absent profile group absent", () => {
+      expect(profileHostAdapter(undefined)).toBeUndefined();
+      const raw = createWasmRawCallbacks({
+        ...makeHostCallbacks(),
+        profile: undefined,
+      });
+      expect(raw.presentProfile).toBeUndefined();
+      expect(raw.presentContactProfile).toBeUndefined();
+      expect(raw.placeContactAvatars).toBeUndefined();
+    });
+
+    it("normalizes missing placement without replacing contact presentation or its receiver", async () => {
+      const host = {
+        presentations: [] as PresentedContactProfile[],
+        async presentProfile() {
+          throw new Error("Contact presentation must not use the fallback");
+        },
+        async presentContactProfile(presentationProduct: ProductContext, contact: PresentedContactProfile) {
+          expect(presentationProduct).toEqual(ProductContext.dec(product));
+          this.presentations.push(contact);
+        },
+      };
+      const raw = createWasmRawCallbacks({
+        ...makeHostCallbacks(),
+        profile: host as never,
+      });
+      await raw.presentContactProfile!(product, PresentedContactProfile.enc(presented));
+      await raw.presentContactProfile!(
+        product,
+        PresentedContactProfile.enc({ ...presented, shared: undefined }),
+      );
+      await expect(raw.placeContactAvatars!(product, PlacedAvatars.enc(placed)))
+        .resolves.toBeUndefined();
+      expect(host.presentations).toEqual([presented, { ...presented, shared: undefined }]);
+    });
+
+    it("preserves placement and its receiver when only contact presentation is missing", async () => {
+      const host = {
+        placements: [] as PlacedAvatars[],
+        async presentProfile() {},
+        async placeContactAvatars(placementProduct: ProductContext, placement: PlacedAvatars) {
+          expect(placementProduct).toEqual(ProductContext.dec(product));
+          this.placements.push(placement);
+        },
+      };
+      const raw = createWasmRawCallbacks({
+        ...makeHostCallbacks(),
+        profile: host as never,
+      });
+      await raw.placeContactAvatars!(product, PlacedAvatars.enc(placed));
+      expect(host.placements).toEqual([placed]);
+    });
+
+    it("returns complete adapters unchanged and preserves callback failures", async () => {
+      const failure = new Error("Overlay unavailable");
+      const host = {
+        failure,
+        async presentProfile() {},
+        async presentContactProfile() {},
+        async placeContactAvatars() { throw this.failure; },
+      };
+      expect(profileHostAdapter(host)).toBe(host);
+      const raw = createWasmRawCallbacks({
+        ...makeHostCallbacks(),
+        profile: host,
+      });
+      await expect(raw.placeContactAvatars!(product, PlacedAvatars.enc(placed)))
+        .rejects.toBe(failure);
+    });
+
+    it("preserves shared profiles without fabricating a reference for empty feedback on older hosts", async () => {
+      const references: string[] = [];
+      const legacy = {
+        references,
+        async presentProfile(
+          _product: unknown,
+          request: { reference: string },
+        ) {
+          this.references.push(request.reference);
+        },
+      };
+      const raw = createWasmRawCallbacks({
+        ...makeHostCallbacks(),
+        profile: legacy as never,
+      });
+
+      await raw.presentContactProfile!(
+        product,
+        PresentedContactProfile.enc(presented),
+      );
+      await expect(
+        raw.presentContactProfile!(
+          product,
+          PresentedContactProfile.enc({ ...presented, shared: undefined }),
+        ),
+      ).rejects.toThrow("Contact profile feedback is unavailable");
+      expect(references).toEqual([presented.shared.reference]);
+      await expect(raw.placeContactAvatars!(product, PlacedAvatars.enc(placed)))
+        .resolves.toBeUndefined();
+    });
   });
 });
 

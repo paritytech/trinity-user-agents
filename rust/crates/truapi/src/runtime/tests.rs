@@ -777,7 +777,7 @@ impl crate::platform::ContactsPlatform for StubContactsPlatform {
 fn contacts_host(
     product_id: &str,
     platform: Arc<StubPlatform>,
-    contacts: Option<Arc<StubContactsPlatform>>,
+    contacts: Option<Arc<dyn crate::platform::ContactsPlatform>>,
     connected: bool,
 ) -> ProductRuntimeHost {
     let (host_config, product) = runtime_config(product_id);
@@ -811,6 +811,379 @@ fn pick(
         &CallContext::default(),
         HostContactsPickRequest::V1(v01::HostContactsPickRequest {}),
     ))
+}
+
+struct AudienceContactsPlatform {
+    directory: Arc<StubContactsPlatform>,
+    outcome: parking_lot::Mutex<crate::platform::HostContactsPick>,
+    selected: parking_lot::Mutex<Vec<Vec<[u8; 32]>>>,
+    labels: parking_lot::Mutex<Vec<crate::platform::PlacedContactLabels>>,
+    after_lookup: parking_lot::Mutex<Option<Box<dyn FnOnce() + Send>>>,
+    after_pick: parking_lot::Mutex<Option<Box<dyn FnOnce() + Send>>>,
+    after_labels: parking_lot::Mutex<Option<Box<dyn FnOnce() + Send>>>,
+}
+
+impl AudienceContactsPlatform {
+    fn new(accounts: Vec<[u8; 32]>, outcome: crate::platform::HostContactsPick) -> Arc<Self> {
+        Arc::new(Self {
+            directory: StubContactsPlatform::new(
+                accounts,
+                crate::platform::HostContactPick::Dismissed,
+            ),
+            outcome: parking_lot::Mutex::new(outcome),
+            selected: Default::default(),
+            labels: Default::default(),
+            after_lookup: Default::default(),
+            after_pick: Default::default(),
+            after_labels: Default::default(),
+        })
+    }
+}
+
+#[truapi::async_trait]
+impl crate::platform::ContactsPlatform for AudienceContactsPlatform {
+    async fn contacts(
+        &self,
+        lookup: &crate::platform::HostContactLookup,
+    ) -> Result<crate::platform::HostContactMatches, truapi::latest::GenericError> {
+        let answer =
+            crate::platform::ContactsPlatform::contacts(self.directory.as_ref(), lookup).await;
+        if let Some(changed) = self.after_lookup.lock().take() {
+            changed();
+        }
+        answer
+    }
+
+    async fn pick_contacts(
+        &self,
+        _product: &ProductContext,
+        selection: crate::platform::ContactSelection,
+    ) -> Result<crate::platform::HostContactsPick, truapi::latest::GenericError> {
+        self.selected.lock().push(selection.selected);
+        if let Some(changed) = self.after_pick.lock().take() {
+            changed();
+        }
+        Ok(self.outcome.lock().clone())
+    }
+
+    async fn place_contact_labels(
+        &self,
+        _product: &ProductContext,
+        placed: crate::platform::PlacedContactLabels,
+    ) -> Result<bool, truapi::latest::HostContactsPlaceLabelsError> {
+        self.labels.lock().push(placed);
+        if let Some(changed) = self.after_labels.lock().take() {
+            changed();
+        }
+        Ok(true)
+    }
+}
+
+fn pick_many(
+    host: &ProductRuntimeHost,
+    selected: Vec<truapi::latest::ContactHandle>,
+) -> Result<HostContactsPickManyResponse, CallError<HostContactsPickManyError>> {
+    futures::executor::block_on(Contacts::pick_many(
+        host,
+        &CallContext::default(),
+        HostContactsPickManyRequest::V1(truapi::latest::HostContactsPickManyRequest { selected }),
+    ))
+}
+
+#[test]
+fn multi_picker_preserves_confirmed_empty_and_dismissed_outcomes() {
+    use crate::platform::HostContactsPick;
+    use truapi::latest::ContactPickManyOutcome;
+    let contacts = AudienceContactsPlatform::new(
+        vec![[10; 32]],
+        HostContactsPick::Picked { accounts: vec![] },
+    );
+    let host = contacts_host("seity.dot", stub_platform(), Some(contacts.clone()), true);
+    for (answer, expected) in [
+        (
+            HostContactsPick::Picked { accounts: vec![] },
+            ContactPickManyOutcome::Picked { handles: vec![] },
+        ),
+        (
+            HostContactsPick::Dismissed,
+            ContactPickManyOutcome::Dismissed,
+        ),
+        (
+            HostContactsPick::NoContacts,
+            ContactPickManyOutcome::NoContacts,
+        ),
+    ] {
+        *contacts.outcome.lock() = answer;
+        assert_eq!(
+            pick_many(&host, vec![]),
+            Ok(HostContactsPickManyResponse::V1(
+                truapi::latest::HostContactsPickManyResponse { outcome: expected },
+            ))
+        );
+    }
+}
+
+#[test]
+fn multi_picker_rejects_unresolved_or_oversized_initial_audiences_without_opening() {
+    let account = [10; 32];
+    let contacts =
+        AudienceContactsPlatform::new(vec![account], crate::platform::HostContactsPick::Dismissed);
+    let host = contacts_host("seity.dot", stub_platform(), Some(contacts.clone()), true);
+    let (_, handles) = host.contacts_picker().unwrap();
+    let known = truapi::latest::ContactHandle {
+        bytes: handles.mint(&account),
+    };
+    let missing = truapi::latest::ContactHandle {
+        bytes: handles.mint(&[11; 32]),
+    };
+    for selected in [vec![known, missing], vec![known; 257]] {
+        assert_eq!(
+            pick_many(&host, selected),
+            Err(CallError::Domain(HostContactsPickManyError::V1(
+                truapi::latest::HostContactsPickManyError::InvalidSelection,
+            )))
+        );
+    }
+    assert!(contacts.selected.lock().is_empty());
+}
+
+#[test]
+fn multi_picker_deduplicates_and_returns_only_wallet_scoped_handles() {
+    let account = [10; 32];
+    let contacts = AudienceContactsPlatform::new(
+        vec![account],
+        crate::platform::HostContactsPick::Picked {
+            accounts: vec![account, account],
+        },
+    );
+    let host = contacts_host("seity.dot", stub_platform(), Some(contacts.clone()), true);
+    let (_, handles) = host.contacts_picker().unwrap();
+    let handle = truapi::latest::ContactHandle {
+        bytes: handles.mint(&account),
+    };
+    assert_eq!(
+        pick_many(&host, vec![handle, handle]),
+        Ok(HostContactsPickManyResponse::V1(
+            truapi::latest::HostContactsPickManyResponse {
+                outcome: truapi::latest::ContactPickManyOutcome::Picked {
+                    handles: vec![handle]
+                },
+            },
+        ))
+    );
+    assert_eq!(*contacts.selected.lock(), vec![vec![account]]);
+    assert_ne!(handle.bytes, account);
+}
+
+#[test]
+fn multi_picker_rejects_lookup_invalidation_and_session_change_during_confirmation() {
+    let account = [10; 32];
+    let contacts = AudienceContactsPlatform::new(
+        vec![account],
+        crate::platform::HostContactsPick::Picked {
+            accounts: vec![account],
+        },
+    );
+    let host = contacts_host("seity.dot", stub_platform(), Some(contacts.clone()), true);
+    let (_, handles) = host.contacts_picker().unwrap();
+    let handle = truapi::latest::ContactHandle {
+        bytes: handles.mint(&account),
+    };
+    let cache = host.services.contact_handles.clone();
+    *contacts.after_lookup.lock() = Some(Box::new(move || cache.clear()));
+    assert!(matches!(
+        pick_many(&host, vec![handle]),
+        Err(CallError::Domain(HostContactsPickManyError::V1(
+            truapi::latest::HostContactsPickManyError::Unknown { .. }
+        )))
+    ));
+    assert!(contacts.selected.lock().is_empty());
+    let session = host.test_session_state();
+    *contacts.after_pick.lock() = Some(Box::new(move || session.clear_session()));
+    assert_eq!(
+        pick_many(&host, vec![]),
+        Err(CallError::Domain(HostContactsPickManyError::V1(
+            truapi::latest::HostContactsPickManyError::NotConnected,
+        )))
+    );
+    assert_eq!(
+        host.services.contact_handles.get(&handle.bytes, &handles),
+        None
+    );
+}
+
+#[test]
+fn multi_picker_cancellation_cannot_confirm_a_late_selection() {
+    let account = [10; 32];
+    let contacts = AudienceContactsPlatform::new(
+        vec![account],
+        crate::platform::HostContactsPick::Picked {
+            accounts: vec![account],
+        },
+    );
+    let host = contacts_host("seity.dot", stub_platform(), Some(contacts.clone()), true);
+    let cx = CallContext::default();
+    let cancel = cx.cancel().clone();
+    *contacts.after_pick.lock() = Some(Box::new(move || cancel.cancel()));
+    assert!(matches!(
+        futures::executor::block_on(Contacts::pick_many(
+            &host,
+            &cx,
+            HostContactsPickManyRequest::V1(truapi::latest::HostContactsPickManyRequest {
+                selected: vec![]
+            }),
+        )),
+        Err(CallError::Domain(HostContactsPickManyError::V1(
+            truapi::latest::HostContactsPickManyError::Unknown { .. }
+        )))
+    ));
+}
+
+#[test]
+fn contact_labels_need_no_profile_grant_and_hide_missing_contact_availability() {
+    let account = [10; 32];
+    let contacts =
+        AudienceContactsPlatform::new(vec![account], crate::platform::HostContactsPick::Dismissed);
+    let host = contacts_host("seity.dot", stub_platform(), Some(contacts.clone()), true);
+    let (_, handles) = host.contacts_picker().unwrap();
+    let rect = truapi::latest::AvatarRect {
+        x: 0,
+        y: 0,
+        width: 180,
+        height: 24,
+    };
+    let request = |account| {
+        HostContactsPlaceLabelsRequest::V1(truapi::latest::HostContactsPlaceLabelsRequest {
+            surface_width: 300,
+            surface_height: 200,
+            slots: vec![truapi::latest::ContactLabelSlot {
+                slot: 0,
+                handle: truapi::latest::ContactHandle {
+                    bytes: handles.mint(&account),
+                },
+                rect,
+                clip: rect,
+            }],
+        })
+    };
+    let place = |request| {
+        futures::executor::block_on(Contacts::place_labels(
+            &host,
+            &CallContext::default(),
+            request,
+        ))
+    };
+    let known = place(request(account));
+    let missing = place(request([11; 32]));
+    assert_eq!(
+        known,
+        Ok(HostContactsPlaceLabelsResponse::V1(
+            truapi::latest::HostContactsPlaceLabelsResponse {}
+        ))
+    );
+    assert_eq!(known, missing);
+    assert_eq!(
+        *contacts.labels.lock(),
+        vec![
+            crate::platform::PlacedContactLabels {
+                surface_width: 300,
+                surface_height: 200,
+                labels: vec![crate::platform::PlacedContactLabel {
+                    slot: 0,
+                    account,
+                    rect,
+                    clip: rect
+                }],
+            },
+            crate::platform::PlacedContactLabels {
+                surface_width: 300,
+                surface_height: 200,
+                labels: vec![]
+            },
+        ]
+    );
+}
+
+#[test]
+fn contact_label_lookup_failure_does_not_clear_the_surface() {
+    let mut contacts =
+        AudienceContactsPlatform::new(vec![], crate::platform::HostContactsPick::Dismissed);
+    Arc::get_mut(&mut contacts).unwrap().directory = StubContactsPlatform::failing("store offline");
+    let host = contacts_host("seity.dot", stub_platform(), Some(contacts.clone()), true);
+    let rect = truapi::latest::AvatarRect {
+        x: 0,
+        y: 0,
+        width: 180,
+        height: 24,
+    };
+    let result = futures::executor::block_on(Contacts::place_labels(
+        &host,
+        &CallContext::default(),
+        HostContactsPlaceLabelsRequest::V1(truapi::latest::HostContactsPlaceLabelsRequest {
+            surface_width: 300,
+            surface_height: 200,
+            slots: vec![truapi::latest::ContactLabelSlot {
+                slot: 0,
+                handle: truapi::latest::ContactHandle { bytes: [0x42; 32] },
+                rect,
+                clip: rect,
+            }],
+        }),
+    ));
+    assert!(matches!(
+        result,
+        Err(CallError::Domain(HostContactsPlaceLabelsError::V1(
+            truapi::latest::HostContactsPlaceLabelsError::Unknown { .. }
+        )))
+    ));
+    assert!(contacts.labels.lock().is_empty());
+}
+
+#[test]
+fn contact_labels_are_cleared_if_the_session_changes_while_drawing() {
+    let account = [10; 32];
+    let contacts =
+        AudienceContactsPlatform::new(vec![account], crate::platform::HostContactsPick::Dismissed);
+    let host = contacts_host("seity.dot", stub_platform(), Some(contacts.clone()), true);
+    let (_, handles) = host.contacts_picker().unwrap();
+    let session = host.test_session_state();
+    *contacts.after_labels.lock() = Some(Box::new(move || session.clear_session()));
+    let rect = truapi::latest::AvatarRect {
+        x: 0,
+        y: 0,
+        width: 180,
+        height: 24,
+    };
+    let result = futures::executor::block_on(Contacts::place_labels(
+        &host,
+        &CallContext::default(),
+        HostContactsPlaceLabelsRequest::V1(truapi::latest::HostContactsPlaceLabelsRequest {
+            surface_width: 300,
+            surface_height: 200,
+            slots: vec![truapi::latest::ContactLabelSlot {
+                slot: 0,
+                handle: truapi::latest::ContactHandle {
+                    bytes: handles.mint(&account),
+                },
+                rect,
+                clip: rect,
+            }],
+        }),
+    ));
+    assert_eq!(
+        result,
+        Err(CallError::Domain(HostContactsPlaceLabelsError::V1(
+            truapi::latest::HostContactsPlaceLabelsError::NotConnected,
+        )))
+    );
+    assert_eq!(
+        contacts.labels.lock().last(),
+        Some(&crate::platform::PlacedContactLabels {
+            surface_width: 300,
+            surface_height: 200,
+            labels: vec![],
+        })
+    );
 }
 
 /// A host that implements only the required `contacts` method.
@@ -867,6 +1240,39 @@ fn a_host_that_only_resolves_contacts_reports_unsupported() {
     install_pairing_session(&host, session_info());
 
     assert_eq!(pick(&host).unwrap_err(), CallError::Unsupported);
+    assert_eq!(
+        futures::executor::block_on(Contacts::place_labels(
+            &host,
+            &CallContext::default(),
+            HostContactsPlaceLabelsRequest::V1(truapi::latest::HostContactsPlaceLabelsRequest {
+                surface_width: 300,
+                surface_height: 200,
+                slots: vec![],
+            }),
+        )),
+        Err(CallError::Unsupported),
+    );
+}
+
+#[test]
+fn workers_cannot_place_contact_labels_even_when_the_host_supports_them() {
+    let contacts =
+        AudienceContactsPlatform::new(vec![], crate::platform::HostContactsPick::Dismissed);
+    let mut host = contacts_host("seity.dot", stub_platform(), Some(contacts.clone()), true);
+    host.product.execution_kind = crate::platform::ProductExecutionKind::Worker;
+    assert_eq!(
+        futures::executor::block_on(Contacts::place_labels(
+            &host,
+            &CallContext::default(),
+            HostContactsPlaceLabelsRequest::V1(truapi::latest::HostContactsPlaceLabelsRequest {
+                surface_width: 300,
+                surface_height: 200,
+                slots: vec![],
+            }),
+        )),
+        Err(CallError::Denied),
+    );
+    assert!(contacts.labels.lock().is_empty());
 }
 
 #[test]
@@ -2411,6 +2817,62 @@ fn pocket_is_denied_to_apps_and_sessionless_workers_and_unsupported_without_an_a
     ));
 }
 
+/// Records every profile presentation that reaches the host.
+#[derive(Default)]
+struct RecordingProfilePlatform {
+    presented: Mutex<Vec<(String, String)>>,
+}
+
+#[truapi::async_trait]
+impl crate::platform::ProfilePlatform for RecordingProfilePlatform {
+    async fn present_profile(
+        &self,
+        product: &ProductContext,
+        request: truapi::latest::HostProfilePresentRequest,
+    ) -> Result<(), truapi::latest::HostProfilePresentError> {
+        self.presented
+            .lock()
+            .expect("presented mutex poisoned")
+            .push((product.product_id.clone(), request.reference));
+        Ok(())
+    }
+}
+
+/// Records contact presentations separately from product-referenced ones, as a
+/// host that names who shared a profile does.
+#[derive(Default)]
+struct RecordingContactProfilePlatform {
+    presented: Mutex<Vec<String>>,
+    contacts: Mutex<Vec<(String, crate::platform::PresentedContactProfile)>>,
+}
+
+#[truapi::async_trait]
+impl crate::platform::ProfilePlatform for RecordingContactProfilePlatform {
+    async fn present_profile(
+        &self,
+        _product: &ProductContext,
+        request: truapi::latest::HostProfilePresentRequest,
+    ) -> Result<(), truapi::latest::HostProfilePresentError> {
+        self.presented
+            .lock()
+            .expect("presented mutex poisoned")
+            .push(request.reference);
+        Ok(())
+    }
+
+    async fn present_contact_profile(
+        &self,
+        product: &ProductContext,
+        presented: crate::platform::PresentedContactProfile,
+    ) -> Result<(), truapi::latest::HostProfilePresentError> {
+        self.contacts
+            .lock()
+            .expect("contacts mutex poisoned")
+            .push((product.product_id.clone(), presented));
+        Ok(())
+    }
+}
+
 /// A game start far enough ahead that no test run reaches it.
 const FUTURE_START: u64 = u64::MAX / 2;
 
@@ -2463,6 +2925,1787 @@ impl crate::platform::GamePlatform for RecordingGamePlatform {
             .push(product.product_id.clone());
         Ok(())
     }
+}
+
+fn profile_host(profile: Option<Arc<RecordingProfilePlatform>>) -> ProductRuntimeHost {
+    let (host_config, product) = runtime_config("egui-chat.dot");
+    let services = RuntimeServices::new(
+        stub_platform(),
+        host_config.host.host_info.clone(),
+        host_config.people_chain_genesis_hash,
+        host_config.bulletin_chain_genesis_hash,
+        host_config.asset_hub_chain_genesis_hash,
+        test_spawner(),
+    );
+    let pairing_host = PairingHost::new(services.clone(), host_config);
+    let mut adapters = crate::host_core::ConnectionAdapters::from_services(&services);
+    adapters.profile_platform =
+        profile.map(|profile| profile as Arc<dyn crate::platform::ProfilePlatform>);
+    ProductRuntimeHost::from_services(services, adapters, pairing_host, product)
+}
+
+fn present_profile(
+    host: &ProductRuntimeHost,
+    reference: &str,
+) -> Result<HostProfilePresentResponse, CallError<HostProfilePresentError>> {
+    futures::executor::block_on(Profile::present(
+        host,
+        &CallContext::default(),
+        HostProfilePresentRequest::V1(v01::HostProfilePresentRequest {
+            reference: reference.to_string(),
+        }),
+    ))
+}
+
+#[test]
+fn profile_present_forwards_screened_references_and_is_unsupported_without_an_adapter() {
+    let profile = Arc::new(RecordingProfilePlatform::default());
+    let host = profile_host(Some(profile.clone()));
+    let reference = format!("bafkreitest#{}", "ab".repeat(44));
+    let longest = "a".repeat(2048);
+
+    assert_eq!(
+        present_profile(&host, &reference).expect("a screened reference is presented"),
+        HostProfilePresentResponse::V1
+    );
+    assert_eq!(
+        present_profile(&host, &longest).expect("the bound is inclusive"),
+        HostProfilePresentResponse::V1
+    );
+    // Anything that could render deceptively or carry a payload into host UI
+    // is refused in the core, whatever the host would have done with it.
+    for rejected in [
+        String::new(),
+        "a".repeat(2049),
+        "bafk ref#00".to_string(),
+        "bafk\u{202e}ref".to_string(),
+        "bafk\nref".to_string(),
+    ] {
+        assert!(matches!(
+            present_profile(&host, &rejected),
+            Err(CallError::Domain(HostProfilePresentError::V1(
+                v01::HostProfilePresentError::InvalidReference
+            )))
+        ));
+    }
+    assert_eq!(
+        profile
+            .presented
+            .lock()
+            .expect("presented mutex poisoned")
+            .as_slice(),
+        [
+            ("egui-chat.dot".to_string(), reference),
+            ("egui-chat.dot".to_string(), longest),
+        ],
+        "only screened references reach the host, attributed to the caller"
+    );
+
+    assert!(matches!(
+        present_profile(&profile_host(None), "bafkreitest#00"),
+        Err(CallError::Unsupported)
+    ));
+}
+
+/// A product runtime on a shared platform, so several products see one core
+/// storage the way they do on a real host.
+fn profile_host_on(
+    platform: Arc<crate::test_support::StubPlatform>,
+    product: ProductContext,
+    profile: Option<Arc<dyn crate::platform::ProfilePlatform>>,
+) -> ProductRuntimeHost {
+    let (host_config, _) = runtime_config(&product.product_id);
+    let services = RuntimeServices::new(
+        platform,
+        host_config.host.host_info.clone(),
+        host_config.people_chain_genesis_hash,
+        host_config.bulletin_chain_genesis_hash,
+        host_config.asset_hub_chain_genesis_hash,
+        test_spawner(),
+    );
+    let pairing_host = PairingHost::new(services.clone(), host_config);
+    let mut adapters = crate::host_core::ConnectionAdapters::from_services(&services);
+    adapters.profile_platform = profile;
+    ProductRuntimeHost::from_services(services, adapters, pairing_host, product)
+}
+
+fn disclose(
+    host: &ProductRuntimeHost,
+    reference: &str,
+) -> Result<HostProfileDiscloseResponse, CallError<HostProfileDiscloseError>> {
+    futures::executor::block_on(Profile::disclose(
+        host,
+        &CallContext::default(),
+        HostProfileDiscloseRequest::V1(v01::HostProfileDiscloseRequest {
+            reference: reference.to_string(),
+        }),
+    ))
+}
+
+fn retract(
+    host: &ProductRuntimeHost,
+) -> Result<HostProfileRetractResponse, CallError<HostProfileRetractError>> {
+    futures::executor::block_on(Profile::retract(
+        host,
+        &CallContext::default(),
+        HostProfileRetractRequest::V1,
+    ))
+}
+
+fn present_contact(
+    host: &ProductRuntimeHost,
+    peer_identity: [u8; 32],
+) -> Result<HostProfilePresentContactResponse, CallError<HostProfilePresentContactError>> {
+    futures::executor::block_on(Profile::present_contact(
+        host,
+        &CallContext::default(),
+        HostProfilePresentContactRequest::V1(v01::HostProfilePresentContactRequest {
+            peer_identity,
+        }),
+    ))
+}
+
+fn own_profile_status(
+    host: &ProductRuntimeHost,
+) -> Result<HostProfileOwnStatusResponse, CallError<HostProfileOwnStatusError>> {
+    futures::executor::block_on(Profile::own_status(
+        host,
+        &CallContext::default(),
+        HostProfileOwnStatusRequest::V1,
+    ))
+}
+
+fn present_own_profile(
+    host: &ProductRuntimeHost,
+) -> Result<HostProfilePresentOwnResponse, CallError<HostProfilePresentOwnError>> {
+    futures::executor::block_on(Profile::present_own(
+        host,
+        &CallContext::default(),
+        HostProfilePresentOwnRequest::V1,
+    ))
+}
+
+#[test]
+fn own_profile_status_and_presentation_resolve_the_host_owned_disclosure() {
+    let platform = stub_platform();
+    let presented = Arc::new(RecordingProfilePlatform::default());
+    let chat = signed_in(
+        profile_host_on(platform.clone(), egui_chat(), Some(presented.clone())),
+        WALLET,
+    );
+    let owner = owner_of(&chat);
+    assert_eq!(
+        own_profile_status(&chat).expect("status is available"),
+        HostProfileOwnStatusResponse::V1(v01::HostProfileOwnStatusResponse { configured: false })
+    );
+    assert!(matches!(
+        present_own_profile(&chat),
+        Err(CallError::Domain(HostProfilePresentOwnError::V1(
+            v01::HostProfilePresentOwnError::NotConfigured
+        )))
+    ));
+
+    futures::executor::block_on(profile::write_disclosure(
+        platform.as_ref(),
+        owner,
+        &profile::Disclosure {
+            product_id: "seity.dot".to_string(),
+            reference: CONTACTS_REFERENCE.to_string(),
+            revision: 1,
+            all_chat_apps: true,
+            app_products: Vec::new(),
+            contacts: Vec::new(),
+        },
+    ))
+    .expect("own disclosure stored");
+    assert_eq!(
+        own_profile_status(&chat).expect("status is available"),
+        HostProfileOwnStatusResponse::V1(v01::HostProfileOwnStatusResponse { configured: true })
+    );
+    assert_eq!(
+        present_own_profile(&chat).expect("own profile is presented"),
+        HostProfilePresentOwnResponse::V1
+    );
+    assert_eq!(
+        presented
+            .presented
+            .lock()
+            .expect("presented mutex poisoned")
+            .as_slice(),
+        [("egui-chat.dot".to_string(), CONTACTS_REFERENCE.to_string())]
+    );
+}
+
+#[test]
+fn own_profile_reads_do_not_cross_a_wallet_switch() {
+    for present in [false, true] {
+        let platform = consenting_platform();
+        let presenter = Arc::new(RecordingProfilePlatform::default());
+        let host = signed_in(
+            profile_host_on(platform.clone(), egui_chat(), Some(presenter.clone())),
+            WALLET,
+        );
+        disclose(&host, CONTACTS_REFERENCE).unwrap();
+        let (release, gate) = futures::channel::oneshot::channel();
+        *platform.core_storage_read_gate.lock() = Some((
+            crate::test_support::core_storage_test_key(owner_of(&host).disclosure_key()),
+            gate,
+        ));
+        futures::executor::block_on(async {
+            let context = CallContext::default();
+            let operation = async {
+                if present {
+                    assert!(matches!(
+                        Profile::present_own(&host, &context, HostProfilePresentOwnRequest::V1).await,
+                        Err(CallError::Domain(HostProfilePresentOwnError::V1(
+                            v01::HostProfilePresentOwnError::NotConnected
+                        )))
+                    ));
+                } else {
+                    assert!(matches!(
+                        Profile::own_status(&host, &context, HostProfileOwnStatusRequest::V1).await,
+                        Err(CallError::Domain(HostProfileOwnStatusError::V1(
+                            v01::HostProfileOwnStatusError::NotConnected
+                        )))
+                    ));
+                }
+            };
+            futures::pin_mut!(operation);
+            assert!(futures::poll!(operation.as_mut()).is_pending());
+            host.test_session_state().set_session(SessionInfo {
+                public_key: [0x99; 32],
+                ..session_info()
+            });
+            release.send(()).unwrap();
+            operation.await;
+        });
+        assert!(presenter.presented.lock().unwrap().is_empty());
+    }
+}
+
+const CONTACTS_REFERENCE: &str = "seity-contacts:v1:5c9584ba6e565351723d57394780b31b4c2156123e1269c4724ae5f01258bb535c9584ba6e565351723d57394780b31b4c2156123e1269c4724ae5f01258bb53";
+
+const WALLET: [u8; 32] = [0x57; 32];
+
+/// Sign `host` in as the wallet with root key `root_public_key`.
+fn signed_in(host: ProductRuntimeHost, root_public_key: [u8; 32]) -> ProductRuntimeHost {
+    host.test_session_state()
+        .set_session(crate::host_logic::session::SessionInfo {
+            public_key: root_public_key,
+            ..session_info()
+        });
+    host
+}
+
+fn app_host(platform: &Arc<StubPlatform>, product_id: &str) -> ProductRuntimeHost {
+    signed_in(
+        profile_host_on(
+            platform.clone(),
+            ProductContext::new(product_id.to_string()).expect("valid product"),
+            None,
+        ),
+        WALLET,
+    )
+}
+
+fn owner_of(host: &ProductRuntimeHost) -> profile::ProfileOwner {
+    host.profile_owner().expect("signed in")
+}
+
+fn consenting_platform() -> Arc<StubPlatform> {
+    Arc::new(StubPlatform {
+        profile_disclosure_confirmed: true,
+        ..Default::default()
+    })
+}
+
+#[test]
+fn profile_disclose_stores_the_reference_and_only_its_discloser_may_retract_it() {
+    let platform = consenting_platform();
+    let seity = app_host(&platform, "seity.dot");
+    let other = app_host(&platform, "other.dot");
+    let owner = owner_of(&seity);
+
+    assert_eq!(
+        disclose(&seity, CONTACTS_REFERENCE).expect("an App discloses a screened reference"),
+        HostProfileDiscloseResponse::V1
+    );
+    let stored = futures::executor::block_on(profile::read_disclosure(platform.as_ref(), owner))
+        .expect("readable")
+        .expect("stored");
+    assert_eq!(stored.product_id, "seity.dot");
+    assert_eq!(stored.reference, CONTACTS_REFERENCE);
+
+    // Disclosing the same reference again (its record changed) is a new
+    // revision, so contacts are sent it again.
+    disclose(&seity, CONTACTS_REFERENCE).expect("re-disclosing is allowed");
+    let again = futures::executor::block_on(profile::read_disclosure(platform.as_ref(), owner))
+        .expect("readable")
+        .expect("stored");
+    assert_eq!(again.reference, CONTACTS_REFERENCE);
+    assert!(again.revision > stored.revision);
+
+    assert!(matches!(
+        retract(&other),
+        Err(CallError::Domain(HostProfileRetractError::V1(
+            v01::HostProfileRetractError::NotDiscloser
+        )))
+    ));
+    assert_eq!(
+        retract(&seity).expect("the discloser retracts"),
+        HostProfileRetractResponse::V1
+    );
+    assert_eq!(
+        futures::executor::block_on(profile::read_disclosure(platform.as_ref(), owner))
+            .expect("readable"),
+        None
+    );
+    assert_eq!(
+        retract(&seity).expect("retracting nothing is not an error"),
+        HostProfileRetractResponse::V1
+    );
+}
+
+#[test]
+fn a_disclosure_stored_before_revisions_still_reads() {
+    use crate::platform::CoreStorage;
+    use parity_scale_codec::Encode;
+    let platform = consenting_platform();
+    let seity = app_host(&platform, "seity.dot");
+    let owner = owner_of(&seity);
+    futures::executor::block_on(platform.write_core_storage(
+        owner.disclosure_key(),
+        ("seity.dot".to_string(), CONTACTS_REFERENCE.to_string()).encode(),
+    ))
+    .unwrap();
+    let stored = futures::executor::block_on(profile::read_disclosure(platform.as_ref(), owner))
+        .expect("the old layout decodes")
+        .expect("stored");
+    assert_eq!(
+        stored,
+        profile::Disclosure {
+            product_id: "seity.dot".into(),
+            reference: CONTACTS_REFERENCE.into(),
+            revision: 0,
+            all_chat_apps: true,
+            app_products: Vec::new(),
+            contacts: Vec::new(),
+        }
+    );
+}
+
+fn picked_handle(host: &ProductRuntimeHost) -> truapi::latest::ContactHandle {
+    let HostContactsPickResponse::V1(response) = pick(host).expect("picker succeeds");
+    let v01::ContactPickOutcome::Picked { handle } = response.outcome else {
+        panic!("fixture picks a contact");
+    };
+    handle
+}
+
+fn disclose_audiences(
+    host: &ProductRuntimeHost,
+    audiences: Vec<truapi::latest::ProfileAudience>,
+) -> Result<HostProfileDiscloseResponse, CallError<HostProfileDiscloseError>> {
+    futures::executor::block_on(Profile::disclose(
+        host,
+        &CallContext::default(),
+        HostProfileDiscloseRequest::V2(truapi::latest::HostProfileDiscloseRequest {
+            reference: CONTACTS_REFERENCE.to_string(),
+            audiences,
+        }),
+    ))
+}
+
+#[test]
+fn profile_audiences_are_independent_and_invalid_handles_leave_the_disclosure_unchanged() {
+    use truapi::latest::{ContactHandle, ProfileAudience};
+    let platform = consenting_platform();
+    let account = [0xa1; 32];
+    let host = contacts_host(
+        "seity.dot",
+        platform.clone(),
+        Some(StubContactsPlatform::picking(account)),
+        true,
+    );
+    let handle = picked_handle(&host);
+    let owner = owner_of(&host);
+    let read = || {
+        futures::executor::block_on(profile::read_disclosure(platform.as_ref(), owner))
+            .unwrap()
+            .unwrap()
+    };
+    disclose_audiences(
+        &host,
+        vec![
+            ProfileAudience::App {
+                product_id: "egui-chat.dot".into(),
+            },
+            ProfileAudience::Contacts {
+                handles: vec![handle, handle],
+            },
+            ProfileAudience::App {
+                product_id: "egui-chat.dot".into(),
+            },
+        ],
+    )
+    .expect("independent audiences accepted");
+    let original = read();
+    assert_eq!(
+        (
+            original.all_chat_apps,
+            &original.app_products,
+            &original.contacts
+        ),
+        (false, &vec!["egui-chat.dot".to_string()], &vec![account]),
+    );
+    for audiences in [
+        vec![ProfileAudience::Contacts {
+            handles: vec![handle, ContactHandle { bytes: [0xee; 32] }],
+        }],
+        vec![ProfileAudience::App {
+            product_id: "invalid product".into(),
+        }],
+        vec![ProfileAudience::Contacts {
+            handles: vec![handle; 4097],
+        }],
+        vec![ProfileAudience::ChatApps; 65],
+    ] {
+        assert!(matches!(
+            disclose_audiences(&host, audiences),
+            Err(CallError::Domain(HostProfileDiscloseError::V2(
+                v01::HostProfileDiscloseError::Unknown { .. }
+            )))
+        ));
+        assert_eq!(
+            read(),
+            original,
+            "a rejected audience cannot partially change grants"
+        );
+    }
+    disclose_audiences(&host, Vec::new()).expect("retaining own profile without grants");
+    let retained = read();
+    assert_eq!(
+        (
+            retained.reference.as_str(),
+            retained.all_chat_apps,
+            retained.app_products,
+            retained.contacts
+        ),
+        (CONTACTS_REFERENCE, false, Vec::new(), Vec::new()),
+    );
+    assert_eq!(
+        own_profile_status(&host).unwrap(),
+        HostProfileOwnStatusResponse::V1(v01::HostProfileOwnStatusResponse { configured: true })
+    );
+    disclose(&host, CONTACTS_REFERENCE).unwrap();
+    let legacy = read();
+    assert_eq!(
+        (legacy.all_chat_apps, legacy.app_products, legacy.contacts),
+        (true, Vec::new(), Vec::new())
+    );
+}
+
+fn present_selected_contact(
+    host: &ProductRuntimeHost,
+    contact: truapi::latest::ProfileContact,
+) -> Result<HostProfilePresentContactResponse, CallError<HostProfilePresentContactError>> {
+    futures::executor::block_on(Profile::present_contact(
+        host,
+        &CallContext::default(),
+        HostProfilePresentContactRequest::V2(truapi::latest::HostProfilePresentContactRequest {
+            contact,
+        }),
+    ))
+}
+
+#[test]
+fn profile_handle_presentation_hides_absence_and_removed_contacts_in_an_unrelated_app() {
+    use truapi::latest::{ContactHandle, ProfileContact};
+    let platform = stub_platform();
+    let account = [0xa1; 32];
+    let contacts = StubContactsPlatform::picking(account);
+    let presented = Arc::new(RecordingContactProfilePlatform::default());
+    let mut host = contacts_host("notes.dot", platform.clone(), Some(contacts.clone()), true);
+    host.profile_platform = Some(presented.clone());
+    let handle = picked_handle(&host);
+    let selected = ProfileContact::Handle { handle };
+    let success = Ok(HostProfilePresentContactResponse::V2);
+    assert_eq!(present_selected_contact(&host, selected), success);
+    let not_shared = Err(CallError::Domain(HostProfilePresentContactError::V1(
+        v01::HostProfilePresentContactError::NotShared,
+    )));
+    assert_eq!(present_contact(&host, account), not_shared);
+    futures::executor::block_on(profile::record_personal_received_reference(
+        platform.as_ref(),
+        owner_of(&host),
+        account,
+        "seity.dot".into(),
+        1,
+        1,
+        Some(CONTACTS_REFERENCE.into()),
+    ))
+    .unwrap();
+    assert_eq!(
+        present_contact(&host, account),
+        not_shared,
+        "legacy raw-peer requests must not reveal that a personal profile became available"
+    );
+    assert_eq!(present_selected_contact(&host, selected), success);
+    futures::executor::block_on(profile::record_personal_received_reference(
+        platform.as_ref(),
+        owner_of(&host),
+        account,
+        "seity.dot".into(),
+        2,
+        2,
+        None,
+    ))
+    .unwrap();
+    assert_eq!(present_selected_contact(&host, selected), success);
+    assert_eq!(
+        present_selected_contact(
+            &host,
+            ProfileContact::Handle {
+                handle: ContactHandle { bytes: [0xee; 32] },
+            }
+        ),
+        success
+    );
+    contacts
+        .listed
+        .lock()
+        .expect("listed mutex poisoned")
+        .clear();
+    host.services.contact_handles.clear();
+    assert_eq!(present_selected_contact(&host, selected), success);
+    assert_eq!(
+        presented
+            .contacts
+            .lock()
+            .expect("contacts mutex poisoned")
+            .as_slice(),
+        [
+            ("notes.dot".to_string(), crate::platform::PresentedContactProfile {
+                shared: None,
+                peer_identity: account,
+                username: None,
+            }),
+            ("notes.dot".to_string(), crate::platform::PresentedContactProfile {
+                shared: Some(crate::platform::SharedContactProfile {
+                    reference: CONTACTS_REFERENCE.to_string(),
+                    shared_at: 1,
+                }),
+                peer_identity: account,
+                username: None,
+            }),
+            ("notes.dot".to_string(), crate::platform::PresentedContactProfile {
+                shared: None,
+                peer_identity: account,
+                username: None,
+            }),
+        ],
+        "absence and retraction reach only host UI; invalid or removed handles do not",
+    );
+}
+
+#[test]
+fn profile_v2_read_failures_and_invalid_references_are_not_presented_as_absence() {
+    for invalid_reference in [false, true] {
+        let platform = Arc::new(StubPlatform {
+            local_storage_error: (!invalid_reference).then_some("storage unavailable"),
+            ..Default::default()
+        });
+        let presenter = Arc::new(RecordingContactProfilePlatform::default());
+        let host = signed_in(
+            profile_host_on(platform.clone(), egui_chat(), Some(presenter.clone())),
+            WALLET,
+        );
+        let account = [0xa1; 32];
+        if invalid_reference {
+            futures::executor::block_on(profile::record_received_reference(
+                platform.as_ref(),
+                owner_of(&host),
+                "egui-chat.dot",
+                account,
+                "seity.dot".into(),
+                1,
+                Some("invalid stored reference".into()),
+            ))
+            .unwrap();
+        }
+        assert_eq!(
+            present_selected_contact(
+                &host,
+                truapi::latest::ProfileContact::Peer { peer_identity: account },
+            ),
+            Ok(HostProfilePresentContactResponse::V2),
+        );
+        assert!(presenter.contacts.lock().unwrap().is_empty());
+    }
+}
+
+#[test]
+fn profile_v2_empty_presentation_is_discarded_after_a_wallet_switch_during_lookup() {
+    struct DelayedContacts {
+        release: parking_lot::Mutex<Option<futures::channel::oneshot::Receiver<()>>>,
+        account: [u8; 32],
+    }
+    #[truapi::async_trait]
+    impl crate::platform::ContactsPlatform for DelayedContacts {
+        async fn contacts(
+            &self,
+            _lookup: &crate::platform::HostContactLookup,
+        ) -> Result<crate::platform::HostContactMatches, truapi::latest::GenericError> {
+            let release = self.release.lock().take().unwrap();
+            release.await.unwrap();
+            Ok(crate::platform::HostContactMatches {
+                accounts: vec![Some(self.account)],
+            })
+        }
+    }
+    let (release, wait) = futures::channel::oneshot::channel();
+    let contacts = Arc::new(DelayedContacts {
+        release: parking_lot::Mutex::new(Some(wait)),
+        account: [0xa1; 32],
+    });
+    let presenter = Arc::new(RecordingContactProfilePlatform::default());
+    let mut host = contacts_host("notes.dot", stub_platform(), Some(contacts), true);
+    host.profile_platform = Some(presenter.clone());
+    let (_, handles) = host.contacts_picker().unwrap();
+    let handle = truapi::latest::ContactHandle {
+        bytes: handles.mint(&[0xa1; 32]),
+    };
+    futures::executor::block_on(async {
+        let context = CallContext::default();
+        let presentation = Profile::present_contact(
+            &host,
+            &context,
+            HostProfilePresentContactRequest::V2(truapi::latest::HostProfilePresentContactRequest {
+                contact: truapi::latest::ProfileContact::Handle { handle },
+            }),
+        );
+        futures::pin_mut!(presentation);
+        assert!(futures::poll!(presentation.as_mut()).is_pending());
+        host.test_session_state().set_session(SessionInfo {
+            public_key: [0x99; 32],
+            ..session_info()
+        });
+        release.send(()).unwrap();
+        assert_eq!(presentation.await, Ok(HostProfilePresentContactResponse::V2));
+    });
+    assert!(presenter.contacts.lock().unwrap().is_empty());
+}
+
+#[test]
+fn profile_v2_presentation_does_not_expose_host_parse_failures() {
+    struct RejectingProfile;
+    #[truapi::async_trait]
+    impl crate::platform::ProfilePlatform for RejectingProfile {
+        async fn present_profile(
+            &self,
+            _product: &ProductContext,
+            _request: truapi::latest::HostProfilePresentRequest,
+        ) -> Result<(), truapi::latest::HostProfilePresentError> {
+            Err(v01::HostProfilePresentError::InvalidReference)
+        }
+    }
+    let platform = stub_platform();
+    let host = signed_in(
+        profile_host_on(
+            platform.clone(),
+            egui_chat(),
+            Some(Arc::new(RejectingProfile)),
+        ),
+        WALLET,
+    );
+    let account = [0xa1; 32];
+    assert_eq!(
+        present_selected_contact(
+            &host,
+            truapi::latest::ProfileContact::Peer { peer_identity: account },
+        ),
+        Ok(HostProfilePresentContactResponse::V2),
+        "an adapter without empty-profile feedback must not expose absence",
+    );
+    futures::executor::block_on(profile::record_received_reference(
+        platform.as_ref(),
+        owner_of(&host),
+        "egui-chat.dot",
+        account,
+        "seity.dot".into(),
+        1,
+        Some(CONTACTS_REFERENCE.into()),
+    ))
+    .unwrap();
+    assert_eq!(
+        present_selected_contact(
+            &host,
+            truapi::latest::ProfileContact::Peer {
+                peer_identity: account
+            }
+        ),
+        Ok(HostProfilePresentContactResponse::V2),
+    );
+    assert_eq!(
+        present_contact(&host, account),
+        Err(CallError::Domain(HostProfilePresentContactError::V1(
+            v01::HostProfilePresentContactError::InvalidReference,
+        ))),
+    );
+}
+
+#[test]
+fn a_contact_removed_during_lookup_never_becomes_a_transaction_recipient_or_profile_grant() {
+    struct RemovingContacts {
+        services: std::sync::Weak<RuntimeServices>,
+        account: [u8; 32],
+    }
+    #[truapi::async_trait]
+    impl crate::platform::ContactsPlatform for RemovingContacts {
+        async fn contacts(
+            &self,
+            lookup: &crate::platform::HostContactLookup,
+        ) -> Result<crate::platform::HostContactMatches, truapi::latest::GenericError> {
+            self.services.upgrade().unwrap().contact_handles.clear();
+            Ok(crate::platform::HostContactMatches {
+                accounts: vec![Some(self.account); lookup.handles.len()],
+            })
+        }
+    }
+    let platform = consenting_platform();
+    let host = contacts_host("seity.dot", platform.clone(), None, true);
+    let account = [0xa1; 32];
+    host.services
+        .install_contacts_platform(Arc::new(RemovingContacts {
+            services: Arc::downgrade(&host.services),
+            account,
+        }));
+    let (_, handles) = host.contacts_picker().unwrap();
+    let handle = truapi::latest::ContactHandle {
+        bytes: handles.mint(&account),
+    };
+    assert_eq!(
+        futures::executor::block_on(
+            host.substitute_declared_contacts(handle.bytes.to_vec(), &[handle])
+        ),
+        Err(ContactResolutionError::UnknownContact),
+    );
+    assert!(
+        disclose_audiences(
+            &host,
+            vec![truapi::latest::ProfileAudience::Contacts {
+                handles: vec![handle]
+            }]
+        )
+        .is_err()
+    );
+    assert_eq!(
+        futures::executor::block_on(profile::read_disclosure(platform.as_ref(), owner_of(&host)))
+            .unwrap(),
+        None,
+    );
+}
+
+#[test]
+fn an_unrenderable_profile_permission_review_does_not_store_a_denial() {
+    let platform = Arc::new(StubPlatform {
+        profile_disclosure_error: Some("profile disclosure review is unsupported"),
+        ..Default::default()
+    });
+    let host = app_host(&platform, "seity.dot");
+    for _ in 0..2 {
+        assert!(matches!(
+            disclose(&host, CONTACTS_REFERENCE),
+            Err(CallError::Domain(HostProfileDiscloseError::V1(
+                v01::HostProfileDiscloseError::PermissionDenied
+            )))
+        ));
+        assert_eq!(
+            futures::executor::block_on(host.permission_authorization_status(
+                PermissionAuthorizationRequest::ProfileDisclosure,
+            )).unwrap(),
+            PermissionAuthorizationStatus::NotDetermined,
+        );
+    }
+    assert_eq!(platform.profile_disclosure_reviews.lock().expect("profile reviews").len(), 2);
+}
+
+#[test]
+fn profile_disclose_asks_once_per_product_and_a_refusal_stores_nothing() {
+    let platform = Arc::new(StubPlatform::default());
+    // The first product is refused, the second allowed, each asked once.
+    platform
+        .permission_confirmation_decisions
+        .lock()
+        .expect("permission confirmation mutex poisoned")
+        .extend([
+            crate::platform::PermissionDecision::Deny,
+            crate::platform::PermissionDecision::AllowAlways,
+        ]);
+    let refused = app_host(&platform, "refused.dot");
+    let allowed = app_host(&platform, "seity.dot");
+    let owner = owner_of(&refused);
+    let denied =
+        |result: Result<HostProfileDiscloseResponse, CallError<HostProfileDiscloseError>>| {
+            matches!(
+                result,
+                Err(CallError::Domain(HostProfileDiscloseError::V1(
+                    v01::HostProfileDiscloseError::PermissionDenied
+                )))
+            )
+        };
+
+    assert!(denied(disclose(&refused, CONTACTS_REFERENCE)));
+    assert!(
+        denied(disclose(&refused, CONTACTS_REFERENCE)),
+        "the refusal is remembered"
+    );
+    assert_eq!(
+        futures::executor::block_on(profile::read_disclosure(platform.as_ref(), owner))
+            .expect("readable"),
+        None,
+        "a refused product discloses nothing"
+    );
+
+    disclose(&allowed, CONTACTS_REFERENCE).expect("the user allowed it");
+    disclose(&allowed, CONTACTS_REFERENCE).expect("and is not asked again");
+    assert_eq!(
+        platform
+            .profile_disclosure_reviews
+            .lock()
+            .expect("profile disclosure review list mutex poisoned")
+            .iter()
+            .map(|review| review.product_id.as_str())
+            .collect::<Vec<_>>(),
+        ["refused.dot", "seity.dot"],
+        "one prompt per product, naming it"
+    );
+}
+
+#[test]
+fn profile_disclose_is_for_apps_and_screened_references_only() {
+    let platform = consenting_platform();
+    let worker = signed_in(
+        profile_host_on(
+            platform.clone(),
+            ProductContext::new_with_execution(
+                "seity.dot".to_string(),
+                crate::platform::ProductExecutionKind::Worker,
+            )
+            .expect("valid product"),
+            None,
+        ),
+        WALLET,
+    );
+    assert!(matches!(
+        disclose(&worker, CONTACTS_REFERENCE),
+        Err(CallError::Denied)
+    ));
+    assert!(matches!(retract(&worker), Err(CallError::Denied)));
+
+    let app = app_host(&platform, "seity.dot");
+    for rejected in [
+        String::new(),
+        "a".repeat(2049),
+        "seity contacts".to_string(),
+    ] {
+        assert!(matches!(
+            disclose(&app, &rejected),
+            Err(CallError::Domain(HostProfileDiscloseError::V1(
+                v01::HostProfileDiscloseError::InvalidReference
+            )))
+        ));
+    }
+    assert_eq!(
+        futures::executor::block_on(profile::read_disclosure(platform.as_ref(), owner_of(&app)))
+            .expect("readable"),
+        None,
+        "nothing unscreened is stored"
+    );
+    assert!(
+        platform
+            .profile_disclosure_reviews
+            .lock()
+            .expect("profile disclosure review list mutex poisoned")
+            .is_empty(),
+        "nor is the user asked about it"
+    );
+
+    let signed_out = profile_host_on(
+        platform.clone(),
+        ProductContext::new("seity.dot".to_string()).expect("valid product"),
+        None,
+    );
+    assert!(matches!(
+        disclose(&signed_out, CONTACTS_REFERENCE),
+        Err(CallError::Domain(HostProfileDiscloseError::V1(
+            v01::HostProfileDiscloseError::NotConnected
+        )))
+    ));
+    assert!(matches!(
+        retract(&signed_out),
+        Err(CallError::Domain(HostProfileRetractError::V1(
+            v01::HostProfileRetractError::NotConnected
+        )))
+    ));
+}
+
+#[test]
+fn profile_state_belongs_to_the_signed_in_wallet() {
+    let platform = consenting_platform();
+    let presented = Arc::new(RecordingProfilePlatform::default());
+    let first = app_host(&platform, "seity.dot");
+    let second = signed_in(
+        profile_host_on(
+            platform.clone(),
+            ProductContext::new("seity.dot".to_string()).expect("valid product"),
+            Some(presented.clone()),
+        ),
+        [0x58; 32],
+    );
+    disclose(&first, CONTACTS_REFERENCE).expect("disclosed");
+    assert_eq!(
+        futures::executor::block_on(profile::read_disclosure(
+            platform.as_ref(),
+            owner_of(&second)
+        ))
+        .expect("readable"),
+        None,
+        "another wallet has disclosed nothing"
+    );
+    assert_eq!(
+        retract(&second).expect("nothing to retract"),
+        HostProfileRetractResponse::V1
+    );
+    assert!(
+        futures::executor::block_on(profile::read_disclosure(
+            platform.as_ref(),
+            owner_of(&first)
+        ))
+        .expect("readable")
+        .is_some(),
+        "and cannot withdraw the first wallet's"
+    );
+
+    // What one wallet's contact sent is not another wallet's.
+    futures::executor::block_on(profile::record_received_reference(
+        platform.as_ref(),
+        owner_of(&first),
+        "seity.dot",
+        [0xa1; 32],
+        "seity.dot".to_string(),
+        1,
+        Some(CONTACTS_REFERENCE.to_string()),
+    ))
+    .expect("recorded");
+    assert!(matches!(
+        present_contact(&second, [0xa1; 32]),
+        Err(CallError::Domain(HostProfilePresentContactError::V1(
+            v01::HostProfilePresentContactError::NotShared
+        )))
+    ));
+}
+
+#[test]
+fn profile_present_contact_substitutes_the_reference_the_contact_sent() {
+    let platform = stub_platform();
+    let presented = Arc::new(RecordingProfilePlatform::default());
+    let chat = signed_in(
+        profile_host_on(
+            platform.clone(),
+            ProductContext::new("egui-chat.dot".to_string()).expect("valid product"),
+            Some(presented.clone()),
+        ),
+        WALLET,
+    );
+    let owner = owner_of(&chat);
+    let alice = [0xa1; 32];
+    let bob = [0xb0; 32];
+    let record = |timestamp, reference: Option<&str>| {
+        // What the relay does when Alice's host sends her a frame.
+        futures::executor::block_on(profile::record_received_reference(
+            platform.as_ref(),
+            owner,
+            "egui-chat.dot",
+            alice,
+            "seity.dot".to_string(),
+            timestamp,
+            reference.map(str::to_string),
+        ))
+        .expect("recorded");
+    };
+    record(1, Some(CONTACTS_REFERENCE));
+
+    assert_eq!(
+        present_contact(&chat, alice).expect("a contact who shared is presented"),
+        HostProfilePresentContactResponse::V1
+    );
+    assert_eq!(
+        presented
+            .presented
+            .lock()
+            .expect("presented mutex poisoned")
+            .as_slice(),
+        [("egui-chat.dot".to_string(), CONTACTS_REFERENCE.to_string())],
+        "a host without contact attribution presents the stored reference by default"
+    );
+    assert!(matches!(
+        present_contact(&chat, bob),
+        Err(CallError::Domain(HostProfilePresentContactError::V1(
+            v01::HostProfilePresentContactError::NotShared
+        )))
+    ));
+
+    // Another product's contacts are not this product's.
+    let other = signed_in(
+        profile_host_on(
+            platform.clone(),
+            ProductContext::new("other-chat.dot".to_string()).expect("valid product"),
+            Some(presented.clone()),
+        ),
+        WALLET,
+    );
+    assert!(matches!(
+        present_contact(&other, alice),
+        Err(CallError::Domain(HostProfilePresentContactError::V1(
+            v01::HostProfilePresentContactError::NotShared
+        )))
+    ));
+
+    // A retraction from Alice's host withdraws what this host holds.
+    record(2, None);
+    assert!(matches!(
+        present_contact(&chat, alice),
+        Err(CallError::Domain(HostProfilePresentContactError::V1(
+            v01::HostProfilePresentContactError::NotShared
+        )))
+    ));
+
+    assert!(matches!(
+        present_contact(
+            &profile_host_on(
+                platform.clone(),
+                ProductContext::new("egui-chat.dot".to_string()).expect("valid product"),
+                Some(presented),
+            ),
+            alice,
+        ),
+        Err(CallError::Domain(HostProfilePresentContactError::V1(
+            v01::HostProfilePresentContactError::NotConnected
+        )))
+    ));
+    assert!(matches!(
+        present_contact(
+            &signed_in(
+                profile_host_on(
+                    platform,
+                    ProductContext::new("egui-chat.dot".to_string()).expect("valid product"),
+                    None,
+                ),
+                WALLET,
+            ),
+            alice,
+        ),
+        Err(CallError::Unsupported)
+    ));
+}
+
+#[test]
+fn profile_present_contact_names_the_contact_who_shared_it() {
+    let platform = stub_platform();
+    let presenter = Arc::new(RecordingContactProfilePlatform::default());
+    let chat = signed_in(
+        profile_host_on(
+            platform.clone(),
+            ProductContext::new("egui-chat.dot".to_string()).expect("valid product"),
+            Some(presenter.clone()),
+        ),
+        WALLET,
+    );
+    let alice = [0xa1; 32];
+    let record = |timestamp| {
+        futures::executor::block_on(profile::record_received_reference(
+            platform.as_ref(),
+            owner_of(&chat),
+            "egui-chat.dot",
+            alice,
+            "seity.dot".to_string(),
+            timestamp,
+            Some(CONTACTS_REFERENCE.to_string()),
+        ))
+        .expect("recorded");
+    };
+    record(1_700_000_000_000);
+    // Alice re-shares after changing the record behind the same reference.
+    record(1_700_000_000_500);
+
+    present_contact(&chat, alice).expect("presented");
+    assert_eq!(
+        presenter
+            .contacts
+            .lock()
+            .expect("contacts mutex poisoned")
+            .as_slice(),
+        [(
+            "egui-chat.dot".to_string(),
+            crate::platform::PresentedContactProfile {
+                shared: Some(crate::platform::SharedContactProfile {
+                    reference: CONTACTS_REFERENCE.to_string(),
+                    shared_at: 1_700_000_000_500,
+                }),
+                peer_identity: alice,
+                // A paired host's Chat roster lives on the signing host.
+                username: None,
+            }
+        )],
+        "the host learns who sent the reference and when their newest share was, and no name \
+         it does not know"
+    );
+    assert!(
+        presenter
+            .presented
+            .lock()
+            .expect("presented mutex poisoned")
+            .is_empty(),
+        "a contact presentation is not reported as a product-referenced one"
+    );
+}
+
+/// A connection from `product` on `platform`, with `avatars` as the host's
+/// profile adapter.
+fn avatar_host(
+    platform: &Arc<StubPlatform>,
+    product: ProductContext,
+    avatars: &Arc<RecordingAvatarHost>,
+) -> ProductRuntimeHost {
+    let (host_config, _) = runtime_config(&product.product_id);
+    let services = RuntimeServices::new(
+        platform.clone(),
+        host_config.host.host_info.clone(),
+        host_config.people_chain_genesis_hash,
+        host_config.bulletin_chain_genesis_hash,
+        host_config.asset_hub_chain_genesis_hash,
+        test_spawner(),
+    );
+    let pairing_host = PairingHost::new(services.clone(), host_config);
+    let mut adapters = crate::host_core::ConnectionAdapters::from_services(&services);
+    adapters.profile_platform = Some(avatars.clone() as Arc<dyn crate::platform::ProfilePlatform>);
+    ProductRuntimeHost::from_services(services, adapters, pairing_host, product)
+}
+
+fn egui_chat() -> ProductContext {
+    ProductContext::new("egui-chat.dot".to_string()).expect("valid product")
+}
+
+fn avatar_rect(x: i32, y: i32, side: u32) -> v01::AvatarRect {
+    v01::AvatarRect {
+        x,
+        y,
+        width: side,
+        height: side,
+    }
+}
+
+const AVATAR_CLIP: v01::AvatarRect = v01::AvatarRect {
+    x: 0,
+    y: 64,
+    width: 360,
+    height: 576,
+};
+
+/// A 360 by 640 placement of one 44-unit avatar per `(slot, peer)`, one row
+/// apart.
+fn avatar_placement(slots: &[(u32, [u8; 32])]) -> v01::HostProfilePlaceContactAvatarsRequest {
+    v01::HostProfilePlaceContactAvatarsRequest {
+        surface_width: 360,
+        surface_height: 640,
+        slots: slots
+            .iter()
+            .map(|&(slot, peer_identity)| v01::ContactAvatarSlot {
+                slot,
+                peer_identity,
+                rect: avatar_rect(16, 80 + 56 * slot as i32, 44),
+                clip: AVATAR_CLIP,
+            })
+            .collect(),
+    }
+}
+
+/// What the host is handed for `slot` of [`avatar_placement`], shared by a
+/// frame sent at time 1.
+fn placed_avatar(slot: u32, reference: &str) -> crate::platform::PlacedAvatar {
+    crate::platform::PlacedAvatar {
+        slot,
+        rect: avatar_rect(16, 80 + 56 * slot as i32, 44),
+        clip: AVATAR_CLIP,
+        shared_at: 1,
+        reference: reference.to_string(),
+    }
+}
+
+fn placed_avatars(avatars: Vec<crate::platform::PlacedAvatar>) -> crate::platform::PlacedAvatars {
+    crate::platform::PlacedAvatars {
+        surface_width: 360,
+        surface_height: 640,
+        avatars,
+    }
+}
+
+/// Place as a v0.1 caller, answered as the dispatcher answers one.
+fn place_avatars(
+    host: &ProductRuntimeHost,
+    request: v01::HostProfilePlaceContactAvatarsRequest,
+) -> Result<HostProfilePlaceContactAvatarsResponse, CallError<HostProfilePlaceContactAvatarsError>>
+{
+    use truapi::versioned::{FromLatest, IntoLatest};
+    futures::executor::block_on(Profile::place_contact_avatars(
+        host,
+        &CallContext::default(),
+        HostProfilePlaceContactAvatarsRequest::V1(request),
+    ))
+    .map(|response| {
+        let () = response.into_latest();
+        HostProfilePlaceContactAvatarsResponse::from_latest((), 1)
+    })
+    .map_err(|error| truapi::frame::downgrade_call_error(error, 1))
+}
+
+/// Place as a v0.2 caller, which may add the user's own avatar.
+fn place_profile_avatars(
+    host: &ProductRuntimeHost,
+    request: v02::HostProfilePlaceContactAvatarsRequest,
+) -> Result<HostProfilePlaceContactAvatarsResponse, CallError<HostProfilePlaceContactAvatarsError>>
+{
+    futures::executor::block_on(Profile::place_contact_avatars(
+        host,
+        &CallContext::default(),
+        HostProfilePlaceContactAvatarsRequest::V2(request),
+    ))
+}
+
+#[test]
+fn handle_avatars_render_personal_profiles_without_reviving_removed_contacts_on_redraw() {
+    use truapi::latest::{ContactAvatarSlot, ContactHandle, ProfileContact};
+    let platform = stub_platform();
+    let account = [0xa1; 32];
+    let contacts = StubContactsPlatform::picking(account);
+    let avatars = Arc::new(RecordingAvatarHost::default());
+    let mut host = contacts_host("notes.dot", platform.clone(), Some(contacts.clone()), true);
+    host.profile_platform = Some(avatars.clone());
+    let handle = picked_handle(&host);
+    let owner = owner_of(&host);
+    futures::executor::block_on(profile::record_personal_received_reference(
+        platform.as_ref(),
+        owner,
+        account,
+        "seity.dot".into(),
+        1,
+        1,
+        Some(CONTACTS_REFERENCE.into()),
+    ))
+    .unwrap();
+    let request = truapi::latest::HostProfilePlaceContactAvatarsRequest {
+        surface_width: 360,
+        surface_height: 640,
+        own: None,
+        slots: [handle, ContactHandle { bytes: [0xee; 32] }]
+            .into_iter()
+            .enumerate()
+            .map(|(index, handle)| ContactAvatarSlot {
+                slot: index as u32,
+                contact: ProfileContact::Handle { handle },
+                rect: avatar_rect(16, 80 + 56 * index as i32, 44),
+                clip: AVATAR_CLIP,
+            })
+            .collect(),
+    };
+    assert_eq!(
+        futures::executor::block_on(Profile::place_contact_avatars(
+            &host,
+            &CallContext::default(),
+            HostProfilePlaceContactAvatarsRequest::V3(request),
+        )),
+        Ok(HostProfilePlaceContactAvatarsResponse::V3),
+    );
+    assert_eq!(
+        avatars.placements(),
+        vec![(
+            "notes.dot".to_string(),
+            placed_avatars(vec![placed_avatar(0, CONTACTS_REFERENCE)])
+        )],
+    );
+    contacts
+        .listed
+        .lock()
+        .expect("listed mutex poisoned")
+        .clear();
+    host.services.contact_handles.clear();
+    host.services
+        .contact_avatars
+        .contacts_changed(&host.services.spawner);
+    let empty = ("notes.dot".to_string(), placed_avatars(Vec::new()));
+    assert_eq!(avatars.wait_for(3)[1..], [empty.clone(), empty.clone()]);
+    host.services
+        .contact_avatars
+        .redraw_owner(owner, &host.services.spawner);
+    assert_eq!(
+        avatars.wait_for(4)[3],
+        empty,
+        "a later profile update cannot reuse the removed handle's account"
+    );
+}
+
+#[test]
+fn peer_and_own_avatars_are_discarded_after_a_wallet_switch_during_storage_read() {
+    for own in [false, true] {
+        let platform = consenting_platform();
+        let avatars = Arc::new(RecordingAvatarHost::default());
+        let host = signed_in(avatar_host(&platform, egui_chat(), &avatars), WALLET);
+        let owner = owner_of(&host);
+        disclose(&host, CONTACTS_REFERENCE).unwrap();
+        futures::executor::block_on(profile::record_received_reference(
+            platform.as_ref(), owner, "egui-chat.dot", [0xa1; 32],
+            "seity.dot".into(), 1, Some(CONTACTS_REFERENCE.into()),
+        )).unwrap();
+        let mut request = truapi::versioned::IntoLatest::into_latest(
+            HostProfilePlaceContactAvatarsRequest::V1(avatar_placement(&[(0, [0xa1; 32])])),
+        );
+        if own {
+            request.own = Some(truapi::latest::OwnAvatarSlot {
+                slot: 1, rect: avatar_rect(16, 16, 44), clip: AVATAR_CLIP,
+            });
+        }
+        let key = if own {
+            owner.disclosure_key()
+        } else {
+            CoreStorageKey::ProfileReferencesReceived {
+                root_public_key: owner.root_public_key,
+                genesis_hash: owner.genesis_hash,
+                product_id: "egui-chat.dot".into(),
+            }
+        };
+        let (release, gate) = futures::channel::oneshot::channel();
+        *platform.core_storage_read_gate.lock() =
+            Some((crate::test_support::core_storage_test_key(key), gate));
+        futures::executor::block_on(async {
+            let context = CallContext::default();
+            let operation = Profile::place_contact_avatars(
+                &host, &context, HostProfilePlaceContactAvatarsRequest::V3(request),
+            );
+            futures::pin_mut!(operation);
+            assert!(futures::poll!(operation.as_mut()).is_pending());
+            host.test_session_state().set_session(SessionInfo {
+                public_key: [0x99; 32], ..session_info()
+            });
+            release.send(()).unwrap();
+            assert_eq!(operation.await, Ok(HostProfilePlaceContactAvatarsResponse::V3));
+        });
+        assert_eq!(avatars.placements(), vec![(
+            "egui-chat.dot".into(), placed_avatars(Vec::new()),
+        )]);
+    }
+}
+
+#[test]
+fn profile_session_change_clears_and_forgets_a_stationary_peer_avatar() {
+    let platform = stub_platform();
+    let avatars = Arc::new(RecordingAvatarHost::default());
+    let host = signed_in(avatar_host(&platform, egui_chat(), &avatars), WALLET);
+    let owner = owner_of(&host);
+    futures::executor::block_on(profile::record_received_reference(
+        platform.as_ref(), owner, "egui-chat.dot", [0xa1; 32],
+        "seity.dot".into(), 1, Some(CONTACTS_REFERENCE.into()),
+    )).unwrap();
+    place_avatars(&host, avatar_placement(&[(0, [0xa1; 32])])).unwrap();
+    host.test_session_state().clear_session();
+    host.services.contacts_session_changed();
+    assert_eq!(avatars.wait_for(2)[1], (
+        "egui-chat.dot".into(), placed_avatars(Vec::new()),
+    ));
+    host.test_session_state().set_session(SessionInfo { public_key: WALLET, ..session_info() });
+    let spawner: crate::subscription::Spawner = Arc::new(futures::executor::block_on);
+    host.services.contact_avatars.redraw_owner(owner, &spawner);
+    assert_eq!(avatars.placements().len(), 2);
+}
+
+#[test]
+fn failed_avatar_replacement_still_clears_the_previous_layer_on_teardown() {
+    let platform = stub_platform();
+    let avatars = Arc::new(RecordingAvatarHost::default());
+    let host = signed_in(avatar_host(&platform, egui_chat(), &avatars), WALLET);
+    let owner = owner_of(&host);
+    futures::executor::block_on(profile::record_received_reference(
+        platform.as_ref(), owner, "egui-chat.dot", [0xa1; 32],
+        "seity.dot".into(), 1, Some(CONTACTS_REFERENCE.into()),
+    )).unwrap();
+    place_avatars(&host, avatar_placement(&[(0, [0xa1; 32])])).unwrap();
+    platform.core_read_failures.lock().insert(crate::test_support::core_storage_test_key(
+        CoreStorageKey::ProfileReferencesReceived {
+            root_public_key: owner.root_public_key,
+            genesis_hash: owner.genesis_hash,
+            product_id: "egui-chat.dot".into(),
+        },
+    ));
+    assert!(place_avatars(&host, avatar_placement(&[(1, [0xa1; 32])])).is_err());
+    drop(host);
+    assert_eq!(avatars.wait_for(2)[1], (
+        "egui-chat.dot".into(), placed_avatars(Vec::new()),
+    ));
+}
+
+#[test]
+fn handle_avatar_redraw_does_not_resolve_under_a_signed_out_wallet() {
+    let platform = stub_platform();
+    let account = [0xa1; 32];
+    let contacts = StubContactsPlatform::picking(account);
+    let avatars = Arc::new(RecordingAvatarHost::default());
+    let mut host = contacts_host("notes.dot", platform.clone(), Some(contacts), true);
+    host.profile_platform = Some(avatars.clone());
+    let handle = picked_handle(&host);
+    let owner = owner_of(&host);
+    futures::executor::block_on(profile::record_personal_received_reference(
+        platform.as_ref(),
+        owner,
+        account,
+        "seity.dot".into(),
+        1,
+        1,
+        Some(CONTACTS_REFERENCE.into()),
+    ))
+    .unwrap();
+    let request = truapi::latest::HostProfilePlaceContactAvatarsRequest {
+        surface_width: 360,
+        surface_height: 640,
+        own: None,
+        slots: vec![truapi::latest::ContactAvatarSlot {
+            slot: 0,
+            contact: truapi::latest::ProfileContact::Handle { handle },
+            rect: avatar_rect(16, 80, 44),
+            clip: AVATAR_CLIP,
+        }],
+    };
+    futures::executor::block_on(Profile::place_contact_avatars(
+        &host,
+        &CallContext::default(),
+        HostProfilePlaceContactAvatarsRequest::V3(request),
+    ))
+    .unwrap();
+    host.test_session_state().clear_session();
+    host.services
+        .contact_avatars
+        .redraw_owner(owner, &host.services.spawner);
+    assert_eq!(
+        avatars.wait_for(2),
+        vec![
+            (
+                "notes.dot".to_string(),
+                placed_avatars(vec![placed_avatar(0, CONTACTS_REFERENCE)])
+            ),
+            ("notes.dot".to_string(), placed_avatars(Vec::new())),
+        ]
+    );
+}
+
+#[test]
+fn own_avatar_placement_draws_the_disclosed_profile_without_returning_its_reference() {
+    let platform = stub_platform();
+    let avatars = Arc::new(RecordingAvatarHost::default());
+    let chat = signed_in(avatar_host(&platform, egui_chat(), &avatars), WALLET);
+    let owner = owner_of(&chat);
+    futures::executor::block_on(profile::write_disclosure(
+        platform.as_ref(),
+        owner,
+        &profile::Disclosure {
+            product_id: "seity.dot".to_string(),
+            reference: CONTACTS_REFERENCE.to_string(),
+            revision: 7,
+            all_chat_apps: true,
+            app_products: Vec::new(),
+            contacts: Vec::new(),
+        },
+    ))
+    .expect("own disclosure stored");
+
+    assert_eq!(
+        place_profile_avatars(
+            &chat,
+            v02::HostProfilePlaceContactAvatarsRequest {
+                surface_width: 360,
+                surface_height: 640,
+                own: Some(v02::OwnAvatarSlot {
+                    slot: 0,
+                    rect: avatar_rect(16, 80, 44),
+                    clip: AVATAR_CLIP,
+                }),
+                slots: Vec::new(),
+            },
+        )
+        .expect("own placement accepted"),
+        HostProfilePlaceContactAvatarsResponse::V2
+    );
+    assert_eq!(
+        avatars.placements(),
+        [(
+            "egui-chat.dot".to_string(),
+            placed_avatars(vec![crate::platform::PlacedAvatar {
+                shared_at: 7,
+                ..placed_avatar(0, CONTACTS_REFERENCE)
+            }])
+        )]
+    );
+}
+
+#[test]
+fn own_and_contact_slots_share_one_slot_namespace() {
+    let platform = stub_platform();
+    let avatars = Arc::new(RecordingAvatarHost::default());
+    let chat = signed_in(avatar_host(&platform, egui_chat(), &avatars), WALLET);
+    let mut request = truapi::versioned::IntoLatest::into_latest(
+        HostProfilePlaceContactAvatarsRequest::V1(avatar_placement(&[(0, [0xa1; 32])])),
+    );
+    request.own = Some(v02::OwnAvatarSlot {
+        slot: 0,
+        rect: avatar_rect(16, 16, 44),
+        clip: AVATAR_CLIP,
+    });
+    assert!(matches!(
+        futures::executor::block_on(Profile::place_contact_avatars(
+            &chat,
+            &CallContext::default(),
+            HostProfilePlaceContactAvatarsRequest::V3(request),
+        )),
+        Err(CallError::Domain(HostProfilePlaceContactAvatarsError::V3(
+            v01::HostProfilePlaceContactAvatarsError::Unknown { .. }
+        )))
+    ));
+    assert!(avatars.placements().is_empty());
+}
+
+#[test]
+fn contact_avatars_are_drawn_only_for_contacts_sharing_with_this_product_and_the_answer_hides_which()
+ {
+    let platform = stub_platform();
+    let avatars = Arc::new(RecordingAvatarHost::default());
+    let chat = signed_in(avatar_host(&platform, egui_chat(), &avatars), WALLET);
+    let owner = owner_of(&chat);
+    let (alice, bob, carol, dave) = ([0xa1; 32], [0xb0; 32], [0xca; 32], [0xda; 32]);
+    let alice_reference = format!("{CONTACTS_REFERENCE}a1");
+    let record = |product_id: &str, peer, timestamp, reference: Option<&str>| {
+        futures::executor::block_on(profile::record_received_reference(
+            platform.as_ref(),
+            owner,
+            product_id,
+            peer,
+            "seity.dot".to_string(),
+            timestamp,
+            reference.map(str::to_string),
+        ))
+        .expect("recorded");
+    };
+    record("egui-chat.dot", alice, 1, Some(&alice_reference));
+    record("egui-chat.dot", bob, 1, Some(CONTACTS_REFERENCE));
+    record("egui-chat.dot", bob, 2, None);
+    // Shared with the user through another chat product only.
+    record("other-chat.dot", dave, 1, Some(CONTACTS_REFERENCE));
+
+    // Alice appears twice, as a list row and in the conversation header.
+    assert_eq!(
+        place_avatars(
+            &chat,
+            avatar_placement(&[(0, alice), (1, bob), (2, carol), (3, dave), (4, alice)]),
+        )
+        .expect("a well-formed placement is accepted"),
+        HostProfilePlaceContactAvatarsResponse::V1
+    );
+    // Nobody on screen shares a profile: the product is answered the same.
+    assert_eq!(
+        place_avatars(&chat, avatar_placement(&[(2, carol), (3, dave)]))
+            .expect("the answer does not depend on who shared"),
+        HostProfilePlaceContactAvatarsResponse::V1
+    );
+    assert_eq!(
+        place_avatars(&chat, avatar_placement(&[])).expect("an empty placement clears"),
+        HostProfilePlaceContactAvatarsResponse::V1
+    );
+    assert_eq!(
+        avatars.placements(),
+        vec![
+            (
+                "egui-chat.dot".to_string(),
+                placed_avatars(vec![
+                    placed_avatar(0, &alice_reference),
+                    placed_avatar(4, &alice_reference),
+                ]),
+            ),
+            ("egui-chat.dot".to_string(), placed_avatars(Vec::new())),
+            ("egui-chat.dot".to_string(), placed_avatars(Vec::new())),
+        ],
+        "only a current reference shared with this product is drawn, and a withdrawn one is not"
+    );
+}
+
+#[test]
+fn contact_avatars_surface_only_the_hosts_own_unsupported() {
+    let platform = stub_platform();
+    let alice = [0xa1; 32];
+    let owner = owner_of(&app_host(&platform, "egui-chat.dot"));
+    futures::executor::block_on(profile::record_received_reference(
+        platform.as_ref(),
+        owner,
+        "egui-chat.dot",
+        alice,
+        "seity.dot".to_string(),
+        1,
+        Some(CONTACTS_REFERENCE.to_string()),
+    ))
+    .expect("recorded");
+    let answered = |answer| {
+        let avatars = Arc::new(RecordingAvatarHost {
+            answer: Some(answer),
+            ..Default::default()
+        });
+        place_avatars(
+            &signed_in(avatar_host(&platform, egui_chat(), &avatars), WALLET),
+            avatar_placement(&[(0, alice)]),
+        )
+    };
+
+    // A drawing failure could depend on which avatars the host was handed,
+    // so it does not reach the product.
+    assert_eq!(
+        answered(v01::HostProfilePlaceContactAvatarsError::Unknown {
+            reason: "avatar image failed to load".to_string(),
+        })
+        .expect("a host failure is not reported"),
+        HostProfilePlaceContactAvatarsResponse::V1
+    );
+    assert!(matches!(
+        answered(v01::HostProfilePlaceContactAvatarsError::Unsupported),
+        Err(CallError::Domain(HostProfilePlaceContactAvatarsError::V1(
+            v01::HostProfilePlaceContactAvatarsError::Unsupported
+        )))
+    ));
+}
+
+#[test]
+fn malformed_contact_avatar_placements_are_refused_before_the_host_sees_them() {
+    let platform = stub_platform();
+    let avatars = Arc::new(RecordingAvatarHost::default());
+    let chat = signed_in(avatar_host(&platform, egui_chat(), &avatars), WALLET);
+    let peer = [0xa1; 32];
+    let with_rect = |rect| {
+        let mut request = avatar_placement(&[(0, peer)]);
+        request.slots[0].rect = rect;
+        request
+    };
+    let with_surface = |surface_width, surface_height| v01::HostProfilePlaceContactAvatarsRequest {
+        surface_width,
+        surface_height,
+        ..avatar_placement(&[(0, peer)])
+    };
+    let slots =
+        |count: u32| avatar_placement(&(0..count).map(|slot| (slot, peer)).collect::<Vec<_>>());
+
+    let accepted = [
+        slots(64),
+        with_surface(1, 1),
+        with_surface(16384, 16384),
+        with_rect(avatar_rect(-20, -20, 1)),
+        with_rect(avatar_rect(0, 0, 1024)),
+    ];
+    let refused = [
+        slots(65),
+        with_surface(0, 640),
+        with_surface(360, 0),
+        with_surface(16385, 640),
+        with_surface(360, 16385),
+        with_rect(v01::AvatarRect {
+            x: 0,
+            y: 0,
+            width: 44,
+            height: 45,
+        }),
+        with_rect(avatar_rect(0, 0, 0)),
+        with_rect(avatar_rect(0, 0, 1025)),
+        avatar_placement(&[(3, peer), (3, [0xb0; 32])]),
+    ];
+    for request in accepted.clone() {
+        assert_eq!(
+            place_avatars(&chat, request).expect("the bounds are inclusive"),
+            HostProfilePlaceContactAvatarsResponse::V1
+        );
+    }
+    for request in refused {
+        assert!(matches!(
+            place_avatars(&chat, request),
+            Err(CallError::Domain(HostProfilePlaceContactAvatarsError::V1(
+                v01::HostProfilePlaceContactAvatarsError::Unknown { .. }
+            )))
+        ));
+    }
+    assert_eq!(
+        avatars.placements().len(),
+        accepted.len(),
+        "a refused placement never reaches the host"
+    );
+}
+
+#[test]
+fn contact_avatars_need_an_app_a_host_that_draws_them_and_a_signed_in_user() {
+    let platform = stub_platform();
+    let avatars = Arc::new(RecordingAvatarHost::default());
+    let worker = signed_in(
+        avatar_host(
+            &platform,
+            ProductContext::new_with_execution(
+                "egui-chat.dot".to_string(),
+                crate::platform::ProductExecutionKind::Worker,
+            )
+            .expect("valid product"),
+            &avatars,
+        ),
+        WALLET,
+    );
+    assert!(matches!(
+        place_avatars(&worker, avatar_placement(&[])),
+        Err(CallError::Denied)
+    ));
+    assert!(matches!(
+        place_avatars(&app_host(&platform, "egui-chat.dot"), avatar_placement(&[])),
+        Err(CallError::Unsupported)
+    ));
+
+    let chat = signed_in(avatar_host(&platform, egui_chat(), &avatars), WALLET);
+    let alice = [0xa1; 32];
+    futures::executor::block_on(profile::record_received_reference(
+        platform.as_ref(),
+        owner_of(&chat),
+        "egui-chat.dot",
+        alice,
+        "seity.dot".to_string(),
+        1,
+        Some(CONTACTS_REFERENCE.to_string()),
+    ))
+    .expect("recorded");
+    place_avatars(&chat, avatar_placement(&[(0, alice)])).expect("placed");
+    chat.test_session_state().clear_session();
+    assert!(matches!(
+        place_avatars(&chat, avatar_placement(&[(0, alice)])),
+        Err(CallError::Domain(HostProfilePlaceContactAvatarsError::V1(
+            v01::HostProfilePlaceContactAvatarsError::NotConnected
+        )))
+    ));
+    assert_eq!(
+        avatars.placements(),
+        vec![
+            (
+                "egui-chat.dot".to_string(),
+                placed_avatars(vec![placed_avatar(0, CONTACTS_REFERENCE)]),
+            ),
+            ("egui-chat.dot".to_string(), placed_avatars(Vec::new())),
+        ],
+        "avatars drawn for a wallet that signed out are cleared"
+    );
 }
 
 /// The game product's runtime over `platform`, with `game` installed when
@@ -2613,6 +4856,68 @@ fn remind_next_game_asks_for_no_permission() {
             vec![(GAME_PRODUCT.to_string(), FUTURE_START)],
             vec![],
         )
+    );
+}
+
+#[test]
+fn contact_avatars_are_redrawn_for_their_wallet_and_cleared_when_the_connection_goes() {
+    let platform = stub_platform();
+    let avatars = Arc::new(RecordingAvatarHost::default());
+    let chat = signed_in(avatar_host(&platform, egui_chat(), &avatars), WALLET);
+    let services = chat.services().clone();
+    let owner = owner_of(&chat);
+    let alice = [0xa1; 32];
+    place_avatars(&chat, avatar_placement(&[(0, alice)])).expect("placed");
+
+    futures::executor::block_on(profile::record_received_reference(
+        platform.as_ref(),
+        owner,
+        "egui-chat.dot",
+        alice,
+        "seity.dot".to_string(),
+        1,
+        Some(CONTACTS_REFERENCE.to_string()),
+    ))
+    .expect("recorded");
+    // What another wallet's contacts share, or another product's, is not
+    // this placement's business.
+    let other_wallet = profile::ProfileOwner {
+        root_public_key: [0x99; 32],
+        ..owner
+    };
+    services
+        .contact_avatars
+        .redraw(other_wallet, "egui-chat.dot", &services.spawner);
+    services
+        .contact_avatars
+        .redraw(owner, "other-chat.dot", &services.spawner);
+    services
+        .contact_avatars
+        .redraw(owner, "egui-chat.dot", &services.spawner);
+    assert_eq!(
+        avatars.wait_for(2),
+        vec![
+            ("egui-chat.dot".to_string(), placed_avatars(Vec::new())),
+            (
+                "egui-chat.dot".to_string(),
+                placed_avatars(vec![placed_avatar(0, CONTACTS_REFERENCE)]),
+            ),
+        ]
+    );
+
+    drop(chat);
+    assert_eq!(
+        avatars.wait_for(3)[2],
+        ("egui-chat.dot".to_string(), placed_avatars(Vec::new())),
+        "a connection that goes away takes its avatars with it"
+    );
+    services
+        .contact_avatars
+        .redraw(owner, "egui-chat.dot", &services.spawner);
+    assert_eq!(
+        avatars.placements().len(),
+        3,
+        "nothing is redrawn for a connection that is gone"
     );
 }
 

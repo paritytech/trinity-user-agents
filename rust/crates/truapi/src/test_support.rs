@@ -28,6 +28,7 @@ use crate::platform::{
     SignRawReview, SignVrfReview, StatementStoreProductSignReview, ThemeHost, UserConfirmation,
     ChatAuthorityReview, HopProvider, MainPurseChatPaymentReview,
     NativeChatFileExportRequest, NativeChatFilePickRequest, NativeChatFilesHost, NativeChatPickedFile,
+    ProfileDisclosureReview,
     UserConfirmationReview,
 };
 use futures::Stream;
@@ -72,6 +73,54 @@ pub fn immediate_spawner() -> Spawner {
     Arc::new(futures::executor::block_on)
 }
 
+/// A profile host that records every contact avatar placement it is handed,
+/// by product, and answers each with `answer`, `Ok` when unset.
+#[derive(Default)]
+pub(crate) struct RecordingAvatarHost {
+    pub(crate) placed: Mutex<Vec<(String, crate::platform::PlacedAvatars)>>,
+    pub(crate) answer: Option<v01::HostProfilePlaceContactAvatarsError>,
+}
+
+impl RecordingAvatarHost {
+    /// Every placement handed over so far, oldest first.
+    pub(crate) fn placements(&self) -> Vec<(String, crate::platform::PlacedAvatars)> {
+        self.placed.lock().expect("placed mutex poisoned").clone()
+    }
+
+    /// Block until the host has been handed `count` placements, then return
+    /// them. Redraws and clears run on background tasks.
+    pub(crate) fn wait_for(&self, count: usize) -> Vec<(String, crate::platform::PlacedAvatars)> {
+        wait_until(
+            || self.placements().len() >= count,
+            "the host was not handed the expected avatar placements",
+        );
+        self.placements()
+    }
+}
+
+#[crate::platform::async_trait]
+impl crate::platform::ProfilePlatform for RecordingAvatarHost {
+    async fn present_profile(
+        &self,
+        _product: &ProductContext,
+        _request: v01::HostProfilePresentRequest,
+    ) -> Result<(), v01::HostProfilePresentError> {
+        Ok(())
+    }
+
+    async fn place_contact_avatars(
+        &self,
+        product: &ProductContext,
+        placed: crate::platform::PlacedAvatars,
+    ) -> Result<(), v01::HostProfilePlaceContactAvatarsError> {
+        self.placed
+            .lock()
+            .expect("placed mutex poisoned")
+            .push((product.product_id.clone(), placed));
+        self.answer.clone().map_or(Ok(()), Err)
+    }
+}
+
 /// Test hook invoked after each recorded auth state.
 pub type AuthStateHook = Arc<dyn Fn(&AuthState) + Send + Sync>;
 /// Test hook invoked after an auth-session write is recorded.
@@ -113,6 +162,9 @@ pub struct StubPlatform {
         Mutex<std::collections::VecDeque<crate::platform::PermissionDecision>>,
     /// Inverted so the derived default (`false`) approves, matching the
     /// pre-consent behavior where a cold own-account resolve was not gated.
+    pub profile_disclosure_confirmed: bool,
+    pub profile_disclosure_error: Option<&'static str>,
+    pub profile_disclosure_reviews: Arc<Mutex<Vec<ProfileDisclosureReview>>>,
     pub product_subtree_denied: bool,
     pub product_subtree_reviews: Arc<Mutex<Vec<ProductSubtreeReview>>>,
     pub identity_disclosure_confirmed: bool,
@@ -222,6 +274,10 @@ pub struct StubPlatform {
     /// Hold every core-storage read pending forever, standing in for a host
     /// callback that is never answered.
     pub core_storage_pending: bool,
+    /// Pause the next matching core read until its test releases it.
+    pub core_storage_read_gate: parking_lot::Mutex<
+        Option<(String, futures::channel::oneshot::Receiver<()>)>,
+    >,
     pub chain_connect_pending: bool,
     /// Set when a `chain_connect_pending` connect future is dropped.
     pub pending_connect_dropped: Arc<AtomicBool>,
@@ -1098,6 +1154,17 @@ impl PlatformCoreStorage for StubPlatform {
         }
         if self.core_storage_pending {
             futures::future::pending::<()>().await;
+        }
+        let gate = {
+            let mut pending = self.core_storage_read_gate.lock();
+            if pending.as_ref().is_some_and(|(slot, _)| *slot == core_storage_test_key(key.clone())) {
+                pending.take().map(|(_, gate)| gate)
+            } else {
+                None
+            }
+        };
+        if let Some(gate) = gate {
+            let _ = gate.await;
         }
         if let CoreStorageKey::AuthSession = key {
             if let Some(reason) = self.session_error {
@@ -2132,6 +2199,13 @@ impl UserConfirmation for StubPlatform {
                     .expect("product subtree review list mutex poisoned")
                     .push(review);
                 (None, !self.product_subtree_denied)
+            }
+            UserConfirmationReview::ProfileDisclosure(review) => {
+                self.profile_disclosure_reviews
+                    .lock()
+                    .expect("profile disclosure review list mutex poisoned")
+                    .push(review);
+                (self.profile_disclosure_error, self.profile_disclosure_confirmed)
             }
         };
         if let Some(reason) = error {

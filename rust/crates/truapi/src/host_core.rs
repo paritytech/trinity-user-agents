@@ -17,6 +17,7 @@ use std::time::Duration;
 use crate::platform::{
     ChatPlatform, CoinageWalletHost, ContactsPlatform, ExpandedCardHost, GamePlatform,
     PermissionStatusHost, PocketPlatform,
+    ProfilePlatform,
 };
 use crate::platform::{
     CoreAdmin, PairingHostAdmin, PairingHostConfig, PermissionAuthorizationRequest,
@@ -277,6 +278,16 @@ impl PairingHostRuntime {
         self.services.install_pocket_platform(platform)
     }
 
+    /// Install the host's [`ProfilePlatform`], which renders product-referenced
+    /// profiles in host-owned UI.
+    ///
+    /// Set-once. Returns whether this call installed it. Call it before
+    /// serving any product runtime.
+    #[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.set_profile_platform"))]
+    pub fn set_profile_platform(&self, platform: Arc<dyn ProfilePlatform>) -> bool {
+        self.services.install_profile_platform(platform)
+    }
+
     /// Install the host's [`GamePlatform`], which holds each product's game
     /// reminder.
     ///
@@ -299,12 +310,14 @@ impl PairingHostRuntime {
         self.services.install_contacts_platform(platform)
     }
 
-    /// Tell the core the host's contacts changed, so no handle resolves from
-    /// what it cached before. Call it whenever a contact is removed or blocked;
-    /// the next transaction naming a contact reads the list again.
+    /// Invalidate cached contact handles and refresh host-drawn contact avatars.
+    /// Call whenever a contact is removed or blocked.
     #[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.notify_contacts_changed"))]
     pub fn notify_contacts_changed(&self) {
-        self.services.contact_handles.clear();
+        self.services.invalidate_contacts();
+        self.services
+            .contact_avatars
+            .contacts_changed(&self.services.spawner);
     }
 
     /// Build a product-facing runtime from this pairing host.
@@ -740,6 +753,16 @@ impl SigningHostRuntime {
         self.services.install_pocket_platform(platform)
     }
 
+    /// Install the host's [`ProfilePlatform`], which renders product-referenced
+    /// profiles in host-owned UI.
+    ///
+    /// Set-once. Returns whether this call installed it. Call it before
+    /// serving any product runtime.
+    #[instrument(skip_all, fields(runtime.method = "signing_host_runtime.set_profile_platform"))]
+    pub fn set_profile_platform(&self, platform: Arc<dyn ProfilePlatform>) -> bool {
+        self.services.install_profile_platform(platform)
+    }
+
     /// Install the host's [`GamePlatform`], which holds each product's game
     /// reminder.
     ///
@@ -762,12 +785,14 @@ impl SigningHostRuntime {
         self.services.install_contacts_platform(platform)
     }
 
-    /// Tell the core the host's contacts changed, so no handle resolves from
-    /// what it cached before. Call it whenever a contact is removed or blocked;
-    /// the next transaction naming a contact reads the list again.
+    /// Invalidate cached contact handles and refresh host-drawn contact avatars.
+    /// Call whenever a contact is removed or blocked.
     #[instrument(skip_all, fields(runtime.method = "signing_host_runtime.notify_contacts_changed"))]
     pub fn notify_contacts_changed(&self) {
-        self.services.contact_handles.clear();
+        self.services.invalidate_contacts();
+        self.services
+            .contact_avatars
+            .contacts_changed(&self.services.spawner);
     }
 
     /// Install the host's [`DevicePairingObserver`], told whenever a device
@@ -1289,7 +1314,8 @@ impl SigningHostRuntime {
 /// action streams. Unscoped connections use [`Self::from_services`].
 ///
 /// `pocket_platform` is the same kind of optional adapter for the card
-/// collection, and `game_platform` for the product's game reminder.
+/// collection, `profile_platform` for host-rendered profiles, and `game_platform`
+/// for the product's game reminder.
 #[derive(Clone)]
 pub struct ConnectionAdapters {
     pub platform: Arc<dyn Platform>,
@@ -1306,6 +1332,7 @@ pub struct ConnectionAdapters {
     pub chat: Arc<ActionChannel<truapi::versioned::chat::HostChatActionSubscribeItem>>,
     pub renderer: Arc<ActionChannel<truapi::versioned::renderer::HostRendererActionSubscribeItem>>,
     pub pocket_platform: Option<Arc<dyn PocketPlatform>>,
+    pub profile_platform: Option<Arc<dyn ProfilePlatform>>,
     pub game_platform: Option<Arc<dyn GamePlatform>>,
     /// Control of the card face above this connection's Widget, when the host draws one.
     pub expanded_card: Option<Arc<dyn ExpandedCardHost>>,
@@ -1323,6 +1350,7 @@ impl ConnectionAdapters {
             chat: Arc::new(ActionChannel::chat()),
             renderer: Arc::new(ActionChannel::renderer()),
             pocket_platform: services.pocket_platform(),
+            profile_platform: services.profile_platform(),
             expanded_card: None,
             game_platform: services.game_platform(),
         }
@@ -1661,15 +1689,12 @@ impl Drop for WorkerReference {
 }
 
 impl ProductRuntime {
-    /// Tell the core the host's contacts changed, so no handle resolves from
-    /// what it cached before. For an embedder that holds only this runtime;
-    /// one holding the host runtime calls it there.
+    /// Invalidate contact handles and refresh avatars for this host's runtimes.
+    /// Embedders holding the host runtime may notify it instead.
     pub fn notify_contacts_changed(&self) {
-        self.admin
-            .product_runtime
-            .services()
-            .contact_handles
-            .clear();
+        let services = self.admin.product_runtime.services();
+        services.invalidate_contacts();
+        services.contact_avatars.contacts_changed(&services.spawner);
     }
 
     /// Build a product-facing host core around a platform implementation and
@@ -1939,6 +1964,8 @@ impl ProductRuntime {
         self.admin.product_runtime.detach_chat();
         self.admin.product_runtime.detach_renderer();
         self.admin.product_runtime.release_open_operations();
+        self.admin.product_runtime.release_contact_avatars();
+        self.admin.product_runtime.release_contact_labels();
         self.host_subscriptions.close();
         self.core.cancel_subscriptions();
     }
@@ -3702,9 +3729,9 @@ mod tests {
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn the_core_database_is_installed_once_and_reports_when_missing() {
+        use crate::platform::{HostInfo, PlatformInfo, SigningHostConfig};
         use crate::store::{Db, DbConfig, DbError, DbLocation};
         use futures::executor::block_on;
-        use crate::platform::{HostInfo, PlatformInfo, SigningHostConfig};
 
         let config = SigningHostConfig::new(
             HostInfo {
@@ -3737,7 +3764,10 @@ mod tests {
         assert!(runtime.set_core_db(installed));
         assert!(!runtime.set_core_db(other));
 
-        let db = runtime.services.core_db().expect("installed database is served");
+        let db = runtime
+            .services
+            .core_db()
+            .expect("installed database is served");
         let answer: i64 =
             block_on(db.write(|tx| Ok(tx.query_row("SELECT 42", [], |row| row.get(0))?)))
                 .expect("installed database serves writes");

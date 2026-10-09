@@ -50,6 +50,7 @@ pub mod payment;
 pub mod permissions;
 pub mod pocket;
 pub mod preimage;
+pub mod profile;
 pub mod renderer;
 pub mod resource_allocation;
 pub mod scanner;

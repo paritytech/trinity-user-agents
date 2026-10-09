@@ -713,6 +713,9 @@ fn validate_error_type(err: &TypeRef, ctx: &BridgeCtx<'_>) -> Result<()> {
     validate_error_name(name, ctx, &mut seen)
 }
 
+/// `seen` holds the envelopes on the path from the root, not every name
+/// visited: two versions of one envelope may carry the same payload, which is
+/// sharing, not recursion.
 fn validate_error_name<'a>(
     name: &'a str,
     ctx: &BridgeCtx<'a>,
@@ -724,6 +727,16 @@ fn validate_error_name<'a>(
     if !seen.insert(name) {
         bail!("platform error type `{name}` contains a recursive alias/envelope");
     }
+    let result = validate_error_def(name, ctx, seen);
+    seen.remove(name);
+    result
+}
+
+fn validate_error_def<'a>(
+    name: &'a str,
+    ctx: &BridgeCtx<'a>,
+    seen: &mut BTreeSet<&'a str>,
+) -> Result<()> {
     let Some(type_def) = resolve_alias_type(name, ctx) else {
         bail!("platform error type `{name}` is not present in the API definition");
     };

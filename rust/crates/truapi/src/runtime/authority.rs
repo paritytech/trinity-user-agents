@@ -643,6 +643,26 @@ pub trait ProductAuthority: Send + Sync {
         request: PaymentTopUpRequest,
     ) -> Result<(), PaymentTopUpAuthorityError>;
 
+    /// The user's profile disclosure for `session`'s wallet was stored or
+    /// cleared. An authority that runs native Chat relays it through the
+    /// wallet's open Chats without delaying the caller. The default does
+    /// nothing: a paired host's Chat runs on the signing host, which relays
+    /// only the disclosure stored there.
+    fn profile_disclosure_changed(&self, _session: &AuthoritySession) {}
+
+    /// The name to show for `peer_identity`, a Chat contact of `product_id`
+    /// in `session`'s wallet: one the host verified itself, never one a
+    /// product supplied. `None` when the host knows none. The default knows
+    /// none: a paired host's Chat roster lives on the signing host.
+    async fn contact_username(
+        &self,
+        _session: &AuthoritySession,
+        _product_id: &str,
+        _peer_identity: [u8; 32],
+    ) -> Option<String> {
+        None
+    }
+
     /// Ask the account authority to allocate product-scoped resources.
     async fn allocate_resources(
         &self,

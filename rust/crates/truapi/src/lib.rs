@@ -88,10 +88,10 @@ pub mod latest {
     use crate::versioned::{self, Versioned};
 
     pub use crate::v01::{
-        AllocatableResource, AllocationOutcome, Arrangement, Background, BlendingMode, BorderStyle,
-        BoxProps, ButtonProps, ButtonVariant, ChainIdentifier, ChatAction, ChatActionLayout,
-        ChatActions, ChatBotRegistrationStatus, ChatCustomMessage, ChatFile, ChatMedia,
-        ChatMessageContent, ChatReaction, ChatRichText, ChatRoom, ChatRoomParticipation,
+        AllocatableResource, AllocationOutcome, Arrangement, AvatarRect, Background, BlendingMode,
+        BorderStyle, BoxProps, ButtonProps, ButtonVariant, ChainIdentifier, ChatAction,
+        ChatActionLayout, ChatActions, ChatBotRegistrationStatus, ChatCustomMessage, ChatFile,
+        ChatMedia, ChatMessageContent, ChatReaction, ChatRichText, ChatRoom, ChatRoomParticipation,
         ChatRoomRegistrationStatus, CodeFormat, ColorToken, ColumnProps, ContactHandle,
         ContactPickOutcome, ContentAlignment, ContextualAlias, DerivationIndex, Dimensions, Effect,
         EffectProps, GenericError, HorizontalAlignment, HostAccountCreateProofRequest,
@@ -115,11 +115,12 @@ pub mod latest {
         HostNativeChatInvitation, HostNativeChatMessages, HostNativeChatPayment,
         HostNativeChatPaymentDirection, HostNativeChatPaymentFailure, HostNativeChatPaymentState,
         HostNativeChatPeer, HostNativeChatPeerDevice, HostNativeChatRichMessage,
-        HostNativeChatRichMessageKind,
+        HostNativeChatRichMessageKind, OwnAvatarSlot, ProfileAudience, ProfileContact,
     };
     pub use crate::v03::{
-        HostNativeChatBinding, HostNativeChatMigrationInvitation, HostNativeChatOpenPage,
-        HostNativeChatOpened, HostNativeChatPrepared, HostNativeChatRoute, HostNativeChatStatePage,
+        ContactAvatarSlot, HostNativeChatBinding, HostNativeChatMigrationInvitation,
+        HostNativeChatOpenPage, HostNativeChatOpened, HostNativeChatPrepared, HostNativeChatRoute,
+        HostNativeChatStatePage,
     };
 
     /// Latest payload type of a versioned envelope.
@@ -164,6 +165,24 @@ pub mod latest {
     pub type HostContactsPickResponse = LatestOf<versioned::contacts::HostContactsPickResponse>;
     /// Contact picker failure.
     pub type HostContactsPickError = LatestOf<versioned::contacts::HostContactsPickError>;
+    /// Multi-contact picker request.
+    pub type HostContactsPickManyRequest =
+        LatestOf<versioned::contacts::HostContactsPickManyRequest>;
+    /// Multi-contact picker result.
+    pub type HostContactsPickManyResponse =
+        LatestOf<versioned::contacts::HostContactsPickManyResponse>;
+    /// Multi-contact picker failure.
+    pub type HostContactsPickManyError = LatestOf<versioned::contacts::HostContactsPickManyError>;
+    /// Host-owned contact name placement.
+    pub type HostContactsPlaceLabelsRequest =
+        LatestOf<versioned::contacts::HostContactsPlaceLabelsRequest>;
+    /// Contact label placement acknowledgment.
+    pub type HostContactsPlaceLabelsResponse =
+        LatestOf<versioned::contacts::HostContactsPlaceLabelsResponse>;
+    /// Contact label placement failure.
+    pub type HostContactsPlaceLabelsError =
+        LatestOf<versioned::contacts::HostContactsPlaceLabelsError>;
+    pub use crate::v01::{ContactLabelSlot, ContactPickManyOutcome};
     /// Scanner request.
     pub type HostScannerScanRequest = LatestOf<versioned::scanner::HostScannerScanRequest>;
     /// Scanner outcome.
@@ -231,6 +250,21 @@ pub mod latest {
     pub type HostPocketRemoveCardRequest = LatestOf<versioned::pocket::HostPocketRemoveCardRequest>;
     /// Pocket card removal failure.
     pub type HostPocketRemoveCardError = LatestOf<versioned::pocket::HostPocketRemoveCardError>;
+    /// Profile presentation request.
+    pub type HostProfilePresentRequest = LatestOf<versioned::profile::HostProfilePresentRequest>;
+    /// Profile presentation failure.
+    pub type HostProfilePresentError = LatestOf<versioned::profile::HostProfilePresentError>;
+    /// Contact avatar placement failure.
+    pub type HostProfilePlaceContactAvatarsError =
+        LatestOf<versioned::profile::HostProfilePlaceContactAvatarsError>;
+    /// Profile disclosure request with explicit audiences.
+    pub type HostProfileDiscloseRequest = LatestOf<versioned::profile::HostProfileDiscloseRequest>;
+    /// Contact profile presentation selector.
+    pub type HostProfilePresentContactRequest =
+        LatestOf<versioned::profile::HostProfilePresentContactRequest>;
+    /// Contact and own avatar geometry.
+    pub type HostProfilePlaceContactAvatarsRequest =
+        LatestOf<versioned::profile::HostProfilePlaceContactAvatarsRequest>;
     /// Request to show or hide the face above the calling Widget.
     pub type HostExpandedCardSetFaceShownRequest =
         LatestOf<versioned::expanded_card::HostExpandedCardSetFaceShownRequest>;

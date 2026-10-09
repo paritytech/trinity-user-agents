@@ -248,7 +248,7 @@ impl NativeChatRegistry {
         product: &str,
     ) -> Result<(), ChatError> {
         let mut uncertain = self.state.products.lock().await;
-        context.services.contact_handles.clear();
+        context.services.invalidate_contacts();
         let cache = self.state.cache.lock().clone();
         let key = (
             (context.session.public_key, context.genesis_hash),
@@ -268,6 +268,57 @@ impl NativeChatRegistry {
         }
         self.persist_products(context, &products, &mut uncertain)
             .await
+    }
+
+    /// Relay a changed profile disclosure through every open Chat of the
+    /// wallet on this network, whichever product it belongs to. Returns at
+    /// once: the relay runs on its own task, after the disclosure is stored,
+    /// and the call that changed it never waits for it. A Chat that is not
+    /// open relays when its product next initializes.
+    pub(crate) fn relay_profile_disclosure(&self, context: NativeChatContext) {
+        let registry = self.clone();
+        let spawner = context.services.spawner.clone();
+        spawner(Box::pin(async move {
+            let wallet = (context.session.public_key, context.genesis_hash);
+            let cache = registry.state.cache.lock().clone();
+            let chats: Vec<_> = cache
+                .chats
+                .lock()
+                .await
+                .iter()
+                .filter(|((key, _), _)| *key == wallet)
+                .map(|(_, chat)| chat.clone())
+                .collect();
+            for chat in chats {
+                chat.relay_profile_reference(&context).await;
+            }
+        }));
+    }
+
+    /// The name to show for `peer`, a contact of `product`'s Chat: the one
+    /// its roster holds, verified when the contact was bound or first
+    /// authenticated, else the peer's verified dotNS name. Never a name a
+    /// product supplied; `None` when neither is known. A Chat not yet open in
+    /// this session is not opened for this, since opening it is the product's
+    /// authorized Chat work; the dotNS lookup covers it.
+    pub(crate) async fn contact_username(
+        &self,
+        context: &NativeChatContext,
+        product: &str,
+        peer: [u8; 32],
+    ) -> Option<String> {
+        let key = (
+            (context.session.public_key, context.genesis_hash),
+            product.to_owned(),
+        );
+        let cache = self.state.cache.lock().clone();
+        let chat = cache.chats.lock().await.get(&key).cloned();
+        if let Some(chat) = chat
+            && let Some(username) = chat.contact_username(&peer).await
+        {
+            return Some(username);
+        }
+        identity::verified_username(context, peer).await
     }
 
     /// Generic incoming coin import shares the wallet's allocator and recovery
@@ -491,6 +542,9 @@ impl NativeChatRegistry {
             return Ok(response);
         }
         let chat = self.chat(&context, &product).await?;
+        // A peer this request makes ready is sent the user's profile in it.
+        // An unreadable store is left to the operation to report or repair.
+        let unready = chat.unready_peers().await.unwrap_or_default();
         let mut binding = None;
         let mut opened = Vec::new();
         let mut prepared = Vec::new();
@@ -500,6 +554,7 @@ impl NativeChatRegistry {
             match &mut request {
                 Request::Initialize => {
                     chat.drive_files(&context).await?;
+                    chat.publish_profile_reference(&context).await?;
                 }
                 Request::Bind { username } => {
                     binding = Some(chat.bind(&context, std::mem::take(username)).await?);
@@ -585,6 +640,7 @@ impl NativeChatRegistry {
             Ok::<(), ChatError>(())
         }
         .await;
+        chat.relay_to_newly_ready(&context, &unready).await;
         let wallet = cache
             .wallets
             .lock()

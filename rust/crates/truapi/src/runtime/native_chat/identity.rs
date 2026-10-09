@@ -63,19 +63,28 @@ pub(crate) async fn resolve_account(
     let chat_public_key = people_key(context, account).await?;
     // A directory outage must not turn a chain-authenticated incoming identity
     // into an arbitrary-key fallback or make its independent People key unusable.
-    let username = match dotns::verified_label(context, &account).await {
-        Ok(username) => username,
-        Err(reason) => {
-            tracing::debug!(%reason, "native Chat peer name unavailable");
-            None
-        }
-    };
+    let username = verified_username(context, account).await;
     ensure_session(context)?;
     Ok(ResolvedPeer {
         identity_account_id: account,
         chat_public_key,
         username,
     })
+}
+
+/// `account`'s verified dotNS name, full preferred over lite, or `None` when
+/// it has none or the directory cannot be read.
+pub(crate) async fn verified_username(
+    context: &NativeChatContext,
+    account: [u8; 32],
+) -> Option<String> {
+    match dotns::verified_label(context, &account).await {
+        Ok(username) => username,
+        Err(reason) => {
+            tracing::debug!(%reason, "native Chat peer name unavailable");
+            None
+        }
+    }
 }
 
 async fn username_candidate(

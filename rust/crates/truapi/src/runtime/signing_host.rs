@@ -587,7 +587,7 @@ impl SigningHost {
             .lock()
             .expect("local AutoSigning grant mutex poisoned");
         state.advance_activation();
-        self.services.contact_handles.clear();
+        self.services.contacts_session_changed();
         *self
             .root_entropy
             .lock()
@@ -608,7 +608,7 @@ impl SigningHost {
             .lock()
             .expect("local AutoSigning grant mutex poisoned");
         state.advance_activation();
-        self.services.contact_handles.clear();
+        self.services.contacts_session_changed();
         self.root_entropy
             .lock()
             .expect("signing host entropy mutex poisoned")
@@ -1627,6 +1627,24 @@ impl ProductAuthority for SigningHost {
             .top_up(context, product, payload)
             .await
             .map_err(PaymentTopUpAuthorityError::Domain)
+    }
+
+    fn profile_disclosure_changed(&self, session: &AuthoritySession) {
+        if let Ok(context) = self.native_chat_context(session) {
+            self.native_chat.relay_profile_disclosure(context);
+        }
+    }
+
+    async fn contact_username(
+        &self,
+        session: &AuthoritySession,
+        product_id: &str,
+        peer_identity: [u8; 32],
+    ) -> Option<String> {
+        let context = self.native_chat_context(session).ok()?;
+        self.native_chat
+            .contact_username(&context, product_id, peer_identity)
+            .await
     }
 
     async fn allocate_resources(
@@ -4961,8 +4979,9 @@ mod tests {
                 .unwrap();
             let runtime = product_runtime(services.clone(), activation.clone());
             let cx = CallContext::default();
-            let chat =
-                |request| runtime.product_device_chat(&cx, HostProductDeviceChatRequest::V2(request));
+            let chat = |request| {
+                runtime.product_device_chat(&cx, HostProductDeviceChatRequest::V2(request))
+            };
             chat(truapi::latest::HostProductDeviceChatRequest::Initialize)
                 .await
                 .unwrap();
@@ -5283,7 +5302,8 @@ mod tests {
                 crate::platform::ProductExecutionKind::Worker,
             )
             .expect("test product id is valid");
-            let permissions = PermissionsService::new(platform.as_ref(), platform.as_ref(), &product);
+            let permissions =
+                PermissionsService::new(platform.as_ref(), platform.as_ref(), &product);
             assert_eq!(
                 permissions
                     .authorization_status(&PermissionAuthorizationRequest::ChatAuthority)

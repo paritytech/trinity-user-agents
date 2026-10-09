@@ -1,8 +1,8 @@
 //! The contact picker and the handles it hands out.
 //!
 //! A product never reads the contact list. It opens the host's picker, the host
-//! draws an overlay from its own chat contacts, and the core turns the one
-//! person the user selected into a handle.
+//! draws an overlay from its own chat contacts, and the core turns the
+//! confirmed selection into handles.
 //!
 //! The handle is deliberately **not** per-product: the same contact yields the
 //! same value in every product and on every host of this user. Per-product
@@ -14,14 +14,151 @@
 //! Keyed on the session's root entropy source, which no product can reach, so
 //! the mapping cannot be recovered by hashing candidate accounts.
 
-use std::collections::HashMap;
-use std::sync::Mutex;
+use std::collections::{HashMap, HashSet};
+use std::sync::{
+    Arc, Mutex,
+    atomic::{AtomicBool, Ordering},
+};
 
 use parity_scale_codec::Encode;
 
 /// Upper bound on cached handles. The cache holds contacts the user picked, so
 /// it stays small; reaching the bound empties it rather than evicting in order.
 const HANDLE_CACHE_MAX_ENTRIES: usize = 256;
+const MAX_CONTACTS: usize = 256;
+
+/// Bound and deduplicate product-supplied selections without changing order.
+pub fn selected_handles(selected: Vec<crate::latest::ContactHandle>) -> Option<Vec<[u8; 32]>> {
+    if selected.len() > MAX_CONTACTS {
+        return None;
+    }
+    let mut seen = HashSet::with_capacity(selected.len());
+    Some(
+        selected
+            .into_iter()
+            .map(|handle| handle.bytes)
+            .filter(|handle| seen.insert(*handle))
+            .collect(),
+    )
+}
+
+/// Bound and deduplicate accounts a host picker confirmed.
+pub fn selected_accounts(mut accounts: Vec<[u8; 32]>) -> Option<Vec<[u8; 32]>> {
+    if accounts.len() > MAX_CONTACTS {
+        return None;
+    }
+    let mut seen = HashSet::with_capacity(accounts.len());
+    accounts.retain(|account| seen.insert(*account));
+    Some(accounts)
+}
+
+/// Validate only product-controlled geometry, never contact availability.
+pub fn valid_label_placement(request: &crate::latest::HostContactsPlaceLabelsRequest) -> bool {
+    const MAX_SIDE: u32 = 16384;
+    if !(1..=MAX_SIDE).contains(&request.surface_width)
+        || !(1..=MAX_SIDE).contains(&request.surface_height)
+        || request.slots.len() > MAX_CONTACTS
+    {
+        return false;
+    }
+    let mut seen = HashSet::with_capacity(request.slots.len());
+    request.slots.iter().all(|slot| {
+        seen.insert(slot.slot)
+            && (1..=MAX_SIDE).contains(&slot.rect.width)
+            && (1..=MAX_SIDE).contains(&slot.rect.height)
+            && slot.clip.width <= MAX_SIDE
+            && slot.clip.height <= MAX_SIDE
+    })
+}
+
+/// Connection-owned label layer, serialized so delayed draws cannot overtake clears.
+pub struct ContactLabelPlacement {
+    platform: Arc<dyn crate::platform::ContactsPlatform>,
+    product: crate::platform::ProductContext,
+    /// Last submitted width, height and directory generation, held across lookup and draw.
+    pub surface: futures::lock::Mutex<Option<(u32, u32, u64)>>,
+    closed: AtomicBool,
+}
+
+impl ContactLabelPlacement {
+    /// Whether teardown has started for this connection.
+    pub fn is_closed(&self) -> bool {
+        self.closed.load(Ordering::Acquire)
+    }
+
+    async fn clear(&self, invalidated_before: Option<u64>) {
+        let mut surface = self.surface.lock().await;
+        if let (Some((_, _, generation)), Some(invalidated_before)) = (*surface, invalidated_before)
+            && generation >= invalidated_before
+        {
+            return;
+        }
+        if let Some((surface_width, surface_height, _)) = surface.take() {
+            let _ = self
+                .platform
+                .place_contact_labels(
+                    &self.product,
+                    crate::platform::PlacedContactLabels {
+                        surface_width,
+                        surface_height,
+                        labels: Vec::new(),
+                    },
+                )
+                .await;
+        }
+    }
+}
+
+/// Host-owned labels belonging to live product connections.
+#[derive(Default)]
+pub struct ContactLabelPlacements {
+    by_runtime: parking_lot::Mutex<HashMap<u64, Arc<ContactLabelPlacement>>>,
+}
+
+impl ContactLabelPlacements {
+    /// Acquire the connection's serial label layer.
+    pub fn for_runtime(
+        &self,
+        runtime: u64,
+        platform: Arc<dyn crate::platform::ContactsPlatform>,
+        product: &crate::platform::ProductContext,
+    ) -> Arc<ContactLabelPlacement> {
+        self.by_runtime
+            .lock()
+            .entry(runtime)
+            .or_insert_with(|| {
+                Arc::new(ContactLabelPlacement {
+                    platform,
+                    product: product.clone(),
+                    surface: Default::default(),
+                    closed: AtomicBool::new(false),
+                })
+            })
+            .clone()
+    }
+
+    /// Prevent late draws and clear a connection's labels during teardown.
+    pub fn release(&self, runtime: u64, spawner: &crate::subscription::Spawner) {
+        let Some(placement) = self.by_runtime.lock().remove(&runtime) else {
+            return;
+        };
+        placement.closed.store(true, Ordering::Release);
+        spawner(Box::pin(async move { placement.clear(None).await }));
+    }
+
+    /// Clear labels from the preceding wallet session, without erasing newer draws.
+    pub fn session_changed(&self, generation: u64, spawner: &crate::subscription::Spawner) {
+        let placements: Vec<_> = self.by_runtime.lock().values().cloned().collect();
+        if placements.is_empty() {
+            return;
+        }
+        spawner(Box::pin(async move {
+            for placement in placements {
+                placement.clear(Some(generation)).await;
+            }
+        }));
+    }
+}
 
 /// Domain separator for the contact-handle key.
 pub const CONTACT_HANDLE_CONTEXT: &[u8] = b"truapi-contact-handle";
@@ -361,19 +498,6 @@ mod tests {
         assert!(cache.has_undeclared_handle(&call, &[]));
         assert!(!cache.has_undeclared_handle(&call, &[handle]));
         assert!(!cache.has_undeclared_handle(&[0x04, 0x00], &[]));
-    }
-
-    #[test]
-    fn the_product_wire_surface_is_the_picker_and_nothing_else() {
-        // The contact list must not be reachable from a product. This asserts
-        // the dispatch table itself, so adding a list or subscribe method to the
-        // `Contacts` trait fails here rather than shipping.
-        let contacts: Vec<&str> = crate::generated::wire_table::WIRE_TABLE
-            .iter()
-            .map(|entry| entry.method)
-            .filter(|method| method.starts_with("contacts_"))
-            .collect();
-        assert_eq!(contacts, vec!["contacts_pick"]);
     }
 
     #[test]

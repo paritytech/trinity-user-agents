@@ -4,6 +4,7 @@
 
 mod files;
 mod history;
+mod profile;
 mod receive;
 #[cfg(test)]
 mod tests;
@@ -37,6 +38,8 @@ use crate::unix_time::current_unix_secs;
 type Error = HostProductDeviceChatError;
 const MAX_PEERS: usize = 256;
 const MAX_OUTBOX: usize = 256;
+/// Profile references have a fixed budget apart from other traffic.
+const MAX_PROFILE_OUTBOX: usize = MAX_PEERS;
 const MAX_RECEIPTS: usize = 4096;
 const MAX_HISTORY_BATCHES: usize = 256;
 const LIFETIME: u64 = 2 * 86_400;
@@ -147,6 +150,21 @@ enum OutgoingKind {
     Payment([u8; 32]),
     Acknowledgment,
     Rich([u8; 32]),
+    /// Appended last so earlier snapshots still decode.
+    ProfileReference([u8; 32]),
+    /// Personal grants never replace an app scope's pending frame.
+    PersonalProfileReference([u8; 32]),
+}
+
+impl OutgoingKind {
+    fn profile_scope(&self) -> Option<crate::runtime::profile::ProfileScope> {
+        use crate::runtime::profile::ProfileScope;
+        match self {
+            Self::ProfileReference(_) => Some(ProfileScope::App),
+            Self::PersonalProfileReference(_) => Some(ProfileScope::Personal),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Clone, Encode, Decode)]
@@ -211,6 +229,9 @@ struct State {
     rich_messages: Vec<files::RichRecord>,
     marker: [u8; 4],
     boundary: BoundaryState,
+    profile_marker: [u8; 4],
+    /// Trailing, and absent from snapshots written before it existed.
+    profile_shared: Vec<profile::ProfileWatermark>,
 }
 
 impl State {
@@ -233,6 +254,8 @@ impl State {
             rich_messages: Vec::new(),
             marker: *b"HCN3",
             boundary: BoundaryState::default(),
+            profile_marker: profile::WATERMARK_MARKER,
+            profile_shared: Vec::new(),
         })
     }
     fn peer(&self, identity: &[u8; 32]) -> Result<&Peer, Error> {
@@ -264,11 +287,25 @@ impl State {
             }
             return Ok(());
         }
-        if self.outbox.len() >= MAX_OUTBOX {
+        let profile = outgoing.kind.profile_scope().is_some();
+        let limit = if profile {
+            MAX_PROFILE_OUTBOX
+        } else {
+            MAX_OUTBOX
+        };
+        if self.outbox_used(profile) >= limit {
             return Err(Error::StorageUnavailable);
         }
         self.outbox.push(outgoing);
         Ok(())
+    }
+    /// Entries in one outbox budget: profile references, or all other
+    /// traffic. Neither can crowd out the other.
+    fn outbox_used(&self, profile: bool) -> usize {
+        self.outbox
+            .iter()
+            .filter(|entry| entry.kind.profile_scope().is_some() == profile)
+            .count()
     }
 }
 
@@ -304,6 +341,18 @@ impl Decode for State {
             }
             BoundaryState::decode(input)?
         };
+        // Added after the boundary state: a snapshot that ends here predates it.
+        // What follows is the watermark list in its current layout or the one
+        // written before frames were ordered; see `profile::decode_watermarks`.
+        let profile_shared = match input.remaining_len()? {
+            Some(0) => Vec::new(),
+            Some(len) => {
+                let mut rest = vec![0; len];
+                input.read(&mut rest)?;
+                profile::decode_watermarks(&rest, &peers, &outbox)?
+            }
+            None => return Err("unbounded Chat state".into()),
+        };
         Ok(Self {
             secret,
             index,
@@ -322,6 +371,8 @@ impl Decode for State {
             rich_messages,
             marker: *b"HCN3",
             boundary,
+            profile_marker: profile::WATERMARK_MARKER,
+            profile_shared,
         })
     }
 }
@@ -469,7 +520,9 @@ impl NativeChatActor {
     fn validate_state(&self, state: &State) -> Result<(), Error> {
         if state.peers.len() > MAX_PEERS
             || state.invitations.len() > 16
-            || state.outbox.len() > MAX_OUTBOX
+            || state.outbox_used(false) > MAX_OUTBOX
+            || state.outbox_used(true) > MAX_PROFILE_OUTBOX
+            || state.profile_shared.len() > MAX_PEERS * 2
             || state.received.len() > MAX_RECEIPTS
             || state.sent.len() > MAX_RECEIPTS
             || state.accepted_payments.len() > MAX_RECEIPTS
@@ -657,6 +710,17 @@ impl NativeChatActor {
                 })
                 .await?;
         }
+        let _profile_state = context.services.profile_state_gate.lock().await;
+        let (profile_revision, disclosure) = crate::runtime::profile::read_disclosure_state(
+            &*context.services.platform,
+            profile::profile_owner(context),
+        )
+        .await
+        .map_err(|_| Error::StorageUnavailable)?;
+        let disclosure = disclosure.map(|disclosure| {
+            let digest = profile::disclosure_digest(&disclosure);
+            (disclosure, digest)
+        });
         self.store
             .read(|state| {
                 let prepared = state
@@ -666,8 +730,21 @@ impl NativeChatActor {
                         state.boundary.legacy_pending
                             || matches!(
                                 entry.kind,
-                                OutgoingKind::Payment(_) | OutgoingKind::Rich(_)
+                                OutgoingKind::Payment(_)
+                                    | OutgoingKind::Rich(_)
+                                    | OutgoingKind::ProfileReference(_)
+                                    | OutgoingKind::PersonalProfileReference(_)
                             )
+                    })
+                    .filter(|entry| {
+                        !profile::superseded(
+                            entry,
+                            &state.profile_shared,
+                            &state.peers,
+                            disclosure.as_ref(),
+                            &self.product,
+                            profile_revision,
+                        )
                     })
                     .map(|entry| entry.prepared(state))
                     .collect();
@@ -737,6 +814,11 @@ impl NativeChatActor {
                 state
                     .outbox
                     .retain(|entry| matches!(entry.kind, OutgoingKind::Payment(_)));
+                // Keep grants so a removed audience still receives withdrawal.
+                // Retired frames can be offered again within the existing limit.
+                for watermark in &mut state.profile_shared {
+                    watermark.lapsed = true;
+                }
                 state.messages.clear();
                 state.acknowledgments.clear();
                 state.sent.clear();
@@ -1181,6 +1263,9 @@ impl NativeChatActor {
     ) -> Result<(), Error> {
         context.require_current()?;
         self.store.reauthenticate().await?;
+        // Heals a relay trigger that was missed. With nothing due it reads the
+        // disclosure and checks watermarks, nothing more.
+        self.relay_profile_reference(context).await;
         let (accepted, required) = self
             .store
             .read(|state| {

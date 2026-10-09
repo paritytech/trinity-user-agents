@@ -959,6 +959,23 @@ fn exchange_digest(messages: &[OpenedDeviceMessage]) -> Result<[u8; 32], Error> 
                 hasher.update(digest);
                 continue;
             }
+            OpenedDeviceMessage::ProfileReference(frame) => {
+                let personal = frame.scope == crate::runtime::profile::ProfileScope::Personal;
+                hasher.update(&[if personal { 7 } else { 6 }]);
+                if personal {
+                    hasher.update(&frame.revision.to_le_bytes());
+                }
+                let bytes = (
+                    frame.message_id.as_str(),
+                    frame.timestamp,
+                    frame.discloser_product_id.as_str(),
+                    frame.reference.as_deref(),
+                )
+                    .encode();
+                hasher.update(&(bytes.len() as u32).to_le_bytes());
+                hasher.update(&bytes);
+                continue;
+            }
             OpenedDeviceMessage::DeviceControl(control) => {
                 let mut bytes = (control.message_id.as_str(), control.timestamp).encode();
                 match &control.content {

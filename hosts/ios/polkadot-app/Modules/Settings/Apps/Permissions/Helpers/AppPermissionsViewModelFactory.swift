@@ -41,6 +41,7 @@ extension ProductPermission {
         case .statementSubmitAccess: String(localized: .Products.permissionBodyStatementSubmit)
         case .userIdentityAccess: String(localized: .Products.permissionBodyUserIdentityAccess)
         case .chatAuthority: String(localized: .Products.permissionBodyChatAuthority)
+        case .profileDisclosure: String(localized: .Products.permissionBodyProfileDisclosure)
         case let .statementStoreAllowance(derivationIndex):
             ProductPermission.statementStoreAllowanceDescription(derivationIndex: derivationIndex)
         }
@@ -58,6 +59,7 @@ extension ProductPermission {
         case .statementSubmitAccess: "text.bubble"
         case .userIdentityAccess: "person.text.rectangle"
         case .chatAuthority: "message.badge.shield"
+        case .profileDisclosure: "person.crop.square"
         case .statementStoreAllowance: "externaldrive.badge.plus"
         }
     }
@@ -74,6 +76,7 @@ extension ProductPermission {
         case .statementSubmitAccess: String(localized: .Products.appPermissionStatementSubmitTitle)
         case .userIdentityAccess: String(localized: .Products.appPermissionUserIdentityTitle)
         case .chatAuthority: String(localized: .Products.appPermissionChatAuthorityTitle)
+        case .profileDisclosure: String(localized: .Products.appPermissionProfileDisclosureTitle)
         case .statementStoreAllowance: String(localized: .Products.appPermissionStatementStoreAllowanceTitle)
         }
     }

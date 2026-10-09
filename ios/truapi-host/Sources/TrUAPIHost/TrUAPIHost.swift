@@ -387,6 +387,22 @@ public protocol ContactsHostBridge: AnyObject, Sendable {
     /// did. With no contacts, answer `.noContacts` instead of drawing an empty
     /// overlay.
     func pickContact(productId: String) async throws -> HostContactPick
+
+    /// Edit the complete selected audience; cancelling does not confirm empty.
+    func pickContacts(productId: String, selection: ContactSelection) async throws -> HostContactsPick
+
+    /// Replace host-owned contact labels, independent of shared profile photos.
+    func placeContactLabels(productId: String, placed: PlacedContactLabels) async throws
+}
+
+public extension ContactsHostBridge {
+    func pickContacts(productId: String, selection: ContactSelection) async throws -> HostContactsPick {
+        .unsupported
+    }
+
+    func placeContactLabels(productId: String, placed: PlacedContactLabels) async throws {
+        throw HostContactsPlaceLabelsError.Unsupported
+    }
 }
 
 public extension HostBridge {
@@ -655,6 +671,26 @@ private final class ContactsCallbackAdapter: NativeContactsCallbacks, @unchecked
             throw error
         } catch {
             throw HostRejection.Rejected(reason: hostRejectionReason(error))
+        }
+    }
+
+    func pickContacts(productId: String, selection: ContactSelection) async throws -> HostContactsPick {
+        do {
+            return try await bridge.pickContacts(productId: productId, selection: selection)
+        } catch let error as HostRejection {
+            throw error
+        } catch {
+            throw HostRejection.Rejected(reason: hostRejectionReason(error))
+        }
+    }
+
+    func placeContactLabels(productId: String, placed: PlacedContactLabels) async throws {
+        do {
+            try await bridge.placeContactLabels(productId: productId, placed: placed)
+        } catch let error as HostContactsPlaceLabelsError {
+            throw error
+        } catch {
+            throw HostContactsPlaceLabelsError.Unknown(reason: "contact label callback failed")
         }
     }
 }

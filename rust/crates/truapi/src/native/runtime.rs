@@ -899,6 +899,9 @@ impl NativeProductExecution {
             chat: self.chat_connection.clone(),
             renderer: self.renderer_connection.clone(),
             pocket_platform: self.pocket.clone(),
+            // Native hosts do not render profiles yet; Profile calls answer
+            // `Unsupported` there.
+            profile_platform: None,
             expanded_card: Some(self.expanded_card.clone()),
             game_platform: self.game.clone(),
         }

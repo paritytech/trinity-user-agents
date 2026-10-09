@@ -156,6 +156,18 @@ export function makeHostCallbacks(
           },
         }
       : {}),
+    // And for profiles: the default fixture is a host that renders none, so
+    // Profile calls are answered `Unsupported`.
+    ...(overrides.profile
+      ? {
+          profile: {
+            presentProfile: async () => {},
+            presentContactProfile: async () => {},
+            placeContactAvatars: async () => {},
+            ...overrides.profile,
+          },
+        }
+      : {}),
     // An unavailable authenticated search must not look like an empty result.
     ...(overrides.identityBackend
       ? {

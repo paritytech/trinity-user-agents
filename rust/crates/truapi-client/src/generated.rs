@@ -5,7 +5,7 @@
 use super::*;
 
 /// Fingerprint of the generated wire contract.
-pub const TRUAPI_WIRE_SCHEMA_HASH: &str = "c3d0557ff827e0a7";
+pub const TRUAPI_WIRE_SCHEMA_HASH: &str = "064ab9d59b73f723";
 
 /// `account_connection_status_subscribe` method marker.
 pub struct AccountConnectionStatusSubscribe;
@@ -1114,6 +1114,60 @@ impl RequestMethod for ContactsPick {
     const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
 }
 
+/// `contacts_pick_many` method marker.
+pub struct ContactsPickMany;
+impl ContactsPickMany {
+    /// Canonical metadata and frame ids for this method.
+    pub const DESCRIPTOR: MethodDescriptor = MethodDescriptor {
+        service: "Contacts",
+        method: "pick_many",
+        wire_name: "contacts_pick_many",
+        request_type: "truapi::versioned::contacts::HostContactsPickManyRequest",
+        response_type: "truapi::versioned::contacts::HostContactsPickManyResponse",
+        error_type: Some("truapi::versioned::contacts::HostContactsPickManyError"),
+        kind: MethodKind::Request,
+        direction: Direction::ProductToHost,
+        required_execution: None,
+        wire: MethodWire::Request(MethodIds {
+            trait_id: 20,
+            method_id: 1,
+        }),
+    };
+}
+impl RequestMethod for ContactsPickMany {
+    type Request = truapi::versioned::contacts::HostContactsPickManyRequest;
+    type Response = truapi::versioned::contacts::HostContactsPickManyResponse;
+    type Error = truapi::versioned::contacts::HostContactsPickManyError;
+    const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
+}
+
+/// `contacts_place_labels` method marker.
+pub struct ContactsPlaceLabels;
+impl ContactsPlaceLabels {
+    /// Canonical metadata and frame ids for this method.
+    pub const DESCRIPTOR: MethodDescriptor = MethodDescriptor {
+        service: "Contacts",
+        method: "place_labels",
+        wire_name: "contacts_place_labels",
+        request_type: "truapi::versioned::contacts::HostContactsPlaceLabelsRequest",
+        response_type: "truapi::versioned::contacts::HostContactsPlaceLabelsResponse",
+        error_type: Some("truapi::versioned::contacts::HostContactsPlaceLabelsError"),
+        kind: MethodKind::Request,
+        direction: Direction::ProductToHost,
+        required_execution: None,
+        wire: MethodWire::Request(MethodIds {
+            trait_id: 20,
+            method_id: 2,
+        }),
+    };
+}
+impl RequestMethod for ContactsPlaceLabels {
+    type Request = truapi::versioned::contacts::HostContactsPlaceLabelsRequest;
+    type Response = truapi::versioned::contacts::HostContactsPlaceLabelsResponse;
+    type Error = truapi::versioned::contacts::HostContactsPlaceLabelsError;
+    const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
+}
+
 /// `entropy_derive` method marker.
 pub struct EntropyDerive;
 impl EntropyDerive {
@@ -1818,6 +1872,195 @@ impl RequestMethod for PreimageSubmit {
     const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
 }
 
+/// `profile_present` method marker.
+pub struct ProfilePresent;
+impl ProfilePresent {
+    /// Canonical metadata and frame ids for this method.
+    pub const DESCRIPTOR: MethodDescriptor = MethodDescriptor {
+        service: "Profile",
+        method: "present",
+        wire_name: "profile_present",
+        request_type: "truapi::versioned::profile::HostProfilePresentRequest",
+        response_type: "truapi::versioned::profile::HostProfilePresentResponse",
+        error_type: Some("truapi::versioned::profile::HostProfilePresentError"),
+        kind: MethodKind::Request,
+        direction: Direction::ProductToHost,
+        required_execution: None,
+        wire: MethodWire::Request(MethodIds {
+            trait_id: 69,
+            method_id: 0,
+        }),
+    };
+}
+impl RequestMethod for ProfilePresent {
+    type Request = truapi::versioned::profile::HostProfilePresentRequest;
+    type Response = truapi::versioned::profile::HostProfilePresentResponse;
+    type Error = truapi::versioned::profile::HostProfilePresentError;
+    const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
+}
+
+/// `profile_disclose` method marker.
+pub struct ProfileDisclose;
+impl ProfileDisclose {
+    /// Canonical metadata and frame ids for this method.
+    pub const DESCRIPTOR: MethodDescriptor = MethodDescriptor {
+        service: "Profile",
+        method: "disclose",
+        wire_name: "profile_disclose",
+        request_type: "truapi::versioned::profile::HostProfileDiscloseRequest",
+        response_type: "truapi::versioned::profile::HostProfileDiscloseResponse",
+        error_type: Some("truapi::versioned::profile::HostProfileDiscloseError"),
+        kind: MethodKind::Request,
+        direction: Direction::ProductToHost,
+        required_execution: None,
+        wire: MethodWire::Request(MethodIds {
+            trait_id: 69,
+            method_id: 1,
+        }),
+    };
+}
+impl RequestMethod for ProfileDisclose {
+    type Request = truapi::versioned::profile::HostProfileDiscloseRequest;
+    type Response = truapi::versioned::profile::HostProfileDiscloseResponse;
+    type Error = truapi::versioned::profile::HostProfileDiscloseError;
+    const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
+}
+
+/// `profile_retract` method marker.
+pub struct ProfileRetract;
+impl ProfileRetract {
+    /// Canonical metadata and frame ids for this method.
+    pub const DESCRIPTOR: MethodDescriptor = MethodDescriptor {
+        service: "Profile",
+        method: "retract",
+        wire_name: "profile_retract",
+        request_type: "truapi::versioned::profile::HostProfileRetractRequest",
+        response_type: "truapi::versioned::profile::HostProfileRetractResponse",
+        error_type: Some("truapi::versioned::profile::HostProfileRetractError"),
+        kind: MethodKind::Request,
+        direction: Direction::ProductToHost,
+        required_execution: None,
+        wire: MethodWire::Request(MethodIds {
+            trait_id: 69,
+            method_id: 2,
+        }),
+    };
+}
+impl RequestMethod for ProfileRetract {
+    type Request = truapi::versioned::profile::HostProfileRetractRequest;
+    type Response = truapi::versioned::profile::HostProfileRetractResponse;
+    type Error = truapi::versioned::profile::HostProfileRetractError;
+    const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
+}
+
+/// `profile_present_contact` method marker.
+pub struct ProfilePresentContact;
+impl ProfilePresentContact {
+    /// Canonical metadata and frame ids for this method.
+    pub const DESCRIPTOR: MethodDescriptor = MethodDescriptor {
+        service: "Profile",
+        method: "present_contact",
+        wire_name: "profile_present_contact",
+        request_type: "truapi::versioned::profile::HostProfilePresentContactRequest",
+        response_type: "truapi::versioned::profile::HostProfilePresentContactResponse",
+        error_type: Some("truapi::versioned::profile::HostProfilePresentContactError"),
+        kind: MethodKind::Request,
+        direction: Direction::ProductToHost,
+        required_execution: None,
+        wire: MethodWire::Request(MethodIds {
+            trait_id: 69,
+            method_id: 3,
+        }),
+    };
+}
+impl RequestMethod for ProfilePresentContact {
+    type Request = truapi::versioned::profile::HostProfilePresentContactRequest;
+    type Response = truapi::versioned::profile::HostProfilePresentContactResponse;
+    type Error = truapi::versioned::profile::HostProfilePresentContactError;
+    const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
+}
+
+/// `profile_place_contact_avatars` method marker.
+pub struct ProfilePlaceContactAvatars;
+impl ProfilePlaceContactAvatars {
+    /// Canonical metadata and frame ids for this method.
+    pub const DESCRIPTOR: MethodDescriptor = MethodDescriptor {
+        service: "Profile",
+        method: "place_contact_avatars",
+        wire_name: "profile_place_contact_avatars",
+        request_type: "truapi::versioned::profile::HostProfilePlaceContactAvatarsRequest",
+        response_type: "truapi::versioned::profile::HostProfilePlaceContactAvatarsResponse",
+        error_type: Some("truapi::versioned::profile::HostProfilePlaceContactAvatarsError"),
+        kind: MethodKind::Request,
+        direction: Direction::ProductToHost,
+        required_execution: None,
+        wire: MethodWire::Request(MethodIds {
+            trait_id: 69,
+            method_id: 4,
+        }),
+    };
+}
+impl RequestMethod for ProfilePlaceContactAvatars {
+    type Request = truapi::versioned::profile::HostProfilePlaceContactAvatarsRequest;
+    type Response = truapi::versioned::profile::HostProfilePlaceContactAvatarsResponse;
+    type Error = truapi::versioned::profile::HostProfilePlaceContactAvatarsError;
+    const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
+}
+
+/// `profile_own_status` method marker.
+pub struct ProfileOwnStatus;
+impl ProfileOwnStatus {
+    /// Canonical metadata and frame ids for this method.
+    pub const DESCRIPTOR: MethodDescriptor = MethodDescriptor {
+        service: "Profile",
+        method: "own_status",
+        wire_name: "profile_own_status",
+        request_type: "truapi::versioned::profile::HostProfileOwnStatusRequest",
+        response_type: "truapi::versioned::profile::HostProfileOwnStatusResponse",
+        error_type: Some("truapi::versioned::profile::HostProfileOwnStatusError"),
+        kind: MethodKind::Request,
+        direction: Direction::ProductToHost,
+        required_execution: None,
+        wire: MethodWire::Request(MethodIds {
+            trait_id: 69,
+            method_id: 5,
+        }),
+    };
+}
+impl RequestMethod for ProfileOwnStatus {
+    type Request = truapi::versioned::profile::HostProfileOwnStatusRequest;
+    type Response = truapi::versioned::profile::HostProfileOwnStatusResponse;
+    type Error = truapi::versioned::profile::HostProfileOwnStatusError;
+    const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
+}
+
+/// `profile_present_own` method marker.
+pub struct ProfilePresentOwn;
+impl ProfilePresentOwn {
+    /// Canonical metadata and frame ids for this method.
+    pub const DESCRIPTOR: MethodDescriptor = MethodDescriptor {
+        service: "Profile",
+        method: "present_own",
+        wire_name: "profile_present_own",
+        request_type: "truapi::versioned::profile::HostProfilePresentOwnRequest",
+        response_type: "truapi::versioned::profile::HostProfilePresentOwnResponse",
+        error_type: Some("truapi::versioned::profile::HostProfilePresentOwnError"),
+        kind: MethodKind::Request,
+        direction: Direction::ProductToHost,
+        required_execution: None,
+        wire: MethodWire::Request(MethodIds {
+            trait_id: 69,
+            method_id: 6,
+        }),
+    };
+}
+impl RequestMethod for ProfilePresentOwn {
+    type Request = truapi::versioned::profile::HostProfilePresentOwnRequest;
+    type Response = truapi::versioned::profile::HostProfilePresentOwnResponse;
+    type Error = truapi::versioned::profile::HostProfilePresentOwnError;
+    const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
+}
+
 /// `renderer_render` method marker.
 pub struct RendererRender;
 impl RendererRender {
@@ -2512,6 +2755,8 @@ pub const APP_METHODS: &[MethodDescriptor] = &[
     CoinPaymentRefund::DESCRIPTOR,
     CoinPaymentListenForPayment::DESCRIPTOR,
     ContactsPick::DESCRIPTOR,
+    ContactsPickMany::DESCRIPTOR,
+    ContactsPlaceLabels::DESCRIPTOR,
     EntropyDerive::DESCRIPTOR,
     GameRemindNextGame::DESCRIPTOR,
     GameCancelNextGame::DESCRIPTOR,
@@ -2535,6 +2780,13 @@ pub const APP_METHODS: &[MethodDescriptor] = &[
     PermissionsAuthorizeDevicePermission::DESCRIPTOR,
     PreimageLookupSubscribe::DESCRIPTOR,
     PreimageSubmit::DESCRIPTOR,
+    ProfilePresent::DESCRIPTOR,
+    ProfileDisclose::DESCRIPTOR,
+    ProfileRetract::DESCRIPTOR,
+    ProfilePresentContact::DESCRIPTOR,
+    ProfilePlaceContactAvatars::DESCRIPTOR,
+    ProfileOwnStatus::DESCRIPTOR,
+    ProfilePresentOwn::DESCRIPTOR,
     ResourceAllocationRequest::DESCRIPTOR,
     ScannerScan::DESCRIPTOR,
     SigningCreateTransaction::DESCRIPTOR,
@@ -2595,6 +2847,8 @@ pub const WIDGET_METHODS: &[MethodDescriptor] = &[
     CoinPaymentRefund::DESCRIPTOR,
     CoinPaymentListenForPayment::DESCRIPTOR,
     ContactsPick::DESCRIPTOR,
+    ContactsPickMany::DESCRIPTOR,
+    ContactsPlaceLabels::DESCRIPTOR,
     EntropyDerive::DESCRIPTOR,
     ExpandedCardSetFaceShown::DESCRIPTOR,
     GameRemindNextGame::DESCRIPTOR,
@@ -2619,6 +2873,13 @@ pub const WIDGET_METHODS: &[MethodDescriptor] = &[
     PermissionsAuthorizeDevicePermission::DESCRIPTOR,
     PreimageLookupSubscribe::DESCRIPTOR,
     PreimageSubmit::DESCRIPTOR,
+    ProfilePresent::DESCRIPTOR,
+    ProfileDisclose::DESCRIPTOR,
+    ProfileRetract::DESCRIPTOR,
+    ProfilePresentContact::DESCRIPTOR,
+    ProfilePlaceContactAvatars::DESCRIPTOR,
+    ProfileOwnStatus::DESCRIPTOR,
+    ProfilePresentOwn::DESCRIPTOR,
     ResourceAllocationRequest::DESCRIPTOR,
     ScannerScan::DESCRIPTOR,
     SigningCreateTransaction::DESCRIPTOR,
@@ -2684,6 +2945,8 @@ pub const WORKER_METHODS: &[MethodDescriptor] = &[
     CoinPaymentRefund::DESCRIPTOR,
     CoinPaymentListenForPayment::DESCRIPTOR,
     ContactsPick::DESCRIPTOR,
+    ContactsPickMany::DESCRIPTOR,
+    ContactsPlaceLabels::DESCRIPTOR,
     EntropyDerive::DESCRIPTOR,
     GameRemindNextGame::DESCRIPTOR,
     GameCancelNextGame::DESCRIPTOR,
@@ -2709,6 +2972,13 @@ pub const WORKER_METHODS: &[MethodDescriptor] = &[
     PocketRemoveCard::DESCRIPTOR,
     PreimageLookupSubscribe::DESCRIPTOR,
     PreimageSubmit::DESCRIPTOR,
+    ProfilePresent::DESCRIPTOR,
+    ProfileDisclose::DESCRIPTOR,
+    ProfileRetract::DESCRIPTOR,
+    ProfilePresentContact::DESCRIPTOR,
+    ProfilePlaceContactAvatars::DESCRIPTOR,
+    ProfileOwnStatus::DESCRIPTOR,
+    ProfilePresentOwn::DESCRIPTOR,
     RendererRender::DESCRIPTOR,
     RendererActionSubscribe::DESCRIPTOR,
     ResourceAllocationRequest::DESCRIPTOR,

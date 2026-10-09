@@ -47,6 +47,7 @@ class ProductPermissionRepositoryTest {
     fun `feature permissions preserve canonical tags bytes and local keys`() {
         val requests = listOf(
             PermissionAuthorizationRequest.ChatAuthority,
+            PermissionAuthorizationRequest.ProfileDisclosure,
             PermissionAuthorizationRequest.StatementStoreAllowance(null),
             PermissionAuthorizationRequest.StatementStoreAllowance(DerivationIndex.Index(0u)),
             PermissionAuthorizationRequest.StatementStoreAllowance(DerivationIndex.Index(UInt.MAX_VALUE)),
@@ -60,7 +61,7 @@ class ProductPermissionRepositoryTest {
             assertEquals(permission.hashCode(), restored.hashCode())
             assertEquals(permission, restored.canonicalRequest()!!.legacyPermission())
         }
-        assertEquals(requests.take(4), permissions.take(4).map { it.canonicalRequest() })
+        assertEquals(requests.dropLast(1), permissions.dropLast(1).map { it.canonicalRequest() })
         val raw = permissions.last().canonicalRequest() as PermissionAuthorizationRequest.StatementStoreAllowance
         assertArrayEquals(ByteArray(32) { it.toByte() }, (raw.derivationIndex as DerivationIndex.Raw).v1)
         assertTrue(runCatching { ProductPermission.fromLocal("statement_store_allowance", "raw:0x01") }.isFailure)
@@ -73,6 +74,7 @@ class ProductPermissionRepositoryTest {
         val f = Fixture()
         val permissions = listOf(
             ProductPermission.ChatAuthority,
+            ProductPermission.ProfileDisclosure,
             ProductPermission.StatementStoreAllowance(null),
             ProductPermission.StatementStoreAllowance(AllowanceAccountSelector.Index(0u)),
             ProductPermission.StatementStoreAllowance(AllowanceAccountSelector.Raw(ByteArray(32) { it.toByte() }.toDataByteArray())),
@@ -94,6 +96,35 @@ class ProductPermissionRepositoryTest {
             assertTrue(f.repository.isGranted(product, permission))
         }
         coVerify(exactly = 0) { f.dao.insert(any()) }
+    }
+
+    @Test
+    fun `profile disclosure is not implied by Chat allowance or trusted remote grants`() = runTest {
+        val f = Fixture()
+        val profile = ProductPermission.ProfileDisclosure
+        assertEquals("profile_disclosure", profile.typeName)
+        assertEquals("", profile.key)
+        val independent = listOf(
+            ProductPermission.ChatAuthority,
+            ProductPermission.StatementStoreAllowance(null),
+            ProductPermission.StatementStoreAllowance(AllowanceAccountSelector.Index(0u)),
+            ProductPermission.StatementStoreAllowance(AllowanceAccountSelector.Raw(ByteArray(32).toDataByteArray())),
+            ProductPermission.RemotePermission.NetworkAccess("*"),
+            ProductPermission.RemotePermission.WebRtcAccess,
+            ProductPermission.RemotePermission.ChainSubmitAccess,
+            ProductPermission.RemotePermission.StatementSubmitAccess,
+            ProductPermission.RemotePermission.PreimageSubmitAccess,
+        )
+        independent.forEach { f.saved(product)[it.canonicalRequest()!!] = authorized }
+        f.saved(other)[profile.canonicalRequest()!!] = authorized
+
+        assertFalse(f.repository.isGranted(product, profile))
+        assertFalse(f.repository.isDenied(product, profile))
+        assertTrue(f.repository.isGranted(other, profile))
+        f.saved(product)[profile.canonicalRequest()!!] = denied
+        assertFalse(f.repository.isGranted(product, profile))
+        assertTrue(f.repository.isDenied(product, profile))
+        assertTrue(independent.all { f.repository.isGranted(product, it) })
     }
 
     @Test

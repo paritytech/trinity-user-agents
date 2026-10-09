@@ -198,6 +198,10 @@ impl NativeChatActor {
         let mut bytes_seen = 0usize;
         let mut had_history = false;
         let mut had_rich = false;
+        // Profile references are the Host's, not the product's: collected here,
+        // stored after the open commits, and cut out of what the product sees.
+        let mut profile_references = Vec::new();
+        let mut stripped = false;
         while let Some((mut bytes, depth)) = work.pop() {
             context.require_current()?;
             bytes_seen = bytes_seen
@@ -297,6 +301,17 @@ impl NativeChatActor {
                         expanded.push(core::mem::take(&mut *bytes));
                     }
                 }
+                OpenedDeviceMessage::ProfileReference(frame) => {
+                    if !super::receive::valid_peer_timestamp(frame.timestamp, current_unix_secs()) {
+                        return Err(Error::InvalidStatement);
+                    }
+                    // Never forwarded, whatever the depth; only a live frame
+                    // updates what this Host holds, never compacted history.
+                    stripped = true;
+                    if depth == 0 {
+                        profile_references.push(frame);
+                    }
+                }
             }
         }
         let rich = self.prepare_rich(context, peer, &request_id, rich).await?;
@@ -310,10 +325,11 @@ impl NativeChatActor {
                     files::merge_received(state, rich)
                 })
                 .await?;
-            // Preserve the original canonical request when it needed neither HOP
-            // expansion nor removal of private rich-content frames, except
-            // references already transferred by legacy migration.
-            let plaintext = if had_history || had_rich {
+            self.record_profile_references(context, peer, profile_references)
+                .await?;
+            // Preserve the original canonical request only when no history
+            // expansion or removal of private frames was needed.
+            let plaintext = if had_history || had_rich || stripped {
                 wire::encode_transport_request_plaintext(&request_id, &expanded)
                     .map_err(|_| Error::InvalidStatement)?
             } else {
@@ -367,6 +383,8 @@ impl NativeChatActor {
             pages,
             imports,
         };
+        self.record_profile_references(context, peer, profile_references)
+            .await?;
         let valid = context.session_valid.clone();
         self.store
             .update(move |state| {
@@ -382,6 +400,68 @@ impl NativeChatActor {
             })
             .await?;
         self.continue_open(context, id, 0).await
+    }
+
+    /// Apply authenticated grants within their own scope. Personal changes
+    /// redraw all placements of the wallet, app changes only this product.
+    async fn record_profile_references(
+        &self,
+        context: &NativeChatContext,
+        peer: [u8; 32],
+        frames: Vec<crate::runtime::chat_device::ProfileReferenceFrame>,
+    ) -> Result<(), Error> {
+        let owner = super::profile::profile_owner(context);
+        let profile_state = context.services.profile_state_gate.lock().await;
+        let mut changed = false;
+        let mut personal_changed = false;
+        for frame in frames {
+            use crate::runtime::profile::{
+                ProfileScope, record_personal_received_reference, record_received_reference,
+            };
+            let kept = match frame.scope {
+                ProfileScope::App => {
+                    record_received_reference(
+                        &*context.services.platform,
+                        owner,
+                        &self.product,
+                        peer,
+                        frame.discloser_product_id,
+                        frame.timestamp,
+                        frame.reference,
+                    )
+                    .await
+                }
+                ProfileScope::Personal => {
+                    record_personal_received_reference(
+                        &*context.services.platform,
+                        owner,
+                        peer,
+                        frame.discloser_product_id,
+                        frame.timestamp,
+                        frame.revision,
+                        frame.reference,
+                    )
+                    .await
+                }
+            }
+            .map_err(|_| Error::StorageUnavailable)?;
+            changed |= kept;
+            personal_changed |= kept && frame.scope == ProfileScope::Personal;
+        }
+        drop(profile_state);
+        if personal_changed {
+            context
+                .services
+                .contact_avatars
+                .redraw_owner(owner, &context.services.spawner);
+        } else if changed {
+            context.services.contact_avatars.redraw(
+                owner,
+                &self.product,
+                &context.services.spawner,
+            );
+        }
+        Ok(())
     }
 
     pub(in crate::runtime::native_chat) async fn continue_open(

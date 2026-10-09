@@ -1189,6 +1189,13 @@ fn approval_summary(review: &UserConfirmationReview) -> (&'static str, String) {
                 hex::encode(review.operation_id),
             ),
         ),
+        UserConfirmationReview::ProfileDisclosure(review) => (
+            "share your profile with your Chat contacts",
+            format!(
+                "Product {} requested permission to share a reference to your profile with every Chat contact. Contacts who receive it can read that profile.",
+                review.product_id
+            ),
+        ),
     }
 }
 

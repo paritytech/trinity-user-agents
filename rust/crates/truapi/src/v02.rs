@@ -7,7 +7,9 @@
 mod account;
 mod local_storage;
 mod locale;
+mod profile;
 
 pub use account::*;
 pub use local_storage::*;
 pub use locale::*;
+pub use profile::*;

@@ -95,6 +95,12 @@ sealed interface ProductPermission {
         override val key: String get() = ""
     }
 
+    data object ProfileDisclosure : ProductPermission {
+        const val TYPE_NAME = "profile_disclosure"
+        override val typeName: String get() = TYPE_NAME
+        override val key: String get() = ""
+    }
+
     /** Null is the legacy allowance account, not product account zero. */
     data class StatementStoreAllowance(val derivationIndex: AllowanceAccountSelector?) : ProductPermission {
         override val typeName: String get() = TYPE_NAME
@@ -117,6 +123,7 @@ sealed interface ProductPermission {
                 BalanceAccess.TYPE_NAME -> BalanceAccess
                 UserIdentityAccess.TYPE_NAME -> UserIdentityAccess
                 ChatAuthority.TYPE_NAME -> ChatAuthority
+                ProfileDisclosure.TYPE_NAME -> ProfileDisclosure
                 StatementStoreAllowance.TYPE_NAME -> StatementStoreAllowance(
                     when {
                         key == "legacy" -> null

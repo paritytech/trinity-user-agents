@@ -377,6 +377,22 @@ pub enum V2ChatMessageContent {
         request_id: String,
         device: V2PeerDevice,
     },
+    /// A profile reference the sender's host discloses to this contact, or
+    /// `None` to withdraw it. Host-originated and host-consumed: products
+    /// never send or see it. V2 wire enum index 21.
+    ///
+    /// Known gap (docs/rfcs/profile-disclosure.md): index 21 is not yet agreed with native Chat.
+    ProfileReference {
+        discloser_product_id: String,
+        reference: Option<String>,
+    },
+    /// Wallet-wide personal grant, explicitly distinguished from app-scoped
+    /// index 21. Content index 22 carries a validated scope byte of 1.
+    PersonalProfileReference {
+        discloser_product_id: String,
+        reference: Option<String>,
+        revision: u64,
+    },
     /// The envelope was valid enough to recover id/timestamp, but the versioned
     /// content wrapper is not yet represented by this SDK surface.
     UnsupportedVersion { version_index: u8 },
@@ -977,6 +993,61 @@ pub fn encode_device_removed_message(
     })
 }
 
+/// Encode a v2 profile-reference message (content index 21).
+pub fn encode_profile_reference_message(
+    message_id: &str,
+    timestamp: u64,
+    discloser_product_id: &str,
+    reference: Option<&str>,
+) -> Result<Vec<u8>, ChatError> {
+    encode_message(message_id, timestamp, |out| {
+        out.push(21);
+        encode_string(out, discloser_product_id)?;
+        match reference {
+            Some(reference) => {
+                out.push(1);
+                encode_string(out, reference)
+            }
+            None => {
+                out.push(0);
+                Ok(())
+            }
+        }
+    })
+}
+
+/// Encode a wallet-wide personal profile grant (content 22, personal scope 1).
+/// Hosts must never fall back to the app-scoped content type for this grant.
+pub fn encode_personal_profile_reference_message(
+    message_id: &str,
+    timestamp: u64,
+    revision: u64,
+    discloser_product_id: &str,
+    reference: Option<&str>,
+) -> Result<Vec<u8>, ChatError> {
+    if revision == 0 {
+        return Err(ChatError::InvalidEncoding(
+            "invalid personal profile revision".into(),
+        ));
+    }
+    encode_message(message_id, timestamp, |out| {
+        out.push(22);
+        out.push(1);
+        out.extend_from_slice(&revision.to_le_bytes());
+        encode_string(out, discloser_product_id)?;
+        match reference {
+            Some(reference) => {
+                out.push(1);
+                encode_string(out, reference)
+            }
+            None => {
+                out.push(0);
+                Ok(())
+            }
+        }
+    })
+}
+
 /// Encode a v2 compacted-messages reference (content index 19).
 pub fn encode_compacted_messages_message(
     message_id: &str,
@@ -1270,6 +1341,47 @@ pub fn decode_message(data: &[u8]) -> Result<V2ChatMessage, ChatError> {
                     statement_account_id,
                     encryption_public_key,
                 },
+            }
+        }
+        21 | 22 => {
+            if content_index == 22 && cursor.read_u8("profile_scope")? != 1 {
+                return Err(ChatError::InvalidEncoding(
+                    "invalid personal profile scope".into(),
+                ));
+            }
+            let revision = if content_index == 22 {
+                let revision = cursor.read_u64("profile_revision")?;
+                if revision == 0 {
+                    return Err(ChatError::InvalidEncoding(
+                        "invalid personal profile revision".into(),
+                    ));
+                }
+                revision
+            } else {
+                0
+            };
+            let discloser_product_id = cursor.read_string("discloser_product_id")?;
+            let reference = match cursor.read_u8("reference_option")? {
+                0 => None,
+                1 => Some(cursor.read_string("reference")?),
+                value => {
+                    return Err(ChatError::InvalidEncoding(format!(
+                        "invalid profile reference option {value}"
+                    )));
+                }
+            };
+            cursor.finish()?;
+            if content_index == 22 {
+                V2ChatMessageContent::PersonalProfileReference {
+                    discloser_product_id,
+                    reference,
+                    revision,
+                }
+            } else {
+                V2ChatMessageContent::ProfileReference {
+                    discloser_product_id,
+                    reference,
+                }
             }
         }
         index => V2ChatMessageContent::UnsupportedContent {
@@ -3598,6 +3710,74 @@ mod tests {
             }
         );
     }
+    #[test]
+    fn profile_reference_wire_roundtrips_disclosure_and_withdrawal() {
+        let disclosed = encode_profile_reference_message(
+            "profile",
+            5,
+            "seity.dot",
+            Some("seity-contacts:v1:00"),
+        )
+        .unwrap();
+        let decoded = decode_message(&disclosed).unwrap();
+        assert_eq!(decoded.message_id, "profile");
+        assert_eq!(
+            decoded.content,
+            V2ChatMessageContent::ProfileReference {
+                discloser_product_id: "seity.dot".into(),
+                reference: Some("seity-contacts:v1:00".into()),
+            }
+        );
+        let withdrawn = encode_profile_reference_message("profile", 6, "seity.dot", None).unwrap();
+        assert_eq!(
+            decode_message(&withdrawn).unwrap().content,
+            V2ChatMessageContent::ProfileReference {
+                discloser_product_id: "seity.dot".into(),
+                reference: None,
+            }
+        );
+        // A malformed option byte is refused, not guessed at.
+        let mut bad = withdrawn.clone();
+        *bad.last_mut().unwrap() = 7;
+        assert!(decode_message(&bad).is_err());
+    }
+
+    #[test]
+    fn personal_profile_wire_requires_explicit_scope_and_durable_revision() {
+        for reference in [Some("profile:secret"), None] {
+            let encoded =
+                encode_personal_profile_reference_message("p", 5, 42, "seity.dot", reference)
+                    .unwrap();
+            assert_eq!(
+                decode_message(&encoded).unwrap().content,
+                V2ChatMessageContent::PersonalProfileReference {
+                    discloser_product_id: "seity.dot".into(),
+                    reference: reference.map(String::from),
+                    revision: 42,
+                }
+            );
+            let mut bad_scope = encoded.clone();
+            bad_scope[12] = 0;
+            assert!(
+                decode_message(&bad_scope).is_err(),
+                "personal cannot silently become app-scoped"
+            );
+            let mut bad_revision = encoded.clone();
+            bad_revision[13..21].fill(0);
+            assert!(decode_message(&bad_revision).is_err());
+            let mut trailing = encoded.clone();
+            trailing.push(0);
+            assert!(decode_message(&trailing).is_err());
+            assert!(decode_message(&encoded[..20]).is_err());
+        }
+        assert!(encode_personal_profile_reference_message("p", 5, 0, "seity.dot", None).is_err());
+        assert_eq!(
+            encode_profile_reference_message("p", 5, "s", None).unwrap(),
+            vec![4, b'p', 5, 0, 0, 0, 0, 0, 0, 0, 0, 21, 4, b's', 0],
+            "legacy content 21 keeps its original byte layout"
+        );
+    }
+
     #[test]
     fn current_multi_device_wire_roundtrips() {
         let added = encode_device_added_message("add", 1, &[1; 32], &[2; 32]).unwrap();

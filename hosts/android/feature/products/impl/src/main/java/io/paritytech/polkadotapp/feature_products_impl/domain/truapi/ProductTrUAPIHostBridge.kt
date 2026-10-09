@@ -222,6 +222,9 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
         override suspend fun confirmUserAction(review: UserConfirmationReview): Boolean =
             confirmationLauncher.decide(review, requesterFallback = callingProductId.value)
 
+        override suspend fun confirmPermission(review: UserConfirmationReview): TrUAPIPermissionDecision =
+            confirmationLauncher.decidePermission(review, requesterFallback = callingProductId.value)
+
         override suspend fun devicePermission(
             product: ProductExecutionConfig,
             request: HostDevicePermissionRequest,
@@ -428,6 +431,18 @@ internal suspend fun TrUAPIConfirmationLauncher.decide(
         }
 
     return awaitDecision(confirmation)
+}
+
+/** Only an explicit user answer becomes authority; mapping and prompt failures propagate. */
+internal suspend fun TrUAPIConfirmationLauncher.decidePermission(
+    review: UserConfirmationReview,
+    requesterFallback: String,
+): TrUAPIPermissionDecision {
+    return if (awaitDecision(review.toConfirmation(requesterFallback))) {
+        TrUAPIPermissionDecision.ALLOW_ALWAYS
+    } else {
+        TrUAPIPermissionDecision.DENY
+    }
 }
 
 // Reports the theme name the native host's `themeSubscribe` already sends, so a
