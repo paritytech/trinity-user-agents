@@ -284,6 +284,12 @@ make wasm     # rebuild truapi WASM artifacts under js/packages/truapi-host/dist
 CI regenerates the shared bindings before building and testing both npm
 packages, so generated client and host callback changes are checked together.
 
+CI and `make check` enforce Rust formatting and Prettier formatting for the JS host package. Run `make fmt` and `npm run format --prefix js/packages/truapi-host` to apply the same rules locally. Use `make fmt-check` or `format:check` for the JS package to check without writing. Rust uses the nightly in `nightly-toolchain` and requires blocks around multiline closure and match-arm bodies.
+
+Rust linting treats correctness and complexity diagnostics as errors, and public Rust items must have documentation.
+
+Rust runtime tests live beside their components; [native binding tests](rust/crates/truapi/src/native/tests.rs) exercise the exported host API.
+
 The native `truapi-host` utility runs pairing and signing hosts against the real
 SSO transport for local end-to-end work. See [Install the CLI](#install-the-cli)
 to get it, and the [`truapi-host-cli` guide](rust/crates/truapi-host-cli/README.md)
