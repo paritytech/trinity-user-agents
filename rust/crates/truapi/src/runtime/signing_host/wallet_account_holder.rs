@@ -379,8 +379,10 @@ impl WalletKeys {
         })
     }
 
-    fn contacts_handle_key(&self) -> [u8; 32] {
-        crate::runtime::contacts::handle_key_from_root_source(&self.root_entropy_source())
+    fn contact_handles(&self) -> crate::runtime::contacts::ContactHandles {
+        crate::runtime::contacts::ContactHandles::from_root_entropy_source(
+            &self.root_entropy_source(),
+        )
     }
 
     /// Purpose-limited entropy shared with a paired host.

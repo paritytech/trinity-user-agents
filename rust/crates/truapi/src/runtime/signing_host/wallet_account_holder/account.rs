@@ -865,7 +865,10 @@ impl AccountHolder for WalletAccountHolder {
         self.with_keys(session, |keys| keys.derive_entropy(product_id, context))
     }
 
-    fn contacts_handle_key(&self, session: &AuthoritySession) -> Result<[u8; 32], AuthorityError> {
-        self.with_keys(session, |keys| Ok(keys.contacts_handle_key()))
+    fn contact_handles(
+        &self,
+        session: &AuthoritySession,
+    ) -> Result<crate::runtime::contacts::ContactHandles, AuthorityError> {
+        self.with_keys(session, |keys| Ok(keys.contact_handles()))
     }
 }

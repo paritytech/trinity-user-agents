@@ -649,12 +649,12 @@ impl<H: AccountHolder> HostAccounts<H> {
             .derive_entropy(authority_session, product_id, context)
     }
 
-    /// Mint contact handles under the selected account holder.
-    pub fn contacts_handle_key(
+    /// Contact handles under the selected account holder.
+    pub fn contact_handles(
         &self,
         authority_session: &AuthoritySession,
-    ) -> Result<[u8; 32], AuthorityError> {
-        self.holder.contacts_handle_key(authority_session)
+    ) -> Result<super::contacts::ContactHandles, AuthorityError> {
+        self.holder.contact_handles(authority_session)
     }
 
     /// Retained grants exercised by lifecycle tests.

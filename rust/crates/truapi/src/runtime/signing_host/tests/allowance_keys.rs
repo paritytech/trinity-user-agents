@@ -163,7 +163,7 @@ fn remembered(signing_host: &SigningHostRole, product_id: &str) -> Option<[u8; 6
     ))
     .unwrap()
     .map(|grant| match grant {
-        AccountGrant::StatementStore { key, .. } => key.secret,
+        AccountGrant::StatementStore { key, .. } => *key.as_secret_bytes(),
         _ => panic!("expected statement-store grant"),
     })
 }

@@ -366,7 +366,7 @@ impl HostGrantStore {
     ) -> Result<(), AuthorityError> {
         let (resource, secret) = match allowance {
             AccountGrant::StatementStore { key, .. } => {
-                (AllowanceResource::StatementStore, &key.secret)
+                (AllowanceResource::StatementStore, key.as_secret_bytes())
             }
             AccountGrant::Bulletin(key) => (AllowanceResource::Bulletin, key.as_secret_bytes()),
             _ => return Err(AuthorityError::Rejected),

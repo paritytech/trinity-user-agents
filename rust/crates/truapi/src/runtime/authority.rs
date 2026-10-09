@@ -392,9 +392,8 @@ impl CreateTransactionAuthorityRequest {
 /// Statement-store allowance signing material held by the authority layer.
 #[derive(Clone, PartialEq, Eq, zeroize::Zeroize, zeroize::ZeroizeOnDrop)]
 pub struct StatementStoreAllowanceKey {
-    /// sr25519 secret used to sign allowance statements.
-    pub secret: [u8; 64],
-    /// Public key derived from `secret`.
+    secret: [u8; 64],
+    /// Public key derived from the secret.
     pub public_key: [u8; 32],
 }
 
@@ -414,6 +413,11 @@ impl StatementStoreAllowanceKey {
         let public_key = statement_public_key_from_secret(secret)
             .map_err(|reason| AuthorityError::Unavailable { reason })?;
         Ok(Self { secret, public_key })
+    }
+
+    /// sr25519 secret used to sign allowance statements.
+    pub fn as_secret_bytes(&self) -> &[u8; 64] {
+        &self.secret
     }
 }
 
@@ -581,12 +585,15 @@ pub trait AccountHolder: Send + Sync + 'static {
         context: &[u8],
     ) -> Result<[u8; 32], AuthorityError>;
 
-    /// Key material for minting contact handles.
+    /// Mint and resolve contact handles under the session's root entropy source.
     ///
-    /// Uses the session's secret root entropy source so handles match across
-    /// products and host roles. The key must remain inaccessible to products
-    /// to prevent recovering contacts by hashing candidate accounts.
-    fn contacts_handle_key(&self, session: &AuthoritySession) -> Result<[u8; 32], AuthorityError>;
+    /// Handles match across products and host roles. The key stays inside
+    /// `ContactHandles`, so no product can recover contacts by hashing
+    /// candidate accounts.
+    fn contact_handles(
+        &self,
+        session: &AuthoritySession,
+    ) -> Result<super::contacts::ContactHandles, AuthorityError>;
 }
 
 /// Build the neutral authority-session snapshot for `session`.

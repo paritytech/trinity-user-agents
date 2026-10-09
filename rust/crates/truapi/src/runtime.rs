@@ -1015,10 +1015,7 @@ impl<H: AccountHolder> ProductRuntimeHost<H> {
             .collect();
         if !misses.is_empty() {
             let generation = cache.generation();
-            let lookup = crate::platform::HostContactLookup {
-                handle_key: handles.handle_key(),
-                handles: misses,
-            };
+            let lookup = handles.lookup(misses);
             let matches = platform
                 .contacts(&lookup)
                 .await
@@ -1064,9 +1061,9 @@ impl<H: AccountHolder> ProductRuntimeHost<H> {
             .accounts
             .current_session()
             .ok_or(CallError::Domain(v01::HostContactsPickError::NotConnected))?;
-        let handle_key = self
+        let handles = self
             .accounts
-            .contacts_handle_key(&authority_session)
+            .contact_handles(&authority_session)
             .map_err(|error| match error {
                 AuthorityError::Disconnected => {
                     CallError::Domain(v01::HostContactsPickError::NotConnected)
@@ -1075,10 +1072,7 @@ impl<H: AccountHolder> ProductRuntimeHost<H> {
                     reason: other.to_string(),
                 }),
             })?;
-        Ok((
-            platform,
-            crate::runtime::contacts::ContactHandles::from_handle_key(handle_key),
-        ))
+        Ok((platform, handles))
     }
 }
 

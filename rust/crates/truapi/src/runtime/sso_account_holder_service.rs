@@ -281,7 +281,7 @@ impl SsoAccountHolderService {
                         SsoAllocationOutcome::Allocated(match grant {
                             AccountGrant::StatementStore { key, .. } => {
                                 SsoAllocatedResource::StatementStoreAllowance {
-                                    slot_account_key: key.secret.to_vec(),
+                                    slot_account_key: key.as_secret_bytes().to_vec(),
                                 }
                             }
                             AccountGrant::Bulletin(key) => {

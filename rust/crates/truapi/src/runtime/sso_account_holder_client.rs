@@ -332,16 +332,17 @@ impl AccountHolder for SsoAccountHolderClient {
         })
     }
 
-    fn contacts_handle_key(&self, session: &AuthoritySession) -> Result<[u8; 32], AuthorityError> {
+    fn contact_handles(
+        &self,
+        session: &AuthoritySession,
+    ) -> Result<crate::runtime::contacts::ContactHandles, AuthorityError> {
         let session = require_current_session(&self.service.session_state(), session)?;
         let source = session
             .root_entropy_source
             .ok_or_else(|| AuthorityError::Unavailable {
                 reason: "Session secret missing".to_string(),
             })?;
-        Ok(crate::runtime::contacts::handle_key_from_root_source(
-            &source,
-        ))
+        Ok(crate::runtime::contacts::ContactHandles::from_root_entropy_source(&source))
     }
 
     async fn allocate_grants<'a>(

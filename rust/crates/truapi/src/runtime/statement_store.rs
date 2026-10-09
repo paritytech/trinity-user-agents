@@ -427,7 +427,7 @@ pub fn create_statement_proof_with_key(
 ) -> Result<latest::StatementProof, StatementProofFailure> {
     let fields =
         statement_fields_from_v01(statement).map_err(StatementProofFailure::InvalidStatement)?;
-    let signed = sign_statement_fields(key.secret, key.public_key, fields)
+    let signed = sign_statement_fields(*key.as_secret_bytes(), key.public_key, fields)
         .map_err(StatementProofFailure::UnableToSign)?;
     signed
         .into_iter()

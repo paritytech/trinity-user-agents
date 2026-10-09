@@ -987,10 +987,8 @@ fn the_handle_is_derived_from_the_sessions_secret_entropy_source() {
     let source = session_info()
         .root_entropy_source
         .expect("the test session carries an entropy source");
-    let expected = crate::runtime::contacts::contact_handle(
-        &crate::runtime::contacts::handle_key_from_root_source(&source),
-        &account,
-    );
+    let expected =
+        crate::runtime::contacts::ContactHandles::from_root_entropy_source(&source).mint(&account);
     assert_eq!(
         handle, expected,
         "the handle must key on the session's root entropy source"
@@ -999,10 +997,8 @@ fn the_handle_is_derived_from_the_sessions_secret_entropy_source() {
     for public in [session_info().public_key, [0u8; 32]] {
         assert_ne!(
             handle,
-            crate::runtime::contacts::contact_handle(
-                &crate::runtime::contacts::handle_key_from_root_source(&public),
-                &account,
-            ),
+            crate::runtime::contacts::ContactHandles::from_root_entropy_source(&public)
+                .mint(&account),
             "the handle must not be derivable from public material"
         );
     }
@@ -1326,9 +1322,9 @@ fn uncached_handles_are_resolved_in_one_lookup() {
     let source = session_info()
         .root_entropy_source
         .expect("the test session carries an entropy source");
-    let key = crate::runtime::contacts::handle_key_from_root_source(&source);
+    let key = crate::runtime::contacts::ContactHandles::from_root_entropy_source(&source);
     let handles = [alice, bob].map(|account| v01::ContactHandle {
-        bytes: crate::runtime::contacts::contact_handle(&key, &account),
+        bytes: key.mint(&account),
     });
     let call: Vec<u8> = handles.iter().flat_map(|handle| handle.bytes).collect();
 
