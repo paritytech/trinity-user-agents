@@ -315,9 +315,7 @@ impl AccountHolder for WalletAccountHolder {
                         .into());
                     }
                     #[cfg(feature = "test-host")]
-                    if matches!(invocation.caller, AccountCaller::Local { .. }) {
-                        self.resource_controls.refuse_withheld(&resource)?;
-                    }
+                    self.resource_controls.refuse_withheld(&resource)?;
                     let product_id = product_id.as_str();
                     let grant = match resource {
                         api::AllocatableResource::StatementStoreAllowance => {
@@ -522,10 +520,7 @@ impl AccountHolder for WalletAccountHolder {
                 request.review(invocation.caller),
             )
             .await?;
-        let cx = match invocation.caller {
-            AccountCaller::Local { .. } => remote_authority_context(invocation.call),
-            AccountCaller::Remote { .. } => invocation.call.clone(),
-        };
+        let cx = remote_authority_context(invocation.call);
         remote_authority_call(&cx, async {
             self.with_keys(invocation.session, |keys| {
                 let (account, payload) = match request {
@@ -560,10 +555,7 @@ impl AccountHolder for WalletAccountHolder {
                 request.review(invocation.caller, watermarked),
             )
             .await?;
-        let cx = match invocation.caller {
-            AccountCaller::Local { .. } => remote_authority_context(invocation.call),
-            AccountCaller::Remote { .. } => invocation.call.clone(),
-        };
+        let cx = remote_authority_context(invocation.call);
         remote_authority_call(&cx, async {
             self.with_keys(invocation.session, |keys| {
                 let (keypair, payload) = match request {
@@ -597,10 +589,7 @@ impl AccountHolder for WalletAccountHolder {
                 request.review(invocation.caller),
             )
             .await?;
-        let cx = match invocation.caller {
-            AccountCaller::Local { .. } => remote_authority_context(invocation.call),
-            AccountCaller::Remote { .. } => invocation.call.clone(),
-        };
+        let cx = remote_authority_context(invocation.call);
         remote_authority_call(&cx, async {
             self.with_keys(invocation.session, |keys| {
                 Self::transaction_keypair(keys, &request).map(|_| ())
@@ -854,10 +843,7 @@ impl AccountHolder for WalletAccountHolder {
                 }),
             )
             .await?;
-        let cx = match invocation.caller {
-            AccountCaller::Local { .. } => remote_authority_context(invocation.call),
-            AccountCaller::Remote { .. } => invocation.call.clone(),
-        };
+        let cx = remote_authority_context(invocation.call);
         remote_authority_call(&cx, async {
             self.with_keys(invocation.session, |keys| {
                 let keypair = keys.product_keypair(&account)?;
