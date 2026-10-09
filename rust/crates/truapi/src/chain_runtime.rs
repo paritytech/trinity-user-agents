@@ -2513,6 +2513,52 @@ mod tests {
         assert_eq!(provider.inner.connect_calls.load(Ordering::SeqCst), 1);
     }
 
+    /// When a chain socket dies, its follow must end with a failure so the
+    /// product refollows, and the next call must dial a new connection: a
+    /// cached dead one would fail every call until the host restarts.
+    #[cfg_attr(target_arch = "wasm32", ignore)]
+    #[test]
+    fn a_connection_whose_stream_ends_is_replaced_on_the_next_call() {
+        let provider = Arc::new(ScriptedProvider::new(|request| {
+            let id = extract_id(request).unwrap();
+            let result = if request.contains("chainHead_v1_follow") {
+                "REMOTE-FOLLOW"
+            } else {
+                "Polkadot"
+            };
+            Some(format!(r#"{{"jsonrpc":"2.0","id":"{id}","result":"{result}"}}"#))
+        }));
+        let runtime = ChainRuntime::new(provider.clone(), spawner_for_tests());
+        let mut follow = runtime.remote_chain_head_follow(
+            "local-follow".to_string(),
+            RemoteChainHeadFollowRequest {
+                genesis_hash: vec![0u8; 32],
+                with_runtime: false,
+            },
+        );
+        notification_sender(&provider).unbounded_send(
+            r#"{"jsonrpc":"2.0","method":"chainHead_v1_followEvent","params":{"subscription":"REMOTE-FOLLOW","result":{"event":"initialized","finalizedBlockHashes":["0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"]}}}"#
+                .to_string(),
+        ).unwrap();
+        assert!(matches!(
+            futures::executor::block_on(follow.next()),
+            Some(Ok(RemoteChainHeadFollowItem::Initialized { .. }))
+        ));
+
+        provider.sender.lock().unwrap().take();
+        assert_eq!(
+            futures::executor::block_on(follow.next()),
+            Some(Err(RuntimeFailure::unavailable(FOLLOW_METHOD)))
+        );
+
+        let (sender, receiver) = fut_mpsc::unbounded();
+        *provider.sender.lock().unwrap() = Some(sender);
+        *provider.receiver.lock().unwrap() = Some(receiver);
+        let name = futures::executor::block_on(runtime.remote_chain_spec_chain_name(vec![0u8; 32]));
+        assert_eq!(name.unwrap().chain_name, "Polkadot");
+        assert_eq!(provider.connect_calls.load(Ordering::SeqCst), 2);
+    }
+
     /// The cached Subxt bundle must pin the host-configured genesis hash
     /// (never fetch it from the provider) and be built once per connection.
     #[cfg_attr(target_arch = "wasm32", ignore)]
