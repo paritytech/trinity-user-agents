@@ -23,6 +23,7 @@ import io.paritytech.polkadotapp.feature_products_api.domain.accountsProtocol.Ac
 import io.paritytech.polkadotapp.feature_products_api.domain.accountsProtocol.MembersRingLocator
 import io.paritytech.polkadotapp.feature_products_api.domain.browser.ProductSessionController
 import io.paritytech.polkadotapp.feature_products_api.domain.deriveEntropy.DeriveEntropyUseCase
+import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardFaceOnOpen
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCollection
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketFaceSource
 import io.paritytech.polkadotapp.feature_products_api.domain.product.ProductContentWarmUp
@@ -110,6 +111,7 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.PocketCardS
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.PocketFaceStreams
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.PocketImageResolver
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.PrefsDebugPocketCards
+import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.RealPocketCardFaceOnOpen
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.RealPocketCollection
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.RealPocketFaceSource
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.RealPocketImageResolver
@@ -206,6 +208,9 @@ internal interface ProductsModule {
 
     @Binds
     fun bindPocketFaceSource(impl: RealPocketFaceSource): PocketFaceSource
+
+    @Binds
+    fun bindPocketCardFaceOnOpen(impl: RealPocketCardFaceOnOpen): PocketCardFaceOnOpen
 
     @Binds
     fun bindPocketFaceStreams(impl: TrUAPIPocketFaceStreams): PocketFaceStreams

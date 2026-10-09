@@ -104,6 +104,22 @@ class ProductsNavigator @Inject constructor(
         performNavigation(R.id.action_global_to_truapiContactPickBottomSheet)
     }
 
+    override suspend fun closeTrUAPIContactPick() = closeIfShowing(R.id.truapiContactPickBottomSheet)
+
+    override suspend fun openTrUAPIProductScan() = withContext(dispatchers.main) {
+        performNavigation(R.id.action_global_to_truapiProductScanBottomSheet)
+    }
+
+    override suspend fun closeTrUAPIProductScan() = closeIfShowing(R.id.truapiProductScanBottomSheet)
+
+    /**
+     * Closes the prompt only when it is on top, so a sheet over it stays. A prompt under another
+     * sheet closes itself when it is shown again, because its answer is already given.
+     */
+    private suspend fun closeIfShowing(destinationId: Int) = withContext(dispatchers.main) {
+        if (isCurrentDestination(destinationId)) back()
+    }
+
     override fun openPocketAddCard(payload: PocketAddCardPayload) = performNavigation(
         actionId = R.id.action_global_to_pocketAddCardBottomSheet,
         args = payload.toPayloadBundle(),

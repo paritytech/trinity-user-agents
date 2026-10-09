@@ -54,6 +54,7 @@ import org.mockito.Mockito.mock
 import org.mockito.Mockito.never
 import org.mockito.Mockito.verify
 import org.mockito.stubbing.Answer
+import kotlin.coroutines.intrinsics.COROUTINE_SUSPENDED
 
 class PocketViewModelTest {
     // Every flow the screen combines answers empty unless a test says otherwise, so each test names
@@ -63,6 +64,7 @@ class PocketViewModelTest {
         when {
             invocation.method.name == "observeRank" -> flowOf(PocketRank.Basic)
             invocation.method.name == "warmUpProduct" -> Result.success(Unit)
+            invocation.method.name == "faceShownOnOpen" -> true
             invocation.method.returnType == Flow::class.java -> emptyFlow<Any>()
             else -> null
         }
@@ -361,5 +363,68 @@ class PocketViewModelTest {
 
         val list = viewModel.state.value as PocketScreenState.List
         assertNull("the removal dialog came back", list.removalCandidate)
+    }
+
+    // The card is on screen while its lookup runs, so what the screen shows first has to be
+    // "not known yet" rather than a guess: a guessed face would flash shown before folding away.
+    @Test
+    fun `a card published with its face away reports it once opened, and nothing once dismissed`() = runTest(testDispatcher) {
+        val card = productCard("loyalty")
+        whenever(interactor.observeProductCards()).thenReturn(flowOf(listOf(card)))
+        whenever(interactor.faceShownOnOpen(card.key)).thenReturn(false)
+
+        val viewModel = createViewModel()
+        val uiCard = settledCards(viewModel).filterIsInstance<PocketCardUiModel.ProductCard>().single()
+        assertNull(viewModel.openingFaceShown.value)
+
+        viewModel.selectCard(uiCard)
+        advanceUntilIdle()
+        assertEquals(false, viewModel.openingFaceShown.value)
+
+        viewModel.dismissCard()
+        assertNull(viewModel.openingFaceShown.value)
+    }
+
+    // A card whose product has not answered yet must not inherit the previous card's answer: it would
+    // fold a face the new card publishes as shown.
+    @Test
+    fun `selecting another card forgets the previous card's opening face until its own answer arrives`() =
+        runTest(testDispatcher) {
+            val away = productCard("away")
+            val pending = productCard("pending")
+            whenever(interactor.observeProductCards()).thenReturn(flowOf(listOf(away, pending)))
+            whenever(interactor.faceShownOnOpen(away.key)).thenReturn(false)
+            whenever(interactor.faceShownOnOpen(pending.key)).thenAnswer { COROUTINE_SUSPENDED }
+
+            val viewModel = createViewModel()
+            val cards = settledCards(viewModel).filterIsInstance<PocketCardUiModel.ProductCard>()
+            viewModel.selectCard(cards.single { it.title == away.title })
+            advanceUntilIdle()
+            assertEquals(false, viewModel.openingFaceShown.value)
+
+            viewModel.selectCard(cards.single { it.title == pending.title })
+            advanceUntilIdle()
+
+            assertNull(viewModel.openingFaceShown.value)
+        }
+
+    // The card being left is still drawn while it fades out, and it reports itself settled again when
+    // the next card's opening face arrives. Hosting its product then would put it under the next card.
+    @Test
+    fun `a card that is no longer selected does not get its product hosted`() = runTest(testDispatcher) {
+        val left = productCard("left")
+        val next = productCard("next")
+        whenever(interactor.observeProductCards()).thenReturn(flowOf(listOf(left, next)))
+
+        val viewModel = createViewModel()
+        val cards = settledCards(viewModel).filterIsInstance<PocketCardUiModel.ProductCard>()
+        val leftCard = cards.single { it.title == left.title }
+        viewModel.selectCard(leftCard)
+        viewModel.dismissCard()
+        viewModel.selectCard(cards.single { it.title == next.title })
+
+        viewModel.hostExpandedProduct(leftCard)
+
+        assertNull(viewModel.expandedProductSession.value)
     }
 }

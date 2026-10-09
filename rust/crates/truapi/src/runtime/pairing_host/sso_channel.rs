@@ -883,7 +883,7 @@ async fn wait_for_sso_peer_disconnect(
                 continue;
             };
             for message in messages {
-                if message? == v1::RemoteMessage::Disconnected {
+                if message == Ok(v1::RemoteMessage::Disconnected) {
                     return Ok(());
                 }
             }
