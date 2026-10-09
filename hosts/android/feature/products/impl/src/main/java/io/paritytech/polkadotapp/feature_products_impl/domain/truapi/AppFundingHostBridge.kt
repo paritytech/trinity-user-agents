@@ -33,8 +33,23 @@ class AppFundingHostBridge @Inject constructor(
         onBufferOverflow = BufferOverflow.DROP_OLDEST,
     )
 
+    private val changedSessions = MutableSharedFlow<String>(
+        extraBufferCapacity = EVENT_BUFFER,
+        onBufferOverflow = BufferOverflow.DROP_OLDEST,
+    )
+    private val quoteRows = MutableSharedFlow<FundingQuoteUpdate>(
+        extraBufferCapacity = EVENT_BUFFER,
+        onBufferOverflow = BufferOverflow.DROP_OLDEST,
+    )
+
     /** Emits whenever a session's status changes. */
     fun sessionChanges(): SharedFlow<Unit> = sessionChanges.asSharedFlow()
+
+    /** Emits the intent of every session whose status changed. */
+    fun changedSessions(): SharedFlow<String> = changedSessions.asSharedFlow()
+
+    /** Emits every quote row the providers answer with, pending first. */
+    fun quoteRows(): SharedFlow<FundingQuoteUpdate> = quoteRows.asSharedFlow()
 
     override suspend fun presentFunding(
         productId: String?,
@@ -63,12 +78,23 @@ class AppFundingHostBridge @Inject constructor(
 
     override fun fundingSessionChanged(intent: String, status: HostFundingStatusSubscribeItem) {
         sessionChanges.tryEmit(Unit)
+        changedSessions.tryEmit(intent)
     }
 
     override fun fundingQuoteChanged(intent: String, row: FundingQuoteRow) {
         Timber.tag("truapi.funding").d("quote %s: %s %s", intent, row.providerId, row.state)
+        quoteRows.tryEmit(FundingQuoteUpdate(intent, row))
+    }
+
+    private companion object {
+        const val EVENT_BUFFER = 64
     }
 }
+
+data class FundingQuoteUpdate(
+    val intent: String,
+    val row: FundingQuoteRow,
+)
 
 internal fun CoreFundingDirection.toDomain(): FundingDirection = when (this) {
     CoreFundingDirection.IN -> FundingDirection.IN

@@ -111,6 +111,11 @@
         android:label="PaymentRequestBottomSheet" />
 
     <dialog
+        android:id="@+id/fundingBottomSheet"
+        android:name="io.paritytech.polkadotapp.feature_products_impl.presentation.funding.FundingBottomSheet"
+        android:label="FundingBottomSheet" />
+
+    <dialog
         android:id="@+id/topUpRequestBottomSheet"
         android:name="io.paritytech.polkadotapp.feature_products_impl.presentation.topUpRequest.TopUpRequestBottomSheet"
         android:label="TopUpRequestBottomSheet" />
@@ -345,6 +350,10 @@
     <action
         android:id="@+id/action_global_to_topUpRequestBottomSheet"
         app:destination="@id/topUpRequestBottomSheet" />
+
+    <action
+        android:id="@+id/action_global_to_fundingBottomSheet"
+        app:destination="@id/fundingBottomSheet" />
 
     <dialog
         android:id="@+id/truapiConfirmationBottomSheet"

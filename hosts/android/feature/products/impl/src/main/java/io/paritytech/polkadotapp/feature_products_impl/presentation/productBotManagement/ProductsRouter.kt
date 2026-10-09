@@ -27,6 +27,9 @@ interface ProductsRouter : ReturnableRouter, SigningRouter {
 
     /** Picker for the one contact a product asked the user to name. */
     suspend fun openTrUAPIContactPick()
+
+    /** The funding sheet for the session [intent] the core is waiting on. */
+    suspend fun openFundingOverlay(intent: String)
     fun openProductSettings(productId: ProductId)
     fun openProductPermissions(productId: ProductId)
 

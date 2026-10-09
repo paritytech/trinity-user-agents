@@ -15,6 +15,7 @@ import io.paritytech.polkadotapp.feature_products_api.presentation.PocketAddCard
 import io.paritytech.polkadotapp.feature_products_api.presentation.ProductSettingsPayload
 import io.paritytech.polkadotapp.feature_products_api.presentation.SpaBrowserPayload
 import io.paritytech.polkadotapp.feature_products_api.presentation.SpaSheetPayload
+import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.FundingBottomSheet
 import io.paritytech.polkadotapp.feature_products_impl.presentation.permissionPrompt.PermissionPromptBottomSheet
 import io.paritytech.polkadotapp.feature_products_impl.presentation.productBotManagement.ProductsRouter
 import kotlinx.coroutines.withContext
@@ -104,6 +105,13 @@ class ProductsNavigator @Inject constructor(
 
     override suspend fun openTrUAPIContactPick() = withContext(dispatchers.main) {
         performNavigation(R.id.action_global_to_truapiContactPickBottomSheet)
+    }
+
+    override suspend fun openFundingOverlay(intent: String) = withContext(dispatchers.main) {
+        performNavigation(
+            R.id.action_global_to_fundingBottomSheet,
+            bundleOf(FundingBottomSheet.INTENT to intent),
+        )
     }
 
     override fun openPocketAddCard(payload: PocketAddCardPayload) = performNavigation(

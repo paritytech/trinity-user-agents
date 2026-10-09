@@ -71,7 +71,8 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.browser.RealProduc
 import io.paritytech.polkadotapp.feature_products_impl.domain.deriveEntropy.RealDeriveEntropyUseCase
 import io.paritytech.polkadotapp.feature_products_impl.domain.exploreProducts.ExploreProductsService
 import io.paritytech.polkadotapp.feature_products_impl.domain.exploreProducts.RealExploreProductsService
-import io.paritytech.polkadotapp.feature_products_impl.domain.funding.DismissingFundingOverlay
+import io.paritytech.polkadotapp.feature_products_impl.domain.funding.AppFundingOverlay
+import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingRuntime
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.allowance.AllowanceKeyStorage
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.allowance.RealAllowanceKeyStorage
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.sponsoring.RealStatementStoreSubmissionSponsoring
@@ -127,6 +128,7 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.topUpRequest.Execu
 import io.paritytech.polkadotapp.feature_products_impl.domain.topUpRequest.RealExecuteTopUpUseCase
 import io.paritytech.polkadotapp.feature_products_impl.domain.topUpRequest.RealTopUpService
 import io.paritytech.polkadotapp.feature_products_impl.domain.topUpRequest.TopUpService
+import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.TrUAPIFundingRuntime
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.TrUAPIHostFunding
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.worker.TrUAPIPocketFaceStreams
 import io.paritytech.polkadotapp.feature_products_impl.domain.usecase.RealResolveProductUseCase
@@ -358,7 +360,10 @@ internal interface ProductsModule {
     fun bindHostFunding(impl: TrUAPIHostFunding): HostFunding
 
     @Binds
-    fun bindFundingOverlay(impl: DismissingFundingOverlay): FundingOverlay
+    fun bindFundingOverlay(impl: AppFundingOverlay): FundingOverlay
+
+    @Binds
+    fun bindFundingRuntime(impl: TrUAPIFundingRuntime): FundingRuntime
 
     @Binds
     @Singleton
