@@ -45,6 +45,8 @@ private extension FundingSheetView {
             FundingTokenView(model: model)
         case .deposit:
             FundingDepositView(model: model)
+        case .progress:
+            FundingProgressView(model: model)
         case .cancelConfirm:
             FundingCancelConfirmView(model: model)
         }

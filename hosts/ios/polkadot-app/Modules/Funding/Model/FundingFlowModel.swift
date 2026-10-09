@@ -6,9 +6,9 @@ import TrUAPIHost
 /// so far, and the quotes the providers sent back.
 ///
 /// The core keeps the session live while the overlay is up, so the provider is
-/// chosen and selected here before the overlay answers `Started`. Card ends
-/// the overlay there; bank and crypto keep it on the deposit screen, which
-/// follows the session until the funds arrive or the user leaves.
+/// chosen and selected here before the overlay answers `Started`. From there
+/// the overlay shows the session's progress until the user leaves; crypto
+/// value in shows its deposit screen first, over the progress screen.
 @MainActor
 @Observable
 final class FundingFlowModel {
@@ -20,6 +20,7 @@ final class FundingFlowModel {
         case network
         case token
         case deposit
+        case progress
         case cancelConfirm
     }
 
@@ -195,15 +196,34 @@ extension FundingFlowModel {
         }
     }
 
-    /// Shows a session that was left running on its deposit screen, as the
-    /// overlay had it once the session started.
+    /// Shows a session that was left running on its progress screen, with
+    /// the crypto deposit over it while the funds have not been seen.
     func resume(_ session: FundingSession) {
         rail = session.choice?.rail ?? rail
         asset = session.choice?.asset
         chosenProviderId = session.providerId
         hasStarted = true
         refreshSession()
-        path = [.deposit]
+        path = [.progress]
+        if showsDepositFirst, !hasReached(.payment) { path.append(.deposit) }
+    }
+
+    /// Back to the progress screen, from the deposit screen over it or from
+    /// the screen the session was started on.
+    func showProgress() {
+        if let index = path.firstIndex(of: .progress) {
+            path.removeSubrange(path.index(after: index)...)
+        } else {
+            path = [.progress]
+        }
+    }
+
+    func showDeposit() {
+        path.append(.deposit)
+    }
+
+    func showFees() {
+        path.append(.fees)
     }
 }
 
@@ -247,6 +267,22 @@ extension FundingFlowModel {
         return reason
     }
 
+    /// The quote the session was started on, or the one on screen before it.
+    var chosenQuote: FundingQuote? {
+        session?.choice?.quote ?? selectedQuote
+    }
+
+    /// Whether the session got to `step`.
+    func hasReached(_ step: FundingStep) -> Bool {
+        progress?.steps.contains { $0.step == step && $0.reachedAtMs != nil } ?? false
+    }
+
+    /// Crypto value in is paid from its deposit screen, which the session
+    /// starts on.
+    var showsDepositFirst: Bool {
+        direction == .in && rail == .crypto
+    }
+
     /// The core's view of the session moved on: read it again.
     func refreshSession() {
         session = runtime.fundingSession(intent: intent)
@@ -287,12 +323,10 @@ private extension FundingFlowModel {
         onOutcome?(.started)
         refreshSession()
 
-        switch rail {
-        case .card:
-            onClose?()
-        case .bank,
-             .crypto:
+        if showsDepositFirst {
             if path.last != .deposit { path.append(.deposit) }
+        } else {
+            path = [.progress]
         }
     }
 

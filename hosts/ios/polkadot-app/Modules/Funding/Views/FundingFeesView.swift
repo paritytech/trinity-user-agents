@@ -11,7 +11,7 @@ struct FundingFeesView: View {
         VStack(spacing: DSSpacings.mediumIncreased) {
             FundingScreenHeader(title: String(localized: .Funding.feesTitle), onBack: model.back)
 
-            if let quote = model.selectedQuote {
+            if let quote = model.chosenQuote {
                 breakdown(quote)
             }
 

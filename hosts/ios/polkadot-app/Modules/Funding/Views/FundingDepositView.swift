@@ -13,7 +13,7 @@ struct FundingDepositView: View {
 
     var body: some View {
         VStack(spacing: DSSpacings.mediumIncreased) {
-            FundingScreenHeader(title: title, onBack: model.hasStarted ? model.close : model.back)
+            FundingScreenHeader(title: title, onBack: model.hasStarted ? model.showProgress : model.back)
 
             ScrollView {
                 content
@@ -145,27 +145,32 @@ private extension FundingDepositView {
         .overlay(alignment: .bottom) { Divider().overlay(Color.strokePrimary) }
     }
 
+    /// Opens the progress screen the deposit sits over.
     var waitingPill: some View {
-        HStack(spacing: DSSpacings.extraSmall) {
-            ProgressView().controlSize(.small).tint(.fgPrimary)
-            Text(.Funding.depositWaiting)
-                .typography(.labelMedium)
-                .foregroundStyle(.fgPrimary)
+        Button(action: model.showProgress) {
+            HStack(spacing: DSSpacings.extraSmall) {
+                ProgressView().controlSize(.small).tint(.fgPrimary)
+                Text(.Funding.depositWaiting)
+                    .typography(.labelMedium)
+                    .foregroundStyle(.fgPrimary)
+            }
+            .frame(maxWidth: .infinity)
+            .frame(height: 52)
+            .background(.bgSurfaceNested, in: Capsule())
         }
-        .frame(maxWidth: .infinity)
-        .frame(height: 52)
-        .background(.bgSurfaceNested, in: Capsule())
+        .buttonStyle(.plain)
     }
 
     /// Follows the session while the screen is up: the deposit can arrive or
-    /// change, and the funds landing ends the session and the overlay. A
-    /// failed session stays on screen with its reason.
+    /// change, and once the funds are seen or the session ends the progress
+    /// screen takes over.
     func follow() async {
         while !Task.isCancelled {
             if model.hasStarted {
                 model.refreshSession()
-                if let stage = model.session?.stage, !stage.isOpen {
-                    if model.failure == nil { model.close() }
+                let ended = model.session.map { !$0.stage.isOpen } ?? false
+                if ended || model.hasReached(.payment) {
+                    model.showProgress()
                     return
                 }
             }

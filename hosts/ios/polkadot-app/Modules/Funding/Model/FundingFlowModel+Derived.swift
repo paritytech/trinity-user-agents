@@ -97,7 +97,7 @@ extension FundingFlowModel {
 
     /// The asset the quote's provider-side figures are counted in.
     var quoteUnit: FundingAssetUnit {
-        FundingAssetUnit(code: ask?.asset ?? fiatAsset)
+        FundingAssetUnit(code: ask?.asset ?? session?.choice?.asset ?? fiatAsset)
     }
 }
 
