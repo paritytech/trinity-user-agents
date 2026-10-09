@@ -39,6 +39,13 @@ struct PocketDeeplinkParserTests {
         #expect(link.cardId.value == "caf\u{e9}")
     }
 
+    /// A bare `/-/pocket` names the collection itself, so a product can send the
+    /// user to the Pocket without naming a card.
+    @Test
+    func readsACollectionLink() {
+        #expect(parser.classify("polkadot://game.dot/-/pocket") == .collection)
+    }
+
     /// The reserved `-` segment belongs to the host. An ordinary product path is
     /// not a Pocket link and must fall through to the App.
     @Test

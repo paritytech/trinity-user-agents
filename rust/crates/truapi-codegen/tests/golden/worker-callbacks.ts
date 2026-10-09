@@ -15,6 +15,7 @@ export const CALLBACK_NAMES = [
   "createChatRoom",
   "registerChatBot",
   "postChatMessage",
+  "setChatRoomFooter",
   "contacts",
   "pickContact",
   "readCoreStorage",
@@ -195,6 +196,7 @@ function chatRawCallbacks(
     | "createChatRoom"
     | "registerChatBot"
     | "postChatMessage"
+    | "setChatRoomFooter"
     | "subscribeChatRooms"
   >
 > {
@@ -214,6 +216,11 @@ function chatRawCallbacks(
         product,
         request,
       ]) as ReturnType<Required<RawCallbacks>["postChatMessage"]>,
+    setChatRoomFooter: (product, request) =>
+      bridge.callbackRequest("setChatRoomFooter", [
+        product,
+        request,
+      ]) as ReturnType<Required<RawCallbacks>["setChatRoomFooter"]>,
     subscribeChatRooms: (product, sendItem, sendError) =>
       bridge.startSubscription(
         "subscribeChatRooms",

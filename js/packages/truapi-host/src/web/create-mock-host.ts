@@ -1355,6 +1355,9 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
         });
         return { messageId };
       },
+      async setChatRoomFooter() {
+        if (faults.chatError) throw new Error(faults.chatError);
+      },
       subscribeChatRooms() {
         // The other chat calls fail with this reason, so the subscription
         // reports it too rather than handing back a stream that looks healthy

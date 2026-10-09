@@ -1442,6 +1442,19 @@ impl ChatPlatform for MockPlatform {
         Ok(latest::HostChatPostMessageResponse { message_id })
     }
 
+    async fn set_chat_room_footer(
+        &self,
+        _product: &ProductContext,
+        _request: latest::HostChatSetRoomFooterRequest,
+    ) -> Result<(), latest::GenericError> {
+        match &self.config.faults.chat_error {
+            Some(reason) => Err(latest::GenericError {
+                reason: reason.clone(),
+            }),
+            None => Ok(()),
+        }
+    }
+
     fn subscribe_chat_rooms(
         &self,
         _product: &ProductContext,

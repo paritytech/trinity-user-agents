@@ -6,6 +6,7 @@ use crate::versioned::chat::{
     HostChatListSubscribeError, HostChatListSubscribeItem, HostChatListSubscribeRequest,
     HostChatPostMessageError, HostChatPostMessageRequest, HostChatPostMessageResponse,
     HostChatRegisterBotError, HostChatRegisterBotRequest, HostChatRegisterBotResponse,
+    HostChatSetRoomFooterError, HostChatSetRoomFooterRequest, HostChatSetRoomFooterResponse,
 };
 use crate::{CallContext, CallError, Subscription};
 use crate::{wire, wire_trait};
@@ -124,5 +125,31 @@ pub trait Chat: Send + Sync {
         Subscription::interrupted(CallError::unavailable())
     }
 
-    // Id 5 is spent and must never be reassigned; the next method takes 6.
+    // Id 5 is spent and must never be reassigned.
+
+    /// Set what a room the product created shows below its messages. A room
+    /// keeps the footer until the product sets another, and a new room shows
+    /// the text input.
+    ///
+    /// ```ts
+    /// const created = await truapi.chat.createRoom({
+    ///   roomId: "test-room",
+    ///   name: "Test Room",
+    ///   icon: "",
+    /// });
+    /// assert(created.isOk(), "createRoom failed:", created);
+    /// const result = await truapi.chat.setRoomFooter({
+    ///   roomId: "test-room",
+    ///   footer: "Empty",
+    /// });
+    /// assert(result.isOk(), "setRoomFooter failed:", result);
+    /// ```
+    #[wire(id = 6)]
+    async fn set_room_footer(
+        &self,
+        _cx: &CallContext,
+        _request: HostChatSetRoomFooterRequest,
+    ) -> Result<HostChatSetRoomFooterResponse, CallError<HostChatSetRoomFooterError>> {
+        Err(CallError::unavailable())
+    }
 }

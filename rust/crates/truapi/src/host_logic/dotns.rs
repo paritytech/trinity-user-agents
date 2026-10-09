@@ -61,6 +61,15 @@ pub enum NavigateDecision {
         /// re-parsing this names the same card.
         canonical_url: String,
     },
+    /// A dotNS product's link to the Pocket itself: `/-/pocket` with no action.
+    /// It names no card, so the host opens the collection rather than a card.
+    PocketCollection {
+        /// Lower-cased dotNS host of the product that linked to the Pocket.
+        identifier: String,
+        /// Normalized `polkadot://` form of the deeplink, which is what
+        /// `navigate_to` hands the host.
+        canonical_url: String,
+    },
     /// An absolute external URL with an `http(s):` scheme prepended if missing.
     External {
         /// Canonical URL string.
@@ -183,6 +192,12 @@ fn classify_host_target(url: &Url, identifier: &str) -> Option<NavigateDecision>
     // A modality or an action this core does not serve opens the App, so a
     // deeplink minted for a newer host degrades rather than failing.
     let (action, verb) = match target.as_slice() {
+        ["pocket"] => {
+            return Some(NavigateDecision::PocketCollection {
+                identifier: identifier.to_string(),
+                canonical_url: format!("polkadot://{identifier}/-/pocket"),
+            });
+        }
         ["pocket", "add"] => (PocketDeeplinkAction::Add, "add"),
         ["pocket", "open"] => (PocketDeeplinkAction::Open, "open"),
         _ => return None,
@@ -327,6 +342,13 @@ mod tests {
         })
     }
 
+    fn pocket_collection(identifier: &str) -> Expected {
+        Expected::Decision(NavigateDecision::PocketCollection {
+            identifier: identifier.to_string(),
+            canonical_url: format!("polkadot://{identifier}/-/pocket"),
+        })
+    }
+
     fn localhost(host: &str, path: &str) -> Expected {
         Expected::Decision(NavigateDecision::Localhost {
             host: host.to_string(),
@@ -443,6 +465,16 @@ mod tests {
                 name: "pocket deeplink without a card is rejected",
                 input: "polkadot://game.dot/-/pocket/add",
                 expected: Expected::Reject,
+            },
+            TestCase {
+                name: "pocket deeplink without an action opens the collection",
+                input: "polkadot://game.dot/-/pocket",
+                expected: pocket_collection("game.dot"),
+            },
+            TestCase {
+                name: "pocket collection deeplink takes no arguments",
+                input: "https://Game.DOT/-/pocket/?card=loyalty",
+                expected: pocket_collection("game.dot"),
             },
             TestCase {
                 name: "a modality this core does not serve opens the app",
