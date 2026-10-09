@@ -154,6 +154,12 @@ private extension ProductPermissionPromptViewFactory {
                 body: String(localized: .Products.permissionBodyChatAuthority),
                 icon: makeIcon(systemName: "message.badge.shield")
             )
+        case let .statementStoreAllowance(derivationIndex):
+            PromptContent(
+                title: String(localized: .Products.permissionTitleStatementStoreAllowance(productId: productId)),
+                body: ProductPermission.statementStoreAllowanceDescription(derivationIndex: derivationIndex),
+                icon: makeIcon(systemName: "externaldrive.badge.plus")
+            )
         }
     }
 
@@ -200,6 +206,8 @@ private extension ProductPermissionPromptViewFactory {
             "- " + String(localized: .Products.permissionBodyUserIdentityAccess)
         case .chatAuthority:
             "- " + String(localized: .Products.permissionBodyChatAuthority)
+        case let .statementStoreAllowance(derivationIndex):
+            "- " + ProductPermission.statementStoreAllowanceDescription(derivationIndex: derivationIndex)
         }
     }
 

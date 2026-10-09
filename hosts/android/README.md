@@ -168,6 +168,14 @@ Polkadot Android is a self-custodial superapp: your keys are created on your pho
 
 A modular **Kotlin** / **Jetpack Compose** codebase: features are split into `api` and `impl` modules wired with Hilt, performance-critical crypto is compiled from **Rust** via the NDK ([`bindings/`](./bindings)), and chain access goes through [substrate-sdk-android](https://github.com/novasamatech/substrate-sdk-android) (JSON-RPC, storage subscriptions, extrinsics).
 
+Product permission settings also expose canonical Chat identity authority and
+Statement Store allowance grants. Allowance entries distinguish the legacy
+allowance account, numbered product accounts, and full raw account selectors;
+allowance authority is separate from statement submission. Settings changes and
+revocations write to the shared Rust authorization store, not an Android-only
+grant. These operations obtain consent through the canonical runtime confirmation
+flow; the legacy permission guard only observes their stored authorization.
+
 GitHub Actions validate pull requests. The remaining workflows are the maintainers'
 own build and distribution flows; a fork does not need them. Build-time
 configuration and the steps to sign and publish the app are documented in

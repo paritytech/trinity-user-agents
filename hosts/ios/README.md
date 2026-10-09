@@ -117,6 +117,8 @@ Polkadot iOS is a self-custodial superapp: your keys are created on your phone, 
 5. **Runs Polkadot apps inside the app.** Type a `.dot` name and the app fetches the dApp's content (published on the Bulletin Chain and addressed via DotNS) and runs it in a sandbox. Each dApp gets its own permissions — network, camera, signing, storage — that you grant and revoke per app.
 6. **Works as one account across devices.** Pair with Polkadot Desktop or Polkadot Web by scanning a QR code: your phone becomes the signer that approves their transactions, and contacts and chats sync between devices over the same encrypted channels.
 
+App permission settings use the shared Rust runtime's canonical authorization records. Chat identity authority and Statement Store allowance are separate permissions, not statement-submission or trusted-network grants. Allowance settings retain the exact legacy account (`None`), product index, or raw 32-byte product selector; each can be displayed and revoked independently. Legacy permission rows never override a core denial or revocation, and settings keep a grant visible until the runtime acknowledges its removal. This revision's native selector contract is `Index`/`Raw`, not a chain-genesis selector.
+
 ### What it doesn't do
 
 - There is no custodian, and nobody (including the developers) can freeze, recover, or move your account. If you lose your device and have no backup, the account is gone.
