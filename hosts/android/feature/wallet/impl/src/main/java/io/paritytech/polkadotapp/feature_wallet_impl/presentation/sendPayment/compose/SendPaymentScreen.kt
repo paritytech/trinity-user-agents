@@ -4,6 +4,7 @@ import android.widget.Toast
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.text.KeyboardOptions
@@ -40,6 +41,7 @@ import io.paritytech.polkadotapp.feature_wallet_impl.presentation.sendPayment.Pa
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.sendPayment.PaymentSearchSectionUiModel
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.sendPayment.SendPaymentContract
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.sendPayment.SendPaymentUiState
+import io.paritytech.polkadotapp.feature_wallet_impl.presentation.sendPayment.compose.components.OutsidePocketRow
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.sendPayment.compose.components.SearchResult
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.sendPayment.compose.components.SendPaymentEmptySearch
 import kotlinx.collections.immutable.persistentListOf
@@ -60,6 +62,7 @@ fun SendPaymentScreen(contract: SendPaymentContract) {
         onPasteClick = contract::onPasteClick,
         onBackClick = contract::onBackClick,
         onScannerClick = contract::onScannerClick,
+        onOutsidePocketClick = contract::onOutsidePocketClick,
     )
 }
 
@@ -71,6 +74,7 @@ private fun SendPaymentScreenInternal(
     onPasteClick: () -> Unit,
     onBackClick: () -> Unit,
     onScannerClick: () -> Unit,
+    onOutsidePocketClick: () -> Unit,
 ) {
     PolkadotSurface {
         Column(
@@ -138,6 +142,11 @@ private fun SendPaymentScreenInternal(
 
             VerticalSpacer { mediumIncreased }
 
+            if (state.input.isEmpty()) {
+                OutsidePocketRow(modifier = Modifier.fillMaxWidth(), onClick = onOutsidePocketClick)
+                VerticalSpacer { medium }
+            }
+
             when (val results = state.results) {
                 is PaymentSearchResults.Sections -> SearchResult(results.sections, onRecipientSelect)
                 PaymentSearchResults.Waiting -> Unit
@@ -203,6 +212,7 @@ private fun SendPaymentScreenPreview() {
             onPasteClick = {},
             onBackClick = {},
             onScannerClick = {},
+            onOutsidePocketClick = {},
         )
     }
 }

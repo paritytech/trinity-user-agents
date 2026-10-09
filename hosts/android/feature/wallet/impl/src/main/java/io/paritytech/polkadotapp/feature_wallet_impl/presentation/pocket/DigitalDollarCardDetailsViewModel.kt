@@ -104,8 +104,6 @@ class DigitalDollarCardDetailsViewModel @Inject constructor(
 
     fun onGetCashClick() = openFunding(FundingDirection.IN, ::GetCashUnavailablePresentationError)
 
-    fun onWithdrawClick() = openFunding(FundingDirection.OUT, ::WithdrawUnavailablePresentationError)
-
     fun onSendClick() {
         router.openSendPayment()
     }

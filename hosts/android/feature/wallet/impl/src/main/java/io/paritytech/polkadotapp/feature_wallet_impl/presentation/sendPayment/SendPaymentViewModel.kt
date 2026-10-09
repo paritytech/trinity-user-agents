@@ -33,6 +33,10 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
+import io.paritytech.polkadotapp.common.utils.disable
+import io.paritytech.polkadotapp.common.utils.enable
+import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.WithdrawUnavailablePresentationError
+import kotlinx.coroutines.flow.MutableStateFlow
 import javax.inject.Inject
 import io.paritytech.polkadotapp.common.R as RCommon
 
@@ -48,8 +52,10 @@ class SendPaymentViewModel @Inject constructor(
     parserAddressUsernameConverterFactory: ParseAddressUsernameConverterFactory,
     previousPaymentsAddressConverterFactory: PreviousPaymentsAddressConverterFactory,
     contactsAddressConverterFactory: ContactsAddressConverterFactory,
-    interactor: SendPaymentInteractor,
+    private val interactor: SendPaymentInteractor,
 ) : BaseViewModel(), SendPaymentContract {
+    private val withdrawalInProgress = MutableStateFlow(false)
+
     private val contacts = flowOf { getContactsUseCase() }
         .shareInBackground()
 
@@ -124,6 +130,14 @@ class SendPaymentViewModel @Inject constructor(
 
     override fun onScannerClick() {
         walletRouter.openScanAddressQr()
+    }
+
+    override fun onOutsidePocketClick() = launchUnit {
+        if (withdrawalInProgress.value) return@launchUnit
+        withdrawalInProgress.enable()
+        interactor.openWithdrawal()
+            .onFailure { showPresentationError(WithdrawUnavailablePresentationError(it)) }
+        withdrawalInProgress.disable()
     }
 
     override fun onBackClick() {

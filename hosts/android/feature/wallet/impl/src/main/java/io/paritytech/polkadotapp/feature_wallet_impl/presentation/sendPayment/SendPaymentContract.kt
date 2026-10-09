@@ -15,5 +15,7 @@ interface SendPaymentContract {
 
     fun onScannerClick()
 
+    fun onOutsidePocketClick()
+
     fun onBackClick()
 }

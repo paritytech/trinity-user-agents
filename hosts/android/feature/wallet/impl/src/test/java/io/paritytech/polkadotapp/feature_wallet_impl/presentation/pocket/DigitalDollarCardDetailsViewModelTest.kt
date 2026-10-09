@@ -77,14 +77,6 @@ class DigitalDollarCardDetailsViewModelTest {
         coVerify(exactly = 1) { hostFunding.openFunding(FundingDirection.IN, null) }
     }
 
-    @Test
-    fun `Withdraw opens outbound funding with no amount`() = runBlocking<Unit> {
-        createViewModel().onWithdrawClick()
-        answerOpens(Result.success("intent"))
-
-        coVerify(exactly = 1) { hostFunding.openFunding(FundingDirection.OUT, null) }
-    }
-
     // The overlay is up for as long as the call is, so a second tap would stack a second session behind it.
     @Test
     fun `a tap while the overlay is up opens nothing more`() = runBlocking<Unit> {
@@ -92,37 +84,34 @@ class DigitalDollarCardDetailsViewModelTest {
 
         viewModel.onGetCashClick()
         viewModel.onGetCashClick()
-        viewModel.onWithdrawClick()
         answerOpens(Result.success(null))
 
         coVerify(exactly = 1) { hostFunding.openFunding(FundingDirection.IN, null) }
-        coVerify(exactly = 0) { hostFunding.openFunding(FundingDirection.OUT, null) }
     }
 
     @Test
-    fun `a dismissed overlay unlocks the buttons`() = runBlocking<Unit> {
+    fun `a dismissed overlay unlocks the button`() = runBlocking<Unit> {
         val viewModel = createViewModel()
 
         viewModel.onGetCashClick()
         answerOpens(Result.success(null))
-        viewModel.onWithdrawClick()
+        viewModel.onGetCashClick()
         answerOpens(Result.success(null))
 
-        coVerify(exactly = 1) { hostFunding.openFunding(FundingDirection.IN, null) }
-        coVerify(exactly = 1) { hostFunding.openFunding(FundingDirection.OUT, null) }
+        coVerify(exactly = 2) { hostFunding.openFunding(FundingDirection.IN, null) }
     }
 
     @Test
-    fun `a failed open shows an error and unlocks the buttons`() = runBlocking<Unit> {
+    fun `a failed open shows an error and unlocks the button`() = runBlocking<Unit> {
         val viewModel = createViewModel()
 
         viewModel.onGetCashClick()
         answerOpens(Result.failure(IllegalStateException("runtime unavailable")))
-        viewModel.onWithdrawClick()
+        viewModel.onGetCashClick()
         answerOpens(Result.success("intent"))
 
         assertPresentationErrorShown(viewModel)
-        coVerify(exactly = 1) { hostFunding.openFunding(FundingDirection.OUT, null) }
+        coVerify(exactly = 2) { hostFunding.openFunding(FundingDirection.IN, null) }
     }
 
     private fun answerOpens(result: Result<String?>) {

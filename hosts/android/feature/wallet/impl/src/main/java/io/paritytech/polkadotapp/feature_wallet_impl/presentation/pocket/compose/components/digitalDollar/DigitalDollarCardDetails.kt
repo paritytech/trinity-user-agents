@@ -19,7 +19,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.tooling.preview.Preview
-import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.paritytech.polkadotapp.common.presentation.loading.LoadingState
@@ -27,12 +26,12 @@ import io.paritytech.polkadotapp.common.presentation.loading.onLoaded
 import io.paritytech.polkadotapp.common.presentation.paymentAsset.LocalPaymentAssetBrand
 import io.paritytech.polkadotapp.common.presentation.paymentAsset.PaymentAssetBrand
 import io.paritytech.polkadotapp.design.components.button.common.PolkadotButtonShape
-import io.paritytech.polkadotapp.design.components.button.default.PolkadotButtonSize
-import io.paritytech.polkadotapp.design.components.button.default.PolkadotTextButton
+import io.paritytech.polkadotapp.design.components.button.common.PolkadotButtonStyle
 import io.paritytech.polkadotapp.design.components.button.icon.PolkadotIconButton
 import io.paritytech.polkadotapp.design.components.button.icon.PolkadotIconButtonSize
 import io.paritytech.polkadotapp.design.components.icon.NovaIcons
 import io.paritytech.polkadotapp.design.components.icon.vectors.Add
+import io.paritytech.polkadotapp.design.components.icon.vectors.ArrowUpward
 import io.paritytech.polkadotapp.design.components.navigationbar.LocalAppNavigationBarInsets
 import io.paritytech.polkadotapp.design.components.spacer.VerticalSpacer
 import io.paritytech.polkadotapp.design.components.topbar.PolkadotTopBar
@@ -54,7 +53,6 @@ import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.
 import kotlinx.collections.immutable.persistentListOf
 import io.paritytech.polkadotapp.common.R as RCommon
 
-private val ActionButtonMinHeight = 48.dp
 
 @Composable
 fun DigitalDollarCardDetails(
@@ -78,7 +76,6 @@ fun DigitalDollarCardDetails(
         fundingActivity = fundingActivity,
         onSendClick = viewModel::onSendClick,
         onGetCashClick = viewModel::onGetCashClick,
-        onWithdrawClick = viewModel::onWithdrawClick,
         onAutoFundClick = viewModel::onAutoFundClick,
         onDetailsToggled = viewModel::onDetailsToggled,
         onShareLogsClick = viewModel::onShareLogsClick,
@@ -97,7 +94,6 @@ private fun DigitalDollarCardDetailsContent(
     fundingActivity: FundingActivityUiState,
     onSendClick: () -> Unit,
     onGetCashClick: () -> Unit,
-    onWithdrawClick: () -> Unit,
     onAutoFundClick: () -> Unit,
     onDetailsToggled: () -> Unit,
     onShareLogsClick: () -> Unit,
@@ -143,8 +139,7 @@ private fun DigitalDollarCardDetailsContent(
                         BalanceRestoreUiState.SendCash -> SendCashActions(
                             modifier = Modifier.fillMaxWidth(),
                             onSendClick = onSendClick,
-                            onGetCashClick = onGetCashClick,
-                            onWithdrawClick = onWithdrawClick
+                            onGetCashClick = onGetCashClick
                         )
 
                         is BalanceRestoreUiState.Restore -> {
@@ -195,43 +190,31 @@ private fun DigitalDollarCardDetailsContent(
     }
 }
 
+/** Add brings value in through the funding sheet; Send reaches contacts and, outside the pocket, withdrawals. */
 @Composable
 private fun SendCashActions(
     modifier: Modifier = Modifier,
     onSendClick: () -> Unit,
-    onGetCashClick: () -> Unit,
-    onWithdrawClick: () -> Unit
+    onGetCashClick: () -> Unit
 ) {
     Row(
         modifier = modifier,
-        horizontalArrangement = Arrangement.spacedBy(PolkadotTheme.spacings.small),
+        horizontalArrangement = Arrangement.spacedBy(PolkadotTheme.spacings.large, Alignment.CenterHorizontally),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        PolkadotTextButton(
-            text = stringResource(RCommon.string.common_send),
-            modifier = Modifier
-                .weight(1f)
-                .defaultMinSize(minHeight = ActionButtonMinHeight),
-            size = PolkadotButtonSize.large(),
-            shape = PolkadotButtonShape.pill,
-            onClick = onSendClick
-        )
-
         PolkadotIconButton(
             icon = NovaIcons.Add,
             onClick = onGetCashClick,
+            style = PolkadotButtonStyle.secondary(),
             shape = PolkadotButtonShape.pill,
-            size = PolkadotIconButtonSize.mediumIncreased()
+            size = PolkadotIconButtonSize.extraLarge()
         )
 
-        PolkadotTextButton(
-            text = stringResource(RCommon.string.common_withdraw),
-            modifier = Modifier
-                .weight(1f)
-                .defaultMinSize(minHeight = ActionButtonMinHeight),
-            size = PolkadotButtonSize.large(),
+        PolkadotIconButton(
+            icon = NovaIcons.ArrowUpward,
+            onClick = onSendClick,
             shape = PolkadotButtonShape.pill,
-            onClick = onWithdrawClick
+            size = PolkadotIconButtonSize.extraLarge()
         )
     }
 }
@@ -281,7 +264,6 @@ private fun DigitalDollarCardDetailsPreview() {
                 fundingActivity = FundingActivityUiState(inFlight = persistentListOf(), days = persistentListOf()),
                 onSendClick = {},
                 onGetCashClick = {},
-                onWithdrawClick = {},
                 onAutoFundClick = {},
                 onDetailsToggled = {},
                 onShareLogsClick = {},
