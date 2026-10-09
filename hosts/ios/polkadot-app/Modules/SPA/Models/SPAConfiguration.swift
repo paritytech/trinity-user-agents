@@ -6,6 +6,19 @@ enum SPAContentSource {
     case dotNs
     /// Debug: load the URL as-is, skipping resolution. Rust runtime only.
     case directURL(URL)
+    /// A product the app ships: its App's files in this directory, served
+    /// through the polkadot:// scheme handler under the product's own origin,
+    /// with no dotNS read. Rust runtime only.
+    case bundled(URL)
+
+    /// Whether only the rust runtime can serve it.
+    var isRustOnly: Bool {
+        switch self {
+        case .dotNs: false
+        case .directURL,
+             .bundled: true
+        }
+    }
 }
 
 struct SPAConfiguration {

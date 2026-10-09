@@ -42,6 +42,7 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
     private let confirmationRouterFacade: ProductRoutersFacadeProtocol
     private let tldProvider: DotNsTldProviding
     private let fundingOverlay: FundingOverlayPresenting?
+    private let bundledProducts: BundledProducts
     private let logger: LoggerProtocol
 
     private let lock = NSLock()
@@ -60,6 +61,7 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
         confirmationRouterFacade: ProductRoutersFacadeProtocol,
         tldProvider: DotNsTldProviding = DotNsTldProviderFacade.shared,
         fundingOverlay: FundingOverlayPresenting? = nil,
+        bundledProducts: BundledProducts = .app,
         logger: LoggerProtocol
     ) {
         self.chainRegistry = chainRegistry
@@ -69,6 +71,7 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
         self.confirmationRouterFacade = confirmationRouterFacade
         self.tldProvider = tldProvider
         self.fundingOverlay = fundingOverlay
+        self.bundledProducts = bundledProducts
         self.logger = logger
     }
 
@@ -131,12 +134,21 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
         )
         runtime.setContacts(contactsBridge)
         // Also before any execution opens, so a product's Funding request
-        // never answers unsupported. The providers are discovered by the core,
-        // so the host ships none of its own.
-        let overlay = fundingOverlay ?? AppFundingOverlay(runtime: runtime) { [confirmationRouterFacade] in
-            AppFundingEnvironment(router: confirmationRouterFacade.productsRouter)
+        // never answers unsupported. The core discovers the published
+        // providers; the host lists only the ones it ships itself.
+        let router = confirmationRouterFacade
+        let overlay = fundingOverlay ?? AppFundingOverlay(runtime: runtime) { [bundledProducts] in
+            AppFundingEnvironment(router: router.productsRouter, bundledProducts: bundledProducts)
         }
         runtime.setFunding(AppFundingHostBridge(overlay: overlay))
+        let bundledProviders = bundledProducts.fundingProviders
+        if !bundledProviders.isEmpty {
+            do {
+                try runtime.setFundingProviders(bundledProviders)
+            } catch {
+                logger.error("[truapi] the bundled funding providers were refused: \(error)")
+            }
+        }
         FundingActivityCenter.attach(runtime: runtime)
         contactsChangeNotifier = ContactsChangeNotifier(
             dataProviderFactory: ChatContactDataProviderFactory(),
