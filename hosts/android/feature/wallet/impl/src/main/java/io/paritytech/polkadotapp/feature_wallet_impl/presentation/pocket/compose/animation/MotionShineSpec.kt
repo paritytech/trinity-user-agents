@@ -2,7 +2,7 @@ package io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compos
 
 import androidx.compose.ui.geometry.Offset
 
-// Shared by the AGSL shader (API 33+, source templated from these values) and the Brush fallback (API < 33).
+// Templated into the AGSL shader (API 33+). The Brush fallback (API < 33) slides along the main axis only.
 
 // Main shine axis: 151.367deg (screen space, y-down) and its perpendicular.
 internal val ShineMainAxis = Offset(0.4787f, 0.8780f)

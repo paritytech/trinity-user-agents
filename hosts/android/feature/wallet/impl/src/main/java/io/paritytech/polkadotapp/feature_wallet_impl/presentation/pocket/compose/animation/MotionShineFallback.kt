@@ -30,8 +30,8 @@ internal fun Modifier.motionShineFallback(
     return drawBehind {
         val tilt = tiltState.value
         val shift = tilt.x * SHINE_MAIN_TILT_X - tilt.y * SHINE_MAIN_TILT_Y
-        drawRect(brush = axisGradient(dimStops, ShineMainAxis, size, shift))
-        drawRect(brush = axisGradient(shineStops, ShineMainAxis, size, shift))
+        drawRect(brush = axisGradient(dimStops, size, shift))
+        drawRect(brush = axisGradient(shineStops, size, shift))
     }
 }
 
@@ -57,8 +57,8 @@ internal fun Modifier.maskedMotionShineFallback(
             canvas.saveLayer(layerRect, Paint())
             drawContent()
             canvas.saveLayer(layerRect, Paint().apply { blendMode = BlendMode.SrcIn })
-            drawRect(brush = axisGradient(dimStops, ShineMainAxis, size, shift))
-            drawRect(brush = axisGradient(shineStops, ShineMainAxis, size, shift))
+            drawRect(brush = axisGradient(dimStops, size, shift))
+            drawRect(brush = axisGradient(shineStops, size, shift))
             canvas.restore()
             canvas.restore()
         }
@@ -83,15 +83,15 @@ private fun profileStops(colorAt: (Float) -> Color): Array<Pair<Float, Color>> =
         t to colorAt(t)
     }
 
-// Builds a CSS-style linear gradient along `axis` spanning the box, translated so that a `shift` in
-// the shader's normalised t-coordinate moves the colour band identically: t' = t + shift means the
-// gradient slides by -shift of its full length along the axis.
+// Builds a CSS-style linear gradient along the main shine axis spanning the box, translated so that
+// a `shift` in the shader's normalised t-coordinate moves the colour band identically: t' = t + shift
+// means the gradient slides by -shift of its full length along the axis.
 private fun axisGradient(
     colorStops: Array<Pair<Float, Color>>,
-    axis: Offset,
     size: Size,
     shift: Float
 ): Brush {
+    val axis = ShineMainAxis
     val centre = Offset(size.width * 0.5f, size.height * 0.5f)
     val halfSpan = 0.5f * (abs(axis.x) * size.width + abs(axis.y) * size.height)
     val translation = axis * (-shift * 2f * halfSpan)

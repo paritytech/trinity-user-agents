@@ -129,8 +129,7 @@ class PocketViewModelTest {
     )
 
     // The collection is stored, decoded and served by a product's worker, so it has failure modes
-    // the balance card does not share. Before the product cards joined this screen
-    // nothing product-side could empty it; that must stay true.
+    // the balance card does not share, and none of them may take the balance card off the screen.
     @Test
     fun `a failing product collection costs the product cards alone, not the balance card`() = runTest(testDispatcher) {
         whenever(interactor.observeProductCards()).thenReturn(flow { throw IllegalStateException("unreadable") })
