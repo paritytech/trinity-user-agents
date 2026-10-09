@@ -9,7 +9,6 @@ protocol MainTabBarViewProtocol: ControllerBackedProtocol, AppWidgetManaging {
     func select(tab: TabBarItem)
     func setLabels(visible: Bool)
     func showSPATabs(_ viewModels: [SPATabChipViewModel])
-    func showTabBarPanelContent(_ configuration: (any HashableContentConfiguration)?, for action: TabBarAction)
     func showScanPanel()
     func showChainStatus(_ rows: [ChainConnectionStatusViewModel])
     func showProductGamePill(_ viewModel: ProductGamePillViewModel?)
@@ -20,6 +19,7 @@ protocol MainTabBarPresenterProtocol: AnyObject {
     func setup()
     func configureViews()
     func didRequestContentPanel(for action: TabBarAction)
+    func didRequestConnectionStatus()
     #if FEATURE_INPUT
         func didFindChat(_ model: ChatOpenModel)
     #else
@@ -54,6 +54,7 @@ protocol MainTabBarWireframeProtocol: AnyObject {
     #else
         func showSearchContact(from view: MainTabBarViewProtocol?)
     #endif
+    func showConnectionStatus(_ viewModel: ConnectionStatusSheetViewModel, from view: MainTabBarViewProtocol?)
 }
 
 enum TabBarItem: String, CaseIterable {

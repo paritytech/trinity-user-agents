@@ -79,6 +79,7 @@ final class TabBarBottomChromeController: UIViewController {
     var onChipTapped: ((UUID) -> Void)?
     var onChipCloseRequested: ((UUID) -> Void)?
     var onPanelChanged: ((TabBarPanelKind?) -> Void)?
+    var onConnectionStatusTapped: (() -> Void)?
     var onPanelDragCommitted: (() -> Void)?
 
     /// The published clearance depends on the chrome's own safe area, so the host has to
@@ -222,14 +223,6 @@ final class TabBarBottomChromeController: UIViewController {
         panelController.togglePanel(kind)
     }
 
-    func setContentPanel(_ configuration: (any HashableContentConfiguration)?, for action: TabBarAction) {
-        guard panelController.open == .content(action) else { return }
-
-        detachHostedController()
-        chromeSurface.setContentConfiguration(configuration)
-        panelController.resizeForContentPanel()
-    }
-
     /// A camera controller needs its appearance callbacks, so it is hosted as a child rather than
     /// wrapped in a content view.
     func setContentController(_ controller: UIViewController?, for action: TabBarAction) {
@@ -354,7 +347,14 @@ private extension TabBarBottomChromeController {
             guard let self, let action = slotMap.action(forItemIndex: itemIndex) else {
                 return
             }
-            togglePanel(action == .spaTabs ? .spaTabs : .content(action))
+            switch action {
+            case .connectionStatus:
+                onConnectionStatusTapped?()
+            case .spaTabs:
+                togglePanel(.spaTabs)
+            case .scan:
+                togglePanel(.content(.scan))
+            }
         }
 
         barView.onItemsLaidOut = { [weak self] in

@@ -82,6 +82,10 @@ final class MainTabBarViewController: UIViewController {
             self?.presenter.didRequestContentPanel(for: action)
         }
 
+        chromeController.onConnectionStatusTapped = { [weak self] in
+            self?.presenter.didRequestConnectionStatus()
+        }
+
         chromeController.onChipTapped = { [weak self] id in
             _ = self?.mountExistingTab { $0.id == id }
         }
@@ -337,10 +341,6 @@ extension MainTabBarViewController: MainTabBarViewProtocol {
     func showSPATabs(_ viewModels: [SPATabChipViewModel]) {
         spaChipViewModels = viewModels
         applyChips()
-    }
-
-    func showTabBarPanelContent(_ configuration: (any HashableContentConfiguration)?, for action: TabBarAction) {
-        chromeController.setContentPanel(configuration, for: action)
     }
 
     func showScanPanel() {

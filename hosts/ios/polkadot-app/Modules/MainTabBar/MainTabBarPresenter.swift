@@ -15,7 +15,7 @@ final class MainTabBarPresenter {
     ]
 
     private let chipViewModelFactory: SPATabChipViewModelFactory
-    private var chainStatusRows: [ChainConnectionStatusViewModel] = []
+    private let connectionStatusViewModel = ConnectionStatusSheetViewModel()
 
     init(
         interactor: MainTabBarInteractorInputProtocol,
@@ -41,11 +41,16 @@ extension MainTabBarPresenter: MainTabBarPresenterProtocol {
         switch action {
         case .scan:
             view?.showScanPanel()
-        case .spaTabs:
+        // Neither pushes content into a panel: the apps panel renders the chips the view already
+        // holds, and the connection status arrives through `didRequestConnectionStatus`.
+        case .spaTabs,
+             .connectionStatus:
             break
-        case .connectionStatus:
-            showConnectionStatusPanel()
         }
+    }
+
+    func didRequestConnectionStatus() {
+        wireframe.showConnectionStatus(connectionStatusViewModel, from: view)
     }
 
     #if FEATURE_INPUT
@@ -84,9 +89,7 @@ extension MainTabBarPresenter: MainTabBarInteractorOutputProtocol {
 
     func didReceiveChainStatus(_ rows: [ChainConnectionStatusViewModel]) {
         view?.showChainStatus(rows)
-
-        chainStatusRows = rows
-        showConnectionStatusPanel()
+        connectionStatusViewModel.rows = rows
     }
 
     func didReceiveTabBarLabelsEnabled(_ isEnabled: Bool) {
@@ -103,15 +106,5 @@ extension MainTabBarPresenter: MainTabBarInteractorOutputProtocol {
             )
         }
         view?.showProductGamePill(viewModel)
-    }
-}
-
-private extension MainTabBarPresenter {
-    /// `setContentPanel` ignores pushes unless its panel is open, so this is a no-op while closed.
-    func showConnectionStatusPanel() {
-        view?.showTabBarPanelContent(
-            SwiftUIContentConfiguration(view: ConnectionStatusPanelView(rows: chainStatusRows)),
-            for: .connectionStatus
-        )
     }
 }
