@@ -487,6 +487,12 @@ xcrun simctl launch booted io.parity.polkadotapp.develop
 It is an arm64 simulator slice, so it needs an Apple Silicon Mac and cannot be
 installed on a device.
 
+### A product from your Mac on a phone
+
+Debug builds of both apps open a product from a development server on your Mac,
+on the simulator, the emulator or a phone, without a deploy. See
+[docs/dev-server-on-a-phone.md](docs/dev-server-on-a-phone.md).
+
 ### A build that installs on a phone
 
 Label a pull request `ios-device-build` and `ios-device-preview.yml` produces a

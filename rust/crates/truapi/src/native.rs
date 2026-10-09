@@ -27,6 +27,7 @@ mod runtime;
 mod ws_bridge;
 
 pub use crate::host_internal::sso_messages::SsoRequestOutcome;
+pub use crate::host_logic::dev_server::DevServerProduct;
 pub use crate::host_logic::dotns::{NavigateDecision, PocketDeeplinkAction};
 pub use crate::host_logic::scanner::{ScanFilter, ScanVerdict};
 pub use callbacks::{
@@ -57,6 +58,15 @@ use crate::SigningHostRuntime;
 #[uniffi::export]
 pub fn parse_navigate(input: String) -> NavigateDecision {
     dotns::parse_navigate(&input)
+}
+
+/// The development product a debug build opens for an address the developer
+/// typed, or `None` when the address is not a development server. Hosts
+/// call it only in development builds, since the identifier it returns holds
+/// the core's development wildcard.
+#[uniffi::export]
+pub fn parse_dev_server(input: String) -> Option<DevServerProduct> {
+    crate::host_logic::dev_server::parse_dev_server(&input)
 }
 
 /// The bridge script a host injects into a product's web view, for the `port`

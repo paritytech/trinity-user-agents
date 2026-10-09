@@ -24,10 +24,16 @@ class BrowserWebViewClient(
     servingHostResolver: DotNsServingHostResolver,
     private val navigationPolicy: NavigationPolicy,
     mainDocumentResponseHeaders: Map<String, String>,
+    private val firstPartyOrigin: String?,
 ) : DotNsWebViewClient(dotNsResolver, dotNsTldProvider, servingHostResolver, mainDocumentResponseHeaders) {
     override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
         val origin = view.url?.toUri()
         val destination = request.url
+        // A page served off dotNS has no dotNS name for the classification below to keep it on.
+        if (firstPartyOrigin != null && destination.originOrNull().equals(firstPartyOrigin, ignoreCase = true)) {
+            return false
+        }
+
         val tld = dotNsTldProvider.currentTldOrNull()
         val type = if (tld == null) {
             DotNsNavigationType.EXTERNAL

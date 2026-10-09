@@ -84,6 +84,34 @@ struct SPARustRuntimeTests {
         await runtime.dispose()
     }
 
+    /// A device reaches the Mac by its LAN address, but the core only runs a non-dotNS product
+    /// under `localhost[:port]`, so the page loads from one and the product runs under the other.
+    @Test func devServerLoadsFromItsOriginAndRunsUnderTheLocalhostIdentifier() async throws {
+        let origin = try #require(URL(string: "http://192.168.1.59:3000"))
+        let configuration = try makeConfiguration(
+            contentSource: .devServer(origin: origin, productId: "localhost:3000")
+        )
+        let resolver = StubDotNsResolver()
+        let runtime = makeRuntime(configuration: configuration, dotNsResolver: resolver)
+
+        let url = try await runtime.start(with: MockJSEngine())
+
+        #expect(url == origin)
+        #expect(resolver.resolvedNames.isEmpty)
+        #expect(configuration.productId == "localhost:3000")
+
+        await runtime.dispose()
+    }
+
+    /// The playground opens through a direct URL under its own dotNS name, not as a dev server.
+    @Test func directURLKeepsTheProductIdentifierOfItsPage() throws {
+        let configuration = try makeConfiguration(
+            contentSource: .directURL(#require(URL(string: "http://localhost:3000")))
+        )
+
+        #expect(configuration.productId == "test.dot")
+    }
+
     @Test func startWithDotNsResolvesContentAndReturnsProductURL() async throws {
         let configuration = try makeConfiguration(contentSource: .dotNs)
         let resolver = StubDotNsResolver()

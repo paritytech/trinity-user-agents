@@ -10,4 +10,6 @@ data class BrowserSessionInfo(
     val url: String,
     val isLoading: Boolean,
     val loadFraction: Float?,
+    /** Served from a development server rather than dotNS, which only a debug build opens. */
+    val isDevServer: Boolean,
 )
