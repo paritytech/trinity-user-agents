@@ -162,6 +162,8 @@ pub enum ShellCommand {
     /// Edit the remembered product script, or run an explicit one, through the
     /// public frame endpoint.
     Script(ScriptCommand),
+    /// Run a product worker compiled to wasm as the selected product.
+    Worker(PathBuf),
     /// Show command and keyboard help.
     Help,
     /// Clear the visible transcript.
@@ -264,6 +266,10 @@ pub fn parse_command(input: &str) -> Result<ShellCommand, String> {
             };
             Ok(ShellCommand::Script(command))
         }
+        "/worker" => match argument {
+            "" => Err("usage: /worker <wasm-path>".to_string()),
+            path => Ok(ShellCommand::Worker(PathBuf::from(path))),
+        },
         "/help" => no_argument(name, argument, ShellCommand::Help),
         "/clear" => no_argument(name, argument, ShellCommand::Clear),
         "/copy" => no_argument(name, argument, ShellCommand::Copy),
@@ -380,6 +386,7 @@ const SIGNING_COMMANDS: &[(&str, &str)] = &[
     ("/product", "show or switch the active product"),
     ("/session", "show, switch, or clear sessions"),
     ("/renew", "renew statement-store allowances now"),
+    ("/worker", "run a wasm product worker as the active product"),
     ("/help", "show commands and keyboard shortcuts"),
     ("/clear", "clear the visible transcript"),
     ("/copy", "copy the transcript to the clipboard"),
@@ -392,6 +399,7 @@ const PAIRING_COMMANDS: &[(&str, &str)] = &[
     ("/logout", "disconnect and reset pairing keys"),
     ("/log", "set error, warn, info, debug, or trace"),
     ("/product", "show or switch the active product"),
+    ("/worker", "run a wasm product worker as the active product"),
     ("/help", "show commands and keyboard shortcuts"),
     ("/clear", "clear the visible transcript"),
     ("/copy", "copy the transcript to the clipboard"),
@@ -867,6 +875,7 @@ pub const HELP_TEXT: &str = "\
 /script --run           rerun the remembered script
 /script --edit          edit without running
 /script --new [dir]     create and edit a new project
+/worker <wasm-path>     run a wasm product worker as the current product
 /log <level>            set error, warn, info, debug, or trace
 /product                show the current product
 /product <id>           switch product and reconnect product clients
@@ -892,6 +901,7 @@ pub const PAIRING_HELP_TEXT: &str = "\
 /script --run           rerun the remembered script
 /script --edit          edit without running
 /script --new [dir]     create and edit a new project
+/worker <wasm-path>     run a wasm product worker as the current product
 /login                  pair with a signing host for the current product
 /logout                 disconnect and reset pairing keys
 /log <level>            set error, warn, info, debug, or trace
@@ -970,6 +980,16 @@ mod tests {
         assert_eq!(
             parse_command("/script"),
             Ok(ShellCommand::Script(ScriptCommand::Edit))
+        );
+        assert_eq!(
+            parse_command("/worker guests/hello guest.wasm"),
+            Ok(ShellCommand::Worker(PathBuf::from(
+                "guests/hello guest.wasm"
+            )))
+        );
+        assert_eq!(
+            parse_command("/worker"),
+            Err("usage: /worker <wasm-path>".to_string())
         );
         assert_eq!(parse_command("/login"), Ok(ShellCommand::Login));
         assert_eq!(parse_command("/logout"), Ok(ShellCommand::Logout));

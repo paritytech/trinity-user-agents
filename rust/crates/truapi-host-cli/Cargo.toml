@@ -17,7 +17,7 @@ rustix = { workspace = true, features = ["process"] }
 unsafe_code = "forbid"
 
 [dependencies]
-truapi = { path = "../truapi" }
+truapi = { path = "../truapi", features = ["wasm-worker"] }
 anyhow = { workspace = true }
 arboard = { workspace = true, features = ["image-data"] }
 async-trait = { workspace = true }

@@ -11,13 +11,19 @@ rust/crates/
                          feature); ships as WASM (browser/node); its `platform` module
                          holds the host syscall traits (storage, navigation, consent, ...)
   truapi-codegen/        rustdoc JSON → TypeScript client + Rust dispatcher
+  truapi-guest-api/      experimental: TrUAPI for a product worker compiled to wasm;
+                         bindings come from #[wasm_env] on every service trait, and the
+                         core runs such a worker in process (truapi `wasm-worker` feature)
   truapi-macros/         #[wire_trait(id = N)] and #[wire(id = N)] proc-macros;
-                         #[sso_service] for truapi's inter-host SSO protocol
+                         #[sso_service] for truapi's inter-host SSO protocol;
+                         #[wasm_env] for wasm worker imports
                          One implementation module per macro; lib.rs holds entry points
   truapi-provider/       network provider backends (WebSocket RPC or smoldot light-client);
                          its `platform` module holds the chain-access traits
   truapi-verifiable/     ring-VRF operations over `verifiable`; a lazily loaded WASM module in the browser
   truapi-host-cli/       CLI pairing/signing hosts; Bun scripts share the container web API gates
+rust/guests/             example wasm product workers, a separate workspace built for
+                         wasm32-unknown-unknown; truapi's wasm_worker test builds and runs them
 js/packages/
   truapi/                  @parity/truapi TS package; generated TS lives under ignored paths
   truapi-host/            @parity/truapi-host: WASM-backed host runtime. Subpath entries:

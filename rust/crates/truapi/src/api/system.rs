@@ -8,10 +8,11 @@ use crate::versioned::system::{
     HostNavigateToResponse,
 };
 use crate::{CallContext, CallError};
-use crate::{wire, wire_trait};
+use crate::{wasm_env, wire, wire_trait};
 
 /// General-purpose TrUAPI methods for handshake, feature detection,
 /// navigation, and runtime information.
+#[wasm_env]
 #[wire_trait(id = 1)]
 #[crate::async_trait]
 pub trait System: Send + Sync {

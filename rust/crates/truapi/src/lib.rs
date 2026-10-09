@@ -50,6 +50,10 @@ pub mod api;
 pub mod v01;
 pub mod v02;
 pub mod versioned;
+pub mod wasm_abi;
+
+#[cfg(all(feature = "guest", target_arch = "wasm32"))]
+pub mod guest;
 
 /// A 32-byte value, passed as plain bytes on FFI surfaces. Version-neutral:
 /// the FFI conversion below applies to `[u8; 32]` fields in every protocol
@@ -84,14 +88,14 @@ pub mod latest {
         HostAccountSignVrfError, HostAccountSignVrfRequest, HostPlatform, HostSignPayloadData,
         HostWorkerOperationError, ImageFit, ImageProps, ImageSource, Modifier,
         OperationStartedResult, PocketCard, ProductAccountId, ProductProofContext, RawPayload,
-        RegisteredRingVrfKey, RemotePermission, RemoteStatementStoreCreateProofError,
-        RemoteStatementStoreCreateProofRequest, RemoteStatementStoreCreateProofResponse,
-        RemoteStatementStoreSubscribeItem, RemoteStatementStoreSubscribeRequest, RenderContext,
-        RendererNode, RingLocation, RingLocationJunction, RingVrfKeyDisclosure, RowProps,
-        RuntimeApi, RuntimeSpec, RuntimeType, ScanOutcome, Shape, SignedStatement, Size, Statement,
-        StatementProof, StorageQueryItem, StorageQueryType, StorageResultItem, TextFieldProps,
-        TextProps, ThemeName, ThemeVariant, TxPayloadExtension, TypographyStyle, VerticalAlignment,
-        VrfSignature,
+        RegisteredRingVrfKey, RemotePermission, RemotePreimageLookupSubscribeRequest,
+        RemoteStatementStoreCreateProofError, RemoteStatementStoreCreateProofRequest,
+        RemoteStatementStoreCreateProofResponse, RemoteStatementStoreSubscribeItem,
+        RemoteStatementStoreSubscribeRequest, RenderContext, RendererNode, RingLocation,
+        RingLocationJunction, RingVrfKeyDisclosure, RowProps, RuntimeApi, RuntimeSpec, RuntimeType,
+        ScanOutcome, Shape, SignedStatement, Size, Statement, StatementProof, StorageQueryItem,
+        StorageQueryType, StorageResultItem, TextFieldProps, TextProps, ThemeName, ThemeVariant,
+        TxPayloadExtension, TypographyStyle, VerticalAlignment, VrfSignature,
     };
 
     /// Latest payload type of a versioned envelope.
@@ -267,7 +271,7 @@ pub mod latest {
     pub type RemotePermissionResponse = LatestOf<versioned::permissions::RemotePermissionResponse>;
 }
 
-pub use truapi_macros::{service, wire, wire_trait};
+pub use truapi_macros::{service, wasm_env, wire, wire_trait};
 
 /// Wire codec version this crate defines. Frames address a method with a
 /// `(trait, method)` byte pair. The handshake accepts only this version, and
@@ -305,6 +309,18 @@ impl<D> CallError<D> {
     pub fn unavailable() -> Self {
         Self::HostFailure {
             reason: "unavailable".into(),
+        }
+    }
+
+    /// Convert the domain error, keeping every framework outcome.
+    pub fn map_domain<T>(self, convert: impl FnOnce(D) -> T) -> CallError<T> {
+        match self {
+            Self::Domain(domain) => CallError::Domain(convert(domain)),
+            Self::Denied => CallError::Denied,
+            Self::Unsupported => CallError::Unsupported,
+            Self::MalformedFrame { reason } => CallError::MalformedFrame { reason },
+            Self::HostFailure { reason } => CallError::HostFailure { reason },
+            Self::Cancelled => CallError::Cancelled,
         }
     }
 }
@@ -591,6 +607,9 @@ runtime_items! {
     #[cfg(not(target_arch = "wasm32"))]
     pub mod native;
 
+    #[cfg(all(feature = "wasm-worker", not(target_arch = "wasm32")))]
+    mod wasm_worker;
+
     #[cfg(target_arch = "wasm32")]
     pub mod wasm;
 
@@ -601,6 +620,8 @@ runtime_items! {
     pub mod store;
 
     pub use truapi_core::TrUApiCore;
+    #[cfg(all(feature = "wasm-worker", not(target_arch = "wasm32")))]
+    pub use wasm_worker::{WasmEnv, WasmWorker, WasmWorkerError};
     pub use host_core::{
         ChannelId, DebugEvent, DebugSink, FrameDirection, FrameSink, HostAdmin, PairingHostRuntime,
         ProductRuntime, ProductRuntimeControl, ProductRuntimeError, SigningHostRuntime,

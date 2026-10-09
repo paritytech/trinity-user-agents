@@ -253,6 +253,7 @@ Commands always start with `/`:
 | `/script --run` | Rerun the remembered script without opening the editor. |
 | `/script --edit` | Edit the remembered script without running it. |
 | `/script --new [directory]` | Create a project in a new directory, then edit and run it. |
+| `/worker <wasm-path>` | Run a product worker compiled to wasm as the selected product, in process, until it returns. See the [wasm worker design](../../../docs/design/wasm-worker.md). |
 | `/login` | Start pairing for the selected product, show its QR code, and copy its deeplink to the clipboard. |
 | `/logout` | Disconnect the pairing host and discard its old pairing keypair. |
 | `/log <level>` | Save tracing as `error`, `warn`, `info`, `debug`, or `trace`, and apply it now. |

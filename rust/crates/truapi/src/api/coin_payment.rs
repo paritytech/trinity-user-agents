@@ -15,13 +15,14 @@ use crate::versioned::coin_payment::{
     HostCoinPaymentRefundRequest,
 };
 use crate::{CallContext, CallError, Subscription};
-use crate::{wire, wire_trait};
+use crate::{wasm_env, wire, wire_trait};
 
 /// CoinPayment operations.
 ///
 /// RFC 0017 describes `Resolvable<T>` values for long-running operations.
 /// TrUAPI represents those as subscriptions whose items are the RFC status
 /// updates.
+#[wasm_env]
 #[wire_trait(id = 5)]
 #[crate::async_trait]
 pub trait CoinPayment: Send + Sync {

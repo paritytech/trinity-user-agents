@@ -7,9 +7,10 @@ use crate::versioned::local_storage::{
     HostLocalStorageWriteError, HostLocalStorageWriteRequest, HostLocalStorageWriteResponse,
 };
 use crate::{CallContext, CallError, Subscription};
-use crate::{wire, wire_trait};
+use crate::{wasm_env, wire, wire_trait};
 
 /// Local key/value storage scoped to the calling product.
+#[wasm_env]
 #[wire_trait(id = 7)]
 #[crate::async_trait]
 pub trait LocalStorage: Send + Sync {

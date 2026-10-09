@@ -9,10 +9,13 @@ use quote::quote;
 use syn::parse::{Parse, ParseStream};
 use syn::{Ident, ItemFn, ItemTrait, LitInt, Token, TraitItemFn, parse_macro_input};
 
+/// Arguments to `#[wire(...)]`.
 #[derive(Default)]
-struct WireArgs {
-    host_initiated: bool,
-    internal: bool,
+pub struct WireArgs {
+    /// The host starts the call and the product answers it.
+    pub host_initiated: bool,
+    /// Kept out of the product SDK.
+    pub internal: bool,
     id: Option<u8>,
 }
 

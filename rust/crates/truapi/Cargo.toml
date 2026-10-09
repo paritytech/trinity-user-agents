@@ -88,6 +88,10 @@ wasm-signing-host = ["runtime"]
 test-host = ["runtime"]
 # In-memory `MockPlatform` for tests and host simulators.
 mock = ["runtime"]
+# Experimental: run a product worker compiled to wasm against the runtime.
+wasm-worker = ["runtime", "dep:wasmi"]
+# Experimental: the bindings a product worker compiled to wasm calls the host with.
+guest = []
 
 [dependencies]
 truapi-macros = { path = "../truapi-macros" }
@@ -138,6 +142,7 @@ tokio-tungstenite = { version = "0.24", default-features = false, features = ["h
 uniffi = { workspace = true, optional = true }
 subxt = { workspace = true, features = ["native"], optional = true }
 subxt-rpcs = { workspace = true, features = ["jsonrpsee", "native"], optional = true }
+wasmi = { workspace = true, optional = true }
 base64 = { workspace = true, optional = true }
 rusqlite = { workspace = true, features = ["bundled", "hooks"], optional = true }
 async-sqlite = { workspace = true, features = ["bundled"], optional = true }
@@ -177,6 +182,10 @@ required-features = ["runtime"]
 [[test]]
 name = "wire_result_shape"
 required-features = ["runtime"]
+
+[[test]]
+name = "wasm_worker"
+required-features = ["wasm-worker"]
 
 [[test]]
 name = "signing_host_mock_platform"

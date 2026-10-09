@@ -622,6 +622,9 @@ mod tests {
                 Self::V2(_) => 2,
             }
         }
+        fn wrap_latest(latest: Self::Latest) -> Self {
+            Self::V2(latest)
+        }
     }
 
     impl IntoLatest for ProbeError {
