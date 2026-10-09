@@ -179,7 +179,7 @@ Android intercepts HTTP requests natively, including scripts and images, and cal
 
 The main frame retains `window.__HOST_WEBVIEW_MARK__` for deployed products that use it to select native navigation or storage. New products should use the SDK's container detection.
 
-The Rust core handles the wire protocol directly. Outbound responses and host-side capability callbacks (`navigateTo`, `pushNotification`, `cancelNotification`, `devicePermission`, `remotePermission`, `authStateChanged`, core storage, chain JSON-RPC, `confirmUserAction`, `confirmPermission`, preimage lookup, theme, `featureSupported`, `storage`) reach the embedder through `HostBridge`. Bulletin preimage build/sign/submit now happens inside the core, so the host only serves `lookupPreimage`.
+The Rust core handles the wire protocol directly. Outbound responses and host-side capability callbacks (`navigateTo`, `pushNotification`, `cancelNotification`, `devicePermission`, `setExpandedCardFaceShown`, `remotePermission`, `authStateChanged`, core storage, chain JSON-RPC, `confirmUserAction`, `confirmPermission`, preimage lookup, theme, `featureSupported`, `storage`) reach the embedder through `HostBridge`. Bulletin preimage build/sign/submit now happens inside the core, so the host only serves `lookupPreimage`.
 
 ## Permissions split
 

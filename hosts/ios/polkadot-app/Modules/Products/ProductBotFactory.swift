@@ -1,6 +1,7 @@
 import Foundation
 import UIKit
 import Keystore_iOS
+import PolkadotUI
 import Products
 
 /// Creates ``ProductBot`` instances for a given product.
@@ -15,6 +16,7 @@ final class ProductBotFactory {
     private let runtimeProvider: TrUAPIHostRuntimeProviding
     private let workers: @Sendable () -> (any TrUAPIWorkerManaging)?
     private let workerManager: ProductWorkerManaging
+    private let productImages: ProductImageSources
     private let logger: LoggerProtocol
 
     init(
@@ -22,6 +24,7 @@ final class ProductBotFactory {
         runtimeProvider: TrUAPIHostRuntimeProviding,
         workers: @Sendable @escaping () -> (any TrUAPIWorkerManaging)?,
         workerManager: ProductWorkerManaging,
+        productImages: ProductImageSources,
         settingsManager: SettingsManagerProtocol = SettingsManager.shared,
         logger: LoggerProtocol = Logger.shared
     ) {
@@ -30,6 +33,7 @@ final class ProductBotFactory {
         self.runtimeProvider = runtimeProvider
         self.workers = workers
         self.workerManager = workerManager
+        self.productImages = productImages
         self.logger = logger
     }
 
@@ -37,6 +41,8 @@ final class ProductBotFactory {
         guard servesChat(resolved) else { return nil }
 
         let product = resolved.product
+        let images = productImages.resolver(contentId: { resolved.contentId(for: .worker) })
+        let resolveImage = WidgetImageResolver.cached { await images.resolve($0) }
 
         if settingsManager.isTrUAPIRuntimeEnabled, let workers = workers() {
             let runtime = TrUAPIChatHandler(
@@ -44,11 +50,11 @@ final class ProductBotFactory {
                 workers: workers,
                 logger: logger
             )
-            return ProductBot(product: product, runtime: runtime, logger: logger)
+            return ProductBot(product: product, runtime: runtime, resolveImage: resolveImage, logger: logger)
         }
 
         let runtime = ManagedChatRuntime(productId: product.identifier, manager: workerManager)
-        return ProductBot(product: product, runtime: runtime, logger: logger)
+        return ProductBot(product: product, runtime: runtime, resolveImage: resolveImage, logger: logger)
     }
 }
 
