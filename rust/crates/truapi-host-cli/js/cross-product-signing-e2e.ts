@@ -45,7 +45,12 @@
 // (no chain, a payload the host will not build); what may not happen is the
 // refusal.
 
-export {};
+import type { HostContext, TrUApiClient } from "./script-types.d.ts";
+
+declare const truapi: TrUApiClient;
+declare const host: HostContext;
+
+type ProductAccountId = ReturnType<HostContext["productAccount"]>;
 
 const OWNER = "peopl.paseo";
 const GRANTED = "dim2.paseo";
@@ -86,7 +91,7 @@ function expectProduct(expected: string): void {
 }
 
 /// Sign `MESSAGE` with `account`, without deciding whether that should work.
-async function signWith(account: typeof OWNER_HANDLE) {
+async function signWith(account: ProductAccountId) {
   return truapi.signing.signRaw({
     account,
     payload: { tag: "Bytes", value: { bytes: MESSAGE } },
@@ -114,17 +119,19 @@ function statement() {
 const SURFACES: {
   name: string;
   refusal: string;
-  call: (account: typeof OWNER_HANDLE) => Promise<{ isOk(): boolean; error?: unknown }>;
+  call: (
+    account: ProductAccountId,
+  ) => Promise<{ isOk(): boolean; error?: unknown }>;
 }[] = [
   {
     name: "signRaw",
     refusal: REFUSAL,
-    call: (account) => signWith(account),
+    call: async (account) => signWith(account),
   },
   {
     name: "signPayload",
     refusal: REFUSAL,
-    call: (account) =>
+    call: async (account) =>
       truapi.signing.signPayload({
         account,
         payload: {
@@ -145,7 +152,7 @@ const SURFACES: {
   {
     name: "createTransaction",
     refusal: REFUSAL,
-    call: (account) =>
+    call: async (account) =>
       truapi.signing.createTransaction({
         signer: account,
         genesisHash: GENESIS,
@@ -158,7 +165,7 @@ const SURFACES: {
   {
     name: "statementStoreCreateProof",
     refusal: "UnknownAccount",
-    call: (account) =>
+    call: async (account) =>
       truapi.statementStore.createProof({
         productAccountId: account,
         statement: statement(),
@@ -192,7 +199,9 @@ async function checkEverySurface(refused: boolean): Promise<void> {
 }
 
 /// The public key behind a handle, as this product is allowed to see it.
-async function publicKeyOf(account: typeof OWNER_HANDLE): Promise<string> {
+async function publicKeyOf(
+  account: ProductAccountId,
+): Promise<`0x${string}`> {
   const read = await truapi.account.getAccount({ productAccountId: account });
   if (!read.isOk()) {
     throw new Error(

@@ -26,6 +26,7 @@
     "browser-sandbox.ts",
     "../../../../scripts/build-cli-runner.ts",
     "../../../../scripts/cli-runner-package.test.ts",
-    "runner-types.fixture.ts"
+    "runner-types.fixture.ts",
+    "cross-product-*-e2e.ts"
   ]
 }
