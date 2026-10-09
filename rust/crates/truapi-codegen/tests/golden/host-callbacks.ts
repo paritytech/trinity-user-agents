@@ -1177,7 +1177,9 @@ export interface ChatPlatform {
 
   /**
    * Set what a product-scoped room shows below its messages, for the room
-   * as it is now and every later time it is shown.
+   * as it is now and every later time it is shown. The core has already
+   * checked the product created the room. A room the product never set a
+   * footer on shows the text input.
    */
   setChatRoomFooter(
     product: ProductContext,

@@ -38,7 +38,7 @@ protocol ChatExtensionDiscoverContextProtocol {
     func setRoomFooter(
         for chatBot: ChatExtensionBotProtocol,
         roomId: String,
-        hidesTextInput: Bool
+        footer: Chat.RoomFooter
     ) async throws
 
     func subscribeRooms(
@@ -86,7 +86,7 @@ actor ChatExtensionDiscoverContext {
     let messageRepository: AnyDataProviderRepository<Chat.LocalMessage>
     let storageFacade: StorageFacadeProtocol
     let chatRepository: AnyDataProviderRepository<Chat.LocalModel>
-    let roomInputRepository: AnyDataProviderRepository<Chat.RoomInputVisibility>
+    let roomFooterRepository: AnyDataProviderRepository<Chat.RoomFooterUpdate>
     let chatsProviderFactory: ChatContactDataProviderMaking
 
     init(
@@ -110,9 +110,9 @@ actor ChatExtensionDiscoverContext {
             )
         )
 
-        roomInputRepository = AnyDataProviderRepository(
+        roomFooterRepository = AnyDataProviderRepository(
             storageFacade.createRepository(
-                mapper: AnyCoreDataMapper(ChatRoomInputMapper())
+                mapper: AnyCoreDataMapper(ChatRoomFooterMapper())
             )
         )
 
@@ -341,8 +341,7 @@ extension ChatExtensionDiscoverContext: ChatExtensionDiscoverContextProtocol {
         let roomMetadata = Chat.RoomMetadata(
             chatRelativeId: roomId,
             name: name,
-            icon: icon,
-            hidesTextInput: false
+            icon: icon
         )
 
         let chat = Chat.LocalModel.newChatWithRoom(
@@ -359,7 +358,7 @@ extension ChatExtensionDiscoverContext: ChatExtensionDiscoverContextProtocol {
     func setRoomFooter(
         for chatBot: ChatExtensionBotProtocol,
         roomId: String,
-        hidesTextInput: Bool
+        footer: Chat.RoomFooter
     ) async throws {
         let chatId = Chat.Id.chatExtension(chatBot.identifier, roomId: roomId)
 
@@ -371,12 +370,12 @@ extension ChatExtensionDiscoverContext: ChatExtensionDiscoverContextProtocol {
             throw RoomFooterError.unknownRoom(roomId)
         }
 
-        guard (existingChat.roomMetadata?.hidesTextInput ?? false) != hidesTextInput else {
+        guard (existingChat.roomFooter ?? .textInput) != footer else {
             return
         }
 
-        let visibility = Chat.RoomInputVisibility(chatId: chatId, roomId: roomId, hidesTextInput: hidesTextInput)
-        try await roomInputRepository.saveOperation({ [visibility] }, { [] }).asyncExecute()
+        let update = Chat.RoomFooterUpdate(chatId: chatId, footer: footer)
+        try await roomFooterRepository.saveOperation({ [update] }, { [] }).asyncExecute()
     }
 
     func subscribeRooms(

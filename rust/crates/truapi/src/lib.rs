@@ -116,6 +116,8 @@ pub mod latest {
     pub type HostChatRegisterBotError = LatestOf<versioned::chat::HostChatRegisterBotError>;
     /// Request to set what a native chat room shows below its messages.
     pub type HostChatSetRoomFooterRequest = LatestOf<versioned::chat::HostChatSetRoomFooterRequest>;
+    /// Failure to set what a native chat room shows below its messages.
+    pub type HostChatSetRoomFooterError = LatestOf<versioned::chat::HostChatSetRoomFooterError>;
     /// Current native room list for a product.
     pub type HostChatListSubscribeItem = LatestOf<versioned::chat::HostChatListSubscribeItem>;
     /// Native chat message posting request.

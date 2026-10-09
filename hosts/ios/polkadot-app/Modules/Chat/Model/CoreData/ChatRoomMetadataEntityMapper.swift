@@ -12,8 +12,7 @@ final class ChatRoomMetadataEntityMapper {
         return Chat.RoomMetadata(
             chatRelativeId: chatRelativeId,
             name: entity.name,
-            icon: entity.icon,
-            hidesTextInput: entity.hidesTextInput
+            icon: entity.icon
         )
     }
 
@@ -21,6 +20,5 @@ final class ChatRoomMetadataEntityMapper {
         entity.chatRelativeId = model.chatRelativeId
         entity.name = model.name
         entity.icon = model.icon
-        entity.hidesTextInput = model.hidesTextInput
     }
 }

@@ -13,7 +13,7 @@ final class RecordingChatMessaging: ProductChatMessaging, @unchecked Sendable {
     private(set) var sentMessages: [ProductBotMessage] = []
     private(set) var sentRoomIds: [String?] = []
     private(set) var createdRooms: [CreateRoomRequest] = []
-    private(set) var roomFooters: [(roomId: String, hidesTextInput: Bool)] = []
+    private(set) var roomFooters: [(roomId: String, footer: Chat.RoomFooter)] = []
     private(set) var subscribeRoomsCallCount = 0
 
     func sendMessage(_ message: ProductBotMessage, roomId: String?) async throws -> String {
@@ -28,8 +28,8 @@ final class RecordingChatMessaging: ProductChatMessaging, @unchecked Sendable {
         return CreateRoomResult(status: createRoomStatus)
     }
 
-    func setRoomFooter(roomId: String, hidesTextInput: Bool) async throws {
-        roomFooters.append((roomId, hidesTextInput))
+    func setRoomFooter(roomId: String, footer: Chat.RoomFooter) async throws {
+        roomFooters.append((roomId, footer))
     }
 
     func subscribeRooms() async throws -> AnyAsyncSequence<[RoomInfo]> {

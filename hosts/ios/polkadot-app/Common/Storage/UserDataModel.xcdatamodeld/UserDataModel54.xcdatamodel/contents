@@ -21,6 +21,7 @@
         <attribute name="chatType" optional="YES" attributeType="Integer 16" defaultValueString="0" usesScalarValueType="YES"/>
         <attribute name="chatTypeContext" optional="YES" attributeType="String"/>
         <attribute name="createdAt" optional="YES" attributeType="Date" usesScalarValueType="NO"/>
+        <attribute name="footer" optional="YES" attributeType="String"/>
         <attribute name="identifier" optional="YES" attributeType="String"/>
         <relationship name="contact" optional="YES" maxCount="1" deletionRule="Nullify" destinationEntity="CDChatContact" inverseName="chat" inverseEntity="CDChatContact"/>
         <relationship name="lastDisplayMessage" optional="YES" maxCount="1" deletionRule="Cascade" destinationEntity="CDChatMessage" inverseName="lastDisplayMessageChat" inverseEntity="CDChatMessage"/>
@@ -119,7 +120,6 @@
     </entity>
     <entity name="CDChatRoomMetadata" representedClassName="CDChatRoomMetadata" syncable="YES" codeGenerationType="class">
         <attribute name="chatRelativeId" optional="YES" attributeType="String"/>
-        <attribute name="hidesTextInput" attributeType="Boolean" defaultValueString="NO" usesScalarValueType="YES"/>
         <attribute name="icon" optional="YES" attributeType="String"/>
         <attribute name="name" optional="YES" attributeType="String"/>
         <relationship name="chat" optional="YES" maxCount="1" deletionRule="Nullify" destinationEntity="CDChat" inverseName="roomMetadata" inverseEntity="CDChat"/>

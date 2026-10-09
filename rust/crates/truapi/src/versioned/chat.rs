@@ -20,7 +20,7 @@ truapi_macros::versioned_type! {
     pub enum HostChatActionSubscribeError { V1 => v01::GenericError }
     pub enum HostChatSetRoomFooterRequest { V1 => v01::HostChatSetRoomFooterRequest }
     pub enum HostChatSetRoomFooterResponse { V1 }
-    pub enum HostChatSetRoomFooterError { V1 => v01::GenericError }
+    pub enum HostChatSetRoomFooterError { V1 => v01::HostChatSetRoomFooterError }
 }
 
 #[cfg(test)]

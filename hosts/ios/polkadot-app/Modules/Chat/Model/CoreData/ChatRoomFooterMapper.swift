@@ -3,23 +3,22 @@ import Operation_iOS
 import CoreData
 
 extension Chat {
-    struct RoomInputVisibility {
+    struct RoomFooterUpdate {
         let chatId: Chat.Id
-        let roomId: String
-        let hidesTextInput: Bool
+        let footer: Chat.RoomFooter
     }
 }
 
-final class ChatRoomInputMapper {
+final class ChatRoomFooterMapper {
     var entityIdentifierFieldName: String {
         #keyPath(CoreDataEntity.identifier)
     }
 
-    typealias DataProviderModel = Chat.RoomInputVisibility
+    typealias DataProviderModel = Chat.RoomFooterUpdate
     typealias CoreDataEntity = CDChat
 }
 
-extension ChatRoomInputMapper: CoreDataMapperProtocol {
+extension ChatRoomFooterMapper: CoreDataMapperProtocol {
     enum MappingError: Error {
         case missingChat
     }
@@ -31,20 +30,17 @@ extension ChatRoomInputMapper: CoreDataMapperProtocol {
     func populate(
         entity: CoreDataEntity,
         from model: DataProviderModel,
-        using context: NSManagedObjectContext
+        using _: NSManagedObjectContext
     ) throws {
         guard entity.identifier != nil else {
             throw MappingError.missingChat
         }
 
-        let metadataEntity = try entity.roomMetadata ?? context.insertNew(CDChatRoomMetadata.self)
-        metadataEntity.chatRelativeId = metadataEntity.chatRelativeId ?? model.roomId
-        metadataEntity.hidesTextInput = model.hidesTextInput
-        entity.roomMetadata = metadataEntity
+        entity.footer = model.footer.rawValue
     }
 }
 
-extension Chat.RoomInputVisibility: Identifiable {
+extension Chat.RoomFooterUpdate: Identifiable {
     var identifier: String {
         chatId.rawRepresentation
     }

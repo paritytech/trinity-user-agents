@@ -1422,19 +1422,13 @@ impl ChatPlatform for MockPlatform {
     async fn set_chat_room_footer(
         &self,
         _product: &ProductContext,
-        request: latest::HostChatSetRoomFooterRequest,
+        _request: latest::HostChatSetRoomFooterRequest,
     ) -> Result<(), latest::GenericError> {
-        if self
-            .chat_rooms
-            .lock()
-            .expect("chat rooms poisoned")
-            .contains_key(&request.room_id)
-        {
-            Ok(())
-        } else {
-            Err(latest::GenericError {
-                reason: format!("unknown chat room {}", request.room_id),
-            })
+        match &self.config.faults.chat_error {
+            Some(reason) => Err(latest::GenericError {
+                reason: reason.clone(),
+            }),
+            None => Ok(()),
         }
     }
 

@@ -3263,7 +3263,9 @@ pub trait ChatPlatform: Send + Sync {
     ) -> Result<HostChatPostMessageResponse, HostChatPostMessageError>;
 
     /// Set what a product-scoped room shows below its messages, for the room
-    /// as it is now and every later time it is shown.
+    /// as it is now and every later time it is shown. The core has already
+    /// checked the product created the room. A room the product never set a
+    /// footer on shows the text input.
     async fn set_chat_room_footer(
         &self,
         product: &ProductContext,

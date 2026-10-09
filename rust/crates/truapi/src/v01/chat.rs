@@ -65,6 +65,18 @@ pub struct HostChatSetRoomFooterRequest {
     pub footer: ChatRoomFooter,
 }
 
+/// Room footer failure.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+pub enum HostChatSetRoomFooterError {
+    /// The calling product created no room with this id.
+    UnknownRoom,
+    /// Catch-all.
+    Unknown {
+        /// Human-readable reason.
+        reason: String,
+    },
+}
+
 /// Request to register a chat bot.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 pub struct HostChatRegisterBotRequest {

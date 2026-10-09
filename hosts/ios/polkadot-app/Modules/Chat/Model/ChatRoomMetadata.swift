@@ -5,6 +5,11 @@ extension Chat {
         let chatRelativeId: String
         let name: String?
         let icon: String?
-        let hidesTextInput: Bool
+    }
+
+    /// What a room shows below its messages.
+    enum RoomFooter: String {
+        case textInput
+        case empty
     }
 }

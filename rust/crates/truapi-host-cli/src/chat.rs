@@ -216,15 +216,9 @@ impl ChatPlatform for CliChatHost {
     async fn set_chat_room_footer(
         &self,
         _product: &ProductContext,
-        request: HostChatSetRoomFooterRequest,
+        _request: HostChatSetRoomFooterRequest,
     ) -> Result<(), GenericError> {
-        if self.lock().rooms.contains_key(&request.room_id) {
-            Ok(())
-        } else {
-            Err(GenericError {
-                reason: format!("unknown room {:?}", request.room_id),
-            })
-        }
+        Ok(())
     }
 
     fn subscribe_chat_rooms(

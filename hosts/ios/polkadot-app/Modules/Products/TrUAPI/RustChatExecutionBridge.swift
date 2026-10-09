@@ -70,11 +70,11 @@ final class RustChatExecutionBridge: RustProductExecutionBridge, ChatHostBridge,
             throw HostRejection.Rejected(reason: "a chat room needs an id")
         }
 
-        let hidesTextInput = switch footer {
-        case .textInput: false
-        case .empty: true
+        let roomFooter: Chat.RoomFooter = switch footer {
+        case .textInput: .textInput
+        case .empty: .empty
         }
-        try await chatMessaging.setRoomFooter(roomId: roomId, hidesTextInput: hidesTextInput)
+        try await chatMessaging.setRoomFooter(roomId: roomId, footer: roomFooter)
     }
 
     func listRooms() async throws -> [ChatRoom] {
