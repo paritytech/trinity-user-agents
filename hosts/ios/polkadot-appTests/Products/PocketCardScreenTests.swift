@@ -89,18 +89,15 @@ struct PocketCardScreenTests {
         #expect(product.controller.view.frame.height == screenSize.height)
     }
 
-    /// A card that declares its face away must open onto the page alone, not
-    /// show the face and then scroll it off. A screen can be laid out before it
-    /// is given its size, and a face placed then would be lost when it arrives.
+    /// A card whose product publishes its face away, and answers before the
+    /// screen is laid out, must open onto the page alone, not show the face and
+    /// then scroll it off. A screen can be laid out before it is given its
+    /// size, and a face placed then would be lost when it arrives.
     @Test
-    func opensWithTheFaceAwayOnceItHasItsSize() {
+    func opensWithThePublishedFaceAwayOnceItHasItsSize() {
         let product = StubSPAView()
-        let screen = PocketCardScreenViewController(
-            card: loyaltyCard,
-            product: product,
-            surface: PocketCardSurface(),
-            faceShown: false
-        )
+        let screen = PocketCardScreenViewController(card: loyaltyCard, product: product, surface: PocketCardSurface())
+        screen.applyOpeningFace(shown: false)
         screen.view.frame = .zero
         screen.view.layoutIfNeeded()
 
@@ -108,6 +105,32 @@ struct PocketCardScreenTests {
 
         #expect(screen.scrollView?.contentOffset.y == faceHeight)
         #expect(product.controller.view.frame.height == screenSize.height)
+    }
+
+    /// The product's answer can come after the page has asked for the face
+    /// itself, and the page's request is the newer word on where it goes.
+    @Test
+    func ignoresThePublishedFaceOnceThePageHasAsked() {
+        let screen = laidOutScreen(product: StubSPAView())
+        _ = screen.setFaceShown(true, animated: false)
+
+        screen.applyOpeningFace(shown: false)
+
+        #expect(screen.scrollView?.contentOffset.y == 0)
+    }
+
+    /// The product's answer can come after the user has moved the face, and
+    /// must not take it from where they left it.
+    @Test
+    func ignoresThePublishedFaceOnceTheUserHasMovedIt() throws {
+        let screen = laidOutScreen(product: StubSPAView())
+        let scrollView = try #require(screen.scrollView)
+        scrollView.delegate?.scrollViewWillBeginDragging?(scrollView)
+        scrollView.delegate?.scrollViewDidEndDragging?(scrollView, willDecelerate: false)
+
+        screen.applyOpeningFace(shown: false)
+
+        #expect(scrollView.contentOffset.y == 0)
     }
 
     /// The user owns the face from the start of a drag until it stops moving,

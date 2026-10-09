@@ -23,20 +23,19 @@ final class PocketCardScreenViewController: UIViewController {
     private let scrollView = UIScrollView()
     private var productHeight: Constraint?
 
-    private var pendingFaceShown: Bool?
+    private var pendingFaceShown: Bool? = true
     private var userOwnsFace = false
+    private var faceMovedSinceOpening = false
     private var pageMoveTarget: CGPoint?
 
     init(
         card: PocketCardViewModel,
         product: SPAViewProtocol,
-        surface: PocketCardSurface,
-        faceShown: Bool = true
+        surface: PocketCardSurface
     ) {
         self.card = card
         self.product = product
         self.surface = surface
-        pendingFaceShown = faceShown
         let face = UIHostingController(rootView: PocketOpenedCardView(card: card))
         face.view.backgroundColor = .clear
         face.safeAreaRegions = []
@@ -97,13 +96,24 @@ final class PocketCardScreenViewController: UIViewController {
     func setFaceShown(_ shown: Bool, animated: Bool) -> ExpandedCardFaceOutcome {
         guard !userOwnsFace else { return .userMoving }
 
-        if pendingFaceShown == nil {
-            moveFace(shown: shown, animated: animated)
-        } else {
-            pendingFaceShown = shown
-        }
+        faceMovedSinceOpening = true
+        placeFace(shown: shown, animated: animated)
 
         return .applied
+    }
+
+    /// The face the card's product published for its opening, which no longer
+    /// applies once the user or the page has moved the face.
+    func applyOpeningFace(shown: Bool) {
+        guard !faceMovedSinceOpening else { return }
+
+        placeFace(shown: shown, animated: true)
+    }
+
+    /// In a window, or on its way into one. It is presented inside a
+    /// navigation controller, so that is what is being presented.
+    var isOnDisplay: Bool {
+        viewIfLoaded?.window != nil || (navigationController ?? self).isBeingPresented
     }
 }
 
@@ -112,6 +122,7 @@ final class PocketCardScreenViewController: UIViewController {
 extension PocketCardScreenViewController: UIScrollViewDelegate {
     func scrollViewWillBeginDragging(_: UIScrollView) {
         userOwnsFace = true
+        faceMovedSinceOpening = true
         pageMoveTarget = nil
         growProduct()
     }
@@ -189,6 +200,15 @@ private extension PocketCardScreenViewController {
         addChild(child)
         scrollView.addSubview(child.view)
         child.didMove(toParent: self)
+    }
+
+    /// Before the first layout the face is only noted, and placed by that layout.
+    func placeFace(shown: Bool, animated: Bool) {
+        if pendingFaceShown == nil {
+            moveFace(shown: shown, animated: animated)
+        } else {
+            pendingFaceShown = shown
+        }
     }
 
     /// A move made at once, or to where the face already is, gets no

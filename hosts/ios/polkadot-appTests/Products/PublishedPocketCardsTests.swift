@@ -179,6 +179,44 @@ struct PublishedPocketCardsTests {
         #expect(ContinuousClock.now - started < .seconds(5))
     }
 
+    /// The card is shown before its product is asked, so an answer that comes
+    /// once the card is on screen must still fold the face away.
+    @Test @MainActor
+    func foldsTheFaceWhenTheProductAnswersAfterTheCardIsShown() async throws {
+        let screen = PocketCardScreenViewController(
+            card: loyaltyCard,
+            product: StubSPAView(),
+            surface: PocketCardSurface()
+        )
+        let window = showing(screen)
+        let scrollView = try #require(screen.scrollView)
+        let cards = PublishedPocketCards(products: gameResolver(worker: workerPublishing([faceAwayLoyalty])))
+
+        await PocketCardFaceOnOpen.apply(to: screen, for: loyaltyKey, cards: cards)
+
+        #expect(waitUntil(on: screen) { scrollView.contentOffset.y == PocketOpenedCardView.height })
+        withExtendedLifetime(window) {}
+    }
+
+    /// The card can be closed before its product answers, and a screen the
+    /// user has left is not one to move.
+    @Test @MainActor
+    func leavesTheFaceOfACardNoLongerOnDisplay() async {
+        let screen = PocketCardScreenViewController(
+            card: loyaltyCard,
+            product: StubSPAView(),
+            surface: PocketCardSurface()
+        )
+        screen.view.frame = CGRect(origin: .zero, size: screenSize)
+        screen.view.layoutIfNeeded()
+        let cards = PublishedPocketCards(products: gameResolver(worker: workerPublishing([faceAwayLoyalty])))
+
+        await PocketCardFaceOnOpen.apply(to: screen, for: loyaltyKey, cards: cards)
+        screen.view.layoutIfNeeded()
+
+        #expect(screen.scrollView?.contentOffset.y == 0)
+    }
+
     /// A lookup the open gave up on must not keep running after it: a
     /// resolver that honours cancellation is told to stop.
     @Test

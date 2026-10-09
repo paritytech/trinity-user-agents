@@ -18,31 +18,21 @@ enum PocketCardOpening {
     ) {
         guard
             let url = card.key.launchUrl,
-            let page = flowState.hostProvider.page(url: url)
+            let page = flowState.hostProvider.page(url: url),
+            let product = pocket.cardHosts.product(for: card.key, make: { surface in
+                makeView(for: card, page: page, surface: surface, flowState: flowState)
+            })
         else { return }
 
-        Task { @MainActor in
-            await pocket.cardHosts.openIfIdle {
-                await PocketCardFaceOnOpen.faceShown(
-                    for: card.key,
-                    cards: PublishedPocketCards.makeDefault(products: flowState.productResolver)
-                )
-            } then: { faceShown in
-                let product = pocket.cardHosts.product(for: card.key) { surface in
-                    makeView(for: card, page: page, surface: surface, flowState: flowState)
-                }
+        let screen = PocketCardScreenViewController(card: card, product: product.view, surface: product.surface)
+        navigator.presentFullScreen(screen)
 
-                guard let product else { return }
-
-                navigator.presentFullScreen(
-                    PocketCardScreenViewController(
-                        card: card,
-                        product: product.view,
-                        surface: product.surface,
-                        faceShown: faceShown
-                    )
-                )
-            }
+        Task {
+            await PocketCardFaceOnOpen.apply(
+                to: screen,
+                for: card.key,
+                cards: PublishedPocketCards.makeDefault(products: flowState.productResolver)
+            )
         }
     }
 

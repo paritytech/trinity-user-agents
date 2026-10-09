@@ -147,3 +147,9 @@ published widget until the debug card is deleted:
 `faceShown: false` opens the card with its face away; left out or `null`, the
 face shows, and a value that is not a boolean drops all of the product's cards
 while its worker keeps running.
+
+The card opens at once and its product is asked afterwards. An answer that
+arrives before the card is laid out opens it onto the page; a later one folds
+the face away; one that arrives after the user or the page has moved the face is
+ignored. A product that has not answered within five seconds leaves the face
+shown.

@@ -16,11 +16,3 @@ final class PocketCardSurface: ExpandedCardFaceShowing {
         return screen.setFaceShown(shown, animated: true)
     }
 }
-
-private extension PocketCardScreenViewController {
-    /// In a window, or on its way into one. It is presented inside a
-    /// navigation controller, so that is what is being presented.
-    var isOnDisplay: Bool {
-        viewIfLoaded?.window != nil || (navigationController ?? self).isBeingPresented
-    }
-}
