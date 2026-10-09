@@ -40,7 +40,8 @@ pub fn insert(
 }
 
 const COMPARE_AND_SET: &str = "UPDATE durable_tx
-    SET status = :status, success_number = :success_number, success_hash = :success_hash
+    SET status = :status, success_number = :success_number, success_hash = :success_hash,
+        scanned_number = COALESCE(:scanned_number, scanned_number)
     WHERE id = :id AND status = :expected AND tx_hash = :expected_hash
     AND status IN ('PENDING', 'PENDING_SUCCESS')";
 
@@ -56,6 +57,7 @@ pub fn compare_and_set(
         ":status": verdict.status,
         ":success_number": success.map(|block| block.number),
         ":success_hash": success.map(|block| block.hash.0),
+        ":scanned_number": verdict.scanned_to,
         ":id": observed.id.0,
         ":expected": observed.status,
         ":expected_hash": observed.tx_hash.0,
@@ -169,6 +171,7 @@ impl DurableTxEntry {
             mortality: mortality_from_row(row)?,
             status: row.get("status")?,
             success_detected_at: success_from_row(row)?,
+            scanned_to: row.get("scanned_number")?,
         })
     }
 }
@@ -268,6 +271,7 @@ mod tests {
             status,
             success_detected_at,
             failure: None,
+            scanned_to: None,
         }
     }
 
@@ -286,6 +290,7 @@ mod tests {
                 mortality: extrinsic(7, 100, 64).mortality,
                 status: DurableTxStatus::Pending,
                 success_detected_at: None,
+                scanned_to: None,
             })
         );
     }
@@ -387,6 +392,7 @@ mod tests {
                 status: DurableTxStatus::Failure,
                 success_detected_at: None,
                 failure: Some(FailureKind::Expired),
+                scanned_to: None,
             },
         );
         let terminal = DurableTxEntry {
@@ -403,6 +409,30 @@ mod tests {
 
     /// Two domains may pick the same group name, such as an operation id; a
     /// group is only ever read within its domain.
+    /// A watch's verdict knows nothing of what recovery already searched, so
+    /// writing it must not throw that away.
+    #[test]
+    fn a_verdict_without_a_cursor_keeps_the_recorded_one() {
+        let (_dir, db) = open_db();
+        let id = register(&db, None, 7);
+        let observed = read(&db, move |conn| entry(conn, id)).unwrap();
+        let scanned = Verdict {
+            scanned_to: Some(120),
+            ..verdict(DurableTxStatus::Pending, None)
+        };
+        write_verdict(&db, observed, scanned);
+        let scanned_entry = read(&db, move |conn| entry(conn, id)).unwrap();
+
+        write_verdict(
+            &db,
+            scanned_entry,
+            verdict(DurableTxStatus::PendingSuccess, Some(block(125))),
+        );
+
+        let recorded = read(&db, move |conn| entry(conn, id)).unwrap();
+        assert_eq!(recorded.scanned_to, Some(120));
+    }
+
     #[test]
     fn a_group_lists_its_own_domain_in_registration_order() {
         let (_dir, db) = open_db();

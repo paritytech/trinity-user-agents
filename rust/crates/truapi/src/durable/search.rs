@@ -44,8 +44,9 @@ impl PinnedView for PinnedChain<'_> {
 }
 
 /// Looks for `tx_hash` in the canonical blocks `from..=to`, reading hashes and
-/// bodies concurrently. An unreadable block only spoils a proof of absence:
-/// the search goes on, because a hit is evidence whatever was skipped.
+/// bodies concurrently. An unreadable block only ends the unbroken read that
+/// absence is proven over: the search goes on, because a hit is evidence
+/// whatever was skipped.
 pub async fn search_range(
     blocks: &dyn BlockBackend,
     genesis: H256,
@@ -57,10 +58,11 @@ pub async fn search_range(
         .map(|number| read_body(blocks, genesis, number))
         .buffered(SEARCH_CONCURRENCY);
 
-    let mut whole_range_read = true;
+    let mut read_advanced_to = None;
+    let mut unbroken = true;
     while let Some(read) = bodies.next().await {
         let Some((block, body)) = read else {
-            whole_range_read = false;
+            unbroken = false;
             continue;
         };
         if body.contains(&tx_hash) {
@@ -71,8 +73,11 @@ pub async fn search_range(
                 .flatten();
             return SearchResult::Found { block, outcome };
         }
+        if unbroken {
+            read_advanced_to = Some(block.number);
+        }
     }
-    SearchResult::NotFound { whole_range_read }
+    SearchResult::NotFound { read_advanced_to }
 }
 
 /// The canonical block at `number` and the extrinsic hashes in it, or
@@ -128,33 +133,33 @@ mod tests {
         assert_eq!(
             search(&chain, 100, 130),
             SearchResult::NotFound {
-                whole_range_read: true
+                read_advanced_to: Some(130)
             }
         );
     }
 
     #[test]
-    fn an_unreadable_block_hash_spoils_absence() {
+    fn an_unreadable_block_hash_ends_the_proven_absence_before_it() {
         let chain = FakeChain::new(130, 140);
         chain.state().unreadable_heights.insert(120);
 
         assert_eq!(
             search(&chain, 100, 130),
             SearchResult::NotFound {
-                whole_range_read: false
+                read_advanced_to: Some(119)
             }
         );
     }
 
     #[test]
-    fn an_unreadable_body_spoils_absence() {
+    fn an_unreadable_body_ends_the_proven_absence_before_it() {
         let chain = FakeChain::new(130, 140);
         chain.state().unreadable_bodies.insert(block_hash(101));
 
         assert_eq!(
             search(&chain, 100, 130),
             SearchResult::NotFound {
-                whole_range_read: false
+                read_advanced_to: Some(100)
             }
         );
     }

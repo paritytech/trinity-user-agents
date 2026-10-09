@@ -160,17 +160,26 @@ impl DurableTxEngine {
         Ok((LedgerView::new(entries), decidable))
     }
 
-    /// Writes `verdict` unless it restates `tx`. Returns whether it wrote.
+    /// Writes `verdict` unless it restates `tx`. Returns whether it wrote a
+    /// new status or success block; a cursor that only moved is not new
+    /// evidence for another round.
     async fn write_if_changed(&self, tx: &DurableTxEntry, verdict: Verdict) -> bool {
-        if verdict.status == tx.status && verdict.success_detected_at == tx.success_detected_at {
+        let scan_moved = verdict
+            .scanned_to
+            .is_some_and(|scanned| Some(scanned) != tx.scanned_to);
+        let restated =
+            verdict.status == tx.status && verdict.success_detected_at == tx.success_detected_at;
+        if restated && !scan_moved {
             return false;
         }
-        self.write_verdict(tx, verdict)
+        let wrote = self
+            .write_verdict(tx, verdict)
             .await
             .unwrap_or_else(|error| {
                 warn!(id = tx.id.0, %error, "durable verdict write failed");
                 false
-            })
+            });
+        wrote && !restated
     }
 
     /// Whether each recorded success block is still canonical. A failed read
@@ -567,6 +576,26 @@ mod tests {
         assert_eq!(status(&engine.db, id), DurableTxStatus::Failure);
     }
 
+    /// Recovery runs on every finalized head while a transaction stays
+    /// pending. Blocks searched on an earlier pass are finalized and cannot
+    /// change, so the next pass reads only the ones finalized since.
+    #[test]
+    fn a_later_pass_reads_only_the_blocks_finalized_since() {
+        let chain = FakeChain::new(120, 140);
+        let (_dir, engine, _timer) = engine_with(
+            &chain,
+            DurableRegistry::new().with_domain(test_domain(), Arc::new(Unobservable(GENESIS))),
+        );
+        insert(&engine.db, &test_domain(), extrinsic(1, 100, 64));
+        block_on(engine.run_pass());
+        chain.state().finalized = 123;
+        let reads_before = chain.state().body_reads;
+
+        block_on(engine.run_pass());
+
+        assert_eq!(chain.state().body_reads - reads_before, 3);
+    }
+
     fn record_success(db: &Db, id: DurableTxId, at: HashAndNumber) {
         block_on(db.write(move |tx| {
             let observed = dao::entry(tx, id)?.unwrap();
@@ -577,6 +606,7 @@ mod tests {
                     status: DurableTxStatus::PendingSuccess,
                     success_detected_at: Some(at),
                     failure: None,
+                    scanned_to: None,
                 },
             )?;
             Ok(())

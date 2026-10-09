@@ -165,7 +165,7 @@ mod tests {
     }
 
     const ABSENT: SearchResult = SearchResult::NotFound {
-        whole_range_read: true,
+        read_advanced_to: Some(DEATH),
     };
 
     #[test]
@@ -214,7 +214,7 @@ mod tests {
                 oracle,
                 DEATH + 1,
                 SearchResult::NotFound {
-                    whole_range_read: false
+                    read_advanced_to: None
                 }
             ),
             DurableTxStatus::Pending

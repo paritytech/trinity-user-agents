@@ -203,6 +203,7 @@ impl DurableTxEngine {
                 status: DurableTxStatus::Pending,
                 success_detected_at: None,
                 failure: None,
+                scanned_to: None,
             };
             self.propose(attempt, demoted).await;
         }
@@ -242,6 +243,7 @@ fn success(status: DurableTxStatus, block: HashAndNumber) -> Verdict {
         status,
         success_detected_at: Some(block),
         failure: None,
+        scanned_to: None,
     }
 }
 
@@ -250,6 +252,7 @@ fn failure(kind: FailureKind) -> Verdict {
         status: DurableTxStatus::Failure,
         success_detected_at: None,
         failure: Some(kind),
+        scanned_to: None,
     }
 }
 

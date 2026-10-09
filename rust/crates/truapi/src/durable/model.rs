@@ -97,6 +97,10 @@ pub struct DurableTxEntry {
     pub status: DurableTxStatus,
     /// The block its success was seen at, while that is still the evidence.
     pub success_detected_at: Option<HashAndNumber>,
+    /// Every block from birth through this one was searched and does not
+    /// include the attempt. Only finalized blocks are searched, so no reorg
+    /// can undo it.
+    pub scanned_to: Option<u64>,
 }
 
 /// A transaction's id and status, as a group lists them.
@@ -118,4 +122,7 @@ pub struct Verdict {
     pub success_detected_at: Option<HashAndNumber>,
     /// Why it failed, for a [`DurableTxStatus::Failure`].
     pub failure: Option<FailureKind>,
+    /// How far the search has now read without finding the attempt. `None`
+    /// keeps the recorded [`DurableTxEntry::scanned_to`].
+    pub scanned_to: Option<u64>,
 }

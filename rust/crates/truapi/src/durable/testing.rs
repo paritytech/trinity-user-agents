@@ -69,6 +69,7 @@ pub fn entry(id: DurableTxId, birth: u64, period: u64) -> DurableTxEntry {
         mortality: Mortality::new(block(birth), period).unwrap(),
         status: DurableTxStatus::Pending,
         success_detected_at: None,
+        scanned_to: None,
     }
 }
 
