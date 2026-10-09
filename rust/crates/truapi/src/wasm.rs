@@ -1102,8 +1102,7 @@ fn connection_adapters_from_js(
         contacts_platform,
         status_host,
         pocket_platform,
-        media_platform,
-        ..
+        game_platform,
     } = wasm_platform(Arc::new(JsBridge::from_js(callbacks)?));
     Ok(Some(crate::host_core::ConnectionAdapters {
         platform,
@@ -1113,7 +1112,8 @@ fn connection_adapters_from_js(
         // One-use grants belong to this execution, not the shared host.
         permission_grants: Arc::default(),
         pocket_platform,
-        media_platform,
+        game_platform,
+        expanded_card: None,
         chat: Arc::new(crate::runtime::ActionChannel::chat()),
         renderer: Arc::new(crate::runtime::ActionChannel::renderer()),
     }))
