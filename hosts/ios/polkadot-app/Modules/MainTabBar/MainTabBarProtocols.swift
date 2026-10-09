@@ -104,6 +104,7 @@ extension TabBarItem {
 @MainActor
 protocol SPAHosting: AnyObject {
     func openProduct(page: ProductPage)
+    func presentProduct(page: ProductPage)
     func minimizeSPA()
     func closeSPA(tabId: UUID)
 }

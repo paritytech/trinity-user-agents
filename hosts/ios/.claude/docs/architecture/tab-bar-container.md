@@ -38,7 +38,7 @@ The container mounts **either a tab or an SPA browser tab** — `TabBarContentSe
 
 ## Fold State
 
-`.shown` is the full capsule; `.folded` is a leading-edge sliver, tappable to restore. `TabBarVisibilityPolicy.state(isTabRoot:derived:override:)` resolves in order **under `FEATURE_PRODUCTS` (DevCI, Nightly)**:
+`.shown` is the full capsule; `.folded` is a leading-edge sliver, tappable to restore. `TabBarVisibilityPolicy.state(isTabRoot:derived:override:)` resolves in order:
 
 1. Tab root → `.shown`. **A tab root can never fold.**
 2. A recorded per-screen user override (`.shown` / `.folded` / `.none`) wins.
@@ -46,15 +46,11 @@ The container mounts **either a tab or an SPA browser tab** — `TabBarContentSe
 
 Overrides live in `screenOverrides`, weakly keyed on `navigationScreen`, so folding one pushed screen does not leak to another.
 
-**Under `!FEATURE_PRODUCTS` (Release)**, steps 2 and 3 never run — every non-root screen resolves to `.hidden` regardless of `override` or `foldDerived`.
-
 Nothing hides the bar programmatically — presented view controllers cover it structurally. Both LocalAuth screens are transparent by design, so the bar stays *visible* behind re-auth but untappable, since the presentation owns the touch.
 
 ## Bar Visibility
 
-**Under `FEATURE_PRODUCTS`, the bar folds when *any* controller at or below the target sets `hidesBottomBarWhenPushed`, not just the top one.** `UITabBarController` behaved this way and screens rely on it. `TabBarHiddenPolicy.deriveFoldState(in:showing:)` scans `stack[...targetIndex].dropFirst()`; the root is excluded, so a tab root setting the flag does not fold.
-
-**Under `!FEATURE_PRODUCTS`, every non-root screen is `.hidden` regardless of the `hidesBottomBarWhenPushed` flag**, so this scan has no effect there.
+**The bar folds when *any* controller at or below the target sets `hidesBottomBarWhenPushed`, not just the top one.** `UITabBarController` behaved this way and screens rely on it. `TabBarHiddenPolicy.deriveFoldState(in:showing:)` scans `stack[...targetIndex].dropFirst()`; the root is excluded, so a tab root setting the flag does not fold.
 
 `stackAfterCancelledPop(stack:staying:)` covers the window where UIKit has already mutated `viewControllers` but the transition is reversing — a cancelled pop restores the *staying* screen's state, not the target's.
 
@@ -71,9 +67,7 @@ Split because they change at different rates — the nav controller is stable fo
 
 `occupiedHeight` is `DSTabBarView.preferredHeight()` on a tab root, the raw bottom safe-area inset elsewhere; `contentClearance` is `occupiedHeight` minus that inset, floored at 0. Neither reads fold state — both depend only on `isTabRoot`.
 
-**Under `FEATURE_PRODUCTS`, clearance is contributed only on a tab root**, which is narrower than the bar being `.shown`. Off the root a screen can show the full capsule — no override, no fold requested — while reserving zero space, so the bar floats over its bottom content and swallows touches in the capsule rect. Pushed screens should either set `hidesBottomBarWhenPushed` or keep interactive content clear of the bottom.
-
-**Under `!FEATURE_PRODUCTS`, non-root screens are always `.hidden`, so clearance ⟺ tab root ⟺ `.shown`** — the bar cannot float over pushed screen content or swallow touches, and the advice to pushed screens does not apply. `contributesClearance(isTabRoot:)` itself is unchanged and correct in both arms.
+**Clearance is contributed only on a tab root**, which is narrower than the bar being `.shown`. Off the root a screen can show the full capsule — no override, no fold requested — while reserving zero space, so the bar floats over its bottom content and swallows touches in the capsule rect. Pushed screens should either set `hidesBottomBarWhenPushed` or keep interactive content clear of the bottom.
 
 ### `apply` vs `applyLayout`
 
@@ -88,7 +82,7 @@ Split because they change at different rates — the nav controller is stable fo
 
 ## Top Status Strip
 
-A permanent 20pt strip at the top of `MainTabBarViewController` holds one `ChainStatusRingView` per chain for the same three `ChainConnectionTarget`s (chat, bulletin, assethub). There is no visible chain name. **The strip is informational only**: no tap handling, no fold, no hide, constant height, and it ships in both `FEATURE_PRODUCTS` arms.
+A permanent 20pt strip at the top of `MainTabBarViewController` holds one `ChainStatusRingView` per chain for the same three `ChainConnectionTarget`s (chat, bulletin, assethub). There is no visible chain name. **The strip is informational only**: no tap handling, no fold, no hide, constant height.
 
 The chain name and state survive only as the ring's accessibility label, which the ring owns.
 
@@ -156,7 +150,7 @@ Flow of one open:
 1. `SPABrowserCoordinator.findOrCreateTab(for:)` matches on `dotDomain`; an existing tab with a different `page` is navigated in place rather than duplicated.
 2. `SPAControllerPool` vends (and caches) one `SPAViewController` per tab id, all sharing a single lazily created `SPAFlowState`.
 3. `container.mountSPA(_:for:)` sets `selection = .spa(id)` and cross-fades it in.
-4. `chromeController.apply(.spa(controller))` — `TabBarChromeContext.spa` marks it `isTabRoot: false, foldDerived: .folded`. **Under `FEATURE_PRODUCTS`, an SPA behaves like a pushed screen: the bar folds and contributes no clearance.** Under `!FEATURE_PRODUCTS` this resolves to `.hidden` rather than folded; the path is unreachable there anyway, since `openProduct` routes to `presentProduct` (a modal `.pageSheet`) instead of `mountSPA`, as the `#if !FEATURE_PRODUCTS` block in `MainTabBarViewController` describes.
+4. `chromeController.apply(.spa(controller))` — `TabBarChromeContext.spa` marks it `isTabRoot: false, foldDerived: .folded`. **An SPA behaves like a pushed screen: the bar folds and contributes no clearance.**
 
 `TabBarContainer.select(index:)` re-mounts even when the index is unchanged if the current selection is an SPA, and reselection of the already-selected tab index is treated as a real switch in that case (`handleSelection`). `minimizeSPA()` returns to `currentIndex`; `closeSPA` drops the pooled controller and the stored tab, then minimizes only if that tab was the mounted one.
 

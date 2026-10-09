@@ -4,8 +4,8 @@ import UIKit
 import WebKit
 import PolkadotUI
 
-/// Layout for builds without the browse tab: no floating top pills and no chrome collapse, so the
-/// browser tab layout is just the web view pinned edge to edge.
+/// Layout for a chromeless product screen: no floating top pills and no chrome collapse, so the
+/// layout is just the web view pinned edge to edge.
 final class SPASimplifiedViewLayout: UIView {
     let webView: WKWebView
 

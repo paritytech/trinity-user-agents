@@ -9,17 +9,10 @@ final class MainTabBarPresenter {
 
     /// `.spaTabs` is dropped by the chrome while no apps are open; it is declared here so its
     /// position next to `.scan` is owned by the slot list rather than by insertion order.
-    #if FEATURE_PRODUCTS
-        let slots: [TabBarSlot] = [
-            .tab(.chat), .tab(.wallet), .action(.scan), .action(.spaTabs),
-            .tab(.browse), .tab(.settings)
-        ]
-    #else
-        let slots: [TabBarSlot] = [
-            .tab(.chat), .tab(.wallet), .action(.scan), .action(.spaTabs), .tab(.settings),
-            .action(.connectionStatus)
-        ]
-    #endif
+    let slots: [TabBarSlot] = [
+        .tab(.chat), .tab(.wallet), .action(.scan), .action(.spaTabs),
+        .tab(.browse), .tab(.settings)
+    ]
 
     private let chipViewModelFactory: SPATabChipViewModelFactory
     private var settingsBadge: TabBarBadge?

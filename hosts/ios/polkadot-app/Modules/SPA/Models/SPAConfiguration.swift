@@ -19,6 +19,9 @@ struct SPAConfiguration {
     /// Which of the product's executables this screen serves. A Pocket card
     /// opens the widget, everything else the app.
     let executable: ExecutableKind
+    /// Whether the screen carries the browser chrome: the floating top pills, chrome collapse and
+    /// minimize. A product presented as a modal has none of them.
+    let usesBrowserChrome: Bool
 
     init(
         title: String?,
@@ -28,7 +31,8 @@ struct SPAConfiguration {
         contentSource: SPAContentSource = .dotNs,
         isBrowserTab: Bool = false,
         browserTabId: UUID? = nil,
-        executable: ExecutableKind = .app
+        executable: ExecutableKind = .app,
+        usesBrowserChrome: Bool = true
     ) {
         self.title = title
         self.isRootScreen = isRootScreen
@@ -38,6 +42,7 @@ struct SPAConfiguration {
         self.isBrowserTab = isBrowserTab
         self.browserTabId = browserTabId
         self.executable = executable
+        self.usesBrowserChrome = usesBrowserChrome
     }
 }
 
