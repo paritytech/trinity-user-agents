@@ -1210,6 +1210,7 @@ type ProductSubtreeRequest = Arc<
 /// Host UI should use this when it needs to inspect or update core-owned state
 /// without owning a product frame endpoint.
 pub struct HostAdmin {
+    #[cfg(not(target_arch = "wasm32"))]
     product_runtime: Arc<dyn truapi::api::Permissions>,
     connection: Arc<ProductConnection>,
     host_session: Arc<dyn HostSession>,
@@ -1254,6 +1255,7 @@ impl HostAdmin {
         ));
         Self {
             connection: product_runtime.connection().clone(),
+            #[cfg(not(target_arch = "wasm32"))]
             product_runtime,
             host_session,
             product_subtree: Arc::new(move |product_id, timeout_ms| {
