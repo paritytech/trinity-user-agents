@@ -41,7 +41,6 @@ enum MainTabBarViewFactory {
             hostProvider: spaFlowState.hostProvider
         )
 
-        let mnemonicBackupHelper = MnemonicBackupHelper()
         let browserCoordinator = createBrowserCoordinator(flowStateProvider: flowStateProvider)
         let interactor = MainTabBarInteractor(
             serviceCoordinator: serviceCoordinator,
@@ -49,7 +48,6 @@ enum MainTabBarViewFactory {
             userNotificationService: userNotificationService,
             urlHandlingService: urlHandler,
             deferredLinkHandler: deepLinkHandling,
-            mnemonicBackupHelper: mnemonicBackupHelper,
             browserCoordinator: browserCoordinator,
             productGamePills: RootDependencyLocator.getDependency()
         )

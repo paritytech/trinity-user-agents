@@ -15,7 +15,6 @@ final class MainTabBarPresenter {
     ]
 
     private let chipViewModelFactory: SPATabChipViewModelFactory
-    private var settingsBadge: TabBarBadge?
     private var chainStatusRows: [ChainConnectionStatusViewModel] = []
 
     init(
@@ -36,7 +35,6 @@ extension MainTabBarPresenter: MainTabBarPresenterProtocol {
 
     func configureViews() {
         view?.show(slots: slots, selecting: .chat)
-        view?.setBadge(settingsBadge, for: .settings)
     }
 
     func didRequestContentPanel(for action: TabBarAction) {
@@ -62,15 +60,6 @@ extension MainTabBarPresenter: MainTabBarPresenterProtocol {
 }
 
 extension MainTabBarPresenter: MainTabBarInteractorOutputProtocol {
-    func didUpdateSettingsAttention(isVisible: Bool) {
-        let nextBadge = isVisible ? TabBarBadge.attention : nil
-        guard settingsBadge != nextBadge else {
-            return
-        }
-        settingsBadge = nextBadge
-        view?.setBadge(settingsBadge, for: .settings)
-    }
-
     func didReceiveWidget(
         configuration: any HashableContentConfiguration,
         for extensionId: ChatExtension.Id

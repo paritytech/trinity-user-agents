@@ -7,7 +7,6 @@ import Products
 protocol MainTabBarViewProtocol: ControllerBackedProtocol, AppWidgetManaging {
     func show(slots: [TabBarSlot], selecting tab: TabBarItem)
     func select(tab: TabBarItem)
-    func setBadge(_ badge: TabBarBadge?, for tab: TabBarItem)
     func setLabels(visible: Bool)
     func showSPATabs(_ viewModels: [SPATabChipViewModel])
     func showTabBarPanelContent(_ configuration: (any HashableContentConfiguration)?, for action: TabBarAction)
@@ -34,7 +33,6 @@ protocol MainTabBarInteractorInputProtocol: AnyObject {
 
 @MainActor
 protocol MainTabBarInteractorOutputProtocol: AnyObject {
-    func didUpdateSettingsAttention(isVisible: Bool)
     func didReceiveWidget(
         configuration: any HashableContentConfiguration,
         for extensionId: ChatExtension.Id
@@ -83,10 +81,6 @@ enum TabBarItem: String, CaseIterable {
         case .settings: String(localized: .tabSettings)
         }
     }
-}
-
-enum TabBarBadge: Equatable {
-    case attention
 }
 
 extension TabBarItem {
