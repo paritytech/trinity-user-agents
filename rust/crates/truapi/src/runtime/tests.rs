@@ -7941,6 +7941,74 @@ fn the_pairing_authority_refuses_a_foreign_ring_vrf_key_without_a_grant() {
     );
 }
 
+/// The pairing authority holds a grantee's proof context to the same rule as
+/// the signing authority: a third product's context needs that product's own
+/// `context` grant.
+///
+/// Driven at the authority, as `sso_responder` would. The admitted case is
+/// asserted as "not refused by the gate", since the stub has no AutoSigning key
+/// or ring to finish the proof with; what it pins is that the context guard
+/// let it through.
+#[test]
+fn the_pairing_authority_admits_a_context_only_its_product_granted() {
+    let prove_in = |context_grants: &str| {
+        let (host_config, product) = runtime_config("dim2next.dot");
+        let platform = stub_platform();
+        cache_manifest(&platform, "peopl.dot", r#"{"dim2next":["context"]}"#, 0);
+        cache_manifest(&platform, "dim2.dot", context_grants, 0);
+        let platform: Arc<dyn Platform> = platform;
+        let services = RuntimeServices::new(
+            platform.clone(),
+            host_config.host.host_info.clone(),
+            host_config.people_chain_genesis_hash,
+            host_config.bulletin_chain_genesis_hash,
+            host_config.asset_hub_chain_genesis_hash,
+            test_spawner(),
+        );
+        let pairing_host = PairingHost::new(services.clone(), host_config);
+        let adapters = crate::host_core::ConnectionAdapters::from_services(&services);
+        let host =
+            ProductRuntimeHost::from_services(services, adapters, pairing_host.clone(), product);
+        install_pairing_session(&host, session_info());
+        let session = pairing_host
+            .current_session()
+            .expect("the pairing host has an active session");
+        let mut cx = CallContext::default();
+        cx.set_timeout(Duration::from_millis(200));
+        futures::executor::block_on(ProductAuthority::create_proof(
+            &*pairing_host,
+            &cx,
+            &session,
+            crate::host_internal::sso_messages::ProductRequest {
+                calling_product_id: "dim2next.dot".to_string(),
+                payload: v01::HostAccountCreateProofRequest {
+                    key_handle: v01::ProductAccountId {
+                        dot_ns_identifier: "peopl.dot".to_string(),
+                        derivation_index: v01::DerivationIndex::Index(0),
+                    },
+                    context: v01::ProductProofContext {
+                        product_id: "dim2.dot".to_string(),
+                        suffix: v01::DerivationIndex::Index(0),
+                    },
+                    ring_location: ring_location_fixture(),
+                    message: b"prove me".to_vec(),
+                },
+            },
+        ))
+    };
+
+    assert_ne!(
+        prove_in(r#"{"dim2next":["context"]}"#).err(),
+        Some(RingVrfError::NotAllowlisted),
+        "the context product's grant admits its context"
+    );
+    assert_eq!(
+        prove_in(r#"{"other":["context"]}"#).err(),
+        Some(RingVrfError::NotAllowlisted),
+        "a grant to another product admits nothing"
+    );
+}
+
 /// The grant lookup obeys the caller's deadline.
 ///
 /// It can reach dotNS on the Asset Hub, which is several sequential chain

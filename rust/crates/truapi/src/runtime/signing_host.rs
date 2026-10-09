@@ -1228,16 +1228,19 @@ impl ProductAuthority for SigningHost {
             Err(RingVrfError::NotAllowlisted) => None,
             Err(err) => return Err(err),
         };
-        // The grant admits the caller's own context and the granting product's,
-        // and no one else's, exactly as on `create_proof`. The alias this returns
-        // and the alias a proof attests are one VRF evaluation, so guarding only
-        // the proof would leave the same bytes reachable through this read.
+        // The context is held to the same rule as on `create_proof`. The alias
+        // this returns and the alias a proof attests are one VRF evaluation, so
+        // guarding only the proof would leave the same bytes reachable through
+        // this read.
         let key_handle = match granted {
             Some((key_handle, access)) => {
-                crate::runtime::product_manifest::require_own_context(
+                crate::runtime::product_manifest::require_context_access(
+                    &self.services,
+                    self.platform.as_ref(),
                     &access,
                     &request.payload.context,
-                )?;
+                )
+                .await?;
                 key_handle
             }
             None => {
@@ -1303,16 +1306,19 @@ impl ProductAuthority for SigningHost {
         let (key_handle, access) = self
             .require_ring_vrf_key_access(&request.calling_product_id, &request.payload.key_handle)
             .await?;
-        // A grant lets the caller act with the owner's key in the caller's own
-        // context. It does not let it choose whose pseudonym to mint: the
-        // contextual alias is a function of (owner key, context), so an
-        // unconstrained context would let a grantee produce the alias the owner
-        // presents to a third product that granted nothing. That third party
-        // cannot consent here and is not a party to the grant.
+        // A grant lets the caller act with the owner's key. It does not let it
+        // choose whose pseudonym to mint: the contextual alias is a function of
+        // (owner key, context), so the product the context names has to consent
+        // too, through its own manifest, unless it is the caller or the owner.
         //
-        // The owner's own calls are unaffected; a cross-product caller is held to
-        // its own context or the granting product's.
-        crate::runtime::product_manifest::require_own_context(&access, &request.payload.context)?;
+        // The owner's own calls are unaffected.
+        crate::runtime::product_manifest::require_context_access(
+            &self.services,
+            self.platform.as_ref(),
+            &access,
+            &request.payload.context,
+        )
+        .await?;
         let vrf = vrf::load().await?;
         let entropy = self
             .resolve_ring_vrf_key_for_ring(
@@ -2123,10 +2129,11 @@ mod tests {
     /// The contextual alias is a function of (owner key, context), so with the
     /// context unconstrained a `context` grant from `peopl.dot` let `dim2.dot`
     /// produce the alias `peopl.dot` presents to `bank.dot`, a third product
-    /// that granted nothing, is not a party to the grant, and cannot consent
-    /// here. The grant is to act in the grantee's own context or the granting
-    /// product's, not in anyone else's: a context naming the owner is the grant
-    /// read literally, and is the one a chain-wide proof context resolves to.
+    /// that granted nothing and is not a party to the grant. The grant is to act
+    /// in the grantee's own context or the granting product's: a context naming
+    /// the owner is the grant read literally, and is the one a chain-wide proof
+    /// context resolves to. Any other product's context needs that product's own
+    /// grant, covered by `a_product_may_grant_a_grantee_its_context`.
     ///
     /// The owner's own calls are untouched: minting your own aliases in any
     /// context is what the context parameter is for.
@@ -2222,6 +2229,225 @@ mod tests {
             "a grant published on one network must not reach the pseudonym a \
              namesake presents on another"
         );
+    }
+
+    /// `dim2next.dot`'s proof and alias read with `peopl.dot`'s key in
+    /// `context`, after seeding `peopl.dot`'s manifest with `owner_grants` and
+    /// `dim2`'s with `context_grants`.
+    ///
+    /// `context_grants` of `None` caches the chain's answer that `dim2`
+    /// publishes no manifest, so no case reaches for a chain the stub lacks.
+    fn third_product_context(
+        owner_grants: &str,
+        context_grants: Option<&str>,
+        context: v01::ProductProofContext,
+        seed: impl FnOnce(&StubPlatform),
+    ) -> (
+        Result<v01::HostAccountCreateProofResponse, RingVrfError>,
+        Result<v01::ContextualAlias, RingVrfError>,
+    ) {
+        let platform = Arc::new(StubPlatform::default());
+        cache_grant(&platform, "peopl.dot", owner_grants);
+        match context_grants {
+            Some(grants) => cache_grant(&platform, "dim2.dot", grants),
+            None => futures::executor::block_on(
+                <StubPlatform as crate::platform::CoreStorage>::write_core_storage(
+                    &platform,
+                    crate::runtime::product_manifest::manifest_cache_key("dim2.dot"),
+                    crate::runtime::product_manifest::encode_cached_root_manifest(
+                        None,
+                        crate::unix_time::current_unix_secs(),
+                    ),
+                ),
+            )
+            .expect("stub core storage accepts the entry"),
+        }
+        seed(&platform);
+        let (_services, authority) =
+            signing_runtime_with_ring_resolver(platform.clone(), full_person_ring_resolver());
+        futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
+            .expect("activation succeeds");
+        let session = authority.current_session().expect("active session");
+        let ring = full_person_ring_location();
+        register_full_person_key(&authority, &session, &ring);
+
+        let proof = futures::executor::block_on(authority.create_proof(
+            &CallContext::default(),
+            &session,
+            ProductRequest {
+                calling_product_id: "dim2next.dot".to_string(),
+                payload: v01::HostAccountCreateProofRequest {
+                    key_handle: full_person_key_handle(),
+                    context: context.clone(),
+                    ring_location: ring.clone(),
+                    message: b"m".to_vec(),
+                },
+            },
+        ));
+        let alias = futures::executor::block_on(authority.account_alias(
+            &CallContext::default(),
+            &session,
+            ProductRequest {
+                calling_product_id: "dim2next.dot".to_string(),
+                payload: v01::HostAccountGetAliasRequest {
+                    key_handle: full_person_key_handle(),
+                    context,
+                    ring_location: ring,
+                },
+            },
+        ));
+        (proof, alias)
+    }
+
+    fn context_of(product_id: &str) -> v01::ProductProofContext {
+        v01::ProductProofContext {
+            product_id: product_id.to_string(),
+            suffix: v01::DerivationIndex::Index(0),
+        }
+    }
+
+    const OWNER_GRANTS_DIM2NEXT: &str = r#"{"dim2next":["context"]}"#;
+
+    /// The product a context names consents to its use through its own manifest.
+    ///
+    /// paritytech/platform-bugs#99: `dim2next` proves with `peopl`'s key in
+    /// `dim2`'s context, which the TURN issuer requires. `peopl` grants the key
+    /// and `dim2` grants the context, so both parties to the pseudonym have
+    /// consented. The read is held to the same rule, since the alias and the
+    /// proof are one VRF evaluation.
+    #[test]
+    fn a_product_may_grant_a_grantee_its_context() {
+        for (grants, context) in [
+            (r#"{"dim2next":["context"]}"#, "dim2.dot"),
+            (r#"{"dim2next":["all"]}"#, "dim2.dot"),
+            (r#"{"dim2next":["context"]}"#, "app.dim2.dot"),
+            (r#"{"dim2next":["context"]}"#, "DIM2.DOT"),
+        ] {
+            let (proof, alias) = third_product_context(
+                OWNER_GRANTS_DIM2NEXT,
+                Some(grants),
+                context_of(context),
+                |_| {},
+            );
+            assert!(
+                proof.is_ok(),
+                "{grants} admits a proof in {context}: {proof:?}"
+            );
+            assert!(
+                alias.is_ok(),
+                "{grants} admits the read in {context}: {alias:?}"
+            );
+        }
+    }
+
+    /// Everything a context grant does not cover stays refused, on both calls.
+    #[test]
+    fn a_context_the_naming_product_did_not_grant_is_refused() {
+        let cases: [(&str, Option<&str>, &str, &str); 5] = [
+            (
+                OWNER_GRANTS_DIM2NEXT,
+                None,
+                "dim2.dot",
+                "a product publishing no manifest granted nothing",
+            ),
+            (
+                OWNER_GRANTS_DIM2NEXT,
+                Some(r#"{}"#),
+                "dim2.dot",
+                "a manifest naming no one granted nothing",
+            ),
+            (
+                OWNER_GRANTS_DIM2NEXT,
+                Some(r#"{"other":["context"]}"#),
+                "dim2.dot",
+                "a grant to another product is not a grant to the caller",
+            ),
+            (
+                OWNER_GRANTS_DIM2NEXT,
+                Some(r#"{"dim2next":["storage"]}"#),
+                "dim2.dot",
+                "a narrower scope does not imply context",
+            ),
+            (
+                // `dim2.dot`'s manifest is cached by bare label, so it is the
+                // document a `.paseo` context would read: a namesake's grant.
+                OWNER_GRANTS_DIM2NEXT,
+                Some(r#"{"dim2next":["context"]}"#),
+                "dim2.paseo",
+                "a grant must not reach the pseudonym on another network",
+            ),
+        ];
+        for (owner, grants, context, why) in cases {
+            let (proof, alias) = third_product_context(owner, grants, context_of(context), |_| {});
+            assert_eq!(proof.err(), Some(RingVrfError::NotAllowlisted), "proof: {why}");
+            assert_eq!(alias.err(), Some(RingVrfError::NotAllowlisted), "read: {why}");
+        }
+    }
+
+    /// A context grant does not reach the development context.
+    ///
+    /// `raw:` names no product, so there is no manifest to consent with, and its
+    /// bytes are whatever the caller chose, which could be any product's
+    /// context.
+    #[test]
+    fn a_context_grant_does_not_reach_the_raw_context() {
+        let (proof, alias) = third_product_context(
+            OWNER_GRANTS_DIM2NEXT,
+            Some(r#"{"dim2next":["all"]}"#),
+            v01::ProductProofContext {
+                product_id: "raw:".to_string(),
+                suffix: v01::DerivationIndex::Raw([0x11; 32]),
+            },
+            |_| {},
+        );
+        assert_eq!(proof.err(), Some(RingVrfError::NotAllowlisted));
+        assert_eq!(alias.err(), Some(RingVrfError::NotAllowlisted));
+    }
+
+    /// A context grant does not open the owner's key.
+    ///
+    /// The two grants answer different questions: `dim2` consents to its
+    /// pseudonym, `peopl` to its key. Without the owner's grant the gate refuses
+    /// before the context is looked at, and the read falls back to the prompt.
+    #[test]
+    fn a_context_grant_without_the_owners_key_grant_is_refused() {
+        let (proof, alias) = third_product_context(
+            r#"{"someone-else":["context"]}"#,
+            Some(r#"{"dim2next":["context"]}"#),
+            context_of("dim2.dot"),
+            |_| {},
+        );
+        assert_eq!(proof.err(), Some(RingVrfError::NotAllowlisted));
+        assert_eq!(
+            alias.err(),
+            Some(RingVrfError::Rejected),
+            "the ungranted read takes the prompt path, which the stub declines"
+        );
+    }
+
+    /// A refusal the user stored for the pair overrides the context product's
+    /// grant, as it overrides the owner's.
+    #[test]
+    fn a_stored_refusal_overrides_a_context_grant() {
+        let (proof, alias) = third_product_context(
+            OWNER_GRANTS_DIM2NEXT,
+            Some(r#"{"dim2next":["context"]}"#),
+            context_of("dim2.dot"),
+            |platform| deny_account_access(platform, "dim2next.dot", "dim2.dot"),
+        );
+        assert_eq!(proof.err(), Some(RingVrfError::NotAllowlisted));
+        assert_eq!(alias.err(), Some(RingVrfError::NotAllowlisted));
+    }
+
+    /// The caller's own context and the owner's need no third manifest.
+    #[test]
+    fn own_and_owner_contexts_need_no_context_grant() {
+        for context in ["dim2next.dot", "peopl.dot"] {
+            let (proof, alias) =
+                third_product_context(OWNER_GRANTS_DIM2NEXT, None, context_of(context), |_| {});
+            assert!(proof.is_ok(), "proof in {context}: {proof:?}");
+            assert!(alias.is_ok(), "read in {context}: {alias:?}");
+        }
     }
 
     /// An owner listing its own keys is not asked to consent to its own account.
@@ -2444,13 +2670,14 @@ mod tests {
         }
     }
 
-    /// The identity read is held to the caller's own context, like the proof.
+    /// The identity read is held to the same contexts as the proof.
     ///
     /// The alias and the proof come out of one VRF evaluation, so a guard on
     /// `create_proof` alone leaves the same bytes reachable through
     /// `account_alias`: a grantee could read the alias the owner presents to a
     /// third product that granted nothing. Both calls refuse it, and both admit
-    /// the granting product's own context.
+    /// the granting product's own context. A third product's own grant is
+    /// covered by `a_product_may_grant_a_grantee_its_context`.
     #[test]
     fn a_grantee_cannot_read_the_owners_alias_in_a_third_partys_context() {
         let platform = Arc::new(StubPlatform::default());
