@@ -74,6 +74,17 @@ pub trait HostCallbacks: Send + Sync {
         request: v01::HostDevicePermissionRequest,
     ) -> Result<DevicePermissionStatus, HostRejection>;
 
+    /// Show (`true`) or hide (`false`) the face above this execution's
+    /// expanded card.
+    ///
+    /// Answer `NotPresented` when the execution is not under its card and
+    /// `UserMoving` while the user drags it. Return without waiting for the
+    /// animation to finish.
+    async fn set_expanded_card_face_shown(
+        &self,
+        shown: bool,
+    ) -> Result<crate::platform::ExpandedCardFaceOutcome, HostRejection>;
+
     /// Prompt the user for a remote permission `product` requested.
     async fn remote_permission(
         &self,
@@ -324,4 +335,19 @@ pub trait NativeContactsCallbacks: Send + Sync {
         &self,
         product_id: String,
     ) -> Result<crate::platform::HostContactPick, HostRejection>;
+}
+
+/// Native form of [`crate::platform::ScannerPlatform`], whose rules it follows.
+/// Installed with [`NativeTrUApiHostRuntime::set_scanner_callbacks`].
+#[uniffi::export(rust, foreign)]
+#[async_trait::async_trait]
+pub trait NativeScannerCallbacks: Send + Sync {
+    /// Open the viewfinder on behalf of `product_id`'s execution of
+    /// `execution_kind` and report how it ended.
+    async fn scan_code(
+        &self,
+        product_id: String,
+        execution_kind: crate::platform::ProductExecutionKind,
+        request: truapi::latest::HostScannerScanRequest,
+    ) -> Result<crate::platform::HostScan, HostRejection>;
 }

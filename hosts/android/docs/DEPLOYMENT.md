@@ -245,7 +245,7 @@ The mandatory set, in the order Gradle reports them when absent:
 `APPLICATION_ID`, `APPLICATION_NAME`, `CONTACT_EMAIL`, `LOG_COLLECTION_EMAIL`,
 `PRIVACY_POLICY_URL`, `TERMS_OF_USE_URL`, `SENTRY_ORG`, `SENTRY_PROJECT`, `CURRENCY_SYMBOL`,
 `FIAT_SYMBOL`, `NIGHTLY_FUNDING_MNEMONIC`, `GOOGLE_OAUTH_ID`, `FIRESTORE_DATABASE_ID`,
-`GOOGLE_PROJECT_ID`.
+`GOOGLE_PROJECT_ID`, `IOS_BUNDLE_ID`.
 
 In GitHub Actions, non-sensitive values from this section can be mapped from GitHub
 variables while credentials and mnemonics must be mapped from GitHub secrets.
@@ -292,6 +292,7 @@ or a `BuildConfig` field. Mandatory ones have no fallback; optional ones list th
 | `DEBUG_APPLICATION_NAME`    | `app` debug build             | no       | `[Debug] <APPLICATION_NAME>`   | Debug launcher name                                                          |
 | `NIGHTLY_APPLICATION_NAME`  | `app` nightly build           | no       | `<APPLICATION_NAME>`           | Nightly launcher name                                                        |
 | `SAFETYNET_APPLICATION_NAME`| `app` safetynet build         | no       | `[Safetynet] <APPLICATION_NAME>` | Safetynet launcher name                                                    |
+| `IOS_BUNDLE_ID`             | `tools/push-notifications/impl` | yes    | —                              | Bundle ID of the iOS app, sent as the APNs topic for chat pushes to iOS peers; debug appends `.develop`, safetynet `.safety` |
 | `PRIVACY_POLICY_URL`        | `app`                         | yes      | —                              | Privacy-policy destination                                                   |
 | `TERMS_OF_USE_URL`          | `app`                         | yes      | —                              | Terms-of-use destination                                                     |
 | `LOG_COLLECTION_EMAIL`      | `app`                         | yes      | —                              | Recipient address for the in-app "collect logs" debug share action          |
@@ -521,6 +522,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       APPLICATION_ID: ${{ vars.APPLICATION_ID }}
+      IOS_BUNDLE_ID: ${{ vars.IOS_BUNDLE_ID }}
       APPLICATION_NAME: ${{ vars.APPLICATION_NAME }}
       DEBUG_APPLICATION_NAME: ${{ vars.DEBUG_APPLICATION_NAME }}
       NIGHTLY_APPLICATION_NAME: ${{ vars.NIGHTLY_APPLICATION_NAME }}

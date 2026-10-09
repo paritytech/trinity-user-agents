@@ -1,4 +1,5 @@
 import Foundation
+import PolkadotUI
 import Products
 import SubstrateSdk
 import UIKitExt
@@ -15,6 +16,7 @@ import UIKitExt
 final class ProductBot: ChatExtensionBot {
     let product: Product
     private let runtime: ChatRuntimeProtocol
+    private let resolveImage: WidgetImageResolver
     private let logger: LoggerProtocol
 
     private var initTask: Task<Void, Never>?
@@ -22,16 +24,19 @@ final class ProductBot: ChatExtensionBot {
     lazy var messageDecoder = ProductMessageDecoder(
         runtime: runtime,
         tokenResolver: WidgetDesignTokenResolver(),
+        resolveImage: resolveImage,
         logger: logger
     )
 
     init(
         product: Product,
         runtime: ChatRuntimeProtocol,
+        resolveImage: WidgetImageResolver,
         logger: LoggerProtocol = Logger.shared
     ) {
         self.product = product
         self.runtime = runtime
+        self.resolveImage = resolveImage
         self.logger = logger
     }
 
@@ -51,7 +56,7 @@ final class ProductBot: ChatExtensionBot {
     ) async -> ChatExtension.ProcessingResult {
         do {
             try await runtime.onUserMessage(text: text, roomId: message.chatId.roomId)
-        } catch ChatRustRuntime.ChatSeamError.notStarted {
+        } catch TrUAPIChatHandler.ChatSeamError.notStarted {
             // Driven before `start` opened the execution — an ordering issue, not
             // a product failure.
             logger.debug("User message not forwarded: the runtime has not started")

@@ -254,7 +254,6 @@ mod tests {
         closed: std::sync::Arc<Mutex<bool>>,
     }
 
-    #[async_trait::async_trait]
     impl TransportSenderT for FakeSender {
         type Error = FakeError;
 
@@ -273,7 +272,6 @@ mod tests {
     /// Sender whose `send` always fails, modelling a dead socket.
     struct FailingSender;
 
-    #[async_trait::async_trait]
     impl TransportSenderT for FailingSender {
         type Error = FakeError;
 
@@ -290,7 +288,6 @@ mod tests {
     /// request and the bounded buffer fills.
     struct StalledSender;
 
-    #[async_trait::async_trait]
     impl TransportSenderT for StalledSender {
         type Error = FakeError;
 
@@ -307,7 +304,6 @@ mod tests {
         frames: mpsc::UnboundedReceiver<Result<ReceivedMessage, FakeError>>,
     }
 
-    #[async_trait::async_trait]
     impl TransportReceiverT for FakeReceiver {
         type Error = FakeError;
 
@@ -411,7 +407,6 @@ mod tests {
     /// the connection and `receive()` neither returns nor errors, ever.
     struct SilentReceiver;
 
-    #[async_trait::async_trait]
     impl TransportReceiverT for SilentReceiver {
         type Error = FakeError;
 

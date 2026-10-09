@@ -36,6 +36,7 @@ export const CALLBACK_NAMES = [
   "read",
   "write",
   "clear",
+  "scanCode",
   "confirmPermission",
   "confirmUserAction",
 ] as const;
@@ -284,6 +285,17 @@ function pocketRawCallbacks(
   };
 }
 
+function scannerRawCallbacks(
+  bridge: WorkerCallbackBridge,
+): Required<Pick<RawCallbacks, "scanCode">> {
+  return {
+    scanCode: (product, request) =>
+      bridge.callbackRequest("scanCode", [product, request]) as ReturnType<
+        Required<RawCallbacks>["scanCode"]
+      >,
+  };
+}
+
 /**
  * Optional capabilities the main-thread host actually serves. A
  * capability left out here is not proxied into the worker, so the
@@ -300,6 +312,8 @@ export interface OptionalCapabilities {
   permissionStatus?: boolean;
   /** Whether the host serves this capability. */
   pocket?: boolean;
+  /** Whether the host serves this capability. */
+  scanner?: boolean;
 }
 
 export function createWorkerRawCallbacks(
@@ -318,6 +332,8 @@ export function createWorkerRawCallbacks(
   if (capabilities.permissionStatus)
     Object.assign(callbacks, permissionStatusRawCallbacks(bridge));
   if (capabilities.pocket) Object.assign(callbacks, pocketRawCallbacks(bridge));
+  if (capabilities.scanner)
+    Object.assign(callbacks, scannerRawCallbacks(bridge));
   return callbacks;
 }
 

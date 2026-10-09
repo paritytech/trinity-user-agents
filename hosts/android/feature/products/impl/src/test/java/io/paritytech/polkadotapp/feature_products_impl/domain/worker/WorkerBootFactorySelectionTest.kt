@@ -11,6 +11,7 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.worker.TrUA
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.worker.TrUAPIWorkerSupervisor
 import io.paritytech.polkadotapp.test_shared.whenever
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
@@ -22,6 +23,7 @@ import org.junit.Test
 import org.mockito.Mockito.mock
 import org.mockito.Mockito.verifyNoInteractions
 
+@OptIn(ExperimentalCoroutinesApi::class)
 class WorkerBootFactorySelectionTest {
     private val productId = ProductId.fromStoredValue("chat.dot")
     private val botApi = BindableProductsBotApi(mock(), mock())

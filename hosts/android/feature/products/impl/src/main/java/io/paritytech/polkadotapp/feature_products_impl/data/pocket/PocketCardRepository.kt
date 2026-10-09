@@ -6,13 +6,14 @@ import io.paritytech.polkadotapp.database.model.PocketCardLocal
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCard
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardId
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardKey
-import io.paritytech.polkadotapp.feature_products_api.model.JsWidget
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.CachedPocketCard
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
-import kotlinx.serialization.json.Json
 import timber.log.Timber
+import uniffi.truapi.RendererNode
+import uniffi.truapi.decodeRendererNode
+import uniffi.truapi.encodeRendererNode
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -28,17 +29,15 @@ interface PocketCardRepository {
     /** Whether a card was held under [key]. */
     suspend fun delete(key: PocketCardKey): Boolean
 
-    suspend fun face(key: PocketCardKey): JsWidget?
+    suspend fun face(key: PocketCardKey): RendererNode?
 
-    suspend fun saveFace(key: PocketCardKey, face: JsWidget)
+    suspend fun saveFace(key: PocketCardKey, face: RendererNode)
 }
 
 @Singleton
 class RealPocketCardRepository @Inject constructor(
     private val dao: PocketCardDao,
 ) : PocketCardRepository {
-    private val json = Json { ignoreUnknownKeys = true }
-
     override fun observeCards(): Flow<List<PocketCard>> =
         dao.observeAll().map { cards -> cards.map { it.toDomain() } }
 
@@ -58,19 +57,19 @@ class RealPocketCardRepository @Inject constructor(
      * keeps its place and waits for its product to draw again, where a failure here would take down
      * the home tab, the core's card list and the deeplink handler alike, none of which catch.
      */
-    override suspend fun face(key: PocketCardKey): JsWidget? {
+    override suspend fun face(key: PocketCardKey): RendererNode? {
         val stored = dao.getFace(key.productId.value, key.cardId.value) ?: return null
 
-        return runCatching { json.decodeFromString(JsWidget.serializer(), stored) }
+        return runCatching { decodeRendererNode(stored) }
             .onFailure { Timber.w(it, "pocket: the stored face for %s no longer decodes", key.cardId.value) }
             .getOrNull()
     }
 
-    override suspend fun saveFace(key: PocketCardKey, face: JsWidget) = dao.insertFace(
+    override suspend fun saveFace(key: PocketCardKey, face: RendererNode) = dao.insertFace(
         PocketCardFaceLocal(
             productId = key.productId.value,
             cardId = key.cardId.value,
-            faceJson = json.encodeToString(JsWidget.serializer(), face),
+            face = encodeRendererNode(face),
         ),
     )
 

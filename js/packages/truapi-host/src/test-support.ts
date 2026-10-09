@@ -140,6 +140,16 @@ export function makeHostCallbacks(
           },
         }
       : {}),
+    // And for the scanner: the default fixture is a host with no viewfinder,
+    // so scans are answered `Unsupported`, as on a web host.
+    ...(overrides.scanner
+      ? {
+          scanner: {
+            scanCode: async () => ({ tag: "Dismissed" as const }),
+            ...overrides.scanner,
+          },
+        }
+      : {}),
   };
 }
 

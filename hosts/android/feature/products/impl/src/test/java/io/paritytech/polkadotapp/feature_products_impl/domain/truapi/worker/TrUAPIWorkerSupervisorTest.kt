@@ -114,7 +114,7 @@ class TrUAPIWorkerSupervisorTest {
 
     private fun bridge(): ProductTrUAPIHostBridge = mockk {
         val execution = mockk<TrUAPIProductExecution>().also { executions += it }
-        coEvery { attach(any(), any(), any(), any(), any(), any(), any()) } answers {
+        coEvery { attach(any(), any(), any(), any(), any(), any(), any(), any()) } answers {
             chatBridges += arg<ChatHostBridge?>(5)
             Result.success(execution)
         }
