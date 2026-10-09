@@ -351,7 +351,24 @@ type Pointer = {
 A wipe changes the descriptor and never the pointer, so a reader that holds a pointer follows its stack through every
 wipe. A stack's identity is its key when it is signed, and otherwise its URL, compared after RFC 3986 normalisation
 (sections 6.2.2 and 6.2.3) without its fragment. An operator that wants mirrors puts them behind its one URL, for
-example with a CDN. A follow-up RFC on importing stacks defines how a pointer travels as a link or a QR code.
+example with a CDN.
+
+An operator SHOULD serve each format at a predictable path on its domain: `/.well-known/trinity-stack.json` for `$v: 1`
+and `/.well-known/trinity-stack.v2.json` for `$v: 2`, and so on. A pointer may still name any URL that follows the
+format rules.
+
+A pointer travels as a link, which is also what a QR code carries:
+
+```
+polkadotapp://stack?key=0x3b6a27bcceb6a42d62a3a8d02a6f0d73653215771de243a63ac048a18b59da29&url=https%3A%2F%2Fpreviewnet.substrate.dev%2F.well-known%2Ftrinity-stack.json
+```
+
+- The query has a `url` parameter, percent-encoded, and a `key` parameter when the descriptor is signed. Readers MUST
+  ignore other parameters.
+- Every reader reads the same pointer from the query, whatever scheme or domain the link arrives on. An app may use its
+  own scheme or an https link to its own domain.
+- A signed pointer is about 200 characters, small enough for a QR code. A tool takes the same link as its stack
+  argument.
 
 A signed descriptor travels inside an envelope, so readers verify the exact bytes the operator signed and never
 re-encode JSON to check a signature:
@@ -408,6 +425,10 @@ A tool reads a stack from a pointer or a local file, and runs the checks under [
 has no identity and no rollback protection, and is trusted as far as its source. Every reader implementation, in the
 host core or in a tool, MUST pass the conformance vectors once they are published, so all of them accept and refuse the
 same descriptors. [Appendix B](#appendix-b-changes-per-tool) lists what changes in each tool today.
+
+A reference implementation, which is informative, will come with the conformance vectors: a TypeScript library and CLI
+that build a descriptor from one model, render each format from it, validate, sign, and print a pointer's link and QR
+code, and a Rust parser in the host core. Operators and tools may use it or their own.
 
 ## Drawbacks
 
