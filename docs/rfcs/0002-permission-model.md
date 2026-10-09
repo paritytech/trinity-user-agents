@@ -24,6 +24,24 @@ One-use grants stay in memory for the product execution and are consumed by
 the operation that needs them. Requesting permission upfront does not consume
 the grant. Product-facing permission responses remain boolean.
 
+Native host settings read the canonical core store, not a second permission
+repository. The host-internal native runtime enumerates existing encoded core
+keys, so decisions saved before this integration remain visible. Legacy host
+records are imported only where no canonical record exists; import check and
+write share the same mutation fence as prompts and settings. A reset still
+means “ask again”, but retains a tombstone that prevents an obsolete legacy
+grant from being imported after revocation or restart. Permission scope remains
+product plus request, independent of the active wallet account.
+
+A native settings edit supersedes pending prompt results across executions of
+the affected product. Revocation/reset also clears their one-use grants and
+closes their live native executions; shells dispose the associated WebViews and
+device resources rather than automatically reconnecting the old execution.
+Unrelated products keep running, and a deliberate fresh execution observes the
+new decision. Enumeration and persistence failures are errors shown in settings,
+not an empty grant list or a successful revocation. Multi-domain denials remain
+bundle-specific and are not flattened into stronger per-domain denials.
+
 The Host API currently has two underdefined permission calls — `host_device_permission` and `remote_permission` — that lack coverage for several device capabilities (NFC, Clipboard, OpenUrl, Biometrics), do not support batched remote-permission requests, and have no specified lifecycle for when prompts occur or how decisions are persisted. This RFC defines the complete set of device and remote permissions, updates the `remote_permission` signature to accept a batch, specifies lasting and one-use permission decisions, and establishes that business methods (`host_sign_raw`, `host_sign_payload`, `host_create_transaction`, `host_create_transaction_with_non_product_account`, `remote_statement_store_submit`, `remote_preimage_submit`, `remote_chain_transaction_broadcast`) implicitly trigger permission prompts if permission has not yet been granted.
 
 ## Motivation

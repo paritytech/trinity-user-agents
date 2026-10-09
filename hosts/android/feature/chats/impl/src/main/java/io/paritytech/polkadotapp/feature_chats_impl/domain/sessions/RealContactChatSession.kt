@@ -15,6 +15,7 @@ import io.paritytech.polkadotapp.feature_chats_impl.data.notifications.ChatNotif
 import io.paritytech.polkadotapp.feature_chats_impl.data.notifications.isDisplayableAsPush
 import io.paritytech.polkadotapp.feature_chats_impl.data.repository.ChatMessageRepository
 import io.paritytech.polkadotapp.feature_chats_impl.domain.ChatEngine
+import io.paritytech.polkadotapp.feature_chats_impl.domain.ChatMessagePlacement
 import io.paritytech.polkadotapp.feature_chats_impl.domain.ChatMessageSaveConflictStrategy
 import io.paritytech.polkadotapp.feature_chats_impl.domain.usecase.SyncContactUsernameUseCase
 import io.paritytech.polkadotapp.feature_chats_impl.utils.ChatPushTokenUtils
@@ -188,7 +189,7 @@ class RealContactChatSession(
     private suspend fun handleNewMessagesReceived(source: CommunicationSession, messages: List<EncodedMessage>) {
         Timber.d("handleNewMessagesReceived: ${messages.size} messages from ${contact.username}")
 
-        incomingChatMessageProcessor.processRaw(source.remoteAccount.accountId, messages)
+        incomingChatMessageProcessor.processRaw(source.remoteAccount.accountId, messages, ChatMessagePlacement.Latest)
     }
 
     private suspend fun tryReparseUnsupportedMessages() {

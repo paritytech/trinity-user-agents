@@ -1,6 +1,7 @@
 import Foundation
 import Testing
 import ChainRegistry
+import Products
 import SubstrateSdk
 import TrUAPIHost
 @testable import polkadot_app
@@ -15,7 +16,7 @@ private func makeHostDefaults() -> UserDefaults {
 
 private func makeHostBridge(
     chainRegistry: ChainRegistryProtocol = MockChainRegistry(),
-    confirmationPresenter: MockConfirmationPresenter = MockConfirmationPresenter()
+    confirmationPresenter: any TrUAPIConfirmationPresenting = MockConfirmationPresenter()
 ) -> RustHostRuntimeBridge {
     let chainConnections = TrUAPIChainConnectionPool(
         engineResolver: { genesisHash in
@@ -112,6 +113,18 @@ struct RustHostRuntimeBridgeTests {
         #expect(result == decision)
         #expect(presenter.receivedReview == review)
         #expect(presenter.receivedRequesterName == "host")
+    }
+
+    @MainActor
+    @Test func unsupportedProfileDisclosurePropagatesWithoutDenial() async throws {
+        let presenter = TrUAPIConfirmationPresenter(routerFacade: ProductRoutersFacade.worker())
+        let bridge = makeHostBridge(confirmationPresenter: presenter)
+        let review = UserConfirmationReview.profileDisclosure(ProfileDisclosureReview(productId: "caller.dot"))
+
+        await #expect(throws: HostRejection.self) {
+            try await bridge.confirmPermission(review: review)
+        }
+        #expect(try await bridge.confirmUserAction(review: review) == false)
     }
 
     /// Core storage is the real host-global backend: writes round-trip.

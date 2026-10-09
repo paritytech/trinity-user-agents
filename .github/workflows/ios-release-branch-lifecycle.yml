@@ -12,6 +12,12 @@ permissions:
   pull-requests: write
 
 jobs:
+  # Deliberately every `release/` branch, app and package alike. The repository
+  # deletes merged branches itself, and this is the only thing that cleans up one
+  # whose PR was closed without merging. A leftover branch is not just untidy:
+  # release-ios.yml and ios-prepare-pipeline.yml both fail outright when the branch
+  # they are about to create already exists, so leaving it turns re-cutting the same
+  # version into a failure rather than a retry.
   cleanup_release_branch:
     name: Delete release branch on PR close without merge
     runs-on: ubuntu-latest
@@ -39,10 +45,13 @@ jobs:
               }
             }
 
+  # Only an app release carries a source branch to go back to. The script already
+  # requires the source_ref metadata, so this narrows the same rule to the branch
+  # name and keeps a package release PR from reaching the job at all.
   create_backport_pr:
     name: Create backport PR to source branch
     runs-on: ubuntu-latest
-    if: startsWith(github.head_ref, 'release/') && github.event.pull_request.merged == true
+    if: startsWith(github.head_ref, 'release/release-') && github.event.pull_request.merged == true
     steps:
       - name: Extract source_ref from PR body and create backport PR
         uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0

@@ -22,6 +22,7 @@ final class RustHostRuntimeBridge: HostBridge, @unchecked Sendable {
     private let chainConnections: TrUAPIChainConnecting
     private let confirmationPresenter: TrUAPIConfirmationPresenting
     private let chatFiles: NativeChatFilesHost
+    private let workerManager: (any TrUAPIWorkerManaging)?
     private let logger: LoggerProtocol
     private weak var runtime: TrUAPIHostRuntime?
 
@@ -31,12 +32,14 @@ final class RustHostRuntimeBridge: HostBridge, @unchecked Sendable {
         chainConnections: TrUAPIChainConnecting,
         confirmationPresenter: TrUAPIConfirmationPresenting,
         chatFiles: NativeChatFilesHost,
+        workerManager: (any TrUAPIWorkerManaging)? = nil,
         logger: LoggerProtocol
     ) {
         self.chainRegistry = chainRegistry
         self.chainConnections = chainConnections
         self.confirmationPresenter = confirmationPresenter
         self.chatFiles = chatFiles
+        self.workerManager = workerManager
         self.logger = logger
         self.coreStorage = CoreStorageBackend(storage: coreStorage)
         storage = EmptyHostStorageBackend()
@@ -49,8 +52,21 @@ final class RustHostRuntimeBridge: HostBridge, @unchecked Sendable {
         self.runtime = runtime
     }
 
+    func permissionAuthorizationsChanged(productId: String) {
+        NotificationCenter.default.post(
+            name: .productPermissionAuthorizationsChanged, object: productId
+        )
+    }
+
     func onCoreLog(marker: String, detail: String) {
         logger.debug("[truapi:host:\(marker)] \(detail)")
+    }
+
+    /// Demand is runtime-wide, so it arrives here rather than on a product's
+    /// own bridge, and can arrive re-entrantly from inside `acquireWorker`,
+    /// the manager hands the transition off rather than acting on it here.
+    func workerDemandChanged(productId: String, transition: WorkerTransition) {
+        workerManager?.demandChanged(productId: productId, transition: transition)
     }
 
     func navigateTo(url: String) async throws {
@@ -125,7 +141,7 @@ final class RustHostRuntimeBridge: HostBridge, @unchecked Sendable {
     }
 
     func confirmPermission(review: UserConfirmationReview) async throws -> TrUAPIPermissionDecision {
-        await confirmationPresenter.confirmPermission(review: review, from: "host")
+        try await confirmationPresenter.confirmPermission(review: review, from: "host")
     }
 
     func identityUsernameCandidates(username: String, peopleChainGenesisHash: Data) async throws -> [Data] {

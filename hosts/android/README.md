@@ -1,5 +1,5 @@
 > [!WARNING]
-> This is an experimental proof-of-concept: a prototype and reference implementation developed and published by Parity. This open source code is provided for research, experimentation, and developer education only. It has not been audited, is actively experimental, and may contain bugs, vulnerabilities, or incomplete features. The app is a self-custodial wallet that can hold real assets — use at your own risk.
+> This is an experimental proof-of-concept: a prototype and reference implementation developed and published by Parity. This open source code is provided for research, experimentation, and developer education only. It has not been audited, is actively experimental, and may contain bugs, vulnerabilities, or incomplete features. The app is a self-custodial wallet that can hold real assets — use at your own risk and obtain legal advice as appropriate — DYOR.
 >
 > Parity does not deploy or operate this code and does not run any service behind it; it may update the code based on community feedback. If you experience problems with an app that was built from or distributed using this code, contact the party who built and distributed it, not Parity.
 
@@ -78,6 +78,7 @@ sdk.dir=/path/to/android-sdk
 
 # Build identity (public values, compiled into the APK)
 APPLICATION_ID=com.example.polkadot
+IOS_BUNDLE_ID=com.example.polkadot
 APPLICATION_NAME=Polkadot
 PRIVACY_POLICY_URL=https://example.com/privacy
 TERMS_OF_USE_URL=https://example.com/terms
@@ -162,6 +163,7 @@ Polkadot Android is a self-custodial superapp: your keys are created on your pho
 - It does **not** act as a custodian of your keys or your money — the keys are stored only on your device, and nobody (including the developers) can freeze, recover, or move your funds. If you lose your device and have no cloud/written backup, the associated accounts are gone.
 - It does **not** route your chats and calls through company messaging servers — messages travel through the public chain, calls go peer-to-peer.
 - It is **not** a production-hardened product — treat it as a reference implementation (see the warning at the top).
+- Seity profile-disclosure consent has no native prompt yet. Its permission callback returns an error, leaving an unanswered authorization `NotDetermined` rather than recording a user denial. Single-action confirmation still fails closed.
 
 ### Under the hood
 

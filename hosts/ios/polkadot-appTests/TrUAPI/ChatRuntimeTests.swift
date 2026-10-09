@@ -56,21 +56,34 @@ private final class FakeWorkerManager: ProductWorkerManaging, @unchecked Sendabl
     }
 }
 
+private let chatProduct: ProductId = "test.dot"
+
 private func makeRustRuntime(
-    execution: MockProductExecution = MockProductExecution(),
-    chainConnections: MockChainConnections = MockChainConnections(),
-    engine: MockJSEngine,
+    workers: StubWorkerManager,
     renderStartupWindow: Duration = .seconds(5)
-) -> ChatRustRuntime {
-    ChatRustRuntime(
-        productUrl: URL(string: "product://test.dot/index.js")!,
-        makeExecutionModel: { _ in
-            makeExecutionModel(execution: execution, chainConnections: chainConnections)
-        },
-        routers: ProductRoutersFacade.worker(),
-        engineFactory: { engine },
+) -> TrUAPIChatHandler {
+    TrUAPIChatHandler(
+        productId: chatProduct,
+        workers: workers,
         renderStartupWindow: renderStartupWindow
     )
+}
+
+/// Whether a start has returned, so a test can tell waiting from finishing.
+private actor StartCompletion {
+    private(set) var happened = false
+
+    func mark() {
+        happened = true
+    }
+}
+
+/// A manager whose worker is already up, which is what chat finds whenever
+/// something else, a card on screen, got there first.
+private func workersRunning(_ execution: MockProductExecution) -> StubWorkerManager {
+    let workers = StubWorkerManager()
+    workers.publish([chatProduct: execution])
+    return workers
 }
 
 // MARK: - Tests
@@ -113,50 +126,128 @@ struct ChatRuntimeTests {
         #expect(manager.activeCount == 0)
     }
 
-    /// The execution is opened in `start`, so a runtime that never started owns
-    /// nothing to close — and must not evict the live one from the core's registry.
-    @Test func rustRuntimeDisposeBeforeStartTearsDownNothing() async {
+    /// Chat is one holder of the product's worker, not its owner. A chat
+    /// session that closed while a card still shows the same product must hand
+    /// its reference back and leave the worker running; closing the execution
+    /// here would take the card's face down with it.
+    @Test func rustRuntimeReleasesTheWorkerInsteadOfClosingIt() async throws {
         let execution = MockProductExecution()
-        let chainConnections = MockChainConnections()
-        let runtime = makeRustRuntime(
-            execution: execution,
-            chainConnections: chainConnections,
-            engine: MockJSEngine()
-        )
-
-        await runtime.dispose()
-        await runtime.dispose()
-
-        #expect(execution.stopWsBridgeCallCount == 0)
-        #expect(execution.closeCallCount == 0)
-        #expect(chainConnections.closeAllCallCount == 0)
-    }
-
-    @Test func rustRuntimeDisposeAfterStartTearsDownExecutionOnce() async throws {
-        let execution = MockProductExecution()
-        let chainConnections = MockChainConnections()
-        let runtime = makeRustRuntime(
-            execution: execution,
-            chainConnections: chainConnections,
-            engine: MockJSEngine()
-        )
+        let workers = workersRunning(execution)
+        let runtime = makeRustRuntime(workers: workers)
 
         try await runtime.start(messagingSupport: .init(bot: nil, context: nil))
+        #expect(workers.references.acquired == [chatProduct])
+
         await runtime.dispose()
         await runtime.dispose()
 
-        #expect(execution.stopWsBridgeCallCount == 1)
-        #expect(execution.closeCallCount == 1)
-        #expect(chainConnections.closeAllCallCount == 1)
+        #expect(workers.references.released == [chatProduct])
+        #expect(execution.closeCallCount == 0)
+        #expect(execution.stopWsBridgeCallCount == 0)
+    }
+
+    /// A runtime that never started took no reference, so it must give none
+    /// back: an unpaired release drops the count of a worker somebody else is
+    /// holding, and the core stops it under them.
+    @Test func rustRuntimeDisposeBeforeStartTakesAndGivesBackNothing() async {
+        let workers = StubWorkerManager()
+        let runtime = makeRustRuntime(workers: workers)
+
+        await runtime.dispose()
+        await runtime.dispose()
+
+        #expect(workers.references.acquired.isEmpty)
+        #expect(workers.references.released.isEmpty)
+    }
+
+    /// Every product repository emission builds fresh bots, and the store keeps
+    /// the existing one and drops the duplicate. The duplicate's runtime never
+    /// started, but its dispose runs, and the chat surface it would clear is the
+    /// one the live bot is bound to: the product stops receiving chat while its
+    /// bot looks healthy.
+    @Test func rustRuntimeDisposeLeavesAnotherRuntimesBindingAlone() async throws {
+        let workers = workersRunning(MockProductExecution())
+        let live = makeRustRuntime(workers: workers)
+        let duplicate = makeRustRuntime(workers: workers)
+
+        try await live.start(messagingSupport: .init(bot: nil, context: nil))
+        await duplicate.dispose()
+
+        #expect(workers.context(of: chatProduct).chat.currentMessaging != nil)
+
+        await live.dispose()
+    }
+
+    /// The bot posts its welcome message the moment `start` returns, so `start`
+    /// has to wait for the worker rather than return onto an execution that is
+    /// not there yet.
+    @Test func rustRuntimeStartWaitsForTheWorkerToComeUp() async throws {
+        let workers = StubWorkerManager()
+        let execution = MockProductExecution()
+        let runtime = makeRustRuntime(workers: workers)
+
+        // Completion is observed rather than inferred from cancellation: a
+        // start that returned at once is not cancelled either, so a runtime
+        // that stopped waiting would pass that test.
+        let returned = StartCompletion()
+        let start = Task {
+            try await runtime.start(messagingSupport: .init(bot: nil, context: nil))
+            await returned.mark()
+        }
+        try await Task.sleep(for: .milliseconds(60))
+        #expect(await returned.happened == false)
+
+        workers.publish([chatProduct: execution])
+        try await start.value
+        #expect(await returned.happened)
+
+        try await runtime.onUserMessage(text: "hi", roomId: "room")
+        #expect(execution.publishedChatActions.count == 1)
+
+        await runtime.dispose()
+    }
+
+    /// A chat session can close while the worker is still coming up. Giving the
+    /// request back there would reach the core before the ask registered it,
+    /// dropping the count of a worker another holder is drawing from.
+    @Test func rustRuntimeDoesNotGiveBackARequestItHasNotTakenYet() async throws {
+        let workers = StubWorkerManager(startupWindow: .milliseconds(100))
+        workers.holdsTheAsk = true
+        let runtime = makeRustRuntime(workers: workers)
+
+        var asks = workers.asks.makeAsyncIterator()
+        let starting = Task { try await runtime.start(messagingSupport: .init(bot: nil, context: nil)) }
+        await asks.next()
+
+        await runtime.dispose()
+        workers.openTheAsk()
+        _ = try? await starting.value
+
+        #expect(workers.references.log == ["acquire \(chatProduct)", "release \(chatProduct)"])
+    }
+
+    /// A worker that never comes up must not leave the session holding a
+    /// reference: the core would keep counting it and never stop the worker it
+    /// eventually builds.
+    @Test func rustRuntimeGivesTheReferenceBackWhenNoWorkerComes() async throws {
+        let workers = StubWorkerManager(startupWindow: .milliseconds(50))
+        let runtime = makeRustRuntime(workers: workers)
+
+        await #expect(throws: (any Error).self) {
+            try await runtime.start(messagingSupport: .init(bot: nil, context: nil))
+        }
+
+        #expect(workers.references.acquired == [chatProduct])
+        #expect(workers.references.released == [chatProduct])
     }
 
     /// `ProductBot` downgrades this one to a debug log, so it has to stay distinct
     /// from a real failure.
-    @Test func rustRuntimeChatSeamsFailBeforeStart() async {
+    @Test func rustRuntimeChatSeamsFailBeforeTheWorkerIsUp() async {
         let execution = MockProductExecution()
-        let runtime = makeRustRuntime(execution: execution, engine: MockJSEngine())
+        let runtime = makeRustRuntime(workers: StubWorkerManager())
 
-        await #expect(throws: ChatRustRuntime.ChatSeamError.notStarted) {
+        await #expect(throws: TrUAPIChatHandler.ChatSeamError.notStarted) {
             try await runtime.onUserMessage(text: "hi", roomId: "room")
         }
         #expect(execution.publishedChatActions.isEmpty)
@@ -166,7 +257,7 @@ struct ChatRuntimeTests {
 
     @Test func rustRuntimeChatSeamsFailAfterDispose() async throws {
         let execution = MockProductExecution()
-        let runtime = makeRustRuntime(execution: execution, engine: MockJSEngine())
+        let runtime = makeRustRuntime(workers: workersRunning(execution))
         try await runtime.start(messagingSupport: .init(bot: nil, context: nil))
         await runtime.dispose()
 
@@ -176,36 +267,13 @@ struct ChatRuntimeTests {
         #expect(execution.publishedChatActions.isEmpty)
     }
 
-    @Test func rustRuntimeInstallsMediaHandlerAndScriptsBeforeLoading() async throws {
-        let execution = MockProductExecution()
-        let engine = MockJSEngine()
-        let runtime = makeRustRuntime(execution: execution, engine: engine)
-
-        try await runtime.start(messagingSupport: .init(bot: nil, context: nil))
-
-        #expect(execution.startWsBridgeCallCount == 1)
-        #expect(engine.mediaHandlerWasInstalledAtInitialization)
-        #expect(execution.permissionRequests.isEmpty)
-
-        #expect(engine.initializedScripts.count == 2)
-        #expect(engine.initializedScripts[0]
-            .content == #"window.__truapi_localhost = { url: "ws://127.0.0.1:0/?t=test" };"#)
-        #expect(engine.initializedScripts[0].insertionPoint == .atDocStart)
-        #expect(engine.initializedScripts[1].content.contains("freezeAndDelete"))
-        #expect(engine.initializedScripts[1].insertionPoint == .atDocStart)
-        #expect(!engine.evaluatedScripts.contains { $0.contains("__truapi_localhost") })
-        #expect(!engine.evaluatedScripts.contains { $0.contains("freezeAndDelete") })
-
-        await runtime.dispose()
-    }
-
     @Test func rustRuntimeRetriesRenderUntilTheProductAttaches() async throws {
         let execution = MockProductExecution()
         execution.renderErrors = [
             ProductRuntimeError.NotConnected,
             ProductRuntimeError.NotConnected
         ]
-        let runtime = makeRustRuntime(execution: execution, engine: MockJSEngine())
+        let runtime = makeRustRuntime(workers: workersRunning(execution))
         try await runtime.start(messagingSupport: .init(bot: nil, context: nil))
 
         let stream = await runtime.renderMessage(
@@ -223,7 +291,7 @@ struct ChatRuntimeTests {
     @Test func rustRuntimeDoesNotRetryTerminalRenderErrors() async throws {
         let execution = MockProductExecution()
         execution.renderErrors = [ProductRuntimeError.Closed]
-        let runtime = makeRustRuntime(execution: execution, engine: MockJSEngine())
+        let runtime = makeRustRuntime(workers: workersRunning(execution))
         try await runtime.start(messagingSupport: .init(bot: nil, context: nil))
 
         let stream = await runtime.renderMessage(
@@ -237,9 +305,9 @@ struct ChatRuntimeTests {
         await runtime.dispose()
     }
 
-    /// A start that never happens must not leave the cell waiting forever.
+    /// A worker that never comes up must not leave the cell waiting forever.
     @Test func rustRuntimeFailsPendingRendersOnDispose() async throws {
-        let runtime = makeRustRuntime(engine: MockJSEngine())
+        let runtime = makeRustRuntime(workers: StubWorkerManager())
 
         let render = Task {
             await runtime.renderMessage(
@@ -256,7 +324,7 @@ struct ChatRuntimeTests {
     @Test func rustRuntimeYieldsTypedNodesToTheConsumer() async throws {
         let execution = MockProductExecution()
         execution.renderNodes = [.string(text: "hello")]
-        let runtime = makeRustRuntime(execution: execution, engine: MockJSEngine())
+        let runtime = makeRustRuntime(workers: workersRunning(execution))
         try await runtime.start(messagingSupport: .init(bot: nil, context: nil))
 
         var outputs: [ChatRendererOutput] = []
@@ -285,23 +353,25 @@ struct ChatRuntimeTests {
         await runtime.dispose()
     }
 
-    /// A cell can decode before `start` opens the execution. Without `.notStarted`
+    /// A cell can decode before the product's worker is up. Without `.notStarted`
     /// in the transient set the render fails once and the cell is dead for the
     /// session, because `ProductMessageDecoder` never evicts.
-    @Test func rustRuntimeRetriesRenderIssuedBeforeStart() async throws {
+    @Test func rustRuntimeRetriesRenderIssuedBeforeTheWorkerIsUp() async throws {
+        let workers = StubWorkerManager()
         let execution = MockProductExecution()
         execution.renderNodes = [.string(text: "late")]
-        let runtime = makeRustRuntime(execution: execution, engine: MockJSEngine())
+        let runtime = makeRustRuntime(workers: workers)
 
         let render = Task {
             await runtime.renderMessage(
                 roomId: "room", messageId: "m1", messageType: "t", messageData: Data()
             )
         }
-        // Long enough for the render to reach the retry loop with no execution.
+        // Long enough for the render to reach the retry loop with no worker.
         try await Task.sleep(for: .milliseconds(60))
         #expect(execution.renderRequests.isEmpty)
 
+        workers.publish([chatProduct: execution])
         try await runtime.start(messagingSupport: .init(bot: nil, context: nil))
 
         var outputs: [ChatRendererOutput] = []
@@ -325,10 +395,10 @@ struct ChatRuntimeTests {
     /// here rather than reach the product as an unanswerable message.
     @Test func rustRuntimeRejectsRoomlessChats() async throws {
         let execution = MockProductExecution()
-        let runtime = makeRustRuntime(execution: execution, engine: MockJSEngine())
+        let runtime = makeRustRuntime(workers: workersRunning(execution))
         try await runtime.start(messagingSupport: .init(bot: nil, context: nil))
 
-        await #expect(throws: ChatRustRuntime.ChatSeamError.roomlessChat) {
+        await #expect(throws: TrUAPIChatHandler.ChatSeamError.roomlessChat) {
             try await runtime.onUserMessage(text: "hi", roomId: nil)
         }
         #expect(execution.publishedChatActions.isEmpty)
@@ -338,7 +408,7 @@ struct ChatRuntimeTests {
         let render = await runtime.renderMessage(
             roomId: nil, messageId: "m1", messageType: "t", messageData: Data()
         )
-        await #expect(throws: ChatRustRuntime.ChatSeamError.roomlessChat) {
+        await #expect(throws: TrUAPIChatHandler.ChatSeamError.roomlessChat) {
             for try await _ in render {}
         }
         #expect(execution.renderRequests.isEmpty)
@@ -348,7 +418,7 @@ struct ChatRuntimeTests {
 
     @Test func rustRuntimeForwardsUserMessagesAndActions() async throws {
         let execution = MockProductExecution()
-        let runtime = makeRustRuntime(execution: execution, engine: MockJSEngine())
+        let runtime = makeRustRuntime(workers: workersRunning(execution))
         try await runtime.start(messagingSupport: .init(bot: nil, context: nil))
 
         try await runtime.onUserMessage(text: "hi", roomId: "room")
@@ -383,21 +453,5 @@ struct ChatRuntimeTests {
         }
 
         await runtime.dispose()
-    }
-
-    @Test func disposalDuringInitializationDestroysEngineBeforeProductCode() async {
-        let execution = MockProductExecution()
-        let engine = MockJSEngine()
-        let runtime = makeRustRuntime(execution: execution, engine: engine)
-        engine.onInitialize = { await runtime.dispose() }
-
-        await #expect(throws: CancellationError.self) {
-            try await runtime.start(messagingSupport: .init(bot: nil, context: nil))
-        }
-
-        #expect(engine.destroyCallCount == 1)
-        #expect(engine.evaluatedScripts.isEmpty)
-        #expect(execution.closeCallCount == 1)
-        #expect(execution.stopWsBridgeCallCount == 1)
     }
 }

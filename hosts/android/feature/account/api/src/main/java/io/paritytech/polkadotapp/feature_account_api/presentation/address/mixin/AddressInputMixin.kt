@@ -1,10 +1,7 @@
 package io.paritytech.polkadotapp.feature_account_api.presentation.address.mixin
 
-import io.paritytech.polkadotapp.common.presentation.search.SearchState
 import io.paritytech.polkadotapp.common.presentation.ui.mixin.paste.PasteMixin
-import io.paritytech.polkadotapp.common.utils.SizedMap
-import io.paritytech.polkadotapp.feature_account_api.presentation.address.model.ExtractedAddress
-import io.paritytech.polkadotapp.feature_account_api.presentation.address.model.ExtractedAddressesCategory
+import io.paritytech.polkadotapp.feature_account_api.presentation.address.model.AddressCandidates
 import io.paritytech.polkadotapp.feature_account_api.presentation.address.model.ExtractedAddressesSection
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.Flow
@@ -18,7 +15,8 @@ interface AddressInputMixin {
     interface Factory {
         fun create(
             coroutineScope: CoroutineScope,
-            converters: List<AddressConverter>,
+            localConverters: List<AddressConverter>,
+            remoteConverters: List<AddressConverter>,
         ): AddressInputMixin
     }
 
@@ -26,5 +24,5 @@ interface AddressInputMixin {
 
     val input: MutableStateFlow<String>
 
-    val addressCandidates: Flow<SearchState<SizedMap<ExtractedAddressesCategory, List<ExtractedAddress>>>>
+    val addressCandidates: Flow<AddressCandidates>
 }

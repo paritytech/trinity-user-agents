@@ -12,7 +12,9 @@ import WebKit
 struct ProductNetworkAccessTests {
     @Test(.timeLimit(.minutes(1)))
     func retainedClientAndFetchRecoverWithoutLifecycleCallbacks() async throws {
-        let product = try await NetworkTestProduct.open(initialScripts: ["""
+        let product = try await NetworkTestProduct.open(authorizedPermissions: [
+            .remote(RemotePermissionRequest(permission: .remote(domains: ["127.0.0.1"])))
+        ], initialScripts: ["""
             const NativeSocket = WebSocket;
             const closeSocket = NativeSocket.prototype.close;
             window.WebSocket = new Proxy(NativeSocket, {
@@ -24,10 +26,6 @@ struct ProductNetworkAccessTests {
             });
             """])
         defer { product.close() }
-        try product.execution.setPermissionAuthorizationStatus(
-            request: .remote(RemotePermissionRequest(permission: .remote(domains: ["127.0.0.1"]))),
-            status: .authorized
-        )
         let remote = product.server.url(host: "127.0.0.1", path: "/allowed")
         let result = try await withNetworkTestTimeout("retained client recovery") {
             try await product.webView.callAsyncJavaScript("""
@@ -75,7 +73,10 @@ struct ProductNetworkAccessTests {
         let permission = PermissionAuthorizationRequest.remote(
             RemotePermissionRequest(permission: .remote(domains: ["127.0.0.1"]))
         )
-        try product.execution.setPermissionAuthorizationStatus(request: permission, status: .authorized)
+        try await product.runtime.setPermissionAuthorizationStatus(
+            productId: "network.paseo", request: permission, status: .authorized
+        )
+        #expect(!product.execution.isClosed())
         #expect(try await fetch(product.webView, remote) == "allowed")
         #expect(product.server.requests(path: "/allowed") == 1)
 
@@ -83,8 +84,13 @@ struct ProductNetworkAccessTests {
         #expect(try await fetch(product.webView, redirect) == "allowed")
         #expect(product.server.requests(path: "/blocked") == 1)
 
-        try product.execution.setPermissionAuthorizationStatus(request: permission, status: .denied)
-        #expect(try await fetch(product.webView, remote) == "denied")
+        try await product.runtime.setPermissionAuthorizationStatus(
+            productId: "network.paseo", request: permission, status: .denied
+        )
+        #expect(product.execution.isClosed())
+        let deniedProduct = try await product.reopen()
+        defer { deniedProduct.closeExecution() }
+        #expect(try await fetch(deniedProduct.webView, remote) == "denied")
         #expect(product.server.requests(path: "/allowed") == 1)
     }
 
@@ -258,6 +264,8 @@ private final class NetworkTestWindow {
 @MainActor
 private struct NetworkTestProduct {
     let server: NetworkTestServer
+    let runtime: TrUAPIHostRuntime
+    let bridge: StubHostBridge
     let execution: TrUAPIProductExecution
     let webView: WKWebView
     let window: NetworkTestWindow
@@ -265,6 +273,7 @@ private struct NetworkTestProduct {
 
     static func open(
         bridge: StubHostBridge = StubHostBridge(),
+        authorizedPermissions: [PermissionAuthorizationRequest] = [],
         initialScripts: [String] = []
     ) async throws -> NetworkTestProduct {
         let server = try await NetworkTestServer.start()
@@ -275,10 +284,29 @@ private struct NetworkTestProduct {
                 assetHubChainGenesisHash: Data(repeating: 1, count: 32), networkSuffix: "paseo",
                 databaseDirectory: temporaryDatabaseDirectory()
             ))
-            let execution = try runtime.openProductExecution(
-                bridge: bridge,
-                configuration: ProductExecutionConfig(productId: "network.paseo", executionKind: .app)
-            )
+            for permission in authorizedPermissions {
+                try await runtime.setPermissionAuthorizationStatus(
+                    productId: "network.paseo", request: permission, status: .authorized
+                )
+            }
+            return try await open(server: server, runtime: runtime, bridge: bridge, initialScripts: initialScripts)
+        } catch {
+            server.stop()
+            throw error
+        }
+    }
+
+    private static func open(
+        server: NetworkTestServer,
+        runtime: TrUAPIHostRuntime,
+        bridge: StubHostBridge,
+        initialScripts: [String]
+    ) async throws -> NetworkTestProduct {
+        let execution = try runtime.openProductExecution(
+            bridge: bridge,
+            configuration: ProductExecutionConfig(productId: "network.paseo", executionKind: .app)
+        )
+        do {
             let ready = ProductPageReady()
             let configuration = WKWebViewConfiguration()
             // Local fixtures must not wait for Safari's Safe Browsing database.
@@ -300,23 +328,32 @@ private struct NetworkTestProduct {
                 #expect(webView.configuration.websiteDataStore.isPersistent)
                 try await ready.load(webView, url: server.url(host: "localhost", path: "/product"))
                 return NetworkTestProduct(
-                    server: server, execution: execution, webView: webView, window: window, navigationDelegate: ready
+                    server: server, runtime: runtime, bridge: bridge, execution: execution,
+                    webView: webView, window: window, navigationDelegate: ready
                 )
             } catch {
                 window.close()
-                execution.close()
                 throw error
             }
         } catch {
-            server.stop()
+            execution.close()
             throw error
         }
     }
 
-    func close() {
+    func reopen() async throws -> NetworkTestProduct {
+        closeExecution()
+        return try await Self.open(server: server, runtime: runtime, bridge: bridge, initialScripts: [])
+    }
+
+    func closeExecution() {
         webView.stopLoading()
         window.close()
         execution.close()
+    }
+
+    func close() {
+        closeExecution()
         server.stop()
     }
 }

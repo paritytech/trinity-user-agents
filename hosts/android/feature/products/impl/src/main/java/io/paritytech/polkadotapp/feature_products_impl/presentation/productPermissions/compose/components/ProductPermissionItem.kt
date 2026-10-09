@@ -60,6 +60,7 @@ private fun ProductPermission.displayName(): String {
         is ProductPermission.BalanceAccess -> stringResource(RCommon.string.product_permission_type_balance_access)
         is ProductPermission.UserIdentityAccess -> stringResource(RCommon.string.product_permission_type_user_identity_access)
         is ProductPermission.RemotePermission.NetworkAccess -> domain
+        is ProductPermission.RemotePermission.NetworkAccessSet -> domains.joinToString(", ")
         ProductPermission.RemotePermission.WebRtcAccess -> stringResource(RCommon.string.product_permission_type_webrtc)
         ProductPermission.RemotePermission.ChainSubmitAccess -> stringResource(RCommon.string.product_permission_type_chain_submit)
         ProductPermission.RemotePermission.StatementSubmitAccess -> stringResource(RCommon.string.product_permission_type_statement_submit)
@@ -94,6 +95,7 @@ private fun ProductPermission.descriptionRes(): Int = when (this) {
     is ProductPermission.UserIdentityAccess -> RCommon.string.product_permission_type_user_identity_access_description
     is ProductPermission.RemotePermission.NetworkAccess -> RCommon.string.product_permission_type_network_access
     is ProductPermission.RemotePermission.JamPeersAccess -> RCommon.string.product_permission_type_jam_peers
+    is ProductPermission.RemotePermission.NetworkAccessSet -> RCommon.string.product_permission_type_network_access
     ProductPermission.RemotePermission.WebRtcAccess,
     ProductPermission.RemotePermission.ChainSubmitAccess,
     ProductPermission.RemotePermission.StatementSubmitAccess,

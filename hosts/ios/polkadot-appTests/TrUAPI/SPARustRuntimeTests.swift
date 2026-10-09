@@ -31,6 +31,8 @@ private struct StubTldProvider: DotNsTldProviding {
     }
 
     func refresh() {}
+
+    func reset() {}
 }
 
 private func makeRuntime(
@@ -121,6 +123,34 @@ struct SPARustRuntimeTests {
         #expect(execution.closeCallCount == 1)
         #expect(chainConnections.closeAllCallCount == 1)
         #expect(engine.destroyCallCount == 1)
+    }
+
+    @Test(.timeLimit(.minutes(1))) func revokedExecutionDestroysOnlyItsEngine() async throws {
+        let configuration = try makeConfiguration(
+            contentSource: .directURL(#require(URL(string: "http://localhost:3000")))
+        )
+        let revoked = MockProductExecution()
+        let revokedEngine = MockJSEngine()
+        let liveEngine = MockJSEngine()
+        let runtime = makeRuntime(execution: revoked, configuration: configuration)
+        let other = makeRuntime(configuration: configuration)
+        let (destroyed, continuation) = AsyncStream.makeStream(of: Void.self)
+        revokedEngine.onDestroy = { _ = continuation.yield(()) }
+        _ = try await runtime.start(with: revokedEngine)
+        _ = try await other.start(with: liveEngine)
+
+        NotificationCenter.default.post(name: .productPermissionAuthorizationsChanged, object: "test.dot")
+        #expect(revokedEngine.destroyCallCount == 0)
+        #expect(liveEngine.destroyCallCount == 0)
+        revoked.close()
+        NotificationCenter.default.post(name: .productPermissionAuthorizationsChanged, object: "test.dot")
+        var iterator = destroyed.makeAsyncIterator()
+        _ = await iterator.next()
+        #expect(revokedEngine.destroyCallCount == 1)
+        #expect(liveEngine.destroyCallCount == 0)
+        await runtime.dispose()
+        await other.dispose()
+        continuation.finish()
     }
 
     @Test func rustScriptsFactoryOrdersBootstrapBeforeContainer() throws {

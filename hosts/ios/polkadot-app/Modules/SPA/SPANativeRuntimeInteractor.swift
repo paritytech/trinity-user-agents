@@ -95,7 +95,7 @@ extension SPANativeRuntimeInteractor: SPAInteractorInputProtocol {
 
     func hasChatEntry() -> Bool {
         // Declared, or not offered: a product with no worker manifest has no chat surface here.
-        resolvedProduct?.executables.worker?.includesChat ?? false
+        resolvedProduct?.executables.worker?.serves(.chat) ?? false
     }
 
     func openChat() {
@@ -200,7 +200,7 @@ private extension SPANativeRuntimeInteractor {
 
             // Bytes come from the app executable's subname; the origin stays the base domain, which
             // is what permission grants and web storage are keyed by.
-            let contentId = resolved.appContentId
+            let contentId = resolved.contentId(for: configuration.executable)
 
             subscribeProgress(domain: contentId)
 

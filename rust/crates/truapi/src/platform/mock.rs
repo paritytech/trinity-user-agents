@@ -861,9 +861,9 @@ fn core_key(key: &CoreStorageKey) -> String {
             genesis_hash,
             product_id,
             attachment_id,
-            ..
+            chunk_index,
         } => format!(
-            "core:native-chat-file-chunk:{}:{}:{product_id}:{}",
+            "core:native-chat-file-chunk:{}:{}:{product_id}:{}:{chunk_index}",
             hex_key(root_public_key),
             hex_key(genesis_hash),
             hex_key(attachment_id)
@@ -1637,6 +1637,33 @@ mod tests {
         assert_eq!(
             block_on(p.read_core_storage(CoreStorageKey::AuthSession)).unwrap(),
             None
+        );
+    }
+
+    #[test]
+    fn native_chat_file_chunks_have_independent_storage_slots() {
+        let platform = MockPlatform::new();
+        let key = |chunk_index| CoreStorageKey::NativeChatFileChunk {
+            root_public_key: [1; 32],
+            genesis_hash: [2; 32],
+            product_id: "chat.dot".into(),
+            attachment_id: [3; 32],
+            chunk_index,
+        };
+        block_on(platform.write_core_storage(key(0), vec![10])).unwrap();
+        block_on(platform.write_core_storage(key(1), vec![20])).unwrap();
+        assert_eq!(
+            block_on(platform.read_core_storage(key(0))).unwrap(),
+            Some(vec![10]),
+        );
+        assert_eq!(
+            block_on(platform.read_core_storage(key(1))).unwrap(),
+            Some(vec![20]),
+        );
+        block_on(platform.clear_core_storage(key(0))).unwrap();
+        assert_eq!(
+            block_on(platform.read_core_storage(key(1))).unwrap(),
+            Some(vec![20]),
         );
     }
 

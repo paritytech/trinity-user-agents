@@ -23,6 +23,12 @@ sealed interface ProductPermission {
             }
         }
 
+        /** Historical core bundle: keep its exact identity, especially for a bundle denial. */
+        data class NetworkAccessSet(val domains: List<String>) : RemotePermission {
+            override val typeName: String get() = "network_access_set"
+            override val key: String get() = domains.joinToString("|")
+        }
+
         data object WebRtcAccess : RemotePermission {
             const val TYPE_NAME = "webrtc_access"
             override val typeName: String get() = TYPE_NAME

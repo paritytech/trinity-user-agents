@@ -3,10 +3,7 @@ import PolkadotUI
 import Products
 
 protocol AppPermissionsViewModelMaking {
-    func createItems(
-        from grants: [ProductPermissionGrant],
-        pendingDeletionIds: Set<String>
-    ) -> [AppPermissionsViewLayout.Item]
+    func createItems(from grants: [ProductPermissionGrant]) -> [AppPermissionsViewLayout.Item]
 }
 
 final class AppPermissionsViewModelFactory {
@@ -14,17 +11,13 @@ final class AppPermissionsViewModelFactory {
 }
 
 extension AppPermissionsViewModelFactory: AppPermissionsViewModelMaking {
-    func createItems(
-        from grants: [ProductPermissionGrant],
-        pendingDeletionIds: Set<String>
-    ) -> [AppPermissionsViewLayout.Item] {
+    func createItems(from grants: [ProductPermissionGrant]) -> [AppPermissionsViewLayout.Item] {
         grants.map { grant in
-            let isOn = !pendingDeletionIds.contains(grant.identifier)
             return AppPermissionsViewLayout.Item(
                 id: grant.identifier,
                 title: grant.permission.settingsTitle,
                 description: grant.permission.permissionDescription,
-                isOn: isOn
+                isOn: true
             )
         }
     }
@@ -37,6 +30,8 @@ extension ProductPermission {
         case let .deviceCapability(capability): capabilityDescription(capability)
         case let .networkAccess(domain):
             String(localized: .Products.permissionBodyNetworkAccess(domain: domain))
+        case let .networkAccessBundle(domains):
+            String(localized: .Products.permissionBodyNetworkAccess(domain: domains.joined(separator: ", ")))
         case let .accountAccess(targetProductId):
             String(localized: .Products.permissionBodyAccountAccess(targetProductId: targetProductId))
         case .balanceAccess: String(localized: .Products.permissionBodyBalanceAccess)
@@ -54,7 +49,7 @@ extension ProductPermission {
     var permissionIconSystemName: String {
         switch self {
         case let .deviceCapability(capability): capabilityIcon(capability)
-        case .networkAccess: "globe"
+        case .networkAccess, .networkAccessBundle: "globe"
         case .accountAccess: "person.crop.circle"
         case .balanceAccess: "dollarsign.circle.fill"
         case .webRtcAccess: "video.fill"
@@ -70,7 +65,7 @@ extension ProductPermission {
     var settingsTitle: String {
         switch self {
         case let .deviceCapability(capability): capabilityTitle(capability)
-        case .networkAccess: String(localized: .Products.appPermissionNetworkTitle)
+        case .networkAccess, .networkAccessBundle: String(localized: .Products.appPermissionNetworkTitle)
         case .accountAccess: String(localized: .Products.appPermissionAccountTitle)
         case .balanceAccess: String(localized: .Products.appPermissionBalanceTitle)
         case .webRtcAccess: String(localized: .Products.appPermissionWebRtcTitle)

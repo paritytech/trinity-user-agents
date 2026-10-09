@@ -157,7 +157,7 @@ internal class ChatPushNotificationHandler @Inject constructor(
         val existingStatuses = chatMessageRepository.getMessageStatuses(chatMessages.map { it.id })
         val previouslyUnseen = chatMessages.filterNot { it.id in existingStatuses }
 
-        for (chatMessage in chatMessages) {
+        for (chatMessage in chatMessages.sortedBy { it.timestamp }) {
             chatEngine.saveMessage(chatMessage, ChatMessageSaveConflictStrategy.IGNORE)
         }
 

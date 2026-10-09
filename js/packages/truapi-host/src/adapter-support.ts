@@ -194,15 +194,22 @@ export function coinageWalletHostAdapter(
  * A profile host built before `presentContactProfile` still shows a contact's
  * profile: without it, the contact's reference is presented as
  * `presentProfile` would. Empty-profile feedback requires the contact callback.
+ * Missing avatar placement draws nothing, matching the Rust platform default;
+ * resolving does not promise that any avatar was rendered.
  */
 export function profileHostAdapter(
-  host: Required<ProfilePlatform> | undefined,
+  host: ProfilePlatform | undefined,
 ): Required<ProfilePlatform> | undefined {
-  if (host === undefined || typeof host.presentContactProfile === "function")
-    return host;
+  if (host === undefined) return undefined;
+  if (
+    typeof host.presentContactProfile === "function" &&
+    typeof host.placeContactAvatars === "function"
+  ) return host as Required<ProfilePlatform>;
   return {
     presentProfile: (product, request) => host.presentProfile(product, request),
     presentContactProfile: (product, presented) => {
+      if (typeof host.presentContactProfile === "function")
+        return host.presentContactProfile(product, presented);
       if (presented.shared === undefined)
         return Promise.reject(
           new Error("Contact profile feedback is unavailable"),
@@ -212,7 +219,9 @@ export function profileHostAdapter(
       });
     },
     placeContactAvatars: (product, placed) =>
-      host.placeContactAvatars(product, placed),
+      typeof host.placeContactAvatars === "function"
+        ? host.placeContactAvatars(product, placed)
+        : Promise.resolve(),
   };
 }
 

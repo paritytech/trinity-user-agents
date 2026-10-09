@@ -91,19 +91,9 @@ public final class DeviceCapabilityPermissionHandler: Sendable {
 
 private extension DeviceCapabilityPermissionHandler {
     func promptAppLevelPermission(productId: String, permission: ProductPermission) async throws -> Bool {
-        let decision = await requester.prompt(productId: productId, permission: permission)
-
-        switch decision {
-        case .allowAlways:
-            try await repository.grant(productId: productId, permission: permission)
-            return true
-        case .allowOnce:
-            repository.grantOneTime(productId: productId, permission: permission)
-            return true
-        case .deny:
-            try await repository.deny(productId: productId, permission: permission)
-            return false
-        }
+        try await repository.promptPermission(
+            productId: productId, permission: permission, requester: requester
+        )
     }
 
     func promptOsPermissionIfNeeded(

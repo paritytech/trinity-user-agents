@@ -1,0 +1,104 @@
+[
+ {
+  "index": 0,
+  "id": "copper",
+  "label": "Copper",
+  "optics": "copper",
+  "f0": [
+   0.90864,
+   0.623504,
+   0.514177
+  ],
+  "roughness": 0.19,
+  "tone": [
+   0.5,
+   0.36,
+   0.3
+  ]
+ },
+ {
+  "index": 1,
+  "id": "nickel",
+  "label": "Nickel",
+  "optics": "nickel",
+  "f0": [
+   0.692323,
+   0.640477,
+   0.559192
+  ],
+  "roughness": 0.17,
+  "tone": [
+   0.52,
+   0.51,
+   0.48
+  ]
+ },
+ {
+  "index": 2,
+  "id": "brass",
+  "label": "Nordic gold",
+  "optics": "brass",
+  "f0": [
+   0.896963,
+   0.777771,
+   0.406581
+  ],
+  "roughness": 0.18,
+  "tone": [
+   0.58,
+   0.5,
+   0.33
+  ]
+ },
+ {
+  "index": 3,
+  "id": "silver",
+  "label": "Silver",
+  "optics": "silver",
+  "f0": [
+   0.988887,
+   0.983939,
+   0.97758
+  ],
+  "roughness": 0.15,
+  "tone": [
+   0.62,
+   0.57,
+   0.48
+  ]
+ },
+ {
+  "index": 4,
+  "id": "gold",
+  "label": "Gold",
+  "optics": "gold",
+  "f0": [
+   1.003203,
+   0.733238,
+   0.344701
+  ],
+  "roughness": 0.14,
+  "tone": [
+   0.64,
+   0.58,
+   0.5
+  ]
+ },
+ {
+  "index": 5,
+  "id": "bronze",
+  "label": "Bronze",
+  "optics": "bronze",
+  "f0": [
+   0.72,
+   0.41,
+   0.27
+  ],
+  "roughness": 0.32,
+  "tone": [
+   0.36,
+   0.22,
+   0.15
+  ]
+ }
+]

@@ -36,7 +36,7 @@ use crate::runtime::profile::{Disclosure, ProfileOwner, ProfileScope, read_discl
 /// the Host stops offering it until the disclosure changes.
 pub(super) const MAX_PROFILE_ATTEMPTS: u8 = 3;
 
-pub(super) const WATERMARK_MARKER: [u8; 4] = [0xff, b'P', b'R', 2];
+pub(super) const WATERMARK_MARKER: [u8; 4] = [0xff, b'P', b'R', 3];
 
 /// What this Host last queued to one peer.
 #[derive(Clone, PartialEq, Eq, Encode, Decode)]
@@ -55,6 +55,8 @@ pub(super) struct ProfileWatermark {
     pub(super) attempts: u8,
     /// The frame sent lapsed without an acknowledgement.
     pub(super) lapsed: bool,
+    /// Device roster the last frame was sealed to, independent of disclosure revision.
+    pub(super) roster_revision: u64,
 }
 
 /// App-scoped watermarks written before independent personal grants.
@@ -97,6 +99,8 @@ type LegacyWatermark = ([u8; 32], [u8; 32], String);
 /// list; anything else is corruption.
 pub(super) fn decode_watermarks(
     bytes: &[u8],
+    peers: &[Peer],
+    outbox: &[Outgoing],
 ) -> Result<Vec<ProfileWatermark>, parity_scale_codec::Error> {
     use parity_scale_codec::DecodeAll;
     if let Some(current) = bytes.strip_prefix(&WATERMARK_MARKER) {
@@ -105,6 +109,28 @@ pub(super) fn decode_watermarks(
             return Err("too many profile watermarks".into());
         }
         return Ok(watermarks);
+    }
+    let roster_revision = |identity: [u8; 32], scope: ProfileScope| {
+        outbox.iter()
+            .find(|entry| entry.peer == identity && entry.kind.profile_scope() == Some(scope))
+            .map(|entry| entry.roster_revision)
+            .or_else(|| peers.iter().find(|peer| peer.identity == identity).map(|peer| peer.revision))
+            .unwrap_or(0)
+    };
+    if let Some(previous) = bytes.strip_prefix(&[0xff, b'P', b'R', 2]) {
+        type PreviousWatermark = ([u8; 32], ProfileScope, u64, Option<[u8; 32]>, String, u64, u8, bool);
+        let previous = Vec::<PreviousWatermark>::decode_all(&mut &previous[..])?;
+        if previous.len() > MAX_PEERS * 2 {
+            return Err("too many profile watermarks".into());
+        }
+        return Ok(previous.into_iter().map(
+            |(peer, scope, revision, digest, discloser_product_id, timestamp, attempts, lapsed)| {
+                ProfileWatermark {
+                    peer, scope, revision, digest, discloser_product_id, timestamp, attempts, lapsed,
+                    roster_revision: roster_revision(peer, scope),
+                }
+            },
+        ).collect());
     }
     if let Ok(app) = Vec::<AppWatermark>::decode_all(&mut &bytes[..]) {
         return Ok(app
@@ -118,6 +144,7 @@ pub(super) fn decode_watermarks(
                 timestamp: watermark.timestamp,
                 attempts: watermark.attempts,
                 lapsed: watermark.lapsed,
+                roster_revision: roster_revision(watermark.peer, ProfileScope::App),
             })
             .collect());
     }
@@ -133,6 +160,7 @@ pub(super) fn decode_watermarks(
                 timestamp: watermark.timestamp,
                 attempts: 1,
                 lapsed: false,
+                roster_revision: roster_revision(watermark.peer, ProfileScope::App),
             })
             .collect());
     }
@@ -189,6 +217,7 @@ fn next_attempt(
     disclosure: Option<&(Disclosure, [u8; 32])>,
     current: Option<&ProfileWatermark>,
     revision: u64,
+    roster_revision: u64,
 ) -> Option<u8> {
     if disclosure.is_none() && current.is_none() {
         return None;
@@ -197,7 +226,8 @@ fn next_attempt(
     match current {
         Some(watermark)
             if watermark.digest == digest
-                && (watermark.scope == ProfileScope::App || watermark.revision == revision) =>
+                && (watermark.scope == ProfileScope::App || watermark.revision == revision)
+                && watermark.roster_revision == roster_revision =>
         {
             (watermark.lapsed && watermark.attempts < MAX_PROFILE_ATTEMPTS)
                 .then(|| watermark.attempts + 1)
@@ -214,8 +244,9 @@ fn wanted(
     disclosure: Option<&(Disclosure, [u8; 32])>,
     current: Option<&ProfileWatermark>,
     revision: u64,
+    roster_revision: u64,
 ) -> Option<Frame> {
-    let attempts = next_attempt(disclosure, current, revision)?;
+    let attempts = next_attempt(disclosure, current, revision, roster_revision)?;
     let (discloser, reference, digest) = match (disclosure, current) {
         (Some((disclosure, digest)), _) => (
             &disclosure.product_id,
@@ -245,6 +276,7 @@ fn lapsed(entry: &Outgoing, now: u64) -> bool {
 pub(super) fn superseded(
     entry: &Outgoing,
     watermarks: &[ProfileWatermark],
+    peers: &[Peer],
     disclosure: Option<&(Disclosure, [u8; 32])>,
     product: &str,
     revision: u64,
@@ -252,6 +284,11 @@ pub(super) fn superseded(
     let Some(scope) = entry.kind.profile_scope() else {
         return false;
     };
+    if peers.iter().find(|peer| peer.identity == entry.peer)
+        .is_none_or(|peer| peer.revision != entry.roster_revision)
+    {
+        return true;
+    }
     let Some(current) = watermarks
         .iter()
         .find(|watermark| watermark.peer == entry.peer && watermark.scope == scope)
@@ -302,6 +339,7 @@ impl NativeChatActor {
                     superseded(
                         entry,
                         &state.profile_shared,
+                        &state.peers,
                         disclosure.as_ref(),
                         &self.product,
                         revision,
@@ -322,6 +360,7 @@ impl NativeChatActor {
                         !superseded(
                             entry,
                             &state.profile_shared,
+                            &state.peers,
                             current_disclosure.as_ref(),
                             &product,
                             revision,
@@ -343,7 +382,7 @@ impl NativeChatActor {
                         let granted = disclosure.as_ref().filter(|(disclosure, _)| {
                             disclosure.grants(scope, &self.product, &peer.identity)
                         });
-                        if next_attempt(granted, current, revision).is_some() {
+                        if next_attempt(granted, current, revision, peer.revision).is_some() {
                             stale.push((peer.identity, scope));
                         }
                     }
@@ -376,7 +415,7 @@ impl NativeChatActor {
                     let granted = disclosure.as_ref().filter(|(disclosure, _)| {
                         disclosure.grants(scope, &actor.product, &identity)
                     });
-                    let Some(frame) = wanted(granted, current, revision) else {
+                    let Some(frame) = wanted(granted, current, revision, peer.revision) else {
                         continue;
                     };
                     // Later than anything sent to this peer before, even
@@ -385,22 +424,12 @@ impl NativeChatActor {
                     let timestamp = current.map_or(now, |watermark| {
                         now.max(watermark.timestamp.saturating_add(1))
                     });
-                    let tag = match scope {
-                        ProfileScope::App => hash(
-                            &(identity, &frame.discloser, &frame.reference, timestamp).encode(),
-                        ),
-                        ProfileScope::Personal => hash(
-                            &(
-                                identity,
-                                scope,
-                                revision,
-                                &frame.discloser,
-                                &frame.reference,
-                                timestamp,
-                            )
-                                .encode(),
-                        ),
-                    };
+                    // Public request ids must not reveal a guessable reference digest
+                    // or correlate the same disclosure across product actors.
+                    let tag = hash(&Zeroizing::new((
+                        b"native-chat-profile-tag-v1", &state.secret.0, identity, scope,
+                        revision, &frame.discloser, &frame.reference, timestamp,
+                    ).encode()));
                     let request_id = format!("profile-{}", hex::encode(&tag[..8]));
                     let bytes = match scope {
                         ProfileScope::App => wire::encode_profile_reference_message(
@@ -464,6 +493,7 @@ impl NativeChatActor {
                         timestamp,
                         attempts: frame.attempts,
                         lapsed: false,
+                        roster_revision: peer.revision,
                     });
                 }
                 Ok(queued)
@@ -601,16 +631,17 @@ mod tests {
             timestamp: 1,
             attempts: 1,
             lapsed: false,
+            roster_revision: 0,
         };
-        assert!(wanted(Some(&current), Some(&held), 0).is_none());
-        let replacement = wanted(Some(&disclosure("seity-contacts:v1:bb")), Some(&held), 0)
+        assert!(wanted(Some(&current), Some(&held), 0, 0).is_none());
+        let replacement = wanted(Some(&disclosure("seity-contacts:v1:bb")), Some(&held), 0, 0)
             .expect("a replacement is sent");
         assert_eq!(
             (replacement.reference.as_deref(), replacement.attempts),
             (Some("seity-contacts:v1:bb"), 1)
         );
         assert_eq!(
-            wanted(None, Some(&held), 0).expect("a withdrawal is sent to a holder"),
+            wanted(None, Some(&held), 0, 0).expect("a withdrawal is sent to a holder"),
             Frame {
                 discloser: "seity.dot".into(),
                 reference: None,
@@ -623,20 +654,24 @@ mod tests {
             ..held
         };
         assert!(
-            wanted(None, Some(&withdrawn), 0).is_none(),
+            wanted(None, Some(&withdrawn), 0, 0).is_none(),
             "a withdrawal is sent once"
         );
         assert!(
-            wanted(Some(&current), Some(&withdrawn), 0).is_some(),
+            wanted(Some(&current), Some(&withdrawn), 0, 0).is_some(),
             "a withdrawn peer is sent a new disclosure"
         );
         assert!(
-            wanted(None, None, 0).is_none(),
+            wanted(None, None, 0, 0).is_none(),
             "nothing to withdraw from a new peer"
         );
         assert!(
-            wanted(Some(&current), None, 0).is_some(),
+            wanted(Some(&current), None, 0, 0).is_some(),
             "a new peer is sent the disclosure"
+        );
+        assert_eq!(
+            wanted(None, Some(&withdrawn), 0, 1).unwrap().attempts, 1,
+            "a changed device roster starts a fresh delivery round"
         );
     }
 
@@ -652,10 +687,12 @@ mod tests {
             timestamp: 1,
             attempts,
             lapsed: true,
+            roster_revision: 0,
         };
         let resent = wanted(
             Some(&current),
             Some(&lapsed_watermark(Some(current.1), 1)),
+            0,
             0,
         )
         .expect("a lapsed disclosure is sent again");
@@ -668,7 +705,7 @@ mod tests {
             wanted(
                 Some(&current),
                 Some(&lapsed_watermark(Some(current.1), MAX_PROFILE_ATTEMPTS)),
-                0
+                0, 0
             )
             .is_none(),
             "not once its attempts are spent"
@@ -677,7 +714,7 @@ mod tests {
             wanted(
                 Some(&disclosure("seity-contacts:v1:bb")),
                 Some(&lapsed_watermark(Some(current.1), MAX_PROFILE_ATTEMPTS)),
-                0
+                0, 0
             )
             .expect("a new disclosure is sent")
             .attempts,
@@ -685,12 +722,26 @@ mod tests {
             "with attempts of its own"
         );
         assert_eq!(
-            wanted(None, Some(&lapsed_watermark(None, 1)), 0)
+            wanted(None, Some(&lapsed_watermark(None, 1)), 0, 0)
                 .expect("a lapsed withdrawal is sent again")
                 .attempts,
             2
         );
-        assert!(wanted(None, Some(&lapsed_watermark(None, MAX_PROFILE_ATTEMPTS)), 0).is_none());
+        assert!(wanted(None, Some(&lapsed_watermark(None, MAX_PROFILE_ATTEMPTS)), 0, 0).is_none());
+    }
+
+    #[test]
+    fn previous_scoped_watermarks_retain_personal_withdrawal_revisions() {
+        let mut bytes = vec![0xff, b'P', b'R', 2];
+        bytes.extend(vec![(
+            [1u8; 32], ProfileScope::Personal, 10u64, None::<[u8; 32]>,
+            "seity.dot".to_string(), 91u64, 1u8, false,
+        )].encode());
+        let migrated = decode_watermarks(&bytes, &[], &[]).unwrap();
+        assert_eq!(migrated[0].scope, ProfileScope::Personal);
+        assert_eq!(migrated[0].revision, 10);
+        assert!(wanted(None, Some(&migrated[0]), 10, 0).is_none());
+        assert!(wanted(None, Some(&migrated[0]), 10, 1).is_some());
     }
 
     #[test]
@@ -705,17 +756,17 @@ mod tests {
             true,
         )]
         .encode();
-        let migrated = decode_watermarks(&bytes).unwrap();
+        let migrated = decode_watermarks(&bytes, &[], &[]).unwrap();
         assert_eq!(migrated[0].scope, ProfileScope::App);
         assert_eq!(migrated[0].timestamp, 91);
         assert_eq!(
-            wanted(Some(&current), Some(&migrated[0]), 9)
+            wanted(Some(&current), Some(&migrated[0]), 9, 0)
                 .unwrap()
                 .attempts,
             3
         );
         assert_eq!(
-            wanted(None, Some(&migrated[0]), 10).unwrap().reference,
+            wanted(None, Some(&migrated[0]), 10, 0).unwrap().reference,
             None
         );
         let withdrawn = ProfileWatermark {
@@ -725,9 +776,9 @@ mod tests {
             lapsed: false,
             ..migrated[0].clone()
         };
-        assert!(wanted(None, Some(&withdrawn), 10).is_none());
+        assert!(wanted(None, Some(&withdrawn), 10, 0).is_none());
         assert!(
-            wanted(None, Some(&withdrawn), 12).is_some(),
+            wanted(None, Some(&withdrawn), 12, 0).is_some(),
             "an actor that missed a regrant must send the newer withdrawal"
         );
     }

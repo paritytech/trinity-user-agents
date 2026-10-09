@@ -18,6 +18,9 @@ generated from [Conventional Commits](https://www.conventionalcommits.org/).
   the handshake requires an exact codec match, so product guests built against
   an earlier codec must be rebuilt
 - Code-generation verification checks deterministic protocol and host output instead of pinning implementation-text snapshots; generated bindings are compiled and exercised against the runtime.
+- integrate the current native SDK with PolkaVM host runtime `0.3.2-rc.9`,
+  pinned to `959ad63f7312a2f4598b9f718ccc2516927cbbff`, retaining canonical
+  permission administration and live-execution revocation (#540)
 
 ### Added
 
@@ -67,6 +70,36 @@ generated from [Conventional Commits](https://www.conventionalcommits.org/).
 - return a decode error instead of trapping when subscription helpers receive a
   request descriptor
 
+## [0.24.0] - 2026-10-07
+
+### Added
+
+- add the Pocket modality (#938)
+- Jollity SPA integration (#990)
+- observe core store queries as streams (#1125)
+- add shared chain capabilities over subxt (#1121)
+- serve the control surface a product suite drives (#934)
+- answer a product account's address from the fixture (#1094)
+
+### Changed
+
+- read, screen and store Pocket cards through the core (#1116)
+- disable the native DIM2 weekly game bot (#1211)
+- backport 6 commits into hosts/ios (#1188)
+- create and restore named sessions (#1124)
+- add a core-owned SQLite database for native hosts (#991)
+
+### Fixed
+
+- read immutable copies of the Pocket reconcile sets inside the lock (#1308)
+- keep preimage submissions local on a test host (#1291)
+- report the app version and build in the host info products see (#1236)
+- revert chain for nightly builds (#1192)
+- serve the statement-store allowance key from memory within a period (#1097)
+- stop the Pocket card flashing black when it opens (#1110)
+- look preimages up on the Bulletin node instead of an empty map (#1017)
+- read granted product storage from the owner on iOS and Android (#997)
+
 ## [0.23.0] - 2026-09-29
 
 ### Added
@@ -75,6 +108,7 @@ generated from [Conventional Commits](https://www.conventionalcommits.org/).
 
 ### Changed
 
+- @parity/truapi 0.23.0, @parity/truapi-host 0.23.0, @parity/truapi-provider 0.3.1, @parity/ios-host 0.23.0, @parity/android-host 0.23.0 (#1059)
 - make storage callbacks and Pocket removal async (#1019)
 - run native core tasks on one Tokio runtime (#1018)
 

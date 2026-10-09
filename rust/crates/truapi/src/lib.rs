@@ -92,9 +92,9 @@ pub mod latest {
         BorderStyle, BoxProps, ButtonProps, ButtonVariant, ChainIdentifier, ChatAction,
         ChatActionLayout, ChatActions, ChatBotRegistrationStatus, ChatCustomMessage, ChatFile,
         ChatMedia, ChatMessageContent, ChatReaction, ChatRichText, ChatRoom, ChatRoomParticipation,
-        ChatRoomRegistrationStatus, ColorToken, ColumnProps, ContactHandle, ContactPickOutcome,
-        ContentAlignment, ContextualAlias, DerivationIndex, Dimensions, Effect, EffectProps,
-        GenericError, HorizontalAlignment, HostAccountCreateProofRequest,
+        ChatRoomRegistrationStatus, CodeFormat, ColorToken, ColumnProps, ContactHandle,
+        ContactPickOutcome, ContentAlignment, ContextualAlias, DerivationIndex, Dimensions, Effect,
+        EffectProps, GenericError, HorizontalAlignment, HostAccountCreateProofRequest,
         HostAccountGetAliasRequest, HostAccountListRingVrfKeysRequest,
         HostAccountRegisterRingVrfKeyRequest, HostAccountRingVrfSignRequest,
         HostAccountSignVrfError, HostAccountSignVrfRequest, HostJamPeerTransportCloseError,
@@ -123,6 +123,7 @@ pub mod latest {
         Shape, SignedStatement, Size, Statement, StatementProof, StorageQueryItem,
         StorageQueryType, StorageResultItem, TextFieldProps, TextProps, ThemeName, ThemeVariant,
         TxPayloadExtension, TypographyStyle, VerticalAlignment, VrfSignature,
+        ScanOutcome,
     };
     pub use crate::v02::{
         HostNativeChatAcknowledgment, HostNativeChatAttachment, HostNativeChatAttachmentKind,
@@ -198,6 +199,12 @@ pub mod latest {
     pub type HostContactsPlaceLabelsError =
         LatestOf<versioned::contacts::HostContactsPlaceLabelsError>;
     pub use crate::v01::{ContactLabelSlot, ContactPickManyOutcome};
+    /// Scanner request.
+    pub type HostScannerScanRequest = LatestOf<versioned::scanner::HostScannerScanRequest>;
+    /// Scanner outcome.
+    pub type HostScannerScanResponse = LatestOf<versioned::scanner::HostScannerScanResponse>;
+    /// Scanner failure.
+    pub type HostScannerScanError = LatestOf<versioned::scanner::HostScannerScanError>;
     /// Contextual alias derivation result.
     pub type HostAccountGetAliasResponse =
         LatestOf<versioned::account::HostAccountGetAliasResponse>;
@@ -230,6 +237,12 @@ pub mod latest {
     /// Product context bound to the current host runtime.
     pub type HostGetProductContextResponse =
         LatestOf<versioned::system::HostGetProductContextResponse>;
+    /// Request to drop the calling product's game reminder.
+    pub type HostCancelNextGameRequest = LatestOf<versioned::game::HostCancelNextGameRequest>;
+    /// Request to remind the user when the calling product's next game starts.
+    pub type HostRemindNextGameRequest = LatestOf<versioned::game::HostRemindNextGameRequest>;
+    /// Why a game reminder was not taken.
+    pub type HostRemindNextGameError = LatestOf<versioned::game::HostRemindNextGameError>;
     /// Storage key change pushed to a subscriber.
     pub type HostLocalStorageChangeItem =
         LatestOf<versioned::local_storage::HostLocalStorageChangeItem>;
@@ -268,6 +281,12 @@ pub mod latest {
     /// Contact and own avatar geometry.
     pub type HostProfilePlaceContactAvatarsRequest =
         LatestOf<versioned::profile::HostProfilePlaceContactAvatarsRequest>;
+    /// Request to show or hide the face above the calling Widget.
+    pub type HostExpandedCardSetFaceShownRequest =
+        LatestOf<versioned::expanded_card::HostExpandedCardSetFaceShownRequest>;
+    /// Face visibility change failure.
+    pub type HostExpandedCardSetFaceShownError =
+        LatestOf<versioned::expanded_card::HostExpandedCardSetFaceShownError>;
     /// Push notification scheduling request.
     pub type HostPushNotificationRequest =
         LatestOf<versioned::notifications::HostPushNotificationRequest>;

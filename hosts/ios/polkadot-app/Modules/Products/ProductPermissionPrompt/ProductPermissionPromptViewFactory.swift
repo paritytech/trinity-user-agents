@@ -83,7 +83,7 @@ private extension ProductPermissionPromptViewFactory {
                 )
             )
             body = permission.permissionDescription
-        case .networkAccess:
+        case .networkAccess, .networkAccessBundle:
             title = String(localized: .Products.permissionTitleNetworkAccess(productId: productId))
             body = permission.permissionDescription
         case .accountAccess:

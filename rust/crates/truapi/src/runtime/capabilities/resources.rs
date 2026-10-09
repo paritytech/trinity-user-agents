@@ -80,6 +80,9 @@ impl ProductRuntimeHost {
                     )
                 })?;
             require_session()?;
+            if status == PermissionAuthorizationStatus::Authorized {
+                return Ok(());
+            }
             if status != PermissionAuthorizationStatus::NotDetermined {
                 return Err(
                     "Statement allowance authorization changed during confirmation".to_string(),

@@ -6,6 +6,7 @@ import Foundation
 public enum ProductPermission: Equatable, Sendable {
     public static let deviceCapabilityTypeName = "device_capability"
     public static let networkAccessTypeName = "network_access"
+    public static let networkAccessBundleTypeName = "network_access_bundle"
     public static let accountAccessTypeName = "account_access"
     public static let webRtcAccessTypeName = "webrtc_access"
     public static let chainSubmitAccessTypeName = "chain_submit"
@@ -18,6 +19,8 @@ public enum ProductPermission: Equatable, Sendable {
 
     case deviceCapability(DeviceCapabilityType)
     case networkAccess(domain: String)
+    /// Exact native domain-set decision; not equivalent to separate domain decisions.
+    case networkAccessBundle(domains: [String])
     case accountAccess(targetProductId: String)
     case balanceAccess
     case webRtcAccess
@@ -40,7 +43,7 @@ public enum ProductPermission: Equatable, Sendable {
     /// that trust.
     public var isRemoteAccess: Bool {
         switch self {
-        case .networkAccess, .webRtcAccess, .chainSubmitAccess, .preimageSubmitAccess,
+        case .networkAccess, .networkAccessBundle, .webRtcAccess, .chainSubmitAccess, .preimageSubmitAccess,
              .statementSubmitAccess, .jamPeersAccess:
             true
         case .deviceCapability, .accountAccess, .balanceAccess, .userIdentityAccess,
@@ -61,6 +64,8 @@ public enum ProductPermission: Equatable, Sendable {
             Self.deviceCapabilityTypeName
         case .networkAccess:
             Self.networkAccessTypeName
+        case .networkAccessBundle:
+            Self.networkAccessBundleTypeName
         case .accountAccess:
             Self.accountAccessTypeName
         case .balanceAccess:
@@ -88,6 +93,8 @@ public enum ProductPermission: Equatable, Sendable {
             capability.rawValue
         case let .networkAccess(domain):
             domain
+        case let .networkAccessBundle(domains):
+            domains.joined(separator: "\n")
         case let .accountAccess(targetProductId):
             targetProductId
         case let .jamPeersAccess(genesis):
@@ -112,6 +119,8 @@ public enum ProductPermission: Equatable, Sendable {
             return .deviceCapability(capability)
         case networkAccessTypeName:
             return .networkAccess(domain: key)
+        case networkAccessBundleTypeName:
+            return .networkAccessBundle(domains: key.components(separatedBy: "\n"))
         case accountAccessTypeName:
             return .accountAccess(targetProductId: key)
         case balanceAccessTypeName:

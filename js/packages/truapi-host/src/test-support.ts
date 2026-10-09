@@ -183,6 +183,17 @@ export function makeHostCallbacks(
           },
         }
       : {}),
+    // And for Game: the default fixture is a host that holds no reminders,
+    // so Game calls are answered `Unsupported`.
+    ...(overrides.game
+      ? {
+          game: {
+            scheduleGameReminder: async () => {},
+            cancelGameReminder: async () => {},
+            ...overrides.game,
+          },
+        }
+      : {}),
   };
 }
 

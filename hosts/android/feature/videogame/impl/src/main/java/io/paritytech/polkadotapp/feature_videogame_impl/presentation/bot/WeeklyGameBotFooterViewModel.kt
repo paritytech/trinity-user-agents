@@ -1,6 +1,8 @@
 package io.paritytech.polkadotapp.feature_videogame_impl.presentation.bot
 
+import android.content.Context
 import dagger.hilt.android.lifecycle.HiltViewModel
+import dagger.hilt.android.qualifiers.ApplicationContext
 import io.paritytech.polkadotapp.chains.multiNetwork.chain.model.ChainAssetWithAmount
 import io.paritytech.polkadotapp.common.presentation.screens.BaseViewModel
 import io.paritytech.polkadotapp.common.utils.calendar.CalendarEvent
@@ -19,6 +21,7 @@ import io.paritytech.polkadotapp.feature_upgrade_username_api.domain.model.Upgra
 import io.paritytech.polkadotapp.feature_upgrade_username_api.presentation.bot.toBotUi
 import io.paritytech.polkadotapp.feature_videogame_impl.VideoGameRouter
 import io.paritytech.polkadotapp.feature_videogame_impl.data.VideoGameInfoSyncService
+import io.paritytech.polkadotapp.feature_videogame_impl.data.calendar.gameCalendarEventTitle
 import io.paritytech.polkadotapp.feature_videogame_impl.data.models.gameDuration
 import io.paritytech.polkadotapp.feature_videogame_impl.domain.dim.Dim2CommitmentHandler
 import io.paritytech.polkadotapp.feature_videogame_impl.domain.interactor.RegisterOutcome
@@ -53,6 +56,7 @@ internal class WeeklyGameBotFooterViewModel @Inject constructor(
     private val router: VideoGameRouter,
     private val videoGameNotificationsMixin: VideoGameNotificationsMixin,
     private val calendarEventsMixin: CalendarEventsMixin,
+    @ApplicationContext context: Context,
     gameInfoSyncService: VideoGameInfoSyncService,
     private val pillVisibility: WeeklyGamePillVisibilityHolder,
     dimSwitchMixinFactory: DimSwitchMixin.Factory
@@ -73,7 +77,7 @@ internal class WeeklyGameBotFooterViewModel @Inject constructor(
         .map {
             it?.let {
                 CalendarEvent(
-                    title = "Web3Citizenship video game",
+                    title = context.gameCalendarEventTitle(),
                     timeStart = it.gameStartMillis,
                     duration = it.gameDuration()
                 )

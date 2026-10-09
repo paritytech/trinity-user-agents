@@ -278,6 +278,12 @@ impl ProductContext {
             execution_kind,
         })
     }
+
+    /// Whether this is the game product, Jollity, on any dotNS network. A
+    /// subname such as `app.dim2.dot` is a different product.
+    pub fn is_game_product(&self) -> bool {
+        dotns_product_label(&self.product_id) == Some(GAME_PRODUCT_LABEL)
+    }
 }
 
 /// Decoding routes through [`ProductContext::new_with_execution`] so a frame
@@ -317,13 +323,17 @@ pub fn has_dotns_tld(normalized: &str) -> bool {
 
 /// Blessed product labels across every network in [`DOTNS_TLDS`].
 ///
-/// These products bypass recorded permissions and prompt only for device access.
-pub const REMOTE_PERMISSION_TRUSTED_LABELS: &[&str] = &["peopl", "dim2", "stash"];
+/// These products default to authorized except for device access. Explicit
+/// stored denials still govern their remote, identity and account permissions.
+pub const REMOTE_PERMISSION_TRUSTED_LABELS: &[&str] = &["peopl", GAME_PRODUCT_LABEL, "stash"];
+
+/// The bare label of the game product, Jollity, on every network.
+const GAME_PRODUCT_LABEL: &str = "dim2";
 
 /// Hosts available to every product unless a stored permission decision blocks them.
 pub const BLESSED_REMOTE_DOMAINS: &[&str] = &["fonts.googleapis.com", "fonts.gstatic.com"];
 
-/// Whether `product_id` holds every [`RemotePermission`] without prompting.
+/// Whether `product_id` defaults to every [`RemotePermission`] without prompting.
 ///
 /// Expects the [`normalize_product_identifier`] form. Matches the whole label
 /// and nothing else: `peopl.dot` and `peopl.paseo` are trusted, while
@@ -331,13 +341,23 @@ pub const BLESSED_REMOTE_DOMAINS: &[&str] = &["fonts.googleapis.com", "fonts.gst
 /// not. The label is only read out of an id that [`has_dotns_tld`] accepts, so a
 /// widened product-id policy cannot promote an arbitrary single-label host.
 pub fn has_trusted_remote_permissions(product_id: &str) -> bool {
-    has_dotns_tld(product_id)
-        && product_id
-            .rsplit_once('.')
-            .is_some_and(|(label, _tld)| REMOTE_PERMISSION_TRUSTED_LABELS.contains(&label))
+    dotns_product_label(product_id)
+        .is_some_and(|label| REMOTE_PERMISSION_TRUSTED_LABELS.contains(&label))
 }
 
-/// Whether `product_id` in any accepted spelling holds every
+/// Everything before the TLD of a dotNS `product_id`: `dim2` for `dim2.dot`,
+/// `app.dim2` for `app.dim2.dot`. `None` when the id does not end in one of
+/// [`DOTNS_TLDS`], so a `localhost` id never yields a label.
+///
+/// Expects the [`normalize_product_identifier`] form.
+fn dotns_product_label(product_id: &str) -> Option<&str> {
+    if !has_dotns_tld(product_id) {
+        return None;
+    }
+    product_id.rsplit_once('.').map(|(label, _tld)| label)
+}
+
+/// Whether `product_id` in any accepted spelling defaults to every
 /// [`RemotePermission`] without prompting.
 ///
 /// [`has_trusted_remote_permissions`] reads the normalized form, which is what
@@ -345,7 +365,7 @@ pub fn has_trusted_remote_permissions(product_id: &str) -> bool {
 /// normalizes first and answers `false` for an id that does not normalize at
 /// all: an unrecognised spelling is never read as trusted.
 ///
-/// Recorded permission decisions do not affect this policy.
+/// This identifies the default only; authorization still checks stored denials.
 pub fn normalizes_to_trusted_remote_permissions(product_id: &str) -> bool {
     normalize_product_identifier(product_id)
         .is_ok_and(|normalized| has_trusted_remote_permissions(&normalized))
@@ -1382,8 +1402,8 @@ pub trait CoreAdmin: Send + Sync {
         requests: Vec<PermissionAuthorizationRequest>,
     ) -> Result<Vec<PermissionAuthorizationStatus>, GenericError>;
 
-    /// Update a stored permission authorization status. `NotDetermined` clears
-    /// the stored value so the next product request prompts again.
+    /// Update a stored permission authorization status. `NotDetermined` resets
+    /// the decision to ask again, retaining a tombstone against legacy re-import.
     async fn set_permission_authorization_status(
         &self,
         request: PermissionAuthorizationRequest,
@@ -3965,7 +3985,9 @@ pub trait LocaleHost: Send + Sync {
         &self,
         _request: crate::latest::HostLocaleLocalizeTimestampsRequest,
     ) -> Result<crate::latest::HostLocaleLocalizeTimestampsResponse, GenericError> {
-        Err(GenericError { reason: "Local time conversion is unavailable".into() })
+        Err(GenericError {
+            reason: "Local time conversion is unavailable".into(),
+        })
     }
 }
 
@@ -4242,6 +4264,33 @@ impl core::fmt::Debug for PlacedAvatar {
     }
 }
 
+/// Host-implemented adapter that holds a product's next-game reminder.
+/// Optional: a host that omits it leaves Game requests answered `Unsupported`.
+/// See [`OptionalPlatform`].
+///
+/// The core serves only the game product and refuses a start that is not in
+/// the future before it calls here; it asks for no per-product consent. The
+/// host asks the OS for what the reminder needs, rings an alarm where the OS
+/// allows one and delivers an ordinary notification otherwise, and may add the
+/// game to the user's calendar. A host keeps one reminder per product: a
+/// schedule replaces the reminder the same product already holds and leaves
+/// other products' reminders alone. The host keeps each reminder across app
+/// kill and device reboot and drops it once its game has started.
+#[async_trait]
+pub trait GamePlatform: Send + Sync {
+    /// Hold `starts_at` (Unix milliseconds, UTC) as the product's reminder,
+    /// replacing any it holds. An error, including an OS that allows neither
+    /// alarms nor notifications, reaches the product as a host failure.
+    async fn schedule_game_reminder(
+        &self,
+        product: &ProductContext,
+        starts_at: u64,
+    ) -> Result<(), GenericError>;
+
+    /// Drop the product's reminder. Idempotent: dropping none succeeds.
+    async fn cancel_game_reminder(&self, product: &ProductContext) -> Result<(), GenericError>;
+}
+
 /// What the operating system currently says about a device capability.
 ///
 /// Distinct from [`PermissionAuthorizationStatus`], which is the product-scoped
@@ -4285,6 +4334,34 @@ pub trait PermissionStatusHost: Send + Sync {
         &self,
         request: HostDevicePermissionRequest,
     ) -> Result<DevicePermissionStatus, GenericError>;
+}
+
+/// What the host did with a request to show or hide the expanded card face.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
+pub enum ExpandedCardFaceOutcome {
+    /// The face is now in the requested state, including when it already was.
+    Applied,
+    /// The Widget is not shown under its card right now.
+    NotPresented,
+    /// The user is moving the face, so the request had no effect.
+    UserMoving,
+    /// The host cannot move the face at all.
+    Unsupported,
+}
+
+/// Host control of the card face drawn above an opened card's Widget.
+///
+/// Carried per connection on `ConnectionAdapters`, because the host owns one
+/// drawer per product execution. A connection without one tells products
+/// `Unsupported`.
+#[async_trait]
+pub trait ExpandedCardHost: Send + Sync {
+    /// Show (`true`) or hide (`false`) the face above the calling Widget.
+    async fn set_expanded_card_face_shown(
+        &self,
+        shown: bool,
+    ) -> Result<ExpandedCardFaceOutcome, GenericError>;
 }
 
 /// Host store for a product's pending operations, which the host uses to keep
@@ -4542,6 +4619,7 @@ pub trait OptionalPlatform:
     + ProfilePlatform
     + IdentityBackendHost
     + CoinageWalletHost
+    + GamePlatform
 {
 }
 
@@ -4553,5 +4631,6 @@ impl<T> OptionalPlatform for T where
         + ProfilePlatform
         + IdentityBackendHost
         + CoinageWalletHost
+        + GamePlatform
 {
 }

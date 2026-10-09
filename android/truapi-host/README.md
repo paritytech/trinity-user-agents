@@ -74,6 +74,7 @@ The public surface lives in
 - `TrUAPIHostRuntime` - process-owned runtime whose product executions share one authentication session. Open a connection per executable with `openProductExecution`, which returns a `TrUAPIProductExecution` holding its own token on the runtime's shared WS bridge, permission authorization, theme/preimage/chain notifications, and the Chat controls below.
 - `ChatHostBridge` - native Chat storage and UI, implemented by hosts that serve the Chat modality and passed to `openProductExecution`. Hosts without it pass nothing and Chat calls answer unsupported.
 - `PocketHostBridge` - the host's Pocket card collection, implemented by hosts with a Pocket surface and passed as `pocket` to `openProductExecution`. The execution then offers `notifyPocketCardsChanged`. `removeCard` suspends, and decides and removes together, returning `NativePocketRemoval.Removed`, `Absent` or `Privileged`, so a card cannot be pinned between the check and the removal. Like Chat, Pocket is reachable only from a Worker execution with an active session, so without `activateLocalSession` every Pocket call answers `Denied`. Hosts without the bridge pass nothing and Pocket calls answer unsupported.
+- `GameHostBridge` - the host's game-reminder surface, implemented by hosts that can hold reminders and passed as `game` to `openProductExecution`. The host holds one reminder per product: a `scheduleReminder` replaces the reminder the same product already holds. The core asks for no per-product consent: the host asks the OS for what it needs, rings an alarm where the OS allows one and delivers a notification otherwise, may add the game to the user's calendar, keeps the reminder across app kill and reboot, and drops it once the game starts. A `scheduleReminder` that throws reaches the product as a host failure carrying its reason. Hosts without the bridge pass nothing and Game calls answer unsupported, as they do for every product but the game product, `dim2`.
 
 Pass an existing native wallet as `nativeWallet` when constructing `TrUAPIHostRuntime`. The separate `NativeCoinageHost`
 interface contains only `nativeCoinage(request)`; it is not part of `HostBridge` or product callbacks. Omitting this
@@ -226,11 +227,7 @@ worker WebViews use this path.
 The main frame retains `window.__HOST_WEBVIEW_MARK__` for deployed products that use it to select native navigation or
 storage. New products should use the SDK's container detection.
 
-The Rust core handles the wire protocol directly. Outbound responses and host-side capability callbacks (`navigateTo`,
-`pushNotification`, `cancelNotification`, `devicePermission`, `remotePermission`, `authStateChanged`, core storage,
-chain JSON-RPC, `confirmUserAction`, `confirmPermission`, preimage lookup, theme, `featureSupported`, `storage`) reach
-the embedder through `HostBridge`. Bulletin preimage build/sign/submit now happens inside the core, so the host only
-serves `lookupPreimage`.
+The Rust core handles the wire protocol directly. Outbound responses and host-side capability callbacks (`navigateTo`, `pushNotification`, `cancelNotification`, `devicePermission`, `setExpandedCardFaceShown`, `remotePermission`, `authStateChanged`, core storage, chain JSON-RPC, `confirmUserAction`, `confirmPermission`, preimage lookup, theme, `featureSupported`, `storage`) reach the embedder through `HostBridge`. Bulletin preimage build/sign/submit now happens inside the core, so the host only serves `lookupPreimage`.
 
 ## Permissions split
 
@@ -242,18 +239,13 @@ The core's `Permissions` platform trait has two methods, and so does the bridge:
 
 `product` is the requesting execution's `ProductExecutionConfig`.
 
-Both return `PermissionDecision` (`ALLOW_ONCE`, `ALLOW_ALWAYS`, or `DENY`). Preserve the choice so the core can consume
-one-use grants without persisting them. OS refusal after app consent should throw rather than record a product denial.
-The same typed values drive the `TrUAPIProductExecution` permission admin API (`permissionAuthorizationStatus`,
-`setPermissionAuthorizationStatus`), which reads and updates the persisted decisions without prompting.
+Both return `PermissionDecision` (`ALLOW_ONCE`, `ALLOW_ALWAYS`, or `DENY`). Preserve the choice so the core can consume one-use grants without persisting them. OS refusal after app consent should throw rather than record a product denial. `TrUAPIProductExecution.permissionAuthorizationStatus` resolves the current execution's authorization (including the OS gate); settings instead use the process-wide `TrUAPIHostRuntime.permissionAuthorizations(productId)` and suspending `setPermissionAuthorizationStatus(productId, request, status)`. Settings work without opening an execution and preserve product+request, account-neutral authority.
 
 The browser container checks product consent before opening WebSockets or requesting camera and microphone access. After
 installing it, the WebChromeClient media callback should check only the Android OS permission, so it does not consume
 product consent twice.
 
-To disable WebRTC, call `execution.setPermissionAuthorizationStatus` with a remote `WebRtc` request and `DENIED` before
-loading each product. This overrides saved grants and trusted-product auto-grants, which otherwise skip
-`remotePermission` callbacks.
+To disable WebRTC, await `runtime.setPermissionAuthorizationStatus(productId, request, DENIED)` with a remote `WebRtc` request **before opening** the product execution. Deny/reset invalidates pending prompts and one-use grants and closes the product's existing executions; reopen a fresh execution when the user launches it again. Other products remain open. An explicit `AUTHORIZED` settings choice updates the same authority.
 
 The vendored Android host retains its native HTTP checks for fetch, XHR and subresources. Its installer adds
 `nativeHttp: true` to the private bootstrap configuration in every frame before the container runs, disabling duplicate
@@ -262,6 +254,14 @@ JavaScript HTTP checks. Embedders without native HTTP enforcement must leave thi
 Identity and account access reviews use `confirmPermission(review)`, which also returns `PermissionDecision`. Override
 it to preserve Allow once. Its compatibility default maps `confirmUserAction`'s Boolean approval to `ALLOW_ALWAYS`;
 signing and other single-action reviews continue to use that Boolean callback.
+
+### Native permission settings and legacy migration
+
+Implement `HostCoreStorage.keys()` by enumerating the existing core namespace in the real persistent backend, not a separate grant index. The default throws unsupported. Implement `HostBridge.permissionAuthorizationsChanged(productId)` on the process bridge and notify settings observers; every core write, including decisions from native prompts, reaches this callback. After invalidation, check `execution.isClosed()` and dispose that execution's WebView/media resources without automatic renderer recovery. A socket disconnect alone does not stop capture.
+
+The Android application's permission repository imports Room rows through `importPermissionAuthorizations` before opening an execution or reading settings. Import only fills absent canonical decisions; a stored deny or reset tombstone cannot be resurrected by an old Room grant. Supported legacy reads and both settings toggle directions use canonical records. Legacy-only balance access stays in Room. Historical multi-domain records retain their bundle identity rather than turning a bundle denial into per-domain denials. Malformed or unmappable supported records fail visibly instead of disappearing from settings.
+
+Legacy prompts capture `permissionAuthorizationRevision` before waiting for the user and persist through `setPermissionAuthorizationStatusIfCurrent`; a false result rejects a late answer. One-use legacy grants are invalidated on process notifications. Revocation errors propagate to settings and leave the displayed persistent decision unchanged; there is no optimistic success. These are native host administration APIs, not new guest wire methods.
 
 ## Statement-store allowance renewal
 
