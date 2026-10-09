@@ -3,9 +3,6 @@ import Testing
 import UIKit
 @testable import polkadot_app
 
-// The card and the screen size the tests of an opened card share, so a face
-// sized against one is never checked against another.
-
 let loyaltyCard = PocketCardViewModel(
     key: PocketCardKey(productId: "game.paseo", cardId: PocketCardId(value: "loyalty")),
     title: "Loyalty",
@@ -13,26 +10,15 @@ let loyaltyCard = PocketCardViewModel(
     face: nil
 )
 
-let screenSize = CGSize(width: 393, height: 800)
-
-/// Puts `screen` in a window, which a card's screen needs before its face may move.
-@MainActor
-func showing(_ screen: UIViewController) -> UIWindow {
-    let window = UIWindow(frame: CGRect(origin: .zero, size: screenSize))
-    window.rootViewController = screen
-    window.isHidden = false
-    window.layoutIfNeeded()
-    return window
-}
-
 /// Puts `root` in a window of the app's scene. Only there does a screen it
 /// presents join the window, as it does in the app.
 @MainActor
-func showingInScene(_ root: UIViewController) throws -> UIWindow {
+func showing(_ root: UIViewController) throws -> UIWindow {
     let scene = try #require(UIApplication.shared.connectedScenes.first as? UIWindowScene)
     let window = UIWindow(windowScene: scene)
     window.rootViewController = root
     window.makeKeyAndVisible()
+    window.layoutIfNeeded()
     return window
 }
 
@@ -55,11 +41,21 @@ func present(_ presented: UIViewController, from presenter: UIViewController) as
     }
 }
 
-/// Dismisses what `presenter` presents and returns once that has finished.
+/// Presents `screen` as the app presents a card and returns the window it is
+/// shown in, which the test keeps alive.
 @MainActor
-func dismissPresented(from presenter: UIViewController) async {
-    await withCheckedContinuation { finished in
-        presenter.dismiss(animated: true) { finished.resume() }
+func presentCard(_ screen: UIViewController) async throws -> UIWindow {
+    let presenter = UIViewController()
+    let window = try showing(presenter)
+    await present(cardNavigation(screen), from: presenter)
+    return window
+}
+
+/// Closes the card `screen` is presented in and returns once it has closed.
+@MainActor
+func closeCard(_ screen: UIViewController) async {
+    await withCheckedContinuation { closed in
+        screen.dismiss(animated: true) { closed.resume() }
     }
 }
 

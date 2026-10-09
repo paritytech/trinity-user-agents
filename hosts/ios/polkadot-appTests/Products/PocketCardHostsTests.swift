@@ -10,6 +10,8 @@ import UIKitExt
 /// that keeps a Pocket full of cards from becoming a web view each.
 @MainActor
 struct PocketCardHostsTests {
+    /// The surface is how a warm page reaches whichever screen shows it next,
+    /// so the card reopened must find the one its page was built with.
     @Test
     func opensACardOnceAndReusesItAfterwards() {
         let hosts = PocketCardHosts()
@@ -20,45 +22,23 @@ struct PocketCardHostsTests {
 
         #expect(factory.built == 1)
         #expect(first?.view === second?.view)
+        #expect(second?.surface === factory.surfaces.first)
     }
 
-    /// One at a time: a second card takes the first down rather than adding to it.
+    /// One at a time: a second card takes the first down rather than adding to
+    /// it. Each has its own surface, since another card's page must never move
+    /// this card's face.
     @Test
     func openingAnotherCardTakesTheFirstDown() {
         let hosts = PocketCardHosts()
         let factory = CountingFactory()
 
         let first = hosts.product(for: loyalty, make: factory.make)
-        _ = hosts.product(for: trophy, make: factory.make)
+        let second = hosts.product(for: trophy, make: factory.make)
         let loyaltyAgain = hosts.product(for: loyalty, make: factory.make)
 
         #expect(factory.built == 3)
         #expect(first?.view !== loyaltyAgain?.view)
-    }
-
-    /// The surface is how a warm page reaches whichever screen shows it next,
-    /// so the card reopened must find the one its page was built with.
-    @Test
-    func keepsTheSurfaceAWarmProductWasBuiltWith() {
-        let hosts = PocketCardHosts()
-        let factory = CountingFactory()
-
-        let first = hosts.product(for: loyalty, make: factory.make)
-        let second = hosts.product(for: loyalty, make: factory.make)
-
-        #expect(first?.surface === factory.surfaces.first)
-        #expect(second?.surface === first?.surface)
-    }
-
-    /// Another card's page must never move this card's face.
-    @Test
-    func givesEachProductItsOwnSurface() {
-        let hosts = PocketCardHosts()
-        let factory = CountingFactory()
-
-        let first = hosts.product(for: loyalty, make: factory.make)
-        let second = hosts.product(for: trophy, make: factory.make)
-
         #expect(first?.surface !== second?.surface)
     }
 
@@ -70,14 +50,12 @@ struct PocketCardHostsTests {
         let hosts = PocketCardHosts()
         let product = try #require(hosts.product(for: loyalty) { _ in StubSPAView() })
         let screen = PocketCardScreenViewController(card: loyaltyCard, product: product.view)
-        let presenter = UIViewController()
-        let window = showing(presenter)
         let beforeOpening = hosts.isOnDisplay(loyalty)
 
-        await present(cardNavigation(screen), from: presenter)
+        let window = try await presentCard(screen)
         product.surface.claim(screen)
         let whileOpen = [hosts.isOnDisplay(loyalty), hosts.isOnDisplay(trophy)]
-        await dismissPresented(from: presenter)
+        await closeCard(screen)
 
         #expect([beforeOpening, hosts.isOnDisplay(loyalty)] == [false, false])
         #expect(whileOpen == [true, false])
