@@ -121,10 +121,15 @@ jobs:
             ./gradlew :bindings:truapi-host:assembleDebugAndroidTest :app:assembleGpDebug :app:assembleGpDebugAndroidTest --no-daemon --max-workers=2 -Dorg.gradle.jvmargs=-Xmx4g -Pkotlin.compiler.execution.strategy=in-process
           emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -accel on
           working-directory: hosts/android
+          # Retain API 30 OS coverage, but replace its frozen WebView 83 with a
+          # digest-pinned official AOSP provider supporting DOCUMENT_START_SCRIPT.
+          # Both suites must use the selected real provider; no feature skips.
           # App flavours do not select the bindings library's tests. Run those
           # explicitly so canonical permission administration is exercised
           # through the actual Android native library, not only JVM mocks.
-          script: ./gradlew :bindings:truapi-host:connectedDebugAndroidTest :app:connectedGpDebugAndroidTest --no-daemon --max-workers=2 -Dorg.gradle.jvmargs=-Xmx4g -Pkotlin.compiler.execution.strategy=in-process
+          script: |
+            bash developer-tools/install-ci-webview.sh emulator-5554
+            ./gradlew :bindings:truapi-host:connectedDebugAndroidTest :app:connectedGpDebugAndroidTest --no-daemon --max-workers=2 -Dorg.gradle.jvmargs=-Xmx4g -Pkotlin.compiler.execution.strategy=in-process
 
       # The report says which test failed; the job status only says one did.
       - name: Upload the test report
