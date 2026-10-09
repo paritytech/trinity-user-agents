@@ -255,6 +255,7 @@ Commands always start with `/`:
 | `/script --new [directory]` | Create a project in a new directory, then edit and run it. |
 | `/login` | Start pairing for the selected product, show its QR code, and copy its deeplink to the clipboard. |
 | `/logout` | Disconnect the pairing host and discard its old pairing keypair. |
+| `/cache` | Show the cache payer and what the host measured of each cache node. |
 | `/log <level>` | Save tracing as `error`, `warn`, `info`, `debug`, or `trace`, and apply it now. |
 | `/product` | Show the currently selected product. |
 | `/product <id>` | Switch the product used by future scripts and frame connections. |
@@ -1001,7 +1002,9 @@ host does not ask cache nodes. A provider that is down, refuses the payer or
 does not have the blob costs one request, and the Bulletin node answers as it
 would without cache nodes. The log names the provider, its rank, whether it is
 a home node, the latency and the source it reports (`local`, `peer:<id>` or
-`source`) for every read a cache node serves.
+`source`) for every read a cache node serves. The measurements are kept in
+`cache-quality.json` in the state directory, so a restart keeps the order, and
+`/cache` shows them with the payer key.
 
 ## Manual use (two terminals)
 

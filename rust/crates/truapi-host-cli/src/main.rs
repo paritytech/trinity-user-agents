@@ -3169,6 +3169,7 @@ async fn pairing_interactive_loop(
 		};
 		match command {
 			ShellCommand::Help => ui.system(PAIRING_HELP_TEXT),
+			ShellCommand::Cache => ui.system(storage.cache_status()),
 			ShellCommand::Clear => ui.clear(),
 			ShellCommand::Copy => match ui.copy_transcript() {
 				Ok(entries) => ui.event(SystemEvent::CopiedTranscript { entries }),
@@ -3349,6 +3350,7 @@ async fn signing_interactive_loop(
 		};
 		match command {
 			ShellCommand::Help => ui.system(HELP_TEXT),
+			ShellCommand::Cache => ui.system(session.platform.cache_status()),
 			ShellCommand::Clear => ui.clear(),
 			ShellCommand::Copy => match ui.copy_transcript() {
 				Ok(entries) => ui.event(SystemEvent::CopiedTranscript { entries }),
@@ -3661,6 +3663,7 @@ async fn execute_interactive_operation(
 			bail!("command must be handled by the terminal UI")
 		},
 		ShellCommand::Help |
+		ShellCommand::Cache |
 		ShellCommand::Clear |
 		ShellCommand::Copy |
 		ShellCommand::Log(_) |
@@ -3726,6 +3729,7 @@ async fn execute_non_interactive_command(
 			}
 		},
 		ShellCommand::Help => println!("{HELP_TEXT}"),
+		ShellCommand::Cache => println!("{}", session.platform.cache_status()),
 		ShellCommand::Clear | ShellCommand::Quit => {},
 		ShellCommand::Copy => bail!("/copy is only available in the terminal UI"),
 		ShellCommand::Approval(_) => {

@@ -179,7 +179,9 @@ impl CliPlatform {
 		let device_storage =
 			device_storage_path.as_deref().map(load_hex_key_map).unwrap_or_default();
 
-		let cache = CacheNodes::from_env().map(Arc::new);
+		let cache_quality =
+			storage.as_ref().map(|paths| paths.state_dir.join("cache-quality.json"));
+		let cache = CacheNodes::from_env(cache_quality).map(Arc::new);
 		Arc::new(Self {
 			chain: WsChainProvider::new(network.people_ws, network.live_chain_endpoints),
 			chains: network.host_chain_set(),
@@ -214,6 +216,14 @@ impl CliPlatform {
 	) {
 		if let Some(cache) = &self.cache {
 			cache.set_account(Some((entropy, product)));
+		}
+	}
+
+	/// The text of `/cache`: the cache payer and what the host measured of each cache node.
+	pub fn cache_status(&self) -> String {
+		match &self.cache {
+			Some(cache) => cache.status(),
+			None => "no cache nodes: set TRUAPI_CACHE_PROVIDERS to a provider set file".to_string(),
 		}
 	}
 
