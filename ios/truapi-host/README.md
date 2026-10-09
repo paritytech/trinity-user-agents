@@ -127,12 +127,16 @@ indistinguishable from the other product having granted nothing. Pass 32 zero
 bytes only to declare deliberately that this host has no Asset Hub. Include this
 configuration update in the embedding app's package upgrade.
 
-Run the package tests in their UIKit host on an iOS simulator (the xcframework has no macOS slice). The helper installs pinned XcodeGen under `target/tools`, generates the project, and selects an available simulator. CI waits for that simulator to finish booting before compiling the test host, keeping OS initialization outside the first WebKit page-ready deadline.
+Run the package tests in their UIKit host on an iOS simulator using Xcode 16.3 or newer (the xcframework has no macOS slice). The helper installs pinned XcodeGen under `target/tools`, generates the project, and selects an available simulator. CI waits for that simulator to finish booting before compiling the test host. This completes OS boot, not WebKit's lazy auxiliary-process startup.
 
 ```bash
 # from the repo root
 ./ios/truapi-host/scripts/test.sh
 ```
+
+`ProductNetworkAccessTests` has a separate, once-per-suite stock WebKit readiness prerequisite. It loads a loopback page and waits for that page's JavaScript message in an uninstrumented WKWebView, before creating any TrUAPI runtime, bridge, or SDK scripts. This prerequisite has a 60-second limit and reports navigation errors or a terminated WebContent process as suite failures; it never retries failed tests. The probe remains alive until suite teardown, while every product test still creates its own WKWebView and runs the real SDK/permission path with the unchanged 15-second page/operation deadlines and one-minute test limits. The prerequisite uses Swift Testing's suite-scoping API (Xcode 16.3+).
+
+The separation is necessary even on the prebooted device: [a cold iOS 18.5 CI run](https://github.com/paritytech/trinity-user-agents/actions/runs/37877467238/job/113649679663) recorded GPU/Networking launches taking 40.46/40.36 seconds, after the first two product pages had already exhausted their 15-second deadlines; the remaining four tests passed. Simulator boot completion alone therefore cannot establish WebKit readiness. Neither the readiness probe nor the local product fixtures query Safari's Safe Browsing database. This prerequisite is not a cold-device SDK startup benchmark; product initialization and authorization are still exercised without preinitializing the SDK.
 
 ## Chat
 
