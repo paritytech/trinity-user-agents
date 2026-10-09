@@ -4,10 +4,11 @@ use truapi::platform::{HostChainEntry, HostChainSet};
 
 /// Supported live network presets for the headless hosts.
 ///
-/// Every preset must be a test network. The CLI account store keeps BIP-39
-/// mnemonics in plaintext (`accounts.rs`), which is only acceptable for
-/// disposable test identities, so adding a production preset means reworking
-/// that storage first. The `every_preset_is_a_test_network` test enforces it.
+/// The CLI account store keeps BIP-39 mnemonics in plaintext (`accounts.rs`),
+/// which is only acceptable for disposable test identities. A preset that sets
+/// [`NetworkConfig::disposable_identities`] may use that store; any other
+/// preset only signs with a mnemonic supplied per process, never writes one,
+/// and never approves a confirmation without a prompt.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, ValueEnum)]
 pub enum Network {
     #[value(name = "paseo-next-v2")]
@@ -45,6 +46,7 @@ impl Network {
                 bulletin_genesis: PASEO_BULLETIN.genesis,
                 asset_hub_genesis: PASEO_ASSET_HUB.genesis,
                 live_chain_endpoints: PASEO_NEXT_V2_CHAIN_ENDPOINTS,
+                disposable_identities: true,
             },
             Self::Previewnet => NetworkConfig {
                 id: "previewnet",
@@ -57,6 +59,7 @@ impl Network {
                 bulletin_genesis: PREVIEWNET_BULLETIN.genesis,
                 asset_hub_genesis: PREVIEWNET_ASSET_HUB.genesis,
                 live_chain_endpoints: PREVIEWNET_CHAIN_ENDPOINTS,
+                disposable_identities: true,
             },
         }
     }
@@ -163,6 +166,10 @@ pub struct NetworkConfig {
     /// the chain does not report sends Asset Hub traffic to the fallback chain.
     pub asset_hub_genesis: [u8; 32],
     pub live_chain_endpoints: &'static [ChainEndpoint],
+    /// Whether identities on this network are disposable test identities the
+    /// plaintext account store may keep and auto-accept may sign for. Only
+    /// test networks set it.
+    pub disposable_identities: bool,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -175,6 +182,18 @@ pub struct ChainEndpoint {
 }
 
 impl NetworkConfig {
+    /// Refuses to write a mnemonic for this network to the plaintext account
+    /// store unless its identities are disposable.
+    pub fn ensure_disposable_identities(&self) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            self.disposable_identities,
+            "{} holds real identities, which the plaintext account store must not keep; \
+             pass the signer with --mnemonic or HOST_CLI_SIGNER_MNEMONIC",
+            self.id
+        );
+        Ok(())
+    }
+
     /// The chain set this preset serves, for `Features::supported_chains`.
     ///
     /// One entry per role this struct names a genesis hash for. `ChainEndpoint`
@@ -351,11 +370,8 @@ mod tests {
         }
     }
 
-    /// Guards the invariant documented on [`Network`]: the plaintext mnemonic
-    /// store is only safe for disposable identities, so no preset may point at a
-    /// production network. If this fails because a real network was added,
-    /// rework the account store rather than relaxing the assertion.
-    /// Hosts a preset may route to. Every entry is a disposable test deployment:
+    /// Hosts a disposable-identity preset may route to. Every entry is a test
+    /// deployment:
     /// `paseo`/`testnet` name the Paseo testnets,
     /// `previewnet.substrate.dev` is the previewnet parachain set, and the two
     /// exact dotSpark hosts are those test presets' identity backends.
@@ -385,11 +401,18 @@ mod tests {
         }
     }
 
+    /// Guards the invariant documented on [`Network`]: a preset that lets the
+    /// plaintext account store keep its identities must route only to test
+    /// networks. If this fails because a real network was added, clear its
+    /// `disposable_identities` rather than extending the allowlist.
     #[test]
-    fn every_preset_is_a_test_network() {
+    fn every_disposable_preset_routes_to_a_test_network() {
         for network in Network::value_variants() {
             // Reading the raw preset. An exported backend override cannot leak in.
             let config = network.preset();
+            if !config.disposable_identities {
+                continue;
+            }
             let mut routes = vec![
                 config.identity_backend_base,
                 config.people_ws,

@@ -496,6 +496,7 @@ truapi-host dev [options] [-- <development-command>...]
 `dev` is the plain-browser development topology built on the signing host. It
 needs no TTY, ensures and activates a signer, auto-accepts confirmations, binds
 the loopback frame server and browser bridge, then starts the wrapped command.
+Because it auto-accepts, it refuses a preset whose identities are real (§14.1).
 When no command follows `--`, it serves the host until stopped.
 
 | Option | Default | Behavior |
@@ -1608,9 +1609,14 @@ core, product, and current selection files.
 
 ### 14.1 Network presets
 
-`--network` selects one of two presets. `paseo-next-v2` is the default. Every
-preset is a test network; the account store keeps BIP-39 entropy for
-disposable test identities only.
+`--network` selects one of two presets. `paseo-next-v2` is the default. Both
+are test networks whose identities are disposable, so the account store may
+keep their BIP-39 entropy. A preset whose identities are real never writes to
+the account store: it signs only with `--mnemonic` or
+`HOST_CLI_SIGNER_MNEMONIC`, and refuses auto accounts, stored accounts and
+mnemonic imports. It also refuses automatic approval (`--auto-accept`,
+`/approval automatic` and `dev`), so a local page cannot get a real identity's
+signature without a prompt.
 
 Auto-account onboarding (§12.3) needs an identity backend that records the
 lite username on the dotNS gateway. Each preset points at its matching dotSpark
@@ -1914,7 +1920,8 @@ only product and message length.
   <redacted summary>
 ```
 
-It does not bypass product-id validation or core authorization rules.
+It does not bypass product-id validation or core authorization rules. It is
+refused on a preset whose identities are real (§14.1).
 
 ### 17.3 Sensitive state and output
 
@@ -1924,7 +1931,7 @@ Transcript copies and submitted-command dividers redact it.
 
 Mnemonics are never intentionally printed, but auto-managed mnemonics are
 stored in plaintext `accounts.json`. That file is local test secret material,
-not production custody.
+not production custody, so only disposable-identity presets (§14.1) write it.
 
 `debug` and especially `trace` can include decoded product payloads and
 transport metadata. Do not publish trace logs from sensitive test accounts

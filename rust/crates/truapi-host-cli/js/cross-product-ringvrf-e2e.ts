@@ -35,8 +35,6 @@
 //   sign-again      dim2.paseo signs once more, so a refusal above cannot be
 //                   the registration having gone.
 
-import { PASEO_NEXT_V2_INDIVIDUALITY } from "../../../../js/packages/truapi/src/index.ts";
-
 const OWNER = "peopl.paseo";
 const GRANTED = "dim2.paseo";
 const UNTRUSTED = "stash.paseo";
@@ -45,12 +43,6 @@ const UNTRUSTED = "stash.paseo";
 const PEOPLE_LITE_COLLECTION_ID =
   "0x706f703a706f6c6b61646f742e6e6574776f726b2f70656f706c652d6c697465";
 
-const RING = {
-  chainId: PASEO_NEXT_V2_INDIVIDUALITY.genesis,
-  junctions: [
-    { tag: "CollectionId" as const, value: PEOPLE_LITE_COLLECTION_ID },
-  ],
-};
 
 const INDEX = { tag: "Index" as const, value: 0 };
 const OWNER_HANDLE = { dotNsIdentifier: OWNER, derivationIndex: INDEX };
@@ -87,6 +79,20 @@ function expectProduct(expected: string): void {
       `phase expects --product-id ${expected}, host serves ${host.productId}`,
     );
   }
+}
+
+/// The People Lite ring on the People chain this host serves.
+async function peopleLiteRing() {
+  const info = await truapi.chain.getChainInfo({ chain: "People" });
+  if (!info.isOk()) {
+    throw new Error(`get_chain_info failed: ${stringify(info.error)}`);
+  }
+  return {
+    chainId: info.value.genesisHash,
+    junctions: [
+      { tag: "CollectionId" as const, value: PEOPLE_LITE_COLLECTION_ID },
+    ],
+  };
 }
 
 async function signOwnerKey(): Promise<{
@@ -166,7 +172,7 @@ switch (phase) {
     expectProduct(OWNER);
     const registered = await truapi.account.registerRingVrfKey({
       index: INDEX,
-      ring: RING,
+      ring: await peopleLiteRing(),
     });
     if (!registered.isOk()) {
       throw new Error(

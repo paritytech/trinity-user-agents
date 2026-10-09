@@ -1040,12 +1040,20 @@ async fn report_slot_scan(
 
 /// Map the `--auto-accept` flag to an approval policy: auto-accept, or prompt
 /// each confirmation on the CLI.
-fn approval_policy(auto_accept: bool) -> ApprovalPolicy {
-    if auto_accept {
-        ApprovalPolicy::AutoAccept
-    } else {
-        ApprovalPolicy::Prompt
+///
+/// Auto-accept is refused on a network whose identities are real, so a local
+/// page can never get a real identity's signature without a prompt.
+fn approval_policy(auto_accept: bool, network: NetworkConfig) -> Result<ApprovalPolicy> {
+    if !auto_accept {
+        return Ok(ApprovalPolicy::Prompt);
     }
+    anyhow::ensure!(
+        network.disposable_identities,
+        "{} holds real identities, so every confirmation must be approved by hand; \
+         automatic approval, which `dev` always uses, is only available on test network presets",
+        network.id
+    );
+    Ok(ApprovalPolicy::AutoAccept)
 }
 
 /// Spawner that runs runtime futures on the tokio runtime, so their WebSocket
@@ -1227,7 +1235,7 @@ async fn run_pairing_host(
     let platform = CliPlatform::new(
         network,
         Some(storage_paths),
-        approval_policy(args.auto_accept),
+        approval_policy(args.auto_accept, network)?,
         ui_handle,
     );
     // SSO runs over the real People chain. Usernames resolve from the dotNS
@@ -1618,7 +1626,7 @@ async fn resolve_session_signer(config: ResolveSignerConfig<'_>) -> Result<Resol
     if config.mnemonic.is_none()
         && let Some(signer) = accounts::resolve_cached_signer(
             config.base_path,
-            config.network.id,
+            config.network,
             config.account.as_deref(),
         )?
     {
@@ -1634,6 +1642,7 @@ async fn start_signing_host(
     network: NetworkConfig,
     ui: Option<UiHandle>,
 ) -> Result<SigningHostSession> {
+    let approval = approval_policy(args.auto_accept, network)?;
     let mnemonic = normalized(args.mnemonic.clone());
     let mut profile = if mnemonic.is_some() {
         None
@@ -1656,7 +1665,7 @@ async fn start_signing_host(
         .map(|profile| {
             accounts::resolve_cached_signer(
                 &profile.account_base_path,
-                network.id,
+                network,
                 selected_account.as_deref(),
             )
         })
@@ -1699,7 +1708,6 @@ async fn start_signing_host(
         }
         signer = Some(explicit_signer);
     }
-    let approval = approval_policy(args.auto_accept);
     let chat = args.execution_kind.chat_host();
     let pocket = args.execution_kind.pocket_host();
     let (runtime, platform) = build_signing_runtime(
@@ -2113,8 +2121,8 @@ async fn run_dev(
         base_path: args.base_path,
         product_config: args.product_config,
         frame_listen: Some(SocketAddr::from((Ipv4Addr::LOCALHOST, args.port))),
-        // A process with no terminal cannot prompt, which is why this pairs
-        // with a testnet-only network preset.
+        // A process with no terminal cannot prompt, so `dev` approves every
+        // confirmation and refuses to start on a preset whose identities are real.
         serve: true,
         auto_accept: true,
         ..Default::default()
@@ -3282,11 +3290,8 @@ async fn import_mnemonic_session(
             )
         })?;
 
-    let signer = accounts::persist_imported_signer(
-        &profile.account_base_path,
-        session.network.id,
-        &imported,
-    )?;
+    let signer =
+        accounts::persist_imported_signer(&profile.account_base_path, session.network, &imported)?;
     let account_name = signer
         .account_name
         .as_deref()
@@ -3581,15 +3586,19 @@ async fn signing_interactive_loop(
                 );
             }
             ShellCommand::Approval(ApprovalCommand::Automatic) => {
-                session
-                    .platform
-                    .set_approval_policy(ApprovalPolicy::AutoAccept);
-                ui.success(
-                    "Approval mode set to automatic",
-                    Some(
-                        "Future product confirmations will be approved automatically.".to_string(),
-                    ),
-                );
+                match approval_policy(true, session.network) {
+                    Ok(policy) => {
+                        session.platform.set_approval_policy(policy);
+                        ui.success(
+                            "Approval mode set to automatic",
+                            Some(
+                                "Future product confirmations will be approved automatically."
+                                    .to_string(),
+                            ),
+                        );
+                    }
+                    Err(error) => ui.error(error.to_string()),
+                }
             }
             ShellCommand::Product(ProductCommand::Current) => ui.system(product.current()),
             ShellCommand::Product(ProductCommand::Switch(product_id)) => {
@@ -4941,6 +4950,29 @@ test -s "$TRUAPI_DEV_COMMAND_TEST_READY_PATH"
                 .unwrap_err()
                 .to_string()
                 .contains("--serve cannot be combined with the exec subcommand")
+        );
+    }
+
+    /// `dev` always auto-accepts, so this is what stops it signing for a real
+    /// identity without a prompt.
+    #[test]
+    fn a_real_identity_network_never_approves_without_a_prompt() {
+        let testnet = crate::network::Network::PaseoNextV2.config();
+        let production = NetworkConfig {
+            disposable_identities: false,
+            ..testnet
+        };
+        assert_eq!(
+            [
+                approval_policy(true, testnet).ok(),
+                approval_policy(false, production).ok(),
+                approval_policy(true, production).ok(),
+            ],
+            [
+                Some(ApprovalPolicy::AutoAccept),
+                Some(ApprovalPolicy::Prompt),
+                None,
+            ]
         );
     }
 
