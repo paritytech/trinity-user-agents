@@ -1,3 +1,4 @@
+import BackgroundExecution
 import BackgroundTasks
 import Foundation
 import TrUAPIHost
@@ -8,8 +9,11 @@ import TrUAPIHost
 /// ``TrUAPIHostRuntime/runDurableRecovery()``, which returns once nothing is
 /// live. A run that stops early or expires schedules the next one.
 ///
+/// The system delivers no background task while the app is in the
+/// foreground, so a request also starts a run in-process right away.
+///
 /// The handler is registered at launch, before the runtime provider exists,
-/// so a task delivered early waits for ``attach(_:)``.
+/// so a task delivered early waits for ``attach(_:executor:)``.
 final class CoreDurableRecoveryTask: @unchecked Sendable {
     static let identifier = "io.novatech.truapi.durable.recovery"
 
@@ -18,6 +22,7 @@ final class CoreDurableRecoveryTask: @unchecked Sendable {
     private let lock = NSLock()
     private var runtimeProvider: TrUAPIHostRuntimeProviding?
     private var pendingTask: CoreDurableRecoveryRun?
+    private var foreground: CoreDurableForegroundRecovery?
 
     private init() {}
 
@@ -28,11 +33,13 @@ final class CoreDurableRecoveryTask: @unchecked Sendable {
         }
     }
 
-    /// Supplies the runtime a run recovers on, and starts a task that arrived
-    /// before it.
-    func attach(_ runtimeProvider: TrUAPIHostRuntimeProviding) {
+    /// Supplies the runtime a run recovers on and the executor an in-process
+    /// run holds its background time through, and starts a task that arrived
+    /// before them.
+    func attach(_ runtimeProvider: TrUAPIHostRuntimeProviding, executor: BackgroundExecuting) {
         lock.lock()
         self.runtimeProvider = runtimeProvider
+        foreground = CoreDurableForegroundRecovery(runtimeProvider: runtimeProvider, executor: executor)
         let pending = pendingTask
         pendingTask = nil
         lock.unlock()
@@ -46,6 +53,16 @@ final class CoreDurableRecoveryTask: @unchecked Sendable {
         request.requiresNetworkConnectivity = true
         request.requiresExternalPower = false
         try? BGTaskScheduler.shared.submit(request)
+    }
+
+    /// Starts a run in-process. Ignored before ``attach(_:executor:)``, when
+    /// no runtime exists to have work.
+    func runInForeground() {
+        lock.lock()
+        let foreground = self.foreground
+        lock.unlock()
+
+        foreground?.request()
     }
 }
 
@@ -125,5 +142,67 @@ private extension CoreDurableRecoveryRun {
 
         run?.cancel()
         finish(success: false)
+    }
+}
+
+/// In-process recovery runs, one at a time, each holding background time so
+/// that leaving the app does not cut it short. A request during a run starts
+/// one more after it, because the run may have read the ledger before the
+/// work behind the request was written.
+private final class CoreDurableForegroundRecovery: @unchecked Sendable {
+    private let runtimeProvider: TrUAPIHostRuntimeProviding
+    private let executor: BackgroundExecuting
+    private let lock = NSLock()
+    private var running = false
+    private var requested = false
+
+    init(runtimeProvider: TrUAPIHostRuntimeProviding, executor: BackgroundExecuting) {
+        self.runtimeProvider = runtimeProvider
+        self.executor = executor
+    }
+
+    func request() {
+        lock.lock()
+        requested = true
+        let starts = claimRun()
+        lock.unlock()
+
+        if starts {
+            start()
+        }
+    }
+}
+
+private extension CoreDurableForegroundRecovery {
+    /// Called with the lock held: whether the caller starts the requested run.
+    func claimRun() -> Bool {
+        guard requested, !running else {
+            return false
+        }
+        requested = false
+        running = true
+        return true
+    }
+
+    /// A failed run needs no retry here: the scheduled background task
+    /// covers it.
+    func start() {
+        Task { [self] in
+            try? await executor.execute { [runtimeProvider] in
+                try await runtimeProvider.sharedRuntime().runDurableRecovery()
+            }
+            finish()
+        }
+    }
+
+    func finish() {
+        lock.lock()
+        running = false
+        let starts = claimRun()
+        lock.unlock()
+
+        if starts {
+            start()
+        }
     }
 }
