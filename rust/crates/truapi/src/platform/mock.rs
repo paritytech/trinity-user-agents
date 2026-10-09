@@ -886,6 +886,15 @@ fn core_key(key: &CoreStorageKey) -> String {
             format!("core:product-manifest:{product_id}")
         }
         CoreStorageKey::NotificationReceiving => "core:notification-receiving".to_string(),
+        CoreStorageKey::AutomaticPreimageUploads {
+            product_id,
+            root_public_key,
+            genesis_hash,
+        } => format!(
+            "core:automatic-preimage-uploads:{}:{}:{product_id}",
+            hex_key(root_public_key),
+            hex_key(genesis_hash)
+        ),
         CoreStorageKey::AllowanceKeys { session_id } => {
             format!("core:allowance-keys:{session_id}")
         }
@@ -1684,6 +1693,33 @@ mod tests {
             block_on(p.read_core_storage(CoreStorageKey::AuthSession)).unwrap(),
             None
         );
+    }
+
+    #[test]
+    fn automatic_preimage_storage_is_scoped_by_product_root_and_genesis() {
+        let p = MockPlatform::new();
+        let keys = [
+            ("mock.dot", [0xab; 32], [0xcd; 32]),
+            ("other.dot", [0xab; 32], [0xcd; 32]),
+            ("mock.dot", [0xef; 32], [0xcd; 32]),
+            ("mock.dot", [0xab; 32], [0xef; 32]),
+        ]
+        .map(|(product_id, root_public_key, genesis_hash)| {
+            CoreStorageKey::AutomaticPreimageUploads {
+                product_id: product_id.to_string(),
+                root_public_key,
+                genesis_hash,
+            }
+        });
+        for (value, key) in (1u8..).zip(&keys) {
+            block_on(p.write_core_storage(key.clone(), vec![value])).unwrap();
+        }
+        for (value, key) in (1u8..).zip(&keys) {
+            assert_eq!(
+                block_on(p.read_core_storage(key.clone())).unwrap(),
+                Some(vec![value])
+            );
+        }
     }
 
     #[test]

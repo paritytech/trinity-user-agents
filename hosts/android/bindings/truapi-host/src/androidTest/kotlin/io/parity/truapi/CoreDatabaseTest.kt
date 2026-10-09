@@ -28,10 +28,14 @@ import uniffi.truapi.RemotePermission
 class CoreDatabaseTest {
     private val context = InstrumentationRegistry.getInstrumentation().targetContext
     private val directory = context.noBackupFilesDir.resolve("truapi-test-${UUID.randomUUID()}")
+    private val productStorageName = "${directory.name}_product"
+    private val coreStorageName = "${directory.name}_core"
 
     @After
     fun cleanUp() {
         directory.deleteRecursively()
+        context.deleteSharedPreferences(productStorageName)
+        context.deleteSharedPreferences(coreStorageName)
     }
 
     @Test
@@ -65,10 +69,11 @@ class CoreDatabaseTest {
 
     private inner class InertBridge : HostBridge {
         override val storage = PrefsHostStorage(
-            context.getSharedPreferences("truapi_core_db_test_product", android.content.Context.MODE_PRIVATE),
+            context.getSharedPreferences(productStorageName, android.content.Context.MODE_PRIVATE),
         )
         override val coreStorage = PrefsHostCoreStorage(
-            context.getSharedPreferences("truapi_core_db_test_core", android.content.Context.MODE_PRIVATE),
+            context.getSharedPreferences(coreStorageName, android.content.Context.MODE_PRIVATE),
+            File(context.applicationInfo.dataDir, "shared_prefs/$coreStorageName.xml").canonicalPath,
         )
 
         override suspend fun navigateTo(url: String) = Unit

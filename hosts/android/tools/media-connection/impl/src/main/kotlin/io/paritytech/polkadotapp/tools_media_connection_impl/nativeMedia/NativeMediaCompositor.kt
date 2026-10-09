@@ -1,7 +1,6 @@
 package io.paritytech.polkadotapp.tools_media_connection_impl.nativeMedia
 
 import android.content.Context
-import android.graphics.Color
 import android.graphics.Outline
 import android.graphics.Rect
 import android.graphics.SurfaceTexture
@@ -80,22 +79,30 @@ internal class NativeMediaCompositor(
     fun invalidateViewport() = changed()
 
     fun set(session: String, viewportRevision: ULong, layoutRevision: ULong, surfaces: List<NativeMediaSurface>) {
-        val current = viewport ?: throw MediaDomainFailure(NativeMediaDomainError.SurfaceUnavailable)
-        if (viewportRevision != current.revision) throw MediaDomainFailure(NativeMediaDomainError.StaleViewport(current.revision))
+        checkViewport(viewportRevision)
         val previous = layouts[session]
         if (previous != null && layoutRevision < previous.first) throw MediaDomainFailure(NativeMediaDomainError.StaleLayout(previous.first))
         if (previous != null && layoutRevision == previous.first) {
             if (surfaces.size != previous.second.size || surfaces.indices.any { !sameSurface(surfaces[it], previous.second[it]) }) throw MediaDomainFailure(NativeMediaDomainError.InvalidSurface)
             return
         }
+        checkSurfaces(surfaces)
+        layouts[session] = layoutRevision to surfaces.toList()
+        refresh()
+    }
+
+    private fun checkViewport(viewportRevision: ULong) {
+        val current = viewport ?: throw MediaDomainFailure(NativeMediaDomainError.SurfaceUnavailable)
+        if (viewportRevision != current.revision) throw MediaDomainFailure(NativeMediaDomainError.StaleViewport(current.revision))
+    }
+
+    private fun checkSurfaces(surfaces: List<NativeMediaSurface>) {
         if (surfaces.size > 12 || surfaces.map { it.surfaceId }.distinct().size != surfaces.size) throw MediaDomainFailure(NativeMediaDomainError.InvalidSurface)
         surfaces.forEach {
             for (rect in listOf(it.rect, it.clip)) {
                 if (rect.width > Int.MAX_VALUE.toUInt() || rect.height > Int.MAX_VALUE.toUInt() || rect.x.toLong() + rect.width.toLong() > Int.MAX_VALUE || rect.y.toLong() + rect.height.toLong() > Int.MAX_VALUE) throw MediaDomainFailure(NativeMediaDomainError.InvalidSurface)
             }
         }
-        layouts[session] = layoutRevision to surfaces.toList()
-        refresh()
     }
 
     private fun sameSurface(a: NativeMediaSurface, b: NativeMediaSurface): Boolean {
@@ -147,7 +154,9 @@ internal class NativeMediaCompositor(
                     target?.addView(container, FrameLayout.LayoutParams(width, height).apply { leftMargin = left; topMargin = top })
                     renderers.add(renderer)
                 }
-        } finally { parent.suppressLayout(false) }
+        } finally {
+            parent.suppressLayout(false)
+        }
     }
 
     fun remove(session: String) { layouts.remove(session); refresh() }
@@ -175,8 +184,11 @@ internal class NativeMediaCompositor(
 
 private class PictureView(context: Context, egl: EglBase.Context, private val track: VideoTrack, mirrored: Boolean, private val contain: Boolean) : TextureView(context), TextureView.SurfaceTextureListener, VideoSink, AutoCloseable {
     private val renderer = EglRenderer("trusted-media-picture")
+
     @Volatile private var closed = false
+
     @Volatile private var frameWidth = 0
+
     @Volatile private var frameHeight = 0
     init {
         isOpaque = false
