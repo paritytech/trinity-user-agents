@@ -550,7 +550,7 @@ extension ProductPermissionRepositoryTests {
 }
 
 @MainActor
-private final class PermissionSettingsViewFixture: AppPermissionsViewProtocol {
+private final class PermissionSettingsViewFixture: @MainActor AppPermissionsViewProtocol {
     let controller = UIViewController()
     var isSetup: Bool { true }
     var items: [AppPermissionsViewLayout.Item] = []

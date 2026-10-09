@@ -538,49 +538,77 @@ impl<'a> ReadOnlyChain<'a> {
         current: u32,
     ) -> Result<bool, String> {
         let capacity = 1u32 << exponent;
-        for ring_index in (0..=current).rev() {
-            let status = self
-                .storage(ring::ring_keys_status_key(collection, ring_index))
-                .await?
-                .map(|bytes| self.decode_storage::<RingStatus>("Members", "RingKeysStatus", &bytes))
-                .transpose()?;
-            if status
-                .as_ref()
-                .is_some_and(|status| status.included > status.total || status.total > capacity)
-            {
-                return Err("ring included/total exceeds its domain".to_string());
-            }
-            // The allocator treats a missing status as an entirely baked ring.
-            let total = status.as_ref().map(|status| status.total);
-            let included = status.as_ref().map_or(capacity, |status| status.included);
-            let mut count = 0u32;
-            let mut found = false;
-            for page in 0..=capacity {
-                if total == Some(count) {
-                    break;
+        let mut newest = current;
+        loop {
+            // Historical rings usually fit in one page. Reading status and
+            // page zero together avoids two serial round trips per ring.
+            let count = (u64::from(newest) + 1).min((STORAGE_BATCH / 2) as u64) as u32;
+            let keys = (0..count)
+                .flat_map(|offset| {
+                    let index = newest - offset;
+                    [
+                        ring::ring_keys_status_key(collection, index),
+                        ring::ring_keys_key(collection, index, 0),
+                    ]
+                })
+                .collect::<Vec<_>>();
+            let values = self.storage_many(&keys).await?;
+            for (offset, pair) in values.chunks_exact(2).enumerate() {
+                let ring_index = newest - offset as u32;
+                let status = pair[0]
+                    .as_deref()
+                    .map(|bytes| {
+                        self.decode_storage::<RingStatus>("Members", "RingKeysStatus", bytes)
+                    })
+                    .transpose()?;
+                if status
+                    .as_ref()
+                    .is_some_and(|status| status.included > status.total || status.total > capacity)
+                {
+                    return Err("ring included/total exceeds its domain".to_string());
                 }
-                let value = self
-                    .storage(ring::ring_keys_key(collection, ring_index, page))
-                    .await?;
-                let Some(bytes) = value else { break };
-                let members: Vec<[u8; 32]> = decode_all(&bytes, "Members.RingKeys")?;
-                if members.is_empty() {
-                    break;
-                }
-                for key in members {
-                    if count >= total.unwrap_or(capacity) {
-                        return Err("ring key pages exceed total".to_string());
+                // The allocator treats a missing status as an entirely baked ring.
+                let total = status.as_ref().map(|status| status.total);
+                let included = status.as_ref().map_or(capacity, |status| status.included);
+                let mut count = 0u32;
+                let mut found = false;
+                for page in 0..=capacity {
+                    if total == Some(count) {
+                        break;
                     }
-                    found |= count < included && &key == member;
-                    count += 1;
+                    let next;
+                    let value = if page == 0 {
+                        pair[1].as_deref()
+                    } else {
+                        next = self
+                            .storage(ring::ring_keys_key(collection, ring_index, page))
+                            .await?;
+                        next.as_deref()
+                    };
+                    let Some(bytes) = value else { break };
+                    let members: Vec<[u8; 32]> = decode_all(bytes, "Members.RingKeys")?;
+                    if members.is_empty() {
+                        break;
+                    }
+                    for key in members {
+                        if count >= total.unwrap_or(capacity) {
+                            return Err("ring key pages exceed total".to_string());
+                        }
+                        found |= count < included && &key == member;
+                        count += 1;
+                    }
+                }
+                if total.is_some_and(|total| count != total) {
+                    return Err("ring key pages are incomplete".to_string());
+                }
+                if found {
+                    return Ok(true);
                 }
             }
-            if total.is_some_and(|total| count != total) {
-                return Err("ring key pages are incomplete".to_string());
+            if count > newest {
+                break;
             }
-            if found {
-                return Ok(true);
-            }
+            newest -= count;
         }
         Ok(false)
     }
@@ -1140,6 +1168,27 @@ mod tests {
         assert_eq!(result.unwrap_err(), "activation changed");
     }
 
+    fn membership_chain<'a>(
+        scripted: ScriptedRpc,
+        guard: ActivationGuard<'a>,
+    ) -> ReadOnlyChain<'a> {
+        ReadOnlyChain {
+            rpc: RpcClient::new(HostRpcClient::new(scripted)),
+            metadata: decode_metadata(include_bytes!(
+                "../../../tests/fixtures/paseo-next-v2-metadata-v16.scale"
+            ))
+            .unwrap(),
+            observation: AllowanceObservation {
+                genesis_hash: account_hex(&[0; 32]),
+                block_hash: account_hex(&[1; 32]),
+                block_number: 19,
+                spec_version: 1,
+                chain_timestamp: 0,
+            },
+            guard,
+        }
+    }
+
     #[test]
     fn membership_can_use_an_older_baked_ring_when_the_current_ring_is_unbaked() {
         fn active() -> Result<(), String> {
@@ -1147,7 +1196,6 @@ mod tests {
         }
         let collection = PersonhoodCollection::LitePeople;
         let member = futures::executor::block_on(proof::member_key([7; 32])).unwrap();
-        let block = account_hex(&[1; 32]);
         let entries = [
             (
                 ring::ring_keys_status_key(collection, 1),
@@ -1165,39 +1213,175 @@ mod tests {
             .map(|(_, bytes)| json!(format!("0x{}", hex::encode(bytes))).to_string())
             .collect();
         let scripted = ScriptedRpc::new(replies.iter().map(String::as_str));
-        let chain = ReadOnlyChain {
-            rpc: RpcClient::new(HostRpcClient::new(scripted.clone())),
-            metadata: decode_metadata(include_bytes!(
-                "../../../tests/fixtures/paseo-next-v2-metadata-v16.scale"
-            ))
-            .unwrap(),
-            observation: AllowanceObservation {
-                genesis_hash: account_hex(&[0; 32]),
-                block_hash: block,
-                block_number: 19,
-                spec_version: 1,
-                chain_timestamp: 0,
-            },
-            guard: &active,
-        };
+        let chain = membership_chain(scripted.clone(), &active);
         assert!(
             futures::executor::block_on(chain.has_including_ring(collection, &member, 12, 1))
                 .unwrap()
         );
         assert_eq!(
             scripted.calls(),
-            entries
-                .iter()
-                .map(|(key, _)| (
-                    "state_queryStorageAt".to_string(),
-                    json!([
-                        [format!("0x{}", hex::encode(key))],
-                        &chain.observation.block_hash
-                    ])
-                    .to_string(),
-                ))
-                .collect::<Vec<_>>(),
+            vec![(
+                "state_queryStorageAt".to_string(),
+                json!([
+                    entries
+                        .iter()
+                        .map(|(key, _)| format!("0x{}", hex::encode(key)))
+                        .collect::<Vec<_>>(),
+                    &chain.observation.block_hash
+                ])
+                .to_string(),
+            )],
         );
+    }
+
+    #[test]
+    fn historical_ring_batches_preserve_membership_and_reported_capacity() {
+        let collection = PersonhoodCollection::LitePeople;
+        let member = [7; 32];
+        for present in [false, true] {
+            let replies = (0..40)
+                .rev()
+                .flat_map(|index| {
+                    let key = if present && index == 0 {
+                        member
+                    } else {
+                        [8; 32]
+                    };
+                    [
+                        json!(format!(
+                            "0x{}",
+                            hex::encode((1u32, 1u32, None::<u64>).encode())
+                        ))
+                        .to_string(),
+                        json!(format!("0x{}", hex::encode(vec![key].encode()))).to_string(),
+                    ]
+                })
+                .collect::<Vec<_>>();
+            let scripted = ScriptedRpc::new(replies.iter().map(String::as_str));
+            let chain = membership_chain(scripted.clone(), &|| Ok(()));
+            let membership =
+                futures::executor::block_on(chain.has_including_ring(collection, &member, 12, 39))
+                    .unwrap();
+            assert_eq!(membership, present);
+            let section = chain.section(pool(collection, membership, membership, 10, Vec::new()));
+            let value = serde_json::to_value(section).unwrap();
+            assert_eq!(value["status"], "available");
+            assert_eq!(value["value"]["remaining"], if present { 10 } else { 0 });
+            assert_eq!(value["value"]["selected"], present);
+
+            let calls = scripted.calls();
+            assert_eq!(
+                calls.len(),
+                3,
+                "forty rings must not require eighty round trips"
+            );
+            let expected = (0..40)
+                .rev()
+                .flat_map(|index| {
+                    [
+                        ring::ring_keys_status_key(collection, index),
+                        ring::ring_keys_key(collection, index, 0),
+                    ]
+                })
+                .collect::<Vec<_>>();
+            for ((method, params), keys) in calls.iter().zip(expected.chunks(STORAGE_BATCH)) {
+                assert_eq!(method, "state_queryStorageAt");
+                assert_eq!(
+                    serde_json::from_str::<Value>(params).unwrap(),
+                    json!([
+                        keys.iter()
+                            .map(|key| format!("0x{}", hex::encode(key)))
+                            .collect::<Vec<_>>(),
+                        &chain.observation.block_hash
+                    ]),
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn ring_batches_still_validate_all_pages_before_reporting_membership() {
+        let collection = PersonhoodCollection::LitePeople;
+        let member = [7; 32];
+        for (total, included, first, second, expected) in [
+            (2, 2, Some(vec![member]), Some(vec![[8; 32]]), Ok(true)),
+            (
+                2,
+                2,
+                Some(vec![member]),
+                None,
+                Err("ring key pages are incomplete"),
+            ),
+            (
+                1,
+                1,
+                Some(vec![member, member]),
+                None,
+                Err("ring key pages exceed total"),
+            ),
+            (
+                1,
+                2,
+                Some(vec![member]),
+                None,
+                Err("ring included/total exceeds its domain"),
+            ),
+            (1, 0, Some(vec![member]), None, Ok(false)),
+            (0, 0, None, None, Ok(false)),
+        ] {
+            let encode_page = |page: Option<Vec<[u8; 32]>>| {
+                page.map(|page| json!(format!("0x{}", hex::encode(page.encode()))))
+                    .unwrap_or(Value::Null)
+                    .to_string()
+            };
+            let replies = [
+                json!(format!(
+                    "0x{}",
+                    hex::encode((total as u32, included as u32, None::<u64>).encode())
+                ))
+                .to_string(),
+                encode_page(first),
+                encode_page(second),
+            ];
+            let scripted = ScriptedRpc::new(replies.iter().map(String::as_str));
+            let chain = membership_chain(scripted, &|| Ok(()));
+            let result =
+                futures::executor::block_on(chain.has_including_ring(collection, &member, 12, 0));
+            assert_eq!(
+                result.as_ref().map(|value| *value).map_err(String::as_str),
+                expected
+            );
+        }
+    }
+
+    #[test]
+    fn ring_batch_rejects_stale_activation_before_using_matching_membership() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let checks = AtomicUsize::new(0);
+        let guard = || {
+            if checks.fetch_add(1, Ordering::SeqCst) == 0 {
+                Ok(())
+            } else {
+                Err("activation changed".to_string())
+            }
+        };
+        let replies = [
+            json!(format!(
+                "0x{}",
+                hex::encode((1u32, 1u32, None::<u64>).encode())
+            ))
+            .to_string(),
+            json!(format!("0x{}", hex::encode(vec![[7u8; 32]].encode()))).to_string(),
+        ];
+        let scripted = ScriptedRpc::new(replies.iter().map(String::as_str));
+        let chain = membership_chain(scripted, &guard);
+        let result = futures::executor::block_on(chain.has_including_ring(
+            PersonhoodCollection::LitePeople,
+            &[7; 32],
+            12,
+            0,
+        ));
+        assert_eq!(result.unwrap_err(), "activation changed");
     }
 
     #[test]
