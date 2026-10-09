@@ -298,9 +298,11 @@ impl EmbeddedChainProvider {
             .ok_or(ProviderError::NotRunning {
                 genesis: genesis_hash,
             })?;
-        Ok(stream::unfold(subscription, |mut subscription| async move {
-            let state = subscription.next().await?;
-            Some((state.into(), subscription))
+        Ok(stream::unfold(subscription, |mut subscription| {
+            async move {
+                let state = subscription.next().await?;
+                Some((state.into(), subscription))
+            }
         })
         .fuse()
         .boxed())
@@ -454,12 +456,14 @@ impl EmbeddedChainProvider {
             let known = lock(&self.stored_quality).get(&genesis_hash).copied();
             match known {
                 Some(known) => Some(known),
-                None => Some(
-                    store
-                        .load(genesis_hash)
-                        .await?
-                        .is_some_and(|stored| crate::storage::carries_runtime_code(&stored)),
-                ),
+                None => {
+                    Some(
+                        store
+                            .load(genesis_hash)
+                            .await?
+                            .is_some_and(|stored| crate::storage::carries_runtime_code(&stored)),
+                    )
+                }
             }
         };
         if !crate::storage::is_worth_storing(&blob, stored_has_code) {
@@ -508,19 +512,21 @@ impl EmbeddedChainProvider {
 
         loop {
             match future::select(responses.next(), deadline.as_mut()).await {
-                Either::Left((Some(frame), _)) => match crate::error::frame_for_id(&frame, id) {
-                    Some(FrameForId::Result(result)) => {
-                        connection.close();
-                        return Ok(result);
+                Either::Left((Some(frame), _)) => {
+                    match crate::error::frame_for_id(&frame, id) {
+                        Some(FrameForId::Result(result)) => {
+                            connection.close();
+                            return Ok(result);
+                        }
+                        Some(FrameForId::Failure(reason)) => {
+                            connection.close();
+                            return Err(ProviderError::Transport {
+                                reason: format!("finalized-database snapshot failed: {reason}"),
+                            });
+                        }
+                        None => {}
                     }
-                    Some(FrameForId::Failure(reason)) => {
-                        connection.close();
-                        return Err(ProviderError::Transport {
-                            reason: format!("finalized-database snapshot failed: {reason}"),
-                        });
-                    }
-                    None => {}
-                },
+                }
                 Either::Left((None, _)) => {
                     connection.close();
                     return Err(ProviderError::Transport {

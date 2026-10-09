@@ -33,7 +33,9 @@ pub use callbacks::{
     NativePocketCallbacks, NativePocketRemoval,
 };
 pub use config::{HostRuntimeConfig, NativeRuntimeConfigError, ProductExecutionConfig};
-pub use errors::{HostRejection, NativeChatFieldError, NativeCoreDatabaseError, NativeRendererError};
+pub use errors::{
+    HostRejection, NativeChatFieldError, NativeCoreDatabaseError, NativeRendererError,
+};
 pub use renderer::{NativeRendererObserver, NativeRendererSubscription};
 pub use runtime::{
     NativeAnnouncedPairing, NativePairingError, NativeProductExecution, NativeTrUApiHostRuntime,
@@ -137,8 +139,10 @@ fn read_face_on_stack(
         .name("truapi-face-reader".to_string())
         .stack_size(stack_bytes)
         .spawn(move || read_renderer_node_json(&json))
-        .map_err(|error| NativeRendererError::ReaderUnavailable {
-            reason: error.to_string(),
+        .map_err(|error| {
+            NativeRendererError::ReaderUnavailable {
+                reason: error.to_string(),
+            }
         })?
         .join()
         .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
@@ -168,9 +172,11 @@ fn read_renderer_node_json(json: &str) -> Result<latest::RendererNode, NativeRen
 
     match node_depth(&node, MAX_FACE_DEPTH) {
         Some(_) => Ok(node),
-        None => Err(NativeRendererError::TooDeep {
-            limit: MAX_FACE_DEPTH,
-        }),
+        None => {
+            Err(NativeRendererError::TooDeep {
+                limit: MAX_FACE_DEPTH,
+            })
+        }
     }
 }
 
@@ -244,11 +250,12 @@ pub fn encode_renderer_node(node: latest::RendererNode) -> Vec<u8> {
 /// Read back a face kept as [`encode_renderer_node`] wrote it.
 #[uniffi::export]
 pub fn decode_renderer_node(bytes: Vec<u8>) -> Result<latest::RendererNode, NativeRendererError> {
-    latest::RendererNode::decode_all_with_depth_limit(MAX_FACE_DEPTH, &mut bytes.as_slice()).map_err(
-        |error| NativeRendererError::Malformed {
-            reason: error.to_string(),
-        },
-    )
+    latest::RendererNode::decode_all_with_depth_limit(MAX_FACE_DEPTH, &mut bytes.as_slice())
+        .map_err(|error| {
+            NativeRendererError::Malformed {
+                reason: error.to_string(),
+            }
+        })
 }
 
 /// Screen a product-supplied Pocket card id with the rules every Pocket call

@@ -53,25 +53,27 @@ impl ChainRuntime {
 fn watch_events(
     progress: TransactionProgress<SubstrateConfig, OnlineClientAtBlockImpl<SubstrateConfig>>,
 ) -> BoxStream<'static, WatchEvent> {
-    stream::unfold(Some(progress), |progress| async move {
-        let mut progress = progress?;
-        loop {
-            let event = match progress.next().await? {
-                Ok(TransactionStatus::Validated | TransactionStatus::Broadcasted) => continue,
-                Ok(TransactionStatus::NoLongerInBestBlock) => WatchEvent::NoLongerInBestBlock,
-                Ok(TransactionStatus::InBestBlock(block)) => {
-                    WatchEvent::InBestBlock(block.block_hash())
-                }
-                Ok(TransactionStatus::InFinalizedBlock(block)) => {
-                    WatchEvent::InFinalizedBlock(block.block_hash())
-                }
-                Ok(TransactionStatus::Invalid { message }) => WatchEvent::Invalid(message),
-                Ok(TransactionStatus::Dropped { message }) => WatchEvent::Dropped(message),
-                Ok(TransactionStatus::Error { message }) => WatchEvent::Error(message),
-                Err(error) => WatchEvent::Error(error.to_string()),
-            };
-            let next = (!event.is_terminal()).then_some(progress);
-            return Some((event, next));
+    stream::unfold(Some(progress), |progress| {
+        async move {
+            let mut progress = progress?;
+            loop {
+                let event = match progress.next().await? {
+                    Ok(TransactionStatus::Validated | TransactionStatus::Broadcasted) => continue,
+                    Ok(TransactionStatus::NoLongerInBestBlock) => WatchEvent::NoLongerInBestBlock,
+                    Ok(TransactionStatus::InBestBlock(block)) => {
+                        WatchEvent::InBestBlock(block.block_hash())
+                    }
+                    Ok(TransactionStatus::InFinalizedBlock(block)) => {
+                        WatchEvent::InFinalizedBlock(block.block_hash())
+                    }
+                    Ok(TransactionStatus::Invalid { message }) => WatchEvent::Invalid(message),
+                    Ok(TransactionStatus::Dropped { message }) => WatchEvent::Dropped(message),
+                    Ok(TransactionStatus::Error { message }) => WatchEvent::Error(message),
+                    Err(error) => WatchEvent::Error(error.to_string()),
+                };
+                let next = (!event.is_terminal()).then_some(progress);
+                return Some((event, next));
+            }
         }
     })
     .boxed()

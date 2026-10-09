@@ -151,10 +151,11 @@ fn validate_auto_signing_key(
 ) -> Result<AutoSigningKey, AuthorityError> {
     let secret = Zeroizing::new(secret);
     let ring_vrf_domain_entropy = Zeroizing::new(ring_vrf_domain_entropy);
-    let secret_key =
-        SecretKey::from_bytes(&secret[..]).map_err(|_| AuthorityError::Unavailable {
+    let secret_key = SecretKey::from_bytes(&secret[..]).map_err(|_| {
+        AuthorityError::Unavailable {
             reason: "AutoSigning capability contains an invalid subtree secret".to_string(),
-        })?;
+        }
+    })?;
     if secret_key.to_public().to_bytes() != expected_product_subtree_public_key {
         return Err(AuthorityError::Unavailable {
             reason: "AutoSigning capability does not match the authenticated product subtree"
@@ -302,37 +303,39 @@ impl PairingHost {
         }
         let platform = services.platform.clone();
         let auth_state = AuthStateMachine::new(platform.clone());
-        Arc::new_cyclic(|weak_self| Self {
-            services: services.clone(),
-            platform,
-            host_config,
-            chain: services.chain.clone(),
-            session_state: SessionState::new(),
-            session_store_changes: SessionStoreChangeNotifier::new(),
-            auth_state,
-            statement_store: services.statement_store.clone(),
-            session_disconnects: Arc::new(SessionDisconnects::default()),
-            newest_request: Mutex::new(None),
-            disconnect_monitor: Mutex::new(None),
-            login_in_flight: Mutex::new(None),
-            login_generation: Mutex::new(0),
-            statement_store_allowances: Mutex::new(HashMap::new()),
-            bulletin_allowances: Mutex::new(HashMap::new()),
-            product_subtrees: Mutex::new(HashMap::new()),
-            auto_signing_keys: Mutex::new(HashMap::new()),
-            ring_resolver: ChainRingResolver::new(services.chain.clone()),
-            ring_vrf_registry: RingVrfRegistryStore::new(services.platform.clone()),
-            session_secret_storage: futures::lock::Mutex::new(()),
-            session_store_activation: futures::lock::Mutex::new(()),
-            session_lifecycle: Mutex::new(SessionLifecycle::default()),
-            #[cfg(feature = "test-host")]
-            submit_preimages_locally: core::sync::atomic::AtomicBool::new(false),
-            #[cfg(test)]
-            external_session_activation_pause: Mutex::new(None),
-            #[cfg(test)]
-            session_store_change_ticks: AtomicUsize::new(0),
-            weak_self: weak_self.clone(),
-            spawner: services.spawner.clone(),
+        Arc::new_cyclic(|weak_self| {
+            Self {
+                services: services.clone(),
+                platform,
+                host_config,
+                chain: services.chain.clone(),
+                session_state: SessionState::new(),
+                session_store_changes: SessionStoreChangeNotifier::new(),
+                auth_state,
+                statement_store: services.statement_store.clone(),
+                session_disconnects: Arc::new(SessionDisconnects::default()),
+                newest_request: Mutex::new(None),
+                disconnect_monitor: Mutex::new(None),
+                login_in_flight: Mutex::new(None),
+                login_generation: Mutex::new(0),
+                statement_store_allowances: Mutex::new(HashMap::new()),
+                bulletin_allowances: Mutex::new(HashMap::new()),
+                product_subtrees: Mutex::new(HashMap::new()),
+                auto_signing_keys: Mutex::new(HashMap::new()),
+                ring_resolver: ChainRingResolver::new(services.chain.clone()),
+                ring_vrf_registry: RingVrfRegistryStore::new(services.platform.clone()),
+                session_secret_storage: futures::lock::Mutex::new(()),
+                session_store_activation: futures::lock::Mutex::new(()),
+                session_lifecycle: Mutex::new(SessionLifecycle::default()),
+                #[cfg(feature = "test-host")]
+                submit_preimages_locally: core::sync::atomic::AtomicBool::new(false),
+                #[cfg(test)]
+                external_session_activation_pause: Mutex::new(None),
+                #[cfg(test)]
+                session_store_change_ticks: AtomicUsize::new(0),
+                weak_self: weak_self.clone(),
+                spawner: services.spawner.clone(),
+            }
         })
     }
 
@@ -1623,11 +1626,12 @@ impl PairingHost {
                 let decoded = decode_auto_signing_keys(&blob);
                 blob.zeroize();
                 match decoded {
-                    Err(_) => self
-                        .platform
-                        .clear_core_storage(CoreStorageKey::AutoSigningKeys)
-                        .await
-                        .map_err(|error| error.reason),
+                    Err(_) => {
+                        self.platform
+                            .clear_core_storage(CoreStorageKey::AutoSigningKeys)
+                            .await
+                            .map_err(|error| error.reason)
+                    }
                     Ok(mut keys) => {
                         let before = keys.len();
                         keys.retain(|key| key.product_id != product_id);
@@ -1699,8 +1703,10 @@ impl PairingHost {
             .platform
             .read_core_storage(storage_key.clone())
             .await
-            .map_err(|err| AuthorityError::Unknown {
-                reason: format!("failed to inspect legacy AutoSigning key: {}", err.reason),
+            .map_err(|err| {
+                AuthorityError::Unknown {
+                    reason: format!("failed to inspect legacy AutoSigning key: {}", err.reason),
+                }
             })?;
         let present = if let Some(mut secret) = legacy {
             secret.zeroize();
@@ -1712,8 +1718,10 @@ impl PairingHost {
             self.platform
                 .clear_core_storage(storage_key)
                 .await
-                .map_err(|err| AuthorityError::Unknown {
-                    reason: format!("failed to clear legacy AutoSigning key: {}", err.reason),
+                .map_err(|err| {
+                    AuthorityError::Unknown {
+                        reason: format!("failed to clear legacy AutoSigning key: {}", err.reason),
+                    }
                 })?;
         }
         Ok(present)
@@ -1744,8 +1752,10 @@ impl PairingHost {
             .platform
             .read_core_storage(CoreStorageKey::AutoSigningKeys)
             .await
-            .map_err(|err| AuthorityError::Unknown {
-                reason: format!("failed to read AutoSigning capabilities: {}", err.reason),
+            .map_err(|err| {
+                AuthorityError::Unknown {
+                    reason: format!("failed to read AutoSigning capabilities: {}", err.reason),
+                }
             })? {
             Some(mut blob) => {
                 let decoded = decode_auto_signing_keys(&blob).unwrap_or_default();
@@ -1768,8 +1778,10 @@ impl PairingHost {
         self.platform
             .write_core_storage(CoreStorageKey::AutoSigningKeys, keys.encode())
             .await
-            .map_err(|err| AuthorityError::Unknown {
-                reason: format!("failed to persist AutoSigning capability: {}", err.reason),
+            .map_err(|err| {
+                AuthorityError::Unknown {
+                    reason: format!("failed to persist AutoSigning capability: {}", err.reason),
+                }
             })?;
         if !self.cache_auto_signing_key_if_current(session, lifecycle_epoch, cache_key, key) {
             let _ = self
@@ -1812,8 +1824,10 @@ impl PairingHost {
             .platform
             .read_core_storage(CoreStorageKey::AutoSigningKeys)
             .await
-            .map_err(|err| AuthorityError::Unknown {
-                reason: format!("failed to read AutoSigning capabilities: {}", err.reason),
+            .map_err(|err| {
+                AuthorityError::Unknown {
+                    reason: format!("failed to read AutoSigning capabilities: {}", err.reason),
+                }
             })?
         else {
             return if legacy_present {
@@ -2105,8 +2119,10 @@ impl PairingHost {
             derivation_index_bytes(&account.derivation_index),
         )
         .map(Some)
-        .map_err(|err| AuthorityError::Unknown {
-            reason: err.to_string(),
+        .map_err(|err| {
+            AuthorityError::Unknown {
+                reason: err.to_string(),
+            }
         })
     }
 
@@ -2151,8 +2167,10 @@ impl PairingHost {
                 *auto_signing_key.as_secret_bytes(),
                 derivation_index_bytes(&request.account.derivation_index),
             )
-            .map_err(|err| AuthorityError::Unknown {
-                reason: err.to_string(),
+            .map_err(|err| {
+                AuthorityError::Unknown {
+                    reason: err.to_string(),
+                }
             })?;
             let (pre_output, proof) = crate::dynamic_vrf::sign_dynamic_vrf(
                 &keypair,
@@ -2177,8 +2195,10 @@ impl PairingHost {
                     })),
             )
             .await?
-            .map_err(|err| AuthorityError::Unknown {
-                reason: format!("VRF signing confirmation failed: {err:?}"),
+            .map_err(|err| {
+                AuthorityError::Unknown {
+                    reason: format!("VRF signing confirmation failed: {err:?}"),
+                }
             })?;
             if !confirmed {
                 return Err(AuthorityError::Rejected);
@@ -2371,8 +2391,10 @@ impl PairingHost {
         let private_session = self.current_private_session(session)?;
         let handle = latest::ProductAccountId {
             dot_ns_identifier: normalize_product_identifier(&request.calling_product_id).map_err(
-                |error| RingVrfError::Unknown {
-                    reason: error.to_string(),
+                |error| {
+                    RingVrfError::Unknown {
+                        reason: error.to_string(),
+                    }
                 },
             )?,
             derivation_index: request.payload.index.clone(),
@@ -2565,15 +2587,16 @@ impl PairingHost {
         if session.sso.is_none() {
             return Err(AuthorityError::Disconnected);
         }
-        let root_entropy_source =
-            session
-                .root_entropy_source
-                .ok_or_else(|| AuthorityError::Unavailable {
-                    reason: "Session secret missing".to_string(),
-                })?;
+        let root_entropy_source = session.root_entropy_source.ok_or_else(|| {
+            AuthorityError::Unavailable {
+                reason: "Session secret missing".to_string(),
+            }
+        })?;
         derive_product_entropy_from_source(&root_entropy_source, product_id, context).map_err(
-            |err| AuthorityError::Unknown {
-                reason: err.to_string(),
+            |err| {
+                AuthorityError::Unknown {
+                    reason: err.to_string(),
+                }
             },
         )
     }
@@ -2585,12 +2608,11 @@ impl PairingHost {
     /// the wallet.
     fn contacts_handle_key(&self, session: &AuthoritySession) -> Result<[u8; 32], AuthorityError> {
         let session = self.current_private_session(session)?;
-        let root_entropy_source =
-            session
-                .root_entropy_source
-                .ok_or_else(|| AuthorityError::Unavailable {
-                    reason: "Session secret missing".to_string(),
-                })?;
+        let root_entropy_source = session.root_entropy_source.ok_or_else(|| {
+            AuthorityError::Unavailable {
+                reason: "Session secret missing".to_string(),
+            }
+        })?;
         Ok(crate::runtime::contacts::handle_key_from_root_source(
             &root_entropy_source,
         ))

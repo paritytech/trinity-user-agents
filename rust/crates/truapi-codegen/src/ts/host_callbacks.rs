@@ -155,10 +155,12 @@ fn emit_host_callbacks(
     let optional_traits = optional_trait_names(definition);
     let (mut composes, docs): (Vec<String>, Option<&str>) = match &definition.super_trait {
         Some(s) => (s.composes.clone(), s.docs.as_deref()),
-        None => (
-            definition.traits.iter().map(|t| t.name.clone()).collect(),
-            None,
-        ),
+        None => {
+            (
+                definition.traits.iter().map(|t| t.name.clone()).collect(),
+                None,
+            )
+        }
     };
     for name in &optional_traits {
         if !composes.contains(name) {
@@ -655,12 +657,16 @@ fn emit_worker_callback_entry(method: &PlatformMethod) -> Result<String> {
         ))
     } else {
         match &method.return_shape.inner {
-            PlatformInner::Unit => Ok(format!(
-                "    {raw}: ({args}) =>\n      void bridge.callbackRequest(\"{raw}\", {arg_array}).catch(() => {{}}),\n"
-            )),
-            PlatformInner::Plain(_) => Ok(format!(
-                "    {raw}: ({args}) =>\n      bridge.callbackRequest(\"{raw}\", {arg_array}) as ReturnType<Required<RawCallbacks>[\"{raw}\"]>,\n"
-            )),
+            PlatformInner::Unit => {
+                Ok(format!(
+                    "    {raw}: ({args}) =>\n      void bridge.callbackRequest(\"{raw}\", {arg_array}).catch(() => {{}}),\n"
+                ))
+            }
+            PlatformInner::Plain(_) => {
+                Ok(format!(
+                    "    {raw}: ({args}) =>\n      bridge.callbackRequest(\"{raw}\", {arg_array}) as ReturnType<Required<RawCallbacks>[\"{raw}\"]>,\n"
+                ))
+            }
             PlatformInner::Result { .. }
             | PlatformInner::Stream(_)
             | PlatformInner::TraitObject(_) => {
@@ -673,12 +679,16 @@ fn emit_worker_callback_entry(method: &PlatformMethod) -> Result<String> {
 fn emit_worker_subscription_entry(method: &PlatformMethod) -> Result<String> {
     let raw = raw_callback_name(method);
     Ok(match worker_subscription_payload_param(method)? {
-        Some(param) => format!(
-            "    {raw}: ({param}, sendItem, sendError) =>\n      bridge.startSubscription(\"{raw}\", {param}, sendItem, sendError),\n"
-        ),
-        None => format!(
-            "    {raw}: (sendItem, sendError) =>\n      bridge.startSubscription(\"{raw}\", null, sendItem, sendError),\n"
-        ),
+        Some(param) => {
+            format!(
+                "    {raw}: ({param}, sendItem, sendError) =>\n      bridge.startSubscription(\"{raw}\", {param}, sendItem, sendError),\n"
+            )
+        }
+        None => {
+            format!(
+                "    {raw}: (sendItem, sendError) =>\n      bridge.startSubscription(\"{raw}\", null, sendItem, sendError),\n"
+            )
+        }
     })
 }
 
@@ -743,10 +753,12 @@ fn worker_subscription_payload_param(method: &PlatformMethod) -> Result<Option<S
     match method.params.as_slice() {
         [] => Ok(None),
         [param] => Ok(Some(to_camel_case(&param.name))),
-        _ => bail!(
-            "subscription callback `{}` has more than one payload parameter",
-            method.name
-        ),
+        _ => {
+            bail!(
+                "subscription callback `{}` has more than one payload parameter",
+                method.name
+            )
+        }
     }
 }
 
@@ -935,10 +947,12 @@ fn raw_ok_ts(
         TypeRef::Vec(inner) | TypeRef::Array(inner, _) if matches!(inner.as_ref(), TypeRef::Primitive(p) if p == "u8") => {
             "Uint8Array".to_string()
         }
-        TypeRef::Option(inner) => format!(
-            "{} | null | undefined",
-            raw_ok_ts(inner, codec_types, local_codec_types)
-        ),
+        TypeRef::Option(inner) => {
+            format!(
+                "{} | null | undefined",
+                raw_ok_ts(inner, codec_types, local_codec_types)
+            )
+        }
         TypeRef::Primitive(p) => raw_primitive_ts(p),
         TypeRef::Unit => "void".to_string(),
         TypeRef::Tuple(items) if items.is_empty() => "void".to_string(),
@@ -1067,13 +1081,15 @@ fn emit_adapter_entry(
         PlatformInner::Plain(ok) => {
             adapter_unary_impl(&host_method, method, ok, codec_types, local_codec_types)?
         }
-        PlatformInner::Unit => adapter_unary_impl(
-            &host_method,
-            method,
-            &TypeRef::Unit,
-            codec_types,
-            local_codec_types,
-        )?,
+        PlatformInner::Unit => {
+            adapter_unary_impl(
+                &host_method,
+                method,
+                &TypeRef::Unit,
+                codec_types,
+                local_codec_types,
+            )?
+        }
         PlatformInner::TraitObject(_) => unreachable!("trait-object callbacks are handled above"),
     };
     Ok(format!("{raw}: {impl_expr},"))
@@ -1162,9 +1178,11 @@ fn contains_non_direct_codec_type(
             TypeRef::Vec(inner) | TypeRef::Option(inner) | TypeRef::Array(inner, _) => {
                 walk(inner, true, codec_types, local_codec_types)
             }
-            TypeRef::Tuple(items) => items
-                .iter()
-                .any(|item| walk(item, true, codec_types, local_codec_types)),
+            TypeRef::Tuple(items) => {
+                items
+                    .iter()
+                    .any(|item| walk(item, true, codec_types, local_codec_types))
+            }
             TypeRef::Primitive(_) | TypeRef::Generic(_) | TypeRef::Unit => false,
         }
     }
@@ -1396,21 +1414,23 @@ fn local_struct_codec_expr(fields: &[FieldDef], type_name: &str) -> Result<Strin
 
 fn local_codec_expr(ty: &TypeRef) -> Result<String> {
     match ty {
-        TypeRef::Primitive(name) => match name.as_str() {
-            "bool" => Ok("S.bool".to_string()),
-            "u8" => Ok("S.u8".to_string()),
-            "u16" => Ok("S.u16".to_string()),
-            "u32" => Ok("S.u32".to_string()),
-            "u64" => Ok("S.u64".to_string()),
-            "u128" => Ok("S.u128".to_string()),
-            "i8" => Ok("S.i8".to_string()),
-            "i16" => Ok("S.i16".to_string()),
-            "i32" => Ok("S.i32".to_string()),
-            "i64" => Ok("S.i64".to_string()),
-            "i128" => Ok("S.i128".to_string()),
-            "str" => Ok("S.str".to_string()),
-            _ => bail!("Unsupported primitive type `{name}` in host callback codec generation"),
-        },
+        TypeRef::Primitive(name) => {
+            match name.as_str() {
+                "bool" => Ok("S.bool".to_string()),
+                "u8" => Ok("S.u8".to_string()),
+                "u16" => Ok("S.u16".to_string()),
+                "u32" => Ok("S.u32".to_string()),
+                "u64" => Ok("S.u64".to_string()),
+                "u128" => Ok("S.u128".to_string()),
+                "i8" => Ok("S.i8".to_string()),
+                "i16" => Ok("S.i16".to_string()),
+                "i32" => Ok("S.i32".to_string()),
+                "i64" => Ok("S.i64".to_string()),
+                "i128" => Ok("S.i128".to_string()),
+                "str" => Ok("S.str".to_string()),
+                _ => bail!("Unsupported primitive type `{name}` in host callback codec generation"),
+            }
+        }
         TypeRef::Named { name, args } => {
             if args.is_empty() {
                 Ok(name.clone())
@@ -1423,16 +1443,20 @@ fn local_codec_expr(ty: &TypeRef) -> Result<String> {
                 Ok(format!("{name}({codecs})"))
             }
         }
-        TypeRef::Vec(inner) => match inner.as_ref() {
-            TypeRef::Primitive(name) if name == "u8" => Ok("S.Bytes()".to_string()),
-            _ => Ok(format!("S.Vector({})", local_codec_expr(inner)?)),
-        },
+        TypeRef::Vec(inner) => {
+            match inner.as_ref() {
+                TypeRef::Primitive(name) if name == "u8" => Ok("S.Bytes()".to_string()),
+                _ => Ok(format!("S.Vector({})", local_codec_expr(inner)?)),
+            }
+        }
         TypeRef::Option(inner) => Ok(format!("S.Option({})", local_codec_expr(inner)?)),
         TypeRef::Tuple(items) => local_tuple_codec_expr(items),
-        TypeRef::Array(inner, len) => match inner.as_ref() {
-            TypeRef::Primitive(name) if name == "u8" => Ok(format!("S.Bytes({len})")),
-            _ => Ok(format!("S.Vector({})", local_codec_expr(inner)?)),
-        },
+        TypeRef::Array(inner, len) => {
+            match inner.as_ref() {
+                TypeRef::Primitive(name) if name == "u8" => Ok(format!("S.Bytes({len})")),
+                _ => Ok(format!("S.Vector({})", local_codec_expr(inner)?)),
+            }
+        }
         TypeRef::Generic(name) => {
             bail!("Generic `{name}` is not supported in host callback codecs")
         }
@@ -1557,16 +1581,20 @@ fn emit_enum_type(enum_def: &TypeDef) -> Result<String> {
 fn enum_variant_type(variant: &VariantDef) -> Result<String> {
     Ok(match &variant.fields {
         VariantFields::Unit => format!("{{ tag: \"{}\"; value?: undefined }}", variant.name),
-        VariantFields::Unnamed(types) => format!(
-            "{{ tag: \"{}\"; value: {} }}",
-            variant.name,
-            unnamed_variant_value_type(types)?
-        ),
-        VariantFields::Named(fields) => format!(
-            "{{ tag: \"{}\"; value: {} }}",
-            variant.name,
-            inline_object_type(fields)?
-        ),
+        VariantFields::Unnamed(types) => {
+            format!(
+                "{{ tag: \"{}\"; value: {} }}",
+                variant.name,
+                unnamed_variant_value_type(types)?
+            )
+        }
+        VariantFields::Named(fields) => {
+            format!(
+                "{{ tag: \"{}\"; value: {} }}",
+                variant.name,
+                inline_object_type(fields)?
+            )
+        }
     })
 }
 
@@ -1726,13 +1754,17 @@ fn format_return(ret: &PlatformReturn) -> Result<String> {
 
 fn ts_type(ty: &TypeRef) -> Result<String> {
     match ty {
-        TypeRef::Primitive(name) => match name.as_str() {
-            "bool" => Ok("boolean".to_string()),
-            "u8" | "u16" | "u32" | "i8" | "i16" | "i32" | "f32" | "f64" => Ok("number".to_string()),
-            "u64" | "u128" | "i64" | "i128" => Ok("bigint".to_string()),
-            "str" => Ok("string".to_string()),
-            _ => bail!("Unsupported primitive type `{name}` in host callbacks generation"),
-        },
+        TypeRef::Primitive(name) => {
+            match name.as_str() {
+                "bool" => Ok("boolean".to_string()),
+                "u8" | "u16" | "u32" | "i8" | "i16" | "i32" | "f32" | "f64" => {
+                    Ok("number".to_string())
+                }
+                "u64" | "u128" | "i64" | "i128" => Ok("bigint".to_string()),
+                "str" => Ok("string".to_string()),
+                _ => bail!("Unsupported primitive type `{name}` in host callbacks generation"),
+            }
+        }
         TypeRef::Named { name, args } => {
             if args.is_empty() {
                 Ok(name.clone())
@@ -1745,10 +1777,12 @@ fn ts_type(ty: &TypeRef) -> Result<String> {
                 Ok(format!("{name}<{rendered}>"))
             }
         }
-        TypeRef::Vec(inner) => match inner.as_ref() {
-            TypeRef::Primitive(name) if name == "u8" => Ok("Uint8Array".to_string()),
-            _ => Ok(format!("Array<{}>", ts_type(inner)?)),
-        },
+        TypeRef::Vec(inner) => {
+            match inner.as_ref() {
+                TypeRef::Primitive(name) if name == "u8" => Ok("Uint8Array".to_string()),
+                _ => Ok(format!("Array<{}>", ts_type(inner)?)),
+            }
+        }
         TypeRef::Option(inner) => Ok(format!("{} | undefined", ts_type(inner)?)),
         TypeRef::Tuple(items) => {
             if items.is_empty() {
@@ -1762,10 +1796,12 @@ fn ts_type(ty: &TypeRef) -> Result<String> {
                 Ok(format!("[{rendered}]"))
             }
         }
-        TypeRef::Array(inner, _len) => match inner.as_ref() {
-            TypeRef::Primitive(name) if name == "u8" => Ok("Uint8Array".to_string()),
-            _ => Ok(format!("Array<{}>", ts_type(inner)?)),
-        },
+        TypeRef::Array(inner, _len) => {
+            match inner.as_ref() {
+                TypeRef::Primitive(name) if name == "u8" => Ok("Uint8Array".to_string()),
+                _ => Ok(format!("Array<{}>", ts_type(inner)?)),
+            }
+        }
         TypeRef::Generic(name) => Ok(name.clone()),
         TypeRef::Unit => Ok("void".to_string()),
     }

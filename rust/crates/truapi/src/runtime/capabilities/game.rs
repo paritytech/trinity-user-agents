@@ -59,8 +59,10 @@ impl Game for ProductRuntimeHost {
             .schedule_game_reminder(&self.product, starts_at)
             .await
             .map(|()| HostRemindNextGameResponse::V1)
-            .map_err(|error| CallError::HostFailure {
-                reason: error.reason,
+            .map_err(|error| {
+                CallError::HostFailure {
+                    reason: error.reason,
+                }
             })
     }
 

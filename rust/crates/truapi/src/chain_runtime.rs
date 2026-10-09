@@ -1284,10 +1284,12 @@ impl ChainConnection {
 
         match setup {
             Some(setup) => setup.await.map_err(|failure| failure.reclassify(method)),
-            None => Err(RuntimeFailure::host_failure(
-                method,
-                format!("follow subscription {local_follow_id:?} is not established"),
-            )),
+            None => {
+                Err(RuntimeFailure::host_failure(
+                    method,
+                    format!("follow subscription {local_follow_id:?} is not established"),
+                ))
+            }
         }
     }
 
@@ -1330,19 +1332,21 @@ impl ChainConnection {
         let pump = async move {
             while let Some(item) = follow.next().await {
                 match item {
-                    Ok(event) => match map_follow_event(event) {
-                        Ok(item) => {
-                            let is_stop = matches!(item, RemoteChainHeadFollowItem::Stop);
-                            connection.deliver_follow_event(&pump_follow_id, item);
-                            if is_stop {
+                    Ok(event) => {
+                        match map_follow_event(event) {
+                            Ok(item) => {
+                                let is_stop = matches!(item, RemoteChainHeadFollowItem::Stop);
+                                connection.deliver_follow_event(&pump_follow_id, item);
+                                if is_stop {
+                                    break;
+                                }
+                            }
+                            Err(failure) => {
+                                connection.interrupt_follow(&pump_follow_id, failure);
                                 break;
                             }
                         }
-                        Err(failure) => {
-                            connection.interrupt_follow(&pump_follow_id, failure);
-                            break;
-                        }
-                    },
+                    }
                     Err(error) => {
                         connection
                             .interrupt_follow(&pump_follow_id, rpc_failure(FOLLOW_METHOD, error));
@@ -1480,9 +1484,11 @@ fn operation_started_result(
     response: subxt_chain::MethodResponse,
 ) -> Result<OperationStartedResult, RuntimeFailure> {
     match response {
-        subxt_chain::MethodResponse::Started(started) => Ok(OperationStartedResult::Started {
-            operation_id: started.operation_id,
-        }),
+        subxt_chain::MethodResponse::Started(started) => {
+            Ok(OperationStartedResult::Started {
+                operation_id: started.operation_id,
+            })
+        }
         subxt_chain::MethodResponse::LimitReached => Ok(OperationStartedResult::LimitReached),
     }
 }
@@ -1504,28 +1510,32 @@ fn map_follow_event(
                     .transpose()?,
             })
         }
-        subxt_chain::FollowEvent::NewBlock(event) => Ok(RemoteChainHeadFollowItem::NewBlock {
-            block_hash: hash_to_bytes(event.block_hash),
-            parent_block_hash: hash_to_bytes(event.parent_block_hash),
-            new_runtime: event.new_runtime.map(map_runtime_event).transpose()?,
-        }),
+        subxt_chain::FollowEvent::NewBlock(event) => {
+            Ok(RemoteChainHeadFollowItem::NewBlock {
+                block_hash: hash_to_bytes(event.block_hash),
+                parent_block_hash: hash_to_bytes(event.parent_block_hash),
+                new_runtime: event.new_runtime.map(map_runtime_event).transpose()?,
+            })
+        }
         subxt_chain::FollowEvent::BestBlockChanged(event) => {
             Ok(RemoteChainHeadFollowItem::BestBlockChanged {
                 best_block_hash: hash_to_bytes(event.best_block_hash),
             })
         }
-        subxt_chain::FollowEvent::Finalized(event) => Ok(RemoteChainHeadFollowItem::Finalized {
-            finalized_block_hashes: event
-                .finalized_block_hashes
-                .into_iter()
-                .map(hash_to_bytes)
-                .collect(),
-            pruned_block_hashes: event
-                .pruned_block_hashes
-                .into_iter()
-                .map(hash_to_bytes)
-                .collect(),
-        }),
+        subxt_chain::FollowEvent::Finalized(event) => {
+            Ok(RemoteChainHeadFollowItem::Finalized {
+                finalized_block_hashes: event
+                    .finalized_block_hashes
+                    .into_iter()
+                    .map(hash_to_bytes)
+                    .collect(),
+                pruned_block_hashes: event
+                    .pruned_block_hashes
+                    .into_iter()
+                    .map(hash_to_bytes)
+                    .collect(),
+            })
+        }
         subxt_chain::FollowEvent::OperationBodyDone(event) => {
             Ok(RemoteChainHeadFollowItem::OperationBodyDone {
                 operation_id: event.operation_id,
@@ -2186,14 +2196,18 @@ mod tests {
             }
         }));
         let runtime = ChainRuntime::new(provider.clone(), spawner_for_tests());
-        let follow_request = || RemoteChainHeadFollowRequest {
-            genesis_hash: vec![0u8; 32],
-            with_runtime: false,
+        let follow_request = || {
+            RemoteChainHeadFollowRequest {
+                genesis_hash: vec![0u8; 32],
+                with_runtime: false,
+            }
         };
-        let header_request = |follow_subscription_id: &str| RemoteChainHeadHeaderRequest {
-            genesis_hash: vec![0u8; 32],
-            follow_subscription_id: follow_subscription_id.to_string(),
-            hash: vec![1u8; 32],
+        let header_request = |follow_subscription_id: &str| {
+            RemoteChainHeadHeaderRequest {
+                genesis_hash: vec![0u8; 32],
+                follow_subscription_id: follow_subscription_id.to_string(),
+                hash: vec![1u8; 32],
+            }
         };
         let follows_sent = |sent: &[String], count: usize| {
             sent.iter()

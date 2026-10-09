@@ -21,10 +21,12 @@ pub fn expand(
     let item = parse_macro_input!(item as syn::Item);
     let result = match item {
         syn::Item::Impl(item) => expand_sso_service(item),
-        other => Err(syn::Error::new_spanned(
-            other,
-            "sso_service requires an inherent implementation",
-        )),
+        other => {
+            Err(syn::Error::new_spanned(
+                other,
+                "sso_service requires an inherent implementation",
+            ))
+        }
     };
     match result {
         Ok(tokens) => tokens.into(),
@@ -255,12 +257,13 @@ fn method_types(sig: &Signature) -> syn::Result<(Type, Type)> {
 
 fn last_segment(ty: &Type) -> syn::Result<Ident> {
     match ty {
-        Type::Path(path) => path
-            .path
-            .segments
-            .last()
-            .map(|segment| segment.ident.clone())
-            .ok_or_else(|| syn::Error::new_spanned(ty, "expected a request type")),
+        Type::Path(path) => {
+            path.path
+                .segments
+                .last()
+                .map(|segment| segment.ident.clone())
+                .ok_or_else(|| syn::Error::new_spanned(ty, "expected a request type"))
+        }
         _ => Err(syn::Error::new_spanned(ty, "expected a request type path")),
     }
 }

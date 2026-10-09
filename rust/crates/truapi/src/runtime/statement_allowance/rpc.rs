@@ -78,9 +78,11 @@ impl RpcClient {
     pub async fn connect(url: &str) -> Result<Self, StatementAllowanceError> {
         let inner = NativeRpcClient::from_insecure_url(url)
             .await
-            .map_err(|err| RpcError::Connect {
-                url: url.to_string(),
-                source: err,
+            .map_err(|err| {
+                RpcError::Connect {
+                    url: url.to_string(),
+                    source: err,
+                }
             })?;
         Ok(Self { inner })
     }
@@ -141,9 +143,11 @@ impl RpcClient {
             .inner
             .request::<Value>("state_getStorage", params)
             .await
-            .map_err(|err| RpcError::Request {
-                method: "state_getStorage".to_string(),
-                source: err,
+            .map_err(|err| {
+                RpcError::Request {
+                    method: "state_getStorage".to_string(),
+                    source: err,
+                }
             })? {
             Value::String(hex_value) => Ok(Some(decode_hex(&hex_value)?)),
             _ => Ok(None),
@@ -170,9 +174,11 @@ impl RpcClient {
             .inner
             .request::<Value>("state_queryStorageAt", rpc_params![hex_keys.clone()])
             .await
-            .map_err(|err| RpcError::Request {
-                method: "state_queryStorageAt".to_string(),
-                source: err,
+            .map_err(|err| {
+                RpcError::Request {
+                    method: "state_queryStorageAt".to_string(),
+                    source: err,
+                }
             })?;
         // `[{ block, changes: [[key, value|null], ..] }]`, and the changes are not
         // required to come back in the order asked, so index them by key.
@@ -192,9 +198,11 @@ impl RpcClient {
         }
         hex_keys
             .iter()
-            .map(|key| match found.get(key.as_str()) {
-                Some(value) => decode_hex(value).map(Some),
-                None => Ok(None),
+            .map(|key| {
+                match found.get(key.as_str()) {
+                    Some(value) => decode_hex(value).map(Some),
+                    None => Ok(None),
+                }
             })
             .collect()
     }
@@ -222,9 +230,11 @@ impl RpcClient {
                 "author_unwatchExtrinsic",
             )
             .await
-            .map_err(|err| RpcError::Request {
-                method: "author_submitAndWatchExtrinsic".to_string(),
-                source: err,
+            .map_err(|err| {
+                RpcError::Request {
+                    method: "author_submitAndWatchExtrinsic".to_string(),
+                    source: err,
+                }
             })?;
         let timeout = futures_timer::Delay::new(SUBMIT_TIMEOUT).fuse();
         pin_mut!(timeout);

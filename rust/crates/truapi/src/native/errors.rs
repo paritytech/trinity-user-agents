@@ -2,8 +2,6 @@ use truapi::v01;
 
 use crate::platform::ChatFieldError;
 
-
-
 /// Native-friendly rejection error returned by callback methods that map onto
 /// [`truapi::v01::GenericError`].
 ///

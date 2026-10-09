@@ -175,13 +175,17 @@ impl RingResolver for ChainRingResolver {
                 .key()
                 .map_err(unknown)?
                 .part(2)
-                .ok_or_else(|| RingVrfError::Unknown {
-                    reason: "Members.RingKeys returned a key without a page index".to_string(),
+                .ok_or_else(|| {
+                    RingVrfError::Unknown {
+                        reason: "Members.RingKeys returned a key without a page index".to_string(),
+                    }
                 })?
                 .decode_as::<u32>()
                 .map_err(unknown)?
-                .ok_or_else(|| RingVrfError::Unknown {
-                    reason: "Members.RingKeys page index is not recoverable".to_string(),
+                .ok_or_else(|| {
+                    RingVrfError::Unknown {
+                        reason: "Members.RingKeys page index is not recoverable".to_string(),
+                    }
                 })?;
             let members = entry.value().decode().map_err(unknown)?.0;
             members_by_page.push((page_index, members));
@@ -277,9 +281,11 @@ fn collection_id(location: &RingLocation) -> Result<[u8; 32], RingVrfError> {
     location
         .junctions
         .iter()
-        .find_map(|junction| match junction {
-            RingLocationJunction::CollectionId(value) => Some(value),
-            RingLocationJunction::PalletInstance(_) => None,
+        .find_map(|junction| {
+            match junction {
+                RingLocationJunction::CollectionId(value) => Some(value),
+                RingLocationJunction::PalletInstance(_) => None,
+            }
         })
         .ok_or(RingVrfError::RingNotFound)?
         .as_slice()
@@ -288,13 +294,12 @@ fn collection_id(location: &RingLocation) -> Result<[u8; 32], RingVrfError> {
 }
 
 fn pallet_instance(location: &RingLocation) -> Option<u8> {
-    location
-        .junctions
-        .iter()
-        .find_map(|junction| match junction {
+    location.junctions.iter().find_map(|junction| {
+        match junction {
             RingLocationJunction::PalletInstance(index) => Some(*index),
             RingLocationJunction::CollectionId(_) => None,
-        })
+        }
+    })
 }
 
 fn blake2b_256(input: &[u8], key: Option<&[u8]>) -> [u8; 32] {

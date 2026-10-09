@@ -670,19 +670,23 @@ mod tests {
             let actual = parse_navigate(case.input);
             match case.expected {
                 Expected::Decision(expected) => assert_eq!(actual, expected, "{}", case.name),
-                Expected::AnyExternalOrReject => assert!(
-                    matches!(
-                        actual,
-                        NavigateDecision::External { .. } | NavigateDecision::Reject { .. }
-                    ),
-                    "{}: expected External or Reject, got {actual:?}",
-                    case.name,
-                ),
-                Expected::Reject => assert!(
-                    matches!(actual, NavigateDecision::Reject { .. }),
-                    "{}: expected Reject, got {actual:?}",
-                    case.name,
-                ),
+                Expected::AnyExternalOrReject => {
+                    assert!(
+                        matches!(
+                            actual,
+                            NavigateDecision::External { .. } | NavigateDecision::Reject { .. }
+                        ),
+                        "{}: expected External or Reject, got {actual:?}",
+                        case.name,
+                    )
+                }
+                Expected::Reject => {
+                    assert!(
+                        matches!(actual, NavigateDecision::Reject { .. }),
+                        "{}: expected Reject, got {actual:?}",
+                        case.name,
+                    )
+                }
             }
         }
 

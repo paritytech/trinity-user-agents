@@ -236,28 +236,36 @@ impl MethodEmission {
     ) -> Result<Self> {
         let versioned_wrappers = versioned_wrapper_names(api);
         let request_payload = match method.params.as_slice() {
-            [] => bail!(
-                "Method `{}`: expected exactly one request parameter, so an empty request needs a \
+            [] => {
+                bail!(
+                    "Method `{}`: expected exactly one request parameter, so an empty request needs a \
                  payload-less versioned wrapper",
-                method.name
-            ),
-            [param] => match &param.type_ref {
-                TypeRef::Named { name, args }
-                    if args.is_empty() && versioned_wrappers.contains(name) =>
-                {
-                    name.clone()
-                }
-                _ => bail!(
-                    "Method `{}`: its request parameter is not a versioned wrapper, so it has no \
-                     representable wire payload",
                     method.name
-                ),
-            },
-            _ => bail!(
-                "Method `{}`: expected at most one request parameter (got {})",
-                method.name,
-                method.params.len()
-            ),
+                )
+            }
+            [param] => {
+                match &param.type_ref {
+                    TypeRef::Named { name, args }
+                        if args.is_empty() && versioned_wrappers.contains(name) =>
+                    {
+                        name.clone()
+                    }
+                    _ => {
+                        bail!(
+                            "Method `{}`: its request parameter is not a versioned wrapper, so it has no \
+                     representable wire payload",
+                            method.name
+                        )
+                    }
+                }
+            }
+            _ => {
+                bail!(
+                    "Method `{}`: expected at most one request parameter (got {})",
+                    method.name,
+                    method.params.len()
+                )
+            }
         };
         let error_payload = match &method.return_type {
             ReturnType::Result { err, .. } => {
@@ -269,25 +277,29 @@ impl MethodEmission {
         };
 
         let (response_wrapper, item_wrapper) = match &method.return_type {
-            ReturnType::Result { ok, .. } => (
-                Some(
-                    versioned_wrapper_root(&method.name, "response", ok, &versioned_wrappers)?
+            ReturnType::Result { ok, .. } => {
+                (
+                    Some(
+                        versioned_wrapper_root(&method.name, "response", ok, &versioned_wrappers)?
+                            .to_string(),
+                    ),
+                    None,
+                )
+            }
+            ReturnType::Subscription { item, .. } => {
+                (
+                    None,
+                    Some(
+                        versioned_wrapper_root(
+                            &method.name,
+                            "subscription item",
+                            item,
+                            &versioned_wrappers,
+                        )?
                         .to_string(),
-                ),
-                None,
-            ),
-            ReturnType::Subscription { item, .. } => (
-                None,
-                Some(
-                    versioned_wrapper_root(
-                        &method.name,
-                        "subscription item",
-                        item,
-                        &versioned_wrappers,
-                    )?
-                    .to_string(),
-                ),
-            ),
+                    ),
+                )
+            }
         };
 
         Ok(MethodEmission {

@@ -81,8 +81,10 @@ fn open_socket(
     ),
     ProviderError,
 > {
-    let socket = WebSocket::new(url.as_str()).map_err(|err| ProviderError::Transport {
-        reason: format!("WebSocket creation for {url} failed: {err:?}"),
+    let socket = WebSocket::new(url.as_str()).map_err(|err| {
+        ProviderError::Transport {
+            reason: format!("WebSocket creation for {url} failed: {err:?}"),
+        }
     })?;
     socket.set_binary_type(BinaryType::Arraybuffer);
 

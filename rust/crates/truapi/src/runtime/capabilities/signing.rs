@@ -76,8 +76,10 @@ impl Signing for ProductRuntimeHost {
             )
             .await
             .map_err(|reason| signing_call_error(HostSignPayloadError::V1, reason))?
-            .map_err(|err| CallError::HostFailure {
-                reason: format!("sign payload confirmation failed: {err:?}"),
+            .map_err(|err| {
+                CallError::HostFailure {
+                    reason: format!("sign payload confirmation failed: {err:?}"),
+                }
             })?;
             if !confirmed {
                 return Err(CallError::Domain(HostSignPayloadError::V1(
@@ -195,8 +197,10 @@ impl Signing for ProductRuntimeHost {
             )
             .await
             .map_err(|reason| transaction_call_error(HostCreateTransactionError::V1, reason))?
-            .map_err(|err| CallError::HostFailure {
-                reason: format!("create transaction confirmation failed: {err:?}"),
+            .map_err(|err| {
+                CallError::HostFailure {
+                    reason: format!("create transaction confirmation failed: {err:?}"),
+                }
             })?;
             if !confirmed {
                 return Err(CallError::Domain(HostCreateTransactionError::V1(
@@ -262,8 +266,10 @@ impl Signing for ProductRuntimeHost {
         )
         .await
         .map_err(|reason| signing_call_error(HostSignPayloadWithLegacyAccountError::V1, reason))?
-        .map_err(|err| CallError::HostFailure {
-            reason: format!("sign payload confirmation failed: {err:?}"),
+        .map_err(|err| {
+            CallError::HostFailure {
+                reason: format!("sign payload confirmation failed: {err:?}"),
+            }
         })?;
         if !confirmed {
             return Err(CallError::Domain(
@@ -358,8 +364,10 @@ impl Signing for ProductRuntimeHost {
         .map_err(|reason| {
             transaction_call_error(HostCreateTransactionWithLegacyAccountError::V1, reason)
         })?
-        .map_err(|err| CallError::HostFailure {
-            reason: format!("create transaction confirmation failed: {err:?}"),
+        .map_err(|err| {
+            CallError::HostFailure {
+                reason: format!("create transaction confirmation failed: {err:?}"),
+            }
         })?;
         if !confirmed {
             return Err(CallError::Domain(
@@ -370,13 +378,15 @@ impl Signing for ProductRuntimeHost {
         }
         let cx = remote_authority_context(cx);
         let authority_request = match signer {
-            LegacySigner::Product => CreateTransactionAuthorityRequest::LegacyAccount {
-                product_account: v01::ProductAccountId {
-                    dot_ns_identifier: self.product_id(),
-                    derivation_index: v01::DerivationIndex::Index(0),
-                },
-                request: inner,
-            },
+            LegacySigner::Product => {
+                CreateTransactionAuthorityRequest::LegacyAccount {
+                    product_account: v01::ProductAccountId {
+                        dot_ns_identifier: self.product_id(),
+                        derivation_index: v01::DerivationIndex::Index(0),
+                    },
+                    request: inner,
+                }
+            }
             LegacySigner::Identity(_) => CreateTransactionAuthorityRequest::IdentityAccount(inner),
         };
         remote_authority_call(
@@ -471,8 +481,10 @@ impl ProductRuntimeHost {
             )
             .await
             .map_err(|reason| signing_call_error(HostSignRawError::V1, reason))?
-            .map_err(|err| CallError::HostFailure {
-                reason: format!("sign raw confirmation failed: {err:?}"),
+            .map_err(|err| {
+                CallError::HostFailure {
+                    reason: format!("sign raw confirmation failed: {err:?}"),
+                }
             })?;
             if !confirmed {
                 return Err(CallError::Domain(HostSignRawError::V1(
@@ -533,8 +545,10 @@ impl ProductRuntimeHost {
         )
         .await
         .map_err(|reason| signing_call_error(HostSignRawWithLegacyAccountError::V1, reason))?
-        .map_err(|err| CallError::HostFailure {
-            reason: format!("sign raw confirmation failed: {err:?}"),
+        .map_err(|err| {
+            CallError::HostFailure {
+                reason: format!("sign raw confirmation failed: {err:?}"),
+            }
         })?;
         if !confirmed {
             return Err(CallError::Domain(HostSignRawWithLegacyAccountError::V1(
@@ -543,17 +557,21 @@ impl ProductRuntimeHost {
         }
         let cx = remote_authority_context(cx);
         let authority_request = match signer {
-            LegacySigner::Product => SignRawAuthorityRequest::Product(v01::HostSignRawRequest {
-                account: v01::ProductAccountId {
-                    dot_ns_identifier: self.product_id(),
-                    derivation_index: v01::DerivationIndex::Index(0),
-                },
-                payload: inner.payload,
-            }),
-            LegacySigner::Identity(account) => SignRawAuthorityRequest::LegacyAccount {
-                account,
-                request: inner,
-            },
+            LegacySigner::Product => {
+                SignRawAuthorityRequest::Product(v01::HostSignRawRequest {
+                    account: v01::ProductAccountId {
+                        dot_ns_identifier: self.product_id(),
+                        derivation_index: v01::DerivationIndex::Index(0),
+                    },
+                    payload: inner.payload,
+                })
+            }
+            LegacySigner::Identity(account) => {
+                SignRawAuthorityRequest::LegacyAccount {
+                    account,
+                    request: inner,
+                }
+            }
         };
         remote_authority_call(
             &cx,

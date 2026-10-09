@@ -88,12 +88,14 @@ impl From<lifecycle_service::LifecycleState> for ChainLifecycle {
             peers: state.num_peers,
             health: match state.health {
                 lifecycle_service::Health::Ok => ChainHealth::Ok,
-                lifecycle_service::Health::Stalled { reason } => ChainHealth::Stalled {
-                    reason: match reason {
-                        lifecycle_service::StallReason::NoPeers => StallReason::NoPeers,
-                        lifecycle_service::StallReason::NoProgress => StallReason::NoProgress,
-                    },
-                },
+                lifecycle_service::Health::Stalled { reason } => {
+                    ChainHealth::Stalled {
+                        reason: match reason {
+                            lifecycle_service::StallReason::NoPeers => StallReason::NoPeers,
+                            lifecycle_service::StallReason::NoProgress => StallReason::NoProgress,
+                        },
+                    }
+                }
             },
         }
     }

@@ -99,8 +99,10 @@ impl System for ProductRuntimeHost {
                     .permissions_service()
                     .authorize_device(v01::HostDevicePermissionRequest::OpenUrl)
                     .await
-                    .map_err(|error| CallError::HostFailure {
-                        reason: format!("permission storage failed: {error:?}"),
+                    .map_err(|error| {
+                        CallError::HostFailure {
+                            reason: format!("permission storage failed: {error:?}"),
+                        }
                     })?;
                 if status != PermissionAuthorizationStatus::Authorized {
                     return Err(CallError::Domain(HostNavigateToError::V1(
@@ -149,14 +151,18 @@ impl Permissions for ProductRuntimeHost {
         let HostDevicePermissionRequest::V1(inner) = request;
         let service = self.permissions_service();
         match service.authorize_device(inner).await {
-            Ok(decision) => Ok(HostDevicePermissionResponse::V1(
-                v01::HostDevicePermissionResponse {
-                    granted: decision == PermissionAuthorizationStatus::Authorized,
-                },
-            )),
-            Err(err) => Err(CallError::HostFailure {
-                reason: format!("permission storage failed: {err:?}"),
-            }),
+            Ok(decision) => {
+                Ok(HostDevicePermissionResponse::V1(
+                    v01::HostDevicePermissionResponse {
+                        granted: decision == PermissionAuthorizationStatus::Authorized,
+                    },
+                ))
+            }
+            Err(err) => {
+                Err(CallError::HostFailure {
+                    reason: format!("permission storage failed: {err:?}"),
+                })
+            }
         }
     }
 
@@ -169,14 +175,18 @@ impl Permissions for ProductRuntimeHost {
         let RemotePermissionRequest::V1(inner) = request;
         let service = self.permissions_service();
         match service.authorize_remote(inner).await {
-            Ok(decision) => Ok(RemotePermissionResponse::V1(
-                v01::RemotePermissionResponse {
-                    granted: decision == PermissionAuthorizationStatus::Authorized,
-                },
-            )),
-            Err(err) => Err(CallError::HostFailure {
-                reason: format!("permission storage failed: {err:?}"),
-            }),
+            Ok(decision) => {
+                Ok(RemotePermissionResponse::V1(
+                    v01::RemotePermissionResponse {
+                        granted: decision == PermissionAuthorizationStatus::Authorized,
+                    },
+                ))
+            }
+            Err(err) => {
+                Err(CallError::HostFailure {
+                    reason: format!("permission storage failed: {err:?}"),
+                })
+            }
         }
     }
 
@@ -189,14 +199,18 @@ impl Permissions for ProductRuntimeHost {
         let HostDevicePermissionRequest::V1(inner) = request;
         let service = self.permissions_service();
         match service.check_or_prompt_device(inner).await {
-            Ok(decision) => Ok(HostDevicePermissionResponse::V1(
-                v01::HostDevicePermissionResponse {
-                    granted: decision == PermissionAuthorizationStatus::Authorized,
-                },
-            )),
-            Err(err) => Err(CallError::HostFailure {
-                reason: format!("permission storage failed: {err:?}"),
-            }),
+            Ok(decision) => {
+                Ok(HostDevicePermissionResponse::V1(
+                    v01::HostDevicePermissionResponse {
+                        granted: decision == PermissionAuthorizationStatus::Authorized,
+                    },
+                ))
+            }
+            Err(err) => {
+                Err(CallError::HostFailure {
+                    reason: format!("permission storage failed: {err:?}"),
+                })
+            }
         }
     }
 
@@ -209,14 +223,18 @@ impl Permissions for ProductRuntimeHost {
         let RemotePermissionRequest::V1(inner) = request;
         let service = self.permissions_service();
         match service.check_or_prompt_remote(inner).await {
-            Ok(decision) => Ok(RemotePermissionResponse::V1(
-                v01::RemotePermissionResponse {
-                    granted: decision == PermissionAuthorizationStatus::Authorized,
-                },
-            )),
-            Err(err) => Err(CallError::HostFailure {
-                reason: format!("permission storage failed: {err:?}"),
-            }),
+            Ok(decision) => {
+                Ok(RemotePermissionResponse::V1(
+                    v01::RemotePermissionResponse {
+                        granted: decision == PermissionAuthorizationStatus::Authorized,
+                    },
+                ))
+            }
+            Err(err) => {
+                Err(CallError::HostFailure {
+                    reason: format!("permission storage failed: {err:?}"),
+                })
+            }
         }
     }
 }
@@ -378,13 +396,15 @@ impl Theme for ProductRuntimeHost {
         _cx: &CallContext,
         _request: HostThemeSubscribeRequest,
     ) -> Subscription<HostThemeSubscribeItem, CallError<HostThemeSubscribeError>> {
-        let stream = self.platform.subscribe_theme().map(|item| match item {
-            Ok(item) => Ok(HostThemeSubscribeItem::V1(item)),
-            Err(error) => {
-                warn!(reason = %error.reason, "theme platform stream failed");
-                Err(CallError::HostFailure {
-                    reason: error.reason,
-                })
+        let stream = self.platform.subscribe_theme().map(|item| {
+            match item {
+                Ok(item) => Ok(HostThemeSubscribeItem::V1(item)),
+                Err(error) => {
+                    warn!(reason = %error.reason, "theme platform stream failed");
+                    Err(CallError::HostFailure {
+                        reason: error.reason,
+                    })
+                }
             }
         });
         Subscription::new(stream)
@@ -399,13 +419,15 @@ impl Locale for ProductRuntimeHost {
         _cx: &CallContext,
         _request: HostLocaleSubscribeRequest,
     ) -> Subscription<HostLocaleSubscribeItem, CallError<HostLocaleSubscribeError>> {
-        let stream = self.platform.subscribe_locale().map(|item| match item {
-            Ok(item) => Ok(HostLocaleSubscribeItem::V1(item)),
-            Err(error) => {
-                warn!(reason = %error.reason, "locale platform stream failed");
-                Err(CallError::HostFailure {
-                    reason: error.reason,
-                })
+        let stream = self.platform.subscribe_locale().map(|item| {
+            match item {
+                Ok(item) => Ok(HostLocaleSubscribeItem::V1(item)),
+                Err(error) => {
+                    warn!(reason = %error.reason, "locale platform stream failed");
+                    Err(CallError::HostFailure {
+                        reason: error.reason,
+                    })
+                }
             }
         });
         Subscription::new(stream)
@@ -428,8 +450,10 @@ impl Notifications for ProductRuntimeHost {
             .permissions_service()
             .authorize_device(v01::HostDevicePermissionRequest::Notifications)
             .await
-            .map_err(|err| CallError::HostFailure {
-                reason: format!("permission storage failed: {err:?}"),
+            .map_err(|err| {
+                CallError::HostFailure {
+                    reason: format!("permission storage failed: {err:?}"),
+                }
             })?;
         if status != PermissionAuthorizationStatus::Authorized {
             return Err(CallError::Domain(HostPushNotificationError::V1(

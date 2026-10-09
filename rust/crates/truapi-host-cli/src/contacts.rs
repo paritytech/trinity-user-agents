@@ -51,10 +51,11 @@ impl CliContactsHost {
     /// configuration and the user's part is approving it.
     fn offered(&self) -> Option<&HostContact> {
         match std::env::var("TRUAPI_CONTACT_PICK") {
-            Ok(name) => self
-                .contacts
-                .iter()
-                .find(|contact| contact.display_name.as_deref() == Some(name.trim())),
+            Ok(name) => {
+                self.contacts
+                    .iter()
+                    .find(|contact| contact.display_name.as_deref() == Some(name.trim()))
+            }
             Err(_) => self.contacts.first(),
         }
     }
@@ -82,9 +83,11 @@ fn parse_contacts(spec: &str) -> Vec<HostContact> {
 fn development_contacts() -> Vec<HostContact> {
     [("alice", 0xA1u8), ("bob", 0xB0)]
         .into_iter()
-        .map(|(name, byte)| HostContact {
-            account: [byte; 32],
-            display_name: Some(name.to_string()),
+        .map(|(name, byte)| {
+            HostContact {
+                account: [byte; 32],
+                display_name: Some(name.to_string()),
+            }
         })
         .collect()
 }

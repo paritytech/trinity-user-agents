@@ -748,9 +748,11 @@ impl Permissions for CliPlatform {
     ) -> Result<PermissionDecision, api::GenericError> {
         let product_id = &product.product_id;
         let detail = match &request.permission {
-            api::RemotePermission::Remote { .. } => format!(
-                "{product_id} requested {request}. This covers all ports on each host, including local services."
-            ),
+            api::RemotePermission::Remote { .. } => {
+                format!(
+                    "{product_id} requested {request}. This covers all ports on each host, including local services."
+                )
+            }
             _ => format!("{product_id} requested {request}."),
         };
         Ok(self
@@ -788,31 +790,39 @@ impl truapi::platform::AuthPresenter for CliPlatform {
             tracing::warn!(%reason, %user_id, "could not switch pairing-host user storage");
         }
         let (connection, event) = match &state {
-            AuthState::Pairing { deeplink } => (
-                "pairing".to_string(),
-                SystemEvent::PairingDeeplink {
-                    url: deeplink.clone(),
-                },
-            ),
-            AuthState::Authenticating => (
-                "authenticating".to_string(),
-                SystemEvent::PairingAuthenticating,
-            ),
-            AuthState::Connected(info) => (
-                connected_user_id(info).unwrap_or("connected").to_string(),
-                SystemEvent::PairingConnected {
-                    user_id: connected_user_id(info).map(str::to_string),
-                },
-            ),
+            AuthState::Pairing { deeplink } => {
+                (
+                    "pairing".to_string(),
+                    SystemEvent::PairingDeeplink {
+                        url: deeplink.clone(),
+                    },
+                )
+            }
+            AuthState::Authenticating => {
+                (
+                    "authenticating".to_string(),
+                    SystemEvent::PairingAuthenticating,
+                )
+            }
+            AuthState::Connected(info) => {
+                (
+                    connected_user_id(info).unwrap_or("connected").to_string(),
+                    SystemEvent::PairingConnected {
+                        user_id: connected_user_id(info).map(str::to_string),
+                    },
+                )
+            }
             AuthState::Disconnected => {
                 ("disconnected".to_string(), SystemEvent::PairingDisconnected)
             }
-            AuthState::LoginFailed { reason, .. } => (
-                "failed".to_string(),
-                SystemEvent::PairingFailed {
-                    reason: reason.clone(),
-                },
-            ),
+            AuthState::LoginFailed { reason, .. } => {
+                (
+                    "failed".to_string(),
+                    SystemEvent::PairingFailed {
+                        reason: reason.clone(),
+                    },
+                )
+            }
         };
         if let Some(ui) = &self.ui {
             ui.connection(connection);
@@ -1205,19 +1215,23 @@ fn load_string_map(path: &Path) -> HashMap<String, Vec<u8>> {
         Err(err) => {
             let preserved = path.with_extension(UNREADABLE_SUFFIX);
             match fs::rename(path, &preserved) {
-                Ok(()) => tracing::warn!(
-                    path = %path.display(),
-                    preserved = %preserved.display(),
-                    %err,
-                    "could not read CLI storage; moved it aside and started empty"
-                ),
-                Err(rename_err) => tracing::warn!(
-                    path = %path.display(),
-                    %err,
-                    %rename_err,
-                    "could not read CLI storage, and could not move it aside; \
-                     the next write will overwrite it"
-                ),
+                Ok(()) => {
+                    tracing::warn!(
+                        path = %path.display(),
+                        preserved = %preserved.display(),
+                        %err,
+                        "could not read CLI storage; moved it aside and started empty"
+                    )
+                }
+                Err(rename_err) => {
+                    tracing::warn!(
+                        path = %path.display(),
+                        %err,
+                        %rename_err,
+                        "could not read CLI storage, and could not move it aside; \
+                         the next write will overwrite it"
+                    )
+                }
             }
             HashMap::new()
         }

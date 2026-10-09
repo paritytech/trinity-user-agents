@@ -214,10 +214,12 @@ impl AsyncWrite for WasmSocket {
             ConnectionState::Error => Poll::Ready(Err(io::Error::other("Socket error"))),
             ConnectionState::Closed => Poll::Ready(Err(io::ErrorKind::BrokenPipe.into())),
             ConnectionState::Connecting => Poll::Pending,
-            ConnectionState::Opened => match self.socket.send_with_u8_array(buf) {
-                Ok(()) => Poll::Ready(Ok(buf.len())),
-                Err(err) => Poll::Ready(Err(io::Error::other(format!("Write error: {err:?}")))),
-            },
+            ConnectionState::Opened => {
+                match self.socket.send_with_u8_array(buf) {
+                    Ok(()) => Poll::Ready(Ok(buf.len())),
+                    Err(err) => Poll::Ready(Err(io::Error::other(format!("Write error: {err:?}")))),
+                }
+            }
         }
     }
 

@@ -341,20 +341,26 @@ pub async fn read_member_ring_index_at(
     )?;
     let mut input = value.as_slice();
     let position = MemberRingPosition::decode_as_type(&mut input, value_type, metadata.registry())
-        .map_err(|err| RingError::DecodeAsType {
-            context: "Members.Members",
-            source: err,
+        .map_err(|err| {
+            RingError::DecodeAsType {
+                context: "Members.Members",
+                source: err,
+            }
         })?;
     match position {
         MemberRingPosition::Included { ring_index, .. } => Ok(ring_index),
-        MemberRingPosition::Onboarding {} => Err(RingError::MemberNotIncluded {
-            status: "onboarding",
+        MemberRingPosition::Onboarding {} => {
+            Err(RingError::MemberNotIncluded {
+                status: "onboarding",
+            }
+            .into())
         }
-        .into()),
-        MemberRingPosition::Suspended => Err(RingError::MemberNotIncluded {
-            status: "suspended",
+        MemberRingPosition::Suspended => {
+            Err(RingError::MemberNotIncluded {
+                status: "suspended",
+            }
+            .into())
         }
-        .into()),
     }
 }
 

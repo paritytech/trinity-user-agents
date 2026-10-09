@@ -48,10 +48,12 @@ pub fn chain_info(
     request: &RemoteChainInfoRequest,
 ) -> Result<RemoteChainInfoResponse, RemoteChainInfoError> {
     genesis_for(set, request.chain)
-        .map(|genesis_hash| RemoteChainInfoResponse {
-            network: set.network.clone(),
-            chain: request.chain,
-            genesis_hash,
+        .map(|genesis_hash| {
+            RemoteChainInfoResponse {
+                network: set.network.clone(),
+                chain: request.chain,
+                genesis_hash,
+            }
         })
         .ok_or(RemoteChainInfoError::NotSupported)
 }

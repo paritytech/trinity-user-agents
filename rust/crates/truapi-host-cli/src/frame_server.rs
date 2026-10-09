@@ -511,23 +511,31 @@ async fn serve_bridge_script(
     container: &Path,
 ) -> Result<()> {
     let response = match request_path(head).as_deref() {
-        Some(bootstrap::PATH) => match bootstrap::read_container(container) {
-            Ok(container) => http_response(
-                "200 OK",
-                "application/javascript; charset=utf-8",
-                &bootstrap::script(endpoint, &container),
-            ),
-            Err(error) => http_response(
-                "500 Internal Server Error",
+        Some(bootstrap::PATH) => {
+            match bootstrap::read_container(container) {
+                Ok(container) => {
+                    http_response(
+                        "200 OK",
+                        "application/javascript; charset=utf-8",
+                        &bootstrap::script(endpoint, &container),
+                    )
+                }
+                Err(error) => {
+                    http_response(
+                        "500 Internal Server Error",
+                        "text/plain; charset=utf-8",
+                        &format!("{error:#}\n"),
+                    )
+                }
+            }
+        }
+        _ => {
+            http_response(
+                "404 Not Found",
                 "text/plain; charset=utf-8",
-                &format!("{error:#}\n"),
-            ),
-        },
-        _ => http_response(
-            "404 Not Found",
-            "text/plain; charset=utf-8",
-            &format!("not found; the bridge script is at {}\n", bootstrap::PATH),
-        ),
+                &format!("not found; the bridge script is at {}\n", bootstrap::PATH),
+            )
+        }
     };
     stream.write_all(response.as_bytes()).await?;
     stream.flush().await?;

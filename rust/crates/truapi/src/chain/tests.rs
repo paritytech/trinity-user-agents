@@ -155,14 +155,16 @@ impl Node {
             }
             "chain_subscribeFinalizedHeads" => vec![response(json!(FINALIZED_SUBSCRIPTION))],
             "chain_subscribeNewHeads" => vec![response(json!(BEST_SUBSCRIPTION))],
-            "chainHead_v1_follow" => vec![
-                response(json!(FOLLOW_ID)),
-                follow_event(json!({
-                    "event": "initialized",
-                    "finalizedBlockHashes": [self.block(self.finalized).hash],
-                    "finalizedBlockRuntime": null
-                })),
-            ],
+            "chainHead_v1_follow" => {
+                vec![
+                    response(json!(FOLLOW_ID)),
+                    follow_event(json!({
+                        "event": "initialized",
+                        "finalizedBlockHashes": [self.block(self.finalized).hash],
+                        "finalizedBlockRuntime": null
+                    })),
+                ]
+            }
             "chainHead_v1_header" => {
                 let header = self
                     .header_at(&params[1])
@@ -200,14 +202,16 @@ impl Node {
             | "transactionWatch_v1_unwatch"
             | "chain_unsubscribeFinalizedHeads"
             | "chain_unsubscribeNewHeads" => vec![response(Value::Null)],
-            other => vec![
-                json!({
-                    "jsonrpc": "2.0",
-                    "id": id,
-                    "error": {"code": -32601, "message": format!("unexpected method {other}")}
-                })
-                .to_string(),
-            ],
+            other => {
+                vec![
+                    json!({
+                        "jsonrpc": "2.0",
+                        "id": id,
+                        "error": {"code": -32601, "message": format!("unexpected method {other}")}
+                    })
+                    .to_string(),
+                ]
+            }
         }
     }
 }

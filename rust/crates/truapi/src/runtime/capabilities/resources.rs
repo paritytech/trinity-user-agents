@@ -52,8 +52,10 @@ impl ResourceAllocation for ProductRuntimeHost {
                 },
             ))
         })?
-        .map_err(|err| CallError::HostFailure {
-            reason: format!("resource allocation confirmation failed: {err:?}"),
+        .map_err(|err| {
+            CallError::HostFailure {
+                reason: format!("resource allocation confirmation failed: {err:?}"),
+            }
         })?;
         if !confirmed {
             return Err(CallError::Domain(HostRequestResourceAllocationError::V1(

@@ -32,12 +32,14 @@ async fn spawn_server() -> (SocketAddr, ServerHandle) {
             "sub_ticks",
             "tick",
             "unsub_ticks",
-            |_params, pending, _context, _extensions| async move {
-                let sink = pending.accept().await?;
-                for tick in 0..3u32 {
-                    sink.send(serde_json::value::to_raw_value(&tick)?).await?;
+            |_params, pending, _context, _extensions| {
+                async move {
+                    let sink = pending.accept().await?;
+                    for tick in 0..3u32 {
+                        sink.send(serde_json::value::to_raw_value(&tick)?).await?;
+                    }
+                    SubscriptionResult::Ok(())
                 }
-                SubscriptionResult::Ok(())
             },
         )
         .expect("sub_ticks registers");

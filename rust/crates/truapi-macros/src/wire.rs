@@ -139,12 +139,14 @@ pub fn expand_trait(args: TokenStream, item: TokenStream) -> TokenStream {
             item_trait.attrs.push(syn::parse_quote!(#[doc = #tag]));
             quote!(#item_trait).into()
         }
-        Err(_) => syn::Error::new(
-            proc_macro2::Span::call_site(),
-            "#[wire_trait] can only be applied to traits",
-        )
-        .to_compile_error()
-        .into(),
+        Err(_) => {
+            syn::Error::new(
+                proc_macro2::Span::call_site(),
+                "#[wire_trait] can only be applied to traits",
+            )
+            .to_compile_error()
+            .into()
+        }
     }
 }
 

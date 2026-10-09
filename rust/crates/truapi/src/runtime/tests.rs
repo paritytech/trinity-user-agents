@@ -764,9 +764,11 @@ impl crate::platform::ContactsPlatform for StubContactsPlatform {
             .expect("asked_for mutex poisoned")
             .push(product.product_id.clone());
         match self.failure {
-            Some(reason) => Err(truapi::latest::GenericError {
-                reason: reason.to_string(),
-            }),
+            Some(reason) => {
+                Err(truapi::latest::GenericError {
+                    reason: reason.to_string(),
+                })
+            }
             None => Ok(self.pick),
         }
     }
@@ -1284,8 +1286,10 @@ fn uncached_handles_are_resolved_in_one_lookup() {
         .root_entropy_source
         .expect("the test session carries an entropy source");
     let key = crate::runtime::contacts::handle_key_from_root_source(&source);
-    let handles = [alice, bob].map(|account| v01::ContactHandle {
-        bytes: crate::runtime::contacts::contact_handle(&key, &account),
+    let handles = [alice, bob].map(|account| {
+        v01::ContactHandle {
+            bytes: crate::runtime::contacts::contact_handle(&key, &account),
+        }
     });
     let call: Vec<u8> = handles.iter().flat_map(|handle| handle.bytes).collect();
 
@@ -1544,11 +1548,13 @@ fn a_request_that_times_out_is_not_withdrawn_from_the_phone() {
 fn withdrawn_requests(platform: &Arc<StubPlatform>, session: &SessionInfo) -> Vec<String> {
     submitted_remote_messages(platform, session)
         .into_iter()
-        .filter_map(|message| match message.data {
-            RemoteMessageData::V1(v1::RemoteMessage::Cancel(withdrawal)) => {
-                Some(withdrawal.message_id)
+        .filter_map(|message| {
+            match message.data {
+                RemoteMessageData::V1(v1::RemoteMessage::Cancel(withdrawal)) => {
+                    Some(withdrawal.message_id)
+                }
+                _ => None,
             }
-            _ => None,
         })
         .collect()
 }
@@ -1915,10 +1921,12 @@ fn chat_register_bot_rejects_unsafe_product_fields() {
         match register(bot_id, name, icon) {
             Err(CallError::Domain(HostChatRegisterBotError::V1(
                 v01::HostChatRegisterBotError::Unknown { reason },
-            ))) => assert!(
-                reason.contains(expected_field),
-                "{bot_id:?}/{name:?}/{icon:?} must name {expected_field}, got {reason:?}"
-            ),
+            ))) => {
+                assert!(
+                    reason.contains(expected_field),
+                    "{bot_id:?}/{name:?}/{icon:?} must name {expected_field}, got {reason:?}"
+                )
+            }
             other => panic!("{bot_id:?}/{name:?}/{icon:?} must be a domain error: {other:?}"),
         }
     }
@@ -2012,9 +2020,11 @@ impl RecordingPocketPlatform {
         Self {
             cards: cards
                 .into_iter()
-                .map(|(card_id, privileged)| v01::PocketCard {
-                    card_id: card_id.to_string(),
-                    privileged,
+                .map(|(card_id, privileged)| {
+                    v01::PocketCard {
+                        card_id: card_id.to_string(),
+                        privileged,
+                    }
                 })
                 .collect(),
             removed: Mutex::new(Vec::new()),
@@ -2225,9 +2235,7 @@ fn set_face_shown(
     futures::executor::block_on(ExpandedCard::set_face_shown(
         host,
         &CallContext::default(),
-        HostExpandedCardSetFaceShownRequest::V1(v01::HostExpandedCardSetFaceShownRequest {
-            shown,
-        }),
+        HostExpandedCardSetFaceShownRequest::V1(v01::HostExpandedCardSetFaceShownRequest { shown }),
     ))
 }
 
@@ -2235,9 +2243,8 @@ fn set_face_shown(
 /// followed by a show never collapses into one state change.
 #[test]
 fn expanded_card_widget_requests_reach_the_host_in_order() {
-    let card = RecordingExpandedCardHost::answering(Ok(
-        crate::platform::ExpandedCardFaceOutcome::Applied,
-    ));
+    let card =
+        RecordingExpandedCardHost::answering(Ok(crate::platform::ExpandedCardFaceOutcome::Applied));
     let host = expanded_card_host(
         crate::platform::ProductExecutionKind::Widget,
         Some(card.clone()),
@@ -2266,7 +2273,10 @@ fn expanded_card_is_denied_to_non_widgets_without_reaching_the_host() {
         ));
         let host = expanded_card_host(kind, Some(card.clone()));
 
-        assert!(matches!(set_face_shown(&host, false), Err(CallError::Denied)));
+        assert!(matches!(
+            set_face_shown(&host, false),
+            Err(CallError::Denied)
+        ));
         assert!(card.requested().is_empty());
     }
 }
@@ -2426,9 +2436,11 @@ struct RecordingGamePlatform {
 impl RecordingGamePlatform {
     fn check_failure(&self) -> Result<(), truapi::latest::GenericError> {
         match self.failure {
-            Some(reason) => Err(truapi::latest::GenericError {
-                reason: reason.to_string(),
-            }),
+            Some(reason) => {
+                Err(truapi::latest::GenericError {
+                    reason: reason.to_string(),
+                })
+            }
             None => Ok(()),
         }
     }
@@ -5460,10 +5472,12 @@ fn resource_allocation_respects_a_shorter_call_context_timeout() {
     match err {
         CallError::Domain(HostRequestResourceAllocationError::V1(
             v01::ResourceAllocationError::Unknown { reason },
-        )) => assert_eq!(
-            reason,
-            "Account authority request timed out after 1ms for allocation-timeout"
-        ),
+        )) => {
+            assert_eq!(
+                reason,
+                "Account authority request timed out after 1ms for allocation-timeout"
+            )
+        }
         other => panic!("expected resource-allocation timeout, got {other:?}"),
     }
 
@@ -7882,12 +7896,8 @@ fn a_pairing_test_host_keeps_a_submitted_preimage_and_serves_it_back() {
     let session = sso_session_info();
     let platform = Arc::new(StubPlatform::default());
     let (host_config, product) = runtime_config("myapp.dot");
-    let (host, pairing_host) = ProductRuntimeHost::new_pairing_for_tests(
-        platform,
-        host_config,
-        product,
-        test_spawner(),
-    );
+    let (host, pairing_host) =
+        ProductRuntimeHost::new_pairing_for_tests(platform, host_config, product, test_spawner());
     install_pairing_session(&host, session.clone());
     let lifecycle_epoch = pairing_host.current_session_lifecycle_epoch();
     futures::executor::block_on(pairing_host.cache_bulletin_allowance_key(

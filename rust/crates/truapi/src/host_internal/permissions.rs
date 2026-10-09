@@ -1323,8 +1323,10 @@ mod tests {
             {
                 return Ok(*status);
             }
-            self.fallback.ok_or_else(|| v01::GenericError {
-                reason: "status channel unavailable".to_string(),
+            self.fallback.ok_or_else(|| {
+                v01::GenericError {
+                    reason: "status channel unavailable".to_string(),
+                }
             })
         }
     }

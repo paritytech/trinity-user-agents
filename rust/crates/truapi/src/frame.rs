@@ -220,23 +220,23 @@ pub struct Payload {
 /// [`WIRE_TABLE`]; intended for tests and embedders that route by method
 /// string rather than holding the generated const.
 pub fn request_ids(method: &str) -> Option<MethodIds> {
-    WIRE_TABLE
-        .iter()
-        .find_map(|entry| match (&entry.kind, entry.method == method) {
+    WIRE_TABLE.iter().find_map(|entry| {
+        match (&entry.kind, entry.method == method) {
             (WireKind::Request(ids), true) => Some(*ids),
             _ => None,
-        })
+        }
+    })
 }
 
 /// Wire discriminants for a subscription method, by name. Walks the
 /// generated [`WIRE_TABLE`].
 pub fn subscription_ids(method: &str) -> Option<MethodIds> {
-    WIRE_TABLE
-        .iter()
-        .find_map(|entry| match (&entry.kind, entry.method == method) {
+    WIRE_TABLE.iter().find_map(|entry| {
+        match (&entry.kind, entry.method == method) {
             (WireKind::Subscription(ids), true) => Some(*ids),
             _ => None,
-        })
+        }
+    })
 }
 
 /// Unique ID generator with a prefix.

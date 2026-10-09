@@ -297,10 +297,12 @@ pub async fn wait_for_sso_remote_response<T>(
     .fuse();
     let disconnect = async move {
         match disconnect {
-            Some(rx) => match rx.await {
-                Ok(reason) => disconnect_error(reason),
-                Err(_) => SsoRemoteResponseError::LocalDisconnected,
-            },
+            Some(rx) => {
+                match rx.await {
+                    Ok(reason) => disconnect_error(reason),
+                    Err(_) => SsoRemoteResponseError::LocalDisconnected,
+                }
+            }
             None => futures::future::pending::<SsoRemoteResponseError>().await,
         }
     }

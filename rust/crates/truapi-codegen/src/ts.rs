@@ -53,10 +53,12 @@ fn resolve_named(name: &str, mode: NameMode<'_>) -> String {
     match mode {
         NameMode::Public => public_versioned_type_name(name),
         NameMode::PreserveQualified => name.to_string(),
-        NameMode::Generated { aliases } => aliases
-            .get(name)
-            .cloned()
-            .unwrap_or_else(|| name.to_string()),
+        NameMode::Generated { aliases } => {
+            aliases
+                .get(name)
+                .cloned()
+                .unwrap_or_else(|| name.to_string())
+        }
     }
 }
 
@@ -964,10 +966,12 @@ fn method_wire_version(
             .copied()
             .collect::<Vec<_>>();
         candidates = Some(match candidates {
-            Some(current) => current
-                .into_iter()
-                .filter(|version| versions.contains(version))
-                .collect(),
+            Some(current) => {
+                current
+                    .into_iter()
+                    .filter(|version| versions.contains(version))
+                    .collect()
+            }
             None => versions,
         });
     }
@@ -1187,9 +1191,11 @@ fn generate_client_view(
                 uses_hex_string |= method_versioned_wrappers(method, &wrappers)
                     .iter()
                     .filter_map(|name| wrappers[name].variants.get(&version))
-                    .any(|variant| match &variant.kind {
-                        VersionedKind::Tuple(inner) => type_ref_uses_hex_string(inner),
-                        VersionedKind::Unit => false,
+                    .any(|variant| {
+                        match &variant.kind {
+                            VersionedKind::Tuple(inner) => type_ref_uses_hex_string(inner),
+                            VersionedKind::Unit => false,
+                        }
                     });
             }
         }
@@ -1426,10 +1432,12 @@ fn generate_decode_table(api: &ApiDefinition, target_version: u32) -> Result<Str
             let key = u32::from(trait_id) * 256 + u32::from(method_id);
 
             let request_decoder = match request_wrapper_name(method, &wrappers) {
-                Some(name) => format!(
-                    "(payload) => T.{}.dec(payload)",
-                    versioned_wrapper_ts_name(name)
-                ),
+                Some(name) => {
+                    format!(
+                        "(payload) => T.{}.dec(payload)",
+                        versioned_wrapper_ts_name(name)
+                    )
+                }
                 None => "() => undefined".to_string(),
             };
 
@@ -1693,12 +1701,14 @@ fn emit_payload(
             anyhow::anyhow!("versioned wrapper `{wrapper_name}` has no V{version} variant")
         })?;
         return match &wrapper.kind {
-            VersionedKind::Unit => Ok(PayloadEmission {
-                param_list: String::new(),
-                param_names: Vec::new(),
-                inner_type_ts: "undefined".to_string(),
-                value_expr: "undefined".to_string(),
-            }),
+            VersionedKind::Unit => {
+                Ok(PayloadEmission {
+                    param_list: String::new(),
+                    param_names: Vec::new(),
+                    inner_type_ts: "undefined".to_string(),
+                    value_expr: "undefined".to_string(),
+                })
+            }
             VersionedKind::Tuple(inner) => {
                 let inner_ts = ts_type_qualified(inner)?;
                 Ok(PayloadEmission {
@@ -1751,12 +1761,16 @@ fn emit_response(
             anyhow::anyhow!("versioned wrapper `{wrapper_name}` has no V{version} variant")
         })?;
         return match &wrapper.kind {
-            VersionedKind::Unit => Ok(ResponseEmission {
-                inner_type_ts: "undefined".to_string(),
-            }),
-            VersionedKind::Tuple(inner) => Ok(ResponseEmission {
-                inner_type_ts: ts_type_qualified(inner)?,
-            }),
+            VersionedKind::Unit => {
+                Ok(ResponseEmission {
+                    inner_type_ts: "undefined".to_string(),
+                })
+            }
+            VersionedKind::Tuple(inner) => {
+                Ok(ResponseEmission {
+                    inner_type_ts: ts_type_qualified(inner)?,
+                })
+            }
         };
     }
 
@@ -1794,11 +1808,13 @@ fn emit_error_response(
 fn leg_codec_expr(ty: &TypeRef, wrappers: &BTreeMap<String, VersionedWrapper>) -> Result<String> {
     match versioned_wrapper_for(ty, wrappers) {
         Some((wrapper_name, _)) => Ok(format!("T.{}", versioned_wrapper_ts_name(wrapper_name))),
-        None => bail!(
-            "type `{}` is not a recognized versioned wrapper, \
+        None => {
+            bail!(
+                "type `{}` is not a recognized versioned wrapper, \
              so no wire codec can be derived for it",
-            ts_type_name_hint(ty)
-        ),
+                ts_type_name_hint(ty)
+            )
+        }
     }
 }
 
@@ -2188,11 +2204,13 @@ fn emit_subscribe_method(
     };
 
     let start_payload = match request_name {
-        Some(name) => format!(
-            "T.{}.enc({{ tag: \"V{version}\", value: {} }})",
-            versioned_wrapper_ts_name(name),
-            payload.value_expr
-        ),
+        Some(name) => {
+            format!(
+                "T.{}.enc({{ tag: \"V{version}\", value: {} }})",
+                versioned_wrapper_ts_name(name),
+                payload.value_expr
+            )
+        }
         None => "new Uint8Array()".to_string(),
     };
 
@@ -2551,11 +2569,13 @@ fn enum_variant_ts_type(variant: &VariantDef) -> Result<String> {
 fn enum_variant_ts_type_mode(variant: &VariantDef, mode: NameMode<'_>) -> Result<String> {
     Ok(match &variant.fields {
         VariantFields::Unit => format!("{{ tag: \"{}\"; value?: undefined }}", variant.name),
-        fields => format!(
-            "{{ tag: \"{}\"; value: {} }}",
-            variant.name,
-            variant_value_type_mode(fields, mode)?
-        ),
+        fields => {
+            format!(
+                "{{ tag: \"{}\"; value: {} }}",
+                variant.name,
+                variant_value_type_mode(fields, mode)?
+            )
+        }
     })
 }
 
@@ -2570,13 +2590,15 @@ fn variant_codec_expr_mode(
         VariantFields::Unnamed(types) => {
             unnamed_fields_codec_expr_mode(types, qualified, ctx, mode)
         }
-        VariantFields::Named(fields) => struct_codec_expr_mode(
-            fields,
-            &inline_object_type_mode(fields, qualified, mode)?,
-            qualified,
-            ctx,
-            mode,
-        ),
+        VariantFields::Named(fields) => {
+            struct_codec_expr_mode(
+                fields,
+                &inline_object_type_mode(fields, qualified, mode)?,
+                qualified,
+                ctx,
+                mode,
+            )
+        }
     }
 }
 
@@ -2686,23 +2708,25 @@ fn codec_expr_mode(
     mode: NameMode<'_>,
 ) -> Result<String> {
     match ty {
-        TypeRef::Primitive(name) => match name.as_str() {
-            "bool" => Ok("S.bool".to_string()),
-            "u8" => Ok("S.u8".to_string()),
-            "u16" => Ok("S.u16".to_string()),
-            "u32" => Ok("S.u32".to_string()),
-            "u64" => Ok("S.u64".to_string()),
-            "u128" => Ok("S.u128".to_string()),
-            name if name.starts_with("compact") => Ok("S.compact".to_string()),
-            "optionBool" => Ok("S.OptionBool".to_string()),
-            "i8" => Ok("S.i8".to_string()),
-            "i16" => Ok("S.i16".to_string()),
-            "i32" => Ok("S.i32".to_string()),
-            "i64" => Ok("S.i64".to_string()),
-            "i128" => Ok("S.i128".to_string()),
-            "str" => Ok("S.str".to_string()),
-            _ => bail!("Unsupported primitive type `{name}` in TypeScript codec generation"),
-        },
+        TypeRef::Primitive(name) => {
+            match name.as_str() {
+                "bool" => Ok("S.bool".to_string()),
+                "u8" => Ok("S.u8".to_string()),
+                "u16" => Ok("S.u16".to_string()),
+                "u32" => Ok("S.u32".to_string()),
+                "u64" => Ok("S.u64".to_string()),
+                "u128" => Ok("S.u128".to_string()),
+                name if name.starts_with("compact") => Ok("S.compact".to_string()),
+                "optionBool" => Ok("S.OptionBool".to_string()),
+                "i8" => Ok("S.i8".to_string()),
+                "i16" => Ok("S.i16".to_string()),
+                "i32" => Ok("S.i32".to_string()),
+                "i64" => Ok("S.i64".to_string()),
+                "i128" => Ok("S.i128".to_string()),
+                "str" => Ok("S.str".to_string()),
+                _ => bail!("Unsupported primitive type `{name}` in TypeScript codec generation"),
+            }
+        }
         TypeRef::Named { name, args } => {
             if name == "CallError" && args.len() == 1 {
                 return Ok(format!(
@@ -2728,17 +2752,23 @@ fn codec_expr_mode(
                 Ok(format!("{target}({codecs})"))
             }
         }
-        TypeRef::Vec(inner) => match inner.as_ref() {
-            TypeRef::Primitive(name) if name == "u8" => Ok("S.Hex()".to_string()),
-            _ => Ok(format!(
-                "S.Vector({})",
+        TypeRef::Vec(inner) => {
+            match inner.as_ref() {
+                TypeRef::Primitive(name) if name == "u8" => Ok("S.Hex()".to_string()),
+                _ => {
+                    Ok(format!(
+                        "S.Vector({})",
+                        codec_expr_mode(inner, qualified, ctx, mode)?
+                    ))
+                }
+            }
+        }
+        TypeRef::Option(inner) => {
+            Ok(format!(
+                "S.Option({})",
                 codec_expr_mode(inner, qualified, ctx, mode)?
-            )),
-        },
-        TypeRef::Option(inner) => Ok(format!(
-            "S.Option({})",
-            codec_expr_mode(inner, qualified, ctx, mode)?
-        )),
+            ))
+        }
         TypeRef::Tuple(items) => {
             if items.is_empty() {
                 Ok("S._void".to_string())
@@ -2751,19 +2781,24 @@ fn codec_expr_mode(
                 Ok(format!("S.Tuple({codecs})"))
             }
         }
-        TypeRef::Array(inner, len) => match inner.as_ref() {
-            TypeRef::Primitive(name) if name == "u8" => Ok(format!("S.Hex({len})")),
-            _ => Ok(format!(
-                "S.Vector({}, {})",
-                codec_expr_mode(inner, qualified, ctx, mode)?,
-                len
-            )),
-        },
-        TypeRef::Generic(name) => ctx
-            .generic_codecs
-            .get(name)
-            .cloned()
-            .ok_or_else(|| anyhow::anyhow!("Missing codec for generic parameter `{name}`")),
+        TypeRef::Array(inner, len) => {
+            match inner.as_ref() {
+                TypeRef::Primitive(name) if name == "u8" => Ok(format!("S.Hex({len})")),
+                _ => {
+                    Ok(format!(
+                        "S.Vector({}, {})",
+                        codec_expr_mode(inner, qualified, ctx, mode)?,
+                        len
+                    ))
+                }
+            }
+        }
+        TypeRef::Generic(name) => {
+            ctx.generic_codecs
+                .get(name)
+                .cloned()
+                .ok_or_else(|| anyhow::anyhow!("Missing codec for generic parameter `{name}`"))
+        }
         TypeRef::Unit => Ok("S._void".to_string()),
     }
 }
@@ -2774,15 +2809,19 @@ fn ts_type(ty: &TypeRef) -> Result<String> {
 
 fn ts_type_with_named(ty: &TypeRef, qualified: bool, mode: NameMode<'_>) -> Result<String> {
     match ty {
-        TypeRef::Primitive(name) => match name.as_str() {
-            "bool" => Ok("boolean".to_string()),
-            "u8" | "u16" | "u32" | "i8" | "i16" | "i32" | "f32" | "f64" => Ok("number".to_string()),
-            "u64" | "u128" | "i64" | "i128" => Ok("bigint".to_string()),
-            name if name.starts_with("compact") => Ok("number | bigint".to_string()),
-            "optionBool" => Ok("boolean | undefined".to_string()),
-            "str" => Ok("string".to_string()),
-            _ => bail!("Unsupported primitive type `{name}` in TypeScript type generation"),
-        },
+        TypeRef::Primitive(name) => {
+            match name.as_str() {
+                "bool" => Ok("boolean".to_string()),
+                "u8" | "u16" | "u32" | "i8" | "i16" | "i32" | "f32" | "f64" => {
+                    Ok("number".to_string())
+                }
+                "u64" | "u128" | "i64" | "i128" => Ok("bigint".to_string()),
+                name if name.starts_with("compact") => Ok("number | bigint".to_string()),
+                "optionBool" => Ok("boolean | undefined".to_string()),
+                "str" => Ok("string".to_string()),
+                _ => bail!("Unsupported primitive type `{name}` in TypeScript type generation"),
+            }
+        }
         TypeRef::Named { name, args } => {
             if name == "CallError" && args.len() == 1 {
                 return Ok(format!(
@@ -2808,17 +2847,23 @@ fn ts_type_with_named(ty: &TypeRef, qualified: bool, mode: NameMode<'_>) -> Resu
                 Ok(format!("{target}<{args}>"))
             }
         }
-        TypeRef::Vec(inner) => match inner.as_ref() {
-            TypeRef::Primitive(name) if name == "u8" => Ok(hex_string_ts_name(qualified)),
-            _ => Ok(format!(
-                "Array<{}>",
+        TypeRef::Vec(inner) => {
+            match inner.as_ref() {
+                TypeRef::Primitive(name) if name == "u8" => Ok(hex_string_ts_name(qualified)),
+                _ => {
+                    Ok(format!(
+                        "Array<{}>",
+                        ts_type_with_named(inner, qualified, mode)?
+                    ))
+                }
+            }
+        }
+        TypeRef::Option(inner) => {
+            Ok(format!(
+                "{} | undefined",
                 ts_type_with_named(inner, qualified, mode)?
-            )),
-        },
-        TypeRef::Option(inner) => Ok(format!(
-            "{} | undefined",
-            ts_type_with_named(inner, qualified, mode)?
-        )),
+            ))
+        }
         TypeRef::Tuple(items) => {
             if items.is_empty() {
                 Ok("undefined".to_string())
@@ -2833,13 +2878,17 @@ fn ts_type_with_named(ty: &TypeRef, qualified: bool, mode: NameMode<'_>) -> Resu
                 ))
             }
         }
-        TypeRef::Array(inner, _len) => match inner.as_ref() {
-            TypeRef::Primitive(name) if name == "u8" => Ok(hex_string_ts_name(qualified)),
-            _ => Ok(format!(
-                "Array<{}>",
-                ts_type_with_named(inner, qualified, mode)?
-            )),
-        },
+        TypeRef::Array(inner, _len) => {
+            match inner.as_ref() {
+                TypeRef::Primitive(name) if name == "u8" => Ok(hex_string_ts_name(qualified)),
+                _ => {
+                    Ok(format!(
+                        "Array<{}>",
+                        ts_type_with_named(inner, qualified, mode)?
+                    ))
+                }
+            }
+        }
         TypeRef::Generic(name) => Ok(name.clone()),
         TypeRef::Unit => Ok("undefined".to_string()),
     }
@@ -2886,14 +2935,16 @@ fn payload_type_mode(params: &[ParamDef], mode: NameMode<'_>) -> Result<String> 
     match params.len() {
         0 => Ok("undefined".to_string()),
         1 => ts_type_with_named(&params[0].type_ref, true, mode),
-        _ => Ok(format!(
-            "[{}]",
-            params
-                .iter()
-                .map(|param| ts_type_with_named(&param.type_ref, true, mode))
-                .collect::<Result<Vec<_>>>()?
-                .join(", ")
-        )),
+        _ => {
+            Ok(format!(
+                "[{}]",
+                params
+                    .iter()
+                    .map(|param| ts_type_with_named(&param.type_ref, true, mode))
+                    .collect::<Result<Vec<_>>>()?
+                    .join(", ")
+            ))
+        }
     }
 }
 
@@ -2933,13 +2984,15 @@ fn humanize_service_name(name: &str) -> String {
     let display_name = name
         .to_case(Case::Title)
         .split_whitespace()
-        .map(|word| match word {
-            "Api" => "API".to_string(),
-            "Id" => "ID".to_string(),
-            "Json" => "JSON".to_string(),
-            "Rpc" => "RPC".to_string(),
-            "Url" => "URL".to_string(),
-            _ => word.to_string(),
+        .map(|word| {
+            match word {
+                "Api" => "API".to_string(),
+                "Id" => "ID".to_string(),
+                "Json" => "JSON".to_string(),
+                "Rpc" => "RPC".to_string(),
+                "Url" => "URL".to_string(),
+                _ => word.to_string(),
+            }
         })
         .collect::<Vec<_>>()
         .join(" ");
@@ -2985,10 +3038,12 @@ mod tests {
             kind: TypeDefKind::Struct(
                 fields
                     .into_iter()
-                    .map(|(name, type_ref)| FieldDef {
-                        name: name.to_string(),
-                        type_ref,
-                        docs: None,
+                    .map(|(name, type_ref)| {
+                        FieldDef {
+                            name: name.to_string(),
+                            type_ref,
+                            docs: None,
+                        }
                     })
                     .collect(),
             ),
@@ -3386,11 +3441,13 @@ mod tests {
     fn schema_hash_moves_when_an_enum_variant_is_reordered() {
         // Variant position is the SCALE discriminant, so a reorder silently
         // renumbers every variant on the wire.
-        let variant = |name: &str| VariantDef {
-            name: name.to_string(),
-            fields: VariantFields::Unit,
-            docs: None,
-            codec_index: None,
+        let variant = |name: &str| {
+            VariantDef {
+                name: name.to_string(),
+                fields: VariantFields::Unit,
+                docs: None,
+                codec_index: None,
+            }
         };
         let build = |names: [&str; 2]| {
             let enum_def = TypeDef {
@@ -3676,11 +3733,13 @@ mod tests {
             kind: TypeDefKind::Enum(
                 variants
                     .iter()
-                    .map(|(version, inner)| VariantDef {
-                        name: format!("V{version}"),
-                        fields: VariantFields::Unnamed(vec![named_type(inner)]),
-                        docs: None,
-                        codec_index: None,
+                    .map(|(version, inner)| {
+                        VariantDef {
+                            name: format!("V{version}"),
+                            fields: VariantFields::Unnamed(vec![named_type(inner)]),
+                            docs: None,
+                            codec_index: None,
+                        }
                     })
                     .collect(),
             ),

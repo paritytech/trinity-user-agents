@@ -773,9 +773,11 @@ mod tests {
             .lock()
             .expect("auth state list mutex poisoned")
             .iter()
-            .filter_map(|state| match state {
-                AuthState::Pairing { deeplink } => Some(deeplink.clone()),
-                _ => None,
+            .filter_map(|state| {
+                match state {
+                    AuthState::Pairing { deeplink } => Some(deeplink.clone()),
+                    _ => None,
+                }
             })
             .collect();
         assert_eq!(deeplinks.len(), 2);
@@ -833,9 +835,11 @@ mod tests {
             .lock()
             .expect("auth state list mutex poisoned")
             .iter()
-            .find_map(|state| match state {
-                AuthState::Pairing { deeplink } => Some(deeplink.clone()),
-                _ => None,
+            .find_map(|state| {
+                match state {
+                    AuthState::Pairing { deeplink } => Some(deeplink.clone()),
+                    _ => None,
+                }
             })
             .expect("pairing state should be emitted");
         assert_ne!(

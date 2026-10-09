@@ -34,30 +34,34 @@ impl Network {
     /// The unmodified preset values.
     fn preset(self) -> NetworkConfig {
         match self {
-            Self::PaseoNextV2 => NetworkConfig {
-                id: "paseo-next-v2",
-                network_suffix: "paseo",
-                identity_backend_base: "https://identity.dotspark.app/api/v1",
-                people_ws: PASEO_PEOPLE.ws,
-                bulletin_ws: PASEO_BULLETIN.ws,
-                asset_hub_ws: PASEO_ASSET_HUB.ws,
-                people_genesis: PASEO_PEOPLE.genesis,
-                bulletin_genesis: PASEO_BULLETIN.genesis,
-                asset_hub_genesis: PASEO_ASSET_HUB.genesis,
-                live_chain_endpoints: PASEO_NEXT_V2_CHAIN_ENDPOINTS,
-            },
-            Self::Previewnet => NetworkConfig {
-                id: "previewnet",
-                network_suffix: "testnet",
-                identity_backend_base: "https://identity-previewnet.dotspark.app/api/v1",
-                people_ws: PREVIEWNET_PEOPLE.ws,
-                bulletin_ws: PREVIEWNET_BULLETIN.ws,
-                asset_hub_ws: PREVIEWNET_ASSET_HUB.ws,
-                people_genesis: PREVIEWNET_PEOPLE.genesis,
-                bulletin_genesis: PREVIEWNET_BULLETIN.genesis,
-                asset_hub_genesis: PREVIEWNET_ASSET_HUB.genesis,
-                live_chain_endpoints: PREVIEWNET_CHAIN_ENDPOINTS,
-            },
+            Self::PaseoNextV2 => {
+                NetworkConfig {
+                    id: "paseo-next-v2",
+                    network_suffix: "paseo",
+                    identity_backend_base: "https://identity.dotspark.app/api/v1",
+                    people_ws: PASEO_PEOPLE.ws,
+                    bulletin_ws: PASEO_BULLETIN.ws,
+                    asset_hub_ws: PASEO_ASSET_HUB.ws,
+                    people_genesis: PASEO_PEOPLE.genesis,
+                    bulletin_genesis: PASEO_BULLETIN.genesis,
+                    asset_hub_genesis: PASEO_ASSET_HUB.genesis,
+                    live_chain_endpoints: PASEO_NEXT_V2_CHAIN_ENDPOINTS,
+                }
+            }
+            Self::Previewnet => {
+                NetworkConfig {
+                    id: "previewnet",
+                    network_suffix: "testnet",
+                    identity_backend_base: "https://identity-previewnet.dotspark.app/api/v1",
+                    people_ws: PREVIEWNET_PEOPLE.ws,
+                    bulletin_ws: PREVIEWNET_BULLETIN.ws,
+                    asset_hub_ws: PREVIEWNET_ASSET_HUB.ws,
+                    people_genesis: PREVIEWNET_PEOPLE.genesis,
+                    bulletin_genesis: PREVIEWNET_BULLETIN.genesis,
+                    asset_hub_genesis: PREVIEWNET_ASSET_HUB.genesis,
+                    live_chain_endpoints: PREVIEWNET_CHAIN_ENDPOINTS,
+                }
+            }
         }
     }
 }

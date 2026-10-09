@@ -114,10 +114,13 @@ async function bundle(
           // Left external: the glue fetches a sibling `.wasm` by relative URL,
           // and bundling it would break that. Only the path is redirected, to
           // an absolute one the server serves.
-          build.onResolve({ filter: /wasm\/(web|testing)\/truapi_server\.js$/ }, () => ({
-            path: `/wasm/${wasmBundle}/truapi_server.js`,
-            external: true,
-          }));
+          build.onResolve(
+            { filter: /wasm\/(web|testing)\/truapi_server\.js$/ },
+            () => ({
+              path: `/wasm/${wasmBundle}/truapi_server.js`,
+              external: true,
+            }),
+          );
         },
       },
     ],
@@ -157,7 +160,6 @@ export async function createTestHostServer(
     bundle("testing/browser-entry.js"),
     bundle("worker-runtime.js"),
   ]);
-
 
   const server = createServer((req, res) => {
     const path = new URL(req.url ?? "/", "http://127.0.0.1").pathname;

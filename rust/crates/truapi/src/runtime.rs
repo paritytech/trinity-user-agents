@@ -652,8 +652,10 @@ impl ProductRuntimeHost {
             subtree,
             derivation_index_bytes(&product_account_id.derivation_index),
         )
-        .map_err(|err| AuthorityError::Unknown {
-            reason: err.to_string(),
+        .map_err(|err| {
+            AuthorityError::Unknown {
+                reason: err.to_string(),
+            }
         })
     }
 
@@ -964,9 +966,11 @@ fn account_get_authority_error(err: AuthorityError) -> CallError<HostAccountGetE
     let error = match err {
         AuthorityError::Disconnected => v01::HostAccountGetError::NotConnected,
         AuthorityError::Rejected => v01::HostAccountGetError::Rejected,
-        AuthorityError::Cancelled(err) => v01::HostAccountGetError::Unknown {
-            reason: err.to_string(),
-        },
+        AuthorityError::Cancelled(err) => {
+            v01::HostAccountGetError::Unknown {
+                reason: err.to_string(),
+            }
+        }
         AuthorityError::Unavailable { reason }
         | AuthorityError::NotSupported { reason }
         | AuthorityError::Unknown { reason } => v01::HostAccountGetError::Unknown { reason },
@@ -1005,9 +1009,11 @@ fn ring_vrf_register_error(err: RingVrfError) -> v01::HostAccountRegisterRingVrf
         RingVrfError::NotMember
         | RingVrfError::KeyNotRegistered
         | RingVrfError::KeyNotInRing
-        | RingVrfError::NotAllowlisted => v01::HostAccountRegisterRingVrfKeyError::Unknown {
-            reason: format!("{err:?}"),
-        },
+        | RingVrfError::NotAllowlisted => {
+            v01::HostAccountRegisterRingVrfKeyError::Unknown {
+                reason: format!("{err:?}"),
+            }
+        }
         RingVrfError::Unknown { reason } => {
             v01::HostAccountRegisterRingVrfKeyError::Unknown { reason }
         }
@@ -1021,9 +1027,11 @@ fn ring_vrf_list_error(err: RingVrfError) -> v01::HostAccountListRingVrfKeysErro
         | RingVrfError::NotMember
         | RingVrfError::KeyNotRegistered
         | RingVrfError::KeyNotInRing
-        | RingVrfError::NotAllowlisted => v01::HostAccountListRingVrfKeysError::Unknown {
-            reason: format!("{err:?}"),
-        },
+        | RingVrfError::NotAllowlisted => {
+            v01::HostAccountListRingVrfKeysError::Unknown {
+                reason: format!("{err:?}"),
+            }
+        }
         RingVrfError::Unknown { reason } => {
             v01::HostAccountListRingVrfKeysError::Unknown { reason }
         }
@@ -1052,9 +1060,11 @@ fn signing_call_error<E>(
         AuthorityError::Rejected | AuthorityError::Disconnected => {
             v01::HostSignPayloadError::Rejected
         }
-        AuthorityError::Cancelled(err) => v01::HostSignPayloadError::Unknown {
-            reason: err.to_string(),
-        },
+        AuthorityError::Cancelled(err) => {
+            v01::HostSignPayloadError::Unknown {
+                reason: err.to_string(),
+            }
+        }
         AuthorityError::Unavailable { reason }
         | AuthorityError::NotSupported { reason }
         | AuthorityError::Unknown { reason } => v01::HostSignPayloadError::Unknown { reason },
@@ -1069,9 +1079,11 @@ fn transaction_call_error<E>(
         AuthorityError::Rejected | AuthorityError::Disconnected => {
             v01::HostCreateTransactionError::Rejected
         }
-        AuthorityError::Cancelled(err) => v01::HostCreateTransactionError::Unknown {
-            reason: err.to_string(),
-        },
+        AuthorityError::Cancelled(err) => {
+            v01::HostCreateTransactionError::Unknown {
+                reason: err.to_string(),
+            }
+        }
         AuthorityError::NotSupported { reason } => {
             v01::HostCreateTransactionError::NotSupported { reason }
         }
@@ -1096,9 +1108,11 @@ impl ProductRuntimeHost {
     }
 
     fn chat_platform<E>(&self) -> Result<Arc<dyn crate::platform::ChatPlatform>, CallError<E>> {
-        self.native_chat_platform().map_err(|error| match error {
-            crate::host_core::ProductRuntimeError::Denied => CallError::Denied,
-            _ => CallError::Unsupported,
+        self.native_chat_platform().map_err(|error| {
+            match error {
+                crate::host_core::ProductRuntimeError::Denied => CallError::Denied,
+                _ => CallError::Unsupported,
+            }
         })
     }
 
@@ -1267,15 +1281,17 @@ impl ProductRuntimeHost {
         if declared.is_empty() {
             return Ok(call_data);
         }
-        let (platform, handles) = self.contacts_picker().map_err(|error| match error {
-            CallError::Unsupported => ContactResolutionError::Unsupported,
-            CallError::Domain(v01::HostContactsPickError::NotConnected) => {
-                ContactResolutionError::NotConnected
+        let (platform, handles) = self.contacts_picker().map_err(|error| {
+            match error {
+                CallError::Unsupported => ContactResolutionError::Unsupported,
+                CallError::Domain(v01::HostContactsPickError::NotConnected) => {
+                    ContactResolutionError::NotConnected
+                }
+                CallError::Domain(v01::HostContactsPickError::Unknown { reason }) => {
+                    ContactResolutionError::Host(reason)
+                }
+                other => ContactResolutionError::Host(format!("{other:?}")),
             }
-            CallError::Domain(v01::HostContactsPickError::Unknown { reason }) => {
-                ContactResolutionError::Host(reason)
-            }
-            other => ContactResolutionError::Host(format!("{other:?}")),
         })?;
         let mut resolved: Vec<([u8; 32], Option<[u8; 32]>)> = declared_bytes
             .iter()
@@ -1338,17 +1354,21 @@ impl ProductRuntimeHost {
             .authority
             .current_session()
             .ok_or(CallError::Domain(v01::HostContactsPickError::NotConnected))?;
-        let handle_key =
-            self.authority
-                .contacts_handle_key(&session)
-                .map_err(|error| match error {
+        let handle_key = self
+            .authority
+            .contacts_handle_key(&session)
+            .map_err(|error| {
+                match error {
                     AuthorityError::Disconnected => {
                         CallError::Domain(v01::HostContactsPickError::NotConnected)
                     }
-                    other => CallError::Domain(v01::HostContactsPickError::Unknown {
-                        reason: other.to_string(),
-                    }),
-                })?;
+                    other => {
+                        CallError::Domain(v01::HostContactsPickError::Unknown {
+                            reason: other.to_string(),
+                        })
+                    }
+                }
+            })?;
         Ok((
             platform,
             crate::runtime::contacts::ContactHandles::from_handle_key(handle_key),
@@ -1473,22 +1493,20 @@ impl Chat for ProductRuntimeHost {
             Ok(platform) => platform,
             Err(error) => return Subscription::interrupted(error),
         };
-        Subscription::new(
-            platform
-                .subscribe_chat_rooms(&self.product)
-                .map(|item| match item {
-                    Ok(item) => Ok(HostChatListSubscribeItem::V1(item)),
-                    Err(error) => {
-                        warn!(
-                            reason = %error.reason,
-                            "chat room list platform stream failed"
-                        );
-                        Err(CallError::HostFailure {
-                            reason: error.reason,
-                        })
-                    }
-                }),
-        )
+        Subscription::new(platform.subscribe_chat_rooms(&self.product).map(|item| {
+            match item {
+                Ok(item) => Ok(HostChatListSubscribeItem::V1(item)),
+                Err(error) => {
+                    warn!(
+                        reason = %error.reason,
+                        "chat room list platform stream failed"
+                    );
+                    Err(CallError::HostFailure {
+                        reason: error.reason,
+                    })
+                }
+            }
+        }))
     }
 
     #[instrument(skip_all, fields(runtime.method = "chat.post_message"))]
@@ -1555,22 +1573,20 @@ impl Pocket for ProductRuntimeHost {
             Ok(platform) => platform,
             Err(error) => return Subscription::interrupted(error),
         };
-        Subscription::new(
-            platform
-                .subscribe_pocket_cards(&self.product)
-                .map(|item| match item {
-                    Ok(item) => Ok(HostPocketListSubscribeItem::V1(item)),
-                    Err(error) => {
-                        warn!(
-                            reason = %error.reason,
-                            "pocket card list platform stream failed"
-                        );
-                        Err(CallError::HostFailure {
-                            reason: error.reason,
-                        })
-                    }
-                }),
-        )
+        Subscription::new(platform.subscribe_pocket_cards(&self.product).map(|item| {
+            match item {
+                Ok(item) => Ok(HostPocketListSubscribeItem::V1(item)),
+                Err(error) => {
+                    warn!(
+                        reason = %error.reason,
+                        "pocket card list platform stream failed"
+                    );
+                    Err(CallError::HostFailure {
+                        reason: error.reason,
+                    })
+                }
+            }
+        }))
     }
 
     #[instrument(skip_all, fields(runtime.method = "pocket.remove_card"))]
@@ -1629,9 +1645,11 @@ fn chat_post_field_error(error: ChatFieldError) -> CallError<HostChatPostMessage
         ChatFieldError::TooLong { field, .. } if CHAT_SIZED_CONTENT_FIELDS.contains(&field) => {
             v01::HostChatPostMessageError::MessageTooLarge
         }
-        error => v01::HostChatPostMessageError::Unknown {
-            reason: error.to_string(),
-        },
+        error => {
+            v01::HostChatPostMessageError::Unknown {
+                reason: error.to_string(),
+            }
+        }
     };
     CallError::Domain(HostChatPostMessageError::V1(payload))
 }

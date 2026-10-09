@@ -237,12 +237,11 @@ pub fn build_unsigned_extrinsic_with_extra(
     extra: &[u8],
 ) -> Result<Vec<u8>, StatementAllowanceError> {
     let all = metadata.encode_signed_extensions(state);
-    let authorizing_index =
-        metadata
-            .extension_index(identifier)
-            .ok_or_else(|| MetadataError::MissingExtension {
-                identifier: identifier.to_string(),
-            })?;
+    let authorizing_index = metadata.extension_index(identifier).ok_or_else(|| {
+        MetadataError::MissingExtension {
+            identifier: identifier.to_string(),
+        }
+    })?;
 
     let mut body = vec![GENERAL_V5_PREAMBLE, metadata.extension_version()];
     for (i, ext) in all.iter().enumerate() {

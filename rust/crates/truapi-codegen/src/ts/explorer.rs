@@ -249,12 +249,14 @@ fn data_type_fields_variants(ty: &TypeDef) -> (Option<Vec<DataField>>, Option<Ve
         TypeDefKind::Struct(fields) => {
             let out: Vec<DataField> = fields
                 .iter()
-                .map(|f| DataField {
-                    name: f.name.clone(),
-                    ts_type: ts_type(&f.type_ref).unwrap_or_else(|_| "unknown".into()),
-                    description: split_playground_docs(f.docs.as_deref())
-                        .ok()
-                        .and_then(|d| d.description),
+                .map(|f| {
+                    DataField {
+                        name: f.name.clone(),
+                        ts_type: ts_type(&f.type_ref).unwrap_or_else(|_| "unknown".into()),
+                        description: split_playground_docs(f.docs.as_deref())
+                            .ok()
+                            .and_then(|d| d.description),
+                    }
                 })
                 .collect();
             (Some(out), None)

@@ -657,14 +657,21 @@ pub mod testing {
             .iter()
             .enumerate()
             .filter_map(|(seq, entry)| {
-                let alias =
-                    futures::executor::block_on(slot_alias(entropy, network_suffix, period, seq as u32))
-                        .unwrap();
+                let alias = futures::executor::block_on(slot_alias(
+                    entropy,
+                    network_suffix,
+                    period,
+                    seq as u32,
+                ))
+                .unwrap();
                 let key = hex::encode(statement_store_allowance_key(period, &alias));
                 Some(format!(r#"["0x{key}",{}]"#, entry.as_ref()?))
             })
             .collect();
-        format!(r#"[{{"block":"0xb10c","changes":[{}]}}]"#, changes.join(","))
+        format!(
+            r#"[{{"block":"0xb10c","changes":[{}]}}]"#,
+            changes.join(",")
+        )
     }
 }
 
@@ -784,7 +791,11 @@ mod tests {
         ))
         .unwrap();
 
-        let methods: Vec<String> = scripted.calls().into_iter().map(|(method, _)| method).collect();
+        let methods: Vec<String> = scripted
+            .calls()
+            .into_iter()
+            .map(|(method, _)| method)
+            .collect();
         assert_eq!(
             (selection, methods),
             (
@@ -1007,7 +1018,9 @@ mod tests {
         const DAY: u32 = 20678;
 
         // Slots 0-2 are claimed; 3 is free. The batch of ten is answered key by key.
-        let answers: Vec<&str> = (0..10).map(|slot| if slot < 3 { r#""0x""# } else { "null" }).collect();
+        let answers: Vec<&str> = (0..10)
+            .map(|slot| if slot < 3 { r#""0x""# } else { "null" })
+            .collect();
         let scripted = ScriptedRpc::new(answers);
         let rpc = RpcClient::new(HostRpcClient::new(scripted.clone()));
 

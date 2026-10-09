@@ -67,10 +67,7 @@ fn chain_with_allocated_slot() -> Arc<StubPlatform> {
                 "state_getStorage",
                 format!(r#""0x{}""#, hex::encode(TEST_NETWORK_SUFFIX.encode())),
             ),
-            (
-                "state_queryStorageAt",
-                people_row,
-            ),
+            ("state_queryStorageAt", people_row),
             // The LitePeople row, read alongside People's, is empty.
             (
                 "state_queryStorageAt",
@@ -92,9 +89,7 @@ fn active_signing_host(platform: Arc<StubPlatform>) -> Arc<SigningHostRole> {
 /// of hanging.
 fn allowance_key(signing_host: &SigningHostRole) -> StatementStoreAllowanceKey {
     futures::executor::block_on(async {
-        let session = signing_host
-            .current_session()
-            .expect("a session is active");
+        let session = signing_host.current_session().expect("a session is active");
         let cx = CallContext::default();
         futures::select! {
             result = signing_host
@@ -158,7 +153,11 @@ fn a_second_proof_in_the_same_session_sends_nothing_to_the_chain() {
     let second = allowance_key(&signing_host);
 
     assert_eq!(
-        (sent_after_first > 0, second.public_key, sent_rpc_count(&platform)),
+        (
+            sent_after_first > 0,
+            second.public_key,
+            sent_rpc_count(&platform)
+        ),
         (true, first.public_key, sent_after_first),
         "the first proof must reach the chain, and a proof after it must not"
     );
@@ -255,7 +254,10 @@ fn a_key_allocated_under_a_replaced_session_is_not_remembered() {
         );
 
     assert_eq!(
-        (remembered_stale, remembered(&signing_host, PRODUCT_ID, PERIOD)),
+        (
+            remembered_stale,
+            remembered(&signing_host, PRODUCT_ID, PERIOD)
+        ),
         (Err(AuthorityError::Disconnected), None),
         "a key allocated for a replaced session was handed back or remembered"
     );
@@ -338,7 +340,10 @@ fn a_no_allowance_rejection_that_clears_on_retry_keeps_the_key() {
     );
 
     assert_eq!(
-        (submitted.is_ok(), remembered(&signing_host, PRODUCT_ID, PERIOD)),
+        (
+            submitted.is_ok(),
+            remembered(&signing_host, PRODUCT_ID, PERIOD)
+        ),
         (true, Some(SECRET)),
         "credit that is only late to reach the store must not cost the product its key"
     );

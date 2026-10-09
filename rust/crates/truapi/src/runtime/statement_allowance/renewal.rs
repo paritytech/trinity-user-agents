@@ -230,25 +230,27 @@ pub async fn renew_targets(
                 .map_err(RenewalFailure::from)
             };
             match scans {
-                Ok(scans) => register_statement_account_pooled(
-                    context.rpc,
-                    context.metadata,
-                    context.chain_state,
-                    &scans,
-                    context.memberships,
-                    PooledRegistrationParams {
-                        target: &target.account_id,
-                        period,
-                        network_suffix: context.network_suffix,
-                        reuse_existing: true,
-                        // Renewal exists to keep the ledger's targets alive across a
-                        // period boundary, so it may reclaim space when full.
-                        allow_eviction: true,
-                        protected: &claimed,
-                    },
-                )
-                .await
-                .map_err(RenewalFailure::from),
+                Ok(scans) => {
+                    register_statement_account_pooled(
+                        context.rpc,
+                        context.metadata,
+                        context.chain_state,
+                        &scans,
+                        context.memberships,
+                        PooledRegistrationParams {
+                            target: &target.account_id,
+                            period,
+                            network_suffix: context.network_suffix,
+                            reuse_existing: true,
+                            // Renewal exists to keep the ledger's targets alive across a
+                            // period boundary, so it may reclaim space when full.
+                            allow_eviction: true,
+                            protected: &claimed,
+                        },
+                    )
+                    .await
+                    .map_err(RenewalFailure::from)
+                }
                 Err(failure) => Err(failure),
             }
         };
@@ -460,10 +462,12 @@ mod tests {
         let seqs: Vec<u32> = report
             .outcomes
             .iter()
-            .filter_map(|outcome| match outcome.status {
-                TargetRenewalStatus::Registered { seq, .. }
-                | TargetRenewalStatus::AlreadyAllocated { seq } => Some(seq),
-                _ => None,
+            .filter_map(|outcome| {
+                match outcome.status {
+                    TargetRenewalStatus::Registered { seq, .. }
+                    | TargetRenewalStatus::AlreadyAllocated { seq } => Some(seq),
+                    _ => None,
+                }
             })
             .collect();
         assert_eq!(
@@ -646,10 +650,12 @@ mod tests {
         let seqs: Vec<u32> = report
             .outcomes
             .iter()
-            .filter_map(|outcome| match outcome.status {
-                TargetRenewalStatus::Registered { seq, .. }
-                | TargetRenewalStatus::AlreadyAllocated { seq } => Some(seq),
-                _ => None,
+            .filter_map(|outcome| {
+                match outcome.status {
+                    TargetRenewalStatus::Registered { seq, .. }
+                    | TargetRenewalStatus::AlreadyAllocated { seq } => Some(seq),
+                    _ => None,
+                }
             })
             .collect();
         assert_eq!(

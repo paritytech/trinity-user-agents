@@ -187,10 +187,12 @@ impl PlatformRef for SubxtPlatform {
         stream: Pin<&'a mut Self::Stream>,
     ) -> Self::StreamUpdateFuture<'a> {
         let stream = stream.project();
-        Box::pin(stream.0.wait_read_write_again(|when| async move {
-            let now = super::helpers::now();
-            let duration = when.saturating_duration_since(now);
-            super::helpers::sleep(duration).await;
+        Box::pin(stream.0.wait_read_write_again(|when| {
+            async move {
+                let now = super::helpers::now();
+                let duration = when.saturating_duration_since(now);
+                super::helpers::sleep(duration).await;
+            }
         }))
     }
 

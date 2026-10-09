@@ -6,8 +6,6 @@ use crate::platform::{
 };
 use truapi::latest::HostPlatform;
 
-
-
 /// Process-owned native host configuration shared by every product execution.
 #[derive(Debug, Clone, uniffi::Record)]
 pub struct HostRuntimeConfig {
@@ -116,11 +114,11 @@ impl From<RuntimeConfigValidationError> for NativeRuntimeConfigError {
 
 /// A 32-byte genesis hash handed over as bytes, or the error naming `field`.
 pub fn genesis_hash(field: &str, bytes: &[u8]) -> Result<[u8; 32], NativeRuntimeConfigError> {
-    bytes
-        .try_into()
-        .map_err(|_| NativeRuntimeConfigError::Invalid {
+    bytes.try_into().map_err(|_| {
+        NativeRuntimeConfigError::Invalid {
             reason: format!("{field} must be exactly 32 bytes, got {}", bytes.len()),
-        })
+        }
+    })
 }
 
 /// The platform products see in `System::host_info`. The native library ships
@@ -139,10 +137,14 @@ impl TryFrom<HostRuntimeConfig> for NativeResolvedHostRuntimeConfig {
     type Error = NativeRuntimeConfigError;
 
     fn try_from(config: HostRuntimeConfig) -> Result<Self, Self::Error> {
-        let people_chain_genesis_hash =
-            genesis_hash("people_chain_genesis_hash", &config.people_chain_genesis_hash)?;
-        let bulletin_chain_genesis_hash =
-            genesis_hash("bulletin_chain_genesis_hash", &config.bulletin_chain_genesis_hash)?;
+        let people_chain_genesis_hash = genesis_hash(
+            "people_chain_genesis_hash",
+            &config.people_chain_genesis_hash,
+        )?;
+        let bulletin_chain_genesis_hash = genesis_hash(
+            "bulletin_chain_genesis_hash",
+            &config.bulletin_chain_genesis_hash,
+        )?;
         let asset_hub_chain_genesis_hash = genesis_hash(
             "asset_hub_chain_genesis_hash",
             &config.asset_hub_chain_genesis_hash,

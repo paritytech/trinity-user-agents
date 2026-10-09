@@ -444,16 +444,18 @@ pub fn decode_sso_session_statement(
             classify_response_ack(request_id, response_code).map(Some)
         }
         SsoStatementData::Response { .. } => Ok(None),
-        SsoStatementData::Request { data, .. } => Ok(Some(SsoSessionStatement::RemoteMessages(
-            data.iter()
-                .map(|message| {
-                    decode_remote_message(message).map(|message| {
-                        let RemoteMessageData::V1(message) = message.data;
-                        message
+        SsoStatementData::Request { data, .. } => {
+            Ok(Some(SsoSessionStatement::RemoteMessages(
+                data.iter()
+                    .map(|message| {
+                        decode_remote_message(message).map(|message| {
+                            let RemoteMessageData::V1(message) = message.data;
+                            message
+                        })
                     })
-                })
-                .collect(),
-        ))),
+                    .collect(),
+            )))
+        }
     }
 }
 
@@ -534,9 +536,11 @@ pub fn decode_incoming_sso_request(
                 .iter()
                 .map(|message| decode_remote_message(message))
                 .collect::<Result<Vec<_>, _>>()
-                .map_err(|reason| SsoRequestDecodeError {
-                    request_id: Some(request_id.clone()),
-                    reason,
+                .map_err(|reason| {
+                    SsoRequestDecodeError {
+                        request_id: Some(request_id.clone()),
+                        reason,
+                    }
                 })?;
             Ok(Some(IncomingSsoRequest {
                 request_id,

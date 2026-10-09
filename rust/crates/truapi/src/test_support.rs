@@ -315,9 +315,11 @@ pub fn first_pairing_deeplink(auth_states: &Mutex<Vec<AuthState>>) -> Option<Str
         .lock()
         .expect("auth state list mutex poisoned")
         .iter()
-        .find_map(|state| match state {
-            AuthState::Pairing { deeplink } => Some(deeplink.clone()),
-            _ => None,
+        .find_map(|state| {
+            match state {
+                AuthState::Pairing { deeplink } => Some(deeplink.clone()),
+                _ => None,
+            }
         })
 }
 
@@ -1048,9 +1050,11 @@ impl PlatformProductOperations for StubPlatform {
             .expect("ended operations mutex poisoned")
             .push((product.product_id.clone(), id));
         match self.end_operation_error {
-            Some(reason) => Err(v01::HostWorkerOperationError::Unknown {
-                reason: reason.to_string(),
-            }),
+            Some(reason) => {
+                Err(v01::HostWorkerOperationError::Unknown {
+                    reason: reason.to_string(),
+                })
+            }
             None => Ok(()),
         }
     }
@@ -1335,75 +1339,79 @@ fn sso_scripted_responses(
                     let id = wait_for_rpc_method_id(sent.clone(), "statement_submit", 0).await;
                     Some((statement_submit_ack_frame(&id), 3))
                 }
-                3 => match &script {
-                    SsoResponseScript::Success { session, .. }
-                    | SsoResponseScript::PeerDisconnect { session } => {
-                        let (statement_request_id, _) = submitted_sso_request(&sent, session);
-                        Some((
-                            new_statements_frame(
-                                "own-sub",
-                                vec![sso_statement(
-                                    session,
-                                    pairing::SsoStatementData::Response {
-                                        request_id: statement_request_id,
-                                        response_code: 0,
-                                    },
-                                    1,
-                                )],
-                            ),
-                            4,
-                        ))
+                3 => {
+                    match &script {
+                        SsoResponseScript::Success { session, .. }
+                        | SsoResponseScript::PeerDisconnect { session } => {
+                            let (statement_request_id, _) = submitted_sso_request(&sent, session);
+                            Some((
+                                new_statements_frame(
+                                    "own-sub",
+                                    vec![sso_statement(
+                                        session,
+                                        pairing::SsoStatementData::Response {
+                                            request_id: statement_request_id,
+                                            response_code: 0,
+                                        },
+                                        1,
+                                    )],
+                                ),
+                                4,
+                            ))
+                        }
                     }
-                },
-                4 => match script {
-                    SsoResponseScript::Success { session, response } => {
-                        let (_, request) = submitted_sso_request(&sent, &session);
-                        let response = retarget_sso_response(*response, &request.message_id);
-                        Some((
-                            new_statements_frame(
-                                "peer-sub",
-                                vec![sso_statement(
-                                    &session,
-                                    pairing::SsoStatementData::Request {
-                                        request_id: format!(
-                                            "wallet-response-{}",
-                                            request.message_id
-                                        ),
-                                        data: vec![response.encode()],
-                                    },
-                                    2,
-                                )],
-                            ),
-                            5,
-                        ))
+                }
+                4 => {
+                    match script {
+                        SsoResponseScript::Success { session, response } => {
+                            let (_, request) = submitted_sso_request(&sent, &session);
+                            let response = retarget_sso_response(*response, &request.message_id);
+                            Some((
+                                new_statements_frame(
+                                    "peer-sub",
+                                    vec![sso_statement(
+                                        &session,
+                                        pairing::SsoStatementData::Request {
+                                            request_id: format!(
+                                                "wallet-response-{}",
+                                                request.message_id
+                                            ),
+                                            data: vec![response.encode()],
+                                        },
+                                        2,
+                                    )],
+                                ),
+                                5,
+                            ))
+                        }
+                        SsoResponseScript::PeerDisconnect { session } => {
+                            let (_, request) = submitted_sso_request(&sent, &session);
+                            let message_id = format!("wallet-disconnect-{}", request.message_id);
+                            Some((
+                                new_statements_frame(
+                                    "peer-sub",
+                                    vec![sso_statement(
+                                        &session,
+                                        pairing::SsoStatementData::Request {
+                                            request_id: message_id.clone(),
+                                            data: vec![
+                                                RemoteMessage {
+                                                    message_id,
+                                                    data: RemoteMessageData::V1(
+                                                        v1::RemoteMessage::Disconnected,
+                                                    ),
+                                                }
+                                                .encode(),
+                                            ],
+                                        },
+                                        2,
+                                    )],
+                                ),
+                                5,
+                            ))
+                        }
                     }
-                    SsoResponseScript::PeerDisconnect { session } => {
-                        let (_, request) = submitted_sso_request(&sent, &session);
-                        let message_id = format!("wallet-disconnect-{}", request.message_id);
-                        Some((
-                            new_statements_frame(
-                                "peer-sub",
-                                vec![sso_statement(
-                                    &session,
-                                    pairing::SsoStatementData::Request {
-                                        request_id: message_id.clone(),
-                                        data: vec![
-                                            RemoteMessage {
-                                                message_id,
-                                                data: RemoteMessageData::V1(
-                                                    v1::RemoteMessage::Disconnected,
-                                                ),
-                                            }
-                                            .encode(),
-                                        ],
-                                    },
-                                    2,
-                                )],
-                            ),
-                            5,
-                        ))
-                    }
-                },
+                }
                 _ => futures::future::pending().await,
             }
         }
@@ -1579,13 +1587,15 @@ impl JsonRpcConnection for RecordingConnection {
                 .expect("method responses gate mutex poisoned")
                 .take();
             return match gate {
-                Some(gate) => Box::pin(
-                    stream::once(async move {
-                        gate.await.expect("method responses gate was released");
-                        answers
-                    })
-                    .flatten(),
-                ),
+                Some(gate) => {
+                    Box::pin(
+                        stream::once(async move {
+                            gate.await.expect("method responses gate was released");
+                            answers
+                        })
+                        .flatten(),
+                    )
+                }
                 None => answers,
             };
         }
@@ -1594,14 +1604,16 @@ impl JsonRpcConnection for RecordingConnection {
                 // Ending immediately tears the connection down before the
                 // request is recorded.
                 let sent = self.sent.clone();
-                return Box::pin(stream::unfold(sent, move |sent| async move {
-                    for _ in 0..2000 {
-                        if !sent.lock().expect("rpc list mutex poisoned").is_empty() {
-                            return None;
+                return Box::pin(stream::unfold(sent, move |sent| {
+                    async move {
+                        for _ in 0..2000 {
+                            if !sent.lock().expect("rpc list mutex poisoned").is_empty() {
+                                return None;
+                            }
+                            futures_timer::Delay::new(Duration::from_millis(1)).await;
                         }
-                        futures_timer::Delay::new(Duration::from_millis(1)).await;
+                        None
                     }
-                    None
                 }));
             }
             Box::pin(futures::stream::pending())

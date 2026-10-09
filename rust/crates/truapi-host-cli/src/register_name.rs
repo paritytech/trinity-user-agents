@@ -84,14 +84,18 @@ pub async fn register_name(config: &RegisterNameConfig) -> Result<()> {
         let lite = core::str::from_utf8(lite).unwrap_or_default();
         match reader.lite_label_owner(lite).await? {
             Some(owner) if owner == who_public => {}
-            Some(_) => bail!(
-                "lite username {lite:?} was reserved for another account; pass --chat-key for a \
+            Some(_) => {
+                bail!(
+                    "lite username {lite:?} was reserved for another account; pass --chat-key for a \
                  standalone registration"
-            ),
-            None => bail!(
-                "lite username {lite:?} was not reserved through the dotNS gateway on this \
+                )
+            }
+            None => {
+                bail!(
+                    "lite username {lite:?} was not reserved through the dotNS gateway on this \
                  network; pass --chat-key for a standalone registration"
-            ),
+                )
+            }
         }
     }
 
@@ -252,14 +256,18 @@ async fn resolve_link(
             debug!(%lite, "linking the account's own lite username");
             Ok(Link::LiteUsername(lite.into_bytes()))
         }
-        Some(lite) => bail!(
-            "the account's lite username {lite:?} is not a linkable `name.NN` label; pass \
+        Some(lite) => {
+            bail!(
+                "the account's lite username {lite:?} is not a linkable `name.NN` label; pass \
              --chat-key <hex 65 bytes> for a standalone registration"
-        ),
-        None => bail!(
-            "account has no lite username to link; pass --link-lite <name.NN> or \
+            )
+        }
+        None => {
+            bail!(
+                "account has no lite username to link; pass --link-lite <name.NN> or \
              --chat-key <hex 65 bytes> for a standalone registration"
-        ),
+            )
+        }
     }
 }
 

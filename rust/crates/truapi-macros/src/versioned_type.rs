@@ -192,16 +192,20 @@ fn expand_versioned_enum(def: &VersionedEnum) -> syn::Result<proc_macro2::TokenS
     if let [only] = &variants[..] {
         let vident = &only.ident;
         let (into_body, from_param, from_body) = match &only.ty {
-            Some(_) => (
-                quote! { match self { Self::#vident(inner) => inner } },
-                quote! { latest },
-                quote! { Self::#vident(latest) },
-            ),
-            None => (
-                quote! { match self { Self::#vident => () } },
-                quote! { _latest },
-                quote! { Self::#vident },
-            ),
+            Some(_) => {
+                (
+                    quote! { match self { Self::#vident(inner) => inner } },
+                    quote! { latest },
+                    quote! { Self::#vident(latest) },
+                )
+            }
+            None => {
+                (
+                    quote! { match self { Self::#vident => () } },
+                    quote! { _latest },
+                    quote! { Self::#vident },
+                )
+            }
         };
         tokens.extend(quote! {
             impl crate::versioned::IntoLatest for #name {

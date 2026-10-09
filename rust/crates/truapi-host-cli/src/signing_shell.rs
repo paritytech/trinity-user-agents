@@ -241,12 +241,14 @@ pub fn parse_command(input: &str) -> Result<ShellCommand, String> {
             }
             Err("usage: /devices [--list | --remove <statement-account-id> [--force]]".to_string())
         }
-        "/approval" => match argument {
-            "" => Ok(ShellCommand::Approval(ApprovalCommand::Current)),
-            "manual" => Ok(ShellCommand::Approval(ApprovalCommand::Manual)),
-            "automatic" => Ok(ShellCommand::Approval(ApprovalCommand::Automatic)),
-            _ => Err("usage: /approval [manual|automatic]".to_string()),
-        },
+        "/approval" => {
+            match argument {
+                "" => Ok(ShellCommand::Approval(ApprovalCommand::Current)),
+                "manual" => Ok(ShellCommand::Approval(ApprovalCommand::Manual)),
+                "automatic" => Ok(ShellCommand::Approval(ApprovalCommand::Automatic)),
+                _ => Err("usage: /approval [manual|automatic]".to_string()),
+            }
+        }
         "/script" => {
             let command = match argument {
                 "" => ScriptCommand::Edit,
@@ -254,13 +256,15 @@ pub fn parse_command(input: &str) -> Result<ShellCommand, String> {
                 "--edit" => ScriptCommand::EditOnly,
                 "--new" => ScriptCommand::New(None),
                 "--" => return Err("usage: /script -- <path>".to_string()),
-                _ => match argument.split_once(char::is_whitespace) {
-                    Some(("--new", directory)) => {
-                        ScriptCommand::New(Some(PathBuf::from(directory.trim())))
+                _ => {
+                    match argument.split_once(char::is_whitespace) {
+                        Some(("--new", directory)) => {
+                            ScriptCommand::New(Some(PathBuf::from(directory.trim())))
+                        }
+                        Some(("--", path)) => ScriptCommand::Run(Some(PathBuf::from(path.trim()))),
+                        _ => ScriptCommand::Run(Some(PathBuf::from(argument))),
                     }
-                    Some(("--", path)) => ScriptCommand::Run(Some(PathBuf::from(path.trim()))),
-                    _ => ScriptCommand::Run(Some(PathBuf::from(argument))),
-                },
+                }
             };
             Ok(ShellCommand::Script(command))
         }
@@ -336,9 +340,11 @@ pub fn parse_command(input: &str) -> Result<ShellCommand, String> {
         }
         "/renew" => no_argument(name, argument, ShellCommand::Renew),
         "/quit" => no_argument(name, argument, ShellCommand::Quit),
-        _ => Err(format!(
-            "unknown command `{name}`; use /help to list commands"
-        )),
+        _ => {
+            Err(format!(
+                "unknown command `{name}`; use /help to list commands"
+            ))
+        }
     }
 }
 
@@ -481,9 +487,11 @@ fn completions_for_scope(
         return session_names
             .iter()
             .filter(|name| name.starts_with(prefix))
-            .map(|name| Completion {
-                value: format!("/session --clear {name}"),
-                description: "clear existing session",
+            .map(|name| {
+                Completion {
+                    value: format!("/session --clear {name}"),
+                    description: "clear existing session",
+                }
             })
             .collect();
     }
@@ -496,9 +504,11 @@ fn completions_for_scope(
         let mut matches = session_names
             .iter()
             .filter(|name| name.starts_with(prefix))
-            .map(|name| Completion {
-                value: format!("/session {name}"),
-                description: "existing session",
+            .map(|name| {
+                Completion {
+                    value: format!("/session {name}"),
+                    description: "existing session",
+                }
             })
             .collect::<Vec<_>>();
         if "--list".starts_with(prefix) {
@@ -534,9 +544,11 @@ fn completions_for_scope(
     commands
         .iter()
         .filter(|(command, _)| command.trim_end().starts_with(input))
-        .map(|(command, description)| Completion {
-            value: (*command).to_string(),
-            description,
+        .map(|(command, description)| {
+            Completion {
+                value: (*command).to_string(),
+                description,
+            }
         })
         .collect()
 }
@@ -552,9 +564,11 @@ fn fixed_argument_completions(
     arguments
         .iter()
         .filter(|(argument, _)| argument.starts_with(prefix))
-        .map(|(argument, description)| Completion {
-            value: format!("{command} {argument}"),
-            description,
+        .map(|(argument, description)| {
+            Completion {
+                value: format!("{command} {argument}"),
+                description,
+            }
         })
         .collect()
 }

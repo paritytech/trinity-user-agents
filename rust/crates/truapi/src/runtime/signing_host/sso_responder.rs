@@ -295,9 +295,11 @@ impl AllowanceAllocationError {
     pub fn into_authority_error(self) -> AuthorityError {
         match self {
             Self::Authority(err) => err,
-            other => AuthorityError::Unavailable {
-                reason: other.to_string(),
-            },
+            other => {
+                AuthorityError::Unavailable {
+                    reason: other.to_string(),
+                }
+            }
         }
     }
 }
@@ -562,16 +564,18 @@ async fn serve_session(
     let (services, session) = (&services, &session);
     let pages = futures::stream::unfold(
         (subscription, DecodeFailureRequestIds::new()),
-        move |(mut subscription, mut decode_failure_request_ids)| async move {
-            let item = subscription.next().await?;
-            let page = match item {
-                Ok(value) => {
-                    read_statements(services, session, &mut decode_failure_request_ids, &value)
-                        .await
-                }
-                Err(err) => Err(format!("sso-responder subscription failed: {err}")),
-            };
-            Some((page, (subscription, decode_failure_request_ids)))
+        move |(mut subscription, mut decode_failure_request_ids)| {
+            async move {
+                let item = subscription.next().await?;
+                let page = match item {
+                    Ok(value) => {
+                        read_statements(services, session, &mut decode_failure_request_ids, &value)
+                            .await
+                    }
+                    Err(err) => Err(format!("sso-responder subscription failed: {err}")),
+                };
+                Some((page, (subscription, decode_failure_request_ids)))
+            }
         },
     );
     // Boxed as a trait object so the hosts that await a session need not
@@ -742,11 +746,13 @@ fn withdrawn_targets(incoming: &IncomingSsoRequest) -> Option<Vec<&str>> {
     incoming
         .messages
         .iter()
-        .map(|message| match &message.data {
-            RemoteMessageData::V1(v1::RemoteMessage::Cancel(withdrawal)) => {
-                Some(withdrawal.message_id.as_str())
+        .map(|message| {
+            match &message.data {
+                RemoteMessageData::V1(v1::RemoteMessage::Cancel(withdrawal)) => {
+                    Some(withdrawal.message_id.as_str())
+                }
+                _ => None,
             }
-            _ => None,
         })
         .collect()
 }
@@ -1105,9 +1111,11 @@ pub async fn allocate_bulletin_allowance(
             .bulletin
             .client("bulletin allowance")
             .await
-            .map_err(|source| AllowanceAllocationError::ChainRpcClient {
-                context: "bulletin allowance client",
-                source,
+            .map_err(|source| {
+                AllowanceAllocationError::ChainRpcClient {
+                    context: "bulletin allowance client",
+                    source,
+                }
             })?,
     );
     let current_allowance = fetch_bulletin_allowance(&bulletin_rpc, &target).await?;
@@ -1230,9 +1238,11 @@ pub async fn allocate_smart_contract_allowance(
                 .chain
                 .rpc_client("PGAS allowance", &asset_hub_genesis)
                 .await
-                .map_err(|source| AllowanceAllocationError::ChainRpcClient {
-                    context: "Asset Hub PGAS client",
-                    source,
+                .map_err(|source| {
+                    AllowanceAllocationError::ChainRpcClient {
+                        context: "Asset Hub PGAS client",
+                        source,
+                    }
                 })?,
         )),
         asset_hub_genesis,
@@ -1455,10 +1465,7 @@ mod tests {
                     "state_getStorage",
                     format!(r#""0x{}""#, hex::encode(b"paseo".to_vec().encode())),
                 ),
-                (
-                    "state_queryStorageAt",
-                    people_row,
-                ),
+                ("state_queryStorageAt", people_row),
                 // The LitePeople row, read alongside People's, is empty.
                 (
                     "state_queryStorageAt",

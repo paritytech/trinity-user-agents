@@ -224,10 +224,7 @@ impl RuntimeServices {
     ///
     /// Set-once, like every optional capability, so reminders cannot change
     /// hands under a running product. Returns whether this call installed it.
-    pub fn install_game_platform(
-        &self,
-        platform: Arc<dyn crate::platform::GamePlatform>,
-    ) -> bool {
+    pub fn install_game_platform(&self, platform: Arc<dyn crate::platform::GamePlatform>) -> bool {
         self.game_platform.set(platform).is_ok()
     }
 
@@ -430,12 +427,14 @@ impl StatementCache {
     ) -> Vec<latest::SignedStatement> {
         self.entries
             .iter()
-            .filter(|statement| match kind {
-                crate::host_logic::statement_store::TopicFilterKind::MatchAll => {
-                    topics.iter().all(|topic| statement.topics.contains(topic))
-                }
-                crate::host_logic::statement_store::TopicFilterKind::MatchAny => {
-                    topics.iter().any(|topic| statement.topics.contains(topic))
+            .filter(|statement| {
+                match kind {
+                    crate::host_logic::statement_store::TopicFilterKind::MatchAll => {
+                        topics.iter().all(|topic| statement.topics.contains(topic))
+                    }
+                    crate::host_logic::statement_store::TopicFilterKind::MatchAny => {
+                        topics.iter().any(|topic| statement.topics.contains(topic))
+                    }
                 }
             })
             .cloned()

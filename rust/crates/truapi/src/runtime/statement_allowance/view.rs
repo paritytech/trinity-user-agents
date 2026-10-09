@@ -115,9 +115,11 @@ async fn read_u32(
     let primitive = metadata
         .registry()
         .resolve(definition.output_type)
-        .and_then(|ty| match &ty.type_def {
-            TypeDef::Primitive(primitive) => Some(primitive),
-            _ => None,
+        .and_then(|ty| {
+            match &ty.type_def {
+                TypeDef::Primitive(primitive) => Some(primitive),
+                _ => None,
+            }
         })
         .ok_or_else(|| {
             view_error(ViewFunctionFailure::OutputType {
@@ -144,11 +146,13 @@ async fn read_u32(
         TypeDefPrimitive::U8 => decode!(u8, "u8"),
         TypeDefPrimitive::U16 => decode!(u16, "u16"),
         TypeDefPrimitive::U32 => decode!(u32, "u32"),
-        _ => Err(view_error(ViewFunctionFailure::OutputType {
-            pallet,
-            function,
-            type_id: definition.output_type,
-        })),
+        _ => {
+            Err(view_error(ViewFunctionFailure::OutputType {
+                pallet,
+                function,
+                type_id: definition.output_type,
+            }))
+        }
     }?;
     metadata.cache_view_u32(id, value);
     Ok(value)

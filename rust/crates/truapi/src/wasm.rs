@@ -231,33 +231,39 @@ where
     }) as Box<dyn FnMut(JsValue)>);
 
     let call_result = match payload {
-        Some(arg) => fn_.call3(
-            &JsValue::NULL,
-            &arg,
-            send_item.as_ref().unchecked_ref(),
-            send_error.as_ref().unchecked_ref(),
-        ),
-        None => fn_.call2(
-            &JsValue::NULL,
-            send_item.as_ref().unchecked_ref(),
-            send_error.as_ref().unchecked_ref(),
-        ),
+        Some(arg) => {
+            fn_.call3(
+                &JsValue::NULL,
+                &arg,
+                send_item.as_ref().unchecked_ref(),
+                send_error.as_ref().unchecked_ref(),
+            )
+        }
+        None => {
+            fn_.call2(
+                &JsValue::NULL,
+                send_item.as_ref().unchecked_ref(),
+                send_error.as_ref().unchecked_ref(),
+            )
+        }
     };
 
     let dispose = match call_result {
         Ok(value) if value.is_null() || value.is_undefined() => None,
-        Ok(value) => match value.dyn_into::<Function>() {
-            Ok(dispose) => Some(SendWrapper::new(dispose)),
-            Err(_) => {
-                return stream::once(async {
-                    Err(generic(
+        Ok(value) => {
+            match value.dyn_into::<Function>() {
+                Ok(dispose) => Some(SendWrapper::new(dispose)),
+                Err(_) => {
+                    return stream::once(async {
+                        Err(generic(
                         "subscription callback must return a dispose function, null, or undefined"
                             .to_string(),
                     ))
-                })
-                .boxed();
+                    })
+                    .boxed();
+                }
             }
-        },
+        }
         Err(err) => return stream::once(async { Err(generic(js_to_string(err))) }).boxed(),
     };
 
@@ -567,9 +573,11 @@ fn host_platform_from_js(value: Option<String>) -> Result<HostPlatform, JsValue>
         Some("Desktop") => Ok(HostPlatform::Desktop),
         Some("Cli") => Ok(HostPlatform::Cli),
         Some("Unknown") => Ok(HostPlatform::Unknown),
-        Some(other) => Err(JsValue::from_str(&format!(
-            "runtimeConfig.host.platform must be one of Web, Android, Ios, Desktop, Cli, or Unknown, got {other:?}"
-        ))),
+        Some(other) => {
+            Err(JsValue::from_str(&format!(
+                "runtimeConfig.host.platform must be one of Web, Android, Ios, Desktop, Cli, or Unknown, got {other:?}"
+            )))
+        }
     }
 }
 
@@ -663,19 +671,27 @@ fn runtime_config_field_to_js(field: &str) -> &str {
 
 fn runtime_config_validation_to_js(err: RuntimeConfigValidationError) -> JsValue {
     match err {
-        RuntimeConfigValidationError::EmptyField { field } => JsValue::from_str(&format!(
-            "runtimeConfig.{} must not be empty",
-            runtime_config_field_to_js(field)
-        )),
-        RuntimeConfigValidationError::InvalidHostIcon { source } => JsValue::from_str(&format!(
-            "runtimeConfig.host.icon must be an absolute HTTPS URL: {source}"
-        )),
-        RuntimeConfigValidationError::InsecureHostIcon { scheme } => JsValue::from_str(&format!(
-            "runtimeConfig.host.icon must use https scheme, got {scheme:?}"
-        )),
-        RuntimeConfigValidationError::InvalidDeeplinkScheme { scheme } => JsValue::from_str(
-            &format!("runtimeConfig.pairing.deeplinkScheme must not include ://, got {scheme:?}"),
-        ),
+        RuntimeConfigValidationError::EmptyField { field } => {
+            JsValue::from_str(&format!(
+                "runtimeConfig.{} must not be empty",
+                runtime_config_field_to_js(field)
+            ))
+        }
+        RuntimeConfigValidationError::InvalidHostIcon { source } => {
+            JsValue::from_str(&format!(
+                "runtimeConfig.host.icon must be an absolute HTTPS URL: {source}"
+            ))
+        }
+        RuntimeConfigValidationError::InsecureHostIcon { scheme } => {
+            JsValue::from_str(&format!(
+                "runtimeConfig.host.icon must use https scheme, got {scheme:?}"
+            ))
+        }
+        RuntimeConfigValidationError::InvalidDeeplinkScheme { scheme } => {
+            JsValue::from_str(&format!(
+                "runtimeConfig.pairing.deeplinkScheme must not include ://, got {scheme:?}"
+            ))
+        }
         RuntimeConfigValidationError::InvalidProductId { product_id } => {
             JsValue::from_str(&format!(
                 "runtimeConfig.productId must be a dotNS or localhost product identifier, got {product_id:?}"
@@ -688,9 +704,11 @@ fn runtime_config_validation_to_js(err: RuntimeConfigValidationError) -> JsValue
         }
         // By length, never by value: an id that trips this is unbounded in
         // size, and this string reaches the product's console.
-        RuntimeConfigValidationError::ProductIdTooLong { limit, actual } => JsValue::from_str(
-            &format!("runtimeConfig.productId must be at most {limit} bytes, got {actual}"),
-        ),
+        RuntimeConfigValidationError::ProductIdTooLong { limit, actual } => {
+            JsValue::from_str(&format!(
+                "runtimeConfig.productId must be at most {limit} bytes, got {actual}"
+            ))
+        }
     }
 }
 
@@ -823,9 +841,11 @@ fn permission_authorization_status_from_js(
         "NotDetermined" => Ok(PermissionAuthorizationStatus::NotDetermined),
         "Denied" => Ok(PermissionAuthorizationStatus::Denied),
         "Authorized" => Ok(PermissionAuthorizationStatus::Authorized),
-        other => Err(JsValue::from_str(&format!(
-            "unknown permission authorization status: {other}"
-        ))),
+        other => {
+            Err(JsValue::from_str(&format!(
+                "unknown permission authorization status: {other}"
+            )))
+        }
     }
 }
 

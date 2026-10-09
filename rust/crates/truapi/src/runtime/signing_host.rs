@@ -620,8 +620,10 @@ impl SigningHost {
         let root = self.root_entropy()?;
         derive_ring_vrf_entropy(&root, &handle.dot_ns_identifier, &handle.derivation_index)
             .map(Zeroizing::new)
-            .map_err(|err| RingVrfError::Unknown {
-                reason: err.to_string(),
+            .map_err(|err| {
+                RingVrfError::Unknown {
+                    reason: err.to_string(),
+                }
             })
     }
 
@@ -663,13 +665,11 @@ impl SigningHost {
         if owner != personhood_product_id(&self.network_suffix) {
             return Ok(());
         }
-        let chains =
-            self.platform
-                .supported_chains()
-                .await
-                .map_err(|error| RingVrfError::Unknown {
-                    reason: error.reason,
-                })?;
+        let chains = self.platform.supported_chains().await.map_err(|error| {
+            RingVrfError::Unknown {
+                reason: error.reason,
+            }
+        })?;
         let chain_id =
             genesis_for(&chains, ChainIdentifier::People).ok_or(RingVrfError::RingNotFound)?;
         let entries = self
@@ -892,8 +892,10 @@ impl SigningHost {
                     })),
             )
             .await?
-            .map_err(|err| AuthorityError::Unknown {
-                reason: format!("VRF signing confirmation failed: {err:?}"),
+            .map_err(|err| {
+                AuthorityError::Unknown {
+                    reason: format!("VRF signing confirmation failed: {err:?}"),
+                }
             })?;
             if !confirmed {
                 return Err(AuthorityError::Rejected);
@@ -1331,8 +1333,10 @@ impl ProductAuthority for SigningHost {
 
         let handle = v01::ProductAccountId {
             dot_ns_identifier: normalize_product_identifier(&request.calling_product_id).map_err(
-                |err| RingVrfError::Unknown {
-                    reason: err.to_string(),
+                |err| {
+                    RingVrfError::Unknown {
+                        reason: err.to_string(),
+                    }
                 },
             )?,
             derivation_index: request.payload.index,
@@ -1459,14 +1463,15 @@ impl ProductAuthority for SigningHost {
                 continue;
             }
             let outcome = match resource {
-                v01::AllocatableResource::StatementStoreAllowance => self
-                    .allocate_statement_store_allowance_key(
+                v01::AllocatableResource::StatementStoreAllowance => {
+                    self.allocate_statement_store_allowance_key(
                         session,
                         &product_id,
                         OnExistingAllowancePolicy::Increase,
                     )
                     .await
-                    .map(|_| v01::AllocationOutcome::Allocated),
+                    .map(|_| v01::AllocationOutcome::Allocated)
+                }
                 v01::AllocatableResource::BulletinAllowance => {
                     sso_responder::allocate_bulletin_allowance(
                         &self.services,
@@ -1490,10 +1495,11 @@ impl ProductAuthority for SigningHost {
                     .await
                     .map(|()| v01::AllocationOutcome::Allocated)
                 }
-                v01::AllocatableResource::AutoSigning => self
-                    .grant_auto_signing(session, &product_id)
-                    .map(|_| v01::AllocationOutcome::Allocated)
-                    .map_err(sso_responder::AllowanceAllocationError::Authority),
+                v01::AllocatableResource::AutoSigning => {
+                    self.grant_auto_signing(session, &product_id)
+                        .map(|_| v01::AllocationOutcome::Allocated)
+                        .map_err(sso_responder::AllowanceAllocationError::Authority)
+                }
             };
             match outcome {
                 Ok(outcome) => outcomes.push(outcome),
@@ -1655,9 +1661,9 @@ mod tests {
     mod allowance_keys;
     mod auto_signing;
     mod cross_product_account;
-    mod raw_signing;
     #[cfg(feature = "test-host")]
     mod local_preimages;
+    mod raw_signing;
     #[cfg(feature = "test-host")]
     mod withheld_resources;
 
@@ -1668,17 +1674,17 @@ mod tests {
         SignPayloadAuthorityRequest, SignRawAuthorityRequest, StatementStoreAllowanceKey,
     };
     use super::super::{ProductAuthority, ProductRuntimeHost, RuntimeServices, SigningHostRole};
+    use super::LocalActivation;
     use super::TEST_NETWORK_SUFFIX;
     use super::ring_vrf::{MemberCandidate, ResolvedRing, RingResolver};
-    use super::LocalActivation;
     use crate::host_internal::extrinsic::tests::split_v4;
     use crate::host_internal::sso_messages::{ProductRequest, RingVrfError};
     use crate::host_internal::transaction::{
         extrinsic_payload_extensions, extrinsic_payload_preimage,
     };
     use crate::host_logic::product_account::{
-        SR25519_SIGNING_CONTEXT, derive_identity_keypair, derive_product_keypair, derive_ring_vrf_entropy,
-        derive_root_keypair_from_entropy, index_bytes,
+        SR25519_SIGNING_CONTEXT, derive_identity_keypair, derive_product_keypair,
+        derive_ring_vrf_entropy, derive_root_keypair_from_entropy, index_bytes,
     };
     use crate::platform::{HostInfo, Platform, PlatformInfo, ProductContext, SigningHostConfig};
     use crate::runtime::statement_allowance::collection::PersonhoodCollection;
@@ -3676,14 +3682,16 @@ mod tests {
         let session = authority.current_session().expect("active session");
         let cx = CallContext::default();
         let identity = derive_identity_keypair(&ENTROPY, TEST_NETWORK_SUFFIX).unwrap();
-        let request = |account| SignRawAuthorityRequest::LegacyAccount {
-            account,
-            request: v01::HostSignRawWithLegacyAccountRequest {
-                signer: String::new(),
-                payload: v01::RawPayload::Bytes {
-                    bytes: b"hello".to_vec(),
+        let request = |account| {
+            SignRawAuthorityRequest::LegacyAccount {
+                account,
+                request: v01::HostSignRawWithLegacyAccountRequest {
+                    signer: String::new(),
+                    payload: v01::RawPayload::Bytes {
+                        bytes: b"hello".to_vec(),
+                    },
                 },
-            },
+            }
         };
 
         let response = futures::executor::block_on(authority.sign_raw(

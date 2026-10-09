@@ -53,17 +53,21 @@ fn dial_report(role: Role, switch: Switch<'_>) -> Vec<String> {
         command.env("TRUAPI_DEBUGGER_URL", url);
     }
     match role {
-        Role::PairingHost => command
-            .args(["pairing-host", "--frame-listen", "127.0.0.1:0"])
-            .arg("--base-path")
-            .arg(temporary.path())
-            .arg("--script")
-            .arg(temporary.path().join("no-such-script.ts")),
-        Role::SigningHost => command
-            .args(["signing-host", "--frame-listen", "127.0.0.1:0"])
-            .arg("--base-path")
-            .arg(temporary.path())
-            .args(["exec", "/session"]),
+        Role::PairingHost => {
+            command
+                .args(["pairing-host", "--frame-listen", "127.0.0.1:0"])
+                .arg("--base-path")
+                .arg(temporary.path())
+                .arg("--script")
+                .arg(temporary.path().join("no-such-script.ts"))
+        }
+        Role::SigningHost => {
+            command
+                .args(["signing-host", "--frame-listen", "127.0.0.1:0"])
+                .arg("--base-path")
+                .arg(temporary.path())
+                .args(["exec", "/session"])
+        }
     };
     let output = command.output().expect("run a headless host role");
 

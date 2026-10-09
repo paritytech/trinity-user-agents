@@ -280,9 +280,11 @@ pub fn decode_revive_call_output(output: &[u8]) -> Result<Vec<u8>, DotnsContract
             }
             Ok(data)
         }
-        _ => Err(DotnsContractError::Dispatch {
-            detail: format!("0x{}", hex::encode(*input)),
-        }),
+        _ => {
+            Err(DotnsContractError::Dispatch {
+                detail: format!("0x{}", hex::encode(*input)),
+            })
+        }
     }
 }
 
@@ -320,8 +322,10 @@ fn word(data: &[u8], index: usize) -> Result<&[u8], DotnsContractError> {
 
 /// Interprets an ABI word as a right-aligned usize offset or length.
 fn word_usize(data: &[u8], index: usize) -> Result<usize, DotnsContractError> {
-    usize::try_from(word_u64(data, index)?).map_err(|_| DotnsContractError::Abi {
-        context: "oversized word",
+    usize::try_from(word_u64(data, index)?).map_err(|_| {
+        DotnsContractError::Abi {
+            context: "oversized word",
+        }
     })
 }
 
@@ -603,9 +607,11 @@ impl From<DotnsViewError> for String {
 /// Splits a `ReviveApi_call` output into return data, a revert, or a failure,
 /// for [`DotnsTransport::view`] implementations.
 pub fn view_output(output: &[u8]) -> Result<Vec<u8>, DotnsViewError> {
-    decode_revive_call_output(output).map_err(|err| match err {
-        DotnsContractError::Reverted { .. } => DotnsViewError::Reverted(err),
-        other => DotnsViewError::Failed(other.to_string()),
+    decode_revive_call_output(output).map_err(|err| {
+        match err {
+            DotnsContractError::Reverted { .. } => DotnsViewError::Reverted(err),
+            other => DotnsViewError::Failed(other.to_string()),
+        }
     })
 }
 
@@ -664,14 +670,18 @@ pub async fn discover_pop_controller<T: DotnsTransport + ?Sized>(
         // answers on the first. Both hops go once no chain stores a dispatcher.
         Err(DotnsViewError::Reverted(_)) => {
             match transport.view(&stored, call_no_args("TARGET()")).await {
-                Ok(output) => decode_address(&output)
-                    .map(Some)
-                    .map_err(|err| format!("RootGatewayDispatcher.TARGET(): {err}")),
-                Err(DotnsViewError::Reverted(_)) => Err(format!(
-                    "DotnsGateway.DispatcherAddress {} has neither protocolRegistry() nor \
+                Ok(output) => {
+                    decode_address(&output)
+                        .map(Some)
+                        .map_err(|err| format!("RootGatewayDispatcher.TARGET(): {err}"))
+                }
+                Err(DotnsViewError::Reverted(_)) => {
+                    Err(format!(
+                        "DotnsGateway.DispatcherAddress {} has neither protocolRegistry() nor \
                      TARGET()",
-                    hex::encode(stored)
-                )),
+                        hex::encode(stored)
+                    ))
+                }
                 Err(DotnsViewError::Failed(reason)) => {
                     Err(format!("RootGatewayDispatcher.TARGET(): {reason}"))
                 }

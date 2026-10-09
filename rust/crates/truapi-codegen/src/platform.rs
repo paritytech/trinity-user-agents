@@ -804,10 +804,12 @@ mod tests {
     // the platform surface; only the `platform` module is host-facing.
     #[test]
     fn only_traits_in_the_platform_module_are_capabilities() {
-        let item_path = |crate_id: u32, path: &[&str]| ItemPath {
-            crate_id,
-            path: path.iter().map(|segment| segment.to_string()).collect(),
-            kind: "trait".to_string(),
+        let item_path = |crate_id: u32, path: &[&str]| {
+            ItemPath {
+                crate_id,
+                path: path.iter().map(|segment| segment.to_string()).collect(),
+                kind: "trait".to_string(),
+            }
         };
         let krate = Crate {
             format_version: Some(57),

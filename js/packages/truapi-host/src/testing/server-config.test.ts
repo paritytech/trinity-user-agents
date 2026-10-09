@@ -122,7 +122,8 @@ describe("signing as an identity that is not a built-in", () => {
         accounts: [{ name: "enrolled", entropy }],
       }),
     );
-    const encoded = (url.searchParams.get("accounts") ?? "").split(":")[1] ?? "";
+    const encoded =
+      (url.searchParams.get("accounts") ?? "").split(":")[1] ?? "";
     const decoded = Uint8Array.from(
       (encoded.match(/../g) ?? []).map((b) => parseInt(b, 16)),
     );

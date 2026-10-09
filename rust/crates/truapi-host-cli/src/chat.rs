@@ -85,9 +85,11 @@ impl CliChatHost {
             rooms: state
                 .rooms
                 .iter()
-                .map(|(room_id, participating_as)| ChatRoom {
-                    room_id: room_id.clone(),
-                    participating_as: *participating_as,
+                .map(|(room_id, participating_as)| {
+                    ChatRoom {
+                        room_id: room_id.clone(),
+                        participating_as: *participating_as,
+                    }
                 })
                 .collect(),
         }

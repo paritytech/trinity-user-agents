@@ -310,10 +310,12 @@ macro_rules! collect_metadata {
             .extrinsic
             .signed_extensions
             .iter()
-            .map(|e| ExtensionDef {
-                identifier: e.identifier.clone(),
-                extra_type: e.ty.id,
-                additional_signed_type: e.additional_signed.id,
+            .map(|e| {
+                ExtensionDef {
+                    identifier: e.identifier.clone(),
+                    extra_type: e.ty.id,
+                    additional_signed_type: e.additional_signed.id,
+                }
             })
             .collect();
         let (storage_values, constants, calls) = collect_pallets!($m, $set);
@@ -344,10 +346,12 @@ macro_rules! collect_metadata_v16 {
         let extensions = extension_indexes
             .into_iter()
             .filter_map(|index| $m.extrinsic.transaction_extensions.get(index))
-            .map(|e| ExtensionDef {
-                identifier: e.identifier.clone(),
-                extra_type: e.ty.id,
-                additional_signed_type: e.implicit.id,
+            .map(|e| {
+                ExtensionDef {
+                    identifier: e.identifier.clone(),
+                    extra_type: e.ty.id,
+                    additional_signed_type: e.implicit.id,
+                }
             })
             .collect();
         let (storage_values, constants, calls) =
@@ -465,21 +469,21 @@ impl Metadata {
         pallet: &str,
         call: &str,
     ) -> Result<[u8; 2], StatementAllowanceError> {
-        let (pallet_index, call_type) =
-            self.calls
-                .get(pallet)
-                .copied()
-                .ok_or_else(|| MetadataError::MissingPalletCalls {
-                    pallet: pallet.to_string(),
-                })?;
+        let (pallet_index, call_type) = self.calls.get(pallet).copied().ok_or_else(|| {
+            MetadataError::MissingPalletCalls {
+                pallet: pallet.to_string(),
+            }
+        })?;
         let variants = self.resolve_variant(call_type)?;
         let variant = variants
             .variants
             .iter()
             .find(|v| v.name == call)
-            .ok_or_else(|| MetadataError::MissingCall {
-                pallet: pallet.to_string(),
-                call: call.to_string(),
+            .ok_or_else(|| {
+                MetadataError::MissingCall {
+                    pallet: pallet.to_string(),
+                    call: call.to_string(),
+                }
             })?;
         Ok([pallet_index, variant.index])
     }
@@ -527,10 +531,12 @@ impl Metadata {
                             .find(|candidate| candidate.name == field_variant)
                     })
             })
-            .ok_or_else(|| MetadataError::MissingExtensionFieldVariant {
-                identifier: identifier.to_string(),
-                variant: info_variant.to_string(),
-                field_variant: field_variant.to_string(),
+            .ok_or_else(|| {
+                MetadataError::MissingExtensionFieldVariant {
+                    identifier: identifier.to_string(),
+                    variant: info_variant.to_string(),
+                    field_variant: field_variant.to_string(),
+                }
             })?;
         Ok((variant.index, nested.index))
     }
@@ -650,8 +656,10 @@ impl Metadata {
             .extensions
             .iter()
             .find(|extension| extension.identifier == identifier)
-            .ok_or_else(|| MetadataError::MissingExtension {
-                identifier: identifier.to_string(),
+            .ok_or_else(|| {
+                MetadataError::MissingExtension {
+                    identifier: identifier.to_string(),
+                }
             })?;
         let option_type = match &self.resolve_type(extension.extra_type)?.type_def {
             TypeDef::Composite(_) => self.single_field_type(extension.extra_type)?,
@@ -662,12 +670,16 @@ impl Metadata {
             .variants
             .iter()
             .find(|candidate| candidate.name == "Some")
-            .and_then(|some| match some.fields.as_slice() {
-                [field] => Some(field.ty.id),
-                _ => None,
+            .and_then(|some| {
+                match some.fields.as_slice() {
+                    [field] => Some(field.ty.id),
+                    _ => None,
+                }
             })
-            .ok_or_else(|| MetadataError::ExtensionExtraNotOption {
-                identifier: identifier.to_string(),
+            .ok_or_else(|| {
+                MetadataError::ExtensionExtraNotOption {
+                    identifier: identifier.to_string(),
+                }
             })?;
         self.resolve_variant(info_type)?
             .variants
@@ -710,11 +722,13 @@ impl Metadata {
         };
         match composite.fields.as_slice() {
             [field] => Ok(field.ty.id),
-            fields => Err(MetadataError::CompositeFieldCount {
-                type_id,
-                actual: fields.len(),
+            fields => {
+                Err(MetadataError::CompositeFieldCount {
+                    type_id,
+                    actual: fields.len(),
+                }
+                .into())
             }
-            .into()),
         }
     }
 
@@ -758,10 +772,12 @@ impl Metadata {
             "ChargeAssetTxPayment" => (vec![0x00, 0x00], Vec::new()),
             // extra = bool. See `ChainState::restrict_origins`.
             "RestrictOrigins" => (vec![state.restrict_origins as u8], Vec::new()),
-            _ => (
-                self.encode_default(ext.extra_type),
-                self.encode_default(ext.additional_signed_type),
-            ),
+            _ => {
+                (
+                    self.encode_default(ext.extra_type),
+                    self.encode_default(ext.additional_signed_type),
+                )
+            }
         }
     }
 
@@ -773,16 +789,18 @@ impl Metadata {
             return Vec::new();
         };
         match &ty.type_def {
-            TypeDef::Composite(c) => c
-                .fields
-                .iter()
-                .flat_map(|f| self.encode_default(f.ty.id))
-                .collect(),
-            TypeDef::Tuple(t) => t
-                .fields
-                .iter()
-                .flat_map(|f| self.encode_default(f.id))
-                .collect(),
+            TypeDef::Composite(c) => {
+                c.fields
+                    .iter()
+                    .flat_map(|f| self.encode_default(f.ty.id))
+                    .collect()
+            }
+            TypeDef::Tuple(t) => {
+                t.fields
+                    .iter()
+                    .flat_map(|f| self.encode_default(f.id))
+                    .collect()
+            }
             TypeDef::Variant(v) => {
                 // Option<T> encodes None as 0x00.
                 if ty.path.segments.last().map(String::as_str) == Some("Option") {
@@ -806,18 +824,20 @@ impl Metadata {
             // Sequences / strings / bit-sequences encode an empty run as compact(0).
             TypeDef::Sequence(_) | TypeDef::BitSequence(_) => vec![0x00],
             TypeDef::Compact(_) => vec![0x00],
-            TypeDef::Primitive(p) => match p {
-                TypeDefPrimitive::Bool | TypeDefPrimitive::U8 | TypeDefPrimitive::I8 => vec![0],
-                TypeDefPrimitive::Char | TypeDefPrimitive::U32 | TypeDefPrimitive::I32 => {
-                    vec![0; 4]
+            TypeDef::Primitive(p) => {
+                match p {
+                    TypeDefPrimitive::Bool | TypeDefPrimitive::U8 | TypeDefPrimitive::I8 => vec![0],
+                    TypeDefPrimitive::Char | TypeDefPrimitive::U32 | TypeDefPrimitive::I32 => {
+                        vec![0; 4]
+                    }
+                    TypeDefPrimitive::U16 | TypeDefPrimitive::I16 => vec![0; 2],
+                    TypeDefPrimitive::U64 | TypeDefPrimitive::I64 => vec![0; 8],
+                    TypeDefPrimitive::U128 | TypeDefPrimitive::I128 => vec![0; 16],
+                    TypeDefPrimitive::U256 | TypeDefPrimitive::I256 => vec![0; 32],
+                    // Length-prefixed string: empty = compact(0).
+                    TypeDefPrimitive::Str => vec![0x00],
                 }
-                TypeDefPrimitive::U16 | TypeDefPrimitive::I16 => vec![0; 2],
-                TypeDefPrimitive::U64 | TypeDefPrimitive::I64 => vec![0; 8],
-                TypeDefPrimitive::U128 | TypeDefPrimitive::I128 => vec![0; 16],
-                TypeDefPrimitive::U256 | TypeDefPrimitive::I256 => vec![0; 32],
-                // Length-prefixed string: empty = compact(0).
-                TypeDefPrimitive::Str => vec![0x00],
-            },
+            }
         }
     }
 
@@ -852,8 +872,10 @@ pub fn build_proof_message_after_extension(
     let tail_start = metadata
         .extension_index(identifier)
         .map(|i| i + 1)
-        .ok_or_else(|| MetadataError::MissingExtension {
-            identifier: identifier.to_string(),
+        .ok_or_else(|| {
+            MetadataError::MissingExtension {
+                identifier: identifier.to_string(),
+            }
         })?;
     let tail = &all[tail_start..];
 

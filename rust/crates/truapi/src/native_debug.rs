@@ -691,10 +691,12 @@ mod tests {
                     );
                     return;
                 }
-                Err(_) => assert!(
-                    tokio::time::Instant::now() < deadline,
-                    "no envelope ever carried the shed frame's drop count"
-                ),
+                Err(_) => {
+                    assert!(
+                        tokio::time::Instant::now() < deadline,
+                        "no envelope ever carried the shed frame's drop count"
+                    )
+                }
             }
         }
     }

@@ -84,8 +84,10 @@ impl Vrf {
 /// A `truapi-verifiable` answer: `Result<T, String>`, SCALE-encoded.
 fn answer<T: Decode>(encoded: &[u8]) -> Result<T, RingVrfError> {
     Result::<T, String>::decode_all(&mut &encoded[..])
-        .map_err(|error| RingVrfError::Unknown {
-            reason: format!("undecodable ring-VRF answer: {error}"),
+        .map_err(|error| {
+            RingVrfError::Unknown {
+                reason: format!("undecodable ring-VRF answer: {error}"),
+            }
         })?
         .map_err(|reason| RingVrfError::Unknown { reason })
 }

@@ -430,11 +430,13 @@ pub async fn finish_background_check(check: tokio::task::JoinHandle<()>) {
 /// `truapi-host update`: the same work, reported on stdout and failing loudly.
 pub async fn run_update_command() -> Result<()> {
     match check_and_install(true).await? {
-        Outcome::Unmanaged => bail!(
-            "truapi-host {CURRENT_VERSION} was not installed by the installer, so it \
+        Outcome::Unmanaged => {
+            bail!(
+                "truapi-host {CURRENT_VERSION} was not installed by the installer, so it \
              cannot update itself.\nInstall a managed copy with:\n  curl -fsSL \
              {INSTALLER_URL} | bash"
-        ),
+            )
+        }
         Outcome::Disabled => {
             println!("Updates are disabled by TRUAPI_HOST_NO_UPDATE.");
         }

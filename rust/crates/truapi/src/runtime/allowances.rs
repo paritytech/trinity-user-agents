@@ -188,10 +188,11 @@ fn encode_entries(entries: Vec<StoredAllowanceEntry>) -> Vec<u8> {
 
 fn decode_entries(blob: &[u8]) -> Result<Vec<StoredAllowanceEntry>, AuthorityError> {
     let mut input = blob;
-    let entries =
-        Vec::<StoredAllowanceEntry>::decode(&mut input).map_err(|err| AuthorityError::Unknown {
+    let entries = Vec::<StoredAllowanceEntry>::decode(&mut input).map_err(|err| {
+        AuthorityError::Unknown {
             reason: format!("invalid persisted allowance keys: {err}"),
-        })?;
+        }
+    })?;
     if !input.is_empty() {
         return Err(AuthorityError::Unknown {
             reason: "invalid persisted allowance keys: trailing bytes".to_string(),

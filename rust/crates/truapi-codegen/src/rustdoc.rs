@@ -1067,9 +1067,11 @@ pub fn resolve_type(ty: &serde_json::Value, names: &NameContext) -> Result<TypeR
 
         return match name {
             "Vec" => Ok(TypeRef::Vec(Box::new(expect_single_arg("Vec", args)?))),
-            "Option" => Ok(TypeRef::Option(Box::new(expect_single_arg(
-                "Option", args,
-            )?))),
+            "Option" => {
+                Ok(TypeRef::Option(Box::new(expect_single_arg(
+                    "Option", args,
+                )?)))
+            }
             "Compact" => {
                 // The width is carried in the primitive's NAME, not discarded.
                 // Emission still keys on the `compact` prefix, so generated
@@ -1095,14 +1097,16 @@ pub fn resolve_type(ty: &serde_json::Value, names: &NameContext) -> Result<TypeR
                 Ok(TypeRef::Primitive("str".to_string()))
             }
             "Box" => expect_single_arg("Box", args),
-            _ => Ok(TypeRef::Named {
-                name: resolved
-                    .get("id")
-                    .and_then(|id| value_id(id).ok())
-                    .map(|id| names.name_for_item(&id, path_suffix(raw_name)))
-                    .unwrap_or_else(|| names.name_for_path(raw_name)),
-                args,
-            }),
+            _ => {
+                Ok(TypeRef::Named {
+                    name: resolved
+                        .get("id")
+                        .and_then(|id| value_id(id).ok())
+                        .map(|id| names.name_for_item(&id, path_suffix(raw_name)))
+                        .unwrap_or_else(|| names.name_for_path(raw_name)),
+                    args,
+                })
+            }
         };
     }
 

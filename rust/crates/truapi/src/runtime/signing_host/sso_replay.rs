@@ -291,10 +291,12 @@ mod tests {
             let request_scope = scope(1, 2, 3);
             let ledger = RequestLedger {
                 entries: (0..MAX_REQUEST_LEDGER_ENTRIES)
-                    .map(|index| RequestLedgerEntry {
-                        request_id: format!("legacy-{index}"),
-                        expires_at_unix_secs: None,
-                        state: RequestLedgerState::Completed,
+                    .map(|index| {
+                        RequestLedgerEntry {
+                            request_id: format!("legacy-{index}"),
+                            expires_at_unix_secs: None,
+                            state: RequestLedgerState::Completed,
+                        }
                     })
                     .collect(),
             };
@@ -367,9 +369,11 @@ mod tests {
                 "overflow",
                 None,
                 0,
-                move || async move {
-                    request_executions.fetch_add(1, Ordering::SeqCst);
-                    Ok::<_, String>(())
+                move || {
+                    async move {
+                        request_executions.fetch_add(1, Ordering::SeqCst);
+                        Ok::<_, String>(())
+                    }
                 },
             )
             .await
@@ -466,9 +470,11 @@ mod tests {
                 "request-1",
                 Some(200),
                 101,
-                move || async move {
-                    replay_executions.fetch_add(1, Ordering::SeqCst);
-                    Ok::<_, String>(())
+                move || {
+                    async move {
+                        replay_executions.fetch_add(1, Ordering::SeqCst);
+                        Ok::<_, String>(())
+                    }
                 },
             )
             .await
@@ -500,9 +506,11 @@ mod tests {
                     "same-request-id",
                     Some(200),
                     100,
-                    move || async move {
-                        executions.fetch_add(1, Ordering::SeqCst);
-                        Ok::<_, String>(())
+                    move || {
+                        async move {
+                            executions.fetch_add(1, Ordering::SeqCst);
+                            Ok::<_, String>(())
+                        }
                     },
                 )
                 .await
@@ -530,9 +538,11 @@ mod tests {
                     "request-1",
                     Some(200),
                     100,
-                    move || async move {
-                        executions.fetch_add(1, Ordering::SeqCst);
-                        Ok::<_, String>(())
+                    move || {
+                        async move {
+                            executions.fetch_add(1, Ordering::SeqCst);
+                            Ok::<_, String>(())
+                        }
                     },
                 )
                 .await

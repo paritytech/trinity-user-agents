@@ -565,16 +565,20 @@ pub fn validate_chat_message_content(
 ) -> Result<ChatMessageContent, ChatFieldError> {
     use ChatMessageContent as Content;
     Ok(match content {
-        Content::Text { text } => Content::Text {
-            text: validate_chat_body("text", &text)?,
-        },
-        Content::RichText(rich) => Content::RichText(ChatRichText {
-            text: rich
-                .text
-                .map(|t| validate_chat_body("text", &t))
-                .transpose()?,
-            media: validate_chat_media("media", rich.media)?,
-        }),
+        Content::Text { text } => {
+            Content::Text {
+                text: validate_chat_body("text", &text)?,
+            }
+        }
+        Content::RichText(rich) => {
+            Content::RichText(ChatRichText {
+                text: rich
+                    .text
+                    .map(|t| validate_chat_body("text", &t))
+                    .transpose()?,
+                media: validate_chat_media("media", rich.media)?,
+            })
+        }
         Content::Actions(actions) => {
             if actions.actions.len() > CHAT_ACTIONS_MAX {
                 return Err(ChatFieldError::TooMany {
@@ -591,16 +595,18 @@ pub fn validate_chat_message_content(
                 layout: actions.layout,
             })
         }
-        Content::File(file) => Content::File(ChatFile {
-            url: validate_chat_url("url", &file.url)?,
-            file_name: validate_chat_file_name("fileName", &file.file_name)?,
-            mime_type: validate_chat_name("mimeType", &file.mime_type)?,
-            size_bytes: file.size_bytes,
-            text: file
-                .text
-                .map(|t| validate_chat_body("text", &t))
-                .transpose()?,
-        }),
+        Content::File(file) => {
+            Content::File(ChatFile {
+                url: validate_chat_url("url", &file.url)?,
+                file_name: validate_chat_file_name("fileName", &file.file_name)?,
+                mime_type: validate_chat_name("mimeType", &file.mime_type)?,
+                size_bytes: file.size_bytes,
+                text: file
+                    .text
+                    .map(|t| validate_chat_body("text", &t))
+                    .transpose()?,
+            })
+        }
         Content::Reaction(reaction) => Content::Reaction(validate_chat_reaction(reaction)?),
         Content::ReactionRemoved(reaction) => {
             Content::ReactionRemoved(validate_chat_reaction(reaction)?)
@@ -1809,9 +1815,11 @@ mod tests {
         let too_many = ChatMessageContent::Actions(ChatActions {
             text: None,
             actions: (0..CHAT_ACTIONS_MAX + 1)
-                .map(|index| ChatAction {
-                    action_id: format!("a{index}"),
-                    title: "go".to_string(),
+                .map(|index| {
+                    ChatAction {
+                        action_id: format!("a{index}"),
+                        title: "go".to_string(),
+                    }
                 })
                 .collect(),
             layout: truapi::latest::ChatActionLayout::Column,
@@ -1838,8 +1846,10 @@ mod tests {
         let too_much_media = ChatMessageContent::RichText(ChatRichText {
             text: None,
             media: (0..CHAT_MEDIA_MAX + 1)
-                .map(|_| ChatMedia {
-                    url: "https://example.invalid/m".to_string(),
+                .map(|_| {
+                    ChatMedia {
+                        url: "https://example.invalid/m".to_string(),
+                    }
                 })
                 .collect(),
         });

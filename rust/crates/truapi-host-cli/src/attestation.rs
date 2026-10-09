@@ -438,10 +438,12 @@ pub async fn lookup_backend_username(
     match matches.len() {
         0 => Ok(None),
         1 => Ok(matches.into_iter().next()),
-        _ => bail!(
-            "identity backend returned multiple assigned usernames for {candidate_account_id}: {}",
-            matches.into_iter().collect::<Vec<_>>().join(", ")
-        ),
+        _ => {
+            bail!(
+                "identity backend returned multiple assigned usernames for {candidate_account_id}: {}",
+                matches.into_iter().collect::<Vec<_>>().join(", ")
+            )
+        }
     }
 }
 
@@ -543,12 +545,16 @@ pub async fn check_identity(network: NetworkConfig, entropy: &[u8]) -> Result<()
     ] {
         let address = product_public_key_to_address(public);
         match reader.dotns_identity(&public).await {
-            Ok(identity) => match identity.full_username.or(identity.lite_username) {
-                Some(username) => {
-                    println!("IDENTITY_FOUND path={label} account={address} username={username}")
+            Ok(identity) => {
+                match identity.full_username.or(identity.lite_username) {
+                    Some(username) => {
+                        println!(
+                            "IDENTITY_FOUND path={label} account={address} username={username}"
+                        )
+                    }
+                    None => println!("IDENTITY_NONE path={label} account={address}"),
                 }
-                None => println!("IDENTITY_NONE path={label} account={address}"),
-            },
+            }
             Err(err) => println!("IDENTITY_ERROR path={label} account={address} error={err:#}"),
         }
     }

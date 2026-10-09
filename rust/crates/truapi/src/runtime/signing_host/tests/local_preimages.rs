@@ -32,7 +32,10 @@ fn activated(unchecked: bool, withheld: &[&str]) -> (ProductRuntimeHost, Arc<Sig
 fn submit(
     runtime: &ProductRuntimeHost,
     value: &[u8],
-) -> Result<RemotePreimageSubmitResponse, CallError<truapi::versioned::preimage::RemotePreimageSubmitError>> {
+) -> Result<
+    RemotePreimageSubmitResponse,
+    CallError<truapi::versioned::preimage::RemotePreimageSubmitError>,
+> {
     futures::executor::block_on(Preimage::submit(
         runtime,
         &CallContext::default(),
@@ -77,7 +80,8 @@ fn a_withheld_bulletin_allowance_still_refuses_the_submit() {
         error,
         CallError::Domain(truapi::versioned::preimage::RemotePreimageSubmitError::V1(
             v01::PreimageSubmitError::Unknown {
-                reason: "Bulletin allowance allocation was rejected by the signing host".to_string(),
+                reason: "Bulletin allowance allocation was rejected by the signing host"
+                    .to_string(),
             }
         ))
     );

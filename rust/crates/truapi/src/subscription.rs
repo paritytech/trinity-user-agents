@@ -78,9 +78,11 @@ where
     Interrupt: Encode + 'static,
     S: futures::Stream<Item = Result<Item, Interrupt>> + Send + 'static,
 {
-    Box::pin(stream.map(|item| match item {
-        Ok(item) => SubscriptionOutput::Item(item.encode()),
-        Err(interrupt) => SubscriptionOutput::Interrupt(subscription_interrupt(interrupt)),
+    Box::pin(stream.map(|item| {
+        match item {
+            Ok(item) => SubscriptionOutput::Item(item.encode()),
+            Err(interrupt) => SubscriptionOutput::Interrupt(subscription_interrupt(interrupt)),
+        }
     }))
 }
 
@@ -331,9 +333,11 @@ impl SubscriptionManager {
             let mut active = self.active.lock().unwrap();
             active
                 .drain()
-                .filter_map(|(_, slot)| match slot {
-                    Slot::Pending { .. } => None,
-                    Slot::Live { cancel, .. } => Some(cancel),
+                .filter_map(|(_, slot)| {
+                    match slot {
+                        Slot::Pending { .. } => None,
+                        Slot::Live { cancel, .. } => Some(cancel),
+                    }
                 })
                 .collect::<Vec<_>>()
         };
@@ -610,9 +614,12 @@ where
                     // the stream without a failure.
                     Ok(Ok(())) if input.is_empty() => Poll::Ready(None),
                     Ok(Err(interrupt)) if input.is_empty() => Poll::Ready(Some(Err(interrupt))),
-                    Ok(_) | Err(_) => Poll::Ready(Some(Err(CallError::MalformedFrame {
-                        reason: "host-initiated subscription interrupt did not decode".to_string(),
-                    }))),
+                    Ok(_) | Err(_) => {
+                        Poll::Ready(Some(Err(CallError::MalformedFrame {
+                            reason: "host-initiated subscription interrupt did not decode"
+                                .to_string(),
+                        })))
+                    }
                 }
             }
             Poll::Ready(Some(HostInitiatedFrame::Unsupported)) => {

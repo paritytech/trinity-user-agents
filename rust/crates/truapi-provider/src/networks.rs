@@ -106,8 +106,10 @@ fn genesis(chain: &ChainDef) -> Result<[u8; 32], ProviderError> {
     hex::decode(chain.genesis_hex.trim_start_matches("0x"))
         .ok()
         .and_then(|bytes| bytes.try_into().ok())
-        .ok_or_else(|| ProviderError::MalformedGenesis {
-            hex: chain.genesis_hex.to_owned(),
+        .ok_or_else(|| {
+            ProviderError::MalformedGenesis {
+                hex: chain.genesis_hex.to_owned(),
+            }
         })
 }
 
@@ -147,9 +149,11 @@ pub fn add_network(
     let network = CATALOG
         .iter()
         .find(|network| network.name == name)
-        .ok_or_else(|| ProviderError::UnknownNetwork {
-            name: name.to_owned(),
-            known: known_networks().collect::<Vec<_>>().join(", "),
+        .ok_or_else(|| {
+            ProviderError::UnknownNetwork {
+                name: name.to_owned(),
+                known: known_networks().collect::<Vec<_>>().join(", "),
+            }
         })?;
 
     let (chains, sources) = network_sources(network)?;

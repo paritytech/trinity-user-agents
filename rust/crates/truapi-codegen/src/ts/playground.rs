@@ -407,11 +407,13 @@ fn playground_request_description(
                 .unwrap_or(&ty.name)
                 == value
         })
-        .find_map(|ty| match &ty.kind {
-            TypeDefKind::Enum(variants) if is_unit_only_enum(ty) => {
-                Some(unit_enum_summary(variants))
+        .find_map(|ty| {
+            match &ty.kind {
+                TypeDefKind::Enum(variants) if is_unit_only_enum(ty) => {
+                    Some(unit_enum_summary(variants))
+                }
+                _ => None,
             }
-            _ => None,
         })
         .unwrap_or(value)
 }

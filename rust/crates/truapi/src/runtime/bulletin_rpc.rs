@@ -176,12 +176,14 @@ impl BulletinSubmitError {
     fn is_broadcast_outcome_unknown(&self, phase: SubmissionPhase) -> bool {
         match self {
             Self::Subxt(_) if phase == SubmissionPhase::Watch => !self.is_node_rejection(),
-            Self::Subxt(error) if phase == SubmissionPhase::Events => matches!(
-                error.as_ref(),
-                subxt::Error::TransactionEventsError(
-                    TransactionEventsError::CannotFindTransactionInBlock { .. }
+            Self::Subxt(error) if phase == SubmissionPhase::Events => {
+                matches!(
+                    error.as_ref(),
+                    subxt::Error::TransactionEventsError(
+                        TransactionEventsError::CannotFindTransactionInBlock { .. }
+                    )
                 )
-            ),
+            }
             _ => false,
         }
     }
@@ -1154,14 +1156,16 @@ mod tests {
             };
 
             match method {
-                "chainHead_v1_follow" => vec![
-                    response(json!(FOLLOW_ID)),
-                    follow_event(json!({
-                        "event": "initialized",
-                        "finalizedBlockHashes": [BLOCK_HASH],
-                        "finalizedBlockRuntime": null
-                    })),
-                ],
+                "chainHead_v1_follow" => {
+                    vec![
+                        response(json!(FOLLOW_ID)),
+                        follow_event(json!({
+                            "event": "initialized",
+                            "finalizedBlockHashes": [BLOCK_HASH],
+                            "finalizedBlockRuntime": null
+                        })),
+                    ]
+                }
                 "chainHead_v1_header" if state.stall_headers => Vec::new(),
                 "chainHead_v1_header" => vec![response(json!(encoded_header()))],
                 "chainHead_v1_call" => {
@@ -1215,10 +1219,12 @@ mod tests {
                         .pop_front()
                         .expect("scripted transaction outcome");
                     let status = match outcome {
-                        TransactionOutcome::Included => json!({
-                            "event": "bestChainBlockIncluded",
-                            "block": {"hash": INCLUDED_HASH, "index": "0"}
-                        }),
+                        TransactionOutcome::Included => {
+                            json!({
+                                "event": "bestChainBlockIncluded",
+                                "block": {"hash": INCLUDED_HASH, "index": "0"}
+                            })
+                        }
                         TransactionOutcome::IncludedWithMissingBody => {
                             state.omit_transaction_from_next_body = true;
                             json!({

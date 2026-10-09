@@ -3,7 +3,9 @@ import { describe, expect, it } from "bun:test";
 import { productAccountAddress } from "./product-account.js";
 import { wasmIsBuilt } from "./require-wasm.js";
 
-const suite = wasmIsBuilt("testing/truapi_server.js") ? describe : describe.skip;
+const suite = wasmIsBuilt("testing/truapi_server.js")
+  ? describe
+  : describe.skip;
 
 suite("the address a product account will be given", () => {
   // Captured from the running products: `product-sdk`'s contracts-demo and
@@ -80,4 +82,3 @@ describe("the index a derivation will accept", () => {
     expect(checkDerivationIndex(0xff_ff_ff_ff)).toBe(0xff_ff_ff_ff);
   });
 });
-

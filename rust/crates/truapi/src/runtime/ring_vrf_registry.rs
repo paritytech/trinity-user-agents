@@ -285,13 +285,15 @@ impl RingVrfRegistryStore {
             .await
             .map_err(storage_error)?
         {
-            Some(blob) => match decode_snapshot(&blob) {
-                Ok(snapshot) => snapshot,
-                Err(error) => {
-                    let _ = self.platform.clear_core_storage(key).await;
-                    return Err(error);
+            Some(blob) => {
+                match decode_snapshot(&blob) {
+                    Ok(snapshot) => snapshot,
+                    Err(error) => {
+                        let _ = self.platform.clear_core_storage(key).await;
+                        return Err(error);
+                    }
                 }
-            },
+            }
             None => RegistrySnapshot::default(),
         };
         self.cache
@@ -324,8 +326,10 @@ impl RingVrfRegistryStore {
 
 fn decode_snapshot(blob: &[u8]) -> Result<RegistrySnapshot, RingVrfError> {
     let mut input = blob;
-    let snapshot = RegistrySnapshot::decode(&mut input).map_err(|error| RingVrfError::Unknown {
-        reason: format!("invalid persisted ring-VRF registry: {error}"),
+    let snapshot = RegistrySnapshot::decode(&mut input).map_err(|error| {
+        RingVrfError::Unknown {
+            reason: format!("invalid persisted ring-VRF registry: {error}"),
+        }
     })?;
     if !input.is_empty() {
         return Err(RingVrfError::Unknown {

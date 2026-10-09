@@ -20,11 +20,19 @@ function statement(topics: string[]): string {
   return encodeStatement({ topics });
 }
 
-function subscribe(store: ReturnType<typeof createLoopbackStatements>, filter: unknown) {
+function subscribe(
+  store: ReturnType<typeof createLoopbackStatements>,
+  filter: unknown,
+) {
   const frames: string[] = [];
   const respond = (frame: string) => frames.push(frame);
   store.handle(
-    JSON.stringify({ jsonrpc: "2.0", id: "s1", method: "statement_subscribeStatement", params: [filter] }),
+    JSON.stringify({
+      jsonrpc: "2.0",
+      id: "s1",
+      method: "statement_subscribeStatement",
+      params: [filter],
+    }),
     respond,
   );
   return { frames, respond };
@@ -39,7 +47,12 @@ describe("the in-page statement store", () => {
     const store = createLoopbackStatements();
     const replies: string[] = [];
     const handled = store.handle(
-      JSON.stringify({ jsonrpc: "2.0", id: 1, method: "statement_submit", params: [statement([])] }),
+      JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "statement_submit",
+        params: [statement([])],
+      }),
       (f) => replies.push(f),
     );
     expect(handled).toBe(true);
@@ -52,7 +65,11 @@ describe("the in-page statement store", () => {
     const store = createLoopbackStatements();
     const { frames, respond } = subscribe(store, { matchAll: [TOPIC_A] });
     store.handle(
-      JSON.stringify({ id: 2, method: "statement_submit", params: [statement([TOPIC_A])] }),
+      JSON.stringify({
+        id: 2,
+        method: "statement_submit",
+        params: [statement([TOPIC_A])],
+      }),
       respond,
     );
     expect(delivered(frames)).toBe(1);
@@ -63,7 +80,11 @@ describe("the in-page statement store", () => {
     const store = createLoopbackStatements();
     const { frames, respond } = subscribe(store, { matchAll: [TOPIC_B] });
     store.handle(
-      JSON.stringify({ id: 3, method: "statement_submit", params: [statement([TOPIC_A])] }),
+      JSON.stringify({
+        id: 3,
+        method: "statement_submit",
+        params: [statement([TOPIC_A])],
+      }),
       respond,
     );
     expect(delivered(frames)).toBe(0);
@@ -74,7 +95,11 @@ describe("the in-page statement store", () => {
     const any = subscribe(store, { matchAny: [TOPIC_A, TOPIC_B] });
     const all = subscribe(store, { matchAll: [TOPIC_A, TOPIC_B] });
     store.handle(
-      JSON.stringify({ id: 4, method: "statement_submit", params: [statement([TOPIC_A])] }),
+      JSON.stringify({
+        id: 4,
+        method: "statement_submit",
+        params: [statement([TOPIC_A])],
+      }),
       any.respond,
     );
     expect(delivered(any.frames)).toBe(1);
@@ -86,11 +111,19 @@ describe("the in-page statement store", () => {
     const { frames, respond } = subscribe(store, { matchAll: [] });
     const id = JSON.parse(frames[0]!).result as string;
     store.handle(
-      JSON.stringify({ id: 5, method: "statement_unsubscribeStatement", params: [id] }),
+      JSON.stringify({
+        id: 5,
+        method: "statement_unsubscribeStatement",
+        params: [id],
+      }),
       respond,
     );
     store.handle(
-      JSON.stringify({ id: 6, method: "statement_submit", params: [statement([TOPIC_A])] }),
+      JSON.stringify({
+        id: 6,
+        method: "statement_submit",
+        params: [statement([TOPIC_A])],
+      }),
       respond,
     );
     expect(delivered(frames)).toBe(0);

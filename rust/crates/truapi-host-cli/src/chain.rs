@@ -177,14 +177,16 @@ impl JsonRpcConnection for WsJsonRpcConnection {
             .take()
             .unwrap_or_else(|| self.inbound.subscribe());
         BroadcastStream::new(receiver)
-            .filter_map(|item| async move {
-                match item {
-                    Ok(response) => Some(response),
-                    Err(tokio_stream::wrappers::errors::BroadcastStreamRecvError::Lagged(
-                        dropped,
-                    )) => {
-                        warn!(dropped, "chain response subscriber lagged");
-                        None
+            .filter_map(|item| {
+                async move {
+                    match item {
+                        Ok(response) => Some(response),
+                        Err(tokio_stream::wrappers::errors::BroadcastStreamRecvError::Lagged(
+                            dropped,
+                        )) => {
+                            warn!(dropped, "chain response subscriber lagged");
+                            None
+                        }
                     }
                 }
             })

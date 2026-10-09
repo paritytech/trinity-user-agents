@@ -171,8 +171,10 @@ pub enum ProductRuntimeError {
 }
 
 fn product_context(product_id: &str) -> Result<ProductContext, v01::GenericError> {
-    ProductContext::new(product_id.to_string()).map_err(|err| v01::GenericError {
-        reason: err.to_string(),
+    ProductContext::new(product_id.to_string()).map_err(|err| {
+        v01::GenericError {
+            reason: err.to_string(),
+        }
     })
 }
 
@@ -455,9 +457,11 @@ impl PairingHostRuntime {
         let product = product_context(product_id)?;
         match self.pairing_host.request_login(&product).await {
             Ok(truapi::versioned::account::HostRequestLoginResponse::V1(response)) => Ok(response),
-            Err(error) => Err(v01::GenericError {
-                reason: pairing_login_error_reason(error),
-            }),
+            Err(error) => {
+                Err(v01::GenericError {
+                    reason: pairing_login_error_reason(error),
+                })
+            }
         }
     }
 
@@ -613,8 +617,10 @@ impl SigningHostRuntime {
     ) -> Result<Option<[u8; 32]>, v01::GenericError> {
         self.signing_host
             .derive_subtree_public_key(product_id)
-            .map_err(|err| v01::GenericError {
-                reason: err.to_string(),
+            .map_err(|err| {
+                v01::GenericError {
+                    reason: err.to_string(),
+                }
             })
     }
 
@@ -860,8 +866,10 @@ impl SigningHostRuntime {
     pub async fn clear_product_state(&self, product_id: &str) -> Result<(), v01::GenericError> {
         self.signing_host
             .clear_product_state(product_id)
-            .map_err(|error| v01::GenericError {
-                reason: error.to_string(),
+            .map_err(|error| {
+                v01::GenericError {
+                    reason: error.to_string(),
+                }
             })
     }
 
@@ -906,8 +914,10 @@ impl SigningHostRuntime {
         self.signing_host
             .activate_local_session(secret)
             .await
-            .map_err(|err| v01::GenericError {
-                reason: err.to_string(),
+            .map_err(|err| {
+                v01::GenericError {
+                    reason: err.to_string(),
+                }
             })
     }
 
@@ -922,8 +932,10 @@ impl SigningHostRuntime {
         self.signing_host
             .activate_local_session_with_identity(secret, lite_username)
             .await
-            .map_err(|err| v01::GenericError {
-                reason: err.to_string(),
+            .map_err(|err| {
+                v01::GenericError {
+                    reason: err.to_string(),
+                }
             })
     }
 
@@ -1017,15 +1029,14 @@ impl SigningHostRuntime {
     /// even while that request is still being answered by another call, and a
     /// withdrawn request is answered `Ignored`.
     #[instrument(skip_all, fields(runtime.method = "signing_host_runtime.answer_sso_request"))]
-    pub async fn answer_sso_request(
-        &self,
-        message: RemoteMessage,
-    ) -> SsoRequestOutcome {
+    pub async fn answer_sso_request(&self, message: RemoteMessage) -> SsoRequestOutcome {
         let service = SigningHostSsoService::new(self.signing_host.clone());
         match service.answer(message).await {
-            Dispatch::Response(answer) => SsoRequestOutcome::Response {
-                message: answer.message.encode(),
-            },
+            Dispatch::Response(answer) => {
+                SsoRequestOutcome::Response {
+                    message: answer.message.encode(),
+                }
+            }
             Dispatch::Disconnected => SsoRequestOutcome::Disconnected,
             Dispatch::NotARequest(_) | Dispatch::Withdraw(_) | Dispatch::Withdrawn => {
                 SsoRequestOutcome::Ignored
@@ -1350,10 +1361,11 @@ async fn product_subtree_public_key(
     product_id: &str,
     timeout_ms: Option<u32>,
 ) -> Result<Option<[u8; 32]>, v01::GenericError> {
-    let product_id =
-        normalize_product_identifier(product_id).map_err(|reason| v01::GenericError {
+    let product_id = normalize_product_identifier(product_id).map_err(|reason| {
+        v01::GenericError {
             reason: reason.to_string(),
-        })?;
+        }
+    })?;
     let Some(session) = authority.current_session() else {
         return Ok(None);
     };
@@ -1467,20 +1479,22 @@ impl ProductRuntimeControl {
         // unpolled still releases it. An interrupt ends the stream by contract
         // and is not polled past, so it releases there rather than waiting for
         // the caller to drop the handle.
-        let stream = futures::stream::unfold(
-            (stream, Some(reference)),
-            |(mut stream, reference)| async move {
-                match stream.next().await? {
-                    Ok(truapi::versioned::renderer::ProductRendererRenderItem::V1(node)) => {
-                        Some((Ok(node), (stream, reference)))
+        let stream =
+            futures::stream::unfold((stream, Some(reference)), |(mut stream, reference)| {
+                async move {
+                    match stream.next().await? {
+                        Ok(truapi::versioned::renderer::ProductRendererRenderItem::V1(node)) => {
+                            Some((Ok(node), (stream, reference)))
+                        }
+                        Err(interrupt) => {
+                            Some((
+                                Err(crate::interrupt::interrupt_into_latest(interrupt)),
+                                (stream, None),
+                            ))
+                        }
                     }
-                    Err(interrupt) => Some((
-                        Err(crate::interrupt::interrupt_into_latest(interrupt)),
-                        (stream, None),
-                    )),
                 }
-            },
-        );
+            });
         Ok(truapi::Subscription::new(stream))
     }
 }
@@ -2178,9 +2192,11 @@ mod tests {
                 ),
                 (
                     [true, true, false, false, true, false, false]
-                        .map(|granted| permissions::RemotePermissionResponse::V1(
-                            RemotePermissionResponse { granted }
-                        ))
+                        .map(|granted| {
+                            permissions::RemotePermissionResponse::V1(RemotePermissionResponse {
+                                granted,
+                            })
+                        })
                         .to_vec(),
                     vec![
                         network_permission(&["example.com"]),
@@ -2315,11 +2331,12 @@ mod tests {
                     channel_id,
                     dir,
                     bytes,
-                } => self
-                    .events
-                    .lock()
-                    .expect("debug events mutex poisoned")
-                    .push((channel_id, dir, bytes)),
+                } => {
+                    self.events
+                        .lock()
+                        .expect("debug events mutex poisoned")
+                        .push((channel_id, dir, bytes))
+                }
             }
         }
     }
@@ -3546,9 +3563,9 @@ mod tests {
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn the_core_database_is_installed_once_and_reports_when_missing() {
+        use crate::platform::{HostInfo, PlatformInfo, SigningHostConfig};
         use crate::store::{Db, DbConfig, DbError, DbLocation};
         use futures::executor::block_on;
-        use crate::platform::{HostInfo, PlatformInfo, SigningHostConfig};
 
         let config = SigningHostConfig::new(
             HostInfo {
@@ -3581,7 +3598,10 @@ mod tests {
         assert!(runtime.set_core_db(installed));
         assert!(!runtime.set_core_db(other));
 
-        let db = runtime.services.core_db().expect("installed database is served");
+        let db = runtime
+            .services
+            .core_db()
+            .expect("installed database is served");
         let answer: i64 =
             block_on(db.write(|tx| Ok(tx.query_row("SELECT 42", [], |row| row.get(0))?)))
                 .expect("installed database serves writes");

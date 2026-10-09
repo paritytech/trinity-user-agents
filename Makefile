@@ -339,11 +339,11 @@ test: check-generated ## Run Rust + TypeScript client tests.
 check: check-generated ## Full verification suite (build, fmt, clippy, test, TS tests, playground build + lint).
 	cargo build --workspace
 	cargo check --target wasm32-unknown-unknown -p truapi
-	cargo +$(NIGHTLY_TOOLCHAIN) fmt --check
+	./scripts/format-rust.sh --check
 	cargo clippy --workspace --all-targets --all-features -- -D warnings
 	cargo test --workspace --all-features --all-targets
 	cd $(TRUAPI_PKG) && npm run build && npm test
-	cd $(HOST_WASM_PKG) && npm install --no-fund --no-audit && npm run build && npm test
+	cd $(HOST_WASM_PKG) && npm install --no-fund --no-audit && npm run format:check && npm run build && npm test
 	cd $(PLAYGROUND) && yarn build && yarn lint && yarn test:unit
 
 clean: ## Remove local build/test artifacts without deleting dependencies.

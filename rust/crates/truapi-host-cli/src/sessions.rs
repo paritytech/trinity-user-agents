@@ -348,9 +348,11 @@ impl SessionCatalog {
         Ok(match provisioned.len() {
             0 => CurrentSession::Fresh,
             1 => CurrentSession::Recovered(provisioned.remove(0)),
-            _ => CurrentSession::Ambiguous {
-                candidates: provisioned,
-            },
+            _ => {
+                CurrentSession::Ambiguous {
+                    candidates: provisioned,
+                }
+            }
         })
     }
 
@@ -402,10 +404,12 @@ impl SessionCatalog {
             }
             [] => Ok(name.to_string()),
             [candidate] => Ok(candidate.clone()),
-            _ => bail!(
-                "sessions {} have the same creation time; select an exact session name",
-                latest.join(", ")
-            ),
+            _ => {
+                bail!(
+                    "sessions {} have the same creation time; select an exact session name",
+                    latest.join(", ")
+                )
+            }
         }
     }
 

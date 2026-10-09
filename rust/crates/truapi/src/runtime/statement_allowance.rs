@@ -632,67 +632,69 @@ pub async fn register_statement_account(
     loop {
         let seq = match preselected.take() {
             Some(preselected) => preselected.seq(),
-            None => match slot::scan_slot_excluding(
-                rpc,
-                metadata,
-                slot::SlotScan {
-                    collection,
-                    entropy,
-                    network_suffix: params.network_suffix,
-                    period: params.period,
-                    target: params.target,
-                    excluded: &skipped_duplicate_slots,
-                    reuse_existing: params.reuse_existing,
-                },
-            )
-            .await?
-            {
-                SlotSelection::AlreadyAllocated(seq) => {
-                    return Ok(RegistrationOutcome::AlreadyAllocated { seq, collection });
-                }
-                SlotSelection::Free(seq) => seq,
-                SlotSelection::FreeSlotsExcluded => {
-                    // A free slot exists; it is only held back by one of this
-                    // call's own in-flight submissions. Evicting a live slot
-                    // instead would revoke an allowance for no reason.
-                    return Err(SlotError::FreeSlotsAwaitingSubmission {
+            None => {
+                match slot::scan_slot_excluding(
+                    rpc,
+                    metadata,
+                    slot::SlotScan {
+                        collection,
+                        entropy,
+                        network_suffix: params.network_suffix,
                         period: params.period,
+                        target: params.target,
+                        excluded: &skipped_duplicate_slots,
+                        reuse_existing: params.reuse_existing,
+                    },
+                )
+                .await?
+                {
+                    SlotSelection::AlreadyAllocated(seq) => {
+                        return Ok(RegistrationOutcome::AlreadyAllocated { seq, collection });
                     }
-                    .into());
-                }
-                SlotSelection::Full { max, occupied } => {
-                    if took_over_a_slot {
-                        return Err(SlotError::NoFreeStatementStoreSlot {
+                    SlotSelection::Free(seq) => seq,
+                    SlotSelection::FreeSlotsExcluded => {
+                        // A free slot exists; it is only held back by one of this
+                        // call's own in-flight submissions. Evicting a live slot
+                        // instead would revoke an allowance for no reason.
+                        return Err(SlotError::FreeSlotsAwaitingSubmission {
                             period: params.period,
-                            max,
                         }
                         .into());
                     }
-                    // Nothing free: replace the oldest slot the runtime will
-                    // let us take, and only then give up.
-                    let cooldown = slot::replacement_cooldown(rpc, metadata).await?;
-                    let chain_now = slot::read_chain_now_seconds(rpc).await?;
-                    match slot::replaceable_slot(
-                        &occupied,
-                        params.target,
-                        chain_now,
-                        cooldown,
-                        params.protected,
-                    ) {
-                        Some(seq) => {
-                            took_over_a_slot = true;
-                            seq
-                        }
-                        None => {
+                    SlotSelection::Full { max, occupied } => {
+                        if took_over_a_slot {
                             return Err(SlotError::NoFreeStatementStoreSlot {
                                 period: params.period,
                                 max,
                             }
                             .into());
                         }
+                        // Nothing free: replace the oldest slot the runtime will
+                        // let us take, and only then give up.
+                        let cooldown = slot::replacement_cooldown(rpc, metadata).await?;
+                        let chain_now = slot::read_chain_now_seconds(rpc).await?;
+                        match slot::replaceable_slot(
+                            &occupied,
+                            params.target,
+                            chain_now,
+                            cooldown,
+                            params.protected,
+                        ) {
+                            Some(seq) => {
+                                took_over_a_slot = true;
+                                seq
+                            }
+                            None => {
+                                return Err(SlotError::NoFreeStatementStoreSlot {
+                                    period: params.period,
+                                    max,
+                                }
+                                .into());
+                            }
+                        }
                     }
                 }
-            },
+            }
         };
 
         let context = slot::derive_slot_context(params.network_suffix, params.period, seq);
@@ -804,22 +806,24 @@ pub async fn scan_collections(
     });
     // Read concurrently, then settled in candidate order, so a lite member does
     // not wait on the empty People row before its own is read.
-    let selections = futures::future::join_all(supported.map(|candidate| async move {
-        let selection = slot::scan_slot_excluding(
-            rpc,
-            metadata,
-            slot::SlotScan {
-                collection: candidate.collection,
-                entropy: candidate.entropy,
-                network_suffix,
-                period,
-                target,
-                excluded: &[],
-                reuse_existing,
-            },
-        )
-        .await;
-        (candidate, selection)
+    let selections = futures::future::join_all(supported.map(|candidate| {
+        async move {
+            let selection = slot::scan_slot_excluding(
+                rpc,
+                metadata,
+                slot::SlotScan {
+                    collection: candidate.collection,
+                    entropy: candidate.entropy,
+                    network_suffix,
+                    period,
+                    target,
+                    excluded: &[],
+                    reuse_existing,
+                },
+            )
+            .await;
+            (candidate, selection)
+        }
     }))
     .await;
     let mut scans = Vec::new();
@@ -851,9 +855,11 @@ pub async fn scan_collections(
 /// cannot currently prove: the allowance is live regardless of whether a fresh
 /// proof could be built, so a second slot must not be claimed for the same target.
 pub fn allocated_in(scans: &[CollectionScan]) -> Option<(PersonhoodCollection, u32)> {
-    scans.iter().find_map(|scan| match scan.selection {
-        SlotSelection::AlreadyAllocated(seq) => Some((scan.collection, seq)),
-        _ => None,
+    scans.iter().find_map(|scan| {
+        match scan.selection {
+            SlotSelection::AlreadyAllocated(seq) => Some((scan.collection, seq)),
+            _ => None,
+        }
     })
 }
 
@@ -961,9 +967,11 @@ pub async fn register_statement_account_pooled(
         return Err(SlotError::NoCollectionMembership.into());
     }
 
-    let exhausted = || SlotError::NoFreeStatementStoreSlot {
-        period: params.period,
-        max: budget,
+    let exhausted = || {
+        SlotError::NoFreeStatementStoreSlot {
+            period: params.period,
+            max: budget,
+        }
     };
 
     let (index, choice) = match free {
@@ -1025,14 +1033,16 @@ pub async fn register_statement_account_pooled(
         },
     )
     .await
-    .map_err(|err| match err {
-        // The retry rescans one collection, so its own exhaustion names that
-        // collection's share. Restate it as the device's pooled budget so the
-        // same error never means two different things to a caller.
-        StatementAllowanceError::Slot(SlotError::NoFreeStatementStoreSlot { .. }) => {
-            exhausted().into()
+    .map_err(|err| {
+        match err {
+            // The retry rescans one collection, so its own exhaustion names that
+            // collection's share. Restate it as the device's pooled budget so the
+            // same error never means two different things to a caller.
+            StatementAllowanceError::Slot(SlotError::NoFreeStatementStoreSlot { .. }) => {
+                exhausted().into()
+            }
+            other => other,
         }
-        other => other,
     })
 }
 
@@ -1200,36 +1210,42 @@ fn decode_bulletin_allowance(
     fetched_at: u32,
 ) -> Result<BulletinAllowanceInfo, StatementAllowanceError> {
     let mut input = bytes;
-    let transactions =
-        u32::decode(&mut input).map_err(|err| ChainStateError::AuthorizationFieldDecode {
+    let transactions = u32::decode(&mut input).map_err(|err| {
+        ChainStateError::AuthorizationFieldDecode {
             field: "transactions",
             source: err,
-        })?;
-    let transactions_allowance =
-        u32::decode(&mut input).map_err(|err| ChainStateError::AuthorizationFieldDecode {
+        }
+    })?;
+    let transactions_allowance = u32::decode(&mut input).map_err(|err| {
+        ChainStateError::AuthorizationFieldDecode {
             field: "transactions_allowance",
             source: err,
-        })?;
-    let bytes_used =
-        u64::decode(&mut input).map_err(|err| ChainStateError::AuthorizationFieldDecode {
+        }
+    })?;
+    let bytes_used = u64::decode(&mut input).map_err(|err| {
+        ChainStateError::AuthorizationFieldDecode {
             field: "bytes",
             source: err,
-        })?;
-    let _bytes_permanent =
-        u64::decode(&mut input).map_err(|err| ChainStateError::AuthorizationFieldDecode {
+        }
+    })?;
+    let _bytes_permanent = u64::decode(&mut input).map_err(|err| {
+        ChainStateError::AuthorizationFieldDecode {
             field: "bytes_permanent",
             source: err,
-        })?;
-    let bytes_allowance =
-        u64::decode(&mut input).map_err(|err| ChainStateError::AuthorizationFieldDecode {
+        }
+    })?;
+    let bytes_allowance = u64::decode(&mut input).map_err(|err| {
+        ChainStateError::AuthorizationFieldDecode {
             field: "bytes_allowance",
             source: err,
-        })?;
-    let expires_in =
-        u32::decode(&mut input).map_err(|err| ChainStateError::AuthorizationFieldDecode {
+        }
+    })?;
+    let expires_in = u32::decode(&mut input).map_err(|err| {
+        ChainStateError::AuthorizationFieldDecode {
             field: "expiration",
             source: err,
-        })?;
+        }
+    })?;
     Ok(BulletinAllowanceInfo {
         remained_size: bytes_allowance.saturating_sub(bytes_used),
         remained_transactions: transactions_allowance.saturating_sub(transactions),
@@ -1722,9 +1738,11 @@ mod tests {
 
     /// Candidates matching [`pooled_memberships`], for the scan pass.
     fn pooled_candidates() -> [CollectionCandidate; 2] {
-        pooled_memberships().map(|membership| CollectionCandidate {
-            collection: membership.collection(),
-            entropy: membership.entropy,
+        pooled_memberships().map(|membership| {
+            CollectionCandidate {
+                collection: membership.collection(),
+                entropy: membership.entropy,
+            }
         })
     }
 
@@ -2097,9 +2115,11 @@ mod tests {
     #[test]
     fn a_broken_people_collection_does_not_discard_a_lite_people_membership() {
         let metadata = test_fixtures::people();
-        let candidates = pooled_memberships().map(|membership| CollectionCandidate {
-            collection: membership.collection(),
-            entropy: membership.entropy,
+        let candidates = pooled_memberships().map(|membership| {
+            CollectionCandidate {
+                collection: membership.collection(),
+                entropy: membership.entropy,
+            }
         });
         let lite_entropy = candidates[1].entropy;
         let page = format!(
@@ -2143,9 +2163,11 @@ mod tests {
     #[test]
     fn every_collection_failing_is_reported_as_an_error() {
         let metadata = test_fixtures::people();
-        let candidates = pooled_memberships().map(|membership| CollectionCandidate {
-            collection: membership.collection(),
-            entropy: membership.entropy,
+        let candidates = pooled_memberships().map(|membership| {
+            CollectionCandidate {
+                collection: membership.collection(),
+                entropy: membership.entropy,
+            }
         });
 
         let responses = [
@@ -2250,9 +2272,16 @@ mod tests {
 
         let null = || "null".to_string();
         // People: an undecodable storage value fails this collection's scan.
-        let people = std::iter::once(r#""zz""#.to_string()).chain(std::iter::repeat_with(null).take(19));
+        let people =
+            std::iter::once(r#""zz""#.to_string()).chain(std::iter::repeat_with(null).take(19));
         // LitePeople: the target holds seq 3.
-        let lite = (0..10).map(|seq| if seq == 3 { occupied(target, 4_000) } else { null() });
+        let lite = (0..10).map(|seq| {
+            if seq == 3 {
+                occupied(target, 4_000)
+            } else {
+                null()
+            }
+        });
         let responses: Vec<String> = people.chain(lite).collect();
         let scripted = ScriptedRpc::new(responses.iter().map(String::as_str).collect::<Vec<_>>());
         let rpc = RpcClient::new(HostRpcClient::new(scripted));
@@ -2279,13 +2308,17 @@ mod tests {
         scripted
             .calls()
             .iter()
-            .map(|(method, params)| match method.as_str() {
-                "state_getStorage" => 1,
-                "state_queryStorageAt" => serde_json::from_str::<serde_json::Value>(params)
-                    .expect("batched read params are JSON")[0]
-                    .as_array()
-                    .map_or(0, Vec::len),
-                _ => 0,
+            .map(|(method, params)| {
+                match method.as_str() {
+                    "state_getStorage" => 1,
+                    "state_queryStorageAt" => {
+                        serde_json::from_str::<serde_json::Value>(params)
+                            .expect("batched read params are JSON")[0]
+                            .as_array()
+                            .map_or(0, Vec::len)
+                    }
+                    _ => 0,
+                }
             })
             .sum()
     }

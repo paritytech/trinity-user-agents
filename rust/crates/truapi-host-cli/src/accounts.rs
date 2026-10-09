@@ -206,10 +206,12 @@ impl AccountStore {
             Ok(text) => {
                 serde_json::from_str(&text).with_context(|| format!("decode {}", path.display()))?
             }
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => AccountStoreData {
-                version: 1,
-                accounts: Vec::new(),
-            },
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+                AccountStoreData {
+                    version: 1,
+                    accounts: Vec::new(),
+                }
+            }
             Err(err) => return Err(err).with_context(|| format!("read {}", path.display())),
         };
         Ok(Self { path, data })
@@ -428,14 +430,16 @@ pub async fn inspect_imported_signer(
         })?;
     let username = match username {
         Some(username) => Some(username),
-        None => attestation::lookup_backend_username(network, &identity.entropy, &identity.address)
-            .await
-            .with_context(|| {
-                format!(
-                    "reverse-resolve the mnemonic's assigned identity-backend username on {}",
-                    network.id
-                )
-            })?,
+        None => {
+            attestation::lookup_backend_username(network, &identity.entropy, &identity.address)
+                .await
+                .with_context(|| {
+                    format!(
+                        "reverse-resolve the mnemonic's assigned identity-backend username on {}",
+                        network.id
+                    )
+                })?
+        }
     };
     wait_for_ring_membership(network, &identity.entropy)
         .await

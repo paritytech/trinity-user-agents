@@ -63,14 +63,18 @@ impl ResponseOutcome {
     /// Classify a plain payload: `ok`, or `error` with the failure's reason.
     pub fn from_payload<T, E: Display>(payload: &Result<T, E>) -> Self {
         match payload {
-            Ok(_) => Self {
-                outcome: "ok",
-                reason: None,
-            },
-            Err(err) => Self {
-                outcome: "error",
-                reason: Some(err.to_string()),
-            },
+            Ok(_) => {
+                Self {
+                    outcome: "ok",
+                    reason: None,
+                }
+            }
+            Err(err) => {
+                Self {
+                    outcome: "error",
+                    reason: Some(err.to_string()),
+                }
+            }
         }
     }
 }

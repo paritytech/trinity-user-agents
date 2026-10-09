@@ -37,9 +37,11 @@ pub async fn connect(url: Url) -> Result<Box<dyn JsonRpcConnection>, ProviderErr
     let (sender, receiver) = WsTransportClientBuilder::default()
         .build(url.clone())
         .await
-        .map_err(|err| ProviderError::Handshake {
-            url: crate::error::redacted(&url),
-            reason: err.to_string(),
+        .map_err(|err| {
+            ProviderError::Handshake {
+                url: crate::error::redacted(&url),
+                reason: err.to_string(),
+            }
         })?;
 
     Ok(Box::new(WsConnection::start(sender, receiver)))
@@ -198,29 +200,33 @@ async fn writer_pump<S: TransportSenderT>(
 /// every [`KEEPALIVE_INTERVAL`], so a live peer produces at least a `Pong` well
 /// inside this window and only a dead one falls silent for the whole of it.
 fn response_stream<R: TransportReceiverT + Send>(receiver: R) -> impl Stream<Item = String> + Send {
-    stream::unfold(receiver, |mut receiver| async move {
-        loop {
-            let received = match tokio::time::timeout(READ_TIMEOUT, receiver.receive()).await {
-                Ok(received) => received,
-                Err(_elapsed) => {
-                    tracing::warn!(
-                        "no WebSocket traffic for {}s; treating the connection as dead",
-                        READ_TIMEOUT.as_secs()
-                    );
-                    return None;
-                }
-            };
-            match received {
-                Ok(ReceivedMessage::Text(text)) => return Some((text, receiver)),
-                Ok(ReceivedMessage::Bytes(bytes)) => match String::from_utf8(bytes) {
-                    Ok(text) => return Some((text, receiver)),
-                    Err(_) => tracing::warn!("dropping non-UTF-8 binary WebSocket frame"),
-                },
-                // Answers our keepalive: proof of life, nothing to forward.
-                Ok(ReceivedMessage::Pong) => {}
-                Err(err) => {
-                    tracing::debug!("WebSocket receive ended: {err}");
-                    return None;
+    stream::unfold(receiver, |mut receiver| {
+        async move {
+            loop {
+                let received = match tokio::time::timeout(READ_TIMEOUT, receiver.receive()).await {
+                    Ok(received) => received,
+                    Err(_elapsed) => {
+                        tracing::warn!(
+                            "no WebSocket traffic for {}s; treating the connection as dead",
+                            READ_TIMEOUT.as_secs()
+                        );
+                        return None;
+                    }
+                };
+                match received {
+                    Ok(ReceivedMessage::Text(text)) => return Some((text, receiver)),
+                    Ok(ReceivedMessage::Bytes(bytes)) => {
+                        match String::from_utf8(bytes) {
+                            Ok(text) => return Some((text, receiver)),
+                            Err(_) => tracing::warn!("dropping non-UTF-8 binary WebSocket frame"),
+                        }
+                    }
+                    // Answers our keepalive: proof of life, nothing to forward.
+                    Ok(ReceivedMessage::Pong) => {}
+                    Err(err) => {
+                        tracing::debug!("WebSocket receive ended: {err}");
+                        return None;
+                    }
                 }
             }
         }

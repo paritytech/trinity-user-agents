@@ -290,10 +290,12 @@ fn resolve_target(
                 account_id: pair.public.to_bytes(),
             })
         }
-        StatementRenewalTarget::Account { account_id, .. } => Ok(ResolvedRenewalTarget {
-            label,
-            account_id: *account_id,
-        }),
+        StatementRenewalTarget::Account { account_id, .. } => {
+            Ok(ResolvedRenewalTarget {
+                label,
+                account_id: *account_id,
+            })
+        }
     }
 }
 
@@ -356,15 +358,15 @@ fn resolve_targets(
 ) -> Vec<ResolvedRenewalTarget> {
     targets
         .iter()
-        .filter_map(
-            |target| match resolve_target(entropy, network_suffix, target) {
+        .filter_map(|target| {
+            match resolve_target(entropy, network_suffix, target) {
                 Ok(resolved) => Some(resolved),
                 Err(reason) => {
                     warn!(?target, %reason, "skipping an unresolvable renewal target");
                     None
                 }
-            },
-        )
+            }
+        })
         .collect()
 }
 

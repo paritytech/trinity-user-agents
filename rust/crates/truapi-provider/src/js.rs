@@ -337,15 +337,19 @@ impl ChainProviderHandle {
             )
             .await
             {
-                futures::future::Either::Left((Err(error), _)) => tracing::warn!(
-                    reason = %error,
-                    "storage unavailable, syncing from the chain-spec checkpoint"
-                ),
+                futures::future::Either::Left((Err(error), _)) => {
+                    tracing::warn!(
+                        reason = %error,
+                        "storage unavailable, syncing from the chain-spec checkpoint"
+                    )
+                }
                 futures::future::Either::Left((Ok(_), _)) => {}
-                futures::future::Either::Right(((), _)) => tracing::warn!(
-                    "storage did not answer in {}s, syncing from the chain-spec checkpoint",
-                    STORAGE_DEADLINE.as_secs()
-                ),
+                futures::future::Either::Right(((), _)) => {
+                    tracing::warn!(
+                        "storage did not answer in {}s, syncing from the chain-spec checkpoint",
+                        STORAGE_DEADLINE.as_secs()
+                    )
+                }
             }
         }
         let connection = self
@@ -562,13 +566,15 @@ fn lifecycle_to_js(state: crate::ChainLifecycle) -> JsValue {
     };
     let health = match state.health {
         ChainHealth::Ok => serde_json::json!({ "kind": "ok" }),
-        ChainHealth::Stalled { reason } => serde_json::json!({
-            "kind": "stalled",
-            "reason": match reason {
-                StallReason::NoPeers => "noPeers",
-                StallReason::NoProgress => "noProgress",
-            },
-        }),
+        ChainHealth::Stalled { reason } => {
+            serde_json::json!({
+                "kind": "stalled",
+                "reason": match reason {
+                    StallReason::NoPeers => "noPeers",
+                    StallReason::NoProgress => "noProgress",
+                },
+            })
+        }
     };
     let object = serde_json::json!({ "phase": phase, "peers": state.peers, "health": health });
     js_sys::JSON::parse(&object.to_string()).expect("serde_json emits valid JSON")

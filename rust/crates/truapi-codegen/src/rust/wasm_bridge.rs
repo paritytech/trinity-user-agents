@@ -295,10 +295,12 @@ fn emit_method(
         PlatformInner::Stream(item) => emit_stream_method(method, item, ctx, parse_fns),
         PlatformInner::Unit => emit_unit_method(method, ctx),
         PlatformInner::Plain(ok) => emit_plain_method(method, ok, ctx),
-        PlatformInner::TraitObject(_) => bail!(
-            "trait-object platform method `{}` must be handled manually",
-            method.name
-        ),
+        PlatformInner::TraitObject(_) => {
+            bail!(
+                "trait-object platform method `{}` must be handled manually",
+                method.name
+            )
+        }
     }
 }
 
@@ -524,11 +526,13 @@ fn rust_type(ty: &TypeRef, ctx: &BridgeCtx<'_>) -> Result<String> {
         TypeRef::Named { name, args } if name == "String" && args.is_empty() => {
             Ok("String".to_string())
         }
-        TypeRef::Named { name, args } if name == "Result" && args.len() == 2 => Ok(format!(
-            "Result<{}, {}>",
-            rust_type(&args[0], ctx)?,
-            rust_type(&args[1], ctx)?
-        )),
+        TypeRef::Named { name, args } if name == "Result" && args.len() == 2 => {
+            Ok(format!(
+                "Result<{}, {}>",
+                rust_type(&args[0], ctx)?,
+                rust_type(&args[1], ctx)?
+            ))
+        }
         TypeRef::Named { name, args } if ctx.api_types.contains_key(name.as_str()) => {
             if args.is_empty() {
                 Ok(format!("v01::{name}"))
@@ -549,14 +553,16 @@ fn rust_type(ty: &TypeRef, ctx: &BridgeCtx<'_>) -> Result<String> {
         TypeRef::Option(inner) => Ok(format!("Option<{}>", rust_type(inner, ctx)?)),
         TypeRef::Array(inner, len) => Ok(format!("[{}; {len}]", rust_type(inner, ctx)?)),
         TypeRef::Tuple(items) if items.is_empty() => Ok("()".to_string()),
-        TypeRef::Tuple(items) => Ok(format!(
-            "({})",
-            items
-                .iter()
-                .map(|item| rust_type(item, ctx))
-                .collect::<Result<Vec<_>>>()?
-                .join(", ")
-        )),
+        TypeRef::Tuple(items) => {
+            Ok(format!(
+                "({})",
+                items
+                    .iter()
+                    .map(|item| rust_type(item, ctx))
+                    .collect::<Result<Vec<_>>>()?
+                    .join(", ")
+            ))
+        }
         TypeRef::Generic(name) => Ok(name.clone()),
         TypeRef::Unit => Ok("()".to_string()),
     }
@@ -624,14 +630,18 @@ fn numeric_js_arg(name: &str, primitive: &str) -> Result<String> {
 fn subscription_payload(method: &PlatformMethod, ctx: &BridgeCtx<'_>) -> Result<String> {
     match method.params.as_slice() {
         [] => Ok("None".to_string()),
-        [param] => Ok(format!(
-            "Some({})",
-            js_arg_expr(&param.name, &param.type_ref, ctx)?
-        )),
-        _ => bail!(
-            "subscription `{}` has more than one payload parameter",
-            method.name
-        ),
+        [param] => {
+            Ok(format!(
+                "Some({})",
+                js_arg_expr(&param.name, &param.type_ref, ctx)?
+            ))
+        }
+        _ => {
+            bail!(
+                "subscription `{}` has more than one payload parameter",
+                method.name
+            )
+        }
     }
 }
 
@@ -732,9 +742,11 @@ fn validate_error_name<'a>(
     if !has_unknown_reason {
         let versioned_payloads = variants
             .iter()
-            .filter_map(|variant| match &variant.fields {
-                VariantFields::Unnamed(types) if types.len() == 1 => Some(&types[0]),
-                _ => None,
+            .filter_map(|variant| {
+                match &variant.fields {
+                    VariantFields::Unnamed(types) if types.len() == 1 => Some(&types[0]),
+                    _ => None,
+                }
             })
             .collect::<Vec<_>>();
         if !versioned_payloads.is_empty() && versioned_payloads.len() == variants.len() {

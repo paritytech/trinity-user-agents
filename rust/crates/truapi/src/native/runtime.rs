@@ -33,16 +33,16 @@ use super::config::{
     ProductExecutionConfig,
 };
 use super::errors::{HostRejection, NativeCoreDatabaseError};
-use super::executor::shared_native_executor;
 use super::events::NativeEventBus;
+use super::executor::shared_native_executor;
+#[cfg(doc)]
+use super::parse_pairing_deeplink;
 use super::platform::{
     CallbackPlatform, ChatCallbackPlatform, ContactsCallbackPlatform, GameCallbackPlatform,
     PocketCallbackPlatform,
 };
 #[cfg(doc)]
 use crate::WorkerTransition;
-#[cfg(doc)]
-use super::parse_pairing_deeplink;
 
 /// Process-owned native TrUAPI runtime shared by all executable connections.
 #[derive(uniffi::Object)]
@@ -107,8 +107,8 @@ impl NativeTrUApiHostRuntime {
                 secret,
                 runtime_config.local_session_lite_username,
             ))
-            .map_err(|err| NativeRuntimeConfigError::LocalSessionActivation {
-                reason: err.reason,
+            .map_err(|err| {
+                NativeRuntimeConfigError::LocalSessionActivation { reason: err.reason }
             })?;
         }
         Ok(Arc::new(Self {
@@ -720,8 +720,10 @@ impl NativeProductExecution {
                 truapi::versioned::permissions::RemotePermissionRequest::V1(request),
             )
             .await
-            .map_err(|error| HostRejection::Rejected {
-                reason: format!("{error:?}"),
+            .map_err(|error| {
+                HostRejection::Rejected {
+                    reason: format!("{error:?}"),
+                }
             })?;
         if self.closed.load(Ordering::Acquire) {
             return Err(HostRejection::Rejected {
@@ -1214,7 +1216,10 @@ mod tests {
             ),
         ));
 
-        assert!(reply.is_ok(), "the card's own host applied the request: {reply:?}");
+        assert!(
+            reply.is_ok(),
+            "the card's own host applied the request: {reply:?}"
+        );
         assert_eq!(
             *card_callbacks.face_requests.lock().expect("face requests"),
             [false]

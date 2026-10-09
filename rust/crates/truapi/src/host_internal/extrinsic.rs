@@ -56,9 +56,11 @@ where
 pub fn sr25519_secret_from_bytes(secret: &[u8; 64]) -> Result<SecretKey, String> {
     match SecretKey::from_bytes(secret) {
         Ok(secret) => Ok(secret),
-        Err(canonical_error) => SecretKey::from_ed25519_bytes(secret).map_err(|ed_error| {
-            format!("invalid sr25519 secret: canonical={canonical_error}; ed25519={ed_error}")
-        }),
+        Err(canonical_error) => {
+            SecretKey::from_ed25519_bytes(secret).map_err(|ed_error| {
+                format!("invalid sr25519 secret: canonical={canonical_error}; ed25519={ed_error}")
+            })
+        }
     }
 }
 
@@ -215,9 +217,11 @@ impl PreencodedExtensions<'_> {
         self.supplied
             .iter()
             .find(|extension| extension.id == name)
-            .ok_or_else(|| TransactionExtensionsError::Other {
-                extension_name: name.to_string(),
-                error: "the caller supplied no bytes for this transaction extension".into(),
+            .ok_or_else(|| {
+                TransactionExtensionsError::Other {
+                    extension_name: name.to_string(),
+                    error: "the caller supplied no bytes for this transaction extension".into(),
+                }
             })
     }
 
@@ -261,9 +265,11 @@ where
         if let Some(verify_signature) = self.host_verify_signature::<R>(name) {
             return verify_signature
                 .encode_value_to(type_id, type_resolver, out)
-                .map_err(|error| TransactionExtensionsError::Other {
-                    extension_name: name.to_string(),
-                    error,
+                .map_err(|error| {
+                    TransactionExtensionsError::Other {
+                        extension_name: name.to_string(),
+                        error,
+                    }
                 });
         }
         out.extend_from_slice(&self.supplied(name)?.extra);
@@ -280,9 +286,11 @@ where
         if let Some(verify_signature) = self.host_verify_signature::<R>(name) {
             return verify_signature
                 .encode_implicit_to(type_id, type_resolver, out)
-                .map_err(|error| TransactionExtensionsError::Other {
-                    extension_name: name.to_string(),
-                    error,
+                .map_err(|error| {
+                    TransactionExtensionsError::Other {
+                        extension_name: name.to_string(),
+                        error,
+                    }
                 });
         }
         out.extend_from_slice(&self.supplied(name)?.additional_signed);
@@ -532,12 +540,14 @@ pub fn build_signed_extrinsic_v5(
         .find(|declared| declared.name == verify_multi_signature);
     match (supplied_verify_signature, declared_verify_signature) {
         // The caller owns the authorization slot, so its bytes must fit.
-        (Some(supplied), Some(declared)) => traverse_exactly(
-            &supplied.extra,
-            declared.id,
-            metadata.types(),
-            verify_multi_signature,
-        )?,
+        (Some(supplied), Some(declared)) => {
+            traverse_exactly(
+                &supplied.extra,
+                declared.id,
+                metadata.types(),
+                verify_multi_signature,
+            )?
+        }
         // Declining to sign is the caller's whole intent, but the version being
         // encoded has no slot to put their bytes in. Silently dropping the one
         // extension that authorizes the transaction is not a safe default.
@@ -723,16 +733,18 @@ pub mod tests {
     /// fixture: `Core_version` (spec 1) and the metadata calls.
     pub fn bulletin_runtime_call(method: &str) -> Option<Vec<u8>> {
         Some(match method {
-            "Core_version" => (
-                "bulletin",
-                "bulletin",
-                1u32,
-                1u32,
-                1u32,
-                Vec::<([u8; 8], u32)>::new(),
-                1u32,
-            )
-                .encode(),
+            "Core_version" => {
+                (
+                    "bulletin",
+                    "bulletin",
+                    1u32,
+                    1u32,
+                    1u32,
+                    Vec::<([u8; 8], u32)>::new(),
+                    1u32,
+                )
+                    .encode()
+            }
             "Metadata_metadata_versions" => vec![14u32].encode(),
             "Metadata_metadata_at_version" => {
                 let mut output = vec![1];
@@ -784,12 +796,14 @@ pub mod tests {
     fn default_value(types: &PortableRegistry, type_id: u32) -> ScaleValue {
         let ty = types.resolve(type_id).expect("metadata type exists");
         match &ty.type_def {
-            TypeDef::Composite(composite) => ScaleValue::unnamed_composite(
-                composite
-                    .fields
-                    .iter()
-                    .map(|field| default_value(types, field.ty.id)),
-            ),
+            TypeDef::Composite(composite) => {
+                ScaleValue::unnamed_composite(
+                    composite
+                        .fields
+                        .iter()
+                        .map(|field| default_value(types, field.ty.id)),
+                )
+            }
             TypeDef::Variant(variants) => {
                 let variant = variants.variants.first().expect("variant exists");
                 ScaleValue::unnamed_variant(
@@ -801,32 +815,38 @@ pub mod tests {
                 )
             }
             TypeDef::Sequence(_) => ScaleValue::unnamed_composite([]),
-            TypeDef::Array(array) => ScaleValue::unnamed_composite(
-                (0..array.len).map(|_| default_value(types, array.type_param.id)),
-            ),
-            TypeDef::Tuple(tuple) => ScaleValue::unnamed_composite(
-                tuple
-                    .fields
-                    .iter()
-                    .map(|field| default_value(types, field.id)),
-            ),
-            TypeDef::Primitive(primitive) => match primitive {
-                TypeDefPrimitive::Bool => ScaleValue::bool(false),
-                TypeDefPrimitive::Char => ScaleValue::char('\0'),
-                TypeDefPrimitive::Str => ScaleValue::string(""),
-                TypeDefPrimitive::U8
-                | TypeDefPrimitive::U16
-                | TypeDefPrimitive::U32
-                | TypeDefPrimitive::U64
-                | TypeDefPrimitive::U128 => ScaleValue::u128(0),
-                TypeDefPrimitive::U256 => ScaleValue::primitive(Primitive::U256([0; 32])),
-                TypeDefPrimitive::I8
-                | TypeDefPrimitive::I16
-                | TypeDefPrimitive::I32
-                | TypeDefPrimitive::I64
-                | TypeDefPrimitive::I128 => ScaleValue::i128(0),
-                TypeDefPrimitive::I256 => ScaleValue::primitive(Primitive::I256([0; 32])),
-            },
+            TypeDef::Array(array) => {
+                ScaleValue::unnamed_composite(
+                    (0..array.len).map(|_| default_value(types, array.type_param.id)),
+                )
+            }
+            TypeDef::Tuple(tuple) => {
+                ScaleValue::unnamed_composite(
+                    tuple
+                        .fields
+                        .iter()
+                        .map(|field| default_value(types, field.id)),
+                )
+            }
+            TypeDef::Primitive(primitive) => {
+                match primitive {
+                    TypeDefPrimitive::Bool => ScaleValue::bool(false),
+                    TypeDefPrimitive::Char => ScaleValue::char('\0'),
+                    TypeDefPrimitive::Str => ScaleValue::string(""),
+                    TypeDefPrimitive::U8
+                    | TypeDefPrimitive::U16
+                    | TypeDefPrimitive::U32
+                    | TypeDefPrimitive::U64
+                    | TypeDefPrimitive::U128 => ScaleValue::u128(0),
+                    TypeDefPrimitive::U256 => ScaleValue::primitive(Primitive::U256([0; 32])),
+                    TypeDefPrimitive::I8
+                    | TypeDefPrimitive::I16
+                    | TypeDefPrimitive::I32
+                    | TypeDefPrimitive::I64
+                    | TypeDefPrimitive::I128 => ScaleValue::i128(0),
+                    TypeDefPrimitive::I256 => ScaleValue::primitive(Primitive::I256([0; 32])),
+                }
+            }
             TypeDef::Compact(_) => ScaleValue::u128(0),
             TypeDef::BitSequence(_) => {
                 ScaleValue::bit_sequence(subxt::ext::scale_bits::Bits::new())
@@ -1002,10 +1022,12 @@ pub mod tests {
             .extension_ids()
             .into_iter()
             .zip(allowance_metadata.encode_signed_extensions(state))
-            .map(|(id, encoded)| TxPayloadExtension {
-                id: id.to_string(),
-                extra: encoded.extra,
-                additional_signed: encoded.additional_signed,
+            .map(|(id, encoded)| {
+                TxPayloadExtension {
+                    id: id.to_string(),
+                    extra: encoded.extra,
+                    additional_signed: encoded.additional_signed,
+                }
             })
             .collect()
     }
@@ -1609,10 +1631,12 @@ pub mod tests {
             .extrinsic
             .signed_extensions
             .iter()
-            .map(|extension| v16::TransactionExtensionMetadata {
-                identifier: extension.identifier.clone(),
-                ty: extension.ty,
-                implicit: extension.additional_signed,
+            .map(|extension| {
+                v16::TransactionExtensionMetadata {
+                    identifier: extension.identifier.clone(),
+                    ty: extension.ty,
+                    implicit: extension.additional_signed,
+                }
             })
             .collect();
         let every_extension = (0..transaction_extensions.len() as u32)
@@ -1628,21 +1652,25 @@ pub mod tests {
         let pallets = v14
             .pallets
             .iter()
-            .map(|pallet| v16::PalletMetadata {
-                name: pallet.name.clone(),
-                storage: None,
-                calls: pallet.calls.as_ref().map(|calls| v16::PalletCallMetadata {
-                    ty: calls.ty,
-                    deprecation_info: v16::EnumDeprecationInfo::nothing_deprecated(),
-                }),
-                event: None,
-                constants: Vec::new(),
-                error: None,
-                associated_types: Vec::new(),
-                view_functions: Vec::new(),
-                index: pallet.index,
-                docs: Vec::new(),
-                deprecation_info: v16::ItemDeprecationInfo::NotDeprecated,
+            .map(|pallet| {
+                v16::PalletMetadata {
+                    name: pallet.name.clone(),
+                    storage: None,
+                    calls: pallet.calls.as_ref().map(|calls| {
+                        v16::PalletCallMetadata {
+                            ty: calls.ty,
+                            deprecation_info: v16::EnumDeprecationInfo::nothing_deprecated(),
+                        }
+                    }),
+                    event: None,
+                    constants: Vec::new(),
+                    error: None,
+                    associated_types: Vec::new(),
+                    view_functions: Vec::new(),
+                    index: pallet.index,
+                    docs: Vec::new(),
+                    deprecation_info: v16::ItemDeprecationInfo::NotDeprecated,
+                }
             })
             .collect();
 

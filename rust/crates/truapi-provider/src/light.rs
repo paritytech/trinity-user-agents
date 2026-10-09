@@ -315,8 +315,10 @@ impl LightState {
                 },
                 statement_protocol_config: statement_protocol.then(statement_protocol_config),
             })
-            .map_err(|err| ProviderError::AddChain {
-                reason: err.to_string(),
+            .map_err(|err| {
+                ProviderError::AddChain {
+                    reason: err.to_string(),
+                }
             });
 
         // No connection is constructed on the error path, so nothing would ever
@@ -424,8 +426,10 @@ fn add_relay(
             json_rpc: AddChainConfigJsonRpc::Disabled,
             statement_protocol_config: statement_protocol.then(statement_protocol_config),
         })
-        .map_err(|err| ProviderError::AddChain {
-            reason: err.to_string(),
+        .map_err(|err| {
+            ProviderError::AddChain {
+                reason: err.to_string(),
+            }
         })?;
 
     let entry = guard.added.entry(relay_genesis).or_insert(AddedChain {
@@ -667,8 +671,8 @@ impl JsonRpcConnection for LightConnection {
         let Some(sources) = lock(&self.responses).take() else {
             return stream::empty().boxed();
         };
-        let responses = stream::unfold(sources.responses, |mut responses| async move {
-            responses.next().await.map(|item| (item, responses))
+        let responses = stream::unfold(sources.responses, |mut responses| {
+            async move { responses.next().await.map(|item| (item, responses)) }
         });
         let pipe = Arc::clone(&self.pipe);
         // Yields nothing: it ends once the chain syncs, releasing what was

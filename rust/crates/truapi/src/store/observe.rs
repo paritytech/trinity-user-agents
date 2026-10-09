@@ -258,7 +258,11 @@ impl Db {
     /// A failed query yields `Err` and keeps observing. The stream ends after
     /// yielding `Err` when its tables can't be resolved (invalid SQL, or
     /// [`DbError::Unobservable`]) and when the database closes.
-    pub fn observe<T, F>(&self, sql: &'static str, query: F) -> BoxStream<'static, Result<T, DbError>>
+    pub fn observe<T, F>(
+        &self,
+        sql: &'static str,
+        query: F,
+    ) -> BoxStream<'static, Result<T, DbError>>
     where
         T: Send + 'static,
         F: Fn(ObservedStatement<'_, '_>) -> Result<T, DbError> + Send + Sync + 'static,
@@ -272,11 +276,16 @@ impl Db {
                 let (registration, last) = match phase {
                     Phase::Done => return None,
                     // Subscribe before the first read, so no commit is missed.
-                    Phase::Start => match db.subscribe(sql).await {
-                        Ok(registration) => (registration, None),
-                        Err(error) => return Some((Some(Err(error)), Phase::Done)),
-                    },
-                    Phase::Running { mut registration, last } => {
+                    Phase::Start => {
+                        match db.subscribe(sql).await {
+                            Ok(registration) => (registration, None),
+                            Err(error) => return Some((Some(Err(error)), Phase::Done)),
+                        }
+                    }
+                    Phase::Running {
+                        mut registration,
+                        last,
+                    } => {
                         registration.wake.next().await?;
                         (registration, last)
                     }
@@ -302,13 +311,23 @@ impl Db {
         F: Fn(ObservedStatement<'_, '_>) -> Result<T, DbError> + Send + Sync + 'static,
     {
         match self.run_observed(sql, query).await {
-            Ok((_, snapshot)) if last.as_ref() == Some(&snapshot) => (None, Phase::Running { registration, last }),
+            Ok((_, snapshot)) if last.as_ref() == Some(&snapshot) => {
+                (None, Phase::Running { registration, last })
+            }
             Ok((value, snapshot)) => {
                 let last = Some(snapshot);
                 (Some(Ok(value)), Phase::Running { registration, last })
             }
             Err(DbError::Closed) => (Some(Err(DbError::Closed)), Phase::Done),
-            Err(error) => (Some(Err(error)), Phase::Running { registration, last: None }),
+            Err(error) => {
+                (
+                    Some(Err(error)),
+                    Phase::Running {
+                        registration,
+                        last: None,
+                    },
+                )
+            }
         }
     }
 
@@ -323,12 +342,22 @@ impl Db {
         if let Some(tables) = self.invalidation.resolved.lock().get(sql) {
             return Ok(tables.clone());
         }
-        let tables = self.readers.conn_and_then(move |conn| resolve_tables(conn, sql)).await?;
-        self.invalidation.resolved.lock().insert(sql, tables.clone());
+        let tables = self
+            .readers
+            .conn_and_then(move |conn| resolve_tables(conn, sql))
+            .await?;
+        self.invalidation
+            .resolved
+            .lock()
+            .insert(sql, tables.clone());
         Ok(tables)
     }
 
-    async fn run_observed<T, F>(&self, sql: &'static str, query: Arc<F>) -> Result<(T, Vec<Value>), DbError>
+    async fn run_observed<T, F>(
+        &self,
+        sql: &'static str,
+        query: Arc<F>,
+    ) -> Result<(T, Vec<Value>), DbError>
     where
         T: Send + 'static,
         F: Fn(ObservedStatement<'_, '_>) -> Result<T, DbError> + Send + Sync + 'static,
@@ -521,7 +550,10 @@ mod tests {
         }
 
         assert!(woken(&mut registration));
-        assert!(!woken(&mut registration), "three commits queue a single wake");
+        assert!(
+            !woken(&mut registration),
+            "three commits queue a single wake"
+        );
         assert_eq!(next(&mut stream).unwrap().unwrap(), vec!["a", "b", "c"]);
     }
 
@@ -539,7 +571,13 @@ mod tests {
         exec(&db, "UPDATE ledger SET note = note");
 
         assert_eq!(
-            next_after_run(&db, &mut stream, &runs, 2, "INSERT INTO ledger (note) VALUES ('second')"),
+            next_after_run(
+                &db,
+                &mut stream,
+                &runs,
+                2,
+                "INSERT INTO ledger (note) VALUES ('second')"
+            ),
             vec!["first", "second"]
         );
     }
@@ -625,7 +663,10 @@ mod tests {
         let mut stream = notes(&db);
         assert_eq!(next(&mut stream).unwrap().unwrap(), vec!["a"]);
 
-        exec(&db, "INSERT OR REPLACE INTO ledger (id, note) VALUES (2, 'a')");
+        exec(
+            &db,
+            "INSERT OR REPLACE INTO ledger (id, note) VALUES (2, 'a')",
+        );
         exec(&db, "INSERT INTO ledger (note) VALUES ('b')");
 
         assert_eq!(next(&mut stream).unwrap().unwrap(), vec!["a", "b"]);
@@ -667,7 +708,10 @@ mod tests {
 
         fail.store(true, Ordering::SeqCst);
         exec(&db, "INSERT INTO ledger (note) VALUES ('a')");
-        assert!(matches!(next(&mut stream), Some(Err(DbError::Connection(_)))));
+        assert!(matches!(
+            next(&mut stream),
+            Some(Err(DbError::Connection(_)))
+        ));
 
         fail.store(false, Ordering::SeqCst);
         exec(&db, "INSERT INTO ledger (note) VALUES ('b')");
@@ -695,7 +739,13 @@ mod tests {
         fail.store(false, Ordering::SeqCst);
         exec(&db, "UPDATE ledger SET note = note");
         assert_eq!(
-            next_after_run(&db, &mut stream, &runs, 3, "INSERT INTO ledger (note) VALUES ('b')"),
+            next_after_run(
+                &db,
+                &mut stream,
+                &runs,
+                3,
+                "INSERT INTO ledger (note) VALUES ('b')"
+            ),
             vec!["a"]
         );
     }
@@ -704,8 +754,12 @@ mod tests {
     fn query_optional_and_query_row_read_the_first_row() {
         let dir = tempfile::tempdir().unwrap();
         let db = open(&dir);
-        let mut optional = db.observe(NOTES_SQL, |q| q.query_optional([], |row| row.get::<_, String>(0)));
-        let mut row = db.observe(NOTES_SQL, |q| q.query_row([], |row| row.get::<_, String>(0)));
+        let mut optional = db.observe(NOTES_SQL, |q| {
+            q.query_optional([], |row| row.get::<_, String>(0))
+        });
+        let mut row = db.observe(NOTES_SQL, |q| {
+            q.query_row([], |row| row.get::<_, String>(0))
+        });
         assert_eq!(next(&mut optional).unwrap().unwrap(), None);
         assert!(matches!(
             next(&mut row),
@@ -757,9 +811,8 @@ mod tests {
         .unwrap();
 
         let without_rowid: Vec<String> = block_on(db.read(|conn| {
-            let mut stmt = conn.prepare(
-                "SELECT name FROM pragma_table_list WHERE schema = 'main' AND wr = 1",
-            )?;
+            let mut stmt = conn
+                .prepare("SELECT name FROM pragma_table_list WHERE schema = 'main' AND wr = 1")?;
             let rows = stmt.query_map([], |row| row.get(0))?;
             Ok(rows.collect::<Result<_, _>>()?)
         }))

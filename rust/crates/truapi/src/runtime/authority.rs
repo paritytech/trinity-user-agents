@@ -44,15 +44,14 @@ pub struct BulletinAllowanceKey {
 impl BulletinAllowanceKey {
     /// Wrap a 64-byte sr25519 secret; other lengths are `Unavailable`.
     pub fn from_secret_bytes(secret: Vec<u8>) -> Result<Self, AuthorityError> {
-        let secret: [u8; 64] =
-            secret
-                .try_into()
-                .map_err(|secret: Vec<u8>| AuthorityError::Unavailable {
-                    reason: format!(
-                        "bulletin allowance key must be 64 bytes, got {}",
-                        secret.len()
-                    ),
-                })?;
+        let secret: [u8; 64] = secret.try_into().map_err(|secret: Vec<u8>| {
+            AuthorityError::Unavailable {
+                reason: format!(
+                    "bulletin allowance key must be 64 bytes, got {}",
+                    secret.len()
+                ),
+            }
+        })?;
         Ok(Self { secret })
     }
 
@@ -160,12 +159,16 @@ impl From<ExtrinsicPayloadError> for AuthorityError {
     fn from(err: ExtrinsicPayloadError) -> Self {
         match err {
             ExtrinsicPayloadError::UnsupportedPayloadVersion { .. }
-            | ExtrinsicPayloadError::UnsupportedSignedExtension { .. } => Self::NotSupported {
-                reason: err.to_string(),
-            },
-            other => Self::Unknown {
-                reason: other.to_string(),
-            },
+            | ExtrinsicPayloadError::UnsupportedSignedExtension { .. } => {
+                Self::NotSupported {
+                    reason: err.to_string(),
+                }
+            }
+            other => {
+                Self::Unknown {
+                    reason: other.to_string(),
+                }
+            }
         }
     }
 }
@@ -176,15 +179,21 @@ impl From<LocalTransactionError> for AuthorityError {
     fn from(err: LocalTransactionError) -> Self {
         match err {
             LocalTransactionError::UnsupportedTxExtVersion { .. }
-            | LocalTransactionError::UnsupportedExtensions(_) => Self::NotSupported {
-                reason: err.to_string(),
-            },
-            LocalTransactionError::ChainUnavailable(_) => Self::Unavailable {
-                reason: err.to_string(),
-            },
-            LocalTransactionError::Other(_) => Self::Unknown {
-                reason: err.to_string(),
-            },
+            | LocalTransactionError::UnsupportedExtensions(_) => {
+                Self::NotSupported {
+                    reason: err.to_string(),
+                }
+            }
+            LocalTransactionError::ChainUnavailable(_) => {
+                Self::Unavailable {
+                    reason: err.to_string(),
+                }
+            }
+            LocalTransactionError::Other(_) => {
+                Self::Unknown {
+                    reason: err.to_string(),
+                }
+            }
         }
     }
 }
@@ -201,9 +210,11 @@ impl From<AuthorityError> for RingVrfError {
     fn from(err: AuthorityError) -> Self {
         match err {
             AuthorityError::Rejected => RingVrfError::Rejected,
-            other => RingVrfError::Unknown {
-                reason: other.to_string(),
-            },
+            other => {
+                RingVrfError::Unknown {
+                    reason: other.to_string(),
+                }
+            }
         }
     }
 }
@@ -213,9 +224,11 @@ impl From<AuthorityError> for HostAccountSignVrfError {
         match err {
             AuthorityError::Disconnected => Self::NotConnected,
             AuthorityError::Rejected => Self::Rejected,
-            AuthorityError::Cancelled(err) => Self::Unknown {
-                reason: err.to_string(),
-            },
+            AuthorityError::Cancelled(err) => {
+                Self::Unknown {
+                    reason: err.to_string(),
+                }
+            }
             AuthorityError::Unavailable { reason }
             | AuthorityError::NotSupported { reason }
             | AuthorityError::Unknown { reason } => Self::Unknown { reason },
@@ -319,15 +332,14 @@ impl StatementStoreAllowanceKey {
     /// Wrap a 64-byte sr25519 secret and derive its public key; other lengths
     /// are `Unavailable`.
     pub fn from_secret_bytes(secret: Vec<u8>) -> Result<Self, AuthorityError> {
-        let secret: [u8; 64] =
-            secret
-                .try_into()
-                .map_err(|secret: Vec<u8>| AuthorityError::Unavailable {
-                    reason: format!(
-                        "statement-store allowance key must be 64 bytes, got {}",
-                        secret.len()
-                    ),
-                })?;
+        let secret: [u8; 64] = secret.try_into().map_err(|secret: Vec<u8>| {
+            AuthorityError::Unavailable {
+                reason: format!(
+                    "statement-store allowance key must be 64 bytes, got {}",
+                    secret.len()
+                ),
+            }
+        })?;
         let public_key = statement_public_key_from_secret(secret)
             .map_err(|reason| AuthorityError::Unavailable { reason })?;
         Ok(Self { secret, public_key })

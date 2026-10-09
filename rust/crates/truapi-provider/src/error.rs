@@ -192,9 +192,11 @@ pub fn frame_for_id(frame: &str, id: &str) -> Option<FrameForId> {
     }
     match value.get("result").and_then(Value::as_str) {
         Some(result) => Some(FrameForId::Result(result.to_owned())),
-        None => Some(FrameForId::Failure(
-            "response carried no string result".to_owned(),
-        )),
+        None => {
+            Some(FrameForId::Failure(
+                "response carried no string result".to_owned(),
+            ))
+        }
     }
 }
 

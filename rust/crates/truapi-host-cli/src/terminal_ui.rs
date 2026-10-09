@@ -73,19 +73,23 @@ impl ApprovalKind {
     /// Interpret an answer using the available choices.
     pub fn parse(self, input: &str) -> Option<PermissionDecision> {
         match self {
-            Self::Action => parse_approval(input).map(|approved| {
-                if approved {
-                    PermissionDecision::AllowAlways
-                } else {
-                    PermissionDecision::Deny
+            Self::Action => {
+                parse_approval(input).map(|approved| {
+                    if approved {
+                        PermissionDecision::AllowAlways
+                    } else {
+                        PermissionDecision::Deny
+                    }
+                })
+            }
+            Self::Permission => {
+                match input.trim().to_ascii_lowercase().as_str() {
+                    "o" | "once" => Some(PermissionDecision::AllowOnce),
+                    "a" | "always" => Some(PermissionDecision::AllowAlways),
+                    "" | "n" | "no" | "deny" => Some(PermissionDecision::Deny),
+                    _ => None,
                 }
-            }),
-            Self::Permission => match input.trim().to_ascii_lowercase().as_str() {
-                "o" | "once" => Some(PermissionDecision::AllowOnce),
-                "a" | "always" => Some(PermissionDecision::AllowAlways),
-                "" | "n" | "no" | "deny" => Some(PermissionDecision::Deny),
-                _ => None,
-            },
+            }
         }
     }
 }
@@ -1099,16 +1103,20 @@ impl ActiveTerminalUi {
         };
         self.copy_next_pairing_deeplink = false;
         match self.copy_text(deeplink, "copy pairing link to system clipboard") {
-            Ok(()) => self.app.notice(
-                NoticeTone::Success,
-                "Pairing link copied".to_string(),
-                Some("Clipboard updated".to_string()),
-            ),
-            Err(error) => self.app.notice(
-                NoticeTone::Warning,
-                "Could not copy pairing link".to_string(),
-                Some(error.to_string()),
-            ),
+            Ok(()) => {
+                self.app.notice(
+                    NoticeTone::Success,
+                    "Pairing link copied".to_string(),
+                    Some("Clipboard updated".to_string()),
+                )
+            }
+            Err(error) => {
+                self.app.notice(
+                    NoticeTone::Warning,
+                    "Could not copy pairing link".to_string(),
+                    Some(error.to_string()),
+                )
+            }
         }
     }
 }
@@ -1150,10 +1158,12 @@ enum PairingImageRequest {
 
 fn pairing_image_request(event: &Event) -> Option<PairingImageRequest> {
     match event {
-        Event::Paste(text) => Some(
-            pairing_image_path(text)
-                .map_or(PairingImageRequest::Clipboard, PairingImageRequest::Path),
-        ),
+        Event::Paste(text) => {
+            Some(
+                pairing_image_path(text)
+                    .map_or(PairingImageRequest::Clipboard, PairingImageRequest::Path),
+            )
+        }
         Event::Key(key) if is_clipboard_image_paste(*key) => Some(PairingImageRequest::Clipboard),
         Event::Key(key)
             if key.kind == KeyEventKind::Press
@@ -1550,14 +1560,16 @@ impl App {
         let keys = self
             .entries
             .iter()
-            .filter_map(|entry| match entry {
-                FeedItem::Activity {
-                    id,
-                    key,
-                    state: ActivityState::Running,
-                    ..
-                } if *id >= first_id => Some(key.clone()),
-                _ => None,
+            .filter_map(|entry| {
+                match entry {
+                    FeedItem::Activity {
+                        id,
+                        key,
+                        state: ActivityState::Running,
+                        ..
+                    } if *id >= first_id => Some(key.clone()),
+                    _ => None,
+                }
             })
             .collect::<Vec<_>>();
         for key in keys {
@@ -2130,13 +2142,15 @@ impl App {
                     self.editor.insert(character);
                 }
             }
-            (false, KeyCode::Enter) => match kind.parse(&self.editor.text()) {
-                Some(answer) => self.answer_approval(answer),
-                None => {
-                    self.editor.clear();
-                    self.notice(NoticeTone::Error, kind.choices().to_string(), None);
+            (false, KeyCode::Enter) => {
+                match kind.parse(&self.editor.text()) {
+                    Some(answer) => self.answer_approval(answer),
+                    None => {
+                        self.editor.clear();
+                        self.notice(NoticeTone::Error, kind.choices().to_string(), None);
+                    }
                 }
-            },
+            }
             (true, KeyCode::Char('c')) => self.editor.clear(),
             (false, KeyCode::Char(character)) => self.editor.insert(character),
             (false, KeyCode::Backspace) => self.editor.backspace(),
@@ -2731,15 +2745,16 @@ fn feed_item_cost(item: &FeedItem) -> (usize, usize) {
 
 fn feed_item_lines(item: &FeedItem, width: usize, height: usize) -> Vec<Line<'static>> {
     match item {
-        FeedItem::Log(text) => text
-            .lines()
-            .map(|line| {
-                Line::from(Span::styled(
-                    format!("  {line}"),
-                    Style::default().add_modifier(Modifier::DIM),
-                ))
-            })
-            .collect(),
+        FeedItem::Log(text) => {
+            text.lines()
+                .map(|line| {
+                    Line::from(Span::styled(
+                        format!("  {line}"),
+                        Style::default().add_modifier(Modifier::DIM),
+                    ))
+                })
+                .collect()
+        }
         FeedItem::Notice {
             tone,
             title,
@@ -2753,20 +2768,26 @@ fn feed_item_lines(item: &FeedItem, width: usize, height: usize) -> Vec<Line<'st
                 Line::default(),
             ]
         }
-        FeedItem::Stream { kind, lines } => lines
-            .iter()
-            .enumerate()
-            .map(|(index, line)| match kind {
-                StreamKind::Stdout => Line::from(format!("  {line}")),
-                StreamKind::Stderr => Line::from(vec![
-                    Span::styled(
-                        if index == 0 { "! " } else { "  " },
-                        semantic_style(Color::Red),
-                    ),
-                    Span::raw(line.clone()),
-                ]),
-            })
-            .collect(),
+        FeedItem::Stream { kind, lines } => {
+            lines
+                .iter()
+                .enumerate()
+                .map(|(index, line)| {
+                    match kind {
+                        StreamKind::Stdout => Line::from(format!("  {line}")),
+                        StreamKind::Stderr => {
+                            Line::from(vec![
+                                Span::styled(
+                                    if index == 0 { "! " } else { "  " },
+                                    semantic_style(Color::Red),
+                                ),
+                                Span::raw(line.clone()),
+                            ])
+                        }
+                    }
+                })
+                .collect()
+        }
         FeedItem::Activity {
             label,
             detail,
@@ -2779,49 +2800,57 @@ fn feed_item_lines(item: &FeedItem, width: usize, height: usize) -> Vec<Line<'st
             kind,
             outcome,
             ..
-        } => match outcome {
-            Some(PermissionDecision::AllowOnce) => status_lines(
-                NoticeTone::Success,
-                &format!("Allowed once: {action}"),
-                None,
-            ),
-            Some(PermissionDecision::AllowAlways) => status_lines(
-                NoticeTone::Success,
-                &if *kind == ApprovalKind::Permission {
-                    format!("Allowed always: {action}")
-                } else {
-                    format!("Approved {action}")
-                },
-                None,
-            ),
-            Some(PermissionDecision::Deny) => {
-                status_lines(NoticeTone::Warning, &format!("Rejected {action}"), None)
+        } => {
+            match outcome {
+                Some(PermissionDecision::AllowOnce) => {
+                    status_lines(
+                        NoticeTone::Success,
+                        &format!("Allowed once: {action}"),
+                        None,
+                    )
+                }
+                Some(PermissionDecision::AllowAlways) => {
+                    status_lines(
+                        NoticeTone::Success,
+                        &if *kind == ApprovalKind::Permission {
+                            format!("Allowed always: {action}")
+                        } else {
+                            format!("Approved {action}")
+                        },
+                        None,
+                    )
+                }
+                Some(PermissionDecision::Deny) => {
+                    status_lines(NoticeTone::Warning, &format!("Rejected {action}"), None)
+                }
+                None => {
+                    vec![
+                        Line::default(),
+                        Line::from(vec![
+                            Span::styled(
+                                "! ",
+                                semantic_style(Color::Yellow).add_modifier(Modifier::BOLD),
+                            ),
+                            Span::styled(
+                                "Approval required",
+                                Style::default().add_modifier(Modifier::BOLD),
+                            ),
+                        ]),
+                        Line::default(),
+                        Line::from(format!("  {action}")),
+                        Line::from(Span::styled(
+                            format!("  {detail}"),
+                            Style::default().add_modifier(Modifier::DIM),
+                        )),
+                        Line::default(),
+                        Line::from(Span::styled(
+                            format!("  {}   Esc deny", kind.choices()),
+                            semantic_style(Color::Cyan),
+                        )),
+                    ]
+                }
             }
-            None => vec![
-                Line::default(),
-                Line::from(vec![
-                    Span::styled(
-                        "! ",
-                        semantic_style(Color::Yellow).add_modifier(Modifier::BOLD),
-                    ),
-                    Span::styled(
-                        "Approval required",
-                        Style::default().add_modifier(Modifier::BOLD),
-                    ),
-                ]),
-                Line::default(),
-                Line::from(format!("  {action}")),
-                Line::from(Span::styled(
-                    format!("  {detail}"),
-                    Style::default().add_modifier(Modifier::DIM),
-                )),
-                Line::default(),
-                Line::from(Span::styled(
-                    format!("  {}   Esc deny", kind.choices()),
-                    semantic_style(Color::Cyan),
-                )),
-            ],
-        },
+        }
         FeedItem::Request {
             name,
             state,
@@ -3147,10 +3176,12 @@ fn sso_activity_presentation(
         ("request_received", _) => (name, ActivityState::Running),
         ("response_failed", _) => (format!("{name} failed"), ActivityState::Failed),
         ("response_sent", None | Some("ok")) => (name, ActivityState::Succeeded),
-        ("response_sent", Some("partial")) => (
-            format!("{name} partially completed"),
-            ActivityState::Warning,
-        ),
+        ("response_sent", Some("partial")) => {
+            (
+                format!("{name} partially completed"),
+                ActivityState::Warning,
+            )
+        }
         ("response_sent", Some("not_available")) => {
             (format!("{name} unavailable"), ActivityState::Warning)
         }
@@ -3571,13 +3602,15 @@ mod tests {
 
         assert!(app.transcript_text().contains("× Setting up signer"));
         assert!(app.transcript_text().contains("Stopped after an error"));
-        assert!(!app.entries.iter().any(|entry| matches!(
-            entry,
-            FeedItem::Activity {
-                state: ActivityState::Running,
-                ..
-            }
-        )));
+        assert!(!app.entries.iter().any(|entry| {
+            matches!(
+                entry,
+                FeedItem::Activity {
+                    state: ActivityState::Running,
+                    ..
+                }
+            )
+        }));
     }
 
     #[test]
@@ -3629,9 +3662,11 @@ mod tests {
 
         assert!(app.retained_lines <= TRANSCRIPT_LINE_LIMIT);
         assert!(app.retained_bytes <= TRANSCRIPT_BYTE_LIMIT);
-        assert!(app.entries.iter().all(|entry| match entry {
-            FeedItem::Stream { lines, .. } => lines.len() <= STREAM_CHUNK_LINE_LIMIT,
-            _ => true,
+        assert!(app.entries.iter().all(|entry| {
+            match entry {
+                FeedItem::Stream { lines, .. } => lines.len() <= STREAM_CHUNK_LINE_LIMIT,
+                _ => true,
+            }
         }));
         assert!(app.transcript_text().contains("line 10499"));
         assert!(!app.transcript_text().contains("line 0\n"));
@@ -3999,9 +4034,11 @@ mod tests {
         let rendered_side = app
             .entries
             .iter()
-            .find_map(|item| match item {
-                FeedItem::PairingQr(qr) => Some(qr.side + QR_QUIET_ZONE * 2),
-                _ => None,
+            .find_map(|item| {
+                match item {
+                    FeedItem::PairingQr(qr) => Some(qr.side + QR_QUIET_ZONE * 2),
+                    _ => None,
+                }
             })
             .expect("pairing QR is retained");
         assert_eq!(qr_rows.len(), rendered_side.div_ceil(2));
@@ -4020,9 +4057,9 @@ mod tests {
                 .chars()
                 .any(|character| ('\u{2800}'..='\u{28ff}').contains(&character))
         }));
-        assert!(qr_rows.windows(2).all(
-            |rows| text_display_width(&rows[0].content) == text_display_width(&rows[1].content)
-        ));
+        assert!(qr_rows.windows(2).all(|rows| {
+            text_display_width(&rows[0].content) == text_display_width(&rows[1].content)
+        }));
         assert_eq!(
             app.transcript_text(),
             "◌ Pairing link ready\n  Open the dedicated link shown by the pairing host.\n• Pairing link\n  <pairing link>"
@@ -4045,9 +4082,11 @@ mod tests {
 
         app.handle_system_event(SystemEvent::PairingDeeplink { url });
 
-        let actual = app.entries.iter().find_map(|item| match item {
-            FeedItem::PairingQr(qr) => Some(qr),
-            _ => None,
+        let actual = app.entries.iter().find_map(|item| {
+            match item {
+                FeedItem::PairingQr(qr) => Some(qr),
+                _ => None,
+            }
         });
         assert_eq!(actual, Some(&expected));
     }
@@ -4197,9 +4236,11 @@ mod tests {
         let expected_qr_rows = app
             .entries
             .iter()
-            .find_map(|item| match item {
-                FeedItem::PairingQr(qr) => Some(qr.rendered_height()),
-                _ => None,
+            .find_map(|item| {
+                match item {
+                    FeedItem::PairingQr(qr) => Some(qr.rendered_height()),
+                    _ => None,
+                }
             })
             .expect("pairing QR is retained");
         for index in 0..20 {

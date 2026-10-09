@@ -15,7 +15,11 @@
 // rather than a direct function call. What it does NOT exercise is the iframe
 // boundary and the browser's origin checks; the fixture covers those.
 
-import { createClient, createMessagePortProvider, createTransport } from "@parity/truapi";
+import {
+  createClient,
+  createMessagePortProvider,
+  createTransport,
+} from "@parity/truapi";
 import type { TrUApiClient } from "@parity/truapi";
 
 import {
@@ -25,7 +29,11 @@ import {
   type MockHostConfig,
 } from "../web/create-mock-host.js";
 import type { ProductRuntimeConfig } from "../runtime.js";
-import { resolveAccount, type DevAccount, type DevAccountName } from "./dev-accounts.js";
+import {
+  resolveAccount,
+  type DevAccount,
+  type DevAccountName,
+} from "./dev-accounts.js";
 
 /** Options for {@link createMockClient}. */
 export interface MockClientOptions {
@@ -80,9 +88,8 @@ export async function createMockClient(
   };
   await glue.default();
 
-  const { createWasmRawCallbacks } = await import(
-    "../generated/host-callbacks-adapter.js"
-  );
+  const { createWasmRawCallbacks } =
+    await import("../generated/host-callbacks-adapter.js");
 
   const host = createMockHost(options.mock);
   const { productId, ...hostConfig } = mockRuntimeConfig(

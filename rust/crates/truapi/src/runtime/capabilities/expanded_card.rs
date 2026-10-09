@@ -29,18 +29,21 @@ impl ExpandedCard for ProductRuntimeHost {
             return Err(CallError::Unsupported);
         };
         let HostExpandedCardSetFaceShownRequest::V1(request) = request;
-        let domain_error =
-            |error| CallError::Domain(HostExpandedCardSetFaceShownError::V1(error));
+        let domain_error = |error| CallError::Domain(HostExpandedCardSetFaceShownError::V1(error));
         match card.set_expanded_card_face_shown(request.shown).await {
             Ok(ExpandedCardFaceOutcome::Applied) => Ok(HostExpandedCardSetFaceShownResponse::V1),
             Ok(ExpandedCardFaceOutcome::NotPresented) => {
                 Err(domain_error(FaceShownError::NotPresented))
             }
-            Ok(ExpandedCardFaceOutcome::UserMoving) => Err(domain_error(FaceShownError::UserMoving)),
+            Ok(ExpandedCardFaceOutcome::UserMoving) => {
+                Err(domain_error(FaceShownError::UserMoving))
+            }
             Ok(ExpandedCardFaceOutcome::Unsupported) => Err(CallError::Unsupported),
-            Err(error) => Err(domain_error(FaceShownError::Unknown {
-                reason: error.reason,
-            })),
+            Err(error) => {
+                Err(domain_error(FaceShownError::Unknown {
+                    reason: error.reason,
+                }))
+            }
         }
     }
 }

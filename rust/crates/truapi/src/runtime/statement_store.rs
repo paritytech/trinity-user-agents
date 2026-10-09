@@ -415,11 +415,13 @@ fn create_statement_proof_with_key(
         .map_err(StatementProofFailure::UnableToSign)?;
     signed
         .into_iter()
-        .find_map(|field| match field {
-            crate::host_logic::statement_store::StatementField::Proof(proof) => {
-                Some(statement_proof_to_v01(proof))
+        .find_map(|field| {
+            match field {
+                crate::host_logic::statement_store::StatementField::Proof(proof) => {
+                    Some(statement_proof_to_v01(proof))
+                }
+                _ => None,
             }
-            _ => None,
         })
         .ok_or_else(|| StatementProofFailure::UnableToSign("missing proof".to_string()))
 }

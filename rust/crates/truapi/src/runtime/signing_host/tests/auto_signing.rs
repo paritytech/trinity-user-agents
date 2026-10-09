@@ -176,9 +176,10 @@ fn a_blessed_vrf_signature_skips_the_prompt_only_locally_for_its_own_account() {
     let request = vrf_request("dim2.paseo");
 
     let sign_locally = |request| {
-        futures::executor::block_on(
-            runtime.sign_vrf(&CallContext::default(), HostAccountSignVrfRequest::V1(request)),
-        )
+        futures::executor::block_on(runtime.sign_vrf(
+            &CallContext::default(),
+            HostAccountSignVrfRequest::V1(request),
+        ))
         .is_ok()
     };
     let own_signed = sign_locally(request.clone());

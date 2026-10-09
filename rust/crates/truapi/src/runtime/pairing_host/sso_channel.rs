@@ -199,10 +199,12 @@ impl PairingHost {
         let message_id = message_id.to_string();
         (self.spawner)(Box::pin(async move {
             let submitted = match withdrawal {
-                Ok(statement) => statement_store
-                    .submit_fire_and_forget(statement, "SSO statement-store")
-                    .await
-                    .map_err(|err| err.to_string()),
+                Ok(statement) => {
+                    statement_store
+                        .submit_fire_and_forget(statement, "SSO statement-store")
+                        .await
+                        .map_err(|err| err.to_string())
+                }
                 Err(reason) => Err(reason),
             };
             if let Err(reason) = submitted {
@@ -291,11 +293,13 @@ impl PairingHost {
             reply_matcher::<R>(&message_id),
         )
         .await;
-        let result = result.map_err(|reason| match reason {
-            SsoRemoteResponseError::Cancelled(err) if !cx.request_id().is_empty() => {
-                SsoRemoteResponseError::Cancelled(err.with_remote_message_id(cx.request_id()))
+        let result = result.map_err(|reason| {
+            match reason {
+                SsoRemoteResponseError::Cancelled(err) if !cx.request_id().is_empty() => {
+                    SsoRemoteResponseError::Cancelled(err.with_remote_message_id(cx.request_id()))
+                }
+                reason => reason,
             }
-            reason => reason,
         });
         match &result {
             Ok(_) => debug!(action, %message_id, "SSO remote response received"),
@@ -362,11 +366,13 @@ impl PairingHost {
         )
         .await
         .map_err(remote_authority_error)?
-        .map_err(|err| match err {
-            latest::HostAccountSignVrfError::NotConnected => AuthorityError::Disconnected,
-            latest::HostAccountSignVrfError::Rejected => AuthorityError::Rejected,
-            latest::HostAccountSignVrfError::Unknown { reason } => {
-                AuthorityError::Unknown { reason }
+        .map_err(|err| {
+            match err {
+                latest::HostAccountSignVrfError::NotConnected => AuthorityError::Disconnected,
+                latest::HostAccountSignVrfError::Rejected => AuthorityError::Rejected,
+                latest::HostAccountSignVrfError::Unknown { reason } => {
+                    AuthorityError::Unknown { reason }
+                }
             }
         })
     }
@@ -387,10 +393,12 @@ impl PairingHost {
             SignPayloadAuthorityRequest::LegacyAccount {
                 product_account,
                 request,
-            } => latest::HostSignPayloadRequest {
-                account: product_account,
-                payload: request.payload,
-            },
+            } => {
+                latest::HostSignPayloadRequest {
+                    account: product_account,
+                    payload: request.payload,
+                }
+            }
         };
         self.call(cx, session, SignRequest::Payload(Box::new(request)))
             .await
@@ -411,8 +419,8 @@ impl PairingHost {
         watermarked: bool,
     ) -> Result<latest::HostSignPayloadResponse, AuthorityError> {
         match request {
-            SignRawAuthorityRequest::Product(request) => self
-                .call(
+            SignRawAuthorityRequest::Product(request) => {
+                self.call(
                     cx,
                     session,
                     if watermarked {
@@ -423,7 +431,8 @@ impl PairingHost {
                 )
                 .await
                 .map_err(remote_authority_error)?
-                .map_err(remote_authority_error),
+                .map_err(remote_authority_error)
+            }
             SignRawAuthorityRequest::LegacyAccount { account, request } => {
                 let request = SignRawWithLegacyAccountRequest {
                     account,
@@ -630,12 +639,16 @@ impl PairingHost {
         match outcomes.into_iter().next() {
             Some(SsoAllocationOutcome::Allocated(resource)) => Ok(resource),
             Some(SsoAllocationOutcome::Rejected) => Err(AuthorityError::Rejected),
-            Some(SsoAllocationOutcome::NotAvailable) => Err(AuthorityError::Unavailable {
-                reason: format!("{name} is not available"),
-            }),
-            None => Err(AuthorityError::Unknown {
-                reason: format!("Empty {name} response"),
-            }),
+            Some(SsoAllocationOutcome::NotAvailable) => {
+                Err(AuthorityError::Unavailable {
+                    reason: format!("{name} is not available"),
+                })
+            }
+            None => {
+                Err(AuthorityError::Unknown {
+                    reason: format!("Empty {name} response"),
+                })
+            }
         }
     }
 
@@ -840,19 +853,24 @@ fn unexpected_resource(label: &str, resource: &SsoAllocatedResource) -> Authorit
 
 fn remote_authority_error(reason: impl Into<SsoRemoteResponseError>) -> AuthorityError {
     match reason.into() {
-        SsoRemoteResponseError::Cancelled(err) => AuthorityError::Cancelled(
-            AuthorityCancelError::new(err.remote_message_id(), err.reason()),
-        ),
+        SsoRemoteResponseError::Cancelled(err) => {
+            AuthorityError::Cancelled(AuthorityCancelError::new(
+                err.remote_message_id(),
+                err.reason(),
+            ))
+        }
         SsoRemoteResponseError::LocalDisconnected | SsoRemoteResponseError::PeerDisconnected => {
             AuthorityError::Disconnected
         }
-        SsoRemoteResponseError::Failure(reason) => match reason.as_str() {
-            "Rejected" | "User rejected" => AuthorityError::Rejected,
-            SSO_LOCAL_DISCONNECT_REASON | SSO_PEER_DISCONNECT_REASON => {
-                AuthorityError::Disconnected
+        SsoRemoteResponseError::Failure(reason) => {
+            match reason.as_str() {
+                "Rejected" | "User rejected" => AuthorityError::Rejected,
+                SSO_LOCAL_DISCONNECT_REASON | SSO_PEER_DISCONNECT_REASON => {
+                    AuthorityError::Disconnected
+                }
+                _ => AuthorityError::Unknown { reason },
             }
-            _ => AuthorityError::Unknown { reason },
-        },
+        }
     }
 }
 

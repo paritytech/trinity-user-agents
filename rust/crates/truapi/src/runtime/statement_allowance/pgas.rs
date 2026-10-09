@@ -125,9 +125,11 @@ async fn read_current_generation(
         .into());
     }
     match rpc.get_storage(&current_generation_key()).await? {
-        Some(bytes) => u32::decode_all(&mut &bytes[..])
-            .map_err(PgasError::GenerationDecode)
-            .map_err(Into::into),
+        Some(bytes) => {
+            u32::decode_all(&mut &bytes[..])
+                .map_err(PgasError::GenerationDecode)
+                .map_err(Into::into)
+        }
         None => Ok(0),
     }
 }
@@ -379,9 +381,11 @@ pub async fn await_ring_revision(
                 value_type,
                 metadata.registry(),
             )
-            .map_err(|source| ring::RingError::DecodeAsType {
-                context: "subscriber ring roots",
-                source,
+            .map_err(|source| {
+                ring::RingError::DecodeAsType {
+                    context: "subscriber ring roots",
+                    source,
+                }
             })?;
             let held: Vec<u32> = records.iter().map(|record| record.revision).collect();
             match revision_status(&held, revision) {

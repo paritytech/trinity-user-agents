@@ -151,9 +151,11 @@ impl FromStr for LogLevel {
             "info" => Ok(Self::Info),
             "debug" => Ok(Self::Debug),
             "trace" => Ok(Self::Trace),
-            _ => Err(format!(
-                "invalid log level `{value}`; expected error, warn, info, debug, or trace"
-            )),
+            _ => {
+                Err(format!(
+                    "invalid log level `{value}`; expected error, warn, info, debug, or trace"
+                ))
+            }
         }
     }
 }
@@ -516,9 +518,11 @@ async fn main() -> Result<()> {
 
     let matches = Cli::command().get_matches();
     let mut cli = Cli::from_arg_matches(&matches).unwrap_or_else(|error| error.exit());
-    let debugger = cli.debugger.take().map(|url| DebuggerSwitch {
-        url,
-        source: debugger_url_source(&matches),
+    let debugger = cli.debugger.take().map(|url| {
+        DebuggerSwitch {
+            url,
+            source: debugger_url_source(&matches),
+        }
     });
     let base_path = command_base_path(&cli.command);
     let (saved_log_level, saved_log_level_error) = match load_log_level(&base_path) {
@@ -957,9 +961,11 @@ async fn run_alloc_check(
                 seq,
                 ring_index,
                 collection,
-            }) => println!(
-                "REGISTERED in {collection} seq={seq} ring_index={ring_index} block={block_hash}"
-            ),
+            }) => {
+                println!(
+                    "REGISTERED in {collection} seq={seq} ring_index={ring_index} block={block_hash}"
+                )
+            }
             Ok(alloc::RegistrationOutcome::AlreadyAllocated { seq, collection }) => {
                 println!("already allocated in {collection} at seq={seq}")
             }
@@ -1054,16 +1060,16 @@ fn approval_policy(auto_accept: bool) -> ApprovalPolicy {
 /// has shut down; `tokio::spawn` panics there, so the handle is looked up
 /// rather than assumed.
 fn tokio_spawner() -> Spawner {
-    Arc::new(
-        |fut: BoxFuture<'static, ()>| match tokio::runtime::Handle::try_current() {
+    Arc::new(|fut: BoxFuture<'static, ()>| {
+        match tokio::runtime::Handle::try_current() {
             Ok(handle) => {
                 handle.spawn(fut);
             }
             Err(error) => {
                 tracing::warn!(%error, "dropping a runtime future: no tokio runtime is running");
             }
-        },
-    )
+        }
+    })
 }
 
 fn host_info(name: &str) -> HostInfo {
@@ -1134,10 +1140,12 @@ fn connect_debugger(switch: DebuggerSwitch) -> Result<DebuggerDial> {
 /// quiet about it, so a stale exported variable cannot tap a session unnoticed.
 fn report_debugger(dial: Option<&DebuggerDial>) {
     match dial {
-        Some(dial) => terminal_ui::output_event(SystemEvent::DebuggerDialling {
-            url: dial.switch.url.clone(),
-            source: dial.switch.source.to_string(),
-        }),
+        Some(dial) => {
+            terminal_ui::output_event(SystemEvent::DebuggerDialling {
+                url: dial.switch.url.clone(),
+                source: dial.switch.source.to_string(),
+            })
+        }
         None => terminal_ui::output_event(SystemEvent::DebuggerOff),
     }
 }
@@ -1592,11 +1600,13 @@ fn initial_session_name(args: &SigningHostArgs, catalog: &SessionCatalog) -> Res
             Ok(name)
         }
         CurrentSession::Fresh => Ok(DEFAULT_SESSION_NAME.to_string()),
-        CurrentSession::Ambiguous { candidates } => Err(anyhow::anyhow!(
-            "this base path holds several provisioned sessions ({}) and no current-session \
+        CurrentSession::Ambiguous { candidates } => {
+            Err(anyhow::anyhow!(
+                "this base path holds several provisioned sessions ({}) and no current-session \
              pointer; name one with --session <name> rather than provisioning another identity",
-            candidates.join(", "),
-        )),
+                candidates.join(", "),
+            ))
+        }
     }
 }
 
@@ -2889,10 +2899,12 @@ fn validate_session_clear(
     session.catalog.validate_clear_target(target)?;
     Ok(match target {
         SessionClearTarget::All => true,
-        SessionClearTarget::Named(name) => session
-            .profile
-            .as_ref()
-            .is_some_and(|profile| profile.name == *name),
+        SessionClearTarget::Named(name) => {
+            session
+                .profile
+                .as_ref()
+                .is_some_and(|profile| profile.name == *name)
+        }
     })
 }
 
@@ -3365,10 +3377,12 @@ async fn pairing_interactive_loop(
         match command {
             ShellCommand::Help => ui.system(PAIRING_HELP_TEXT),
             ShellCommand::Clear => ui.clear(),
-            ShellCommand::Copy => match ui.copy_transcript() {
-                Ok(entries) => ui.event(SystemEvent::CopiedTranscript { entries }),
-                Err(error) => ui.error(format!("failed to copy transcript: {error}")),
-            },
+            ShellCommand::Copy => {
+                match ui.copy_transcript() {
+                    Ok(entries) => ui.event(SystemEvent::CopiedTranscript { entries }),
+                    Err(error) => ui.error(format!("failed to copy transcript: {error}")),
+                }
+            }
             ShellCommand::Login => {
                 let product_id = product.current();
                 run_pairing_login(&runtime, &product_id, input, &mut ui).await?;
@@ -3551,10 +3565,12 @@ async fn signing_interactive_loop(
         match command {
             ShellCommand::Help => ui.system(HELP_TEXT),
             ShellCommand::Clear => ui.clear(),
-            ShellCommand::Copy => match ui.copy_transcript() {
-                Ok(entries) => ui.event(SystemEvent::CopiedTranscript { entries }),
-                Err(error) => ui.error(format!("failed to copy transcript: {error}")),
-            },
+            ShellCommand::Copy => {
+                match ui.copy_transcript() {
+                    Ok(entries) => ui.event(SystemEvent::CopiedTranscript { entries }),
+                    Err(error) => ui.error(format!("failed to copy transcript: {error}")),
+                }
+            }
             ShellCommand::Log(level) => {
                 if let Err(error) = log_controller.set(level) {
                     ui.error(format!("failed to set log level: {error}"));
@@ -3609,14 +3625,18 @@ async fn signing_interactive_loop(
                     ui.event(SystemEvent::SigningHostNeedsSession);
                 }
             }
-            ShellCommand::Session(SessionCommand::List) => match session_list(session) {
-                Ok(sessions) => ui.system(sessions),
-                Err(error) => ui.error(format!("failed to list sessions: {error}")),
-            },
-            ShellCommand::Devices(DeviceCommand::List) => match paired_device_list(session) {
-                Ok(devices) => ui.system(devices),
-                Err(error) => ui.error(format!("failed to list paired devices: {error}")),
-            },
+            ShellCommand::Session(SessionCommand::List) => {
+                match session_list(session) {
+                    Ok(sessions) => ui.system(sessions),
+                    Err(error) => ui.error(format!("failed to list sessions: {error}")),
+                }
+            }
+            ShellCommand::Devices(DeviceCommand::List) => {
+                match paired_device_list(session) {
+                    Ok(devices) => ui.system(devices),
+                    Err(error) => ui.error(format!("failed to list paired devices: {error}")),
+                }
+            }
             ShellCommand::Devices(DeviceCommand::Remove {
                 statement_account_id,
                 force,
@@ -3718,33 +3738,35 @@ async fn signing_interactive_loop(
                 };
                 run_interactive_pairing_image(session, input, &mut ui).await?;
             }
-            ShellCommand::Script(command) => match select_interactive_script(
-                &command,
-                &session.script_projects,
-                session
-                    .profile
-                    .as_ref()
-                    .map(|profile| profile.path.as_path()),
-                &mut session.last_script,
-                &mut ui,
-            )
-            .await
-            {
-                Ok(Some(script)) => {
-                    let product_id = product.current();
-                    run_interactive_operation(
-                        session,
-                        &frame_url,
-                        &product_id,
-                        ShellCommand::Script(ScriptCommand::Run(Some(script))),
-                        input,
-                        &mut ui,
-                    )
-                    .await?;
+            ShellCommand::Script(command) => {
+                match select_interactive_script(
+                    &command,
+                    &session.script_projects,
+                    session
+                        .profile
+                        .as_ref()
+                        .map(|profile| profile.path.as_path()),
+                    &mut session.last_script,
+                    &mut ui,
+                )
+                .await
+                {
+                    Ok(Some(script)) => {
+                        let product_id = product.current();
+                        run_interactive_operation(
+                            session,
+                            &frame_url,
+                            &product_id,
+                            ShellCommand::Script(ScriptCommand::Run(Some(script))),
+                            input,
+                            &mut ui,
+                        )
+                        .await?;
+                    }
+                    Ok(None) => {}
+                    Err(error) => ui.error(error.to_string()),
                 }
-                Ok(None) => {}
-                Err(error) => ui.error(error.to_string()),
-            },
+            }
             command => {
                 let product_id = product.current();
                 run_interactive_operation(
@@ -3797,9 +3819,11 @@ async fn run_interactive_pairing_image(
 ) -> Result<()> {
     let activity_checkpoint = ui.activity_checkpoint();
     let operation = async {
-        let deeplink = tokio::task::spawn_blocking(move || match input {
-            PairingImageInput::Pixels(image) => qr_scanner::decode(&image),
-            PairingImageInput::Path(path) => qr_scanner::decode_path(&path),
+        let deeplink = tokio::task::spawn_blocking(move || {
+            match input {
+                PairingImageInput::Pixels(image) => qr_scanner::decode(&image),
+                PairingImageInput::Path(path) => qr_scanner::decode_path(&path),
+            }
         })
         .await
         .context("join QR image decoder")??;
@@ -3904,9 +3928,11 @@ async fn execute_non_interactive_command(
                 .context("join QR image decoder")??;
             respond_to_deeplink(session, deeplink).await?
         }
-        ShellCommand::Pair(PairCommand::Scan) => bail!(
-            "clipboard image paste needs an interactive signing host; use /pair <image-path> or /pair <polkadotapp://pair?...>"
-        ),
+        ShellCommand::Pair(PairCommand::Scan) => {
+            bail!(
+                "clipboard image paste needs an interactive signing host; use /pair <image-path> or /pair <polkadotapp://pair?...>"
+            )
+        }
         ShellCommand::Script(command) => {
             if command.edits() && !terminal_ui::is_interactive_terminal() {
                 bail!(
@@ -4048,14 +4074,16 @@ fn select_script(
         }
         ScriptCommand::New(directory) => script_project::create(projects, directory.as_deref()),
         ScriptCommand::Run(Some(script)) => Ok(script.clone()),
-        ScriptCommand::Run(None) => last_script
-            .as_ref()
-            .map(|script| script_project::remembered_script(script))
-            .transpose()?
-            .flatten()
-            .context(
-                "no script selected; use /script to create one or /script <path> to select one",
-            ),
+        ScriptCommand::Run(None) => {
+            last_script
+                .as_ref()
+                .map(|script| script_project::remembered_script(script))
+                .transpose()?
+                .flatten()
+                .context(
+                    "no script selected; use /script to create one or /script <path> to select one",
+                )
+        }
     }
 }
 
@@ -4104,10 +4132,12 @@ async fn edit_script_in(script: PathBuf, ui: &mut ActiveTerminalUi) -> Result<Pa
         .await?
     {
         DriveResult::Complete(result) => result?,
-        DriveResult::Cancelled => bail!(
-            "script setup cancelled; project retained at {}",
-            script.display()
-        ),
+        DriveResult::Cancelled => {
+            bail!(
+                "script setup cancelled; project retained at {}",
+                script.display()
+            )
+        }
     }
     ui.system(format!("Opening {} in your editor", script.display()));
     ui.suspend()?;
@@ -4401,12 +4431,16 @@ mod cli_tests {
         session.catalog.ensure_profile("workbench.99")?;
         for name in ["foo", "carol", "workbench.99", "another"] {
             let expected_error = match name {
-                "foo" | "carol" => format!(
-                    "session name {name:?} must contain at least 6 lowercase ASCII letters to create an account; digits and separators do not count"
-                ),
-                "workbench.99" => format!(
-                    "session {name:?} has no saved account; choose a username base to create one"
-                ),
+                "foo" | "carol" => {
+                    format!(
+                        "session name {name:?} must contain at least 6 lowercase ASCII letters to create an account; digits and separators do not count"
+                    )
+                }
+                "workbench.99" => {
+                    format!(
+                        "session {name:?} has no saved account; choose a username base to create one"
+                    )
+                }
                 _ => format!("check lite username {name:?} availability"),
             };
             let error = switch_session(&mut session, name.to_string())

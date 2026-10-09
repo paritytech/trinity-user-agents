@@ -346,11 +346,13 @@ mod tests {
             (STORE, s) if s == selector("getLabels(uint256,uint256)") => {
                 abi_string_array(&["myproject.paseo", "app.myproject.paseo"])
             }
-            (dest, sel) => panic!(
-                "unscripted view {} on 0x{}",
-                hex::encode(sel),
-                hex::encode(dest)
-            ),
+            (dest, sel) => {
+                panic!(
+                    "unscripted view {} on 0x{}",
+                    hex::encode(sel),
+                    hex::encode(dest)
+                )
+            }
         };
         contract_result(&data)
     }

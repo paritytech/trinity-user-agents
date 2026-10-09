@@ -252,19 +252,21 @@ impl SigningHostSsoService {
                     })
                 })
             }
-            api::AllocatableResource::BulletinAllowance => allocate_bulletin_allowance(
-                services,
-                signing_host,
-                session,
-                calling_product_id,
-                on_existing,
-            )
-            .await
-            .map(|slot_account_key| {
-                SsoAllocationOutcome::Allocated(SsoAllocatedResource::BulletinAllowance {
-                    slot_account_key,
+            api::AllocatableResource::BulletinAllowance => {
+                allocate_bulletin_allowance(
+                    services,
+                    signing_host,
+                    session,
+                    calling_product_id,
+                    on_existing,
+                )
+                .await
+                .map(|slot_account_key| {
+                    SsoAllocationOutcome::Allocated(SsoAllocatedResource::BulletinAllowance {
+                        slot_account_key,
+                    })
                 })
-            }),
+            }
             api::AllocatableResource::SmartContractAllowance(index) => {
                 allocate_smart_contract_allowance(
                     services,

@@ -49,9 +49,11 @@ fn parse_cards(spec: &str) -> BTreeMap<String, bool> {
     spec.split(',')
         .map(str::trim)
         .filter(|entry| !entry.is_empty())
-        .map(|entry| match entry.split_once(':') {
-            Some((card_id, "privileged")) => (card_id.trim().to_string(), true),
-            _ => (entry.to_string(), false),
+        .map(|entry| {
+            match entry.split_once(':') {
+                Some((card_id, "privileged")) => (card_id.trim().to_string(), true),
+                _ => (entry.to_string(), false),
+            }
         })
         .collect()
 }
@@ -98,9 +100,11 @@ impl CliPocketHost {
     ) -> &'a mut ProductCards {
         products
             .entry(product.product_id.clone())
-            .or_insert_with(|| ProductCards {
-                cards: self.seed.clone(),
-                subscribers: Vec::new(),
+            .or_insert_with(|| {
+                ProductCards {
+                    cards: self.seed.clone(),
+                    subscribers: Vec::new(),
+                }
             })
     }
 
@@ -111,9 +115,11 @@ impl CliPocketHost {
             cards: state
                 .cards
                 .iter()
-                .map(|(card_id, privileged)| v01::PocketCard {
-                    card_id: card_id.clone(),
-                    privileged: *privileged,
+                .map(|(card_id, privileged)| {
+                    v01::PocketCard {
+                        card_id: card_id.clone(),
+                        privileged: *privileged,
+                    }
                 })
                 .collect(),
         }

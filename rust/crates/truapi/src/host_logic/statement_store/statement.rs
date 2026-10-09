@@ -129,9 +129,11 @@ pub fn decode_verified_statement_data(
 ) -> Result<VerifiedStatementData, StatementStoreParseError> {
     let fields = decode_statement_fields(statement)?;
     let signer = verify_statement_proof(&fields, expected_signer)?;
-    let expiry = fields.iter().find_map(|field| match field {
-        StatementField::Expiry(value) => Some(*value),
-        _ => None,
+    let expiry = fields.iter().find_map(|field| {
+        match field {
+            StatementField::Expiry(value) => Some(*value),
+            _ => None,
+        }
     });
     let data = statement_data_from_fields(fields)?;
     Ok(VerifiedStatementData {
@@ -315,9 +317,11 @@ fn statement_data_from_fields(
 ) -> Result<Vec<u8>, StatementStoreParseError> {
     fields
         .into_iter()
-        .find_map(|field| match field {
-            StatementField::Data(value) => Some(value),
-            _ => None,
+        .find_map(|field| {
+            match field {
+                StatementField::Data(value) => Some(value),
+                _ => None,
+            }
         })
         .ok_or_else(|| StatementStoreParseError::Malformed("statement has no data".to_string()))
 }
@@ -570,11 +574,13 @@ impl From<StatementProof> for v01::StatementProof {
                 who,
                 block_hash,
                 event,
-            } => v01::StatementProof::OnChain {
-                who,
-                block_hash,
-                event,
-            },
+            } => {
+                v01::StatementProof::OnChain {
+                    who,
+                    block_hash,
+                    event,
+                }
+            }
         }
     }
 }
@@ -595,11 +601,13 @@ impl From<v01::StatementProof> for StatementProof {
                 who,
                 block_hash,
                 event,
-            } => StatementProof::OnChain {
-                who,
-                block_hash,
-                event,
-            },
+            } => {
+                StatementProof::OnChain {
+                    who,
+                    block_hash,
+                    event,
+                }
+            }
         }
     }
 }

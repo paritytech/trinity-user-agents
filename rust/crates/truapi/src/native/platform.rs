@@ -35,11 +35,11 @@ impl crate::platform::ContactsPlatform for ContactsCallbackPlatform {
         &self,
         lookup: &crate::platform::HostContactLookup,
     ) -> Result<crate::platform::HostContactMatches, v01::GenericError> {
-        self.contacts
-            .contacts(lookup.clone())
-            .map_err(|error| v01::GenericError {
+        self.contacts.contacts(lookup.clone()).map_err(|error| {
+            v01::GenericError {
                 reason: error.to_string(),
-            })
+            }
+        })
     }
 
     async fn pick_contact(
@@ -49,8 +49,10 @@ impl crate::platform::ContactsPlatform for ContactsCallbackPlatform {
         self.contacts
             .pick_contact(product.product_id.clone())
             .await
-            .map_err(|error| v01::GenericError {
-                reason: error.to_string(),
+            .map_err(|error| {
+                v01::GenericError {
+                    reason: error.to_string(),
+                }
             })
     }
 }
@@ -263,8 +265,10 @@ impl ProductStorage for CallbackPlatform {
                 .local_storage_read(key)
                 .await
                 .map(|value| v01::HostLocalStorageChangeItem { value })
-                .map_err(|error| v01::GenericError {
-                    reason: error.to_string(),
+                .map_err(|error| {
+                    v01::GenericError {
+                        reason: error.to_string(),
+                    }
                 })
         };
         stream::once(current).chain(rx).boxed()
@@ -282,8 +286,10 @@ impl ProductOperations for CallbackPlatform {
             .begin_operation(product.product_id.clone(), label)
             .await
             .map(|id| v01::HostWorkerBeginOperationResponse { id })
-            .map_err(|error| v01::HostWorkerOperationError::Unknown {
-                reason: error.to_string(),
+            .map_err(|error| {
+                v01::HostWorkerOperationError::Unknown {
+                    reason: error.to_string(),
+                }
             })
     }
 
@@ -295,8 +301,10 @@ impl ProductOperations for CallbackPlatform {
         self.callbacks
             .end_operation(product.product_id.clone(), id)
             .await
-            .map_err(|error| v01::HostWorkerOperationError::Unknown {
-                reason: error.to_string(),
+            .map_err(|error| {
+                v01::HostWorkerOperationError::Unknown {
+                    reason: error.to_string(),
+                }
             })
     }
 }
@@ -397,8 +405,10 @@ impl ChainProvider for CallbackPlatform {
         let Some(connection_id) = self
             .callbacks
             .chain_connect(genesis_hash.to_vec())
-            .map_err(|rejection| ProviderError::Host {
-                reason: v01::GenericError::from(rejection).reason,
+            .map_err(|rejection| {
+                ProviderError::Host {
+                    reason: v01::GenericError::from(rejection).reason,
+                }
             })?
         else {
             return Err(ProviderError::Host {
@@ -527,8 +537,10 @@ impl crate::platform::ChatPlatform for ChatCallbackPlatform {
             .chat
             .create_room(request.room_id, request.name, request.icon)
             .await
-            .map_err(|error| v01::HostChatCreateRoomError::Unknown {
-                reason: error.to_string(),
+            .map_err(|error| {
+                v01::HostChatCreateRoomError::Unknown {
+                    reason: error.to_string(),
+                }
             })?;
 
         if status == v01::ChatRoomRegistrationStatus::New
@@ -549,8 +561,10 @@ impl crate::platform::ChatPlatform for ChatCallbackPlatform {
             .chat
             .register_bot(request.bot_id, request.name, request.icon)
             .await
-            .map_err(|error| v01::HostChatRegisterBotError::Unknown {
-                reason: error.to_string(),
+            .map_err(|error| {
+                v01::HostChatRegisterBotError::Unknown {
+                    reason: error.to_string(),
+                }
             })?;
 
         // No room-list republish: a bot identity is not a room. A host that
@@ -567,8 +581,10 @@ impl crate::platform::ChatPlatform for ChatCallbackPlatform {
             .chat
             .post_message(request.room_id, request.payload)
             .await
-            .map_err(|error| v01::HostChatPostMessageError::Unknown {
-                reason: error.to_string(),
+            .map_err(|error| {
+                v01::HostChatPostMessageError::Unknown {
+                    reason: error.to_string(),
+                }
             })?;
         Ok(v01::HostChatPostMessageResponse { message_id })
     }
@@ -612,8 +628,10 @@ impl crate::platform::PocketPlatform for PocketCallbackPlatform {
             pocket
                 .list_cards()
                 .map(|cards| v01::HostPocketListSubscribeItem { cards })
-                .map_err(|error| v01::GenericError {
-                    reason: error.to_string(),
+                .map_err(|error| {
+                    v01::GenericError {
+                        reason: error.to_string(),
+                    }
                 })
         }))
     }
@@ -623,8 +641,10 @@ impl crate::platform::PocketPlatform for PocketCallbackPlatform {
         _product: &ProductContext,
         request: v01::HostPocketRemoveCardRequest,
     ) -> Result<(), v01::HostPocketRemoveCardError> {
-        let unknown = |error: HostRejection| v01::HostPocketRemoveCardError::Unknown {
-            reason: error.to_string(),
+        let unknown = |error: HostRejection| {
+            v01::HostPocketRemoveCardError::Unknown {
+                reason: error.to_string(),
+            }
         };
         match self
             .pocket
@@ -641,9 +661,11 @@ impl crate::platform::PocketPlatform for PocketCallbackPlatform {
                 // product on a list that still holds the removed card.
                 match self.pocket.list_cards() {
                     Ok(cards) => self.events.notify_pocket_cards_changed(cards),
-                    Err(error) => self.events.notify_pocket_cards_failed(v01::GenericError {
-                        reason: error.to_string(),
-                    }),
+                    Err(error) => {
+                        self.events.notify_pocket_cards_failed(v01::GenericError {
+                            reason: error.to_string(),
+                        })
+                    }
                 }
                 Ok(())
             }

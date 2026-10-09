@@ -312,8 +312,10 @@ impl ChainProvider {
             // Bounded here rather than in an adapter: a foreign store authors
             // this reason, so it is unbounded at the source and crosses the
             // boundary twice.
-            .map_err(|error| ChainProviderError::Storage {
-                reason: bounded_reason(error.to_string()),
+            .map_err(|error| {
+                ChainProviderError::Storage {
+                    reason: bounded_reason(error.to_string()),
+                }
             })
     }
 
@@ -334,8 +336,10 @@ impl ChainProvider {
             // Bounded here rather than in an adapter: a foreign store authors
             // this reason, so it is unbounded at the source and crosses the
             // boundary twice.
-            .map_err(|error| ChainProviderError::Storage {
-                reason: bounded_reason(error.to_string()),
+            .map_err(|error| {
+                ChainProviderError::Storage {
+                    reason: bounded_reason(error.to_string()),
+                }
             })
     }
 
@@ -360,10 +364,11 @@ impl ChainProvider {
             });
         }
         let genesis = genesis_from(genesis_hash)?;
-        let connection =
-            block_on(self.inner.connect(genesis)).map_err(|error| ChainProviderError::Connect {
+        let connection = block_on(self.inner.connect(genesis)).map_err(|error| {
+            ChainProviderError::Connect {
                 reason: error.to_string(),
-            })?;
+            }
+        })?;
         let connection: Arc<dyn JsonRpcConnection> = Arc::from(connection);
 
         let responses = connection.responses();
@@ -373,8 +378,10 @@ impl ChainProvider {
         // strong reference means the drop that would release it can never run.
         let pumped = Arc::downgrade(&connection);
         spawn_pump("truapi-pump", pump_responses(responses, pumped, listener)).map_err(
-            |error| ChainProviderError::Connect {
-                reason: format!("could not start the response pump: {error}"),
+            |error| {
+                ChainProviderError::Connect {
+                    reason: format!("could not start the response pump: {error}"),
+                }
             },
         )?;
 
@@ -394,8 +401,10 @@ impl ChainProvider {
         let states = self
             .inner
             .lifecycle(genesis_from(genesis_hash)?)
-            .map_err(|error| ChainProviderError::Lifecycle {
-                reason: error.to_string(),
+            .map_err(|error| {
+                ChainProviderError::Lifecycle {
+                    reason: error.to_string(),
+                }
             })?;
         let (states, stop) = futures::stream::abortable(states);
         spawn_pump("truapi-lifecycle", pump_lifecycle(states, listener)).map_err(|error| {

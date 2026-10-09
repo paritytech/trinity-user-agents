@@ -786,12 +786,14 @@ fn core_key(key: &CoreStorageKey) -> String {
             root_public_key,
             peer_statement_account_id,
             peer_encryption_public_key,
-        } => format!(
-            "core:sso-responder-ledger:{}:{}:{}",
-            hex_key(root_public_key),
-            hex_key(peer_statement_account_id),
-            hex_key(peer_encryption_public_key)
-        ),
+        } => {
+            format!(
+                "core:sso-responder-ledger:{}:{}:{}",
+                hex_key(root_public_key),
+                hex_key(peer_statement_account_id),
+                hex_key(peer_encryption_public_key)
+            )
+        }
         CoreStorageKey::ProductManifest { product_id } => {
             format!("core:product-manifest:{product_id}")
         }
@@ -1606,10 +1608,12 @@ mod tests {
     #[test]
     fn notifications_record_order_with_unique_ids() {
         let p = MockPlatform::new();
-        let make = |text: &str| latest::HostPushNotificationRequest {
-            text: text.to_string(),
-            deeplink: None,
-            scheduled_at: None,
+        let make = |text: &str| {
+            latest::HostPushNotificationRequest {
+                text: text.to_string(),
+                deeplink: None,
+                scheduled_at: None,
+            }
         };
         let id0 = block_on(p.push_notification(make("one"))).unwrap().id;
         let id1 = block_on(p.push_notification(make("two"))).unwrap().id;
@@ -1911,9 +1915,11 @@ mod tests {
         let products: Vec<String> = p
             .reviews()
             .into_iter()
-            .map(|review| match review {
-                UserConfirmationReview::ResourceAllocation(inner) => inner.calling_product_id,
-                other => panic!("unexpected review {other:?}"),
+            .map(|review| {
+                match review {
+                    UserConfirmationReview::ResourceAllocation(inner) => inner.calling_product_id,
+                    other => panic!("unexpected review {other:?}"),
+                }
             })
             .collect();
         assert_eq!(products, vec!["first.dot", "second.dot"]);
