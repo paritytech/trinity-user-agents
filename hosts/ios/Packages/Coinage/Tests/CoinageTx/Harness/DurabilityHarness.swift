@@ -76,14 +76,11 @@ final class DurabilityHarness: @unchecked Sendable {
 
     /// Reserves `assets` against being spent again, returning the commit handle. The two-phase form a
     /// scenario drives directly (``handOff(_:)`` is the pre-commit-and-commit shorthand). The same check
-    /// the coinage service runs: a live claimant makes the pre-commit throw.
+    /// the coinage service runs: a live claimant or an existing reservation makes pre-commit throw.
     func preCommitHandoff(_ assets: [OwnAsset]) async throws -> any CoinageHandoffCommit {
         let keys = Set(assets.map(\.publicKey))
         try await store.ledger.precommitHandOff(assets) { context in
-            let claimed = try context.filterClaimed(keys)
-            if let key = claimed.first {
-                throw CoinageTxError.handoffOfClaimedAsset(key.toHex())
-            }
+            try CoinageTxRegistrationValidator().validateHandoff(keys, transaction: context)
         }
         return StoreHandoffCommit(assets: assets, ledger: store.ledger)
     }

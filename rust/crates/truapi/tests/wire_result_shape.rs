@@ -28,7 +28,7 @@ use std::sync::Arc;
 
 use parity_scale_codec::{Decode, Encode};
 
-use truapi::{CallError, v01};
+use truapi::{CallError, v01, versioned::account};
 
 use truapi::TrUApiCore;
 use truapi::frame::{
@@ -437,25 +437,6 @@ fn deferred_payment_requests_return_dotli_not_implemented_errors() {
             reason: PAYMENTS_NOT_IMPLEMENTED.to_string(),
         }),
     );
-
-    let top_up = v01::HostPaymentTopUpRequest {
-        into: None,
-        amount: 1,
-        source: v01::PaymentTopUpSource::ProductAccount {
-            derivation_index: v01::DerivationIndex::Index(0),
-        },
-    };
-    assert_request_returns_domain_error(
-        &core,
-        "p:top-up",
-        "payment_top_up",
-        truapi::versioned::payment::HostPaymentTopUpRequest::V1(top_up).encode(),
-        truapi::versioned::payment::HostPaymentTopUpError::V1(
-            v01::HostPaymentTopUpError::Unknown {
-                reason: PAYMENTS_NOT_IMPLEMENTED.to_string(),
-            },
-        ),
-    );
 }
 
 #[test]
@@ -551,6 +532,103 @@ fn malformed_result_subscription_start_interrupts_with_malformed_frame() {
         Err(CallError::MalformedFrame { reason }) => assert!(!reason.is_empty()),
         other => panic!("expected MalformedFrame interrupt, got {other:?}"),
     }
+}
+
+#[test]
+fn product_device_chat_initialize_reaches_authorization_at_method_twelve() {
+    let core = make_core();
+    let request = account::HostProductDeviceChatRequest::V2(
+        truapi::latest::HostProductDeviceChatRequest::Initialize,
+    );
+    let response = dispatch(
+        &core,
+        ProtocolMessage {
+            request_id: "p:product-device-chat".into(),
+            payload: Payload {
+                trait_id: 2,
+                method_id: 12,
+                message_type: MESSAGE_TYPE_REQUEST,
+                value: request.encode(),
+            },
+        },
+    );
+    assert_eq!(response.request_id, "p:product-device-chat");
+    assert_eq!(response.payload.trait_id, 2);
+    assert_eq!(response.payload.method_id, 12);
+    assert_eq!(response.payload.message_type, MESSAGE_TYPE_RESPONSE);
+    assert_eq!(
+        response.payload.value,
+        versioned_result_err_payload(account::HostProductDeviceChatError::V1(
+            truapi::v02::HostProductDeviceChatError::NotConnected,
+        )),
+    );
+}
+
+#[test]
+fn retired_high_level_chat_cannot_dispatch_at_method_twelve() {
+    let core = make_core();
+    let request = account::HostProductDeviceChatRequest::V1(
+        truapi::v02::HostProductDeviceChatRequest::Initialize,
+    );
+    let response = dispatch(
+        &core,
+        ProtocolMessage {
+            request_id: "p:retired-high-level-chat".into(),
+            payload: Payload {
+                trait_id: 2,
+                method_id: 12,
+                message_type: MESSAGE_TYPE_REQUEST,
+                value: request.encode(),
+            },
+        },
+    );
+    let result = Result::<
+        account::HostProductDeviceChatResponse,
+        CallError<account::HostProductDeviceChatError>,
+    >::decode(&mut response.payload.value.as_slice())
+    .expect("retired request remains decodable");
+    assert!(matches!(result, Err(CallError::HostFailure { .. })));
+}
+
+#[test]
+fn retired_raw_chat_method_cannot_dispatch() {
+    let core = make_core();
+    // The retired V1 Identity request was [V1, Identity, ProductAccountId].
+    // Keep a valid historical payload so rejection cannot be a decode failure.
+    let mut raw_identity = vec![0, 4];
+    v01::ProductAccountId {
+        dot_ns_identifier: "chat.dot".into(),
+        derivation_index: v01::DerivationIndex::Index(0),
+    }
+    .encode_to(&mut raw_identity);
+    let response = dispatch(
+        &core,
+        ProtocolMessage {
+            request_id: "p:retired-chat".into(),
+            payload: Payload {
+                trait_id: 2,
+                method_id: 11,
+                message_type: MESSAGE_TYPE_REQUEST,
+                value: raw_identity,
+            },
+        },
+    );
+    assert_eq!(
+        response,
+        ProtocolMessage {
+            request_id: "p:retired-chat".into(),
+            payload: Payload {
+                trait_id: PROTOCOL_ERROR_TRAIT_ID,
+                method_id: PROTOCOL_ERROR_METHOD_ID,
+                message_type: MESSAGE_TYPE_RESPONSE,
+                value: VersionedProtocolError::V1(ProtocolErrorV1::UnsupportedMessage {
+                    trait_id: 2,
+                    method_id: 11,
+                })
+                .encode(),
+            },
+        },
+    );
 }
 
 /// A chain follow that cannot reach its provider must end with the failure,

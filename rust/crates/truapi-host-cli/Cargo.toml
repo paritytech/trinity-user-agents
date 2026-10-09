@@ -3,7 +3,7 @@ name = "truapi-host-cli"
 version = "0.24.0"
 edition.workspace = true
 description = "Headless TrUAPI hosts: a signing-host companion and a pairing host that pair over the real People-chain statement store, for end-to-end testing without an external signer service"
-license = "MIT"
+license = "MIT AND AGPL-3.0-only"
 include = ["src/**", "js/**", "README.md", "SPEC.md"]
 
 [[bin]]
@@ -11,7 +11,7 @@ name = "truapi-host"
 path = "src/main.rs"
 
 [target.'cfg(unix)'.dependencies]
-rustix = { workspace = true, features = ["process"] }
+rustix = { workspace = true, features = ["process", "fs"] }
 
 [lints.rust]
 unsafe_code = "forbid"
@@ -31,6 +31,7 @@ flate2 = { workspace = true }
 futures = { workspace = true }
 futures-util = { workspace = true }
 fs2 = { workspace = true }
+getrandom = { workspace = true }
 hex = { workspace = true }
 image = { workspace = true, features = ["jpeg", "png", "webp"] }
 parity-scale-codec = { workspace = true, features = ["derive"] }

@@ -20,7 +20,9 @@ pub const DOMAIN_2E12: u32 = 1 << 12;
 /// Ring domain size 2^16, for on-chain ring exponent 14.
 pub const DOMAIN_2E16: u32 = 1 << 16;
 
-/// Ring-VRF operations, from [`load`].
+/// Ring-VRF operations, from [`load`]. Holding one proves the operations are
+/// loaded, which stays true, so it is freely copyable into synchronous callers.
+#[derive(Clone, Copy)]
 pub struct Vrf(());
 
 /// Ring-VRF operations, which native builds link in.

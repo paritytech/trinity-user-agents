@@ -248,7 +248,7 @@ impl BulletinRpc {
         }
     }
 
-    /// The chain used by the allowance reader and submission service.
+    /// Configured Bulletin identity, used by the allowance reader and to select trusted HOP endpoints.
     pub(crate) fn genesis_hash(&self) -> [u8; 32] {
         self.genesis_hash
     }

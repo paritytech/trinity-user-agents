@@ -383,12 +383,20 @@ async fn write_last_processed_pairing_statement(
     if let Err(err) = storage
         .write_core_storage(
             CoreStorageKey::LastProcessedPairingStatement,
-            statement.to_vec(),
+            pairing_statement_fingerprint(statement),
         )
         .await
     {
         debug!("last processed pairing statement write failed: {err:?}");
     }
+}
+
+fn pairing_statement_fingerprint(statement: &[u8]) -> Vec<u8> {
+    blake2b_simd::Params::new()
+        .hash_length(32)
+        .hash(statement)
+        .as_bytes()
+        .to_vec()
 }
 
 #[instrument(skip_all, fields(runtime.method = "sso.auth_session.clear"))]
@@ -577,7 +585,9 @@ fn handle_v2_pairing_result(
         parse_new_statements_result("pairing".to_string(), value).map_err(|err| err.to_string())?;
     let mut pending = false;
     for statement in page.statements {
-        if last_processed_statement == Some(statement.as_slice()) {
+        if last_processed_statement
+            .is_some_and(|fingerprint| fingerprint == pairing_statement_fingerprint(&statement))
+        {
             continue;
         }
         match PairingProgress::from_v2_statement(&statement, core_encryption_secret_key)? {
@@ -1264,10 +1274,11 @@ mod tests {
             },
         });
 
+        let fingerprint = pairing_statement_fingerprint(&statement);
         let ignored = handle_v2_pairing_result(
             &page,
             bootstrap.encryption_secret_key,
-            Some(statement.as_slice()),
+            Some(fingerprint.as_slice()),
         )
         .unwrap();
         assert!(ignored.is_none());

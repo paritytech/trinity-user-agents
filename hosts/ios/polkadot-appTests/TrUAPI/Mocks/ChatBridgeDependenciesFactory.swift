@@ -29,6 +29,7 @@ func makeChatBridgeDependencies(
         ),
         coreStorage: TrUAPILocalStorage.createCoreLocalStorage(defaults: defaults),
         confirmationPresenter: MockConfirmationPresenter(),
+        chatFiles: UnavailableNativeChatFiles(),
         preimageCache: TrUAPIPreimageCache { _ in nil },
         hostProvider: InertHostProvider(),
         logger: Logger.shared

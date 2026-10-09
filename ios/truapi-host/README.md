@@ -1,8 +1,11 @@
 # TrUAPI iOS host adapter
 
-_Thin Swift shell over the Rust TrUAPI core (UniFFI). Wire decoding, request routing, and subscription lifecycle stay in the Rust core; products connect through the localhost WebSocket bridge._
+_Thin Swift shell over the Rust TrUAPI core (UniFFI). Wire decoding, request routing, and subscription lifecycle stay in
+the Rust core; products connect through the localhost WebSocket bridge._
 
-The package lives in the truapi repo next to the Rust core it wraps. `Package.swift` sits at the **repo root** (SPM requires that for git-URL dependencies), with all target paths pointing into `ios/truapi-host/`; the build scripts regenerate those target paths from this repo's workspace, because none of them are committed.
+The package lives in the truapi repo next to the Rust core it wraps. `Package.swift` sits at the **repo root** (SPM
+requires that for git-URL dependencies), with all target paths pointing into `ios/truapi-host/`; the build scripts
+regenerate those target paths from this repo's workspace, because none of them are committed.
 
 ## What this package is for
 
@@ -16,7 +19,9 @@ The `TrUAPIHost` SPM package an iOS host app imports directly. It carries:
 - `Tests/` contains WS-bridge and WebKit network tests that boot the real Rust core.
 - `TestHost/` provides the UIKit app and XcodeGen project for simulator tests.
 
-The generated bindings, the container bundle and the xcframework are all **gitignored** build outputs, so a fresh checkout has no Swift sources for the package's targets. Run `rebuild.sh` before opening it. The xcframework is additionally distributed as a GitHub release asset. Two scripts split the lifecycle:
+The generated bindings, the container bundle and the xcframework are all **gitignored** build outputs, so a fresh
+checkout has no Swift sources for the package's targets. Run `rebuild.sh` before opening it. The xcframework is
+additionally distributed as a GitHub release asset. Two scripts split the lifecycle:
 
 ```bash
 ./scripts/rebuild.sh            # regenerate xcframework + bindings + container
@@ -31,19 +36,17 @@ The generated bindings, the container bundle and the xcframework are all **gitig
                                 # SwiftPM consumer resolves
 ```
 
-A consumer pins the plain semver tag, not the `@parity/ios-host@<version>` one,
-which SwiftPM cannot see:
+A consumer pins the plain semver tag, not the `@parity/ios-host@<version>` one, which SwiftPM cannot see:
 
 ```swift
 .package(url: "https://github.com/paritytech/trinity-user-agents", exact: "0.12.0")
 ```
 
-`release-ios.yml` runs all three in order and clones and compiles the tag
-before pushing it. Run them by hand only as a fallback.
+`release-ios.yml` runs all three in order and clones and compiles the tag before pushing it. Run them by hand only as a
+fallback.
 
-When only the bindings need refreshing — a Rust surface change with no container
-or xcframework impact — skip the full rebuild, which needs Xcode and the iOS
-targets:
+When only the bindings need refreshing — a Rust surface change with no container or xcframework impact — skip the full
+rebuild, which needs Xcode and the iOS targets:
 
 ```bash
 # from the repo root
@@ -73,9 +76,16 @@ the separate iOS CI workflow builds and tests the embedding app.
 
 Run `rebuild.sh` after changing anything host-visible — the `NativeTrUApiHostRuntime` or `NativeProductExecution` methods, `HostCallbacks`, the native mirror types in `rust/crates/truapi/src/native*`, or `js/container/src` — to refresh your local build outputs. Nothing to commit: CI regenerates them. To publish from a release PR, add `@parity/ios-host <version>` to its `release:` title. After the release commit passes CI, the release workflow rebuilds and simulator-tests the XCFramework on macOS, uploads it, cuts the `<version>` tag, and opens the `Package.swift` follow-up pull request only after the asset is live. `publish.sh` remains available for an ad hoc manual release.
 
-For local iteration without publishing, set `TRUAPI_USE_LOCAL_BINARY=1` so the root `Package.swift` builds against `Binaries/` directly.
+For local iteration without publishing, set `TRUAPI_USE_LOCAL_BINARY=1` so the root `Package.swift` builds against
+`Binaries/` directly.
 
-The embedding app implements `HostBridge` (defined in `TrUAPIHost.swift`): navigation, push, permissions, auth state, scoped + core storage, chain JSON-RPC, confirmations, preimage, theme, feature support, and the served chain set. UI-decision callbacks are `async` and awaited by the Rust core. `HostCallbackAdapter` translates it to the UniFFI-generated `HostCallbacks` protocol; `TrUAPIHostRuntime` and each product execution retain their own adapter. Conform to `HostBridge` rather than to the generated protocol: its extension defaults the optional callbacks, so a newly added one does not break the build. Storage arrives as the `storage` and `coreStorage` sub-objects, which the adapter flattens.
+The embedding app implements `HostBridge` (defined in `TrUAPIHost.swift`): navigation, push, permissions, auth state,
+scoped + core storage, chain JSON-RPC, confirmations, preimage, theme, feature support, and the served chain set.
+UI-decision callbacks are `async` and awaited by the Rust core. `HostCallbackAdapter` translates it to the
+UniFFI-generated `HostCallbacks` protocol; `TrUAPIHostRuntime` and each product execution retain their own adapter.
+Conform to `HostBridge` rather than to the generated protocol: its extension defaults the optional callbacks, so a newly
+added one does not break the build. Storage arrives as the `storage` and `coreStorage` sub-objects, which the adapter
+flattens.
 
 The default `currentLocale` includes the system BCP 47 language tag and actual time-zone identifier. `localizeTimestamps` uses Foundation to format each instant in the requested language and zone, including historical daylight-saving offsets; grouping keys are always Gregorian `YYYY-MM-DD`. Product executions observe system locale and time-zone changes and remove those observers on close. Hosts with an in-app language picker override `currentLocale` and call `notifyLocaleChanged` when that selection changes, preserving the actual time zone. Direct users of generated callbacks must implement `localizeTimestamps`, either supplying a formatter or throwing `HostRejection.Rejected` when conversion is unavailable.
 
@@ -105,27 +115,45 @@ Add the package as an SPM dependency and link the `TrUAPIHost` product into the 
 .product(name: "TrUAPIHost", package: "trinity-user-agents")
 ```
 
-The release workflow publishes the asset under `@parity/ios-host@<version>`,
-creates a bare `<version>` tag from a manifest containing its URL and checksum,
-and builds that tag from a clean clone before pushing it. It also opens a
-manifest PR to keep `main` current. SPM pins the resolved revision in the app's
-`Package.resolved`; update it with File > Packages > Update in Xcode or
-`xcodebuild -resolvePackageDependencies` after the tag is published.
+The release workflow publishes the asset under `@parity/ios-host@<version>`, creates a bare `<version>` tag from a
+manifest containing its URL and checksum, and builds that tag from a clean clone before pushing it. It also opens a
+manifest PR to keep `main` current. SPM pins the resolved revision in the app's `Package.resolved`; update it with
+File > Packages > Update in Xcode or `xcodebuild -resolvePackageDependencies` after the tag is published.
 
-`HostRuntimeConfig.networkSuffix` is required. Supply the bare TLD (`dot`,
-`paseo`, or `testnet`) from the same network configuration used by onboarding
-and the People/Bulletin genesis hashes. It must match the People chain's
-`NetworkSuffix.NetworkSuffix`. Include this configuration update in the
+`HostRuntimeConfig.networkSuffix` is required. Supply the bare TLD (`dot`, `paseo`, or `testnet`) from the same network
+configuration used by onboarding and the People/Bulletin genesis hashes. It must match the People chain's
+`NetworkSuffix.NetworkSuffix`. Include this configuration update in the embedding app's package upgrade.
+
+`HostRuntimeConfig.coinageInstanceId` is optional for legacy Coinage runtimes and required for instance-scoped Coinage
+operations. Supply the same trusted asset instance as the app's native Coinage service (`AppConfig.Coinage.instanceId`
+in Polkadot App). Do not substitute the main-purse derivation identifier. Omission fails closed on instance-scoped
+runtimes. The UniFFI record appends this field; rebuild bindings and native libraries together with the wrapper.
+
+Pass an existing native wallet as `nativeWallet:` when constructing `TrUAPIHostRuntime`. The separate
+`NativeCoinageHost` protocol contains only `nativeCoinage(request:)`; it is not part of `HostBridge` or product
+callbacks. Omitting the optional dependency selects built-in Rust custody. Once registered, a locked, unavailable or
+failing native wallet never falls back to Rust, and product executions cannot replace it. The reference iOS integration
+always supplies its Coinage service adapter directly, delegates to the coordinator's `CoinageService`, and retains the
+guard against opening Rust purse storage.
+
+This callback is Host-private. Validate the request's wallet root, **Coinage/People** genesis and asset instance against
+the service, preserve durable native custody before returning an outgoing memo, and never expose memo secrets or native
+exception text to a product. Regenerate bindings and rebuild the XCFramework together after changing this callback
+surface; generating Swift alone is not an iOS build or funded-payment qualification.
+
+The reference app's combined Core Data schema is `UserDataModel54`. Keep the shipped base
+`UserDataModel53` and Chat `UserDataModel53Chat` models unchanged for store detection; each migrates
+to version 54. The combined schema retains pocket cards, incoming payment ownership and the durable
+native Coinage ledger. `UserDataModel49Chat` follows the Chat migration path, avoiding an intermediate
+schema that would discard its custody records. Qualify migration from both version-53 stores on iOS
+before release; the Swift migration tests cover their distinct persisted fields.
+
+`HostRuntimeConfig.assetHubChainGenesisHash` is required. Supply the Asset Hub genesis hash from the same network
+configuration, as 32 bytes. Product manifests are read from the dotNS contracts deployed there, so it is what makes a
+`trustedProducts` grant resolvable: without a usable value no manifest resolves, so every cross-product grant not
+already cached is refused, and the refusal is indistinguishable from the other product having granted nothing. Pass 32
+zero bytes only to declare deliberately that this host has no Asset Hub. Include this configuration update in the
 embedding app's package upgrade.
-
-`HostRuntimeConfig.assetHubChainGenesisHash` is required. Supply the Asset Hub
-genesis hash from the same network configuration, as 32 bytes. Product manifests
-are read from the dotNS contracts deployed there, so it is what makes a
-`trustedProducts` grant resolvable: without a usable value no manifest resolves,
-so every cross-product grant not already cached is refused, and the refusal is
-indistinguishable from the other product having granted nothing. Pass 32 zero
-bytes only to declare deliberately that this host has no Asset Hub. Include this
-configuration update in the embedding app's package upgrade.
 
 Run the package tests in their UIKit host on an iOS simulator using Xcode 16.3 or newer (the xcframework has no macOS slice). The helper installs pinned XcodeGen under `target/tools`, generates the project, and selects an available simulator. CI waits for that simulator to finish booting before compiling the test host. This completes OS boot, not WebKit's lazy auxiliary-process startup.
 
@@ -140,9 +168,8 @@ The separation is necessary even on the prebooted device: [a cold iOS 18.5 CI ru
 
 ## Chat
 
-A host serving the Chat modality implements `ChatHostBridge` and opens the
-execution with `ProductExecutionKind.chat`. Hosts without it pass nothing and
-Chat calls answer unsupported.
+A host serving the Chat modality implements `ChatHostBridge` and opens the execution with `ProductExecutionKind.chat`.
+Hosts without it pass nothing and Chat calls answer unsupported.
 
 ```swift
 // Called from a shared dispatch pool, so the backing store must be
@@ -199,24 +226,21 @@ let execution = try runtime.openProductExecution(
 let endpoint = try execution.startWsBridge()
 ```
 
-The core bounds and screens the product-supplied fields it forwards — ids,
-names, icons, message bodies, URLs, and the action and media counts. Ids and
-names are also normalized; a message body is bounded and screened but passed
-through byte-for-byte, and `ChatFile.sizeBytes` is product-asserted and
-unverified. Contextual output escaping is the host's job.
+The core bounds and screens the product-supplied fields it forwards — ids, names, icons, message bodies, URLs, and the
+action and media counts. Ids and names are also normalized; a message body is bounded and screened but passed through
+byte-for-byte, and `ChatFile.sizeBytes` is product-asserted and unverified. Contextual output escaping is the host's
+job.
 
-The id `postMessage` returns is the correlation key `ActionTrigger.messageId`
-carries back, so it must name that message for as long as the host stores it.
-Ids arriving _in_ a `Reaction` or `ReactionRemoved` are product-chosen and
-untrusted: they may name a message in another room, or one that never existed.
+The id `postMessage` returns is the correlation key `ActionTrigger.messageId` carries back, so it must name that message
+for as long as the host stores it. Ids arriving _in_ a `Reaction` or `ReactionRemoved` are product-chosen and untrusted:
+they may name a message in another room, or one that never existed.
 
 ## Pocket
 
-A host with a Pocket surface owns the card collection and implements
-`PocketHostBridge`, passed as `pocket:` to `openProductExecution`. Pocket is
-reachable only from a Worker execution with an active session, so a product
-on a signed-out host is denied before the bridge is consulted. Hosts without
-the bridge pass nothing and Pocket calls answer unsupported.
+A host with a Pocket surface owns the card collection and implements `PocketHostBridge`, passed as `pocket:` to
+`openProductExecution`. Pocket is reachable only from a Worker execution with an active session, so a product on a
+signed-out host is denied before the bridge is consulted. Hosts without the bridge pass nothing and Pocket calls answer
+unsupported.
 
 ```swift
 final class MyPocketBridge: PocketHostBridge, @unchecked Sendable {
@@ -247,70 +271,51 @@ let execution = try runtime.openProductExecution(
 execution.notifyPocketCardsChanged(cards: pocketStore.cards())
 ```
 
-A card's face does not cross this bridge. The host keeps each card's newest
-face itself: that is what the card shows while the worker is down, and at cold
-start before the worker answers.
+A card's face does not cross this bridge. The host keeps each card's newest face itself: that is what the card shows
+while the worker is down, and at cold start before the worker answers.
 
-On the execution: `publishChatAction` delivers a user's action back to the
-product, buffering up to 64 before it subscribes; `notifyChatRoomsChanged`
-republishes the room list; `render` returns a stream of `RendererNode` trees
-for one render context; `publishRendererAction` delivers a renderer action
-back to the product; and `sessionChatIdentityKey` reads the session's X25519
-chat identity private key, which must not be logged or persisted. An open
-render stream is one worker reference the core holds on the product's behalf;
-the transition it causes arrives on the runtime bridge's
-`workerDemandChanged`, never on the execution's. Two rules the core
-cannot check are the host's to keep: send a render context only for a surface
-the product's manifest `includes`, and publish a renderer action only from the
-current tree of an open render stream.
+On the execution: `publishChatAction` delivers a user's action back to the product, buffering up to 64 before it
+subscribes; `notifyChatRoomsChanged` republishes the room list; `render` returns a stream of `RendererNode` trees for
+one render context; `publishRendererAction` delivers a renderer action back to the product; and `sessionChatIdentityKey`
+reads the session's X25519 chat identity private key, which must not be logged or persisted. An open render stream is
+one worker reference the core holds on the product's behalf; the transition it causes arrives on the runtime bridge's
+`workerDemandChanged`, never on the execution's. Two rules the core cannot check are the host's to keep: send a render
+context only for a surface the product's manifest `includes`, and publish a renderer action only from the current tree
+of an open render stream.
 
-The runtime answers other devices pairing with it:
-`notifyPairingAllowanceAllocation(deeplink:)` and
-`notifyPairingFailed(announced:reason:)` are the two notices a peer gets before
-the answer, `establishPairing(deeplink:)` is the answer,
-`resumePairing(peer:)` serves the session for its whole life and belongs in its
-own task, and `disconnectPairedHost(peer:)` ends it. Only
-`.peerDisconnected` from `resumePairing` authorises dropping the stored
-pairing. The host persists the peer between answering and serving, which is why
-those are separate calls.
+The runtime answers other devices pairing with it: `notifyPairingAllowanceAllocation(deeplink:)` and
+`notifyPairingFailed(announced:reason:)` are the two notices a peer gets before the answer,
+`establishPairing(deeplink:)` is the answer, `resumePairing(peer:)` serves the session for its whole life and belongs in
+its own task, and `disconnectPairedHost(peer:)` ends it. Only `.peerDisconnected` from `resumePairing` authorises
+dropping the stored pairing. The host persists the peer between answering and serving, which is why those are separate
+calls.
 
-Two steps around them are the host's. `establishPairing` signs its answer with
-this host's own SSO statement identity, so `.walletSso` has to be allocated
-before it runs, and the peer's device statement account has to be tracked
-alongside it for the peer to author into the session:
-`parsePairingDeeplink(deeplink:)` reads that account out of the deeplink before
-any notice goes out, and a pairing that then fails untracks it again unless the
-device was already paired. `disconnectPairedHost` submits the notice and nothing more, so ending
-a pairing also means cancelling that peer's `resumePairing` task and untracking
-its renewal account; dropping the stored pairing alone leaves both running.
+Two steps around them are the host's. `establishPairing` signs its answer with this host's own SSO statement identity,
+so `.walletSso` has to be allocated before it runs, and the peer's device statement account has to be tracked alongside
+it for the peer to author into the session: `parsePairingDeeplink(deeplink:)` reads that account out of the deeplink
+before any notice goes out, and a pairing that then fails untracks it again unless the device was already paired.
+`disconnectPairedHost` submits the notice and nothing more, so ending a pairing also means cancelling that peer's
+`resumePairing` task and untracking its renewal account; dropping the stored pairing alone leaves both running.
 
-Which undo a failure owes is the thrown case, not the message: `.rejected`
-means the peer may already have been reached and its target tracked, while
-`.undecodableDeeplink` is refused before either happens and leaves nothing to
-undo.
+Which undo a failure owes is the thrown case, not the message: `.rejected` means the peer may already have been reached
+and its target tracked, while `.undecodableDeeplink` is refused before either happens and leaves nothing to undo.
 
-The core prompts for nothing along the way, so asking the user is the host's
-too. `parsePairingDeeplink` returns the peer's `metadata` alongside it for that
-prompt: the host name, version, icon and platform the peer put in its QR,
-trimmed and stripped of the control characters and bidirectional overrides that
-would otherwise rewrite the prompt's own text around them, capped at 512
-characters, and `nil` where nothing renderable was sent. Safe to render is not
-verified: nothing signs that metadata, so a prompt built from it says what the
-peer calls itself, never who it is.
+The core prompts for nothing along the way, so asking the user is the host's too. `parsePairingDeeplink` returns the
+peer's `metadata` alongside it for that prompt: the host name, version, icon and platform the peer put in its QR,
+trimmed and stripped of the control characters and bidirectional overrides that would otherwise rewrite the prompt's own
+text around them, capped at 512 characters, and `nil` where nothing renderable was sent. Safe to render is not verified:
+nothing signs that metadata, so a prompt built from it says what the peer calls itself, never who it is.
 
-The handle `notifyPairingAllowanceAllocation` returns holds the responder
-statement secret its notice was signed with, and nothing consumes it, so drop
-the last reference once the pairing settles rather than holding it for the life
-of the session.
+The handle `notifyPairingAllowanceAllocation` returns holds the responder statement secret its notice was signed with,
+and nothing consumes it, so drop the last reference once the pairing settles rather than holding it for the life of the
+session.
 
-`devicePaired` on the runtime bridge reports a device that finished pairing
-with this signing host, carrying the `PairedSsoPeer` the pairing produced. The
-core has no chat of its own, so announcing the new device to the user's
-existing contacts is the host's to do. It fires at least once per pairing, so
-a device that pairs again reports again; a resumed pairing reports nothing, so
-the host keeps its own record of which devices it has already seen. It arrives
-on the thread answering the handshake, so hand the device off rather than
-announcing it inline. Defaults to a no-op for a host that answers no pairing.
+`devicePaired` on the runtime bridge reports a device that finished pairing with this signing host, carrying the
+`PairedSsoPeer` the pairing produced. The core has no chat of its own, so announcing the new device to the user's
+existing contacts is the host's to do. It fires at least once per pairing, so a device that pairs again reports again; a
+resumed pairing reports nothing, so the host keeps its own record of which devices it has already seen. It arrives on
+the thread answering the handshake, so hand the device off rather than announcing it inline. Defaults to a no-op for a
+host that answers no pairing.
 
 ## Game
 
@@ -373,18 +378,29 @@ The bootstrap supplies the execution endpoint to the shared container, which con
 
 The core's `Permissions` platform trait has two methods, and so does `HostCallbacks`:
 
-- `devicePermission(product:request:)` - product consent for device capabilities (camera, mic, location, push). `request` is a typed `HostDevicePermissionRequest`.
+- `devicePermission(product:request:)` - product consent for device capabilities (camera, mic, location, push).
+  `request` is a typed `HostDevicePermissionRequest`.
 - `remotePermission(product:request:)` - per-product capabilities. `request` is a typed `RemotePermission`.
 
 `product` is the requesting execution's `ProductExecutionConfig`.
 
 Both return `PermissionDecision`: `.allowOnce`, `.allowAlways`, or `.deny`. Preserve the user’s choice; the core keeps one-use grants in memory and consumes them at the authorized operation. OS refusal after app consent should throw instead of returning `.deny`, which records a product denial. Executions expose the read-only `permissionAuthorizationStatus`; native settings administration belongs to the process-owned `TrUAPIHostRuntime`.
 
-Identity and account access reviews use `confirmPermission(review:)`, which also returns `PermissionDecision`. Override it to preserve Allow once. Its compatibility default maps `confirmUserAction`'s Boolean approval to `.allowAlways`; signing and other single-action reviews continue to use that Boolean callback.
+Identity and account access reviews use `confirmPermission(review:)`, which also returns `PermissionDecision`. Override
+it to preserve Allow once. Its compatibility default maps `confirmUserAction`'s Boolean approval to `.allowAlways`;
+signing and other single-action reviews continue to use that Boolean callback.
 
-Fetch, XHR, WebSocket connections, notification scheduling, external navigation and existing remote-operation gates consume temporary grants. The shared container authorizes each `getUserMedia` call through `authorize_device_permission`, camera before microphone. Each approval consumes its one-use grant for that attempt: a later microphone denial or native capture failure does not restore the camera grant. The returned stream remains usable until stopped; another capture requires new authorization.
+Fetch, XHR, WebSocket connections, notification scheduling, external navigation and existing remote-operation gates
+consume temporary grants. The shared container authorizes each `getUserMedia` call through
+`authorize_device_permission`, camera before microphone. Each approval consumes its one-use grant for that attempt: a
+later microphone denial or native capture failure does not restore the camera grant. The returned stream remains usable
+until stopped; another capture requires new authorization.
 
-The container enforces product consent, while native media delegates resolve OS permission without consuming product consent again. An OS grant does not establish product consent. This boundary requires the container to run before product code in every frame, with its native methods and prototypes locked. SPA and Chat install it at document start. Authorization uses a private transport and response handler with captured browser primitives, so replacing public SDK replies, collection methods or Promise methods cannot approve a pending capture.
+The container enforces product consent, while native media delegates resolve OS permission without consuming product
+consent again. An OS grant does not establish product consent. This boundary requires the container to run before
+product code in every frame, with its native methods and prototypes locked. SPA and Chat install it at document start.
+Authorization uses a private transport and response handler with captured browser primitives, so replacing public SDK
+replies, collection methods or Promise methods cannot approve a pending capture.
 
 ### Native settings and legacy consumers
 
@@ -402,28 +418,37 @@ The iOS app merges canonical decisions with legacy-only rows both in per-product
 
 ## SSO session handling
 
-`TrUAPIHostRuntime` exposes two methods for wallet-owned SSO sessions. Meaningful request answering requires `activateLocalSession` to have been called first; `prepareDisconnectRequest` needs no session.
+`TrUAPIHostRuntime` exposes two methods for wallet-owned SSO sessions. Meaningful request answering requires
+`activateLocalSession` to have been called first; `prepareDisconnectRequest` needs no session.
 
 ```swift
 func handleSsoRequest(message: Data) async throws -> SsoRequestOutcome
 func prepareDisconnectRequest() -> Data
 ```
 
-`handleSsoRequest(message:)` takes one SCALE-encoded `RemoteMessage` exactly as decrypted from the statement-store session and routes it through the Rust core. The returned `SsoRequestOutcome` is the generated UniFFI enum (no Swift mirror):
+`handleSsoRequest(message:)` takes one SCALE-encoded `RemoteMessage` exactly as decrypted from the statement-store
+session and routes it through the Rust core. The returned `SsoRequestOutcome` is the generated UniFFI enum (no Swift
+mirror):
 
 - `.response(message:)` — SCALE-encoded reply; post it back over the same session.
 - `.disconnected` — the peer ended the session; tear down the transport and records on the wallet side.
 - `.ignored` — the message was not a request; nothing to post.
 
-Confirmation-gated requests suspend on `confirmUserAction` or `confirmPermission`, so `handleSsoRequest` can take arbitrarily long. Always call it from a `Task`, never the main thread.
+Confirmation-gated requests suspend on `confirmUserAction` or `confirmPermission`, so `handleSsoRequest` can take
+arbitrarily long. Always call it from a `Task`, never the main thread.
 
-`prepareDisconnectRequest()` returns the SCALE-encoded `Disconnected` message to post when the wallet is ending the session. Posting and record cleanup (host entry, device record, device-removed broadcast) stay with the wallet.
+`prepareDisconnectRequest()` returns the SCALE-encoded `Disconnected` message to post when the wallet is ending the
+session. Posting and record cleanup (host entry, device record, device-removed broadcast) stay with the wallet.
 
 ## Statement-store allowance renewal
 
-Statement-store allowances are granted per period, so a host has to re-register the accounts it wants to keep writing. They are not revoked the moment the period ends: `Resources.StmtStoreGraceWindow` keeps an ended period's allowances active until cleanup catches up, 48 hours on `paseo-next-v2`. The runtime owns the ledger and the registration; the app owns only the schedule.
+Statement-store allowances are granted per period, so a host has to re-register the accounts it wants to keep writing.
+They are not revoked the moment the period ends: `Resources.StmtStoreGraceWindow` keeps an ended period's allowances
+active until cleanup catches up, 48 hours on `paseo-next-v2`. The runtime owns the ledger and the registration; the app
+owns only the schedule.
 
-Record the accounts to keep allowed. This needs an active session, so call it after `activateLocalSession` or after pairing, not at construction:
+Record the accounts to keep allowed. This needs an active session, so call it after `activateLocalSession` or after
+pairing, not at construction:
 
 ```swift
 try runtime.trackStatementRenewalTargets([
@@ -432,15 +457,32 @@ try runtime.trackStatementRenewalTargets([
 ])
 ```
 
-The ledger persists across launches, and an entry is dropped when the identity that promised it changes. `.walletSso` and `.productStatementAllowance` are derivation recipes, so they survive that; `.account` carries a fixed account id and does not. A dropped target is listed in `report.pruned`, which is how a host learns to re-track one and keep renewal covering it. Re-tracking is idempotent, so the safe habit is to re-track the full set after every identity change rather than trying to reason about what survived.
+The ledger persists across launches, and an entry is dropped when the identity that promised it changes. `.walletSso`
+and `.productStatementAllowance` are derivation recipes, so they survive that; `.account` carries a fixed account id and
+does not. A dropped target is listed in `report.pruned`, which is how a host learns to re-track one and keep renewal
+covering it. Re-tracking is idempotent, so the safe habit is to re-track the full set after every identity change rather
+than trying to reason about what survived.
 
-`statementRenewalTargets()` lists what the ledger holds, in the order it was tracked. It needs no active session, so a `BGTaskScheduler` wake can read it on a cold start before deciding whether the pass is worth running. Each entry carries an `owner`: a recipe has none and resolves under whichever identity is active, while a fixed account records the root key that promised it. `statementRenewalOwnerKey()` returns that key for the active identity, and needs a session. An entry whose owner is that key, or which has no owner, is one the next pass will renew; any other is one it will prune.
+`statementRenewalTargets()` lists what the ledger holds, in the order it was tracked. It needs no active session, so a
+`BGTaskScheduler` wake can read it on a cold start before deciding whether the pass is worth running. Each entry carries
+an `owner`: a recipe has none and resolves under whichever identity is active, while a fixed account records the root
+key that promised it. `statementRenewalOwnerKey()` returns that key for the active identity, and needs a session. An
+entry whose owner is that key, or which has no owner, is one the next pass will renew; any other is one it will prune.
 
-`untrackStatementRenewalAccount(accountId:)` drops one fixed account and reports whether the ledger held it. It is scoped to the active identity and so needs a session, and it never removes an entry another identity promised. A stale entry does not deny you a slot forever, since registration replaces the oldest slot past its cooldown once a period is full, but it does cost an allocation attempt every period and keeps churning the slot table, which is what untracking it saves.
+`untrackStatementRenewalAccount(accountId:)` drops one fixed account and reports whether the ledger held it. It is
+scoped to the active identity and so needs a session, and it never removes an entry another identity promised. A stale
+entry does not deny you a slot forever, since registration replaces the oldest slot past its cooldown once a period is
+full, but it does cost an allocation attempt every period and keeps churning the slot table, which is what untracking it
+saves.
 
-Only `.account` can be untracked. `.walletSso` and `.productStatementAllowance` are recipes with no removal path, so a product you no longer run keeps being resolved and renewed until the promising identity changes.
+Only `.account` can be untracked. `.walletSso` and `.productStatementAllowance` are recipes with no removal path, so a
+product you no longer run keeps being resolved and renewed until the promising identity changes.
 
-Then run a pass from a background task, off the main thread. It needs an active session too, which is the whole difficulty here: a `BGTaskScheduler` wake on a cold start has none until you restore one, and the pass then fails with the bare reason `Disconnected`. Restore the session first, and read that reason as "not ready" rather than as a renewal failure. `startStatementAllowanceRenewal()` does not need this care, since its loop skips a tick with no session and retries.
+Then run a pass from a background task, off the main thread. It needs an active session too, which is the whole
+difficulty here: a `BGTaskScheduler` wake on a cold start has none until you restore one, and the pass then fails with
+the bare reason `Disconnected`. Restore the session first, and read that reason as "not ready" rather than as a renewal
+failure. `startStatementAllowanceRenewal()` does not need this care, since its loop skips a tick with no session and
+retries.
 
 ```swift
 let report = try runtime.renewStatementAllowances()
@@ -456,43 +498,56 @@ if report.slotsExhausted {
 }
 ```
 
-One scheduled pass per period is enough, with room to spare: an allowance stays usable for `Resources.StmtStoreGraceWindow` past its boundary, which is 48 hours on `paseo-next-v2`, so a missed wake-up is recoverable rather than fatal. `nextStatementRenewalDelay()` reports the in-process loop's retry cadence, capped at an hour; a `BGTaskScheduler` host should read a value under an hour as the boundary approaching rather than requesting a wake-up every hour for a pass that will almost always report `alreadyAllocated`.
+One scheduled pass per period is enough, with room to spare: an allowance stays usable for
+`Resources.StmtStoreGraceWindow` past its boundary, which is 48 hours on `paseo-next-v2`, so a missed wake-up is
+recoverable rather than fatal. `nextStatementRenewalDelay()` reports the in-process loop's retry cadence, capped at an
+hour; a `BGTaskScheduler` host should read a value under an hour as the boundary approaching rather than requesting a
+wake-up every hour for a pass that will almost always report `alreadyAllocated`.
 
 ### Answering the scheduler
 
-A pass reports per target and only throws when it could not run at all, so decide from the report rather than from the absence of an error:
+A pass reports per target and only throws when it could not run at all, so decide from the report rather than from the
+absence of an error:
 
 - every status `Registered` or `AlreadyAllocated`: completed successfully.
-- any status `Failed`: complete unsuccessfully and submit a fresh request, since iOS does not reschedule one for you. The grace window means that request can wait for the next opportunistic wake rather than a tight loop.
-- any status `SkippedExhausted`, or `report.slotsExhausted`: completed successfully. Retrying cannot free a slot, only time or a replacement can, so a retry here only burns background budget. It does mean an allowance went unrenewed, so tell the person rather than only logging it.
-- a throw carrying `Disconnected` before a session is restored: not ready rather than failed. Restore a session and let the next wake run the pass.
+- any status `Failed`: complete unsuccessfully and submit a fresh request, since iOS does not reschedule one for you.
+  The grace window means that request can wait for the next opportunistic wake rather than a tight loop.
+- any status `SkippedExhausted`, or `report.slotsExhausted`: completed successfully. Retrying cannot free a slot, only
+  time or a replacement can, so a retry here only burns background budget. It does mean an allowance went unrenewed, so
+  tell the person rather than only logging it.
+- a throw carrying `Disconnected` before a session is restored: not ready rather than failed. Restore a session and let
+  the next wake run the pass.
 
 Scheduling is one of three layers, and only the first needs the OS:
 
 1. a `BGTaskScheduler` wake, which is the only one that covers an app nobody opens.
 2. a pass on session activation, which covers an app somebody does.
-3. on-demand allocation, which registers a product's own account for the current period when that product asks for a statement-store allowance and none is held. That covers the asking product, not the rest of the ledger, so it narrows the window rather than closing it.
+3. on-demand allocation, which registers a product's own account for the current period when that product asks for a
+   statement-store allowance and none is held. That covers the asking product, not the rest of the ledger, so it narrows
+   the window rather than closing it.
 
-`lastStatementRenewalReport()` returns the most recent pass the in-process loop ran, or `nil` if none has, which is "not yet" rather than healthy. The loop returns nothing to its caller, so this is where a host driving it reads what it achieved; checking on resume is enough to catch an exhausted period. A direct `renewStatementAllowances()` hands back its own report and does not write here.
+`lastStatementRenewalReport()` returns the most recent pass the in-process loop ran, or `nil` if none has, which is "not
+yet" rather than healthy. The loop returns nothing to its caller, so this is where a host driving it reads what it
+achieved; checking on resume is enough to catch an exhausted period. A direct `renewStatementAllowances()` hands back
+its own report and does not write here.
 
-`startStatementAllowanceRenewal()` runs the same pass on an in-process loop instead. It suits a host that stays resident; on iOS a suspended app stops ticking, so prefer `BGTaskScheduler` driving the one-shot call. A pass has no cancellation, so several targets can outlast a short background budget; targets registered before the process is killed are not lost, and read back as already allocated next time.
+`startStatementAllowanceRenewal()` runs the same pass on an in-process loop instead. It suits a host that stays
+resident; on iOS a suspended app stops ticking, so prefer `BGTaskScheduler` driving the one-shot call. A pass has no
+cancellation, so several targets can outlast a short background budget; targets registered before the process is killed
+are not lost, and read back as already allocated next time.
 
 An account id must be exactly 32 bytes. Anything else is rejected where the bindings convert it, before any chain work happens.
 
 ## Example
 
-> **Threading:** the Rust core invokes every `HostCallbacks` method on a
-> background thread it owns, never the main thread. Hop to the main thread
-> (`MainActor` / `DispatchQueue.main`) before touching UIKit, WebKit, or the
-> `WKWebView`. The `async` callbacks (`navigateTo`, `pushNotification`,
-> `devicePermission`, `remotePermission`, `featureSupported`,
-> `confirmUserAction`, `confirmPermission`, `lookupPreimage`) are awaited by the core, so an
-> implementation may suspend for as long as the user takes to decide (e.g.
-> `await MainActor.run { ... }` or an `withCheckedContinuation` around a
-> prompt); other TrUAPI traffic keeps flowing while you wait. The remaining
-> sync callbacks (auth state, storage, core storage, chain, theme,
-> `cancelNotification`) run inline on the dispatcher thread and must return
-> promptly without blocking.
+> **Threading:** the Rust core invokes every `HostCallbacks` method on a background thread it owns, never the main
+> thread. Hop to the main thread (`MainActor` / `DispatchQueue.main`) before touching UIKit, WebKit, or the `WKWebView`.
+> The `async` callbacks (`navigateTo`, `pushNotification`, `devicePermission`, `remotePermission`, `featureSupported`,
+> `confirmUserAction`, `confirmPermission`, `lookupPreimage`) are awaited by the core, so an implementation may suspend
+> for as long as the user takes to decide (e.g. `await MainActor.run { ... }` or an `withCheckedContinuation` around a
+> prompt); other TrUAPI traffic keeps flowing while you wait. The remaining sync callbacks (auth state, storage, core
+> storage, chain, theme, `cancelNotification`) run inline on the dispatcher thread and must return promptly without
+> blocking.
 
 ```swift
 import Foundation
@@ -665,30 +720,57 @@ execution.close()
 runtime.disconnect()
 ```
 
-The updated `@parity/truapi` SDK keeps the same client across connection loss. The SDK replaces the socket; interrupted operations fail with `ConnectionResetError` and are never replayed. Recreate read/watch subscriptions in the provider that owns them. SDKs 0.16.0 and 0.18.0 can still start through the minimal `__HOST_API_PORT__` adapter, but require a page reload after a disconnect. Remove that adapter once deployed products adopt the injected client.
+The updated `@parity/truapi` SDK keeps the same client across connection loss. The SDK replaces the socket; interrupted
+operations fail with `ConnectionResetError` and are never replayed. Recreate read/watch subscriptions in the provider
+that owns them. SDKs 0.16.0 and 0.18.0 can still start through the minimal `__HOST_API_PORT__` adapter, but require a
+page reload after a disconnect. Remove that adapter once deployed products adopt the injected client.
 
-The shared container uses the same WebSocket as SDK calls and asks Rust to authorize each fetch or XHR before sending it, and each remote WebSocket before connecting. It parses the URL with captured browser primitives and sends its hostname to `authorize_remote_permission`; Rust normalizes and checks the domain. Swift supplies the endpoint and handles native permission prompts; it does not relay individual network permission messages. An upfront permission request and a network operation are separate, so an Allow once decision is consumed by the next permitted operation rather than persisted.
+The shared container uses the same WebSocket as SDK calls and asks Rust to authorize each fetch or XHR before sending
+it, and each remote WebSocket before connecting. It parses the URL with captured browser primitives and sends its
+hostname to `authorize_remote_permission`; Rust normalizes and checks the domain. Swift supplies the endpoint and
+handles native permission prompts; it does not relay individual network permission messages. An upfront permission
+request and a network operation are separate, so an Allow once decision is consumed by the next permitted operation
+rather than persisted.
 
-XHR keeps native request headers, response types and browser CORS behavior. `open()` configures the request synchronously; `send()` waits for permission before sending. Aborting or reopening during that wait cancels the pending send. Synchronous XHR is unsupported because it cannot wait for an asynchronous permission decision.
+XHR keeps native request headers, response types and browser CORS behavior. `open()` configures the request
+synchronously; `send()` waits for permission before sending. Aborting or reopening during that wait cancels the pending
+send. Synchronous XHR is unsupported because it cannot wait for an asynchronous permission decision.
 
-A remote `WebSocket` starts in `CONNECTING` while Rust checks the same domain permission. Allow once permits that connection and all its messages; a new connection checks again. Closing while permission is pending prevents the connection from opening. Text, binary messages and subprotocols use the native socket after approval. The private host connection uses the browser constructor captured before these gates are installed. Product-created sockets receive no endpoint exemption.
+A remote `WebSocket` starts in `CONNECTING` while Rust checks the same domain permission. Allow once permits that
+connection and all its messages; a new connection checks again. Closing while permission is pending prevents the
+connection from opening. Text, binary messages and subprotocols use the native socket after approval. The private host
+connection uses the browser constructor captured before these gates are installed. Product-created sockets receive no
+endpoint exemption.
 
 Forwarded WebSocket events and XHR failures before sending are synthetic, with `isTrusted` set to `false`.
 
-WebRTC uses the same private transport. Each peer connection asks Rust for permission at its first network method, such as `createOffer`, and shares that decision across later methods on the connection. Allow once permits one connection. New connections check the current permission without requiring a page reload.
+WebRTC uses the same private transport. Each peer connection asks Rust for permission at its first network method, such
+as `createOffer`, and shares that decision across later methods on the connection. Allow once permits one connection.
+New connections check the current permission without requiring a page reload.
 
 To disable WebRTC, await `runtime.setPermissionAuthorizationStatus(productId:request:status:)` with the product's ID, a remote `.webRtc` request and `.denied` before opening its execution. This overrides saved grants and trusted-product auto-grants, which otherwise skip `remotePermission` callbacks. A denial/reset closes affected existing executions; tear down their WebViews and open fresh executions rather than reusing a closed execution's transport. An ordinary authorization grant does not close an execution.
 
-The installer adds the bootstrap and container scripts before loading. It preserves the host's website data store and navigation delegate. Hosts that assemble their own script lists can keep using `LocalhostBridgeBootstrap.script` followed by `ContainerScriptBundle.load()`, with the container injected into every frame.
+The installer adds the bootstrap and container scripts before loading. It preserves the host's website data store and
+navigation delegate. Hosts that assemble their own script lists can keep using `LocalhostBridgeBootstrap.script`
+followed by `ContainerScriptBundle.load()`, with the container injected into every frame.
 
-`Worker`, `WebTransport` and `getDisplayMedia` screen capture are unavailable. Workers would provide a separate realm with unguarded network APIs; WebTransport has no permission wrapper, and screen capture has no product permission.
+`Worker`, `WebTransport` and `getDisplayMedia` screen capture are unavailable. Workers would provide a separate realm
+with unguarded network APIs; WebTransport has no permission wrapper, and screen capture has no product permission.
 
-Redirects and stylesheet/font loads retain native WebKit behavior. Redirect destinations are not separately authorized by the fetch/XHR wrappers; direct DOM resource loads remain outside those wrappers. There is no content-rule registration, global settings refresh or installation disposal requirement. Close the execution when its product stops, and maintain the host's existing web-view navigation and teardown behavior.
+Redirects and stylesheet/font loads retain native WebKit behavior. Redirect destinations are not separately authorized
+by the fetch/XHR wrappers; direct DOM resource loads remain outside those wrappers. There is no content-rule
+registration, global settings refresh or installation disposal requirement. Close the execution when its product stops,
+and maintain the host's existing web-view navigation and teardown behavior.
 
-Build the generated JavaScript SDK before the container: from the repository root, run `npm ci --ignore-scripts`, `npm run build --prefix js/packages/truapi`, then `npm run build --prefix js/container`. A protocol change also requires regenerating the SDK through the repository's normal build pipeline.
+Build the generated JavaScript SDK before the container: from the repository root, run `npm ci --ignore-scripts`,
+`npm run build --prefix js/packages/truapi`, then `npm run build --prefix js/container`. A protocol change also requires
+regenerating the SDK through the repository's normal build pipeline.
 
-`ProductNetworkAccessTests` exercises grant/deny/revocation, one-use fetch, WebRTC and media authorization, native redirects, stylesheet/font requests, and preserving a persistent store and existing navigation delegate. Media coverage uses a capture stub with the actual private Rust permission transport; it does not require simulator camera hardware. The tests require the built container, current Rust bindings and a real WKWebView in the UIKit test host. These Apple-only tests cannot run on Linux.
-
+`ProductNetworkAccessTests` exercises grant/deny/revocation, one-use fetch, WebRTC and media authorization, native
+redirects, stylesheet/font requests, and preserving a persistent store and existing navigation delegate. Media coverage
+uses a capture stub with the actual private Rust permission transport; it does not require simulator camera hardware.
+The tests require the built container, current Rust bindings and a real WKWebView in the UIKit test host. These
+Apple-only tests cannot run on Linux.
 
 ## Build outputs in detail
 

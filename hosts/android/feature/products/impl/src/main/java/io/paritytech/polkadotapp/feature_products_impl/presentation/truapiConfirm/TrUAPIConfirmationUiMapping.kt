@@ -32,6 +32,10 @@ fun TrUAPIConfirmation.Prompt.toUiState(): TrUAPIConfirmationUiState = when (thi
         RCommon.string.truapi_confirm_title_identity_disclosure,
     )
 
+    is TrUAPIConfirmation.ChatAuthority -> build(
+        RCommon.string.truapi_confirm_title_chat_authority,
+    )
+
     is TrUAPIConfirmation.ResourceAllocation -> build(
         RCommon.string.truapi_confirm_title_resource_allocation,
         *resources.map { detail(RCommon.string.truapi_confirm_label_resource, it) }.toTypedArray(),
@@ -40,6 +44,16 @@ fun TrUAPIConfirmation.Prompt.toUiState(): TrUAPIConfirmationUiState = when (thi
     is TrUAPIConfirmation.PreimageSubmit -> build(
         RCommon.string.truapi_confirm_title_preimage_submit,
         detail(RCommon.string.truapi_confirm_label_payload_size, "$sizeBytes"),
+    )
+
+    is TrUAPIConfirmation.MainPurseChatPayment -> build(
+        RCommon.string.truapi_confirm_title_main_purse_payment,
+        detail(RCommon.string.truapi_confirm_label_recipient, recipient),
+        detail(RCommon.string.truapi_confirm_label_amount_cents, amountCents.toString()),
+        detail(RCommon.string.truapi_confirm_label_max_debit_cents, maxDebitCents.toString()),
+        detail(RCommon.string.truapi_confirm_label_chain, genesisHash),
+        detail(RCommon.string.truapi_confirm_label_asset_instance, coinageInstanceId?.toString() ?: "legacy"),
+        detail(RCommon.string.truapi_confirm_label_payment_operation, operationId),
     )
 
     is TrUAPIConfirmation.AccountAccess -> build(

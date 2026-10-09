@@ -18,8 +18,18 @@ public protocol CoinageAssetLedgerProtocol: Sendable {
     func registerAssets(
         _ registrations: [CoinageAssetRegistration],
         for ids: [CoinageTxId],
+        custody: NativeTransferCustody?,
+        authorization: (@Sendable () throws -> Void)?,
         in scope: any DurableTxRegistrationScope
     ) throws
+
+    /// Atomically retains an exact-match transfer and final handoff marks, without a transaction.
+    func retainNativeTransfer(
+        _ custody: NativeTransferCustody, authorization: @escaping @Sendable () throws -> Void
+    ) async throws
+
+    /// Nil means nothing registered; malformed or partially missing durable state must throw.
+    func retainedNativeTransfer(custodyId: String) async throws -> NativeTransferCustody?
 
     /// Every entry, live and terminal, joined to its assets, ordered by `sequence`.
     func getAllEntries() async throws -> [CoinageTxEntry]
@@ -65,6 +75,14 @@ public protocol CoinageAssetLedgerProtocol: Sendable {
 }
 
 public extension CoinageAssetLedgerProtocol {
+    func registerAssets(
+        _ registrations: [CoinageAssetRegistration],
+        for ids: [CoinageTxId],
+        in scope: any DurableTxRegistrationScope
+    ) throws {
+        try registerAssets(registrations, for: ids, custody: nil, authorization: nil, in: scope)
+    }
+
     /// Handoff marks as a set of ``OwnAsset/publicKey``, the form the DAG and callers compare against.
     func getHandoffKeys() async throws -> Set<PublicKey> {
         try await Set(handedOffCoins().map(\.publicKey))

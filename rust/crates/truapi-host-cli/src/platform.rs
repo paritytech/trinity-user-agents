@@ -23,15 +23,18 @@ use tokio::sync::Mutex as AsyncMutex;
 use truapi::latest as api;
 use truapi::platform::{
     AuthState, ChainProvider, CoreStorage, CoreStorageKey, CreateTransactionReview,
-    DevicePermissionStatus, Features, JsonRpcConnection, LocaleHost, Navigation, Notifications,
-    PermissionDecision, PermissionStatusHost, Permissions, PreimageHost, ProductContext,
-    ProductOperations, ProductStorage, ProductStorageKey, ProviderError, SessionUiInfo,
-    SignPayloadReview, SignRawReview, ThemeHost, UserConfirmation, UserConfirmationReview,
+    DevicePermissionStatus, Features, HopProvider, JsonRpcConnection, LocaleHost,
+    NativeChatFileExportRequest, NativeChatFilePickRequest, NativeChatFilesHost,
+    NativeChatPickedFile, Navigation, Notifications, PermissionDecision, PermissionStatusHost,
+    Permissions, PreimageHost, ProductContext, ProductOperations, ProductStorage,
+    ProductStorageKey, ProviderError, SessionUiInfo, SignPayloadReview, SignRawReview, ThemeHost,
+    UserConfirmation, UserConfirmationReview,
 };
 use truapi::v01;
 
 use crate::bulletin_lookup::{BitswapRpc, BulletinLookup};
 use crate::chain::CliChainProvider;
+use crate::chat_files::{self, ChatFiles};
 use crate::terminal_ui::{ApprovalKind, SystemEvent, UiHandle};
 
 static NEXT_STORAGE_TEMP_ID: AtomicU32 = AtomicU32::new(0);
@@ -105,6 +108,7 @@ pub struct CliPlatform {
     state_dir: Mutex<Option<PathBuf>>,
     pairing_scope: Option<PairingStorageScope>,
     bulletin: Arc<BulletinLookup<BitswapRpc>>,
+    chat_files: ChatFiles,
     next_notification_id: AtomicU32,
     scheduled_notifications: Arc<Mutex<HashMap<u32, api::HostPushNotificationRequest>>>,
     approval: Mutex<ApprovalPolicy>,
@@ -194,6 +198,7 @@ impl CliPlatform {
             state_dir: Mutex::new(storage.as_ref().map(|paths| paths.state_dir.clone())),
             pairing_scope: storage.and_then(|paths| paths.pairing_scope),
             bulletin: Arc::new(BulletinLookup::new(BitswapRpc::new(network.bulletin_ws))),
+            chat_files: ChatFiles::default(),
             next_notification_id: AtomicU32::new(1),
             scheduled_notifications: Arc::new(Mutex::new(HashMap::new())),
             approval: Mutex::new(approval),
@@ -279,6 +284,20 @@ impl CliPlatform {
             .lock()
             .expect("state path mutex poisoned")
             .clone()
+    }
+
+    fn chat_file_scope(&self) -> Result<PathBuf, api::GenericError> {
+        self.state_dir()
+            .ok_or_else(|| chat_files::error("Durable Chat file storage is unavailable"))
+    }
+
+    fn check_chat_file_scope(&self, scope: &Path) -> Result<(), api::GenericError> {
+        if self.state_dir().as_deref() != Some(scope) {
+            return Err(chat_files::error(
+                "Chat file session changed during terminal selection",
+            ));
+        }
+        Ok(())
     }
 
     fn switch_pairing_user_storage(&self, user_id: &str) -> Result<(), String> {
@@ -387,7 +406,20 @@ impl CliPlatform {
         detail: String,
         kind: ApprovalKind,
     ) -> PermissionDecision {
-        let decision = match self.approval_policy() {
+        self.decide_with_policy(action, detail, kind, self.approval_policy())
+            .await
+    }
+
+    /// Decide under an explicitly supplied policy, so a review that must never
+    /// be auto-accepted (a main-purse Chat payment) can force the prompt.
+    async fn decide_with_policy(
+        &self,
+        action: &str,
+        detail: String,
+        kind: ApprovalKind,
+        policy: ApprovalPolicy,
+    ) -> PermissionDecision {
+        let decision = match policy {
             ApprovalPolicy::AutoAccept => {
                 if let Some(ui) = &self.ui {
                     ui.success(format!("Approved {action} automatically"), Some(detail));
@@ -412,6 +444,112 @@ impl CliPlatform {
             record_approval(path, decision != PermissionDecision::Deny, action);
         }
         decision
+    }
+}
+
+#[async_trait]
+impl NativeChatFilesHost for CliPlatform {
+    async fn pick_chat_files(
+        &self,
+        request: NativeChatFilePickRequest,
+    ) -> Result<Vec<NativeChatPickedFile>, api::GenericError> {
+        if request.max_files == 0 {
+            return Err(chat_files::error(
+                "Chat file selection requires a positive file limit",
+            ));
+        }
+        let root = self.chat_file_scope()?;
+        let ui = self.ui.as_ref().ok_or_else(|| {
+            chat_files::error("Chat file selection requires the interactive terminal UI")
+        })?;
+        // Never use auto-accept or a second stdin reader to choose local paths.
+        let _guard = self.prompt_lock.lock().await;
+        let detail = format!(
+            "Product {:?} requests attachments for {:?}. Select at most {} file(s).",
+            request.product_id,
+            request
+                .peer_username
+                .as_deref()
+                .unwrap_or("unnamed Chat peer"),
+            request.max_files,
+        );
+        let paths = ui
+            .chat_file_paths(detail, request.max_files, false)
+            .await
+            .map_err(|_| chat_files::error("Chat file terminal UI is unavailable"))?;
+        let Some(paths) = paths else {
+            return Ok(Vec::new());
+        };
+        self.check_chat_file_scope(&root)?;
+        ChatFiles::import(root, paths).await
+    }
+
+    async fn read_chat_file(
+        &self,
+        source_id: String,
+        offset: u64,
+        length: u32,
+    ) -> Result<Vec<u8>, api::GenericError> {
+        ChatFiles::read(self.chat_file_scope()?, source_id, offset, length).await
+    }
+
+    async fn release_chat_file(&self, source_id: String) -> Result<(), api::GenericError> {
+        ChatFiles::release(self.chat_file_scope()?, source_id).await
+    }
+
+    async fn begin_chat_file_export(
+        &self,
+        request: NativeChatFileExportRequest,
+    ) -> Result<Option<String>, api::GenericError> {
+        let root = self.chat_file_scope()?;
+        let ui = self.ui.as_ref().ok_or_else(|| {
+            chat_files::error("Chat file export requires the interactive terminal UI")
+        })?;
+        let _guard = self.prompt_lock.lock().await;
+        let detail = format!(
+            "Product {:?} requests export of a {}-byte attachment from {:?}.",
+            request.product_id,
+            request.metadata.size_bytes,
+            request
+                .peer_username
+                .as_deref()
+                .unwrap_or("unnamed Chat peer"),
+        );
+        let paths = ui
+            .chat_file_paths(detail, 1, true)
+            .await
+            .map_err(|_| chat_files::error("Chat file terminal UI is unavailable"))?;
+        let Some(destination) = paths.and_then(|paths| paths.into_iter().next()) else {
+            return Ok(None);
+        };
+        self.check_chat_file_scope(&root)?;
+        self.chat_files
+            .begin_export(root, destination, request.metadata.size_bytes)
+            .await
+            .map(Some)
+    }
+
+    async fn write_chat_file_export(
+        &self,
+        export_id: String,
+        offset: u64,
+        data: Vec<u8>,
+    ) -> Result<(), api::GenericError> {
+        self.chat_files
+            .write_export(self.chat_file_scope()?, export_id, offset, data)
+            .await
+    }
+
+    async fn finish_chat_file_export(&self, export_id: String) -> Result<(), api::GenericError> {
+        self.chat_files
+            .finish_export(self.chat_file_scope()?, export_id)
+            .await
+    }
+
+    async fn cancel_chat_file_export(&self, export_id: String) -> Result<(), api::GenericError> {
+        self.chat_files
+            .cancel_export(self.chat_file_scope()?, export_id)
+            .await
     }
 }
 
@@ -616,6 +754,28 @@ impl ChainProvider for CliPlatform {
         genesis_hash: [u8; 32],
     ) -> Result<Box<dyn JsonRpcConnection>, ProviderError> {
         self.chain.connect(genesis_hash).await
+    }
+}
+
+#[async_trait]
+impl HopProvider for CliPlatform {
+    async fn allowed_hop_endpoints(
+        &self,
+        bulletin_genesis_hash: [u8; 32],
+    ) -> Result<Vec<String>, api::GenericError> {
+        self.chain
+            .allowed_hop_endpoints(bulletin_genesis_hash)
+            .await
+    }
+
+    async fn connect_hop(
+        &self,
+        bulletin_genesis_hash: [u8; 32],
+        endpoint: String,
+    ) -> Result<Box<dyn JsonRpcConnection>, api::GenericError> {
+        self.chain
+            .connect_hop(bulletin_genesis_hash, endpoint)
+            .await
     }
 }
 
@@ -865,7 +1025,15 @@ impl UserConfirmation for CliPlatform {
         review: UserConfirmationReview,
     ) -> Result<bool, api::GenericError> {
         let (action, detail) = approval_summary(&review);
-        Ok(self.decide(action, detail).await)
+        let policy = if matches!(review, UserConfirmationReview::MainPurseChatPayment(_)) {
+            ApprovalPolicy::Prompt
+        } else {
+            self.approval_policy()
+        };
+        Ok(self
+            .decide_with_policy(action, detail, ApprovalKind::Action, policy)
+            .await
+            != PermissionDecision::Deny)
     }
 }
 
@@ -996,6 +1164,29 @@ fn approval_summary(review: &UserConfirmationReview) -> (&'static str, String) {
             format!(
                 "Product {} requested its account from your device.",
                 review.product_id
+            ),
+        ),
+        UserConfirmationReview::ChatAuthority(review) => (
+            "use Chat identity authority",
+            format!(
+                "Product {} requested permission to bind its device account to your wallet Chat identity and encrypt or decrypt Chat routing data.",
+                review.product_id
+            ),
+        ),
+        UserConfirmationReview::MainPurseChatPayment(review) => (
+            "pay from your main purse",
+            format!(
+                "Product {:?} requests {}.{:02} Coinage for {:?} (identity 0x{}).\nMaximum main-purse debit: {}.{:02} Coinage.\nChain genesis: 0x{}.\nCoinage asset: {}.\nPayment operation: 0x{}.\nThis approves only this payment, not future spending.",
+                review.calling_product_id,
+                review.amount_cents / 100,
+                review.amount_cents % 100,
+                review.recipient_username.as_deref().unwrap_or("unnamed recipient"),
+                hex::encode(review.recipient_identity),
+                review.max_debit_cents / 100,
+                review.max_debit_cents % 100,
+                hex::encode(review.genesis_hash),
+                review.coinage_instance_id.map_or_else(|| "legacy single asset".to_string(), |id| format!("instance {id}")),
+                hex::encode(review.operation_id),
             ),
         ),
     }
@@ -1465,10 +1656,15 @@ mod tests {
         assert_eq!(platform.approval_policy(), ApprovalPolicy::Prompt);
         platform.set_approval_policy(ApprovalPolicy::AutoAccept);
         assert_eq!(platform.approval_policy(), ApprovalPolicy::AutoAccept);
-        assert!(
+        assert_eq!(
             platform
-                .decide("test action", "test detail".to_string())
-                .await
+                .decide_with(
+                    "test action",
+                    "test detail".to_string(),
+                    ApprovalKind::Action,
+                )
+                .await,
+            PermissionDecision::AllowAlways,
         );
 
         platform.set_approval_policy(ApprovalPolicy::Prompt);

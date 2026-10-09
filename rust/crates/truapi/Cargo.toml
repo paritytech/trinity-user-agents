@@ -2,7 +2,7 @@
 name = "truapi"
 version = "0.24.0"
 edition.workspace = true
-license.workspace = true
+license = "MIT AND AGPL-3.0-only"
 description = "TrUAPI trait and type definitions, and the runtime hosts embed"
 
 [lib]
@@ -46,6 +46,8 @@ runtime = [
     # only with codec's own serde support.
     "parity-scale-codec/serde",
     "dep:truapi-provider",
+    "dep:truapi-coinage",
+    "dep:truapi-chat-v2",
     "dep:futures-timer",
     "dep:scale-decode",
     "dep:frame-metadata",
@@ -60,7 +62,6 @@ runtime = [
     "dep:sp-crypto-hashing",
     "dep:schnorrkel",
     "dep:substrate-bip39",
-    "dep:zeroize",
     "dep:getrandom",
     "dep:hkdf",
     "dep:chacha20poly1305",
@@ -107,6 +108,8 @@ hex = { workspace = true, default-features = false, features = ["alloc"] }
 parity-scale-codec = { workspace = true, default-features = false, features = ["derive"] }
 
 truapi-provider = { path = "../truapi-provider", default-features = false, optional = true }
+truapi-coinage = { path = "../truapi-coinage", optional = true }
+truapi-chat-v2 = { path = "../truapi-chat-v2", default-features = false, optional = true }
 futures-timer = { workspace = true, optional = true }
 scale-decode = { workspace = true, features = ["derive"], optional = true }
 # Metadata decoding backs allowance registration, which both the native and the
@@ -123,11 +126,11 @@ blake2b_simd = { workspace = true, optional = true }
 sp-crypto-hashing = { workspace = true, optional = true }
 schnorrkel = { workspace = true, features = ["alloc", "getrandom"], optional = true }
 substrate-bip39 = { workspace = true, optional = true }
-zeroize = { workspace = true, features = ["alloc", "derive"], optional = true }
+zeroize = { workspace = true, default-features = false, features = ["alloc", "derive"] }
 getrandom = { workspace = true, features = ["js"], optional = true }
 hkdf = { workspace = true, optional = true }
 chacha20poly1305 = { workspace = true, features = ["alloc"], optional = true }
-x25519-dalek = { workspace = true, features = ["static_secrets"], optional = true }
+x25519-dalek = { workspace = true, features = ["static_secrets", "zeroize"], optional = true }
 sha2 = { workspace = true, optional = true }
 merlin = { workspace = true, optional = true }
 parking_lot = { workspace = true, optional = true }
@@ -138,6 +141,7 @@ tracing-subscriber = { workspace = true, features = ["registry", "std"], optiona
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 # The browser core loads `truapi-verifiable` as a separate WASM module instead.
+futures = { workspace = true, features = ["thread-pool"], optional = true }
 verifiable = { git = "https://github.com/paritytech/verifiable.git", rev = "19b03deb89b8dea484b143afc8bbe048a74bc1ff", optional = true }
 truapi-verifiable = { path = "../truapi-verifiable", optional = true }
 rand = { workspace = true, optional = true }

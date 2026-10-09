@@ -73,6 +73,19 @@ pub async fn ring_vrf_proof(
     message: &[u8],
 ) -> Result<Vec<u8>, StatementAllowanceError> {
     let vrf = vrf::load().await.map_err(vrf_error)?;
+    ring_vrf_proof_with(&vrf, domain, entropy, members, context, message)
+}
+
+/// [`ring_vrf_proof`] with the operations already loaded, for a synchronous
+/// caller such as a Coinage voucher proof.
+pub(in crate::runtime) fn ring_vrf_proof_with(
+    vrf: &vrf::Vrf,
+    domain: u32,
+    entropy: [u8; 32],
+    members: &[[u8; 32]],
+    context: &[u8],
+    message: &[u8],
+) -> Result<Vec<u8>, StatementAllowanceError> {
     let member = vrf.member(&entropy).map_err(vrf_error)?;
     let (bytes, _alias) = vrf
         .prove(&entropy, domain, &member, members, context, message)

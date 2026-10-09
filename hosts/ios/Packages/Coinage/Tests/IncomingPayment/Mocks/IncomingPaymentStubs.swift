@@ -129,6 +129,27 @@ final class StubClaimCoinsService: ClaimCoinsServicing, @unchecked Sendable {
     func retryUntil() -> Date? { capturedRetryUntil.withLock { $0 } }
 }
 
+/// Controlled source progress for service tests that exercise finality and reorg transitions.
+final class StreamingClaimCoinsService: ClaimCoinsServicing, Sendable {
+    private let stream: AsyncStream<CoinageTransferDetection>
+    let detections: AsyncStream<CoinageTransferDetection>.Continuation
+
+    init() {
+        let (stream, continuation) = AsyncStream<CoinageTransferDetection>.makeStream()
+        self.stream = stream
+        detections = continuation
+    }
+
+    func claim(
+        coinKeys _: [Data],
+        groupId _: CoinageTxGroupId,
+        retryUntil _: Date,
+        context _: DenominationBreakdownContext
+    ) -> AnyAsyncSequence<CoinageTransferDetection> {
+        stream.eraseToAnyAsyncSequence()
+    }
+}
+
 /// `ClaimAssetServicing` that replays a fixed detection sequence, then finishes. Records every call
 /// so tests can pin what the service forwards for a wallet source.
 final class StubClaimAssetService: ClaimAssetServicing, @unchecked Sendable {

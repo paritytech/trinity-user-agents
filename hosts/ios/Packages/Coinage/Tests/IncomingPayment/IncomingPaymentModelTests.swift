@@ -8,19 +8,17 @@ struct IncomingPaymentModelTests {
     @Test func groupIdIsProductBoundAndPrefixed() {
         #expect(IncomingPayment.groupId(productId: "prodA", paymentId: "pay1") == "top up:prodA:pay1")
 
-        let payment = IncomingPayment(
-            paymentId: "pay1",
-            productId: "prodA",
-            amount: 0,
-            createdAt: Date(),
-            outcome: nil
-        )
+        let payment = IncomingPayment(paymentId: "pay1",
+        productId: "prodA",
+        amount: 0,
+        createdAt: Date(),
+        outcome: nil, ownerId: Data([0xA0]))
         #expect(payment.groupId == "top up:prodA:pay1")
     }
 
     @Test func isActiveReflectsOutcome() {
         func make(_ outcome: IncomingPaymentTerminalOutcome?) -> IncomingPayment {
-            IncomingPayment(paymentId: "p", productId: "prod", amount: 0, createdAt: Date(), outcome: outcome)
+            IncomingPayment(paymentId: "p", productId: "prod", amount: 0, createdAt: Date(), outcome: outcome, ownerId: Data([0xA0]))
         }
         #expect(make(nil).isActive)
         #expect(!make(.claimed).isActive)
@@ -37,13 +35,37 @@ struct IncomingPaymentModelTests {
         #expect(IncomingPaymentStatus.notClaimed.isTerminal)
     }
 
-    @Test func statusMapsFromDetection() {
-        #expect(IncomingPaymentStatus(detection: .detecting) == .detecting)
-        #expect(IncomingPaymentStatus(detection: .claiming) == .claiming)
-        #expect(IncomingPaymentStatus(detection: .claimingRest(claimed: 3)) == .claiming)
-        #expect(IncomingPaymentStatus(detection: .claimed(amount: 10, finalized: true)) == .claimed(finalized: true))
-        #expect(IncomingPaymentStatus(detection: .claimedPartially(claimed: 4)) == .claimedPartially(actualClaimed: 4))
-        #expect(IncomingPaymentStatus(detection: .notClaimed) == .notClaimed)
+    @Test func detectionKeepsProgressPendingUntilFinality() {
+        #expect(IncomingPaymentStatus(detection: .detecting, amount: 0) == .detecting)
+        #expect(IncomingPaymentStatus(detection: .claiming, amount: 0) == .claiming)
+        #expect(IncomingPaymentStatus(detection: .claimingRest(claimed: 100), amount: 0) == .claiming)
+        #expect(IncomingPaymentStatus(detection: .claimed(amount: 40, finalized: false), amount: 100) == .claiming)
+        #expect(IncomingPaymentStatus(detection: .claimed(amount: 100, finalized: false), amount: 100)
+            == .claimed(finalized: false))
+        #expect(IncomingPaymentStatus(detection: .claimed(amount: 40, finalized: false), amount: 0)
+            == .claimed(finalized: false))
+    }
+
+    @Test func finalizedSourceIsValuedAgainstTheRequestedMinimum() {
+        #expect(IncomingPaymentStatus(detection: .claimed(amount: 40, finalized: true), amount: 100)
+            == .claimedPartially(actualClaimed: 40))
+        #expect(IncomingPaymentStatus(detection: .claimed(amount: 100, finalized: true), amount: 100)
+            == .claimed(finalized: true))
+        #expect(IncomingPaymentStatus(detection: .claimedPartially(claimed: 120), amount: 100)
+            == .claimed(finalized: true))
+        #expect(IncomingPaymentStatus(detection: .claimedPartially(claimed: 40), amount: 100)
+            == .claimedPartially(actualClaimed: 40))
+    }
+
+    @Test func claimAllNeedsPositiveFinalizedCredit() {
+        #expect(IncomingPaymentStatus(detection: .claimed(amount: 40, finalized: true), amount: 0)
+            == .claimed(finalized: true))
+        #expect(IncomingPaymentStatus(detection: .claimedPartially(claimed: 40), amount: 0)
+            == .claimed(finalized: true))
+        #expect(IncomingPaymentStatus(detection: .claimed(amount: 0, finalized: true), amount: 0) == .notClaimed)
+        #expect(IncomingPaymentStatus(detection: .claimedPartially(claimed: 0), amount: 0) == .notClaimed)
+        #expect(IncomingPaymentStatus(detection: .claimed(amount: 0, finalized: false), amount: 0) == .claiming)
+        #expect(IncomingPaymentStatus(detection: .notClaimed, amount: 0) == .notClaimed)
     }
 
     @Test func statusMapsFromStoredOutcome() {

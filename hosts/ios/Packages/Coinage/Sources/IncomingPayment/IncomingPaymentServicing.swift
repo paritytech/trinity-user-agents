@@ -5,8 +5,11 @@ import SubstrateSdk
 /// Idempotent, restart-durable inbound top-ups. Instantiated and driven by the ServiceCoordinator.
 public protocol IncomingPaymentServicing: Sendable {
     /// Registers a top-up for `(productId, paymentId)` from `descriptor` and returns once
-    /// initialization has concluded — the claim is driven by `setup`'s subscription. Throws
-    /// `IncomingPaymentError`.
+    /// initialization has concluded — the claim is driven by `setup`'s subscription. A positive
+    /// `amount` is the minimum credit required; zero claims all and is supported only for `.coins`.
+    /// Existing ids owned by another root/chain/instance, including unbound legacy records, are
+    /// rejected without replacing their record or secret. Legacy funds require explicit recovery.
+    /// Throws `IncomingPaymentError`.
     func accept(
         amount: Balance,
         descriptor: IncomingPaymentSourceDescriptor,
@@ -15,7 +18,8 @@ public protocol IncomingPaymentServicing: Sendable {
     ) async throws
 
     /// Observes a payment's status, scoped to `(productId, paymentId)`. Returns the live derived
-    /// stream for an active payment, or the stored terminal verdict for a settled one.
+    /// stream for an active payment, or the stored terminal verdict for a settled one. A record not
+    /// owned by this service's root/chain/instance is reported as not found.
     func subscribeStatus(
         for paymentId: IncomingPaymentId,
         productId: String

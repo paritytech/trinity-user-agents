@@ -52,6 +52,11 @@ sealed interface TrUAPIConfirmation {
         override val requesterProductId: String,
     ) : TrUAPIConfirmation.Prompt
 
+    /** Let a product bind and use wallet-held Chat identity authority. */
+    class ChatAuthority(
+        override val requesterProductId: String,
+    ) : TrUAPIConfirmation.Prompt
+
     /** Allocate host resources to the product. */
     class ResourceAllocation(
         override val requesterProductId: String,
@@ -62,6 +67,17 @@ sealed interface TrUAPIConfirmation {
     class PreimageSubmit(
         override val requesterProductId: String,
         val sizeBytes: Long,
+    ) : TrUAPIConfirmation.Prompt
+
+    /** Approve one exact payment from the user's main purse. */
+    class MainPurseChatPayment(
+        override val requesterProductId: String,
+        val recipient: String,
+        val amountCents: ULong,
+        val maxDebitCents: ULong,
+        val genesisHash: String,
+        val coinageInstanceId: UInt?,
+        val operationId: String,
     ) : TrUAPIConfirmation.Prompt
 
     /** Let one product act on another product's account. */

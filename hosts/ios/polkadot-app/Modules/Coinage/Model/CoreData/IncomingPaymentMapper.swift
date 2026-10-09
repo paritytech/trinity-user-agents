@@ -33,7 +33,8 @@ final class IncomingPaymentMapper: CoreDataMapperProtocol {
             outcome: IncomingPaymentOutcomeSerialization.outcome(
                 tag: entity.outcomeTag,
                 actualClaimed: entity.actualClaimed
-            )
+            ),
+            ownerId: entity.ownerId
         )
     }
 
@@ -47,6 +48,7 @@ final class IncomingPaymentMapper: CoreDataMapperProtocol {
         entity.productId = model.productId
         entity.amount = String(model.amount)
         entity.createdAt = model.createdAt
+        entity.ownerId = model.ownerId
 
         let serialized = IncomingPaymentOutcomeSerialization.columns(for: model.outcome)
         entity.outcomeTag = serialized.tag

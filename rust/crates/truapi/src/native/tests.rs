@@ -275,8 +275,24 @@ impl EventCallbacks {
     }
 }
 
+fn unavailable_chat_files<T>() -> Result<T, HostRejection> {
+    Err(HostRejection::Rejected {
+        reason: "native Chat files unavailable in this fixture".into(),
+    })
+}
+
 #[async_trait::async_trait]
 impl HostCallbacks for EventCallbacks {
+    async fn pick_chat_files(&self, _: crate::platform::NativeChatFilePickRequest) -> Result<Vec<crate::platform::NativeChatPickedFile>, HostRejection> { unavailable_chat_files() }
+    async fn read_chat_file(&self, _: String, _: u64, _: u32) -> Result<Vec<u8>, HostRejection> { unavailable_chat_files() }
+    async fn release_chat_file(&self, _: String) -> Result<(), HostRejection> { unavailable_chat_files() }
+    async fn begin_chat_file_export(&self, _: crate::platform::NativeChatFileExportRequest) -> Result<Option<String>, HostRejection> { unavailable_chat_files() }
+    async fn write_chat_file_export(&self, _: String, _: u64, _: Vec<u8>) -> Result<(), HostRejection> { unavailable_chat_files() }
+    async fn finish_chat_file_export(&self, _: String) -> Result<(), HostRejection> { unavailable_chat_files() }
+    async fn cancel_chat_file_export(&self, _: String) -> Result<(), HostRejection> { unavailable_chat_files() }
+    async fn identity_username_candidates(&self, _: String, _: Vec<u8>) -> Result<Vec<Vec<u8>>, HostRejection> { Err(HostRejection::Rejected { reason: "no identity provider in fixture".into() }) }
+    async fn allowed_hop_endpoints(&self, _: Vec<u8>) -> Result<Vec<String>, HostRejection> { Ok(Vec::new()) }
+    fn hop_connect(&self, _: Vec<u8>, _: String) -> Result<Option<u32>, HostRejection> { Ok(None) }
     async fn core_storage_keys(&self) -> Result<Vec<Vec<u8>>, HostRejection> {
         if self.core_storage_keys_failure.load(Ordering::SeqCst) {
             return Err(HostRejection::Rejected {
@@ -679,6 +695,7 @@ pub fn native_host_runtime_config() -> HostRuntimeConfig {
             .into_owned(),
         local_session_secret: Some(vec![7; 32]),
         local_session_lite_username: Some("alice".to_string()),
+        coinage_instance_id: None,
     }
 }
 
@@ -699,7 +716,7 @@ pub fn native_product_execution(
     let mut config = native_host_runtime_config();
     config.local_session_secret = None;
     config.local_session_lite_username = None;
-    let host = NativeTrUApiHostRuntime::with_runtime_config(callbacks.clone(), config)
+    let host = NativeTrUApiHostRuntime::with_runtime_config(callbacks.clone(), config, None)
         .expect("host runtime config should be valid");
     host.open_product_execution(
         callbacks,
@@ -917,10 +934,7 @@ fn a_paired_device_reaches_the_host_callbacks() {
 #[test]
 fn process_runtime_counts_worker_references_per_product() {
     let callbacks = Arc::new(EventCallbacks::new());
-    let host = NativeTrUApiHostRuntime::with_runtime_config(
-        callbacks.clone(),
-        native_host_runtime_config(),
-    )
+    let host = NativeTrUApiHostRuntime::with_runtime_config(callbacks.clone(), native_host_runtime_config(), None)
     .expect("host runtime config should be valid");
     let product = || "shared.dot".to_string();
 
@@ -1104,7 +1118,7 @@ fn native_chat_entrypoint_is_unsupported_without_an_adapter() {
     let mut config = native_host_runtime_config();
     config.local_session_secret = Some(vec![7; 32]);
     let host =
-        NativeTrUApiHostRuntime::with_runtime_config(Arc::new(EventCallbacks::new()), config)
+        NativeTrUApiHostRuntime::with_runtime_config(Arc::new(EventCallbacks::new()), config, None)
             .expect("host runtime config should be valid");
     let execution = host
         .open_product_execution(
@@ -1156,48 +1170,6 @@ fn the_trusted_export_normalizes_before_matching() {
     }
 }
 
-#[test]
-fn permission_authorization_request_mirror_round_trips() {
-    let device_cases = [
-        v01::HostDevicePermissionRequest::Notifications,
-        v01::HostDevicePermissionRequest::Camera,
-        v01::HostDevicePermissionRequest::Microphone,
-        v01::HostDevicePermissionRequest::Bluetooth,
-        v01::HostDevicePermissionRequest::NFC,
-        v01::HostDevicePermissionRequest::Location,
-        v01::HostDevicePermissionRequest::Clipboard,
-        v01::HostDevicePermissionRequest::OpenUrl,
-        v01::HostDevicePermissionRequest::Biometrics,
-    ];
-    let remote_cases = [
-        v01::RemotePermission::Remote {
-            domains: vec!["a.dot".to_string(), "b.dot".to_string()],
-        },
-        v01::RemotePermission::WebRtc,
-        v01::RemotePermission::ChainSubmit,
-        v01::RemotePermission::PreimageSubmit,
-        v01::RemotePermission::StatementSubmit,
-    ];
-
-    let mut cases: Vec<PermissionAuthorizationRequest> = Vec::new();
-    cases.extend(
-        device_cases
-            .into_iter()
-            .map(PermissionAuthorizationRequest::Device),
-    );
-    cases.extend(remote_cases.into_iter().map(|permission| {
-        PermissionAuthorizationRequest::Remote(v01::RemotePermissionRequest { permission })
-    }));
-    cases.push(PermissionAuthorizationRequest::IdentityDisclosure);
-    cases.push(PermissionAuthorizationRequest::AccountAccess {
-        target_product_id: "other.dot".to_string(),
-    });
-
-    for case in cases {
-        let native = case.clone();
-        assert_eq!(native, case);
-    }
-}
 
 #[test]
 fn native_auth_presenter_forwards_states_across_the_ffi_mirror() {
@@ -2012,6 +1984,16 @@ fn start_ws_bridge_twice_returns_already_running() {
     struct Noop;
     #[async_trait::async_trait]
     impl HostCallbacks for Noop {
+        async fn pick_chat_files(&self, _: crate::platform::NativeChatFilePickRequest) -> Result<Vec<crate::platform::NativeChatPickedFile>, HostRejection> { unavailable_chat_files() }
+        async fn read_chat_file(&self, _: String, _: u64, _: u32) -> Result<Vec<u8>, HostRejection> { unavailable_chat_files() }
+        async fn release_chat_file(&self, _: String) -> Result<(), HostRejection> { unavailable_chat_files() }
+        async fn begin_chat_file_export(&self, _: crate::platform::NativeChatFileExportRequest) -> Result<Option<String>, HostRejection> { unavailable_chat_files() }
+        async fn write_chat_file_export(&self, _: String, _: u64, _: Vec<u8>) -> Result<(), HostRejection> { unavailable_chat_files() }
+        async fn finish_chat_file_export(&self, _: String) -> Result<(), HostRejection> { unavailable_chat_files() }
+        async fn cancel_chat_file_export(&self, _: String) -> Result<(), HostRejection> { unavailable_chat_files() }
+        async fn identity_username_candidates(&self, _: String, _: Vec<u8>) -> Result<Vec<Vec<u8>>, HostRejection> { Err(HostRejection::Rejected { reason: "no identity provider in fixture".into() }) }
+        async fn allowed_hop_endpoints(&self, _: Vec<u8>) -> Result<Vec<String>, HostRejection> { Ok(Vec::new()) }
+        fn hop_connect(&self, _: Vec<u8>, _: String) -> Result<Option<u32>, HostRejection> { Ok(None) }
         async fn core_storage_keys(&self) -> Result<Vec<Vec<u8>>, HostRejection> {
             Err(HostRejection::Rejected {
                 reason: "storage unavailable in bridge-start fixture".into(),
@@ -2026,7 +2008,7 @@ fn start_ws_bridge_twice_returns_already_running() {
         ) -> Result<PermissionDecision, HostRejection> {
             Ok(PermissionDecision::Deny)
         }
-
+    
         fn on_core_log(&self, _marker: String, _detail: String) {}
         fn worker_demand_changed(&self, _product_id: String, _transition: WorkerTransition) {}
         fn device_paired(&self, _device: PairedSsoPeer) {}
@@ -2209,6 +2191,16 @@ fn pending_permission_decision_does_not_stall_bridge() {
 
     #[async_trait::async_trait]
     impl HostCallbacks for GatedPermissionCallbacks {
+        async fn pick_chat_files(&self, _: crate::platform::NativeChatFilePickRequest) -> Result<Vec<crate::platform::NativeChatPickedFile>, HostRejection> { unavailable_chat_files() }
+        async fn read_chat_file(&self, _: String, _: u64, _: u32) -> Result<Vec<u8>, HostRejection> { unavailable_chat_files() }
+        async fn release_chat_file(&self, _: String) -> Result<(), HostRejection> { unavailable_chat_files() }
+        async fn begin_chat_file_export(&self, _: crate::platform::NativeChatFileExportRequest) -> Result<Option<String>, HostRejection> { unavailable_chat_files() }
+        async fn write_chat_file_export(&self, _: String, _: u64, _: Vec<u8>) -> Result<(), HostRejection> { unavailable_chat_files() }
+        async fn finish_chat_file_export(&self, _: String) -> Result<(), HostRejection> { unavailable_chat_files() }
+        async fn cancel_chat_file_export(&self, _: String) -> Result<(), HostRejection> { unavailable_chat_files() }
+        async fn identity_username_candidates(&self, _: String, _: Vec<u8>) -> Result<Vec<Vec<u8>>, HostRejection> { Err(HostRejection::Rejected { reason: "no identity provider in fixture".into() }) }
+        async fn allowed_hop_endpoints(&self, _: Vec<u8>) -> Result<Vec<String>, HostRejection> { Ok(Vec::new()) }
+        fn hop_connect(&self, _: Vec<u8>, _: String) -> Result<Option<u32>, HostRejection> { Ok(None) }
         async fn core_storage_keys(&self) -> Result<Vec<Vec<u8>>, HostRejection> {
             Err(HostRejection::Rejected {
                 reason: "enumeration unavailable in prompt fixture".into(),
@@ -2223,7 +2215,7 @@ fn pending_permission_decision_does_not_stall_bridge() {
         ) -> Result<PermissionDecision, HostRejection> {
             Ok(PermissionDecision::Deny)
         }
-
+    
         fn on_core_log(&self, _marker: String, _detail: String) {}
         fn worker_demand_changed(&self, _product_id: String, _transition: WorkerTransition) {}
         fn device_paired(&self, _device: PairedSsoPeer) {}
@@ -2557,10 +2549,7 @@ fn bridge_logs_follow_the_host_and_authenticated_execution() {
         Arc::new(EventCallbacks::new()),
         Arc::new(EventCallbacks::new()),
     ];
-    let host = NativeTrUApiHostRuntime::with_runtime_config(
-        callbacks[0].clone(),
-        native_host_runtime_config(),
-    )
+    let host = NativeTrUApiHostRuntime::with_runtime_config(callbacks[0].clone(), native_host_runtime_config(), None)
     .expect("create host");
     let executions = [(1, "first.dot"), (2, "second.dot")].map(|(index, product_id)| {
         host.open_product_execution(
@@ -2637,10 +2626,7 @@ fn two_executions_share_one_bridge_through_the_native_api() {
 
     use crate::frame::{Payload, ProtocolMessage, request_ids};
 
-    let host = NativeTrUApiHostRuntime::with_runtime_config(
-        Arc::new(EventCallbacks::new()),
-        native_host_runtime_config(),
-    )
+    let host = NativeTrUApiHostRuntime::with_runtime_config(Arc::new(EventCallbacks::new()), native_host_runtime_config(), None)
     .expect("host runtime config should be valid");
     let app = host
         .open_product_execution(
@@ -2765,7 +2751,7 @@ pub fn native_host_runtime_no_session() -> Arc<NativeTrUApiHostRuntime> {
     let mut config = native_host_runtime_config();
     config.local_session_secret = None;
     config.local_session_lite_username = None;
-    NativeTrUApiHostRuntime::with_runtime_config(Arc::new(EventCallbacks::new()), config)
+    NativeTrUApiHostRuntime::with_runtime_config(Arc::new(EventCallbacks::new()), config, None)
         .expect("host runtime config should be valid")
 }
 
@@ -2843,10 +2829,7 @@ fn native_remote_authorization_uses_the_execution_permission_callback() {
             false,
         ),
     ] {
-        let host = NativeTrUApiHostRuntime::with_runtime_config(
-            Arc::new(EventCallbacks::new()),
-            native_host_runtime_config(),
-        )
+        let host = NativeTrUApiHostRuntime::with_runtime_config(Arc::new(EventCallbacks::new()), native_host_runtime_config(), None)
         .unwrap();
         let callbacks = Arc::new(EventCallbacks {
             remote_permission_result: answer,
@@ -2924,10 +2907,7 @@ fn native_remote_authorization_reuses_stored_product_decisions() {
             remote_permission_result: Ok(decision),
             ..EventCallbacks::new()
         });
-        let host = NativeTrUApiHostRuntime::with_runtime_config(
-            callbacks.clone(),
-            native_host_runtime_config(),
-        )
+        let host = NativeTrUApiHostRuntime::with_runtime_config(callbacks.clone(), native_host_runtime_config(), None)
         .unwrap();
         let open = |product_id| {
             host.open_product_execution(
@@ -2983,10 +2963,7 @@ fn native_remote_authorization_rejects_closed_and_closing_executions() {
             remote_permission_reply: Mutex::new(Some(response)),
             ..EventCallbacks::new()
         });
-        let host = NativeTrUApiHostRuntime::with_runtime_config(
-            callbacks.clone(),
-            native_host_runtime_config(),
-        )
+        let host = NativeTrUApiHostRuntime::with_runtime_config(callbacks.clone(), native_host_runtime_config(), None)
         .unwrap();
         let execution = host
             .open_product_execution(
@@ -3031,10 +3008,7 @@ fn native_remote_authorization_rejects_closed_and_closing_executions() {
 /// would silently answer from the wrong object.
 #[test]
 fn a_native_status_read_follows_the_os_gate() {
-    let host = NativeTrUApiHostRuntime::with_runtime_config(
-        Arc::new(EventCallbacks::new()),
-        native_host_runtime_config(),
-    )
+    let host = NativeTrUApiHostRuntime::with_runtime_config(Arc::new(EventCallbacks::new()), native_host_runtime_config(), None)
     .expect("host runtime config should be valid");
     let execution = host
         .open_product_execution(

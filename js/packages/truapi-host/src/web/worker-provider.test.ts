@@ -15,21 +15,34 @@ import type {
 } from "@parity/truapi";
 
 import { createWasmRawCallbacks } from "../generated/host-callbacks-adapter.js";
+import { createWorkerRawCallbacks } from "../generated/worker-callbacks.js";
+import type {
+  OptionalCapabilities,
+  WorkerCallbackBridge,
+} from "../generated/worker-callbacks.js";
+import type { RawCallbacks } from "../generated/host-callbacks-adapter.js";
 import {
   AuthState,
   CoreStorageKey,
+  NativeChatFileExportRequest,
+  NativeChatFilePickRequest,
+  NativeCoinageRequest,
+  NativeCoinageResponse,
   ProductContext,
 } from "../generated/host-callbacks.js";
 import type {
   AuthState as AuthStateValue,
   PreimageHost,
+  NativeChatPickedFile,
 } from "../generated/host-callbacks.js";
 import type {
+  PlatformJsonRpcConnection,
   ProductRuntimeConfig,
   TrUApiProductProvider,
   WorkerDemandChange,
 } from "../runtime.js";
 import { makeHostCallbacks, settle } from "../test-support.js";
+import { MAX_JSON_RPC_CONNECTIONS } from "../worker-protocol.js";
 import {
   asWorker,
   FakeWorker,
@@ -265,6 +278,8 @@ describe("createWebWorkerPairingHostRuntime", () => {
         chat: false,
         permissionStatus: false,
         pocket: false,
+        identityBackend: false,
+        coinageWallet: false,
         game: false,
         contacts: false,
       },
@@ -441,6 +456,8 @@ describe("createWebWorkerPairingHostRuntime", () => {
       chat: true,
       permissionStatus: false,
       pocket: false,
+      identityBackend: false,
+      coinageWallet: false,
       game: false,
       contacts: false,
     });
@@ -464,9 +481,265 @@ describe("createWebWorkerPairingHostRuntime", () => {
       chat: false,
       permissionStatus: false,
       pocket: true,
+      identityBackend: false,
+      coinageWallet: false,
       game: false,
       contacts: false,
     });
+  });
+
+  it("preserves optional authenticated identity search through the worker boundary", async () => {
+    const worker = new FakeWorker();
+    const account = new Uint8Array(32).fill(0x42);
+    const genesis = new Uint8Array(32).fill(0x77);
+    const runtimePromise = createWebWorkerSigningHostRuntime(
+      asWorker(worker),
+      makeHostCallbacks({
+        identityBackend: {
+          identityUsernameCandidates: async (username, peopleGenesis) => {
+            if (
+              username !== "alice" ||
+              bytesToHex(peopleGenesis) !== bytesToHex(genesis)
+            ) {
+              throw new Error("authenticated search unavailable");
+            }
+            return [account];
+          },
+        },
+      }),
+      {
+        hostConfig: {
+          ...hostConfigFromRuntimeConfig(runtimeConfig()),
+          networkSuffix: "paseo",
+        },
+      },
+    );
+    worker.emit({ kind: "loaded" });
+    const capabilities = lastMessageOfKind(worker, "init")
+      .capabilities as OptionalCapabilities;
+    worker.emit({ kind: "ready" });
+    const runtime = await runtimePromise;
+    let requestId = 0;
+    const bridge = {
+      async callbackRequest(name, args) {
+        const id = ++requestId;
+        worker.emit({ kind: "callbackRequest", requestId: id, name, args });
+        await settle();
+        const response = worker.messages.find(
+          (message) =>
+            message.kind === "callbackResponse" && message.requestId === id,
+        );
+        if (!response) throw new Error("missing callback response");
+        if (!response.ok) throw new Error(String(response.error));
+        return response.value;
+      },
+    } satisfies Pick<WorkerCallbackBridge, "callbackRequest">;
+    const callbacks = createWorkerRawCallbacks(
+      bridge as WorkerCallbackBridge,
+      capabilities,
+    ) as unknown as RawCallbacks;
+
+    try {
+      expect(
+        await callbacks.identityUsernameCandidates!("alice", genesis),
+      ).toEqual(new Uint8Array([4, ...account]));
+      await expect(
+        callbacks.identityUsernameCandidates!("unavailable", genesis),
+      ).rejects.toThrow("authenticated search unavailable");
+    } finally {
+      runtime.dispose();
+    }
+  });
+
+  it("does not register a product wallet when the runtime uses the Rust wallet", async () => {
+    const worker = new FakeWorker();
+    const runtimePromise = createWebWorkerSigningHostRuntime(
+      asWorker(worker),
+      makeHostCallbacks(),
+      {
+        hostConfig: {
+          ...hostConfigFromRuntimeConfig(runtimeConfig()),
+          networkSuffix: "paseo",
+        },
+      },
+    );
+    worker.emit({ kind: "loaded" });
+    const capabilities = lastMessageOfKind(worker, "init")
+      .capabilities as OptionalCapabilities;
+    worker.emit({ kind: "ready" });
+    const runtime = await runtimePromise;
+    let productWalletCalls = 0;
+    try {
+      const providerPromise = runtime.createProvider(
+        { productId: "chat.dot" },
+        makeHostCallbacks({
+          coinageWallet: {
+            nativeCoinage: async () => {
+              productWalletCalls++;
+              return { tag: "Done" };
+            },
+          },
+        }),
+      );
+      const productCapabilities = lastMessageOfKind(worker, "createCore")
+        .capabilities as OptionalCapabilities;
+      worker.emit({ kind: "coreReady", coreId: 1 });
+      await providerPromise;
+      const bridge = {
+        async callbackRequest() {
+          throw new Error("An absent wallet must not issue a callback");
+        },
+      } satisfies Pick<WorkerCallbackBridge, "callbackRequest">;
+      for (const registration of [capabilities, productCapabilities]) {
+        const callbacks = createWorkerRawCallbacks(
+          bridge as WorkerCallbackBridge,
+          registration,
+        ) as unknown as RawCallbacks;
+        expect(callbacks.nativeCoinage).toBeUndefined();
+      }
+      // Even a stale or forged product-scoped request cannot invoke its wallet.
+      worker.emit({
+        kind: "callbackRequest",
+        requestId: 1,
+        coreId: 1,
+        name: "nativeCoinage",
+        args: [],
+      });
+      await settle();
+      expect(lastMessageOfKind(worker, "callbackResponse").ok).toBe(false);
+      expect(productWalletCalls).toBe(0);
+    } finally {
+      runtime.dispose();
+    }
+  });
+
+  it("keeps native wallet ownership and secrets on the runtime callback route", async () => {
+    const worker = new FakeWorker();
+    const runtimePromise = createWebWorkerSigningHostRuntime(
+      asWorker(worker),
+      makeHostCallbacks({
+        coinageWallet: {
+          nativeCoinage: async (request) => {
+            if (request.operation.tag === "Denomination")
+              return { tag: "Failed", value: { reason: "Unavailable" } };
+            throw new Error("private native memo bearer material");
+          },
+        },
+      }),
+      {
+        hostConfig: {
+          ...hostConfigFromRuntimeConfig(runtimeConfig()),
+          networkSuffix: "paseo",
+        },
+      },
+    );
+    worker.emit({ kind: "loaded" });
+    const capabilities = lastMessageOfKind(worker, "init")
+      .capabilities as OptionalCapabilities;
+    worker.emit({ kind: "ready" });
+    const runtime = await runtimePromise;
+    let productWalletCalls = 0;
+    const providerPromise = runtime.createProvider(
+      { productId: "chat.dot" },
+      makeHostCallbacks({
+        coinageWallet: {
+          nativeCoinage: async () => {
+            productWalletCalls++;
+            return { tag: "Done" };
+          },
+        },
+      }),
+    );
+    worker.emit({ kind: "coreReady", coreId: 1 });
+    await providerPromise;
+    const scope = {
+      rootPublicKey: new Uint8Array(32),
+      genesisHash: new Uint8Array(32),
+    };
+    try {
+      let coreId = 1;
+      const bridge = {
+        async callbackRequest(name, args) {
+          worker.emit({
+            kind: "callbackRequest",
+            requestId: 1,
+            coreId,
+            name,
+            args,
+          });
+          await settle();
+          const response = lastMessageOfKind(worker, "callbackResponse");
+          if (!response.ok) throw new Error(String(response.error));
+          return response.value;
+        },
+      } satisfies Pick<WorkerCallbackBridge, "callbackRequest">;
+      const native = createWorkerRawCallbacks(
+        bridge as WorkerCallbackBridge,
+        capabilities,
+      ) as unknown as RawCallbacks;
+      await expect(
+        native.nativeCoinage!(
+          NativeCoinageRequest.enc({ scope, operation: { tag: "Reconcile" } }),
+        ),
+      ).rejects.toThrow();
+      worker.emit({
+        kind: "callbackRequest",
+        requestId: 2,
+        coreId: 1,
+        name: "nativeCoinage",
+        args: [
+          NativeCoinageRequest.enc({
+            scope,
+            operation: { tag: "Denomination" },
+          }),
+        ],
+      });
+      await settle();
+      expect(
+        NativeCoinageResponse.dec(
+          lastMessageOfKind(worker, "callbackResponse").value as Uint8Array,
+        ),
+      ).toEqual({ tag: "Failed", value: { reason: "Unavailable" } });
+      worker.emit({
+        kind: "callbackRequest",
+        requestId: 3,
+        name: "nativeCoinage",
+        args: [
+          NativeCoinageRequest.enc({ scope, operation: { tag: "Reconcile" } }),
+        ],
+      });
+      await settle();
+      const failure = lastMessageOfKind(worker, "callbackResponse");
+      expect(failure.ok).toBe(false);
+      expect(failure.error).not.toContain("bearer material");
+      // Recreating product execution callbacks after failure keeps the runtime owner.
+      const recreatedProvider = runtime.createProvider(
+        { productId: "chat.dot" },
+        makeHostCallbacks(),
+      );
+      const productCapabilities = lastMessageOfKind(worker, "createCore")
+        .capabilities as OptionalCapabilities;
+      coreId = 2;
+      worker.emit({ kind: "coreReady", coreId });
+      await recreatedProvider;
+      const recreated = createWorkerRawCallbacks(
+        bridge as WorkerCallbackBridge,
+        productCapabilities,
+      ) as unknown as RawCallbacks;
+      expect(
+        NativeCoinageResponse.dec(
+          await recreated.nativeCoinage!(
+            NativeCoinageRequest.enc({
+              scope,
+              operation: { tag: "Denomination" },
+            }),
+          ),
+        ),
+      ).toEqual({ tag: "Failed", value: { reason: "Unavailable" } });
+      expect(productWalletCalls).toBe(0);
+    } finally {
+      runtime.dispose();
+    }
   });
 
   it("reports the game capability to the worker when the host serves it", async () => {
@@ -491,6 +764,8 @@ describe("createWebWorkerPairingHostRuntime", () => {
       permissionStatus: false,
       pocket: false,
       game: true,
+      identityBackend: false,
+      coinageWallet: false,
       contacts: false,
     });
   });
@@ -513,6 +788,8 @@ describe("createWebWorkerPairingHostRuntime", () => {
       permissionStatus: false,
       pocket: false,
       game: true,
+      identityBackend: false,
+      coinageWallet: false,
     });
     const provider = await finishProviderReady(worker, providerPromise);
     provider.dispose();
@@ -885,6 +1162,19 @@ describe("createWebWorkerPairingHostRuntime", () => {
     );
   });
 
+  it("rejects permission changes after the product connection closes", async () => {
+    const worker = new FakeWorker();
+    const provider = await readyProvider(worker);
+    provider.dispose();
+
+    await expect(
+      provider.setPermissionAuthorizationStatus(
+        { tag: "Device", value: "Camera" },
+        "Denied",
+      ),
+    ).rejects.toThrow();
+  });
+
   it("forwards session activation calls and resolves their responses", async () => {
     const worker = new FakeWorker();
     const runtime = await readyRuntime(worker);
@@ -1122,6 +1412,367 @@ describe("createWebWorkerPairingHostRuntime", () => {
     expect(worker.messages.at(-1)).toEqual({
       kind: "notifySessionStoreChanged",
     });
+    runtime.dispose();
+  });
+
+  it("keeps delivered file sources durable but releases a selection lost during teardown", async () => {
+    const worker = new FakeWorker();
+    const late = Promise.withResolvers<NativeChatPickedFile[]>();
+    const owned = new Set(["delivered", "undelivered"]);
+    let calls = 0;
+    const metadata = {
+      mimeType: "application/octet-stream",
+      sizeBytes: 1,
+      kind: { tag: "File" as const },
+    };
+    const runtimePromise = createWebWorkerPairingHostRuntime(
+      asWorker(worker),
+      makeHostCallbacks({
+        nativeChatFiles: {
+          pickChatFiles: async () =>
+            ++calls === 1
+              ? [{ sourceId: "delivered", metadata }]
+              : late.promise,
+          releaseChatFile: async (id) => {
+            owned.delete(id);
+          },
+        },
+      }),
+      { hostConfig: hostConfigFromRuntimeConfig(runtimeConfig()) },
+    );
+    worker.emit({ kind: "loaded" });
+    worker.emit({ kind: "ready" });
+    const runtime = await runtimePromise;
+    const request = NativeChatFilePickRequest.enc({
+      productId: "chat.dot",
+      peerIdentity: new Uint8Array(32),
+      peerUsername: undefined,
+      maxFiles: 1,
+    });
+    worker.emit({
+      kind: "callbackRequest",
+      requestId: 1,
+      name: "pickChatFiles",
+      args: [request],
+    });
+    await settle();
+    worker.emit({
+      kind: "callbackRequest",
+      requestId: 2,
+      name: "pickChatFiles",
+      args: [request],
+    });
+    await settle();
+    runtime.dispose();
+    late.resolve([{ sourceId: "undelivered", metadata }]);
+    await settle();
+    expect([...owned]).toEqual(["delivered"]);
+    expect(
+      worker.messages
+        .filter((message) => message.kind === "callbackResponse")
+        .map((message) => message.requestId),
+    ).toEqual([1]);
+  });
+
+  it("cancels active and late file exports after a worker fault, not completed exports", async () => {
+    const worker = new FakeWorker();
+    const late = Promise.withResolvers<string | undefined>();
+    const cancelled: string[] = [];
+    let calls = 0;
+    const runtimePromise = createWebWorkerPairingHostRuntime(
+      asWorker(worker),
+      makeHostCallbacks({
+        nativeChatFiles: {
+          beginChatFileExport: async () =>
+            ["completed", "active"][calls++] ?? late.promise,
+          finishChatFileExport: async () => {},
+          cancelChatFileExport: async (id) => {
+            cancelled.push(id);
+          },
+        },
+      }),
+      { hostConfig: hostConfigFromRuntimeConfig(runtimeConfig()) },
+    );
+    worker.emit({ kind: "loaded" });
+    worker.emit({ kind: "ready" });
+    await runtimePromise;
+    const request = NativeChatFileExportRequest.enc({
+      productId: "chat.dot",
+      peerIdentity: new Uint8Array(32),
+      peerUsername: undefined,
+      metadata: {
+        mimeType: "application/octet-stream",
+        sizeBytes: 0,
+        kind: { tag: "File" },
+      },
+    });
+    worker.emit({
+      kind: "callbackRequest",
+      requestId: 1,
+      name: "beginChatFileExport",
+      args: [request],
+    });
+    await settle();
+    worker.emit({
+      kind: "callbackRequest",
+      requestId: 2,
+      name: "finishChatFileExport",
+      args: ["completed"],
+    });
+    await settle();
+    worker.emit({
+      kind: "callbackRequest",
+      requestId: 3,
+      name: "beginChatFileExport",
+      args: [request],
+    });
+    await settle();
+    worker.emit({
+      kind: "callbackRequest",
+      requestId: 4,
+      name: "beginChatFileExport",
+      args: [request],
+    });
+    await settle();
+    worker.emitError("worker stopped");
+    late.resolve("late");
+    await settle();
+    expect(cancelled.sort()).toEqual(["active", "late"]);
+    expect(
+      worker.messages
+        .filter((message) => message.kind === "callbackResponse")
+        .map((message) => message.requestId),
+    ).toEqual([1, 2, 3]);
+  });
+
+  it("preserves bigint file offsets and never returns backend private error details", async () => {
+    const worker = new FakeWorker();
+    const runtimePromise = createWebWorkerPairingHostRuntime(
+      asWorker(worker),
+      makeHostCallbacks({
+        nativeChatFiles: {
+          readChatFile: async (_id, offset) => {
+            if (offset === 0xffff_ffff_ffff_ffffn)
+              return new Uint8Array([0xa5]);
+            throw new Error("private-source-and-path");
+          },
+        },
+      }),
+      { hostConfig: hostConfigFromRuntimeConfig(runtimeConfig()) },
+    );
+    worker.emit({ kind: "loaded" });
+    worker.emit({ kind: "ready" });
+    const runtime = await runtimePromise;
+    worker.emit({
+      kind: "callbackRequest",
+      requestId: 1,
+      name: "readChatFile",
+      args: ["private-source-and-path", 0xffff_ffff_ffff_ffffn, 1],
+    });
+    await settle();
+    expect(lastMessageOfKind(worker, "callbackResponse")).toEqual({
+      kind: "callbackResponse",
+      requestId: 1,
+      ok: true,
+      value: new Uint8Array([0xa5]),
+    });
+    worker.emit({
+      kind: "callbackRequest",
+      requestId: 2,
+      name: "readChatFile",
+      args: ["private-source-and-path", 0n, 1],
+    });
+    await settle();
+    expect(lastMessageOfKind(worker, "callbackResponse")).toEqual({
+      kind: "callbackResponse",
+      requestId: 2,
+      ok: false,
+      error: "Native Chat file operation failed",
+    });
+    runtime.dispose();
+  });
+
+  for (const teardown of ["dispose", "fault", "close"] as const) {
+    it(`closes a HOP handle that opens after ${teardown}`, async () => {
+      const worker = new FakeWorker();
+      const opening = Promise.withResolvers<PlatformJsonRpcConnection>();
+      const endpoint = "wss://hop.example/rpc";
+      let closes = 0;
+      const runtimePromise = createWebWorkerPairingHostRuntime(
+        asWorker(worker),
+        makeHostCallbacks({
+          hop: {
+            allowedHopEndpoints: async () => [endpoint],
+            connectHop: () => opening.promise,
+          },
+        }),
+        { hostConfig: hostConfigFromRuntimeConfig(runtimeConfig()) },
+      );
+      worker.emit({ kind: "loaded" });
+      worker.emit({ kind: "ready" });
+      const runtime = await runtimePromise;
+      worker.emit({
+        kind: "hopConnectStart",
+        connId: 1,
+        genesisHash: "0xab",
+        endpoint,
+      });
+      await settle();
+      if (teardown === "dispose") runtime.dispose();
+      else if (teardown === "fault") worker.emitError("worker stopped");
+      else worker.emit({ kind: "chainClose", connId: 1 });
+      const response = Promise.withResolvers<IteratorResult<string>>();
+      opening.resolve({
+        send() {},
+        responses: () => ({
+          [Symbol.asyncIterator]: () => ({ next: () => response.promise }),
+        }),
+        close() {
+          closes += 1;
+          response.resolve({ done: true, value: undefined });
+        },
+      });
+      await settle();
+      expect(closes).toBe(1);
+      expect(
+        worker.messages.filter(
+          (message) =>
+            message.kind === "chainConnectAck" ||
+            message.kind === "chainResponse",
+        ),
+      ).toEqual([]);
+      runtime.dispose();
+      expect(closes).toBe(1);
+    });
+  }
+
+  it("pumps HOP responses and releases the connection on remote closure", async () => {
+    const worker = new FakeWorker();
+    const response = Promise.withResolvers<IteratorResult<string>>();
+    const endpoint = "wss://hop.example/rpc";
+    const sent: string[] = [];
+    let closes = 0;
+    let delivered = false;
+    const runtimePromise = createWebWorkerPairingHostRuntime(
+      asWorker(worker),
+      makeHostCallbacks({
+        hop: {
+          allowedHopEndpoints: async () => [endpoint],
+          async connectHop() {
+            return {
+              send: (request) => sent.push(request),
+              responses: () => ({
+                [Symbol.asyncIterator]: () => ({
+                  async next(): Promise<IteratorResult<string>> {
+                    if (delivered) return { done: true, value: undefined };
+                    delivered = true;
+                    return response.promise;
+                  },
+                }),
+              }),
+              close() {
+                closes += 1;
+              },
+            };
+          },
+        },
+      }),
+      { hostConfig: hostConfigFromRuntimeConfig(runtimeConfig()) },
+    );
+    worker.emit({ kind: "loaded" });
+    worker.emit({ kind: "ready" });
+    const runtime = await runtimePromise;
+    worker.emit({
+      kind: "hopConnectStart",
+      connId: 7,
+      genesisHash: "0xab",
+      endpoint,
+    });
+    await settle();
+    expect(lastMessageOfKind(worker, "chainConnectAck")).toEqual({
+      kind: "chainConnectAck",
+      connId: 7,
+      ok: true,
+    });
+    worker.emit({ kind: "chainSend", connId: 7, request: '{"id":1}' });
+    response.resolve({ done: false, value: '{"id":1,"result":"ok"}' });
+    await settle();
+    expect(lastMessageOfKind(worker, "chainResponse")).toEqual({
+      kind: "chainResponse",
+      connId: 7,
+      json: '{"id":1,"result":"ok"}',
+    });
+    expect(lastMessageOfKind(worker, "chainClosed")).toEqual({
+      kind: "chainClosed",
+      connId: 7,
+    });
+    worker.emit({ kind: "chainSend", connId: 7, request: "late" });
+    worker.emit({ kind: "chainClose", connId: 7 });
+    runtime.dispose();
+    expect(sent).toEqual(['{"id":1}']);
+    expect(closes).toBe(1);
+  });
+
+  it("bounds outstanding HOP opens even when cancelled before completion", async () => {
+    const worker = new FakeWorker();
+    const opening = Promise.withResolvers<PlatformJsonRpcConnection>();
+    const endpoint = "wss://hop.example/rpc";
+    let dials = 0;
+    let closes = 0;
+    const runtimePromise = createWebWorkerPairingHostRuntime(
+      asWorker(worker),
+      makeHostCallbacks({
+        hop: {
+          allowedHopEndpoints: async () => [endpoint],
+          connectHop() {
+            dials += 1;
+            return opening.promise;
+          },
+        },
+      }),
+      { hostConfig: hostConfigFromRuntimeConfig(runtimeConfig()) },
+    );
+    worker.emit({ kind: "loaded" });
+    worker.emit({ kind: "ready" });
+    const runtime = await runtimePromise;
+    for (let connId = 1; connId <= MAX_JSON_RPC_CONNECTIONS; connId += 1) {
+      worker.emit({
+        kind: "hopConnectStart",
+        connId,
+        genesisHash: "0xab",
+        endpoint,
+      });
+      worker.emit({ kind: "chainClose", connId });
+    }
+    worker.emit({
+      kind: "hopConnectStart",
+      connId: MAX_JSON_RPC_CONNECTIONS + 1,
+      genesisHash: "0xab",
+      endpoint,
+    });
+    await settle();
+    expect(dials).toBe(MAX_JSON_RPC_CONNECTIONS);
+    expect(lastMessageOfKind(worker, "chainConnectAck")).toMatchObject({
+      connId: MAX_JSON_RPC_CONNECTIONS + 1,
+      ok: false,
+    });
+    opening.resolve({
+      send() {},
+      async *responses() {},
+      close() {
+        closes += 1;
+      },
+    });
+    await settle();
+    expect(closes).toBe(MAX_JSON_RPC_CONNECTIONS);
+    worker.emit({
+      kind: "hopConnectStart",
+      connId: MAX_JSON_RPC_CONNECTIONS + 2,
+      genesisHash: "0xab",
+      endpoint,
+    });
+    await settle();
+    expect(dials).toBe(MAX_JSON_RPC_CONNECTIONS + 1);
     runtime.dispose();
   });
 
@@ -2296,4 +2947,56 @@ describe("wallet allowance inspection isolation", () => {
     });
     runtime.dispose();
   });
+});
+
+describe("native Chat directory lifetime", () => {
+  it("refuses a pairing host instead of returning an empty directory", async () => {
+    const runtime = await readyRuntime(new FakeWorker());
+    await expect(runtime.getNativeChatContacts()).rejects.toThrow();
+    runtime.dispose();
+  });
+
+  it.each(["activation", "contacts", "dispose"] as const)(
+    "rejects a pending directory after %s invalidation, including a late reply",
+    async (change) => {
+      const worker = new FakeWorker();
+      const runtime = await readySigningRuntime(worker);
+      const directory = runtime.getNativeChatContacts();
+      const outcome = directory.catch((error: unknown) => error);
+      const requestId = lastMessageOfKind(
+        worker,
+        "getNativeChatContacts",
+      ).requestId;
+      let activation: Promise<void> | undefined;
+      if (change === "activation") {
+        activation = runtime.activateLocalSession(new Uint8Array(32));
+        await expect(runtime.getNativeChatContacts()).rejects.toThrow();
+      } else if (change === "contacts") {
+        runtime.notifyContactsChanged();
+      } else {
+        runtime.dispose();
+      }
+      worker.emit({
+        kind: "nativeChatContactsResponse",
+        requestId,
+        ok: true,
+        snapshot: {
+          walletPublicKey: `0x${"11".repeat(32)}`,
+          genesisHash: `0x${"22".repeat(32)}`,
+          contacts: [{ peerIdentity: `0x${"33".repeat(32)}` }],
+        },
+      });
+      expect(await outcome).toBeInstanceOf(Error);
+      if (activation) {
+        worker.emit({
+          kind: "sessionActivationResponse",
+          requestId: lastMessageOfKind(worker, "activateLocalSession")
+            .requestId,
+          ok: true,
+        });
+        await activation;
+      }
+      runtime.dispose();
+    },
+  );
 });

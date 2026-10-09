@@ -45,6 +45,7 @@ impl Network {
                 bulletin_genesis: PASEO_BULLETIN.genesis,
                 asset_hub_genesis: PASEO_ASSET_HUB.genesis,
                 live_chain_endpoints: PASEO_NEXT_V2_CHAIN_ENDPOINTS,
+                hop_endpoints: PASEO_HOP_ENDPOINTS,
             },
             Self::Previewnet => NetworkConfig {
                 id: "previewnet",
@@ -57,6 +58,7 @@ impl Network {
                 bulletin_genesis: PREVIEWNET_BULLETIN.genesis,
                 asset_hub_genesis: PREVIEWNET_ASSET_HUB.genesis,
                 live_chain_endpoints: PREVIEWNET_CHAIN_ENDPOINTS,
+                hop_endpoints: PREVIEWNET_HOP_ENDPOINTS,
             },
         }
     }
@@ -135,6 +137,36 @@ const PASEO_NEXT_V2_CHAIN_ENDPOINTS: &[ChainEndpoint] =
 const PREVIEWNET_CHAIN_ENDPOINTS: &[ChainEndpoint] =
     &[PREVIEWNET_ASSET_HUB, PREVIEWNET_PEOPLE, PREVIEWNET_BULLETIN];
 
+// Trusted endpoint/identity pairs from brevity-chain presets.rs and
+// remote_config.json (chains_v2) at d504259b60b88ca42f70a8378186a714887ef19f.
+// Do not infer a HOP endpoint from a chain RPC URL.
+const PASEO_HOP_ENDPOINTS: &[HopEndpoint] = &[
+    HopEndpoint {
+        bulletin_genesis: PASEO_BULLETIN.genesis,
+        ws: "wss://paseo-hop-next-0.polkadot.io",
+    },
+    HopEndpoint {
+        bulletin_genesis: PASEO_BULLETIN.genesis,
+        ws: "wss://paseo-hop-next-1.polkadot.io",
+    },
+];
+
+// This trusted snapshot identifies a newer Previewnet Bulletin than the CLI's
+// existing chain preset. Keep the exact pair: the provider fails closed until
+// the selected Bulletin identity matches, rather than silently changing chains.
+const PREVIEWNET_HOP_ENDPOINTS: &[HopEndpoint] = &[HopEndpoint {
+    bulletin_genesis: hex_literal_genesis(
+        "1144acd27f0e5b2c88da7dc12c111e396983dec036ccfb42da5bbb0dd7104e89",
+    ),
+    ws: "wss://previewnet.substrate.dev/bulletin",
+}];
+
+#[derive(Debug, Clone, Copy)]
+pub struct HopEndpoint {
+    pub bulletin_genesis: [u8; 32],
+    pub ws: &'static str,
+}
+
 /// Resolved RPC/backend/genesis values for one network preset.
 #[derive(Debug, Clone, Copy)]
 pub struct NetworkConfig {
@@ -163,6 +195,7 @@ pub struct NetworkConfig {
     /// the chain does not report sends Asset Hub traffic to the fallback chain.
     pub asset_hub_genesis: [u8; 32],
     pub live_chain_endpoints: &'static [ChainEndpoint],
+    pub hop_endpoints: &'static [HopEndpoint],
 }
 
 #[derive(Debug, Clone, Copy)]

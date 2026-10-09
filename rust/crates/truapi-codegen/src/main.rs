@@ -45,6 +45,10 @@ struct Cli {
     client_version: Option<ProtocolVersionArg>,
 
     /// Wire codec version for generated handshake calls.
+    ///
+    /// Defaults to the Host's authoritative `truapi::WIRE_CODEC_VERSION`.
+    /// Override only for intentional historical generation; normal client and
+    /// Host generation must use the same constant.
     #[arg(long, default_value_t = truapi::WIRE_CODEC_VERSION)]
     codec_version: u8,
 

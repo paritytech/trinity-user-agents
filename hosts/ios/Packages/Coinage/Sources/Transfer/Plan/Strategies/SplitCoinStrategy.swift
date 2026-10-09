@@ -50,7 +50,7 @@ struct SplitCoinStrategy {
 // MARK: - TransferStrategy
 
 extension SplitCoinStrategy: TransferStrategy {
-    func prepare() async throws -> PreparedStrategy {
+    func prepare(native: NativeTransferRequest?) async throws -> PreparedStrategy {
         // Every piece of the split shares one provenance: the overflow coin's chain, plus this
         // split. Fanout counts all outputs, the recipient's and ours alike, since that is how many
         // ways the input was divided.
@@ -86,9 +86,6 @@ extension SplitCoinStrategy: TransferStrategy {
             outputs: assets.outputs
         )
 
-        let handoffCommit = try await txService
-            .preCommitHandoff(assets.handedOff.map { .coin($0.derivationIndex, $0.publicKey) })
-
         var memoEntries = wholeCoins.map {
             PlannedMemoEntry(
                 coinDerivationIndex: $0.derivationIndex,
@@ -99,10 +96,11 @@ extension SplitCoinStrategy: TransferStrategy {
             PlannedMemoEntry(coinDerivationIndex: $0.derivationIndex, valueExponent: $0.exponent)
         }
 
-        return PreparedStrategy(
+        return try await txService.prepareTransfer(
+            handingOff: assets.handedOff,
             memoEntries: memoEntries,
-            handoffCommit: handoffCommit,
-            transactions: [scheduled]
+            transactions: [scheduled],
+            native: native
         )
     }
 }

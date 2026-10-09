@@ -64,6 +64,7 @@ pub use async_trait::async_trait;
 pub mod api;
 pub mod v01;
 pub mod v02;
+pub mod v03;
 pub mod versioned;
 
 /// A 32-byte value, passed as plain bytes on FFI surfaces. Version-neutral:
@@ -107,6 +108,18 @@ pub mod latest {
         StatementProof, StorageQueryItem, StorageQueryType, StorageResultItem, TextFieldProps,
         TextProps, ThemeName, ThemeVariant, TxPayloadExtension, TypographyStyle, VerticalAlignment,
         VrfSignature,
+    };
+    pub use crate::v02::{
+        HostNativeChatAcknowledgment, HostNativeChatAttachment, HostNativeChatAttachmentKind,
+        HostNativeChatAttachmentMetadata, HostNativeChatAttachmentState, HostNativeChatDevice,
+        HostNativeChatInvitation, HostNativeChatMessages, HostNativeChatPayment,
+        HostNativeChatPaymentDirection, HostNativeChatPaymentFailure, HostNativeChatPaymentState,
+        HostNativeChatPeer, HostNativeChatPeerDevice, HostNativeChatRichMessage,
+        HostNativeChatRichMessageKind,
+    };
+    pub use crate::v03::{
+        HostNativeChatBinding, HostNativeChatMigrationInvitation, HostNativeChatOpenPage,
+        HostNativeChatOpened, HostNativeChatPrepared, HostNativeChatRoute, HostNativeChatStatePage,
     };
 
     /// Latest payload type of a versioned envelope.
@@ -240,6 +253,14 @@ pub mod latest {
     /// Per-resource allocation outcomes.
     pub type HostRequestResourceAllocationResponse =
         LatestOf<versioned::resource_allocation::HostRequestResourceAllocationResponse>;
+    /// Native Chat cryptographic request using non-exportable Host keys.
+    pub type HostProductDeviceChatRequest =
+        LatestOf<versioned::account::HostProductDeviceChatRequest>;
+    /// Authenticated native plaintext, prepared ciphertext, and custody metadata.
+    pub type HostProductDeviceChatResponse =
+        LatestOf<versioned::account::HostProductDeviceChatResponse>;
+    /// Host-owned native Chat operation error.
+    pub type HostProductDeviceChatError = LatestOf<versioned::account::HostProductDeviceChatError>;
     /// Extrinsic payload signing request for a product account.
     pub type HostSignPayloadRequest = LatestOf<versioned::signing::HostSignPayloadRequest>;
     /// Signing operation result.
@@ -654,6 +675,7 @@ runtime_items! {
         PermissionAuthorizationRequest, PermissionAuthorizationStatus, Platform, ProductContext,
         SigningHostConfig, describe_core_storage_key,
     };
+    #[cfg(any(test, not(target_arch = "wasm32")))]
     pub use runtime::StatementRenewalTarget;
     pub use runtime::contacts::contact_handle;
     pub use runtime::login_failure::reports_exhausted_period;
@@ -663,7 +685,10 @@ runtime_items! {
         AnnouncedPairing, DevicePairingObserver, MAX_PAIRING_METADATA_CHARS, PairedSsoPeer,
         PairingProposal, PairingProposalMetadata, ResponderExit,
     };
-    pub use runtime::{LocalIdentity, LocalIdentityContext, WalletAllowanceSnapshot};
+    pub use runtime::{
+        LocalIdentity, LocalIdentityContext, NativeChatContact, NativeChatContactsSnapshot,
+        WalletAllowanceSnapshot,
+    };
 
     #[cfg(not(target_arch = "wasm32"))]
     pub use native::{

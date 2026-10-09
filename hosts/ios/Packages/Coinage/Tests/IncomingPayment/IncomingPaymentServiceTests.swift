@@ -1,6 +1,8 @@
 import Testing
 import Foundation
 import AsyncExtensions
+import SubstrateSdk
+import os
 @testable import Coinage
 
 struct IncomingPaymentServiceTests {
@@ -16,47 +18,167 @@ struct IncomingPaymentServiceTests {
         store: InMemoryIncomingPaymentStore,
         secretStore: InMemoryIncomingPaymentSecretStore = InMemoryIncomingPaymentSecretStore(),
         resolver: StubSourceResolver = StubSourceResolver(),
-        acknowledger: StubAcknowledger = StubAcknowledger()
+        acknowledger: StubAcknowledger = StubAcknowledger(),
+        claim: any ClaimCoinsServicing = StubClaimCoinsService(),
+        verdictResolver: any CoinageGroupVerdictResolving = StubGroupVerdictResolver(verdict: .notClaimed),
+        lifecycle: CoinageLifecycle? = nil,
+        ownerId: Data = Data([0xA0])
     ) -> IncomingPaymentService {
-        IncomingPaymentService(
-            store: store,
-            secretStore: secretStore,
-            sourceResolver: resolver,
-            paymentContext: IncomingPaymentContext(logger: StubLogger()),
-            claimCoinsService: StubClaimCoinsService(),
-            claimAssetService: StubClaimAssetService(),
-            verdictResolver: StubGroupVerdictResolver(verdict: .notClaimed),
-            acknowledger: acknowledger,
-            instanceId: 0,
-            logger: StubLogger()
-        )
+        IncomingPaymentService(store: store,
+        secretStore: secretStore,
+        sourceResolver: resolver,
+        paymentContext: IncomingPaymentContext(logger: StubLogger()),
+        claimCoinsService: claim,
+        claimAssetService: StubClaimAssetService(),
+        verdictResolver: verdictResolver,
+        acknowledger: acknowledger,
+        instanceId: 0,
+        logger: StubLogger(),
+        lifecycle: lifecycle, ownerId: ownerId)
     }
 
-    @Test func acceptRejectsZeroAmount() async throws {
+    @Test(.timeLimit(.minutes(1)))
+    func zeroCoinsClaimsFullSourceAndPersistsRealZero() async throws {
+        let store = InMemoryIncomingPaymentStore()
+        let secretStore = InMemoryIncomingPaymentSecretStore()
+        let service = makeService(
+            store: store,
+            secretStore: secretStore,
+            claim: StubClaimCoinsService(detections: [.claiming, .claimed(amount: 40, finalized: true)])
+        )
+
+        try await service.accept(
+            amount: 0,
+            descriptor: .coins(secretKeys: [Data([0x01])]),
+            paymentId: "p1",
+            productId: "prod"
+        )
+        #expect(store.payment(for: "top up:prod:p1")?.amount == 0)
+
+        service.setup(with: Self.denomination)
+        defer { service.throttle() }
+        try await waitUntil { store.payment(for: "top up:prod:p1")?.outcome != nil }
+
+        #expect(store.payment(for: "top up:prod:p1")?.outcome == .claimed)
+        #expect(store.payment(for: "top up:prod:p1")?.amount == 0)
+        let restarted = makeService(store: store, secretStore: secretStore)
+        let stream = try await restarted.subscribeStatus(for: "p1", productId: "prod")
+        for try await status in stream {
+            #expect(status == .claimed(finalized: true))
+            break
+        }
+    }
+
+    @Test(arguments: [
+        IncomingPaymentSourceDescriptor.privateKey(secretKey: Data([0x01])),
+        .productAccount(derivationPath: "//product//prod/0x1")
+    ])
+    func acceptRejectsZeroForWalletSources(descriptor: IncomingPaymentSourceDescriptor) async throws {
         let store = InMemoryIncomingPaymentStore()
         let secretStore = InMemoryIncomingPaymentSecretStore()
         let service = makeService(store: store, secretStore: secretStore)
 
         await #expect {
-            try await service.accept(
-                amount: 0,
-                descriptor: .coins(secretKeys: [Data([0x01])]),
-                paymentId: "p1",
-                productId: "prod"
-            )
+            try await service.accept(amount: 0, descriptor: descriptor, paymentId: "p1", productId: "prod")
         } throws: { ($0 as? IncomingPaymentError) == .invalidAmount }
         #expect(store.payment(for: "top up:prod:p1") == nil)
         #expect(!secretStore.hasDescriptor(for: "top up:prod:p1"))
     }
 
-    @Test func acceptFailsWhenBusyCheckCannotReadSecrets() async throws {
-        let active = IncomingPayment(
-            paymentId: "p1",
-            productId: "prod",
-            amount: 100,
-            createdAt: Date(),
-            outcome: nil
+    @Test(.timeLimit(.minutes(1)))
+    func suspendedOldAcceptCannotOverwriteReactivatedPaymentOrRemoveItsSecret() async throws {
+        let (entered, didEnter) = AsyncStream<Void>.makeStream()
+        let (resume, release) = AsyncStream<Void>.makeStream()
+        let firstSave = OSAllocatedUnfairLock(initialState: true)
+        let store = InMemoryIncomingPaymentStore(beforeSave: {
+            let suspend = firstSave.withLock {
+                let first = $0
+                $0 = false
+                return first
+            }
+            guard suspend else { return }
+            didEnter.yield(())
+            for await _ in resume { break }
+        })
+        let secrets = InMemoryIncomingPaymentSecretStore()
+        let lifecycle = try CoinageLifecycle(
+            rootEntropyManager: MockEntropyManager(entropy: Data(repeating: 2, count: 32))
         )
+        #expect(lifecycle.setActive(true))
+        let oldService = makeService(store: store, secretStore: secrets, lifecycle: lifecycle)
+        let oldAccept = Task {
+            do {
+                try await oldService.accept(
+                    amount: 100, descriptor: .coins(secretKeys: [Data([1])]), paymentId: "p", productId: "prod"
+                )
+                return false
+            } catch {
+                return true
+            }
+        }
+        defer {
+            release.finish()
+            oldAccept.cancel()
+        }
+        var entries = entered.makeAsyncIterator()
+        _ = await entries.next()
+        #expect(lifecycle.setActive(false))
+        #expect(lifecycle.setActive(true))
+
+        let replacement = makeService(store: store, secretStore: secrets, lifecycle: lifecycle)
+        let descriptor = IncomingPaymentSourceDescriptor.coins(secretKeys: [Data([2])])
+        try await replacement.accept(amount: 200, descriptor: descriptor, paymentId: "p", productId: "prod")
+        release.yield(())
+        #expect(await oldAccept.value)
+
+        #expect(store.payment(for: "top up:prod:p")?.amount == 200)
+        #expect(try secrets.fetch(groupId: "top up:prod:p") == descriptor)
+        #expect(secrets.removedGroupIds().isEmpty)
+    }
+
+    @Test(.timeLimit(.minutes(1)), arguments: [Data?.none, Data([0xB0])])
+    func foreignAndLegacyRecordsArePreservedButNeverAdopted(recordOwner: Data?) async throws {
+        let unowned = IncomingPayment(
+            paymentId: "foreign", productId: "prod", amount: 0, createdAt: Date(), outcome: nil,
+            ownerId: recordOwner
+        )
+        let owned = IncomingPayment(
+            paymentId: "owned", productId: "prod", amount: 0, createdAt: Date(), outcome: nil,
+            ownerId: Data([0xA0])
+        )
+        let descriptor = IncomingPaymentSourceDescriptor.coins(secretKeys: [Data([1])])
+        let store = InMemoryIncomingPaymentStore(seed: [unowned, owned])
+        let secrets = InMemoryIncomingPaymentSecretStore(seed: [
+            unowned.groupId: descriptor,
+            owned.groupId: .coins(secretKeys: [Data([2])])
+        ])
+        let service = makeService(
+            store: store, secretStore: secrets, claim: StubClaimCoinsService(detections: [.notClaimed])
+        )
+        await #expect {
+            _ = try await service.subscribeStatus(for: "foreign", productId: "prod")
+        } throws: { ($0 as? IncomingPaymentError) == .notFound("foreign") }
+        await #expect {
+            try await service.accept(
+                amount: 0, descriptor: .coins(secretKeys: [Data([3])]), paymentId: "foreign", productId: "prod"
+            )
+        } throws: { ($0 as? IncomingPaymentError) == .alreadyExists }
+
+        service.setup(with: Self.denomination)
+        defer { service.throttle() }
+        try await waitUntil { store.payment(for: owned.groupId)?.outcome != nil }
+        #expect(store.payment(for: unowned.groupId) == unowned)
+        #expect(try secrets.fetch(groupId: unowned.groupId) == descriptor)
+        #expect(!secrets.removedGroupIds().contains(unowned.groupId))
+        #expect(!store.settledGroupIds().contains(unowned.groupId))
+    }
+
+    @Test func acceptFailsWhenBusyCheckCannotReadSecrets() async throws {
+        let active = IncomingPayment(paymentId: "p1",
+        productId: "prod",
+        amount: 100,
+        createdAt: Date(),
+        outcome: nil, ownerId: Data([0xA0]))
         let store = InMemoryIncomingPaymentStore(seed: [active])
         let secretStore = InMemoryIncomingPaymentSecretStore()
         secretStore.fetchError = InMemoryIncomingPaymentSecretStore.Failure()
@@ -93,13 +215,11 @@ struct IncomingPaymentServiceTests {
     }
 
     @Test func acceptRejectsDuplicateGroupId() async throws {
-        let existing = IncomingPayment(
-            paymentId: "p1",
-            productId: "prod",
-            amount: 100,
-            createdAt: Date(),
-            outcome: nil
-        )
+        let existing = IncomingPayment(paymentId: "p1",
+        productId: "prod",
+        amount: 100,
+        createdAt: Date(),
+        outcome: nil, ownerId: Data([0xA0]))
         let store = InMemoryIncomingPaymentStore(seed: [existing])
         let service = makeService(store: store)
 
@@ -114,13 +234,11 @@ struct IncomingPaymentServiceTests {
     }
 
     @Test func acceptRejectsBusySource() async throws {
-        let active = IncomingPayment(
-            paymentId: "p1",
-            productId: "prod",
-            amount: 100,
-            createdAt: Date(),
-            outcome: nil
-        )
+        let active = IncomingPayment(paymentId: "p1",
+        productId: "prod",
+        amount: 100,
+        createdAt: Date(),
+        outcome: nil, ownerId: Data([0xA0]))
         let store = InMemoryIncomingPaymentStore(seed: [active])
         let secretStore = InMemoryIncomingPaymentSecretStore(
             seed: ["top up:prod:p1": .coins(secretKeys: [Data([0x05])])]
@@ -138,7 +256,7 @@ struct IncomingPaymentServiceTests {
     }
 
     @Test func sameProductAccountPathIsBusy() async throws {
-        let active = IncomingPayment(paymentId: "p1", productId: "prod", amount: 100, createdAt: Date(), outcome: nil)
+        let active = IncomingPayment(paymentId: "p1", productId: "prod", amount: 100, createdAt: Date(), outcome: nil, ownerId: Data([0xA0]))
         let store = InMemoryIncomingPaymentStore(seed: [active])
         let secretStore = InMemoryIncomingPaymentSecretStore(
             seed: ["top up:prod:p1": .productAccount(derivationPath: "//product//prod/0x1")]
@@ -157,7 +275,7 @@ struct IncomingPaymentServiceTests {
 
     @Test func differentProductAccountPathsAreNotBusy() async throws {
         // The path embeds the product, so another product's account at the same index is other money.
-        let active = IncomingPayment(paymentId: "p1", productId: "prodA", amount: 100, createdAt: Date(), outcome: nil)
+        let active = IncomingPayment(paymentId: "p1", productId: "prodA", amount: 100, createdAt: Date(), outcome: nil, ownerId: Data([0xA0]))
         let store = InMemoryIncomingPaymentStore(seed: [active])
         let secretStore = InMemoryIncomingPaymentSecretStore(
             seed: ["top up:prodA:p1": .productAccount(derivationPath: "//product//prodA/0x1")]
@@ -176,7 +294,7 @@ struct IncomingPaymentServiceTests {
     @Test func busyCheckSkipsCorruptedSecrets() async throws {
         // A payment whose secret no longer decodes can never claim, so it holds nothing busy and must
         // not block every future accept.
-        let active = IncomingPayment(paymentId: "p1", productId: "prod", amount: 100, createdAt: Date(), outcome: nil)
+        let active = IncomingPayment(paymentId: "p1", productId: "prod", amount: 100, createdAt: Date(), outcome: nil, ownerId: Data([0xA0]))
         let store = InMemoryIncomingPaymentStore(seed: [active])
         let secretStore = InMemoryIncomingPaymentSecretStore()
         secretStore.corruptedGroupIds = ["top up:prod:p1"]
@@ -192,13 +310,11 @@ struct IncomingPaymentServiceTests {
     }
 
     @Test func settledSourceIsNotBusy() async throws {
-        let done = IncomingPayment(
-            paymentId: "p1",
-            productId: "prod",
-            amount: 100,
-            createdAt: Date(),
-            outcome: .claimed
-        )
+        let done = IncomingPayment(paymentId: "p1",
+        productId: "prod",
+        amount: 100,
+        createdAt: Date(),
+        outcome: .claimed, ownerId: Data([0xA0]))
         // A settled payment has no live secret — it was wiped on settle.
         let store = InMemoryIncomingPaymentStore(seed: [done])
         let service = makeService(store: store)
@@ -261,13 +377,11 @@ struct IncomingPaymentServiceTests {
     }
 
     @Test func coldSubscribeReturnsStoredVerdictExactly() async throws {
-        let settled = IncomingPayment(
-            paymentId: "p1",
-            productId: "prod",
-            amount: 100,
-            createdAt: Date(),
-            outcome: .claimedPartially(actualClaimed: 42)
-        )
+        let settled = IncomingPayment(paymentId: "p1",
+        productId: "prod",
+        amount: 100,
+        createdAt: Date(),
+        outcome: .claimedPartially(actualClaimed: 42), ownerId: Data([0xA0]))
         let store = InMemoryIncomingPaymentStore(seed: [settled])
         let service = makeService(store: store)
 
@@ -305,6 +419,135 @@ struct IncomingPaymentServiceTests {
         #expect(call.outcome == .claimedPartially(actualClaimed: 40))
         #expect(call.requestedAmount == 100)
         #expect(rig.store.payment(for: "top up:prod:p")?.outcome == .claimedPartially(actualClaimed: 40))
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func finalizedFullSourceBelowMinimumPersistsActualShortfall() async throws {
+        let acknowledger = StubAcknowledger()
+        let rig = makeDrivingService(
+            detections: [.claimed(amount: 40, finalized: true)],
+            acknowledger: acknowledger
+        )
+
+        rig.service.setup(with: Self.denomination)
+        defer { rig.service.throttle() }
+        try await waitUntil { acknowledger.calls().count == 1 }
+
+        #expect(rig.store.payment(for: "top up:prod:p")?.outcome == .claimedPartially(actualClaimed: 40))
+        #expect(acknowledger.calls().first?.requestedAmount == 100)
+        #expect(acknowledger.calls().first?.outcome == .claimedPartially(actualClaimed: 40))
+        let stream = try await rig.service.subscribeStatus(for: "p", productId: "prod")
+        for try await status in stream {
+            #expect(status == .claimedPartially(actualClaimed: 40))
+            break
+        }
+    }
+
+    @Test(.timeLimit(.minutes(1)), arguments: [Balance(0), Balance(100)])
+    func terminalPartialSourceMeetingMinimumIsClaimed(amount: Balance) async throws {
+        let rig = makeDrivingService(detections: [.claimedPartially(claimed: 120)], amount: amount)
+
+        rig.service.setup(with: Self.denomination)
+        defer { rig.service.throttle() }
+        try await waitUntil { rig.store.payment(for: "top up:prod:p")?.outcome != nil }
+
+        #expect(rig.store.payment(for: "top up:prod:p")?.outcome == .claimed)
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func zeroCoinsWithoutFundsIsNotClaimed() async throws {
+        let rig = makeDrivingService(detections: [.detecting, .notClaimed], amount: 0)
+
+        rig.service.setup(with: Self.denomination)
+        defer { rig.service.throttle() }
+        try await waitUntil { rig.store.payment(for: "top up:prod:p")?.outcome != nil }
+
+        #expect(rig.store.payment(for: "top up:prod:p")?.amount == 0)
+        #expect(rig.store.payment(for: "top up:prod:p")?.outcome == .notClaimed)
+    }
+
+    @Test(.timeLimit(.minutes(1)), arguments: [Balance(0), Balance(100)])
+    func unfinalizedCreditAndReorgRemainActiveUntilStableVerdict(amount: Balance) async throws {
+        let store = InMemoryIncomingPaymentStore()
+        let secrets = InMemoryIncomingPaymentSecretStore()
+        let claim = StreamingClaimCoinsService()
+        let service = makeService(store: store, secretStore: secrets, claim: claim)
+        try await service.accept(
+            amount: amount, descriptor: .coins(secretKeys: [Data([1])]), paymentId: "p", productId: "prod"
+        )
+        let stream = try await service.subscribeStatus(for: "p", productId: "prod")
+        var statuses = stream.makeAsyncIterator()
+        #expect(try await statuses.next() == .detecting)
+        service.setup(with: Self.denomination)
+        defer { service.throttle() }
+
+        claim.detections.yield(.claimingRest(claimed: 120))
+        #expect(try await statuses.next() == .claiming)
+        claim.detections.yield(.claimed(amount: 40, finalized: false))
+        let pending: IncomingPaymentStatus = amount == 0 ? .claimed(finalized: false) : .claiming
+        #expect(try await statuses.next() == pending)
+        #expect(store.payment(for: "top up:prod:p")?.outcome == nil)
+        #expect(secrets.hasDescriptor(for: "top up:prod:p"))
+
+        claim.detections.yield(.detecting)
+        #expect(try await statuses.next() == .detecting)
+        #expect(store.payment(for: "top up:prod:p")?.outcome == nil)
+        claim.detections.yield(.claimed(amount: 40, finalized: true))
+        claim.detections.finish()
+        let outcome: IncomingPaymentTerminalOutcome = amount == 0 ? .claimed : .claimedPartially(actualClaimed: 40)
+        #expect(try await statuses.next() == IncomingPaymentStatus(outcome: outcome))
+        try await waitUntil { store.payment(for: "top up:prod:p")?.outcome != nil }
+        #expect(store.payment(for: "top up:prod:p")?.outcome == outcome)
+    }
+
+    @Test(.timeLimit(.minutes(1)), arguments: [Balance(0), Balance(100)])
+    func restartWithoutSecretRequiresActualFinalizedLedgerCredit(amount: Balance) async throws {
+        let payment = IncomingPayment(paymentId: "p", productId: "prod", amount: amount, createdAt: Date(), outcome: nil, ownerId: Data([0xA0]))
+        let store = InMemoryIncomingPaymentStore(seed: [payment])
+        let repository = MockCoinageTxRepository()
+        let coin = Coin(exponent: 3, derivationIndex: 1, age: nil, publicKey: testKey(1))
+        try await repository.register(.fixture(
+            outputs: [.coin(1, coin.publicKey)], status: .finalizedSuccess, groupId: payment.groupId
+        ))
+        let resolver = CoinageGroupVerdictResolver(
+            txService: MockCoinageTxService(store: repository),
+            coinService: InMemoryCoinService(coins: [coin]),
+            voucherService: InMemoryVoucherService()
+        )
+        let service = makeService(store: store, verdictResolver: resolver)
+        let denomination = DenominationBreakdownContext(unit: 1, precision: 0, maxExponent: 3, minExponent: 0)
+
+        service.setup(with: denomination)
+        defer { service.throttle() }
+        try await waitUntil { store.payment(for: payment.groupId)?.outcome != nil }
+
+        let outcome: IncomingPaymentTerminalOutcome = amount == 0 ? .claimed : .claimedPartially(actualClaimed: 8)
+        #expect(store.payment(for: payment.groupId)?.outcome == outcome)
+        #expect(store.payment(for: payment.groupId)?.amount == amount)
+        let restarted = makeService(store: store)
+        let stream = try await restarted.subscribeStatus(for: "p", productId: "prod")
+        for try await status in stream {
+            #expect(status == IncomingPaymentStatus(outcome: outcome))
+            break
+        }
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func restartZeroWithoutSecretOrLedgerCreditIsNotClaimed() async throws {
+        let payment = IncomingPayment(paymentId: "p", productId: "prod", amount: 0, createdAt: Date(), outcome: nil, ownerId: Data([0xA0]))
+        let store = InMemoryIncomingPaymentStore(seed: [payment])
+        let resolver = CoinageGroupVerdictResolver(
+            txService: MockCoinageTxService(),
+            coinService: InMemoryCoinService(),
+            voucherService: InMemoryVoucherService()
+        )
+        let service = makeService(store: store, verdictResolver: resolver)
+
+        service.setup(with: Self.denomination)
+        defer { service.throttle() }
+        try await waitUntil { store.payment(for: payment.groupId)?.outcome != nil }
+
+        #expect(store.payment(for: payment.groupId)?.outcome == .notClaimed)
     }
 
     @Test(.timeLimit(.minutes(1)))
@@ -482,6 +725,7 @@ struct IncomingPaymentServiceTests {
     /// Without a secret the durability fallback answers `durabilityVerdict`.
     private func makeDrivingService(
         detections: [CoinageTransferDetection],
+        amount: Balance = 100,
         acknowledger: StubAcknowledger = StubAcknowledger(),
         createdAt: Date = Date(),
         secretPresent: Bool = true,
@@ -490,13 +734,11 @@ struct IncomingPaymentServiceTests {
         instanceId: CoinageInstanceId = 0,
         assetClaim: StubClaimAssetService = StubClaimAssetService()
     ) -> DrivingRig {
-        let payment = IncomingPayment(
-            paymentId: "p",
-            productId: "prod",
-            amount: 100,
-            createdAt: createdAt,
-            outcome: nil
-        )
+        let payment = IncomingPayment(paymentId: "p",
+        productId: "prod",
+        amount: amount,
+        createdAt: createdAt,
+        outcome: nil, ownerId: Data([0xA0]))
         let store = InMemoryIncomingPaymentStore(seed: [payment])
         let secretStore = InMemoryIncomingPaymentSecretStore(
             seed: secretPresent ? ["top up:prod:p": descriptor] : [:]
@@ -507,18 +749,16 @@ struct IncomingPaymentServiceTests {
             case let .success(verdict): StubGroupVerdictResolver(verdict: verdict)
             case let .failure(error): StubGroupVerdictResolver(error: error)
             }
-        let service = IncomingPaymentService(
-            store: store,
-            secretStore: secretStore,
-            sourceResolver: StubSourceResolver(),
-            paymentContext: IncomingPaymentContext(logger: StubLogger()),
-            claimCoinsService: claim,
-            claimAssetService: assetClaim,
-            verdictResolver: verdictResolver,
-            acknowledger: acknowledger,
-            instanceId: instanceId,
-            logger: StubLogger()
-        )
+        let service = IncomingPaymentService(store: store,
+        secretStore: secretStore,
+        sourceResolver: StubSourceResolver(),
+        paymentContext: IncomingPaymentContext(logger: StubLogger()),
+        claimCoinsService: claim,
+        claimAssetService: assetClaim,
+        verdictResolver: verdictResolver,
+        acknowledger: acknowledger,
+        instanceId: instanceId,
+        logger: StubLogger(), ownerId: Data([0xA0]))
         return DrivingRig(
             service: service,
             store: store,

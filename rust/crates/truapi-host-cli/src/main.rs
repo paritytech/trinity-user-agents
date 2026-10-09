@@ -18,6 +18,7 @@ mod bootstrap;
 mod bulletin_lookup;
 mod chain;
 mod chat;
+mod chat_files;
 mod contacts;
 mod dotns_read;
 mod frame_server;
@@ -369,7 +370,7 @@ struct PairingHostArgs {
     /// Network preset that supplies all RPC/backend/genesis config.
     #[arg(long, value_enum, default_value = "paseo-next-v2")]
     network: Network,
-    /// Approve every confirmation without prompting on the CLI.
+    /// Automatically approve non-payment confirmations. Main-purse payments still require review.
     #[arg(long)]
     auto_accept: bool,
 }
@@ -395,6 +396,9 @@ struct DevArgs {
     /// Network preset that supplies all RPC/backend/genesis config.
     #[arg(long, value_enum, default_value = "paseo-next-v2")]
     network: Network,
+    /// Trusted Coinage asset instance. Required for instance-scoped Coinage runtimes.
+    #[arg(long, env = "TRUAPI_COINAGE_INSTANCE_ID")]
+    coinage_instance_id: Option<u32>,
     /// Persistent signing-host session to restore or create.
     #[arg(long)]
     session: Option<String>,
@@ -456,11 +460,14 @@ struct SigningHostArgs {
     /// Network preset that supplies all RPC/backend/genesis config.
     #[arg(long, value_enum, default_value = "paseo-next-v2")]
     network: Network,
+    /// Trusted Coinage asset instance. Required for instance-scoped Coinage runtimes.
+    #[arg(long, env = "TRUAPI_COINAGE_INSTANCE_ID")]
+    coinage_instance_id: Option<u32>,
     /// TCP address to serve product WebSocket frames on. When omitted, use a
     /// private per-process Unix-domain socket.
     #[arg(long)]
     frame_listen: Option<SocketAddr>,
-    /// Approve every confirmation without prompting on the CLI.
+    /// Automatically approve non-payment confirmations. Main-purse payments still require review.
     #[arg(long)]
     auto_accept: bool,
     /// Serve product frames without a terminal UI and stay up until stopped.
@@ -468,6 +475,7 @@ struct SigningHostArgs {
     /// endpoint and every lifecycle event are logged one line at a time, and
     /// the signer is ready once "Signing host ready" is printed. Pair it with
     /// `--auto-accept`, because a process with no terminal cannot prompt.
+    /// Main-purse payments cannot be approved in unattended serve mode.
     #[arg(long)]
     serve: bool,
     /// Local product config declaring `trustedProducts`, as the publisher will
@@ -1037,8 +1045,7 @@ async fn report_slot_scan(
     Ok(())
 }
 
-/// Map the `--auto-accept` flag to an approval policy: auto-accept, or prompt
-/// each confirmation on the CLI.
+/// Select the default confirmation policy; main-purse payments always prompt.
 fn approval_policy(auto_accept: bool) -> ApprovalPolicy {
     if auto_accept {
         ApprovalPolicy::AutoAccept
@@ -1521,6 +1528,7 @@ struct SigningHostSession {
     catalog: SessionCatalog,
     profile: Option<SessionProfile>,
     network: NetworkConfig,
+    coinage_instance_id: Option<u32>,
     mnemonic: Option<String>,
     default_account: Option<String>,
     reserved_username: Option<String>,
@@ -1702,6 +1710,7 @@ async fn start_signing_host(
     let pocket = args.execution_kind.pocket_host();
     let (runtime, platform) = build_signing_runtime(
         network,
+        args.coinage_instance_id,
         storage_profile.path,
         storage_profile.product_storage_dir,
         approval,
@@ -1768,6 +1777,7 @@ async fn start_signing_host(
         catalog,
         profile,
         network,
+        coinage_instance_id: args.coinage_instance_id,
         mnemonic,
         default_account,
         reserved_username: normalized(args.reserved_username.clone()),
@@ -1777,8 +1787,10 @@ async fn start_signing_host(
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 fn build_signing_runtime(
     network: NetworkConfig,
+    coinage_instance_id: Option<u32>,
     storage_path: PathBuf,
     product_storage_dir: PathBuf,
     approval: ApprovalPolicy,
@@ -1798,7 +1810,7 @@ fn build_signing_runtime(
         approval,
         ui,
     );
-    let config = SigningHostConfig::new(
+    let mut config = SigningHostConfig::new(
         host_info("Headless Signing Host"),
         platform_info(),
         network.people_genesis,
@@ -1807,13 +1819,18 @@ fn build_signing_runtime(
         network.network_suffix.to_string(),
     )
     .context("invalid signing host config")?;
+    config.coinage_instance_id = coinage_instance_id;
     let status_host = platform.clone() as Arc<dyn PermissionStatusHost>;
     let runtime = Arc::new(SigningHostRuntime::with_chat_platform(
         platform.clone(),
         config,
         tokio_spawner(),
         chat.map(|chat| chat as Arc<dyn ChatPlatform>),
+        None,
     ));
+    runtime.set_identity_backend_host(Arc::new(attestation::CliIdentityBackendHost::new(
+        &runtime, network,
+    )?));
     runtime.set_permission_status_host(status_host);
     if let Some(pocket) = pocket {
         runtime.set_pocket_platform(pocket);
@@ -2105,6 +2122,7 @@ async fn run_dev(
     let signing = SigningHostArgs {
         product_id,
         network: args.network,
+        coinage_instance_id: args.coinage_instance_id,
         session: args.session,
         mnemonic: args.mnemonic,
         base_path: args.base_path,
@@ -3170,6 +3188,7 @@ async fn activate_session(session: &mut SigningHostSession, name: String) -> Res
     let last_script = session.catalog.last_script(&profile)?;
     let (runtime, platform) = build_signing_runtime(
         session.network,
+        session.coinage_instance_id,
         profile.path.clone(),
         profile.product_storage_dir.clone(),
         session.platform.approval_policy(),
@@ -3262,6 +3281,7 @@ async fn import_mnemonic_session(
     let last_script = session.catalog.last_script(&profile)?;
     let (runtime, platform) = build_signing_runtime(
         session.network,
+        session.coinage_instance_id,
         profile.path.clone(),
         profile.product_storage_dir.clone(),
         session.platform.approval_policy(),
@@ -3584,7 +3604,7 @@ async fn signing_interactive_loop(
                 ui.success(
                     "Approval mode set to automatic",
                     Some(
-                        "Future product confirmations will be approved automatically.".to_string(),
+                        "Future product confirmations will be approved automatically, except main-purse payments, which always require review.".to_string(),
                     ),
                 );
             }
@@ -4446,6 +4466,7 @@ mod cli_tests {
         let profile = tempfile::tempdir().unwrap();
         let (runtime, _platform) = build_signing_runtime(
             crate::network::Network::PaseoNextV2.config(),
+            None,
             profile.path().to_path_buf(),
             profile.path().join("storage"),
             ApprovalPolicy::AutoAccept,
@@ -4939,24 +4960,6 @@ test -s "$TRUAPI_DEV_COMMAND_TEST_READY_PATH"
                 .to_string()
                 .contains("--serve cannot be combined with the exec subcommand")
         );
-    }
-
-    #[test]
-    fn serve_ready_names_the_endpoint_and_the_approval_policy() {
-        let prompting = terminal_ui::SystemEvent::ServeReady {
-            url: "ws://127.0.0.1:9955".to_string(),
-            auto_accept: false,
-        }
-        .human();
-        assert!(prompting.contains("ws://127.0.0.1:9955"));
-        assert!(prompting.contains("--auto-accept"));
-
-        let accepting = terminal_ui::SystemEvent::ServeReady {
-            url: "ws://127.0.0.1:9955".to_string(),
-            auto_accept: true,
-        }
-        .human();
-        assert!(accepting.contains("approved automatically"));
     }
 
     #[test]

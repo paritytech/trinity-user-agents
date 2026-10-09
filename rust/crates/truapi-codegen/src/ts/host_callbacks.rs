@@ -19,9 +19,10 @@ use crate::platform::{
     PlatformDefinition, PlatformInner, PlatformMethod, PlatformParam, PlatformReturn, PlatformTrait,
 };
 use crate::platform_callbacks::{
-    callback_namespace, collect_local_bridge_payload_types, composed_traits, optional_trait_names,
-    platform_trait_names, raw_callback_adapter_name, raw_callback_name, raw_callback_type_name,
-    raw_callback_wire_name, stream_item, to_camel_case, trait_object_return_name,
+    callback_namespace, collect_local_bridge_payload_types, composed_traits,
+    is_scale_vector_result, optional_trait_names, platform_trait_names, raw_callback_adapter_name,
+    raw_callback_name, raw_callback_type_name, raw_callback_wire_name, stream_item, to_camel_case,
+    trait_object_return_name,
 };
 use crate::rustdoc::{FieldDef, TypeDef, TypeDefKind, TypeRef, VariantDef, VariantFields};
 use crate::ts::ts_string_literal;
@@ -201,6 +202,25 @@ fn emit_wasm_adapter(
     let mut adapter_local_codec_types: BTreeSet<String> = BTreeSet::new();
     let mut runtime_types: BTreeSet<String> = BTreeSet::new();
     let mut support_imports: BTreeSet<String> = BTreeSet::new();
+    let mut result_codecs = Vec::new();
+    if traits
+        .iter()
+        .any(|trait_def| trait_def.name == "HopProvider")
+    {
+        support_imports.insert("unavailableHopProvider".to_string());
+    }
+    if traits
+        .iter()
+        .any(|trait_def| trait_def.name == "NativeChatFilesHost")
+    {
+        support_imports.insert("unavailableNativeChatFilesHost".to_string());
+    }
+    if traits
+        .iter()
+        .any(|trait_def| trait_def.name == "CoinageWalletHost")
+    {
+        support_imports.insert("coinageWalletHostAdapter".to_string());
+    }
     for trait_def in &traits {
         for method in &trait_def.methods {
             for param in &method.params {
@@ -219,6 +239,13 @@ fn emit_wasm_adapter(
             }
             match &method.return_shape.inner {
                 PlatformInner::Result { ok, .. } | PlatformInner::Plain(ok) => {
+                    if is_scale_vector_result(ok) {
+                        result_codecs.push(format!(
+                            "const {}ResultCodec = {};",
+                            raw_callback_name(method),
+                            local_codec_expr(ok)?,
+                        ));
+                    }
                     collect_codec_imports(ok, codec_types, &mut imports);
                     collect_local_codec_names(
                         ok,
@@ -257,6 +284,9 @@ fn emit_wasm_adapter(
         "#,
     )
     .unwrap();
+    if !result_codecs.is_empty() {
+        out.push_str("import * as S from \"@parity/truapi/scale\";\n");
+    }
     emit_import_block(&mut out, false, "@parity/truapi", &imports);
     emit_import_block(&mut out, true, "@parity/truapi", &extra_types);
     emit_import_block(
@@ -278,6 +308,12 @@ fn emit_wasm_adapter(
     emit_import_block(&mut out, true, "../runtime.js", &runtime_types);
     emit_import_block(&mut out, false, "../adapter-support.js", &support_imports);
     if !runtime_types.is_empty() || !support_imports.is_empty() {
+        out.push('\n');
+    }
+    for codec in &result_codecs {
+        writeln!(out, "{codec}").unwrap();
+    }
+    if !result_codecs.is_empty() {
         out.push('\n');
     }
     let optional_traits = optional_trait_names(definition);
@@ -303,7 +339,29 @@ fn emit_wasm_adapter(
     // narrowed reference rather than re-reading a possibly-absent member.
     for name in &optional_traits {
         let namespace = callback_namespace(name);
-        writeln!(out, "  const {namespace} = callbacks.{namespace};").unwrap();
+        if name == "CoinageWalletHost" {
+            writeln!(
+                out,
+                "  const {namespace} = coinageWalletHostAdapter(callbacks.{namespace});"
+            )
+            .unwrap();
+        } else {
+            writeln!(out, "  const {namespace} = callbacks.{namespace};").unwrap();
+        }
+    }
+    // HOP remains a required Rust capability. Older JS embeddings get its
+    // explicit unavailable implementation, not a phantom working transport.
+    if traits
+        .iter()
+        .any(|trait_def| trait_def.name == "HopProvider")
+    {
+        out.push_str("  const hop = callbacks.hop ?? unavailableHopProvider;\n");
+    }
+    if traits
+        .iter()
+        .any(|trait_def| trait_def.name == "NativeChatFilesHost")
+    {
+        out.push_str("  const nativeChatFiles = callbacks.nativeChatFiles ?? unavailableNativeChatFilesHost;\n");
     }
     out.push_str("  return {\n");
     for trait_def in &traits {
@@ -506,7 +564,7 @@ fn emit_worker_callbacks(
             /**
              * Optional capabilities the main-thread host actually serves. A
              * capability left out here is not proxied into the worker, so the
-             * core answers its product calls with `Unsupported`.
+             * core applies that capability's absence behavior.
              */
             export interface OptionalCapabilities {{
             {members}
@@ -950,6 +1008,7 @@ fn raw_primitive_ts(p: &str) -> String {
     match p {
         "bool" => "boolean".to_string(),
         "str" => "string".to_string(),
+        "u64" | "i64" | "u128" | "i128" => "bigint".to_string(),
         _ => "number".to_string(),
     }
 }
@@ -999,8 +1058,8 @@ fn collect_codec_imports(ty: &TypeRef, codec_types: &BTreeSet<String>, out: &mut
 }
 
 /// The call argument expression for one Rust param. Codec types arrive as
-/// `Uint8Array` and are decoded; everything else, including `u64`-family
-/// integers that arrive as `bigint`, passes through. Arrow parameter
+/// `Uint8Array` and are decoded; wide integers cross as lossless JS `bigint`;
+/// everything else passes through. Arrow parameter
 /// types are left to contextual inference from `RawCallbacks`, so only the
 /// argument expression varies.
 fn adapter_arg(
@@ -1045,17 +1104,27 @@ fn emit_adapter_entry(
     let raw = raw_callback_wire_name(trait_def, method, platform_trait_names);
     let namespace = callback_namespace(&trait_def.name);
     // Optional capabilities are hoisted into a local binding by the caller.
-    let host_method = if optional {
-        format!("{namespace}.{raw}")
+    let host_method = if optional
+        || matches!(
+            trait_def.name.as_str(),
+            "HopProvider" | "NativeChatFilesHost"
+        ) {
+        format!("{namespace}.{}", raw_callback_name(method))
     } else {
-        format!("callbacks.{namespace}.{raw}")
+        format!("callbacks.{namespace}.{}", raw_callback_name(method))
     };
     if trait_object_return_name(method, platform_trait_names).is_some() {
         let adapter = raw_callback_adapter_name(trait_def, method, platform_trait_names);
-        return Ok(format!(
-            "{raw}: {adapter}(callbacks.{}),",
-            callback_namespace(&trait_def.name)
-        ));
+        let host = if optional
+            || matches!(
+                trait_def.name.as_str(),
+                "HopProvider" | "NativeChatFilesHost"
+            ) {
+            namespace
+        } else {
+            format!("callbacks.{namespace}")
+        };
+        return Ok(format!("{raw}: {adapter}({host}),"));
     }
     let impl_expr = match &method.return_shape.inner {
         PlatformInner::Stream(item) => {
@@ -1096,8 +1165,14 @@ fn validate_adapter_codec_boundary(
 
     match &method.return_shape.inner {
         PlatformInner::Result { ok, .. } | PlatformInner::Plain(ok) => {
+            // Vector results have an inline SCALE codec. Validate their
+            // element as a direct codec rather than a nested container.
+            let value = match ok {
+                TypeRef::Vec(inner) if is_scale_vector_result(ok) => inner.as_ref(),
+                other => other,
+            };
             validate_adapter_codec_boundary_type(
-                ok,
+                value,
                 codec_types,
                 local_codec_types,
                 "return value",
@@ -1134,11 +1209,9 @@ fn validate_adapter_codec_boundary_type(
     Ok(())
 }
 
-/// The WASM adapter only knows how to translate a direct codec payload:
-/// `Codec` maps to raw `Uint8Array` and the adapter emits `Codec.dec/enc`.
-/// Containers such as `Vec<Codec>`, `Option<Codec>`, or `(Codec, ...)` would
-/// still be declared as raw bytes at the WASM boundary, but no generated code
-/// knows how to encode or decode the container. Reject those shapes at codegen.
+/// Named codec payload parameters must cross directly. Vector results use an
+/// emitted inline SCALE codec and validate their elements separately; other
+/// containers of named codecs remain unsupported.
 fn contains_non_direct_codec_type(
     ty: &TypeRef,
     codec_types: &BTreeSet<String>,
@@ -1194,6 +1267,9 @@ fn adapter_unary_impl(
             if codec_types.contains(ty) || local_codec_types.contains(ty) =>
         {
             format!("{ty}.enc(await {call})")
+        }
+        ty if is_scale_vector_result(ty) => {
+            format!("{}ResultCodec.enc(await {call})", raw_callback_name(method))
         }
         _ => format!("await {call}"),
     };
@@ -1611,9 +1687,12 @@ fn emit_host_callback_composites(
         );
     }
     // A host may leave out an optional capability entirely; the core then
-    // answers the matching product calls with `Unsupported`.
+    // applies that capability's absence behavior.
+    // Required Rust capabilities with explicit unavailable embedding backends.
     let mark = |trait_name: &String| {
-        if optional_traits.contains(trait_name) {
+        if optional_traits.contains(trait_name)
+            || matches!(trait_name.as_str(), "HopProvider" | "NativeChatFilesHost")
+        {
             "?"
         } else {
             ""
@@ -1909,49 +1988,23 @@ mod tests {
         }
     }
 
-    fn assert_rejects_compound_codec(method: PlatformMethod, expected: &str) {
+    fn assert_rejects_compound_codec(method: PlatformMethod) {
         let definition = platform_with_method(method);
-        let err = emit_wasm_adapter(&definition, &codec_types(), &BTreeSet::new())
-            .expect_err("compound codec boundary should fail codegen")
-            .to_string();
-        assert!(
-            err.contains("unsupported compound codec type"),
-            "unexpected error: {err}"
-        );
-        assert!(err.contains(expected), "unexpected error: {err}");
+        assert!(emit_wasm_adapter(&definition, &codec_types(), &BTreeSet::new()).is_err());
     }
 
     #[test]
-    fn wasm_adapter_rejects_compound_codec_return_shapes() {
+    fn wasm_adapter_rejects_unsupported_compound_codec_return_shapes() {
         let codec = named("HostFeatureSupportedResponse");
-        assert_rejects_compound_codec(
-            method_with_return(TypeRef::Vec(Box::new(codec.clone()))),
-            "return value",
-        );
-        assert_rejects_compound_codec(
-            method_with_return(TypeRef::Option(Box::new(codec.clone()))),
-            "return value",
-        );
-        assert_rejects_compound_codec(
-            method_with_return(TypeRef::Tuple(vec![codec])),
-            "return value",
-        );
+        assert_rejects_compound_codec(method_with_return(TypeRef::Option(Box::new(codec.clone()))));
+        assert_rejects_compound_codec(method_with_return(TypeRef::Tuple(vec![codec])));
     }
 
     #[test]
     fn wasm_adapter_rejects_compound_codec_param_shapes() {
         let codec = named("HostFeatureSupportedRequest");
-        assert_rejects_compound_codec(
-            method_with_param(TypeRef::Vec(Box::new(codec.clone()))),
-            "parameter `request`",
-        );
-        assert_rejects_compound_codec(
-            method_with_param(TypeRef::Option(Box::new(codec.clone()))),
-            "parameter `request`",
-        );
-        assert_rejects_compound_codec(
-            method_with_param(TypeRef::Tuple(vec![codec])),
-            "parameter `request`",
-        );
+        assert_rejects_compound_codec(method_with_param(TypeRef::Vec(Box::new(codec.clone()))));
+        assert_rejects_compound_codec(method_with_param(TypeRef::Option(Box::new(codec.clone()))));
+        assert_rejects_compound_codec(method_with_param(TypeRef::Tuple(vec![codec])));
     }
 }

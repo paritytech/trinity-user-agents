@@ -540,6 +540,7 @@ console.log(JSON.stringify({
     }
 
     #[test]
+
     fn editor_command_accepts_quoted_arguments_without_a_shell() -> Result<()> {
         let (program, arguments) = parse_editor("code --wait \"profile one\"")?;
 

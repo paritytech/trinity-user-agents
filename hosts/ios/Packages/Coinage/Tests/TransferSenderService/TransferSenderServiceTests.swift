@@ -697,10 +697,158 @@ struct TransferSenderServiceTests {
             "handoff reservation must precede scheduling: \(events)"
         )
     }
+
+    @Test("Native split remains recoverable after memo derivation fails; restart does not mint or debit again")
+    func nativeCustodySurvivesMemoFailure() async throws {
+        let result = nativeSplitSelection()
+        let failing = makeTransferSenderService(mockDurability: mockDurability, memoBuilder: FailingMemoBuilder())
+        await #expect(throws: TransferSenderServiceError.self) {
+            try await failing.execute(
+                result: result, breakdownContext: testContext, groupId: "native", custodyId: "memo-failure",
+                authorization: { try Task.checkCancellation() }
+            )
+        }
+        try await mockDurability.releaseUncommittedHandoffs()
+        let store = mockDurability.store
+        let ids = try await store.getAllEntries().map(\.id)
+        let allocated = await mockMinter.mintedCoins
+        #expect(store.handoffMarks == [.coin(1, Data(repeating: 1, count: 32)), .coin(100, Data(repeating: 100, count: 32))])
+
+        let restarted = makeTransferSenderService(
+            mockDurability: MockCoinageTxService(store: store),
+            memoBuilder: MemoBuilder(privateKeyDeriver: NativeMemoKeyFactory())
+        )
+        let recovered = try await restarted.retainedTransfer(custodyId: "memo-failure", breakdownContext: testContext)
+        let memo = try #require(recovered?.memo)
+        #expect(memo.entries == [Data(repeating: 1, count: 64), Data(repeating: 100, count: 64)])
+        #expect(memo.totalValue == planks(3))
+        let currentContext = DenominationBreakdownContext(
+            unit: BigUInt(2_000_000), precision: 6, maxExponent: 7, minExponent: -6
+        )
+        let repriced = try await restarted.retainedTransfer(custodyId: "memo-failure", breakdownContext: currentContext)
+        #expect(repriced?.memo.entries == memo.entries)
+        #expect(repriced?.memo.totalValue == BigUInt(6_000_000))
+        let replay = try await restarted.execute(
+            result: result, breakdownContext: testContext, groupId: "native", custodyId: "memo-failure",
+            authorization: { throw StubError.boom }
+        )
+        #expect(replay.memo == memo)
+        #expect(await mockMinter.mintedCoins == allocated)
+        #expect(try await store.getAllEntries().map(\.id) == ids)
+
+        await #expect(throws: NativeTransferCustodyError.amountMismatch) {
+            try await restarted.execute(
+                result: .exactMatch(coins: [makeCoin(exponent: 0, derivationIndex: 20).coin]),
+                breakdownContext: testContext, groupId: "native", custodyId: "memo-failure",
+                authorization: { try Task.checkCancellation() }
+            )
+        }
+    }
+
+    @Test("Native recovery distinguishes a failure before registration from a lost result after registration")
+    func nativeRegistrationBoundary() async throws {
+        let result = nativeSplitSelection()
+        let store = MockCoinageTxRepository()
+        let beforeRegistration = makeTransferSenderService(
+            mockDurability: MockCoinageTxService(store: store, submissionOutcome: .thrown)
+        )
+        await #expect(throws: TransferSenderServiceError.self) {
+            try await beforeRegistration.execute(
+                result: result, breakdownContext: testContext, groupId: nil, custodyId: "boundary",
+                authorization: { try Task.checkCancellation() }
+            )
+        }
+        #expect(try await beforeRegistration.retainedTransfer(custodyId: "boundary", breakdownContext: testContext)?.memo == nil)
+        #expect(try await store.getAllEntries().isEmpty)
+
+        let afterRegistration = makeTransferSenderService(
+            mockDurability: MockCoinageTxService(store: store, submissionOutcome: .registeredThenThrown)
+        )
+        let recovered = try await afterRegistration.execute(
+            result: result, breakdownContext: testContext, groupId: nil, custodyId: "boundary",
+            authorization: { try Task.checkCancellation() }
+        )
+        #expect(recovered.memo.totalValue == planks(3))
+        #expect(try await store.getAllEntries().count == 1)
+        try await store.releaseUncommittedHandoffs()
+        #expect(try await store.ledger.retainedNativeTransfer(custodyId: "boundary") != nil)
+    }
+
+    @Test("Native exact match retains keys without creating an on-chain transaction")
+    func nativeExactMatchRecovery() async throws {
+        let service = makeTransferSenderService(mockDurability: mockDurability)
+        let selection = CoinSelectionResult.exactMatch(coins: [makeCoin(exponent: 2, derivationIndex: 1).coin])
+        let prepared = try await service.execute(
+            result: selection, breakdownContext: testContext, groupId: nil, custodyId: "exact",
+            authorization: { try Task.checkCancellation() }
+        )
+        try await mockDurability.releaseUncommittedHandoffs()
+        let recovered = try await service.retainedTransfer(custodyId: "exact", breakdownContext: testContext)
+        #expect(recovered?.memo == prepared.memo)
+        #expect(try await mockDurability.store.getAllEntries().isEmpty)
+        #expect(await mockMinter.mintedCoins.isEmpty)
+        #expect(mockDurability.store.handoffMarks == [.coin(1, Data(repeating: 1, count: 32))])
+    }
+
+    @Test("Native unload retains pass-through and minted recipients but leaves change spendable")
+    func nativeUnloadCustody() async throws {
+        let loader = MockRecyclerLoader()
+        loader.revisions[RecyclerKey(exponent: 3, index: 0)] = 1
+        let service = makeTransferSenderService(recyclerLoader: loader, mockDurability: mockDurability)
+        let selection = try await service.previewStrategy(
+            amount: planks(5),
+            availableCoins: [makeCoin(exponent: 0, derivationIndex: 1)],
+            availableVouchers: [makeVoucher(exponent: 3, derivationIndex: 2)],
+            breakdownContext: testContext
+        )
+        let prepared = try await service.execute(
+            result: selection, breakdownContext: testContext, groupId: nil, custodyId: "unload",
+            authorization: { try Task.checkCancellation() }
+        )
+        try await mockDurability.releaseUncommittedHandoffs()
+        let saved = try #require(try await mockDurability.store.ledger.retainedNativeTransfer(custodyId: "unload"))
+        #expect(prepared.memo.totalValue == planks(5))
+        #expect(saved.entries.contains { $0.coinDerivationIndex == 1 })
+        #expect(mockDurability.store.handoffMarks == Set(saved.assets))
+        let retainedIndices = Set(saved.entries.map(\.coinDerivationIndex))
+        let change = await mockMinter.mintedCoins.filter { !retainedIndices.contains($0.derivationIndex) }
+        #expect(change.reduce(BigUInt.zero) { $0 + testContext.valueInPlanks(for: $1.exponent) } == planks(4))
+    }
+
+    @Test("Revoking the lease while native preparation is suspended prevents atomic registration")
+    func nativeAuthorizationRevokedBeforeRegistration() async throws {
+        let gate = NativeRegistrationGate()
+        let lease = NativeAuthorizationLease()
+        let store = MockCoinageTxRepository()
+        let durability = MockCoinageTxService(store: store, beforeRegistration: { await gate.pause() })
+        let service = makeTransferSenderService(mockDurability: durability)
+        let transfer = Task {
+            try await service.execute(
+                result: nativeSplitSelection(), breakdownContext: testContext, groupId: nil,
+                custodyId: "revoked", authorization: { try lease.check() }
+            )
+        }
+        await gate.waitUntilPaused()
+        lease.revoke()
+        await gate.resume()
+        await #expect(throws: TransferSenderServiceError.self) { try await transfer.value }
+        #expect(try await store.getAllEntries().isEmpty)
+        #expect(try await store.ledger.retainedNativeTransfer(custodyId: "revoked") == nil)
+        #expect(store.handoffMarks.isEmpty)
+    }
 }
 
 extension TransferSenderServiceTests {
     // MARK: - Helpers
+
+    private func nativeSplitSelection() -> CoinSelectionResult {
+        .split(
+            wholeCoins: [makeCoin(exponent: 0, derivationIndex: 1).coin],
+            overflowCoin: makeCoin(exponent: 2, derivationIndex: 2).coin,
+            targetDenominations: [.init(exponent: 1)],
+            changeDenominations: [.init(exponent: 1)]
+        )
+    }
 
     /// Derivation indices of the coins the strategy reserved for the peer via `preCommitHandoff`.
     private func handedOffIndices() async -> Set<CoinageKeyIndex> {
@@ -817,10 +965,10 @@ extension TransferSenderServiceTests {
         originFactory _: StubOriginFactory = StubOriginFactory(),
         recyclerLoader: MockRecyclerLoader = MockRecyclerLoader(),
         blockInfoProvider _: MockBlockNumberProvider = MockBlockNumberProvider(),
-        mockDurability: MockCoinageTxService = MockCoinageTxService()
+        mockDurability: MockCoinageTxService = MockCoinageTxService(),
+        memoBuilder: any MemoBuilding = MockMemoBuilder()
     ) -> TransferSenderService {
         let coinSelector = CoinSelector()
-        let memoBuilder = MockMemoBuilder()
 
         let planFactory = TransferPlanFactory(
             minter: mockMinter,

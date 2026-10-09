@@ -14,6 +14,8 @@ public enum ProductPermission: Equatable, Sendable {
     public static let balanceAccessTypeName = "balance_access"
     public static let statementSubmitAccessTypeName = "statement_submit"
     public static let userIdentityAccessTypeName = "user_identity_access"
+    public static let chatAuthorityTypeName = "chat_authority"
+    public static let statementStoreAllowanceTypeName = "statement_store_allowance"
 
     case deviceCapability(DeviceCapabilityType)
     case networkAccess(domain: String)
@@ -26,20 +28,25 @@ public enum ProductPermission: Equatable, Sendable {
     case preimageSubmitAccess
     case statementSubmitAccess
     case userIdentityAccess
+    case chatAuthority
+    /// `nil` is the legacy allowance account, distinct from every product selector.
+    case statementStoreAllowance(derivationIndex: ProductAccountSelector?)
 
     /// Whether this is one of the core's `RemotePermission` cases: a product's
     /// own outbound access.
     ///
     /// The distinction exists because the core grants a first-party product
     /// every remote permission without prompting, and nothing else. Device
-    /// capabilities, account access, balance and identity disclosure always
-    /// prompt, whoever asks, so they must not ride along on that trust.
+    /// capabilities, account access, balance, identity disclosure, Chat authority
+    /// and Statement Store allowance always prompt, whoever asks, so they must not ride along on
+    /// that trust.
     public var isRemoteAccess: Bool {
         switch self {
         case .networkAccess, .networkAccessBundle, .webRtcAccess, .chainSubmitAccess, .preimageSubmitAccess,
              .statementSubmitAccess:
             true
-        case .deviceCapability, .accountAccess, .balanceAccess, .userIdentityAccess:
+        case .deviceCapability, .accountAccess, .balanceAccess, .userIdentityAccess,
+             .chatAuthority, .statementStoreAllowance:
             false
         }
     }
@@ -66,6 +73,10 @@ public enum ProductPermission: Equatable, Sendable {
             Self.statementSubmitAccessTypeName
         case .userIdentityAccess:
             Self.userIdentityAccessTypeName
+        case .chatAuthority:
+            Self.chatAuthorityTypeName
+        case .statementStoreAllowance:
+            Self.statementStoreAllowanceTypeName
         }
     }
 
@@ -79,18 +90,28 @@ public enum ProductPermission: Equatable, Sendable {
             domains.joined(separator: "\n")
         case let .accountAccess(targetProductId):
             targetProductId
+        case let .statementStoreAllowance(derivationIndex):
+            switch derivationIndex {
+            case nil:
+                "legacy"
+            case let .index(index):
+                "index:\(index)"
+            case let .raw(bytes):
+                "raw:\(bytes.base64EncodedString())"
+            }
         case .balanceAccess,
              .webRtcAccess,
              .chainSubmitAccess,
              .preimageSubmitAccess,
              .statementSubmitAccess,
-             .userIdentityAccess:
+             .userIdentityAccess,
+             .chatAuthority:
             ""
         }
     }
 
     /// Reconstruct a permission from its persisted `(typeName, key)` pair.
-    /// Returns `nil` for unknown type names or malformed device capability keys.
+    /// Returns `nil` for unknown type names or malformed capability/selector keys.
     public static func from(typeName: String, key: String) -> ProductPermission? {
         switch typeName {
         case deviceCapabilityTypeName:
@@ -114,6 +135,20 @@ public enum ProductPermission: Equatable, Sendable {
             return .statementSubmitAccess
         case userIdentityAccessTypeName:
             return .userIdentityAccess
+        case chatAuthorityTypeName:
+            return .chatAuthority
+        case statementStoreAllowanceTypeName:
+            if key == "legacy" {
+                return .statementStoreAllowance(derivationIndex: nil)
+            }
+            if key.hasPrefix("index:"), let index = UInt32(key.dropFirst(6)) {
+                return .statementStoreAllowance(derivationIndex: .index(index))
+            }
+            if key.hasPrefix("raw:"), let bytes = Data(base64Encoded: String(key.dropFirst(4))),
+               bytes.count == 32 {
+                return .statementStoreAllowance(derivationIndex: .raw(bytes))
+            }
+            return nil
         default:
             return nil
         }

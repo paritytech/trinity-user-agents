@@ -640,3 +640,167 @@ extension ProductPermissionRepositoryTests {
         continuation.finish()
     }
 }
+
+extension ProductPermissionRepositoryTests {
+    private static var featureRequests: [PermissionAuthorizationRequest] {
+        [
+            .chatAuthority,
+            .statementStoreAllowance(derivationIndex: nil),
+            .statementStoreAllowance(derivationIndex: .index(0)),
+            .statementStoreAllowance(derivationIndex: .index(UInt32.max)),
+            .statementStoreAllowance(derivationIndex: .raw(Data(repeating: 0, count: 32))),
+            .statementStoreAllowance(derivationIndex: .raw(Data(repeating: 9, count: 32)))
+        ]
+    }
+
+    @Test("Chat and every allowance selector round-trip without changing canonical authority")
+    func featurePermissionRoundTrips() throws {
+        #expect(ProductPermission.chatAuthority.typeName == "chat_authority")
+        #expect(ProductPermission.chatAuthority.key == "")
+        #expect(ProductPermission.statementStoreAllowance(derivationIndex: nil).typeName == "statement_store_allowance")
+        #expect(ProductPermission.statementStoreAllowance(derivationIndex: nil).key == "legacy")
+        #expect(ProductPermission.statementStoreAllowance(derivationIndex: .index(0)).key == "index:0")
+        #expect(ProductPermission.statementStoreAllowance(derivationIndex: .index(UInt32.max)).key == "index:4294967295")
+        #expect(ProductPermission.statementStoreAllowance(derivationIndex: .raw(Data(repeating: 0, count: 32))).key
+            == "raw:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
+        var identifiers = Set<String>()
+        for request in Self.featureRequests {
+            let mapped = try ProductPermission.fromAuthorization(request)
+            let permission = try #require(mapped.first)
+            #expect(mapped.count == 1)
+            #expect(try permission.authorizationRequest() == request)
+            let restored = try #require(ProductPermission.from(typeName: permission.typeName, key: permission.key))
+            #expect(restored == permission)
+            #expect(try restored.authorizationRequest() == request)
+            #expect(!permission.isRemoteAccess)
+            #expect(identifiers.insert(ProductPermissionGrant.makeIdentifier(
+                productId: "chat.paseo", permission: permission
+            )).inserted)
+        }
+        for key in ["", "index:-1", "index:4294967296", "raw:AA==", "raw:invalid", "other"] {
+            #expect(ProductPermission.from(typeName: ProductPermission.statementStoreAllowanceTypeName, key: key) == nil)
+        }
+        #expect(throws: TrUAPIReviewMappingError.self) {
+            try ProductPermission.statementStoreAllowance(derivationIndex: .raw(Data([1]))).authorizationRequest()
+        }
+    }
+
+    @Test("Native feature grants and denials enumerate and revoke the exact selector")
+    func canonicalFeatureSettingsAndRevocation() async throws {
+        let authority = PermissionAuthorityFixture()
+        let storage = UserDataStorageTestFacade()
+        let repository = ProductPermissionRepository(storageFacade: storage, authority: { authority })
+        for (index, request) in Self.featureRequests.enumerated() {
+            try await authority.setPermissionAuthorizationStatus(
+                productId: "chat.paseo", request: request, status: index.isMultiple(of: 2) ? .authorized : .denied
+            )
+            try await authority.setPermissionAuthorizationStatus(
+                productId: "other.paseo", request: request, status: .authorized
+            )
+        }
+        let grants = try await repository.settingsGrants(legacy: []).filter { $0.productId == "chat.paseo" }
+        #expect(grants.count == Self.featureRequests.count)
+        for (index, request) in Self.featureRequests.enumerated() {
+            let permission = try #require(ProductPermission.fromAuthorization(request).first)
+            let grant = try #require(grants.first { $0.permission == permission })
+            #expect(grant.granted == index.isMultiple(of: 2))
+            let reader = ProductPermissionRepository(storageFacade: storage, authority: { authority })
+            #expect(try await reader.getPermissionState(productId: "chat.paseo", permission: permission)
+                == (grant.granted ? .allowedAlways : .denied))
+            reader.grantOneTime(productId: "chat.paseo", permission: permission)
+            try await repository.revoke(productId: "chat.paseo", permission: permission)
+            #expect(!reader.consumeOneTimeGrant(productId: "chat.paseo", permission: permission))
+            #expect(try await reader.getPermissionState(productId: "chat.paseo", permission: permission) == .notDetermined)
+            let entries = try await authority.permissionAuthorizations(productId: "chat.paseo")
+            #expect(entries.first { $0.request == request }?.status == .notDetermined)
+            for untouched in Self.featureRequests.dropFirst(index + 1) {
+                #expect(entries.first { $0.request == untouched }?.status != .notDetermined)
+            }
+            #expect(try await reader.getPermissionState(productId: "other.paseo", permission: permission) == .allowedAlways)
+        }
+        #expect(try await repository.getAllByProduct(productId: "chat.paseo").isEmpty)
+    }
+
+    @Test("Persisted feature grants cannot overwrite a core denial or revocation")
+    func legacyFeatureRowsRespectCanonicalDecisions() async throws {
+        let storage = UserDataStorageTestFacade()
+        let authority = PermissionAuthorityFixture()
+        let legacy = AnyDataProviderRepository(
+            storage.createRepository(mapper: AnyCoreDataMapper(ProductPermissionGrantMapper()))
+        )
+        let permissions = try Self.featureRequests.flatMap { try ProductPermission.fromAuthorization($0) }
+        let rows = permissions.map {
+            ProductPermissionGrant(productId: "chat.paseo", permission: $0, granted: true, grantedAt: nil)
+        }
+        try await legacy.saveOperation({ rows }, { [] }).asyncExecute()
+        for request in Self.featureRequests {
+            try await authority.setPermissionAuthorizationStatus(
+                productId: "chat.paseo", request: request, status: .denied
+            )
+        }
+        let repository = ProductPermissionRepository(storageFacade: storage, authority: { authority })
+        let grants = try await repository.getAllByProduct(productId: "chat.paseo")
+        #expect(grants.count == permissions.count)
+        #expect(grants.allSatisfy { !$0.granted })
+        try await repository.revokeAllByProduct(productId: "chat.paseo")
+        let reader = ProductPermissionRepository(storageFacade: storage, authority: { authority })
+        #expect(try await reader.getAllByProduct(productId: "chat.paseo").isEmpty)
+        for permission in permissions {
+            #expect(try await reader.getPermissionState(productId: "chat.paseo", permission: permission) == .notDetermined)
+        }
+    }
+
+    @Test("Settings display every feature scope and revoke without optimistic UI changes")
+    @MainActor
+    func featureSettingsDisplayAndRevoke() throws {
+        let permissions = try Self.featureRequests.flatMap { try ProductPermission.fromAuthorization($0) }
+        let grants = permissions.map {
+            ProductPermissionGrant(productId: "chat.paseo", permission: $0, granted: true, grantedAt: nil)
+        }
+        let view = PermissionSettingsViewFixture()
+        let interactor = PermissionSettingsInteractorFixture()
+        let wireframe = PermissionSettingsWireframeFixture()
+        let presenter = AppPermissionsPresenter(
+            productName: "Chat", interactor: interactor, wireframe: wireframe,
+            viewModelFactory: AppPermissionsViewModelFactory()
+        )
+        presenter.view = view
+        presenter.didReceive(grants: grants)
+        #expect(view.items.count == grants.count)
+        #expect(Set(view.items.map(\.id)).count == grants.count)
+        #expect(Set(view.items.map(\.description)).count == grants.count)
+        for (item, permission) in zip(view.items, permissions) {
+            presenter.toggle(item, isOn: false)
+            #expect(interactor.requests.last == [permission])
+            #expect(view.revoking)
+            #expect(view.items.allSatisfy { $0.isOn })
+            presenter.didFinishRevoking()
+            presenter.didReceive(error: NSError(domain: "storage unavailable", code: 1))
+            #expect(view.items.count == grants.count)
+            #expect(view.items.allSatisfy { $0.isOn })
+        }
+        #expect(wireframe.errors.count == grants.count)
+        presenter.didReceive(grants: [])
+        #expect(view.items.isEmpty)
+    }
+}
+
+extension ProductPermissionRepositoryTests {
+    @Test("A failed feature revoke preserves the canonical grant")
+    func failedFeatureRevocationRetainsAuthority() async throws {
+        let authority = PermissionAuthorityFixture()
+        let repository = ProductPermissionRepository(storageFacade: UserDataStorageTestFacade(), authority: { authority })
+        let permissions = try Self.featureRequests.flatMap { try ProductPermission.fromAuthorization($0) }
+        for permission in permissions {
+            try await repository.grant(productId: "chat.paseo", permission: permission)
+        }
+        authority.failWrites = true
+        for permission in permissions {
+            await #expect(throws: NSError.self) {
+                try await repository.revoke(productId: "chat.paseo", permission: permission)
+            }
+            #expect(try await repository.getPermissionState(productId: "chat.paseo", permission: permission) == .allowedAlways)
+        }
+        #expect(try await repository.getAllByProduct(productId: "chat.paseo").count == permissions.count)
+    }
+}

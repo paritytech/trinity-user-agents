@@ -14,16 +14,19 @@ use truapi::latest::{
 use super::{
     CreateAccountProofResponse, CreateTransactionRequest, CreateTransactionResponse,
     CreateTransactionWithLegacyAccountRequest, GetAccountAliasResponse, ListRingVrfKeysResponse,
-    ProductRequest, ProductSubtreeRequest, ProductSubtreeResponse, RegisterRingVrfKeyResponse,
+    PaymentTopUpRequest, PaymentTopUpResponse, ProductDeviceChatResponse, ProductRequest,
+    ProductSubtreeRequest, ProductSubtreeResponse, RegisterRingVrfKeyResponse,
     ResourceAllocationRequest, ResourceAllocationResponse, Response, RingVrfSignResponse,
     SignRawWithLegacyAccountRequest, SignRawWithLegacyAccountResponse, SignRequest, SignResponse,
-    SignVrfResponse, Withdrawal,
+    SignVrfResponse, SsoProductDeviceChatOperation, StatementStoreProductSignRequest,
+    StatementStoreProductSignResponse, Withdrawal,
 };
 
 /// v1 messages exchanged with the paired signing host over the encrypted SSO channel.
 ///
 /// The variant order is part of the SCALE wire protocol used inside
 /// statement-store session statements.
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 pub enum RemoteMessage {
     /// The peer is ending the SSO session.
@@ -88,4 +91,25 @@ pub enum RemoteMessage {
     /// the pairing host.
     #[codec(index = 24)]
     Cancel(Withdrawal),
+    // Released messages are appended from 25 upward. These unreleased Chat v2
+    // and payment messages sit in a block of their own at 200, so a release
+    // appending to the catalog cannot collide with them and renumber them.
+    /// Forward a product-device Chat v2 operation to the Account Holder.
+    #[codec(index = 200)]
+    ProductDeviceChatRequest(ProductRequest<SsoProductDeviceChatOperation>),
+    /// Account Holder's product-device Chat v2 response.
+    #[codec(index = 201)]
+    ProductDeviceChatResponse(Response<ProductDeviceChatResponse>),
+    /// Ask the Account Holder to sign an exact Statement Store product payload.
+    #[codec(index = 202)]
+    StatementStoreProductSignRequest(StatementStoreProductSignRequest),
+    /// Account Holder's product-account Statement Store signature.
+    #[codec(index = 203)]
+    StatementStoreProductSignResponse(Response<StatementStoreProductSignResponse>),
+    /// Deposit caller-supplied funding into the wallet's payment purse.
+    #[codec(index = 204)]
+    PaymentTopUpRequest(PaymentTopUpRequest),
+    /// Account Holder's answer after incoming funding has been credited.
+    #[codec(index = 205)]
+    PaymentTopUpResponse(Response<PaymentTopUpResponse>),
 }

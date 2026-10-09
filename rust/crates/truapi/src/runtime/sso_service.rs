@@ -11,6 +11,10 @@ use crate::host_internal::sso_messages::{RemoteMessage, RemoteMessageData, Respo
 use crate::host_internal::sso_wire::ResponseOutcome;
 
 /// Per-request context handed to every service method.
+///
+/// It identifies the paired host's request and signing session, not the
+/// calling product: that is the paired host's attestation in
+/// [`ProductRequest::calling_product_id`](crate::host_internal::sso_messages::ProductRequest).
 pub struct SsoRequestContext {
     /// Call context correlated to the request's `message_id`.
     pub call: CallContext,

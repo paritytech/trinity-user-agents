@@ -23,6 +23,7 @@ use schnorrkel::{ExpansionMode, MiniSecretKey, SignatureError};
 use sha2::Sha256;
 use thiserror::Error;
 use x25519_dalek::{PublicKey, StaticSecret};
+use zeroize::{Zeroize, Zeroizing};
 
 use crate::host_logic::session::SsoSessionInfo;
 
@@ -145,6 +146,14 @@ pub enum SsoStatementData {
     },
 }
 
+impl Zeroize for SsoStatementData {
+    fn zeroize(&mut self) {
+        if let Self::Request { data, .. } = self {
+            data.zeroize();
+        }
+    }
+}
+
 /// Decode a pairing deeplink (or its bare handshake hex) into the advertised
 /// handshake proposal. Inverse of [`build_pairing_deeplink`].
 pub fn decode_pairing_deeplink(
@@ -254,13 +263,15 @@ pub fn establish_sso_session_info(
 /// The statement keypair signs every session statement (its public key is the
 /// `identityAccountId` the pairing host binds the session to), and the X25519
 /// secret is the persistent `sso` key both sides feed into the session ECDH.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq, zeroize::Zeroize, zeroize::ZeroizeOnDrop, derive_more::Debug)]
 pub struct ResponderIdentity {
     /// Expanded Ed25519 secret used to sign session statements.
+    #[debug("\"<redacted>\"")]
     pub statement_secret: [u8; 64],
     /// Ed25519 public key advertised as the session identity account.
     pub statement_public_key: [u8; 32],
     /// X25519 secret key used to derive the shared session channels.
+    #[debug("\"<redacted>\"")]
     pub encryption_secret_key: [u8; 32],
     /// Raw X25519 public key advertised during pairing.
     pub encryption_public_key: [u8; 32],
@@ -354,9 +365,10 @@ pub fn encrypt_session_statement_data_with_nonce(
     data: &SsoStatementData,
     nonce: [u8; AEAD_NONCE_LEN],
 ) -> Result<Vec<u8>, String> {
+    let plaintext = Zeroizing::new(data.encode());
     encrypt_chacha20_poly1305_with_nonce(
         session_aead_key(session)?,
-        &data.encode(),
+        &plaintext,
         nonce,
         "statement data",
     )
@@ -367,11 +379,12 @@ pub fn decrypt_session_statement_data(
     session: &SsoSessionInfo,
     encrypted_message: &[u8],
 ) -> Result<SsoStatementData, String> {
-    let plaintext = decrypt_session_message(session, encrypted_message)?;
+    let plaintext = Zeroizing::new(decrypt_session_message(session, encrypted_message)?);
     let mut input = plaintext.as_slice();
-    let data = SsoStatementData::decode(&mut input)
+    let mut data = SsoStatementData::decode(&mut input)
         .map_err(|err| format!("invalid SSO statement data: {err}"))?;
     if !input.is_empty() {
+        data.zeroize();
         return Err("invalid SSO statement data: trailing bytes".to_string());
     }
     Ok(data)

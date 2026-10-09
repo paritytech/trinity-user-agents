@@ -28,6 +28,18 @@ public struct CoinageKeyIndex: Hashable, Sendable {
     }
 }
 
+extension CoinageKeyIndex: Codable {
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        try self = Self.fromString(container.decode(String.self))
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        try container.encode(toString())
+    }
+}
+
 public enum CoinageKeyIndexError: Error, Equatable {
     case malformed(String)
 }

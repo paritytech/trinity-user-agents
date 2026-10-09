@@ -729,6 +729,11 @@ fn migrate_default_profile(
     if scripts.is_dir() {
         promotion.move_path(&scripts, target_path.join("scripts"))?;
     }
+    let chat_files = profile.path.join(crate::chat_files::DIRECTORY);
+    if chat_files.is_dir() {
+        fs::rename(&chat_files, target_path.join(crate::chat_files::DIRECTORY))
+            .map_err(|_| anyhow::anyhow!("could not move private Chat file storage"))?;
+    }
     if profile.product_storage_dir.is_dir() {
         promotion.move_path(&profile.product_storage_dir, target_path.join("storage"))?;
     }
@@ -1352,6 +1357,25 @@ mod tests {
 
         assert_eq!(catalog.paired_hosts(&promoted)?, vec![host]);
         assert!(!default_profile.path.join(PAIRED_HOSTS_FILE).exists());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn promoting_the_default_profile_preserves_chat_source_custody() -> Result<()> {
+        let temporary = tempdir()?;
+        let catalog = SessionCatalog::new(temporary.path().to_path_buf(), "testnet")?;
+        let profile = catalog.ensure_profile(DEFAULT_SESSION_NAME)?;
+        let selected = temporary.path().join("selected");
+        fs::write(&selected, b"attachment")?;
+        let sources = crate::chat_files::ChatFiles::import(profile.path.clone(), vec![selected])
+            .await
+            .expect("import selected file");
+        let promoted = catalog.promote_to_user(&profile, "alice.dot")?;
+        let bytes =
+            crate::chat_files::ChatFiles::read(promoted.path, sources[0].source_id.clone(), 0, 10)
+                .await
+                .expect("read source after identity promotion");
+        assert_eq!(bytes, b"attachment");
         Ok(())
     }
 

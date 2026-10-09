@@ -25,9 +25,10 @@ use super::allowances::{self, AllowanceCacheKey, AllowanceResource};
 use super::auth_state::AuthStateMachine;
 use super::authority::{
     AuthorityError, AuthoritySession, AutoSigningGrant, AutoSigningKey, BulletinAllowanceKey,
-    CreateTransactionAuthorityRequest, ProductAuthority, SignPayloadAuthorityRequest,
-    SignRawAuthorityRequest, StatementStoreAllowanceKey, authority_session,
-    require_current_session,
+    CreateTransactionAuthorityRequest, PaymentTopUpAuthorityError, ProductAuthority,
+    ProductDeviceChatAuthorityError, ProductDeviceChatAuthorityRequest,
+    SignPayloadAuthorityRequest, SignRawAuthorityRequest, StatementStoreAllowanceKey,
+    authority_session, require_current_session,
 };
 use super::connected_session_ui_info;
 use super::identity::resolve_session_identity_with_chain;
@@ -40,7 +41,7 @@ use super::sso_remote::{
 use super::statement_store_rpc::StatementStoreRpc;
 use crate::chain_runtime::ChainRuntime;
 use crate::host_internal::extrinsic::build_local_transaction;
-use crate::host_internal::sso_messages::{ProductRequest, RingVrfError};
+use crate::host_internal::sso_messages::{PaymentTopUpRequest, ProductRequest, RingVrfError};
 use crate::host_internal::transaction::sign_extrinsic_payload;
 use crate::host_logic::entropy::derive_product_entropy_from_source;
 use crate::host_logic::product_account::{
@@ -61,7 +62,7 @@ use crate::platform::{
 use futures::StreamExt;
 use tracing::{instrument, warn};
 use truapi::versioned::account::{HostRequestLoginError, HostRequestLoginResponse};
-use truapi::{CallContext, CallError, v01};
+use truapi::{CallContext, CallError, latest, v01};
 use zeroize::Zeroizing;
 
 use super::ring_vrf_registry::{RingVrfRegistryStore, validate_owner_listing};
@@ -2504,6 +2505,19 @@ impl PairingHost {
             .await
     }
 
+    async fn product_device_chat(
+        &self,
+        cx: &CallContext,
+        session: &AuthoritySession,
+        request: ProductDeviceChatAuthorityRequest,
+    ) -> Result<latest::HostProductDeviceChatResponse, ProductDeviceChatAuthorityError> {
+        let private_session = self
+            .current_private_session(session)
+            .map_err(|_| ProductDeviceChatAuthorityError::Disconnected)?;
+        self.remote_product_device_chat(cx, &private_session, request)
+            .await
+    }
+
     async fn allocate_resources(
         &self,
         cx: &CallContext,
@@ -2802,6 +2816,29 @@ impl ProductAuthority for PairingHost {
         request: ProductRequest<HostAccountRingVrfSignRequest>,
     ) -> Result<Vec<u8>, RingVrfError> {
         PairingHost::ring_vrf_sign(self, cx, session, request).await
+    }
+
+    async fn product_device_chat(
+        &self,
+        cx: &CallContext,
+        session: &AuthoritySession,
+        request: ProductDeviceChatAuthorityRequest,
+    ) -> Result<latest::HostProductDeviceChatResponse, ProductDeviceChatAuthorityError> {
+        PairingHost::product_device_chat(self, cx, session, request).await
+    }
+
+    async fn payment_top_up(
+        &self,
+        cx: &CallContext,
+        session: &AuthoritySession,
+        mut request: PaymentTopUpRequest,
+    ) -> Result<(), PaymentTopUpAuthorityError> {
+        let current = require_current_session(&self.session_state, session)?;
+        request.calling_product_id = normalize_product_identifier(&request.calling_product_id)
+            .map_err(|_| {
+                PaymentTopUpAuthorityError::Domain(v01::HostPaymentTopUpError::InvalidSource)
+            })?;
+        self.remote_payment_top_up(cx, &current, request).await
     }
 
     async fn allocate_resources(

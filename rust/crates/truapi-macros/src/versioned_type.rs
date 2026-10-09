@@ -127,17 +127,24 @@ fn expand_versioned_enum(def: &VersionedEnum) -> syn::Result<proc_macro2::TokenS
 
     let mut variant_defs = Vec::new();
     let mut version_arms = Vec::new();
+    let first_version = variant_version(&variants[0].ident)?;
+    if first_version == 0 {
+        return Err(syn::Error::new(
+            variants[0].ident.span(),
+            "version numbers start at 1",
+        ));
+    }
     for (i, variant) in variants.iter().enumerate() {
-        let expected = i + 1;
+        let expected = usize::from(first_version) + i;
         let version = variant_version(&variant.ident)?;
         if usize::from(version) != expected {
             return Err(syn::Error::new(
                 variant.ident.span(),
-                format!("expected variant `V{expected}`; versions must be contiguous from 1"),
+                format!("expected variant `V{expected}`; retained versions must be contiguous"),
             ));
         }
 
-        let index = Literal::u8_unsuffixed(i as u8);
+        let index = Literal::u8_unsuffixed(version - 1);
         let version_lit = Literal::u8_unsuffixed(version);
         let vattrs = &variant.attrs;
         let vident = &variant.ident;
@@ -164,7 +171,9 @@ fn expand_versioned_enum(def: &VersionedEnum) -> syn::Result<proc_macro2::TokenS
     }
 
     let doc = format!("Versioned envelope for [`{name}`].");
-    let latest_lit = Literal::u8_unsuffixed(variants.len() as u8);
+    let latest_lit = Literal::u8_unsuffixed(variant_version(
+        &variants.last().expect("checked non-empty").ident,
+    )?);
     let latest_ty = match &variants.last().expect("checked non-empty").ty {
         Some(ty) => quote! { #ty },
         None => quote! { () },

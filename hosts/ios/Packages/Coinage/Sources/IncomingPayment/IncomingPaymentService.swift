@@ -23,6 +23,8 @@ public final class IncomingPaymentService: IncomingPaymentServicing, @unchecked 
     private let acknowledger: any IncomingPaymentAcknowledging
     private let instanceId: CoinageInstanceId
     private let logger: SDKLoggerProtocol?
+    private let lifecycle: CoinageLifecycle?
+    private let ownerId: Data
     private let acceptQueue = SerialOperationQueue()
 
     init(
@@ -35,7 +37,9 @@ public final class IncomingPaymentService: IncomingPaymentServicing, @unchecked 
         verdictResolver: any CoinageGroupVerdictResolving,
         acknowledger: any IncomingPaymentAcknowledging,
         instanceId: CoinageInstanceId,
-        logger: SDKLoggerProtocol?
+        logger: SDKLoggerProtocol?,
+        lifecycle: CoinageLifecycle? = nil,
+        ownerId: Data
     ) {
         self.store = store
         self.secretStore = secretStore
@@ -47,6 +51,8 @@ public final class IncomingPaymentService: IncomingPaymentServicing, @unchecked 
         self.acknowledger = acknowledger
         self.instanceId = instanceId
         self.logger = logger
+        self.lifecycle = lifecycle
+        self.ownerId = ownerId
     }
 }
 
@@ -60,10 +66,14 @@ public extension IncomingPaymentService {
         productId: String
     ) async throws {
         do {
-            try await acceptQueue.run { [self] in
-                try await performAccept(
-                    amount: amount, descriptor: descriptor, paymentId: paymentId, productId: productId
-                )
+            let operation = try lifecycle?.captureOperation()
+            try await CoinageLifecycle.$operation.withValue(operation) {
+                try await acceptQueue.run { [self] in
+                    try await performAccept(
+                        amount: amount, descriptor: descriptor, paymentId: paymentId, productId: productId,
+                        operation: operation
+                    )
+                }
             }
         } catch let error as IncomingPaymentError {
             throw error
@@ -78,22 +88,38 @@ public extension IncomingPaymentService {
     ) async throws -> AnyAsyncSequence<IncomingPaymentStatus> {
         let groupId = IncomingPayment.groupId(productId: productId, paymentId: paymentId)
 
-        return try await paymentContext.liveStatusStream(for: groupId) { [store] in
-            // Cold subscribe: a settled record returns its stored verdict exactly; an unknown one, notClaimed.
-            let payment = try await store.fetch(groupId: groupId)
-            guard let payment else {
-                throw IncomingPaymentError.notFound(paymentId)
-            }
-
+        let operation = try lifecycle?.captureOperation()
+        guard let payment = try await store.fetch(groupId: groupId), payment.ownerId == ownerId else {
+            throw IncomingPaymentError.notFound(paymentId)
+        }
+        if let lifecycle, let operation { try lifecycle.check(operation) }
+        return try await paymentContext.liveStatusStream(for: groupId) {
             return payment.outcome.map(IncomingPaymentStatus.init(outcome:)) ?? .detecting
         }
     }
 
     func setup(with denomination: DenominationBreakdownContext) {
-        Task { [weak self, paymentContext] in
-            await paymentContext.setup {
-                self?.runSetup(denomination: denomination)
+        do {
+            let operation = try lifecycle?.captureOperation()
+            Task { [weak self, paymentContext] in
+                do {
+                    try await CoinageLifecycle.$operation.withValue(operation) {
+                        try await paymentContext.setup {
+                            guard let self else { return nil }
+                            if let lifecycle = self.lifecycle, let operation {
+                                return try lifecycle.withEffect(operation) {
+                                    self.runSetup(denomination: denomination)
+                                }
+                            }
+                            return self.runSetup(denomination: denomination)
+                        }
+                    }
+                } catch {
+                    self?.logger?.warning("Incoming payment setup skipped: \(error)")
+                }
             }
+        } catch {
+            logger?.warning("Incoming payment setup skipped: \(error)")
         }
     }
 }
@@ -114,10 +140,13 @@ private extension IncomingPaymentService {
         amount: Balance,
         descriptor: IncomingPaymentSourceDescriptor,
         paymentId: IncomingPaymentId,
-        productId: String
+        productId: String,
+        operation: CoinageLifecycle.Operation?
     ) async throws {
-        guard amount > 0 else {
-            throw IncomingPaymentError.invalidAmount
+        if amount == 0 {
+            guard case .coins = descriptor else {
+                throw IncomingPaymentError.invalidAmount
+            }
         }
 
         let groupId = IncomingPayment.groupId(productId: productId, paymentId: paymentId)
@@ -134,20 +163,34 @@ private extension IncomingPaymentService {
 
         try await ensureSourceFree(descriptor: descriptor)
 
+        let authorization: @Sendable () throws -> Void = { [lifecycle] in
+            if let lifecycle, let operation { try lifecycle.check(operation) }
+        }
         // Both recorded before a single transaction is built, so a resumed top-up can be picked up.
-        try secretStore.save(groupId: groupId, descriptor: descriptor)
+        if let lifecycle, let operation {
+            try lifecycle.withEffect(operation) {
+                try secretStore.save(groupId: groupId, descriptor: descriptor)
+            }
+        } else {
+            try secretStore.save(groupId: groupId, descriptor: descriptor)
+        }
 
         let payment = IncomingPayment(
             paymentId: paymentId,
             productId: productId,
             amount: amount,
             createdAt: Date(),
-            outcome: nil
+            outcome: nil,
+            ownerId: ownerId
         )
         do {
-            try await store.save(payment)
+            try await store.save(payment, authorization: authorization)
         } catch {
-            secretStore.remove(groupId: groupId)
+            if let lifecycle, let operation {
+                try? lifecycle.withEffect(operation) { secretStore.remove(groupId: groupId) }
+            } else {
+                secretStore.remove(groupId: groupId)
+            }
             throw error
         }
     }
@@ -157,7 +200,7 @@ private extension IncomingPaymentService {
     /// store that cannot be read at all still aborts, since nothing is known about those payments.
     func ensureSourceFree(descriptor: IncomingPaymentSourceDescriptor) async throws {
         let active = try await store.fetchActivePayments()
-        for other in active {
+        for other in active where other.ownerId == ownerId {
             let otherDescriptor: IncomingPaymentSourceDescriptor?
             do {
                 otherDescriptor = try secretStore.fetch(groupId: other.groupId)
@@ -186,7 +229,8 @@ private extension IncomingPaymentService {
     func driveActivePayments(denomination: DenominationBreakdownContext) async {
         do {
             for try await payments in store.observeActivePayments() {
-                for payment in payments {
+                try lifecycle?.checkCurrentOperation()
+                for payment in payments where payment.ownerId == ownerId {
                     await paymentContext.process(groupId: payment.groupId) { [weak self] in
                         guard let self else { return Task {} }
                         return Task { await self.drive(payment: payment, denomination: denomination) }
@@ -205,14 +249,21 @@ private extension IncomingPaymentService {
             }
         }
 
-        switch lookupSecret(for: payment) {
-        case .unreadable:
-            return
-        case .gone:
-            // Can't re-run without the source, so settle from the ledger alone.
-            await settleFromDurability(payment: payment, denomination: denomination)
-        case let .found(descriptor):
-            await runClaim(payment: payment, descriptor: descriptor, denomination: denomination)
+        do {
+            guard let current = try await store.fetch(groupId: payment.groupId),
+                  current.ownerId == ownerId, current.isActive else { return }
+            try lifecycle?.checkCurrentOperation()
+            switch lookupSecret(for: current) {
+            case .unreadable:
+                return
+            case .gone:
+                // Can't re-run without the source, so settle from the ledger alone.
+                await settleFromDurability(payment: current, denomination: denomination)
+            case let .found(descriptor):
+                await runClaim(payment: current, descriptor: descriptor, denomination: denomination)
+            }
+        } catch {
+            logger?.error("Incoming payment \(payment.paymentId) cannot resume: \(error)")
         }
     }
 
@@ -257,7 +308,8 @@ private extension IncomingPaymentService {
         var last: IncomingPaymentStatus = .detecting
         do {
             for try await detection in claimStream(for: payment, resolved: resolved, denomination: denomination) {
-                last = IncomingPaymentStatus(detection: detection)
+                last = IncomingPaymentStatus(detection: detection, amount: payment.amount)
+                try lifecycle?.checkCurrentOperation()
                 await paymentContext.report(last, for: payment.groupId)
             }
         } catch {
@@ -310,17 +362,24 @@ private extension IncomingPaymentService {
         }
 
         do {
-            try await store.settle(groupId: payment.groupId, outcome: outcome)
+            let operation = try lifecycle?.captureOperation()
+            try await store.settle(groupId: payment.groupId, ownerId: ownerId, outcome: outcome) { [lifecycle] in
+                if let lifecycle, let operation { try lifecycle.check(operation) }
+            }
+            // A readable secret is retired only by a verdict that says where the funds went. `notClaimed`
+            // says they were never collected — and for a `.coins` source the stored secrets *are* the
+            // money, so removing them here is what turns an uncollected top-up into an unrecoverable one.
+            // Keeping them costs a Keychain entry; a retention sweep can reclaim those once one exists.
+            if !secretIsUsable || outcome != .notClaimed {
+                if let lifecycle, let operation {
+                    try lifecycle.withEffect(operation) { secretStore.remove(groupId: payment.groupId) }
+                } else {
+                    secretStore.remove(groupId: payment.groupId)
+                }
+            }
         } catch {
-            logger?.error("Incoming payment \(payment.paymentId) failed to persist verdict: \(error)")
+            logger?.error("Incoming payment \(payment.paymentId) settlement interrupted: \(error)")
             return
-        }
-        // A readable secret is retired only by a verdict that says where the funds went. `notClaimed`
-        // says they were never collected — and for a `.coins` source the stored secrets *are* the
-        // money, so removing them here is what turns an uncollected top-up into an unrecoverable one.
-        // Keeping them costs a Keychain entry; a retention sweep can reclaim those once one exists.
-        if !secretIsUsable || outcome != .notClaimed {
-            secretStore.remove(groupId: payment.groupId)
         }
 
         await acknowledge(payment: payment, outcome: outcome)
@@ -352,7 +411,8 @@ private extension IncomingPaymentService {
                 amount: payment.amount,
                 context: denomination
             )
-            let status = IncomingPaymentStatus(detection: detection)
+            let status = IncomingPaymentStatus(detection: detection, amount: payment.amount)
+            try lifecycle?.checkCurrentOperation()
             await paymentContext.report(status, for: payment.groupId)
             // The secret is gone or corrupt — that is why this path was taken — so it is retired with
             // the verdict whatever that verdict is.

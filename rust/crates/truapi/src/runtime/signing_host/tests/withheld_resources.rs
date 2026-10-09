@@ -58,6 +58,41 @@ fn a_withheld_resource_is_refused_while_the_others_are_granted() {
 }
 
 #[test]
+fn withholding_product_statement_allowances_covers_every_index_until_cleared() {
+    let (services, activation) = signing_runtime_with_platform(granting_platform());
+    futures::executor::block_on(activation.activate_local_session(ENTROPY.to_vec()))
+        .expect("activation succeeds");
+    activation.set_grant_allowances_unchecked(true);
+    activation.set_withheld_resources(vec!["ProductStatementStoreAllowance".to_string()]);
+    let runtime = product_runtime(services, activation.clone());
+    let product_allowance =
+        v01::AllocatableResource::ProductStatementStoreAllowance(v01::DerivationIndex::Index(0));
+
+    assert_eq!(
+        allocate(
+            &runtime,
+            vec![
+                product_allowance.clone(),
+                v01::AllocatableResource::StatementStoreAllowance,
+                v01::AllocatableResource::ProductStatementStoreAllowance(
+                    v01::DerivationIndex::Index(7),
+                ),
+            ],
+        ),
+        vec![
+            v01::AllocationOutcome::Rejected,
+            v01::AllocationOutcome::Allocated,
+            v01::AllocationOutcome::Rejected,
+        ],
+    );
+    activation.set_withheld_resources(Vec::new());
+    assert_eq!(
+        allocate(&runtime, vec![product_allowance]),
+        vec![v01::AllocationOutcome::Allocated],
+    );
+}
+
+#[test]
 fn withholding_nothing_leaves_every_resource_granted() {
     let (services, activation) = signing_runtime_with_platform(granting_platform());
     futures::executor::block_on(activation.activate_local_session(ENTROPY.to_vec()))

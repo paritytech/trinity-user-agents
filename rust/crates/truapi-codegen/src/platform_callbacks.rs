@@ -5,6 +5,19 @@ use std::collections::BTreeSet;
 use crate::platform::{PlatformDefinition, PlatformInner, PlatformMethod, PlatformTrait};
 use crate::rustdoc::{TypeDef, TypeDefKind, TypeRef, VariantFields};
 
+/// Compound callback results with inline SCALE codecs shared by both bridges.
+/// Byte vectors themselves remain unencoded byte payloads.
+pub(crate) fn is_scale_vector_result(ty: &TypeRef) -> bool {
+    matches!(
+        ty,
+        TypeRef::Vec(inner)
+            if matches!(inner.as_ref(), TypeRef::Array(element, _)
+                if matches!(element.as_ref(), TypeRef::Primitive(name) if name == "u8"))
+                || matches!(inner.as_ref(), TypeRef::Primitive(name) if name == "str")
+                || matches!(inner.as_ref(), TypeRef::Named { args, .. } if args.is_empty())
+    )
+}
+
 /// Traits the platform surface actually composes: the super trait's
 /// constituents when one exists, otherwise every collected trait.
 pub fn composed_traits(definition: &PlatformDefinition) -> Vec<&PlatformTrait> {
@@ -22,7 +35,7 @@ pub fn composed_traits(definition: &PlatformDefinition) -> Vec<&PlatformTrait> {
 
 /// Capability trait names a host may omit, taken from the `OptionalPlatform`
 /// super-trait. A host that supplies none of a trait's callbacks is not
-/// broken: the core answers the matching product calls with `Unsupported`.
+/// broken: the core applies the capability's absence behavior.
 pub fn optional_trait_names(definition: &PlatformDefinition) -> BTreeSet<String> {
     definition
         .optional_super_trait
@@ -63,6 +76,11 @@ pub fn raw_callback_wire_name(
     method: &PlatformMethod,
     platform_trait_names: &BTreeSet<String>,
 ) -> String {
+    // The public Rust method spells out its capability; the established raw
+    // connection bridge uses the same namespace-first shape as chainConnect.
+    if trait_def.name == "HopProvider" && method.name == "connect_hop" {
+        return "hopConnect".to_string();
+    }
     let raw = raw_callback_name(method);
     if trait_object_return_name(method, platform_trait_names).is_some() {
         return format!(

@@ -10,7 +10,9 @@ use std::sync::{Arc, Mutex, OnceLock};
 
 use crate::chain_runtime::{ChainRuntime, RuntimeChainProvider, RuntimeFailure};
 use crate::host_logic::worker::WorkerLedger;
-use crate::platform::{HostInfo, JsonRpcConnection, PermissionStatusHost, Platform};
+use crate::platform::{
+    CoinageWalletHost, HostInfo, JsonRpcConnection, PermissionStatusHost, Platform,
+};
 use crate::runtime::bulletin_rpc::BulletinRpc;
 use crate::runtime::signing_host::DevicePairingObserver;
 use crate::runtime::statement_store_rpc::StatementStoreRpc;
@@ -39,19 +41,24 @@ pub struct RuntimeServices {
     /// Host chat adapter, when the host serves the Chat capability. `None`
     /// makes every product chat call resolve as `Unsupported`.
     pub chat_platform: Option<Arc<dyn crate::platform::ChatPlatform>>,
+    /// Native wallet custody, fixed at construction. Absence uses Rust; an
+    /// injected service remains the owner even while unavailable.
+    pub(crate) native_wallet: Option<Arc<dyn CoinageWalletHost>>,
     /// Host adapter reporting live OS permission state, installed once at
     /// startup by a host that can read it. Unset leaves device grants
     /// resolving from stored state alone.
     permission_status: OnceLock<Arc<dyn PermissionStatusHost>>,
     /// Host Pocket adapter, installed once at startup by a host with a Pocket
     /// surface. Unset leaves every product Pocket call `Unsupported`.
+    /// Optional native authenticated username index; only supplies candidates.
+    identity_backend: OnceLock<Arc<dyn crate::platform::IdentityBackendHost>>,
     pocket_platform: OnceLock<Arc<dyn crate::platform::PocketPlatform>>,
     /// Host contacts adapter, installed once at startup by a host with a
     /// contact picker. Unset leaves every product contacts call `Unsupported`.
     contacts_platform: OnceLock<Arc<dyn crate::platform::ContactsPlatform>>,
     /// Contact handles already resolved, shared by every product runtime of
     /// this host and emptied when the host says its contacts changed.
-    pub contact_handles: crate::runtime::contacts::ContactHandleCache,
+    pub contact_handles: Arc<crate::runtime::contacts::ContactHandleCache>,
     /// Host Game adapter, installed once at startup by a host that can hold
     /// reminders. Unset leaves every product Game call `Unsupported`.
     game_platform: OnceLock<Arc<dyn crate::platform::GamePlatform>>,
@@ -70,6 +77,8 @@ pub struct RuntimeServices {
     pub worker_ledger: WorkerLedger,
     /// Shared chainHead-v1 runtime behind the Chain surface.
     pub chain: ChainRuntime,
+    /// Configured People chain for native Chat identity and main-purse Coinage.
+    pub(crate) people_chain_genesis_hash: [u8; 32],
     /// People-chain statement store RPC client.
     pub statement_store: StatementStoreRpc,
     /// In-core Bulletin submission over the configured Bulletin chain.
@@ -113,6 +122,30 @@ impl RuntimeServices {
         asset_hub_chain_genesis_hash: [u8; 32],
         spawner: Spawner,
     ) -> Arc<Self> {
+        Self::with_chat_platform(
+            platform,
+            host_info,
+            people_chain_genesis_hash,
+            bulletin_chain_genesis_hash,
+            asset_hub_chain_genesis_hash,
+            spawner,
+            None,
+            None,
+        )
+    }
+
+    /// Same as [`Self::new`], with optional Chat and native wallet dependencies.
+    #[allow(clippy::too_many_arguments)]
+    pub fn with_chat_platform(
+        platform: Arc<dyn Platform>,
+        host_info: HostInfo,
+        people_chain_genesis_hash: [u8; 32],
+        bulletin_chain_genesis_hash: [u8; 32],
+        asset_hub_chain_genesis_hash: [u8; 32],
+        spawner: Spawner,
+        chat_platform: Option<Arc<dyn crate::platform::ChatPlatform>>,
+        native_wallet: Option<Arc<dyn CoinageWalletHost>>,
+    ) -> Arc<Self> {
         let chain_provider = Arc::new(HostChainProvider {
             platform: platform.clone(),
         });
@@ -124,9 +157,11 @@ impl RuntimeServices {
             platform,
             permissions: Arc::default(),
             host_info,
-            chat_platform: None,
+            chat_platform,
+            native_wallet,
             permission_status: OnceLock::new(),
             pocket_platform: OnceLock::new(),
+            identity_backend: OnceLock::new(),
             contacts_platform: OnceLock::new(),
             contact_handles: Default::default(),
             game_platform: OnceLock::new(),
@@ -136,6 +171,7 @@ impl RuntimeServices {
             asset_hub_chain_genesis_hash,
             worker_ledger: WorkerLedger::default(),
             chain,
+            people_chain_genesis_hash,
             statement_store,
             bulletin,
             chain_context: crate::runtime::statement_allowance::ChainContextCache::default(),
@@ -149,39 +185,25 @@ impl RuntimeServices {
         })
     }
 
-    /// Same as [`Self::new`], with the host's chat adapter installed.
-    pub fn with_chat_platform(
-        platform: Arc<dyn Platform>,
-        host_info: HostInfo,
-        people_chain_genesis_hash: [u8; 32],
-        bulletin_chain_genesis_hash: [u8; 32],
-        asset_hub_chain_genesis_hash: [u8; 32],
-        spawner: Spawner,
-        chat_platform: Option<Arc<dyn crate::platform::ChatPlatform>>,
-    ) -> Arc<Self> {
-        let services = Self::new(
-            platform,
-            host_info,
-            people_chain_genesis_hash,
-            bulletin_chain_genesis_hash,
-            asset_hub_chain_genesis_hash,
-            spawner,
-        );
-        let Some(chat_platform) = chat_platform else {
-            return services;
-        };
-        let mut services = Arc::try_unwrap(services)
-            .unwrap_or_else(|_| unreachable!("services are not shared before this point"));
-        services.chat_platform = Some(chat_platform);
-        Arc::new(services)
-    }
-
     /// Install the host's live OS permission-status adapter.
     ///
     /// Set-once, so a capability cannot be swapped out from under a running
     /// product. Returns whether this call installed it.
     pub fn install_permission_status_host(&self, host: Arc<dyn PermissionStatusHost>) -> bool {
         self.permission_status.set(host).is_ok()
+    }
+
+    pub(crate) fn install_identity_backend_host(
+        &self,
+        host: Arc<dyn crate::platform::IdentityBackendHost>,
+    ) -> bool {
+        self.identity_backend.set(host).is_ok()
+    }
+
+    pub(crate) fn identity_backend_host(
+        &self,
+    ) -> Option<Arc<dyn crate::platform::IdentityBackendHost>> {
+        self.identity_backend.get().cloned()
     }
 
     /// The Asset Hub dotNS reads run against, when one is configured.

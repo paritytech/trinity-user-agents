@@ -1,5 +1,7 @@
 use crate::platform::{
-    AuthState, DevicePermissionStatus, PermissionDecision, UserConfirmationReview,
+    AuthState, DevicePermissionStatus, NativeChatFileExportRequest, NativeChatFilePickRequest,
+    NativeChatPickedFile, NativeCoinageRequest, NativeCoinageResponse, PermissionDecision,
+    UserConfirmationReview,
 };
 use truapi::v01;
 
@@ -12,6 +14,26 @@ use super::config::ProductExecutionConfig;
 use super::errors::HostRejection;
 #[cfg(doc)]
 use crate::platform::CoreStorageKey;
+
+/// Host-private native Coinage response. It may contain bearer memo material.
+#[derive(Clone, uniffi::Record)]
+pub struct NativeCoinageCallbackResult {
+    /// Typed result, including private memo material when preparing a payment.
+    pub response: NativeCoinageResponse,
+}
+
+/// Optional process-wide native custody, installed only at runtime construction.
+/// Absence selects built-in Rust custody. A registered wallet's failure or
+/// unavailability never changes that dependency or permits fallback.
+#[uniffi::export(rust, foreign)]
+#[async_trait::async_trait]
+pub trait NativeCoinageCallbacks: Send + Sync {
+    /// Host-private wallet operation; bearer material must never reach a product.
+    async fn native_coinage(
+        &self,
+        request: NativeCoinageRequest,
+    ) -> Result<NativeCoinageCallbackResult, HostRejection>;
+}
 
 /// Callback surface that iOS and Android implement.
 ///
@@ -133,6 +155,21 @@ pub trait HostCallbacks: Send + Sync {
     /// connection id, or `None` when unsupported.
     fn chain_connect(&self, genesis_hash: Vec<u8>) -> Result<Option<u32>, HostRejection>;
 
+    /// Current trusted HOP WSS URLs for the configured Bulletin chain.
+    /// An embedding with no HOP configuration returns an empty allowlist.
+    async fn allowed_hop_endpoints(
+        &self,
+        bulletin_genesis_hash: Vec<u8>,
+    ) -> Result<Vec<String>, HostRejection>;
+
+    /// Open only an exact endpoint from the current trusted Bulletin allowlist.
+    /// HOP ids share the chain send/close and response/closed event namespace.
+    fn hop_connect(
+        &self,
+        bulletin_genesis_hash: Vec<u8>,
+        endpoint: String,
+    ) -> Result<Option<u32>, HostRejection>;
+
     /// Send one JSON-RPC request over a previously opened chain connection.
     fn chain_send(&self, connection_id: u32, request: String) -> Result<(), HostRejection>;
 
@@ -145,6 +182,43 @@ pub trait HostCallbacks: Send + Sync {
         review: UserConfirmationReview,
     ) -> Result<bool, HostRejection>;
 
+    /// Trusted file selection into durable immutable Host custody.
+    async fn pick_chat_files(
+        &self,
+        request: NativeChatFilePickRequest,
+    ) -> Result<Vec<NativeChatPickedFile>, HostRejection>;
+
+    /// Exact bounded read from a Host-private immutable source.
+    async fn read_chat_file(
+        &self,
+        source_id: String,
+        offset: u64,
+        length: u32,
+    ) -> Result<Vec<u8>, HostRejection>;
+
+    /// Idempotently release a durable private source.
+    async fn release_chat_file(&self, source_id: String) -> Result<(), HostRejection>;
+
+    /// Trusted export consent; `None` means user cancellation.
+    async fn begin_chat_file_export(
+        &self,
+        request: NativeChatFileExportRequest,
+    ) -> Result<Option<String>, HostRejection>;
+
+    /// Contiguous bounded write into a partial private export.
+    async fn write_chat_file_export(
+        &self,
+        export_id: String,
+        offset: u64,
+        data: Vec<u8>,
+    ) -> Result<(), HostRejection>;
+
+    /// Publish an exact-size export through safe native UI.
+    async fn finish_chat_file_export(&self, export_id: String) -> Result<(), HostRejection>;
+
+    /// Idempotently discard a partial export, never a completed user export.
+    async fn cancel_chat_file_export(&self, export_id: String) -> Result<(), HostRejection>;
+
     /// Preserve the lifetime of consent for identity and account disclosures.
     async fn confirm_permission(
         &self,
@@ -154,6 +228,15 @@ pub trait HostCallbacks: Send + Sync {
     /// Look up one preimage value by key. The native shim emits this as the
     /// current item in its subscription stream.
     async fn lookup_preimage(&self, key: Vec<u8>) -> Result<Option<Vec<u8>>, HostRejection>;
+
+    /// Exact-name AccountId32 candidates from the host's configured,
+    /// authenticated native username service. Every item must contain 32 bytes;
+    /// the core verifies finalized dotNS ownership and the canonical People key.
+    async fn identity_username_candidates(
+        &self,
+        username: String,
+        people_chain_genesis_hash: Vec<u8>,
+    ) -> Result<Vec<Vec<u8>>, HostRejection>;
 
     /// Current host theme, named variant included. The native shim emits this
     /// as the current item in its subscription stream.

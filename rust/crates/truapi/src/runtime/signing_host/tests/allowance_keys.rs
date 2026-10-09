@@ -201,8 +201,7 @@ fn clearing_a_product_forgets_only_its_key() {
     remember(&signing_host, PRODUCT_ID, PERIOD);
     remember(&signing_host, "other.dot", PERIOD);
 
-    signing_host
-        .clear_product_state(PRODUCT_ID)
+    futures::executor::block_on(signing_host.clear_product_state(PRODUCT_ID))
         .expect("the product id is valid");
 
     assert_eq!(

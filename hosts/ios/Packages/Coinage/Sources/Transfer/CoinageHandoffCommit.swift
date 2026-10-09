@@ -1,15 +1,15 @@
 import DurableTransactions
 import Foundation
 
-/// A handoff that is reserved but not yet final.
+/// An idempotent handle for committing a recipient handoff.
 ///
 /// Held from the moment the assets are chosen until whatever carries their keys is durable, then
 /// committed. Where that is depends on the transport — for a chat payment it is the message row —
 /// so the commit belongs inside the transaction that writes it: a crash in between would otherwise
 /// clear the reservation while a peer already holds the keys.
 ///
-/// Leaving a handle uncommitted is safe: a relaunch releases every provisional mark, returning the
-/// coins. The only way for a mark to outlive the process is for the keys to have actually left.
+/// Ordinary uncommitted reservations are released on relaunch. Native custody instead commits its
+/// marks alongside a durable derivation journal before returning this handle.
 public protocol CoinageHandoffCommit: Sendable {
     /// Commits inside the transaction the transport already opened, so the marks become final in the
     /// same write that makes the keys durable — the only placement where a crash cannot either strand

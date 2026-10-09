@@ -19,6 +19,12 @@ final class InMemoryCoinageAssetLedger: CoinageAssetLedgerProtocol, @unchecked S
         var assets: [CoinageTxId: CoinageAssetRegistration] = [:]
         var pendingMarks: Set<OwnAsset> = []
         var committedMarks: Set<OwnAsset> = []
+        var custodies: [String: Retention] = [:]
+    }
+
+    private struct Retention {
+        let custody: NativeTransferCustody
+        let registrations: [CoinageTxId: CoinageAssetRegistration]
     }
 
     private let state = OSAllocatedUnfairLock(initialState: State())
@@ -53,17 +59,67 @@ final class InMemoryCoinageAssetLedger: CoinageAssetLedgerProtocol, @unchecked S
     func registerAssets(
         _ registrations: [CoinageAssetRegistration],
         for ids: [CoinageTxId],
+        custody: NativeTransferCustody?,
+        authorization: (@Sendable () throws -> Void)?,
         in scope: any DurableTxRegistrationScope
     ) throws {
         guard scope is InMemoryRegistrationScope else {
             throw DurableTxError.foreignRegistrationScope
         }
-        try validate(registrations)
-        state.withLock { current in
+        guard registrations.count == ids.count else { throw NativeTransferCustodyError.invalidRecord }
+        try state.withLock { current in
+            let context = validationContext(current)
+            if let custody {
+                guard current.custodies[custody.custodyId] == nil else {
+                    throw NativeTransferCustodyError.alreadyRegistered
+                }
+                guard let authorization else { throw NativeTransferCustodyError.invalidRecord }
+                try authorization()
+                try custody.validate(registrations: registrations, transaction: context)
+            }
+            try validator.validate(registrations, transaction: context)
             for (id, assets) in zip(ids, registrations) {
                 current.assets[id] = assets
             }
+            if let custody {
+                current.custodies[custody.custodyId] = Retention(
+                    custody: custody, registrations: Dictionary(uniqueKeysWithValues: zip(ids, registrations))
+                )
+                current.committedMarks.formUnion(custody.assets)
+            }
         }
+    }
+
+    func retainNativeTransfer(
+        _ custody: NativeTransferCustody, authorization: @escaping @Sendable () throws -> Void
+    ) async throws {
+        try state.withLock { current in
+            guard current.custodies[custody.custodyId] == nil else {
+                throw NativeTransferCustodyError.alreadyRegistered
+            }
+            try authorization()
+            try custody.validate(registrations: [], transaction: validationContext(current))
+            current.custodies[custody.custodyId] = Retention(custody: custody, registrations: [:])
+            current.committedMarks.formUnion(custody.assets)
+        }
+    }
+
+    func retainedNativeTransfer(custodyId: String) async throws -> NativeTransferCustody? {
+        try state.withLock { current in
+            guard let retention = current.custodies[custodyId] else { return nil }
+            guard Set(retention.custody.assets).isSubset(of: current.committedMarks),
+                  retention.registrations.allSatisfy({ id, assets in
+                      current.assets[id] == assets && durable.statusSnapshot(of: id) != nil
+                  }) else {
+                throw NativeTransferCustodyError.incompleteRegistration
+            }
+            return retention.custody
+        }
+    }
+
+    /// Corrupts the asset half to exercise fail-closed recovery of a partially missing registration.
+    func removeAssets(for id: CoinageTxId) {
+        state.withLock { _ = $0.assets.removeValue(forKey: id) }
     }
 
     func getAllEntries() async throws -> [CoinageTxEntry] {
@@ -122,8 +178,8 @@ final class InMemoryCoinageAssetLedger: CoinageAssetLedgerProtocol, @unchecked S
         _ assets: [OwnAsset],
         validation: @escaping (any CoinageTxValidationContextProtocol) throws -> Void
     ) async throws {
-        try validation(validationContext())
         try state.withLock { current in
+            try validation(validationContext(current))
             for asset in assets where current.pendingMarks.contains(asset)
                 || current.committedMarks.contains(asset) {
                 throw CoinageTxError.handoffOfHandedOffAsset(asset.publicKey.toHex())
@@ -154,12 +210,15 @@ private extension InMemoryCoinageAssetLedger {
     }
 
     func validationContext() -> InMemoryValidationContext {
-        let assets = state.withLock { $0.assets }
-        let statuses = Dictionary(uniqueKeysWithValues: assets.keys.map { ($0, durable.statusSnapshot(of: $0)) })
+        state.withLock { validationContext($0) }
+    }
+
+    private func validationContext(_ current: State) -> InMemoryValidationContext {
+        let statuses = Dictionary(uniqueKeysWithValues: current.assets.keys.map { ($0, durable.statusSnapshot(of: $0)) })
         return InMemoryValidationContext(
-            assets: assets,
+            assets: current.assets,
             statuses: statuses,
-            handedOff: Set(handoffMarks.map(\.publicKey))
+            handedOff: Set(current.pendingMarks.union(current.committedMarks).map(\.publicKey))
         )
     }
 }

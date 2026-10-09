@@ -27,11 +27,21 @@ function stubBridge() {
         return () => {};
       },
       chainConnect: async () => null,
+      hopConnect: async () => null,
     },
   };
 }
 
 describe("worker raw callbacks", () => {
+  it("leaves username search unavailable when the host omits its capability", () => {
+    const { bridge } = stubBridge();
+    const callbacks = createWorkerRawCallbacks(
+      bridge as unknown as Parameters<typeof createWorkerRawCallbacks>[0],
+    );
+
+    expect(callbacks.identityUsernameCandidates).toBeUndefined();
+  });
+
   it("omits the chat proxies when no chat capability is reported", () => {
     const { bridge } = stubBridge();
 

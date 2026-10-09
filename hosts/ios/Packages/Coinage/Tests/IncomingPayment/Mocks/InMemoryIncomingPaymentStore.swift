@@ -15,12 +15,17 @@ final class InMemoryIncomingPaymentStore: IncomingPaymentStoring, @unchecked Sen
 
     private let state = OSAllocatedUnfairLock(initialState: State())
     private let activeSubject = AsyncCurrentValueSubject<[IncomingPayment]>([])
+    private let beforeSave: (@Sendable () async -> Void)?
 
     var saveError: Error?
     var fetchError: Error?
     var settleError: Error?
 
-    init(seed: [IncomingPayment] = []) {
+    init(
+        seed: [IncomingPayment] = [],
+        beforeSave: (@Sendable () async -> Void)? = nil
+    ) {
+        self.beforeSave = beforeSave
         state.withLock { state in
             for payment in seed {
                 state.payments[payment.groupId] = payment
@@ -29,9 +34,17 @@ final class InMemoryIncomingPaymentStore: IncomingPaymentStoring, @unchecked Sen
         publishActive()
     }
 
-    func save(_ payment: IncomingPayment) async throws {
+    func save(
+        _ payment: IncomingPayment,
+        authorization: @escaping @Sendable () throws -> Void
+    ) async throws {
+        await beforeSave?()
         if let saveError { throw saveError }
-        state.withLock { $0.payments[payment.groupId] = payment }
+        try state.withLock {
+            try authorization()
+            guard $0.payments[payment.groupId] == nil else { throw IncomingPaymentError.alreadyExists }
+            $0.payments[payment.groupId] = payment
+        }
         publishActive()
     }
 
@@ -44,19 +57,25 @@ final class InMemoryIncomingPaymentStore: IncomingPaymentStoring, @unchecked Sen
         state.withLock { Array($0.payments.values.filter { $0.outcome == nil }) }
     }
 
-    func settle(groupId: CoinageTxGroupId, outcome: IncomingPaymentTerminalOutcome) async throws {
+    func settle(
+        groupId: CoinageTxGroupId,
+        ownerId: Data,
+        outcome: IncomingPaymentTerminalOutcome,
+        authorization: @escaping @Sendable () throws -> Void
+    ) async throws {
         if let settleError { throw settleError }
-        state.withLock { state in
+        try state.withLock { state in
+            try authorization()
+            guard let existing = state.payments[groupId], existing.ownerId == ownerId else { throw Failure() }
             state.settledGroupIds.append(groupId)
-            if let existing = state.payments[groupId] {
-                state.payments[groupId] = IncomingPayment(
-                    paymentId: existing.paymentId,
-                    productId: existing.productId,
-                    amount: existing.amount,
-                    createdAt: existing.createdAt,
-                    outcome: outcome
-                )
-            }
+            state.payments[groupId] = IncomingPayment(
+                paymentId: existing.paymentId,
+                productId: existing.productId,
+                amount: existing.amount,
+                createdAt: existing.createdAt,
+                outcome: outcome,
+                ownerId: existing.ownerId
+            )
         }
         publishActive()
     }

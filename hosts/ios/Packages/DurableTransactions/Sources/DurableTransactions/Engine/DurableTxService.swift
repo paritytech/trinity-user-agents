@@ -44,6 +44,17 @@ public protocol DurableTxServicing: Sendable {
         onRegister: DurableTxRegistrationHook
     ) throws -> [DurableTxId]
 
+    /// Registers transactions that have not been built yet, one per policy, as one operation in a write
+    /// of the engine's own — for a caller whose own rows are written by `onRegister` rather than by a
+    /// write it already opened. All commit or none do.
+    @discardableResult
+    func schedule(
+        domain: TxDomainId,
+        groupId: DurableTxGroupId?,
+        policies: [SubmissionPolicy],
+        onRegister: @escaping DurableTxRegistrationHook
+    ) async throws -> [DurableTxId]
+
     /// A stream of a transaction's status: the current value, then every change.
     func subscribeTransactionStatus(_ id: DurableTxId) -> AnyAsyncSequence<DurableTxStatus>
 
@@ -270,6 +281,27 @@ public extension DurableTxService {
 
         // The executor reads committed rows only, so asking now is safe while the caller's transaction
         // is still open — it simply sees nothing until the caller commits.
+        startRecoveryPass()
+
+        return ids
+    }
+
+    @discardableResult
+    func schedule(
+        domain: TxDomainId,
+        groupId: DurableTxGroupId?,
+        policies: [SubmissionPolicy],
+        onRegister: @escaping DurableTxRegistrationHook
+    ) async throws -> [DurableTxId] {
+        let schedules = policies.map {
+            DurableTxSchedule(domainId: domain, groupId: groupId, policy: $0)
+        }
+
+        let ids = try await store.schedule(schedules, in: nil, onRegister: onRegister)
+
+        logger?.debug("Scheduled transactions=\(ids.count) groupId=\(String(describing: groupId))")
+
+        // The rows are committed, so the executor can pick them up.
         startRecoveryPass()
 
         return ids

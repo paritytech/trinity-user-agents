@@ -101,8 +101,8 @@ env:
   # DEBUG MODE: Set to 'true' to enable enhanced debugging for build failures
   # What it does:
   #   - Enables verbose xcodebuild logging
-  #   - Collects and uploads build artifacts (logs, test results)
-  #   - Continues build even on failures to gather maximum information
+  #   - Collects and uploads build artifacts
+  # Test results and diagnostics are uploaded regardless of this setting.
   DEBUG_CI: false
 
 jobs:
@@ -522,13 +522,27 @@ jobs:
             bundle exec fastlane run_unit_tests
           fi
 
-      # Upload test artifacts for debugging - only when DEBUG_CI is enabled
+      - name: Export test diagnostics
+        if: always()
+        working-directory: hosts/ios
+        run: |
+          set -euo pipefail
+          result="fastlane/test_output/polkadot-app.xcresult"
+          if [[ -d "$result" ]]; then
+            xcrun xcresulttool get test-results summary --path "$result"
+            xcrun xcresulttool get test-results tests --path "$result"
+            xcrun xcresulttool export diagnostics --path "$result" \
+              --output-path fastlane/test_output/diagnostics
+          fi
+
       - name: Upload test artifacts
-        if: env.DEBUG_CI == 'true' && (failure() || success())
+        if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: test-artifacts-${{ github.run_number }}
+          name: test-artifacts-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
             hosts/ios/fastlane/test_output/
             hosts/ios/fastlane/build_logs/
+            ~/Library/Logs/DiagnosticReports/*.ips
+            ~/Library/Logs/DiagnosticReports/*.crash
           retention-days: 3

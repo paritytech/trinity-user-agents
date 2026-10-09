@@ -15,7 +15,8 @@ use truapi::latest::{
     HostAccountListRingVrfKeysResponse, HostAccountRegisterRingVrfKeyRequest,
     HostAccountRegisterRingVrfKeyResponse, HostAccountRingVrfSignRequest,
     HostAccountRingVrfSignResponse, HostAccountSignVrfError, HostAccountSignVrfRequest,
-    HostCreateTransactionResponse, HostRequestResourceAllocationRequest,
+    HostCreateTransactionResponse, HostProductDeviceChatError, HostProductDeviceChatRequest,
+    HostProductDeviceChatResponse, HostRequestResourceAllocationRequest,
     HostRequestResourceAllocationResponse, HostSignPayloadRequest, HostSignPayloadResponse,
     HostSignPayloadWithLegacyAccountRequest, HostSignRawRequest,
     HostSignRawWithLegacyAccountRequest, LegacyAccountTxPayload, ProductAccountId,
@@ -25,7 +26,7 @@ use truapi::versioned::account::{HostRequestLoginError, HostRequestLoginResponse
 use truapi::{CallContext, CallError, CancellationReason};
 
 use crate::host_internal::extrinsic::LocalTransactionError;
-use crate::host_internal::sso_messages::{ProductRequest, RingVrfError};
+use crate::host_internal::sso_messages::{PaymentTopUpRequest, ProductRequest, RingVrfError};
 use crate::host_internal::transaction::ExtrinsicPayloadError;
 use crate::host_logic::raw_signing::RawPayloadError;
 use crate::host_logic::session::{SessionInfo, SessionState};
@@ -288,6 +289,106 @@ pub enum CreateTransactionAuthorityRequest {
     IdentityAccount(LegacyAccountTxPayload),
 }
 
+/// Host-owned Chat operation after the caller's capability authorization.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ProductDeviceChatAuthorityRequest {
+    /// Product whose capability authorization was checked by the host.
+    pub calling_product_id: String,
+    /// Authorized wallet-local Chat operation.
+    pub operation: HostProductDeviceChatRequest,
+    /// The user allowed Chat for this session only. The authority honours
+    /// that grant for the product until its session ends; nothing is stored.
+    pub session_consent: bool,
+}
+
+/// Only trusted attachment preparation uploads preimages; products submit Chat statements.
+pub(crate) fn chat_requires_preimage_submit(operation: &HostProductDeviceChatRequest) -> bool {
+    match operation {
+        HostProductDeviceChatRequest::PrepareAttachments { .. } => true,
+        HostProductDeviceChatRequest::Initialize
+        | HostProductDeviceChatRequest::Bind { .. }
+        | HostProductDeviceChatRequest::Prepare { .. }
+        | HostProductDeviceChatRequest::Open { .. }
+        | HostProductDeviceChatRequest::SendPayment { .. }
+        | HostProductDeviceChatRequest::PaymentStatus { .. }
+        | HostProductDeviceChatRequest::ReconcilePayments
+        | HostProductDeviceChatRequest::OpenAttachment { .. }
+        | HostProductDeviceChatRequest::CommitMigration { .. }
+        | HostProductDeviceChatRequest::ContinueOpen { .. }
+        | HostProductDeviceChatRequest::ContinueState { .. }
+        | HostProductDeviceChatRequest::PaymentDenomination => false,
+    }
+}
+
+/// A wallet-local Chat failure before conversion to its public protocol error.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ProductDeviceChatAuthorityError {
+    /// The wallet session is no longer connected.
+    Disconnected,
+    /// The user rejected the operation.
+    Rejected,
+    /// A host backend is unavailable; diagnostics remain host-owned.
+    Unavailable(String),
+    /// A typed Chat failure safe to return to the product.
+    Domain(HostProductDeviceChatError),
+}
+
+impl From<AuthorityError> for ProductDeviceChatAuthorityError {
+    fn from(error: AuthorityError) -> Self {
+        match error {
+            AuthorityError::Disconnected => Self::Disconnected,
+            AuthorityError::Rejected => Self::Rejected,
+            other => Self::Unavailable(other.to_string()),
+        }
+    }
+}
+
+impl From<ProductDeviceChatAuthorityError> for truapi::v02::HostProductDeviceChatError {
+    fn from(error: ProductDeviceChatAuthorityError) -> Self {
+        match error {
+            ProductDeviceChatAuthorityError::Disconnected => Self::NotConnected,
+            ProductDeviceChatAuthorityError::Rejected => Self::UserRejected,
+            ProductDeviceChatAuthorityError::Unavailable(_) => Self::NetworkUnavailable,
+            ProductDeviceChatAuthorityError::Domain(error) => error,
+        }
+    }
+}
+
+/// Payment failures retain typed wallet results without exposing backend diagnostics.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PaymentTopUpAuthorityError {
+    /// Session, consent, or backend authority failure.
+    Authority(AuthorityError),
+    /// A typed wallet top-up failure.
+    Domain(truapi::v01::HostPaymentTopUpError),
+}
+
+impl From<AuthorityError> for PaymentTopUpAuthorityError {
+    fn from(error: AuthorityError) -> Self {
+        Self::Authority(error)
+    }
+}
+
+impl From<PaymentTopUpAuthorityError> for truapi::v01::HostPaymentTopUpError {
+    fn from(error: PaymentTopUpAuthorityError) -> Self {
+        match error {
+            PaymentTopUpAuthorityError::Domain(error) if !matches!(error, Self::Unknown { .. }) => {
+                error
+            }
+            PaymentTopUpAuthorityError::Authority(AuthorityError::Disconnected) => Self::Unknown {
+                reason: "Wallet session is not active".to_string(),
+            },
+            PaymentTopUpAuthorityError::Authority(AuthorityError::Cancelled(_)) => Self::Unknown {
+                reason: "Payment top-up cancelled".to_string(),
+            },
+            // Backend failures may contain supplied source keys; never echo them.
+            _ => Self::Unknown {
+                reason: "Payment top-up unavailable".to_string(),
+            },
+        }
+    }
+}
+
 /// Whether blessed `calling_product_id` is using its own account, `owner`.
 pub(crate) fn is_blessed_owner(calling_product_id: &str, owner: &str) -> bool {
     use crate::platform::{has_trusted_remote_permissions, normalize_product_identifier};
@@ -305,11 +406,11 @@ pub enum AutoSigningGrant {
     /// Not covered: the caller must obtain user consent.
     Absent,
 }
-
 /// Statement-store allowance signing material held by the authority layer.
-#[derive(Clone, PartialEq, Eq, zeroize::Zeroize, zeroize::ZeroizeOnDrop)]
+#[derive(Clone, PartialEq, Eq, zeroize::Zeroize, zeroize::ZeroizeOnDrop, derive_more::Debug)]
 pub struct StatementStoreAllowanceKey {
     /// sr25519 secret used to sign allowance statements.
+    #[debug("\"<redacted>\"")]
     pub secret: [u8; 64],
     /// Public key derived from `secret`.
     pub public_key: [u8; 32],
@@ -519,6 +620,28 @@ pub trait ProductAuthority: Send + Sync {
         session: &AuthoritySession,
         request: ProductRequest<HostAccountRingVrfSignRequest>,
     ) -> Result<HostAccountRingVrfSignResponse, RingVrfError>;
+
+    /// Whether the user allowed Chat for `product_id` for the rest of this
+    /// session. Authorities that do not keep session grants answer `false`.
+    fn chat_session_granted(&self, _session: &AuthoritySession, _product_id: &str) -> bool {
+        false
+    }
+
+    /// Execute an authorized operation on the Host-owned native Chat device.
+    async fn product_device_chat(
+        &self,
+        cx: &CallContext,
+        session: &AuthoritySession,
+        request: ProductDeviceChatAuthorityRequest,
+    ) -> Result<HostProductDeviceChatResponse, ProductDeviceChatAuthorityError>;
+
+    /// Credit caller-supplied incoming funding; no outgoing-spend or Chat grant.
+    async fn payment_top_up(
+        &self,
+        cx: &CallContext,
+        session: &AuthoritySession,
+        request: PaymentTopUpRequest,
+    ) -> Result<(), PaymentTopUpAuthorityError>;
 
     /// Ask the account authority to allocate product-scoped resources.
     async fn allocate_resources(

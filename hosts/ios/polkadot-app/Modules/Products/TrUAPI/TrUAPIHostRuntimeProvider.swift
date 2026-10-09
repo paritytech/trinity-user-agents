@@ -7,6 +7,7 @@ import Products
 import SubstrateSdk
 import KeyDerivation
 import Keystore_iOS
+import Coinage
 
 /// Runtime configuration error raised while assembling the shared host config.
 enum TrUAPIRuntimeConfigError: Error {
@@ -20,6 +21,8 @@ protocol TrUAPIHostRuntimeProviding: AnyObject, Sendable {
     /// Return the shared runtime, building and activating its local session on
     /// first use. Subsequent calls return the cached instance.
     func sharedRuntime() throws -> TrUAPIHostRuntime
+
+    func setCoinageAvailable(_ available: Bool)
 
     /// Anchor the host's core confirmations (signing, permission prompts) to
     /// the given view. Until it is attached, host-level prompts deny.
@@ -42,6 +45,7 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
     private let confirmationRouterFacade: ProductRoutersFacadeProtocol
     private let tldProvider: DotNsTldProviding
     private let logger: LoggerProtocol
+    private let coinageAdapter: TrUAPINativeCoinage
 
     private let lock = NSLock()
     private var cachedRuntime: TrUAPIHostRuntime?
@@ -57,6 +61,8 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
         settingsManager: SettingsManagerProtocol,
         coreStorage: TrUAPILocalStoring,
         confirmationRouterFacade: ProductRoutersFacadeProtocol,
+        coinageService: any CoinageServicing,
+        storageFacade: StorageFacadeProtocol,
         tldProvider: DotNsTldProviding = DotNsTldProviderFacade.shared,
         logger: LoggerProtocol
     ) {
@@ -67,11 +73,40 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
         self.confirmationRouterFacade = confirmationRouterFacade
         self.tldProvider = tldProvider
         self.logger = logger
+        // CoinageService is assembled for this wallet/chain. Live configuration may not relabel that instance.
+        let boundScope = try? Self.makeNativeCoinageScope(chainRegistry: chainRegistry, entropyManager: entropyManager)
+        coinageAdapter = TrUAPINativeCoinage(
+            service: coinageService,
+            storageFacade: storageFacade,
+            scope: {
+                guard let boundScope else {
+                    throw HostRejection.Rejected(reason: "Native Coinage wallet session unavailable")
+                }
+                let currentScope = try Self.makeNativeCoinageScope(
+                    chainRegistry: chainRegistry,
+                    entropyManager: entropyManager
+                )
+                guard currentScope == boundScope else {
+                    throw HostRejection.Rejected(reason: "Native Coinage wallet session unavailable")
+                }
+                return boundScope
+            },
+            confirmationPresenter: TrUAPIConfirmationPresenter(routerFacade: confirmationRouterFacade)
+        )
+    }
+
+    deinit {
+        // The runtime can outlive its provider. It retains the adapter, not an authorization lease.
+        coinageAdapter.setAvailable(false)
     }
 
     @MainActor
     func setPresentationView(_ view: ControllerBackedProtocol) {
         confirmationRouterFacade.setPresentationView(view)
+    }
+
+    func setCoinageAvailable(_ available: Bool) {
+        coinageAdapter.setAvailable(available)
     }
 
     func attach(workerManager: any TrUAPIWorkerManaging) {
@@ -96,15 +131,12 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
             secret: secret,
             liteUsername: settingsManager.string(for: .username),
             networkSuffix: networkSuffix,
+            coinageInstanceId: AppConfig.Coinage.instanceId,
             databaseDirectory: Self.coreDatabaseDirectory()
         )
 
         let chainConnections = TrUAPIChainConnectionPool(
-            engineResolver: { [chainRegistry] genesisHash in
-                chainRegistry.getChainByGenesis(for: genesisHash.toHex()).flatMap { chain in
-                    chainRegistry.getConnection(for: chain.chainId)
-                }
-            },
+            chainRegistry: chainRegistry,
             logger: logger
         )
 
@@ -113,11 +145,14 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
             coreStorage: coreStorage,
             chainConnections: chainConnections,
             confirmationPresenter: TrUAPIConfirmationPresenter(routerFacade: confirmationRouterFacade),
+            chatFiles: TrUAPINativeChatFiles.shared,
             workerManager: workerManager,
             logger: logger
         )
 
-        let runtime = try TrUAPIHostRuntime(bridge: bridge, runtimeConfig: runtimeConfig)
+        // Always register native custody, including while the service is unavailable.
+        // Temporary unavailability must never opt this host into Rust purse storage.
+        let runtime = try TrUAPIHostRuntime(bridge: bridge, runtimeConfig: runtimeConfig, nativeWallet: coinageAdapter)
         bridge.attach(runtime)
         // Before any product execution opens, so a product never sees the
         // window where the host lists no contacts.
@@ -145,6 +180,22 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
 }
 
 extension TrUAPIHostRuntimeProvider {
+    private static func makeNativeCoinageScope(
+        chainRegistry: ChainRegistryProtocol,
+        entropyManager: RootEntropyManaging
+    ) throws -> NativeCoinageScope {
+        let chain = try chainRegistry.getChainOrError(for: AppConfig.Assets.mainAsset.chainId)
+        guard let genesis = chain.explicitGenesisHash else {
+            throw TrUAPIRuntimeConfigError.missingGenesisHash(chain: "coinage")
+        }
+        let wallet = DynamicDerivedWallet(derivationPath: nil, entropyManager: entropyManager)
+        return try NativeCoinageScope(
+            rootPublicKey: wallet.getRawPublicKey(),
+            genesisHash: Data(hexString: genesis),
+            coinageInstanceId: AppConfig.Coinage.instanceId
+        )
+    }
+
     /// Assemble the immutable host-wide config. Genesis hashes are fetched from
     /// the registry and must resolve; a missing hash fails explicitly rather
     /// than degrading. `networkSuffix` is the dotNS TLD the core derives the
@@ -156,6 +207,7 @@ extension TrUAPIHostRuntimeProvider {
         secret: Data,
         liteUsername: String?,
         networkSuffix: String,
+        coinageInstanceId: UInt32,
         databaseDirectory: String
     ) throws -> HostRuntimeConfig {
         let peopleChain = try chainRegistry.getChainOrError(for: AppConfig.Chains.usernameChain)
@@ -189,7 +241,8 @@ extension TrUAPIHostRuntimeProvider {
             networkSuffix: networkSuffix,
             databaseDirectory: databaseDirectory,
             localSessionSecret: secret,
-            localSessionLiteUsername: liteUsername
+            localSessionLiteUsername: liteUsername,
+            coinageInstanceId: coinageInstanceId
         )
     }
 

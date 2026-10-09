@@ -4,7 +4,8 @@
 //! for alias, proof, and login operations.
 
 use crate::platform::{
-    PermissionAuthorizationStatus, ProductSubtreeReview, UserConfirmationReview,
+    PermissionAuthorizationRequest, PermissionAuthorizationStatus, ProductSubtreeReview,
+    UserConfirmationReview,
     normalize_product_identifier,
 };
 use futures::StreamExt;
@@ -22,19 +23,23 @@ use truapi::versioned::account::{
     HostAccountRingVrfSignRequest, HostAccountRingVrfSignResponse, HostAccountSignVrfError,
     HostAccountSignVrfRequest, HostAccountSignVrfResponse, HostGetLegacyAccountsError,
     HostGetLegacyAccountsRequest, HostGetLegacyAccountsResponse, HostGetUserIdError,
-    HostGetUserIdRequest, HostGetUserIdResponse, HostRequestLoginError, HostRequestLoginRequest,
-    HostRequestLoginResponse,
+    HostGetUserIdRequest, HostGetUserIdResponse, HostProductDeviceChatError,
+    HostProductDeviceChatRequest, HostProductDeviceChatResponse, HostRequestLoginError,
+    HostRequestLoginRequest, HostRequestLoginResponse,
 };
 use truapi::{CallContext, CallError, Subscription, latest, v01};
 
+use crate::host_internal::permissions::ChatAuthorityConsent;
 use crate::host_internal::product_manifest::Granted;
 use crate::host_internal::sso_messages::ProductRequest;
-use crate::runtime::authority::AuthorityError;
+use crate::runtime::authority::{
+    AuthorityError, ProductDeviceChatAuthorityRequest, chat_requires_preimage_submit,
+};
 use crate::runtime::{
     ProductRuntimeHost, account_access_authorization, account_get_authority_error,
-    remote_authority_call, remote_authority_context, ring_vrf_alias_error, ring_vrf_list_error,
-    ring_vrf_proof_error, ring_vrf_register_error, ring_vrf_sign_error, validate_vrf_transcript,
-    vrf_call_error,
+    product_device_chat_authority_error, remote_authority_call, remote_authority_context,
+    ring_vrf_alias_error, ring_vrf_list_error, ring_vrf_proof_error, ring_vrf_register_error,
+    ring_vrf_sign_error, validate_vrf_transcript, vrf_call_error,
 };
 
 #[truapi::async_trait]
@@ -401,6 +406,76 @@ impl Account for ProductRuntimeHost {
         .await
         .map(HostAccountRingVrfSignResponse::V1)
         .map_err(|err| CallError::Domain(HostAccountRingVrfSignError::V1(ring_vrf_sign_error(err))))
+    }
+
+    #[instrument(skip_all, fields(runtime.method = "account.product_device_chat"))]
+    async fn product_device_chat(
+        &self,
+        cx: &CallContext,
+        request: HostProductDeviceChatRequest,
+    ) -> Result<HostProductDeviceChatResponse, CallError<HostProductDeviceChatError>> {
+        let operation = match request {
+            HostProductDeviceChatRequest::V2(operation) => operation,
+            HostProductDeviceChatRequest::V1(_) => {
+                return Err(CallError::unavailable());
+            }
+        };
+        let calling_product_id =
+            normalize_product_identifier(&self.product_id()).map_err(|_| {
+                CallError::Domain(HostProductDeviceChatError::V1(
+                    latest::HostProductDeviceChatError::InvalidRequest,
+                ))
+            })?;
+        let Some(session) = self.authority.current_session() else {
+            return Err(CallError::Domain(HostProductDeviceChatError::V1(
+                latest::HostProductDeviceChatError::NotConnected,
+            )));
+        };
+        // A session-only grant lives with the authority, so a new execution of
+        // the same product reuses it without prompting again.
+        let consent = if self.authority.chat_session_granted(&session, &calling_product_id)
+            && self
+                .permission_authorization_status(PermissionAuthorizationRequest::ChatAuthority)
+                .await
+                .map_err(|error| CallError::HostFailure {
+                    reason: error.reason,
+                })?
+                == PermissionAuthorizationStatus::NotDetermined
+        {
+            ChatAuthorityConsent::Session
+        } else {
+            self.chat_authority_authorization()
+                .await
+                .map_err(|reason| CallError::HostFailure { reason })?
+        };
+        if consent == ChatAuthorityConsent::Refused {
+            return Err(CallError::Domain(HostProductDeviceChatError::V1(
+                latest::HostProductDeviceChatError::AccessNotGranted,
+            )));
+        }
+        if chat_requires_preimage_submit(&operation) {
+            self.require_remote_permission(
+                v01::RemotePermission::PreimageSubmit,
+                HostProductDeviceChatError::V1(
+                    latest::HostProductDeviceChatError::AccessNotGranted,
+                ),
+            )
+            .await?;
+        }
+        let cx = remote_authority_context(cx);
+        let authority_request = ProductDeviceChatAuthorityRequest {
+            calling_product_id,
+            operation,
+            session_consent: consent == ChatAuthorityConsent::Session,
+        };
+        remote_authority_call(
+            &cx,
+            self.authority
+                .product_device_chat(&cx, &session, authority_request),
+        )
+        .await
+        .map(HostProductDeviceChatResponse::V2)
+        .map_err(product_device_chat_authority_error)
     }
 
     #[instrument(skip_all, fields(runtime.method = "account.sign_vrf"))]

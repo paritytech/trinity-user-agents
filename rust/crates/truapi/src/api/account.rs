@@ -12,8 +12,9 @@ use crate::versioned::account::{
     HostAccountRingVrfSignRequest, HostAccountRingVrfSignResponse, HostAccountSignVrfError,
     HostAccountSignVrfRequest, HostAccountSignVrfResponse, HostGetLegacyAccountsError,
     HostGetLegacyAccountsRequest, HostGetLegacyAccountsResponse, HostGetUserIdError,
-    HostGetUserIdRequest, HostGetUserIdResponse, HostRequestLoginError, HostRequestLoginRequest,
-    HostRequestLoginResponse,
+    HostGetUserIdRequest, HostGetUserIdResponse, HostProductDeviceChatError,
+    HostProductDeviceChatRequest, HostProductDeviceChatResponse, HostRequestLoginError,
+    HostRequestLoginRequest, HostRequestLoginResponse,
 };
 use crate::{CallContext, CallError, Subscription};
 use crate::{wire, wire_trait};
@@ -290,6 +291,41 @@ pub trait Account: Send + Sync {
         _cx: &CallContext,
         _request: HostAccountRingVrfSignRequest,
     ) -> Result<HostAccountRingVrfSignResponse, CallError<HostAccountRingVrfSignError>> {
+        Err(CallError::unavailable())
+    }
+
+    /// Use a non-exportable Host Chat device for native cryptographic operations
+    /// and reviewed main-purse payments. The product owns native lifecycle frames,
+    /// subscriptions, delivery, retries, history, and acknowledgments.
+    ///
+    /// `Bind` resolves the peer independently. `Prepare` validates native plaintext
+    /// and returns signed ciphertext for product submission. `Open` authenticates
+    /// complete external statements and rejects reflected local output; it is not
+    /// an arbitrary decryption primitive. Incoming plaintext can contain incoming
+    /// bearer coin keys: persist the import intent securely and use generic payment
+    /// top-up before acknowledging. Wallet/device keys and outgoing main-purse
+    /// coin secrets never leave the Host.
+    ///
+    /// `Initialize` also advances private file transfers. Persist any legacy
+    /// migration view and ordinary prepared statements before `CommitMigration`.
+    /// `ContinueOpen` retrieves the next bounded page of an authenticated batch.
+    /// `ContinueState` retrieves remaining pages of a stable public state snapshot;
+    /// persist every page before committing its migration.
+    ///
+    /// Method 11 (the former raw-crypto interface) and method 12's former V1 actor
+    /// operations are retired, not forwarded. This boundary uses V2 payloads.
+    ///
+    /// ```ts
+    /// const result = await truapi.account.deviceChat({ tag: "Initialize" });
+    /// assert(result.isOk(), "deviceChat failed:", result);
+    /// console.log("Host-owned Chat device:", result.value.device);
+    /// ```
+    #[wire(id = 12)]
+    async fn product_device_chat(
+        &self,
+        _cx: &CallContext,
+        _request: HostProductDeviceChatRequest,
+    ) -> Result<HostProductDeviceChatResponse, CallError<HostProductDeviceChatError>> {
         Err(CallError::unavailable())
     }
 

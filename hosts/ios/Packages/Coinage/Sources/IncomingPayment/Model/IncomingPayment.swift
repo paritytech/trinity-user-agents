@@ -11,6 +11,9 @@ public struct IncomingPayment: Equatable, Sendable {
     public let paymentId: IncomingPaymentId
     /// The product this payment is bound to. `(productId, paymentId)` is the global identity.
     public let productId: String
+    /// Stable root/chain/instance owner. `nil` legacy records and their secrets need explicit recovery;
+    /// a new service preserves them without adopting, settling, or replacing them.
+    public let ownerId: Data?
     public let amount: Balance
     /// The retry window opened here; a resumed run finishes the window it was given.
     public let createdAt: Date
@@ -23,10 +26,12 @@ public struct IncomingPayment: Equatable, Sendable {
         productId: String,
         amount: Balance,
         createdAt: Date,
-        outcome: IncomingPaymentTerminalOutcome?
+        outcome: IncomingPaymentTerminalOutcome?,
+        ownerId: Data?
     ) {
         self.paymentId = paymentId
         self.productId = productId
+        self.ownerId = ownerId
         self.amount = amount
         self.createdAt = createdAt
         self.outcome = outcome

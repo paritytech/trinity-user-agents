@@ -2,10 +2,12 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use crate::platform::{
-    AuthPresenter, ChainProvider, CoreStorage, CoreStorageKey, DevicePermissionStatus, Features,
-    JsonRpcConnection, LocaleHost, Navigation, Notifications, PermissionDecision, Permissions,
-    PreimageHost, ProductContext, ProductOperations, ProductStorage, ProviderError, ThemeHost,
-    UserConfirmation, UserConfirmationReview, async_trait,
+    AuthPresenter, ChainProvider, CoinageWalletHost, CoreStorage, CoreStorageKey,
+    DevicePermissionStatus, Features, HopProvider, JsonRpcConnection, LocaleHost,
+    NativeChatFileExportRequest, NativeChatFilePickRequest, NativeChatFilesHost,
+    NativeChatPickedFile, NativeCoinageRequest, NativeCoinageResponse, Navigation, Notifications,
+    PermissionDecision, Permissions, PreimageHost, ProductContext, ProductOperations,
+    ProductStorage, ProviderError, ThemeHost, UserConfirmation, UserConfirmationReview, async_trait,
 };
 use futures::channel::mpsc;
 use futures::stream::{self, BoxStream, StreamExt};
@@ -16,11 +18,109 @@ use crate::host_logic::worker::WorkerTransition;
 use crate::{DevicePairingObserver, PairedSsoPeer};
 
 use super::callbacks::{
-    HostCallbacks, NativeChatCallbacks, NativeContactsCallbacks, NativeGameCallbacks,
+    HostCallbacks, NativeChatCallbacks, NativeCoinageCallbacks, NativeContactsCallbacks,
+    NativeGameCallbacks,
     NativePocketCallbacks, NativePocketRemoval,
 };
 use super::errors::HostRejection;
 use super::events::NativeEventBus;
+
+/// Host-selected process-wide native custody.
+pub struct NativeCoinageCallbackPlatform {
+    /// Wallet callbacks fixed at runtime construction.
+    pub callbacks: Arc<dyn NativeCoinageCallbacks>,
+}
+
+#[async_trait]
+impl CoinageWalletHost for NativeCoinageCallbackPlatform {
+    async fn native_coinage(
+        &self,
+        request: NativeCoinageRequest,
+    ) -> Result<NativeCoinageResponse, v01::GenericError> {
+        self.callbacks
+            .native_coinage(request)
+            .await
+            .map(|result| result.response)
+            .map_err(|_| v01::GenericError {
+                reason: "Native Coinage wallet operation failed".into(),
+            })
+    }
+}
+
+#[async_trait]
+impl NativeChatFilesHost for CallbackPlatform {
+    async fn pick_chat_files(
+        &self,
+        request: NativeChatFilePickRequest,
+    ) -> Result<Vec<NativeChatPickedFile>, v01::GenericError> {
+        self.callbacks.pick_chat_files(request).await.map_err(Into::into)
+    }
+
+    async fn read_chat_file(
+        &self,
+        source_id: String,
+        offset: u64,
+        length: u32,
+    ) -> Result<Vec<u8>, v01::GenericError> {
+        self.callbacks.read_chat_file(source_id, offset, length).await.map_err(Into::into)
+    }
+
+    async fn release_chat_file(&self, source_id: String) -> Result<(), v01::GenericError> {
+        self.callbacks.release_chat_file(source_id).await.map_err(Into::into)
+    }
+
+    async fn begin_chat_file_export(
+        &self,
+        request: NativeChatFileExportRequest,
+    ) -> Result<Option<String>, v01::GenericError> {
+        self.callbacks.begin_chat_file_export(request).await.map_err(Into::into)
+    }
+
+    async fn write_chat_file_export(
+        &self,
+        export_id: String,
+        offset: u64,
+        data: Vec<u8>,
+    ) -> Result<(), v01::GenericError> {
+        self.callbacks.write_chat_file_export(export_id, offset, data).await.map_err(Into::into)
+    }
+
+    async fn finish_chat_file_export(&self, export_id: String) -> Result<(), v01::GenericError> {
+        self.callbacks.finish_chat_file_export(export_id).await.map_err(Into::into)
+    }
+
+    async fn cancel_chat_file_export(&self, export_id: String) -> Result<(), v01::GenericError> {
+        self.callbacks.cancel_chat_file_export(export_id).await.map_err(Into::into)
+    }
+}
+
+#[async_trait]
+impl crate::platform::IdentityBackendHost for CallbackPlatform {
+    async fn identity_username_candidates(
+        &self,
+        username: String,
+        people_chain_genesis_hash: [u8; 32],
+    ) -> Result<Vec<[u8; 32]>, v01::GenericError> {
+        let candidates = self.callbacks
+            .identity_username_candidates(username, people_chain_genesis_hash.to_vec())
+            .await
+            .map_err(v01::GenericError::from)?;
+        decode_identity_candidates(candidates)
+    }
+}
+
+fn decode_identity_candidates(candidates: Vec<Vec<u8>>) -> Result<Vec<[u8; 32]>, v01::GenericError> {
+    if candidates.len() > 32 {
+        return Err(v01::GenericError {
+            reason: "too many username candidates".into(),
+        });
+    }
+    candidates.into_iter().map(|candidate| {
+        candidate.try_into().map_err(|_| v01::GenericError {
+            reason: "username candidate is not AccountId32".into(),
+        })
+    }).collect()
+}
 
 /// [`crate::platform::ContactsPlatform`] served by host-provided
 /// [`NativeContactsCallbacks`]; constructed only when the host passed one.
@@ -368,6 +468,7 @@ struct NativeJsonRpcConnection {
     events: Arc<NativeEventBus>,
     response_rx: Mutex<Option<mpsc::UnboundedReceiver<String>>>,
     closed: AtomicBool,
+    private_rpc: bool,
 }
 
 impl JsonRpcConnection for NativeJsonRpcConnection {
@@ -378,8 +479,13 @@ impl JsonRpcConnection for NativeJsonRpcConnection {
         if let Err(err) = self.callbacks.chain_send(self.id, request) {
             self.callbacks.on_core_log(
                 "truapi.native.callback.chain_send_failed".to_string(),
-                err.to_string(),
+                if self.private_rpc {
+                    "HOP send failed".to_string()
+                } else {
+                    err.to_string()
+                },
             );
+            self.close();
         }
     }
 
@@ -405,7 +511,11 @@ impl JsonRpcConnection for NativeJsonRpcConnection {
         if let Err(err) = self.callbacks.chain_close(self.id) {
             self.callbacks.on_core_log(
                 "truapi.native.callback.chain_close_failed".to_string(),
-                err.to_string(),
+                if self.private_rpc {
+                    "HOP close failed".to_string()
+                } else {
+                    err.to_string()
+                },
             );
         }
     }
@@ -443,10 +553,59 @@ impl ChainProvider for CallbackPlatform {
             events: self.events.clone(),
             response_rx: Mutex::new(response_rx),
             closed: AtomicBool::new(false),
+            private_rpc: false,
         };
         if !registered {
             return Err(ProviderError::Host {
                 reason: "chain connection closed during setup".to_string(),
+            });
+        }
+        Ok(Box::new(connection))
+    }
+}
+
+#[async_trait]
+impl HopProvider for CallbackPlatform {
+    async fn allowed_hop_endpoints(
+        &self,
+        bulletin_genesis_hash: [u8; 32],
+    ) -> Result<Vec<String>, v01::GenericError> {
+        self.callbacks
+            .allowed_hop_endpoints(bulletin_genesis_hash.to_vec())
+            .await
+            .map_err(v01::GenericError::from)
+    }
+
+    async fn connect_hop(
+        &self,
+        bulletin_genesis_hash: [u8; 32],
+        endpoint: String,
+    ) -> Result<Box<dyn JsonRpcConnection>, v01::GenericError> {
+        let allowed = self.allowed_hop_endpoints(bulletin_genesis_hash).await?;
+        crate::platform::ensure_allowed_hop_endpoint(&endpoint, &allowed)?;
+        let close_generation = self.events.chain_close_generation();
+        let Some(connection_id) = self
+            .callbacks
+            .hop_connect(bulletin_genesis_hash.to_vec(), endpoint)
+            .map_err(v01::GenericError::from)?
+        else {
+            return Err(v01::GenericError {
+                reason: "HOP provider unavailable".to_string(),
+            });
+        };
+        let response_rx = self.events.register_chain(connection_id, close_generation);
+        let registered = response_rx.is_some();
+        let connection = NativeJsonRpcConnection {
+            id: connection_id,
+            callbacks: self.callbacks.clone(),
+            events: self.events.clone(),
+            response_rx: Mutex::new(response_rx),
+            closed: AtomicBool::new(false),
+            private_rpc: true,
+        };
+        if !registered {
+            return Err(v01::GenericError {
+                reason: "HOP connection closed during setup".to_string(),
             });
         }
         Ok(Box::new(connection))
@@ -721,5 +880,21 @@ impl crate::platform::GamePlatform for GameCallbackPlatform {
             .cancel_reminder()
             .await
             .map_err(v01::GenericError::from)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::decode_identity_candidates;
+
+    #[test]
+    fn native_identity_candidates_reject_malformed_accounts_and_oversized_sets() {
+        assert_eq!(
+            decode_identity_candidates(vec![vec![3; 32]]).unwrap(),
+            vec![[3; 32]]
+        );
+        assert!(decode_identity_candidates(vec![vec![3; 31]]).is_err());
+        assert!(decode_identity_candidates(vec![vec![3; 33]]).is_err());
+        assert!(decode_identity_candidates(vec![vec![3; 32]; 33]).is_err());
     }
 }

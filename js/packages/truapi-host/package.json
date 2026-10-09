@@ -2,7 +2,7 @@
   "name": "@parity/truapi-host",
   "version": "0.24.0",
   "description": "WASM-backed TrUAPI host runtime: embeds the Rust core, with web iframe and Web Worker entry points",
-  "license": "MIT",
+  "license": "MIT AND AGPL-3.0-only",
   "author": "Parity Technologies <admin@parity.io>",
   "repository": {
     "type": "git",
@@ -76,7 +76,9 @@
     "!dist/**/*.wasm.gz",
     "!dist/**/*.wasm.br",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    "LICENSE-AGPL-3.0",
+    "NOTICE"
   ],
   "scripts": {
     "build": "tsc -b && node scripts/build-cjs.mjs",

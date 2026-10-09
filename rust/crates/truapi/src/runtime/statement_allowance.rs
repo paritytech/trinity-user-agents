@@ -24,7 +24,7 @@ pub mod slot;
 #[cfg(test)]
 mod test_fixtures;
 mod view;
-mod view_cache;
+pub(crate) mod view_cache;
 
 pub use view::ViewFunctionError;
 
@@ -81,6 +81,9 @@ pub enum StatementAllowanceError {
     /// Bulletin allowance polling timed out.
     #[error("timed out waiting for Bulletin authorization")]
     BulletinAuthorizationTimeout,
+    /// The authority session changed while a long-term-storage claim was pending.
+    #[error("allowance claim session is no longer active")]
+    SessionInvalidated,
 }
 
 /// Error while decoding generic chain state used by allowance registration.
@@ -1047,8 +1050,12 @@ pub async fn register_statement_account_pooled(
 
 /// Claim long-term Bulletin storage authorization for `target`, proving
 /// membership in the already-located `ring`, at People-chain `period`.
+///
+/// Recheck the authority session after chain reads and immediately before proof
+/// construction and submission, including every duplicate-counter retry.
 pub async fn claim_long_term_storage(
     params: LongTermStorageClaim<'_>,
+    session_is_current: impl Fn() -> bool,
 ) -> Result<LongTermStorageOutcome, StatementAllowanceError> {
     let LongTermStorageClaim {
         rpc,
@@ -1060,6 +1067,14 @@ pub async fn claim_long_term_storage(
         period,
         ring,
     } = params;
+    let require_current_session = || {
+        if session_is_current() {
+            Ok(())
+        } else {
+            Err(StatementAllowanceError::SessionInvalidated)
+        }
+    };
+    require_current_session()?;
     let revision = ring::read_ring_revision(
         rpc,
         metadata,
@@ -1070,6 +1085,7 @@ pub async fn claim_long_term_storage(
     .await?;
     let mut skipped_duplicate_counters = Vec::new();
     loop {
+        require_current_session()?;
         let counter = slot::scan_long_term_storage_counter_excluding(
             rpc,
             metadata,
@@ -1085,6 +1101,7 @@ pub async fn claim_long_term_storage(
             extrinsic::build_claim_long_term_storage_call(metadata, period, counter, target)?;
         let message = extension::build_proof_message(metadata, &call, chain_state)?;
         let domain = proof::domain_for_ring_exponent(ring.exponent)?;
+        require_current_session()?;
         let ring_proof =
             proof::ring_vrf_proof(domain, entropy, &ring.members, &context, &message).await?;
         let as_resources_extra = extrinsic::build_long_term_storage_extra(
@@ -1104,6 +1121,7 @@ pub async fn claim_long_term_storage(
             "submitting Bulletin long-term-storage claim"
         );
 
+        require_current_session()?;
         match rpc.submit_and_watch(&extrinsic).await {
             Ok(block_hash) => {
                 return Ok(LongTermStorageOutcome::Claimed {

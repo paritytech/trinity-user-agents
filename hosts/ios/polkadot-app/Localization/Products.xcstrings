@@ -265,6 +265,34 @@
         }
       }
     },
+    "app.permission.statementStoreAllowance.title": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Statement Store allowance"
+          }
+        }
+      }
+    },
+    "app.permission.chatAuthority.title": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Chat identity authority"
+          }
+        },
+        "es-ES": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Autoridad de identidad de Chat"
+          }
+        }
+      }
+    },
     "app.permission.userIdentity.title": {
       "extractionState": "manual",
       "localizations": {
@@ -540,6 +568,56 @@
         }
       }
     },
+    "permission.body.statementStoreAllowance.legacy": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Allows this product to provision Statement Store allowance for its legacy allowance account."
+          }
+        }
+      }
+    },
+    "permission.body.statementStoreAllowance.index": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Allows this product to provision Statement Store allowance for product account index %1$(index)@."
+          }
+        }
+      }
+    },
+    "permission.body.statementStoreAllowance.raw": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Allows this product to provision Statement Store allowance for raw product account selector %1$(selector)@."
+          }
+        }
+      }
+    },
+    "permission.body.chatAuthority": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Allows this product to bind its device account to your wallet Chat identity and encrypt or decrypt Chat routing data."
+          }
+        },
+        "es-ES": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Permite que este producto vincule su cuenta de dispositivo a la identidad de Chat de tu cartera y cifre o descifre los datos de enrutamiento de Chat."
+          }
+        }
+      }
+    },
     "permission.body.userIdentityAccess": {
       "extractionState": "manual",
       "localizations": {
@@ -767,6 +845,34 @@
           "stringUnit": {
             "state": "translated",
             "value": "%1$(productId)@ would like to access account data"
+          }
+        }
+      }
+    },
+    "permission.title.statementStoreAllowance": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$(productId)@ would like to provision Statement Store allowance"
+          }
+        }
+      }
+    },
+    "permission.title.chatAuthority": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$(productId)@ would like to use your Chat identity authority"
+          }
+        },
+        "es-ES": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$(productId)@ quiere usar tu autoridad de identidad de Chat"
           }
         }
       }

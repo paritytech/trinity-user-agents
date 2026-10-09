@@ -703,7 +703,7 @@ mod tests {
 
     /// Run `scan_slot_excluding` for `[0x22; 32]` against a scripted period
     /// whose slot occupancy is `slots`.
-    fn scripted_find(slots: &[Option<[u8; 32]>]) -> SlotSelection {
+    fn scripted_find(slots: &[Option<[u8; 32]>], reuse_existing: bool) -> SlotSelection {
         let metadata = test_fixtures::people();
         let entries: Vec<String> = slots
             .iter()
@@ -722,10 +722,21 @@ mod tests {
                 period: 7,
                 target: &[0x22; 32],
                 excluded: &[],
-                reuse_existing: true,
+                reuse_existing,
             },
         ))
         .unwrap()
+    }
+
+    #[test]
+    fn an_explicit_increase_chooses_an_additional_slot_instead_of_reusing_quota() {
+        let mut slots = [None; SLOTS];
+        slots[0] = Some([0x22; 32]);
+        assert_eq!(
+            scripted_find(&slots, true),
+            SlotSelection::AlreadyAllocated(0)
+        );
+        assert_eq!(scripted_find(&slots, false), SlotSelection::Free(1));
     }
 
     /// The scan bound is whatever Asset Hub declares, not a compiled-in constant,
@@ -749,7 +760,7 @@ mod tests {
 
     #[test]
     fn an_empty_period_offers_the_first_slot() {
-        assert_eq!(scripted_find(&[None; SLOTS]), SlotSelection::Free(0));
+        assert_eq!(scripted_find(&[None; SLOTS], true), SlotSelection::Free(0));
     }
 
     #[test]
@@ -757,7 +768,10 @@ mod tests {
         let mut slots = [None; SLOTS];
         slots[2] = Some([0x22; 32]);
 
-        assert_eq!(scripted_find(&slots), SlotSelection::AlreadyAllocated(2));
+        assert_eq!(
+            scripted_find(&slots, true),
+            SlotSelection::AlreadyAllocated(2)
+        );
     }
 
     /// The whole row is read in one round trip. One request per slot, one after
@@ -796,7 +810,7 @@ mod tests {
 
     #[test]
     fn a_table_filled_by_other_accounts_reports_full_rather_than_erroring() {
-        let SlotSelection::Full { max, occupied } = scripted_find(&[Some([0x99; 32]); SLOTS])
+        let SlotSelection::Full { max, occupied } = scripted_find(&[Some([0x99; 32]); SLOTS], true)
         else {
             panic!("a full table should report Full");
         };

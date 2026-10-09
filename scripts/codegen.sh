@@ -28,6 +28,8 @@
 #
 # The client surface defaults to the latest wire version any versioned
 # wrapper exposes; pass `--client-version V<N>` to pin to an older one.
+# The codec version defaults to truapi::WIRE_CODEC_VERSION in the generator;
+# do not pin normal generation separately from the Host's handshake constant.
 #
 # Run from the repo root.
 

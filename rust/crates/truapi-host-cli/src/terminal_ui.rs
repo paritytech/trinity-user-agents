@@ -358,6 +358,12 @@ enum UiEvent {
         kind: ApprovalKind,
         response: oneshot::Sender<PermissionDecision>,
     },
+    ChatFiles {
+        detail: String,
+        max_files: u32,
+        export: bool,
+        response: oneshot::Sender<Option<Vec<PathBuf>>>,
+    },
     Connection(String),
     Session {
         name: String,
@@ -670,6 +676,26 @@ impl UiHandle {
             return PermissionDecision::Deny;
         }
         answer.await.unwrap_or(PermissionDecision::Deny)
+    }
+
+    /// Collect paths only through the existing terminal event owner. Input is
+    /// never submitted to command history, the transcript, or another reader.
+    pub async fn chat_file_paths(
+        &self,
+        detail: String,
+        max_files: u32,
+        export: bool,
+    ) -> Result<Option<Vec<PathBuf>>> {
+        let (response, answer) = oneshot::channel();
+        self.sender
+            .send(UiEvent::ChatFiles {
+                detail,
+                max_files,
+                export,
+                response,
+            })
+            .map_err(|_| anyhow::anyhow!("Chat file terminal UI is unavailable"))?;
+        answer.await.context("Chat file terminal UI closed")
     }
 }
 
@@ -1004,6 +1030,10 @@ impl ActiveTerminalUi {
                         return Ok(DriveResult::Cancelled);
                     };
                     let event = event.context("read terminal event")?;
+                    if self.app.pending_chat_files.is_some() {
+                        self.app.handle_busy_event(event);
+                        continue;
+                    }
                     match pairing_image_request(&event) {
                         Some(PairingImageRequest::Clipboard) => {
                             match self.read_clipboard_image() {
@@ -1072,6 +1102,14 @@ impl ActiveTerminalUi {
     }
 
     fn draw(&mut self) -> Result<()> {
+        if self
+            .app
+            .pending_chat_files
+            .as_ref()
+            .is_some_and(|pending| pending.response.is_closed())
+        {
+            self.app.answer_chat_files(true);
+        }
         let app = &mut self.app;
         self.terminal
             .as_mut()
@@ -1276,6 +1314,14 @@ struct PendingApproval {
     saved_input: String,
 }
 
+struct PendingChatFiles {
+    response: oneshot::Sender<Option<Vec<PathBuf>>>,
+    saved_input: String,
+    paths: Vec<PathBuf>,
+    max_files: u32,
+    export: bool,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum HostRole {
     Pairing,
@@ -1292,6 +1338,7 @@ struct App {
     entries: VecDeque<FeedItem>,
     editor: CommandEditor,
     pending_approval: Option<PendingApproval>,
+    pending_chat_files: Option<PendingChatFiles>,
     busy: Option<String>,
     scroll_from_bottom: usize,
     transcript_height: usize,
@@ -1354,6 +1401,7 @@ impl App {
             entries: VecDeque::new(),
             editor,
             pending_approval: None,
+            pending_chat_files: None,
             busy: None,
             scroll_from_bottom: 0,
             transcript_height: 1,
@@ -1607,7 +1655,7 @@ impl App {
                 kind,
                 response,
             } => {
-                if self.pending_approval.is_some() {
+                if self.pending_approval.is_some() || self.pending_chat_files.is_some() {
                     let _ = response.send(PermissionDecision::Deny);
                     self.notice(
                         NoticeTone::Error,
@@ -1631,6 +1679,48 @@ impl App {
                     kind,
                     response,
                     saved_input,
+                });
+            }
+            UiEvent::ChatFiles {
+                detail,
+                max_files,
+                export,
+                response,
+            } => {
+                if self.pending_approval.is_some()
+                    || self.pending_chat_files.is_some()
+                    || max_files == 0
+                {
+                    // Dropping the sender reports unavailable, not user cancellation.
+                    return;
+                }
+                let saved_input = self.editor.text();
+                self.editor.clear();
+                self.notice(
+                    NoticeTone::Info,
+                    if export {
+                        "Export Chat attachment"
+                    } else {
+                        "Select Chat attachments"
+                    }
+                    .to_string(),
+                    Some(detail),
+                );
+                self.notice(
+                    NoticeTone::Info,
+                    if export {
+                        "Enter a new destination file path (without shell quotes). Existing files are never overwritten."
+                    } else {
+                        "Enter one file path at a time (without shell quotes). Empty Enter confirms the selection; Esc cancels."
+                    }.to_string(),
+                    None,
+                );
+                self.pending_chat_files = Some(PendingChatFiles {
+                    response,
+                    saved_input,
+                    paths: Vec::new(),
+                    max_files,
+                    export,
                 });
             }
         }
@@ -1664,7 +1754,7 @@ impl App {
                 Some(format!(
                     "{url}\n{}",
                     if auto_accept {
-                        "Confirmations are approved automatically"
+                        "Non-payment confirmations are approved automatically; main-purse payments require a terminal review and are denied here"
                     } else {
                         "Confirmations will be denied: there is no terminal to prompt on, so pass --auto-accept"
                     }
@@ -2004,6 +2094,10 @@ impl App {
                 if self.handle_scroll_key(key) {
                     return None;
                 }
+                if self.pending_chat_files.is_some() {
+                    self.handle_chat_files_key(key);
+                    return None;
+                }
                 if self.pending_approval.is_some() {
                     self.handle_approval_key(key);
                     return None;
@@ -2028,6 +2122,10 @@ impl App {
                 if self.handle_scroll_key(key) {
                     return false;
                 }
+                if self.pending_chat_files.is_some() {
+                    self.handle_chat_files_key(key);
+                    return false;
+                }
                 if self.pending_approval.is_some() {
                     self.handle_approval_key(key);
                     return false;
@@ -2048,6 +2146,14 @@ impl App {
     }
 
     fn insert_paste(&mut self, text: &str) {
+        if self.pending_chat_files.is_some() && text.chars().any(char::is_control) {
+            self.notice(
+                NoticeTone::Warning,
+                "Paste one path without control characters".to_string(),
+                None,
+            );
+            return;
+        }
         for character in text.chars().filter(|character| !character.is_control()) {
             self.editor.insert(character);
         }
@@ -2113,6 +2219,66 @@ impl App {
             _ => {}
         }
         None
+    }
+
+    fn handle_chat_files_key(&mut self, key: KeyEvent) {
+        let control = key.modifiers.contains(KeyModifiers::CONTROL);
+        match (control, key.code) {
+            (false, KeyCode::Esc) | (true, KeyCode::Char('c')) => self.answer_chat_files(true),
+            (false, KeyCode::Enter) => {
+                let text = self.editor.text();
+                if text.is_empty() {
+                    self.answer_chat_files(false);
+                    return;
+                }
+                let pending = self
+                    .pending_chat_files
+                    .as_mut()
+                    .expect("active file prompt");
+                if pending.paths.len() >= pending.max_files as usize {
+                    self.editor.clear();
+                    self.notice(
+                        NoticeTone::Warning,
+                        "Selection limit reached; empty Enter confirms, Esc cancels".to_string(),
+                        None,
+                    );
+                    return;
+                }
+                pending.paths.push(PathBuf::from(text));
+                let export = pending.export;
+                let count = pending.paths.len();
+                self.editor.clear();
+                if export {
+                    self.answer_chat_files(false);
+                } else {
+                    self.notice(
+                        NoticeTone::Info,
+                        format!("{count} Chat file(s) selected"),
+                        None,
+                    );
+                }
+            }
+            (false, KeyCode::Char(character)) if !character.is_control() => {
+                self.editor.insert(character)
+            }
+            (false, KeyCode::Backspace) => self.editor.backspace(),
+            (false, KeyCode::Delete) => self.editor.delete(),
+            (false, KeyCode::Left) => self.editor.left(),
+            (false, KeyCode::Right) => self.editor.right(),
+            (false, KeyCode::Home) => self.editor.home(),
+            (false, KeyCode::End) => self.editor.end(),
+            _ => {}
+        }
+    }
+
+    fn answer_chat_files(&mut self, cancelled: bool) {
+        let Some(pending) = self.pending_chat_files.take() else {
+            return;
+        };
+        self.editor.clear();
+        self.editor.set_text(pending.saved_input);
+        let paths = (!cancelled && !pending.paths.is_empty()).then_some(pending.paths);
+        let _ = pending.response.send(paths);
     }
 
     fn handle_approval_key(&mut self, key: KeyEvent) {
@@ -2219,7 +2385,7 @@ impl App {
 }
 
 fn render(frame: &mut ratatui::Frame<'_>, app: &mut App) {
-    let completions = if app.pending_approval.is_some() {
+    let completions = if app.pending_approval.is_some() || app.pending_chat_files.is_some() {
         Vec::new()
     } else {
         app.editor.completions()
@@ -2367,7 +2533,11 @@ fn render(frame: &mut ratatui::Frame<'_>, app: &mut App) {
 
     let approval = app.pending_approval.is_some();
     let raw_input = app.editor.text();
-    let input = mask_mnemonic(&raw_input).unwrap_or(raw_input);
+    let input = if app.pending_chat_files.is_some() {
+        raw_input
+    } else {
+        mask_mnemonic(&raw_input).unwrap_or(raw_input)
+    };
     let prompt_area = Rect::new(
         composer_content_area.x,
         surface_area
@@ -2381,21 +2551,22 @@ fn render(frame: &mut ratatui::Frame<'_>, app: &mut App) {
         app.editor.cursor(),
         prompt_area.width.saturating_sub(2),
     );
-    let (prompt_text, prompt_style) = if input.is_empty() && !approval {
-        (
-            "Type / for commands".to_string(),
-            Style::default().add_modifier(Modifier::DIM),
-        )
-    } else {
-        (
-            viewport.text,
-            if approval {
-                Style::default().add_modifier(Modifier::BOLD)
-            } else {
-                Style::default()
-            },
-        )
-    };
+    let (prompt_text, prompt_style) =
+        if input.is_empty() && !approval && app.pending_chat_files.is_none() {
+            (
+                "Type / for commands".to_string(),
+                Style::default().add_modifier(Modifier::DIM),
+            )
+        } else {
+            (
+                viewport.text,
+                if approval {
+                    Style::default().add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default()
+                },
+            )
+        };
     frame.render_widget(
         Paragraph::new(Line::from(vec![
             Span::styled(
@@ -2465,6 +2636,13 @@ fn composer_status_line(
 }
 
 fn footer_text(app: &App, approval: bool, autocomplete: bool, width: u16) -> String {
+    if let Some(pending) = &app.pending_chat_files {
+        return if pending.export {
+            "Enter destination · Esc cancel".to_string()
+        } else {
+            "Enter add path · empty Enter finish · Esc cancel".to_string()
+        };
+    }
     if approval {
         let choices = app
             .pending_approval
@@ -3278,6 +3456,69 @@ mod tests {
                 (Ok(expected), "/script draft.ts".to_string(), true)
             );
         }
+    }
+
+    #[test]
+    fn chat_file_paths_are_private_and_restore_the_command_draft() {
+        let mut app = test_app();
+        app.editor.set_text("/script draft.ts");
+        let (response, answer) = oneshot::channel();
+        app.handle_event(UiEvent::ChatFiles {
+            detail: "Send files to a Chat peer".to_string(),
+            max_files: 1,
+            export: false,
+            response,
+        });
+        app.handle_idle_event(Event::Paste("/private/selected file".to_string()));
+        app.handle_idle_event(Event::Key(KeyEvent::new(
+            KeyCode::Enter,
+            KeyModifiers::NONE,
+        )));
+        app.handle_idle_event(Event::Paste("/private/too many".to_string()));
+        app.handle_idle_event(Event::Key(KeyEvent::new(
+            KeyCode::Enter,
+            KeyModifiers::NONE,
+        )));
+        app.handle_idle_event(Event::Key(KeyEvent::new(
+            KeyCode::Enter,
+            KeyModifiers::NONE,
+        )));
+        assert_eq!(
+            answer.blocking_recv().unwrap(),
+            Some(vec![PathBuf::from("/private/selected file")])
+        );
+        assert_eq!(app.editor.text(), "/script draft.ts");
+        assert!(!app.transcript_text().contains("/private/"));
+        app.editor.up();
+        assert!(!app.editor.text().contains("/private/"));
+    }
+
+    #[test]
+    fn chat_file_cancellation_discards_paths_without_answering_an_approval() {
+        let mut app = test_app();
+        let (response, answer) = oneshot::channel();
+        app.handle_event(UiEvent::ChatFiles {
+            detail: String::new(),
+            max_files: 2,
+            export: false,
+            response,
+        });
+        app.handle_busy_event(Event::Paste("/private/file".to_string()));
+        app.handle_busy_event(Event::Key(KeyEvent::new(
+            KeyCode::Enter,
+            KeyModifiers::NONE,
+        )));
+        let (response, approval) = oneshot::channel();
+        app.handle_event(UiEvent::Approval {
+            action: "pay".to_string(),
+            detail: String::new(),
+            kind: ApprovalKind::Action,
+            response,
+        });
+        assert_eq!(approval.blocking_recv().unwrap(), PermissionDecision::Deny);
+        app.handle_busy_event(Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)));
+        assert_eq!(answer.blocking_recv().unwrap(), None);
+        assert!(!app.transcript_text().contains("/private/"));
     }
 
     #[test]

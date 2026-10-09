@@ -45,7 +45,7 @@ struct UnloadIntoCoinsStrategy {
 // MARK: - TransferStrategy
 
 extension UnloadIntoCoinsStrategy: TransferStrategy {
-    func prepare() async throws -> PreparedStrategy {
+    func prepare(native: NativeTransferRequest?) async throws -> PreparedStrategy {
         guard !perGroupAllocations.isEmpty else {
             throw TransferStrategyError.emptyVouchers
         }
@@ -95,10 +95,8 @@ extension UnloadIntoCoinsStrategy: TransferStrategy {
         logger?.info("Declared \(scheduled.count) unload(s) for \(allVouchers.count) vouchers")
 
         // Ready coins need no submission; every group's recipient coins leave to the peer. Change
-        // coins stay ours. All pre-committed before the memo can leave.
+        // coins stay ours. All reserved before the memo can leave.
         let handedOff = readyCoins + realizedGroups.flatMap(\.recipientCoins)
-        let handoffCommit = try await txService
-            .preCommitHandoff(handedOff.map { .coin($0.derivationIndex, $0.publicKey) })
 
         var memoEntries = readyCoins.map {
             PlannedMemoEntry(
@@ -114,10 +112,11 @@ extension UnloadIntoCoinsStrategy: TransferStrategy {
             }
         }
 
-        return PreparedStrategy(
+        return try await txService.prepareTransfer(
+            handingOff: handedOff,
             memoEntries: memoEntries,
-            handoffCommit: handoffCommit,
-            transactions: scheduled
+            transactions: scheduled,
+            native: native
         )
     }
 }

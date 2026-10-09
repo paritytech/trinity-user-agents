@@ -30,6 +30,22 @@ protocol TransferSenderServicing: Actor {
         breakdownContext: DenominationBreakdownContext,
         groupId: CoinageTxGroupId
     ) async throws -> PreparedTransfer
+
+    /// Native custody: registers the transfer's transactions under `groupId` and retains its recipient
+    /// custody in one write, after `authorization` passes inside it. Replaying `custodyId` returns the
+    /// retained memo without allocating or spending again.
+    func execute(
+        result: CoinSelectionResult,
+        breakdownContext: DenominationBreakdownContext,
+        groupId: CoinageTxGroupId?,
+        custodyId: String,
+        authorization: @escaping @Sendable () throws -> Void
+    ) async throws -> PreparedTransfer
+
+    func retainedTransfer(
+        custodyId: String,
+        breakdownContext: DenominationBreakdownContext
+    ) async throws -> PreparedTransfer?
 }
 
 /// Orchestrates the complete coin transfer sender flow.
@@ -89,43 +105,63 @@ extension TransferSenderService: TransferSenderServicing {
         groupId: CoinageTxGroupId
     ) async throws -> PreparedTransfer {
         try await markStallActivity("Execute transfer") {
-            let plan: TransferPlan
-            do {
-                plan = try await planFactory.createPlan(for: result)
-            } catch {
-                logger?.error("Plan creation failed: \(error)")
-                throw TransferSenderServiceError.planCreationFailed(error)
-            }
-
-            // Mint outputs (persisted by the allocator), fire the background-tracked submission, and
-            // pre-commit the handoff — everything that must land before the memo (the keys) can leave.
-            // A failure leaves registered entries and a provisional handoff, both resolved by the
-            // recovery pass / relaunch.
-            let prepared: PreparedStrategy
-            do {
-                prepared = try await plan.strategy.prepare()
-            } catch {
-                logger?.error("Strategy preparation failed: \(error)")
-                throw TransferSenderServiceError.strategyFailed(error)
-            }
-
-            // Memo is built from what `prepare` just minted.
-            let memo: TransferMemo
-            do {
-                memo = try memoBuilder.buildMemo(from: prepared.memoEntries, breakdownContext: breakdownContext)
-            } catch {
-                logger?.error("Memo building failed: \(error)")
-                throw TransferSenderServiceError.memoBuildingFailed(error)
-            }
+            let prepared = try await prepare(result: result, breakdownContext: breakdownContext, native: nil)
 
             return PreparedTransfer(
-                memo: memo,
-                handoffCommit: prepared.handoffCommit,
-                transactions: prepared.transactions,
+                memo: prepared.memo,
+                handoffCommit: prepared.strategy.handoffCommit,
+                transactions: prepared.strategy.transactions,
                 groupId: groupId,
                 txService: txService
             )
         }
+    }
+
+    func execute(
+        result: CoinSelectionResult,
+        breakdownContext: DenominationBreakdownContext,
+        groupId: CoinageTxGroupId?,
+        custodyId: String,
+        authorization: @escaping @Sendable () throws -> Void
+    ) async throws -> PreparedTransfer {
+        try await markStallActivity("Execute transfer") {
+            try Task.checkCancellation()
+            guard !custodyId.isEmpty else { throw NativeTransferCustodyError.invalidRecord }
+            if let retained = try await retainedTransfer(custodyId: custodyId, breakdownContext: breakdownContext) {
+                try validateNativeAmount(retained.memo, result: result, context: breakdownContext)
+                return retained
+            }
+            try Task.checkCancellation()
+
+            let native = NativeTransferRequest(custodyId: custodyId, groupId: groupId, authorization: authorization)
+            let prepared: (strategy: PreparedStrategy, memo: TransferMemo)
+            do {
+                prepared = try await prepare(result: result, breakdownContext: breakdownContext, native: native)
+            } catch let TransferSenderServiceError.strategyFailed(error) {
+                // Registration may have committed before the failure surfaced; a retained identity is
+                // returned, never spent a second time.
+                try Task.checkCancellation()
+                if let retained = try await retainedTransfer(custodyId: custodyId, breakdownContext: breakdownContext) {
+                    try validateNativeAmount(retained.memo, result: result, context: breakdownContext)
+                    return retained
+                }
+                throw TransferSenderServiceError.strategyFailed(error)
+            }
+            try Task.checkCancellation()
+            try validateNativeAmount(prepared.memo, result: result, context: breakdownContext)
+
+            return PreparedTransfer(memo: prepared.memo, retaining: prepared.strategy.handoffCommit)
+        }
+    }
+
+    func retainedTransfer(
+        custodyId: String,
+        breakdownContext: DenominationBreakdownContext
+    ) async throws -> PreparedTransfer? {
+        guard let retained = try await txService.retainedNativeTransfer(custodyId: custodyId) else { return nil }
+        try Task.checkCancellation()
+        let memo = try memoBuilder.buildMemo(from: retained.custody.memoEntries, breakdownContext: breakdownContext)
+        return PreparedTransfer(memo: memo, retaining: retained.handoffCommit)
     }
 
     func previewStrategy(
@@ -143,5 +179,64 @@ extension TransferSenderService: TransferSenderServicing {
         )
 
         return try await coinSelector.selectCoins(input)
+    }
+}
+
+private extension TransferSenderService {
+    /// Plans, mints and reserves the handoff, then builds the memo from what was minted. Native
+    /// failures are not logged here; their caller decides whether a retained transfer answers them.
+    func prepare(
+        result: CoinSelectionResult,
+        breakdownContext: DenominationBreakdownContext,
+        native: NativeTransferRequest?
+    ) async throws -> (strategy: PreparedStrategy, memo: TransferMemo) {
+        let plan: TransferPlan
+        do {
+            plan = try await planFactory.createPlan(for: result)
+        } catch {
+            if native == nil { logger?.error("Plan creation failed: \(error)") }
+            throw TransferSenderServiceError.planCreationFailed(error)
+        }
+
+        // Mint outputs (persisted by the allocator) and reserve the handoff — everything that must land
+        // before the memo (the keys) can leave. Normal transports keep a provisional handoff until their
+        // carrying payload is durable; native custody is committed with its transactions here.
+        let prepared: PreparedStrategy
+        do {
+            if native != nil { try Task.checkCancellation() }
+            prepared = try await plan.strategy.prepare(native: native)
+        } catch {
+            if native == nil { logger?.error("Strategy preparation failed: \(error)") }
+            throw TransferSenderServiceError.strategyFailed(error)
+        }
+
+        // Memo is built from what `prepare` just minted.
+        let memo: TransferMemo
+        do {
+            memo = try memoBuilder.buildMemo(from: prepared.memoEntries, breakdownContext: breakdownContext)
+        } catch {
+            if native == nil { logger?.error("Memo building failed: \(error)") }
+            throw TransferSenderServiceError.memoBuildingFailed(error)
+        }
+
+        return (prepared, memo)
+    }
+
+    func validateNativeAmount(
+        _ memo: TransferMemo,
+        result: CoinSelectionResult,
+        context: DenominationBreakdownContext
+    ) throws {
+        let exponents: [Int16]
+        switch result {
+        case let .exactMatch(coins):
+            exponents = coins.map(\.exponent)
+        case let .split(wholeCoins, _, targetDenominations, _):
+            exponents = wholeCoins.map(\.exponent) + targetDenominations.map(\.exponent)
+        case let .unloadIntoCoins(coins, allocations):
+            exponents = coins.map(\.exponent) + allocations.flatMap { $0.recipientDenominations.map(\.exponent) }
+        }
+        let expected = exponents.reduce(BigUInt.zero) { $0 + context.valueInPlanks(for: $1) }
+        guard memo.totalValue == expected else { throw NativeTransferCustodyError.amountMismatch }
     }
 }

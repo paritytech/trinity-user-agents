@@ -62,7 +62,7 @@ const BULLETIN_AUTHORIZATION_WAIT: std::time::Duration = std::time::Duration::fr
 /// Upper bound on undecodable request ids acknowledged within one serve loop.
 const MAX_DECODE_FAILURE_REQUEST_IDS: usize = 1024;
 
-fn derive_responder_identity(
+pub(super) fn derive_responder_identity(
     entropy: &[u8],
     network_suffix: &str,
 ) -> Result<(ResponderIdentity, [u8; 32]), ProductAccountError> {
@@ -295,6 +295,9 @@ impl AllowanceAllocationError {
     pub fn into_authority_error(self) -> AuthorityError {
         match self {
             Self::Authority(err) => err,
+            Self::StatementAllowance(StatementAllowanceError::SessionInvalidated) => {
+                AuthorityError::Disconnected
+            }
             other => AuthorityError::Unavailable {
                 reason: other.to_string(),
             },
@@ -471,7 +474,11 @@ async fn submit_handshake_answer(
         handshake.encode(),
         fresh_statement_expiry(),
     )?;
-    services.statement_store.submit(statement, context).await
+    services
+        .statement_store
+        .submit(statement, context)
+        .await
+        .map_err(|error| error.to_string())
 }
 
 /// The identity and peer a pairing notice went out under.
@@ -948,28 +955,76 @@ pub async fn allocate_statement_store_allowance(
     product_id: &str,
     policy: OnExistingAllowancePolicy,
 ) -> Result<StatementStoreAllocation, AllowanceAllocationError> {
-    use super::allowance_renewal::{self, StatementRenewalTarget};
+    signing_host.require_current_session(session)?;
+    let entropy = signing_host.root_entropy()?;
+    let allowance =
+        derive_sr25519_hard_path(&entropy, &["allowance", "statement-store", product_id])?;
+    // The key is derived locally; only its registration needs the chain. A host
+    // answering allocation as granted hands back the derived key so a product
+    // can sign with it, and skips the registration, so nothing it signs is
+    // accepted by a real statement store.
+    #[cfg(feature = "test-host")]
+    if signing_host.grants_allowances_unchecked() {
+        return Ok(StatementStoreAllocation {
+            secret: allowance.secret.to_bytes().to_vec(),
+            period: crate::runtime::statement_allowance::slot::current_period(current_unix_secs()?),
+        });
+    }
+    let period = register_statement_store_target(
+        services,
+        signing_host,
+        session,
+        product_id,
+        allowance.public.to_bytes(),
+        policy,
+    )
+    .await?;
+    signing_host.require_current_session(session)?;
+    Ok(StatementStoreAllocation {
+        secret: allowance.secret.to_bytes().to_vec(),
+        period,
+    })
+}
+
+pub(super) async fn allocate_product_statement_store_allowance(
+    services: &RuntimeServices,
+    signing_host: &SigningHost,
+    session: &AuthoritySession,
+    product_id: &str,
+    derivation_index: &v01::DerivationIndex,
+    policy: OnExistingAllowancePolicy,
+) -> Result<(), AllowanceAllocationError> {
+    signing_host.require_current_session(session)?;
+    #[cfg(feature = "test-host")]
+    if signing_host.grants_allowances_unchecked() {
+        return Ok(());
+    }
+    let target = signing_host
+        .product_keypair(&v01::ProductAccountId {
+            dot_ns_identifier: product_id.to_string(),
+            derivation_index: derivation_index.clone(),
+        })?
+        .public
+        .to_bytes();
+    register_statement_store_target(services, signing_host, session, product_id, target, policy)
+        .await
+        .map(|_| ())
+}
+
+async fn register_statement_store_target(
+    services: &RuntimeServices,
+    signing_host: &SigningHost,
+    session: &AuthoritySession,
+    product_id: &str,
+    target: [u8; 32],
+    policy: OnExistingAllowancePolicy,
+) -> Result<u32, AllowanceAllocationError> {
     use crate::runtime::statement_allowance::{
         self, PooledRegistrationParams, allocated_in, find_including_rings,
         register_statement_account_pooled, scan_collections,
     };
 
     signing_host.require_current_session(session)?;
-    let entropy = signing_host.root_entropy()?;
-    let allowance =
-        derive_sr25519_hard_path(&entropy, &["allowance", "statement-store", product_id])?;
-    // The key is derived locally; only its registration needs the chain. A
-    // host answering allocation as granted hands back the derived key so a
-    // product can sign with it, and skips the registration, so nothing it
-    // signs is accepted by a real statement store.
-    #[cfg(feature = "test-host")]
-    if signing_host.grants_allowances_unchecked() {
-        return Ok(StatementStoreAllocation {
-            secret: allowance.secret.to_bytes().to_vec(),
-            period: statement_allowance::slot::current_period(current_unix_secs()?),
-        });
-    }
-    let target = allowance.public.to_bytes();
     let candidates = signing_host.reserved_person_collection_candidates(session)?;
     let client = services
         .statement_store
@@ -983,13 +1038,8 @@ pub async fn allocate_statement_store_allowance(
 
     // Held from the scan through the submission, not just around the submission:
     // the scan is what picks the free slot, so a renewal pass scanning in the gap
-    // would choose the same one. Released on the early return below, which
-    // submits nothing.
+    // would choose the same one.
     let _registration = signing_host.renewal.registration_lock().lock().await;
-
-    // One read of the period's slot tables, reused below rather than rescanned:
-    // when an allowance is already recorded on chain neither a proof nor a
-    // submission is needed, and a ring snapshot pages in every member key.
     let scans = scan_collections(
         rpc,
         &chain.metadata,
@@ -1000,6 +1050,7 @@ pub async fn allocate_statement_store_allowance(
         reuse_existing,
     )
     .await?;
+    signing_host.require_current_session(session)?;
     if let Some((collection, seq)) = allocated_in(&scans) {
         debug!(
             %product_id,
@@ -1008,82 +1059,63 @@ pub async fn allocate_statement_store_allowance(
             %collection,
             "statement-store allowance already allocated"
         );
+    } else {
+        // Every ring back to index 0, because a membership that stopped being
+        // re-included still proves against the ring that holds it.
+        let memberships = find_including_rings(rpc, &chain.metadata, &candidates, u32::MAX).await?;
+        if memberships.is_empty() {
+            return Err(AllowanceAllocationError::MissingPersonhoodMembership {
+                resource: "statement-store",
+            });
+        }
         signing_host.require_current_session(session)?;
-        return Ok(StatementStoreAllocation {
-            secret: allowance.secret.to_bytes().to_vec(),
-            period,
-        });
-    }
-
-    // Every ring back to index 0, because a membership that stopped being
-    // re-included still proves against the ring that holds it.
-    let memberships = find_including_rings(rpc, &chain.metadata, &candidates, u32::MAX).await?;
-    if memberships.is_empty() {
-        return Err(AllowanceAllocationError::MissingPersonhoodMembership {
-            resource: "statement-store",
-        });
-    }
-    signing_host.require_current_session(session)?;
-    let outcome = register_statement_account_pooled(
-        rpc,
-        &chain.metadata,
-        &chain.state,
-        &scans,
-        &memberships,
-        PooledRegistrationParams {
-            target: &target,
-            period,
-            network_suffix: &network_suffix,
-            reuse_existing,
-            // Connecting a product must not revoke another product's allowance.
-            // A full period is reported as exhaustion; reclaiming space is the
-            // renewal pass's job, which only ever replaces for its own ledger.
-            allow_eviction: false,
-            protected: &[],
-        },
-    )
-    .await?;
-    match outcome {
-        statement_allowance::RegistrationOutcome::Registered {
-            block_hash,
-            seq,
-            ring_index,
-            collection,
-        } => {
-            debug!(
-                %product_id,
-                %block_hash,
+        let outcome = register_statement_account_pooled(
+            rpc,
+            &chain.metadata,
+            &chain.state,
+            &scans,
+            &memberships,
+            PooledRegistrationParams {
+                target: &target,
+                period,
+                network_suffix: &network_suffix,
+                reuse_existing,
+                // Connecting a product must not revoke another product's allowance.
+                // A full period is reported as exhaustion; reclaiming space is the
+                // renewal pass's job, which only ever replaces for its own ledger.
+                allow_eviction: false,
+                protected: &[],
+            },
+        )
+        .await?;
+        match outcome {
+            statement_allowance::RegistrationOutcome::Registered {
+                block_hash,
                 seq,
                 ring_index,
-                %collection,
-                "registered statement-store allowance"
-            );
-        }
-        statement_allowance::RegistrationOutcome::AlreadyAllocated { seq, collection } => {
-            debug!(
-                %product_id,
-                seq,
-                %collection,
-                "statement-store allowance already allocated"
-            );
+                collection,
+            } => {
+                debug!(
+                    %product_id,
+                    %block_hash,
+                    seq,
+                    ring_index,
+                    %collection,
+                    "registered statement-store allowance"
+                );
+            }
+            statement_allowance::RegistrationOutcome::AlreadyAllocated { seq, collection } => {
+                debug!(
+                    %product_id,
+                    seq,
+                    %collection,
+                    "statement-store allowance already allocated"
+                );
+            }
         }
     }
     signing_host.require_current_session(session)?;
-    if let Err(reason) = allowance_renewal::track(
-        signing_host,
-        vec![StatementRenewalTarget::ProductStatementAllowance {
-            product_id: product_id.to_string(),
-        }],
-    )
-    .await
-    {
-        warn!(%product_id, %reason, "failed to record statement-store renewal target");
-    }
-    signing_host.require_current_session(session)?;
-    Ok(StatementStoreAllocation {
-        secret: allowance.secret.to_bytes().to_vec(),
-        period,
-    })
+    Ok(period)
 }
 
 pub async fn allocate_bulletin_allowance(
@@ -1158,16 +1190,19 @@ pub async fn allocate_bulletin_allowance(
         period_duration,
     )?;
     signing_host.require_current_session(session)?;
-    let outcome = claim_long_term_storage(statement_allowance::LongTermStorageClaim {
-        rpc: people_rpc,
-        metadata: &chain.metadata,
-        chain_state: &chain.state,
-        entropy: membership.entropy,
-        network_suffix: &network_suffix,
-        target: &target,
-        period,
-        ring: &membership.ring,
-    })
+    let outcome = claim_long_term_storage(
+        statement_allowance::LongTermStorageClaim {
+            rpc: people_rpc,
+            metadata: &chain.metadata,
+            chain_state: &chain.state,
+            entropy: membership.entropy,
+            network_suffix: &network_suffix,
+            target: &target,
+            period,
+            ring: &membership.ring,
+        },
+        || signing_host.require_current_session(session).is_ok(),
+    )
     .await?;
     let statement_allowance::LongTermStorageOutcome::Claimed {
         block_hash,
@@ -1396,7 +1431,11 @@ mod tests {
             config.asset_hub_chain_genesis_hash,
             test_spawner(),
         );
-        let signing_host = SigningHost::new(services.clone(), config.network_suffix);
+        let signing_host = SigningHost::new(
+            services.clone(),
+            config.network_suffix,
+            config.coinage_instance_id,
+        );
         futures::executor::block_on(signing_host.activate_local_session(ENTROPY.to_vec()))
             .expect("activation succeeds");
         (services, signing_host)
@@ -1413,7 +1452,7 @@ mod tests {
     /// rather than passing quietly.
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
-    fn an_existing_allowance_is_served_without_touching_the_ring() {
+    fn repeated_implicit_provisioning_reuses_existing_allowance_without_submission() {
         use futures::FutureExt;
 
         use crate::host_logic::product_account::{
@@ -1484,35 +1523,58 @@ mod tests {
                     "state_queryStorageAt",
                     r#"[{"block":"0xb10c","changes":[]}]"#.to_string(),
                 ),
+                (
+                    "state_getStorage",
+                    format!(r#""0x{}""#, hex::encode(b"paseo".to_vec().encode())),
+                ),
+                (
+                    "state_getStorage",
+                    format!(r#""0x{}""#, hex::encode(&slot_entry)),
+                ),
+                (
+                    "state_getRuntimeVersion",
+                    r#"{"specVersion":1000000,"transactionVersion":1}"#.to_string(),
+                ),
+                (
+                    "chain_getBlockHash",
+                    format!(r#""0x{}""#, hex::encode([0u8; 32])),
+                ),
+                (
+                    "RuntimeViewFunction_execute_view_function",
+                    format!(
+                        r#""0x{}""#,
+                        hex::encode(Ok::<Vec<u8>, ()>(20u32.encode()).encode()),
+                    ),
+                ),
             ],
             ..Default::default()
         });
-        let (services, signing_host) = signing_fixture(platform.clone());
+        let (_services, signing_host) = signing_fixture(platform.clone());
 
         // Bounded, because the failure mode of losing the early return is a
         // wait on a chain read the stub deliberately does not answer — an
         // unbounded test would hang instead of reporting. The bound is generous
         // because it is catching a hang, not asserting latency.
-        let allocation = futures::executor::block_on(async {
+        futures::executor::block_on(async {
             let session = signing_host.current_session().unwrap();
-            futures::select! {
-                result = allocate_statement_store_allowance(
-                    &services,
-                    &signing_host,
+            let cx = truapi::CallContext::default();
+            for _ in 0..2 {
+                let allocation = signing_host.statement_store_allowance_key(
+                    &cx,
                     &session,
-                    product_id,
-                    OnExistingAllowancePolicy::Ignore,
-                )
-                .fuse() => result,
-                _ = futures_timer::Delay::new(std::time::Duration::from_secs(30)).fuse() => {
-                    panic!("allocation blocked on a chain read it should not have made")
+                    product_id.to_string(),
+                );
+                futures::pin_mut!(allocation);
+                let response = futures::select! {
+                    result = allocation.fuse() => result,
+                    _ = futures_timer::Delay::new(std::time::Duration::from_secs(30)).fuse() => {
+                        panic!("allocation blocked on a chain read it should not have made")
+                    }
                 }
+                .expect("existing allowance succeeds");
+                assert_eq!(response.public_key, allowance.public.to_bytes());
             }
-        })
-        .expect("an existing allowance is returned");
-
-        assert_eq!(allocation.secret, allowance.secret.to_bytes().to_vec());
-
+        });
         let sent = platform.sent_rpc.lock().expect("rpc list mutex poisoned");
         let methods: Vec<String> = sent
             .iter()
@@ -1934,6 +1996,224 @@ mod tests {
             response.payload,
             Err("signing host session is not active".to_string())
         );
+    }
+
+    #[test]
+    fn encrypted_chat_accepts_narrow_initialize_and_rejects_retired_operations() {
+        use crate::host_internal::sso_messages::{ProductRequest, SsoProductDeviceChatOperation, SsoSessionStatement,
+        decode_sso_session_statement,};
+        use crate::host_internal::sso_wire::SsoRequest;
+        use crate::test_support::sso_host_and_responder_sessions;
+        use truapi::versioned::account::{
+            HostProductDeviceChatError, HostProductDeviceChatResponse,
+        };
+
+        let platform = Arc::new(StubPlatform {
+            chat_authority_confirmed: true,
+            remote_permission_denied: true,
+            ..Default::default()
+        });
+        let (_, signing_host) = signing_fixture(platform.clone());
+        futures::executor::block_on(async {
+            let service = SigningHostSsoService::new(signing_host);
+            let (pairing, responder) = sso_host_and_responder_sessions();
+            for (message_id, operation, retired) in [
+                (
+                    "retired-chat",
+                    SsoProductDeviceChatOperation::V2(
+                        truapi::v02::HostProductDeviceChatRequest::Initialize,
+                    ),
+                    true,
+                ),
+                (
+                    "narrow-chat",
+                    SsoProductDeviceChatOperation::V3(
+                        api::HostProductDeviceChatRequest::Initialize,
+                    ),
+                    false,
+                ),
+            ] {
+                let request = ProductRequest {
+                    calling_product_id: "MYAPP.DOT".to_string(),
+                    payload: operation,
+                };
+                let message = RemoteMessage::request(message_id.to_string(), request);
+                let statement = sso_messages::build_outgoing_request_statement(
+                    &pairing,
+                    message_id.to_string(),
+                    vec![message],
+                    (statement_current_unix_secs() + 60) << 32,
+                )
+                .unwrap();
+                let incoming = sso_messages::decode_incoming_sso_request(&responder, &statement)
+                    .unwrap()
+                    .unwrap();
+                let Dispatch::Response(answer) = service
+                    .answer(incoming.messages.into_iter().next().unwrap())
+                    .await
+                else {
+                    panic!("expected Chat response");
+                };
+                let response_statement = sso_messages::build_outgoing_request_statement(
+                    &responder,
+                    format!("{message_id}-response"),
+                    vec![answer.message],
+                    (statement_current_unix_secs() + 60) << 32,
+                )
+                .unwrap();
+                let Some(SsoSessionStatement::RemoteMessages(mut responses)) =
+                    decode_sso_session_statement(&pairing, &response_statement, message_id)
+                        .unwrap()
+                else {
+                    panic!("expected encrypted Chat answer");
+                };
+                let response =
+                    ProductRequest::<SsoProductDeviceChatOperation>::response_from_message(
+                        responses.remove(0).unwrap(),
+                    )
+                    .unwrap();
+                assert_eq!(response.responding_to, message_id);
+                if retired {
+                    assert_eq!(
+                        response.payload,
+                        Err(HostProductDeviceChatError::V1(
+                            api::HostProductDeviceChatError::InvalidRequest,
+                        ))
+                    );
+                    assert!(platform.chat_authority_reviews.lock().is_empty());
+                } else {
+                    let Ok(HostProductDeviceChatResponse::V2(state)) = response.payload else {
+                        panic!("expected narrow Chat initialization");
+                    };
+                    assert_eq!(state.device.product_account.dot_ns_identifier, "myapp.dot");
+                    assert_eq!(platform.chat_authority_reviews.lock().len(), 1);
+                }
+            }
+            assert!(
+                platform
+                    .remote_permission_requests
+                    .lock()
+                    .unwrap()
+                    .is_empty()
+            );
+            assert!(
+                platform
+                    .main_purse_chat_payment_reviews
+                    .lock()
+                    .unwrap()
+                    .is_empty()
+            );
+        });
+    }
+
+    #[test]
+    fn encrypted_payment_top_up_reaches_wallet_validation_without_chat_grants() {
+        use crate::host_internal::sso_messages::{PaymentTopUpRequest, SsoSessionStatement, decode_sso_session_statement,};
+        use crate::host_internal::sso_wire::SsoRequest;
+        use crate::test_support::sso_host_and_responder_sessions;
+        use truapi::versioned::payment::HostPaymentTopUpRequest;
+
+        let platform = Arc::new(StubPlatform {
+            chain_connect_error: Some("offline"),
+            ..Default::default()
+        });
+        let (_, signing_host) = signing_fixture(platform.clone());
+        futures::executor::block_on(async {
+            let service = SigningHostSsoService::new(signing_host.clone());
+            let (pairing, responder) = sso_host_and_responder_sessions();
+            let request = PaymentTopUpRequest {
+                calling_product_id: "MYAPP.DOT".to_string(),
+                payload: HostPaymentTopUpRequest::V1(truapi::v01::HostPaymentTopUpRequest {
+                    into: None,
+                    amount: 1,
+                    source: truapi::v01::PaymentTopUpSource::PrivateKey {
+                        sr25519_secret_key: [0xab; 64],
+                    },
+                }),
+            };
+            let message = RemoteMessage::request("top-up-1".to_string(), request);
+            assert!(!format!("{message:?}").contains(&format!("{:?}", [0xab_u8; 64])));
+            let statement = sso_messages::build_outgoing_request_statement(
+                &pairing,
+                "top-up-1".to_string(),
+                vec![message],
+                (statement_current_unix_secs() + 60) << 32,
+            )
+            .unwrap();
+            assert!(!statement.windows(64).any(|bytes| bytes == [0xab; 64]));
+            let incoming = sso_messages::decode_incoming_sso_request(&responder, &statement)
+                .unwrap()
+                .unwrap();
+            let Dispatch::Response(answer) = service
+                .answer(incoming.messages.into_iter().next().unwrap())
+                .await
+            else {
+                panic!("expected top-up response");
+            };
+            let response_statement = sso_messages::build_outgoing_request_statement(
+                &responder,
+                "top-up-response".to_string(),
+                vec![answer.message],
+                (statement_current_unix_secs() + 60) << 32,
+            )
+            .unwrap();
+            let Some(SsoSessionStatement::RemoteMessages(mut responses)) =
+                decode_sso_session_statement(&pairing, &response_statement, "top-up-1").unwrap()
+            else {
+                panic!("expected encrypted top-up answer");
+            };
+            let response =
+                PaymentTopUpRequest::response_from_message(responses.remove(0).unwrap()).unwrap();
+            assert_eq!(response.responding_to, "top-up-1");
+            assert_eq!(
+                response.payload,
+                Err(sso_messages::PaymentTopUpError(
+                    truapi::v01::HostPaymentTopUpError::InvalidSource
+                ))
+            );
+            assert!(platform.chat_authority_reviews.lock().is_empty());
+            assert!(
+                platform
+                    .main_purse_chat_payment_reviews
+                    .lock()
+                    .unwrap()
+                    .is_empty()
+            );
+            assert!(platform.sign_raw_reviews.lock().unwrap().is_empty());
+            assert!(platform.sign_payload_reviews.lock().unwrap().is_empty());
+            assert_eq!(
+                platform
+                    .identity_disclosure_calls
+                    .load(std::sync::atomic::Ordering::SeqCst),
+                0
+            );
+
+            signing_host.disconnect().await;
+            let request = RemoteMessage::request(
+                "top-up-disconnected".to_string(),
+                PaymentTopUpRequest {
+                    calling_product_id: "myapp.dot".to_string(),
+                    payload: HostPaymentTopUpRequest::V1(truapi::v01::HostPaymentTopUpRequest {
+                        into: None,
+                        amount: 1,
+                        source: truapi::v01::PaymentTopUpSource::Coins {
+                            sr25519_secret_keys: vec![[0xab; 64]],
+                        },
+                    }),
+                },
+            );
+            let Dispatch::Response(answer) = service.answer(request).await else {
+                panic!("expected disconnected top-up response");
+            };
+            let RemoteMessageData::V1(data) = answer.message.data;
+            let response = PaymentTopUpRequest::response_from_message(data).unwrap();
+            assert!(matches!(
+                response.payload,
+                Err(sso_messages::PaymentTopUpError(
+                    truapi::v01::HostPaymentTopUpError::Unknown { .. }
+                ))
+            ));
+        });
     }
 
     #[test]

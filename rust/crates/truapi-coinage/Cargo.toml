@@ -1,0 +1,43 @@
+[package]
+name = "truapi-coinage"
+version = "0.1.0"
+edition = "2024"
+publish = false
+license = "AGPL-3.0-only"
+description = "Portable Host-owned Coinage selection, send, claim and durable recovery engine"
+repository = "https://github.com/paritytech/host-rust-core"
+
+[package.metadata.provenance]
+source = "https://github.com/paritytech/brevity-dozer"
+revision = "d504259b60b88ca42f70a8378186a714887ef19f"
+paths = ["core/crates/brevity-coinage", "core/crates/brevity-chain/src/pallets/members.rs", "core/crates/brevity-chain/src/tx_extensions.rs"]
+license-notice = "NOTICE"
+
+[dependencies]
+async-trait = "0.1"
+blake2 = "0.10"
+blake2b_simd = "1"
+futures = "0.3"
+futures-timer = "3"
+getrandom = { version = "0.2", features = ["js"] }
+hex = "0.4"
+parity-scale-codec = { version = "3", features = ["derive"] }
+parking_lot = "0.12"
+rand = "0.8"
+rand_chacha = "0.3"
+schnorrkel = { version = "0.11.5", default-features = false, features = ["alloc", "getrandom"] }
+serde_json = "1"
+substrate-bip39 = { version = "0.6", default-features = false }
+tokio = { version = "1", default-features = false, features = ["sync"] }
+tracing = "0.1"
+web-time = "1"
+zeroize = { version = "1", features = ["zeroize_derive"] }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+futures-timer = { version = "3", features = ["wasm-bindgen"] }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
+subxt-signer = { version = "0.44.3", default-features = false, features = ["std", "sr25519"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] }
+
+[lints]

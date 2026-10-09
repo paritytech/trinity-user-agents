@@ -53,6 +53,10 @@ pub struct HostRuntimeConfig {
     /// Optional lite username attached to the local signing-host session.
     #[uniffi(default)]
     pub local_session_lite_username: Option<String>,
+    /// Trusted Coinage asset instance from the wallet's network configuration.
+    /// Required for instance-scoped Coinage runtimes; omit only for legacy use.
+    #[uniffi(default)]
+    pub coinage_instance_id: Option<u32>,
 }
 
 /// Trusted identity attached by a native host to one executable connection.
@@ -147,7 +151,7 @@ impl TryFrom<HostRuntimeConfig> for NativeResolvedHostRuntimeConfig {
             "asset_hub_chain_genesis_hash",
             &config.asset_hub_chain_genesis_hash,
         )?;
-        let signing = SigningHostConfig::new(
+        let mut signing = SigningHostConfig::new(
             HostInfo {
                 name: config.host_name,
                 icon: config.host_icon,
@@ -163,6 +167,7 @@ impl TryFrom<HostRuntimeConfig> for NativeResolvedHostRuntimeConfig {
             asset_hub_chain_genesis_hash,
             config.network_suffix,
         )?;
+        signing.coinage_instance_id = config.coinage_instance_id;
         Ok(Self {
             signing,
             local_session_secret: config.local_session_secret,

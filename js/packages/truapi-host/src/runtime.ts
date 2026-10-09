@@ -19,13 +19,29 @@ import type {
 // SCALE bytes. The web worker pairing-host runtime adapts this typed surface
 // into the byte-oriented callback bridge consumed by the WASM core.
 export * from "./generated/host-callbacks.js";
-export type {
-  JsonRpcConnection as PlatformJsonRpcConnection,
-} from "./generated/host-callbacks.js";
+export type { JsonRpcConnection as PlatformJsonRpcConnection } from "./generated/host-callbacks.js";
 
 /** Encode a typed core-storage slot for hosts that need an opaque backing key. */
 export function encodeCoreStorageKey(key: CoreStorageKey): Uint8Array {
   return GeneratedCoreStorageKey.enc(key);
+}
+
+/** Authenticated, ready native Chat peer. Host-private; never a product directory. */
+export interface NativeChatContact {
+  /** Canonical lowercase 0x-prefixed People identity account. */
+  peerIdentity: string;
+  /** Verified roster name, absent when authorized products disagree. */
+  username?: string;
+}
+
+/** Current signing wallet's authenticated native Chat contacts, restored from storage. */
+export interface NativeChatContactsSnapshot {
+  /** Canonical lowercase 0x-prefixed root wallet public key. */
+  walletPublicKey: string;
+  /** Canonical lowercase 0x-prefixed People chain genesis hash. */
+  genesisHash: string;
+  /** Deterministically ordered, deduplicated ready peers. */
+  contacts: NativeChatContact[];
 }
 
 /**
@@ -39,15 +55,26 @@ export type Awaitable<T> = T | Promise<T>;
  * Open a JSON-RPC connection for `genesisHash`. The wasm bridge passes
  * `onResponse` so the host can push JSON-RPC replies back asynchronously.
  * Returning `null` (or throwing) tells the core no provider is available.
+ * `onClosed`, when supplied, is called when the remote response stream ends
+ * or fails. Local `close()` is idempotent and does not call it.
  */
 export type ChainConnect = (
   genesisHash: string,
   onResponse: (json: string) => void,
+  onClosed?: () => void,
+) => Awaitable<ChainConnection | null>;
+
+/** Open only a host-allowlisted HOP endpoint for this Bulletin chain. */
+export type HopConnect = (
+  bulletinGenesisHash: string,
+  endpoint: string,
+  onResponse: (json: string) => void,
+  onClosed?: () => void,
 ) => Awaitable<ChainConnection | null>;
 
 /**
- * Per-connection handle returned by `chainConnect`. `send` forwards a
- * SCALE-encoded JSON-RPC request; `close` tears the connection down.
+ * Per-connection handle returned by `chainConnect` or `hopConnect`. `send`
+ * forwards a JSON-RPC request string; `close` tears the connection down.
  */
 export interface ChainConnection {
   send(request: string): void;

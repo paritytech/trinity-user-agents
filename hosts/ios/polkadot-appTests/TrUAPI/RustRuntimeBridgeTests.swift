@@ -108,6 +108,7 @@ private func makeBridge(
         productStorage: productStorage,
         coreStorage: TrUAPILocalStorage.createCoreLocalStorage(defaults: makeTestDefaults()),
         confirmationPresenter: confirmationPresenter,
+        chatFiles: UnavailableNativeChatFiles(),
         preimageCache: preimageCache,
         hostProvider: hostProvider,
         logger: Logger.shared
@@ -553,7 +554,8 @@ struct RustRuntimeBridgeTests {
     @Test func currentThemeReturnsDark() throws {
         let bridge = makeBridge()
         let theme = try bridge.currentTheme()
-        #expect(theme == .dark)
+        #expect(theme.name == .default)
+        #expect(theme.variant == .dark)
     }
 
     // MARK: attach
@@ -602,6 +604,7 @@ struct RustRuntimeBridgeTests {
             ),
             coreStorage: TrUAPILocalStorage.createCoreLocalStorage(defaults: makeTestDefaults()),
             confirmationPresenter: MockConfirmationPresenter(),
+            chatFiles: UnavailableNativeChatFiles(),
             preimageCache: TrUAPIPreimageCache { _ in nil },
             hostProvider: StubHostProvider(),
             logger: Logger.shared

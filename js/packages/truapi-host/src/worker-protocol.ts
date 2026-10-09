@@ -30,7 +30,11 @@
 // safe choice.
 
 import type { OptionalCapabilities } from "./generated/worker-callbacks.js";
-import type { LogLevel, PermissionAuthorizationStatus } from "./runtime.js";
+import type {
+  LogLevel,
+  NativeChatContactsSnapshot,
+  PermissionAuthorizationStatus,
+} from "./runtime.js";
 import type { WalletAllowanceSnapshot } from "./wallet-allowances.js";
 import type {
   CallbackName,
@@ -44,6 +48,16 @@ export type {
   CallbackName,
   SubscriptionName,
 } from "./generated/worker-callbacks.js";
+
+/** Shared cap includes connections still opening or closing during an open. */
+export const MAX_JSON_RPC_CONNECTIONS = 64;
+
+/** Wallet custody belongs to the runtime, never a product-specific callback bundle. */
+export const COINAGE_WALLET_CALLBACKS: Readonly<
+  Partial<Record<CallbackName, true>>
+> = {
+  nativeCoinage: true,
+};
 
 /**
  * Positional arguments for a callback. The wasm core calls each callback
@@ -157,6 +171,7 @@ export type MainToWorker =
       requestId: number;
       productIds: string[];
     }
+  | { kind: "getNativeChatContacts"; requestId: number }
   | {
       kind: "registerLocalLiteUsername";
       requestId: number;
@@ -220,6 +235,7 @@ export type MainToWorker =
   | { kind: "chainConnectAck"; connId: number; ok: true }
   | { kind: "chainConnectAck"; connId: number; ok: false; error: string }
   | { kind: "chainResponse"; connId: number; json: string }
+  | { kind: "chainClosed"; connId: number }
   | { kind: "dispose" };
 
 /**
@@ -288,6 +304,18 @@ export type WorkerToMain =
     }
   | {
       kind: "walletAllowanceSnapshotResponse";
+      requestId: number;
+      ok: false;
+      error: string;
+    }
+  | {
+      kind: "nativeChatContactsResponse";
+      requestId: number;
+      ok: true;
+      snapshot: NativeChatContactsSnapshot;
+    }
+  | {
+      kind: "nativeChatContactsResponse";
       requestId: number;
       ok: false;
       error: string;
@@ -415,6 +443,12 @@ export type WorkerToMain =
     }
   | { kind: "subscriptionStop"; subId: number }
   | { kind: "chainConnectStart"; connId: number; genesisHash: string }
+  | {
+      kind: "hopConnectStart";
+      connId: number;
+      genesisHash: string;
+      endpoint: string;
+    }
   | { kind: "chainSend"; connId: number; request: string }
   | { kind: "chainClose"; connId: number };
 

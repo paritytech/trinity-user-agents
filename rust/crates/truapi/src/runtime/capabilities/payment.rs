@@ -27,7 +27,12 @@ use truapi::versioned::payment::{
 };
 use truapi::{CallContext, CallError, Subscription, v01};
 
-use crate::runtime::{PAYMENTS_NOT_IMPLEMENTED, ProductRuntimeHost};
+use crate::host_internal::sso_messages::PaymentTopUpRequest;
+use crate::runtime::authority::{AuthorityError, PaymentTopUpAuthorityError};
+use crate::runtime::{
+    PAYMENTS_NOT_IMPLEMENTED, ProductRuntimeHost, remote_authority_call, remote_authority_context,
+};
+use crate::platform::normalize_product_identifier;
 
 #[truapi::async_trait]
 impl CoinPayment for ProductRuntimeHost {
@@ -166,13 +171,32 @@ impl Payment for ProductRuntimeHost {
     #[instrument(skip_all, fields(runtime.method = "payment.top_up"))]
     async fn top_up(
         &self,
-        _cx: &CallContext,
-        _request: HostPaymentTopUpRequest,
+        cx: &CallContext,
+        request: HostPaymentTopUpRequest,
     ) -> Result<HostPaymentTopUpResponse, CallError<HostPaymentTopUpError>> {
-        Err(CallError::Domain(HostPaymentTopUpError::V1(
-            v01::HostPaymentTopUpError::Unknown {
-                reason: PAYMENTS_NOT_IMPLEMENTED.to_string(),
-            },
-        )))
+        // Install the secret guard before any rejection or suspension point.
+        let mut request = PaymentTopUpRequest {
+            calling_product_id: self.product_id(),
+            payload: request,
+        };
+        request.calling_product_id = normalize_product_identifier(&request.calling_product_id)
+            .map_err(|_| {
+                CallError::Domain(HostPaymentTopUpError::V1(
+                    v01::HostPaymentTopUpError::InvalidSource,
+                ))
+            })?;
+        let session = self
+            .authority
+            .current_session()
+            .ok_or_else(|| payment_top_up_error(AuthorityError::Disconnected.into()))?;
+        let cx = remote_authority_context(cx);
+        remote_authority_call(&cx, self.authority.payment_top_up(&cx, &session, request))
+            .await
+            .map(|()| HostPaymentTopUpResponse::V1)
+            .map_err(payment_top_up_error)
     }
+}
+
+fn payment_top_up_error(error: PaymentTopUpAuthorityError) -> CallError<HostPaymentTopUpError> {
+    CallError::Domain(HostPaymentTopUpError::V1(error.into()))
 }
