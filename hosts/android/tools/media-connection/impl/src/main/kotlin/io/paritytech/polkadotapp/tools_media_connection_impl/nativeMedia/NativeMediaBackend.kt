@@ -14,18 +14,17 @@ import android.webkit.WebView
 import androidx.core.content.ContextCompat
 import dagger.hilt.android.qualifiers.ApplicationContext
 import io.paritytech.polkadotapp.tools_media_connection_impl.WebRtcCore
-import io.paritytech.polkadotapp.tools_media_connection_impl.turn.ExternalRtcConfigProvider
 import io.paritytech.polkadotapp.tools_media_connection_impl.models.toIceServers
+import io.paritytech.polkadotapp.tools_media_connection_impl.turn.ExternalRtcConfigProvider
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.collect
-import org.webrtc.PeerConnection
 import uniffi.truapi.*
-import uniffi.truapi.ProductContext
+import uniffi.truapi.NativeMediaBackendCapabilities
+import uniffi.truapi.NativeMediaBackendResponse
 import uniffi.truapi.NativeMediaCallbacks
 import uniffi.truapi.NativeMediaEventSink
 import uniffi.truapi.NativeMediaException
-import uniffi.truapi.NativeMediaBackendCapabilities
-import uniffi.truapi.NativeMediaBackendResponse
+import uniffi.truapi.ProductContext
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -53,6 +52,7 @@ class NativeMediaBackend internal constructor(
     })
     private val runtimes = mutableMapOf<ULong, Runtime>()
     private val closedRuntimes = java.util.concurrent.ConcurrentHashMap.newKeySet<ULong>()
+
     @Volatile private var closed = false
     private var view: WebView? = null
 
@@ -96,6 +96,7 @@ class NativeMediaBackend internal constructor(
     private class Pending(val sessionKey: String, val generation: ULong, val revision: ULong, val tracks: NativeMediaLocalTracks, val capture: NativeMediaCapture, val job: Job) {
         var ready = false
         var foregroundTypes = 0
+
         // An initial OS consent prompt is not a withdrawal. Remember grants before capture exists.
         var microphoneAuthorized = false
         var cameraAuthorized = false
@@ -245,7 +246,9 @@ class NativeMediaBackend internal constructor(
             }
             if (runtime.closed || key in runtime.cancelled) throw MediaDomainFailure(NativeMediaDomainError.OperationCancelled)
             NativeMediaBackendResponse.Consent(granted)
-        } finally { runtime.consentJobs.remove(key) }
+        } finally {
+            runtime.consentJobs.remove(key)
+        }
     }
 
     private suspend fun prepare(runtime: Runtime, session: Session, operationId: ByteArray, revision: ULong, tracks: NativeMediaLocalTracks): NativeMediaBackendResponse = coroutineScope {
@@ -306,8 +309,7 @@ class NativeMediaBackend internal constructor(
         checkPermissions()
         val key = operationId.key()
         val pending = runtime.operations[key] ?: throw MediaDomainFailure(NativeMediaDomainError.OperationCancelled)
-        val session = runtime.sessions[pending.sessionKey] ?: throw MediaDomainFailure(NativeMediaDomainError.SessionEnded)
-        if (!pending.ready || session.generation != pending.generation) throw MediaDomainFailure(NativeMediaDomainError.InvalidState)
+        val session = requireCommitSession(runtime, pending)
         val old = session.capture
         // No coroutine suspension in this commit. New tracks remain disabled until every sender switched.
         old?.disable()
@@ -334,10 +336,18 @@ class NativeMediaBackend internal constructor(
         try {
             pending.capture.enable()
             runtime.compositor.refresh()
-        } finally { old?.close() }
+        } finally {
+            old?.close()
+        }
         refreshLease(session)
         session.peers.values.toList().forEach { it.renegotiateLater() }
         return NativeMediaBackendResponse.LocalState(pending.capture.state(runtime.audio.current()))
+    }
+
+    private fun requireCommitSession(runtime: Runtime, pending: Pending): Session {
+        val session = runtime.sessions[pending.sessionKey] ?: throw MediaDomainFailure(NativeMediaDomainError.SessionEnded)
+        if (!pending.ready || session.generation != pending.generation) throw MediaDomainFailure(NativeMediaDomainError.InvalidState)
+        return session
     }
 
     private fun cancel(runtime: Runtime, key: String) {
@@ -447,7 +457,11 @@ class NativeMediaBackend internal constructor(
 
     private fun emit(runtime: Runtime, event: NativeMediaBackendEvent) {
         if (runtime.closed) return
-        try { runtime.sink?.publish(event) } catch (_: Exception) { release(runtime) }
+        try {
+            runtime.sink?.publish(event)
+        } catch (_: Exception) {
+            release(runtime)
+        }
     }
     private fun owner(product: ProductContext) { if (product.productId != productId) throw NativeMediaException.BackendFailure() }
     private fun session(runtime: Runtime, id: ByteArray): Session = runtime.sessions[id.key()] ?: throw MediaDomainFailure(NativeMediaDomainError.InvalidHandle)

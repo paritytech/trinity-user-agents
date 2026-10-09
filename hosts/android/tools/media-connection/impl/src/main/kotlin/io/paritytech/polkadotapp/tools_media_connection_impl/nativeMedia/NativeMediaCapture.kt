@@ -8,8 +8,8 @@ import android.media.AudioManager
 import android.media.projection.MediaProjection
 import android.os.Build
 import androidx.core.content.ContextCompat
-import io.paritytech.polkadotapp.tools_media_connection_impl.WebRtcCore
 import io.paritytech.polkadotapp.tools_media_connection_impl.AudioCaptureState
+import io.paritytech.polkadotapp.tools_media_connection_impl.WebRtcCore
 import kotlinx.coroutines.CompletableDeferred
 import org.webrtc.*
 import uniffi.truapi.*
@@ -31,7 +31,9 @@ internal class NativeMediaCapture(private val context: Context, private val core
     private var closed = false
     private class VideoResources(val track: VideoTrack, val source: VideoSource, val capturer: VideoCapturer, val helper: SurfaceTextureHelper) {
         var references = 1
+
         @Volatile var live = false
+
         @Volatile var failed = false
         var wasLive = false
     }
@@ -96,9 +98,9 @@ internal class NativeMediaCapture(private val context: Context, private val core
 
     suspend fun screen(stopped: (VideoTrack?) -> Unit, startProjectionService: suspend () -> Unit, changed: () -> Unit) {
         val consent = NativeMediaConsent.screen(context) ?: throw MediaDomainFailure(NativeMediaDomainError.CaptureCancelled)
-        if (closed) throw MediaDomainFailure(NativeMediaDomainError.OperationCancelled)
+        checkOpen()
         startProjectionService()
-        if (closed) throw MediaDomainFailure(NativeMediaDomainError.OperationCancelled)
+        checkOpen()
         var selectedTrack: VideoTrack? = null
         val capturer = ScreenCapturerAndroid(consent, object : MediaProjection.Callback() {
             override fun onStop() { stopped(selectedTrack) }
@@ -106,6 +108,10 @@ internal class NativeMediaCapture(private val context: Context, private val core
         val started = CompletableDeferred<Unit>()
         screen = video("screen", capturer, true, changed, started).also { selectedTrack = it }
         started.await()
+    }
+
+    private fun checkOpen() {
+        if (closed) throw MediaDomainFailure(NativeMediaDomainError.OperationCancelled)
     }
 
     private fun video(id: String, capturer: VideoCapturer, screencast: Boolean, changed: () -> Unit, started: CompletableDeferred<Unit>): VideoTrack {

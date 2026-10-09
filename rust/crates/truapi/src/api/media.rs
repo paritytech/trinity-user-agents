@@ -68,10 +68,11 @@ pub trait Media: Send + Sync {
     /// dropping state. Resubscribe to recover a fresh authoritative snapshot.
     ///
     /// ```ts
-    /// for await (const event of truapi.media.sessionSubscribe()) {
-    ///   console.log("current Media state:", event);
-    ///   break; // This example only reads the initial snapshot.
-    /// }
+    /// import { firstValueFrom, from } from "rxjs";
+    ///
+    /// const first = await firstValueFrom(from(truapi.media.sessionSubscribe()));
+    /// assert(first.tag === "Snapshot", "snapshot required");
+    /// console.log("current Media state:", first);
     /// ```
     #[wire(id = 1)]
     async fn session_subscribe(
@@ -88,9 +89,15 @@ pub trait Media: Send + Sync {
     /// consent and stays in unreadable host composition; no view is required.
     ///
     /// ```ts
-    /// const events = truapi.media.sessionSubscribe()[Symbol.asyncIterator]();
+    /// import { connectable, firstValueFrom, from } from "rxjs";
+    ///
+    /// const events = connectable(from(truapi.media.sessionSubscribe()));
+    /// const firstSnapshot = firstValueFrom(events);
+    /// // Keep the host listener until the operation and cleanup finish.
+    /// const listener = events.connect();
     /// try {
-    ///   await events.next(); // Keep this listener alive during admission.
+    ///   const first = await firstSnapshot;
+    ///   assert(first.tag === "Snapshot", "snapshot required");
     ///   const operationId: `0x${string}` = `0x${crypto.getRandomValues(new Uint8Array(32)).toHex()}`;
     ///   const result = await truapi.media.createSession({
     ///     operationId, tracks: { microphone: false, camera: false, screen: false },
@@ -99,7 +106,7 @@ pub trait Media: Send + Sync {
     ///   console.log("ready session:", result.value.session);
     ///   await truapi.media.endSession({ sessionId: result.value.session.sessionId });
     /// } finally {
-    ///   await events.return?.();
+    ///   listener.unsubscribe();
     /// }
     /// ```
     #[wire(id = 2)]
@@ -119,11 +126,16 @@ pub trait Media: Send + Sync {
     /// remote endpoints is the mandatory floor, not six remote participants.
     ///
     /// ```ts
-    /// const events = truapi.media.sessionSubscribe()[Symbol.asyncIterator]();
+    /// import { connectable, firstValueFrom, from } from "rxjs";
+    ///
+    /// const events = connectable(from(truapi.media.sessionSubscribe()));
+    /// const firstSnapshot = firstValueFrom(events);
+    /// // Keep the host listener until the operation and cleanup finish.
+    /// const listener = events.connect();
     /// try {
-    ///   const first = await events.next();
-    ///   assert(!first.done && first.value.tag === "Snapshot", "snapshot required");
-    ///   const session = first.value.value.sessions.find(s => s.state !== "Ended" && s.participants.length > 0);
+    ///   const first = await firstSnapshot;
+    ///   assert(first.tag === "Snapshot", "snapshot required");
+    ///   const session = first.value.sessions.find(s => s.state !== "Ended" && s.participants.length > 0);
     ///   assert(session, "Start a session with an authenticated contact first");
     ///   // Re-adding this known peer demonstrates duplicate-peer admission.
     ///   const operationId: `0x${string}` = `0x${crypto.getRandomValues(new Uint8Array(32)).toHex()}`;
@@ -131,7 +143,7 @@ pub trait Media: Send + Sync {
     ///     operationId, sessionId: session.sessionId, peer: session.participants[0].peer,
     ///   }));
     /// } finally {
-    ///   await events.return?.();
+    ///   listener.unsubscribe();
     /// }
     /// ```
     #[wire(id = 3)]
@@ -150,17 +162,22 @@ pub trait Media: Send + Sync {
     /// Refusal is cleanup and needs neither subscription nor operation quota.
     ///
     /// ```ts
-    /// const events = truapi.media.sessionSubscribe()[Symbol.asyncIterator]();
+    /// import { connectable, firstValueFrom, from } from "rxjs";
+    ///
+    /// const events = connectable(from(truapi.media.sessionSubscribe()));
+    /// const firstSnapshot = firstValueFrom(events);
+    /// // Keep the host listener until the operation and cleanup finish.
+    /// const listener = events.connect();
     /// try {
-    ///   const first = await events.next();
-    ///   assert(!first.done && first.value.tag === "Snapshot", "snapshot required");
-    ///   const offer = first.value.value.incoming[0];
+    ///   const first = await firstSnapshot;
+    ///   assert(first.tag === "Snapshot", "snapshot required");
+    ///   const offer = first.value.incoming[0];
     ///   assert(offer, "An incoming offer is required");
     ///   console.log(await truapi.media.respondIncoming({
     ///     incomingId: offer.incomingId, decision: { tag: "Refuse" },
     ///   }));
     /// } finally {
-    ///   await events.return?.();
+    ///   listener.unsubscribe();
     /// }
     /// ```
     #[wire(id = 4)]
@@ -177,18 +194,23 @@ pub trait Media: Send + Sync {
     /// new events, permission, subscription, quota, or successful network exchange.
     ///
     /// ```ts
-    /// const events = truapi.media.sessionSubscribe()[Symbol.asyncIterator]();
+    /// import { connectable, firstValueFrom, from } from "rxjs";
+    ///
+    /// const events = connectable(from(truapi.media.sessionSubscribe()));
+    /// const firstSnapshot = firstValueFrom(events);
+    /// // Keep the host listener until the operation and cleanup finish.
+    /// const listener = events.connect();
     /// try {
-    ///   const first = await events.next();
-    ///   assert(!first.done && first.value.tag === "Snapshot", "snapshot required");
-    ///   const session = first.value.value.sessions.find(s => s.participants.some(p => p.state !== "Left"));
+    ///   const first = await firstSnapshot;
+    ///   assert(first.tag === "Snapshot", "snapshot required");
+    ///   const session = first.value.sessions.find(s => s.participants.some(p => p.state !== "Left"));
     ///   assert(session, "A session with a live participant is required");
     ///   const participant = session.participants.find(p => p.state !== "Left")!;
     ///   console.log(await truapi.media.removeParticipant({
     ///     sessionId: session.sessionId, participantId: participant.participantId,
     ///   }));
     /// } finally {
-    ///   await events.return?.();
+    ///   listener.unsubscribe();
     /// }
     /// ```
     #[wire(id = 5)]
@@ -209,11 +231,16 @@ pub trait Media: Send + Sync {
     /// leaves the last accepted intent unchanged; committed Off stops sending.
     ///
     /// ```ts
-    /// const events = truapi.media.sessionSubscribe()[Symbol.asyncIterator]();
+    /// import { connectable, firstValueFrom, from } from "rxjs";
+    ///
+    /// const events = connectable(from(truapi.media.sessionSubscribe()));
+    /// const firstSnapshot = firstValueFrom(events);
+    /// // Keep the host listener until the operation and cleanup finish.
+    /// const listener = events.connect();
     /// try {
-    ///   const first = await events.next();
-    ///   assert(!first.done && first.value.tag === "Snapshot", "snapshot required");
-    ///   const session = first.value.value.sessions.find(s => s.state !== "Ended");
+    ///   const first = await firstSnapshot;
+    ///   assert(first.tag === "Snapshot", "snapshot required");
+    ///   const session = first.value.sessions.find(s => s.state !== "Ended");
     ///   assert(session, "Start a session first");
     ///   const operationId: `0x${string}` = `0x${crypto.getRandomValues(new Uint8Array(32)).toHex()}`;
     ///   console.log(await truapi.media.setLocalTracks({
@@ -221,7 +248,7 @@ pub trait Media: Send + Sync {
     ///     tracks: { microphone: false, camera: false, screen: false },
     ///   }));
     /// } finally {
-    ///   await events.return?.();
+    ///   listener.unsubscribe();
     /// }
     /// ```
     #[wire(id = 6)]
@@ -243,11 +270,16 @@ pub trait Media: Send + Sync {
     /// pictures remain unreadable siblings below trusted UI, not product textures.
     ///
     /// ```ts
-    /// const events = truapi.media.sessionSubscribe()[Symbol.asyncIterator]();
+    /// import { connectable, firstValueFrom, from } from "rxjs";
+    ///
+    /// const events = connectable(from(truapi.media.sessionSubscribe()));
+    /// const firstSnapshot = firstValueFrom(events);
+    /// // Keep the host listener until the operation and cleanup finish.
+    /// const listener = events.connect();
     /// try {
-    ///   const first = await events.next();
-    ///   assert(!first.done && first.value.tag === "Snapshot", "snapshot required");
-    ///   const viewport = first.value.value.viewport;
+    ///   const first = await firstSnapshot;
+    ///   assert(first.tag === "Snapshot", "snapshot required");
+    ///   const viewport = first.value.viewport;
     ///   assert(viewport, "An attached App viewport is required");
     ///   const operationId: `0x${string}` = `0x${crypto.getRandomValues(new Uint8Array(32)).toHex()}`;
     ///   const created = await truapi.media.createSession({
@@ -263,7 +295,7 @@ pub trait Media: Send + Sync {
     ///     await truapi.media.endSession({ sessionId });
     ///   }
     /// } finally {
-    ///   await events.return?.();
+    ///   listener.unsubscribe();
     /// }
     /// ```
     #[wire(id = 7)]
@@ -282,15 +314,20 @@ pub trait Media: Send + Sync {
     /// random and unowned handles both return InvalidHandle without ownership leaks.
     ///
     /// ```ts
-    /// const events = truapi.media.sessionSubscribe()[Symbol.asyncIterator]();
+    /// import { connectable, firstValueFrom, from } from "rxjs";
+    ///
+    /// const events = connectable(from(truapi.media.sessionSubscribe()));
+    /// const firstSnapshot = firstValueFrom(events);
+    /// // Keep the host listener until the operation and cleanup finish.
+    /// const listener = events.connect();
     /// try {
-    ///   const first = await events.next();
-    ///   assert(!first.done && first.value.tag === "Snapshot", "snapshot required");
-    ///   const session = first.value.value.sessions.find(s => s.state !== "Ended");
+    ///   const first = await firstSnapshot;
+    ///   assert(first.tag === "Snapshot", "snapshot required");
+    ///   const session = first.value.sessions.find(s => s.state !== "Ended");
     ///   assert(session, "Start a session first");
     ///   console.log(await truapi.media.endSession({ sessionId: session.sessionId }));
     /// } finally {
-    ///   await events.return?.();
+    ///   listener.unsubscribe();
     /// }
     /// ```
     #[wire(id = 8)]
