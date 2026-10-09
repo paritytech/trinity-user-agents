@@ -11,10 +11,12 @@
 //! hosts go to the same nodes. Every fourth read tries an unmeasured provider first.
 //!
 //! The host pays as an sr25519 payer key: `TRUAPI_CACHE_PAYER_SEED`, else `//allowance//cache//{product}` of the
-//! signed-in account. It asks with `POST /acquire`, checks the bytes against the CID, and only then signs a receipt for
-//! that delivery and sends it to that provider (`POST /receipt`). A node that sends bad bytes gets no receipt. Without
-//! a payer the host does not ask cache nodes. A node that is down, refuses the payer or does not have the blob costs
-//! one request, and the Bulletin node answers as it would without cache nodes.
+//! signed-in account. It asks with `POST /acquire` and a read request that the payer signs. The request names the
+//! provider, the content, a new transfer id and the time, so only the payer can take reads in its name, and a node
+//! serves each request once. The host checks the bytes against the CID, and only then signs a receipt for that
+//! delivery and sends it to that provider (`POST /receipt`). A node that sends bad bytes gets no receipt. Without a
+//! payer the host does not ask cache nodes. A node that is down, refuses the payer or does not have the blob costs one
+//! request, and the Bulletin node answers as it would without cache nodes.
 //!
 //! The host keeps what it measured in `cache-quality.json` in its state directory, so a restart does not forget which
 //! providers are fast. `/cache` shows the payer and the measurements.
@@ -51,10 +53,12 @@ const FAILURE_COOLDOWN: Duration = Duration::from_secs(30);
 const PRIOR_MS: u64 = 50;
 /// Every this many reads, an unmeasured provider goes first.
 const EXPLORE_EVERY: u64 = 4;
-/// The signing context and message prefix of a cache receipt. The cache nodes check the same layout
-/// (`cache/src/payment.rs`).
+/// The signature contexts and message prefixes of a cache receipt and of a cache read request. The cache nodes check
+/// the same layouts (`cache/src/payment.rs`).
 const RECEIPT_CONTEXT: &[u8] = b"cache-receipt";
-const RECEIPT_PREFIX: &[u8] = b"cache-receipt/1";
+const RECEIPT_PREFIX: &[u8] = b"cache-receipt/2";
+const READ_CONTEXT: &[u8] = b"cache-read";
+const READ_PREFIX: &[u8] = b"cache-read/1";
 
 /// One provider of the provider set that a host can call.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -197,24 +201,50 @@ fn order(
     ordered
 }
 
-/// The bytes that a payer signs for one cache delivery. Text fields have a little-endian u32 length first, keys are
-/// their 32 raw bytes, the service is one byte (0 delivery), and `secs` is a little-endian u64.
-fn receipt_message(
+/// The fields that a receipt and a read request share, after `prefix`: the transfer id, the payer and provider keys,
+/// and the content id. Text fields have a little-endian u32 length first, and keys are their 32 raw bytes.
+fn signed_fields(
+    prefix: &[u8],
     transfer: &str,
     payer: &[u8; 32],
     provider: &[u8; 32],
     content_id: &str,
-    secs: u64,
 ) -> Vec<u8> {
-    let mut message = RECEIPT_PREFIX.to_vec();
+    let mut message = prefix.to_vec();
     message.extend_from_slice(&(transfer.len() as u32).to_le_bytes());
     message.extend_from_slice(transfer.as_bytes());
     message.extend_from_slice(payer);
     message.extend_from_slice(provider);
     message.extend_from_slice(&(content_id.len() as u32).to_le_bytes());
     message.extend_from_slice(content_id.as_bytes());
+    message
+}
+
+/// The bytes that a payer signs for one cache delivery: the shared fields, the service as one byte (0 delivery), and
+/// the retention window `from` and `until` as little-endian u64s. A delivery has no window, so both are 0.
+fn receipt_message(
+    transfer: &str,
+    payer: &[u8; 32],
+    provider: &[u8; 32],
+    content_id: &str,
+) -> Vec<u8> {
+    let mut message = signed_fields(RECEIPT_PREFIX, transfer, payer, provider, content_id);
     message.push(0);
-    message.extend_from_slice(&secs.to_le_bytes());
+    message.extend_from_slice(&[0; 16]);
+    message
+}
+
+/// The bytes that a payer signs to ask one provider for one read: the shared fields and the issue time in Unix
+/// seconds as a little-endian u64.
+fn read_message(
+    transfer: &str,
+    payer: &[u8; 32],
+    provider: &[u8; 32],
+    content_id: &str,
+    issued_at: u64,
+) -> Vec<u8> {
+    let mut message = signed_fields(READ_PREFIX, transfer, payer, provider, content_id);
+    message.extend_from_slice(&issued_at.to_le_bytes());
     message
 }
 
@@ -455,8 +485,8 @@ impl CacheNodes {
         status
     }
 
-    /// One `POST /acquire`: the bytes and the source that the node reports, or `None` when the node answers that
-    /// Bulletin does not hold the blob.
+    /// One `POST /acquire` with a read request that the payer signs for this provider: the bytes and the source that
+    /// the node reports, or `None` when the node answers that Bulletin does not hold the blob.
     async fn ask(
         &self,
         provider: &Provider,
@@ -464,10 +494,24 @@ impl CacheNodes {
         payer: &Keypair,
         transfer: &str,
     ) -> Result<Option<(Vec<u8>, String)>, String> {
+        let payer_id = payer.public.to_bytes();
+        let issued_at = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_or(0, |since| since.as_secs());
+        let message = read_message(transfer, &payer_id, &provider.id, cid, issued_at);
+        let signature = payer.sign_simple(READ_CONTEXT, &message);
         let request = json!({
             "reference": { "source": format!("bulletin:{cid}"), "cid": null, "size": null },
-            "payer": hex::encode(payer.public.to_bytes()),
-            "transfer": transfer,
+            "read": {
+                "request": {
+                    "transfer": transfer,
+                    "payer": hex::encode(payer_id),
+                    "provider": hex::encode(provider.id),
+                    "content": cid,
+                    "issued_at": issued_at,
+                },
+                "signature": hex::encode(signature.to_bytes()),
+            },
         });
         let response = self
             .http
@@ -497,7 +541,7 @@ impl CacheNodes {
     /// paying is the provider's concern, and the provider keeps the delivery as unpaid until the receipt arrives.
     fn pay(&self, provider: &Provider, cid: &str, payer: &Keypair, transfer: String) {
         let payer_id = payer.public.to_bytes();
-        let message = receipt_message(&transfer, &payer_id, &provider.id, cid, 0);
+        let message = receipt_message(&transfer, &payer_id, &provider.id, cid);
         let signature = payer.sign_simple(RECEIPT_CONTEXT, &message);
         let receipt = json!({
             "receipt": {
@@ -506,7 +550,8 @@ impl CacheNodes {
                 "provider": hex::encode(provider.id),
                 "content": cid,
                 "service": "Delivery",
-                "secs": 0,
+                "from": 0,
+                "until": 0,
             },
             "signature": hex::encode(signature.to_bytes()),
         });
@@ -529,7 +574,8 @@ impl CacheNodes {
         });
     }
 
-    /// A transfer id that the ledger of the cache sees once, so a read is never taken as a retry of another.
+    /// A new transfer id for each request to a node. A node serves a transfer id once, and the ledger of the cache
+    /// charges it once.
     fn transfer_id(&self) -> String {
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -701,29 +747,37 @@ mod tests {
             .collect()
     }
 
+    /// Whether `signature` (hex) is the signature of the test payer over `message` in `context`.
+    fn signed_by_test_payer(context: &[u8], message: &[u8], signature: &serde_json::Value) -> bool {
+        let signature = hex::decode(signature.as_str().unwrap()).unwrap();
+        let signature = schnorrkel::Signature::from_bytes(&signature).unwrap();
+        test_payer()
+            .public
+            .verify_simple(context, message, &signature)
+            .is_ok()
+    }
+
     // The same vectors are in the cache (cache/src/logic.rs and cache/src/payment.rs): hosts and nodes must rank the
     // same home nodes, derive the same payer from a seed and sign the same bytes.
     #[test]
     fn vectors_shared_with_the_cache() {
         let key = "bafk2bzaceb2yf3stdn7wptwblupjbssdhdp2czormoqyiwkcrq35uhvzgcgp4";
         let payer = test_payer().public.to_bytes();
-        let mut retention = receipt_message("t-1", &payer, &[7; 32], key, 3600);
-        // The cache vector is a retention receipt: service byte 1.
-        let service = retention.len() - 9;
-        retention[service] = 1;
+        let fields = "03000000742d31189dac29296d31814dc8c56cf3d36a0543372bba7538fa322a4aebfebc39e056070707070707070707\
+                      07070707070707070707070707070707070707070707073e0000006261666b32627a61636562327966337374646e3777\
+                      707477626c75706a6273736468647032637a6f726d6f717969776b63727133357568767a6763677034";
         assert_eq!(
             (
                 hex::encode(preimage_key(&[key.as_bytes(), &[7; 32]].concat())),
                 hex::encode(payer),
-                hex::encode(retention),
+                hex::encode(receipt_message("t-1", &payer, &[7; 32], key)),
+                hex::encode(read_message("t-1", &payer, &[7; 32], key, 1_791_500_000)),
             ),
             (
                 "1b90bef8509cc25b45d94885d8a1eca44bd751212310efc75c9e2628a663b98f".to_string(),
                 "189dac29296d31814dc8c56cf3d36a0543372bba7538fa322a4aebfebc39e056".to_string(),
-                "63616368652d726563656970742f3103000000742d31189dac29296d31814dc8c56cf3d36a0543372bba7538fa322a4aebfebc39e0560707\
-                 0707070707070707070707070707070707070707070707070707070707073e0000006261666b32627a61636562327966337374646e377770\
-                 7477626c75706a6273736468647032637a6f726d6f717969776b63727133357568767a676367703401100e000000000000"
-                    .to_string(),
+                format!("63616368652d726563656970742f32{fields}0000000000000000000000000000000000"),
+                format!("63616368652d726561642f31{fields}e01ec86a00000000"),
             )
         );
     }
@@ -814,9 +868,10 @@ mod tests {
         );
     }
 
-    /// The host pays for what it verified: one receipt, to the provider that served, signed by the payer.
+    /// The host asks with a read request that the payer signs for that provider, and pays for what it verified: one
+    /// receipt for the same transfer, to the provider that served, signed by the payer.
     #[tokio::test]
-    async fn a_cache_hit_is_paid_with_a_signed_receipt_and_bulletin_is_not_asked() {
+    async fn a_cache_hit_is_asked_and_paid_with_signatures_and_bulletin_is_not_asked() {
         let (node, requests) = fake_node(200, blob()).await;
         let source = CacheFirst::new(
             cache(vec![provider(1, &node)], Some(test_payer())),
@@ -827,34 +882,54 @@ mod tests {
             (Some(blob()), 0)
         );
         let receipts = receipts(&requests).await;
-        let receipt = &receipts[0]["receipt"];
-        let signature = hex::decode(receipts[0]["signature"].as_str().unwrap()).unwrap();
-        let signature = schnorrkel::Signature::from_bytes(&signature).unwrap();
-        let message = receipt_message(
-            receipt["transfer"].as_str().unwrap(),
-            &test_payer().public.to_bytes(),
-            &[1; 32],
-            &cid(),
-            0,
+        let acquire = requests.lock().unwrap()[0].1["read"].clone();
+        let (read, receipt) = (&acquire["request"], &receipts[0]["receipt"]);
+        let payer = test_payer().public.to_bytes();
+        let transfer = read["transfer"].as_str().unwrap();
+        let read_signed = signed_by_test_payer(
+            READ_CONTEXT,
+            &read_message(
+                transfer,
+                &payer,
+                &[1; 32],
+                &cid(),
+                read["issued_at"].as_u64().unwrap(),
+            ),
+            &acquire["signature"],
         );
-        assert!(
-            test_payer()
-                .public
-                .verify_simple(RECEIPT_CONTEXT, &message, &signature)
-                .is_ok()
+        let receipt_signed = signed_by_test_payer(
+            RECEIPT_CONTEXT,
+            &receipt_message(transfer, &payer, &[1; 32], &cid()),
+            &receipts[0]["signature"],
         );
         assert_eq!(
             (
                 receipts.len(),
-                receipt["provider"].clone(),
-                receipt["content"].clone(),
-                receipt["service"].clone()
+                read_signed,
+                receipt_signed,
+                [&read["provider"], &read["content"], &read["payer"]],
+                [
+                    &receipt["transfer"],
+                    &receipt["provider"],
+                    &receipt["content"]
+                ],
+                [&receipt["service"], &receipt["from"], &receipt["until"]],
             ),
             (
                 1,
-                json!(hex::encode([1u8; 32])),
-                json!(cid()),
-                json!("Delivery")
+                true,
+                true,
+                [
+                    &json!(hex::encode([1u8; 32])),
+                    &json!(cid()),
+                    &json!(hex::encode(payer))
+                ],
+                [
+                    &json!(transfer),
+                    &json!(hex::encode([1u8; 32])),
+                    &json!(cid())
+                ],
+                [&json!("Delivery"), &json!(0), &json!(0)],
             )
         );
     }

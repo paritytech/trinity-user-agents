@@ -1834,12 +1834,16 @@ A preimage lookup the core cannot answer from its own cache goes to the
 network's Bulletin node, by CID over `bitswap_v1_get`. When
 `TRUAPI_CACHE_PROVIDERS` names a provider set file, each read first asks the
 providers in it that have an API URL, with `POST /acquire` for
-`bulletin:<cid>` and a 15 s bound per provider. Providers that failed in the
+`bulletin:<cid>` and a 15 s bound per provider. Each request carries a read
+request signed by the payer key for that provider, the CID, a new transfer id
+and the time in Unix seconds; a provider rejects a request with a transfer id
+it has seen or a time more than 300 s from its clock. Providers that failed in the
 last 30 s go last; the others go by measured latency, with the CID's three
 home nodes (highest `blake2b-256(cid || endpoint id)`) at half their latency,
 and every fourth read tries an unmeasured provider first. Bytes that do not
 hash to the CID are dropped and the next provider is asked; for bytes that
-pass, the host sends that provider a delivery receipt signed by the payer key,
+pass, the host sends that provider a delivery receipt for the same transfer id,
+signed by the payer key,
 `//allowance//cache//{product}` of the signed-in account or the seed in
 `TRUAPI_CACHE_PAYER_SEED`. Without a payer the host does not ask cache nodes.
 When no cache node supplies the blob, the Bulletin node is asked as before.
