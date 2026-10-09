@@ -564,6 +564,7 @@ impl<'a, S: CoreStorage + ?Sized, P: Permissions + ?Sized> PermissionsService<'a
     }
 
     /// Edit one canonical settings row without broadening a bundle denial.
+    #[cfg(not(target_arch = "wasm32"))]
     pub(crate) async fn set_canonical_authorization_status(
         &self,
         request: &PermissionAuthorizationRequest,
@@ -580,6 +581,7 @@ impl<'a, S: CoreStorage + ?Sized, P: Permissions + ?Sized> PermissionsService<'a
         .await
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     pub(crate) async fn commit_if_current(
         &self,
         request: &PermissionAuthorizationRequest,
@@ -603,6 +605,7 @@ impl<'a, S: CoreStorage + ?Sized, P: Permissions + ?Sized> PermissionsService<'a
         Ok(true)
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     pub(crate) async fn import_authorization_status(
         &self,
         request: &PermissionAuthorizationRequest,
@@ -941,6 +944,7 @@ pub(crate) fn authorization_key(
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) async fn stored_authorization_status<S: CoreStorage + ?Sized>(
     storage: &S,
     key: CoreStorageKey,
