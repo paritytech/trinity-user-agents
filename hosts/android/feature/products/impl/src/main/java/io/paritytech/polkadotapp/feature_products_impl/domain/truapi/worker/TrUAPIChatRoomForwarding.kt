@@ -14,7 +14,7 @@ import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.retryWhen
 import timber.log.Timber
 
-internal class TrUAPIChatRoomForwarding(
+class TrUAPIChatRoomForwarding(
     private val productId: ProductId,
     private val execution: TrUAPIProductExecution,
     private val chatMessaging: ProductChatMessaging,

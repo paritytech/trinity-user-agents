@@ -37,7 +37,7 @@ interface ProductWorkerRefCounter {
 }
 
 interface ProductWorkerReference {
-    /** Awaits boot and returns the running worker. Throws if this reference is released or the product has no worker. */
+    /** Awaits boot and returns the running worker. Throws if this reference is released or the boot failed. */
     suspend fun worker(): ProductWorker
 
     /** Binds a modality API (e.g. chat messaging) onto the shared worker for as long as this reference is held. */

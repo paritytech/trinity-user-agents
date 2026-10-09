@@ -17,6 +17,11 @@ import javax.inject.Inject
  * graph is assembled before any worker boots.
  */
 interface WorkerBootFactory {
+    /**
+     * Boots the worker for [productId] on [scope], wiring [botApi] as its host-call surface.
+     * Throws when the chosen runtime cannot produce one: a product with no worker script fails here
+     * on the JS path, but boots on the core path and surfaces as a supervisor `Failed` state later.
+     */
     suspend fun boot(
         productId: ProductId,
         botApi: BindableProductsBotApi,

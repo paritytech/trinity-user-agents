@@ -5,7 +5,7 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.bot.model.ProductC
 import uniffi.truapi.ChatRoom
 import uniffi.truapi.ChatRoomParticipation
 
-internal fun ProductChatRoom.toCoreChatRoom(): ChatRoom = ChatRoom(
+fun ProductChatRoom.toCoreChatRoom(): ChatRoom = ChatRoom(
     roomId = roomId,
     participatingAs = when (participatingAs) {
         RoomParticipation.ROOM_HOST -> ChatRoomParticipation.ROOM_HOST

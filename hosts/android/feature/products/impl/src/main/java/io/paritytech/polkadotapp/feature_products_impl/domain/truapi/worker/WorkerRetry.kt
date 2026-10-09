@@ -14,7 +14,7 @@ import kotlin.time.Duration.Companion.seconds
  * asked for in that window is refused as not connected. Such a refusal is retried; anything else
  * is a failure of the stream.
  */
-internal fun <T> Flow<T>.retryWhileConnecting(
+fun <T> Flow<T>.retryWhileConnecting(
     attempts: Long = CONNECT_ATTEMPTS,
     retryDelay: Duration = CONNECT_RETRY_DELAY,
 ): Flow<T> = retryWhen { cause, attempt ->
@@ -29,14 +29,14 @@ internal fun <T> Flow<T>.retryWhileConnecting(
  * different execution is published, and a stop publishes none. The backoff counts every failure
  * of one collection and does not shrink after a successful draw.
  */
-internal fun <T> Flow<T>.reopenAfterFailure(what: String): Flow<T> = retryWhen { failure, attempt ->
+fun <T> Flow<T>.reopenAfterFailure(what: String): Flow<T> = retryWhen { failure, attempt ->
     Timber.w(failure, "%s ended, reopening", what)
     delay(reopenBackoff(attempt))
     true
 }
 
 /** Doubling from [BACKOFF_BASE] to [MAX_BACKOFF]: a slow surface is picked up at once, a broken one is not asked on a loop. */
-internal fun reopenBackoff(attempt: Long): Duration =
+fun reopenBackoff(attempt: Long): Duration =
     minOf(BACKOFF_BASE * (1 shl attempt.coerceAtMost(MAX_BACKOFF_SHIFT).toInt()), MAX_BACKOFF)
 
 private const val CONNECT_ATTEMPTS = 40L

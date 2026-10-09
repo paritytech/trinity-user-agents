@@ -10,7 +10,7 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.bot.message.Produc
 
 @Module
 @InstallIn(SingletonComponent::class)
-internal interface E2EModule {
+interface E2EModule {
     @Binds
     @IntoSet
     fun bindRenderMarker(impl: E2ERuntimeMarkers): ProductMessageRenderObserver
