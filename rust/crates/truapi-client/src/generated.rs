@@ -5,7 +5,7 @@
 use super::*;
 
 /// Fingerprint of the generated wire contract.
-pub const TRUAPI_WIRE_SCHEMA_HASH: &str = "064ab9d59b73f723";
+pub const TRUAPI_WIRE_SCHEMA_HASH: &str = "ec0d28820f74178d";
 
 /// `account_connection_status_subscribe` method marker.
 pub struct AccountConnectionStatusSubscribe;
@@ -1195,6 +1195,195 @@ impl RequestMethod for EntropyDerive {
     const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
 }
 
+/// `jam_peer_transport_dial` method marker.
+pub struct JamPeerTransportDial;
+impl JamPeerTransportDial {
+    /// Canonical metadata and frame ids for this method.
+    pub const DESCRIPTOR: MethodDescriptor = MethodDescriptor {
+        service: "JamPeerTransport",
+        method: "dial",
+        wire_name: "jam_peer_transport_dial",
+        request_type: "truapi::versioned::jam_peer_transport::HostJamPeerTransportDialRequest",
+        response_type: "truapi::versioned::jam_peer_transport::HostJamPeerTransportDialResponse",
+        error_type: Some("truapi::versioned::jam_peer_transport::HostJamPeerTransportDialError"),
+        kind: MethodKind::Request,
+        direction: Direction::ProductToHost,
+        required_execution: None,
+        wire: MethodWire::Request(MethodIds {
+            trait_id: 111,
+            method_id: 0,
+        }),
+    };
+}
+impl RequestMethod for JamPeerTransportDial {
+    type Request = truapi::versioned::jam_peer_transport::HostJamPeerTransportDialRequest;
+    type Response = truapi::versioned::jam_peer_transport::HostJamPeerTransportDialResponse;
+    type Error = truapi::versioned::jam_peer_transport::HostJamPeerTransportDialError;
+    const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
+}
+
+/// `jam_peer_transport_open` method marker.
+pub struct JamPeerTransportOpen;
+impl JamPeerTransportOpen {
+    /// Canonical metadata and frame ids for this method.
+    pub const DESCRIPTOR: MethodDescriptor = MethodDescriptor {
+        service: "JamPeerTransport",
+        method: "open",
+        wire_name: "jam_peer_transport_open",
+        request_type: "truapi::versioned::jam_peer_transport::HostJamPeerTransportOpenRequest",
+        response_type: "truapi::versioned::jam_peer_transport::HostJamPeerTransportOpenResponse",
+        error_type: Some("truapi::versioned::jam_peer_transport::HostJamPeerTransportOpenError"),
+        kind: MethodKind::Request,
+        direction: Direction::ProductToHost,
+        required_execution: None,
+        wire: MethodWire::Request(MethodIds {
+            trait_id: 111,
+            method_id: 1,
+        }),
+    };
+}
+impl RequestMethod for JamPeerTransportOpen {
+    type Request = truapi::versioned::jam_peer_transport::HostJamPeerTransportOpenRequest;
+    type Response = truapi::versioned::jam_peer_transport::HostJamPeerTransportOpenResponse;
+    type Error = truapi::versioned::jam_peer_transport::HostJamPeerTransportOpenError;
+    const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
+}
+
+/// `jam_peer_transport_send` method marker.
+pub struct JamPeerTransportSend;
+impl JamPeerTransportSend {
+    /// Canonical metadata and frame ids for this method.
+    pub const DESCRIPTOR: MethodDescriptor = MethodDescriptor {
+        service: "JamPeerTransport",
+        method: "send",
+        wire_name: "jam_peer_transport_send",
+        request_type: "truapi::versioned::jam_peer_transport::HostJamPeerTransportSendRequest",
+        response_type: "truapi::versioned::jam_peer_transport::HostJamPeerTransportSendResponse",
+        error_type: Some("truapi::versioned::jam_peer_transport::HostJamPeerTransportSendError"),
+        kind: MethodKind::Request,
+        direction: Direction::ProductToHost,
+        required_execution: None,
+        wire: MethodWire::Request(MethodIds {
+            trait_id: 111,
+            method_id: 2,
+        }),
+    };
+}
+impl RequestMethod for JamPeerTransportSend {
+    type Request = truapi::versioned::jam_peer_transport::HostJamPeerTransportSendRequest;
+    type Response = truapi::versioned::jam_peer_transport::HostJamPeerTransportSendResponse;
+    type Error = truapi::versioned::jam_peer_transport::HostJamPeerTransportSendError;
+    const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
+}
+
+/// `jam_peer_transport_recv` method marker.
+pub struct JamPeerTransportRecv;
+impl JamPeerTransportRecv {
+    /// Canonical metadata and frame ids for this method.
+    pub const DESCRIPTOR: MethodDescriptor = MethodDescriptor {
+        service: "JamPeerTransport",
+        method: "recv",
+        wire_name: "jam_peer_transport_recv",
+        request_type: "truapi::versioned::jam_peer_transport::HostJamPeerTransportRecvRequest",
+        response_type: "truapi::versioned::jam_peer_transport::HostJamPeerTransportRecvResponse",
+        error_type: Some("truapi::versioned::jam_peer_transport::HostJamPeerTransportRecvError"),
+        kind: MethodKind::Request,
+        direction: Direction::ProductToHost,
+        required_execution: None,
+        wire: MethodWire::Request(MethodIds {
+            trait_id: 111,
+            method_id: 3,
+        }),
+    };
+}
+impl RequestMethod for JamPeerTransportRecv {
+    type Request = truapi::versioned::jam_peer_transport::HostJamPeerTransportRecvRequest;
+    type Response = truapi::versioned::jam_peer_transport::HostJamPeerTransportRecvResponse;
+    type Error = truapi::versioned::jam_peer_transport::HostJamPeerTransportRecvError;
+    const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
+}
+
+/// `jam_peer_transport_reset` method marker.
+pub struct JamPeerTransportReset;
+impl JamPeerTransportReset {
+    /// Canonical metadata and frame ids for this method.
+    pub const DESCRIPTOR: MethodDescriptor = MethodDescriptor {
+        service: "JamPeerTransport",
+        method: "reset",
+        wire_name: "jam_peer_transport_reset",
+        request_type: "truapi::versioned::jam_peer_transport::HostJamPeerTransportResetRequest",
+        response_type: "truapi::versioned::jam_peer_transport::HostJamPeerTransportResetResponse",
+        error_type: Some("truapi::versioned::jam_peer_transport::HostJamPeerTransportResetError"),
+        kind: MethodKind::Request,
+        direction: Direction::ProductToHost,
+        required_execution: None,
+        wire: MethodWire::Request(MethodIds {
+            trait_id: 111,
+            method_id: 4,
+        }),
+    };
+}
+impl RequestMethod for JamPeerTransportReset {
+    type Request = truapi::versioned::jam_peer_transport::HostJamPeerTransportResetRequest;
+    type Response = truapi::versioned::jam_peer_transport::HostJamPeerTransportResetResponse;
+    type Error = truapi::versioned::jam_peer_transport::HostJamPeerTransportResetError;
+    const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
+}
+
+/// `jam_peer_transport_close` method marker.
+pub struct JamPeerTransportClose;
+impl JamPeerTransportClose {
+    /// Canonical metadata and frame ids for this method.
+    pub const DESCRIPTOR: MethodDescriptor = MethodDescriptor {
+        service: "JamPeerTransport",
+        method: "close",
+        wire_name: "jam_peer_transport_close",
+        request_type: "truapi::versioned::jam_peer_transport::HostJamPeerTransportCloseRequest",
+        response_type: "truapi::versioned::jam_peer_transport::HostJamPeerTransportCloseResponse",
+        error_type: Some("truapi::versioned::jam_peer_transport::HostJamPeerTransportCloseError"),
+        kind: MethodKind::Request,
+        direction: Direction::ProductToHost,
+        required_execution: None,
+        wire: MethodWire::Request(MethodIds {
+            trait_id: 111,
+            method_id: 5,
+        }),
+    };
+}
+impl RequestMethod for JamPeerTransportClose {
+    type Request = truapi::versioned::jam_peer_transport::HostJamPeerTransportCloseRequest;
+    type Response = truapi::versioned::jam_peer_transport::HostJamPeerTransportCloseResponse;
+    type Error = truapi::versioned::jam_peer_transport::HostJamPeerTransportCloseError;
+    const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
+}
+
+/// `jam_peer_transport_events` method marker.
+pub struct JamPeerTransportEvents;
+impl JamPeerTransportEvents {
+    /// Canonical metadata and frame ids for this method.
+    pub const DESCRIPTOR: MethodDescriptor = MethodDescriptor {
+        service: "JamPeerTransport",
+        method: "events",
+        wire_name: "jam_peer_transport_events",
+        request_type: "truapi::versioned::jam_peer_transport::HostJamPeerTransportEventsRequest",
+        response_type: "truapi::versioned::jam_peer_transport::HostJamPeerTransportEventsResponse",
+        error_type: Some("truapi::versioned::jam_peer_transport::HostJamPeerTransportEventsError"),
+        kind: MethodKind::Request,
+        direction: Direction::ProductToHost,
+        required_execution: None,
+        wire: MethodWire::Request(MethodIds {
+            trait_id: 111,
+            method_id: 6,
+        }),
+    };
+}
+impl RequestMethod for JamPeerTransportEvents {
+    type Request = truapi::versioned::jam_peer_transport::HostJamPeerTransportEventsRequest;
+    type Response = truapi::versioned::jam_peer_transport::HostJamPeerTransportEventsResponse;
+    type Error = truapi::versioned::jam_peer_transport::HostJamPeerTransportEventsError;
+    const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
+}
+
 /// `expanded_card_set_face_shown` method marker.
 pub struct ExpandedCardSetFaceShown;
 impl ExpandedCardSetFaceShown {
@@ -1489,6 +1678,170 @@ impl RequestMethod for NotificationsCancelPushNotification {
     type Request = truapi::versioned::notifications::HostPushNotificationCancelRequest;
     type Response = truapi::versioned::notifications::HostPushNotificationCancelResponse;
     type Error = truapi::versioned::notifications::HostPushNotificationCancelError;
+    const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
+}
+
+/// `notifications_receiver_status` method marker.
+pub struct NotificationsReceiverStatus;
+impl NotificationsReceiverStatus {
+    /// Canonical metadata and frame ids for this method.
+    pub const DESCRIPTOR: MethodDescriptor = MethodDescriptor {
+        service: "Notifications",
+        method: "receiver_status",
+        wire_name: "notifications_receiver_status",
+        request_type: "truapi::versioned::notifications::HostNotificationReceiverStatusRequest",
+        response_type: "truapi::versioned::notifications::HostNotificationReceiverStatusResponse",
+        error_type: Some("truapi::versioned::notifications::HostNotificationReceivingError"),
+        kind: MethodKind::Request,
+        direction: Direction::ProductToHost,
+        required_execution: None,
+        wire: MethodWire::Request(MethodIds {
+            trait_id: 8,
+            method_id: 2,
+        }),
+    };
+}
+impl RequestMethod for NotificationsReceiverStatus {
+    type Request = truapi::versioned::notifications::HostNotificationReceiverStatusRequest;
+    type Response = truapi::versioned::notifications::HostNotificationReceiverStatusResponse;
+    type Error = truapi::versioned::notifications::HostNotificationReceivingError;
+    const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
+}
+
+/// `notifications_replace_receiver` method marker.
+pub struct NotificationsReplaceReceiver;
+impl NotificationsReplaceReceiver {
+    /// Canonical metadata and frame ids for this method.
+    pub const DESCRIPTOR: MethodDescriptor = MethodDescriptor {
+        service: "Notifications",
+        method: "replace_receiver",
+        wire_name: "notifications_replace_receiver",
+        request_type: "truapi::versioned::notifications::HostNotificationReplaceReceiverRequest",
+        response_type: "truapi::versioned::notifications::HostNotificationReplaceReceiverResponse",
+        error_type: Some("truapi::versioned::notifications::HostNotificationReceivingError"),
+        kind: MethodKind::Request,
+        direction: Direction::ProductToHost,
+        required_execution: None,
+        wire: MethodWire::Request(MethodIds {
+            trait_id: 8,
+            method_id: 3,
+        }),
+    };
+}
+impl RequestMethod for NotificationsReplaceReceiver {
+    type Request = truapi::versioned::notifications::HostNotificationReplaceReceiverRequest;
+    type Response = truapi::versioned::notifications::HostNotificationReplaceReceiverResponse;
+    type Error = truapi::versioned::notifications::HostNotificationReceivingError;
+    const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
+}
+
+/// `notifications_disable_receiver` method marker.
+pub struct NotificationsDisableReceiver;
+impl NotificationsDisableReceiver {
+    /// Canonical metadata and frame ids for this method.
+    pub const DESCRIPTOR: MethodDescriptor = MethodDescriptor {
+        service: "Notifications",
+        method: "disable_receiver",
+        wire_name: "notifications_disable_receiver",
+        request_type: "truapi::versioned::notifications::HostNotificationDisableReceiverRequest",
+        response_type: "truapi::versioned::notifications::HostNotificationDisableReceiverResponse",
+        error_type: Some("truapi::versioned::notifications::HostNotificationReceivingError"),
+        kind: MethodKind::Request,
+        direction: Direction::ProductToHost,
+        required_execution: None,
+        wire: MethodWire::Request(MethodIds {
+            trait_id: 8,
+            method_id: 4,
+        }),
+    };
+}
+impl RequestMethod for NotificationsDisableReceiver {
+    type Request = truapi::versioned::notifications::HostNotificationDisableReceiverRequest;
+    type Response = truapi::versioned::notifications::HostNotificationDisableReceiverResponse;
+    type Error = truapi::versioned::notifications::HostNotificationReceivingError;
+    const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
+}
+
+/// `notifications_record_receipt` method marker.
+pub struct NotificationsRecordReceipt;
+impl NotificationsRecordReceipt {
+    /// Canonical metadata and frame ids for this method.
+    pub const DESCRIPTOR: MethodDescriptor = MethodDescriptor {
+        service: "Notifications",
+        method: "record_receipt",
+        wire_name: "notifications_record_receipt",
+        request_type: "truapi::versioned::notifications::HostNotificationRecordReceiptRequest",
+        response_type: "truapi::versioned::notifications::HostNotificationRecordReceiptResponse",
+        error_type: Some("truapi::versioned::notifications::HostNotificationReceivingError"),
+        kind: MethodKind::Request,
+        direction: Direction::ProductToHost,
+        required_execution: None,
+        wire: MethodWire::Request(MethodIds {
+            trait_id: 8,
+            method_id: 5,
+        }),
+    };
+}
+impl RequestMethod for NotificationsRecordReceipt {
+    type Request = truapi::versioned::notifications::HostNotificationRecordReceiptRequest;
+    type Response = truapi::versioned::notifications::HostNotificationRecordReceiptResponse;
+    type Error = truapi::versioned::notifications::HostNotificationReceivingError;
+    const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
+}
+
+/// `notifications_receiver_events` method marker.
+pub struct NotificationsReceiverEvents;
+impl NotificationsReceiverEvents {
+    /// Canonical metadata and frame ids for this method.
+    pub const DESCRIPTOR: MethodDescriptor = MethodDescriptor {
+        service: "Notifications",
+        method: "receiver_events",
+        wire_name: "notifications_receiver_events",
+        request_type: "truapi::versioned::notifications::HostNotificationReceiverEventsRequest",
+        response_type: "truapi::versioned::notifications::HostNotificationReceiverEventsResponse",
+        error_type: Some("truapi::versioned::notifications::HostNotificationReceivingError"),
+        kind: MethodKind::Request,
+        direction: Direction::ProductToHost,
+        required_execution: None,
+        wire: MethodWire::Request(MethodIds {
+            trait_id: 8,
+            method_id: 6,
+        }),
+    };
+}
+impl RequestMethod for NotificationsReceiverEvents {
+    type Request = truapi::versioned::notifications::HostNotificationReceiverEventsRequest;
+    type Response = truapi::versioned::notifications::HostNotificationReceiverEventsResponse;
+    type Error = truapi::versioned::notifications::HostNotificationReceivingError;
+    const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
+}
+
+/// `notifications_acknowledge_receiver_event` method marker.
+pub struct NotificationsAcknowledgeReceiverEvent;
+impl NotificationsAcknowledgeReceiverEvent {
+    /// Canonical metadata and frame ids for this method.
+    pub const DESCRIPTOR: MethodDescriptor = MethodDescriptor {
+        service: "Notifications",
+        method: "acknowledge_receiver_event",
+        wire_name: "notifications_acknowledge_receiver_event",
+        request_type: "truapi::versioned::notifications::HostNotificationAcknowledgeReceiverEventRequest",
+        response_type: "truapi::versioned::notifications::HostNotificationAcknowledgeReceiverEventResponse",
+        error_type: Some("truapi::versioned::notifications::HostNotificationReceivingError"),
+        kind: MethodKind::Request,
+        direction: Direction::ProductToHost,
+        required_execution: None,
+        wire: MethodWire::Request(MethodIds {
+            trait_id: 8,
+            method_id: 7,
+        }),
+    };
+}
+impl RequestMethod for NotificationsAcknowledgeReceiverEvent {
+    type Request =
+        truapi::versioned::notifications::HostNotificationAcknowledgeReceiverEventRequest;
+    type Response =
+        truapi::versioned::notifications::HostNotificationAcknowledgeReceiverEventResponse;
+    type Error = truapi::versioned::notifications::HostNotificationReceivingError;
     const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
 }
 
@@ -2758,6 +3111,13 @@ pub const APP_METHODS: &[MethodDescriptor] = &[
     ContactsPickMany::DESCRIPTOR,
     ContactsPlaceLabels::DESCRIPTOR,
     EntropyDerive::DESCRIPTOR,
+    JamPeerTransportDial::DESCRIPTOR,
+    JamPeerTransportOpen::DESCRIPTOR,
+    JamPeerTransportSend::DESCRIPTOR,
+    JamPeerTransportRecv::DESCRIPTOR,
+    JamPeerTransportReset::DESCRIPTOR,
+    JamPeerTransportClose::DESCRIPTOR,
+    JamPeerTransportEvents::DESCRIPTOR,
     GameRemindNextGame::DESCRIPTOR,
     GameCancelNextGame::DESCRIPTOR,
     LocalStorageRead::DESCRIPTOR,
@@ -2768,6 +3128,12 @@ pub const APP_METHODS: &[MethodDescriptor] = &[
     LocaleLocalizeTimestamps::DESCRIPTOR,
     NotificationsSendPushNotification::DESCRIPTOR,
     NotificationsCancelPushNotification::DESCRIPTOR,
+    NotificationsReceiverStatus::DESCRIPTOR,
+    NotificationsReplaceReceiver::DESCRIPTOR,
+    NotificationsDisableReceiver::DESCRIPTOR,
+    NotificationsRecordReceipt::DESCRIPTOR,
+    NotificationsReceiverEvents::DESCRIPTOR,
+    NotificationsAcknowledgeReceiverEvent::DESCRIPTOR,
     NotificationsActivationEvents::DESCRIPTOR,
     NotificationsAcknowledgeActivation::DESCRIPTOR,
     PaymentBalanceSubscribe::DESCRIPTOR,
@@ -2850,6 +3216,13 @@ pub const WIDGET_METHODS: &[MethodDescriptor] = &[
     ContactsPickMany::DESCRIPTOR,
     ContactsPlaceLabels::DESCRIPTOR,
     EntropyDerive::DESCRIPTOR,
+    JamPeerTransportDial::DESCRIPTOR,
+    JamPeerTransportOpen::DESCRIPTOR,
+    JamPeerTransportSend::DESCRIPTOR,
+    JamPeerTransportRecv::DESCRIPTOR,
+    JamPeerTransportReset::DESCRIPTOR,
+    JamPeerTransportClose::DESCRIPTOR,
+    JamPeerTransportEvents::DESCRIPTOR,
     ExpandedCardSetFaceShown::DESCRIPTOR,
     GameRemindNextGame::DESCRIPTOR,
     GameCancelNextGame::DESCRIPTOR,
@@ -2861,6 +3234,12 @@ pub const WIDGET_METHODS: &[MethodDescriptor] = &[
     LocaleLocalizeTimestamps::DESCRIPTOR,
     NotificationsSendPushNotification::DESCRIPTOR,
     NotificationsCancelPushNotification::DESCRIPTOR,
+    NotificationsReceiverStatus::DESCRIPTOR,
+    NotificationsReplaceReceiver::DESCRIPTOR,
+    NotificationsDisableReceiver::DESCRIPTOR,
+    NotificationsRecordReceipt::DESCRIPTOR,
+    NotificationsReceiverEvents::DESCRIPTOR,
+    NotificationsAcknowledgeReceiverEvent::DESCRIPTOR,
     NotificationsActivationEvents::DESCRIPTOR,
     NotificationsAcknowledgeActivation::DESCRIPTOR,
     PaymentBalanceSubscribe::DESCRIPTOR,
@@ -2948,6 +3327,13 @@ pub const WORKER_METHODS: &[MethodDescriptor] = &[
     ContactsPickMany::DESCRIPTOR,
     ContactsPlaceLabels::DESCRIPTOR,
     EntropyDerive::DESCRIPTOR,
+    JamPeerTransportDial::DESCRIPTOR,
+    JamPeerTransportOpen::DESCRIPTOR,
+    JamPeerTransportSend::DESCRIPTOR,
+    JamPeerTransportRecv::DESCRIPTOR,
+    JamPeerTransportReset::DESCRIPTOR,
+    JamPeerTransportClose::DESCRIPTOR,
+    JamPeerTransportEvents::DESCRIPTOR,
     GameRemindNextGame::DESCRIPTOR,
     GameCancelNextGame::DESCRIPTOR,
     LocalStorageRead::DESCRIPTOR,
@@ -2958,6 +3344,12 @@ pub const WORKER_METHODS: &[MethodDescriptor] = &[
     LocaleLocalizeTimestamps::DESCRIPTOR,
     NotificationsSendPushNotification::DESCRIPTOR,
     NotificationsCancelPushNotification::DESCRIPTOR,
+    NotificationsReceiverStatus::DESCRIPTOR,
+    NotificationsReplaceReceiver::DESCRIPTOR,
+    NotificationsDisableReceiver::DESCRIPTOR,
+    NotificationsRecordReceipt::DESCRIPTOR,
+    NotificationsReceiverEvents::DESCRIPTOR,
+    NotificationsAcknowledgeReceiverEvent::DESCRIPTOR,
     NotificationsActivationEvents::DESCRIPTOR,
     NotificationsAcknowledgeActivation::DESCRIPTOR,
     PaymentBalanceSubscribe::DESCRIPTOR,

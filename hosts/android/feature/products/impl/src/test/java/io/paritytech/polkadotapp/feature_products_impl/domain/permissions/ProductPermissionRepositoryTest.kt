@@ -172,6 +172,15 @@ class ProductPermissionRepositoryTest {
     }
 
     @Test
+    fun `JAM permission mapping preserves the full genesis and rejects short keys`() {
+        val permission = ProductPermission.RemotePermission.JamPeersAccess("0x" + "ab".repeat(32))
+        assertEquals(permission, permission.canonicalRequest()!!.legacyPermission())
+        assertTrue(runCatching {
+            ProductPermission.RemotePermission.JamPeersAccess("0xab").canonicalRequest()
+        }.isFailure)
+    }
+
+    @Test
     fun `account notifications invalidate executable aliases but not other products`() {
         val changes = PermissionAuthorizationChanges()
         changes.changed("game")

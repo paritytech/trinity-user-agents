@@ -155,10 +155,10 @@ enum RemotePermission {
   // Submit statements to the statement store via
   // remote_statement_store_submit.
   StatementSubmit,
-  // Read-only JAMNP-S QUIC/WebTransport peer access to the validators of
-  // one JAM chain via jam_peer_transport_dial. The product names the
-  // endpoints; every byte received is untrusted. Decided per product and
-  // genesis.
+  // Bidirectional JAMNP-S QUIC/WebTransport peer messaging via
+  // jam_peer_transport_dial. The product names endpoints and peer keys;
+  // every byte received is untrusted. Decided per product and full genesis,
+  // without granting account access or signing authority.
   JamPeers { genesis: [u8; 32] }
 }
 ```

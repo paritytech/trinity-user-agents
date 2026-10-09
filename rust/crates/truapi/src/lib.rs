@@ -120,10 +120,9 @@ pub mod latest {
         RemoteStatementStoreCreateProofResponse, RemoteStatementStoreSubscribeItem,
         RemoteStatementStoreSubscribeRequest, RenderContext, RendererNode, RingLocation,
         RingLocationJunction, RingVrfKeyDisclosure, RowProps, RuntimeApi, RuntimeSpec, RuntimeType,
-        Shape, SignedStatement, Size, Statement, StatementProof, StorageQueryItem,
+        ScanOutcome, Shape, SignedStatement, Size, Statement, StatementProof, StorageQueryItem,
         StorageQueryType, StorageResultItem, TextFieldProps, TextProps, ThemeName, ThemeVariant,
         TxPayloadExtension, TypographyStyle, VerticalAlignment, VrfSignature,
-        ScanOutcome,
     };
     pub use crate::v02::{
         HostNativeChatAcknowledgment, HostNativeChatAttachment, HostNativeChatAttachmentKind,

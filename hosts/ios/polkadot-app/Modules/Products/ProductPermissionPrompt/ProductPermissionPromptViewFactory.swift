@@ -104,7 +104,7 @@ private extension ProductPermissionPromptViewFactory {
                     shortGenesis: ProductPermission.shortGenesis(genesis)
                 )
             )
-            body = String(localized: .Products.permissionBodyJamPeers)
+            body = String(localized: .Products.permissionBodyJamPeers) + "\n\n" + genesis
         case .chatAuthority:
             title = String(localized: .Products.permissionTitleChatAuthority(productId: productId))
             body = permission.permissionDescription

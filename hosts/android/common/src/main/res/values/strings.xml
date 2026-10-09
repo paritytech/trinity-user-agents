@@ -905,7 +905,7 @@ I’m attaching PDF with more information and details regarding the Tattoo Stenc
     <string name="product_permission_preimage_submit_title">%1$s would like to submit preimages</string>
     <string name="product_permission_preimage_submit_subtitle">Preimages will be uploaded to the bulletin chain. %1$s</string>
     <string name="product_permission_jam_peers_title">%1$s would like to connect to JAM network %2$s</string>
-    <string name="product_permission_jam_peers_subtitle">Read-only peer access to this network\'s validators, with no accounts or signing. %1$s</string>
+    <string name="product_permission_jam_peers_subtitle">Send and receive messages with peers selected by this app, with no access to your accounts or signing keys. %1$s</string>
     <string name="product_permission_batched_title">%1$s Would Like Access to:</string>
     <string name="product_permission_network_label">Access %1$s</string>
     <string name="product_permission_webrtc_label">Use WebRTC</string>

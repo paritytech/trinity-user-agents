@@ -40,7 +40,7 @@ extension ProductPermission {
         case .preimageSubmitAccess: String(localized: .Products.permissionBodyPreimageSubmit)
         case .statementSubmitAccess: String(localized: .Products.permissionBodyStatementSubmit)
         case let .jamPeersAccess(genesis):
-            String(localized: .Products.permissionLabelJamPeers(shortGenesis: ProductPermission.shortGenesis(genesis)))
+            String(localized: .Products.permissionLabelJamPeers(genesis: genesis))
         case .userIdentityAccess: String(localized: .Products.permissionBodyUserIdentityAccess)
         case .chatAuthority: String(localized: .Products.permissionBodyChatAuthority)
         }

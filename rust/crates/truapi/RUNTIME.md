@@ -260,20 +260,51 @@ Native product runtimes (iOS, Android, CLI) serve `JamPeerTransport` (trait
 Every `dial` first requires `RemotePermission::JamPeers { genesis }` through the
 flow above. The connection asks once per genesis: concurrent dials wait for the
 same prompt, a refusal stays `NotGranted` for the connection, and the answer is
-persisted even when every dial waiting on it has given up.
+persisted even when every dial waiting on it has timed out. Revoking or dropping
+the session instead cancels its pending permission checks and transport operations.
+
+Pending dials reserve from the eight-connection budget before awaiting permission,
+alongside retained connection handles. The session remembers at most eight distinct
+full-genesis decisions, including pending and denied decisions; a new ninth
+genesis returns `Limit` without prompting or evicting a prior decision. Cancelled,
+timed-out, or dropped dial futures release their pending reservation and subscription.
+The one bounded permission task per genesis remains until its answer or session stop.
 
 - A dial answers within 10 seconds, prompt included. One still waiting then
   answers `Unreachable`, a cancelled one `Cancelled`, and what it would have
-  opened is dropped without holding one of the 8 connection slots.
+  opened is dropped without holding one of the 8 connection slots. Native
+  closed connection handles retain their slot until the guest calls `close`,
+  so their remaining streams and queued data cannot bypass the cap.
 - The ALPN is `jam_peer_transport::alpn(genesis)`, and the peer certificate
   must carry the Ed25519 key the dial names. The P-256 key is for WebTransport
   hosts and is ignored.
 - The first granted dial creates the endpoint, so a refused product binds no
   socket. Disposing the connection closes every peer connection, and later
   calls are `Denied`.
+- Stream opens reserve one of 16 slots before waiting for the transport.
+  Cancellation and session closure cannot publish late stream handles.
+- Incoming and outgoing length-prefixed messages share a 4 MiB per-connection
+  reservation budget. Headers and empty messages consume space too; readers
+  wait for capacity before allocating payloads, and draining/resetting streams
+  releases capacity. Individual payloads remain limited to 1 MiB.
 
 The browser core keeps the trait's `NotGranted` defaults, because its
 JavaScript session answers trait 111 before frames reach the core.
+Browser dials share the eight-connection limit with established connections while
+awaiting permission or the handshake. Its execution-local cache holds at most
+eight distinct genesis decisions, counting pending/refused decisions too; a new
+ninth genesis returns `Limit` without evicting any remembered decision.
+Cancelling a dial releases its operation slot and removes its subscription to a
+pending decision. The shared decision remains available to retries until stop.
+
+The browser uses WebTransport's readable byte streams with BYOB reads to reserve
+space before receiving each payload; its cancellation path handles blocked opens
+and writes as well as dials. WebTransport negotiates HTTP/3, not the native
+genesis-prefix ALPN. The current PolkaJAM CONNECT endpoint has no additional
+genesis negotiation. On both platforms, the full genesis keys permission
+decisions and TLS pins the caller-supplied peer key; neither proves validator
+membership or makes received chain data trustworthy. Guests must verify it.
+
 `cargo test -p truapi --features mock --test live_jam_test_instance -- --include-ignored`
 dials JAM-TEST-INSTANCE through a product runtime.
 ### Core database

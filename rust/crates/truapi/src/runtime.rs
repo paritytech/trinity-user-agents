@@ -859,6 +859,7 @@ impl ProductRuntimeHost {
         let product = self.product.clone();
         let permission_status = self.permission_status.clone();
         let temporary_permissions = self.temporary_permissions.clone();
+        let permission_authority = self.services.permissions.clone();
         let request = v01::RemotePermissionRequest {
             permission: v01::RemotePermission::JamPeers { genesis },
         };
@@ -866,6 +867,7 @@ impl ProductRuntimeHost {
             let status = PermissionsService::new(platform.as_ref(), platform.as_ref(), &product)
                 .with_status_host(permission_status.as_deref())
                 .with_temporary_permissions(temporary_permissions)
+                .with_authority(permission_authority)
                 .check_or_prompt_remote(request)
                 .await;
             match status {

@@ -71,7 +71,12 @@ private fun ProductPermission.displayName(): String {
 
 @Composable
 private fun ProductPermission.displayDescription(): String {
-    return stringResource(descriptionRes())
+    val description = stringResource(descriptionRes())
+    return if (this is ProductPermission.RemotePermission.JamPeersAccess) {
+        "$description\n$genesis"
+    } else {
+        description
+    }
 }
 
 @StringRes

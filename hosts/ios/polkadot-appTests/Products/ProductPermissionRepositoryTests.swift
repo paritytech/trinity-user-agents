@@ -67,6 +67,38 @@ struct ProductPermissionRepositoryTests {
         #expect(state == .notDetermined)
     }
 
+    @Test("JAM grants and revocation distinguish full genesis and product")
+    func jamGrantsAreScopedToFullGenesisAndProduct() async throws {
+        let sut = makeSUT()
+        let first = ProductPermission.jamPeersAccess(
+            genesis: "0x10c123f0" + String(repeating: "ab", count: 28)
+        )
+        let second = ProductPermission.jamPeersAccess(
+            genesis: "0x10c123f0" + String(repeating: "cd", count: 28)
+        )
+
+        try await sut.grant(productId: "product-a", permission: first)
+        #expect(try await sut.getPermissionState(
+            productId: "product-a", permission: second
+        ) == .notDetermined)
+        #expect(try await sut.getPermissionState(
+            productId: "product-b", permission: first
+        ) == .notDetermined)
+
+        try await sut.grant(productId: "product-a", permission: second)
+        let restored = try await sut.getAllByProduct(productId: "product-a")
+        #expect(restored.contains { $0.permission == first })
+        #expect(restored.contains { $0.permission == second })
+
+        try await sut.revoke(productId: "product-a", permission: first)
+        #expect(try await sut.getPermissionState(
+            productId: "product-a", permission: first
+        ) == .notDetermined)
+        #expect(try await sut.getPermissionState(
+            productId: "product-a", permission: second
+        ) == .allowedAlways)
+    }
+
     // MARK: - deny
 
     @Test("deny persists and getPermissionState returns denied")
@@ -503,6 +535,16 @@ extension ProductPermissionRepositoryTests {
         #expect(try ProductPermission.accountAccess(targetProductId: "app.peopl.paseo").authorizationRequest() == .accountAccess(targetProductId: "peopl"))
         #expect(throws: ProductPermissionMappingError.self) {
             try ProductPermission.networkAccess(domain: "https://example.com/path").authorizationRequest()
+        }
+    }
+
+    @Test("JAM permission mapping preserves the full genesis and rejects short keys")
+    func canonicalJamPermissionMapping() throws {
+        let permission = ProductPermission.jamPeersAccess(genesis: "0x" + String(repeating: "ab", count: 32))
+        let request = try #require(permission.authorizationRequest())
+        #expect(try ProductPermission.fromAuthorization(request) == [permission])
+        #expect(throws: ProductPermissionMappingError.self) {
+            try ProductPermission.jamPeersAccess(genesis: "0xab").authorizationRequest()
         }
     }
 }

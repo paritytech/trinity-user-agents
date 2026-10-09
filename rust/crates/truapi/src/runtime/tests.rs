@@ -5447,6 +5447,32 @@ fn an_undetermined_genesis_prompts_once_per_execution() {
 }
 
 #[test]
+fn jam_peer_one_time_grant_is_revoked_by_canonical_permission_authority() {
+    futures::executor::block_on(async {
+        let genesis = [0x37; 32];
+        let platform = Arc::new(StubPlatform {
+            remote_permission_decisions: Mutex::new([PermissionDecision::AllowOnce].into()),
+            ..Default::default()
+        });
+        let host = ProductRuntimeHost::new_compat(platform.clone(), test_spawner());
+        assert_eq!(host.require_jam_peers(genesis).await, Ok(()));
+
+        host.set_permission_authorization_status(
+            PermissionAuthorizationRequest::Remote(jam_peers(genesis)),
+            PermissionAuthorizationStatus::Denied,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(host.require_jam_peers(genesis).await, Err(jam_peers_not_granted()));
+        assert_eq!(
+            platform.remote_permission_requests.lock().unwrap().clone(),
+            vec![jam_peers(genesis)],
+        );
+    });
+}
+
+#[test]
 fn each_genesis_is_a_separate_jam_peers_decision() {
     futures::executor::block_on(async {
         let (granted, refused) = ([0x35; 32], [0x36; 32]);
