@@ -8542,6 +8542,7 @@ fn card_ask(country: Option<&str>) -> v01::FundingQuoteAsk {
         direction: v01::FundingDirection::In,
         rail: v01::FundingRail::Card,
         asset: "EUR".to_string(),
+        network: None,
         amount: 1_000,
         country: country.map(str::to_string),
     }

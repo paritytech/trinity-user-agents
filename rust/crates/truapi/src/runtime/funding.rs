@@ -134,7 +134,7 @@ impl FundingRegistry {
             .lock_sessions()
             .values()
             .filter(|session| {
-                !session.is_terminal() && session.provider_id.as_deref() == Some(provider_id)
+                session.serves_provider() && session.provider_id.as_deref() == Some(provider_id)
             })
             .cloned()
             .collect();
@@ -268,10 +268,11 @@ impl FundingRegistry {
         .await
     }
 
-    /// Whether open session `intent` is assigned to `provider_id`.
+    /// Whether session `intent` is assigned to `provider_id` and still has
+    /// work for it: open, or released and awaiting its payout outcome.
     pub fn is_serving(&self, provider_id: &str, intent: &str) -> bool {
         self.get(intent).is_some_and(|session| {
-            !session.is_terminal() && session.provider_id.as_deref() == Some(provider_id)
+            session.serves_provider() && session.provider_id.as_deref() == Some(provider_id)
         })
     }
 
@@ -449,7 +450,7 @@ impl FundingRegistry {
         let (acquire, release) = {
             let mut holding = self.lock_holding();
             let mut acquire = Vec::new();
-            for session in sessions.values().filter(|session| !session.is_terminal()) {
+            for session in sessions.values().filter(|session| session.serves_provider()) {
                 if let Some(provider) = &session.provider_id
                     && !holding.contains_key(&session.intent)
                 {
@@ -459,7 +460,11 @@ impl FundingRegistry {
             }
             let ended: Vec<String> = holding
                 .keys()
-                .filter(|intent| sessions.get(*intent).is_none_or(FundingSession::is_terminal))
+                .filter(|intent| {
+                    sessions
+                        .get(*intent)
+                        .is_none_or(|session| !session.serves_provider())
+                })
                 .cloned()
                 .collect();
             let release: Vec<String> = ended
@@ -950,6 +955,7 @@ impl RuntimeServices {
 mod tests {
     use super::*;
 
+    use futures::FutureExt;
     use futures::executor::block_on;
     use truapi::latest::FundingFailure;
 
@@ -1071,6 +1077,48 @@ mod tests {
     // A provider's top-up and payment ids are its own, so naming one in two
     // sessions would settle both from a single claim and show the money twice
     // in the user's history. Another provider's ids are a different namespace.
+    // A provider that restarts after a withdrawal was released must still be
+    // handed it, or it could never report how the payout went; once it has,
+    // there is nothing left for it to do.
+    #[test]
+    fn a_released_withdrawal_is_served_until_its_payout_is_reported() {
+        let storage = stub_platform();
+        let registry = FundingRegistry::default();
+        let mut released = FundingSession {
+            direction: FundingDirection::Out,
+            ..session("fs_out", NOW)
+        };
+        assert!(released.assign("ramp.dot", None));
+        released.updates.push(crate::host_logic::funding::FundingUpdateRecord {
+            update: FundingUpdate::Collecting { payment_id: [4; 32], amount: 100 },
+            at_ms: NOW,
+        });
+        assert!(released.settle(100, NOW));
+        insert(&registry, storage.as_ref(), released);
+        let first_served = || match registry.serve("ramp.dot").next().now_or_never().flatten() {
+            Some(HostFundingServeSubscribeItem::Assigned { session }) => Some(session.intent),
+            _ => None,
+        };
+
+        let before = first_served();
+        let reported = block_on(registry.report(
+            storage.as_ref(),
+            NOW + 1,
+            "ramp.dot",
+            "fs_out",
+            FundingUpdate::Payout {
+                outcome: truapi::latest::FundingPayout::PaidOut,
+            },
+        ))
+        .expect("stored");
+        let after = first_served();
+
+        assert_eq!(
+            (before, reported, after),
+            (Some("fs_out".to_string()), Ok(()), None)
+        );
+    }
+
     #[test]
     fn a_provider_cannot_name_one_top_up_in_two_sessions() {
         let storage = stub_platform();

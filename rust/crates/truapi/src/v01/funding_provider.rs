@@ -53,6 +53,9 @@ pub struct FundingQuoteAsk {
     /// Symbol the user pays with (In) or receives (Out), as the provider's
     /// manifest names it.
     pub asset: String,
+    /// Crypto only: the network the asset moves on, one the provider's route
+    /// declares, such as `polkadot`.
+    pub network: Option<String>,
     /// Amount in the user's payment balance units: credited for In, debited
     /// for Out.
     pub amount: u128,
@@ -193,6 +196,30 @@ pub enum FundingUpdate {
         /// A reference the user pays with or quotes, such as a bank
         /// transfer reference.
         reference: Option<String>,
+    },
+    /// Outbound: how the provider's payout went after the session was
+    /// released. Allowed once, after `Released`, while the host has not
+    /// recorded the session.
+    Payout {
+        /// The payout's outcome.
+        outcome: FundingPayout,
+    },
+}
+
+/// How a provider's payout to the user went after an outbound session was
+/// released.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(
+    all(feature = "runtime", not(target_arch = "wasm32")),
+    derive(uniffi::Enum)
+)]
+pub enum FundingPayout {
+    /// The funds reached the user's bank, card or wallet.
+    PaidOut,
+    /// The payout failed; the provider holds the funds.
+    Failed {
+        /// Human-readable reason.
+        reason: String,
     },
 }
 

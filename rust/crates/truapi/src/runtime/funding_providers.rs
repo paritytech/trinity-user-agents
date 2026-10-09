@@ -102,9 +102,18 @@ impl FundingProviders {
 
     /// Record what an answer showed, replacing what was known for the same
     /// ask and dropping what is no longer trusted.
-    fn learn(&self, support: LearnedSupport) {
+    fn learn(&self, mut support: LearnedSupport) {
         let mut learned = lock(&self.learned);
         let now_ms = support.learned_at_ms;
+        // A quote says nothing about the limits, so the ones an earlier
+        // refusal of the same ask showed still stand.
+        if let Some(known) = learned
+            .iter()
+            .find(|known| known.is_fresh(now_ms) && known.same_ask(&support))
+        {
+            support.min = support.min.or(known.min);
+            support.max = support.max.or(known.max);
+        }
         learned.retain(|known| known.is_fresh(now_ms) && !known.same_ask(&support));
         learned.push(support);
     }
@@ -334,6 +343,7 @@ mod tests {
                     mode: FundingMode::Crypto,
                     directions: vec![RouteDirection::Out],
                     assets: vec!["USDT".to_string()],
+                    networks: None,
                     countries: None,
                     requires_account: false,
                 }]],
@@ -384,6 +394,32 @@ mod tests {
                 ids(providers.candidates(FundingDirection::Out)),
             ),
             (vec!["unshipped.dot".to_string()], vec!["changed.dot".to_string()])
+        );
+    }
+
+    // A quote says nothing about the limits, so a minimum an earlier refusal
+    // of the same ask showed survives the provider quoting it later.
+    #[test]
+    fn a_later_quote_keeps_the_limit_a_refusal_showed() {
+        let providers = FundingProviders::default();
+        let ask = LearnedSupport {
+            provider_id: "ramp.dot".to_string(),
+            direction: FundingDirection::In,
+            rail: truapi::latest::FundingRail::Card,
+            asset: "EUR".to_string(),
+            network: None,
+            country: None,
+            supported: true,
+            min: Some(10),
+            max: None,
+            learned_at_ms: 1_000,
+        };
+        providers.learn(ask.clone());
+        providers.learn(LearnedSupport { min: None, learned_at_ms: 2_000, ..ask });
+
+        assert_eq!(
+            lock(&providers.learned).iter().map(|known| (known.min, known.learned_at_ms)).collect::<Vec<_>>(),
+            vec![(Some(10), 2_000)]
         );
     }
 }

@@ -61,6 +61,9 @@ pub struct FundingRoute {
     pub directions: Vec<RouteDirection>,
     /// Symbols the user pays with or receives; never empty.
     pub assets: Vec<String>,
+    /// Networks a crypto route's assets move on, such as `polkadot` (Polkadot
+    /// Asset Hub), when declared. `None` for card and bank routes.
+    pub networks: Option<Vec<String>>,
     /// ISO 3166-1 alpha-2 codes the route serves, when declared. The quote
     /// still decides.
     pub countries: Option<Vec<String>>,
@@ -130,6 +133,7 @@ struct PublishedRoute {
     mode: String,
     directions: Vec<String>,
     assets: Vec<String>,
+    networks: Option<Vec<String>>,
     countries: Option<Vec<String>>,
     #[serde(default)]
     requires_account: bool,
@@ -201,10 +205,12 @@ impl PublishedRoute {
                 directions.push(direction);
             }
         }
+        let networks = self.networks.filter(|_| mode == FundingMode::Crypto);
         (!directions.is_empty() && !self.assets.is_empty()).then_some(FundingRoute {
             mode,
             directions,
             assets: self.assets,
+            networks,
             countries: self.countries,
             requires_account: self.requires_account,
         })
@@ -225,7 +231,7 @@ mod tests {
             "funding": {
                 "routes": [
                     { "mode": "CARD", "directions": ["In"], "assets": ["EUR", "USD"], "countries": ["DE", "FR", "US"], "requiresAccount": true },
-                    { "mode": "CRYPTO", "directions": ["In", "Out"], "assets": ["USDT", "DOT"] }
+                    { "mode": "CRYPTO", "directions": ["In", "Out"], "assets": ["USDT", "DOT"], "networks": ["polkadot", "ethereum"] }
                 ]
             }
         }
@@ -242,6 +248,7 @@ mod tests {
             mode: FundingMode::Card,
             directions: vec![RouteDirection::In],
             assets: vec!["EUR".to_string()],
+            networks: None,
             countries: None,
             requires_account: false,
         }
@@ -264,6 +271,7 @@ mod tests {
                             mode: FundingMode::Card,
                             directions: vec![RouteDirection::In],
                             assets: vec!["EUR".to_string(), "USD".to_string()],
+                            networks: None,
                             countries: Some(vec![
                                 "DE".to_string(),
                                 "FR".to_string(),
@@ -275,6 +283,7 @@ mod tests {
                             mode: FundingMode::Crypto,
                             directions: vec![RouteDirection::In, RouteDirection::Out],
                             assets: vec!["USDT".to_string(), "DOT".to_string()],
+                            networks: Some(vec!["polkadot".to_string(), "ethereum".to_string()]),
                             countries: None,
                             requires_account: false,
                         },
@@ -283,6 +292,17 @@ mod tests {
                 }),
             })
         );
+    }
+
+    // Networks only say where crypto moves, so a card route that names some
+    // reads as one that does not.
+    #[test]
+    fn only_a_crypto_route_keeps_its_networks() {
+        let card = r#"{ "mode": "CARD", "directions": ["In"], "assets": ["EUR"], "networks": ["polkadot"] }"#;
+        let manifest = WorkerManifest::parse(&with_funding(&format!(r#"{{ "routes": [{card}] }}"#)))
+            .expect("parsed");
+
+        assert_eq!(manifest.funding.map(|funding| funding.routes), Some(vec![card_in()]));
     }
 
     // A worker that serves no Funding reads as it always did.
@@ -350,6 +370,7 @@ mod tests {
                     mode: FundingMode::Crypto,
                     directions: vec![RouteDirection::Out],
                     assets: vec!["DOT".to_string()],
+                    networks: None,
                     countries: None,
                     requires_account: false,
                 },

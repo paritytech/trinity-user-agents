@@ -20,9 +20,6 @@ final class AssetDetailsInteractor: AnyProviderAutoCleaning {
     let priceLocalSubscriptionFactory: PriceProviderFactoryProtocol
     let chainAsset: ChainAsset
 
-    private let fiatOnrampTrackingService: FiatOnrampTrackingServiceProtocol
-    private var fiatOnrampTrackingTask: Task<Void, Never>?
-
     private var balanceSubscriptionTask: Task<Void, Error>?
     private var priceProvider: StreamableProvider<PriceData>?
     private var priceSubscriptionTask: Task<Void, Never>?
@@ -44,14 +41,12 @@ final class AssetDetailsInteractor: AnyProviderAutoCleaning {
 
     init(
         priceLocalSubscriptionFactory: PriceProviderFactoryProtocol,
-        fiatOnrampTrackingService: FiatOnrampTrackingServiceProtocol,
         chainAsset: ChainAsset,
         coinageService: CoinageServicing,
         coinageBackupSyncService: any CoinageBackupSyncServicing,
         fundingDomainProvider: FundingDomainProviding
     ) {
         self.priceLocalSubscriptionFactory = priceLocalSubscriptionFactory
-        self.fiatOnrampTrackingService = fiatOnrampTrackingService
         self.chainAsset = chainAsset
         self.coinageService = coinageService
         self.coinageBackupSyncService = coinageBackupSyncService
@@ -59,7 +54,6 @@ final class AssetDetailsInteractor: AnyProviderAutoCleaning {
     }
 
     deinit {
-        fiatOnrampTrackingTask?.cancel()
         balanceSubscriptionTask?.cancel()
         recoveryStateTask?.cancel()
         recoveredBalanceTask?.cancel()
@@ -71,7 +65,6 @@ final class AssetDetailsInteractor: AnyProviderAutoCleaning {
 
 extension AssetDetailsInteractor: AssetDetailsInteractorInputProtocol {
     func setup() {
-        subscribeToFiatOnrampTracking()
         subscribeToPrice()
         subscribeToBalances()
         subscribeToRecoveryState()
@@ -85,14 +78,6 @@ extension AssetDetailsInteractor: AssetDetailsInteractorInputProtocol {
 
     func cancelBackupNotification() {
         coinageBackupSyncService.acknowledgeRecovery()
-    }
-
-    func removeCompletedFiatOnrampTransactions() {
-        fiatOnrampTrackingService.removeCompletedTransactions()
-    }
-
-    func removeFailedFiatOnrampTransactions() {
-        fiatOnrampTrackingService.removeFailedTransactions()
     }
 
     func openRampProduct(_ action: RampAction) {
@@ -195,25 +180,6 @@ private extension AssetDetailsInteractor {
         accountBackupStatusTask = Task { [weak presenter, coinageService] in
             for try await status in coinageService.subscribeAccountBackupStatus() {
                 await presenter?.didReceive(isAccountBackupPending: status.needsAttention)
-            }
-        }
-    }
-
-    func subscribeToFiatOnrampTracking() {
-        fiatOnrampTrackingTask?.cancel()
-        fiatOnrampTrackingTask = Task { [weak self] in
-            guard let self else {
-                return
-            }
-
-            let stream = await fiatOnrampTrackingService.subscribeToTransactionStatuses()
-
-            do {
-                for try await statuses in stream {
-                    await presenter?.didReceive(fiatOnrampStatuses: statuses)
-                }
-            } catch {
-                // No-op: tracking updates are best-effort
             }
         }
     }

@@ -19,7 +19,7 @@ Configuration comes from three places:
 
 - **Brand identity** — bundle id, display name, deep-link scheme, universal-link
   domains, legal URLs — in `Configs/brand.xcconfig` (§4).
-- **Build-time secrets** (Sentry DSN, Meld token) — environment variables baked
+- **Build-time secrets** (Sentry DSN) — environment variables baked
   into the app by `generate_secrets.sh` (§2).
 - **Runtime configuration** — the chain set, backend URLs, contract addresses —
   fetched at launch from Firebase Remote Config (§3). Nothing in this group is
@@ -69,7 +69,6 @@ needs the Remote Config parameters from §3.
 | Variable | Used for | If empty |
 |----------|----------|----------|
 | `SENTRY_DSN` | Sentry crash/issue reporting DSN (ignored unless the build links Sentry — see §9) | Issue monitoring disabled |
-| `MELD_BASIC_AUTH_TOKEN` | Meld fiat on-ramp basic auth (`<key>:<secret>`, base64) | Fiat on-ramp auth unset |
 
 ### Signing & distribution — GitHub Actions secrets (not needed for local simulator runs)
 
@@ -108,8 +107,8 @@ Optional — these gate reporting steps only, and a fork can leave them unset:
 | `CI_MATRIX_ROOM_IDS` | Comma separated rooms to announce into. One message per room | `ios-nightly-distribution.yml`, `ios-release-distribution.yml` |
 | `TESTFLIGHT_DISTRIBUTION_LINK` | One ready-to-render markdown link entry, e.g. `[TestFlight](https://testflight.apple.com/join/<id>)`. Kept in a secret so the access hint stays out of this public repository | `ios-nightly-distribution.yml`, `ios-release-distribution.yml` |
 
-`SENTRY_DSN` and `MELD_BASIC_AUTH_TOKEN` from the first table are also stored as
-GitHub Actions secrets, because CI runs `generate_secrets.sh` from
+`SENTRY_DSN` from the first table is also stored as a
+GitHub Actions secret, because CI runs `generate_secrets.sh` from
 `.github/actions/configure-secrets` instead of reading `env-vars.sh`.
 
 Tester groups are a workflow variable rather than a secret: `FIREBASE_GROUPS` is

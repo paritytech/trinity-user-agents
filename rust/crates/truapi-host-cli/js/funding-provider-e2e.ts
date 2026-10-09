@@ -256,7 +256,7 @@ export async function runProviderStart(
           tag: "Crypto",
           value: {
             address: "0x0000000000000000000000000000000000000001",
-            network: "Ethereum",
+            network: "polkadot",
             asset: "USDT",
             amount: 1_000n,
             decimals: 6,

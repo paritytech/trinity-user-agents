@@ -72,7 +72,7 @@ the placeholder plists point at nothing. [docs/PUBLISHING.md](./docs/PUBLISHING.
 lists every Remote Config parameter and build-time variable and the brand
 identity keys in `Configs/brand.xcconfig`; the identity backend is open source
 as [device-uniqueness-backend-community](https://github.com/paritytech/device-uniqueness-backend-community). Optional
-integrations (fiat on-ramp, crash reporting) are enabled by filling in
+integrations (crash reporting) are enabled by filling in
 `polkadot-app/env-vars.sh`.
 
 The app talks to Polkadot system chains (People Chain, Asset Hub, Bulletin Chain); the chain set is

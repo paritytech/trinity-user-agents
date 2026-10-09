@@ -43,10 +43,16 @@ pub struct LearnedSupport {
     pub rail: FundingRail,
     /// The ask's asset symbol.
     pub asset: String,
+    /// The ask's network, for a crypto ask that named one.
+    pub network: Option<String>,
     /// The ask's country, when it named one.
     pub country: Option<String>,
     /// Whether the provider serves it: it quoted, or refused only the amount.
     pub supported: bool,
+    /// The smallest amount it takes, from its latest `BelowMinimum`.
+    pub min: Option<u128>,
+    /// The largest amount it takes, from its latest `AboveMaximum`.
+    pub max: Option<u128>,
     /// When the answer came, in Unix milliseconds.
     pub learned_at_ms: u64,
 }
@@ -63,6 +69,7 @@ impl LearnedSupport {
             && self.direction == other.direction
             && self.rail == other.rail
             && self.asset == other.asset
+            && self.network == other.network
             && self.country == other.country
     }
 }
@@ -83,6 +90,26 @@ pub struct FundingUnsupported {
     pub country: Option<String>,
 }
 
+/// The amounts a provider takes for a rail, asset and network, as its quote
+/// refusals showed them, so the host can show the limits before quoting.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(
+    all(feature = "runtime", not(target_arch = "wasm32")),
+    derive(uniffi::Record)
+)]
+pub struct FundingLimit {
+    /// The rail.
+    pub rail: FundingRail,
+    /// The asset symbol.
+    pub asset: String,
+    /// The network, for crypto.
+    pub network: Option<String>,
+    /// The smallest amount it takes, in balance units, when known.
+    pub min: Option<u128>,
+    /// The largest amount it takes, in balance units, when known.
+    pub max: Option<u128>,
+}
+
 /// A provider a session can be handed to, with only the routes that serve the
 /// session's direction.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -99,6 +126,8 @@ pub struct FundingCandidate {
     /// What its recent quote answers refused, which its routes may still
     /// declare.
     pub unsupported: Vec<FundingUnsupported>,
+    /// The limits its recent quote refusals showed.
+    pub limits: Vec<FundingLimit>,
     /// Onramp adapter id for calls that need the provider's key.
     pub backend: Option<String>,
 }
@@ -132,6 +161,7 @@ impl FundingCandidate {
             })
             .unwrap_or_default();
         let mut unsupported = Vec::new();
+        let mut limits = Vec::new();
         let fresh = learned.iter().filter(|support| {
             support.provider_id == provider_id
                 && support.direction == direction
@@ -139,6 +169,15 @@ impl FundingCandidate {
         });
         for support in fresh {
             let mode = mode_of(support.rail);
+            if support.min.is_some() || support.max.is_some() {
+                limits.push(FundingLimit {
+                    rail: support.rail,
+                    asset: support.asset.clone(),
+                    network: support.network.clone(),
+                    min: support.min,
+                    max: support.max,
+                });
+            }
             if support.supported {
                 confirm(&mut routes, mode, route_direction, support);
             } else {
@@ -153,6 +192,7 @@ impl FundingCandidate {
             provider_id: provider_id.to_string(),
             routes,
             unsupported,
+            limits,
             backend: funding.and_then(|funding| funding.backend.clone()),
         })
     }
@@ -170,6 +210,7 @@ fn confirm(
             mode,
             directions: vec![direction],
             assets: vec![support.asset.clone()],
+            networks: support.network.clone().map(|network| vec![network]),
             countries: support.country.clone().map(|country| vec![country]),
             requires_account: false,
         });
@@ -177,6 +218,12 @@ fn confirm(
     };
     if !route.assets.contains(&support.asset) {
         route.assets.push(support.asset.clone());
+    }
+    if let Some(network) = &support.network {
+        let networks = route.networks.get_or_insert_with(Vec::new);
+        if !networks.contains(network) {
+            networks.push(network.clone());
+        }
     }
     if let (Some(countries), Some(country)) = (route.countries.as_mut(), &support.country)
         && !countries.contains(country)
@@ -206,8 +253,11 @@ mod tests {
             direction: FundingDirection::In,
             rail: FundingRail::Bank,
             asset: "EUR".to_string(),
+            network: None,
             country: Some("DE".to_string()),
             supported,
+            min: None,
+            max: None,
             learned_at_ms: at_ms,
         }
     }
@@ -234,10 +284,51 @@ mod tests {
                     mode: FundingMode::Bank,
                     directions: vec![RouteDirection::In],
                     assets: vec!["EUR".to_string()],
+                    networks: None,
                     countries: Some(vec!["DE".to_string()]),
                     requires_account: false,
                 }]),
                 None,
+            )
+        );
+    }
+
+    // A refusal of only the amount shows what the provider takes, so the host
+    // can show the limit before quoting, and a crypto answer shows the network
+    // it serves, for the network picker.
+    #[test]
+    fn answers_show_the_limits_and_the_crypto_networks() {
+        let usdt = LearnedSupport {
+            rail: FundingRail::Crypto,
+            asset: "USDT".to_string(),
+            network: Some("polkadot".to_string()),
+            country: None,
+            min: Some(10_000_000),
+            ..learned(true, NOW)
+        };
+
+        let candidate =
+            FundingCandidate::for_direction("ramp.dot", None, &[usdt], FundingDirection::In, NOW)
+                .expect("candidate");
+
+        assert_eq!(
+            (candidate.routes, candidate.limits),
+            (
+                vec![FundingRoute {
+                    mode: FundingMode::Crypto,
+                    directions: vec![RouteDirection::In],
+                    assets: vec!["USDT".to_string()],
+                    networks: Some(vec!["polkadot".to_string()]),
+                    countries: None,
+                    requires_account: false,
+                }],
+                vec![FundingLimit {
+                    rail: FundingRail::Crypto,
+                    asset: "USDT".to_string(),
+                    network: Some("polkadot".to_string()),
+                    min: Some(10_000_000),
+                    max: None,
+                }],
             )
         );
     }

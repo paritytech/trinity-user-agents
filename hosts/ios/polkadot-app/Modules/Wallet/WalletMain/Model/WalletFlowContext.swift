@@ -6,8 +6,6 @@ import Products
 
 protocol WalletFlowContextProtocol {
     var depositService: DepositServiceProtocol { get }
-    var fiatOnrampService: FiatOnrampServicing { get }
-    var fiatOnrampTrackingService: FiatOnrampTrackingServiceProtocol { get }
     var coinageService: CoinageServicing { get }
     var coinageBackupSyncService: CoinageBackupSyncServicing { get }
     var personDataStore: DetermineStatePersonDataStore { get }
@@ -17,8 +15,6 @@ protocol WalletFlowContextProtocol {
 
 final class WalletFlowContext: WalletFlowContextProtocol {
     let depositService: DepositServiceProtocol
-    let fiatOnrampService: FiatOnrampServicing
-    let fiatOnrampTrackingService: FiatOnrampTrackingServiceProtocol
     let coinageService: CoinageServicing
     let coinageBackupSyncService: CoinageBackupSyncServicing
     let personDataStore: DetermineStatePersonDataStore
@@ -27,8 +23,6 @@ final class WalletFlowContext: WalletFlowContextProtocol {
 
     init(
         depositService: DepositServiceProtocol,
-        fiatOnrampService: FiatOnrampServicing,
-        fiatOnrampTrackingService: FiatOnrampTrackingServiceProtocol,
         coinageService: CoinageServicing,
         coinageBackupSyncService: CoinageBackupSyncServicing,
         personDataStore: DetermineStatePersonDataStore,
@@ -36,8 +30,6 @@ final class WalletFlowContext: WalletFlowContextProtocol {
         flowState: SPAFlowState
     ) {
         self.depositService = depositService
-        self.fiatOnrampService = fiatOnrampService
-        self.fiatOnrampTrackingService = fiatOnrampTrackingService
         self.coinageService = coinageService
         self.coinageBackupSyncService = coinageBackupSyncService
         self.personDataStore = personDataStore

@@ -185,13 +185,17 @@ impl RuntimeServices {
                     let now_ms = current_unix_millis();
                     quotes.remember(provider_id, &ask, now_ms, answer.clone());
                     if let Some(supported) = shows_support(answer) {
+                        let (min, max) = limits_shown(answer);
                         self.learn_funding_support(LearnedSupport {
                             provider_id: provider_id.to_string(),
                             direction: ask.direction,
                             rail: ask.rail,
                             asset: ask.asset.clone(),
+                            network: ask.network.clone(),
                             country: ask.country.clone(),
                             supported,
+                            min,
+                            max,
                             learned_at_ms: now_ms,
                         });
                     }
@@ -231,6 +235,19 @@ fn shows_support(answer: &FundingQuoteAnswer) -> Option<bool> {
             FundingQuoteRefusal::CountryUnsupported => Some(false),
             FundingQuoteRefusal::Unavailable | FundingQuoteRefusal::Other { .. } => None,
         },
+    }
+}
+
+/// The minimum or maximum a refusal of only the amount showed.
+fn limits_shown(answer: &FundingQuoteAnswer) -> (Option<u128>, Option<u128>) {
+    match answer {
+        FundingQuoteAnswer::Refused {
+            reason: FundingQuoteRefusal::BelowMinimum { min },
+        } => (Some(*min), None),
+        FundingQuoteAnswer::Refused {
+            reason: FundingQuoteRefusal::AboveMaximum { max },
+        } => (None, Some(*max)),
+        _ => (None, None),
     }
 }
 

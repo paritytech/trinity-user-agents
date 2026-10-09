@@ -36,8 +36,6 @@ on:
     secrets:
       GOOGLE_SERVICE_INFO_RELEASE_BASE64:
         required: true
-      MELD_BASIC_AUTH_TOKEN:
-        required: true
       SENTRY_AUTH_TOKEN:
         required: true
       SENTRY_DSN:
@@ -92,7 +90,6 @@ jobs:
         uses: ./hosts/ios/.github/actions/configure-secrets
         with:
           sentry_dsn: ${{ secrets.SENTRY_DSN }}
-          meld_basic_auth_token: ${{ secrets.MELD_BASIC_AUTH_TOKEN }}
 
       - name: Build simulator .app
         working-directory: hosts/ios

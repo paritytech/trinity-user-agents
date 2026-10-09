@@ -45,7 +45,7 @@ use truapi::platform::{
 
 /// Worker manifest every scripted provider publishes: card in, and crypto in
 /// and out, quoted by its worker.
-const SCRIPTED_PROVIDER_MANIFEST: &str = r#"{"$v":1,"appVersion":[1,0,0],"kind":"worker","entrypoint":"index.js","includes":{"funding":{"routes":[{"mode":"CARD","directions":["In"],"assets":["EUR"]},{"mode":"CRYPTO","directions":["In","Out"],"assets":["USDT"]}]}}}"#;
+const SCRIPTED_PROVIDER_MANIFEST: &str = r#"{"$v":1,"appVersion":[1,0,0],"kind":"worker","entrypoint":"index.js","includes":{"funding":{"routes":[{"mode":"CARD","directions":["In"],"assets":["EUR"]},{"mode":"CRYPTO","directions":["In","Out"],"assets":["USDT"],"networks":["polkadot"]}]}}}"#;
 
 /// Offer each product named in `TRUAPI_FUNDING_PROVIDERS` (comma-separated)
 /// as a funding provider publishing [`SCRIPTED_PROVIDER_MANIFEST`], seeded
@@ -85,14 +85,15 @@ pub async fn offer_scripted_providers(
 /// The ask a scripted session is quoted on: a card payment in EUR inbound,
 /// USDT outbound, as [`SCRIPTED_PROVIDER_MANIFEST`] serves them.
 fn scripted_ask(direction: FundingDirection, amount: Option<u128>) -> FundingQuoteAsk {
-    let (rail, asset) = match direction {
-        FundingDirection::In => (FundingRail::Card, "EUR"),
-        FundingDirection::Out => (FundingRail::Crypto, "USDT"),
+    let (rail, asset, network) = match direction {
+        FundingDirection::In => (FundingRail::Card, "EUR", None),
+        FundingDirection::Out => (FundingRail::Crypto, "USDT", Some("polkadot".to_string())),
     };
     FundingQuoteAsk {
         direction,
         rail,
         asset: asset.to_string(),
+        network,
         amount: amount.unwrap_or(1_000),
         country: None,
     }

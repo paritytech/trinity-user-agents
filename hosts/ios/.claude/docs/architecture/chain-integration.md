@@ -112,7 +112,7 @@ For reactive subscriptions, prefer `CallbackBatchStorageSubscription.asyncStream
 Defined in `AppConfig/AppConfig.swift`:
 - Chat chain, username chain, bulletin chain, asset hub chain
 - UNSTABLE build variant support for testnet chains
-- Chain assets: main asset, fiat onramp asset, PGAS, funding assets
+- Chain assets: main asset, PGAS, funding assets
 
 ## Anti-Patterns from Reviews
 

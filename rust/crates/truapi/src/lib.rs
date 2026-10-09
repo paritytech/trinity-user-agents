@@ -99,7 +99,7 @@ pub mod latest {
         ChatRoomRegistrationStatus, CodeFormat, ColorToken, ColumnProps, ContactHandle,
         ContactPickOutcome, ContentAlignment, ContextualAlias, DerivationIndex, Dimensions, Effect,
         EffectProps, FundingAssignment, FundingDeposit, FundingDirection, FundingFailure,
-        FundingFrameOutcome, FundingQuote, FundingQuoteAnswer, FundingQuoteAsk,
+        FundingFrameOutcome, FundingPayout, FundingQuote, FundingQuoteAnswer, FundingQuoteAsk,
         FundingQuoteRefusal, FundingRail, FundingReceived, FundingUpdate, GenericError,
         HorizontalAlignment, HostAccountCreateProofRequest, HostAccountGetAliasRequest,
         HostAccountListRingVrfKeysRequest, HostAccountRegisterRingVrfKeyRequest,

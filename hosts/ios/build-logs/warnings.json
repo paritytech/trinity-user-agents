@@ -322,11 +322,6 @@
       "message": "Todo Violation: TODOs should be resolved (Pass outside) (todo)"
     },
     {
-      "path": "polkadot-app/Modules/FiatOnRampProvider/FiatOnRampProviderPresenter.swift",
-      "line": 81,
-      "message": "Call to main actor-isolated instance method 'handleRefreshTick()' in a synchronous nonisolated context"
-    },
-    {
       "path": "polkadot-app/Modules/IncomingChatRequest/Model/ChatRequestPeerDeviceMapper.swift",
       "line": 87,
       "message": "Todo Violation: TODOs should be resolved (- remove when not needed) (todo)"
