@@ -39,9 +39,10 @@ extension ProductPermission {
         case .chainSubmitAccess: String(localized: .Products.permissionBodyChainSubmit)
         case .preimageSubmitAccess: String(localized: .Products.permissionBodyPreimageSubmit)
         case .statementSubmitAccess: String(localized: .Products.permissionBodyStatementSubmit)
-        case let .jamPeersAccess(genesis):
-            String(localized: .Products.permissionLabelJamPeers(genesis: genesis))
         case .userIdentityAccess: String(localized: .Products.permissionBodyUserIdentityAccess)
+        case .chatAuthority: String(localized: .Products.permissionBodyChatAuthority)
+        case let .statementStoreAllowance(derivationIndex):
+            ProductPermission.statementStoreAllowanceDescription(derivationIndex: derivationIndex)
         }
     }
 
@@ -55,8 +56,9 @@ extension ProductPermission {
         case .chainSubmitAccess: "link"
         case .preimageSubmitAccess: "doc.text"
         case .statementSubmitAccess: "text.bubble"
-        case .jamPeersAccess: "point.3.connected.trianglepath.dotted"
         case .userIdentityAccess: "person.text.rectangle"
+        case .chatAuthority: "message.badge.shield"
+        case .statementStoreAllowance: "externaldrive.badge.plus"
         }
     }
 
@@ -70,13 +72,15 @@ extension ProductPermission {
         case .chainSubmitAccess: String(localized: .Products.appPermissionChainSubmitTitle)
         case .preimageSubmitAccess: String(localized: .Products.appPermissionPreimageSubmitTitle)
         case .statementSubmitAccess: String(localized: .Products.appPermissionStatementSubmitTitle)
-        case .jamPeersAccess: String(localized: .Products.appPermissionJamPeersTitle)
         case .userIdentityAccess: String(localized: .Products.appPermissionUserIdentityTitle)
+        case .chatAuthority: String(localized: .Products.appPermissionChatAuthorityTitle)
+        case .statementStoreAllowance: String(localized: .Products.appPermissionStatementStoreAllowanceTitle)
         }
     }
 }
 
 private extension ProductPermission {
+
     func capabilityTitle(_ capability: DeviceCapabilityType) -> String {
         switch capability {
         case .notifications: String(localized: .Products.appPermissionCapabilityNotifications)
@@ -104,6 +108,20 @@ private extension ProductPermission {
         case .openUrl: String(localized: .Products.permissionCapabilityDescriptionOpenUrl)
         case .biometrics: String(localized: .Products.permissionCapabilityDescriptionBiometrics)
         case .motion: String(localized: .Products.permissionCapabilityDescriptionMotion)
+        }
+    }
+
+    func capabilityIcon(_ capability: DeviceCapabilityType) -> String {
+        switch capability {
+        case .notifications: "bell.fill"
+        case .camera: "camera.fill"
+        case .microphone: "mic.fill"
+        case .bluetooth: "antenna.radiowaves.left.and.right"
+        case .nfc: "wave.3.right"
+        case .location: "location.fill"
+        case .clipboard: "doc.on.clipboard.fill"
+        case .openUrl: "safari.fill"
+        case .biometrics: "faceid"
         }
     }
 
