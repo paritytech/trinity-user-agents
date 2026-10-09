@@ -187,8 +187,8 @@ The id `postMessage` returns is the correlation key `ActionTrigger.messageId`
 carries back, so it must name that message for as long as the host stores it.
 `alt` is the product's one-line description of the message, already trimmed
 and screened. Show it where the message is listed rather than drawn, such as a
-chat list preview of a custom card. A host may ignore it for a message that
-previews itself, such as text.
+chat list preview of a custom card. A text message never carries one, since it
+previews as itself.
 Ids arriving _in_ a `Reaction` or `ReactionRemoved` are product-chosen and
 untrusted: they may name a message in another room, or one that never existed.
 

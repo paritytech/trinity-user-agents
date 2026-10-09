@@ -1948,16 +1948,19 @@ fn chat_post_message_screens_the_alt_before_it_reaches_a_host() {
     let host = ProductRuntimeHost::from_services(services, adapters, pairing_host, product);
     install_pairing_session(&host, session_info());
 
-    let post = |alt: Option<String>| {
+    let card = || {
+        v01::ChatMessageContent::Custom(v01::ChatCustomMessage {
+            message_type: "results".to_string(),
+            payload: vec![1],
+        })
+    };
+    let post = |payload: v01::ChatMessageContent, alt: Option<String>| {
         futures::executor::block_on(Chat::post_message(
             &host,
             &CallContext::default(),
             HostChatPostMessageRequest::V2(truapi::latest::HostChatPostMessageRequest {
                 room_id: "support".to_string(),
-                payload: v01::ChatMessageContent::Custom(v01::ChatCustomMessage {
-                    message_type: "results".to_string(),
-                    payload: vec![1],
-                }),
+                payload,
                 alt,
             }),
         ))
@@ -1965,11 +1968,19 @@ fn chat_post_message_screens_the_alt_before_it_reaches_a_host() {
 
     // A host lists the alt as it arrives, so it gets the trimmed value, and a
     // blank one is no description at all rather than an empty preview.
-    post(Some("  Week 12 results  ".to_string())).expect("a short alt is accepted");
-    post(Some("   ".to_string())).expect("a blank alt is accepted");
-    post(None).expect("a message without an alt is accepted");
+    post(card(), Some("  Week 12 results  ".to_string())).expect("a short alt is accepted");
+    post(card(), Some("   ".to_string())).expect("a blank alt is accepted");
+    post(card(), None).expect("a message without an alt is accepted");
+    // A text message previews as itself, so a host never sees an alt for one.
+    post(
+        v01::ChatMessageContent::Text {
+            text: "hello".to_string(),
+        },
+        Some("Greeting".to_string()),
+    )
+    .expect("a text message with an alt is accepted");
 
-    let too_long = post(Some("x".repeat(crate::platform::CHAT_FIELD_MAX_BYTES + 1)))
+    let too_long = post(card(), Some("x".repeat(crate::platform::CHAT_FIELD_MAX_BYTES + 1)))
         .expect_err("an over-long alt must be rejected");
     assert!(matches!(
         too_long,
@@ -1984,7 +1995,7 @@ fn chat_post_message_screens_the_alt_before_it_reaches_a_host() {
             .lock()
             .expect("posted alts mutex poisoned")
             .as_slice(),
-        &[Some("Week 12 results".to_string()), None, None]
+        &[Some("Week 12 results".to_string()), None, None, None]
     );
 }
 

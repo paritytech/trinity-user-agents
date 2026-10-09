@@ -12,6 +12,6 @@ pub struct HostChatPostMessageRequest {
     /// Message content.
     pub payload: ChatMessageContent,
     /// One line describing the message. `None` leaves the host its own
-    /// placeholder.
+    /// placeholder. A text message previews as itself, so its `alt` is dropped.
     pub alt: Option<String>,
 }
