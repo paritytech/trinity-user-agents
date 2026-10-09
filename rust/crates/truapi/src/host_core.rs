@@ -16,7 +16,7 @@ use std::time::Duration;
 
 use crate::platform::{
     ChatPlatform, ContactsPlatform, ExpandedCardHost, GamePlatform, PermissionStatusHost,
-    PocketPlatform, ScannerPlatform,
+    PocketPlatform, PreimageReadHost, ScannerPlatform,
 };
 use crate::platform::{
     CoreAdmin, PairingHostAdmin, PairingHostConfig, PermissionAuthorizationRequest,
@@ -292,6 +292,17 @@ impl PairingHostRuntime {
     #[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.set_scanner_platform"))]
     pub fn set_scanner_platform(&self, platform: Arc<dyn ScannerPlatform>) -> bool {
         self.services.install_scanner_platform(platform)
+    }
+
+    /// Install the host's [`PreimageReadHost`], which reads preimages through a
+    /// route that the product chooses and reports how it got them.
+    ///
+    /// Set-once, so the capability cannot be swapped under a running product.
+    /// Returns whether this call installed it. Call it before serving any
+    /// product runtime.
+    #[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.set_preimage_read_host"))]
+    pub fn set_preimage_read_host(&self, host: Arc<dyn PreimageReadHost>) -> bool {
+        self.services.install_preimage_read_host(host)
     }
 
     /// Install the host's [`ContactsPlatform`], which owns the contact list and
@@ -740,6 +751,17 @@ impl SigningHostRuntime {
     #[instrument(skip_all, fields(runtime.method = "signing_host_runtime.set_scanner_platform"))]
     pub fn set_scanner_platform(&self, platform: Arc<dyn ScannerPlatform>) -> bool {
         self.services.install_scanner_platform(platform)
+    }
+
+    /// Install the host's [`PreimageReadHost`], which reads preimages through a
+    /// route that the product chooses and reports how it got them.
+    ///
+    /// Set-once, so the capability cannot be swapped under a running product.
+    /// Returns whether this call installed it. Call it before serving any
+    /// product runtime.
+    #[instrument(skip_all, fields(runtime.method = "signing_host_runtime.set_preimage_read_host"))]
+    pub fn set_preimage_read_host(&self, host: Arc<dyn PreimageReadHost>) -> bool {
+        self.services.install_preimage_read_host(host)
     }
 
     /// Install the host's [`ContactsPlatform`], which owns the contact list and

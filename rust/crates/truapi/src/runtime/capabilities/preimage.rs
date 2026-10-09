@@ -9,7 +9,8 @@ use tracing::{instrument, warn};
 use truapi::api::Preimage;
 use truapi::versioned::preimage::{
     RemotePreimageLookupSubscribeError, RemotePreimageLookupSubscribeItem,
-    RemotePreimageLookupSubscribeRequest, RemotePreimageSubmitError, RemotePreimageSubmitRequest,
+    RemotePreimageLookupSubscribeRequest, RemotePreimageReadError, RemotePreimageReadRequest,
+    RemotePreimageReadResponse, RemotePreimageSubmitError, RemotePreimageSubmitRequest,
     RemotePreimageSubmitResponse,
 };
 use truapi::{CallContext, CallError, Subscription, v01};
@@ -183,5 +184,82 @@ impl Preimage for ProductRuntimeHost {
         // immediate product lookup hits before the content backend has it.
         self.prime_preimage_cache(&key, value);
         Ok(RemotePreimageSubmitResponse::V1(key))
+    }
+
+    #[instrument(skip_all, fields(runtime.method = "preimage.read"))]
+    async fn read(
+        &self,
+        _cx: &CallContext,
+        request: RemotePreimageReadRequest,
+    ) -> Result<RemotePreimageReadResponse, CallError<RemotePreimageReadError>> {
+        let RemotePreimageReadRequest::V1(v01::RemotePreimageReadRequest {
+            key,
+            route,
+            skip_host_caches,
+        }) = request;
+        let started = Instant::now();
+
+        // The read-after-write cache answers first, as for a lookup, unless the
+        // product asks to measure the network.
+        if !skip_host_caches
+            && let Ok(key_bytes) = <[u8; 32]>::try_from(key.as_slice())
+            && let Some(value) = self.services.cached_preimage(&key_bytes)
+        {
+            let ms = elapsed_ms(started);
+            return Ok(RemotePreimageReadResponse::V1(
+                v01::RemotePreimageReadResponse {
+                    value: Some(value),
+                    report: v01::PreimageReadReport {
+                        served_by: Some(v01::PreimageReadSource::HostCache),
+                        attempts: vec![v01::PreimageReadAttempt {
+                            source: v01::PreimageReadAttemptSource::HostCache,
+                            outcome: v01::PreimageReadOutcome::Served,
+                            ms,
+                        }],
+                        host_ms: ms,
+                    },
+                },
+            ));
+        }
+
+        let Some(host) = self.services.preimage_read_host() else {
+            return Err(CallError::Unsupported);
+        };
+        let mut response = host
+            .read_preimage(key.clone(), route, skip_host_caches)
+            .await
+            .map_err(|error| CallError::Domain(RemotePreimageReadError::V1(error)))?;
+        // The host checks the bytes, and the core checks them again, so a
+        // compromised backend cannot feed products forged content.
+        if response
+            .value
+            .as_ref()
+            .is_some_and(|value| preimage_key(value)[..] != key[..])
+        {
+            warn!("preimage read returned a value whose hash does not match the requested key");
+            mark_bad_bytes(&mut response.report);
+            response.value = None;
+        }
+        response.report.host_ms = elapsed_ms(started);
+        Ok(RemotePreimageReadResponse::V1(response))
+    }
+}
+
+/// Milliseconds since `started`, at most `u32::MAX`.
+fn elapsed_ms(started: Instant) -> u32 {
+    u32::try_from(started.elapsed().as_millis()).unwrap_or(u32::MAX)
+}
+
+/// Record that the source that served a read sent bytes that do not match the
+/// key: its attempt becomes `BadBytes`, and no source served the read.
+fn mark_bad_bytes(report: &mut v01::PreimageReadReport) {
+    report.served_by = None;
+    if let Some(attempt) = report
+        .attempts
+        .iter_mut()
+        .rev()
+        .find(|attempt| attempt.outcome == v01::PreimageReadOutcome::Served)
+    {
+        attempt.outcome = v01::PreimageReadOutcome::BadBytes;
     }
 }

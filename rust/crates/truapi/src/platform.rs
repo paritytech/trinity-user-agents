@@ -31,15 +31,16 @@ use truapi::latest::{
     HostChatCreateRoomError, HostChatCreateRoomRequest, HostChatCreateRoomResponse,
     HostChatListSubscribeItem, HostChatPostMessageError, HostChatPostMessageRequest,
     HostChatPostMessageResponse, HostChatRegisterBotError, HostChatRegisterBotRequest,
-    HostChatRegisterBotResponse, HostChatSetRoomFooterRequest, HostDevicePermissionRequest, HostFeatureSupportedRequest,
-    HostFeatureSupportedResponse, HostLocalStorageChangeItem, HostLocaleSubscribeItem,
-    HostNavigateToError, HostPlatform, HostPocketListSubscribeItem, HostPocketRemoveCardError,
-    HostPocketRemoveCardRequest, HostPushNotificationRequest, HostPushNotificationResponse,
-    HostScannerScanRequest, HostSignPayloadRequest, HostSignPayloadWithLegacyAccountRequest,
-    HostSignRawRequest, HostSignRawWithLegacyAccountRequest, HostThemeSubscribeItem,
-    HostWorkerBeginOperationResponse, HostWorkerOperationError, LegacyAccountTxPayload,
+    HostChatRegisterBotResponse, HostChatSetRoomFooterRequest, HostDevicePermissionRequest,
+    HostFeatureSupportedRequest, HostFeatureSupportedResponse, HostLocalStorageChangeItem,
+    HostLocaleSubscribeItem, HostNavigateToError, HostPlatform, HostPocketListSubscribeItem,
+    HostPocketRemoveCardError, HostPocketRemoveCardRequest, HostPushNotificationRequest,
+    HostPushNotificationResponse, HostScannerScanRequest, HostSignPayloadRequest,
+    HostSignPayloadWithLegacyAccountRequest, HostSignRawRequest,
+    HostSignRawWithLegacyAccountRequest, HostThemeSubscribeItem, HostWorkerBeginOperationResponse,
+    HostWorkerOperationError, LegacyAccountTxPayload, PreimageReadError, PreimageReadRoute,
     ProductAccountId, ProductAccountTxPayload, ProductProofContext, RemotePermission,
-    RemotePermissionRequest, RingLocation,
+    RemotePermissionRequest, RemotePreimageReadResponse, RingLocation,
 };
 use truapi::v01::HostAccountSignVrfRequest;
 use url::{Host, Url};
@@ -3214,6 +3215,28 @@ pub trait PreimageHost: Send + Sync {
     ) -> BoxStream<'static, Result<Option<Vec<u8>>, GenericError>>;
 }
 
+/// Host preimage reads through a route that the product chooses, with a
+/// report of how the host got the value. `Preimage.read` uses it.
+///
+/// Optional: a host that omits it leaves `Preimage.read` answered
+/// `Unsupported`. See [`OptionalPlatform`].
+///
+/// The core answers from its own read-after-write cache before it calls this,
+/// unless the product asks to skip host caches. The core checks the value
+/// against the key and sets `host_ms`, so a host can leave `host_ms` at 0.
+#[async_trait]
+pub trait PreimageReadHost: Send + Sync {
+    /// Read the preimage under `key` once, through `route`, and report every
+    /// source asked. One pass with no polling: a miss answers no value. With
+    /// `skip_host_caches`, the host does not answer from its own caches.
+    async fn read_preimage(
+        &self,
+        key: Vec<u8>,
+        route: PreimageReadRoute,
+        skip_host_caches: bool,
+    ) -> Result<RemotePreimageReadResponse, PreimageReadError>;
+}
+
 /// Host-implemented adapter through which product Chat calls reach host
 /// storage and UI. Optional: a host that omits it leaves Chat requests
 /// answered `Unsupported`. See [`OptionalPlatform`].
@@ -3622,6 +3645,7 @@ pub trait OptionalPlatform:
     + PocketPlatform
     + GamePlatform
     + ScannerPlatform
+    + PreimageReadHost
 {
 }
 
@@ -3632,5 +3656,6 @@ impl<T> OptionalPlatform for T where
         + PocketPlatform
         + GamePlatform
         + ScannerPlatform
+        + PreimageReadHost
 {
 }

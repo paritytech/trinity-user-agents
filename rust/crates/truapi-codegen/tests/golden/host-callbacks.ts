@@ -46,6 +46,8 @@ import type {
   HostScannerScanRequest,
   HostThemeSubscribeItem,
   HostWorkerBeginOperationResponse,
+  PreimageReadRoute,
+  RemotePreimageReadResponse,
   Result,
 } from "@parity/truapi";
 
@@ -1675,6 +1677,30 @@ export interface PreimageHost {
 }
 
 /**
+ * Host preimage reads through a route that the product chooses, with a
+ * report of how the host got the value. `Preimage.read` uses it.
+ *
+ * Optional: a host that omits it leaves `Preimage.read` answered
+ * `Unsupported`. See `OptionalPlatform`.
+ *
+ * The core answers from its own read-after-write cache before it calls this,
+ * unless the product asks to skip host caches. The core checks the value
+ * against the key and sets `host_ms`, so a host can leave `host_ms` at 0.
+ */
+export interface PreimageReadHost {
+  /**
+   * Read the preimage under `key` once, through `route`, and report every
+   * source asked. One pass with no polling: a miss answers no value. With
+   * `skip_host_caches`, the host does not answer from its own caches.
+   */
+  readPreimage(
+    key: Uint8Array,
+    route: PreimageReadRoute,
+    skipHostCaches: boolean,
+  ): Promise<RemotePreimageReadResponse>;
+}
+
+/**
  * Host store for a product's pending operations, which the host uses to keep
  * the product's worker runtime alive. Reached only through the `Worker`
  * protocol trait, so non-worker products never call these.
@@ -1830,6 +1856,7 @@ export interface HostCallbacks {
   game?: GamePlatform;
   permissionStatus?: PermissionStatusHost;
   pocket?: PocketPlatform;
+  preimageRead?: PreimageReadHost;
   scanner?: ScannerPlatform;
 }
 
@@ -1852,5 +1879,6 @@ export interface RequiredHostCallbacks {
   game?: Required<GamePlatform>;
   permissionStatus?: Required<PermissionStatusHost>;
   pocket?: Required<PocketPlatform>;
+  preimageRead?: Required<PreimageReadHost>;
   scanner?: Required<ScannerPlatform>;
 }

@@ -9,4 +9,7 @@ truapi_macros::versioned_type! {
     pub enum RemotePreimageSubmitRequest { V1 => Vec<u8> }
     pub enum RemotePreimageSubmitResponse { V1 => Vec<u8> }
     pub enum RemotePreimageSubmitError { V1 => v01::PreimageSubmitError }
+    pub enum RemotePreimageReadRequest { V1 => v01::RemotePreimageReadRequest }
+    pub enum RemotePreimageReadResponse { V1 => v01::RemotePreimageReadResponse }
+    pub enum RemotePreimageReadError { V1 => v01::PreimageReadError }
 }

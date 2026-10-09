@@ -150,6 +150,11 @@ impl<S: BlobSource + 'static> BulletinLookup<S> {
         Self::with_poll_interval(source, POLL_INTERVAL)
     }
 
+    /// The source that the lookups read.
+    pub fn source(&self) -> &S {
+        &self.source
+    }
+
     fn with_poll_interval(source: S, poll_interval: Duration) -> Self {
         Self {
             source,

@@ -976,7 +976,8 @@ network's Bulletin node, by CID over `bitswap_v1_get`. Set
 `TRUAPI_CACHE_PROVIDERS` to a provider set file to ask cache nodes first. A cache
 node keeps verified copies of Bulletin blobs close to its users and answers
 faster than a Bulletin node. Each line of the file is one provider: its endpoint
-id (64 hex digits), any `ip:port` dial hints, and the base URL of its API. The
+id (64 hex digits), any `ip:port` dial hints, the base URL of its API, and
+optionally `name=<text>` and `region=<text>` for read reports. The
 host asks the providers that have an API URL, each with `POST /acquire` for
 `bulletin:<cid>` and a read request that the payer key signs. The request
 names that provider, the CID, a new transfer id and the time, so no one else
@@ -1007,6 +1008,16 @@ a home node, the latency and the source it reports (`local`, `peer:<id>` or
 `source`) for every read a cache node serves. The measurements are kept in
 `cache-quality.json` in the state directory, so a restart keeps the order, and
 `/cache` shows them with the payer key.
+
+A product can also read once through a route of its choice with
+`Preimage.read`, and get a report of the read: `auto` (cache nodes, then
+Bulletin), `bulletin` (Bulletin only), `cache` (cache nodes only) or one cache
+node. The report names the source that served the value: the host's own cache,
+a cache node with its rank, home flag, origin (`local`, `peer` or `source`),
+own time and trace, or Bulletin. It also lists every source the host asked,
+with the outcome and time of each. A read is one pass with no polling, so a
+miss answers no value. Without a payer, a route through cache nodes answers
+`NoCacheProviders`.
 
 ## Manual use (two terminals)
 

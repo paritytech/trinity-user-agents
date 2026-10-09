@@ -150,6 +150,7 @@ describe("createWebWorkerPairingHostRuntime", () => {
         game: false,
         contacts: false,
         scanner: false,
+        preimageRead: false,
       },
       // Null under `bun test`: the `import.meta.env.DEV` gate reads undefined,
       // so no dial resolves and the worker builds no tap.
@@ -190,6 +191,7 @@ describe("createWebWorkerPairingHostRuntime", () => {
       game: false,
       contacts: false,
       scanner: false,
+      preimageRead: false,
     });
   });
 
@@ -214,6 +216,7 @@ describe("createWebWorkerPairingHostRuntime", () => {
       game: false,
       contacts: false,
       scanner: false,
+      preimageRead: false,
     });
   });
 
@@ -241,6 +244,34 @@ describe("createWebWorkerPairingHostRuntime", () => {
       game: true,
       contacts: false,
       scanner: false,
+      preimageRead: false,
+    });
+  });
+
+  it("reports the preimage read capability to the worker when the host serves it", async () => {
+    const worker = new FakeWorker();
+    void createWebWorkerPairingHostRuntime(
+      asWorker(worker),
+      makeHostCallbacks({
+        preimageRead: {
+          readPreimage: async () => ({ report: { attempts: [], hostMs: 0 } }),
+        },
+      }),
+      { hostConfig: hostConfigFromRuntimeConfig(runtimeConfig()) },
+    );
+
+    worker.emit({ kind: "loaded" });
+
+    // Without this the worker never builds the preimage read callback, so a
+    // host that serves Preimage.read is answered `Unsupported` anyway.
+    expect(lastMessageOfKind(worker, "init").capabilities).toEqual({
+      chat: false,
+      permissionStatus: false,
+      pocket: false,
+      game: false,
+      contacts: false,
+      scanner: false,
+      preimageRead: true,
     });
   });
 

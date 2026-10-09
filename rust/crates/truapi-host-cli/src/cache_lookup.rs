@@ -34,6 +34,11 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tracing::{debug, info, warn};
 use truapi::host_logic::product_account::derive_sr25519_hard_path;
+use truapi::v01::{
+    BulletinReadVia, CacheOrigin, PreimageReadAttempt, PreimageReadAttemptSource,
+    PreimageReadError, PreimageReadOutcome, PreimageReadReport, PreimageReadRoute,
+    PreimageReadSource, RemotePreimageReadResponse,
+};
 use truapi::{preimage_cid, preimage_key};
 use zeroize::Zeroizing;
 
@@ -53,11 +58,11 @@ const FAILURE_COOLDOWN: Duration = Duration::from_secs(30);
 const PRIOR_MS: u64 = 50;
 /// Every this many reads, an unmeasured provider goes first.
 const EXPLORE_EVERY: u64 = 4;
-/// The signature contexts and message prefixes of a cache receipt and of a cache read request. The cache nodes check
+/// The sr25519 signing context of Substrate, which browser and wallet libraries also use, and the message prefixes of a
+/// cache receipt and of a cache read request. The prefixes keep the two kinds of messages apart. The cache nodes check
 /// the same layouts (`cache/src/payment.rs`).
-const RECEIPT_CONTEXT: &[u8] = b"cache-receipt";
+const SIGNING_CONTEXT: &[u8] = b"substrate";
 const RECEIPT_PREFIX: &[u8] = b"cache-receipt/2";
-const READ_CONTEXT: &[u8] = b"cache-read";
 const READ_PREFIX: &[u8] = b"cache-read/1";
 
 /// One provider of the provider set that a host can call.
@@ -65,10 +70,15 @@ const READ_PREFIX: &[u8] = b"cache-read/1";
 pub struct Provider {
     id: [u8; 32],
     url: String,
+    /// The display name from `name=<text>` on the provider's line, if any.
+    name: Option<String>,
+    /// The region from `region=<text>` on the provider's line, if any.
+    region: Option<String>,
 }
 
 /// Every provider of a provider set file, with an API URL or without. Only the home-node rank uses the providers
-/// without one.
+/// without one. After the endpoint id, a line can hold dial hints, an API URL, `name=<text>` and `region=<text>`, in
+/// any order.
 fn parse_providers(text: &str) -> (Vec<[u8; 32]>, Vec<Provider>) {
     let mut ids = Vec::new();
     let mut callable = Vec::new();
@@ -85,15 +95,64 @@ fn parse_providers(text: &str) -> (Vec<[u8; 32]>, Vec<Provider>) {
             continue;
         };
         ids.push(id);
-        let url = words.find(|word| word.starts_with("http://") || word.starts_with("https://"));
+        let words: Vec<&str> = words.collect();
+        let url = words
+            .iter()
+            .find(|word| word.starts_with("http://") || word.starts_with("https://"));
+        let named = |prefix: &str| {
+            words
+                .iter()
+                .find_map(|word| word.strip_prefix(prefix))
+                .filter(|value| !value.is_empty())
+                .map(str::to_string)
+        };
         if let Some(url) = url {
             callable.push(Provider {
                 id,
                 url: url.trim_end_matches('/').to_string(),
+                name: named("name="),
+                region: named("region="),
             });
         }
     }
     (ids, callable)
+}
+
+/// Where a cache node got the content, from its `x-cache-origin` header: `local`, `source`, or `peer:` and the 64
+/// hex digits of the peer's endpoint id. Any other text is `Unknown`.
+fn parse_origin(origin: &str) -> CacheOrigin {
+    match origin {
+        "local" => CacheOrigin::Local,
+        "source" => CacheOrigin::Source,
+        _ => origin
+            .strip_prefix("peer:")
+            .and_then(|id| hex::decode(id).ok())
+            .and_then(|id| <[u8; 32]>::try_from(id).ok())
+            .map_or(CacheOrigin::Unknown, |id| CacheOrigin::Peer { id }),
+    }
+}
+
+/// Milliseconds since `started`, at most `u32::MAX`.
+fn elapsed_ms(started: Instant) -> u32 {
+    u32::try_from(started.elapsed().as_millis()).unwrap_or(u32::MAX)
+}
+
+/// What a cache node answered to one `POST /acquire` that it served.
+struct Answer {
+    value: Vec<u8>,
+    /// The `x-cache-origin` header, `unknown` when it is missing.
+    origin: String,
+    /// The `x-cache-elapsed-ms` header: the time of the node's own work.
+    provider_ms: Option<u32>,
+    /// The `x-cache-trace` header: the node's steps, as JSON.
+    trace: Option<String>,
+}
+
+/// One read through the cache nodes: the value, the provider that served it, and every provider asked.
+struct CacheRead {
+    value: Option<Vec<u8>>,
+    served_by: Option<PreimageReadSource>,
+    attempts: Vec<PreimageReadAttempt>,
 }
 
 /// The home nodes of a content id: the `HOMES` providers that rank highest by `blake2b-256(content id || endpoint id)`.
@@ -374,48 +433,95 @@ impl CacheNodes {
 
     /// The blob under `cid` from the first provider, in quality order, that sends bytes that hash to it.
     async fn read(&self, cid: &str) -> Option<Vec<u8>> {
-        let Some(payer) = self.payer() else {
+        if self.payer().is_none() {
             if !self.warned_no_payer.swap(true, Ordering::Relaxed) {
                 warn!(
                     "no cache payer yet (sign in, or set {PAYER_SEED_ENV}), so lookups go to Bulletin only"
                 );
             }
             return None;
+        }
+        self.read_reported(cid, None)
+            .await
+            .ok()
+            .and_then(|read| read.value)
+    }
+
+    /// One pass through the cache nodes, in quality order, or through the provider `only`: the value from the first
+    /// provider that sends bytes that hash to `cid`, and an attempt for each provider asked. The host pays the
+    /// provider that served. Without a payer or a callable provider the answer is `NoCacheProviders`, and `only`
+    /// outside the provider set is `UnknownProvider`.
+    async fn read_reported(
+        &self,
+        cid: &str,
+        only: Option<[u8; 32]>,
+    ) -> Result<CacheRead, PreimageReadError> {
+        let Some(payer) = self.payer() else {
+            return Err(PreimageReadError::NoCacheProviders);
         };
         let (ids, providers) = self.load_providers();
+        if providers.is_empty() {
+            return Err(PreimageReadError::NoCacheProviders);
+        }
         let homes = home_nodes(cid, &ids);
         let explore =
             self.reads.fetch_add(1, Ordering::Relaxed) % EXPLORE_EVERY == EXPLORE_EVERY - 1;
-        let ordered = {
+        let mut ordered = {
             let quality = self.quality.lock().expect("cache quality mutex poisoned");
             order(&providers, &homes, &quality, explore, Instant::now())
         };
+        if let Some(only) = only {
+            ordered.retain(|provider| provider.id == only);
+            if ordered.is_empty() {
+                return Err(PreimageReadError::UnknownProvider);
+            }
+        }
+        let mut attempts = Vec::new();
         for (rank, provider) in ordered.iter().enumerate() {
             let transfer = self.transfer_id();
             let started = Instant::now();
             let answer = self.ask(provider, cid, &payer, &transfer).await;
             let latency_ms = started.elapsed().as_millis() as u64;
+            let ms = elapsed_ms(started);
             let node = provider.url.as_str();
             let mut quality = self.quality.lock().expect("cache quality mutex poisoned");
             let measured = quality.entry(provider.id).or_default();
-            match answer {
-                Ok(Some((value, origin))) if preimage_cid(&preimage_key(&value)) == cid => {
+            let outcome = match answer {
+                Ok(Some(answer)) if preimage_cid(&preimage_key(&answer.value)) == cid => {
                     measured.record_success(latency_ms);
                     let home = homes.contains(&provider.id);
                     info!(
                         cid,
                         node,
-                        origin,
+                        origin = answer.origin,
                         rank,
                         home,
                         latency_ms,
-                        size = value.len(),
+                        size = answer.value.len(),
                         "preimage read from a cache node"
                     );
                     drop(quality);
                     self.save_quality();
                     self.pay(provider, cid, &payer, transfer);
-                    return Some(value);
+                    attempts.push(PreimageReadAttempt {
+                        source: PreimageReadAttemptSource::CacheProvider { id: provider.id },
+                        outcome: PreimageReadOutcome::Served,
+                        ms,
+                    });
+                    return Ok(CacheRead {
+                        served_by: Some(PreimageReadSource::CacheProvider {
+                            id: provider.id,
+                            name: provider.name.clone(),
+                            region: provider.region.clone(),
+                            origin: parse_origin(&answer.origin),
+                            rank: u32::try_from(rank).unwrap_or(u32::MAX),
+                            home,
+                            provider_ms: answer.provider_ms,
+                            trace: answer.trace,
+                        }),
+                        value: Some(answer.value),
+                        attempts,
+                    });
                 }
                 Ok(Some(_)) => {
                     measured.record_failure(Instant::now());
@@ -424,18 +530,34 @@ impl CacheNodes {
                         node,
                         "cache node sent bytes that do not hash to the CID, so it gets no receipt"
                     );
+                    PreimageReadOutcome::BadBytes
                 }
-                Ok(None) => debug!(cid, node, "cache node cannot find the preimage"),
+                Ok(None) => {
+                    debug!(cid, node, "cache node cannot find the preimage");
+                    PreimageReadOutcome::Miss
+                }
                 Err(reason) => {
-                    if !reason.starts_with("402") {
-                        measured.record_failure(Instant::now());
-                    }
                     warn!(cid, node, %reason, "cache node failed");
+                    if reason.starts_with("402") {
+                        PreimageReadOutcome::Refused { reason }
+                    } else {
+                        measured.record_failure(Instant::now());
+                        PreimageReadOutcome::Failed { reason }
+                    }
                 }
-            }
+            };
+            attempts.push(PreimageReadAttempt {
+                source: PreimageReadAttemptSource::CacheProvider { id: provider.id },
+                outcome,
+                ms,
+            });
         }
         self.save_quality();
-        None
+        Ok(CacheRead {
+            value: None,
+            served_by: None,
+            attempts,
+        })
     }
 
     fn save_quality(&self) {
@@ -485,21 +607,21 @@ impl CacheNodes {
         status
     }
 
-    /// One `POST /acquire` with a read request that the payer signs for this provider: the bytes and the source that
-    /// the node reports, or `None` when the node answers that Bulletin does not hold the blob.
+    /// One `POST /acquire` with a read request that the payer signs for this provider: the bytes and what the node
+    /// reports about them, or `None` when the node answers that Bulletin does not hold the blob.
     async fn ask(
         &self,
         provider: &Provider,
         cid: &str,
         payer: &Keypair,
         transfer: &str,
-    ) -> Result<Option<(Vec<u8>, String)>, String> {
+    ) -> Result<Option<Answer>, String> {
         let payer_id = payer.public.to_bytes();
         let issued_at = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map_or(0, |since| since.as_secs());
         let message = read_message(transfer, &payer_id, &provider.id, cid, issued_at);
-        let signature = payer.sign_simple(READ_CONTEXT, &message);
+        let signature = payer.sign_simple(SIGNING_CONTEXT, &message);
         let request = json!({
             "reference": { "source": format!("bulletin:{cid}"), "cid": null, "size": null },
             "read": {
@@ -524,17 +646,26 @@ impl CacheNodes {
         if status == reqwest::StatusCode::NOT_FOUND {
             return Ok(None);
         }
-        let origin = response
-            .headers()
-            .get("x-cache-origin")
-            .and_then(|origin| origin.to_str().ok())
-            .unwrap_or("unknown")
-            .to_string();
+        let header = |name: &str| {
+            response
+                .headers()
+                .get(name)
+                .and_then(|value| value.to_str().ok())
+                .map(str::to_string)
+        };
+        let origin = header("x-cache-origin").unwrap_or_else(|| "unknown".to_string());
+        let provider_ms = header("x-cache-elapsed-ms").and_then(|ms| ms.parse().ok());
+        let trace = header("x-cache-trace");
         let body = response.bytes().await.map_err(|error| error.to_string())?;
         if !status.is_success() {
             return Err(format!("{status}: {}", String::from_utf8_lossy(&body)));
         }
-        Ok(Some((body.to_vec(), origin)))
+        Ok(Some(Answer {
+            value: body.to_vec(),
+            origin,
+            provider_ms,
+            trace,
+        }))
     }
 
     /// Sign the receipt for a verified delivery and send it to the provider that served it. The read does not wait:
@@ -542,7 +673,7 @@ impl CacheNodes {
     fn pay(&self, provider: &Provider, cid: &str, payer: &Keypair, transfer: String) {
         let payer_id = payer.public.to_bytes();
         let message = receipt_message(&transfer, &payer_id, &provider.id, cid);
-        let signature = payer.sign_simple(RECEIPT_CONTEXT, &message);
+        let signature = payer.sign_simple(SIGNING_CONTEXT, &message);
         let receipt = json!({
             "receipt": {
                 "transfer": transfer,
@@ -603,6 +734,96 @@ impl<S> CacheFirst<S> {
     /// Ask `cache` before `fallback`. Without cache nodes, `fallback` answers alone.
     pub fn new(cache: Option<Arc<CacheNodes>>, fallback: S) -> Self {
         Self { cache, fallback }
+    }
+}
+
+impl<S: BlobSource> CacheFirst<S> {
+    /// One read of `key` through `route`, with a report of every source asked. One pass, with no polling: a miss
+    /// answers no value. `Auto` asks the cache nodes in quality order and then `fallback`, the Bulletin node. `Cache`
+    /// and `CacheProvider` never ask Bulletin, and answer `NoCacheProviders` when there is no cache node to ask.
+    pub async fn read_routed(
+        &self,
+        key: &[u8],
+        route: PreimageReadRoute,
+    ) -> Result<RemotePreimageReadResponse, PreimageReadError> {
+        let key = <[u8; 32]>::try_from(key).map_err(|_| PreimageReadError::Unknown {
+            reason: "a preimage key is 32 bytes".to_string(),
+        })?;
+        let cid = preimage_cid(&key);
+        let mut attempts = Vec::new();
+        let cache_only = match route {
+            PreimageReadRoute::Auto => None,
+            PreimageReadRoute::Bulletin => Some(false),
+            PreimageReadRoute::Cache | PreimageReadRoute::CacheProvider { .. } => Some(true),
+        };
+        if cache_only != Some(false) {
+            let only = match route {
+                PreimageReadRoute::CacheProvider { id } => Some(id),
+                _ => None,
+            };
+            let read = match &self.cache {
+                Some(cache) => cache.read_reported(&cid, only).await,
+                None => Err(PreimageReadError::NoCacheProviders),
+            };
+            match read {
+                Ok(read) => {
+                    attempts.extend(read.attempts);
+                    if read.value.is_some() {
+                        return Ok(read_response(read.value, read.served_by, attempts));
+                    }
+                }
+                // `Auto` reads Bulletin when no cache node can help, as a lookup does.
+                Err(error) if cache_only == Some(true) => return Err(error),
+                Err(_) => {}
+            }
+        }
+        if cache_only == Some(true) {
+            return Ok(read_response(None, None, attempts));
+        }
+
+        let via = BulletinReadVia::Rpc;
+        let started = Instant::now();
+        let outcome = match self.fallback.get(&cid).await {
+            Ok(Some(value)) if preimage_key(&value) == key => {
+                attempts.push(PreimageReadAttempt {
+                    source: PreimageReadAttemptSource::Bulletin { via },
+                    outcome: PreimageReadOutcome::Served,
+                    ms: elapsed_ms(started),
+                });
+                return Ok(read_response(
+                    Some(value),
+                    Some(PreimageReadSource::Bulletin { via }),
+                    attempts,
+                ));
+            }
+            Ok(Some(_)) => PreimageReadOutcome::BadBytes,
+            Ok(None) => PreimageReadOutcome::Miss,
+            Err(SourceError::Transient(reason) | SourceError::Permanent(reason)) => {
+                PreimageReadOutcome::Failed { reason }
+            }
+        };
+        attempts.push(PreimageReadAttempt {
+            source: PreimageReadAttemptSource::Bulletin { via },
+            outcome,
+            ms: elapsed_ms(started),
+        });
+        Ok(read_response(None, None, attempts))
+    }
+}
+
+/// A read response. The core sets `host_ms`, so it is 0 here.
+fn read_response(
+    value: Option<Vec<u8>>,
+    served_by: Option<PreimageReadSource>,
+    attempts: Vec<PreimageReadAttempt>,
+) -> RemotePreimageReadResponse {
+    RemotePreimageReadResponse {
+        value,
+        report: PreimageReadReport {
+            served_by,
+            attempts,
+            host_ms: 0,
+        },
     }
 }
 
@@ -675,7 +896,8 @@ mod tests {
                     .unwrap()
                     .push((path, serde_json::from_slice(&request).unwrap()));
                 let head = format!(
-                    "HTTP/1.1 {status} Fake\r\ncontent-length: {}\r\nx-cache-origin: local\r\nconnection: close\r\n\r\n",
+                    "HTTP/1.1 {status} Fake\r\ncontent-length: {}\r\nx-cache-origin: local\r\nx-cache-elapsed-ms: 3\r\n\
+                     x-cache-trace: [\"local\"]\r\nconnection: close\r\n\r\n",
                     body.len()
                 );
                 stream.write_all(head.as_bytes()).await.unwrap();
@@ -712,6 +934,8 @@ mod tests {
         Provider {
             id: [n; 32],
             url: url.to_string(),
+            name: None,
+            region: None,
         }
     }
 
@@ -788,15 +1012,211 @@ mod tests {
     #[test]
     fn provider_set_files() {
         let text = format!(
-            "# providers\n{a} 10.0.0.1:4433 http://a.example:8080/\n\n{b}  # no API\nnot-hex http://x\n",
+            "# providers\n{a} 10.0.0.1:4433 http://a.example:8080/ name=A region=fr-par\n\n{b}  # no API\n\
+             not-hex http://x\n{c} name= https://c.example\n",
             a = hex::encode([1u8; 32]),
             b = hex::encode([2u8; 32]),
+            c = hex::encode([3u8; 32]),
         );
+        let named = Provider {
+            name: Some("A".to_string()),
+            region: Some("fr-par".to_string()),
+            ..provider(1, "http://a.example:8080")
+        };
         assert_eq!(
             parse_providers(&text),
             (
-                vec![[1; 32], [2; 32]],
-                vec![provider(1, "http://a.example:8080")]
+                vec![[1; 32], [2; 32], [3; 32]],
+                vec![named, provider(3, "https://c.example")]
+            )
+        );
+    }
+
+    /// A node reports `local`, `source`, or `peer:` and a full endpoint id. Anything else is unknown.
+    #[test]
+    fn origin_headers() {
+        let peer = format!("peer:{}", hex::encode([5u8; 32]));
+        assert_eq!(
+            [
+                "local",
+                "source",
+                peer.as_str(),
+                "peer:abcdef1234",
+                "elsewhere"
+            ]
+            .map(parse_origin),
+            [
+                CacheOrigin::Local,
+                CacheOrigin::Source,
+                CacheOrigin::Peer { id: [5; 32] },
+                CacheOrigin::Unknown,
+                CacheOrigin::Unknown,
+            ]
+        );
+    }
+
+    /// A read report with every time set to 0, so that tests compare it whole.
+    fn untimed(
+        result: Result<RemotePreimageReadResponse, PreimageReadError>,
+    ) -> Result<RemotePreimageReadResponse, PreimageReadError> {
+        result.map(|mut response| {
+            for attempt in &mut response.report.attempts {
+                attempt.ms = 0;
+            }
+            response
+        })
+    }
+
+    fn attempt(
+        source: PreimageReadAttemptSource,
+        outcome: PreimageReadOutcome,
+    ) -> PreimageReadAttempt {
+        PreimageReadAttempt {
+            source,
+            outcome,
+            ms: 0,
+        }
+    }
+
+    fn served_by_node(n: u8, rank: u32) -> PreimageReadSource {
+        PreimageReadSource::CacheProvider {
+            id: [n; 32],
+            name: None,
+            region: None,
+            origin: CacheOrigin::Local,
+            rank,
+            home: true,
+            provider_ms: Some(3),
+            trace: Some("[\"local\"]".to_string()),
+        }
+    }
+
+    /// Each route asks only the sources it names, and the report says which source served and which were asked.
+    #[tokio::test]
+    async fn reads_report_the_route_that_each_route_takes() {
+        let (holder, holder_requests) = fake_node(200, blob()).await;
+        let (missing, _) = fake_node(404, b"not found: not held".to_vec()).await;
+        let key = preimage_key(&blob());
+        let source = CacheFirst::new(
+            cache(vec![provider(1, &holder)], Some(test_payer())),
+            bulletin(Some(blob())),
+        );
+        let cache_only = CacheFirst::new(
+            cache(vec![provider(2, &missing)], Some(test_payer())),
+            bulletin(Some(blob())),
+        );
+        let no_payer = CacheFirst::new(
+            cache(vec![provider(1, &holder)], None),
+            bulletin(Some(blob())),
+        );
+        let node = |n: u8| PreimageReadAttemptSource::CacheProvider { id: [n; 32] };
+        let rpc = PreimageReadAttemptSource::Bulletin {
+            via: BulletinReadVia::Rpc,
+        };
+        let results = [
+            source.read_routed(&key, PreimageReadRoute::Auto).await,
+            source.read_routed(&key, PreimageReadRoute::Bulletin).await,
+            cache_only.read_routed(&key, PreimageReadRoute::Cache).await,
+            cache_only.read_routed(&key, PreimageReadRoute::Auto).await,
+            source
+                .read_routed(&key, PreimageReadRoute::CacheProvider { id: [9; 32] })
+                .await,
+            no_payer.read_routed(&key, PreimageReadRoute::Cache).await,
+        ]
+        .map(untimed);
+        let paid = receipts(&holder_requests).await.len();
+        let bulletin_calls = (
+            *source.fallback.calls.lock().unwrap(),
+            *cache_only.fallback.calls.lock().unwrap(),
+        );
+        assert_eq!(
+            (results, bulletin_calls.0, bulletin_calls.1, paid),
+            (
+                [
+                    Ok(read_response(
+                        Some(blob()),
+                        Some(served_by_node(1, 0)),
+                        vec![attempt(node(1), PreimageReadOutcome::Served)],
+                    )),
+                    Ok(read_response(
+                        Some(blob()),
+                        Some(PreimageReadSource::Bulletin {
+                            via: BulletinReadVia::Rpc
+                        }),
+                        vec![attempt(rpc.clone(), PreimageReadOutcome::Served)],
+                    )),
+                    Ok(read_response(
+                        None,
+                        None,
+                        vec![attempt(node(2), PreimageReadOutcome::Miss)],
+                    )),
+                    Ok(read_response(
+                        Some(blob()),
+                        Some(PreimageReadSource::Bulletin {
+                            via: BulletinReadVia::Rpc
+                        }),
+                        vec![
+                            attempt(node(2), PreimageReadOutcome::Miss),
+                            attempt(rpc, PreimageReadOutcome::Served),
+                        ],
+                    )),
+                    Err(PreimageReadError::UnknownProvider),
+                    Err(PreimageReadError::NoCacheProviders),
+                ],
+                1,
+                1,
+                1,
+            )
+        );
+    }
+
+    /// A provider that sends bad bytes is an attempt with `BadBytes`, gets no receipt, and the next provider serves.
+    #[tokio::test]
+    async fn a_bad_provider_is_reported_and_the_next_one_serves() {
+        let (liar, liar_requests) = fake_node(200, b"forged".to_vec()).await;
+        let (honest, _) = fake_node(200, blob()).await;
+        let source = CacheFirst::new(
+            cache(
+                vec![provider(1, &liar), provider(2, &honest)],
+                Some(test_payer()),
+            ),
+            bulletin(None),
+        );
+        if let Some(cache) = &source.cache {
+            let mut quality = cache.quality.lock().unwrap();
+            for (id, latency_ms) in [([1; 32], 1), ([2; 32], 1000)] {
+                quality.insert(
+                    id,
+                    Quality {
+                        latency_ms: Some(latency_ms),
+                        ..Default::default()
+                    },
+                );
+            }
+        }
+        let read = untimed(
+            source
+                .read_routed(&preimage_key(&blob()), PreimageReadRoute::Cache)
+                .await,
+        );
+        assert_eq!(
+            (read, receipts(&liar_requests).await.len()),
+            (
+                Ok(read_response(
+                    Some(blob()),
+                    Some(served_by_node(2, 1)),
+                    vec![
+                        attempt(
+                            PreimageReadAttemptSource::CacheProvider { id: [1; 32] },
+                            PreimageReadOutcome::BadBytes
+                        ),
+                        attempt(
+                            PreimageReadAttemptSource::CacheProvider { id: [2; 32] },
+                            PreimageReadOutcome::Served
+                        ),
+                    ],
+                )),
+                0,
             )
         );
     }
@@ -890,7 +1310,7 @@ mod tests {
         let payer = test_payer().public.to_bytes();
         let transfer = read["transfer"].as_str().unwrap();
         let read_signed = signed_by_test_payer(
-            READ_CONTEXT,
+            SIGNING_CONTEXT,
             &read_message(
                 transfer,
                 &payer,
@@ -901,7 +1321,7 @@ mod tests {
             &acquire["signature"],
         );
         let receipt_signed = signed_by_test_payer(
-            RECEIPT_CONTEXT,
+            SIGNING_CONTEXT,
             &receipt_message(transfer, &payer, &[1; 32], &cid()),
             &receipts[0]["signature"],
         );

@@ -20,8 +20,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use crate::platform::SigningHostConfig;
 use crate::platform::{
     ChainProvider, ChatPlatform, ContactsPlatform, GamePlatform, HostInfo, JsonRpcConnection,
-    PairingHostConfig, PermissionStatusHost, PlatformInfo, PocketPlatform, ProductContext,
-    ProductExecutionKind, ProviderError, RuntimeConfigValidationError, ScannerPlatform,
+    PairingHostConfig, PermissionStatusHost, PlatformInfo, PocketPlatform, PreimageReadHost,
+    ProductContext, ProductExecutionKind, ProviderError, RuntimeConfigValidationError,
+    ScannerPlatform,
 };
 use futures::channel::mpsc;
 use futures::future::{AbortHandle, Abortable};
@@ -848,6 +849,7 @@ struct WasmPlatformAdapters {
     pocket_platform: Option<Arc<dyn PocketPlatform>>,
     game_platform: Option<Arc<dyn GamePlatform>>,
     scanner_platform: Option<Arc<dyn ScannerPlatform>>,
+    preimage_read_host: Option<Arc<dyn PreimageReadHost>>,
 }
 
 /// Build the platform and the optional capability adapters supplied by the host.
@@ -858,6 +860,7 @@ fn wasm_platform(bridge: Arc<JsBridge>) -> WasmPlatformAdapters {
     let has_pocket = bridge.has_pocket();
     let has_game = bridge.has_game();
     let has_scanner = bridge.has_scanner();
+    let has_preimage_read = bridge.has_preimage_read();
     let platform = Arc::new(WasmPlatform::new(bridge));
     let chat = has_chat.then(|| platform.clone() as Arc<dyn ChatPlatform>);
     let contacts = has_contacts.then(|| platform.clone() as Arc<dyn ContactsPlatform>);
@@ -865,6 +868,7 @@ fn wasm_platform(bridge: Arc<JsBridge>) -> WasmPlatformAdapters {
     let pocket = has_pocket.then(|| platform.clone() as Arc<dyn PocketPlatform>);
     let game = has_game.then(|| platform.clone() as Arc<dyn GamePlatform>);
     let scanner = has_scanner.then(|| platform.clone() as Arc<dyn ScannerPlatform>);
+    let preimage_read = has_preimage_read.then(|| platform.clone() as Arc<dyn PreimageReadHost>);
     WasmPlatformAdapters {
         platform,
         chat_platform: chat,
@@ -873,6 +877,7 @@ fn wasm_platform(bridge: Arc<JsBridge>) -> WasmPlatformAdapters {
         pocket_platform: pocket,
         game_platform: game,
         scanner_platform: scanner,
+        preimage_read_host: preimage_read,
     }
 }
 
@@ -951,6 +956,7 @@ impl WasmPairingHostRuntime {
             pocket_platform,
             game_platform,
             scanner_platform,
+            preimage_read_host,
         } = wasm_platform(bridge);
         let spawner: Spawner = Arc::new(|fut| {
             wasm_bindgen_futures::spawn_local(fut);
@@ -974,6 +980,9 @@ impl WasmPairingHostRuntime {
         }
         if let Some(scanner_platform) = scanner_platform {
             runtime.set_scanner_platform(scanner_platform);
+        }
+        if let Some(preimage_read_host) = preimage_read_host {
+            runtime.set_preimage_read_host(preimage_read_host);
         }
         install_worker_demand_observer(runtime.worker_ledger(), &callbacks)?;
         Ok(Self {
@@ -1301,6 +1310,7 @@ impl WasmSigningHostRuntime {
             pocket_platform,
             game_platform,
             scanner_platform,
+            preimage_read_host,
             ..
         } = wasm_platform(bridge);
         let spawner: Spawner = Arc::new(|fut| {
@@ -1316,6 +1326,9 @@ impl WasmSigningHostRuntime {
         }
         if let Some(scanner_platform) = scanner_platform {
             runtime.set_scanner_platform(scanner_platform);
+        }
+        if let Some(preimage_read_host) = preimage_read_host {
+            runtime.set_preimage_read_host(preimage_read_host);
         }
         install_worker_demand_observer(runtime.worker_ledger(), &callbacks)?;
         Ok(Self {
@@ -1513,6 +1526,7 @@ impl WasmProductRuntime {
             pocket_platform,
             game_platform,
             scanner_platform,
+            preimage_read_host,
         } = wasm_platform(bridge);
         let spawner: Spawner = Arc::new(|fut| {
             wasm_bindgen_futures::spawn_local(fut);
@@ -1533,6 +1547,9 @@ impl WasmProductRuntime {
         }
         if let Some(scanner_platform) = scanner_platform {
             pairing.set_scanner_platform(scanner_platform);
+        }
+        if let Some(preimage_read_host) = preimage_read_host {
+            pairing.set_preimage_read_host(preimage_read_host);
         }
         if let Some(contacts_platform) = contacts_platform {
             pairing.set_contacts_platform(contacts_platform);

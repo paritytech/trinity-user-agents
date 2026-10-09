@@ -24,9 +24,10 @@ use truapi::latest as api;
 use truapi::platform::{
     AuthState, ChainProvider, CoreStorage, CoreStorageKey, CreateTransactionReview,
     DevicePermissionStatus, Features, JsonRpcConnection, LocaleHost, Navigation, Notifications,
-    PermissionDecision, PermissionStatusHost, Permissions, PreimageHost, ProductContext,
-    ProductOperations, ProductStorage, ProductStorageKey, ProviderError, SessionUiInfo,
-    SignPayloadReview, SignRawReview, ThemeHost, UserConfirmation, UserConfirmationReview,
+    PermissionDecision, PermissionStatusHost, Permissions, PreimageHost, PreimageReadHost,
+    ProductContext, ProductOperations, ProductStorage, ProductStorageKey, ProviderError,
+    SessionUiInfo, SignPayloadReview, SignRawReview, ThemeHost, UserConfirmation,
+    UserConfirmationReview,
 };
 use truapi::v01;
 
@@ -1065,6 +1066,20 @@ impl PreimageHost for CliPlatform {
         key: Vec<u8>,
     ) -> BoxStream<'static, Result<Option<Vec<u8>>, api::GenericError>> {
         self.bulletin.subscribe(key)
+    }
+}
+
+#[async_trait]
+impl PreimageReadHost for CliPlatform {
+    /// One read through the cache nodes, Bulletin, or both, as `route` says. The CLI platform keeps no cache of its
+    /// own, so `skip_host_caches` changes nothing here: the core skips its read-after-write cache.
+    async fn read_preimage(
+        &self,
+        key: Vec<u8>,
+        route: api::PreimageReadRoute,
+        _skip_host_caches: bool,
+    ) -> Result<api::RemotePreimageReadResponse, api::PreimageReadError> {
+        self.bulletin.source().read_routed(&key, route).await
     }
 }
 

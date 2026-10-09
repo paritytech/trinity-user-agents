@@ -46,6 +46,7 @@ use truapi::versioned::notifications::{
 use truapi::versioned::permissions::{HostDevicePermissionRequest, HostDevicePermissionResponse};
 use truapi::versioned::preimage::{
     RemotePreimageLookupSubscribeItem, RemotePreimageLookupSubscribeRequest,
+    RemotePreimageReadError, RemotePreimageReadRequest, RemotePreimageReadResponse,
     RemotePreimageSubmitRequest,
 };
 use truapi::versioned::resource_allocation::{
@@ -4903,6 +4904,171 @@ fn preimage_lookup_forged_host_bytes_downgraded_to_miss() {
         Ok(RemotePreimageLookupSubscribeItem::V1(
             v01::RemotePreimageLookupSubscribeItem { value: Some(value) }
         ))
+    );
+}
+
+/// A read host that answers every read with one fixed response.
+struct FixedPreimageRead(v01::RemotePreimageReadResponse);
+
+#[async_trait::async_trait]
+impl crate::platform::PreimageReadHost for FixedPreimageRead {
+    async fn read_preimage(
+        &self,
+        _key: Vec<u8>,
+        _route: v01::PreimageReadRoute,
+        _skip_host_caches: bool,
+    ) -> Result<v01::RemotePreimageReadResponse, v01::PreimageReadError> {
+        Ok(self.0.clone())
+    }
+}
+
+fn preimage_read(
+    host: &ProductRuntimeHost,
+    key: &[u8; 32],
+    skip_host_caches: bool,
+) -> Result<v01::RemotePreimageReadResponse, CallError<RemotePreimageReadError>> {
+    let request = RemotePreimageReadRequest::V1(v01::RemotePreimageReadRequest {
+        key: key.to_vec(),
+        route: v01::PreimageReadRoute::Auto,
+        skip_host_caches,
+    });
+    futures::executor::block_on(Preimage::read(host, &CallContext::default(), request)).map(|response| {
+        let RemotePreimageReadResponse::V1(mut response) = response;
+        response.report.host_ms = 0;
+        for attempt in &mut response.report.attempts {
+            attempt.ms = 0;
+        }
+        response
+    })
+}
+
+#[test]
+fn preimage_read_answers_from_the_host_cache_unless_told_to_skip_it() {
+    use crate::host_internal::bulletin::preimage_key;
+
+    let host = ProductRuntimeHost::new_compat(stub_platform(), test_spawner());
+    let value = vec![4, 5, 6, 7];
+    let key = preimage_key(&value);
+    host.services.cache_preimage(key, value.clone());
+    assert_eq!(
+        (
+            preimage_read(&host, &key, false),
+            preimage_read(&host, &key, true)
+        ),
+        (
+            Ok(v01::RemotePreimageReadResponse {
+                value: Some(value),
+                report: v01::PreimageReadReport {
+                    served_by: Some(v01::PreimageReadSource::HostCache),
+                    attempts: vec![v01::PreimageReadAttempt {
+                        source: v01::PreimageReadAttemptSource::HostCache,
+                        outcome: v01::PreimageReadOutcome::Served,
+                        ms: 0,
+                    }],
+                    host_ms: 0,
+                },
+            }),
+            // Without a read host, a read past the host cache is not available.
+            Err(CallError::Unsupported),
+        )
+    );
+}
+
+#[test]
+fn preimage_read_checks_the_host_value_against_the_key() {
+    use crate::host_internal::bulletin::preimage_key;
+
+    let value = vec![1, 1, 2, 3, 5, 8];
+    let key = preimage_key(&value);
+    let provider = v01::PreimageReadAttemptSource::CacheProvider { id: [7; 32] };
+    let answer = |value: Vec<u8>| v01::RemotePreimageReadResponse {
+        value: Some(value),
+        report: v01::PreimageReadReport {
+            served_by: Some(v01::PreimageReadSource::CacheProvider {
+                id: [7; 32],
+                name: None,
+                region: None,
+                origin: v01::CacheOrigin::Local,
+                rank: 0,
+                home: true,
+                provider_ms: None,
+                trace: None,
+            }),
+            attempts: vec![v01::PreimageReadAttempt {
+                source: provider.clone(),
+                outcome: v01::PreimageReadOutcome::Served,
+                ms: 0,
+            }],
+            host_ms: 0,
+        },
+    };
+    let read_with = |response| {
+        let host = ProductRuntimeHost::new_compat(stub_platform(), test_spawner());
+        host.services
+            .install_preimage_read_host(Arc::new(FixedPreimageRead(response)));
+        preimage_read(&host, &key, true)
+    };
+    assert_eq!(
+        (read_with(answer(vec![9, 9, 9])), read_with(answer(value.clone()))),
+        (
+            Ok(v01::RemotePreimageReadResponse {
+                value: None,
+                report: v01::PreimageReadReport {
+                    served_by: None,
+                    attempts: vec![v01::PreimageReadAttempt {
+                        source: v01::PreimageReadAttemptSource::CacheProvider { id: [7; 32] },
+                        outcome: v01::PreimageReadOutcome::BadBytes,
+                        ms: 0,
+                    }],
+                    host_ms: 0,
+                },
+            }),
+            Ok(answer(value)),
+        )
+    );
+}
+
+// The SCALE bytes of one read request and one read response. The cache repo's `ctest` mirrors these types until a
+// truapi release has `Preimage.read`, and checks the same bytes (cache `ctest/src/read_report.rs`).
+#[test]
+fn preimage_read_wire_vectors() {
+    let request = RemotePreimageReadRequest::V1(v01::RemotePreimageReadRequest {
+        key: vec![1; 32],
+        route: v01::PreimageReadRoute::CacheProvider { id: [7; 32] },
+        skip_host_caches: true,
+    });
+    let response = RemotePreimageReadResponse::V1(v01::RemotePreimageReadResponse {
+        value: Some(b"hi".to_vec()),
+        report: v01::PreimageReadReport {
+            served_by: Some(v01::PreimageReadSource::CacheProvider {
+                id: [7; 32],
+                name: Some("A".to_string()),
+                region: None,
+                origin: v01::CacheOrigin::Peer { id: [5; 32] },
+                rank: 1,
+                home: true,
+                provider_ms: Some(3),
+                trace: None,
+            }),
+            attempts: vec![v01::PreimageReadAttempt {
+                source: v01::PreimageReadAttemptSource::CacheProvider { id: [7; 32] },
+                outcome: v01::PreimageReadOutcome::Served,
+                ms: 4,
+            }],
+            host_ms: 9,
+        },
+    });
+    assert_eq!(
+        (hex::encode(request.encode()), hex::encode(response.encode())),
+        (
+            "0080010101010101010101010101010101010101010101010101010101010101010103070707070707070707070707070707\
+             070707070707070707070707070707070701"
+                .to_string(),
+            "0001086869010107070707070707070707070707070707070707070707070707070707070707070104410001050505050505\
+             0505050505050505050505050505050505050505050505050505010000000101030000000004010707070707070707070707\
+             070707070707070707070707070707070707070707000400000009000000"
+                .to_string(),
+        )
     );
 }
 

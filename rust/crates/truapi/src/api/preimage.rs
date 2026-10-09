@@ -2,7 +2,8 @@
 
 use crate::versioned::preimage::{
     RemotePreimageLookupSubscribeError, RemotePreimageLookupSubscribeItem,
-    RemotePreimageLookupSubscribeRequest, RemotePreimageSubmitError, RemotePreimageSubmitRequest,
+    RemotePreimageLookupSubscribeRequest, RemotePreimageReadError, RemotePreimageReadRequest,
+    RemotePreimageReadResponse, RemotePreimageSubmitError, RemotePreimageSubmitRequest,
     RemotePreimageSubmitResponse,
 };
 use crate::{CallContext, CallError, Subscription};
@@ -54,6 +55,38 @@ pub trait Preimage: Send + Sync {
         _cx: &CallContext,
         _request: RemotePreimageSubmitRequest,
     ) -> Result<RemotePreimageSubmitResponse, CallError<RemotePreimageSubmitError>> {
+        Err(CallError::unavailable())
+    }
+
+    /// Read a preimage once, through a route that the product chooses, and
+    /// report how the host got it: which source served it, and every source
+    /// that the host asked. A miss answers no value. A host without this
+    /// capability answers `Unsupported`, and the product can use
+    /// `lookupSubscribe` instead. Wire id 2 is kept for `Preimage.retain`.
+    ///
+    /// ```ts
+    /// const value = `0x${crypto.getRandomValues(new Uint8Array(4)).toHex()}` as `0x${string}`;
+    /// const submitted = await truapi.preimage.submit(value);
+    /// assert(submitted.isOk(), "submit failed:", submitted);
+    ///
+    /// const read = await truapi.preimage.read({
+    ///   key: submitted.value,
+    ///   route: { tag: "Auto" },
+    ///   skipHostCaches: false,
+    /// });
+    /// if (read.isErr()) {
+    ///   console.log("this host cannot report reads:", read.error);
+    /// } else {
+    ///   assert(read.value.value === value, "preimage read returned the wrong value:", read.value);
+    ///   console.log("preimage read report:", read.value.report);
+    /// }
+    /// ```
+    #[wire(id = 3)]
+    async fn read(
+        &self,
+        _cx: &CallContext,
+        _request: RemotePreimageReadRequest,
+    ) -> Result<RemotePreimageReadResponse, CallError<RemotePreimageReadError>> {
         Err(CallError::unavailable())
     }
 }

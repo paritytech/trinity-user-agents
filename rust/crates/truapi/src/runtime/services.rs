@@ -59,6 +59,10 @@ pub struct RuntimeServices {
     /// Whether a scan is open. Shared by every product runtime of this host,
     /// because the device has one viewfinder.
     scan_open: AtomicBool,
+    /// Host adapter for preimage reads with a route and a report, installed
+    /// once at startup by a host that can read through cache providers. Unset
+    /// leaves every product `Preimage.read` call `Unsupported`.
+    preimage_read_host: OnceLock<Arc<dyn crate::platform::PreimageReadHost>>,
     /// Host observer told when a device finishes pairing with this signing
     /// host. Unset leaves a paired device unannounced.
     device_pairing_observer: OnceLock<Arc<dyn DevicePairingObserver>>,
@@ -136,6 +140,7 @@ impl RuntimeServices {
             game_platform: OnceLock::new(),
             scanner_platform: OnceLock::new(),
             scan_open: AtomicBool::new(false),
+            preimage_read_host: OnceLock::new(),
             device_pairing_observer: OnceLock::new(),
             #[cfg(not(target_arch = "wasm32"))]
             core_db: OnceLock::new(),
@@ -242,6 +247,22 @@ impl RuntimeServices {
     /// The host's Game adapter, when one is installed.
     pub fn game_platform(&self) -> Option<Arc<dyn crate::platform::GamePlatform>> {
         self.game_platform.get().cloned()
+    }
+
+    /// Install the host's adapter for preimage reads with a route and a report.
+    ///
+    /// Set-once, like every optional capability. Returns whether this call
+    /// installed it.
+    pub fn install_preimage_read_host(
+        &self,
+        host: Arc<dyn crate::platform::PreimageReadHost>,
+    ) -> bool {
+        self.preimage_read_host.set(host).is_ok()
+    }
+
+    /// The host's adapter for preimage reads, when one is installed.
+    pub fn preimage_read_host(&self) -> Option<Arc<dyn crate::platform::PreimageReadHost>> {
+        self.preimage_read_host.get().cloned()
     }
 
     /// Install the host's contacts adapter. Answers whether this call was the

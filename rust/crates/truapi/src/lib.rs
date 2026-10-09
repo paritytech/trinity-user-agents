@@ -83,8 +83,8 @@ pub mod latest {
         HostAccountListRingVrfKeysRequest, HostAccountRegisterRingVrfKeyRequest,
         HostAccountRingVrfSignRequest, HostAccountSignVrfError, HostAccountSignVrfRequest,
         HostPlatform, HostSignPayloadData, HostWorkerOperationError, ImageFit, ImageProps,
-        ImageSource, Modifier, OperationStartedResult, PocketCard, ProductAccountId,
-        ProductProofContext, RawPayload, RegisteredRingVrfKey, RemotePermission,
+        ImageSource, Modifier, OperationStartedResult, PocketCard, PreimageReadRoute,
+        ProductAccountId, ProductProofContext, RawPayload, RegisteredRingVrfKey, RemotePermission,
         RemoteStatementStoreCreateProofError, RemoteStatementStoreCreateProofRequest,
         RemoteStatementStoreCreateProofResponse, RemoteStatementStoreSubscribeItem,
         RemoteStatementStoreSubscribeRequest, RenderContext, RendererNode, RingLocation,
@@ -212,6 +212,10 @@ pub mod latest {
     /// Push notification scheduling result.
     pub type HostPushNotificationResponse =
         LatestOf<versioned::notifications::HostPushNotificationResponse>;
+    /// Preimage read result: the value and the read report.
+    pub type RemotePreimageReadResponse = LatestOf<versioned::preimage::RemotePreimageReadResponse>;
+    /// Preimage read failure.
+    pub type PreimageReadError = LatestOf<versioned::preimage::RemotePreimageReadError>;
     /// Login request error.
     pub type HostRequestLoginError = LatestOf<versioned::account::HostRequestLoginError>;
     /// Login request result.
