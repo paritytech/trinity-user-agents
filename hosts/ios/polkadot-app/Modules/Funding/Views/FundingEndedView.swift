@@ -3,9 +3,9 @@ import PolkadotUI
 import SwiftUI
 import TrUAPIHost
 
-/// An ended session's detail screen. A success shows what moved and when; a
-/// failure shows the step it stopped on, why, and who to quote to support,
-/// with a way to start a new session.
+/// An ended session's detail screen: what moved, how, through whom, the ids
+/// to quote to support, and when. A failure also shows the step it stopped
+/// on and why, with a way to start a new session.
 struct FundingEndedView: View {
     let ended: FundingEndedSession
     let cash: FundingCash
@@ -102,41 +102,78 @@ private extension FundingEndedView {
         .background(.bgSurfaceNested, in: RoundedRectangle(cornerRadius: DSRadii.large))
     }
 
+    /// What is known about the session, one row each; a value the record
+    /// does not hold has no row.
     var rows: some View {
         VStack(spacing: DSSpacings.extraSmall) {
             if let paid = ended.quotedAmount {
-                FundingValueRow(title: amountCaption, action: onFees) {
+                FundingValueRow(title: amountCaption, action: ended.quote == nil ? nil : onFees) {
                     value(paid)
                 }
             }
 
-            if ended.succeeded {
-                if ended.direction == .out, let eta = ended.quote?.etaSecs {
-                    FundingValueRow(title: String(localized: .Funding.summaryArrives)) {
-                        value(FundingEta.text(seconds: eta))
+            if let settled = ended.record.settledAmount {
+                FundingValueRow(title: settledCaption) {
+                    VStack(alignment: .trailing, spacing: DSSpacings.extraSmall) {
+                        value(cash.label(cash.decimal(settled)))
+                        if let requested = ended.differingRequestedAmount {
+                            let amount = cash.label(cash.decimal(requested))
+                            Text(verbatim: String(localized: .Funding.endedRequested(amount: amount)))
+                                .typography(.bodySmall)
+                                .foregroundStyle(.fgSecondary)
+                                .multilineTextAlignment(.trailing)
+                        }
                     }
                 }
-            } else {
-                if ended.direction == .in, ended.record.rail == .bank, let reference = ended.record.reference {
-                    FundingCopyRow(
-                        title: String(localized: .Funding.depositReference),
-                        text: reference,
-                        copied: $copied
-                    )
+            }
+
+            if let method {
+                FundingValueRow(title: String(localized: .Funding.endedMethod)) {
+                    value(method)
                 }
-                if let providerName {
-                    FundingValueRow(title: String(localized: .Funding.summaryProvider)) {
-                        value(providerName)
-                    }
+            }
+
+            if let providerName {
+                FundingValueRow(title: String(localized: .Funding.summaryProvider)) {
+                    value(providerName)
                 }
-                if let transactionId = ended.record.transactionId {
-                    FundingCopyRow(
-                        title: String(localized: .Funding.endedTransactionId),
-                        text: transactionId,
-                        copied: $copied,
-                        truncatesMiddle: true
-                    )
+            }
+
+            if let payout = payoutText {
+                FundingValueRow(title: String(localized: .Funding.endedPayout)) {
+                    value(payout)
                 }
+            }
+
+            if ended.payoutState == .pending, let eta = ended.quote?.etaSecs {
+                FundingValueRow(title: String(localized: .Funding.summaryArrives)) {
+                    value(FundingEta.text(seconds: eta))
+                }
+            }
+
+            if let transactionId = nonEmpty(ended.record.transactionId) {
+                FundingCopyRow(
+                    title: String(localized: .Funding.endedTransactionId),
+                    text: transactionId,
+                    copied: $copied,
+                    truncatesMiddle: true
+                )
+            }
+
+            if let reference = nonEmpty(ended.record.reference) {
+                FundingCopyRow(
+                    title: String(localized: .Funding.depositReference),
+                    text: reference,
+                    copied: $copied
+                )
+            }
+
+            FundingValueRow(title: String(localized: .Funding.endedStarted)) {
+                value(dateTime(ended.record.openedAt))
+            }
+
+            FundingValueRow(title: endedCaption) {
+                value(dateTime(ended.record.settledAt))
             }
         }
     }
@@ -262,12 +299,56 @@ private extension FundingEndedView {
     var amountCaption: String {
         switch (ended.direction, ended.record.rail) {
         case (.in, .card):
-            String(localized: .Funding.progressYouPaid)
-        case (.out, .card) where !ended.succeeded:
-            String(localized: .Funding.endedWithdrawalAmount)
-        default:
+            String(localized: .Funding.endedPaid)
+        case (.in, _):
             String(localized: .Funding.endedSent)
+        case (.out, _) where ended.succeeded:
+            String(localized: .Funding.endedReceived)
+        case (.out, _):
+            String(localized: .Funding.endedWithdrawalAmount)
         }
+    }
+
+    var settledCaption: String {
+        ended.direction == .in ? String(localized: .Funding.endedCredited) : String(localized: .Funding.endedDebited)
+    }
+
+    var endedCaption: String {
+        ended.succeeded ? String(localized: .Funding.endedCompleted) : String(localized: .Funding.endedEnded)
+    }
+
+    /// How the user paid or was paid, with the network for crypto.
+    var method: String? {
+        guard let rail = ended.record.rail else { return nil }
+        switch rail {
+        case .card:
+            return String(localized: .Funding.railCard)
+        case .bank:
+            return String(localized: .Funding.endedMethodBank)
+        case .crypto:
+            let crypto = String(localized: .Funding.railCrypto)
+            guard let network = nonEmpty(ended.record.paidNetwork) else { return crypto }
+            let name = FundingNetwork(id: network).name
+            return String(localized: .Funding.endedMethodNetwork(method: crypto, network: name))
+        }
+    }
+
+    var payoutText: String? {
+        switch ended.payoutState {
+        case .pending: String(localized: .Funding.endedPayoutPending)
+        case .paidOut: String(localized: .Funding.endedPayoutPaidOut)
+        case .failed: String(localized: .Funding.endedPayoutFailedStatus)
+        case nil: nil
+        }
+    }
+
+    func dateTime(_ date: Date) -> String {
+        date.formatted(date: .abbreviated, time: .shortened)
+    }
+
+    func nonEmpty(_ text: String?) -> String? {
+        guard let text, !text.isEmpty else { return nil }
+        return text
     }
 
     func signedFigure(_ value: Decimal) -> String {

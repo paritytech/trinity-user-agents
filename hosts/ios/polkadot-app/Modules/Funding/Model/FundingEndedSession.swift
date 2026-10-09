@@ -11,6 +11,13 @@ struct FundingEndedSession: Equatable {
         case payoutFailed(reason: String)
     }
 
+    /// Where a released outbound session's payout stands.
+    enum PayoutState: Equatable {
+        case pending
+        case paidOut
+        case failed
+    }
+
     let record: FundingRecord
     var quote: FundingQuote?
     var reportedSteps: [FundingProgressStep]?
@@ -53,10 +60,30 @@ extension FundingEndedSession {
     }
 
     /// What the user paid for value in, or receives for value out, in the
-    /// asset of the quote the session ran on.
+    /// asset of the quote the session ran on: the record's copy, or the quote
+    /// while the core still holds it.
     var quotedAmount: String? {
-        guard let quote, let asset = record.asset else { return nil }
-        return FundingAssetUnit(code: asset).format(direction == .in ? quote.sendAmount : quote.receiveAmount)
+        let quoted = quote.map { direction == .in ? $0.sendAmount : $0.receiveAmount }
+        guard let units = record.paidAmount ?? quoted, let asset = record.paidAsset ?? record.asset else { return nil }
+        return FundingAssetUnit(code: asset).format(units)
+    }
+
+    /// The CASH asked for, when the CASH that moved differs from it.
+    var differingRequestedAmount: U128? {
+        guard let requested = record.requestedAmount, let settled = record.settledAmount,
+              Decimal(string: requested) != Decimal(string: settled)
+        else { return nil }
+        return requested
+    }
+
+    /// The payout state of value out that the provider released.
+    var payoutState: PayoutState? {
+        guard direction == .out, record.outcome == .released else { return nil }
+        switch record.payout {
+        case .paidOut: return .paidOut
+        case .failed: return .failed
+        case nil: return .pending
+        }
     }
 
     var steps: [FundingStep] {

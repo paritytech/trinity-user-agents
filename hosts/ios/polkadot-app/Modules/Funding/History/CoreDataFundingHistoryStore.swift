@@ -56,6 +56,9 @@ extension FundingRecordMapper: CoreDataMapperProtocol {
             providerId: entity.providerId,
             requestedAmount: entity.requestedAmount,
             settledAmount: entity.settledAmount,
+            paidAmount: entity.paidAmount,
+            paidAsset: entity.paidAsset,
+            paidNetwork: entity.paidNetwork,
             outcome: outcome,
             payout: entity.payout.flatMap { FundingRecord.Payout(storageValue: $0, reason: entity.payoutReason) },
             transactionId: entity.transactionId,
@@ -73,6 +76,9 @@ extension FundingRecordMapper: CoreDataMapperProtocol {
         entity.providerId = model.providerId
         entity.requestedAmount = model.requestedAmount
         entity.settledAmount = model.settledAmount
+        entity.paidAmount = model.paidAmount
+        entity.paidAsset = model.paidAsset
+        entity.paidNetwork = model.paidNetwork
         entity.outcome = model.outcome.storageValue
         entity.failureCode = model.outcome.failure?.code
         entity.failureMessage = model.outcome.failure?.message

@@ -23,6 +23,13 @@ struct FundingRecord: Identifiable, Equatable {
     let providerId: String?
     let requestedAmount: U128?
     let settledAmount: U128?
+    /// What the user paid for value in, or receives for value out, in
+    /// `paidAsset`, from the quote the session ran on. Kept so the detail
+    /// screen can show it once the core has dropped the quote.
+    let paidAmount: U128?
+    let paidAsset: String?
+    /// The crypto network the value moved on, when the provider named one.
+    let paidNetwork: String?
     let outcome: Outcome
     let payout: Payout?
     let transactionId: String?
@@ -56,6 +63,11 @@ extension FundingRecord {
         providerId = session.providerId
         requestedAmount = session.amount
         settledAmount = settled.amount
+        paidAmount = session.choice.map { choice in
+            session.direction == .in ? choice.quote.sendAmount : choice.quote.receiveAmount
+        }
+        paidAsset = session.choice?.asset
+        paidNetwork = progress?.deposit.flatMap(\.network)
         outcome = settled.outcome
         payout = progress?.payout.map(Payout.init)
         transactionId = progress?.transactionId
@@ -78,6 +90,13 @@ private struct Settled {
     let outcome: FundingRecord.Outcome
     let amount: U128?
     let atMs: UInt64
+}
+
+private extension FundingDeposit {
+    var network: String? {
+        guard case let .crypto(_, network, _, _, _, _, _, _) = self else { return nil }
+        return network
+    }
 }
 
 extension FundingRecord.Payout {
