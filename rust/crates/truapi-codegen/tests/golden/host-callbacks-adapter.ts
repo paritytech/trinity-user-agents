@@ -26,7 +26,9 @@ import {
   HostScannerScanRequest,
   HostThemeSubscribeItem,
   HostWorkerBeginOperationResponse,
+  PreimageReadRoute,
   RemotePermissionRequest,
+  RemotePreimageReadResponse,
 } from "@parity/truapi";
 import type { GenericError } from "@parity/truapi";
 import {
@@ -109,6 +111,11 @@ export interface RawCallbacks {
     sendItem: (item?: Uint8Array) => void,
     sendError: (error: GenericError) => void,
   ): (() => void) | void;
+  readPreimage?(
+    key: Uint8Array,
+    route: Uint8Array,
+    skipHostCaches: boolean,
+  ): Promise<Uint8Array>;
   beginOperation(product: Uint8Array, label: string): Promise<Uint8Array>;
   endOperation(product: Uint8Array, id: number): Promise<void>;
   read(key: string): Promise<Uint8Array | null | undefined>;
@@ -137,6 +144,7 @@ export function createWasmRawCallbacks(
   const game = callbacks.game;
   const permissionStatus = callbacks.permissionStatus;
   const pocket = callbacks.pocket;
+  const preimageRead = callbacks.preimageRead;
   const scanner = callbacks.scanner;
   return {
     authStateChanged: async (state) =>
@@ -278,6 +286,18 @@ export function createWasmRawCallbacks(
         sendItem,
         sendError,
       ),
+    ...(preimageRead
+      ? {
+          readPreimage: async (key, route, skipHostCaches) =>
+            RemotePreimageReadResponse.enc(
+              await preimageRead.readPreimage(
+                key,
+                PreimageReadRoute.dec(route),
+                skipHostCaches,
+              ),
+            ),
+        }
+      : {}),
     beginOperation: async (product, label) =>
       HostWorkerBeginOperationResponse.enc(
         await callbacks.productOperations.beginOperation(

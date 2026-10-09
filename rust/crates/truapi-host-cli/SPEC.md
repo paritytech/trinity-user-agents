@@ -1851,7 +1851,20 @@ The measured latency, read and failure counts of each provider are kept in
 `cache-quality.json` in the state directory, so a restart keeps the order; a
 recent failure is not kept. A
 miss is asked again every 6 s until the blob lands; a request the node can
-never answer ends the lookup with an error. The core also owns the real Bulletin client and a
+never answer ends the lookup with an error.
+
+The host also serves `Preimage.read` (trait 11, method 3) as its
+`PreimageReadHost`: one read through the product's route, with no polling.
+`Auto` asks the cache nodes in the order above and then the Bulletin node;
+`Bulletin` asks only the Bulletin node; `Cache` and `CacheProvider { id }` ask
+only cache nodes and never fall back. The response carries a read report: the
+source that served (a cache node with its id, the `name=` and `region=` of its
+provider line, origin from `x-cache-origin`, rank, home flag, `provider_ms` from
+`x-cache-elapsed-ms` and the opaque `x-cache-trace`; or Bulletin via RPC), and
+one attempt per source asked (`Served`, `Miss`, `BadBytes`, `Refused` for a 402,
+`Failed`) with its time. Without a payer or a callable provider, a cache route
+answers `NoCacheProviders`; a provider id outside the set answers
+`UnknownProvider`. A provider that served gets its receipt as for a lookup. The core also owns the real Bulletin client and a
 separate 16 MiB insertion-ordered preimage bridge for read-after-write
 behavior.
 

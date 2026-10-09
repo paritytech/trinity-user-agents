@@ -84,16 +84,16 @@ pub mod latest {
 		HostAccountRingVrfSignRequest, HostAccountSignVrfError, HostAccountSignVrfRequest,
 		HostPlatform, HostSignPayloadData, HostWorkerBeginOperationRequest,
 		HostWorkerOperationError, ImageFit, ImageProps, ImageSource, Modifier,
-		OperationStartedResult, PocketCard, ProductAccountId, ProductProofContext, RawPayload,
-		RegisteredRingVrfKey, RemoteChainTransactionStopRequest, RemotePermission,
-		RemoteStatementStoreCreateProofError, RemoteStatementStoreCreateProofRequest,
-		RemoteStatementStoreCreateProofResponse, RemoteStatementStoreSubscribeItem,
-		RemoteStatementStoreSubscribeRequest, RenderContext, RendererNode, ResourceAllocationError,
-		RingLocation, RingLocationJunction, RingVrfKeyDisclosure, RowProps, RuntimeApi,
-		RuntimeSpec, RuntimeType, ScanOutcome, Shape, SignedStatement, Size, Statement,
-		StatementProof, StorageQueryItem, StorageQueryType, StorageResultItem, TextFieldProps,
-		TextProps, ThemeName, ThemeVariant, TxPayloadExtension, TypographyStyle, VerticalAlignment,
-		VrfSignature,
+		OperationStartedResult, PocketCard, PreimageReadRoute, ProductAccountId,
+		ProductProofContext, RawPayload, RegisteredRingVrfKey, RemoteChainTransactionStopRequest,
+		RemotePermission, RemoteStatementStoreCreateProofError,
+		RemoteStatementStoreCreateProofRequest, RemoteStatementStoreCreateProofResponse,
+		RemoteStatementStoreSubscribeItem, RemoteStatementStoreSubscribeRequest, RenderContext,
+		RendererNode, ResourceAllocationError, RingLocation, RingLocationJunction,
+		RingVrfKeyDisclosure, RowProps, RuntimeApi, RuntimeSpec, RuntimeType, ScanOutcome, Shape,
+		SignedStatement, Size, Statement, StatementProof, StorageQueryItem, StorageQueryType,
+		StorageResultItem, TextFieldProps, TextProps, ThemeName, ThemeVariant, TxPayloadExtension,
+		TypographyStyle, VerticalAlignment, VrfSignature,
 	};
 
 	/// Latest payload type of a versioned envelope.
@@ -219,6 +219,10 @@ pub mod latest {
 	/// Connection state reported to account subscribers.
 	pub type HostAccountConnectionStatusSubscribeItem =
 		LatestOf<versioned::account::HostAccountConnectionStatusSubscribeItem>;
+	/// Preimage read result: the value and the read report.
+	pub type RemotePreimageReadResponse = LatestOf<versioned::preimage::RemotePreimageReadResponse>;
+	/// Preimage read failure.
+	pub type PreimageReadError = LatestOf<versioned::preimage::RemotePreimageReadError>;
 	/// Login request error.
 	pub type HostRequestLoginError = LatestOf<versioned::account::HostRequestLoginError>;
 	/// Login request result.

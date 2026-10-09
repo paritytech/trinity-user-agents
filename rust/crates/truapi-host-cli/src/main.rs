@@ -62,7 +62,10 @@ use truapi::{
 	host_logic::dotns_gateway::{
 		MAX_BASE_LABEL_LEN, MIN_PERSON_LABEL_LEN, is_lite_label, is_registrable_full_label,
 	},
-	platform::{ChatPlatform, HostInfo, PermissionStatusHost, PlatformInfo, ProductExecutionKind},
+	platform::{
+		ChatPlatform, HostInfo, PermissionStatusHost, PlatformInfo, PreimageReadHost,
+		ProductExecutionKind,
+	},
 	statement_allowance as alloc,
 	subscription::Spawner,
 };
@@ -1193,6 +1196,7 @@ async fn run_pairing_host(
 	let chat_host = args.execution_kind.chat_host();
 	let pocket_host = args.execution_kind.pocket_host();
 	let status_host = platform.clone() as Arc<dyn PermissionStatusHost>;
+	let platform_read_host = platform.clone() as Arc<dyn PreimageReadHost>;
 	let pairing_runtime = Arc::new(PairingHostRuntime::with_chat_platform(
 		platform,
 		config,
@@ -1205,6 +1209,7 @@ async fn run_pairing_host(
 	}
 	pairing_runtime.set_game_platform(Arc::new(game::CliGameHost));
 	pairing_runtime.set_scanner_platform(Arc::new(scanner::CliScannerHost));
+	pairing_runtime.set_preimage_read_host(platform_read_host);
 	pairing_runtime
 		.set_contacts_platform(contacts::CliContactsHost::from_env(storage_platform.clone()));
 
@@ -1737,6 +1742,7 @@ fn build_signing_runtime(
 	}
 	runtime.set_game_platform(Arc::new(game::CliGameHost));
 	runtime.set_scanner_platform(Arc::new(scanner::CliScannerHost));
+	runtime.set_preimage_read_host(platform.clone() as Arc<dyn PreimageReadHost>);
 	runtime.set_core_db(core_db);
 	runtime.start_statement_allowance_renewal();
 	Ok((runtime, platform))

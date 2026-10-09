@@ -119,6 +119,16 @@ export function makeHostCallbacks(
           },
         }
       : {}),
+    // And for Preimage.read: only a host with cache providers serves it, so
+    // the default fixture answers `Unsupported`.
+    ...(overrides.preimageRead
+      ? {
+          preimageRead: {
+            readPreimage: async () => ({ report: { attempts: [], hostMs: 0 } }),
+            ...overrides.preimageRead,
+          },
+        }
+      : {}),
     // And for Pocket: the default fixture is a host that keeps no card
     // collection, so Pocket calls are answered `Unsupported`.
     ...(overrides.pocket

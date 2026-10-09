@@ -52,6 +52,7 @@ pub struct JsBridge {
     pub subscribe_pocket_cards: Function,
     pub remove_pocket_card: Function,
     pub lookup_preimage: Function,
+    pub read_preimage: Function,
     pub begin_operation: Function,
     pub end_operation: Function,
     pub read: Function,
@@ -67,6 +68,7 @@ pub struct JsBridge {
     pub game_present: bool,
     pub permission_status_present: bool,
     pub pocket_present: bool,
+    pub preimage_read_present: bool,
     pub scanner_present: bool,
 }
 
@@ -111,6 +113,8 @@ impl JsBridge {
             remove_pocket_card: get_optional_function(callbacks, "removePocketCard")?
                 .unwrap_or_else(|| missing_callback("removePocketCard")),
             lookup_preimage: get_function(callbacks, "lookupPreimage")?,
+            read_preimage: get_optional_function(callbacks, "readPreimage")?
+                .unwrap_or_else(|| missing_callback("readPreimage")),
             begin_operation: get_function(callbacks, "beginOperation")?,
             end_operation: get_function(callbacks, "endOperation")?,
             read: get_function(callbacks, "read")?,
@@ -135,6 +139,7 @@ impl JsBridge {
                 .is_some(),
             pocket_present: get_optional_function(callbacks, "subscribePocketCards")?.is_some()
                 && get_optional_function(callbacks, "removePocketCard")?.is_some(),
+            preimage_read_present: get_optional_function(callbacks, "readPreimage")?.is_some(),
             scanner_present: get_optional_function(callbacks, "scanCode")?.is_some(),
         })
     }
@@ -162,6 +167,11 @@ impl JsBridge {
     /// Whether the host supplied every `pocket` callback.
     pub fn has_pocket(&self) -> bool {
         self.pocket_present
+    }
+
+    /// Whether the host supplied every `preimage_read` callback.
+    pub fn has_preimage_read(&self) -> bool {
+        self.preimage_read_present
     }
 
     /// Whether the host supplied every `scanner` callback.
@@ -574,6 +584,32 @@ impl crate::platform::PreimageHost for WasmPlatform {
             Some(Uint8Array::from(key.as_slice()).into()),
             parse_optional_bytes_item,
         )
+    }
+}
+
+#[crate::platform::async_trait]
+impl crate::platform::PreimageReadHost for WasmPlatform {
+    async fn read_preimage(
+        &self,
+        key: Vec<u8>,
+        route: latest::PreimageReadRoute,
+        skip_host_caches: bool,
+    ) -> Result<latest::RemotePreimageReadResponse, latest::PreimageReadError> {
+        let bytes = invoke_bytes_return(
+            &self.bridge.read_preimage,
+            vec![
+                Uint8Array::from(key.as_slice()).into(),
+                Uint8Array::from(route.encode().as_slice()).into(),
+                JsValue::from_bool(skip_host_caches),
+            ],
+        )
+        .await
+        .map_err(|reason| latest::PreimageReadError::Unknown { reason })?;
+        decode_bytes::<latest::RemotePreimageReadResponse>(
+            bytes,
+            "readPreimage response did not decode",
+        )
+        .map_err(|reason| latest::PreimageReadError::Unknown { reason })
     }
 }
 

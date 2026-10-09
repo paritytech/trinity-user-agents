@@ -1275,6 +1275,7 @@ export function createWebWorkerPairingHostRuntime(
             game: host.game !== undefined,
             contacts: host.contacts !== undefined,
             scanner: host.scanner !== undefined,
+            preimageRead: host.preimageRead !== undefined,
           },
           debuggerUrl: debuggerDial,
           role: options.role,
