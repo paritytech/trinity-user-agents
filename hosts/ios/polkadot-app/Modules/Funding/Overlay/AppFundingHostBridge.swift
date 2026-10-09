@@ -24,6 +24,10 @@ protocol FundingOverlayPresenting: AnyObject, Sendable {
 
     /// Shows session `intent` again after the user left it running.
     func reopen(intent: String)
+
+    /// Shows an ended session's detail screen, from what the core still
+    /// holds of it or else from the host's record.
+    func showEnded(_ record: FundingRecord)
 }
 
 /// The runtime's funding overlay. Installed once, before any product

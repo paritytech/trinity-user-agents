@@ -57,6 +57,10 @@ final class AppFundingOverlay: FundingOverlayPresenting, @unchecked Sendable {
     func reopen(intent: String) {
         Task { @MainActor in coordinator?.reopen(intent: intent) }
     }
+
+    func showEnded(_ record: FundingRecord) {
+        Task { @MainActor in coordinator?.showEnded(record) }
+    }
 }
 
 private extension AppFundingOverlay {
@@ -112,11 +116,12 @@ final class FundingOverlayCoordinator {
         }
     }
 
-    /// Shows a session the user left running: its deposit screen, with the
-    /// provider's screen over it while the provider still waits on one.
+    /// Shows a session the core holds: one the user left running on its
+    /// progress screen, with the provider's screen over it while the provider
+    /// still waits on one, or an ended one on its ended screen.
     func reopen(intent: String) {
         guard flows[intent] == nil,
-              let session = runtime?.fundingSession(intent: intent), session.stage.isOpen,
+              let session = runtime?.fundingSession(intent: intent),
               let model = makeModel(intent: intent, direction: session.direction, amount: session.amount)
         else { return }
 
@@ -125,6 +130,24 @@ final class FundingOverlayCoordinator {
             guard let frame = self?.frames[intent], frame.presentingViewController == nil else { return }
             _ = self?.environment.present(frame)
         }
+    }
+
+    /// An ended session the core has dropped is drawn from the host's record.
+    func showEnded(_ record: FundingRecord) {
+        if runtime?.fundingSession(intent: record.intent) != nil {
+            reopen(intent: record.intent)
+            return
+        }
+
+        let sheet = FundingEndedSheetController(
+            ended: FundingEndedSession(record: record),
+            cash: environment.cash,
+            branding: environment.branding
+        )
+        sheet.onStartOver = { [weak self, weak sheet] in
+            sheet?.dismissIfPresented { self?.startOver(direction: record.direction) }
+        }
+        _ = environment.present(sheet)
     }
 
     func presentFrame(providerId: String, intent: String, route: String) async -> FundingFrameOutcome {
@@ -188,10 +211,27 @@ private extension FundingOverlayCoordinator {
             sheet?.dismissIfPresented()
             self?.flows[intent] = nil
         }
+        model.onStartOver = { [weak self, weak sheet, direction = model.direction] in
+            self?.flows[intent] = nil
+            sheet?.dismissIfPresented { self?.startOver(direction: direction) }
+        }
         flows[intent] = model
 
         if !environment.present(sheet) {
             model.close()
+        }
+    }
+
+    /// A new session the same way, opened once the sheet before it is gone.
+    func startOver(direction: FundingDirection) {
+        guard let runtime else { return }
+
+        Task {
+            do {
+                _ = try await runtime.openFunding(direction: direction, amount: nil)
+            } catch {
+                Logger.shared.error("[funding] starting over failed: \(error)")
+            }
         }
     }
 
@@ -219,10 +259,7 @@ final class FundingSheetController: UIHostingController<FundingSheetView>, UIAda
         self.onAppear = onAppear
         super.init(rootView: FundingSheetView(model: model))
 
-        modalPresentationStyle = .pageSheet
-        sheetPresentationController?.detents = [.custom { $0.maximumDetentValue * 0.92 }]
-        sheetPresentationController?.prefersGrabberVisible = true
-        sheetPresentationController?.preferredCornerRadius = 32
+        presentAsFundingSheet()
         presentationController?.delegate = self
     }
 
@@ -245,12 +282,74 @@ final class FundingSheetController: UIHostingController<FundingSheetView>, UIAda
 
     /// Dismisses from the presenter, so a provider's screen still over the
     /// sheet goes with it.
-    func dismissIfPresented() {
-        guard let presenter = presentingViewController, !isBeingDismissed else { return }
-        presenter.dismiss(animated: true)
+    func dismissIfPresented(completion: (() -> Void)? = nil) {
+        guard let presenter = presentingViewController, !isBeingDismissed else {
+            completion?()
+            return
+        }
+        presenter.dismiss(animated: true, completion: completion)
     }
 
     func presentationControllerDidDismiss(_: UIPresentationController) {
         model.close()
+    }
+}
+
+/// An ended session the core has dropped, on the same sheet as the overlay.
+final class FundingEndedSheetController: UIHostingController<FundingEndedSheetView> {
+    var onStartOver: (() -> Void)?
+
+    init(ended: FundingEndedSession, cash: FundingCash, branding: FundingProviderBranding) {
+        super.init(rootView: FundingEndedSheetView(ended: ended, cash: cash, branding: branding))
+
+        rootView.onClose = { [weak self] in self?.dismiss(animated: true) }
+        rootView.onStartOver = { [weak self] in self?.onStartOver?() }
+        presentAsFundingSheet()
+    }
+
+    @available(*, unavailable)
+    @MainActor dynamic required init?(coder _: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        view.backgroundColor = .clear
+    }
+
+    func dismissIfPresented(completion: @escaping () -> Void) {
+        guard presentingViewController != nil, !isBeingDismissed else {
+            completion()
+            return
+        }
+        dismiss(animated: true, completion: completion)
+    }
+}
+
+struct FundingEndedSheetView: View {
+    let ended: FundingEndedSession
+    let cash: FundingCash
+    let branding: FundingProviderBranding
+    var onClose: () -> Void = {}
+    var onStartOver: () -> Void = {}
+
+    var body: some View {
+        FundingEndedView(
+            ended: ended,
+            cash: cash,
+            branding: branding,
+            onClose: onClose,
+            onStartOver: onStartOver
+        )
+        .fundingScreen()
+    }
+}
+
+private extension UIViewController {
+    func presentAsFundingSheet() {
+        modalPresentationStyle = .pageSheet
+        sheetPresentationController?.detents = [.custom { $0.maximumDetentValue * 0.92 }]
+        sheetPresentationController?.prefersGrabberVisible = true
+        sheetPresentationController?.preferredCornerRadius = 32
     }
 }

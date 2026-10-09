@@ -19,13 +19,7 @@ struct FundingSheetView: View {
 
 private extension FundingSheetView {
     func screen(@ViewBuilder _ content: () -> some View) -> some View {
-        content()
-            .padding(.horizontal, DSSpacings.mediumIncreased)
-            .padding(.top, DSSpacings.mediumIncreased)
-            .padding(.bottom, DSSpacings.small)
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-            .background(Color.bgSurfaceContainer.ignoresSafeArea())
-            .toolbar(.hidden, for: .navigationBar)
+        content().fundingScreen()
     }
 
     @ViewBuilder
@@ -50,5 +44,17 @@ private extension FundingSheetView {
         case .cancelConfirm:
             FundingCancelConfirmView(model: model)
         }
+    }
+}
+
+extension View {
+    /// Lays a screen out on the funding sheet.
+    func fundingScreen() -> some View {
+        padding(.horizontal, DSSpacings.mediumIncreased)
+            .padding(.top, DSSpacings.mediumIncreased)
+            .padding(.bottom, DSSpacings.small)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            .background(Color.bgSurfaceContainer.ignoresSafeArea())
+            .toolbar(.hidden, for: .navigationBar)
     }
 }

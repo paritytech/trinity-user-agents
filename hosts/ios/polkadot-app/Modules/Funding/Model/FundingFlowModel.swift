@@ -62,9 +62,11 @@ final class FundingFlowModel {
     var onOutcome: ((FundingPresentOutcome) -> Void)?
     /// Takes the overlay down.
     var onClose: (() -> Void)?
+    /// Takes the overlay down and opens a new session the same way.
+    var onStartOver: (() -> Void)?
 
     let runtime: FundingRuntime
-    private let branding: FundingProviderBranding
+    let branding: FundingProviderBranding
     private var startsWhenQuoted = false
     private var quoteTask: Task<Void, Never>?
 
@@ -173,6 +175,13 @@ extension FundingFlowModel {
         onClose?()
     }
 
+    /// An ended session leaves for a new one in the same direction, from the
+    /// start.
+    func startOver() {
+        quoteTask?.cancel()
+        onStartOver?()
+    }
+
     func confirmCancel() {
         path.append(.cancelConfirm)
     }
@@ -196,8 +205,9 @@ extension FundingFlowModel {
         }
     }
 
-    /// Shows a session that was left running on its progress screen, with
-    /// the crypto deposit over it while the funds have not been seen.
+    /// Shows a session that was left running, or has ended, on its progress
+    /// screen, with the crypto deposit over it while the funds have not been
+    /// seen.
     func resume(_ session: FundingSession) {
         rail = session.choice?.rail ?? rail
         asset = session.choice?.asset
@@ -205,7 +215,7 @@ extension FundingFlowModel {
         hasStarted = true
         refreshSession()
         path = [.progress]
-        if showsDepositFirst, !hasReached(.payment) { path.append(.deposit) }
+        if showsDepositFirst, session.stage.isOpen, !hasReached(.payment) { path.append(.deposit) }
     }
 
     /// Back to the progress screen, from the deposit screen over it or from
@@ -265,6 +275,11 @@ extension FundingFlowModel {
     var failure: FundingFailure? {
         guard case let .failed(reason, _) = session?.stage else { return nil }
         return reason
+    }
+
+    /// The session once it has ended, as its ended screen draws it.
+    var ended: FundingEndedSession? {
+        session.flatMap { FundingEndedSession(session: $0, progress: progress) }
     }
 
     /// The quote the session was started on, or the one on screen before it.

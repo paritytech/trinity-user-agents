@@ -58,7 +58,7 @@ private extension FundingAmountView {
         DSAmount(
             amount: model.cash.figure(model.amount),
             symbol: model.cash.symbol,
-            typography: typography(forDigits: model.amountText.filter(\.isNumber).count)
+            typography: .fundingFigure(digits: model.amountText.filter(\.isNumber).count)
         )
         .foregroundStyle(model.amount > 0 ? Color.fgPrimary : Color.fgTertiary)
         .lineLimit(1)
@@ -96,14 +96,6 @@ private extension FundingAmountView {
                 }
                 .buttonStyle(.plain)
             }
-        }
-    }
-
-    func typography(forDigits count: Int) -> DesignSystem.TypographyStyle {
-        switch count {
-        case 0 ... 3: .displayLarge
-        case 4 ... 5: .displayMedium
-        default: .displaySmall
         }
     }
 

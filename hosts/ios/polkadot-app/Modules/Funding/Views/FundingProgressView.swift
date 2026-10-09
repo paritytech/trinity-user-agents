@@ -5,7 +5,7 @@ import TrUAPIHost
 
 /// Where a started session stands: the amount, the steps the core reports for
 /// its direction and rail, and what the user may still need, such as the bank
-/// details to pay to. An ended session stays on its final state.
+/// details to pay to. Once the session ends it shows the ended screen.
 struct FundingProgressView: View {
     let model: FundingFlowModel
 
@@ -13,20 +13,20 @@ struct FundingProgressView: View {
     @State private var now = Date()
 
     var body: some View {
-        VStack(spacing: DSSpacings.mediumIncreased) {
-            FundingScreenHeader(title: "", onBack: model.hasStarted ? model.close : model.back)
-
-            ScrollView {
-                VStack(spacing: DSSpacings.medium) {
-                    headline
-                    stepCard
-                    rows
-                }
+        Group {
+            if let ended = model.ended {
+                FundingEndedView(
+                    ended: ended,
+                    cash: model.cash,
+                    branding: model.branding,
+                    onFees: model.showFees,
+                    onClose: model.close,
+                    onStartOver: model.startOver
+                )
+            } else {
+                inProgress
             }
-
-            bottomAction
         }
-        .fundingToast($copied)
         .task { await follow() }
     }
 }
@@ -34,18 +34,6 @@ struct FundingProgressView: View {
 // MARK: - State
 
 private extension FundingProgressView {
-    var isOpen: Bool {
-        model.session?.stage.isOpen ?? true
-    }
-
-    var succeeded: Bool {
-        switch model.session?.stage {
-        case .delivered,
-             .released: true
-        default: false
-        }
-    }
-
     /// The CASH card row for the session, for its amount and whether it is
     /// slower than quoted.
     var item: FundingActivityItem? {
@@ -53,12 +41,12 @@ private extension FundingProgressView {
     }
 
     var isDelayed: Bool {
-        guard isOpen, case let .inProgress(_, isDelayed)? = item?.status else { return false }
+        guard case let .inProgress(_, isDelayed)? = item?.status else { return false }
         return isDelayed
     }
 
     var isRetrying: Bool {
-        isOpen && model.progress?.retrying == true
+        model.progress?.retrying == true
     }
 
     var amountUnits: U128? {
@@ -71,39 +59,20 @@ private extension FundingProgressView {
 
         return reported.enumerated().map { index, step in
             let state: FundingStepBar.State =
-                if succeeded || step.reachedAtMs != nil {
+                if step.reachedAtMs != nil {
                     .done
                 } else if index == firstUnreached {
-                    model.failure != nil ? .failed : .current(isAmber: isDelayed || isRetrying)
+                    .current(isAmber: isDelayed || isRetrying)
                 } else {
                     .upcoming
                 }
-            return FundingStepBar.Step(title: Self.title(step.step), state: state)
+            return FundingStepBar.Step(title: FundingStepBar.title(step.step), state: state)
         }
     }
 
-    static func title(_ step: FundingStep) -> String {
-        switch step {
-        case .started: String(localized: .Funding.progressStepStarted)
-        case .payment: String(localized: .Funding.progressStepPayment)
-        case .approved: String(localized: .Funding.progressStepApproved)
-        case .conversion: String(localized: .Funding.progressStepConversion)
-        case .added: String(localized: .Funding.progressStepAdded)
-        case .sent: String(localized: .Funding.progressStepSent)
-        }
-    }
-
-    /// The line under the steps: why it ended, why it is slow, or for a bank
-    /// transfer not seen yet, that it is on its way.
+    /// The line under the steps: why it is slow, or for a bank transfer not
+    /// seen yet, that it is on its way.
     var note: (text: String, color: Color)? {
-        if let failure = model.failure {
-            return (failure.failedText, .fgError)
-        }
-        if case let .failed(reason)? = model.progress?.payout {
-            return (String(localized: .Funding.progressPayoutFailed(reason: reason)), .fgError)
-        }
-        guard isOpen else { return nil }
-
         if isRetrying { return (String(localized: .Funding.activityRetrying), .fgWarning) }
         if isDelayed { return (String(localized: .Funding.activityDelayed), .fgWarning) }
         if model.direction == .in, model.rail == .bank, !model.hasReached(.payment) {
@@ -119,21 +88,49 @@ private extension FundingProgressView {
     /// A transfer the user has not made yet can still be called off; a card
     /// payment and value out are the provider's to finish.
     var canCancel: Bool {
-        isOpen && model.direction == .in && model.rail != .card && !model.hasReached(.payment)
+        model.direction == .in && model.rail != .card && !model.hasReached(.payment)
     }
 }
 
 // MARK: - Sections
 
 private extension FundingProgressView {
+    var inProgress: some View {
+        VStack(spacing: DSSpacings.mediumIncreased) {
+            FundingScreenHeader(title: "", onBack: model.hasStarted ? model.close : model.back)
+
+            ScrollView {
+                VStack(spacing: DSSpacings.medium) {
+                    headline
+                    stepCard
+                    rows
+                }
+            }
+
+            if canCancel {
+                FundingPrimaryButton(
+                    title: String(localized: .Funding.depositCancel),
+                    style: .destructive,
+                    action: model.confirmCancel
+                )
+            }
+        }
+        .fundingToast($copied)
+    }
+
     var headline: some View {
         VStack(spacing: DSSpacings.small) {
-            statusIcon
+            Image(systemName: "arrow.triangle.2.circlepath")
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundStyle(.fgPrimary)
+                .frame(width: 40, height: 40)
+                .background(.bgSurfaceMain, in: Circle())
             if let units = amountUnits {
+                let figure = model.cash.figure(model.cash.decimal(units))
                 DSAmount(
-                    amount: model.cash.figure(model.cash.decimal(units)),
+                    amount: figure,
                     symbol: model.cash.symbol,
-                    typography: .displayMedium
+                    typography: .fundingFigure(digits: figure.filter(\.isNumber).count)
                 )
                 .foregroundStyle(.fgPrimary)
                 .lineLimit(1)
@@ -141,23 +138,6 @@ private extension FundingProgressView {
             }
         }
         .padding(.top, DSSpacings.small)
-    }
-
-    @ViewBuilder
-    var statusIcon: some View {
-        let (name, tint): (String, Color) =
-            if succeeded {
-                ("checkmark", .fgSuccess)
-            } else if !isOpen {
-                ("xmark", .fgError)
-            } else {
-                ("arrow.triangle.2.circlepath", .fgPrimary)
-            }
-        Image(systemName: name)
-            .font(.system(size: 16, weight: .semibold))
-            .foregroundStyle(tint)
-            .frame(width: 40, height: 40)
-            .background(.bgSurfaceMain, in: Circle())
     }
 
     var stepCard: some View {
@@ -216,7 +196,7 @@ private extension FundingProgressView {
             feesRow(String(localized: .Funding.summaryBankCaption), quotedSendAmount)
             if let reference = model.progress?.reference {
                 copyRow(String(localized: .Funding.depositReference), reference)
-            } else if isOpen, !model.hasReached(.payment) {
+            } else if !model.hasReached(.payment) {
                 pending(.Funding.depositPreparing)
             }
         }
@@ -226,7 +206,7 @@ private extension FundingProgressView {
     /// While the funds are not seen, the way back to the address to pay.
     @ViewBuilder
     var cryptoRow: some View {
-        if isOpen, !model.hasReached(.payment) {
+        if !model.hasReached(.payment) {
             if case let .crypto(_, _, asset, amount, decimals, exact, _, _)? = model.progress?.deposit {
                 FundingValueRow(
                     title: String(localized: exact ? .Funding.depositExactAmount : .Funding.depositAtLeast),
@@ -242,27 +222,10 @@ private extension FundingProgressView {
 
     @ViewBuilder
     var arrivesRow: some View {
-        if isOpen, let eta = model.chosenQuote?.etaSecs {
+        if let eta = model.chosenQuote?.etaSecs {
             FundingValueRow(title: String(localized: .Funding.summaryArrives)) {
                 value(FundingEta.text(seconds: eta))
             }
-        }
-    }
-
-    @ViewBuilder
-    var bottomAction: some View {
-        if canCancel {
-            FundingPrimaryButton(
-                title: String(localized: .Funding.depositCancel),
-                style: .destructive,
-                action: model.confirmCancel
-            )
-        } else if !isOpen {
-            FundingPrimaryButton(
-                title: String(localized: .Funding.failureClose),
-                style: .secondary,
-                action: model.close
-            )
         }
     }
 }
@@ -282,19 +245,7 @@ private extension FundingProgressView {
     }
 
     func copyRow(_ title: String, _ text: String) -> some View {
-        FundingValueRow(title: title) {
-            HStack(spacing: DSSpacings.small) {
-                value(text)
-                Button {
-                    UIPasteboard.general.string = text
-                    copied = String(localized: .Funding.depositCopied)
-                } label: {
-                    Image(systemName: "doc.on.doc")
-                        .foregroundStyle(.fgPrimary)
-                }
-                .buttonStyle(.plain)
-            }
-        }
+        FundingCopyRow(title: title, text: text, copied: $copied)
     }
 
     func value(_ text: String) -> some View {
@@ -344,6 +295,17 @@ struct FundingStepBar: View {
     let steps: [Step]
 
     private static let size: CGFloat = 28
+
+    static func title(_ step: FundingStep) -> String {
+        switch step {
+        case .started: String(localized: .Funding.progressStepStarted)
+        case .payment: String(localized: .Funding.progressStepPayment)
+        case .approved: String(localized: .Funding.progressStepApproved)
+        case .conversion: String(localized: .Funding.progressStepConversion)
+        case .added: String(localized: .Funding.progressStepAdded)
+        case .sent: String(localized: .Funding.progressStepSent)
+        }
+    }
 
     var body: some View {
         HStack(spacing: 0) {

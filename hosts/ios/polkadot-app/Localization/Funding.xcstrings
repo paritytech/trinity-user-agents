@@ -1430,6 +1430,204 @@
           }
         }
       }
+    },
+    "ended.sent" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sent inc. fees"
+          }
+        }
+      }
+    },
+    "ended.withdrawalAmount" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Withdrawal amount"
+          }
+        }
+      }
+    },
+    "ended.transactionId" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Transaction ID"
+          }
+        }
+      }
+    },
+    "ended.startOver" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Start over"
+          }
+        }
+      }
+    },
+    "ended.stepPaymentFailed" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Payment failed"
+          }
+        }
+      }
+    },
+    "ended.stepPaymentDeclined" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Payment declined"
+          }
+        }
+      }
+    },
+    "ended.stepSendingFailed" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sending failed"
+          }
+        }
+      }
+    },
+    "ended.topUpFailed" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Top-up didn't go through. No money was taken."
+          }
+        }
+      }
+    },
+    "ended.cardDeclined" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Your bank declined the payment. Check your card details or try another card."
+          }
+        }
+      }
+    },
+    "ended.bankDeclined" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Your bank rejected the transfer. Check with your bank or try another account."
+          }
+        }
+      }
+    },
+    "ended.refundedCard" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Your top-up didn't go through. Your %1$(amount)@ has been returned to your card."
+          }
+        }
+      }
+    },
+    "ended.refundedCardUnknown" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Your top-up didn't go through. Your money has been returned to your card."
+          }
+        }
+      }
+    },
+    "ended.refundedBank" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Your %1$(amount)@ has been returned to your bank account."
+          }
+        }
+      }
+    },
+    "ended.refundedBankUnknown" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Your money has been returned to your bank account."
+          }
+        }
+      }
+    },
+    "ended.refundedCrypto" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Your top-up didn't go through. Your funds have been returned."
+          }
+        }
+      }
+    },
+    "ended.withdrawFailed" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "We couldn't send your funds. Your %1$(amount)@ is back in your account."
+          }
+        }
+      }
+    },
+    "ended.withdrawRefunded" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Your withdrawal didn't go through. Your %1$(amount)@ is back in your account."
+          }
+        }
+      }
+    },
+    "ended.payoutFailed" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Your bank didn't accept the payout. Check your account details or try another account."
+          }
+        }
+      }
     }
   },
   "version" : "1.1"

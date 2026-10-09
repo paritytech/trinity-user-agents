@@ -84,6 +84,47 @@ struct FundingValueRow<Value: View>: View {
     }
 }
 
+/// A summary row whose value the user can copy, saying so in a toast.
+struct FundingCopyRow: View {
+    let title: String
+    let text: String
+    @Binding var copied: String?
+    /// One line, cut in the middle, for an id only support reads in full.
+    var truncatesMiddle = false
+
+    var body: some View {
+        FundingValueRow(title: title) {
+            HStack(spacing: DSSpacings.small) {
+                Text(verbatim: text)
+                    .typography(.bodyLargeEmphasized)
+                    .foregroundStyle(.fgPrimary)
+                    .multilineTextAlignment(.trailing)
+                    .lineLimit(truncatesMiddle ? 1 : nil)
+                    .truncationMode(.middle)
+                Button {
+                    UIPasteboard.general.string = text
+                    copied = String(localized: .Funding.depositCopied)
+                } label: {
+                    Image(systemName: "doc.on.doc")
+                        .foregroundStyle(.fgPrimary)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+    }
+}
+
+extension DesignSystem.TypographyStyle {
+    /// A large amount sized by how many digits it has, smaller as it grows.
+    static func fundingFigure(digits count: Int) -> DesignSystem.TypographyStyle {
+        switch count {
+        case 0 ... 3: .displayLarge
+        case 4 ... 5: .displayMedium
+        default: .displaySmall
+        }
+    }
+}
+
 /// A round letter mark in a colour, for networks, tokens and providers that
 /// have no image of their own.
 struct FundingMonogram: View {

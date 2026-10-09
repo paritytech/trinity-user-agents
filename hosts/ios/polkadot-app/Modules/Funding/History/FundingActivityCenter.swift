@@ -21,6 +21,7 @@ final class FundingActivityCenter {
     private(set) var inFlight: [FundingActivityItem] = []
     private(set) var history: [FundingActivityItem] = []
 
+    private var records: [String: FundingRecord] = [:]
     private let store: FundingHistoryStoring
     private var refreshTask: Task<Void, Never>?
     private var needsRefresh = false
@@ -42,6 +43,12 @@ final class FundingActivityCenter {
     /// Shows a session in flight again, such as the bank details to pay to.
     func open(intent: String) {
         Self.attached.withLock { $0.overlay }?.reopen(intent: intent)
+    }
+
+    /// Shows an ended session's detail screen.
+    func showEnded(intent: String) {
+        guard let record = records[intent] else { return }
+        Self.attached.withLock { $0.overlay }?.showEnded(record)
     }
 
     /// Reads the core's sessions again and settles the ended ones. Calls that
@@ -114,6 +121,7 @@ private extension FundingActivityCenter {
         let storedIds = Set(stored.map(\.intent))
         let records = stored + coreSessions.filter { !storedIds.contains($0.intent) }
 
+        self.records = Dictionary(records.map { ($0.intent, $0) }) { _, latest in latest }
         history = records
             .sorted { $0.settledAt > $1.settledAt }
             .map(FundingActivityItem.init(record:))

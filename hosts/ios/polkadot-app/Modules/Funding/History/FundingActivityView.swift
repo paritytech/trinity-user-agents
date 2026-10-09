@@ -24,6 +24,8 @@ struct FundingActivityView: View {
                         .padding(.bottom, DSSpacings.small)
                     ForEach(day.items) { item in
                         FundingActivityRow(item: item, cash: cash)
+                            .contentShape(Rectangle())
+                            .onTapGesture { center.showEnded(intent: item.id) }
                     }
                 }
             }
