@@ -83,6 +83,9 @@ pub struct FundingChoice {
     pub rail: FundingRail,
     /// The asset symbol the user pays with or receives.
     pub asset: String,
+    /// The amount the quote was asked for, in the user's payment balance
+    /// units.
+    pub amount: u128,
 }
 
 /// A session's progress as a host draws it: the steps for its direction and
@@ -271,6 +274,9 @@ impl FundingSession {
             return false;
         }
         self.provider_id = Some(provider_id.to_string());
+        if let Some(choice) = &choice {
+            self.amount = self.amount.or(Some(choice.amount));
+        }
         self.choice = choice;
         true
     }
@@ -979,6 +985,33 @@ mod tests {
         );
     }
 
+    // The CASH card opens a session with no amount and the user enters it in
+    // the overlay, so the provider must be told the amount of the quote the
+    // user chose; a product's own amount stands.
+    #[test]
+    fn the_chosen_quote_sets_an_amount_the_session_lacks() {
+        let quote = FundingQuote {
+            quote_id: "q1".to_string(),
+            send_amount: 5_100,
+            receive_amount: 5_000,
+            provider_fee: 100,
+            network_fee: 0,
+            eta_secs: None,
+            expires_at: None,
+        };
+        let choice = FundingChoice { quote, rail: FundingRail::Card, asset: "EUR".to_string(), amount: 5_000 };
+        let mut open = FundingSession::new("fs_1".to_string(), None, FundingDirection::In, None, NOW);
+        let mut asked = session(FundingDirection::In);
+
+        assert!(open.assign(PROVIDER, Some(choice.clone())));
+        assert!(asked.assign(PROVIDER, Some(choice)));
+
+        assert_eq!(
+            (open.assignment().amount, asked.assignment().amount),
+            (Some(5_000), Some(100))
+        );
+    }
+
     fn chosen(direction: FundingDirection, rail: FundingRail) -> FundingSession {
         let mut session = session(direction);
         let quote = FundingQuote {
@@ -990,7 +1023,7 @@ mod tests {
             eta_secs: None,
             expires_at: None,
         };
-        let choice = FundingChoice { quote, rail, asset: "EUR".to_string() };
+        let choice = FundingChoice { quote, rail, asset: "EUR".to_string(), amount: 100 };
         assert!(session.assign(PROVIDER, Some(choice)));
         session
     }
