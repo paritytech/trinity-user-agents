@@ -2,15 +2,20 @@ import DesignSystem
 import SwiftUI
 import TrUAPIHost
 import UIKit
+import UIKitExt
 
 /// "Outside pocket" over the recipient list: sending to a bank, crypto wallet
 /// or card is a withdrawal, which the core's funding overlay takes from here.
 extension SearchAccountViewController {
     func installOutsidePocketRow() {
-        let row = UIHostingController(rootView: FundingOutsidePocketRow {
+        let row = UIHostingController(rootView: FundingOutsidePocketRow { [weak self] in
             Task {
                 let opener = RuntimeFundingOpener(runtimeProvider: RootDependencyLocator.getDependency())
-                _ = try? await opener.openFunding(direction: .out)
+                do {
+                    _ = try await opener.openFunding(direction: .out)
+                } catch let error as FundingOpeningError {
+                    self?.presentFundingError(error.toErrorContent())
+                }
             }
         })
         row.view.backgroundColor = .clear
@@ -20,6 +25,12 @@ extension SearchAccountViewController {
         addChild(row)
         rootView.tableView.tableHeaderView = row.view
         row.didMove(toParent: self)
+    }
+
+    private func presentFundingError(_ content: ErrorContent) {
+        let alert = UIAlertController(title: content.title, message: content.message, preferredStyle: .alert)
+        alert.addAction(UIAlertAction(title: String(localized: .Common.close), style: .cancel))
+        present(alert, animated: true)
     }
 }
 

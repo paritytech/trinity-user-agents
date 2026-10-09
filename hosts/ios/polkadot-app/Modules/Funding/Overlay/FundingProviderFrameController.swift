@@ -7,10 +7,12 @@ import UIKit
 /// A provider's own screen, full screen over the app, for as long as the
 /// provider needs it.
 ///
-/// The user leaving through the back button is `Dismissed`. The frame closes
-/// itself as `Closed` when the host sees the provider's part done: the payment
-/// seen or the session over, or, for a bank transfer, the user saying they
-/// have sent the funds.
+/// The session is already running, so leaving the screen only hides it. A
+/// provider takes a frame that answers before the user acted on it as the user
+/// giving up, so a hidden frame stays unanswered and the CASH card can show it
+/// again. It answers `Closed` once the host sees the provider's part done, the
+/// payment seen or the session over, and `Dismissed` only when it could not be
+/// shown at all.
 final class FundingProviderFrameController: UIViewController {
     private let page: UIViewController
     private let showsSentFunds: Bool
@@ -33,7 +35,7 @@ final class FundingProviderFrameController: UIViewController {
         super.viewDidLoad()
         view.backgroundColor = .bgSurfaceMain
 
-        let topBar = hosted(FundingFrameTopBar { [weak self] in self?.finish(.dismissed) })
+        let topBar = hosted(FundingFrameTopBar { [weak self] in self?.hide() })
         embed(page)
         embed(topBar)
 
@@ -48,7 +50,7 @@ final class FundingProviderFrameController: UIViewController {
         ]
 
         if showsSentFunds {
-            let bottomBar = hosted(FundingFrameSentFundsBar { [weak self] in self?.finish(.closed) })
+            let bottomBar = hosted(FundingFrameSentFundsBar { [weak self] in self?.hide() })
             embed(bottomBar)
             constraints += [
                 bottomBar.view.leadingAnchor.constraint(equalTo: view.leadingAnchor),
@@ -62,6 +64,12 @@ final class FundingProviderFrameController: UIViewController {
         }
 
         NSLayoutConstraint.activate(constraints)
+    }
+
+    /// Takes the frame off screen without answering the core.
+    func hide() {
+        guard presentingViewController != nil, !isBeingDismissed else { return }
+        dismiss(animated: true)
     }
 
     /// Answers the core once and takes the frame down.

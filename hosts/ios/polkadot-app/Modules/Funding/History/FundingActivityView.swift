@@ -70,6 +70,8 @@ private extension FundingActivityView {
             } else {
                 ForEach(center.inFlight) { item in
                     card(item)
+                        .contentShape(RoundedRectangle(cornerRadius: DSRadii.large))
+                        .onTapGesture { center.open(intent: item.id) }
                 }
             }
         }
@@ -187,6 +189,9 @@ private extension FundingActivityRow {
     }
 
     var subtitle: String {
+        if case let .failed(failure) = item.status {
+            return failure.failedText
+        }
         guard case let .inProgress(step, isDelayed) = item.status else {
             let when = FundingActivityDate.moment(item.date)
             guard let rail = item.rail else { return when }

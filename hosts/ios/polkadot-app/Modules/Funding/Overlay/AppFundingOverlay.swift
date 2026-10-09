@@ -53,6 +53,10 @@ final class AppFundingOverlay: FundingOverlayPresenting, @unchecked Sendable {
     func fundingQuoteChanged(intent: String, row: FundingQuoteRow) {
         Task { @MainActor in coordinator?.quoteChanged(intent: intent, row: row) }
     }
+
+    func reopen(intent: String) {
+        Task { @MainActor in coordinator?.reopen(intent: intent) }
+    }
 }
 
 private extension AppFundingOverlay {
@@ -94,19 +98,7 @@ final class FundingOverlayCoordinator {
     }
 
     func presentFunding(intent: String, direction: FundingDirection, amount: U128?) async -> FundingPresentOutcome {
-        guard let runtime else { return .dismissed }
-
-        let model = FundingFlowModel(
-            context: .init(
-                intent: intent,
-                direction: direction,
-                amount: amount,
-                cash: environment.cash,
-                spendable: environment.spendable
-            ),
-            runtime: runtime,
-            branding: environment.branding
-        )
+        guard let model = makeModel(intent: intent, direction: direction, amount: amount) else { return .dismissed }
 
         return await withCheckedContinuation { continuation in
             var answered = false
@@ -116,16 +108,22 @@ final class FundingOverlayCoordinator {
                 continuation.resume(returning: outcome)
             }
 
-            let sheet = FundingSheetController(model: model)
-            model.onClose = { [weak self, weak sheet] in
-                sheet?.dismissIfPresented()
-                self?.flows[intent] = nil
-            }
-            flows[intent] = model
+            presentSheet(for: model)
+        }
+    }
 
-            if !environment.present(sheet) {
-                model.close()
-            }
+    /// Shows a session the user left running: its deposit screen, with the
+    /// provider's screen over it while the provider still waits on one.
+    func reopen(intent: String) {
+        guard flows[intent] == nil,
+              let session = runtime?.fundingSession(intent: intent), session.stage.isOpen,
+              let model = makeModel(intent: intent, direction: session.direction, amount: session.amount)
+        else { return }
+
+        model.resume(session)
+        presentSheet(for: model) { [weak self] in
+            guard let frame = self?.frames[intent], frame.presentingViewController == nil else { return }
+            _ = self?.environment.present(frame)
         }
     }
 
@@ -167,6 +165,36 @@ final class FundingOverlayCoordinator {
 }
 
 private extension FundingOverlayCoordinator {
+    func makeModel(intent: String, direction: FundingDirection, amount: U128?) -> FundingFlowModel? {
+        guard let runtime else { return nil }
+
+        return FundingFlowModel(
+            context: .init(
+                intent: intent,
+                direction: direction,
+                amount: amount,
+                cash: environment.cash,
+                spendable: environment.spendable
+            ),
+            runtime: runtime,
+            branding: environment.branding
+        )
+    }
+
+    func presentSheet(for model: FundingFlowModel, onAppear: (() -> Void)? = nil) {
+        let intent = model.intent
+        let sheet = FundingSheetController(model: model, onAppear: onAppear)
+        model.onClose = { [weak self, weak sheet] in
+            sheet?.dismissIfPresented()
+            self?.flows[intent] = nil
+        }
+        flows[intent] = model
+
+        if !environment.present(sheet) {
+            model.close()
+        }
+    }
+
     /// The provider's screen has done its part once the payment is seen or
     /// the session is over, which is when the frame closes itself.
     static func paymentMoved(runtime: FundingRuntime, intent: String) -> Bool {
@@ -184,9 +212,11 @@ private extension FundingOverlayCoordinator {
 /// The overlay sheet. A swipe down is the user leaving, the same as Close.
 final class FundingSheetController: UIHostingController<FundingSheetView>, UIAdaptivePresentationControllerDelegate {
     private let model: FundingFlowModel
+    private var onAppear: (() -> Void)?
 
-    init(model: FundingFlowModel) {
+    init(model: FundingFlowModel, onAppear: (() -> Void)? = nil) {
         self.model = model
+        self.onAppear = onAppear
         super.init(rootView: FundingSheetView(model: model))
 
         modalPresentationStyle = .pageSheet
@@ -206,9 +236,18 @@ final class FundingSheetController: UIHostingController<FundingSheetView>, UIAda
         view.backgroundColor = .clear
     }
 
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        let onAppear = onAppear
+        self.onAppear = nil
+        onAppear?()
+    }
+
+    /// Dismisses from the presenter, so a provider's screen still over the
+    /// sheet goes with it.
     func dismissIfPresented() {
-        guard presentingViewController != nil, !isBeingDismissed else { return }
-        dismiss(animated: true)
+        guard let presenter = presentingViewController, !isBeingDismissed else { return }
+        presenter.dismiss(animated: true)
     }
 
     func presentationControllerDidDismiss(_: UIPresentationController) {

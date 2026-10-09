@@ -8,7 +8,7 @@ struct FundingRecord: Identifiable, Equatable {
         case delivered
         case released
         case refunded
-        case failed(code: String)
+        case failed(FundingFailure)
     }
 
     enum Payout: Equatable {
@@ -45,7 +45,7 @@ extension FundingRecord {
         case let .released(debited, settledAtMs):
             settled = Settled(outcome: .released, amount: debited, atMs: settledAtMs)
         case let .failed(reason, settledAtMs):
-            let outcome: Outcome = reason == .refunded ? .refunded : .failed(code: reason.code)
+            let outcome: Outcome = reason == .refunded ? .refunded : .failed(reason)
             settled = Settled(outcome: outcome, amount: nil, atMs: settledAtMs)
         }
 
@@ -106,6 +106,22 @@ extension FundingFailure {
         case .refunded: "refunded"
         case let .other(code, _): code
         }
+    }
+
+    /// The failure a stored ``code`` names, with the message an `Other`
+    /// failure was stored with.
+    init(code: String, message: String?) {
+        let named: [FundingFailure] = [
+            .regionUnavailable, .verificationRequired, .verificationRefused, .belowMinimum, .aboveMaximum,
+            .insufficientBalance, .expired, .wrongAssetOrChain, .providerTimeout, .cancelled, .refunded
+        ]
+        self = named.first { $0.code == code } ?? .other(code: code, message: message ?? "")
+    }
+
+    /// The message an `Other` failure carries.
+    var message: String? {
+        guard case let .other(_, message) = self else { return nil }
+        return message
     }
 }
 

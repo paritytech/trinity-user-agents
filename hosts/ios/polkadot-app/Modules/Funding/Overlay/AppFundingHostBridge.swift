@@ -21,6 +21,9 @@ protocol FundingOverlayPresenting: AnyObject, Sendable {
     func fundingSessionChanged(intent: String, status: HostFundingStatusSubscribeItem)
 
     func fundingQuoteChanged(intent: String, row: FundingQuoteRow)
+
+    /// Shows session `intent` again after the user left it running.
+    func reopen(intent: String)
 }
 
 /// The runtime's funding overlay. Installed once, before any product

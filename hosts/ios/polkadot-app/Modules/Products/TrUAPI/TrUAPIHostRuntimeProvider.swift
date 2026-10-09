@@ -157,7 +157,7 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
                 logger.error("[truapi] the bundled funding providers were refused: \(error)")
             }
         }
-        FundingActivityCenter.attach(runtime: runtime)
+        FundingActivityCenter.attach(runtime: runtime, overlay: overlay)
         contactsChangeNotifier = ContactsChangeNotifier(
             dataProviderFactory: ChatContactDataProviderFactory(),
             logger: logger,

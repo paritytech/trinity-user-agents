@@ -10,7 +10,7 @@ struct FundingActivityItem: Identifiable, Equatable {
         case sent
         case refunded
         case payoutFailed
-        case failed
+        case failed(FundingFailure)
     }
 
     let id: String
@@ -63,8 +63,8 @@ extension FundingActivityItem {
             }
         case .refunded:
             status = .refunded
-        case .failed:
-            status = .failed
+        case let .failed(failure):
+            status = .failed(failure)
         }
     }
 

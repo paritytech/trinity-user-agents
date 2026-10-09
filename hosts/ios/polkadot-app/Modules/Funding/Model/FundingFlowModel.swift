@@ -51,7 +51,9 @@ final class FundingFlowModel {
     private(set) var brands: [String: FundingProviderBrand] = [:]
     private(set) var isStarting = false
     private(set) var hasStarted = false
-    private(set) var startFailed = false
+    /// Why the chosen provider could not be handed the session.
+    private(set) var startError: String?
+    private(set) var isCancelling = false
     private(set) var progress: FundingProgress?
     private(set) var session: FundingSession?
 
@@ -163,7 +165,7 @@ extension FundingFlowModel {
 
     /// The user left the overlay. Before `Started` that is the answer the core
     /// discards the session on; after it the session runs on without the
-    /// overlay.
+    /// overlay, and only ``cancelTopUp()`` ends it.
     func close() {
         quoteTask?.cancel()
         if !hasStarted { onOutcome?(.dismissed) }
@@ -175,10 +177,33 @@ extension FundingFlowModel {
     }
 
     func cancelTopUp() {
+        guard !isCancelling else { return }
+
+        isCancelling = true
         Task {
-            _ = try? await runtime.cancelFunding(intent: intent)
-            close()
+            defer { isCancelling = false }
+            do {
+                guard try await runtime.cancelFunding(intent: intent) else {
+                    leaveCancelConfirm(toast: String(localized: .Funding.errorCancelRefused))
+                    return
+                }
+                close()
+            } catch {
+                Logger.shared.error("[funding] \(intent): cancel failed: \(error)")
+                leaveCancelConfirm(toast: String(localized: .Funding.errorCancelFailed))
+            }
         }
+    }
+
+    /// Shows a session that was left running on its deposit screen, as the
+    /// overlay had it once the session started.
+    func resume(_ session: FundingSession) {
+        rail = session.choice?.rail ?? rail
+        asset = session.choice?.asset
+        chosenProviderId = session.providerId
+        hasStarted = true
+        refreshSession()
+        path = [.deposit]
     }
 }
 
@@ -191,24 +216,35 @@ extension FundingFlowModel {
         guard !isStarting, !hasStarted, let providerId = selectedProviderId else { return }
 
         isStarting = true
-        startFailed = false
+        startError = nil
         let quoteId = rows[providerId]?.quote?.quoteId
 
         Task {
-            let selected = await (try? runtime.selectFundingProvider(
-                intent: intent,
-                providerId: providerId,
-                quoteId: quoteId
-            )) ?? false
-
-            isStarting = false
-            guard selected else {
-                startFailed = true
+            defer { isStarting = false }
+            do {
+                guard try await runtime.selectFundingProvider(
+                    intent: intent,
+                    providerId: providerId,
+                    quoteId: quoteId
+                ) else {
+                    refreshSession()
+                    startError = failure?.failedText ?? String(localized: .Funding.errorStartFailed)
+                    return
+                }
+            } catch {
+                Logger.shared.error("[funding] \(intent): selecting \(providerId) failed: \(error)")
+                startError = String(localized: .Funding.errorStartFailed)
                 return
             }
 
             didStart()
         }
+    }
+
+    /// Why the session ended, once it has failed.
+    var failure: FundingFailure? {
+        guard case let .failed(reason, _) = session?.stage else { return nil }
+        return reason
     }
 
     /// The core's view of the session moved on: read it again.
@@ -239,6 +275,11 @@ private extension FundingFlowModel {
 
     static func text(for value: Decimal) -> String {
         NSDecimalNumber(decimal: value.fundingRounded(scale: 2, mode: .down)).stringValue
+    }
+
+    func leaveCancelConfirm(toast message: String) {
+        if path.last == .cancelConfirm { path.removeLast() }
+        toast = message
     }
 
     func didStart() {

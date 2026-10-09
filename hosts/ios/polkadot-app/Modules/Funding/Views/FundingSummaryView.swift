@@ -186,8 +186,11 @@ private extension FundingSummaryView {
     }
 
     var problem: String? {
-        if model.startFailed {
-            return String(localized: .Funding.errorStartFailed)
+        if let failure = model.failure {
+            return failure.failedText
+        }
+        if let startError = model.startError {
+            return startError
         }
         guard model.noProviderQuoted else { return nil }
 
@@ -198,7 +201,7 @@ private extension FundingSummaryView {
             return String(localized: .Funding.errorMaximum(amount: model.cash.label(maximum)))
         case .notEnoughBalance,
              nil:
-            return String(localized: .Funding.errorNoProvider)
+            return model.quoteFailureText ?? String(localized: .Funding.errorNoProvider)
         }
     }
 

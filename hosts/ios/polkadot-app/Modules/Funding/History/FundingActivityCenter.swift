@@ -29,11 +29,19 @@ final class FundingActivityCenter {
         self.store = store
     }
 
-    /// The runtime is built off the main thread, so it is handed over through
-    /// a lock rather than through the main actor.
-    nonisolated static func attach(runtime: FundingRuntime) {
-        attached.withLock { $0.runtime = runtime }
+    /// The runtime is built off the main thread, so it and its overlay are
+    /// handed over through a lock rather than through the main actor.
+    nonisolated static func attach(runtime: FundingRuntime, overlay: FundingOverlayPresenting) {
+        attached.withLock { attached in
+            attached.runtime = runtime
+            attached.overlay = overlay
+        }
         Task { @MainActor in shared.refresh() }
+    }
+
+    /// Shows a session in flight again, such as the bank details to pay to.
+    func open(intent: String) {
+        Self.attached.withLock { $0.overlay }?.reopen(intent: intent)
     }
 
     /// Reads the core's sessions again and settles the ended ones. Calls that
@@ -57,6 +65,7 @@ final class FundingActivityCenter {
 private extension FundingActivityCenter {
     struct Attached {
         weak var runtime: FundingRuntime?
+        weak var overlay: FundingOverlayPresenting?
     }
 
     nonisolated static let attached = OSAllocatedUnfairLock(initialState: Attached())

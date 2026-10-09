@@ -19,7 +19,9 @@ struct FundingDepositView: View {
                 content
             }
 
-            if model.hasStarted {
+            if model.failure != nil {
+                FundingPrimaryButton(title: String(localized: .Funding.failureClose), action: model.close)
+            } else if model.hasStarted {
                 HStack(spacing: DSSpacings.small) {
                     FundingPrimaryButton(
                         title: String(localized: .Funding.depositCancel),
@@ -37,15 +39,18 @@ struct FundingDepositView: View {
 
 private extension FundingDepositView {
     var title: String {
-        if model.rail == .bank {
-            return String(localized: .Funding.summaryBankTitle)
+        switch model.rail {
+        case .card: String(localized: .Funding.summaryCardTitle)
+        case .bank: String(localized: .Funding.summaryBankTitle)
+        case .crypto: String(localized: .Funding.summaryCryptoTitle)
         }
-        return String(localized: .Funding.summaryCryptoTitle)
     }
 
     @ViewBuilder
     var content: some View {
-        if let deposit = model.progress?.deposit {
+        if let failure = model.failure {
+            errorText(failure.failedText)
+        } else if let deposit = model.progress?.deposit {
             switch deposit {
             case let .crypto(address, network, asset, amount, decimals, exact, uri, _):
                 cryptoDeposit(
@@ -67,22 +72,32 @@ private extension FundingDepositView {
                     copyRow(String(localized: .Funding.depositReference), reference)
                 }
             }
-        } else if model.startFailed || (model.noProviderQuoted && !model.hasStarted) {
-            Text(.Funding.errorNoProvider)
-                .typography(.bodyMedium)
-                .foregroundStyle(.fgError)
-                .padding(.top, DSSpacings.large)
+        } else if let startError = model.startError {
+            errorText(startError)
+        } else if model.noProviderQuoted, !model.hasStarted {
+            errorText(model.quoteFailureText ?? String(localized: .Funding.errorNoProvider))
         } else {
             VStack(spacing: DSSpacings.medium) {
                 ProgressView().tint(.fgPrimary)
-                Text(model.hasStarted
-                    ? LocalizedStringResource.Funding.depositPreparing
-                    : LocalizedStringResource.Funding.depositFindingProvider)
+                Text(pendingText)
                     .typography(.bodyMedium)
                     .foregroundStyle(.fgSecondary)
             }
             .padding(.top, DSSpacings.extraLarge)
         }
+    }
+
+    var pendingText: LocalizedStringResource {
+        guard model.hasStarted else { return .Funding.depositFindingProvider }
+        return model.rail == .card ? .Funding.depositCardInProgress : .Funding.depositPreparing
+    }
+
+    func errorText(_ text: String) -> some View {
+        Text(verbatim: text)
+            .typography(.bodyMedium)
+            .foregroundStyle(.fgError)
+            .multilineTextAlignment(.center)
+            .padding(.top, DSSpacings.large)
     }
 
     func cryptoDeposit(address: String, network: String, amount: String, exact: Bool, uri: String?) -> some View {
@@ -143,13 +158,14 @@ private extension FundingDepositView {
     }
 
     /// Follows the session while the screen is up: the deposit can arrive or
-    /// change, and the funds landing ends the session and the overlay.
+    /// change, and the funds landing ends the session and the overlay. A
+    /// failed session stays on screen with its reason.
     func follow() async {
         while !Task.isCancelled {
             if model.hasStarted {
                 model.refreshSession()
                 if let stage = model.session?.stage, !stage.isOpen {
-                    model.close()
+                    if model.failure == nil { model.close() }
                     return
                 }
             }
@@ -207,6 +223,7 @@ struct FundingCancelConfirmView: View {
             FundingPrimaryButton(
                 title: String(localized: .Funding.depositCancel),
                 style: .destructive,
+                isLoading: model.isCancelling,
                 action: model.cancelTopUp
             )
             FundingPrimaryButton(title: String(localized: .Funding.cancelKeep), action: model.back)

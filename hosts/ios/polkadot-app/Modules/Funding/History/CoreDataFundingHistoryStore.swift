@@ -41,7 +41,7 @@ extension FundingRecordMapper: CoreDataMapperProtocol {
         guard
             let identifier = entity.identifier,
             let direction = entity.direction.flatMap(FundingDirection.init(storageValue:)),
-            let outcome = entity.outcome.flatMap({ FundingRecord.Outcome(storageValue: $0, code: entity.failureCode) }),
+            let outcome = entity.outcome.flatMap({ FundingRecord.Outcome(storageValue: $0, entity: entity) }),
             let openedAt = entity.openedAt,
             let settledAt = entity.settledAt
         else {
@@ -74,7 +74,8 @@ extension FundingRecordMapper: CoreDataMapperProtocol {
         entity.requestedAmount = model.requestedAmount
         entity.settledAmount = model.settledAmount
         entity.outcome = model.outcome.storageValue
-        entity.failureCode = model.outcome.failureCode
+        entity.failureCode = model.outcome.failure?.code
+        entity.failureMessage = model.outcome.failure?.message
         entity.payout = model.payout?.storageValue
         entity.payoutReason = model.payout?.reason
         entity.transactionId = model.transactionId
@@ -121,12 +122,12 @@ private extension FundingRail {
 }
 
 private extension FundingRecord.Outcome {
-    init?(storageValue: String, code: String?) {
+    init?(storageValue: String, entity: CDFundingRecord) {
         switch storageValue {
         case "delivered": self = .delivered
         case "released": self = .released
         case "refunded": self = .refunded
-        case "failed": self = .failed(code: code ?? "")
+        case "failed": self = .failed(FundingFailure(code: entity.failureCode ?? "", message: entity.failureMessage))
         default: return nil
         }
     }
@@ -140,9 +141,9 @@ private extension FundingRecord.Outcome {
         }
     }
 
-    var failureCode: String? {
-        guard case let .failed(code) = self else { return nil }
-        return code
+    var failure: FundingFailure? {
+        guard case let .failed(failure) = self else { return nil }
+        return failure
     }
 }
 

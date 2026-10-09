@@ -151,6 +151,22 @@ extension FundingFlowModel {
     var noProviderQuoted: Bool {
         !rows.isEmpty && quotedProviders.isEmpty && !rows.values.contains(where: \.isPending)
     }
+
+    /// Why no provider quoted, when they all said the same thing: no answer
+    /// in time, the payment country, or a reason of their own.
+    var quoteFailureText: String? {
+        let reasons = rows.values.map { state -> String? in
+            guard case let .unavailable(reason) = state else { return nil }
+            switch reason {
+            case .timeout: return String(localized: .Funding.errorQuoteTimeout)
+            case .refused(.countryUnsupported): return String(localized: .Funding.providersCountryUnsupported)
+            case let .refused(.other(message)) where !message.isEmpty: return message
+            case .refused: return nil
+            }
+        }
+        guard let first = reasons.first, reasons.allSatisfy({ $0 == first }) else { return nil }
+        return first
+    }
 }
 
 // MARK: - Crypto and countries
