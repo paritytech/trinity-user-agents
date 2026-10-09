@@ -188,6 +188,7 @@ for a wallet-initiated disconnect) on `TrUAPIHostRuntime`. Response posting and
 session-record cleanup remain on the wallet side.
 See the core's [inter-host SSO design](rust/crates/truapi/RUNTIME.md#inter-host-sso)
 for typed handlers, canonical resource types, and consent bound to the signing session.
+SSO session, responder identity and handshake payload structs zeroize their fields on drop; debug output redacts their secret fields.
 Product and SSO signing share canonical payloads and the one-byte `OptionBool`
 encoding for `with_signed_transaction`.
 
@@ -282,6 +283,10 @@ make wasm     # rebuild truapi WASM artifacts under js/packages/truapi-host/dist
 
 CI regenerates the shared bindings before building and testing both npm
 packages, so generated client and host callback changes are checked together.
+
+CI and `make check` enforce Rust formatting, including runtime modules declared inside macros, and Prettier formatting for the JS host package. Run `make fmt` and `npm run format --prefix js/packages/truapi-host` to apply the same rules locally. Use `make fmt-check` or `format:check` for the JS package to check without writing. Rust uses the nightly in `nightly-toolchain` and the [Polkadot SDK formatting rules](https://github.com/paritytech/polkadot-sdk/blob/master/.rustfmt.toml) with edition 2024.
+
+Rust runtime tests live beside their components; [native binding tests](rust/crates/truapi/src/native/tests.rs) exercise the exported host API.
 
 The native `truapi-host` utility runs pairing and signing hosts against the real
 SSO transport for local end-to-end work. See [Install the CLI](#install-the-cli)

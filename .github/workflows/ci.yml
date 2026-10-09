@@ -73,7 +73,7 @@ jobs:
         run: cargo +"$TRUAPI_NIGHTLY_TOOLCHAIN" clippy -p truapi-provider --no-default-features --features uniffi --all-targets -- -D warnings
 
       - name: cargo (pinned nightly) fmt --check
-        run: cargo +"$TRUAPI_NIGHTLY_TOOLCHAIN" fmt --check
+        run: make fmt-check
 
       - name: cargo (pinned nightly) clippy
         run: cargo +"$TRUAPI_NIGHTLY_TOOLCHAIN" clippy --workspace --all-targets --all-features -- -D warnings
@@ -776,6 +776,9 @@ jobs:
 
       - name: Install
         run: npm ci --ignore-scripts
+
+      - name: Check formatting
+        run: npm run format:check --prefix js/packages/truapi-host
 
       - name: Build
         run: npm run build --prefix js/packages/truapi-host

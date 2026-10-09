@@ -186,10 +186,14 @@ async function build(crate, outName, target, subdir, features = [], env = {}) {
     } → ${outDir}\n`,
   );
   try {
-    await execFileAsync("wasm-pack", args(crate, outName, target, outDir, features), {
-      cwd: repoRoot,
-      env: { ...process.env, ...env },
-    });
+    await execFileAsync(
+      "wasm-pack",
+      args(crate, outName, target, outDir, features),
+      {
+        cwd: repoRoot,
+        env: { ...process.env, ...env },
+      },
+    );
   } catch (err) {
     if (err?.code === "ENOENT") {
       console.error(

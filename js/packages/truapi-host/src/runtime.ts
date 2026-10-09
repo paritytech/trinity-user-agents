@@ -19,9 +19,7 @@ import type {
 // SCALE bytes. The web worker pairing-host runtime adapts this typed surface
 // into the byte-oriented callback bridge consumed by the WASM core.
 export * from "./generated/host-callbacks.js";
-export type {
-  JsonRpcConnection as PlatformJsonRpcConnection,
-} from "./generated/host-callbacks.js";
+export type { JsonRpcConnection as PlatformJsonRpcConnection } from "./generated/host-callbacks.js";
 
 /** Encode a typed core-storage slot for hosts that need an opaque backing key. */
 export function encodeCoreStorageKey(key: CoreStorageKey): Uint8Array {

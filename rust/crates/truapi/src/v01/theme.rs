@@ -2,39 +2,30 @@ use parity_scale_codec::{Decode, Encode};
 
 /// Identifies a named theme.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
-#[cfg_attr(
-    all(feature = "runtime", not(target_arch = "wasm32")),
-    derive(uniffi::Enum)
-)]
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
 pub enum ThemeName {
-    /// A custom named theme.
-    Custom(String),
-    /// The host's default theme.
-    Default,
+	/// A custom named theme.
+	Custom(String),
+	/// The host's default theme.
+	Default,
 }
 
 /// Light or dark variant.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
-#[cfg_attr(
-    all(feature = "runtime", not(target_arch = "wasm32")),
-    derive(uniffi::Enum)
-)]
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
 pub enum ThemeVariant {
-    /// Light appearance.
-    Light,
-    /// Dark appearance.
-    Dark,
+	/// Light appearance.
+	Light,
+	/// Dark appearance.
+	Dark,
 }
 
 /// Current theme state pushed to subscribers.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
-#[cfg_attr(
-    all(feature = "runtime", not(target_arch = "wasm32")),
-    derive(uniffi::Record)
-)]
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
 pub struct HostThemeSubscribeItem {
-    /// Theme name.
-    pub name: ThemeName,
-    /// Light or dark variant.
-    pub variant: ThemeVariant,
+	/// Theme name.
+	pub name: ThemeName,
+	/// Light or dark variant.
+	pub variant: ThemeVariant,
 }

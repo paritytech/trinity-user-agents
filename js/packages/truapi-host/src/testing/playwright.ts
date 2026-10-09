@@ -404,7 +404,7 @@ const NO_PAYMENT_SEAM =
 /** Why login behaviour is fixed once the host page has booted. */
 const LOGIN_BEHAVIOR_IS_CONSTRUCTION_TIME =
   "cannot be changed after boot in the TrUAPI test host: the host page reads " +
-  "it once at start. Pass `loginBehavior: \"auto\" | \"manual\"` to " +
+  'it once at start. Pass `loginBehavior: "auto" | "manual"` to ' +
   "createTestHostFixture instead.";
 
 /** One chain, in `@parity/host-api-test-sdk`'s shape. */
@@ -598,7 +598,9 @@ function accountNames(
  */
 export function createTestHostFixture(defaults: TestHostFixtureOptions) {
   if (defaults.productAccounts) {
-    throw new Error(`testHost \`productAccounts\` ${NO_PINNED_PRODUCT_ACCOUNT}`);
+    throw new Error(
+      `testHost \`productAccounts\` ${NO_PINNED_PRODUCT_ACCOUNT}`,
+    );
   }
   // Started at most once and shared by every test in the file. Held as the
   // promise, not the server, so concurrent first tests await one start rather
@@ -622,7 +624,8 @@ export function createTestHostFixture(defaults: TestHostFixtureOptions) {
         "both -- `chain: x` is exactly `networks: [x]`.",
     );
   }
-  const chains = defaults.networks ?? (defaults.chain ? [defaults.chain] : undefined);
+  const chains =
+    defaults.networks ?? (defaults.chain ? [defaults.chain] : undefined);
   // Defaults to on when allocation is granted unchecked, so a product handed
   // an unregistered allowance key has somewhere its statements are accepted.
   // Carried as "default" rather than `true` so the networks the suite declared
@@ -642,7 +645,9 @@ export function createTestHostFixture(defaults: TestHostFixtureOptions) {
     ? fromNetworks(chains, loopbackStatements)
     : undefined;
   // Explicit settings win over anything derived from `networks`.
-  const mock = expanded ? { ...expanded.mock, ...defaults.mock } : defaults.mock;
+  const mock = expanded
+    ? { ...expanded.mock, ...defaults.mock }
+    : defaults.mock;
   const runtimeConfig = expanded
     ? { ...expanded.runtimeConfig, ...defaults.runtimeConfig }
     : defaults.runtimeConfig;
@@ -796,7 +801,8 @@ export function createTestHostFixture(defaults: TestHostFixtureOptions) {
           page.evaluate(
             (value) => {
               const host = window.__TRUAPI_TEST_HOST__;
-              if (!host) throw new Error("test host is not running on this page");
+              if (!host)
+                throw new Error("test host is not running on this page");
               return host.injectStatement(value);
             },
             // A `Uint8Array` is reduced to hex here because `page.evaluate`
@@ -826,7 +832,9 @@ export function createTestHostFixture(defaults: TestHostFixtureOptions) {
           throw new Error(`testHost.clearPaymentLog ${NO_PAYMENT_SEAM}`);
         },
         setPaymentTopUpBehavior: () => {
-          throw new Error(`testHost.setPaymentTopUpBehavior ${NO_PAYMENT_SEAM}`);
+          throw new Error(
+            `testHost.setPaymentTopUpBehavior ${NO_PAYMENT_SEAM}`,
+          );
         },
         simulatePaymentStatus: () => {
           throw new Error(`testHost.simulatePaymentStatus ${NO_PAYMENT_SEAM}`);

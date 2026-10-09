@@ -80,6 +80,8 @@
   ],
   "scripts": {
     "build": "tsc -b && node scripts/build-cjs.mjs",
+    "format": "prettier --write \"src/**/*.{ts,tsx}\" \"scripts/**/*.{js,mjs,ts}\" \"!src/generated/**\"",
+    "format:check": "prettier --check \"src/**/*.{ts,tsx}\" \"scripts/**/*.{js,mjs,ts}\" \"!src/generated/**\"",
     "typecheck:harness": "tsc -p tsconfig.harness.json",
     "build:wasm": "node scripts/build-wasm.mjs",
     "test": "bun test"

@@ -86,9 +86,9 @@ describe("createMockHost callbacks", () => {
       devicePermissions: "allow-all",
       remotePermissions: "deny-all",
     });
-    expect(await callbacks.permissions.devicePermission(PRODUCT, "Notifications")).toBe(
-      "AllowAlways",
-    );
+    expect(
+      await callbacks.permissions.devicePermission(PRODUCT, "Notifications"),
+    ).toBe("AllowAlways");
     expect(
       await callbacks.permissions.remotePermission(PRODUCT, {
         permission: { tag: "WebRtc" },
@@ -217,9 +217,9 @@ describe("createMockHost callbacks", () => {
       devicePermissions: "deny-all",
       remotePermissions: "allow-all",
     });
-    expect(await callbacks.permissions.devicePermission(PRODUCT, "Notifications")).toBe(
-      "Deny",
-    );
+    expect(
+      await callbacks.permissions.devicePermission(PRODUCT, "Notifications"),
+    ).toBe("Deny");
     expect(
       await callbacks.permissions.remotePermission(PRODUCT, {
         permission: { tag: "WebRtc" },
@@ -356,7 +356,8 @@ describe("createMockHost control surface", () => {
 
   it("answers permissions per capability, overriding the policy", async () => {
     const host = createMockHost({ devicePermissions: "deny-all" });
-    const ask = () => host.callbacks.permissions.devicePermission(PRODUCT, "Camera");
+    const ask = () =>
+      host.callbacks.permissions.devicePermission(PRODUCT, "Camera");
 
     expect(await ask()).toBe("Deny");
     host.grantPermission("Camera");
@@ -374,13 +375,13 @@ describe("createMockHost control surface", () => {
   it("denies whatever was not explicitly granted when enforcing", async () => {
     const host = createMockHost();
     host.setEnforcePermissions(true);
-    expect(await host.callbacks.permissions.devicePermission(PRODUCT, "Camera")).toBe(
-      "Deny",
-    );
+    expect(
+      await host.callbacks.permissions.devicePermission(PRODUCT, "Camera"),
+    ).toBe("Deny");
     host.grantPermission("Camera");
-    expect(await host.callbacks.permissions.devicePermission(PRODUCT, "Camera")).toBe(
-      "AllowAlways",
-    );
+    expect(
+      await host.callbacks.permissions.devicePermission(PRODUCT, "Camera"),
+    ).toBe("AllowAlways");
   });
 
   it("records the surface, key and answer of every permission prompt", async () => {
@@ -435,9 +436,9 @@ describe("createMockHost control surface", () => {
     expect(host.getGrantedPermissions()).toEqual([]);
     expect(host.getPreimages()).toEqual([]);
     expect(host.getTheme()).toBe("Dark");
-    expect(await host.callbacks.permissions.devicePermission(PRODUCT, "Camera")).toBe(
-      "AllowAlways",
-    );
+    expect(
+      await host.callbacks.permissions.devicePermission(PRODUCT, "Camera"),
+    ).toBe("AllowAlways");
   });
 });
 
@@ -479,9 +480,9 @@ describe("createMockHost TestHostAPI parity", () => {
   it("setPermissionBehavior switches the fallback for both prompts", async () => {
     const host = createMockHost();
     host.setPermissionBehavior("deny-all");
-    expect(await host.callbacks.permissions.devicePermission(PRODUCT, "Camera")).toBe(
-      "Deny",
-    );
+    expect(
+      await host.callbacks.permissions.devicePermission(PRODUCT, "Camera"),
+    ).toBe("Deny");
     expect(
       await host.callbacks.permissions.remotePermission(PRODUCT, {
         permission: { tag: "ChainSubmit" },
@@ -489,9 +490,9 @@ describe("createMockHost TestHostAPI parity", () => {
     ).toBe("Deny");
     // An explicit grant still wins over the policy.
     host.grantPermission("Camera");
-    expect(await host.callbacks.permissions.devicePermission(PRODUCT, "Camera")).toBe(
-      "AllowAlways",
-    );
+    expect(
+      await host.callbacks.permissions.devicePermission(PRODUCT, "Camera"),
+    ).toBe("AllowAlways");
   });
 
   it("getConnectionStatus and dispose track and release state", async () => {
@@ -631,7 +632,9 @@ describe("createMockHost TestHostAPI parity", () => {
     expect(
       await Promise.race([
         ended.then((result) => (result.done ? "ended" : "yielded")),
-        new Promise<"parked">((resolve) => setTimeout(() => resolve("parked"), 50)),
+        new Promise<"parked">((resolve) =>
+          setTimeout(() => resolve("parked"), 50),
+        ),
       ]),
     ).toBe("ended");
   });
@@ -725,9 +728,9 @@ describe("createMockHost TestHostAPI parity", () => {
     host.reset();
 
     expect(host.getOpenOperations()).toEqual([]);
-    expect(await host.callbacks.permissions.devicePermission(PRODUCT, "Camera")).toBe(
-      "AllowAlways",
-    );
+    expect(
+      await host.callbacks.permissions.devicePermission(PRODUCT, "Camera"),
+    ).toBe("AllowAlways");
   });
 
   it("setTheme reaches a subscription that has not been read yet", async () => {

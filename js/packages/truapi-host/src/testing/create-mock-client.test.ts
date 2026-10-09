@@ -15,7 +15,9 @@ function hex(bytes: Uint8Array): `0x${string}` {
   return `0x${digits.join("")}`;
 }
 
-const suite = wasmIsBuilt("testing/truapi_server.js") ? describe : describe.skip;
+const suite = wasmIsBuilt("testing/truapi_server.js")
+  ? describe
+  : describe.skip;
 
 suite("createMockClient", () => {
   it("round-trips a product call to the mock host", async () => {
@@ -108,7 +110,8 @@ suite("createMockClient", () => {
 
       // The core caches a decided authorization, so a product asking twice is
       // answered from that record and the second call never reaches the host.
-      const repeated = await client.permissions.requestDevicePermission("Camera");
+      const repeated =
+        await client.permissions.requestDevicePermission("Camera");
       expect(repeated._unsafeUnwrap().granted).toBe(false);
       expect(
         host.getPermissionLog(),
@@ -120,7 +123,8 @@ suite("createMockClient", () => {
       // the host afresh. Without this a suite can only ever observe the answer
       // its first request happened to settle on.
       host.grantPermission("Camera");
-      const granted = await client.permissions.requestDevicePermission("Camera");
+      const granted =
+        await client.permissions.requestDevicePermission("Camera");
       expect(granted._unsafeUnwrap().granted).toBe(true);
       expect(host.getPermissionLog()).toHaveLength(2);
     } finally {

@@ -3,7 +3,7 @@
 # Run `make help` for the list of targets.
 
 .DEFAULT_GOAL := help
-.PHONY: help setup build codegen test check check-generated clean playground wasm wasm-crypto-test uniffi uniffi-kotlin android-check provider-android-check ios-build ios-run ios-chat-run ios-chat-host-playground-run ios-chat-all android-jni android-publish-local dotli-link dev dev-cli dev-bootstrap debugger dev-link-check e2e-dotli e2e-cli-diagnosis e2e-signing-cli e2e-pairing-cli e2e-chat-cli e2e-pocket-cli e2e-cross-product-storage e2e-cross-product-ringvrf e2e-cross-product-signing e2e-cli-update headless install cli-runner cli-dist matrix explorer xcframework
+.PHONY: help setup build codegen test check fmt fmt-check check-generated clean playground wasm wasm-crypto-test uniffi uniffi-kotlin android-check provider-android-check ios-build ios-run ios-chat-run ios-chat-host-playground-run ios-chat-all android-jni android-publish-local dotli-link dev dev-cli dev-bootstrap debugger dev-link-check e2e-dotli e2e-cli-diagnosis e2e-signing-cli e2e-pairing-cli e2e-chat-cli e2e-pocket-cli e2e-cross-product-storage e2e-cross-product-ringvrf e2e-cross-product-signing e2e-cli-update headless install cli-runner cli-dist matrix explorer xcframework
 
 CARGO ?= cargo
 # The dated nightly CI runs; see nightly-toolchain.
@@ -336,14 +336,21 @@ test: check-generated ## Run Rust + TypeScript client tests.
 	cd $(TRUAPI_PKG) && npm test
 	cd $(HOST_WASM_PKG) && npm run build && npm test
 
+fmt: ## Format Rust sources.
+	cargo +$(NIGHTLY_TOOLCHAIN) fmt --all $(RUSTFMT_FLAGS)
+	git ls-files --cached --others --exclude-standard -z -- 'rust/crates/truapi/src/*.rs' | xargs -0 rustfmt +$(NIGHTLY_TOOLCHAIN) --config skip_children=true $(RUSTFMT_FLAGS)
+
+fmt-check: RUSTFMT_FLAGS := --check
+fmt-check: fmt ## Check Rust formatting.
+
 check: check-generated ## Full verification suite (build, fmt, clippy, test, TS tests, playground build + lint).
 	cargo build --workspace
 	cargo check --target wasm32-unknown-unknown -p truapi
-	cargo +$(NIGHTLY_TOOLCHAIN) fmt --check
+	$(MAKE) fmt-check
 	cargo clippy --workspace --all-targets --all-features -- -D warnings
 	cargo test --workspace --all-features --all-targets
 	cd $(TRUAPI_PKG) && npm run build && npm test
-	cd $(HOST_WASM_PKG) && npm install --no-fund --no-audit && npm run build && npm test
+	cd $(HOST_WASM_PKG) && npm install --no-fund --no-audit && npm run format:check && npm run build && npm test
 	cd $(PLAYGROUND) && yarn build && yarn lint && yarn test:unit
 
 clean: ## Remove local build/test artifacts without deleting dependencies.

@@ -24,7 +24,9 @@ const suite = wasmIsBuilt("testing/truapi_server_bg.wasm")
 
 describe("dev account specs", () => {
   it("rejects an unknown name and a wrong-sized key", () => {
-    expect(() => resolveAccount("eve" as "alice")).toThrow(/unknown dev account/);
+    expect(() => resolveAccount("eve" as "alice")).toThrow(
+      /unknown dev account/,
+    );
     expect(() =>
       resolveAccount({ name: "short", entropy: new Uint8Array(16) }),
     ).toThrow(/32 bytes/);
@@ -44,9 +46,8 @@ describe("dev account specs", () => {
 suite("dev accounts against the real signing host", () => {
   async function signingRuntime() {
     const { initSync, WasmSigningHostRuntime } = await import(glueUrl.href);
-    const { createWasmRawCallbacks } = await import(
-      "../generated/host-callbacks-adapter.js"
-    );
+    const { createWasmRawCallbacks } =
+      await import("../generated/host-callbacks-adapter.js");
     initSync({ module: readFileSync(wasmUrl) });
     const mock = createMockHost();
     const { productId, ...hostConfig } = mockRuntimeConfig();

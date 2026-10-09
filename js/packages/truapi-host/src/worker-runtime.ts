@@ -823,19 +823,23 @@ ctx.addEventListener("message", (ev: MessageEvent<MainToWorker>) => {
     }
     case "setWithheldResources": {
       const { tags } = msg;
-      void handleSessionActivation(msg.requestId, "setWithheldResources", (rt) => {
-        const signing = rt as Partial<WorkerSigningHostRuntime>;
-        if (typeof signing.setWithheldResources !== "function") {
-          return Promise.reject(
-            new Error(
-              "setWithheldResources needs a signing host built with " +
-                "`wasm-signing-host`; this core does not carry it",
-            ),
-          );
-        }
-        signing.setWithheldResources(tags);
-        return Promise.resolve();
-      });
+      void handleSessionActivation(
+        msg.requestId,
+        "setWithheldResources",
+        (rt) => {
+          const signing = rt as Partial<WorkerSigningHostRuntime>;
+          if (typeof signing.setWithheldResources !== "function") {
+            return Promise.reject(
+              new Error(
+                "setWithheldResources needs a signing host built with " +
+                  "`wasm-signing-host`; this core does not carry it",
+              ),
+            );
+          }
+          signing.setWithheldResources(tags);
+          return Promise.resolve();
+        },
+      );
       break;
     }
     case "resetSessionState":
