@@ -76,6 +76,7 @@ impl FundingQuotes {
             quote,
             rail: ask.rail,
             asset: ask.asset.clone(),
+            network: ask.network.clone(),
             amount: ask.amount,
         });
     }

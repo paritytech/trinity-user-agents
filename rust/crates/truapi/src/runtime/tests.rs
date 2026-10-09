@@ -8611,6 +8611,7 @@ fn quotes_resolve_row_by_row_and_a_silent_provider_times_out() {
                 quote: card_quote("q1"),
                 rail: v01::FundingRail::Card,
                 asset: "EUR".into(),
+                network: None,
                 amount: 1_000,
             }),
         )

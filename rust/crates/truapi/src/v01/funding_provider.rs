@@ -153,7 +153,9 @@ pub enum FundingUpdate {
         mismatch: Option<FundingReceived>,
     },
     /// Inbound: the provider is converting the payment to the user's balance
-    /// asset.
+    /// asset. Outbound: after release, the provider is converting what it
+    /// collected before paying the user out; reported at most once, before
+    /// `Payout`.
     Converting,
     /// Inbound: the provider started a top-up with `payment.topUp` to credit
     /// the user. A partial claim may be followed by further top-ups.

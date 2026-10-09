@@ -83,6 +83,8 @@ pub struct FundingChoice {
     pub rail: FundingRail,
     /// The asset symbol the user pays with or receives.
     pub asset: String,
+    /// The network a crypto quote was asked for.
+    pub network: Option<String>,
     /// The amount the quote was asked for, in the user's payment balance
     /// units.
     pub amount: u128,
@@ -142,7 +144,7 @@ pub enum FundingStep {
     Started,
     /// The provider saw the user's payment, or asked the user to pay it.
     Payment,
-    /// The payment can no longer be reversed. Bank and crypto only.
+    /// The payment can no longer be reversed. Card and crypto only.
     Approved,
     /// The provider is converting to or from the balance asset.
     Conversion,
@@ -150,6 +152,9 @@ pub enum FundingStep {
     Added,
     /// The funds left the user's balance.
     Sent,
+    /// The provider paid the user out of a withdrawal, or reported that the
+    /// payout failed.
+    Payout,
 }
 
 /// One update a provider reported, and when the core stored it.
@@ -312,14 +317,17 @@ impl FundingSession {
     /// The session's progress for its direction and rail.
     pub fn progress(&self) -> FundingProgress {
         let steps: &[FundingStep] = match (self.direction, self.choice.as_ref().map(|choice| choice.rail)) {
-            (FundingDirection::Out, _) => &[FundingStep::Started, FundingStep::Payment, FundingStep::Sent],
-            (FundingDirection::In, Some(FundingRail::Card) | None) => &[
+            (FundingDirection::Out, _) => &[
                 FundingStep::Started,
                 FundingStep::Payment,
+                FundingStep::Sent,
                 FundingStep::Conversion,
-                FundingStep::Added,
+                FundingStep::Payout,
             ],
-            (FundingDirection::In, Some(FundingRail::Bank | FundingRail::Crypto)) => &[
+            (FundingDirection::In, Some(FundingRail::Bank)) => {
+                &[FundingStep::Started, FundingStep::Payment, FundingStep::Added]
+            }
+            (FundingDirection::In, Some(FundingRail::Card | FundingRail::Crypto) | None) => &[
                 FundingStep::Started,
                 FundingStep::Payment,
                 FundingStep::Approved,
@@ -355,6 +363,7 @@ impl FundingSession {
                 FundingStage::Released { settled_at_ms, .. } => Some(settled_at_ms),
                 _ => None,
             },
+            FundingStep::Payout => first(|update| matches!(update, FundingUpdate::Payout { .. })),
         };
         let mut times: Vec<Option<u64>> = steps.iter().map(|step| reached(*step)).collect();
         // A provider may skip a step; one reached later says the earlier
@@ -420,8 +429,10 @@ impl FundingSession {
         if self.provider_id.as_deref() != Some(provider_id) {
             return Err(ReportRefusal::NotFound);
         }
-        if matches!(update, FundingUpdate::Payout { .. }) {
-            return self.report_payout(update, now_ms);
+        if matches!(update, FundingUpdate::Payout { .. })
+            || (matches!(update, FundingUpdate::Converting) && self.direction == FundingDirection::Out)
+        {
+            return self.report_after_release(update, now_ms);
         }
         if self.is_terminal() {
             return Err(ReportRefusal::NotFound);
@@ -454,14 +465,19 @@ impl FundingSession {
         Ok(())
     }
 
-    /// Store the provider's payout outcome on a released outbound session the
-    /// host has not recorded yet. Only one is kept.
-    fn report_payout(&mut self, update: FundingUpdate, now_ms: u64) -> Result<(), ReportRefusal> {
+    /// Store what the provider reports about paying the user out of a
+    /// released outbound session the host has not recorded yet: that it is
+    /// converting, then the payout outcome, each once.
+    fn report_after_release(&mut self, update: FundingUpdate, now_ms: u64) -> Result<(), ReportRefusal> {
         let released = matches!(self.stage, FundingStage::Released { .. });
         if !released || self.acknowledged {
             return Err(ReportRefusal::NotFound);
         }
-        if self.payout().is_some() {
+        let converting = self
+            .updates
+            .iter()
+            .any(|record| matches!(record.update, FundingUpdate::Converting));
+        if self.payout().is_some() || (matches!(update, FundingUpdate::Converting) && converting) {
             return Err(ReportRefusal::OutOfOrder);
         }
         self.updates.push(FundingUpdateRecord {
@@ -999,7 +1015,7 @@ mod tests {
             eta_secs: None,
             expires_at: None,
         };
-        let choice = FundingChoice { quote, rail: FundingRail::Card, asset: "EUR".to_string(), amount: 5_000 };
+        let choice = FundingChoice { quote, rail: FundingRail::Card, asset: "EUR".to_string(), network: None, amount: 5_000 };
         let mut open = FundingSession::new("fs_1".to_string(), None, FundingDirection::In, None, NOW);
         let mut asked = session(FundingDirection::In);
 
@@ -1023,7 +1039,7 @@ mod tests {
             eta_secs: None,
             expires_at: None,
         };
-        let choice = FundingChoice { quote, rail, asset: "EUR".to_string(), amount: 100 };
+        let choice = FundingChoice { quote, rail, asset: "EUR".to_string(), network: None, amount: 100 };
         assert!(session.assign(PROVIDER, Some(choice)));
         session
     }
@@ -1036,22 +1052,25 @@ mod tests {
         progress.steps.iter().map(|step| (step.step, step.reached_at_ms)).collect()
     }
 
-    // A bank payment is approved once it can no longer be reversed, a card
-    // payment has no such step, and a step the provider skipped takes the
-    // time of the first later one, so the bar never shows a gap behind it.
+    // The bar follows the design per rail: a card payment is approved once it
+    // can no longer be reversed, a bank transfer goes straight from payment
+    // to added, and a withdrawal runs on to the provider's payout. A step the
+    // provider skipped takes the time of the first later one, so the bar
+    // never shows a gap behind it.
     #[test]
     fn progress_follows_the_rail_and_fills_skipped_steps() {
-        let mut bank = chosen(FundingDirection::In, FundingRail::Bank);
-        report_at(&mut bank, FundingUpdate::PaymentReceived { finalized: false, mismatch: None }, NOW + 1);
-        report_at(&mut bank, FundingUpdate::Crediting { top_up_id: [1; 32], amount: 100 }, NOW + 3);
         let mut card = chosen(FundingDirection::In, FundingRail::Card);
-        report_at(&mut card, FundingUpdate::Converting, NOW + 2);
+        report_at(&mut card, FundingUpdate::PaymentReceived { finalized: false, mismatch: None }, NOW + 1);
+        report_at(&mut card, FundingUpdate::Crediting { top_up_id: [1; 32], amount: 100 }, NOW + 3);
+        let mut bank = chosen(FundingDirection::In, FundingRail::Bank);
+        report_at(&mut bank, FundingUpdate::PaymentReceived { finalized: false, mismatch: None }, NOW + 2);
         let mut out = chosen(FundingDirection::Out, FundingRail::Bank);
         report_at(&mut out, FundingUpdate::Collecting { payment_id: [2; 32], amount: 100 }, NOW + 1);
         assert!(out.settle(100, NOW + 4));
+        report_at(&mut out, FundingUpdate::Payout { outcome: FundingPayout::PaidOut }, NOW + 6);
 
         assert_eq!(
-            (steps(&bank.progress()), steps(&card.progress()), steps(&out.progress())),
+            (steps(&card.progress()), steps(&bank.progress()), steps(&out.progress())),
             (
                 vec![
                     (FundingStep::Started, Some(NOW)),
@@ -1063,14 +1082,46 @@ mod tests {
                 vec![
                     (FundingStep::Started, Some(NOW)),
                     (FundingStep::Payment, Some(NOW + 2)),
-                    (FundingStep::Conversion, Some(NOW + 2)),
                     (FundingStep::Added, None),
                 ],
                 vec![
                     (FundingStep::Started, Some(NOW)),
                     (FundingStep::Payment, Some(NOW + 1)),
                     (FundingStep::Sent, Some(NOW + 4)),
+                    (FundingStep::Conversion, Some(NOW + 6)),
+                    (FundingStep::Payout, Some(NOW + 6)),
                 ],
+            )
+        );
+    }
+
+    // After a withdrawal is released the provider still converts what it
+    // collected and then pays the user out; each is reported once and in
+    // that order, and an inbound session takes neither once it has ended.
+    #[test]
+    fn a_released_withdrawal_takes_converting_then_payout_once_each() {
+        let mut out = chosen(FundingDirection::Out, FundingRail::Bank);
+        report_at(&mut out, FundingUpdate::Collecting { payment_id: [2; 32], amount: 100 }, NOW + 1);
+        assert!(out.settle(100, NOW + 2));
+        let mut delivered = chosen(FundingDirection::In, FundingRail::Card);
+        report_at(&mut delivered, FundingUpdate::Crediting { top_up_id: [1; 32], amount: 100 }, NOW + 1);
+        assert!(delivered.settle(100, NOW + 2));
+        let paid_out = || FundingUpdate::Payout { outcome: FundingPayout::PaidOut };
+
+        assert_eq!(
+            (
+                out.report(PROVIDER, FundingUpdate::Converting, NOW + 3),
+                out.report(PROVIDER, FundingUpdate::Converting, NOW + 4),
+                out.report(PROVIDER, paid_out(), NOW + 5),
+                out.report(PROVIDER, FundingUpdate::Converting, NOW + 6),
+                delivered.report(PROVIDER, FundingUpdate::Converting, NOW + 3),
+            ),
+            (
+                Ok(()),
+                Err(ReportRefusal::OutOfOrder),
+                Ok(()),
+                Err(ReportRefusal::OutOfOrder),
+                Err(ReportRefusal::NotFound),
             )
         );
     }
