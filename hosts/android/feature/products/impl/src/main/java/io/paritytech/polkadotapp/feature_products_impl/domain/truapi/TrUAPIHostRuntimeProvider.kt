@@ -73,6 +73,7 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
     private val confirmationLauncher: TrUAPIConfirmationLauncher,
     private val appLifecycleObserver: AppLifecycleObserver,
     private val contactsBridge: AppContactsHostBridge,
+    private val fundingBridge: AppFundingHostBridge,
     // Lazy: the supervisor boots workers on this runtime, and reports back through this bridge.
     private val workerSupervisor: Lazy<TrUAPIWorkerSupervisor>,
     dispatchers: CoroutineDispatchers,
@@ -119,8 +120,9 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
 
     private fun wire(runtime: TrUAPIHostRuntime) {
         // Before any product execution opens, so a product never sees the
-        // window where the host lists no contacts.
+        // window where the host lists no contacts or answers funding unsupported.
         runtime.setContacts(contactsBridge)
+        runtime.setFunding(fundingBridge)
         observeContactRemovals(runtime)
         chainProvider.attach(
             onResponse = runtime::notifyChainResponse,
