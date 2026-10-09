@@ -1123,10 +1123,22 @@ impl ProductAuthority for SigningHost {
             .secret
             .sign_simple(SR25519_SIGNING_CONTEXT, &message, &keypair.public)
             .to_bytes();
-        Ok(v01::HostSignPayloadResponse {
+        let response = v01::HostSignPayloadResponse {
             signature: signature.to_vec(),
             signed_transaction: None,
-        })
+        };
+        crate::host_internal::signature_log::record(
+            if watermarked {
+                "sign raw data"
+            } else {
+                "sign unprotected data"
+            },
+            if watermarked { "message" } else { "unknown" },
+            &response.signature,
+            &keypair.public.to_bytes(),
+            None,
+        );
+        Ok(response)
     }
 
     async fn create_transaction(

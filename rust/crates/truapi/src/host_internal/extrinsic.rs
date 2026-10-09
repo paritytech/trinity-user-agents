@@ -72,6 +72,10 @@ pub struct Sr25519Signer {
     secret: SecretKey,
     #[debug("{}", hex::encode(public.to_bytes()))]
     public: PublicKey,
+    /// The exact typed signature produced by this transaction's signer.
+    /// Captured once; logging happens only after assembly succeeds.
+    #[debug("\"<redacted>\"")]
+    returned_signature: std::sync::Mutex<Option<Vec<u8>>>,
 }
 
 impl Sr25519Signer {
@@ -79,7 +83,11 @@ impl Sr25519Signer {
     pub fn from_secret_bytes(secret: &[u8; 64]) -> Result<Self, String> {
         let secret = sr25519_secret_from_bytes(secret)?;
         let public = secret.to_public();
-        Ok(Self { secret, public })
+        Ok(Self {
+            secret,
+            public,
+            returned_signature: std::sync::Mutex::new(None),
+        })
     }
 
     /// Build a signer from an already-derived schnorrkel keypair (e.g. a
@@ -88,6 +96,7 @@ impl Sr25519Signer {
         Self {
             secret: keypair.secret.clone(),
             public: keypair.public,
+            returned_signature: std::sync::Mutex::new(None),
         }
     }
 }
@@ -101,7 +110,11 @@ impl Signer<SubstrateConfig> for Sr25519Signer {
         let signature =
             self.secret
                 .sign_simple(SR25519_SIGNING_CONTEXT, signer_payload, &self.public);
-        MultiSignature::Sr25519(signature.to_bytes())
+        let signature = MultiSignature::Sr25519(signature.to_bytes());
+        if let Ok(mut returned_signature) = self.returned_signature.lock() {
+            *returned_signature = Some(signature.encode());
+        }
+        signature
     }
 }
 
@@ -331,15 +344,31 @@ pub async fn build_local_transaction(
     let at_block = client.at_current_block().await.map_err(|error| {
         LocalTransactionError::ChainUnavailable(format!("cannot select a metadata block: {error}"))
     })?;
+    let signer = Sr25519Signer::from_keypair(keypair);
     let transaction = build_signed_transaction(
-        &Sr25519Signer::from_keypair(keypair),
+        &signer,
         genesis_hash,
         call_data,
         extensions,
         tx_ext_version,
         at_block.metadata(),
     )?;
+    record_returned_transaction_signature(&signer, &transaction);
     Ok(HostCreateTransactionResponse { transaction })
+}
+
+fn record_returned_transaction_signature(signer: &Sr25519Signer, transaction: &[u8]) {
+    if let Ok(returned_signature) = signer.returned_signature.lock()
+        && let Some(signature) = returned_signature.as_deref()
+    {
+        super::signature_log::record(
+            "create transaction",
+            "transaction",
+            signature,
+            &signer.public.to_bytes(),
+            Some(transaction),
+        );
+    }
 }
 
 /// Choose the extrinsic format for `tx_ext_version`, then assemble it.
@@ -926,6 +955,11 @@ pub mod tests {
 
         let extrinsic = build_signed_extrinsic_v4(&signer, &call_data, &extensions);
         let (account, signature, tail) = split_v4(&extrinsic);
+        assert_eq!(
+            signer.returned_signature.lock().unwrap().as_deref(),
+            Some(MultiSignature::Sr25519(signature).encode().as_slice()),
+            "transcript evidence preserves the signature embedded in V4"
+        );
 
         // Body tail is Σextra ++ call_data (extra before call).
         let mut expected_tail = Vec::new();
@@ -1117,6 +1151,11 @@ pub mod tests {
         let signature: [u8; 64] = inner[verify_offset + 2..verify_offset + 66]
             .try_into()
             .unwrap();
+        assert_eq!(
+            signer.returned_signature.lock().unwrap().as_deref(),
+            Some(MultiSignature::Sr25519(signature).encode().as_slice()),
+            "transcript evidence preserves the signature embedded in V5"
+        );
         let account: [u8; 32] = inner[verify_offset + 66..verify_offset + 98]
             .try_into()
             .unwrap();
@@ -1208,6 +1247,10 @@ pub mod tests {
         assert_eq!(
             inner[verify_offset], 0,
             "VerifySignature::Disabled variant survives"
+        );
+        assert!(
+            signer.returned_signature.lock().unwrap().is_none(),
+            "caller-supplied authorization is not a host signature"
         );
         assert!(
             !inner

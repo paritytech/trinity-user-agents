@@ -36,6 +36,35 @@ use crate::terminal_ui::{ApprovalKind, SystemEvent, UiHandle};
 
 static NEXT_STORAGE_TEMP_ID: AtomicU32 = AtomicU32::new(0);
 static NEXT_OPERATION_ID: AtomicU32 = AtomicU32::new(1);
+static NEXT_SIGNATURE_COVERAGE_ID: AtomicU32 = AtomicU32::new(1);
+
+/// A startup marker proves that an empty transcript was initialized by this
+/// running CLI host. It describes local returned-signature coverage only;
+/// remote-only authority responses and VRF/proof signatures remain uncovered.
+fn initialize_signature_transcript() {
+    let Some(path) = std::env::var_os("TRUAPI_SIGNATURES_LOG") else {
+        return;
+    };
+    if let Err(error) = append_signature_coverage(Path::new(&path)) {
+        tracing::warn!(%error, "could not initialize TRUAPI_SIGNATURES_LOG coverage");
+    }
+}
+
+fn append_signature_coverage(path: &Path) -> std::io::Result<()> {
+    let row = serde_json::json!({
+        "type": "coverage",
+        "scope": "local-returned-signatures",
+        "id": format!("{}-coverage-{}", std::process::id(), NEXT_SIGNATURE_COVERAGE_ID.fetch_add(1, Ordering::Relaxed)),
+        "at": SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis(),
+    });
+    let mut line = serde_json::to_vec(&row)?;
+    line.push(b'\n');
+    fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)?
+        .write_all(&line)
+}
 
 /// How the host answers confirmation prompts (the web/iOS "sign?" modals).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -179,6 +208,7 @@ impl CliPlatform {
             .map(load_hex_key_map)
             .unwrap_or_default();
 
+        initialize_signature_transcript();
         Arc::new(Self {
             chain: WsChainProvider::new(network.people_ws, network.live_chain_endpoints),
             chains: network.host_chain_set(),
@@ -1342,6 +1372,37 @@ fn save_hex_key_map(path: &Path, values: &HashMap<Vec<u8>, Vec<u8>>) -> Result<(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn signature_coverage_initializes_an_empty_log_without_inventing_a_signature() {
+        let path = std::env::temp_dir().join(format!(
+            "truapi-signature-coverage-{}.jsonl",
+            std::process::id()
+        ));
+        let _ = fs::remove_file(&path);
+        append_signature_coverage(&path).unwrap();
+        let initial = fs::read_to_string(&path).unwrap();
+        let rows = initial
+            .lines()
+            .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0]["type"], "coverage");
+        assert_eq!(rows[0]["scope"], "local-returned-signatures");
+        assert!(rows[0]["signature"].is_null());
+        assert!(rows[0]["approved"].is_null());
+        assert!(rows[0]["at"].as_u64().unwrap() > 0);
+        append_signature_coverage(&path).unwrap();
+        let later = fs::read_to_string(&path).unwrap();
+        let rows = later
+            .lines()
+            .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(rows.len(), 2);
+        assert_ne!(rows[0]["id"], rows[1]["id"]);
+        fs::remove_file(&path).unwrap();
+        assert!(append_signature_coverage(&std::env::temp_dir()).is_err());
+    }
 
     /// The preset production builds from, so tests exercise the same config.
     fn test_network() -> crate::network::NetworkConfig {

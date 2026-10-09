@@ -2181,6 +2181,7 @@ ended. This preserves the child status but bypasses later Rust destructors.
 | `FORCE_COLOR` | Force battery reporter color in non-TTY output. |
 | `TRUAPI_BATTERY_REPORT_PATH` | Override battery report destination. |
 | `TRUAPI_APPROVALS_LOG` | Append one line per decided confirmation to this file. |
+| `TRUAPI_SIGNATURES_LOG` | Append one JSON line per signature a local signer returned: a startup `{"type":"coverage","scope":"local-returned-signatures","id","at"}` marker, then `{"id","at","approved","action","payload","signature","signer","transaction"?}` for each successful payload or raw signature and each locally assembled transaction (hex with `0x`). No payload contents or secrets are written; a write failure is logged and leaves signing unchanged. |
 
 ## 22. Current v0.1 operational constraints
 
