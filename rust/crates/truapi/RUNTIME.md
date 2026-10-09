@@ -397,6 +397,9 @@ AutoSigning without approval. Legacy-account signing still asks the user.
 - `PocketPlatform`: stream the product's Pocket card collection and remove a
   card from it. The host owns the collection and decides which cards are
   privileged.
+- `ExpandedCardHost`: show or hide the card face drawn above an opened card's
+  Widget. It is carried per product connection on `ConnectionAdapters`, so only
+  the Widget under a card reaches that card.
 - `ContactsPlatform`: resolve the handles a transaction names to contacts, and
   render the picker that selects one. `contacts` is the only required method; `pick_contact`
   defaults to `Unsupported`, so a host serving no picker says so rather than
@@ -422,14 +425,16 @@ AutoSigning without approval. Legacy-account signing still asks the user.
 `Platform` is a blanket-implemented supertrait that combines the capability
 traits above except `ChatPlatform`, `ContactsPlatform`, `PermissionStatusHost`,
 `PocketPlatform`, `GamePlatform` and `ScannerPlatform`, which `OptionalPlatform`
-lists instead: a
-host supplies each only when it can serve it. Codegen reads `OptionalPlatform`
-to emit each listed capability as an optional group on the host-callback
-surface.
+lists instead: a host supplies each only when it can serve it. `ExpandedCardHost`
+is in neither, because it travels per connection rather than with the platform.
+Codegen reads `OptionalPlatform` to emit each listed capability as an optional
+group on the host-callback surface.
 
 Omitting `ChatPlatform` makes the core answer Chat calls `Unsupported`, and
 omitting `ContactsPlatform`, `PocketPlatform`, `GamePlatform` or
-`ScannerPlatform` does the same for Contacts, Pocket, Game or Scanner calls.
+`ScannerPlatform` does the same for Contacts, Pocket, Game or Scanner calls. A
+connection without an `ExpandedCardHost` answers a Widget's `ExpandedCard` calls
+`Unsupported`.
 Omitting `PermissionStatusHost` leaves device grants resolving from stored
 state alone, which is what a host with no OS permission model does anyway.
 Serving it gates both halves of the surface: a device permission request and a

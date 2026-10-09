@@ -28,5 +28,9 @@ interface ProductBotManagementContract {
 
     fun onPreviewUrlChanged(url: String)
 
+    fun onAppUrlChanged(url: String)
+
+    fun onOpenWithFaceAwayChanged(faceAway: Boolean)
+
     fun onDialogConfirm()
 }

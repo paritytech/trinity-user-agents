@@ -61,8 +61,12 @@ A face is a body drawn through [Renderer](https://github.com/paritytech/trinity-
 tree per item; presses and edits inside the tree arrive on `action_subscribe` under the same context, so one handler
 serves every card of the product.
 
-Pocket adds one rule on top: the host caches the newest tree per card durably, so a face is shown offline and at cold
-start before the worker answers, and a privileged card has something to show on first run.
+Pocket adds two rules on top. First, the host caches the newest tree per card durably, so a face is shown offline and at
+cold start before the worker answers, and a privileged card has something to show on first run.
+
+Second, the host draws every face in one fixed theme, whatever theme the user picked, so a card looks the same in every
+theme. In the Polkadot Android app that theme is Berlin Night: `FgPrimary` is `#F4F4F5` and `BgSurfaceMain` is
+`#0B0C0F`. `theme.subscribe` still reports the user's theme, for the product's own screens.
 
 ### Expanded card
 
