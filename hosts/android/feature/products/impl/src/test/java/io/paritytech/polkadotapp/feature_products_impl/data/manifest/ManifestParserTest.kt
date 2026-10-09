@@ -141,6 +141,24 @@ class ManifestParserTest {
     }
 
     @Test
+    fun `a modality the worker does not list is one it does not serve`() {
+        fun parsedWorker(rawText: String) =
+            parser.parseExecutable(rawText, ExecutableKind.WORKER, host("worker.coinflip.dot")).getOrNull() as? ProductExecutable.Worker
+
+        val chatOnly = parsedWorker("""{"${'$'}v":1,"kind":"worker","appVersion":[1,0,0],"entrypoint":"i.js","includes":{"chat":true}}""")
+        assertEquals(true, chatOnly?.includesChat)
+        assertEquals(false, chatOnly?.includesPocket)
+
+        val fundingOnly = parsedWorker("""{"${'$'}v":1,"kind":"worker","appVersion":[1,0,0],"entrypoint":"i.js","includes":{"funding":{"routes":[]}}}""")
+        assertEquals(false, fundingOnly?.includesChat)
+        assertEquals(false, fundingOnly?.includesPocket)
+
+        val noIncludes = parsedWorker("""{"${'$'}v":1,"kind":"worker","appVersion":[1,0,0],"entrypoint":"i.js"}""")
+        assertEquals(false, noIncludes?.includesChat)
+        assertEquals(false, noIncludes?.includesPocket)
+    }
+
+    @Test
     fun `worker publishes pocket cards behind includes pocket`() {
         val worker = parser.parseExecutable(
             """{"${'$'}v":1,"kind":"worker","appVersion":[1,0,0],"entrypoint":"index.js","includes":{"chat":false,"pocket":true},
@@ -226,8 +244,7 @@ class ManifestParserTest {
 
     @Test
     fun `executables that do not conform are rejected`() {
-        // Incomplete includes: RFC-0001 types it as Record<'chat' | 'pocket', boolean>.
-        rejectsExecutable("""{"${'$'}v":1,"kind":"worker","appVersion":[1,0,0],"entrypoint":"i.js","includes":{"chat":true}}""", ExecutableKind.WORKER)
+        rejectsExecutable("""{"${'$'}v":1,"kind":"worker","appVersion":[1,0,0],"includes":{"chat":true,"pocket":false}}""", ExecutableKind.WORKER)
         // A record read from worker.<base> that declares kind=app must not load as a worker.
         rejectsExecutable("""{"${'$'}v":1,"kind":"app","appVersion":[1,0,0]}""", ExecutableKind.WORKER)
         rejectsExecutable("""{"${'$'}v":2,"kind":"app","appVersion":[1,0,0]}""", ExecutableKind.APP)
