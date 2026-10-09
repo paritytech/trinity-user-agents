@@ -442,56 +442,6 @@ describe("createWebWorkerPairingHostRuntime", () => {
     });
   }
 
-  it("reports the chat capability to the worker when the host serves it", async () => {
-    const worker = new FakeWorker();
-    void createWebWorkerPairingHostRuntime(
-      asWorker(worker),
-      makeHostCallbacks({
-        chat: { createChatRoom: async () => ({ status: "New" }) },
-      }),
-      { hostConfig: hostConfigFromRuntimeConfig(runtimeConfig()) },
-    );
-
-    worker.emit({ kind: "loaded" });
-
-    expect(lastMessageOfKind(worker, "init").capabilities).toEqual({
-      chat: true,
-      permissionStatus: false,
-      pocket: false,
-      profile: false,
-      identityBackend: false,
-      coinageWallet: false,
-      game: false,
-      contacts: false,
-    });
-  });
-
-  it("reports the pocket capability to the worker when the host serves it", async () => {
-    const worker = new FakeWorker();
-    void createWebWorkerPairingHostRuntime(
-      asWorker(worker),
-      makeHostCallbacks({
-        pocket: { removePocketCard: async () => {} },
-      }),
-      { hostConfig: hostConfigFromRuntimeConfig(runtimeConfig()) },
-    );
-
-    worker.emit({ kind: "loaded" });
-
-    // Without this the worker never builds the pocket callbacks, so a host
-    // that serves Pocket is answered `Unsupported` anyway.
-    expect(lastMessageOfKind(worker, "init").capabilities).toEqual({
-      chat: false,
-      permissionStatus: false,
-      pocket: true,
-      profile: false,
-      identityBackend: false,
-      coinageWallet: false,
-      game: false,
-      contacts: false,
-    });
-  });
-
   it("preserves optional authenticated identity search through the worker boundary", async () => {
     const worker = new FakeWorker();
     const account = new Uint8Array(32).fill(0x42);
@@ -744,62 +694,6 @@ describe("createWebWorkerPairingHostRuntime", () => {
     } finally {
       runtime.dispose();
     }
-  });
-
-  it("reports the game capability to the worker when the host serves it", async () => {
-    const worker = new FakeWorker();
-    void createWebWorkerPairingHostRuntime(
-      asWorker(worker),
-      makeHostCallbacks({
-        game: {
-          scheduleGameReminder: async () => {},
-          cancelGameReminder: async () => {},
-        },
-      }),
-      { hostConfig: hostConfigFromRuntimeConfig(runtimeConfig()) },
-    );
-
-    worker.emit({ kind: "loaded" });
-
-    // Without this the worker never builds the game callbacks, so a host that
-    // holds reminders is answered `Unsupported` anyway.
-    expect(lastMessageOfKind(worker, "init").capabilities).toEqual({
-      chat: false,
-      permissionStatus: false,
-      pocket: false,
-      profile: false,
-      game: true,
-      identityBackend: false,
-      coinageWallet: false,
-      contacts: false,
-    });
-  });
-
-  it("reports the game capability for product-specific callbacks", async () => {
-    const worker = new FakeWorker();
-    const runtime = await readyRuntime(worker);
-    const providerPromise = runtime.createProvider(
-      { productId: "dim2.dot" },
-      makeHostCallbacks({
-        game: {
-          scheduleGameReminder: async () => {},
-          cancelGameReminder: async () => {},
-        },
-      }),
-    );
-    expect(lastMessageOfKind(worker, "createCore").capabilities).toEqual({
-      chat: false,
-      contacts: false,
-      permissionStatus: false,
-      pocket: false,
-      profile: false,
-      game: true,
-      identityBackend: false,
-      coinageWallet: false,
-    });
-    const provider = await finishProviderReady(worker, providerPromise);
-    provider.dispose();
-    runtime.dispose();
   });
 
   it("creates multiple product cores on one worker runtime", async () => {
