@@ -1,5 +1,6 @@
+import ChainRegistry
 import Foundation
-import PolkadotUI
+@testable import PolkadotUI
 import Products
 import Testing
 import TrUAPIHost
@@ -31,6 +32,26 @@ struct ProductBotChatListTests {
 
         #expect(bot.peerMetadata.icon == .product(domain: "dim2.paseo"))
     }
+
+    /// The sender describes each card, so the row says what this one shows rather than what the product is.
+    @Test
+    func aWidgetWithAnAltPreviewsAsTheAltInTheChatList() throws {
+        #expect(try chatListPreview(alt: "Week 12 results") == "Week 12 results")
+    }
+
+    @Test
+    func aWidgetWithoutAnAltPreviewsAsTheManifestDescriptionInTheChatList() throws {
+        #expect(try chatListPreview(alt: nil) == "Play the weekly game with friends")
+    }
+
+    @Test
+    func aProductPeerLoadsItsIconByDomain() {
+        let iconFactory = RecordingProductIconViewModelFactory()
+
+        #expect(Chat.PeerMetadata.Icon.product(domain: "dim2.paseo").imageViewModel(using: iconFactory) != nil)
+        #expect(Chat.PeerMetadata.Icon.bot.imageViewModel(using: iconFactory) == nil)
+        #expect(iconFactory.requestedDomains == ["dim2.paseo"])
+    }
 }
 
 private extension ProductBotChatListTests {
@@ -41,6 +62,76 @@ private extension ProductBotChatListTests {
             runtime: IdleChatRuntime(),
             resolveImage: WidgetImageResolver { _ in nil }
         )
+    }
+
+    func chatListPreview(alt: String?) throws -> String? {
+        let bot = makeBot(description: "Play the weekly game with friends")
+        let chatId = Chat.Id.chatExtension(bot.product.id)
+        let message = Chat.LocalMessage(
+            messageId: "results",
+            chatId: chatId,
+            origin: .chatExtension(bot.product.id),
+            creationSource: .localDevice,
+            status: .incoming(.seen),
+            timestamp: 0,
+            content: .customRendered(
+                Chat.LocalMessage.Content.CustomRenderedData(
+                    decoderId: MessageDecoderIdentifier.product.rawValue,
+                    data: Data(),
+                    identifier: "results",
+                    alt: alt
+                )
+            ),
+            reactions: [],
+            compactionId: nil,
+            relatedMessages: []
+        )
+        let chat = Chat.LocalModel(
+            peer: .chatExtension(bot.product.id),
+            message: message,
+            unreadDisplayMessageCount: 0,
+            hasIncomingReaction: false,
+            createdAt: nil,
+            roomMetadata: nil
+        )
+        let chain = ChainMock.makeChainModel(from: ChainMock.makeRemoteChain(name: "Polkadot"), order: 0)
+        let asset = try #require(chain.assets.first)
+        let factory = ContactsListViewModelFactory(
+            chatMessageDecoderFactory: FixedChatMessageDecoderFactory(decoders: [bot.messageDecoder]),
+            productIconViewModelFactory: RecordingProductIconViewModelFactory(),
+            chain: chain,
+            tokenFormatter: { info in
+                TransferAmountViewModelFactory(targetAssetInfo: info, formatterFactory: AssetBalanceFormatterFactory())
+            }
+        )
+
+        let viewModel = factory.createViewModel(
+            assetDisplayInfo: asset.displayInfo,
+            model: ChatListModel(
+                establishedChats: [ChatWithPeerMetadata(chat: chat, peerMetadata: bot.peerMetadata)],
+                pendingIncomingRequestCount: 0,
+                newIncomingRequestCount: 0
+            )
+        )
+
+        return try #require(viewModel.contactsById.first).configuration.message
+    }
+}
+
+private struct FixedChatMessageDecoderFactory: ChatMessageDecoderMaking {
+    let decoders: [ChatMessageCustomDecoding]
+
+    func makeDecoders(for _: ChainModel, chatId _: Chat.Id) -> [ChatMessageCustomDecoding] {
+        decoders
+    }
+}
+
+private final class RecordingProductIconViewModelFactory: ProductIconViewModelMaking {
+    private(set) var requestedDomains: [String] = []
+
+    func createViewModel(for domain: String) -> any ImageViewModelProtocol {
+        requestedDomains.append(domain)
+        return StaticImageViewModel(image: nil)
     }
 }
 

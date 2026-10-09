@@ -1811,7 +1811,7 @@ fn chat_post_message_screens_the_alt_before_it_reaches_a_host() {
         futures::executor::block_on(Chat::post_message(
             &host,
             &CallContext::default(),
-            HostChatPostMessageRequest::V2(v02::HostChatPostMessageRequest {
+            HostChatPostMessageRequest::V2(truapi::latest::HostChatPostMessageRequest {
                 room_id: "support".to_string(),
                 payload: v01::ChatMessageContent::Custom(v01::ChatCustomMessage {
                     message_type: "results".to_string(),
