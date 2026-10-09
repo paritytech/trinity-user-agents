@@ -225,6 +225,58 @@ when the current account exhausts Statement Store slots and no saved pairing
 depends on its identity. A full period replaces the oldest slot past the runtime's
 replacement cooldown, so rotation only happens when no slot is replaceable.
 
+#### Chat workers
+
+A chat product ships a headless worker beside its app, and on a phone the
+worker talks to people through Chat. `dev` plays that phone too. It installs
+the CLI's in-memory chat host (and the Pocket host when `TRUAPI_POCKET_CARDS`
+is set) whatever kind the app runs as; an `App` connection is still refused
+Chat by the core, so the app is unaffected. Point `--worker-bundle` at the
+worker's built ESM file and open the chat page the CLI prints:
+
+```bash
+truapi-host dev --worker-bundle apps/worker/dist-dev/index.js -- yarn dev
+# Chat surface: http://127.0.0.1:9955/chat
+```
+
+![The chat page: rooms on the left, the thread and composer in the middle, the worker's log on the right](docs/chat-surface.png)
+
+The frame port then also serves:
+
+| Route                      | What                                                                                                                      |
+| -------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| `GET /chat`                | The chat page. It boots the worker from the two routes below when a bundle is configured.                                 |
+| `GET /worker/bootstrap.js` | The bridge script, pointed at `/worker`.                                                                                  |
+| `GET /worker/index.js`     | The bundle, read from disk on every request so a `vite build --watch` output is always current. A 404 when it is missing. |
+| `WS /worker`               | A product frame socket for the same product and session, opened as a `Worker`.                                            |
+| `WS /chat/ws`              | The page's view of the chat, as JSON text frames.                                                                         |
+
+The worker boots with the page, so reloading the page restarts the worker. The
+page lists the rooms the worker created and each room's messages. A line typed
+there reaches every live worker through `chat.actionSubscribe()` as a
+`MessagePosted` from peer `native`, the way the iOS host delivers it; a line
+starting with `/` becomes a `Command`, and a button on an `Actions` message
+becomes an `ActionTriggered` naming that message. A person's message takes its
+id from the same sequence as the product's, so a trigger can never name the
+wrong one.
+
+The worker runs as a module script in the page, so its console is the page's.
+The **Logs** pane shows it: every line levelled from its `[INF]`/`[WRN]`/`[ERR]`
+tag, filtered by substring, following the tail unless paused. Rooms, chat and
+log are each a pane to show, hide or resize from the header, and the layout is
+remembered across reloads.
+
+![Toggling the rooms and log panes and dragging the log wider](docs/chat-panes.gif)
+
+On `/chat/ws` the host sends a `snapshot` of rooms, bots and messages first,
+then a `room`, `bot` or `message` event as each lands, and `workers` whenever a
+worker connects or disconnects. The page sends `post`, `trigger` and `command`
+operations; each is answered with `delivered` and the number of workers that
+took it, where 0 means none is connected, or with `error` for an unknown room
+or an action the core refused. Without `--worker-bundle` the page still shows
+the chat, but boots no worker until one is given. Other host modes serve none
+of these routes.
+
 ### Interactive terminal UI
 
 In a TTY, both hosts open the same scrollable transcript above a single command
