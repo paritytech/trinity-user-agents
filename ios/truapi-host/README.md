@@ -286,6 +286,14 @@ the host keeps its own record of which devices it has already seen. It arrives
 on the thread answering the handshake, so hand the device off rather than
 announcing it inline. Defaults to a no-op for a host that answers no pairing.
 
+`durableWorkChanged(pending:)` on the runtime bridge reports whether the core
+has durable transactions still awaiting a verdict, starting with the state it
+finds at launch. While it is `true`, schedule a background task (a
+`BGProcessingTask` requiring network connectivity) that awaits
+`runDurableRecovery()`, which returns once nothing is live and throws when
+recovery stopped early, so the task is retried. Defaults to a no-op for a host
+that runs no durable work.
+
 ## Game
 
 A host that can hold reminders implements `GameHostBridge`, passed as `game:`

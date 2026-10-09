@@ -2,6 +2,7 @@ import Foundation
 import Keystore_iOS
 import Operation_iOS
 import AssetExchange
+import BackgroundExecution
 import NovaCrypto
 import CommonService
 import ExtrinsicService
@@ -325,6 +326,10 @@ extension ServiceCoordinator {
             logger: logger
         )
         RootDependencyLocator.setDependency(truapiRuntimeProvider as TrUAPIHostRuntimeProviding)
+        CoreDurableRecoveryTask.shared.attach(
+            truapiRuntimeProvider,
+            executor: ConnectionRetainingExecutor(provider: ChainRegistryFacade.sharedRegistry)
+        )
 
         let gameReminders = ProductGameReminderCenter.makeDefault()
         RootDependencyLocator.setDependency(gameReminders as ProductGameReminderScheduling)

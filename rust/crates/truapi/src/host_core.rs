@@ -762,10 +762,40 @@ impl SigningHostRuntime {
     ///
     /// Set-once, so durable state cannot move to another file under a running
     /// consumer. Returns whether this call installed it.
+    ///
+    /// Also starts the durable transaction engine over it, which reports
+    /// pending work to the observer installed with
+    /// [`Self::set_durable_work_observer`]; install that first.
     #[cfg(not(target_arch = "wasm32"))]
     #[instrument(skip_all, fields(runtime.method = "signing_host_runtime.set_core_db"))]
     pub fn set_core_db(&self, db: crate::store::Db) -> bool {
-        self.services.install_core_db(db)
+        if !self.services.install_core_db(db.clone()) {
+            return false;
+        }
+        let engine = durable_engine(&self.services, db);
+        self.services.install_durable_engine(engine.clone());
+        forward_durable_work(&self.services, &engine);
+        true
+    }
+
+    /// Install the host observer told whether durable transactions are
+    /// pending. Set-once; returns whether this call installed it.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn set_durable_work_observer(
+        &self,
+        observer: Arc<dyn crate::durable::DurableWorkObserver>,
+    ) -> bool {
+        self.services.install_durable_work_observer(observer)
+    }
+
+    /// Runs durable recovery until no transaction is live.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub async fn run_durable_recovery(&self) -> Result<(), crate::durable::RecoveryError> {
+        self.services
+            .durable_engine()
+            .ok_or(crate::durable::RecoveryError::NotConfigured)?
+            .run_until_settled()
+            .await
     }
 
     /// Reports the core database's state.
@@ -1032,6 +1062,43 @@ impl SigningHostRuntime {
             }
         }
     }
+}
+
+/// The durable transaction engine over `db`, reading and submitting through
+/// the runtime's chain connections.
+#[cfg(not(target_arch = "wasm32"))]
+fn durable_engine(
+    services: &RuntimeServices,
+    db: crate::store::Db,
+) -> Arc<crate::durable::DurableTxEngine> {
+    use crate::durable::{DurableDeps, DurableRegistry, DurableTxEngine, RealTimer};
+
+    let chain = Arc::new(services.chain.clone());
+    DurableTxEngine::new(DurableDeps {
+        db,
+        registry: DurableRegistry::new(),
+        heads: chain.clone(),
+        blocks: chain.clone(),
+        validator: chain.clone(),
+        submitter: chain,
+        timer: Arc::new(RealTimer),
+        spawner: services.spawner.clone(),
+    })
+}
+
+/// Reports every change of the engine's pending work to the host observer,
+/// for as long as the engine lives.
+#[cfg(not(target_arch = "wasm32"))]
+fn forward_durable_work(services: &Arc<RuntimeServices>, engine: &crate::durable::DurableTxEngine) {
+    let services = Arc::downgrade(services);
+    engine.report_work_to(move |pending| {
+        let observer = services
+            .upgrade()
+            .and_then(|services| services.durable_work_observer());
+        if let Some(observer) = observer {
+            observer.durable_work_changed(pending);
+        }
+    });
 }
 
 #[cfg(not(target_arch = "wasm32"))]

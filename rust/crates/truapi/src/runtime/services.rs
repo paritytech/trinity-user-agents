@@ -9,6 +9,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 
 use crate::chain_runtime::{ChainRuntime, RuntimeChainProvider, RuntimeFailure};
+#[cfg(not(target_arch = "wasm32"))]
+use crate::durable::{DurableTxEngine, DurableWorkObserver};
 use crate::host_logic::worker::WorkerLedger;
 use crate::platform::{HostInfo, JsonRpcConnection, PermissionStatusHost, Platform};
 use crate::runtime::bulletin_rpc::BulletinRpc;
@@ -61,6 +63,13 @@ pub struct RuntimeServices {
     /// [`DbError::NotConfigured`].
     #[cfg(not(target_arch = "wasm32"))]
     core_db: OnceLock<Db>,
+    /// Durable transaction engine over the core database, installed with it.
+    #[cfg(not(target_arch = "wasm32"))]
+    durable_engine: OnceLock<Arc<DurableTxEngine>>,
+    /// Host observer told whether durable work is pending. Unset leaves
+    /// recovery to whoever calls it.
+    #[cfg(not(target_arch = "wasm32"))]
+    durable_work_observer: OnceLock<Arc<dyn DurableWorkObserver>>,
     /// Asset Hub the dotNS contracts are deployed on. All-zero says this host
     /// has none, which leaves every manifest unresolvable.
     asset_hub_chain_genesis_hash: [u8; 32],
@@ -131,6 +140,10 @@ impl RuntimeServices {
             device_pairing_observer: OnceLock::new(),
             #[cfg(not(target_arch = "wasm32"))]
             core_db: OnceLock::new(),
+            #[cfg(not(target_arch = "wasm32"))]
+            durable_engine: OnceLock::new(),
+            #[cfg(not(target_arch = "wasm32"))]
+            durable_work_observer: OnceLock::new(),
             asset_hub_chain_genesis_hash,
             worker_ledger: WorkerLedger::default(),
             chain,
@@ -280,6 +293,32 @@ impl RuntimeServices {
     #[cfg(not(target_arch = "wasm32"))]
     pub(crate) fn core_db(&self) -> Result<Db, DbError> {
         self.core_db.get().cloned().ok_or(DbError::NotConfigured)
+    }
+
+    /// Install the durable transaction engine. Set-once, like the database it
+    /// runs on. Returns whether this call installed it.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn install_durable_engine(&self, engine: Arc<DurableTxEngine>) -> bool {
+        self.durable_engine.set(engine).is_ok()
+    }
+
+    /// The durable transaction engine, once the core database is installed.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn durable_engine(&self) -> Option<Arc<DurableTxEngine>> {
+        self.durable_engine.get().cloned()
+    }
+
+    /// Install the host's durable work observer. Returns whether this call
+    /// installed it.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn install_durable_work_observer(&self, observer: Arc<dyn DurableWorkObserver>) -> bool {
+        self.durable_work_observer.set(observer).is_ok()
+    }
+
+    /// The host's durable work observer, when one is installed.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn durable_work_observer(&self) -> Option<Arc<dyn DurableWorkObserver>> {
+        self.durable_work_observer.get().cloned()
     }
 
     /// This device's persisted X25519 encryption secret, created on first use.

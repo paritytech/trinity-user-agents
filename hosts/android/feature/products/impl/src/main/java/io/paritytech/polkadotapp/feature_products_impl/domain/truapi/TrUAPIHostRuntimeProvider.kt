@@ -22,6 +22,7 @@ import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
 import io.paritytech.polkadotapp.feature_dotns_api.domain.getTldRetrying
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_impl.di.TrUAPIChainHttpClient
+import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.worker.CoreDurableRecoveryWorker
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.worker.TrUAPIWorkerSupervisor
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.worker.WorkerDemand
 import kotlinx.coroutines.CoroutineScope
@@ -223,6 +224,11 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
                 WorkerTransition.STOP -> WorkerDemand.STOP
             }
             workerSupervisor.get().onDemandChanged(ProductId.fromStoredValue(productId), demand)
+        }
+
+        // A run returns by itself once nothing is live, so `false` needs no action.
+        override fun durableWorkChanged(pending: Boolean) {
+            if (pending) CoreDurableRecoveryWorker.enqueue(context)
         }
 
         override suspend fun navigateTo(url: String) {

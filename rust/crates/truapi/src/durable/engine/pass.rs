@@ -1,0 +1,616 @@
+//! The recovery pass: one evaluation of every live transaction no submission
+//! watch owns.
+
+use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::sync::Arc;
+
+use subxt::utils::H256;
+use tracing::warn;
+
+use super::DurableTxEngine;
+use crate::chain_runtime::RuntimeFailure;
+use crate::durable::dao;
+use crate::durable::ladder::{PinnedView, RuleOutcome, evaluate_ladder};
+use crate::durable::model::{DomainId, DurableTxEntry, DurableTxId, Verdict};
+use crate::durable::oracle::{CompletionOracle, LedgerView};
+use crate::durable::search::PinnedChain;
+use crate::store::DbError;
+
+/// Why one round of a domain decided nothing.
+#[derive(Debug, thiserror::Error)]
+enum RoundError {
+    #[error(transparent)]
+    Ledger(#[from] DbError),
+    #[error(transparent)]
+    Oracle(#[from] RuntimeFailure),
+}
+
+/// A live domain and the oracle that decides it.
+struct LiveDomain<'a> {
+    domain: DomainId,
+    oracle: &'a Arc<dyn CompletionOracle>,
+}
+
+impl DurableTxEngine {
+    /// Decides what it can of every live transaction. At most one pass runs
+    /// at a time; a call made while one runs returns at once. The ladder runs
+    /// outside any write, and each verdict is a compare-and-set against the
+    /// status it was derived from.
+    pub async fn run_pass(&self) {
+        let Some(_running) = self.pass_lock.try_lock() else {
+            return;
+        };
+        let domains = match self.db.read(dao::live_domains).await {
+            Ok(domains) => domains,
+            Err(error) => return warn!(%error, "durable recovery pass could not read the ledger"),
+        };
+        let by_chain = self.group_domains_by_chain(domains);
+        let chains = by_chain
+            .into_iter()
+            .map(|(genesis, domains)| self.decide_chain(genesis, domains));
+        futures::future::join_all(chains).await;
+    }
+
+    /// Groups `domains` by the chain their oracle names, so each chain's
+    /// heads are read once. A domain with no oracle has no chain and is
+    /// skipped.
+    fn group_domains_by_chain(
+        &self,
+        domains: Vec<DomainId>,
+    ) -> BTreeMap<H256, Vec<LiveDomain<'_>>> {
+        let mut by_chain: BTreeMap<H256, Vec<LiveDomain<'_>>> = BTreeMap::new();
+        for domain in domains {
+            match self.registry.oracle(&domain) {
+                Some(oracle) => by_chain
+                    .entry(oracle.chain())
+                    .or_default()
+                    .push(LiveDomain { domain, oracle }),
+                None => warn!(
+                    domain = domain.as_str(),
+                    "durable recovery pass skips a domain with no oracle"
+                ),
+            }
+        }
+        by_chain
+    }
+
+    /// Pins the chain with `genesis` and decides each of its domains.
+    async fn decide_chain(&self, genesis: H256, domains: Vec<LiveDomain<'_>>) {
+        let view = match PinnedChain::pin(&*self.heads, &*self.blocks, genesis).await {
+            Ok(view) => view,
+            Err(error) => {
+                return warn!(?genesis, %error, "durable recovery pass could not read heads");
+            }
+        };
+        for LiveDomain { domain, oracle } in domains {
+            self.decide_domain(&domain, oracle.as_ref(), genesis, &view)
+                .await;
+        }
+    }
+
+    /// Two rounds: a verdict written in the first is exactly the evidence a
+    /// predecessor's oracle may need in the second.
+    async fn decide_domain(
+        &self,
+        domain: &DomainId,
+        oracle: &dyn CompletionOracle,
+        genesis: H256,
+        view: &PinnedChain<'_>,
+    ) {
+        for _ in 0..2 {
+            match self.decide_round(domain, oracle, genesis, view).await {
+                Ok(0) => return,
+                Ok(_) => continue,
+                Err(error) => {
+                    return warn!(domain = domain.as_str(), %error, "durable recovery round failed");
+                }
+            }
+        }
+    }
+
+    /// Decides every decidable transaction of `domain` once. Returns how
+    /// many verdicts it wrote.
+    async fn decide_round(
+        &self,
+        domain: &DomainId,
+        oracle: &dyn CompletionOracle,
+        genesis: H256,
+        view: &PinnedChain<'_>,
+    ) -> Result<usize, RoundError> {
+        let (ledger, decidable) = self.decidable(domain).await?;
+        if decidable.is_empty() {
+            return Ok(0);
+        }
+        let (scope, canonical) = futures::future::join(
+            oracle.open_pass(&decidable, &ledger, &view.heads()),
+            self.recorded_canonicity(genesis, &decidable),
+        )
+        .await;
+        let scope = scope?;
+
+        let mut written = 0;
+        for tx in &decidable {
+            let outcome =
+                evaluate_ladder(tx, scope.as_ref(), view, canonical.get(&tx.id).copied()).await;
+            if let RuleOutcome::Decided(verdict) = outcome
+                && self.write_if_changed(tx, verdict).await
+            {
+                written += 1;
+            }
+        }
+        Ok(written)
+    }
+
+    /// The domain's ledger, and the transactions in it that await a verdict
+    /// and no watch owns.
+    async fn decidable(
+        &self,
+        domain: &DomainId,
+    ) -> Result<(LedgerView, Vec<DurableTxEntry>), DbError> {
+        let domain = domain.clone();
+        let entries = self
+            .db
+            .read(move |conn| dao::domain_entries(conn, &domain))
+            .await?;
+        let decidable = entries
+            .iter()
+            .filter(|entry| entry.status.awaits_verdict() && !self.ownership.is_owned(entry.id))
+            .cloned()
+            .collect();
+        Ok((LedgerView::new(entries), decidable))
+    }
+
+    /// Writes `verdict` unless it restates `tx`. Returns whether it wrote a
+    /// new status or success block; a cursor that only moved is not new
+    /// evidence for another round.
+    async fn write_if_changed(&self, tx: &DurableTxEntry, verdict: Verdict) -> bool {
+        let scan_moved = verdict
+            .scanned_to
+            .is_some_and(|scanned| Some(scanned) != tx.scanned_to);
+        let restated =
+            verdict.status == tx.status && verdict.success_detected_at == tx.success_detected_at;
+        if restated && !scan_moved {
+            return false;
+        }
+        let wrote = self
+            .write_verdict(tx, verdict)
+            .await
+            .unwrap_or_else(|error| {
+                warn!(id = tx.id.0, %error, "durable verdict write failed");
+                false
+            });
+        wrote && !restated
+    }
+
+    /// Whether each recorded success block is still canonical. A failed read
+    /// leaves its transactions out, so Rule 0 stays undecided instead of
+    /// discarding a record on a transport error.
+    async fn recorded_canonicity(
+        &self,
+        genesis: H256,
+        transactions: &[DurableTxEntry],
+    ) -> HashMap<DurableTxId, bool> {
+        let heights = transactions
+            .iter()
+            .filter_map(|tx| tx.success_detected_at.map(|block| block.number));
+        let hashes = self.canonical_hashes(genesis, heights).await;
+        transactions
+            .iter()
+            .filter_map(|tx| {
+                let recorded = tx.success_detected_at?;
+                // A chain shorter than the record no longer has its block.
+                let hash = hashes.get(&recorded.number)?;
+                Some((tx.id, *hash == Some(recorded.hash)))
+            })
+            .collect()
+    }
+
+    /// The canonical hash at each height, read once per distinct height.
+    /// Heights whose read failed are missing.
+    async fn canonical_hashes(
+        &self,
+        genesis: H256,
+        heights: impl Iterator<Item = u64>,
+    ) -> HashMap<u64, Option<H256>> {
+        let heights: BTreeSet<u64> = heights.collect();
+        futures::future::join_all(
+            heights.into_iter().map(|number| async move {
+                (number, self.blocks.block_hash(genesis, number).await)
+            }),
+        )
+        .await
+        .into_iter()
+        .filter_map(|(number, read)| read.ok().map(|hash| (number, hash)))
+        .collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use futures::executor::block_on;
+
+    use super::*;
+    use crate::chain::{DispatchOutcome, HashAndNumber, Heads};
+    use crate::chain_runtime::RuntimeFailure;
+    use crate::durable::model::{DurableTxStatus, HeadKind};
+    use crate::durable::oracle::{DurableRegistry, PassScope, Unobservable};
+    use crate::durable::testing::{
+        FakeChain, GENESIS, ScriptedScope, block, engine_with, extrinsic, insert,
+    };
+    use crate::store::Db;
+
+    fn test_domain() -> DomainId {
+        DomainId::new("test")
+    }
+
+    fn status(db: &Db, id: DurableTxId) -> DurableTxStatus {
+        block_on(db.read(move |conn| dao::status(conn, id)))
+            .unwrap()
+            .unwrap()
+    }
+
+    /// An oracle whose scope is computed from the ledger it is shown.
+    struct ScriptedOracle<F> {
+        scope: F,
+        fails: bool,
+    }
+
+    impl<F> ScriptedOracle<F>
+    where
+        F: Fn(&LedgerView) -> Box<dyn PassScope> + Send + Sync,
+    {
+        fn new(scope: F) -> Arc<Self> {
+            Arc::new(Self {
+                scope,
+                fails: false,
+            })
+        }
+    }
+
+    fn says(
+        scope: ScriptedScope,
+    ) -> Arc<ScriptedOracle<impl Fn(&LedgerView) -> Box<dyn PassScope> + Send + Sync>> {
+        ScriptedOracle::new(move |_: &LedgerView| Box::new(scope) as Box<dyn PassScope>)
+    }
+
+    #[async_trait::async_trait]
+    impl<F> CompletionOracle for ScriptedOracle<F>
+    where
+        F: Fn(&LedgerView) -> Box<dyn PassScope> + Send + Sync,
+    {
+        fn chain(&self) -> H256 {
+            GENESIS
+        }
+
+        async fn open_pass(
+            &self,
+            _transactions: &[DurableTxEntry],
+            ledger: &LedgerView,
+            _heads: &Heads,
+        ) -> Result<Box<dyn PassScope>, RuntimeFailure> {
+            if self.fails {
+                return Err(RuntimeFailure::host_failure("open_pass", "down"));
+            }
+            Ok((self.scope)(ledger))
+        }
+    }
+
+    fn completed_at_finalized() -> ScriptedScope {
+        ScriptedScope {
+            completed_at_finalized: true,
+            ..ScriptedScope::default()
+        }
+    }
+
+    /// Recovery runs on every launch, and usually nothing is live; that must
+    /// cost no chain reads.
+    #[test]
+    fn a_settled_ledger_reads_no_chain() {
+        let chain = FakeChain::new(150, 200);
+        let registry =
+            DurableRegistry::new().with_domain(test_domain(), says(completed_at_finalized()));
+        let (_dir, engine, _timer) = engine_with(&chain, registry);
+
+        block_on(engine.run_pass());
+
+        assert_eq!(chain.state().heads_reads, 0);
+    }
+
+    #[test]
+    fn the_oracles_answer_is_written() {
+        let chain = FakeChain::new(150, 200);
+        let registry =
+            DurableRegistry::new().with_domain(test_domain(), says(completed_at_finalized()));
+        let (_dir, engine, _timer) = engine_with(&chain, registry);
+        let id = insert(&engine.db, &test_domain(), extrinsic(1, 100, 64));
+
+        block_on(engine.run_pass());
+
+        assert_eq!(status(&engine.db, id), DurableTxStatus::FinalizedSuccess);
+    }
+
+    /// A watch is following the transaction right now and will decide it
+    /// faster; a pass deciding it too would race the watch's writes.
+    #[test]
+    fn a_transaction_a_watch_owns_gets_no_verdict() {
+        let chain = FakeChain::new(150, 200);
+        let registry =
+            DurableRegistry::new().with_domain(test_domain(), says(completed_at_finalized()));
+        let (_dir, engine, _timer) = engine_with(&chain, registry);
+        let id = insert(&engine.db, &test_domain(), extrinsic(1, 100, 64));
+        engine
+            .ownership
+            .acquire(id, extrinsic(1, 100, 64).extrinsic.hash());
+
+        block_on(engine.run_pass());
+
+        assert_eq!(status(&engine.db, id), DurableTxStatus::Pending);
+    }
+
+    /// An app update removed a domain while its rows were live. Nothing can
+    /// decide them any more, but they must not be decided wrongly either.
+    #[test]
+    fn a_domain_without_an_oracle_is_left_alone() {
+        let chain = FakeChain::new(150, 200);
+        let (_dir, engine, _timer) = engine_with(&chain, DurableRegistry::new());
+        let tx = extrinsic(1, 100, 64);
+        chain.include(120, tx.extrinsic.hash(), DispatchOutcome::Succeeded);
+        let id = insert(&engine.db, &DomainId::new("orphan"), tx);
+
+        block_on(engine.run_pass());
+
+        assert_eq!(status(&engine.db, id), DurableTxStatus::Pending);
+        assert_eq!(chain.state().heads_reads, 0);
+    }
+
+    /// Proves completion at the finalized head for the listed transactions.
+    struct CompletedAtFinalized(Vec<DurableTxId>);
+
+    impl PassScope for CompletedAtFinalized {
+        fn proven_completed(&self, tx: &DurableTxEntry, head: HeadKind) -> bool {
+            head == HeadKind::Finalized && self.0.contains(&tx.id)
+        }
+    }
+
+    /// A domain may only be able to infer a transaction's completion from its
+    /// successor's status, as coinage infers a minter from a finalized
+    /// consumer. The second round sees what the first one wrote.
+    #[test]
+    fn a_second_round_sees_what_the_first_wrote() {
+        const PREDECESSOR: DurableTxId = DurableTxId(1);
+        const SUCCESSOR: DurableTxId = DurableTxId(2);
+        let chain = FakeChain::new(150, 200);
+        // The predecessor's completion is only inferred from its successor's
+        // finalized status, as coinage infers a minter from its consumer.
+        let oracle = ScriptedOracle::new(|ledger: &LedgerView| {
+            let mut completed = vec![SUCCESSOR];
+            if ledger.status_of(SUCCESSOR) == Some(DurableTxStatus::FinalizedSuccess) {
+                completed.push(PREDECESSOR);
+            }
+            Box::new(CompletedAtFinalized(completed)) as Box<dyn PassScope>
+        });
+        let (_dir, engine, _timer) = engine_with(
+            &chain,
+            DurableRegistry::new().with_domain(test_domain(), oracle),
+        );
+        assert_eq!(
+            [
+                insert(&engine.db, &test_domain(), extrinsic(1, 100, 64)),
+                insert(&engine.db, &test_domain(), extrinsic(2, 100, 64))
+            ],
+            [PREDECESSOR, SUCCESSOR]
+        );
+
+        block_on(engine.run_pass());
+
+        assert_eq!(
+            status(&engine.db, PREDECESSOR),
+            DurableTxStatus::FinalizedSuccess
+        );
+        assert_eq!(
+            status(&engine.db, SUCCESSOR),
+            DurableTxStatus::FinalizedSuccess
+        );
+    }
+
+    #[test]
+    fn two_domains_on_one_chain_read_its_heads_once() {
+        let chain = FakeChain::new(150, 200);
+        let registry = DurableRegistry::new()
+            .with_domain(DomainId::new("a"), Arc::new(Unobservable(GENESIS)))
+            .with_domain(DomainId::new("b"), Arc::new(Unobservable(GENESIS)));
+        let (_dir, engine, _timer) = engine_with(&chain, registry);
+        insert(&engine.db, &DomainId::new("a"), extrinsic(1, 100, 64));
+        insert(&engine.db, &DomainId::new("b"), extrinsic(2, 100, 64));
+
+        block_on(engine.run_pass());
+
+        assert_eq!(chain.state().heads_reads, 1);
+    }
+
+    /// The node is unreachable when the pass starts: without heads nothing can
+    /// be decided, so nothing is written.
+    #[test]
+    fn a_chain_whose_heads_cannot_be_read_gets_no_verdict() {
+        let chain = FakeChain::new(150, 200);
+        chain.state().heads_unavailable = true;
+        let registry =
+            DurableRegistry::new().with_domain(test_domain(), says(completed_at_finalized()));
+        let (_dir, engine, _timer) = engine_with(&chain, registry);
+        let id = insert(&engine.db, &test_domain(), extrinsic(1, 100, 64));
+
+        block_on(engine.run_pass());
+
+        assert_eq!(status(&engine.db, id), DurableTxStatus::Pending);
+    }
+
+    /// The domain's own chain read fails mid-pass. Even a transaction the
+    /// search could find waits for the next pass instead of being decided on
+    /// half the evidence.
+    #[test]
+    fn an_oracle_that_fails_to_open_leaves_its_domain_untouched() {
+        let chain = FakeChain::new(150, 200);
+        let tx = extrinsic(1, 100, 64);
+        chain.include(120, tx.extrinsic.hash(), DispatchOutcome::Succeeded);
+        let oracle = Arc::new(ScriptedOracle {
+            scope: |_: &LedgerView| Box::new(ScriptedScope::default()) as Box<dyn PassScope>,
+            fails: true,
+        });
+        let (_dir, engine, _timer) = engine_with(
+            &chain,
+            DurableRegistry::new().with_domain(test_domain(), oracle),
+        );
+        let id = insert(&engine.db, &test_domain(), tx);
+
+        block_on(engine.run_pass());
+
+        assert_eq!(status(&engine.db, id), DurableTxStatus::Pending);
+    }
+
+    /// The watch saw the transaction in a best block, which a reorg then
+    /// replaced. With nothing else proving it ran, the success is withdrawn.
+    #[test]
+    fn a_record_whose_block_was_reorged_out_is_demoted_and_cleared() {
+        let chain = FakeChain::new(150, 200);
+        let (_dir, engine, _timer) = engine_with(
+            &chain,
+            DurableRegistry::new().with_domain(test_domain(), Arc::new(Unobservable(GENESIS))),
+        );
+        let id = insert(&engine.db, &test_domain(), extrinsic(1, 100, 64));
+        record_success(&engine.db, id, block(160));
+        chain.state().reorged.insert(160, H256::repeat_byte(0x99));
+
+        block_on(engine.run_pass());
+
+        let entry = block_on(engine.db.read(move |conn| dao::entry(conn, id)))
+            .unwrap()
+            .unwrap();
+        assert_eq!(entry.status, DurableTxStatus::Pending);
+        assert_eq!(entry.success_detected_at, None);
+    }
+
+    /// The node cannot serve the hash at the recorded height, for example after
+    /// a restart. A transport failure must not withdraw a success.
+    #[test]
+    fn an_unreadable_record_height_keeps_the_success() {
+        let chain = FakeChain::new(150, 200);
+        let (_dir, engine, _timer) = engine_with(
+            &chain,
+            DurableRegistry::new().with_domain(test_domain(), Arc::new(Unobservable(GENESIS))),
+        );
+        let id = insert(&engine.db, &test_domain(), extrinsic(1, 100, 64));
+        record_success(&engine.db, id, block(160));
+        chain.state().unreadable_heights.insert(160);
+
+        block_on(engine.run_pass());
+
+        assert_eq!(status(&engine.db, id), DurableTxStatus::PendingSuccess);
+    }
+
+    /// A reorg replaced the branch with a shorter one that does not reach the
+    /// recorded block at all.
+    #[test]
+    fn a_chain_shorter_than_the_record_clears_it() {
+        let chain = FakeChain::new(150, 155);
+        let (_dir, engine, _timer) = engine_with(
+            &chain,
+            DurableRegistry::new().with_domain(test_domain(), Arc::new(Unobservable(GENESIS))),
+        );
+        let id = insert(&engine.db, &test_domain(), extrinsic(1, 100, 64));
+        record_success(&engine.db, id, block(160));
+
+        block_on(engine.run_pass());
+
+        assert_eq!(status(&engine.db, id), DurableTxStatus::Pending);
+    }
+
+    /// The search decides a transaction no oracle can see, end to end over
+    /// the chain's own blocks.
+    #[test]
+    fn a_transaction_found_in_a_finalized_block_finalizes() {
+        let chain = FakeChain::new(150, 200);
+        let tx = extrinsic(1, 100, 64);
+        chain.include(120, tx.extrinsic.hash(), DispatchOutcome::Succeeded);
+        let (_dir, engine, _timer) = engine_with(
+            &chain,
+            DurableRegistry::new().with_domain(test_domain(), Arc::new(Unobservable(GENESIS))),
+        );
+        let id = insert(&engine.db, &test_domain(), tx);
+
+        block_on(engine.run_pass());
+
+        let entry = block_on(engine.db.read(move |conn| dao::entry(conn, id)))
+            .unwrap()
+            .unwrap();
+        assert_eq!(entry.status, DurableTxStatus::FinalizedSuccess);
+        assert_eq!(entry.success_detected_at, Some(block(120)));
+    }
+
+    /// Finality stalls while best blocks keep coming. The era has passed on the
+    /// best chain, but only finalized facts may fail a transaction.
+    #[test]
+    fn best_height_alone_never_expires_a_transaction() {
+        let chain = FakeChain::new(150, 400);
+        let (_dir, engine, _timer) = engine_with(
+            &chain,
+            DurableRegistry::new().with_domain(test_domain(), Arc::new(Unobservable(GENESIS))),
+        );
+        let id = insert(&engine.db, &test_domain(), extrinsic(1, 100, 64));
+
+        block_on(engine.run_pass());
+
+        assert_eq!(status(&engine.db, id), DurableTxStatus::Pending);
+    }
+
+    #[test]
+    fn absence_over_a_closed_window_fails_the_transaction() {
+        let chain = FakeChain::new(200, 210);
+        let (_dir, engine, _timer) = engine_with(
+            &chain,
+            DurableRegistry::new().with_domain(test_domain(), Arc::new(Unobservable(GENESIS))),
+        );
+        let id = insert(&engine.db, &test_domain(), extrinsic(1, 100, 64));
+
+        block_on(engine.run_pass());
+
+        assert_eq!(status(&engine.db, id), DurableTxStatus::Failure);
+    }
+
+    /// Recovery runs on every finalized head while a transaction stays
+    /// pending. Blocks searched on an earlier pass are finalized and cannot
+    /// change, so the next pass reads only the ones finalized since.
+    #[test]
+    fn a_later_pass_reads_only_the_blocks_finalized_since() {
+        let chain = FakeChain::new(120, 140);
+        let (_dir, engine, _timer) = engine_with(
+            &chain,
+            DurableRegistry::new().with_domain(test_domain(), Arc::new(Unobservable(GENESIS))),
+        );
+        insert(&engine.db, &test_domain(), extrinsic(1, 100, 64));
+        block_on(engine.run_pass());
+        chain.state().finalized = 123;
+        let reads_before = chain.state().body_reads;
+
+        block_on(engine.run_pass());
+
+        assert_eq!(chain.state().body_reads - reads_before, 3);
+    }
+
+    fn record_success(db: &Db, id: DurableTxId, at: HashAndNumber) {
+        block_on(db.write(move |tx| {
+            let observed = dao::entry(tx, id)?.unwrap();
+            dao::compare_and_set(
+                tx,
+                &observed,
+                &crate::durable::model::Verdict {
+                    status: DurableTxStatus::PendingSuccess,
+                    success_detected_at: Some(at),
+                    failure: None,
+                    scanned_to: None,
+                },
+            )?;
+            Ok(())
+        }))
+        .unwrap();
+    }
+}

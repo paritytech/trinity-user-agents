@@ -75,6 +75,12 @@ impl crate::host_logic::worker::WorkerDemandObserver for CallbackPlatform {
     }
 }
 
+impl crate::durable::DurableWorkObserver for CallbackPlatform {
+    fn durable_work_changed(&self, pending: bool) {
+        self.callbacks.durable_work_changed(pending);
+    }
+}
+
 impl DevicePairingObserver for CallbackPlatform {
     fn device_paired(&self, device: PairedSsoPeer) {
         self.callbacks.device_paired(device);
