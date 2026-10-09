@@ -22,7 +22,7 @@ use futures::{FutureExt, StreamExt, pin_mut};
 use serde_json::Value;
 use subxt_rpcs::RpcClient;
 use subxt_rpcs::client::RpcSubscription;
-use tracing::instrument;
+use tracing::{debug, instrument};
 use truapi::{CancellationReason, CancellationToken};
 
 /// Host-spec B.3.3 recommends seven-day statement expiry for session traffic:
@@ -412,7 +412,13 @@ fn handle_sso_remote_statement_page<T>(
             }
             Some(SsoSessionStatement::RemoteMessages(messages)) => {
                 for message in messages {
-                    let message = message.map_err(SsoRemoteResponseError::Failure)?;
+                    let message = match message {
+                        Ok(message) => message,
+                        Err(error) => {
+                            debug!(%error, "skipping undecodable SSO remote message");
+                            continue;
+                        }
+                    };
                     if message == v1::RemoteMessage::Disconnected {
                         return Err(SsoRemoteResponseError::PeerDisconnected);
                     }
@@ -714,10 +720,11 @@ mod tests {
         );
     }
 
-    /// Only messages read before the match have to decode; garbage after it
-    /// belongs to nobody the waiter cares about.
+    /// A message that does not decode, such as a stale reply from an older peer
+    /// left on the session channel, is skipped wherever it sits, so it cannot
+    /// fail a wait for another request.
     #[test]
-    fn an_undecodable_message_only_matters_before_the_match() {
+    fn an_undecodable_message_is_skipped() {
         let (host, responder) = sso_host_and_responder_sessions();
         let ack = build_signed_session_response_statement(
             &responder,
@@ -756,9 +763,10 @@ mod tests {
             ],
         );
 
-        assert!(after.is_ok());
-        assert!(
-            matches!(before, Err(SsoRemoteResponseError::Failure(reason)) if reason.contains("invalid SSO remote message"))
-        );
+        let expected = Ok(Response {
+            responding_to: "request-1".to_string(),
+            payload: Ok([7; 32]),
+        });
+        assert_eq!((before, after), (expected.clone(), expected));
     }
 }

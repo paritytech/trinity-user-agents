@@ -5,6 +5,8 @@ import UIKit
 
 public struct DSChatListItemConfiguration: HashableContentConfiguration {
     public let avatarViewModel: AvatarViewModel
+    /// Loaded over ``avatarViewModel``, which shows until it arrives.
+    public let icon: (any ImageViewModelProtocol)?
     public let sender: String
     public let message: String?
     public let messageKind: DSChatMessage.Kind
@@ -20,6 +22,7 @@ public struct DSChatListItemConfiguration: HashableContentConfiguration {
     public init(
         dateFormatter: TimestampFormatting,
         avatarViewModel: AvatarViewModel,
+        icon: (any ImageViewModelProtocol)? = nil,
         sender: String,
         message: String? = nil,
         messageKind: DSChatMessage.Kind = .default,
@@ -32,6 +35,7 @@ public struct DSChatListItemConfiguration: HashableContentConfiguration {
     ) {
         self.dateFormatter = dateFormatter
         self.avatarViewModel = avatarViewModel
+        self.icon = icon
         self.sender = sender
         self.message = message
         self.messageKind = messageKind
@@ -46,7 +50,7 @@ public struct DSChatListItemConfiguration: HashableContentConfiguration {
     public func makeContentView() -> any UIView & UIContentView {
         UIHostingConfiguration {
             DSChatListItem(data: rowData) {
-                DSAvatarFactory.chatList(avatarViewModel)
+                DSAvatarFactory.chatList(avatarViewModel, icon: icon)
             }
             .accessibilityId(rawValue: accessibilityId)
         }
@@ -80,8 +84,8 @@ public struct DSChatListItemConfiguration: HashableContentConfiguration {
             lhs.accessibilityId == rhs.accessibilityId
     }
 
-    private var rowData: DSChatListItem<DSAvatar>.Data {
-        DSChatListItem<DSAvatar>.Data(
+    private var rowData: DSChatListItem<DSAsyncAvatar>.Data {
+        DSChatListItem<DSAsyncAvatar>.Data(
             sender: sender,
             timestamp: formattedDate ?? "",
             message: message ?? "",

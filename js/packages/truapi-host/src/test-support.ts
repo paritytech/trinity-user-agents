@@ -103,6 +103,7 @@ export function makeHostCallbacks(
             createChatRoom: async () => ({ status: "New" as const }),
             registerChatBot: async () => ({ status: "New" as const }),
             postChatMessage: async () => ({ messageId: "message" }),
+            setChatRoomFooter: async () => {},
             async *subscribeChatRooms() {},
             ...overrides.chat,
           },
@@ -137,6 +138,16 @@ export function makeHostCallbacks(
             scheduleGameReminder: async () => {},
             cancelGameReminder: async () => {},
             ...overrides.game,
+          },
+        }
+      : {}),
+    // And for the scanner: the default fixture is a host with no viewfinder,
+    // so scans are answered `Unsupported`, as on a web host.
+    ...(overrides.scanner
+      ? {
+          scanner: {
+            scanCode: async () => ({ tag: "Dismissed" as const }),
+            ...overrides.scanner,
           },
         }
       : {}),

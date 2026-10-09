@@ -8,13 +8,11 @@ import io.paritytech.polkadotapp.common.utils.CoroutineDispatchers
 import io.paritytech.polkadotapp.common.utils.toPayloadBundle
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatId
 import io.paritytech.polkadotapp.feature_chats_api.presentation.model.ChatFeedPayload
-import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardKey
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_api.model.toChatExtensionId
 import io.paritytech.polkadotapp.feature_products_api.presentation.PocketAddCardPayload
 import io.paritytech.polkadotapp.feature_products_api.presentation.ProductSettingsPayload
 import io.paritytech.polkadotapp.feature_products_api.presentation.SpaBrowserPayload
-import io.paritytech.polkadotapp.feature_products_api.presentation.SpaSheetPayload
 import io.paritytech.polkadotapp.feature_products_impl.presentation.permissionPrompt.PermissionPromptBottomSheet
 import io.paritytech.polkadotapp.feature_products_impl.presentation.productBotManagement.ProductsRouter
 import kotlinx.coroutines.withContext
@@ -106,13 +104,24 @@ class ProductsNavigator @Inject constructor(
         performNavigation(R.id.action_global_to_truapiContactPickBottomSheet)
     }
 
+    override suspend fun closeTrUAPIContactPick() = closeIfShowing(R.id.truapiContactPickBottomSheet)
+
+    override suspend fun openTrUAPIProductScan() = withContext(dispatchers.main) {
+        performNavigation(R.id.action_global_to_truapiProductScanBottomSheet)
+    }
+
+    override suspend fun closeTrUAPIProductScan() = closeIfShowing(R.id.truapiProductScanBottomSheet)
+
+    /**
+     * Closes the prompt only when it is on top, so a sheet over it stays. A prompt under another
+     * sheet closes itself when it is shown again, because its answer is already given.
+     */
+    private suspend fun closeIfShowing(destinationId: Int) = withContext(dispatchers.main) {
+        if (isCurrentDestination(destinationId)) back()
+    }
+
     override fun openPocketAddCard(payload: PocketAddCardPayload) = performNavigation(
         actionId = R.id.action_global_to_pocketAddCardBottomSheet,
         args = payload.toPayloadBundle(),
-    )
-
-    override fun openPocketCard(key: PocketCardKey) = performNavigation(
-        actionId = R.id.action_global_to_spaSheetBottomSheet,
-        args = SpaSheetPayload(key.launchUrl()).toPayloadBundle(),
     )
 }

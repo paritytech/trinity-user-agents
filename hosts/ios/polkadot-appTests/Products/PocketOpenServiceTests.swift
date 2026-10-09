@@ -14,6 +14,25 @@ struct PocketOpenServiceTests {
         #expect(seen.links.map(\.cardId.value) == ["loyalty"])
     }
 
+    /// A bare `/-/pocket` is the host's to answer: it opens the Pocket, with no
+    /// card to present and nothing to refuse.
+    @Test
+    func claimsACollectionLinkAndOpensThePocket() async throws {
+        let seen = Recorder()
+        let service = PocketOpenService(
+            present: { seen.record($0) },
+            openCollection: { seen.collectionsOpened += 1 },
+            refuse: { seen.refusals.append($0) }
+        )
+
+        #expect(service.handle(url: URL(string: "polkadot://game.dot/-/pocket")!))
+
+        try await Task.sleep(for: .milliseconds(50))
+        #expect(seen.collectionsOpened == 1)
+        #expect(seen.links.isEmpty)
+        #expect(seen.refusals.isEmpty)
+    }
+
     /// An ordinary product link is not ours and must fall through to the App
     /// handler behind us in the chain.
     @Test
@@ -72,6 +91,7 @@ struct PocketOpenServiceTests {
 private final class Recorder: @unchecked Sendable {
     private(set) var links: [PocketDeeplink] = []
     var refusals: [String] = []
+    var collectionsOpened = 0
 
     func record(_ link: PocketDeeplink) {
         links.append(link)

@@ -15,6 +15,7 @@ import io.paritytech.polkadotapp.common.utils.logFailure
 import io.paritytech.polkadotapp.common.utils.withLoading
 import io.paritytech.polkadotapp.feature_coinage_api.domain.model.BackupProgress
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCard
+import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardOpenRequests
 import io.paritytech.polkadotapp.feature_products_api.model.JsImageSource
 import io.paritytech.polkadotapp.feature_products_api.model.JsUiEvent
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
@@ -31,6 +32,7 @@ import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.
 import kotlinx.collections.immutable.persistentListOf
 import kotlinx.collections.immutable.toImmutableList
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -39,12 +41,15 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChangedBy
+import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.job
+import kotlinx.coroutines.launch
 import timber.log.Timber
 import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
@@ -60,12 +65,15 @@ class PocketViewModel @Inject constructor(
     private val idShareImageRenderer: IdShareImageRenderer,
     private val sharingManager: SharingManager,
     private val dispatchers: CoroutineDispatchers,
+    private val cardOpenRequests: PocketCardOpenRequests,
     spaHost: SpaHost,
     @param:ApplicationContext private val context: Context
 ) : BaseViewModel() {
     private val selectedCardId = MutableStateFlow<String?>(null)
-    private val expandedProduct = ExpandedProductPage(this) { scope, url -> with(scope) { spaHost.createSession(url) } }
+    private val expandedProduct = ExpandedProductPage(this) { scope, url -> with(scope) { spaHost.createSession(url, underCard = true) } }
     private val collectiblesShown = MutableStateFlow(false)
+    private val _openingFaceShown = MutableStateFlow<Boolean?>(null)
+    private var openingFaceLookup: Job? = null
     private val removalCandidate = MutableStateFlow<PocketCardUiModel.ProductCard?>(null)
 
     private val digitalDollarAmounts = interactor.observeDigitalDollarBalance()
@@ -219,9 +227,51 @@ class PocketViewModel @Inject constructor(
     /** The product page under the expanded card, live only while that card is open. */
     val expandedProductSession = expandedProduct.session
 
+    /** Whether the selected card opens with its face shown; null until its product has answered. */
+    val openingFaceShown: StateFlow<Boolean?> = _openingFaceShown
+
+    // A tab shown for the first time has no product cards until the collection loads.
+    init {
+        combine(cards, cardOpenRequests.requested) { held, requested ->
+            held.filterIsInstance<PocketCardUiModel.ProductCard>().firstOrNull { it.key == requested }
+        }
+            .filterNotNull()
+            .onEach(::openRequestedCard)
+            .launchIn(this)
+    }
+
+    /**
+     * A tap always starts from the list, but a link can arrive with another card open. Switched to
+     * straight away, the new card would be drawn over the open one's page until it settled, so the
+     * open card is closed first, as [dismissCard] does, and the list behind it is put back.
+     */
+    private fun openRequestedCard(card: PocketCardUiModel.ProductCard) {
+        cardOpenRequests.consume(card.key)
+        if (selectedCardId.value == card.id) return
+
+        if (selectedCardId.value != null) dismissCard()
+        collectiblesShown.value = false
+        removalCandidate.value = null
+        selectCard(card)
+    }
+
     fun selectCard(card: PocketCardUiModel) {
         selectedCardId.value = card.id
-        if (card is PocketCardUiModel.ProductCard) warmUpProduct(card)
+        if (card is PocketCardUiModel.ProductCard) {
+            warmUpProduct(card)
+            lookUpOpeningFace(card)
+        }
+    }
+
+    private fun lookUpOpeningFace(card: PocketCardUiModel.ProductCard) {
+        openingFaceLookup?.cancel()
+        _openingFaceShown.value = null
+        openingFaceLookup = launch { _openingFaceShown.value = interactor.faceShownOnOpen(card.key) }
+    }
+
+    private fun forgetOpeningFace() {
+        openingFaceLookup?.cancel()
+        _openingFaceShown.value = null
     }
 
     /**
@@ -245,6 +295,7 @@ class PocketViewModel @Inject constructor(
 
     fun dismissCard() {
         expandedProduct.close()
+        forgetOpeningFace()
         selectedCardId.value = null
     }
 
@@ -263,9 +314,11 @@ class PocketViewModel @Inject constructor(
     /**
      * The product is loaded only once the card has finished travelling. Building a WebView while the
      * card is still moving starves the animation, and the card is the part the user is watching.
+     * A card already left can still report itself settled while it fades out, so only the selected
+     * one is hosted.
      */
     fun hostExpandedProduct(card: PocketCardUiModel.ProductCard) {
-        expandedProduct.open(card.key.launchUrl())
+        if (card.id == selectedCardId.value) expandedProduct.open(card.key.launchUrl())
     }
 
     /** A press or edit inside a face goes back to the product; a text edit carries the new value as UTF-8. */
@@ -323,6 +376,7 @@ class PocketViewModel @Inject constructor(
 
     private fun closeExpandedCard() {
         expandedProduct.release()
+        forgetOpeningFace()
         selectedCardId.value = null
     }
 

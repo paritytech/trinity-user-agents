@@ -19,6 +19,7 @@ use truapi::api::{
     CoinPayment,
     Contacts,
     Entropy,
+    ExpandedCard,
     Game,
     LocalStorage,
     Locale,
@@ -58,6 +59,7 @@ where
     register_coin_payment(dispatcher, host.clone());
     register_contacts(dispatcher, host.clone());
     register_entropy(dispatcher, host.clone());
+    register_expanded_card(dispatcher, host.clone());
     register_game(dispatcher, host.clone());
     register_local_storage(dispatcher, host.clone());
     register_locale(dispatcher, host.clone());
@@ -954,7 +956,7 @@ where
     }
     {
         let execution_allowed = dispatcher.allows_execution(ProductExecutionKind::Worker);
-        let host = host;
+        let host = host.clone();
         dispatcher.on_subscription(wire_table::CHAT_ACTION_SUBSCRIBE, move |request_id: String, bytes: Vec<u8>| {
             let host = host.clone();
             Box::pin(async move {
@@ -986,6 +988,40 @@ where
                     },
                 );
                 Ok(subscription_stream(stream))
+            })
+        });
+    }
+    {
+        let execution_allowed = dispatcher.allows_execution(ProductExecutionKind::Worker);
+        let host = host;
+        dispatcher.on_request(wire_table::CHAT_SET_ROOM_FOOTER, move |request_id: String, bytes: Vec<u8>, cancel: truapi::CancellationToken| {
+            let host = host.clone();
+            Box::pin(async move {
+                let request: versioned::chat::HostChatSetRoomFooterRequest = match DecodeAll::decode_all(&mut &bytes[..]) {
+                    Ok(request) => request,
+                    Err(err) => {
+                        let error: truapi::CallError<versioned::chat::HostChatSetRoomFooterError> =
+                            truapi::CallError::MalformedFrame { reason: err.to_string() };
+                        let result: Result<versioned::chat::HostChatSetRoomFooterResponse, truapi::CallError<versioned::chat::HostChatSetRoomFooterError>> = Err(error);
+                        return result.encode();
+                    }
+                };
+                let target_version = request.version();
+                let cx = CallContext::with_parts(request_id, cancel);
+                if !execution_allowed {
+                    let error: truapi::CallError<versioned::chat::HostChatSetRoomFooterError> = truapi::CallError::Denied;
+                    let result: Result<versioned::chat::HostChatSetRoomFooterResponse, truapi::CallError<versioned::chat::HostChatSetRoomFooterError>> = Err(error);
+                    return result.encode();
+                }
+                let result: Result<versioned::chat::HostChatSetRoomFooterResponse, truapi::CallError<versioned::chat::HostChatSetRoomFooterError>> =
+                    match host.set_room_footer(&cx, request).await {
+                        Ok(response) => Ok(<versioned::chat::HostChatSetRoomFooterResponse as truapi::versioned::FromLatest>::from_latest(
+                            truapi::versioned::IntoLatest::into_latest(response),
+                            target_version,
+                        )),
+                        Err(err) => Err(downgrade_call_error(err, target_version)),
+                    };
+                result.encode()
             })
         });
     }
@@ -1326,6 +1362,46 @@ where
                 let result: Result<versioned::entropy::HostDeriveEntropyResponse, truapi::CallError<versioned::entropy::HostDeriveEntropyError>> =
                     match host.derive(&cx, request).await {
                         Ok(response) => Ok(<versioned::entropy::HostDeriveEntropyResponse as truapi::versioned::FromLatest>::from_latest(
+                            truapi::versioned::IntoLatest::into_latest(response),
+                            target_version,
+                        )),
+                        Err(err) => Err(downgrade_call_error(err, target_version)),
+                    };
+                result.encode()
+            })
+        });
+    }
+}
+
+fn register_expanded_card<P>(dispatcher: &mut Dispatcher, host: Arc<P>)
+where
+    P: ExpandedCard + Send + Sync + 'static,
+{
+    {
+        let execution_allowed = dispatcher.allows_execution(ProductExecutionKind::Widget);
+        let host = host;
+        dispatcher.on_request(wire_table::EXPANDED_CARD_SET_FACE_SHOWN, move |request_id: String, bytes: Vec<u8>, cancel: truapi::CancellationToken| {
+            let host = host.clone();
+            Box::pin(async move {
+                let request: versioned::expanded_card::HostExpandedCardSetFaceShownRequest = match DecodeAll::decode_all(&mut &bytes[..]) {
+                    Ok(request) => request,
+                    Err(err) => {
+                        let error: truapi::CallError<versioned::expanded_card::HostExpandedCardSetFaceShownError> =
+                            truapi::CallError::MalformedFrame { reason: err.to_string() };
+                        let result: Result<versioned::expanded_card::HostExpandedCardSetFaceShownResponse, truapi::CallError<versioned::expanded_card::HostExpandedCardSetFaceShownError>> = Err(error);
+                        return result.encode();
+                    }
+                };
+                let target_version = request.version();
+                let cx = CallContext::with_parts(request_id, cancel);
+                if !execution_allowed {
+                    let error: truapi::CallError<versioned::expanded_card::HostExpandedCardSetFaceShownError> = truapi::CallError::Denied;
+                    let result: Result<versioned::expanded_card::HostExpandedCardSetFaceShownResponse, truapi::CallError<versioned::expanded_card::HostExpandedCardSetFaceShownError>> = Err(error);
+                    return result.encode();
+                }
+                let result: Result<versioned::expanded_card::HostExpandedCardSetFaceShownResponse, truapi::CallError<versioned::expanded_card::HostExpandedCardSetFaceShownError>> =
+                    match host.set_face_shown(&cx, request).await {
+                        Ok(response) => Ok(<versioned::expanded_card::HostExpandedCardSetFaceShownResponse as truapi::versioned::FromLatest>::from_latest(
                             truapi::versioned::IntoLatest::into_latest(response),
                             target_version,
                         )),
