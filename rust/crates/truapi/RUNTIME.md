@@ -449,9 +449,10 @@ AutoSigning without approval. Legacy-account signing still asks the user.
   receives it in `Assigned`, and the session keeps it with the rail and asset
   it priced.
   `funding_progress(intent)` gives the steps the host draws for a session's
-  direction and rail, each with when it was reached: in, `Started`,
-  `Payment`, `Approved` (bank and crypto, once the payment can no longer be
-  reversed), `Conversion`, `Added`; out, `Started`, `Payment`, `Sent`. A step
+  direction and rail, each with when it was reached: card and crypto in,
+  `Started`, `Payment`, `Approved` (once the payment can no longer be
+  reversed), `Conversion`, `Added`; bank in, `Started`, `Payment`, `Added`;
+  out, `Started`, `Payment`, `Sent`, `Conversion`, `Payout`. A step
   the provider skipped takes the time of the first later one. It also carries
   when the session failed, the latest transaction id and reference the
   provider reported with `Details`, the latest `Deposit` instructions for the
@@ -461,11 +462,12 @@ AutoSigning without approval. Legacy-account signing still asks the user.
   short or wrong-asset payment. `Deposit` is inbound only and allowed until
   funds move, so a provider can ask for the rest of a short payment.
   It is `retrying` once the provider names a second top-up after a partial
-  claim. A provider whose payout fails after an outbound session was
-  released reports `Payout { PaidOut | Failed }` once, while the host has not
-  recorded the session; it shows as the session's `payout`, beside the
-  `Released` outcome. An inbound payment the provider returned ends as
-  `Failed { Refunded }`.
+  claim. After an outbound session is released, while the host has not
+  recorded it, the provider reports `Converting` once as it prepares the
+  payout and then `Payout { PaidOut | Failed }` once; the outcome shows as
+  the session's `payout`, beside the `Released` outcome. An inbound payment
+  the provider returned ends as `Failed { Refunded }`, one the user's bank or
+  card issuer refused as `Failed { Declined }`.
   That provider's worker runs it through the `FundingProvider` trait:
   `serveSubscribe` replays its sessions in flight and then streams new ones
   and cancel requests, `report` stores each update on the session (only from

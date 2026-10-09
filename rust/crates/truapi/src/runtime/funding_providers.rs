@@ -125,10 +125,13 @@ impl FundingProviders {
             .any(|candidate| candidate.provider_id == provider_id)
     }
 
-    /// The manifest the core goes by for `entry`: dotNS's answer once it has
-    /// one, the host's snapshot until then.
+    /// The manifest the core goes by for `entry`: the host's for a bundled
+    /// provider; otherwise dotNS's answer once it has one, the host's
+    /// snapshot until then.
     fn manifest(&self, entry: &FundingProviderEntry) -> Option<WorkerManifest> {
-        if let Some(live) = lock(&self.live).get(&entry.product_id) {
+        if !entry.bundled
+            && let Some(live) = lock(&self.live).get(&entry.product_id)
+        {
             return live.clone();
         }
         WorkerManifest::parse(entry.worker_manifest.as_deref()?)
@@ -159,6 +162,7 @@ impl RuntimeServices {
                 normalized.push(FundingProviderEntry {
                     product_id,
                     worker_manifest: entry.worker_manifest,
+                    bundled: entry.bundled,
                 });
             }
         }
@@ -191,7 +195,7 @@ impl RuntimeServices {
             }));
         }
         let entries = lock(&self.funding_providers.entries).clone();
-        for entry in entries {
+        for entry in entries.into_iter().filter(|entry| !entry.bundled) {
             if !lock(&self.funding_providers.refreshing).insert(entry.product_id.clone()) {
                 continue;
             }
@@ -310,6 +314,7 @@ mod tests {
             .map(|(product_id, worker_manifest)| FundingProviderEntry {
                 product_id: product_id.to_string(),
                 worker_manifest: worker_manifest.clone(),
+                bundled: false,
             })
             .collect();
         providers
@@ -348,6 +353,24 @@ mod tests {
                     requires_account: false,
                 }]],
             )
+        );
+    }
+
+    // A provider the host ships in the app is never published, so dotNS
+    // answering "nothing" must not drop it the way it drops a listed one.
+    #[test]
+    fn a_bundled_provider_keeps_the_hosts_manifest() {
+        let providers = providers(&[("listed.dot", Some(manifest(CARD_IN)))]);
+        lock(&providers.entries).push(FundingProviderEntry {
+            product_id: "bundled.dot".to_string(),
+            worker_manifest: Some(manifest(CARD_IN)),
+            bundled: true,
+        });
+        lock(&providers.live).extend([("listed.dot".to_string(), None), ("bundled.dot".to_string(), None)]);
+
+        assert_eq!(
+            ids(providers.candidates(FundingDirection::In)),
+            vec!["bundled.dot".to_string()]
         );
     }
 

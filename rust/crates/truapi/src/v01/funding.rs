@@ -48,6 +48,8 @@ pub enum FundingFailure {
     Cancelled,
     /// The provider returned the user's payment instead of crediting it.
     Refunded,
+    /// The user's bank or card issuer refused the payment.
+    Declined,
     /// Outcome not covered above. Clients render the message and treat the
     /// code as opaque.
     Other {
