@@ -824,32 +824,37 @@ impl crate::platform::PocketPlatform for PocketCallbackPlatform {
 		}))
 	}
 
-	async fn remove_pocket_card(
-		&self,
-		_product: &ProductContext,
-		request: v01::HostPocketRemoveCardRequest,
-	) -> Result<(), v01::HostPocketRemoveCardError> {
-		let unknown = |error: HostRejection| v01::HostPocketRemoveCardError::Unknown {
-			reason: error.to_string(),
-		};
-		match self.pocket.remove_card(request.card_id).await.map_err(unknown)? {
-			NativePocketRemoval::Privileged => Err(v01::HostPocketRemoveCardError::Privileged),
-			// A card this host does not hold is already removed.
-			NativePocketRemoval::Absent => Ok(()),
-			NativePocketRemoval::Removed => {
-				// The removal stands either way. A host that can no longer
-				// list its cards says so on the stream rather than leaving the
-				// product on a list that still holds the removed card.
-				match self.pocket.list_cards() {
-					Ok(cards) => self.events.notify_pocket_cards_changed(cards),
-					Err(error) => self.events.notify_pocket_cards_failed(v01::GenericError {
-						reason: error.to_string(),
-					}),
-				}
-				Ok(())
-			},
-		}
-	}
+    async fn remove_pocket_card(
+        &self,
+        _product: &ProductContext,
+        request: v01::HostPocketRemoveCardRequest,
+    ) -> Result<(), v01::HostPocketRemoveCardError> {
+        let unknown = |error: HostRejection| v01::HostPocketRemoveCardError::Unknown {
+            reason: error.to_string(),
+        };
+        match self
+            .pocket
+            .remove_card(request.card_id)
+            .await
+            .map_err(unknown)?
+        {
+            NativePocketRemoval::Privileged => Err(v01::HostPocketRemoveCardError::Privileged),
+            // A card this host does not hold is already removed.
+            NativePocketRemoval::Absent => Ok(()),
+            NativePocketRemoval::Removed => {
+                // The removal stands either way. A host that can no longer
+                // list its cards says so on the stream rather than leaving the
+                // product on a list that still holds the removed card.
+                match self.pocket.list_cards() {
+                    Ok(cards) => self.events.notify_pocket_cards_changed(cards),
+                    Err(error) => self.events.notify_pocket_cards_failed(v01::GenericError {
+                        reason: error.to_string(),
+                    }),
+                }
+                Ok(())
+            }
+        }
+    }
 }
 
 /// [`crate::platform::GamePlatform`] served by host-provided
@@ -1412,4 +1417,20 @@ mod status_relay_tests {
 		let _live = platform.subscribe_balance(&product(), None);
 		assert_eq!(platform.lock_followers().len(), 1);
 	}
+}
+
+#[cfg(test)]
+mod tests {
+    use super::decode_identity_candidates;
+
+    #[test]
+    fn native_identity_candidates_reject_malformed_accounts_and_oversized_sets() {
+        assert_eq!(
+            decode_identity_candidates(vec![vec![3; 32]]).unwrap(),
+            vec![[3; 32]]
+        );
+        assert!(decode_identity_candidates(vec![vec![3; 31]]).is_err());
+        assert!(decode_identity_candidates(vec![vec![3; 33]]).is_err());
+        assert!(decode_identity_candidates(vec![vec![3; 32]; 33]).is_err());
+    }
 }

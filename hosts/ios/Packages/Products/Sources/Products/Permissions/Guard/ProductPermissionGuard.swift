@@ -78,8 +78,9 @@ public final class ProductPermissionGuard: ProductPermissionGuarding, @unchecked
              .chainSubmitAccess,
              .preimageSubmitAccess,
              .statementSubmitAccess,
-             .jamPeersAccess,
-             .userIdentityAccess:
+             .userIdentityAccess,
+             .chatAuthority,
+             .statementStoreAllowance:
             try await remoteHandler.request(productId: productId, permission: permission)
         }
     }
@@ -168,8 +169,9 @@ public final class ProductPermissionGuard: ProductPermissionGuarding, @unchecked
              .chainSubmitAccess,
              .preimageSubmitAccess,
              .statementSubmitAccess,
-             .jamPeersAccess,
-             .userIdentityAccess:
+             .userIdentityAccess,
+             .chatAuthority,
+             .statementStoreAllowance:
             try await remoteHandler.isGranted(productId: productId, permission: permission)
         }
     }

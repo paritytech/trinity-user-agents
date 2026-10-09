@@ -159,8 +159,17 @@ private extension ProductPermissionPromptViewFactory {
             )
             body = String(localized: .Products.permissionBodyJamPeers)
         case .chatAuthority:
-            title = String(localized: .Products.permissionTitleChatAuthority(productId: productId))
-            body = permission.permissionDescription
+            PromptContent(
+                title: String(localized: .Products.permissionTitleChatAuthority(productId: productId)),
+                body: String(localized: .Products.permissionBodyChatAuthority),
+                icon: makeIcon(systemName: "message.badge.shield")
+            )
+        case let .statementStoreAllowance(derivationIndex):
+            PromptContent(
+                title: String(localized: .Products.permissionTitleStatementStoreAllowance(productId: productId)),
+                body: ProductPermission.statementStoreAllowanceDescription(derivationIndex: derivationIndex),
+                icon: makeIcon(systemName: "externaldrive.badge.plus")
+            )
         }
         return PromptContent(title: title, body: body, icon: makeIcon(systemName: permission.permissionIconSystemName))
     }
@@ -212,6 +221,10 @@ private extension ProductPermissionPromptViewFactory {
             )
         case .userIdentityAccess:
             "- " + String(localized: .Products.permissionBodyUserIdentityAccess)
+        case .chatAuthority:
+            "- " + String(localized: .Products.permissionBodyChatAuthority)
+        case let .statementStoreAllowance(derivationIndex):
+            "- " + ProductPermission.statementStoreAllowanceDescription(derivationIndex: derivationIndex)
         }
     }
 

@@ -53,7 +53,10 @@ struct TrustedRemoteProductPermissionRequesterTests {
             .accountAccess(targetProductId: "other.dot"),
             .balanceAccess,
             .userIdentityAccess,
-            .chatAuthority
+            .chatAuthority,
+            .statementStoreAllowance(derivationIndex: nil),
+            .statementStoreAllowance(derivationIndex: .index(7)),
+            .statementStoreAllowance(derivationIndex: .raw(Data(repeating: 9, count: 32)))
         ] {
             let (sut, wrapped) = makeSUT()
 
