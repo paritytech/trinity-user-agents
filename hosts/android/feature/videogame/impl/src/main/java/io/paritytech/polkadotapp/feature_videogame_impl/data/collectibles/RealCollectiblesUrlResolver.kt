@@ -3,10 +3,12 @@ package io.paritytech.polkadotapp.feature_videogame_impl.data.collectibles
 import android.net.Uri
 import androidx.core.net.toUri
 import io.paritytech.polkadotapp.common.utils.FeatureOption
+import io.paritytech.polkadotapp.common.utils.flatMap
 import io.paritytech.polkadotapp.common.utils.flatRecover
 import io.paritytech.polkadotapp.common.utils.isDisabled
 import io.paritytech.polkadotapp.common.utils.logFailure
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsResolver
+import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
 import io.paritytech.polkadotapp.feature_videogame_api.domain.collectibles.CollectiblesUrlResolver
 import io.paritytech.polkadotapp.tools_remoteconfig_api.RemoteConfigService
 import kotlinx.serialization.json.Json
@@ -14,6 +16,7 @@ import javax.inject.Inject
 
 class RealCollectiblesUrlResolver @Inject constructor(
     private val dotNsResolver: DotNsResolver,
+    private val dotNsTldProvider: DotNsTldProvider,
     private val remoteConfigService: RemoteConfigService,
 ) : CollectiblesUrlResolver {
     override suspend fun resolveUrl(): Uri? {
@@ -32,9 +35,10 @@ class RealCollectiblesUrlResolver @Inject constructor(
     }
 
     private suspend fun resolveDotNs(): Result<Uri> {
-        return dotNsResolver.resolveToLocalUri(DOT_NS_HOST)
-            .map { "https://$DOT_NS_HOST/".toUri() }
-            .logFailure("DotNs resolution failed for $DOT_NS_HOST")
+        return dotNsTldProvider.getTld()
+            .map { tld -> DOT_NS_LABEL + tld.suffix }
+            .flatMap { host -> dotNsResolver.resolveToLocalUri(host).map { "https://$host/".toUri() } }
+            .logFailure("DotNs resolution failed for $DOT_NS_LABEL")
     }
 
     private suspend fun resolveRemoteConfig(): Result<Uri> {
@@ -51,7 +55,7 @@ class RealCollectiblesUrlResolver @Inject constructor(
     }
 
     private companion object {
-        const val DOT_NS_HOST = "collectibles-webview.dot"
+        const val DOT_NS_LABEL = "stash"
         const val REMOTE_CONFIG_KEY = "collectibles_fallback_url"
         const val ENABLED_KEY = "collectibles_enabled"
     }
