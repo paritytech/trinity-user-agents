@@ -448,7 +448,7 @@ struct RustRuntimeBridgeTests {
         #expect(presenter.receivedRequesterName == "caller.dot")
     }
 
-    @Test func unsupportedProfileDisclosurePropagatesWithoutDenial() async throws {
+    @Test func profileDisclosureWithoutPresentationPropagatesWithoutDenial() async throws {
         let presenter = TrUAPIConfirmationPresenter(routerFacade: ProductRoutersFacade.worker())
         let bridge = makeBridge(confirmationPresenter: presenter)
         let review = UserConfirmationReview.profileDisclosure(ProfileDisclosureReview(productId: "caller.dot"))
@@ -459,14 +459,16 @@ struct RustRuntimeBridgeTests {
         #expect(try await bridge.confirmUserAction(review: review) == false)
     }
 
-    @Test func supportedPermissionWithoutPresentationStillDenies() async throws {
+    @Test func supportedPermissionWithoutPresentationThrowsWithoutDenial() async throws {
         let presenter = TrUAPIConfirmationPresenter(routerFacade: ProductRoutersFacade.worker())
         let bridge = makeBridge(confirmationPresenter: presenter)
         let review = UserConfirmationReview.accountAccess(
             AccountAccessReview(requestingProductId: "caller.dot", targetProductId: "target.dot")
         )
 
-        #expect(try await bridge.confirmPermission(review: review) == .deny)
+        await #expect(throws: HostRejection.self) {
+            try await bridge.confirmPermission(review: review)
+        }
     }
 
     // MARK: lookupPreimage

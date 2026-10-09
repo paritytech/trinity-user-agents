@@ -36,6 +36,20 @@ If you experience problems with any product or service that was built on or depl
 - **Manual backups** — Keep your account stored only in the secure enclave storage locally.
 - **Customization** — Fully customizable UI design system with 5 default themes.
 
+### Native profile permission settings
+
+Profile sharing is a separate, product-scoped permission, not part of Chat
+identity authority or trusted outbound network access. Native settings enumerate
+its canonical grant or denial and revoke that exact permission; the persisted
+`profile_disclosure` case has an empty key. Revocation invalidates pending consent
+and one-time grants without changing another product's authority. A failed write
+leaves the existing settings row and authority intact.
+
+Profile disclosure reviews use the native permission prompt and preserve explicit
+allow-once, allow-always and deny choices. Missing presentation or cancellation
+throws instead of recording a user denial. Runtime/session consent checks remain
+authoritative.
+
 ## Getting started
 
 For the in-tree Host build and Chat product, follow the

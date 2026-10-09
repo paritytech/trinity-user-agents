@@ -163,7 +163,6 @@ Polkadot Android is a self-custodial superapp: your keys are created on your pho
 - It does **not** act as a custodian of your keys or your money — the keys are stored only on your device, and nobody (including the developers) can freeze, recover, or move your funds. If you lose your device and have no cloud/written backup, the associated accounts are gone.
 - It does **not** route your chats and calls through company messaging servers — messages travel through the public chain, calls go peer-to-peer.
 - It is **not** a production-hardened product — treat it as a reference implementation (see the warning at the top).
-- Seity profile-disclosure consent has no native prompt yet. Its permission callback returns an error, leaving an unanswered authorization `NotDetermined` rather than recording a user denial. Single-action confirmation still fails closed.
 
 ### Under the hood
 
@@ -176,6 +175,13 @@ allowance authority is separate from statement submission. Settings changes and
 revocations write to the shared Rust authorization store, not an Android-only
 grant. These operations obtain consent through the canonical runtime confirmation
 flow; the legacy permission guard only observes their stored authorization.
+
+Profile sharing is a separate canonical permission, displayed and revocable per
+product in settings. Neither Chat identity access nor trusted remote defaults
+grant profile-disclosure authority. The native confirmation identifies the
+requesting product and asks before sharing a profile reference with all Chat
+contacts. Permission and single-action callbacks both await user review; prompt
+failures propagate rather than becoming a persisted permission decision.
 
 GitHub Actions validate pull requests. The remaining workflows are the maintainers'
 own build and distribution flows; a fork does not need them. Build-time

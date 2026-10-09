@@ -382,6 +382,8 @@ extension ProductPermission {
             return .identityDisclosure
         case .chatAuthority:
             return .chatAuthority
+        case .profileDisclosure:
+            return .profileDisclosure
         case let .statementStoreAllowance(derivationIndex):
             let selector: TrUAPIHostDerivationIndex? = try derivationIndex.map { selector in
                 switch selector {
@@ -421,6 +423,8 @@ extension ProductPermission {
             return [.userIdentityAccess]
         case .chatAuthority:
             return [.chatAuthority]
+        case .profileDisclosure:
+            return [.profileDisclosure]
         case let .statementStoreAllowance(derivationIndex):
             return [try .statementStoreAllowance(derivationIndex: derivationIndex?.toSelector())]
         case let .accountAccess(targetProductId):

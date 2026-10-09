@@ -82,6 +82,11 @@ private extension AppPermissionsViewModelFactory {
                 String(localized: .Products.appPermissionChatAuthorityTitle),
                 String(localized: .Products.permissionBodyChatAuthority)
             )
+        case .profileDisclosure:
+            (
+                String(localized: .Products.appPermissionProfileDisclosureTitle),
+                String(localized: .Products.permissionBodyProfileDisclosure)
+            )
         case let .statementStoreAllowance(derivationIndex):
             (
                 String(localized: .Products.appPermissionStatementStoreAllowanceTitle),

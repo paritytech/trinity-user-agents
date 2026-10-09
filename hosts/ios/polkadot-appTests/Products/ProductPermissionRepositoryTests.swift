@@ -645,6 +645,7 @@ extension ProductPermissionRepositoryTests {
     private static var featureRequests: [PermissionAuthorizationRequest] {
         [
             .chatAuthority,
+            .profileDisclosure,
             .statementStoreAllowance(derivationIndex: nil),
             .statementStoreAllowance(derivationIndex: .index(0)),
             .statementStoreAllowance(derivationIndex: .index(UInt32.max)),
@@ -653,10 +654,12 @@ extension ProductPermissionRepositoryTests {
         ]
     }
 
-    @Test("Chat and every allowance selector round-trip without changing canonical authority")
+    @Test("Chat, profile disclosure and every allowance selector round-trip without changing canonical authority")
     func featurePermissionRoundTrips() throws {
         #expect(ProductPermission.chatAuthority.typeName == "chat_authority")
         #expect(ProductPermission.chatAuthority.key == "")
+        #expect(ProductPermission.profileDisclosure.typeName == "profile_disclosure")
+        #expect(ProductPermission.profileDisclosure.key == "")
         #expect(ProductPermission.statementStoreAllowance(derivationIndex: nil).typeName == "statement_store_allowance")
         #expect(ProductPermission.statementStoreAllowance(derivationIndex: nil).key == "legacy")
         #expect(ProductPermission.statementStoreAllowance(derivationIndex: .index(0)).key == "index:0")
@@ -804,5 +807,49 @@ extension ProductPermissionRepositoryTests {
             #expect(try await repository.getPermissionState(productId: "chat.paseo", permission: permission) == .allowedAlways)
         }
         #expect(try await repository.getAllByProduct(productId: "chat.paseo").count == permissions.count)
+    }
+
+    @Test("Profile prompt decisions remain separate from Chat and other products",
+          arguments: [Products.PermissionDecision.allowAlways, .allowOnce, .deny])
+    func profilePromptDecisions(decision: Products.PermissionDecision) async throws {
+        let authority = PermissionAuthorityFixture()
+        let repository = ProductPermissionRepository(storageFacade: UserDataStorageTestFacade(), authority: { authority })
+        try await repository.grant(productId: "profile.paseo", permission: .chatAuthority)
+        #expect(try await repository.getPermissionState(productId: "profile.paseo", permission: .profileDisclosure) == .notDetermined)
+        let requester = PermissionPromptFixture(decision: decision, whilePrompting: {})
+        #expect(try await repository.promptPermission(
+            productId: "profile.paseo", permission: .profileDisclosure, requester: requester
+        ) == (decision != .deny))
+        let entries = try await authority.permissionAuthorizations(productId: "profile.paseo")
+        let status = entries.first { $0.request == .profileDisclosure }?.status ?? .notDetermined
+        switch decision {
+        case .allowAlways:
+            #expect(status == .authorized)
+        case .allowOnce:
+            #expect(status == .notDetermined)
+            #expect(repository.consumeOneTimeGrant(productId: "profile.paseo", permission: .profileDisclosure))
+            #expect(!repository.consumeOneTimeGrant(productId: "profile.paseo", permission: .profileDisclosure))
+        case .deny:
+            #expect(status == .denied)
+        }
+        #expect(try await repository.getPermissionState(productId: "profile.paseo", permission: .chatAuthority) == .allowedAlways)
+        #expect(try await repository.getPermissionState(productId: "other.paseo", permission: .profileDisclosure) == .notDetermined)
+    }
+
+    @Test("Profile revocation fences pending consent",
+          arguments: [Products.PermissionDecision.allowAlways, .allowOnce])
+    func pendingProfilePromptCannotResurrect(decision: Products.PermissionDecision) async throws {
+        let authority = PermissionAuthorityFixture()
+        let storage = UserDataStorageTestFacade()
+        let reader = ProductPermissionRepository(storageFacade: storage, authority: { authority })
+        let settings = ProductPermissionRepository(storageFacade: storage, authority: { authority })
+        let requester = PermissionPromptFixture(decision: decision) {
+            try await settings.revoke(productId: "profile.paseo", permission: .profileDisclosure)
+        }
+        #expect(try await reader.promptPermission(
+            productId: "profile.paseo", permission: .profileDisclosure, requester: requester
+        ) == false)
+        #expect(try await reader.getPermissionState(productId: "profile.paseo", permission: .profileDisclosure) == .notDetermined)
+        #expect(!reader.consumeOneTimeGrant(productId: "profile.paseo", permission: .profileDisclosure))
     }
 }
