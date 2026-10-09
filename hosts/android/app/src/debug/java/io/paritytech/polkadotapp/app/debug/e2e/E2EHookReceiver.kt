@@ -106,7 +106,7 @@ class E2EHookReceiver : BroadcastReceiver() {
     }
 
     private suspend fun registerProduct(hooks: Hooks, productId: ProductId, workerUrl: String, name: String) {
-        hooks.productBotManagementInteractor().upsertProduct(productId, workerUrl, name, card = null).fold(
+        hooks.productBotManagementInteractor().upsertProduct(productId, workerUrl, name, card = null, appUrl = null).fold(
             onSuccess = { log(E2EAcks.productRegistered(productId.value)) },
             onFailure = { logError("product", it) }
         )
