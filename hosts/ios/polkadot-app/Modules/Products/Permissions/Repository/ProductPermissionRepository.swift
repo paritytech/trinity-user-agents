@@ -370,17 +370,28 @@ extension ProductPermission {
     }
 
     func authorizationRequest() throws -> PermissionAuthorizationRequest? {
-        switch try canonicalPermission() {
+        let permission = try canonicalPermission()
+        switch permission {
         case let .deviceCapability(capability):
             return .device(capability.authorizationRequest)
-        case let .networkAccess(domain):
-            return .remote(.init(permission: .remote(domains: [domain])))
-        case let .networkAccessBundle(domains):
-            return .remote(.init(permission: .remote(domains: domains)))
         case let .accountAccess(target):
             return .accountAccess(targetProductId: target)
         case .userIdentityAccess:
             return .identityDisclosure
+        case .balanceAccess:
+            return nil
+        case .networkAccess, .networkAccessBundle, .webRtcAccess,
+             .chainSubmitAccess, .preimageSubmitAccess, .statementSubmitAccess, .jamPeersAccess:
+            return try permission.remoteAuthorizationRequest()
+        }
+    }
+
+    private func remoteAuthorizationRequest() throws -> PermissionAuthorizationRequest {
+        switch self {
+        case let .networkAccess(domain):
+            return .remote(.init(permission: .remote(domains: [domain])))
+        case let .networkAccessBundle(domains):
+            return .remote(.init(permission: .remote(domains: domains)))
         case .webRtcAccess:
             return .remote(.init(permission: .webRtc))
         case .chainSubmitAccess:
@@ -395,8 +406,8 @@ extension ProductPermission {
                 throw ProductPermissionMappingError.unsupported(typeName, genesis)
             }
             return .remote(.init(permission: .jamPeers(genesis: bytes)))
-        case .balanceAccess:
-            return nil
+        default:
+            preconditionFailure("Expected a remote permission")
         }
     }
 
