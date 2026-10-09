@@ -1,5 +1,6 @@
 //! The recovery loop: passes on every head and wake until nothing is live.
 
+use core::ops::ControlFlow;
 use std::collections::{BTreeMap, BTreeSet};
 
 use futures::FutureExt;
@@ -35,20 +36,22 @@ impl LostChains {
         self.0.contains_key(&genesis)
     }
 
-    /// Fails for the first lost chain that still has live transactions, so
-    /// the host retries for it.
-    fn result_for(&self, live_chains: &BTreeSet<H256>) -> Result<(), RecoveryError> {
-        let lost_with_live = self
+    /// Whether recovery lost the heads of every chain in `chains`.
+    fn contains_all(&self, chains: &BTreeSet<H256>) -> bool {
+        chains.iter().all(|genesis| self.contains(*genesis))
+    }
+
+    /// The [`RecoveryError::HeadsLost`] of the first lost chain in
+    /// `live_chains`, or `None` when no lost chain has live transactions.
+    fn heads_lost_error(&self, live_chains: &BTreeSet<H256>) -> Option<RecoveryError> {
+        let (genesis, reason) = self
             .0
             .iter()
-            .find(|(genesis, _)| live_chains.contains(genesis));
-        match lost_with_live {
-            Some((genesis, reason)) => Err(RecoveryError::HeadsLost {
-                genesis: *genesis,
-                reason: reason.clone(),
-            }),
-            None => Ok(()),
-        }
+            .find(|(genesis, _)| live_chains.contains(genesis))?;
+        Some(RecoveryError::HeadsLost {
+            genesis: *genesis,
+            reason: reason.clone(),
+        })
     }
 }
 
@@ -90,15 +93,15 @@ impl DurableTxEngine {
         let wakes = self.recovery_wakes.subscribe();
         let mut lost = LostChains::default();
         self.run_pass().await;
-        if let Some(result) = self.settled(&lost).await {
-            return result;
+        if let ControlFlow::Break(ended) = self.after_pass(&lost).await {
+            return ended;
         }
         let mut triggers = self.triggers(wakes).await;
         loop {
             next_trigger(&mut triggers, &mut lost).await;
             self.run_pass().await;
-            if let Some(result) = self.settled(&lost).await {
-                return result;
+            if let ControlFlow::Break(ended) = self.after_pass(&lost).await {
+                return ended;
             }
         }
     }
@@ -128,21 +131,35 @@ impl DurableTxEngine {
             .boxed()
     }
 
-    /// How recovery ends, or `None` while a transaction some registered
-    /// domain can decide is live on a chain recovery still follows. Rows of a
-    /// domain without an oracle stay as they are: no pass could decide them.
-    /// An unreadable ledger counts as live: abandoning transactions is far
-    /// worse than one more pass.
-    async fn settled(&self, lost: &LostChains) -> Option<Result<(), RecoveryError>> {
-        let live_chains = match self.db.read(dao::live_domains).await {
-            Ok(domains) => self.chains_of(&domains),
+    /// Whether recovery goes on after a pass. It goes on while a transaction
+    /// some registered domain can decide is live on a chain whose heads it
+    /// still receives. Rows of a domain without an oracle do not count: no
+    /// pass could decide them. Once it stops, it fails if a chain whose
+    /// heads were lost still has live transactions.
+    async fn after_pass(&self, lost: &LostChains) -> ControlFlow<Result<(), RecoveryError>> {
+        let Some(live_chains) = self.readable_live_chains().await else {
+            return ControlFlow::Continue(());
+        };
+        if !lost.contains_all(&live_chains) {
+            return ControlFlow::Continue(());
+        }
+        match lost.heads_lost_error(&live_chains) {
+            Some(error) => ControlFlow::Break(Err(error)),
+            None => ControlFlow::Break(Ok(())),
+        }
+    }
+
+    /// The chains with live transactions, or `None` when the ledger cannot
+    /// be read. An unreadable ledger keeps recovery running: abandoning
+    /// transactions is far worse than one more pass.
+    async fn readable_live_chains(&self) -> Option<BTreeSet<H256>> {
+        match self.db.read(dao::live_domains).await {
+            Ok(domains) => Some(self.chains_of(&domains)),
             Err(error) => {
                 warn!(%error, "durable recovery could not read the ledger");
-                return None;
+                None
             }
-        };
-        let followed_live = live_chains.iter().any(|genesis| !lost.contains(*genesis));
-        (!followed_live).then(|| lost.result_for(&live_chains))
+        }
     }
 
     /// The chains `domains` live on, skipping domains without an oracle.
@@ -481,7 +498,10 @@ mod tests {
         let fixture = fixture(1);
         block_on(fixture.engine.db.close()).unwrap();
 
-        assert!(block_on(fixture.engine.settled(&LostChains::default())).is_none());
+        assert_eq!(
+            block_on(fixture.engine.after_pass(&LostChains::default())),
+            ControlFlow::Continue(())
+        );
     }
 
     /// Nothing could decide a domain without an oracle, so its rows must not
