@@ -1302,6 +1302,7 @@ async fn run_signing_host(
 		initial_session_name,
 		network,
 		ui_handle.clone(),
+		product.clone(),
 	)
 	.await?;
 	// Resolved before the port is bound, so a bad URL still fails on the argument
@@ -1450,6 +1451,9 @@ struct SigningHostSession {
 	/// Set when this host serves a Pocket product. Held across runtime rebuilds
 	/// so switching session keeps the card set it was seeded with.
 	pocket: Option<Arc<pocket::CliPocketHost>>,
+	/// The product this host serves. Cache nodes are paid as the session's
+	/// allowance account for the product selected at each read.
+	product: Arc<frame_server::ProductSelection>,
 }
 
 #[derive(Default)]
@@ -1549,6 +1553,7 @@ async fn start_signing_host(
 	session_name: String,
 	network: NetworkConfig,
 	ui: Option<UiHandle>,
+	product: Arc<frame_server::ProductSelection>,
 ) -> Result<SigningHostSession> {
 	let mnemonic = normalized(args.mnemonic.clone());
 	let mut profile =
@@ -1636,6 +1641,7 @@ async fn start_signing_host(
 			.map_err(|error| {
 				anyhow::anyhow!("failed to activate cached session: {}", error.reason)
 			})?;
+		platform.set_cache_account(&cached_signer.entropy, product.clone());
 		if let (Some(profile), Some(user_id)) = (&profile, &cached_signer.lite_username) {
 			if let Some(account_name) = &cached_signer.account_name {
 				catalog.store_signer_binding(profile, user_id, account_name)?;
@@ -1684,6 +1690,7 @@ async fn start_signing_host(
 		ui,
 		chat,
 		pocket,
+		product,
 	})
 }
 
@@ -2197,6 +2204,7 @@ async fn activate_current_signer(session: &mut SigningHostSession) -> Result<()>
 		.activate_local_session_with_identity(signer.entropy.clone(), signer.lite_username.clone())
 		.await
 		.map_err(|err| anyhow::anyhow!("failed to activate local session: {}", err.reason))?;
+	session.platform.set_cache_account(&signer.entropy, session.product.clone());
 	if let (Some(profile), Some(user_id)) = (&session.profile, &signer.lite_username) {
 		if let Some(account_name) = &signer.account_name {
 			session.catalog.store_signer_binding(profile, user_id, account_name)?;
@@ -2992,6 +3000,7 @@ async fn activate_session(session: &mut SigningHostSession, name: String) -> Res
 	{
 		bail!("failed to activate session {name:?}: {}", error.reason);
 	}
+	platform.set_cache_account(&signer.entropy, session.product.clone());
 	if let (Some(user_id), Some(account_name)) = (&signer.lite_username, &signer.account_name) {
 		session.catalog.store_signer_binding(&profile, user_id, account_name)?;
 	}
@@ -3078,6 +3087,7 @@ async fn import_mnemonic_session(
 				error.reason
 			)
 		})?;
+	platform.set_cache_account(imported.entropy(), session.product.clone());
 
 	let signer = accounts::persist_imported_signer(
 		&profile.account_base_path,
@@ -3926,8 +3936,19 @@ mod cli_tests {
 		let network = Network::default().config();
 		let catalog = SessionCatalog::new(base_path.to_path_buf(), network.id)?;
 		catalog.set_current(name)?;
-		start_signing_host(&SigningHostArgs::default(), catalog, name.to_string(), network, None)
-			.await
+		let product = frame_server::ProductSelection::new(
+			DEFAULT_PRODUCT_ID.to_string(),
+			ExecutionKind::App.context(),
+		)?;
+		start_signing_host(
+			&SigningHostArgs::default(),
+			catalog,
+			name.to_string(),
+			network,
+			None,
+			product,
+		)
+		.await
 	}
 
 	fn finish_session_account(session: &SigningHostSession) -> Result<Vec<u8>> {
