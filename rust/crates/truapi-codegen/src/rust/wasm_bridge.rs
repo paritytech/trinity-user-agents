@@ -39,7 +39,7 @@ pub fn generate_wasm_bridge(
         use futures::stream::BoxStream;
         use js_sys::{{Function, Uint8Array}};
         use parity_scale_codec::Encode;
-        use truapi::v01;
+        use truapi::latest;
         use wasm_bindgen::JsValue;
 
         use super::{{
@@ -531,7 +531,7 @@ fn rust_type(ty: &TypeRef, ctx: &BridgeCtx<'_>) -> Result<String> {
         )),
         TypeRef::Named { name, args } if ctx.api_types.contains_key(name.as_str()) => {
             if args.is_empty() {
-                Ok(format!("v01::{name}"))
+                Ok(protocol_type_path(name))
             } else {
                 bail!("generic API type `{name}` is not supported in wasm bridge")
             }
@@ -762,6 +762,19 @@ fn resolve_alias_type<'a>(name: &'a str, ctx: &BridgeCtx<'a>) -> Option<&'a Type
             TypeDefKind::Alias(TypeRef::Named { name, .. }) => current = name,
             _ => return Some(type_def),
         }
+    }
+}
+
+/// The Rust path of a protocol type. A `V01`-style prefix is the version the
+/// signature names explicitly, and an unprefixed name is the latest version.
+fn protocol_type_path(name: &str) -> String {
+    let versioned = name
+        .strip_prefix('V')
+        .filter(|rest| rest.len() > 2 && rest.as_bytes()[..2].iter().all(u8::is_ascii_digit))
+        .map(|rest| rest.split_at(2));
+    match versioned {
+        Some((version, simple_name)) => format!("truapi::v{version}::{simple_name}"),
+        None => format!("latest::{name}"),
     }
 }
 

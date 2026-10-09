@@ -499,6 +499,42 @@ fn should_skip_type_candidate(name: &str, candidate: &ItemCandidate) -> bool {
     should_skip_type_name(name) || candidate.path.iter().any(|segment| segment == "latest")
 }
 
+/// Names the protocol types a platform signature refers to the way the
+/// generated clients do: the newest version of a type keeps its plain name and
+/// each older one carries its version, so a signature that names an older
+/// version explicitly still resolves to that version.
+pub fn protocol_name_context(krate: &Crate) -> NameContext {
+    let mut ctx = NameContext::default();
+    for (simple_name, candidates) in
+        collect_public_candidates(krate, &["struct", "enum", "type_alias"])
+    {
+        let versioned = candidates
+            .iter()
+            .filter_map(|candidate| {
+                let version = candidate
+                    .path
+                    .iter()
+                    .find_map(|segment| version_module_number(segment))?;
+                Some((version, candidate))
+            })
+            .collect::<Vec<_>>();
+        let Some(newest) = versioned.iter().map(|(version, _)| *version).max() else {
+            continue;
+        };
+        for (version, candidate) in versioned {
+            let output_name = if version == newest {
+                simple_name.clone()
+            } else {
+                format!("V{version:02}{simple_name}")
+            };
+            ctx.by_item_id
+                .insert(candidate.item_id.clone(), output_name.clone());
+            ctx.by_path.insert(candidate.path.join("::"), output_name);
+        }
+    }
+    ctx
+}
+
 fn build_name_context(type_candidates: &BTreeMap<String, Vec<ItemCandidate>>) -> NameContext {
     let mut ctx = NameContext::default();
     for (simple_name, candidates) in type_candidates {
