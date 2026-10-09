@@ -124,8 +124,9 @@ fn parse_providers(text: &str) -> (Vec<[u8; 32]>, Vec<Provider>) {
     (ids, callable)
 }
 
-/// Where a cache node got the content, from its `x-cache-origin` header: `local`, `source`, or
-/// `peer:` and the 64 hex digits of the endpoint id of the peer. Other text gives `Unknown`.
+/// Where a cache node got the content, from its `x-cache-origin` header. The header is `local`,
+/// `source`, or `peer:` and the 64 hex digits of the endpoint id of the peer. Other text gives
+/// `Unknown`.
 fn parse_origin(origin: &str) -> CacheOrigin {
     match origin {
         "local" => CacheOrigin::Local,
@@ -291,9 +292,9 @@ fn signed_fields(
     message
 }
 
-/// The bytes that a payer signs for one cache delivery: the shared fields, the service as one byte
-/// (0 for a delivery), then the retention size, `from` and `until` as little-endian u64s. A
-/// delivery has no retention, so these three values are 0.
+/// The bytes that a payer signs for one cache delivery. They are the shared fields and the service
+/// as one byte (0 for a delivery). Then come the retention size, `from` and `until` as
+/// little-endian u64s. A delivery has no retention, so these three values are 0.
 fn receipt_message(
     transfer: &str,
     payer: &[u8; 32],
@@ -306,8 +307,8 @@ fn receipt_message(
     message
 }
 
-/// The bytes that a payer signs to ask one provider for one read: the shared fields and the issue
-/// time in Unix seconds, as a little-endian u64.
+/// The bytes that a payer signs to ask one provider for one read. They are the shared fields and
+/// the issue time in Unix seconds, as a little-endian u64.
 fn read_message(
     transfer: &str,
     payer: &[u8; 32],
@@ -465,10 +466,10 @@ impl CacheNodes {
     }
 
     /// One pass through the cache nodes in quality order, or through the provider `only`. The
-    /// answer has the value from the first provider that sends bytes that hash to `cid`, and an
-    /// attempt for each provider that the host asked. The host pays the provider that served.
-    /// Without a payer or a callable provider, the answer is `NoCacheProviders`. An `only` outside
-    /// the provider set gives `UnknownProvider`.
+    /// answer has the value from the first provider that sends bytes that hash to `cid`. It also
+    /// has an attempt for each provider that the host asked. The host pays the provider that
+    /// served. Without a payer or a callable provider, the answer is `NoCacheProviders`. An `only`
+    /// outside the provider set gives `UnknownProvider`.
     async fn read_reported(
         &self,
         cid: &str,

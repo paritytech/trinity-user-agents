@@ -58,9 +58,9 @@ pub trait Preimage: Send + Sync {
         Err(CallError::unavailable())
     }
 
-    /// Read a preimage once, through a route that the product chooses, and
-    /// report how the host got it: which source served it, and every source
-    /// that the host asked. A miss answers no value. A host without this
+    /// Read a preimage once, through a route that the product chooses. Report
+    /// how the host got it: the source that served it, and every source that
+    /// the host asked. A miss answers no value. A host without this
     /// capability answers `Unsupported`, and the product can use
     /// `lookupSubscribe` instead. The trait keeps wire id 2 free for
     /// `Preimage.retain`.
