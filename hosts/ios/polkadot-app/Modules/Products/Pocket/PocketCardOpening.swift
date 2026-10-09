@@ -16,6 +16,9 @@ enum PocketCardOpening {
         navigator: ModuleNavigating,
         pocket: ProductPocketService
     ) {
+        // A second screen would take the open card's page and leave it blank.
+        guard !pocket.cardHosts.isOnDisplay(card.key) else { return }
+
         guard
             let url = card.key.launchUrl,
             let page = flowState.hostProvider.page(url: url),

@@ -39,6 +39,13 @@ final class PocketCardHosts {
         return product
     }
 
+    /// Whether the card for `key` is open on screen now.
+    func isOnDisplay(_ key: PocketCardKey) -> Bool {
+        guard let held, held.key == key else { return false }
+
+        return held.surface.screen?.isOnDisplay == true
+    }
+
     /// Gives up a product held for a card the collection no longer has, since a
     /// card that is gone has no next tap.
     func keepOnly(_ isStillHeld: (PocketCardKey) -> Bool) {

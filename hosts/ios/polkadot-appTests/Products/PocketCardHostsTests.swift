@@ -62,6 +62,28 @@ struct PocketCardHostsTests {
         #expect(first?.surface !== second?.surface)
     }
 
+    /// A card already open is what the user asked for. Opening it again would
+    /// build a second screen that takes its page, and closing that one would
+    /// leave the card under it blank.
+    @Test
+    func knowsWhetherACardIsOpenOnScreen() async throws {
+        let hosts = PocketCardHosts()
+        let product = try #require(hosts.product(for: loyalty) { _ in StubSPAView() })
+        let screen = PocketCardScreenViewController(card: loyaltyCard, product: product.view, surface: product.surface)
+        let presenter = UIViewController()
+        let window = showing(presenter)
+        let beforeOpening = hosts.isOnDisplay(loyalty)
+
+        await present(cardNavigation(screen), from: presenter)
+        product.surface.claim(screen)
+        let whileOpen = [hosts.isOnDisplay(loyalty), hosts.isOnDisplay(trophy)]
+        await dismissPresented(from: presenter)
+
+        #expect([beforeOpening, hosts.isOnDisplay(loyalty)] == [false, false])
+        #expect(whileOpen == [true, false])
+        withExtendedLifetime(window) {}
+    }
+
     /// A card the collection no longer holds has no next tap, so the product
     /// behind it is given up rather than kept warm.
     @Test
