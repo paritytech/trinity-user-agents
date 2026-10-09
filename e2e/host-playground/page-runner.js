@@ -36,6 +36,10 @@
   // pass once the page reaches the path.
   const IN_APP_DESTINATIONS = { "navigate-internal": "/navigation" };
 
+  // Tests whose entry JSON holds key material for the test account. Results
+  // are published as artifacts, so these keep only their message.
+  const SECRET_DETAIL = new Set(["derive-entropy"]);
+
   async function runOne(id, timeoutMs = 60000) {
     const started = Date.now();
     const result = (fields) => ({ id, durationMs: Date.now() - started, ...fields });
@@ -81,7 +85,7 @@
       outcome: settled.dataset.outcome || undefined,
       message: settled.querySelector("div.break-all")?.textContent?.trim() || undefined,
       // The entry's JSON, which carries what the message abbreviates, such as full addresses.
-      detail: settled.querySelector("pre")?.textContent?.trim().slice(0, 4000) || undefined,
+      detail: SECRET_DETAIL.has(id) ? undefined : settled.querySelector("pre")?.textContent?.trim().slice(0, 4000) || undefined,
     });
   }
 
