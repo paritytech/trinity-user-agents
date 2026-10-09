@@ -412,6 +412,9 @@ private struct NetworkTestProduct {
                     webView: webView, window: window, navigationDelegate: ready
                 )
             } catch {
+                print("Product page failed: url=\(webView.url?.absoluteString ?? "none"), "
+                    + "loading=\(webView.isLoading), progress=\(webView.estimatedProgress), "
+                    + "requests=\(server.requests(path: "/product")), error=\(error)")
                 window.close()
                 throw error
             }
@@ -440,26 +443,39 @@ private struct NetworkTestProduct {
 
 @MainActor
 private final class ProductPageReady: NSObject, WKScriptMessageHandler, WKNavigationDelegate {
-    private var onReady: (() -> Void)?
+    private var readiness: AsyncThrowingStream<Void, Error>.Continuation?
 
     func load(_ webView: WKWebView, url: URL) async throws {
-        let ready = AsyncStream<Void>.makeStream()
-        onReady = {
-            ready.continuation.yield(())
+        let ready = AsyncThrowingStream<Void, Error>.makeStream()
+        readiness = ready.continuation
+        defer {
+            readiness = nil
             ready.continuation.finish()
         }
-        defer { onReady = nil }
         webView.load(URLRequest(url: url))
         try await withNetworkTestTimeout("page ready \(url.absoluteString)") {
             var iterator = ready.stream.makeAsyncIterator()
-            guard await iterator.next() != nil else { throw CancellationError() }
+            guard try await iterator.next() != nil else { throw CancellationError() }
         }
     }
 
     func userContentController(_: WKUserContentController, didReceive _: WKScriptMessage) {
-        let callback = onReady
-        onReady = nil
-        callback?()
+        readiness?.yield(())
+        readiness?.finish()
+    }
+
+    func webView(_: WKWebView, didFailProvisionalNavigation _: WKNavigation!, withError error: Error) {
+        readiness?.finish(throwing: error)
+    }
+
+    func webView(_: WKWebView, didFail _: WKNavigation!, withError error: Error) {
+        readiness?.finish(throwing: error)
+    }
+
+    func webViewWebContentProcessDidTerminate(_: WKWebView) {
+        readiness?.finish(throwing: NSError(
+            domain: WKError.errorDomain, code: WKError.Code.webContentProcessTerminated.rawValue
+        ))
     }
 }
 
