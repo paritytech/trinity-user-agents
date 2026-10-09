@@ -24,6 +24,16 @@ struct BundledProductsTests {
         ))
     }
 
+    /// The app's network has its own top-level domain, which a bundled id
+    /// need not end in, and a provider's screen must still resolve.
+    @Test func opensPagesUnderItsOwnIdOnAnyNetwork() throws {
+        let product = BundledProduct(id: "provider.dot", directory: URL(fileURLWithPath: "/bundle/provider.dot"))
+        let page = try #require(product.page(navigationDestination: "provider.dot/card?intent=fs_1"))
+
+        #expect(page.host.toDotDomain() == "provider.dot")
+        #expect(page.page == "/card?intent=fs_1")
+    }
+
     /// A build made without the bundle still runs, with nothing bundled.
     @Test func shipsNothingWithoutARoot() {
         #expect(BundledProducts(root: nil).all.isEmpty)

@@ -44,6 +44,15 @@ public struct BundledProduct: Hashable, Sendable {
     public func hasApp(fileManager: FileManager = .default) -> Bool {
         fileManager.fileExists(atPath: appDirectory.appendingPathComponent(ProductBundle.indexHTML).path)
     }
+
+    /// The App's page at `navigationDestination`, its id followed by a route.
+    /// The id is the same on every network, so it is read against its own
+    /// root rather than the network's top-level domain.
+    public func page(navigationDestination: String) -> ProductPage? {
+        guard let root = id.components(separatedBy: ProductHost.separator).last else { return nil }
+
+        return ProductPage.fromNavigationDestination(navigationDestination, tld: root)
+    }
 }
 
 /// The products shipped under one root directory, one subdirectory each.

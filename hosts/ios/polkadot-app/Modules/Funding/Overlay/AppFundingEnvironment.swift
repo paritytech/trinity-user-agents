@@ -42,10 +42,13 @@ final class AppFundingEnvironment: FundingOverlayEnvironment {
     func providerPage(providerId: String, route: String, title: String) -> UIViewController? {
         let destination = route.hasPrefix("/") || route.hasPrefix("#") ? providerId + route : providerId + "/" + route
         let flowState = flowStateProvider.flowState()
-        guard let page = flowState.hostProvider.page(navigationDestination: destination) else { return nil }
 
         // A provider the app ships opens from its own files, under its own id.
         let bundled = bundledProducts.product(providerId).flatMap { $0.hasApp() ? $0 : nil }
+        let page = bundled.flatMap { $0.page(navigationDestination: destination) }
+            ?? flowState.hostProvider.page(navigationDestination: destination)
+        guard let page else { return nil }
+
         let configuration = SPAConfiguration(
             title: title,
             isRootScreen: false,
