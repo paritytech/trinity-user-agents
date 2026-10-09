@@ -15,7 +15,7 @@ status: draft
 ## Summary
 
 - `localStorage.subscribe(key)` streams a key's value on every change, within the product's own namespace.
-- `worker.beginOperation()` / `worker.endOperation(id)` declare a pending operation. The host keeps the worker running while any operation is open.
+- `worker.beginOperation()` / `worker.endOperation(id)` declare a pending operation. The core keeps the worker running while any operation is open, across restarts.
 
 ## Motivation
 
@@ -77,7 +77,7 @@ async fn end_operation(
     request: HostWorkerEndOperationRequest, // { id: OperationId }
 ) -> Result<HostWorkerEndOperationResponse, CallError<HostWorkerOperationError>>;
 
-/// Host-assigned, unique per product. Like `NotificationId`.
+/// Core-assigned, unique per product across restarts.
 pub type OperationId = u32;
 
 pub struct HostWorkerBeginOperationResponse {
@@ -85,48 +85,29 @@ pub struct HostWorkerBeginOperationResponse {
 }
 
 pub enum HostWorkerOperationError {
-    /// The product is at the host's per-product cap of open operations.
+    /// The product is at the per-product cap of open operations.
     /// `end` never returns this.
     TooManyOpen,
     Unknown { reason: String },
 }
 ```
 
-The id is session-scoped and never persisted. No host stores operations, so if the host dies the worker, the id and the operation die together and the next launch starts with none open.
+The core stores open operations, so an operation survives a restart and starts its worker again at the next launch. Ids stay unique per product across restarts. The product keeps each id in host storage and ends the operation with it, even after a restart. An operation still open after 24 hours expires, so one the product lost or forgot cannot keep its worker running.
 
-The host owns operations and the lifecycle. The core forwards each call to a host trait scoped to the calling product, and the operation existing is the keep-alive signal. Every host implements the trait; one with no worker lifecycle, such as the headless CLI, hands out ids and tracks nothing.
+The core owns operations, as it owns the rest of the [Worker Lifecycle](worker-lifecycle.md). It assigns ids and stores open operations, so no host implements them.
 
-An open operation is also demand on the worker: the core takes one reference on the product's worker ledger per open id, so an operation reaches the host through the same `workerDemandChanged` signal an on-screen surface produces, and a host reading that signal needs no second keep-alive rule. The reference is dropped when the operation ends, and a connection that goes away with operations still open drops the ones it held.
-
-```rust
-#[async_trait]
-pub trait ProductOperations: Send + Sync {
-    /// `label` is empty when the product gave none.
-    async fn begin_operation(
-        &self,
-        product: &ProductContext,
-        label: String,
-    ) -> Result<HostWorkerBeginOperationResponse, HostWorkerOperationError>;
-
-    /// Idempotent.
-    async fn end_operation(
-        &self,
-        product: &ProductContext,
-        id: OperationId,
-    ) -> Result<(), HostWorkerOperationError>;
-}
-```
+An open operation is a reference on the product's worker, like a chat room or a Pocket card. The reference is dropped when the operation ends or expires.
 
 Operations are keyed by id and scoped to the product. Two tasks each begin one and the worker stays alive until both end. Ending an id twice, or one that was never begun, releases nothing.
 
-Keep-alive is best-effort. iOS and Android can kill a backgrounded worker. An open operation lets the host request the background time the platform allows (a background task assertion on iOS, a foreground service or WorkManager on Android), and the worker resumes from saved state after a kill.
+Keep-alive is best-effort. iOS and Android can suspend or kill a backgrounded app, and its workers with it. Its open operations start the worker again at the next launch, and it resumes from saved state.
 
 An operation is opaque: an optional label, no funding or deposit typing.
 
 ## Compatibility
 
-All three wire methods are additive. `subscribe_storage` and `ProductOperations` are required host capabilities. Target is v0.2 / latest.
+All three wire methods are additive. `subscribe_storage` is a required host capability. Target is v0.2 / latest.
 
 ## Future directions
 
-Operations become one term of a general liveness rule: `can_execute = has pending operations || has chats || has pocket cards || ...`. On top of that, a host UI listing active operations with `status`, a `list_operations` read to feed it, and user cancel. A prefix subscription if products want to watch a set of keys.
+A host UI listing active operations with `status`, a `list_operations` read to feed it, and user cancel. A prefix subscription if products want to watch a set of keys.
