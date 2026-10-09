@@ -28,4 +28,32 @@ public enum DSTabBarStyle {
     static let shadowRadius: CGFloat = 18
     /// Reach of the shadow mask past the bar, so the blurred shadow is not cut off at the bar edge.
     static let shadowMaskSpread: CGFloat = shadowRadius * 4 + 40
+
+    /// Diameter of the centre control at rest. It sits in the hole with a ring gap.
+    static let centerButtonSize: CGFloat = 60
+    /// Gap between the open centre panel and the bar's side edges.
+    static let centerPanelMargin: CGFloat = 10
+    static let centerPanelCornerRadius: CGFloat = 24
+    /// Concave blend where the lobe meets the panel's bottom edge.
+    static let centerPanelFillet: CGFloat = 18
+
+    /// Strength of the top-lit sheen, which makes the centre control read as a dome.
+    static let centerSheenStrength: Double = 0.35
+    /// Opacity of the frost wash that separates the centre control from the bar.
+    static let centerFrostOpacity: Double = 0.18
+    /// Opacity of the centre control's rim at its top edge.
+    static let centerRimTopOpacity: Double = 0.252
+    /// Opacity of the centre control's rim at its foot, where it has faded out.
+    static let centerRimBottomOpacity: Double = 0.042
+
+    static let centerGlyphSize: CGFloat = 22
+    /// Room the grabber takes at the top of the panel. Counted in the panel's height as well as
+    /// padded, or it eats into the content.
+    static let centerGrabberHeight: CGFloat = 26
+    static let centerGrabberWidth: CGFloat = 36
+    static let centerGrabberThickness: CGFloat = 5
+    static let centerGrabberOpacity: Double = 0.35
+
+    static let centerShadowRadius: CGFloat = 10
+    static let centerShadowY: CGFloat = 4
 }

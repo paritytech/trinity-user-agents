@@ -1,27 +1,31 @@
 import DesignSystem
 import SwiftUI
 
-/// Notched tab bar with four caller-supplied slots. The first two sit left of a centre gap the
-/// width of the hole, the last two sit right of it. The bar supplies chrome and layout only;
-/// each slot draws itself.
-public struct DSTabBarContainer<First: View, Second: View, Third: View, Fourth: View>: View {
+/// Notched tab bar with four caller-supplied slots and a centre slot. The first two sit left of a
+/// centre gap the width of the hole, the last two sit right of it. The bar supplies chrome and
+/// layout only; each slot draws itself.
+public struct DSTabBarContainer<First: View, Second: View, Third: View, Fourth: View, Center: View>: View {
     private let first: First
     private let second: Second
     private let third: Third
     private let fourth: Fourth
+    private let center: Center
 
     /// Slots are placed left to right, two either side of the hole, each taking an equal share
-    /// of the width left over.
+    /// of the width left over. The centre slot is laid over the bar after its mask, so a control
+    /// in the hole can grow above the bar without being clipped.
     public init(
         @ViewBuilder first: () -> First,
         @ViewBuilder second: () -> Second,
         @ViewBuilder third: () -> Third,
-        @ViewBuilder fourth: () -> Fourth
+        @ViewBuilder fourth: () -> Fourth,
+        @ViewBuilder center: () -> Center
     ) {
         self.first = first()
         self.second = second()
         self.third = third()
         self.fourth = fourth()
+        self.center = center()
     }
 
     public var body: some View {
@@ -39,7 +43,7 @@ public struct DSTabBarContainer<First: View, Second: View, Third: View, Fourth: 
         .overlay(border)
         .shadow(color: Color.shadowSoft, radius: DSTabBarStyle.shadowRadius, y: DSTabBarStyle.shadowRadius / 3)
         .mask { DSTabBarShadowMask().fill(style: FillStyle(eoFill: true)) }
-        .background(widthReader)
+        .overlay(alignment: .bottom) { center }
     }
 }
 
@@ -65,21 +69,6 @@ private extension DSTabBarContainer {
             )
             .clipShape(DSTabBarShape(), style: FillStyle(eoFill: true))
     }
-
-    var widthReader: some View {
-        GeometryReader { proxy in
-            Color.clear.preference(key: DSTabBarWidthKey.self, value: proxy.size.width)
-        }
-    }
-}
-
-/// Publishes the bar's width up the view tree, so a centre control can size itself to it.
-struct DSTabBarWidthKey: PreferenceKey {
-    static let defaultValue: CGFloat = 0
-
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
-        value = max(value, nextValue())
-    }
 }
 
 #if DEBUG
@@ -89,7 +78,8 @@ struct DSTabBarWidthKey: PreferenceKey {
                 first: { item("house.fill") },
                 second: { item("bubble.left.fill") },
                 third: { item("safari.fill") },
-                fourth: { item("gearshape.fill") }
+                fourth: { item("gearshape.fill") },
+                center: { EmptyView() }
             )
             .padding(.horizontal, 16)
             .padding(.top, 30)
