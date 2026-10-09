@@ -161,7 +161,9 @@ client's database, and keeps what belongs to the stack itself.
 
 `$v` is the format version, and this RFC defines `$v: 1`. Readers MUST ignore fields and service kinds they do not know,
 so adding either keeps `$v: 1` and older readers keep working. Only a change older readers would misread takes a new
-number. The format is not part of the TrUAPI protocol, so dapps never see it.
+number. An operator that makes such a change publishes the new format at a new URL and MUST keep serving the old format
+at the existing URL, updated alongside the new one, for as long as builds that read it are in use. Newer builds point at
+the new URL. The format is not part of the TrUAPI protocol, so dapps never see it.
 
 ```typescript
 type Descriptor = {
