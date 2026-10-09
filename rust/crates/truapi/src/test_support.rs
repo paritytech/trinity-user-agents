@@ -101,6 +101,8 @@ pub struct StubPlatform {
     pub account_access_confirmed: bool,
     pub account_access_error: Option<&'static str>,
     pub account_access_reviews: Arc<Mutex<Vec<AccountAccessReview>>>,
+    /// Holds the account-access prompt open until the sender fires.
+    pub account_access_confirmation_gate: Mutex<Option<futures::channel::oneshot::Receiver<()>>>,
     /// Permission answers retain their lifetime separately from action confirmations.
     pub permission_confirmation_decisions:
         Mutex<std::collections::VecDeque<crate::platform::PermissionDecision>>,
@@ -1926,6 +1928,14 @@ impl UserConfirmation for StubPlatform {
                     .lock()
                     .expect("account access review list mutex poisoned")
                     .push(review);
+                let gate = self
+                    .account_access_confirmation_gate
+                    .lock()
+                    .expect("account access gate mutex poisoned")
+                    .take();
+                if let Some(gate) = gate {
+                    gate.await.expect("account access gate was released");
+                }
                 (self.account_access_error, self.account_access_confirmed)
             }
             UserConfirmationReview::IdentityDisclosure(_) => {

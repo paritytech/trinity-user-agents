@@ -196,6 +196,7 @@ path. Web hosts do not compile the store.
 - `ProductConnection` holds the existing per-product adapters, permissions, action channels and open-operation references independently of the holder type. The dispatcher erases that type for native control handles. Worker scheduling and ownership remain in their existing components.
 
 - **Paired runtime**: `HostAccounts<SsoAccountHolderClient>` uses retained keys locally and sends holder operations over encrypted SSO when needed. Transport uses the People-chain statement store in `sso_request_service/channel.rs`. The
+- `ProductConsent` holds one runtime's account-access decisions and review rules. The wallet asks it before wallet work and product calls ask it for account access, both on the runtime-wide prompt channel. Allow once answers the same requester and target until the runtime restarts, the wallet locks or changes, or the requesting product is reset, and one account-access prompt runs at a time.
   v2 wire protocol uses raw X25519 keys, HKDF-SHA256, and
   ChaCha20-Poly1305. `SsoRequestService` owns pairing/login state, persisted auth-session reload and remote signing-host liveness monitoring.
 - **`SigningHost`** (wallet-local): signs on device from local BIP-39 entropy,
@@ -233,7 +234,7 @@ the page.
 `SsoAccountHolderService` serves one peer through the shared wallet and the activation that authenticated its channel. It owns that peer's withdrawals without host grants or per-message wallet selection. Directly dispatched stale requests produce the macro-generated NotConnected response; activation loss during a request discards its result. The transport rejects posts on an expired activation, so even a disconnected response requires a live channel. Native transports first verify their own statement and encryption public keys through `open_sso_session`, then retain independent peer services from that binding. Neither a child service nor an old binding can attach itself to a replacement activation, including the same wallet reactivated. Product reset does not invalidate the wallet binding. Already-dispatched transport writes cannot be recalled.
 
 `SsoRequestService::call(request)` sends typed requests to
-[`SsoAccountHolderService`](src/runtime/sso_account_holder_service.rs). Handlers forward remote account invocations and encode wallet receipts in the existing SSO messages. Signing consent belongs to the account implementation, resource consent and issuance to `WalletAccountHolder`; `sso_responder.rs` owns the transport loop. Consent is bound to the request's signing session: account changes, disconnects, and reactivation invalidate pending approval before allocation or key return. Allocation failure details stay in local transcripts.
+[`SsoAccountHolderService`](src/runtime/sso_account_holder_service.rs). Handlers forward remote account invocations and encode wallet receipts in the existing SSO messages. Signing consent belongs to the account implementation, resource consent and issuance to `WalletAccountHolder`. [`SsoResponderService`](src/runtime/sso_responder_service.rs) owns the signing host's side of the transport: pairing answers, the serve loop, duplicate detection and binding native transports, each peer answered by its own `SsoAccountHolderService`. Consent is bound to the request's signing session: account changes, disconnects, and reactivation invalidate pending approval before allocation or key return. Allocation failure details stay in local transcripts.
 Allocation requests use the canonical `truapi::latest::AllocatableResource` type.
 Signing uses canonical request and result types. Product-scoped VRF requests use
 `ProductRequest<P>` to attach the caller to a canonical payload. Both product and
@@ -247,7 +248,7 @@ a withdrawn request posts no response. See the
 [SSO request cancellation RFC](../../../docs/rfcs/sso-request-cancellation.md).
 
 When a device finishes pairing, the signing host reports it to the embedder's
-[`DevicePairingObserver`](src/runtime/signing_host/sso_responder.rs), installed
+[`DevicePairingObserver`](src/runtime/sso_responder_service.rs), installed
 once through `SigningHostRuntime::set_device_pairing_observer`, and on a native
 host to `HostCallbacks::device_paired`. It carries the `PairedSsoPeer` that
 pairing produced, which is also what `resume_pairing` and

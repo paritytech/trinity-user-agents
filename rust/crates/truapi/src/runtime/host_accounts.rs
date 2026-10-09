@@ -7,12 +7,14 @@ use super::authority::{
     CreateTransactionAuthorityRequest, SignPayloadAuthorityRequest, SignRawAuthorityRequest,
     StatementStoreAllowanceKey,
 };
-use super::host_grants::{HostGrantGuard, HostGrantStore};
+use super::host_grants::{GrantBarrier, HostGrantGuard, HostGrantStore};
+use super::product_consent::ProductConsent;
 use super::ring_vrf_registry::{RingVrfRegistryStore, validate_owner_listing};
 use super::services::RuntimeServices;
 use super::signing_host::{
     ChainRingResolver, MemberCandidate, RingResolver, create_proof, development_context_bytes,
 };
+use super::sso_request_service::PairedSessionOwner;
 use super::{HostSession, SsoAccountHolderClient, SsoRequestService, vrf};
 use crate::host_internal::extrinsic::{
     Sr25519Signer, build_signed_transaction, local_transaction_metadata,
@@ -26,11 +28,10 @@ use crate::host_logic::product_account::{
 use crate::host_logic::raw_signing::raw_payload_bytes;
 use crate::host_logic::session::{SessionInfo, SessionState};
 use crate::platform::{
-    PairingHostConfig, PermissionAuthorizationStatus, ProductContext, ProductSubtreeReview,
-    SignVrfReview, UserConfirmationReview, normalize_product_identifier,
+    PairingHostConfig, PermissionAuthorizationStatus, ProductContext, normalize_product_identifier,
 };
 use futures::StreamExt;
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
 #[cfg(not(target_arch = "wasm32"))]
 use std::time::Instant;
 use truapi::{CallContext, CallError, latest as api};
@@ -46,6 +47,7 @@ pub struct HostAccounts<H: AccountHolder> {
     grants: Arc<HostGrantStore>,
     ring_resolver: Arc<dyn RingResolver>,
     ring_vrf_registry: Arc<RingVrfRegistryStore>,
+    consent: Arc<ProductConsent>,
     #[cfg(feature = "test-host")]
     resource_controls: Arc<super::test_resource_controls::TestResourceControls>,
     #[cfg(feature = "test-host")]
@@ -53,26 +55,85 @@ pub struct HostAccounts<H: AccountHolder> {
 }
 
 impl HostAccounts<SsoAccountHolderClient> {
-    /// Bind paired account operations and lifecycle to the same session and grant store.
+    /// Bind paired account operations to a session service whose grants this host keeps.
     pub fn pairing(
         services: Arc<RuntimeServices>,
         config: PairingHostConfig,
     ) -> (Arc<Self>, Arc<SsoRequestService>) {
-        let grants = Arc::new(HostGrantStore::new(services.platform.clone()));
-        let sso = SsoRequestService::new(services.clone(), config, grants.clone());
-        let accounts = Self::new(
-            services.clone(),
-            Arc::new(SsoAccountHolderClient::new(
-                sso.clone(),
-                services.platform.clone(),
-            )),
-            sso.session_state(),
-            grants,
-            RingVrfRegistryStore::new(services.platform.clone()),
-            #[cfg(feature = "test-host")]
-            Arc::default(),
-        );
-        (accounts, sso)
+        let mut sso = None;
+        let accounts = Arc::new_cyclic(|accounts: &Weak<Self>| {
+            let owner: Weak<dyn PairedSessionOwner> = accounts.clone();
+            let service = SsoRequestService::new(services.clone(), config, owner);
+            sso = Some(service.clone());
+            Self::with_parts(
+                services.clone(),
+                Arc::new(SsoAccountHolderClient::new(service.clone())),
+                service.session_state(),
+                Arc::new(HostGrantStore::new(services.platform.clone())),
+                RingVrfRegistryStore::new(services.platform.clone()),
+                Arc::new(ProductConsent::new(services.platform.clone())),
+                #[cfg(feature = "test-host")]
+                Arc::default(),
+            )
+        });
+        (accounts, sso.expect("the session service is built with its owner"))
+    }
+
+    /// Clear one product's grants while keeping the paired session and other products.
+    pub async fn clear_product_state(&self, product_id: &str) -> Result<(), String> {
+        let product_id = normalize_product_identifier(product_id).map_err(|error| error.to_string())?;
+        self.consent.forget_allowed_once_for(&product_id);
+        let session = {
+            let mut lifecycle = self.grants.lifecycle();
+            lifecycle.revoke_product(&product_id);
+            self.session_state.current()
+        };
+        self.grants
+            .persistence()
+            .await
+            .clear_product(session.as_ref(), &product_id)
+            .await
+    }
+
+    /// Drop the paired host's kept AutoSigning keys, as logout requires.
+    pub async fn forget_auto_signing_keys(&self) -> Result<(), String> {
+        self.grants
+            .persistence()
+            .await
+            .clear_auto_signing_keys()
+            .await
+    }
+}
+
+#[async_trait::async_trait]
+impl PairedSessionOwner for HostAccounts<SsoAccountHolderClient> {
+    async fn write_barrier(&self) -> GrantBarrier {
+        self.grants.barrier().await
+    }
+
+    fn session_ended(&self, previous: Option<&SessionInfo>, revoked: bool) {
+        self.grants.session_ended(previous, revoked);
+        self.consent.forget_allowed_once();
+    }
+
+    fn begin_cleanup(&self, barrier: &GrantBarrier) -> bool {
+        self.grants.persistence_under(barrier).begin_cleanup()
+    }
+
+    async fn finish_cleanup(&self, barrier: &GrantBarrier) -> Result<(), String> {
+        self.grants.persistence_under(barrier).drain_cleanup().await
+    }
+
+    async fn prepare_session(
+        &self,
+        barrier: &GrantBarrier,
+        previous: Option<&SessionInfo>,
+        next: &SessionInfo,
+    ) {
+        self.grants
+            .persistence_under(barrier)
+            .prepare_session(previous, next)
+            .await;
     }
 }
 
@@ -84,22 +145,47 @@ impl<H: AccountHolder> HostAccounts<H> {
         session_state: Arc<SessionState>,
         grants: Arc<HostGrantStore>,
         ring_vrf_registry: Arc<RingVrfRegistryStore>,
+        consent: Arc<ProductConsent>,
         #[cfg(feature = "test-host")] resource_controls: Arc<
             super::test_resource_controls::TestResourceControls,
         >,
     ) -> Arc<Self> {
-        Arc::new(Self {
+        Arc::new(Self::with_parts(
+            services,
+            holder,
+            session_state,
+            grants,
+            ring_vrf_registry,
+            consent,
+            #[cfg(feature = "test-host")]
+            resource_controls,
+        ))
+    }
+
+    fn with_parts(
+        services: Arc<RuntimeServices>,
+        holder: Arc<H>,
+        session_state: Arc<SessionState>,
+        grants: Arc<HostGrantStore>,
+        ring_vrf_registry: Arc<RingVrfRegistryStore>,
+        consent: Arc<ProductConsent>,
+        #[cfg(feature = "test-host")] resource_controls: Arc<
+            super::test_resource_controls::TestResourceControls,
+        >,
+    ) -> Self {
+        Self {
             ring_resolver: ChainRingResolver::new(services.chain.clone()),
             services,
             holder,
             session_state,
             grants,
             ring_vrf_registry,
+            consent,
             #[cfg(feature = "test-host")]
             resource_controls,
             #[cfg(feature = "test-host")]
             submit_preimages_locally: core::sync::atomic::AtomicBool::new(false),
-        })
+        }
     }
 
     /// Keep test submissions in memory when no on-chain allowance exists.
@@ -199,7 +285,6 @@ impl<H: AccountHolder> HostAccounts<H> {
         &self,
         cx: &CallContext,
         product: &ProductContext,
-        platform: &dyn crate::platform::Platform,
         mut account: api::ProductAccountId,
     ) -> Result<[u8; 32], CallError<api::HostAccountGetError>> {
         account.dot_ns_identifier = normalize_product_identifier(&account.dot_ns_identifier)
@@ -208,12 +293,10 @@ impl<H: AccountHolder> HostAccounts<H> {
             .current_session()
             .ok_or(CallError::Domain(api::HostAccountGetError::NotConnected))?;
         if account.dot_ns_identifier != product.product_id {
-            match super::account_access_authorization(
-                platform,
-                &product.product_id,
-                &account.dot_ns_identifier,
-            )
-            .await
+            match self
+                .consent
+                .account_access(&product.product_id, &account.dot_ns_identifier)
+                .await
             {
                 Ok(PermissionAuthorizationStatus::Authorized) => {}
                 Ok(
@@ -229,19 +312,8 @@ impl<H: AccountHolder> HostAccounts<H> {
                 }
             }
         }
-        let outbound_review = (account.dot_ns_identifier == product.product_id).then(|| {
-            UserConfirmationReview::ProductSubtree(ProductSubtreeReview {
-                product_id: account.dot_ns_identifier.clone(),
-            })
-        });
-        self.product_account_public_key(
-            cx,
-            &authority_session,
-            product,
-            &account,
-            outbound_review.as_ref(),
-        )
-        .await
+        self.product_account_public_key(cx, &authority_session, product, &account)
+            .await
         .map_err(super::account_get_authority_error)
     }
 
@@ -252,7 +324,6 @@ impl<H: AccountHolder> HostAccounts<H> {
         authority_session: &AuthoritySession,
         product: &ProductContext,
         product_account_id: &api::ProductAccountId,
-        outbound_review: Option<&UserConfirmationReview>,
     ) -> Result<[u8; 32], AuthorityError> {
         let subtree = self
             .product_subtree_public_key(
@@ -261,7 +332,6 @@ impl<H: AccountHolder> HostAccounts<H> {
                 AccountCaller::Local {
                     product,
                     authorization: None,
-                    outbound_review,
                 },
                 product_account_id.dot_ns_identifier.clone(),
             )
@@ -334,11 +404,6 @@ impl<H: AccountHolder> HostAccounts<H> {
         request: api::HostRequestResourceAllocationRequest,
     ) -> Result<api::HostRequestResourceAllocationResponse, AuthorityError> {
         let revision = self.hold_session(authority_session)?.revision();
-        let review =
-            UserConfirmationReview::ResourceAllocation(crate::platform::ResourceAllocationReview {
-                calling_product_id: product.product_id.clone(),
-                resources: request.resources.clone(),
-            });
         #[cfg(feature = "test-host")]
         let resources = request.resources.clone();
         let count = request.resources.len();
@@ -351,7 +416,6 @@ impl<H: AccountHolder> HostAccounts<H> {
                     caller: AccountCaller::Local {
                         product,
                         authorization: None,
-                        outbound_review: Some(&review),
                     },
                 },
                 request,
@@ -438,7 +502,6 @@ impl<H: AccountHolder> HostAccounts<H> {
                         AccountCaller::Local {
                             product,
                             authorization: None,
-                            outbound_review: None,
                         },
                         product.product_id.clone(),
                     )
@@ -498,7 +561,6 @@ impl<H: AccountHolder> HostAccounts<H> {
                     caller: AccountCaller::Local {
                         product: &product,
                         authorization: None,
-                        outbound_review: None,
                     },
                 },
                 AllowanceResource::StatementStore,
@@ -560,7 +622,6 @@ impl<H: AccountHolder> HostAccounts<H> {
                     caller: AccountCaller::Local {
                         product,
                         authorization: None,
-                        outbound_review: None,
                     },
                 },
                 signer,
@@ -626,7 +687,6 @@ impl<H: AccountHolder> HostAccounts<H> {
                     caller: AccountCaller::Local {
                         product: &product,
                         authorization: None,
-                        outbound_review: None,
                     },
                 },
                 AllowanceResource::Bulletin,
@@ -746,10 +806,7 @@ impl<H: AccountHolder> HostAccounts<H> {
             })
             .await;
         }
-        let review = request.review(invocation.caller);
-        self.holder
-            .sign_payload(invocation.with_outbound_review(&review), request)
-            .await
+        self.holder.sign_payload(invocation, request).await
     }
 
     /// Preserve legacy review even when a retained product key can sign locally.
@@ -781,11 +838,14 @@ impl<H: AccountHolder> HostAccounts<H> {
         } else {
             Ok(None)
         };
-        let review = request.review(invocation.caller, watermarked);
         if !matches!(request, SignRawAuthorityRequest::Product(_)) && !matches!(&grant, Ok(None)) {
             self.holder.require_current_session(authority_session)?;
-            invocation
-                .confirm(self.services.platform.as_ref(), review.clone())
+            self.consent
+                .review(
+                    invocation.call,
+                    invocation.caller,
+                    request.review(invocation.caller, watermarked),
+                )
                 .await?;
         }
         if let (Some(grant), Some(account)) = (grant?, account) {
@@ -810,13 +870,7 @@ impl<H: AccountHolder> HostAccounts<H> {
             })
             .await;
         }
-        self.holder
-            .sign_raw(
-                invocation.with_outbound_review(&review),
-                request,
-                watermarked,
-            )
-            .await
+        self.holder.sign_raw(invocation, request, watermarked).await
     }
 
     /// Prepare chain metadata before using a retained key with the selected grant.
@@ -834,15 +888,18 @@ impl<H: AccountHolder> HostAccounts<H> {
             session: authority_session,
             caller,
         };
-        let review = request.review(invocation.caller);
         if let CreateTransactionAuthorityRequest::Product(payload) = &request
             && let Some(grant) = self
                 .product_signing_grant(authority_session, invocation.caller, &payload.signer)
                 .await?
         {
             if !payload.contacts.is_empty() {
-                invocation
-                    .confirm(self.services.platform.as_ref(), review)
+                self.consent
+                    .review(
+                        invocation.call,
+                        invocation.caller,
+                        request.review(invocation.caller),
+                    )
                     .await?;
             }
             let cx = super::remote_authority_context(invocation.call);
@@ -864,9 +921,7 @@ impl<H: AccountHolder> HostAccounts<H> {
             })
             .await;
         }
-        self.holder
-            .create_transaction(invocation.with_outbound_review(&review), request)
-            .await
+        self.holder.create_transaction(invocation, request).await
     }
 
     /// Keep retained VRF signing restricted to this host's bound product caller.
@@ -900,22 +955,6 @@ impl<H: AccountHolder> HostAccounts<H> {
             );
             return Ok(api::VrfSignature { pre_output, proof });
         }
-        let calling_product_id = invocation
-            .caller
-            .product_id()
-            .ok_or(AuthorityError::Rejected)?;
-        let review = UserConfirmationReview::SignVrf(SignVrfReview {
-            calling_product_id: calling_product_id.to_string(),
-            request: request.clone(),
-        });
-        let invocation = if super::authority::is_blessed_owner(
-            calling_product_id,
-            &request.account.dot_ns_identifier,
-        ) {
-            invocation
-        } else {
-            invocation.with_outbound_review(&review)
-        };
         self.holder.sign_vrf(invocation, request).await
     }
 
@@ -946,19 +985,6 @@ impl<H: AccountHolder> HostAccounts<H> {
                 .sign_simple(SR25519_SIGNING_CONTEXT, &payload, &keypair.public)
                 .to_bytes());
         }
-        let review = UserConfirmationReview::StatementStoreProductSign(
-            crate::platform::StatementStoreProductSignReview {
-                calling_product_id: invocation.caller.product_id().map(str::to_string),
-                account: account.clone(),
-                payload: payload.clone(),
-            },
-        );
-        let invocation = if matches!(invocation.caller, AccountCaller::Local { product, .. } if product.product_id == account.dot_ns_identifier)
-        {
-            invocation
-        } else {
-            invocation.with_outbound_review(&review)
-        };
         self.holder
             .sign_statement_store_product_payload(invocation, account, payload)
             .await
@@ -1277,7 +1303,6 @@ impl<H: AccountHolder + 'static> HostAccounts<H> {
                                 caller: AccountCaller::Local {
                                     product: &product,
                                     authorization: None,
-                                    outbound_review: None,
                                 },
                             },
                             request,

@@ -228,7 +228,6 @@ fn wallet_change_during_ring_preparation_rejects_the_alias() {
                 caller: AccountCaller::Local {
                     product: &product,
                     authorization: None,
-                    outbound_review: None,
                 },
             },
             HostAccountGetAliasRequest {
@@ -254,4 +253,32 @@ fn wallet_change_during_ring_preparation_rejects_the_alias() {
             Err(RingVrfError::from(AuthorityError::Disconnected))
         );
     }
+}
+
+/// Allow once lasts for one unlocked wallet and one installed product: lock,
+/// a wallet switch and a product reset each make the next request ask again.
+#[test]
+fn lock_wallet_switch_and_product_reset_forget_allow_once() {
+    let platform = Arc::new(StubPlatform {
+        permission_confirmation_decisions: std::sync::Mutex::new(
+            [crate::platform::PermissionDecision::AllowOnce; 4].into(),
+        ),
+        ..StubPlatform::default()
+    });
+    let (_, authority) = signing_runtime_with_platform(platform.clone());
+    futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec())).unwrap();
+    let prompts_after_request = || {
+        futures::executor::block_on(authority.consent.account_access("myapp.dot", "peopl.dot"))
+            .unwrap();
+        platform.account_access_reviews.lock().unwrap().len()
+    };
+    let mut prompts = vec![prompts_after_request(), prompts_after_request()];
+    futures::executor::block_on(authority.disconnect());
+    futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec())).unwrap();
+    prompts.push(prompts_after_request());
+    futures::executor::block_on(authority.activate_local_session(vec![0xCD; 16])).unwrap();
+    prompts.push(prompts_after_request());
+    authority.clear_product_state("myapp.dot").unwrap();
+    prompts.push(prompts_after_request());
+    assert_eq!(prompts, vec![1, 1, 2, 3, 4]);
 }

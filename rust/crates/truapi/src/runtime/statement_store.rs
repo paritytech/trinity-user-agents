@@ -376,7 +376,6 @@ impl<H: super::AccountHolder> ProductRuntimeHost<H> {
                 authority_session,
                 &self.connection.product,
                 &product_account_id,
-                None,
             )
             .await
             .map_err(|err| StatementProofFailure::UnableToSign(err.to_string()))?;
@@ -392,7 +391,6 @@ impl<H: super::AccountHolder> ProductRuntimeHost<H> {
                 crate::runtime::authority::AccountCaller::Local {
                     product: &self.connection.product,
                     authorization: None,
-                    outbound_review: None,
                 },
                 product_account_id,
                 payload,

@@ -30,7 +30,6 @@ fn wallet_signing_requires_the_callers_authorization() {
                 AccountCaller::Local {
                     product: &product,
                     authorization: None,
-                    outbound_review: None,
                 }
             },
         };
@@ -152,7 +151,7 @@ fn remote_account_access_reuses_shared_decisions_and_preserves_their_lifetime() 
                 None,
                 PermissionDecision::AllowOnce,
                 PermissionAuthorizationStatus::NotDetermined,
-                2,
+                1,
             ),
             (
                 None,
@@ -289,7 +288,6 @@ fn shared_denials_override_published_access_for_local_and_remote_callers() {
                 caller: AccountCaller::Local {
                     product: &ProductContext::new(request.calling_product_id.clone()).unwrap(),
                     authorization: None,
-                    outbound_review: None,
                 },
             },
             request.payload.clone(),

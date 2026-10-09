@@ -40,12 +40,7 @@ impl<H: AccountHolder> Account for ProductRuntimeHost<H> {
         let HostAccountGetRequest::V1(v01::HostAccountGetRequest { product_account_id }) = request;
         let public_key = self
             .accounts
-            .get_account(
-                cx,
-                &self.connection.product,
-                self.connection.platform.as_ref(),
-                product_account_id,
-            )
+            .get_account(cx, &self.connection.product, product_account_id)
             .await
             .map_err(|error| match error {
                 CallError::Domain(error) => CallError::Domain(HostAccountGetError::V1(error)),
@@ -93,7 +88,6 @@ impl<H: AccountHolder> Account for ProductRuntimeHost<H> {
                 AccountCaller::Local {
                     product: &self.connection.product,
                     authorization: None,
-                    outbound_review: None,
                 },
                 request,
             ),
@@ -132,7 +126,6 @@ impl<H: AccountHolder> Account for ProductRuntimeHost<H> {
                 AccountCaller::Local {
                     product: &self.connection.product,
                     authorization: None,
-                    outbound_review: None,
                 },
                 request,
             )
@@ -165,7 +158,6 @@ impl<H: AccountHolder> Account for ProductRuntimeHost<H> {
                 AccountCaller::Local {
                     product: &self.connection.product,
                     authorization: None,
-                    outbound_review: None,
                 },
                 request,
             ),
@@ -208,7 +200,6 @@ impl<H: AccountHolder> Account for ProductRuntimeHost<H> {
                 AccountCaller::Local {
                     product: &self.connection.product,
                     authorization: None,
-                    outbound_review: None,
                 },
                 request,
             ),
@@ -250,7 +241,6 @@ impl<H: AccountHolder> Account for ProductRuntimeHost<H> {
                 AccountCaller::Local {
                     product: &self.connection.product,
                     authorization: None,
-                    outbound_review: None,
                 },
                 request,
             )
@@ -298,7 +288,6 @@ impl<H: AccountHolder> Account for ProductRuntimeHost<H> {
                 AccountCaller::Local {
                     product: &self.connection.product,
                     authorization: authorization.as_ref(),
-                    outbound_review: None,
                 },
                 request,
             ),

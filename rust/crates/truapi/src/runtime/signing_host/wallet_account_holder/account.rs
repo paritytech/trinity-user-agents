@@ -13,7 +13,7 @@ use crate::platform::{
     PermissionAuthorizationStatus, SignVrfReview, StatementStoreProductSignReview,
     UserConfirmationReview, normalize_product_identifier,
 };
-use crate::platform::{ResourceAllocationReview, has_trusted_remote_permissions};
+use crate::platform::ResourceAllocationReview;
 use crate::runtime::authority::{
     AccountCaller, AccountGrant, AccountGrantOutcome, AccountHolder, AccountInvocation,
     AuthorityError, AuthoritySession, AutoSigningGrant, AutoSigningKey, BulletinAllowanceKey,
@@ -266,11 +266,7 @@ impl WalletAccountHolder {
     ) -> Result<(), RingVrfError> {
         let status = until_cancelled(
             invocation.call,
-            crate::runtime::account_access_authorization(
-                self.services.platform.as_ref(),
-                requester,
-                owner,
-            ),
+            self.consent.account_access(requester, owner),
         )
         .await?
         .map_err(|error| RingVrfError::Unknown {
@@ -314,27 +310,16 @@ impl AccountHolder for WalletAccountHolder {
             .caller
             .product_id()
             .ok_or(AuthorityError::Rejected)?;
-        let confirmed = crate::runtime::until_cancelled(invocation.call, async {
-            if matches!(invocation.caller, AccountCaller::Local { .. })
-                && has_trusted_remote_permissions(caller)
-            {
-                return Ok(true);
-            }
-            self.services
-                .platform
-                .confirm_user_action(UserConfirmationReview::ResourceAllocation(
-                    ResourceAllocationReview {
-                        calling_product_id: caller.to_string(),
-                        resources: request.resources.clone(),
-                    },
-                ))
-                .await
-        })
-        .await?
-        .map_err(AuthorityError::ConfirmationFailed)?;
-        if !confirmed {
-            return Err(AuthorityError::Rejected);
-        }
+        self.consent
+            .review(
+                invocation.call,
+                invocation.caller,
+                UserConfirmationReview::ResourceAllocation(ResourceAllocationReview {
+                    calling_product_id: caller.to_string(),
+                    resources: request.resources.clone(),
+                }),
+            )
+            .await?;
         self.require_current_session(invocation.session)?;
         let product_id = caller.to_string();
         Ok(stream::unfold(
@@ -534,22 +519,22 @@ impl AccountHolder for WalletAccountHolder {
             keys.product_keypair(&request.account).map(|_| ())
         })?;
         if !self.invocation_auto_signing(&invocation, &request.account)? {
-            let confirmed = until_cancelled(
-                invocation.call,
-                self.services
-                    .platform
-                    .confirm_user_action(UserConfirmationReview::SignVrf(SignVrfReview {
+            self.consent
+                .review(
+                    invocation.call,
+                    invocation.caller,
+                    UserConfirmationReview::SignVrf(SignVrfReview {
                         calling_product_id: calling_product_id.to_string(),
                         request: request.clone(),
-                    })),
-            )
-            .await?
-            .map_err(|err| AuthorityError::Unknown {
-                reason: format!("VRF signing confirmation failed: {err:?}"),
-            })?;
-            if !confirmed {
-                return Err(AuthorityError::Rejected);
-            }
+                    }),
+                )
+                .await
+                .map_err(|error| match error {
+                    AuthorityError::ConfirmationFailed(err) => AuthorityError::Unknown {
+                        reason: format!("VRF signing confirmation failed: {err:?}"),
+                    },
+                    error => error,
+                })?;
         }
         self.with_keys(session, |keys| {
             let keypair = keys.product_keypair(&request.account)?;
@@ -578,9 +563,10 @@ impl AccountHolder for WalletAccountHolder {
             _ => false,
         };
         if !granted {
-            invocation
-                .confirm(
-                    self.services.platform.as_ref(),
+            self.consent
+                .review(
+                    invocation.call,
+                    invocation.caller,
                     request.review(invocation.caller),
                 )
                 .await?;
@@ -623,9 +609,10 @@ impl AccountHolder for WalletAccountHolder {
             _ => false,
         };
         if !granted {
-            invocation
-                .confirm(
-                    self.services.platform.as_ref(),
+            self.consent
+                .review(
+                    invocation.call,
+                    invocation.caller,
                     request.review(invocation.caller, watermarked),
                 )
                 .await?;
@@ -668,9 +655,10 @@ impl AccountHolder for WalletAccountHolder {
             _ => false,
         };
         if !granted {
-            invocation
-                .confirm(
-                    self.services.platform.as_ref(),
+            self.consent
+                .review(
+                    invocation.call,
+                    invocation.caller,
                     request.review(invocation.caller),
                 )
                 .await?;
@@ -921,21 +909,17 @@ impl AccountHolder for WalletAccountHolder {
         account: api::ProductAccountId,
         payload: Vec<u8>,
     ) -> Result<[u8; 64], AuthorityError> {
-        if !matches!(invocation.caller, AccountCaller::Local { product, .. } if product.product_id == account.dot_ns_identifier)
-        {
-            invocation
-                .confirm(
-                    self.services.platform.as_ref(),
-                    UserConfirmationReview::StatementStoreProductSign(
-                        StatementStoreProductSignReview {
-                            calling_product_id: invocation.caller.product_id().map(str::to_string),
-                            account: account.clone(),
-                            payload: payload.clone(),
-                        },
-                    ),
-                )
-                .await?;
-        }
+        self.consent
+            .review(
+                invocation.call,
+                invocation.caller,
+                UserConfirmationReview::StatementStoreProductSign(StatementStoreProductSignReview {
+                    calling_product_id: invocation.caller.product_id().map(str::to_string),
+                    account: account.clone(),
+                    payload: payload.clone(),
+                }),
+            )
+            .await?;
         let cx = match invocation.caller {
             AccountCaller::Local { .. } => remote_authority_context(invocation.call),
             AccountCaller::Remote { .. } => invocation.call.clone(),

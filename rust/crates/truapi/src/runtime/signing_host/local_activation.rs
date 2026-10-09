@@ -34,6 +34,7 @@ impl LocalActivation for SigningHost {
         let session = {
             let mut state = self.grants.lifecycle();
             state.clear_memory();
+            self.consent.forget_allowed_once();
             self.wallet.install(activation)
         };
         self.auth_state

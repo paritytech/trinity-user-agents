@@ -36,58 +36,6 @@ pub struct AccountInvocation<'a> {
     pub caller: AccountCaller<'a>,
 }
 
-impl<'a> AccountInvocation<'a> {
-    /// Attach host review metadata while preserving the original caller binding.
-    pub fn with_outbound_review(self, review: &'a crate::platform::UserConfirmationReview) -> Self {
-        let caller = match self.caller {
-            AccountCaller::Local {
-                product,
-                authorization,
-                ..
-            } => AccountCaller::Local {
-                product,
-                authorization,
-                outbound_review: Some(review),
-            },
-            remote => remote,
-        };
-        Self { caller, ..self }
-    }
-
-    /// Review wallet work, preserving the local product's trusted-review policy.
-    pub async fn confirm(
-        &self,
-        platform: &dyn crate::platform::Platform,
-        review: crate::platform::UserConfirmationReview,
-    ) -> Result<(), AuthorityError> {
-        use crate::platform::{
-            CreateTransactionReview, SignPayloadReview, SignRawReview, UserConfirmationReview,
-        };
-        if let AccountCaller::Local { product, .. } = self.caller
-            && crate::platform::has_trusted_remote_permissions(&product.product_id)
-            && matches!(
-                review,
-                UserConfirmationReview::SignPayload(SignPayloadReview::Product { .. })
-                    | UserConfirmationReview::SignRaw(SignRawReview::Product { .. })
-                    | UserConfirmationReview::CreateTransaction(
-                        CreateTransactionReview::Product { .. }
-                    )
-                    | UserConfirmationReview::StatementStoreProductSign(_)
-            )
-        {
-            return Ok(());
-        }
-        let approved = super::until_cancelled(self.call, platform.confirm_user_action(review))
-            .await?
-            .map_err(AuthorityError::ConfirmationFailed)?;
-        if approved {
-            Ok(())
-        } else {
-            Err(AuthorityError::Rejected)
-        }
-    }
-}
-
 /// Trust boundary for product identity and host permissions.
 #[derive(Clone, Copy)]
 pub enum AccountCaller<'a> {
@@ -97,8 +45,6 @@ pub enum AccountCaller<'a> {
         product: &'a ProductContext,
         /// Wallet-issued permission retained by this host.
         authorization: Option<&'a WalletAuthorization>,
-        /// Host review prepared before conversion to an outbound SSO payload.
-        outbound_review: Option<&'a crate::platform::UserConfirmationReview>,
     },
     /// Product identity reported by an authenticated paired host.
     Remote {

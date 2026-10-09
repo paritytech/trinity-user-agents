@@ -7,21 +7,11 @@ mod ring_vrf;
 pub use ring_vrf::{
     ChainRingResolver, MemberCandidate, RingResolver, create_proof, development_context_bytes,
 };
-mod sso_replay;
-mod sso_responder;
 mod wallet_account_holder;
 
 use std::sync::Arc;
 
 pub use local_activation::LocalActivation;
-pub use sso_responder::{
-    AnnouncedPairing, DevicePairingObserver, MAX_PAIRING_METADATA_CHARS, PairedSsoPeer,
-    PairingProposal, PairingProposalMetadata, ResponderExit,
-};
-pub use sso_responder::{
-    disconnect_paired_host, establish_pairing, notify_pairing_allowance_allocation,
-    notify_pairing_failed, respond_to_pairing, resume_pairing,
-};
 #[cfg(not(target_arch = "wasm32"))]
 pub use wallet_account_holder::TrackedStatementRenewalTarget;
 pub use wallet_account_holder::{StatementRenewalTarget, WalletAccountHolder};
@@ -34,11 +24,12 @@ use super::{
     AccountHolder, HostAccounts, HostGrantStore, HostSession, RuntimeServices,
     connected_session_ui_info,
 };
+use super::product_consent::ProductConsent;
 use crate::host_logic::session::SessionState;
 use crate::runtime::auth_state::AuthStateMachine;
 #[cfg(not(target_arch = "wasm32"))]
 use crate::runtime::statement_allowance;
-use sso_replay::SsoReplayLocks;
+use super::sso_responder_service::SsoResponderService;
 
 /// The network suffix the unit tests configure their signing host for. `dot`
 /// keeps the `peopl.dot` handles the RFC examples use meaningful; the
@@ -57,11 +48,11 @@ pub struct SigningHost {
     #[cfg(any(not(target_arch = "wasm32"), test))]
     services: Arc<RuntimeServices>,
     wallet: Arc<WalletAccountHolder>,
+    consent: Arc<ProductConsent>,
     auth_state: AuthStateMachine,
     grants: Arc<HostGrantStore>,
     accounts: Arc<HostAccounts<WalletAccountHolder>>,
-    /// Serializes replay-ledger updates within each wallet and peer scope.
-    sso_replay_locks: SsoReplayLocks,
+    sso_responder: Arc<SsoResponderService>,
     #[cfg(not(target_arch = "wasm32"))]
     renewal_loop_started: std::sync::atomic::AtomicBool,
 }
@@ -81,18 +72,21 @@ impl SigningHost {
     pub fn new(services: Arc<RuntimeServices>, network_suffix: String) -> Arc<Self> {
         let platform = services.platform.clone();
         let registry = RingVrfRegistryStore::new(platform.clone());
+        let consent = Arc::new(ProductConsent::new(platform.clone()));
         let wallet = Arc::new(WalletAccountHolder::new(
             services.clone(),
             network_suffix,
+            consent.clone(),
             registry.clone(),
         ));
-        Self::with_wallet(services, wallet, registry)
+        Self::with_wallet(services, wallet, registry, consent)
     }
 
     fn with_wallet(
         services: Arc<RuntimeServices>,
         wallet: Arc<WalletAccountHolder>,
         registry: Arc<RingVrfRegistryStore>,
+        consent: Arc<ProductConsent>,
     ) -> Arc<Self> {
         let platform = services.platform.clone();
         let grants = Arc::new(HostGrantStore::new(platform.clone()));
@@ -102,17 +96,19 @@ impl SigningHost {
             wallet.session_state(),
             grants.clone(),
             registry,
+            consent.clone(),
             #[cfg(feature = "test-host")]
             wallet.resource_controls().clone(),
         );
         Arc::new(Self {
             #[cfg(any(not(target_arch = "wasm32"), test))]
-            services,
+            services: services.clone(),
+            sso_responder: SsoResponderService::new(services, wallet.clone()),
             wallet,
+            consent,
             auth_state: AuthStateMachine::new(platform),
             grants,
             accounts,
-            sso_replay_locks: SsoReplayLocks::default(),
             #[cfg(not(target_arch = "wasm32"))]
             renewal_loop_started: std::sync::atomic::AtomicBool::new(false),
         })
@@ -167,17 +163,20 @@ impl SigningHost {
             crate::test_support::test_spawner(),
         );
         let registry = RingVrfRegistryStore::new(platform.clone());
+        let consent = Arc::new(ProductConsent::new(platform.clone()));
         let wallet = Arc::new(WalletAccountHolder::new_with_ring_resolver(
             services.clone(),
             network_suffix.to_string(),
+            consent.clone(),
             ring_resolver,
             registry.clone(),
         ));
-        Self::with_wallet(services, wallet, registry)
+        Self::with_wallet(services, wallet, registry, consent)
     }
 
-    fn sso_replay_locks(&self) -> &SsoReplayLocks {
-        &self.sso_replay_locks
+    /// Incoming SSO for this host's wallet, answered by its runtime.
+    pub fn sso_responder(&self) -> Arc<SsoResponderService> {
+        self.sso_responder.clone()
     }
 
     /// Revoke one product's grants while preserving the active wallet.
@@ -188,6 +187,7 @@ impl SigningHost {
             }
         })?;
         self.grants.lifecycle().revoke_product(&product_id);
+        self.consent.forget_allowed_once_for(&product_id);
         Ok(())
     }
 
@@ -195,6 +195,7 @@ impl SigningHost {
         let mut state = self.grants.lifecycle();
         state.clear_memory();
         self.wallet.clear();
+        self.consent.forget_allowed_once();
     }
 }
 
@@ -529,7 +530,7 @@ mod tests {
     /// Persist a user refusal of `caller`'s access to `target`'s account.
     fn deny_account_access(platform: &StubPlatform, caller: &str, target: &str) {
         futures::executor::block_on(
-            // Bare-labelled on both sides, as `account_access_authorization`
+            // Bare-labelled on both sides, as `ProductConsent::account_access`
             // writes it in production.
             crate::host_internal::permissions::set_account_access_status(
                 platform,
@@ -691,7 +692,6 @@ mod tests {
                     caller: AccountCaller::Local {
                         product: &ProductContext::new(caller.to_string()).unwrap(),
                         authorization: None,
-                        outbound_review: None,
                     },
                 },
                 v01::HostAccountGetAliasRequest {
@@ -762,7 +762,6 @@ mod tests {
                     caller: AccountCaller::Local {
                         product: &ProductContext::new(caller.to_string()).unwrap(),
                         authorization: None,
-                        outbound_review: None,
                     },
                 },
                 v01::HostAccountCreateProofRequest {
@@ -785,7 +784,6 @@ mod tests {
                     caller: AccountCaller::Local {
                         product: &ProductContext::new(caller.to_string()).unwrap(),
                         authorization: None,
-                        outbound_review: None,
                     },
                 },
                 v01::HostAccountCreateProofRequest {
@@ -869,7 +867,6 @@ mod tests {
                 caller: AccountCaller::Local {
                     product: &ProductContext::new("PEOPL.DOT".to_string()).unwrap(),
                     authorization: None,
-                    outbound_review: None,
                 },
             },
             v01::HostAccountListRingVrfKeysRequest {
@@ -924,7 +921,6 @@ mod tests {
                 caller: AccountCaller::Local {
                     product: &ProductContext::new("peopl.paseo".to_string()).unwrap(),
                     authorization: None,
-                    outbound_review: None,
                 },
             },
             v01::HostAccountCreateProofRequest {
@@ -971,7 +967,6 @@ mod tests {
                     caller: AccountCaller::Local {
                         product: &ProductContext::new("dim2.dot".to_string()).unwrap(),
                         authorization: None,
-                        outbound_review: None,
                     },
                 },
                 v01::HostAccountCreateProofRequest {
@@ -1055,16 +1050,15 @@ mod tests {
         let platform = Arc::new(StubPlatform {
             // The user declines, so the refusal is written by the production
             // path rather than by a test helper: this has to pin where
-            // `account_access_authorization` files it, not where a fixture does.
+            // `ProductConsent::account_access` files it, not where a fixture does.
             account_access_confirmed: false,
             ..StubPlatform::default()
         });
         cache_grant(&platform, "peopl.dot", r#"{"ordinary":["context"]}"#);
-        futures::executor::block_on(crate::runtime::account_access_authorization(
-            platform.as_ref(),
-            "ordinary.dot",
-            "peopl.dot",
-        ))
+        futures::executor::block_on(
+            crate::runtime::product_consent::ProductConsent::new(platform.clone())
+                .account_access("ordinary.dot", "peopl.dot"),
+        )
         .expect("the stub records the declined decision");
         let (services, _authority) =
             signing_runtime_with_ring_resolver(platform.clone(), full_person_ring_resolver());
@@ -1111,7 +1105,6 @@ mod tests {
                     caller: AccountCaller::Local {
                         product: &ProductContext::new(caller.to_string()).unwrap(),
                         authorization: None,
-                        outbound_review: None,
                     },
                 },
                 v01::HostAccountGetAliasRequest {
@@ -1322,7 +1315,7 @@ mod tests {
     /// The stored `AccountAccess` decision is the only thing that can override a
     /// publisher's grant. Reading a storage fault as "not refused" would let a
     /// locked keychain turn the user's explicit no into a yes, on the strength
-    /// of a manifest the publisher controls. `account_access_authorization`,
+    /// of a manifest the publisher controls. `ProductConsent::account_access`,
     /// which writes that same decision, already fails closed; this is the read
     /// side agreeing with it.
     ///
@@ -1560,7 +1553,6 @@ mod tests {
                 caller: AccountCaller::Local {
                     product: &ProductContext::new("dim2.dot".to_string()).unwrap(),
                     authorization: None,
-                    outbound_review: None,
                 },
             },
             v01::HostAccountCreateProofRequest {
@@ -1615,7 +1607,6 @@ mod tests {
                 caller: AccountCaller::Local {
                     product: &ProductContext::new("peopl.dot".to_string()).unwrap(),
                     authorization: None,
-                    outbound_review: None,
                 },
             },
             HostAccountRegisterRingVrfKeyRequest {
@@ -1652,7 +1643,6 @@ mod tests {
                 caller: AccountCaller::Local {
                     product: &ProductContext::new("peopl.dot".to_string()).unwrap(),
                     authorization: None,
-                    outbound_review: None,
                 },
             },
             HostAccountGetAliasRequest {
@@ -1669,7 +1659,6 @@ mod tests {
                 caller: AccountCaller::Local {
                     product: &ProductContext::new("peopl.dot".to_string()).unwrap(),
                     authorization: None,
-                    outbound_review: None,
                 },
             },
             HostAccountCreateProofRequest {
@@ -1708,7 +1697,6 @@ mod tests {
                 caller: AccountCaller::Local {
                     product: &ProductContext::new("peopl.dot".to_string()).unwrap(),
                     authorization: None,
-                    outbound_review: None,
                 },
             },
             HostAccountGetAliasRequest {
@@ -1761,7 +1749,6 @@ mod tests {
                 caller: AccountCaller::Local {
                     product: &ProductContext::new("myapp.dot".to_string()).unwrap(),
                     authorization: None,
-                    outbound_review: None,
                 },
             },
             HostAccountRingVrfSignRequest {
@@ -1803,7 +1790,6 @@ mod tests {
                 caller: AccountCaller::Local {
                     product: &ProductContext::new("myapp.dot".to_string()).unwrap(),
                     authorization: None,
-                    outbound_review: None,
                 },
             },
             HostAccountGetAliasRequest {
@@ -1821,7 +1807,6 @@ mod tests {
                 caller: AccountCaller::Local {
                     product: &ProductContext::new("myapp.dot".to_string()).unwrap(),
                     authorization: None,
-                    outbound_review: None,
                 },
             },
             HostAccountCreateProofRequest {
@@ -1877,7 +1862,6 @@ mod tests {
                 caller: AccountCaller::Local {
                     product: &ProductContext::new(request.calling_product_id.clone()).unwrap(),
                     authorization: None,
-                    outbound_review: None,
                 },
             },
             request.payload.clone(),
@@ -1890,7 +1874,6 @@ mod tests {
                 caller: AccountCaller::Local {
                     product: &ProductContext::new(request.calling_product_id.clone()).unwrap(),
                     authorization: None,
-                    outbound_review: None,
                 },
             },
             request.payload,
@@ -1989,7 +1972,6 @@ mod tests {
                 caller: AccountCaller::Local {
                     product: &ProductContext::new("myapp.dot".to_string()).unwrap(),
                     authorization: None,
-                    outbound_review: None,
                 },
             },
             request,
@@ -2057,7 +2039,6 @@ mod tests {
                 caller: AccountCaller::Local {
                     product: &ProductContext::new("myapp.dot".to_string()).unwrap(),
                     authorization: authorization.as_ref(),
-                    outbound_review: None,
                 },
             },
             vrf_request("myapp.dot"),
@@ -2079,7 +2060,6 @@ mod tests {
                 caller: AccountCaller::Local {
                     product: &ProductContext::new("other.dot".to_string()).unwrap(),
                     authorization: None,
-                    outbound_review: None,
                 },
             },
             vrf_request("myapp.dot"),
@@ -2331,7 +2311,6 @@ mod tests {
                     caller: AccountCaller::Local {
                         product: &ProductContext::new("myapp.dot".to_string()).unwrap(),
                         authorization: None,
-                        outbound_review: None,
                     },
                 },
                 SignPayloadAuthorityRequest::Product(v01::HostSignPayloadRequest {
@@ -2378,7 +2357,6 @@ mod tests {
                 caller: AccountCaller::Local {
                     product: &ProductContext::new("myapp.dot".to_string()).unwrap(),
                     authorization: None,
-                    outbound_review: None,
                 },
             },
             SignPayloadAuthorityRequest::LegacyAccount {
@@ -2429,7 +2407,6 @@ mod tests {
                 caller: AccountCaller::Local {
                     product: &ProductContext::new("myapp.dot".to_string()).unwrap(),
                     authorization: None,
-                    outbound_review: None,
                 },
             },
             request(identity.public.to_bytes()),
@@ -2451,7 +2428,6 @@ mod tests {
                 caller: AccountCaller::Local {
                     product: &ProductContext::new("myapp.dot".to_string()).unwrap(),
                     authorization: None,
-                    outbound_review: None,
                 },
             },
             request([0xff; 32]),
@@ -2525,7 +2501,6 @@ mod tests {
                 caller: AccountCaller::Local {
                     product: &ProductContext::new("myapp.dot".to_string()).unwrap(),
                     authorization: None,
-                    outbound_review: None,
                 },
             },
             CreateTransactionAuthorityRequest::Product(tx_payload(0)),
@@ -2569,7 +2544,6 @@ mod tests {
                 caller: AccountCaller::Local {
                     product: &ProductContext::new("myapp.dot".to_string()).unwrap(),
                     authorization: None,
-                    outbound_review: None,
                 },
             },
             request,
@@ -2598,7 +2572,6 @@ mod tests {
                 caller: AccountCaller::Local {
                     product: &ProductContext::new("myapp.dot".to_string()).unwrap(),
                     authorization: None,
-                    outbound_review: None,
                 },
             },
             CreateTransactionAuthorityRequest::Product(tx_payload(0)),
@@ -2729,7 +2702,6 @@ mod tests {
                 caller: AccountCaller::Local {
                     product: &ProductContext::new("myapp.dot".to_string()).unwrap(),
                     authorization: None,
-                    outbound_review: None,
                 },
             },
             SignRawAuthorityRequest::Product(request),
@@ -2767,7 +2739,6 @@ mod tests {
                 caller: AccountCaller::Local {
                     product: &ProductContext::new("myapp.dot".to_string()).unwrap(),
                     authorization: None,
-                    outbound_review: None,
                 },
             },
             SignRawAuthorityRequest::Product(request),

@@ -483,6 +483,7 @@ mod tests {
     use crate::host_logic::product_account::derive_sr25519_hard_path;
     use crate::platform::HostInfo;
     use crate::runtime::RuntimeServices;
+    use crate::runtime::product_consent::ProductConsent;
     use crate::test_support::{StubPlatform, test_spawner};
     use std::collections::HashMap;
     use std::sync::{Arc, Mutex};
@@ -508,7 +509,8 @@ mod tests {
         );
         let registry =
             crate::runtime::ring_vrf_registry::RingVrfRegistryStore::new(services.platform.clone());
-        let wallet = WalletAccountHolder::new(services, "paseo".to_string(), registry);
+        let consent = Arc::new(ProductConsent::new(services.platform.clone()));
+        let wallet = WalletAccountHolder::new(services, "paseo".to_string(), consent, registry);
         wallet.install(wallet.prepare_activation(vec![entropy; 32], None).unwrap());
         wallet
     }

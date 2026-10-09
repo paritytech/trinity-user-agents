@@ -1,5 +1,6 @@
 use super::*;
 use crate::platform::HostInfo;
+use crate::runtime::product_consent::ProductConsent;
 use crate::runtime::{AccountHolder, RuntimeServices};
 use crate::test_support::{StubPlatform, test_spawner};
 use truapi::latest::HostPlatform;
@@ -20,7 +21,8 @@ fn wallet(suffix: &str) -> WalletAccountHolder {
     );
     let registry =
         crate::runtime::ring_vrf_registry::RingVrfRegistryStore::new(services.platform.clone());
-    let wallet = WalletAccountHolder::new(services, suffix.to_string(), registry);
+    let consent = Arc::new(ProductConsent::new(services.platform.clone()));
+    let wallet = WalletAccountHolder::new(services, suffix.to_string(), consent, registry);
     wallet.install(wallet.prepare_activation(vec![7; 32], None).unwrap());
     wallet
 }

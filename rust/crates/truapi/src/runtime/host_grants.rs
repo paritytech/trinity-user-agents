@@ -8,7 +8,7 @@ use super::authority::{
 use super::product_subtree;
 use crate::host_logic::session::{SessionInfo, SessionState};
 use crate::platform::{CoreStorage, CoreStorageKey};
-use futures::lock::MutexGuard as AsyncMutexGuard;
+use futures::lock::OwnedMutexGuard;
 use parity_scale_codec::{Decode, Encode};
 use schnorrkel::SecretKey;
 use std::collections::HashMap;
@@ -102,7 +102,7 @@ impl GrantState {
 pub struct HostGrantStore {
     storage: Arc<dyn CoreStorage>,
     state: Mutex<GrantState>,
-    persistence: futures::lock::Mutex<()>,
+    persistence: Arc<futures::lock::Mutex<()>>,
     statement_store_allowances:
         Mutex<HashMap<AllowanceCacheKey, (Option<u32>, StatementStoreAllowanceKey)>>,
     bulletin_allowances: Mutex<HashMap<AllowanceCacheKey, BulletinAllowanceKey>>,
@@ -119,7 +119,17 @@ pub struct HostGrantGuard<'a> {
 /// Orders durable grants and session writes against revocation.
 pub struct HostGrantPersistence<'a> {
     store: &'a HostGrantStore,
-    _guard: AsyncMutexGuard<'a, ()>,
+    _barrier: Barrier<'a>,
+}
+
+/// Holds back grant writes while a session changes or its grants are revoked.
+pub struct GrantBarrier {
+    _guard: OwnedMutexGuard<()>,
+}
+
+enum Barrier<'a> {
+    Owned { _barrier: GrantBarrier },
+    Held { _barrier: &'a GrantBarrier },
 }
 
 impl HostGrantStore {
@@ -128,7 +138,7 @@ impl HostGrantStore {
         Self {
             storage,
             state: Mutex::new(GrantState::default()),
-            persistence: futures::lock::Mutex::new(()),
+            persistence: Arc::new(futures::lock::Mutex::new(())),
             statement_store_allowances: Mutex::new(HashMap::new()),
             bulletin_allowances: Mutex::new(HashMap::new()),
             product_subtrees: Mutex::new(HashMap::new()),
@@ -148,8 +158,39 @@ impl HostGrantStore {
     pub async fn persistence(&self) -> HostGrantPersistence<'_> {
         HostGrantPersistence {
             store: self,
-            _guard: self.persistence.lock().await,
+            _barrier: Barrier::Owned {
+                _barrier: self.barrier().await,
+            },
         }
+    }
+
+    /// Hold back grant writes across another component's session change.
+    pub async fn barrier(&self) -> GrantBarrier {
+        GrantBarrier {
+            _guard: self.persistence.clone().lock_owned().await,
+        }
+    }
+
+    /// Persist under a barrier this store already handed out.
+    pub fn persistence_under<'a>(&'a self, barrier: &'a GrantBarrier) -> HostGrantPersistence<'a> {
+        HostGrantPersistence {
+            store: self,
+            _barrier: Barrier::Held { _barrier: barrier },
+        }
+    }
+
+    /// Stop grant work for `previous`, revoking its durable grants when it was cleared.
+    pub fn session_ended(&self, previous: Option<&SessionInfo>, revoked: bool) {
+        let mut lifecycle = self.lifecycle();
+        if revoked {
+            lifecycle.revoke_session(previous);
+        } else {
+            lifecycle.advance();
+        }
+        drop(lifecycle);
+        self.clear_statement_store_allowance_keys(previous);
+        self.clear_bulletin_allowance_keys(previous);
+        self.clear_product_subtrees(previous);
     }
 
     fn session_secret_allocation_is_current(

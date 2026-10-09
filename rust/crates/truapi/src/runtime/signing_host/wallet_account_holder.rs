@@ -30,6 +30,7 @@ use crate::host_logic::sso::pairing::{
     ResponderIdentity, derive_identity_chat_private_key, derive_x25519_keypair_from_entropy,
 };
 use crate::platform::normalize_product_identifier;
+use crate::runtime::product_consent::ProductConsent;
 use crate::runtime::authority::{
     AccountHolder, AuthorityError, AuthoritySession, AutoSigningGrant,
     authority_session_validation_id,
@@ -51,6 +52,7 @@ pub struct WalletAccountHolder {
     #[cfg(feature = "test-host")]
     resource_controls: Arc<crate::runtime::test_resource_controls::TestResourceControls>,
     network_suffix: String,
+    consent: Arc<ProductConsent>,
     lifecycle: Mutex<WalletState>,
     session_state: Arc<SessionState>,
 }
@@ -152,19 +154,21 @@ impl WalletAccountHolder {
     pub fn new_with_ring_resolver(
         services: Arc<crate::runtime::RuntimeServices>,
         network_suffix: String,
+        consent: Arc<ProductConsent>,
         ring_resolver: Arc<dyn super::ring_vrf::RingResolver>,
         ring_vrf_registry: Arc<crate::runtime::ring_vrf_registry::RingVrfRegistryStore>,
     ) -> WalletAccountHolder {
         WalletAccountHolder {
             ring_resolver,
-            ..WalletAccountHolder::new(services, network_suffix, ring_vrf_registry)
+            ..WalletAccountHolder::new(services, network_suffix, consent, ring_vrf_registry)
         }
     }
 
-    /// Start locked, with no wallet secrets.
+    /// Start locked, with no wallet secrets, asking `consent` before wallet work.
     pub fn new(
         services: Arc<crate::runtime::RuntimeServices>,
         network_suffix: String,
+        consent: Arc<ProductConsent>,
         ring_vrf_registry: Arc<crate::runtime::ring_vrf_registry::RingVrfRegistryStore>,
     ) -> Self {
         Self {
@@ -177,6 +181,7 @@ impl WalletAccountHolder {
                 crate::runtime::test_resource_controls::TestResourceControls::default(),
             ),
             network_suffix,
+            consent,
             lifecycle: Mutex::new(WalletState::default()),
             session_state: SessionState::new(),
         }

@@ -74,7 +74,6 @@ impl<H: AccountHolder> Signing for ProductRuntimeHost<H> {
                 AccountCaller::Local {
                     product: &self.connection.product,
                     authorization: authorization.as_ref(),
-                    outbound_review: None,
                 },
                 SignPayloadAuthorityRequest::Product(inner),
             )
@@ -175,7 +174,6 @@ impl<H: AccountHolder> Signing for ProductRuntimeHost<H> {
                 AccountCaller::Local {
                     product: &self.connection.product,
                     authorization: authorization.as_ref(),
-                    outbound_review: None,
                 },
                 CreateTransactionAuthorityRequest::Product(inner),
             )
@@ -226,7 +224,6 @@ impl<H: AccountHolder> Signing for ProductRuntimeHost<H> {
                 AccountCaller::Local {
                     product: &self.connection.product,
                     authorization: None,
-                    outbound_review: None,
                 },
                 SignPayloadAuthorityRequest::LegacyAccount {
                     product_account: v01::ProductAccountId {
@@ -315,7 +312,6 @@ impl<H: AccountHolder> Signing for ProductRuntimeHost<H> {
                 AccountCaller::Local {
                     product: &self.connection.product,
                     authorization: None,
-                    outbound_review: None,
                 },
                 authority_request,
             )
@@ -383,7 +379,6 @@ impl<H: AccountHolder> ProductRuntimeHost<H> {
                 AccountCaller::Local {
                     product: &self.connection.product,
                     authorization: authorization.as_ref(),
-                    outbound_review: None,
                 },
                 SignRawAuthorityRequest::Product(inner),
                 watermarked,
@@ -439,7 +434,6 @@ impl<H: AccountHolder> ProductRuntimeHost<H> {
                 AccountCaller::Local {
                     product: &self.connection.product,
                     authorization: None,
-                    outbound_review: None,
                 },
                 authority_request,
                 watermarked,

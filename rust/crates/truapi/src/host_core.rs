@@ -37,8 +37,7 @@ use crate::runtime::{
     DEFAULT_REMOTE_AUTHORITY_RESPONSE_TIMEOUT, DevicePairingObserver, HostAccounts, HostSession,
     LocalActivation, PairedSsoPeer, ProductConnection, ProductRuntimeHost, ResponderExit,
     RuntimeServices, SigningHostRole, SsoAccountHolderClient, SsoAccountHolderService,
-    SsoRequestService, disconnect_paired_host, establish_pairing,
-    notify_pairing_allowance_allocation, notify_pairing_failed, respond_to_pairing, resume_pairing,
+    SsoRequestService, SsoResponderService,
 };
 use crate::subscription::{HostInitiatedSubscriptionManager, Spawner};
 use crate::transport::Transport;
@@ -347,8 +346,15 @@ impl PairingHostRuntime {
     /// presents a new deeplink suitable for another signing host.
     #[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.logout"))]
     pub async fn logout(&self) -> Result<(), v01::GenericError> {
+        self.sso.disconnect().await;
+        self.accounts
+            .forget_auto_signing_keys()
+            .await
+            .map_err(|reason| v01::GenericError {
+                reason: format!("session disconnected, but AutoSigning reset failed: {reason}"),
+            })?;
         self.sso
-            .logout_and_reset_pairing()
+            .forget_pairing_identity()
             .await
             .map_err(|reason| v01::GenericError { reason })
     }
@@ -357,7 +363,7 @@ impl PairingHostRuntime {
     /// session and unrelated products.
     #[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.clear_product_state", %product_id))]
     pub async fn clear_product_state(&self, product_id: &str) -> Result<(), v01::GenericError> {
-        self.sso
+        self.accounts
             .clear_product_state(product_id)
             .await
             .map_err(|reason| v01::GenericError { reason })
@@ -583,6 +589,7 @@ impl PairingHostAdmin for PairingHostRuntime {
 pub struct SigningHostRuntime {
     services: Arc<RuntimeServices>,
     signing_host: Arc<SigningHostRole>,
+    sso_responder: Arc<SsoResponderService>,
 }
 
 impl SigningHostRuntime {
@@ -695,6 +702,7 @@ impl SigningHostRuntime {
         let signing_host = SigningHostRole::new(services.clone(), config.network_suffix);
         Self {
             services,
+            sso_responder: signing_host.sso_responder(),
             signing_host,
         }
     }
@@ -908,7 +916,8 @@ impl SigningHostRuntime {
         &self,
         deeplink: &str,
     ) -> Result<ResponderExit, v01::GenericError> {
-        respond_to_pairing(self.services.clone(), self.signing_host.clone(), deeplink)
+        self.sso_responder
+            .respond_to_pairing(deeplink)
             .await
             .map_err(|reason| v01::GenericError { reason })
     }
@@ -923,13 +932,10 @@ impl SigningHostRuntime {
         &self,
         deeplink: &str,
     ) -> Result<crate::runtime::AnnouncedPairing, v01::GenericError> {
-        notify_pairing_allowance_allocation(
-            self.services.clone(),
-            self.signing_host.clone(),
-            deeplink,
-        )
-        .await
-        .map_err(|reason| v01::GenericError { reason })
+        self.sso_responder
+            .notify_pairing_allowance_allocation(deeplink)
+            .await
+            .map_err(|reason| v01::GenericError { reason })
     }
 
     /// Tell a pairing host that pairing failed, so it reports `reason` and
@@ -946,7 +952,8 @@ impl SigningHostRuntime {
         announced: &crate::runtime::AnnouncedPairing,
         reason: String,
     ) -> Result<(), v01::GenericError> {
-        notify_pairing_failed(self.services.clone(), announced, reason)
+        self.sso_responder
+            .notify_pairing_failed(announced, reason)
             .await
             .map_err(|reason| v01::GenericError { reason })
     }
@@ -954,7 +961,8 @@ impl SigningHostRuntime {
     /// Answer a pairing host's handshake without entering its long-lived serve loop.
     #[instrument(skip_all, fields(runtime.method = "signing_host_runtime.establish_pairing"))]
     pub async fn establish_pairing(&self, deeplink: &str) -> Result<(), v01::GenericError> {
-        establish_pairing(self.services.clone(), self.signing_host.clone(), deeplink)
+        self.sso_responder
+            .establish_pairing(deeplink)
             .await
             .map_err(|reason| v01::GenericError { reason })
     }
@@ -968,7 +976,8 @@ impl SigningHostRuntime {
         &self,
         peer: PairedSsoPeer,
     ) -> Result<ResponderExit, v01::GenericError> {
-        resume_pairing(self.services.clone(), self.signing_host.clone(), peer)
+        self.sso_responder
+            .resume_pairing(peer)
             .await
             .map_err(|reason| v01::GenericError { reason })
     }
@@ -979,7 +988,8 @@ impl SigningHostRuntime {
         &self,
         peer: PairedSsoPeer,
     ) -> Result<(), v01::GenericError> {
-        disconnect_paired_host(self.services.clone(), self.signing_host.clone(), peer)
+        self.sso_responder
+            .disconnect_paired_host(peer)
             .await
             .map_err(|reason| v01::GenericError { reason })
     }
@@ -990,16 +1000,8 @@ impl SigningHostRuntime {
         own_statement_account_id: [u8; 32],
         own_encryption_public_key: [u8; 32],
     ) -> Result<SsoAccountHolderService, AuthorityError> {
-        let wallet = self.signing_host.account_holder().clone();
-        let session = wallet
-            .current_session()
-            .ok_or(AuthorityError::Disconnected)?;
-        wallet.require_sso_identity(
-            &session,
-            own_statement_account_id,
-            own_encryption_public_key,
-        )?;
-        Ok(SsoAccountHolderService::new(wallet, session))
+        self.sso_responder
+            .open_service(own_statement_account_id, own_encryption_public_key)
     }
 }
 
@@ -1413,7 +1415,6 @@ async fn product_subtree_public_key<H: AccountHolder>(
             AccountCaller::Local {
                 product: &product,
                 authorization: None,
-                outbound_review: None,
             },
             product_id,
         )
