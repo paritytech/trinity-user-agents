@@ -6,7 +6,6 @@ import io.paritytech.polkadotapp.common.utils.awaitTrue
 import io.paritytech.polkadotapp.common.utils.logFailure
 import io.paritytech.polkadotapp.common.utils.logSuccess
 import io.paritytech.polkadotapp.tools_remoteconfig_api.RemoteConfigService
-import io.paritytech.polkadotapp.tools_remoteconfig_impl.BuildConfig
 import io.paritytech.polkadotapp.tools_remoteconfig_impl.data.RemoteConfigDataSource
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -18,7 +17,6 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
-import timber.log.Timber
 import javax.inject.Inject
 
 class RealRemoteConfigService @Inject constructor(
@@ -45,12 +43,6 @@ class RealRemoteConfigService @Inject constructor(
                 .onSuccess { isSynced.value = true }
                 .logSuccess("Remote config synced")
                 .logFailure("Failed to sync remote config")
-                .onFailure {
-                    if (BuildConfig.LOCAL_CONFIG_FALLBACK) {
-                        Timber.w("Remote config fetch failed; serving the in-app defaults (debug build)")
-                        isSynced.value = true
-                    }
-                }
         }
     }
 
