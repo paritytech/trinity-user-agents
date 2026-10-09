@@ -525,7 +525,7 @@ pub fn protocol_name_context(krate: &Crate) -> NameContext {
             let output_name = if version == newest {
                 simple_name.clone()
             } else {
-                format!("V{version:02}{simple_name}")
+                versioned_type_name(version, &simple_name)
             };
             ctx.by_item_id
                 .insert(candidate.item_id.clone(), output_name.clone());
@@ -557,6 +557,23 @@ fn build_name_context(type_candidates: &BTreeMap<String, Vec<ItemCandidate>>) ->
     ctx
 }
 
+/// The name generated code gives a protocol type at a version older than its
+/// newest, such as `V01HostChatPostMessageRequest`.
+fn versioned_type_name(version: u32, simple_name: &str) -> String {
+    format!("V{version:02}{simple_name}")
+}
+
+/// Splits a name built by [`versioned_type_name`] into its version and simple
+/// name, or `None` for a name that carries no version.
+pub fn split_versioned_type_name(name: &str) -> Option<(u32, &str)> {
+    let rest = name.strip_prefix('V')?;
+    let (digits, simple_name) = (rest.get(..2)?, rest.get(2..)?);
+    if simple_name.is_empty() || !digits.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+    Some((digits.parse().ok()?, simple_name))
+}
+
 fn disambiguated_type_name(simple_name: &str, path: &[String]) -> String {
     if path.iter().any(|segment| segment == "versioned") {
         return simple_name.to_string();
@@ -565,7 +582,7 @@ fn disambiguated_type_name(simple_name: &str, path: &[String]) -> String {
         .iter()
         .find_map(|segment| version_module_number(segment))
     {
-        return format!("V{version:02}{simple_name}");
+        return versioned_type_name(version, simple_name);
     }
     let module = path
         .iter()

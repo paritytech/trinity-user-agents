@@ -10,7 +10,9 @@ use crate::platform_callbacks::{
     platform_trait_names, raw_callback_field_name, raw_callback_name, raw_callback_wire_name,
     snake_case, stream_item, trait_object_return_name,
 };
-use crate::rustdoc::{ApiDefinition, TypeDef, TypeDefKind, TypeRef, VariantFields};
+use crate::rustdoc::{
+    ApiDefinition, TypeDef, TypeDefKind, TypeRef, VariantFields, split_versioned_type_name,
+};
 
 pub fn generate_wasm_bridge(
     definition: &PlatformDefinition,
@@ -768,12 +770,8 @@ fn resolve_alias_type<'a>(name: &'a str, ctx: &BridgeCtx<'a>) -> Option<&'a Type
 /// The Rust path of a protocol type. A `V01`-style prefix is the version the
 /// signature names explicitly, and an unprefixed name is the latest version.
 fn protocol_type_path(name: &str) -> String {
-    let versioned = name
-        .strip_prefix('V')
-        .filter(|rest| rest.len() > 2 && rest.as_bytes()[..2].iter().all(u8::is_ascii_digit))
-        .map(|rest| rest.split_at(2));
-    match versioned {
-        Some((version, simple_name)) => format!("truapi::v{version}::{simple_name}"),
+    match split_versioned_type_name(name) {
+        Some((version, simple_name)) => format!("truapi::v{version:02}::{simple_name}"),
         None => format!("latest::{name}"),
     }
 }

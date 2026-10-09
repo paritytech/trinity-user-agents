@@ -731,7 +731,6 @@ extension Chat.LocalMessage.Content {
             identifier = try String(scaleDecoder: scaleDecoder)
             decoderId = try UInt8(scaleDecoder: scaleDecoder)
             data = try Data(scaleDecoder: scaleDecoder)
-            // Messages stored before `alt` existed end after `data`.
             alt = scaleDecoder.remained > 0 ? try ScaleOption<String>(scaleDecoder: scaleDecoder).value : nil
         }
 
