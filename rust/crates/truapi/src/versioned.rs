@@ -41,6 +41,8 @@ pub mod chat;
 pub mod coin_payment;
 pub mod contacts;
 pub mod entropy;
+pub mod expanded_card;
+pub mod game;
 pub mod jam_peer_transport;
 pub mod local_storage;
 pub mod locale;

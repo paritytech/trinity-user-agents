@@ -112,8 +112,8 @@ class RealProductPermissionGuardTest {
         assertTrue(guard.requestPermissionsBatched(productId, listOf(first, second)))
 
         verify(requester).promptBatched(productId, listOf(first, second))
-        verify(repository).grant(productId, first)
-        verify(repository).grant(productId, second)
+        coVerify { repository.grant(productId, first) }
+        coVerify { repository.grant(productId, second) }
         assertEquals(first, ProductPermission.fromLocal(first.typeName, first.key))
         assertEquals(second, ProductPermission.fromLocal(second.typeName, second.key))
     }
