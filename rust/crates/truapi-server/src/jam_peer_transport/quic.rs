@@ -256,10 +256,8 @@ impl StreamSlot {
 
 impl Drop for StreamSlot {
     fn drop(&mut self) {
-        if self.armed {
-            if let Some(entry) = self.shared.lock().conns.get_mut(&self.conn) {
-                entry.opening -= 1;
-            }
+        if self.armed && let Some(entry) = self.shared.lock().conns.get_mut(&self.conn) {
+            entry.opening -= 1;
         }
     }
 }
