@@ -2,6 +2,10 @@ use parity_scale_codec::{Decode, Encode};
 
 /// Code formats the host scanner reads: the set both platform decoders share.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(
+    all(feature = "runtime", not(target_arch = "wasm32")),
+    derive(uniffi::Enum)
+)]
 pub enum CodeFormat {
     /// QR code.
     Qr,
@@ -35,16 +39,20 @@ pub enum CodeFormat {
 /// The host draws the viewfinder and writes its title, naming the product.
 /// Only `hint` is product text, shown as one plain line under the title.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(
+    all(feature = "runtime", not(target_arch = "wasm32")),
+    derive(uniffi::Record)
+)]
 pub struct HostScannerScanRequest {
-    /// Formats the product accepts. At least one.
+    /// Formats the product accepts. At least one, each named once.
     pub formats: Vec<CodeFormat>,
     /// Start the text must have, compared ignoring ASCII letter case, since QR
     /// codes often carry URLs in capitals. At most 256 bytes of UTF-8.
     pub prefix: Option<String>,
     /// What to point the camera at, shown as the product's words. At most 80
     /// Unicode scalar values (`[...hint].length` in TypeScript). No control
-    /// characters, line or paragraph separators, or bidirectional formatting
-    /// characters.
+    /// characters, line or paragraph separators, invisible characters, or
+    /// bidirectional formatting characters.
     pub hint: Option<String>,
 }
 

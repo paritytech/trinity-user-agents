@@ -4,7 +4,8 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use crate::platform::{
-    AuthState, CoreStorage as PlatformCoreStorage, CoreStorageKey, PermissionAuthorizationRequest,
+    AuthState, CoreStorage as PlatformCoreStorage, CoreStorageKey, HostScan,
+    PermissionAuthorizationRequest, ProductExecutionKind,
 };
 use parity_scale_codec::Encode;
 use truapi::api::{
@@ -51,7 +52,9 @@ use truapi::versioned::resource_allocation::{
     HostRequestResourceAllocationError, HostRequestResourceAllocationRequest,
     HostRequestResourceAllocationResponse,
 };
-use truapi::versioned::scanner::HostScannerScanRequest;
+use truapi::versioned::scanner::{
+    HostScannerScanError, HostScannerScanRequest, HostScannerScanResponse,
+};
 use truapi::versioned::signing::{
     HostCreateTransactionError, HostCreateTransactionRequest, HostCreateTransactionResponse,
     HostCreateTransactionWithLegacyAccountError, HostCreateTransactionWithLegacyAccountRequest,
@@ -7851,23 +7854,322 @@ fn an_internal_cancellation_never_becomes_the_cancelled_variant() {
     }
 }
 
-/// A product tells "no scanner here" by `Unsupported` and falls back to its own
-/// camera code; a `HostFailure` would read as a real failure.
-#[test]
-fn scanner_scan_is_unsupported_until_a_host_implements_it() {
-    let host = ProductRuntimeHost::new_compat(stub_platform(), test_spawner());
+/// A scanner whose answer is fixed, recording each product and request it is
+/// asked for. A parked one never answers, standing in for a user who has not
+/// scanned yet, and records when the core stops waiting on it.
+struct StubScannerPlatform {
+    answer: HostScan,
+    park: bool,
+    asked: Mutex<Vec<(String, truapi::latest::HostScannerScanRequest)>>,
+    abandoned: Arc<AtomicBool>,
+}
 
-    let result = futures::executor::block_on(Scanner::scan(
+impl StubScannerPlatform {
+    fn answering(answer: HostScan) -> Arc<Self> {
+        Arc::new(Self {
+            answer,
+            park: false,
+            asked: Mutex::new(Vec::new()),
+            abandoned: Arc::default(),
+        })
+    }
+
+    fn parked() -> Arc<Self> {
+        let mut stub = Arc::into_inner(Self::answering(HostScan::Dismissed)).unwrap();
+        stub.park = true;
+        Arc::new(stub)
+    }
+
+    fn asked(&self) -> Vec<(String, truapi::latest::HostScannerScanRequest)> {
+        self.asked.lock().unwrap().clone()
+    }
+}
+
+/// Sets its flag when dropped, which is how a parked scan sees the core stop
+/// waiting.
+struct SetOnDrop(Arc<AtomicBool>);
+
+impl Drop for SetOnDrop {
+    fn drop(&mut self) {
+        self.0.store(true, Ordering::SeqCst);
+    }
+}
+
+#[truapi::async_trait]
+impl crate::platform::ScannerPlatform for StubScannerPlatform {
+    async fn scan_code(
+        &self,
+        product: &crate::platform::ProductContext,
+        request: &truapi::latest::HostScannerScanRequest,
+    ) -> Result<HostScan, truapi::latest::GenericError> {
+        self.asked
+            .lock()
+            .unwrap()
+            .push((product.product_id.clone(), request.clone()));
+        if self.park {
+            let _abandoned = SetOnDrop(self.abandoned.clone());
+            futures::future::pending::<()>().await;
+        }
+        Ok(self.answer.clone())
+    }
+}
+
+/// A runtime for `greenmarket.dot` with no session, and `scanner` installed
+/// when given.
+fn scanner_host(scanner: Option<Arc<StubScannerPlatform>>) -> ProductRuntimeHost {
+    scanner_host_for(ProductExecutionKind::App, scanner)
+}
+
+/// [`scanner_host`] for an execution of `kind`.
+fn scanner_host_for(
+    kind: ProductExecutionKind,
+    scanner: Option<Arc<StubScannerPlatform>>,
+) -> ProductRuntimeHost {
+    let (host_config, mut product) = runtime_config("greenmarket.dot");
+    product.execution_kind = kind;
+    let services = RuntimeServices::with_chat_platform(
+        stub_platform() as Arc<dyn Platform>,
+        host_config.host.host_info.clone(),
+        host_config.people_chain_genesis_hash,
+        host_config.bulletin_chain_genesis_hash,
+        host_config.asset_hub_chain_genesis_hash,
+        test_spawner(),
+        None,
+    );
+    if let Some(scanner) = scanner {
+        services.install_scanner_platform(scanner);
+    }
+    let pairing_host = PairingHost::new(services.clone(), host_config);
+    let adapters = crate::host_core::ConnectionAdapters::from_services(&services);
+    ProductRuntimeHost::from_services(services, adapters, pairing_host, product)
+}
+
+fn receipt_request() -> truapi::latest::HostScannerScanRequest {
+    truapi::latest::HostScannerScanRequest {
+        formats: vec![v01::CodeFormat::Qr],
+        prefix: Some("https://greenmarket.example/r/".into()),
+        hint: Some("Point at the receipt's QR code".into()),
+    }
+}
+
+fn unwrap_scan(
+    result: Result<HostScannerScanResponse, CallError<HostScannerScanError>>,
+) -> Result<v01::ScanOutcome, CallError<v01::HostScannerScanError>> {
+    match result {
+        Ok(HostScannerScanResponse::V1(response)) => Ok(response.outcome),
+        Err(CallError::Domain(HostScannerScanError::V1(error))) => Err(CallError::Domain(error)),
+        Err(CallError::Unsupported) => Err(CallError::Unsupported),
+        Err(other) => panic!("unexpected scanner error: {other:?}"),
+    }
+}
+
+fn scan(
+    host: &ProductRuntimeHost,
+) -> Result<v01::ScanOutcome, CallError<v01::HostScannerScanError>> {
+    unwrap_scan(futures::executor::block_on(Scanner::scan(
+        host,
+        &CallContext::default(),
+        HostScannerScanRequest::V1(receipt_request()),
+    )))
+}
+
+/// The user tapping a button on the product's card face.
+fn card_tap() -> truapi::versioned::renderer::HostRendererActionSubscribeItem {
+    truapi::versioned::renderer::HostRendererActionSubscribeItem::V1(
+        v01::HostRendererActionSubscribeItem {
+            context: v01::RenderContext::PocketCard {
+                card_id: "receipts".into(),
+            },
+            action_id: "scan".into(),
+            payload: vec![],
+        },
+    )
+}
+
+fn scanned(text: &str, format: v01::CodeFormat) -> HostScan {
+    HostScan::Scanned {
+        text: text.into(),
+        format,
+    }
+}
+
+#[test]
+fn a_worker_scans_only_shortly_after_the_user_taps_its_card() {
+    // A Worker has no screen of its own. Without a recent tap, the viewfinder
+    // would open over whatever the user is doing.
+    let scanner = StubScannerPlatform::answering(HostScan::Dismissed);
+    let host = scanner_host_for(ProductExecutionKind::Worker, Some(scanner.clone()));
+    let not_visible = Err(CallError::Domain(v01::HostScannerScanError::NotVisible));
+    assert_eq!(scan(&host), not_visible);
+
+    host.renderer
+        .note_published_at(crate::unix_time::current_unix_secs() - super::USER_TAP_WINDOW_SECS - 1);
+    assert_eq!(scan(&host), not_visible);
+    assert!(scanner.asked().is_empty());
+
+    host.publish_renderer_action(card_tap()).unwrap();
+    assert_eq!(scan(&host), Ok(v01::ScanOutcome::Dismissed));
+}
+
+#[test]
+fn each_host_answer_reaches_the_product_as_its_own_result() {
+    // `Unsupported` tells a product to use its own camera code, a dismissal is
+    // worth offering again, and a code the request does not accept never
+    // reaches the product, even from a buggy host.
+    use v01::HostScannerScanError::{CameraUnavailable, NotVisible};
+    let receipt = "https://greenmarket.example/r/BAG6";
+    assert_eq!(scan(&scanner_host(None)), Err(CallError::Unsupported));
+    for (answer, expected) in [
+        (
+            scanned(receipt, v01::CodeFormat::Qr),
+            Ok(v01::ScanOutcome::Scanned {
+                text: receipt.into(),
+                format: v01::CodeFormat::Qr,
+            }),
+        ),
+        (HostScan::Dismissed, Ok(v01::ScanOutcome::Dismissed)),
+        (
+            HostScan::CameraUnavailable,
+            Err(CallError::Domain(CameraUnavailable)),
+        ),
+        (HostScan::NotVisible, Err(CallError::Domain(NotVisible))),
+    ] {
+        assert_eq!(
+            scan(&scanner_host(Some(StubScannerPlatform::answering(answer)))),
+            expected
+        );
+    }
+    for refused in [
+        scanned("polkadotapp://pair?handshake=00", v01::CodeFormat::Qr),
+        scanned(receipt, v01::CodeFormat::Code128),
+    ] {
+        let host = scanner_host(Some(StubScannerPlatform::answering(refused)));
+        assert!(matches!(
+            scan(&host),
+            Err(CallError::Domain(v01::HostScannerScanError::Unknown { .. }))
+        ));
+    }
+}
+
+#[test]
+fn the_host_is_told_the_product_and_never_sees_an_invalid_request() {
+    // The host titles the viewfinder with the product id, and no session is
+    // needed. A request the product could not make never opens a viewfinder.
+    let scanner = StubScannerPlatform::answering(HostScan::Dismissed);
+    let host = scanner_host(Some(scanner.clone()));
+    let mut invalid = receipt_request();
+    invalid.hint = Some("Scan the code on your computer\nto sign in".into());
+    let result = unwrap_scan(futures::executor::block_on(Scanner::scan(
         &host,
         &CallContext::default(),
-        HostScannerScanRequest::V1(v01::HostScannerScanRequest {
-            formats: vec![v01::CodeFormat::Qr],
-            prefix: None,
-            hint: None,
-        }),
+        HostScannerScanRequest::V1(invalid),
+    )));
+    assert!(matches!(
+        result,
+        Err(CallError::Domain(
+            v01::HostScannerScanError::InvalidRequest { .. }
+        ))
     ));
+    assert_eq!(scan(&host), Ok(v01::ScanOutcome::Dismissed));
+    assert_eq!(
+        scanner.asked(),
+        vec![("greenmarket.dot".to_owned(), receipt_request())]
+    );
+}
 
-    assert!(matches!(result, Err(CallError::Unsupported)));
+#[test]
+fn a_second_scan_waits_its_turn_and_a_cancel_frees_the_viewfinder() {
+    // The device has one viewfinder. Cancelling the open scan must close it,
+    // which the host sees as its wait being dropped, and let the next one in.
+    let scanner = StubScannerPlatform::parked();
+    let host = scanner_host(Some(scanner.clone()));
+    let cancel = truapi::CancellationToken::default();
+    let first_cx = CallContext::with_parts("scan-first".into(), cancel.clone());
+    let mut first = Box::pin(Scanner::scan(
+        &host,
+        &first_cx,
+        HostScannerScanRequest::V1(receipt_request()),
+    ));
+    assert!(futures::FutureExt::now_or_never(&mut first).is_none());
+
+    assert_eq!(
+        scan(&host),
+        Err(CallError::Domain(v01::HostScannerScanError::Busy))
+    );
+
+    cancel.cancel();
+    // The handler reports its own error; the dispatcher answers `Cancelled`
+    // only when the product sent a Cancel frame.
+    assert!(matches!(
+        unwrap_scan(futures::executor::block_on(first)),
+        Err(CallError::Domain(v01::HostScannerScanError::Unknown { .. }))
+    ));
+    assert!(scanner.abandoned.load(Ordering::SeqCst));
+
+    let next_cx = CallContext::default();
+    let mut next = Box::pin(Scanner::scan(
+        &host,
+        &next_cx,
+        HostScannerScanRequest::V1(receipt_request()),
+    ));
+    assert!(futures::FutureExt::now_or_never(&mut next).is_none());
+    assert_eq!(scanner.asked().len(), 2);
+}
+
+/// A contact picker the user never answers, which records when the core stops
+/// waiting on it.
+struct ParkedContactsPlatform {
+    abandoned: Arc<AtomicBool>,
+}
+
+#[truapi::async_trait]
+impl crate::platform::ContactsPlatform for ParkedContactsPlatform {
+    async fn contacts(
+        &self,
+        lookup: &crate::platform::HostContactLookup,
+    ) -> Result<crate::platform::HostContactMatches, truapi::latest::GenericError> {
+        Ok(crate::platform::HostContactMatches {
+            accounts: vec![None; lookup.handles.len()],
+        })
+    }
+
+    async fn pick_contact(
+        &self,
+        _product: &ProductContext,
+    ) -> Result<crate::platform::HostContactPick, truapi::latest::GenericError> {
+        let _abandoned = SetOnDrop(self.abandoned.clone());
+        futures::future::pending().await
+    }
+}
+
+#[test]
+fn cancelling_a_contact_pick_stops_waiting_on_the_picker() {
+    // The host closes its picker when the core drops the wait. Without that, a
+    // withdrawn pick leaves the picker on screen until the user acts.
+    let abandoned = Arc::new(AtomicBool::new(false));
+    let host = host_with_contacts(Arc::new(ParkedContactsPlatform {
+        abandoned: abandoned.clone(),
+    }));
+    let cancel = truapi::CancellationToken::default();
+    let cx = CallContext::with_parts("pick-withdrawn".into(), cancel.clone());
+    let mut pick = Box::pin(Contacts::pick(
+        &host,
+        &cx,
+        HostContactsPickRequest::V1(v01::HostContactsPickRequest {}),
+    ));
+    assert!(futures::FutureExt::now_or_never(&mut pick).is_none());
+
+    cancel.cancel();
+
+    // The handler reports its own error; the dispatcher answers `Cancelled`
+    // only when the product sent a Cancel frame.
+    assert!(matches!(
+        futures::executor::block_on(pick),
+        Err(CallError::Domain(HostContactsPickError::V1(
+            v01::HostContactsPickError::Unknown { .. }
+        )))
+    ));
+    assert!(abandoned.load(Ordering::SeqCst));
 }
 
 /// A pairing test host, whose wallet answered the Bulletin allowance in-page,

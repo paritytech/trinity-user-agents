@@ -782,6 +782,11 @@ Scripts under `js/scripts/` include:
   the picker offers; the approval surface asks about it like any other action,
   so a headless run approves it and an interactive one does not.
 
+  The CLI has no camera, so `scanner.scan` answers with `TRUAPI_SCAN_TEXT` as a
+  QR code, or as a dismissal when it is unset. The core still checks the code
+  against the product's request, so a text that misses the prefix answers
+  `Unknown`.
+
   The paired phase gives its pairing host a throwaway `--base-path` under
   `target/battery/pairing-host-state`, so it performs a real handshake on every
   run. A pairing host that restores an earlier session reports

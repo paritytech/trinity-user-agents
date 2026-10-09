@@ -10,6 +10,7 @@ import {
   AllocatableResource,
   Bytes32,
   ChainIdentifier,
+  CodeFormat,
   HostAccountSignVrfRequest,
   HostDevicePermissionRequest,
   HostSignPayloadRequest,
@@ -41,6 +42,7 @@ import type {
   HostPocketRemoveCardRequest,
   HostPushNotificationRequest,
   HostPushNotificationResponse,
+  HostScannerScanRequest,
   HostThemeSubscribeItem,
   HostWorkerBeginOperationResponse,
   Result,
@@ -360,6 +362,30 @@ export type HostContactPick =
    * apart from "this host will never pick".
    */
   | { tag: "Unsupported"; value?: undefined };
+
+/**
+ * How the host's scanner ended.
+ */
+export type HostScan =
+  /**
+   * The user scanned a code the request accepts.
+   */
+  | { tag: "Scanned"; value: { text: string; format: CodeFormat } }
+  /**
+   * The user closed the viewfinder without scanning.
+   */
+  | { tag: "Dismissed"; value?: undefined }
+  /**
+   * The device has no camera, or the user refused the host application one.
+   * The host has already told the user how to turn it on.
+   */
+  | { tag: "CameraUnavailable"; value?: undefined }
+  /**
+   * The requesting App or Widget is not the screen the user sees, so the
+   * host opened nothing. A Worker's request was already checked by the core
+   * and is never answered this way.
+   */
+  | { tag: "NotVisible"; value?: undefined };
 
 /**
  * Review shown before a product learns the user's primary identity.
@@ -882,6 +908,22 @@ export const HostContactPick: S.Codec<HostContactPick> = S.lazy(
       Dismissed: S._void,
       NoContacts: S._void,
       Unsupported: S._void,
+    }),
+);
+
+/**
+ * How the host's scanner ended.
+ */
+export const HostScan: S.Codec<HostScan> = S.lazy(
+  (): S.Codec<HostScan> =>
+    S.TaggedUnion({
+      Scanned: S.Struct({ text: S.str, format: CodeFormat }) as S.Codec<{
+        text: string;
+        format: CodeFormat;
+      }>,
+      Dismissed: S._void,
+      CameraUnavailable: S._void,
+      NotVisible: S._void,
     }),
 );
 
@@ -1698,6 +1740,29 @@ export interface ProductStorage {
 }
 
 /**
+ * Host-owned viewfinder for QR codes and barcodes. Optional. The Swift and
+ * Kotlin bridges and the JS `scanner` callbacks follow the same rules.
+ *
+ * - Title the viewfinder with the product id. Show `request.hint` under it as
+ *   the product's words.
+ * - Pass every code the camera reads to a `ScanFilter` built from `request`,
+ *   and never follow a scanned link.
+ * - Answer `HostScan::NotVisible` for an App or Widget that is not on
+ *   screen. A Worker reaching the host already passed the core's tap check.
+ * - Close the viewfinder when the core drops the future, and close any still
+ *   open before opening another. A JS host is not told about a drop.
+ */
+export interface ScannerPlatform {
+  /**
+   * Open the viewfinder on behalf of `product` and wait for the user.
+   */
+  scanCode(
+    product: ProductContext,
+    request: HostScannerScanRequest,
+  ): Promise<HostScan>;
+}
+
+/**
  * Host theme source.
  */
 export interface ThemeHost {
@@ -1753,6 +1818,7 @@ export interface HostCallbacks {
   game?: GamePlatform;
   permissionStatus?: PermissionStatusHost;
   pocket?: PocketPlatform;
+  scanner?: ScannerPlatform;
 }
 
 export interface RequiredHostCallbacks {
@@ -1774,4 +1840,5 @@ export interface RequiredHostCallbacks {
   game?: Required<GamePlatform>;
   permissionStatus?: Required<PermissionStatusHost>;
   pocket?: Required<PocketPlatform>;
+  scanner?: Required<ScannerPlatform>;
 }

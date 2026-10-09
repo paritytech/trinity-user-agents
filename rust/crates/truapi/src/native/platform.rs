@@ -17,7 +17,7 @@ use crate::{DevicePairingObserver, PairedSsoPeer};
 
 use super::callbacks::{
     HostCallbacks, NativeChatCallbacks, NativeContactsCallbacks, NativeGameCallbacks,
-    NativePocketCallbacks, NativePocketRemoval,
+    NativePocketCallbacks, NativePocketRemoval, NativeScannerCallbacks,
 };
 use super::errors::HostRejection;
 use super::events::NativeEventBus;
@@ -48,6 +48,33 @@ impl crate::platform::ContactsPlatform for ContactsCallbackPlatform {
     ) -> Result<crate::platform::HostContactPick, v01::GenericError> {
         self.contacts
             .pick_contact(product.product_id.clone())
+            .await
+            .map_err(|error| v01::GenericError {
+                reason: error.to_string(),
+            })
+    }
+}
+
+/// [`crate::platform::ScannerPlatform`] served by host-provided
+/// [`NativeScannerCallbacks`]; constructed only when the host passed one.
+pub struct ScannerCallbackPlatform {
+    /// Host viewfinder.
+    pub scanner: Arc<dyn NativeScannerCallbacks>,
+}
+
+#[async_trait]
+impl crate::platform::ScannerPlatform for ScannerCallbackPlatform {
+    async fn scan_code(
+        &self,
+        product: &ProductContext,
+        request: &truapi::latest::HostScannerScanRequest,
+    ) -> Result<crate::platform::HostScan, v01::GenericError> {
+        self.scanner
+            .scan_code(
+                product.product_id.clone(),
+                product.execution_kind,
+                request.clone(),
+            )
             .await
             .map_err(|error| v01::GenericError {
                 reason: error.to_string(),
