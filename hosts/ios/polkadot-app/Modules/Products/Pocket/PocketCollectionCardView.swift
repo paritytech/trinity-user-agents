@@ -22,7 +22,7 @@ struct PocketCollectionCardView: View {
             title: card.title,
             face: streamed ?? card.face,
             resolveImage: pocket?.images(of: card.key.productId).map { images in
-                WidgetImageResolver { await images.resolve($0) }
+                WidgetImageResolver.cached { await images.resolve($0) }
             },
             onAction: { action, value in send(action, value) }
         )

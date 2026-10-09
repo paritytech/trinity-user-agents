@@ -13,7 +13,7 @@ enum WidgetNodeRaster {
     static func colours(of node: CustomMessageWidgetNode, in size: CGSize) throws -> [String: Int] {
         let view = ZStack {
             Color.black
-            CustomMessageWidgetView(node: node)
+            CustomMessageWidgetView(node: node, resolveImage: nil)
         }
         .frame(width: size.width, height: size.height)
 

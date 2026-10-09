@@ -5,18 +5,18 @@ import Products
 import Testing
 @testable import polkadot_app
 
-/// Turns an image source inside a face into something the image loader can
-/// fetch. A source that cannot be resolved answers nil: the rest of the face
-/// still draws, with a hole where the image would be.
+/// Turns an image source inside a face or a chat card into something the
+/// image loader can fetch. A source that cannot be resolved answers nil: the
+/// rest of the tree still draws, with a hole where the image would be.
 ///
 /// What a path is allowed to name is the archive's rule, and
 /// ``ProductWorkerArchiveTests`` proves it. What is left here is which archive
 /// gets asked, and what a source that is not a file becomes.
-struct PocketImageResolverTests {
+struct ProductImageResolverTests {
     @Test
     func resolvesAnArchiveImageToAFileInTheWorkersArchive() async throws {
         let root = try makeArchive(files: ["art/badge.png": "png"])
-        let resolver = PocketImageResolver(
+        let resolver = ProductImageResolver(
             contentId: { "worker.game.paseo" },
             archive: ProductWorkerArchive(dotNsResolver: StubResolver(root: root), cachedRoot: { _ in nil }),
             ipfsUrl: { _ in nil }
@@ -35,7 +35,7 @@ struct PocketImageResolverTests {
     @Test
     func readsAnArchiveAlreadyOnDiskWithoutAskingTheChain() async throws {
         let root = try makeArchive(files: ["art/badge.png": "png"])
-        let resolver = PocketImageResolver(
+        let resolver = ProductImageResolver(
             contentId: { "worker.game.paseo" },
             archive: ProductWorkerArchive(dotNsResolver: FailingResolver(), cachedRoot: { _ in root }),
             ipfsUrl: { _ in nil }
@@ -51,7 +51,7 @@ struct PocketImageResolverTests {
     @Test
     func fetchesTheArchiveWhenNothingIsOnDiskYet() async throws {
         let root = try makeArchive(files: ["art/badge.png": "png"])
-        let resolver = PocketImageResolver(
+        let resolver = ProductImageResolver(
             contentId: { "worker.game.paseo" },
             archive: ProductWorkerArchive(dotNsResolver: StubResolver(root: root), cachedRoot: { _ in nil }),
             ipfsUrl: { _ in nil }
@@ -62,7 +62,7 @@ struct PocketImageResolverTests {
 
     @Test
     func resolvesABulletinImageToItsGatewayAddress() async throws {
-        let resolver = PocketImageResolver(
+        let resolver = ProductImageResolver(
             contentId: { "worker.game.paseo" },
             archive: ProductWorkerArchive(
                 dotNsResolver: StubResolver(root: URL(fileURLWithPath: "/tmp/none")),
@@ -70,6 +70,21 @@ struct PocketImageResolverTests {
             ),
             ipfsUrl: { URL(string: "https://gateway.invalid/ipfs/\($0)") }
         )
+
+        let url = try #require(await resolver.resolve(.bulletin(cid: "bafyimage")))
+
+        #expect(url.absoluteString == "https://gateway.invalid/ipfs/bafyimage")
+    }
+
+    /// Pocket and chat name the same archive reader and the same gateway, so
+    /// both build the resolver from the one set of product image sources.
+    @Test
+    func resolvesABulletinImageUnderTheGatewayItIsGiven() async throws {
+        let sources = ProductImageSources(
+            dotNsResolver: FailingResolver(),
+            ipfsGatewayBaseUrl: URL(string: "https://gateway.invalid/ipfs/")!
+        )
+        let resolver = sources.resolver(contentId: { "worker.game.paseo" })
 
         let url = try #require(await resolver.resolve(.bulletin(cid: "bafyimage")))
 
@@ -86,7 +101,7 @@ struct PocketImageResolverTests {
         let root = try makeArchive(files: ["art/badge.png": "png"])
         let onDisk: @Sendable (ProductId) -> URL? = { $0 == "worker.game.paseo" ? root : nil }
         let name = PocketWorkerArchiveName(productId: "game.paseo", published: { nil }, onDisk: onDisk)
-        let resolver = PocketImageResolver(
+        let resolver = ProductImageResolver(
             contentId: { await name.resolve() },
             archive: ProductWorkerArchive(dotNsResolver: FailingResolver(), cachedRoot: onDisk),
             ipfsUrl: { _ in nil }
@@ -113,7 +128,7 @@ struct PocketImageResolverTests {
     /// An archive that cannot be fetched leaves the rest of the face drawable.
     @Test
     func answersNoUrlWhenTheArchiveCannotBeRead() async {
-        let resolver = PocketImageResolver(
+        let resolver = ProductImageResolver(
             contentId: { "worker.game.paseo" },
             archive: ProductWorkerArchive(dotNsResolver: FailingResolver(), cachedRoot: { _ in nil }),
             ipfsUrl: { _ in nil }
