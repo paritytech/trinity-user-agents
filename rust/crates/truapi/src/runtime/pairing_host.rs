@@ -19,7 +19,6 @@ use super::authority::{
 use super::host_grants::HostGrantStore;
 use super::product_consent::ProductConsent;
 use super::services::RuntimeServices;
-use super::sso_remote::SsoSessionKey;
 use super::sso_request_service::SsoRequestService;
 use crate::chain_runtime::ChainRuntime;
 use crate::host_internal::extrinsic::{
@@ -38,7 +37,7 @@ use crate::host_logic::session::{SessionInfo, SessionState};
 use crate::runtime::vrf;
 
 use crate::platform::{
-    Platform, ProductContext, SignVrfReview, UserConfirmationReview, normalize_product_identifier,
+    Platform, ProductContext, UserConfirmationReview, normalize_product_identifier,
 };
 use truapi::versioned::account::{HostRequestLoginError, HostRequestLoginResponse};
 use truapi::{CallContext, CallError, latest};
@@ -196,29 +195,6 @@ impl PairingHost {
             .await
     }
 
-    /// Whether resolving `product_id`'s subtree would reach the Account Holder,
-    /// i.e. neither the memory cache nor the persisted slot already holds it.
-    ///
-    /// A stale or missing session resolves as `false` so a broken state falls
-    /// through to the resolution's own error rather than a spurious prompt.
-    async fn subtree_reaches_account_holder(
-        &self,
-        session: &AuthoritySession,
-        product_id: &str,
-    ) -> bool {
-        let Ok(session) = self.current_private_session(session) else {
-            return false;
-        };
-        let Some(sso) = session.sso.as_ref() else {
-            return false;
-        };
-        let cache_key = (SsoSessionKey::from_session(sso), product_id.to_string());
-        self.grants
-            .known_product_subtree(&self.sso.session_state(), &session, cache_key)
-            .await
-            .is_none()
-    }
-
     fn current_private_session(
         &self,
         session: &AuthoritySession,
@@ -372,7 +348,6 @@ impl PairingHost {
         request: latest::HostAccountSignVrfRequest,
     ) -> Result<latest::VrfSignature, AuthorityError> {
         let session = invocation.session;
-        let cx = invocation.call;
         let calling_product_id = invocation
             .caller
             .product_id()
@@ -400,27 +375,6 @@ impl PairingHost {
                     .map(|item| (item.label.as_slice(), item.value.as_slice())),
             );
             return Ok(latest::VrfSignature { pre_output, proof });
-        }
-        if !super::authority::is_blessed_owner(
-            calling_product_id,
-            &request.account.dot_ns_identifier,
-        ) {
-            self.consent
-                .review(
-                    cx,
-                    invocation.caller,
-                    UserConfirmationReview::SignVrf(SignVrfReview {
-                        calling_product_id: calling_product_id.to_string(),
-                        request: request.clone(),
-                    }),
-                )
-                .await
-                .map_err(|error| match error {
-                    AuthorityError::ConfirmationFailed(err) => AuthorityError::Unknown {
-                        reason: format!("VRF signing confirmation failed: {err:?}"),
-                    },
-                    error => error,
-                })?;
         }
         self.holder.sign_vrf(invocation, request).await
     }
@@ -707,27 +661,34 @@ impl PairingHost {
         payload: Vec<u8>,
     ) -> Result<[u8; 64], AuthorityError> {
         let (session, revision) = self.grant_session(invocation.session)?;
+        let keypair = match invocation.caller {
+            AccountCaller::Local { product, .. } => {
+                self.local_product_signing_key(&session, Some(&product.product_id), &account)
+                    .await?
+            }
+            AccountCaller::Remote { .. } => None,
+        };
+        let Some(keypair) = keypair else {
+            return Err(AuthorityError::Unavailable { reason: "pairing host: exact statement proof signing needs an AutoSigning capability; the current SSO raw-signing protocol cannot carry it".to_string() });
+        };
         self.consent
-            .review(invocation.call, invocation.caller, UserConfirmationReview::StatementStoreProductSign(
-                        crate::platform::StatementStoreProductSignReview {
-                            calling_product_id: invocation.caller.product_id().map(str::to_string),
-                            account: account.clone(),
-                            payload: payload.clone(),
-                        },
-                    ))
+            .review(
+                invocation.call,
+                invocation.caller,
+                UserConfirmationReview::StatementStoreProductSign(
+                    crate::platform::StatementStoreProductSignReview {
+                        calling_product_id: invocation.caller.product_id().map(str::to_string),
+                        account: account.clone(),
+                        payload: payload.clone(),
+                    },
+                ),
+            )
             .await?;
         let cx = match invocation.caller {
             AccountCaller::Local { .. } => super::remote_authority_context(invocation.call),
             AccountCaller::Remote { .. } => invocation.call.clone(),
         };
         super::remote_authority_call(&cx, async {
-            let keypair = match invocation.caller {
-                AccountCaller::Local { product, .. } => self.local_product_signing_key(&session, Some(&product.product_id), &account).await?,
-                AccountCaller::Remote { .. } => None,
-            };
-            let Some(keypair) = keypair else {
-                return Err(AuthorityError::Unavailable { reason: "pairing host: exact statement proof signing needs an AutoSigning capability; the current SSO raw-signing protocol cannot carry it".to_string() });
-            };
             let lifecycle = self.grants.lifecycle();
             lifecycle.require_revision(revision)?;
             self.current_private_session(invocation.session)?;
@@ -765,31 +726,6 @@ impl ProductAuthority for PairingHost {
         request: latest::HostRequestResourceAllocationRequest,
     ) -> Result<latest::HostRequestResourceAllocationResponse, AuthorityError> {
         let (session, lifecycle_epoch) = self.grant_session(authority_session)?;
-        match self
-            .consent
-            .review(
-                cx,
-                AccountCaller::Local {
-                    product,
-                    authorization: None,
-                },
-                UserConfirmationReview::ResourceAllocation(
-                    crate::platform::ResourceAllocationReview {
-                        calling_product_id: product.product_id.clone(),
-                        resources: request.resources.clone(),
-                    },
-                ),
-            )
-            .await
-        {
-            Ok(()) => {}
-            Err(AuthorityError::Rejected) => {
-                return Ok(latest::HostRequestResourceAllocationResponse {
-                    outcomes: vec![latest::AllocationOutcome::Rejected; request.resources.len()],
-                });
-            }
-            Err(error) => return Err(error),
-        }
         let cx = super::remote_authority_context_with_default(
             cx,
             super::RESOURCE_ALLOCATION_REMOTE_AUTHORITY_RESPONSE_TIMEOUT,
@@ -856,14 +792,6 @@ impl ProductAuthority for PairingHost {
 
     async fn refresh_session_identity(&self) -> Option<AuthoritySession> {
         self.sso.refresh_current_session_identity().await
-    }
-
-    async fn subtree_resolution_reaches_account_holder(
-        &self,
-        session: &AuthoritySession,
-        product_id: &str,
-    ) -> bool {
-        PairingHost::subtree_reaches_account_holder(self, session, product_id).await
     }
 
     fn wallet_authorization(
@@ -958,11 +886,6 @@ impl AccountHolder for PairingHost {
         } else {
             None
         };
-        if keypair.is_none() && matches!(invocation.caller, AccountCaller::Local { .. }) {
-            self.consent
-                .review(invocation.call, invocation.caller, request.review(invocation.caller))
-                .await?;
-        }
         let cx = match invocation.caller {
             AccountCaller::Local { .. } => super::remote_authority_context(invocation.call),
             AccountCaller::Remote { .. } => invocation.call.clone(),
@@ -997,13 +920,6 @@ impl AccountHolder for PairingHost {
         watermarked: bool,
     ) -> Result<latest::HostSignPayloadResponse, AuthorityError> {
         let (session, revision) = self.grant_session(invocation.session)?;
-        if !matches!(request, SignRawAuthorityRequest::Product(_))
-            && matches!(invocation.caller, AccountCaller::Local { .. })
-        {
-            self.consent
-                .review(invocation.call, invocation.caller, request.review(invocation.caller, watermarked))
-                .await?;
-        }
         let keypair = if let AccountCaller::Local { product, .. } = invocation.caller
             && watermarked
         {
@@ -1023,10 +939,7 @@ impl AccountHolder for PairingHost {
         } else {
             None
         };
-        if keypair.is_none()
-            && matches!(request, SignRawAuthorityRequest::Product(_))
-            && matches!(invocation.caller, AccountCaller::Local { .. })
-        {
+        if keypair.is_some() && !matches!(request, SignRawAuthorityRequest::Product(_)) {
             self.consent
                 .review(invocation.call, invocation.caller, request.review(invocation.caller, watermarked))
                 .await?;
@@ -1085,9 +998,7 @@ impl AccountHolder for PairingHost {
             None
         };
         let names_contacts = matches!(&request, CreateTransactionAuthorityRequest::Product(payload) if !payload.contacts.is_empty());
-        if (keypair.is_none() || names_contacts)
-            && matches!(invocation.caller, AccountCaller::Local { .. })
-        {
+        if keypair.is_some() && names_contacts {
             self.consent
                 .review(invocation.call, invocation.caller, request.review(invocation.caller))
                 .await?;

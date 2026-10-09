@@ -4,8 +4,7 @@
 //! for alias, proof, and login operations.
 
 use crate::platform::{
-    PermissionAuthorizationStatus, ProductSubtreeReview, UserConfirmationReview,
-    normalize_product_identifier,
+    PermissionAuthorizationStatus, normalize_product_identifier,
 };
 use futures::StreamExt;
 use tracing::instrument;
@@ -32,7 +31,7 @@ use crate::runtime::{
     AccountCaller, AccountInvocation, ProductRuntimeHost,
     account_get_authority_error, remote_authority_context, ring_vrf_alias_error,
     ring_vrf_list_error, ring_vrf_proof_error, ring_vrf_register_error, ring_vrf_sign_error,
-    until_cancelled, validate_vrf_transcript, vrf_call_error,
+    validate_vrf_transcript, vrf_call_error,
 };
 
 #[truapi::async_trait]
@@ -55,8 +54,6 @@ impl Account for ProductRuntimeHost {
                 v01::HostAccountGetError::NotConnected,
             )));
         };
-        let session = &authority_session;
-
         let product_id = self.product_id();
         if product_account_id.dot_ns_identifier != product_id {
             match self
@@ -79,33 +76,6 @@ impl Account for ProductRuntimeHost {
                         reason: err.to_string(),
                     });
                 }
-            }
-        } else if self
-            .authority
-            .subtree_resolution_reaches_account_holder(
-                session,
-                &product_account_id.dot_ns_identifier,
-            )
-            .await
-        {
-            // Own-account resolution has no access review, so a cold subtree
-            // that must reach the Account Holder is the one point a host can
-            // surface and reject before the SSO call.
-            let approved = until_cancelled(
-                cx,
-                self.confirm_product_action(UserConfirmationReview::ProductSubtree(
-                    ProductSubtreeReview {
-                        product_id: product_account_id.dot_ns_identifier.clone(),
-                    },
-                )),
-            )
-            .await
-            .map_err(account_get_authority_error)?
-            .map_err(|err| CallError::HostFailure { reason: err.reason })?;
-            if !approved {
-                return Err(CallError::Domain(HostAccountGetError::V1(
-                    v01::HostAccountGetError::Rejected,
-                )));
             }
         }
 

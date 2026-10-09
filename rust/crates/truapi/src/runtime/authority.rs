@@ -602,15 +602,6 @@ pub trait ProductAuthority: Send + Sync {
         self.account_holder().current_session()
     }
 
-    /// Whether subtree resolution needs SSO and therefore host consent.
-    ///
-    /// True for a paired cache miss; false for local derivation or a cached subtree.
-    async fn subtree_resolution_reaches_account_holder(
-        &self,
-        session: &AuthoritySession,
-        product_id: &str,
-    ) -> bool;
-
     /// Select retained wallet permission for the current account activation.
     fn wallet_authorization(
         &self,

@@ -491,14 +491,6 @@ impl ProductAuthority for SigningHost {
         self.auth_state.store_disconnected();
     }
 
-    async fn subtree_resolution_reaches_account_holder(
-        &self,
-        _session: &AuthoritySession,
-        _product_id: &str,
-    ) -> bool {
-        false
-    }
-
     fn wallet_authorization(
         &self,
         authority_session: &AuthoritySession,
