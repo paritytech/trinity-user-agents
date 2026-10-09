@@ -281,7 +281,8 @@
             if direction == .in, rail != .card {
                 try? await Task.sleep(for: .seconds(1))
                 guard update(intent, { entry in
-                    entry.progress?.deposit = deposit(entry: entry, rail: rail)
+                    let pending = deposit(entry: entry, rail: rail)
+                    entry.progress?.deposit = pending
                     if rail == .bank { entry.progress?.reference = Self.reference(intent: intent) }
                 }) else { return }
                 try? await Task.sleep(for: .seconds(10))
@@ -291,9 +292,10 @@
                 try? await Task.sleep(for: Self.stepPause)
                 guard update(intent, { entry in
                     let now = Self.nowMs
-                    entry.progress?.steps = entry.progress?.steps.map {
+                    let steps = entry.progress?.steps.map {
                         $0.step == step ? FundingProgressStep(step: step, reachedAtMs: now) : $0
                     } ?? []
+                    entry.progress?.steps = steps
                     if step == .payment || step == .sent {
                         entry.progress?.transactionId = "0x" + UUID().uuidString.replacingOccurrences(of: "-", with: "")
                             .lowercased()
