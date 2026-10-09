@@ -221,7 +221,7 @@ fn signed_fields(
 }
 
 /// The bytes that a payer signs for one cache delivery: the shared fields, the service as one byte (0 delivery), and
-/// the retention window `from` and `until` as little-endian u64s. A delivery has no window, so both are 0.
+/// the retention size, `from` and `until` as little-endian u64s. A delivery has no retention, so all three are 0.
 fn receipt_message(
     transfer: &str,
     payer: &[u8; 32],
@@ -230,7 +230,7 @@ fn receipt_message(
 ) -> Vec<u8> {
     let mut message = signed_fields(RECEIPT_PREFIX, transfer, payer, provider, content_id);
     message.push(0);
-    message.extend_from_slice(&[0; 16]);
+    message.extend_from_slice(&[0; 24]);
     message
 }
 
@@ -550,6 +550,7 @@ impl CacheNodes {
                 "provider": hex::encode(provider.id),
                 "content": cid,
                 "service": "Delivery",
+                "size": 0,
                 "from": 0,
                 "until": 0,
             },
@@ -776,7 +777,9 @@ mod tests {
             (
                 "1b90bef8509cc25b45d94885d8a1eca44bd751212310efc75c9e2628a663b98f".to_string(),
                 "189dac29296d31814dc8c56cf3d36a0543372bba7538fa322a4aebfebc39e056".to_string(),
-                format!("63616368652d726563656970742f32{fields}0000000000000000000000000000000000"),
+                format!(
+                    "63616368652d726563656970742f32{fields}00000000000000000000000000000000000000000000000000"
+                ),
                 format!("63616368652d726561642f31{fields}e01ec86a00000000"),
             )
         );
@@ -913,7 +916,12 @@ mod tests {
                     &receipt["provider"],
                     &receipt["content"]
                 ],
-                [&receipt["service"], &receipt["from"], &receipt["until"]],
+                [
+                    &receipt["service"],
+                    &receipt["size"],
+                    &receipt["from"],
+                    &receipt["until"]
+                ],
             ),
             (
                 1,
@@ -929,7 +937,7 @@ mod tests {
                     &json!(hex::encode([1u8; 32])),
                     &json!(cid())
                 ],
-                [&json!("Delivery"), &json!(0), &json!(0)],
+                [&json!("Delivery"), &json!(0), &json!(0), &json!(0)],
             )
         );
     }
