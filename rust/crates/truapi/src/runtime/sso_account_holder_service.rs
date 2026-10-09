@@ -281,7 +281,7 @@ impl SsoAccountHolderService {
                         SsoAllocationOutcome::Allocated(match grant {
                             AccountGrant::StatementStore { key, .. } => {
                                 SsoAllocatedResource::StatementStoreAllowance {
-                                    slot_account_key: key.secret.to_vec(),
+                                    slot_account_key: key.as_secret_bytes().to_vec(),
                                 }
                             }
                             AccountGrant::Bulletin(key) => {
@@ -296,11 +296,6 @@ impl SsoAccountHolderService {
                                 product_root_private_key: *key.as_secret_bytes(),
                                 ring_vrf_domain_entropy: *key.ring_vrf_domain_entropy(),
                             },
-                            AccountGrant::WalletAuthorization(_) => {
-                                return Err(
-                                    "remote allocation returned a local authorization".to_string()
-                                );
-                            }
                         })
                     }
                     Ok(AccountGrantOutcome::Rejected) => {

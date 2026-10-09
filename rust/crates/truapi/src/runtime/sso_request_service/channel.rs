@@ -66,7 +66,10 @@ pub fn start_disconnect_monitor(service: &SsoRequestService, session: &SessionIn
     let key = SsoSessionKey::from_session(&sso);
 
     let (registration, spawner, previous) = {
-        let _lifecycle = service.grants.lifecycle();
+        let _selection = service
+            .selection
+            .lock()
+            .expect("session selection mutex poisoned");
         if !service.current_sso_session_matches(key) {
             return;
         }
@@ -111,18 +114,12 @@ pub fn start_disconnect_monitor(service: &SsoRequestService, session: &SessionIn
     spawner(Box::pin(Abortable::new(future, registration).map(|_| ())));
 }
 
-/// Detach channel state while the session lifecycle is locked.
-pub fn detach_session_channel(
-    service: &SsoRequestService,
-    session: Option<&SessionInfo>,
-) -> Option<SsoDisconnectMonitor> {
+/// Detach channel state while session selection is locked.
+pub fn detach_session_channel(service: &SsoRequestService) -> Option<SsoDisconnectMonitor> {
     *service
         .newest_request
         .lock()
         .expect("newest request mutex poisoned") = None;
-    service.grants.clear_statement_store_allowance_keys(session);
-    service.grants.clear_bulletin_allowance_keys(session);
-    service.grants.clear_product_subtrees(session);
     service
         .disconnect_monitor
         .lock()

@@ -13,7 +13,7 @@ fn invalid_activation_preserves_the_active_wallet_and_its_grants() {
     )
     .expect("initial activation succeeds");
     let session = authority
-        .account_holder()
+        .wallet_for_tests()
         .current_session()
         .expect("active wallet");
     let runtime = product_runtime(services, authority.clone());
@@ -46,7 +46,7 @@ fn invalid_activation_preserves_the_active_wallet_and_its_grants() {
 
     assert_eq!(
         (
-            authority.account_holder().current_session(),
+            authority.wallet_for_tests().current_session(),
             keypair
                 .public
                 .verify_simple(b"substrate", b"<Bytes>still active</Bytes>", &signature)
@@ -81,11 +81,11 @@ fn pending_vrf_approval_tracks_wallet_activation() {
             let (services, authority) = signing_runtime_with_platform(platform.clone());
             futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
                 .unwrap();
-            let session = authority.account_holder().current_session().unwrap();
+            let session = authority.wallet_for_tests().current_session().unwrap();
             let runtime = product_runtime(services, authority.clone());
             let service = SsoAccountHolderService::new(
-                authority.account_holder().clone(),
-                authority.account_holder().current_session().unwrap(),
+                authority.wallet_for_tests().clone(),
+                authority.wallet_for_tests().current_session().unwrap(),
             );
             let answer = async {
                 if remote {
@@ -144,7 +144,7 @@ fn pending_vrf_approval_tracks_wallet_activation() {
             assert_eq!(
                 (
                     futures::executor::block_on(answer),
-                    authority.account_holder().current_session() == Some(session),
+                    authority.wallet_for_tests().current_session() == Some(session),
                     platform.sign_vrf_reviews.lock().unwrap().len()
                 ),
                 (expected, change == "reset", 1),
@@ -180,13 +180,7 @@ fn product_reset_during_allocation_review_cannot_restore_native_grants() {
     futures::executor::block_on(authority.clear_product_state("myapp.dot")).unwrap();
     release.send(()).unwrap();
     let result = futures::executor::block_on(allocation);
-    let status = authority
-        .accounts()
-        .wallet_authorization(
-            &authority.accounts().current_session().unwrap(),
-            &ProductContext::new("myapp.dot".to_string()).unwrap(),
-        )
-        .map(|authorization| authorization.is_some());
+    let status = keeps_auto_signing(&authority, "myapp.dot");
     assert_eq!(
         (
             result.map(|_| ()),
@@ -201,7 +195,7 @@ fn product_reset_during_allocation_review_cannot_restore_native_grants() {
                     }
                 )
             )),
-            Ok(false),
+            false,
             1
         ),
     );
@@ -216,21 +210,19 @@ fn wallet_change_during_ring_preparation_rejects_the_alias() {
         let (_, authority) =
             signing_runtime_with_ring_resolver(Arc::new(StubPlatform::default()), resolver.clone());
         futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec())).unwrap();
-        let session = authority.account_holder().current_session().unwrap();
+        let session = authority.wallet_for_tests().current_session().unwrap();
         let ring = full_person_ring_location();
         register_full_person_key(&authority, &session, &ring);
         let (release, gate) = futures::channel::oneshot::channel();
         *resolver.validation_gate.lock().unwrap() = Some(gate);
         let product = ProductContext::new("peopl.dot".to_string()).unwrap();
         let cx = CallContext::default();
-        let alias = authority.account_holder().account_alias(
+        let alias = authority.wallet_for_tests().account_alias(
             AccountInvocation {
                 call: &cx,
                 session: &session,
                 caller: AccountCaller::Local {
                     product: &product,
-                    authorization: None,
-                    outbound_review: None,
                 },
             },
             HostAccountGetAliasRequest {
@@ -256,4 +248,40 @@ fn wallet_change_during_ring_preparation_rejects_the_alias() {
             Err(RingVrfError::from(AuthorityError::Disconnected))
         );
     }
+}
+
+/// Allow once lasts for one unlocked wallet and one installed product: lock,
+/// a wallet switch and a product reset each make the next request ask again.
+#[test]
+fn lock_wallet_switch_and_product_reset_forget_allow_once() {
+    let platform = Arc::new(StubPlatform {
+        permission_confirmation_decisions: std::sync::Mutex::new(
+            [crate::platform::PermissionDecision::AllowOnce; 4].into(),
+        ),
+        ..StubPlatform::default()
+    });
+    let (_, authority) = signing_runtime_with_platform(platform.clone());
+    futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec())).unwrap();
+    let product = ProductContext::new("myapp.dot".to_string()).unwrap();
+    let prompts_after_request = || {
+        futures::executor::block_on(authority.accounts().get_account(
+            &CallContext::default(),
+            &product,
+            truapi::latest::ProductAccountId {
+                dot_ns_identifier: "peopl.dot".to_string(),
+                derivation_index: truapi::latest::DerivationIndex::Index(0),
+            },
+        ))
+        .unwrap();
+        platform.account_access_reviews.lock().unwrap().len()
+    };
+    let mut prompts = vec![prompts_after_request(), prompts_after_request()];
+    futures::executor::block_on(authority.disconnect());
+    futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec())).unwrap();
+    prompts.push(prompts_after_request());
+    futures::executor::block_on(authority.activate_local_session(vec![0xCD; 16])).unwrap();
+    prompts.push(prompts_after_request());
+    futures::executor::block_on(authority.clear_product_state("myapp.dot")).unwrap();
+    prompts.push(prompts_after_request());
+    assert_eq!(prompts, vec![1, 1, 2, 3, 4]);
 }

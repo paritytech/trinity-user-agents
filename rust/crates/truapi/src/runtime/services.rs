@@ -12,7 +12,7 @@ use crate::chain_runtime::{ChainRuntime, RuntimeChainProvider, RuntimeFailure};
 use crate::host_logic::worker::WorkerLedger;
 use crate::platform::{HostInfo, JsonRpcConnection, PermissionStatusHost, Platform};
 use crate::runtime::bulletin_rpc::BulletinRpc;
-use crate::runtime::signing_host::DevicePairingObserver;
+use crate::runtime::sso_responder_service::DevicePairingObserver;
 use crate::runtime::statement_store_rpc::StatementStoreRpc;
 #[cfg(not(target_arch = "wasm32"))]
 use crate::store::{Db, DbError};

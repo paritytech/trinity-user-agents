@@ -24,7 +24,9 @@ mod host_grants;
 mod host_session;
 mod identity;
 pub mod login_failure;
+mod pairing_host;
 pub mod product_manifest;
+mod product_consent;
 mod product_subtree;
 mod renderer;
 mod ring_vrf_registry;
@@ -36,6 +38,7 @@ mod sso_account_holder_service;
 /// SSO remote request/response messaging over the statement store.
 pub mod sso_remote;
 mod sso_request_service;
+mod sso_responder_service;
 pub mod sso_service;
 /// Statement Store and Bulletin allowance allocation.
 pub mod statement_allowance;
@@ -53,17 +56,7 @@ use std::time::Instant;
 
 pub use actions::ActionChannel;
 use authority::AuthorityCancelError;
-pub use authority::{
-    AccountCaller, AccountHolder, AuthorityError, AuthoritySession, BulletinAllowanceKey,
-};
-/// Wallet-issued permission for one product during one activation.
-#[derive(Clone)]
-pub struct WalletAuthorization {
-    issuer: std::sync::Weak<crate::host_logic::session::SessionState>,
-    validation_id: Vec<u8>,
-    product_id: String,
-}
-
+pub use authority::{AccountHolder, AuthorityError, AuthoritySession, BulletinAllowanceKey};
 pub use chat::chat_platform_for;
 pub use contacts::ContactResolutionError;
 
@@ -75,29 +68,26 @@ type ContactsPicker = (
 );
 use futures::{FutureExt, StreamExt, pin_mut};
 pub use host_accounts::HostAccounts;
+pub use pairing_host::PairingHost;
 #[cfg(feature = "test-host")]
 mod test_resource_controls;
 pub use host_grants::HostGrantStore;
 pub use host_session::HostSession;
 pub use renderer::renderer_access_for;
 pub use services::RuntimeServices;
-pub use signing_host::{
-    AnnouncedPairing, DevicePairingObserver, MAX_PAIRING_METADATA_CHARS, PairedSsoPeer,
-    PairingProposal, PairingProposalMetadata, ResponderExit,
-};
-pub use signing_host::{
-    LocalActivation, SigningHost as SigningHostRole, disconnect_paired_host, establish_pairing,
-    notify_pairing_allowance_allocation, notify_pairing_failed, respond_to_pairing, resume_pairing,
-};
+pub use signing_host::{LocalActivation, SigningHost as SigningHostRole};
 pub use sso_account_holder_client::SsoAccountHolderClient;
 pub use sso_account_holder_service::SsoAccountHolderService;
-pub use sso_request_service::SsoRequestService;
+pub use sso_responder_service::{
+    AnnouncedPairing, DevicePairingObserver, MAX_PAIRING_METADATA_CHARS, PairedSsoPeer,
+    PairingProposal, PairingProposalMetadata, ResponderExit, SsoResponderService,
+};
 #[cfg(all(target_arch = "wasm32", feature = "test-host"))]
 pub use vrf::ring_vrf_member;
 // `TrackedStatementRenewalTarget` is only read back by the native renewal
 // reporting, so re-exporting it on wasm leaves an unused import.
 use crate::platform::{
-    AccountAccessReview, ChatFieldError, IdentityDisclosureReview, PermissionAuthorizationRequest,
+    ChatFieldError, IdentityDisclosureReview, PermissionAuthorizationRequest,
     PermissionAuthorizationStatus, PermissionDecision, Platform, ProductContext, ProductStorageKey,
     SessionUiInfo, UserConfirmationReview, normalize_chat_identifier, normalize_product_identifier,
     validate_chat_icon, validate_chat_message_content, validate_chat_name,
@@ -742,7 +732,6 @@ impl<H: AccountHolder> ProductRuntimeHost<H> {
                     dot_ns_identifier: self.connection.product_id(),
                     derivation_index: latest::DerivationIndex::Index(0),
                 },
-                None,
             )
             .await
             .map_err(|err| err.to_string())
@@ -779,63 +768,6 @@ impl<H: AccountHolder> ProductRuntimeHost<H> {
         }
         Err(LegacySignerError::Unavailable)
     }
-}
-
-async fn account_access_authorization(
-    platform: &dyn Platform,
-    requesting_product_id: &str,
-    target_product_id: &str,
-) -> Result<PermissionAuthorizationStatus, AccountAccessAuthorizationError> {
-    if requesting_product_id == target_product_id
-        || crate::platform::normalizes_to_trusted_remote_permissions(requesting_product_id)
-    {
-        return Ok(PermissionAuthorizationStatus::Authorized);
-    }
-
-    // Both sides bare-labelled, matching the grant this decision overrides and
-    // the key `user_denied_account_access` reads back. A decision filed against
-    // the full target would not be found when the grant is resolved for a
-    // subname of it.
-    let target = crate::host_internal::product_manifest::bare_product_label(target_product_id);
-    // Stored per product, not per executable, because that is the granularity a
-    // manifest grant uses: `dim2.dot`, `app.dim2.dot` and `worker.dim2.dot` are
-    // one grantee. A decision filed under the full id could be missed by the
-    // same product arriving under a subname it already owns, which would let a
-    // refused product keep a `context` grant by respelling itself. The prompt
-    // still names the id the user saw; only the slot it is filed under is the
-    // product's.
-    let caller = crate::host_internal::product_manifest::bare_product_label(requesting_product_id);
-    let cached = crate::host_internal::permissions::account_access_status(platform, caller, target)
-        .await
-        .map_err(AccountAccessAuthorizationError::PermissionStorage)?;
-    if cached != PermissionAuthorizationStatus::NotDetermined {
-        return Ok(cached);
-    }
-
-    let decision = platform
-        .confirm_permission(UserConfirmationReview::AccountAccess(AccountAccessReview {
-            requesting_product_id: requesting_product_id.to_string(),
-            target_product_id: target_product_id.to_string(),
-        }))
-        .await
-        .map_err(AccountAccessAuthorizationError::Confirmation)?;
-    let status = match decision {
-        PermissionDecision::AllowOnce => return Ok(PermissionAuthorizationStatus::Authorized),
-        PermissionDecision::AllowAlways => PermissionAuthorizationStatus::Authorized,
-        PermissionDecision::Deny => PermissionAuthorizationStatus::Denied,
-    };
-    crate::host_internal::permissions::set_account_access_status(platform, caller, target, status)
-        .await
-        .map_err(AccountAccessAuthorizationError::PermissionStorage)?;
-    Ok(status)
-}
-
-#[derive(Debug, thiserror::Error)]
-enum AccountAccessAuthorizationError {
-    #[error("permission storage failed: {0:?}")]
-    PermissionStorage(v01::GenericError),
-    #[error("account access confirmation failed: {0:?}")]
-    Confirmation(v01::GenericError),
 }
 
 fn parse_legacy_signer_hex(signer: &str) -> Option<[u8; 32]> {
@@ -1083,10 +1015,7 @@ impl<H: AccountHolder> ProductRuntimeHost<H> {
             .collect();
         if !misses.is_empty() {
             let generation = cache.generation();
-            let lookup = crate::platform::HostContactLookup {
-                handle_key: handles.handle_key(),
-                handles: misses,
-            };
+            let lookup = handles.lookup(misses);
             let matches = platform
                 .contacts(&lookup)
                 .await
@@ -1132,9 +1061,9 @@ impl<H: AccountHolder> ProductRuntimeHost<H> {
             .accounts
             .current_session()
             .ok_or(CallError::Domain(v01::HostContactsPickError::NotConnected))?;
-        let handle_key = self
+        let handles = self
             .accounts
-            .contacts_handle_key(&authority_session)
+            .contact_handles(&authority_session)
             .map_err(|error| match error {
                 AuthorityError::Disconnected => {
                     CallError::Domain(v01::HostContactsPickError::NotConnected)
@@ -1143,10 +1072,7 @@ impl<H: AccountHolder> ProductRuntimeHost<H> {
                     reason: other.to_string(),
                 }),
             })?;
-        Ok((
-            platform,
-            crate::runtime::contacts::ContactHandles::from_handle_key(handle_key),
-        ))
+        Ok((platform, handles))
     }
 }
 
@@ -1519,14 +1445,7 @@ impl ProductRuntimeHost<SsoAccountHolderClient> {
         .0
     }
 
-    fn new_compat_with_pairing(
-        platform: Arc<dyn Platform>,
-        spawner: Spawner,
-    ) -> (
-        Self,
-        Arc<HostAccounts<SsoAccountHolderClient>>,
-        Arc<SsoRequestService>,
-    ) {
+    fn new_compat_with_pairing(platform: Arc<dyn Platform>, spawner: Spawner) -> (Self, PairingHost) {
         let host_config = Self::compat_host_config();
         Self::new_pairing_for_tests(
             platform,
@@ -1542,11 +1461,7 @@ impl ProductRuntimeHost<SsoAccountHolderClient> {
         host_config: crate::platform::PairingHostConfig,
         product: ProductContext,
         spawner: Spawner,
-    ) -> (
-        Self,
-        Arc<HostAccounts<SsoAccountHolderClient>>,
-        Arc<SsoRequestService>,
-    ) {
+    ) -> (Self, PairingHost) {
         let services = RuntimeServices::new(
             platform.clone(),
             host_config.host.host_info.clone(),
@@ -1555,10 +1470,16 @@ impl ProductRuntimeHost<SsoAccountHolderClient> {
             host_config.asset_hub_chain_genesis_hash,
             spawner.clone(),
         );
-        let (accounts, sso) = HostAccounts::pairing(services.clone(), host_config);
+        let pairing = PairingHost::new(services.clone(), host_config);
         let adapters = crate::host_core::ConnectionAdapters::from_services(&services);
-        let host = Self::from_services(services, adapters, accounts.clone(), sso.clone(), product);
-        (host, accounts, sso)
+        let host = Self::from_services(
+            services,
+            adapters,
+            pairing.accounts().clone(),
+            pairing.session().clone(),
+            product,
+        );
+        (host, pairing)
     }
 }
 

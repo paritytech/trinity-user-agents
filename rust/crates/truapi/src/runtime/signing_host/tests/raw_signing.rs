@@ -101,8 +101,8 @@ fn paired_raw_signing_review_matches_the_signed_bytes_and_requires_confirmation(
             futures::executor::block_on(activation.activate_local_session(ENTROPY.to_vec()))
                 .unwrap();
             let service = SsoAccountHolderService::new(
-                activation.account_holder().clone(),
-                activation.account_holder().current_session().unwrap(),
+                activation.wallet_for_tests().clone(),
+                activation.wallet_for_tests().current_session().unwrap(),
             );
             let identity = derive_identity_keypair(&ENTROPY, TEST_NETWORK_SUFFIX).unwrap();
             let root = derive_root_keypair_from_entropy(&ENTROPY).unwrap();

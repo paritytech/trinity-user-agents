@@ -376,7 +376,6 @@ impl<H: super::AccountHolder> ProductRuntimeHost<H> {
                 authority_session,
                 &self.connection.product,
                 &product_account_id,
-                None,
             )
             .await
             .map_err(|err| StatementProofFailure::UnableToSign(err.to_string()))?;
@@ -389,11 +388,7 @@ impl<H: super::AccountHolder> ProductRuntimeHost<H> {
             .sign_statement_store_product_payload(
                 authority_session,
                 cx,
-                crate::runtime::authority::AccountCaller::Local {
-                    product: &self.connection.product,
-                    authorization: None,
-                    outbound_review: None,
-                },
+                &self.connection.product,
                 product_account_id,
                 payload,
             )
@@ -432,7 +427,7 @@ pub fn create_statement_proof_with_key(
 ) -> Result<latest::StatementProof, StatementProofFailure> {
     let fields =
         statement_fields_from_v01(statement).map_err(StatementProofFailure::InvalidStatement)?;
-    let signed = sign_statement_fields(key.secret, key.public_key, fields)
+    let signed = sign_statement_fields(*key.as_secret_bytes(), key.public_key, fields)
         .map_err(StatementProofFailure::UnableToSign)?;
     signed
         .into_iter()

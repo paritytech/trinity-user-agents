@@ -15,7 +15,7 @@ use crate::frame::ProtocolMessage;
 use crate::generated::dispatcher;
 use crate::host_logic::session::SessionState;
 use crate::runtime::{
-    AccountHolder, HostAccounts, HostSession, ProductRuntimeHost, RuntimeServices,
+    AccountHolder, HostAccounts, HostSession, PairingHost, ProductRuntimeHost, RuntimeServices,
 };
 use crate::subscription::Spawner;
 use crate::transport::Transport;
@@ -81,9 +81,14 @@ impl TrUApiCore {
             host_config.asset_hub_chain_genesis_hash,
             spawner.clone(),
         );
-        let (accounts, sso) = HostAccounts::pairing(services.clone(), host_config);
-        sso.clone().start_session_store_sync(spawner);
-        Self::from_runtime_parts(services, accounts, sso, product)
+        let pairing = PairingHost::new(services.clone(), host_config);
+        pairing.session().clone().start_session_store_sync(spawner);
+        Self::from_runtime_parts(
+            services,
+            pairing.accounts().clone(),
+            pairing.session().clone(),
+            product,
+        )
     }
 
     /// Build a product-facing core over shared accounts and session lifecycle.

@@ -6,13 +6,13 @@ use native_allowances::NativeAllowanceDeletion;
 
 use super::allowances::{self, AllowanceCacheKey, AllowanceResource, GrantScope};
 use super::authority::{
-    AccountGrant, AuthorityError, AuthoritySession, AutoSigningKey, BulletinAllowanceKey,
+    AccountGrant, AuthorityError, AutoSigningKey, BulletinAllowanceKey,
     StatementStoreAllowanceKey,
 };
 use super::product_subtree;
 use crate::host_logic::session::{SessionInfo, SessionState};
 use crate::platform::{CoreStorage, CoreStorageKey};
-use futures::lock::MutexGuard as AsyncMutexGuard;
+use futures::lock::OwnedMutexGuard;
 use parity_scale_codec::{Decode, Encode};
 use schnorrkel::SecretKey;
 use std::collections::HashMap;
@@ -97,7 +97,6 @@ enum PendingDeletion {
 struct GrantState {
     revision: u64,
     pending_deletions: Vec<PendingDeletion>,
-    wallet_authorizations: HashMap<String, super::WalletAuthorization>,
 }
 
 impl GrantState {
@@ -112,7 +111,7 @@ impl GrantState {
 pub struct HostGrantStore {
     storage: Arc<dyn CoreStorage>,
     state: Mutex<GrantState>,
-    persistence: futures::lock::Mutex<()>,
+    persistence: Arc<futures::lock::Mutex<()>>,
     statement_store_allowances:
         Mutex<HashMap<AllowanceCacheKey, (Option<u32>, StatementStoreAllowanceKey)>>,
     bulletin_allowances: Mutex<HashMap<AllowanceCacheKey, BulletinAllowanceKey>>,
@@ -129,7 +128,17 @@ pub struct HostGrantGuard<'a> {
 /// Orders durable grants and session writes against revocation.
 pub struct HostGrantPersistence<'a> {
     store: &'a HostGrantStore,
-    _guard: AsyncMutexGuard<'a, ()>,
+    _barrier: Barrier<'a>,
+}
+
+/// Holds back grant writes while a session changes or its grants are revoked.
+pub struct GrantBarrier {
+    _guard: OwnedMutexGuard<()>,
+}
+
+enum Barrier<'a> {
+    Owned { _barrier: GrantBarrier },
+    Held { _barrier: &'a GrantBarrier },
 }
 
 impl HostGrantStore {
@@ -138,7 +147,7 @@ impl HostGrantStore {
         Self {
             storage,
             state: Mutex::new(GrantState::default()),
-            persistence: futures::lock::Mutex::new(()),
+            persistence: Arc::new(futures::lock::Mutex::new(())),
             statement_store_allowances: Mutex::new(HashMap::new()),
             bulletin_allowances: Mutex::new(HashMap::new()),
             product_subtrees: Mutex::new(HashMap::new()),
@@ -158,7 +167,9 @@ impl HostGrantStore {
     pub async fn persistence(&self) -> HostGrantPersistence<'_> {
         HostGrantPersistence {
             store: self,
-            _guard: self.persistence.lock().await,
+            _barrier: Barrier::Owned {
+                _barrier: self.barrier().await,
+            },
         }
     }
 
@@ -182,6 +193,35 @@ impl HostGrantStore {
             return Err(AuthorityError::Disconnected);
         }
         Ok(storage)
+    }
+
+    /// Hold back grant writes across another component's session change.
+    pub async fn barrier(&self) -> GrantBarrier {
+        GrantBarrier {
+            _guard: self.persistence.clone().lock_owned().await,
+        }
+    }
+
+    /// Persist under a barrier this store already handed out.
+    pub fn persistence_under<'a>(&'a self, barrier: &'a GrantBarrier) -> HostGrantPersistence<'a> {
+        HostGrantPersistence {
+            store: self,
+            _barrier: Barrier::Held { _barrier: barrier },
+        }
+    }
+
+    /// Stop grant work for `previous`, revoking its durable grants when it was cleared.
+    pub fn session_ended(&self, previous: Option<&SessionInfo>, revoked: bool) {
+        let mut lifecycle = self.lifecycle();
+        if revoked {
+            lifecycle.revoke_session(previous);
+        } else {
+            lifecycle.advance();
+        }
+        drop(lifecycle);
+        self.clear_statement_store_allowance_keys(previous);
+        self.clear_bulletin_allowance_keys(previous);
+        self.clear_product_subtrees(previous);
     }
 
     fn session_secret_allocation_is_current(
@@ -358,7 +398,7 @@ impl HostGrantStore {
     ) -> Result<(), AuthorityError> {
         let (resource, secret) = match allowance {
             AccountGrant::StatementStore { key, .. } => {
-                (AllowanceResource::StatementStore, &key.secret)
+                (AllowanceResource::StatementStore, key.as_secret_bytes())
             }
             AccountGrant::Bulletin(key) => (AllowanceResource::Bulletin, key.as_secret_bytes()),
             _ => return Err(AuthorityError::Rejected),
@@ -547,6 +587,8 @@ impl HostGrantStore {
     }
 
     /// Validate and retain delegated signing authority for the selected session.
+    ///
+    /// A wallet's own host keeps it in memory for this activation; a paired host stores it.
     pub async fn remember_auto_signing_key(
         &self,
         session_state: &SessionState,
@@ -565,6 +607,20 @@ impl HostGrantStore {
         )?;
         let owner = AutoSigningOwner::from_session(session);
         let cache_key = (owner.clone(), product_id.to_string());
+        if session.sso.is_none() {
+            let kept = self.cache_auto_signing_key_if_current(
+                session_state,
+                session,
+                lifecycle_epoch,
+                cache_key,
+                key,
+            );
+            return if kept {
+                Ok(())
+            } else {
+                Err(AuthorityError::Disconnected)
+            };
+        }
         let _storage_guard = self.persistence().await;
         if !self.session_secret_allocation_is_current(session_state, session, lifecycle_epoch) {
             return Err(AuthorityError::Disconnected);
@@ -622,10 +678,6 @@ impl HostGrantStore {
         session: &SessionInfo,
         product_id: &str,
     ) -> Result<Option<AutoSigningKey>, AuthorityError> {
-        if session.sso.is_none() {
-            return Ok(None);
-        }
-
         let owner = AutoSigningOwner::from_session(session);
         let cache_key = (owner.clone(), product_id.to_string());
         if let Some(key) = self
@@ -636,6 +688,9 @@ impl HostGrantStore {
             .cloned()
         {
             return Ok(Some(key));
+        }
+        if session.sso.is_none() {
+            return Ok(None);
         }
 
         let _storage_guard = self.persistence().await;
@@ -784,7 +839,6 @@ impl HostGrantGuard<'_> {
     /// Revoke transient grants before replacing or locking the local wallet.
     pub fn clear_memory(&mut self) {
         self.advance();
-        self.state.wallet_authorizations.clear();
         self.store
             .statement_store_allowances
             .lock()
@@ -807,37 +861,9 @@ impl HostGrantGuard<'_> {
             .clear();
     }
 
-    /// Retain a receipt issued to this runtime's canonical wallet activation.
-    pub fn retain_wallet_authorization(
-        &mut self,
-        session_state: &Arc<SessionState>,
-        authority_session: &AuthoritySession,
-        revision: u64,
-        product_id: &str,
-        authorization: super::WalletAuthorization,
-    ) -> Result<(), AuthorityError> {
-        self.require_revision(revision)?;
-        if !authorization.issuer.ptr_eq(&Arc::downgrade(session_state))
-            || authorization.validation_id != authority_session.validation_id
-            || authorization.product_id != product_id
-        {
-            return Err(AuthorityError::Rejected);
-        }
-        self.state
-            .wallet_authorizations
-            .insert(product_id.to_string(), authorization);
-        Ok(())
-    }
-
-    /// Permission retained for the calling product in this activation.
-    pub fn wallet_authorization(&self, product_id: &str) -> Option<super::WalletAuthorization> {
-        self.state.wallet_authorizations.get(product_id).cloned()
-    }
-
     /// Invalidate one product without touching another product's wallet permission.
     pub fn revoke_product(&mut self, product_id: &str) {
         self.advance();
-        self.state.wallet_authorizations.remove(product_id);
         self.store
             .statement_store_allowances
             .lock()

@@ -136,8 +136,8 @@ fn secret_key() -> StatementStoreAllowanceKey {
 fn remember(signing_host: &SigningHostRole, product_id: &str, period: u32) {
     let state = signing_host.session_state();
     let session = state.current().unwrap();
-    let revision = signing_host.grants.lifecycle().revision();
-    futures::executor::block_on(signing_host.grants.retain_allowance(
+    let revision = signing_host.accounts().grants_for_tests().lifecycle().revision();
+    futures::executor::block_on(signing_host.accounts().grants_for_tests().retain_allowance(
         &state,
         &session,
         revision,
@@ -153,8 +153,8 @@ fn remember(signing_host: &SigningHostRole, product_id: &str, period: u32) {
 fn remembered(signing_host: &SigningHostRole, product_id: &str) -> Option<[u8; 64]> {
     let state = signing_host.session_state();
     let session = state.current().unwrap();
-    let revision = signing_host.grants.lifecycle().revision();
-    futures::executor::block_on(signing_host.grants.cached_allowance(
+    let revision = signing_host.accounts().grants_for_tests().lifecycle().revision();
+    futures::executor::block_on(signing_host.accounts().grants_for_tests().cached_allowance(
         &state,
         &session,
         revision,
@@ -163,7 +163,7 @@ fn remembered(signing_host: &SigningHostRole, product_id: &str) -> Option<[u8; 6
     ))
     .unwrap()
     .map(|grant| match grant {
-        AccountGrant::StatementStore { key, .. } => key.secret,
+        AccountGrant::StatementStore { key, .. } => *key.as_secret_bytes(),
         _ => panic!("expected statement-store grant"),
     })
 }
@@ -214,8 +214,8 @@ fn a_new_session_reuses_the_same_wallet_allowance() {
     let restarted = active_signing_host(platform);
     let state = restarted.session_state();
     let session = state.current().unwrap();
-    let revision = restarted.grants.lifecycle().revision();
-    let restored = futures::executor::block_on(restarted.grants.cached_allowance(
+    let revision = restarted.accounts().grants_for_tests().lifecycle().revision();
+    let restored = futures::executor::block_on(restarted.accounts().grants_for_tests().cached_allowance(
         &state,
         &session,
         revision,
@@ -229,7 +229,7 @@ fn a_new_session_reuses_the_same_wallet_allowance() {
         (
             after_lock,
             restored.map(|grant| match grant {
-                AccountGrant::StatementStore { key, period } => (period, key.secret),
+                AccountGrant::StatementStore { key, period } => (period, *key.as_secret_bytes()),
                 _ => panic!("expected statement-store grant"),
             }),
             remembered(&restarted, PRODUCT_ID)
@@ -322,11 +322,11 @@ fn a_key_allocated_under_a_replaced_session_is_not_remembered() {
     let signing_host = active_signing_host(Arc::new(StubPlatform::default()));
     let state = signing_host.session_state();
     let session = state.current().unwrap();
-    let revision = signing_host.grants.lifecycle().revision();
+    let revision = signing_host.accounts().grants_for_tests().lifecycle().revision();
     futures::executor::block_on(signing_host.activate_local_session(ENTROPY.to_vec()))
         .expect("re-activation succeeds");
 
-    let remembered_stale = futures::executor::block_on(signing_host.grants.retain_allowance(
+    let remembered_stale = futures::executor::block_on(signing_host.accounts().grants_for_tests().retain_allowance(
         &state,
         &session,
         revision,
@@ -504,9 +504,9 @@ fn native_bulletin_submission_uses_the_retained_key() {
     let state = host.session_state();
     let session = state.current().unwrap();
     let authority_session = host.accounts().current_session().unwrap();
-    let revision = host.grants.lifecycle().revision();
+    let revision = host.accounts().grants_for_tests().lifecycle().revision();
     let result = futures::executor::block_on(async {
-        host.grants
+        host.accounts().grants_for_tests()
             .retain_allowance(
                 &state,
                 &session,
@@ -530,7 +530,7 @@ fn native_bulletin_submission_uses_the_retained_key() {
             .await
             .unwrap();
         let cached = host
-            .grants
+            .accounts().grants_for_tests()
             .cached_allowance(
                 &state,
                 &session,
@@ -560,10 +560,10 @@ fn only_a_retained_sponsorship_renews_without_another_approval() {
         derive_sr25519_hard_path(&ENTROPY, &["allowance", "statement-store", PRODUCT_ID]).unwrap();
     let state = host.session_state();
     let session = state.current().unwrap();
-    let revision = host.grants.lifecycle().revision();
+    let revision = host.accounts().grants_for_tests().lifecycle().revision();
     let product = crate::platform::ProductContext::new(PRODUCT_ID.to_string()).unwrap();
     futures::executor::block_on(async {
-        host.grants
+        host.accounts().grants_for_tests()
             .retain_allowance(
                 &state,
                 &session,
@@ -609,10 +609,10 @@ fn a_declined_bulletin_extension_keeps_the_retained_key() {
     let state = host.session_state();
     let session = state.current().unwrap();
     let authority_session = host.accounts().current_session().unwrap();
-    let revision = host.grants.lifecycle().revision();
+    let revision = host.accounts().grants_for_tests().lifecycle().revision();
     let key = derive_sr25519_hard_path(&ENTROPY, &["retained-bulletin"]).unwrap();
     let outcome = futures::executor::block_on(async {
-        host.grants
+        host.accounts().grants_for_tests()
             .retain_allowance(
                 &state,
                 &session,
@@ -638,7 +638,7 @@ fn a_declined_bulletin_extension_keeps_the_retained_key() {
             )
             .await;
         let retained = host
-            .grants
+            .accounts().grants_for_tests()
             .cached_allowance(
                 &state,
                 &session,
@@ -681,7 +681,7 @@ fn started_native_writes_survive_lock_but_not_an_interrupted_product_reset() {
         remember(&host, "other.dot", PERIOD);
         let state = host.session_state();
         let session = state.current().unwrap();
-        let revision = host.grants.lifecycle().revision();
+        let revision = host.accounts().grants_for_tests().lifecycle().revision();
         let (release, gate) = futures::channel::oneshot::channel();
         *platform.core_storage_write_gate.lock().unwrap() = Some(gate);
         let grant = AccountGrant::StatementStore {
@@ -689,7 +689,7 @@ fn started_native_writes_survive_lock_but_not_an_interrupted_product_reset() {
             period: Some(PERIOD),
         };
         let mut write = Box::pin(
-            host.grants
+            host.accounts().grants_for_tests()
                 .retain_allowance(&state, &session, revision, PRODUCT_ID, &grant),
         );
         assert!(write.as_mut().now_or_never().is_none());

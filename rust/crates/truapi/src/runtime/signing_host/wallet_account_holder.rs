@@ -12,7 +12,6 @@ pub use allowance_renewal::StatementRenewalTarget;
 #[cfg(not(target_arch = "wasm32"))]
 pub use allowance_renewal::TrackedStatementRenewalTarget;
 
-use crate::runtime::WalletAuthorization;
 use std::sync::{Arc, Mutex};
 use truapi::latest::ProductAccountId;
 use zeroize::Zeroizing;
@@ -30,8 +29,9 @@ use crate::host_logic::sso::pairing::{
     ResponderIdentity, derive_identity_chat_private_key, derive_x25519_keypair_from_entropy,
 };
 use crate::platform::normalize_product_identifier;
+use crate::runtime::product_consent::ProductConsent;
 use crate::runtime::authority::{
-    AccountHolder, AuthorityError, AuthoritySession, AutoSigningGrant,
+    AccountHolder, AuthorityError, AuthoritySession,
     authority_session_validation_id,
 };
 use crate::runtime::statement_allowance::collection::PersonhoodCollection;
@@ -51,6 +51,7 @@ pub struct WalletAccountHolder {
     #[cfg(feature = "test-host")]
     resource_controls: Arc<crate::runtime::test_resource_controls::TestResourceControls>,
     network_suffix: String,
+    consent: Arc<ProductConsent>,
     lifecycle: Mutex<WalletState>,
     session_state: Arc<SessionState>,
 }
@@ -152,19 +153,21 @@ impl WalletAccountHolder {
     pub fn new_with_ring_resolver(
         services: Arc<crate::runtime::RuntimeServices>,
         network_suffix: String,
+        consent: Arc<ProductConsent>,
         ring_resolver: Arc<dyn super::ring_vrf::RingResolver>,
         ring_vrf_registry: Arc<crate::runtime::ring_vrf_registry::RingVrfRegistryStore>,
     ) -> WalletAccountHolder {
         WalletAccountHolder {
             ring_resolver,
-            ..WalletAccountHolder::new(services, network_suffix, ring_vrf_registry)
+            ..WalletAccountHolder::new(services, network_suffix, consent, ring_vrf_registry)
         }
     }
 
-    /// Start locked, with no wallet secrets.
+    /// Start locked, with no wallet secrets, asking `consent` before wallet work.
     pub fn new(
         services: Arc<crate::runtime::RuntimeServices>,
         network_suffix: String,
+        consent: Arc<ProductConsent>,
         ring_vrf_registry: Arc<crate::runtime::ring_vrf_registry::RingVrfRegistryStore>,
     ) -> Self {
         Self {
@@ -177,6 +180,7 @@ impl WalletAccountHolder {
                 crate::runtime::test_resource_controls::TestResourceControls::default(),
             ),
             network_suffix,
+            consent,
             lifecycle: Mutex::new(WalletState::default()),
             session_state: SessionState::new(),
         }
@@ -208,51 +212,6 @@ impl WalletAccountHolder {
         })
     }
 
-    /// Validate retained permission without accessing the host's grant cache.
-    fn auto_signing_status(
-        &self,
-        session: &AuthoritySession,
-        calling_product_id: &str,
-        account: &ProductAccountId,
-        authorization: Option<&WalletAuthorization>,
-    ) -> Result<AutoSigningGrant, AuthorityError> {
-        self.require_current_session(session)?;
-        if crate::runtime::authority::is_blessed_owner(
-            calling_product_id,
-            &account.dot_ns_identifier,
-        ) {
-            return Ok(AutoSigningGrant::Active);
-        }
-        let (Ok(caller), Ok(owner)) = (
-            normalize_product_identifier(calling_product_id),
-            normalize_product_identifier(&account.dot_ns_identifier),
-        ) else {
-            return Ok(AutoSigningGrant::Absent);
-        };
-        Ok(
-            if caller == owner
-                && authorization
-                    .is_some_and(|grant| self.authorization_matches(grant, session, &caller))
-            {
-                AutoSigningGrant::Active
-            } else {
-                AutoSigningGrant::Absent
-            },
-        )
-    }
-
-    fn authorization_matches(
-        &self,
-        authorization: &WalletAuthorization,
-        session: &AuthoritySession,
-        product_id: &str,
-    ) -> bool {
-        authorization
-            .issuer
-            .ptr_eq(&Arc::downgrade(&self.session_state))
-            && authorization.validation_id == session.validation_id
-            && authorization.product_id == product_id
-    }
 }
 
 impl WalletAccountHolder {
@@ -420,8 +379,10 @@ impl WalletKeys {
         })
     }
 
-    fn contacts_handle_key(&self) -> [u8; 32] {
-        crate::runtime::contacts::handle_key_from_root_source(&self.root_entropy_source())
+    fn contact_handles(&self) -> crate::runtime::contacts::ContactHandles {
+        crate::runtime::contacts::ContactHandles::from_root_entropy_source(
+            &self.root_entropy_source(),
+        )
     }
 
     /// Purpose-limited entropy shared with a paired host.

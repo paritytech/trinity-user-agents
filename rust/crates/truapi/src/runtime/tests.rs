@@ -1,11 +1,12 @@
 //! Shared runtime fixtures and cross-capability integration tests.
 
 use super::allowances::AllowanceResource;
-use super::authority::{AccountCaller, AccountGrant, AutoSigningKey, StatementStoreAllowanceKey};
+use super::authority::{AccountGrant, AutoSigningKey, StatementStoreAllowanceKey};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use crate::platform::{
+    AccountAccessReview,
     AuthState, CoreStorage as PlatformCoreStorage, CoreStorageKey, PermissionAuthorizationRequest,
 };
 use parity_scale_codec::Encode;
@@ -82,25 +83,6 @@ use crate::host_internal::sso_messages::{RemoteMessage, RemoteMessageData, Respo
 use crate::host_logic::product_account::{derive_product_public_key, index_bytes};
 use crate::test_support::*;
 use crate::unix_time::current_unix_secs;
-
-fn paired_accounts(
-    services: Arc<RuntimeServices>,
-    sso: Arc<SsoRequestService>,
-    grants: Arc<HostGrantStore>,
-) -> Arc<HostAccounts<SsoAccountHolderClient>> {
-    HostAccounts::new(
-        services.clone(),
-        Arc::new(SsoAccountHolderClient::new(
-            sso.clone(),
-            services.platform.clone(),
-        )),
-        sso.session_state(),
-        grants,
-        ring_vrf_registry::RingVrfRegistryStore::new(services.platform.clone()),
-        #[cfg(feature = "test-host")]
-        Arc::default(),
-    )
-}
 
 fn test_product_subtree(product_id: &str) -> [u8; 32] {
     let root = crate::host_logic::product_account::derive_root_keypair_from_entropy(&[0xAB; 16])
@@ -828,9 +810,9 @@ fn contacts_host(
     if let Some(contacts) = contacts {
         services.install_contacts_platform(contacts);
     }
-    let grants = Arc::new(HostGrantStore::new(services.platform.clone()));
-    let sso = SsoRequestService::new(services.clone(), host_config, grants.clone());
-    let accounts = paired_accounts(services.clone(), sso.clone(), grants);
+    let pairing = PairingHost::new(services.clone(), host_config);
+    let accounts = pairing.accounts().clone();
+    let sso = pairing.session().clone();
     let adapters = crate::host_core::ConnectionAdapters::from_services(&services);
     let host = ProductRuntimeHost::from_services(
         services,
@@ -902,9 +884,9 @@ fn a_host_that_only_resolves_contacts_reports_unsupported() {
         None,
     );
     services.install_contacts_platform(Arc::new(LookupOnlyContactsPlatform));
-    let grants = Arc::new(HostGrantStore::new(services.platform.clone()));
-    let sso = SsoRequestService::new(services.clone(), host_config, grants.clone());
-    let accounts = paired_accounts(services.clone(), sso.clone(), grants);
+    let pairing = PairingHost::new(services.clone(), host_config);
+    let accounts = pairing.accounts().clone();
+    let sso = pairing.session().clone();
     let adapters = crate::host_core::ConnectionAdapters::from_services(&services);
     let host = ProductRuntimeHost::from_services(
         services,
@@ -1005,10 +987,8 @@ fn the_handle_is_derived_from_the_sessions_secret_entropy_source() {
     let source = session_info()
         .root_entropy_source
         .expect("the test session carries an entropy source");
-    let expected = crate::runtime::contacts::contact_handle(
-        &crate::runtime::contacts::handle_key_from_root_source(&source),
-        &account,
-    );
+    let expected =
+        crate::runtime::contacts::ContactHandles::from_root_entropy_source(&source).mint(&account);
     assert_eq!(
         handle, expected,
         "the handle must key on the session's root entropy source"
@@ -1017,10 +997,8 @@ fn the_handle_is_derived_from_the_sessions_secret_entropy_source() {
     for public in [session_info().public_key, [0u8; 32]] {
         assert_ne!(
             handle,
-            crate::runtime::contacts::contact_handle(
-                &crate::runtime::contacts::handle_key_from_root_source(&public),
-                &account,
-            ),
+            crate::runtime::contacts::ContactHandles::from_root_entropy_source(&public)
+                .mint(&account),
             "the handle must not be derivable from public material"
         );
     }
@@ -1256,9 +1234,9 @@ fn host_with_contacts(
         None,
     );
     services.install_contacts_platform(contacts);
-    let grants = Arc::new(HostGrantStore::new(services.platform.clone()));
-    let sso = SsoRequestService::new(services.clone(), host_config, grants.clone());
-    let accounts = paired_accounts(services.clone(), sso.clone(), grants);
+    let pairing = PairingHost::new(services.clone(), host_config);
+    let accounts = pairing.accounts().clone();
+    let sso = pairing.session().clone();
     let adapters = crate::host_core::ConnectionAdapters::from_services(&services);
     let host = ProductRuntimeHost::from_services(
         services,
@@ -1344,9 +1322,9 @@ fn uncached_handles_are_resolved_in_one_lookup() {
     let source = session_info()
         .root_entropy_source
         .expect("the test session carries an entropy source");
-    let key = crate::runtime::contacts::handle_key_from_root_source(&source);
+    let key = crate::runtime::contacts::ContactHandles::from_root_entropy_source(&source);
     let handles = [alice, bob].map(|account| v01::ContactHandle {
-        bytes: crate::runtime::contacts::contact_handle(&key, &account),
+        bytes: key.mint(&account),
     });
     let call: Vec<u8> = handles.iter().flat_map(|handle| handle.bytes).collect();
 
@@ -1496,9 +1474,9 @@ fn a_withdrawn_request_already_published_is_cancelled_on_the_phone() {
         host_config.asset_hub_chain_genesis_hash,
         test_spawner(),
     );
-    let grants = Arc::new(HostGrantStore::new(services.platform.clone()));
-    let sso = SsoRequestService::new(services.clone(), host_config, grants.clone());
-    let accounts = paired_accounts(services.clone(), sso.clone(), grants);
+    let pairing = PairingHost::new(services.clone(), host_config);
+    let accounts = pairing.accounts().clone();
+    let sso = pairing.session().clone();
     let adapters = crate::host_core::ConnectionAdapters::from_services(&services);
     let host = ProductRuntimeHost::from_services(
         services,
@@ -1592,9 +1570,9 @@ fn a_request_that_times_out_is_not_withdrawn_from_the_phone() {
         host_config.asset_hub_chain_genesis_hash,
         test_spawner(),
     );
-    let grants = Arc::new(HostGrantStore::new(services.platform.clone()));
-    let sso = SsoRequestService::new(services.clone(), host_config, grants.clone());
-    let accounts = paired_accounts(services.clone(), sso.clone(), grants);
+    let pairing = PairingHost::new(services.clone(), host_config);
+    let accounts = pairing.accounts().clone();
+    let sso = pairing.session().clone();
     let adapters = crate::host_core::ConnectionAdapters::from_services(&services);
     let host = ProductRuntimeHost::from_services(
         services,
@@ -1657,9 +1635,9 @@ fn a_withdrawn_request_with_a_newer_one_behind_it_sends_no_cancel() {
         host_config.asset_hub_chain_genesis_hash,
         test_spawner(),
     );
-    let grants = Arc::new(HostGrantStore::new(services.platform.clone()));
-    let sso = SsoRequestService::new(services.clone(), host_config, grants.clone());
-    let accounts = paired_accounts(services.clone(), sso.clone(), grants);
+    let pairing = PairingHost::new(services.clone(), host_config);
+    let accounts = pairing.accounts().clone();
+    let sso = pairing.session().clone();
     let adapters = crate::host_core::ConnectionAdapters::from_services(&services);
     let host = Arc::new(ProductRuntimeHost::from_services(
         services,
@@ -1732,9 +1710,9 @@ fn chat_post_message_screens_content_before_it_reaches_a_host() {
         spawner.clone(),
     );
     let chat_platform = Arc::new(RecordingChatPlatform::default());
-    let grants = Arc::new(HostGrantStore::new(services.platform.clone()));
-    let sso = SsoRequestService::new(services.clone(), host_config, grants.clone());
-    let accounts = paired_accounts(services.clone(), sso.clone(), grants);
+    let pairing = PairingHost::new(services.clone(), host_config);
+    let accounts = pairing.accounts().clone();
+    let sso = pairing.session().clone();
     let mut adapters = crate::host_core::ConnectionAdapters::from_services(&services);
     adapters.chat_platform = Some(chat_platform.clone());
     let host = ProductRuntimeHost::from_services(
@@ -1884,9 +1862,9 @@ fn chat_room_ids_agree_across_create_and_post() {
         spawner.clone(),
     );
     let chat_platform = Arc::new(RecordingChatPlatform::default());
-    let grants = Arc::new(HostGrantStore::new(services.platform.clone()));
-    let sso = SsoRequestService::new(services.clone(), host_config, grants.clone());
-    let accounts = paired_accounts(services.clone(), sso.clone(), grants);
+    let pairing = PairingHost::new(services.clone(), host_config);
+    let accounts = pairing.accounts().clone();
+    let sso = pairing.session().clone();
     let mut adapters = crate::host_core::ConnectionAdapters::from_services(&services);
     adapters.chat_platform = Some(chat_platform.clone());
     let host = ProductRuntimeHost::from_services(
@@ -1977,9 +1955,9 @@ fn chat_register_bot_rejects_unsafe_product_fields() {
         spawner.clone(),
     );
     let chat_platform = Arc::new(RecordingChatPlatform::default());
-    let grants = Arc::new(HostGrantStore::new(services.platform.clone()));
-    let sso = SsoRequestService::new(services.clone(), host_config, grants.clone());
-    let accounts = paired_accounts(services.clone(), sso.clone(), grants);
+    let pairing = PairingHost::new(services.clone(), host_config);
+    let accounts = pairing.accounts().clone();
+    let sso = pairing.session().clone();
     let mut adapters = crate::host_core::ConnectionAdapters::from_services(&services);
     adapters.chat_platform = Some(chat_platform.clone());
     let host = ProductRuntimeHost::from_services(
@@ -2070,9 +2048,9 @@ fn chat_register_bot_reaches_the_installed_adapter() {
         spawner.clone(),
     );
     let chat_platform = Arc::new(RecordingChatPlatform::default());
-    let grants = Arc::new(HostGrantStore::new(services.platform.clone()));
-    let sso = SsoRequestService::new(services.clone(), host_config, grants.clone());
-    let accounts = paired_accounts(services.clone(), sso.clone(), grants);
+    let pairing = PairingHost::new(services.clone(), host_config);
+    let accounts = pairing.accounts().clone();
+    let sso = pairing.session().clone();
     let mut adapters = crate::host_core::ConnectionAdapters::from_services(&services);
     adapters.chat_platform = Some(chat_platform.clone());
     let host = ProductRuntimeHost::from_services(
@@ -2184,9 +2162,9 @@ fn pocket_host(
         host_config.asset_hub_chain_genesis_hash,
         test_spawner(),
     );
-    let grants = Arc::new(HostGrantStore::new(services.platform.clone()));
-    let sso = SsoRequestService::new(services.clone(), host_config, grants.clone());
-    let accounts = paired_accounts(services.clone(), sso.clone(), grants);
+    let pairing = PairingHost::new(services.clone(), host_config);
+    let accounts = pairing.accounts().clone();
+    let sso = pairing.session().clone();
     let mut adapters = crate::host_core::ConnectionAdapters::from_services(&services);
     adapters.pocket_platform =
         pocket.map(|pocket| pocket as Arc<dyn crate::platform::PocketPlatform>);
@@ -2440,9 +2418,9 @@ fn game_host_for(
         host_config.asset_hub_chain_genesis_hash,
         test_spawner(),
     );
-    let grants = Arc::new(HostGrantStore::new(services.platform.clone()));
-    let sso = SsoRequestService::new(services.clone(), host_config, grants.clone());
-    let accounts = paired_accounts(services.clone(), sso.clone(), grants);
+    let pairing = PairingHost::new(services.clone(), host_config);
+    let accounts = pairing.accounts().clone();
+    let sso = pairing.session().clone();
     let mut adapters = crate::host_core::ConnectionAdapters::from_services(&services);
     adapters.game_platform = game.map(|game| game as Arc<dyn crate::platform::GamePlatform>);
     ProductRuntimeHost::from_services(services, adapters, accounts, sso, product)
@@ -2706,9 +2684,9 @@ fn chain_follow_ids_are_scoped_per_product_core() {
         host_config.asset_hub_chain_genesis_hash,
         spawner.clone(),
     );
-    let grants = Arc::new(HostGrantStore::new(services.platform.clone()));
-    let sso = SsoRequestService::new(services.clone(), host_config, grants.clone());
-    let accounts = paired_accounts(services.clone(), sso.clone(), grants);
+    let pairing = PairingHost::new(services.clone(), host_config);
+    let accounts = pairing.accounts().clone();
+    let sso = pairing.session().clone();
     let first = ProductRuntimeHost::from_services(
         services.clone(),
         crate::host_core::ConnectionAdapters::from_services(&services),
@@ -2834,9 +2812,9 @@ fn permission_prompts_name_the_requesting_product_and_execution_kind() {
         spawner,
     );
     let adapters = crate::host_core::ConnectionAdapters::from_services(&services);
-    let grants = Arc::new(HostGrantStore::new(services.platform.clone()));
-    let sso = SsoRequestService::new(services.clone(), host_config, grants.clone());
-    let accounts = paired_accounts(services.clone(), sso.clone(), grants);
+    let pairing = PairingHost::new(services.clone(), host_config);
+    let accounts = pairing.accounts().clone();
+    let sso = pairing.session().clone();
     let host = ProductRuntimeHost::from_services(
         services,
         adapters,
@@ -3636,16 +3614,23 @@ fn get_account_other_product_maps_confirmation_failure_to_host_failure() {
     assert!(matches!(err, CallError::HostFailure { reason } if reason.contains("modal failed")));
 }
 
+/// Account access asks through the runtime's one prompt channel, so every
+/// connection shares its decisions and its one-prompt-at-a-time rule.
 #[test]
-fn get_account_reviews_with_connection_platform_before_deriving_key() {
-    let host =
-        ProductRuntimeHost::new(stub_platform(), runtime_config("myapp.dot"), test_spawner());
-    let mut adapters =
-        crate::host_core::ConnectionAdapters::from_services(&host.connection.services);
-    adapters.platform = Arc::new(StubPlatform {
+fn get_account_asks_through_the_runtime_channel_not_the_connection() {
+    let runtime_platform = Arc::new(StubPlatform {
         account_access_confirmed: true,
         ..Default::default()
     });
+    let connection_platform = stub_platform();
+    let host = ProductRuntimeHost::new(
+        runtime_platform.clone(),
+        runtime_config("myapp.dot"),
+        test_spawner(),
+    );
+    let mut adapters =
+        crate::host_core::ConnectionAdapters::from_services(&host.connection.services);
+    adapters.platform = connection_platform.clone();
     let host = ProductRuntimeHost::from_services(
         host.connection.services.clone(),
         adapters,
@@ -3656,18 +3641,18 @@ fn get_account_reviews_with_connection_platform_before_deriving_key() {
     let session = sso_session_info();
     install_pairing_session(&host, session.clone());
     cache_test_product_subtree(&host, &session, "other.dot");
-    let cx = CallContext::default();
     let request = HostAccountGetRequest::V1(v01::HostAccountGetRequest {
-        product_account_id: v01::ProductAccountId {
-            dot_ns_identifier: "other.dot".to_string(),
-            derivation_index: v01::DerivationIndex::Index(0),
-        },
+        product_account_id: account_id("other.dot", 0),
     });
-    let response = futures::executor::block_on(host.get_account(&cx, request)).unwrap();
-    let HostAccountGetResponse::V1(inner) = response;
+    let HostAccountGetResponse::V1(inner) =
+        futures::executor::block_on(host.get_account(&CallContext::default(), request)).unwrap();
     assert_eq!(
-        inner.account.public_key,
-        test_product_account_public("other.dot", 0).to_vec()
+        (
+            inner.account.public_key,
+            runtime_platform.account_access_reviews.lock().unwrap().len(),
+            connection_platform.account_access_reviews.lock().unwrap().len(),
+        ),
+        (test_product_account_public("other.dot", 0).to_vec(), 1, 0)
     );
 }
 
@@ -3693,8 +3678,10 @@ fn get_account_other_product_skips_confirmation_for_a_blessed_product() {
     );
 }
 
+/// Allow once covers the product's later disclosures, as on Android, without
+/// writing a decision.
 #[test]
-fn get_account_allow_once_does_not_authorize_the_next_disclosure() {
+fn get_account_allow_once_answers_later_disclosures_without_saving() {
     futures::executor::block_on(async {
         let platform = Arc::new(StubPlatform {
             permission_confirmation_decisions: Mutex::new(
@@ -3717,39 +3704,30 @@ fn get_account_allow_once_does_not_authorize_the_next_disclosure() {
         let request = HostAccountGetRequest::V1(v01::HostAccountGetRequest {
             product_account_id: account_id("other.dot", 0),
         });
-        let response = host
-            .get_account(&CallContext::default(), request.clone())
-            .await
-            .unwrap();
-        let HostAccountGetResponse::V1(response) = response;
+        let mut disclosed = Vec::new();
+        for _ in 0..3 {
+            let HostAccountGetResponse::V1(response) = host
+                .get_account(&CallContext::default(), request.clone())
+                .await
+                .unwrap();
+            disclosed.push(response.account.public_key);
+        }
         let saved = platform
             .read_core_storage(CoreStorageKey::account_access_authorization(
                 "myapp", "other",
             ))
             .await
             .unwrap();
-        let mut rejected = Vec::new();
-        for _ in 0..2 {
-            rejected.push(matches!(
-                host.get_account(&CallContext::default(), request.clone())
-                    .await,
-                Err(CallError::Domain(HostAccountGetError::V1(
-                    v01::HostAccountGetError::Rejected
-                )))
-            ));
-        }
         assert_eq!(
             (
-                response.account.public_key,
+                disclosed,
                 saved,
-                rejected,
                 platform.account_access_reviews.lock().unwrap().len(),
             ),
             (
-                test_product_account_public("other.dot", 0).to_vec(),
+                vec![test_product_account_public("other.dot", 0).to_vec(); 3],
                 None,
-                vec![true, true],
-                2,
+                1,
             ),
         );
     });
@@ -3775,30 +3753,50 @@ fn get_account_derives_rfc0022_product_key() {
     );
 }
 
+/// A product's own subtree key is public, so the phone serves it without a
+/// prompt and the paired host adds none of its own, as on Android.
 #[test]
-fn get_account_own_product_prompts_and_rejects_on_a_cold_subtree() {
+fn get_account_own_product_resolves_a_cold_subtree_without_a_prompt() {
+    let session = sso_session_info();
+    let platform = Arc::new(StubPlatform {
+        product_subtree_denied: true,
+        sso_response_script: Some(sso_success_response_script(
+            &session,
+            RemoteMessage {
+                message_id: "wallet-subtree-1".to_string(),
+                data: RemoteMessageData::V1(v1::RemoteMessage::ProductSubtreeResponse(
+                    crate::host_internal::sso_messages::Response {
+                        responding_to: "subtree-1".to_string(),
+                        payload: Ok(test_product_subtree("myapp.dot")),
+                    },
+                )),
+            },
+        )),
+        ..Default::default()
+    });
     let host = ProductRuntimeHost::new(
-        Arc::new(StubPlatform {
-            product_subtree_denied: true,
-            ..Default::default()
-        }),
+        platform.clone(),
         runtime_config("myapp.dot"),
         test_spawner(),
     );
-    // Session without a cached subtree: resolving it must reach the
-    // Account Holder, which is the one point the consent prompt fires.
-    host.test_session_state().set_session(sso_session_info());
+    host.test_session_state().set_session(session);
     let request = HostAccountGetRequest::V1(v01::HostAccountGetRequest {
         product_account_id: account_id("myapp.dot", 0),
     });
 
-    let err = futures::executor::block_on(host.get_account(&CallContext::default(), request))
-        .unwrap_err();
+    let HostAccountGetResponse::V1(inner) = futures::executor::block_on(host.get_account(
+        &CallContext::with_request_id("subtree-1".to_string()),
+        request,
+    ))
+    .unwrap();
 
-    assert!(matches!(
-        err,
-        CallError::Domain(HostAccountGetError::V1(v01::HostAccountGetError::Rejected))
-    ));
+    assert_eq!(
+        (
+            inner.account.public_key,
+            platform.product_subtree_reviews.lock().unwrap().len()
+        ),
+        (test_product_account_public("myapp.dot", 0).to_vec(), 0)
+    );
 }
 
 #[test]
@@ -5161,12 +5159,13 @@ fn idle_peer_disconnect_monitor_clears_session_store_and_broadcasts() {
         ..Default::default()
     });
     let (host_config, product) = runtime_config("myapp.dot");
-    let (host, _accounts, sso) = ProductRuntimeHost::new_pairing_for_tests(
+    let (host, pairing) = ProductRuntimeHost::new_pairing_for_tests(
         platform.clone(),
         host_config,
         product,
         test_spawner(),
     );
+    let sso = pairing.session().clone();
     install_pairing_session(&host, session.clone());
     let mut statuses = host.test_session_state().subscribe();
     assert_eq!(
@@ -5366,41 +5365,6 @@ fn resource_allocation_rejects_without_session() {
 }
 
 #[test]
-fn resource_allocation_rejects_when_user_declines() {
-    let host = ProductRuntimeHost::new_compat(stub_platform(), test_spawner());
-    install_pairing_session(&host, session_info());
-    let cx = CallContext::default();
-    let request = resource_allocation_request();
-    let HostRequestResourceAllocationRequest::V1(inner) = &request;
-    let expected =
-        HostRequestResourceAllocationResponse::V1(v01::HostRequestResourceAllocationResponse {
-            outcomes: vec![v01::AllocationOutcome::Rejected; inner.resources.len()],
-        });
-    let result = futures::executor::block_on(ResourceAllocation::request(&host, &cx, request));
-    assert_eq!(result, Ok(expected));
-}
-
-#[test]
-fn resource_allocation_maps_confirmation_failure_to_host_failure() {
-    let host = ProductRuntimeHost::new_compat(
-        Arc::new(StubPlatform {
-            resource_allocation_error: Some("modal failed"),
-            ..Default::default()
-        }),
-        test_spawner(),
-    );
-    install_pairing_session(&host, session_info());
-    let cx = CallContext::default();
-    let err = futures::executor::block_on(ResourceAllocation::request(
-        &host,
-        &cx,
-        resource_allocation_request(),
-    ))
-    .unwrap_err();
-    assert!(matches!(err, CallError::HostFailure { reason } if reason.contains("modal failed")));
-}
-
-#[test]
 fn resource_allocation_respects_a_shorter_call_context_timeout() {
     let session = sso_session_info();
     let message_id = "allocation-timeout";
@@ -5453,52 +5417,6 @@ fn resource_allocation_respects_a_shorter_call_context_timeout() {
     );
 }
 
-/// An allocation the person approves spends chain resources on the phone, so
-/// one the product withdrew while the prompt was open must never be sent.
-#[test]
-fn resource_allocation_withdrawn_at_the_prompt_is_never_requested() {
-    let (_release, gate) = futures::channel::oneshot::channel();
-    let platform = Arc::new(StubPlatform {
-        resource_allocation_confirmed: true,
-        resource_allocation_confirmation_gate: Mutex::new(Some(gate)),
-        ..Default::default()
-    });
-    let host = ProductRuntimeHost::new_compat(platform.clone(), test_spawner());
-    install_pairing_session(&host, sso_session_info());
-    let cancel = truapi::CancellationToken::default();
-    let cx = CallContext::with_parts("alloc-withdrawn".to_string(), cancel.clone());
-    let mut call = Box::pin(ResourceAllocation::request(
-        &host,
-        &cx,
-        resource_allocation_request(),
-    ));
-    assert!(call.as_mut().now_or_never().is_none());
-    assert_eq!(
-        platform.resource_allocation_reviews.lock().unwrap().len(),
-        1
-    );
-
-    cancel.cancel();
-
-    let err = call
-        .as_mut()
-        .now_or_never()
-        .expect("a withdrawn call stops waiting on the prompt")
-        .unwrap_err();
-    assert_eq!(
-        err,
-        CallError::Domain(HostRequestResourceAllocationError::V1(
-            v01::ResourceAllocationError::Unknown {
-                reason: "Account authority request cancelled for alloc-withdrawn".to_string(),
-            }
-        ))
-    );
-    assert_eq!(
-        recorded_rpc_method_count(&platform.sent_rpc, "statement_subscribeStatement"),
-        0
-    );
-}
-
 /// The unwind grace exists for a call that already started. One whose token
 /// fired before it got here must not be started just to be unwound.
 #[test]
@@ -5529,47 +5447,7 @@ fn an_authority_call_withdrawn_before_it_starts_is_never_polled() {
 }
 
 #[test]
-fn product_reset_during_allocation_review_cannot_request_paired_grants() {
-    let (release, gate) = futures::channel::oneshot::channel();
-    let platform = Arc::new(StubPlatform {
-        resource_allocation_confirmed: true,
-        resource_allocation_confirmation_gate: Mutex::new(Some(gate)),
-        ..Default::default()
-    });
-    let (host_config, product) = runtime_config("myapp.dot");
-    let (host, _, sso) = ProductRuntimeHost::new_pairing_for_tests(
-        platform.clone(),
-        host_config,
-        product,
-        test_spawner(),
-    );
-    install_pairing_session(&host, sso_session_info());
-    let cx = CallContext::default();
-    let call = ResourceAllocation::request(&host, &cx, resource_allocation_request());
-    futures::pin_mut!(call);
-    assert!(call.as_mut().now_or_never().is_none());
-    futures::executor::block_on(sso.clear_product_state("myapp.dot")).unwrap();
-    release.send(()).unwrap();
-    assert_eq!(
-        (
-            call.as_mut()
-                .now_or_never()
-                .map(|result| result.map(|_| ())),
-            recorded_rpc_method_count(&platform.sent_rpc, "statement_subscribeStatement")
-        ),
-        (
-            Some(Err(CallError::Domain(
-                HostRequestResourceAllocationError::V1(v01::ResourceAllocationError::Unknown {
-                    reason: AuthorityError::Disconnected.to_string()
-                })
-            ))),
-            0
-        ),
-    );
-}
-
-#[test]
-fn resource_allocation_accepts_confirmation_then_returns_sso_response() {
+fn resource_allocation_forwards_to_the_phone_and_returns_its_outcomes() {
     let session = sso_session_info();
     let slot_account_key = {
         let mini_secret = schnorrkel::MiniSecretKey::from_bytes(&[12; 32]).unwrap();
@@ -5912,47 +5790,6 @@ fn a_grant_still_asks_the_user_when_a_call_names_a_contact() {
     );
 }
 
-/// The confirmation is drawn from the substituted call, so the user is asked
-/// about the person being paid rather than about 32 opaque bytes.
-#[test]
-fn the_confirmation_shows_the_account_not_the_handle() {
-    const ALICE: [u8; 32] = [0xA1; 32];
-    let platform = Arc::new(StubPlatform {
-        create_transaction_confirmed: true,
-        ..StubPlatform::default()
-    });
-    let host = contacts_host(
-        "myapp.dot",
-        platform.clone(),
-        Some(StubContactsPlatform::picking(ALICE)),
-        true,
-    );
-    let handle = picked_contact(&host);
-
-    let _ = futures::executor::block_on(host.create_transaction(
-        &CallContext::default(),
-        transaction_naming(handle, vec![handle]),
-    ));
-
-    let reviews = platform
-        .create_transaction_reviews
-        .lock()
-        .expect("create transaction review list mutex poisoned");
-    let [
-        crate::platform::CreateTransactionReview::Product {
-            payload: reviewed, ..
-        },
-    ] = reviews.as_slice()
-    else {
-        panic!("one product transaction was reviewed, got {reviews:?}");
-    };
-    assert_eq!(
-        reviewed.call_data,
-        transfer_naming(&ALICE),
-        "the review names the account",
-    );
-}
-
 /// A handle the host can no longer resolve refuses the whole transaction. A
 /// removed contact and a forged handle look the same here, which is the only
 /// revocation this API has.
@@ -6138,34 +5975,32 @@ fn a_broken_auto_signing_slot_fails_sign_raw_rather_than_prompting() {
     );
 }
 
+/// The deprecated unwatermarked API is never covered by a grant: the paired
+/// host does not answer it with its kept key, and adds no review of its own,
+/// since the phone reviews what it signs.
 #[test]
-fn an_unwatermarked_sign_raw_still_prompts_under_a_grant() {
+fn an_unwatermarked_sign_raw_is_not_signed_with_the_kept_key() {
     let (platform, host) = granted_pairing_host();
+    let mut cx = CallContext::default();
+    cx.set_timeout(Duration::from_millis(20));
 
     #[allow(deprecated)]
-    let error = futures::executor::block_on(host.sign_raw_unwatermarked_deprecated(
-        &CallContext::default(),
+    let result = futures::executor::block_on(host.sign_raw_unwatermarked_deprecated(
+        &cx,
         HostSignRawRequest::V1(v01::HostSignRawRequest {
             account: account_id("myapp.dot", 0),
             payload: v01::RawPayload::Bytes {
                 bytes: b"hello world".to_vec(),
             },
         }),
-    ))
-    .expect_err("the stub declines the confirmation");
-
-    assert!(matches!(
-        error,
-        CallError::Domain(HostSignRawError::V1(v01::HostSignPayloadError::Rejected))
     ));
+
     assert_eq!(
-        platform
-            .sign_raw_reviews
-            .lock()
-            .expect("raw signing review list mutex poisoned")
-            .len(),
-        1,
-        "the deprecated API prompts whatever the capability says",
+        (
+            result.is_ok(),
+            platform.sign_raw_reviews.lock().unwrap().len()
+        ),
+        (false, 0),
     );
 }
 
@@ -6297,12 +6132,14 @@ fn auto_signing_ring_vrf_requires_registration_and_signs_locally() {
 
     let session = sso_session_info();
     let platform = Arc::new(StubPlatform::default());
-    let (host, accounts, sso) = ProductRuntimeHost::new_pairing_for_tests(
+    let (host, pairing) = ProductRuntimeHost::new_pairing_for_tests(
         platform.clone(),
         ProductRuntimeHost::compat_host_config(),
         ProductContext::new("myapp.dot".to_string()).unwrap(),
         test_spawner(),
     );
+    let accounts = pairing.accounts().clone();
+    let sso = pairing.session().clone();
     install_pairing_session(&host, session.clone());
 
     let root =
@@ -6468,12 +6305,13 @@ fn auto_signing_logout_reset_clears_cached_and_persisted_capability() {
     let session = sso_session_info();
     let platform = auto_signing_test_platform(&session, "auto-logout");
     let (host_config, product) = runtime_config("myapp.dot");
-    let (host, accounts, sso) = ProductRuntimeHost::new_pairing_for_tests(
+    let (host, pairing) = ProductRuntimeHost::new_pairing_for_tests(
         platform.clone(),
         host_config,
         product,
         test_spawner(),
     );
+    let accounts = pairing.accounts().clone();
     install_pairing_session(&host, session.clone());
     request_auto_signing(&host, "auto-logout");
     assert!(
@@ -6484,7 +6322,7 @@ fn auto_signing_logout_reset_clears_cached_and_persisted_capability() {
             .contains_key(&core_storage_test_key(CoreStorageKey::AutoSigningKeys))
     );
 
-    futures::executor::block_on(sso.logout_and_reset_pairing()).unwrap();
+    futures::executor::block_on(pairing.logout()).unwrap();
 
     assert!(
         !platform
@@ -6510,12 +6348,14 @@ fn stale_secret_allocations_cannot_persist_after_reset_and_same_owner_reactivati
     let session = sso_session_info();
     let platform = Arc::new(StubPlatform::default());
     let (host_config, product) = runtime_config("myapp.dot");
-    let (host, accounts, sso) = ProductRuntimeHost::new_pairing_for_tests(
+    let (host, pairing) = ProductRuntimeHost::new_pairing_for_tests(
         platform.clone(),
         host_config,
         product,
         test_spawner(),
     );
+    let accounts = pairing.accounts().clone();
+    let sso = pairing.session().clone();
     install_pairing_session(&host, session.clone());
     let stale_epoch = accounts.grants_for_tests().lifecycle().revision();
     let root =
@@ -6524,7 +6364,7 @@ fn stale_secret_allocations_cannot_persist_after_reset_and_same_owner_reactivati
         crate::host_logic::product_account::derive_product_subtree_keypair(&root, "myapp.dot")
             .unwrap();
 
-    futures::executor::block_on(sso.logout_and_reset_pairing()).unwrap();
+    futures::executor::block_on(pairing.logout()).unwrap();
     futures::executor::block_on(sso.set_connected_session_for_tests(session.clone()));
     let auto_signing_error =
         futures::executor::block_on(accounts.grants_for_tests().remember_auto_signing_key(
@@ -6609,12 +6449,14 @@ fn product_clear_preserves_other_capabilities_and_fences_stale_work() {
     let session = sso_session_info();
     let platform = Arc::new(StubPlatform::default());
     let (host_config, product) = runtime_config("myapp.dot");
-    let (host, accounts, sso) = ProductRuntimeHost::new_pairing_for_tests(
+    let (host, pairing) = ProductRuntimeHost::new_pairing_for_tests(
         platform.clone(),
         host_config,
         product,
         test_spawner(),
     );
+    let accounts = pairing.accounts().clone();
+    let sso = pairing.session().clone();
     install_pairing_session(&host, session.clone());
     cache_test_product_subtree(&host, &session, "other.dot");
     let stale_epoch = accounts.grants_for_tests().lifecycle().revision();
@@ -6668,7 +6510,7 @@ fn product_clear_preserves_other_capabilities_and_fences_stale_work() {
         .unwrap();
     }
 
-    futures::executor::block_on(sso.clear_product_state("myapp.dot")).unwrap();
+    futures::executor::block_on(accounts.clear_product_state("myapp.dot")).unwrap();
     let current_epoch = accounts.grants_for_tests().lifecycle().revision();
     assert_ne!(current_epoch, stale_epoch);
     assert_eq!(
@@ -6791,12 +6633,14 @@ fn reset_session_state_clears_all_capabilities_without_peer_traffic() {
     let session = sso_session_info();
     let platform = Arc::new(StubPlatform::default());
     let (host_config, product) = runtime_config("myapp.dot");
-    let (host, accounts, sso) = ProductRuntimeHost::new_pairing_for_tests(
+    let (host, pairing) = ProductRuntimeHost::new_pairing_for_tests(
         platform.clone(),
         host_config,
         product,
         test_spawner(),
     );
+    let accounts = pairing.accounts().clone();
+    let sso = pairing.session().clone();
     install_pairing_session(&host, session.clone());
     let lifecycle_epoch = accounts.grants_for_tests().lifecycle().revision();
     let root =
@@ -6877,12 +6721,14 @@ fn identity_replacement_clears_all_stale_wallet_capabilities() {
     let session = sso_session_info();
     let platform = auto_signing_test_platform(&session, "auto-replace");
     let (host_config, product) = runtime_config("myapp.dot");
-    let (host, accounts, sso) = ProductRuntimeHost::new_pairing_for_tests(
+    let (host, pairing) = ProductRuntimeHost::new_pairing_for_tests(
         platform.clone(),
         host_config,
         product,
         test_spawner(),
     );
+    let accounts = pairing.accounts().clone();
+    let sso = pairing.session().clone();
     install_pairing_session(&host, session.clone());
     request_auto_signing(&host, "auto-replace");
     let lifecycle_epoch = accounts.grants_for_tests().lifecycle().revision();
@@ -6978,12 +6824,13 @@ fn auto_signing_restored_different_wallet_rejects_persisted_capability() {
         .expect("fixture has SSO identity")
         .identity_account_id = [0x77; 32];
     let (host_config, product) = runtime_config("myapp.dot");
-    let (restored, accounts, _sso) = ProductRuntimeHost::new_pairing_for_tests(
+    let (restored, pairing) = ProductRuntimeHost::new_pairing_for_tests(
         platform.clone(),
         host_config,
         product,
         test_spawner(),
     );
+    let accounts = pairing.accounts().clone();
     install_pairing_session(&restored, replacement.clone());
 
     assert!(
@@ -7055,8 +6902,9 @@ fn auto_signing_rejects_and_erases_legacy_unscoped_secret() {
 #[test]
 fn external_session_activation_is_memory_only_and_rejects_trailing_bytes() {
     let platform = Arc::new(StubPlatform::default());
-    let (host, _accounts, sso) =
+    let (host, pairing) =
         ProductRuntimeHost::new_compat_with_pairing(platform.clone(), test_spawner());
+    let sso = pairing.session().clone();
     let session = sso_session_info();
     let blob = crate::host_logic::session::encode_persisted_session(&session);
 
@@ -7092,8 +6940,9 @@ fn external_session_activation_is_memory_only_and_rejects_trailing_bytes() {
 #[test]
 fn external_session_activation_reports_its_outcome_when_the_blob_is_corrupt() {
     let platform = Arc::new(StubPlatform::default());
-    let (_host, _accounts, sso) =
+    let (_host, pairing) =
         ProductRuntimeHost::new_compat_with_pairing(platform.clone(), test_spawner());
+    let sso = pairing.session().clone();
 
     futures::executor::block_on(sso.activate_external_session(&[0xff]))
         .expect_err("invalid bytes are rejected");
@@ -7114,8 +6963,9 @@ fn external_session_activation_reports_its_outcome_when_the_blob_is_corrupt() {
 #[test]
 fn resetting_session_state_reports_its_outcome_when_nothing_was_active() {
     let platform = Arc::new(StubPlatform::default());
-    let (_host, _accounts, sso) =
+    let (_host, pairing) =
         ProductRuntimeHost::new_compat_with_pairing(platform.clone(), test_spawner());
+    let sso = pairing.session().clone();
 
     futures::executor::block_on(sso.reset_session_state());
 
@@ -7134,10 +6984,11 @@ fn resetting_session_state_reports_its_outcome_when_nothing_was_active() {
 
 #[test]
 fn external_session_activation_replaces_and_fences_the_previous_session() {
-    let (host, _accounts, sso) = ProductRuntimeHost::new_compat_with_pairing(
+    let (host, pairing) = ProductRuntimeHost::new_compat_with_pairing(
         Arc::new(StubPlatform::default()),
         test_spawner(),
     );
+    let sso = pairing.session().clone();
     let first = sso_session_info();
     let mut replacement = first.clone();
     replacement.public_key = [0x44; 32];
@@ -7169,8 +7020,9 @@ fn store_notification_during_external_activation_restores_persisted_session() {
         )),
         ..Default::default()
     });
-    let (host, _accounts, sso) =
+    let (host, pairing) =
         ProductRuntimeHost::new_compat_with_pairing(platform, test_spawner());
+    let sso = pairing.session().clone();
     sso.clone().start_session_store_sync(test_spawner());
     wait_until(
         || host.test_session_state().current() == Some(persisted.clone()),
@@ -7206,10 +7058,11 @@ fn store_notification_during_external_activation_restores_persisted_session() {
 
 #[test]
 fn disconnect_during_external_activation_prevents_stale_reinstallation() {
-    let (host, _accounts, sso) = ProductRuntimeHost::new_compat_with_pairing(
+    let (host, pairing) = ProductRuntimeHost::new_compat_with_pairing(
         Arc::new(StubPlatform::default()),
         test_spawner(),
     );
+    let sso = pairing.session().clone();
     let stale_blob = crate::host_logic::session::encode_persisted_session(&sso_session_info());
     let (activation_entered, resume_activation) = sso.pause_external_session_activation_for_tests();
     let activation = std::thread::spawn({
@@ -7243,8 +7096,9 @@ fn stored_session_activation_resolves_after_connected_installation() {
         )),
         ..Default::default()
     });
-    let (host, _accounts, sso) =
+    let (host, pairing) =
         ProductRuntimeHost::new_compat_with_pairing(platform.clone(), test_spawner());
+    let sso = pairing.session().clone();
 
     futures::executor::block_on(sso.activate_stored_session())
         .expect("valid stored session activates");
@@ -7267,8 +7121,9 @@ fn stored_session_activation_rejects_invalid_blob_and_disconnects() {
         session_clears: session_clears.clone(),
         ..Default::default()
     });
-    let (host, _accounts, sso) =
+    let (host, pairing) =
         ProductRuntimeHost::new_compat_with_pairing(platform, test_spawner());
+    let sso = pairing.session().clone();
     install_pairing_session(&host, sso_session_info());
 
     let error = futures::executor::block_on(sso.activate_stored_session())
@@ -7296,8 +7151,9 @@ fn activating_an_untagged_stored_session_restores_it_and_rewrites_the_slot() {
         session_blob: Some(untagged.clone()),
         ..Default::default()
     });
-    let (host, _accounts, sso) =
+    let (host, pairing) =
         ProductRuntimeHost::new_compat_with_pairing(platform.clone(), test_spawner());
+    let sso = pairing.session().clone();
 
     let notify_sso = Arc::downgrade(&sso);
     *platform.on_auth_session_write.lock().unwrap() = Some(Arc::new(move || {
@@ -7335,8 +7191,9 @@ fn session_store_sync_restores_valid_blob_from_tick() {
         )),
         ..Default::default()
     });
-    let (host, _accounts, sso) =
+    let (host, pairing) =
         ProductRuntimeHost::new_compat_with_pairing(platform.clone(), test_spawner());
+    let sso = pairing.session().clone();
 
     sso.clone().start_session_store_sync(test_spawner());
     wait_until(
@@ -7368,8 +7225,9 @@ fn session_store_sync_restores_valid_blob_from_tick() {
 #[test]
 fn session_store_sync_announces_a_signed_out_boot() {
     let platform = Arc::new(StubPlatform::default());
-    let (_host, _accounts, sso) =
+    let (_host, pairing) =
         ProductRuntimeHost::new_compat_with_pairing(platform.clone(), test_spawner());
+    let sso = pairing.session().clone();
 
     sso.clone().start_session_store_sync(test_spawner());
 
@@ -7401,8 +7259,9 @@ fn session_store_sync_announces_a_restored_boot_once() {
         )),
         ..Default::default()
     });
-    let (_host, _accounts, sso) =
+    let (_host, pairing) =
         ProductRuntimeHost::new_compat_with_pairing(platform.clone(), test_spawner());
+    let sso = pairing.session().clone();
 
     sso.clone().start_session_store_sync(test_spawner());
 
@@ -7436,8 +7295,9 @@ fn session_store_sync_stays_silent_on_an_unchanged_tick() {
         )),
         ..Default::default()
     });
-    let (_host, _accounts, sso) =
+    let (_host, pairing) =
         ProductRuntimeHost::new_compat_with_pairing(platform.clone(), test_spawner());
+    let sso = pairing.session().clone();
 
     sso.clone().start_session_store_sync(test_spawner());
     wait_until(
@@ -7472,7 +7332,7 @@ fn session_store_sync_stays_silent_on_an_unchanged_tick() {
 fn session_store_sync_replaces_valid_blob_and_broadcasts_connected() {
     let mut replacement = sso_session_info();
     replacement.public_key = [0x44; 32];
-    let (host, _accounts, sso) = ProductRuntimeHost::new_compat_with_pairing(
+    let (host, pairing) = ProductRuntimeHost::new_compat_with_pairing(
         Arc::new(StubPlatform {
             session_blob: Some(crate::host_logic::session::encode_persisted_session(
                 &replacement,
@@ -7481,6 +7341,7 @@ fn session_store_sync_replaces_valid_blob_and_broadcasts_connected() {
         }),
         test_spawner(),
     );
+    let sso = pairing.session().clone();
     install_pairing_session(&host, sso_session_info());
     let mut statuses = host.test_session_state().subscribe();
     let _ = futures::executor::block_on(statuses.next());
@@ -7502,8 +7363,9 @@ fn session_store_sync_clears_invalid_blob() {
         session_blob: Some(vec![0xff]),
         ..Default::default()
     });
-    let (host, _accounts, sso) =
+    let (host, pairing) =
         ProductRuntimeHost::new_compat_with_pairing(platform.clone(), test_spawner());
+    let sso = pairing.session().clone();
     install_pairing_session(&host, sso_session_info());
 
     sso.clone().start_session_store_sync(test_spawner());
@@ -7537,7 +7399,7 @@ fn session_store_sync_clears_invalid_blob() {
 #[test]
 fn session_store_sync_clears_unreadable_blob() {
     let session_clears = Arc::new(Mutex::new(0));
-    let (host, _accounts, sso) = ProductRuntimeHost::new_compat_with_pairing(
+    let (host, pairing) = ProductRuntimeHost::new_compat_with_pairing(
         Arc::new(StubPlatform {
             session_error: Some("storage unavailable"),
             session_clears: session_clears.clone(),
@@ -7545,6 +7407,7 @@ fn session_store_sync_clears_unreadable_blob() {
         }),
         test_spawner(),
     );
+    let sso = pairing.session().clone();
     install_pairing_session(&host, sso_session_info());
 
     sso.clone().start_session_store_sync(test_spawner());
@@ -7562,7 +7425,7 @@ fn session_store_sync_clears_unreadable_blob() {
 #[test]
 fn session_store_sync_clears_once_on_initial_persistent_read_error() {
     let session_clears = Arc::new(Mutex::new(0));
-    let (host, _accounts, sso) = ProductRuntimeHost::new_compat_with_pairing(
+    let (host, pairing) = ProductRuntimeHost::new_compat_with_pairing(
         Arc::new(StubPlatform {
             session_error: Some("storage unavailable"),
             session_clears: session_clears.clone(),
@@ -7570,6 +7433,7 @@ fn session_store_sync_clears_once_on_initial_persistent_read_error() {
         }),
         test_spawner(),
     );
+    let sso = pairing.session().clone();
     install_pairing_session(&host, sso_session_info());
 
     sso.clone().start_session_store_sync(test_spawner());
@@ -7610,7 +7474,7 @@ fn disconnect_submits_disconnected_message_best_effort() {
 #[test]
 fn pairing_logout_clears_session_and_bootstrap_identity() {
     let platform = Arc::new(StubPlatform::default());
-    let (host, _accounts, sso) =
+    let (host, pairing) =
         ProductRuntimeHost::new_compat_with_pairing(platform.clone(), test_spawner());
     install_pairing_session(&host, sso_session_info());
     {
@@ -7628,7 +7492,7 @@ fn pairing_logout_clears_session_and_bootstrap_identity() {
         );
     }
 
-    futures::executor::block_on(sso.logout_and_reset_pairing()).unwrap();
+    futures::executor::block_on(pairing.logout()).unwrap();
 
     assert!(host.test_session_state().current().is_none());
     let storage = platform
@@ -7711,8 +7575,9 @@ fn disconnect_emits_disconnected_auth_state_after_store_sync_connected() {
         )),
         ..Default::default()
     });
-    let (host, _accounts, sso) =
+    let (host, pairing) =
         ProductRuntimeHost::new_compat_with_pairing(platform.clone(), test_spawner());
+    let sso = pairing.session().clone();
     sso.clone().start_session_store_sync(test_spawner());
     wait_until(
         || {
@@ -7796,9 +7661,9 @@ fn host_accounts_refuse_a_foreign_ring_vrf_key_without_a_grant() {
         host_config.asset_hub_chain_genesis_hash,
         test_spawner(),
     );
-    let grants = Arc::new(HostGrantStore::new(services.platform.clone()));
-    let sso = SsoRequestService::new(services.clone(), host_config, grants.clone());
-    let accounts = paired_accounts(services.clone(), sso.clone(), grants);
+    let pairing = PairingHost::new(services.clone(), host_config);
+    let accounts = pairing.accounts().clone();
+    let sso = pairing.session().clone();
     let adapters = crate::host_core::ConnectionAdapters::from_services(&services);
     let host = ProductRuntimeHost::from_services(
         services,
@@ -7815,11 +7680,7 @@ fn host_accounts_refuse_a_foreign_ring_vrf_key_without_a_grant() {
     let proof = futures::executor::block_on(accounts.create_proof(
         &authority_session,
         &CallContext::default(),
-        AccountCaller::Local {
-            product: &ProductContext::new("dim2.dot".to_string()).unwrap(),
-            authorization: None,
-            outbound_review: None,
-        },
+        &ProductContext::new("dim2.dot".to_string()).unwrap(),
         v01::HostAccountCreateProofRequest {
             key_handle: v01::ProductAccountId {
                 dot_ns_identifier: "peopl.dot".to_string(),
@@ -7842,11 +7703,7 @@ fn host_accounts_refuse_a_foreign_ring_vrf_key_without_a_grant() {
     let signed = futures::executor::block_on(accounts.ring_vrf_sign(
         &authority_session,
         &CallContext::default(),
-        AccountCaller::Local {
-            product: &ProductContext::new("dim2.dot".to_string()).unwrap(),
-            authorization: None,
-            outbound_review: None,
-        },
+        &ProductContext::new("dim2.dot".to_string()).unwrap(),
         v01::HostAccountRingVrfSignRequest {
             key_handle: v01::ProductAccountId {
                 dot_ns_identifier: "peopl.dot".to_string(),
@@ -7883,9 +7740,9 @@ fn a_grant_lookup_obeys_the_callers_deadline() {
         host_config.asset_hub_chain_genesis_hash,
         test_spawner(),
     );
-    let grants = Arc::new(HostGrantStore::new(services.platform.clone()));
-    let sso = SsoRequestService::new(services.clone(), host_config, grants.clone());
-    let accounts = paired_accounts(services.clone(), sso.clone(), grants);
+    let pairing = PairingHost::new(services.clone(), host_config);
+    let accounts = pairing.accounts().clone();
+    let sso = pairing.session().clone();
     let adapters = crate::host_core::ConnectionAdapters::from_services(&services);
     let host = ProductRuntimeHost::from_services(
         services,
@@ -8025,8 +7882,10 @@ fn a_pairing_test_host_keeps_a_submitted_preimage_and_serves_it_back() {
     let session = sso_session_info();
     let platform = Arc::new(StubPlatform::default());
     let (host_config, product) = runtime_config("myapp.dot");
-    let (host, pairing_host, sso) =
+    let (host, pairing) =
         ProductRuntimeHost::new_pairing_for_tests(platform, host_config, product, test_spawner());
+    let pairing_host = pairing.accounts().clone();
+    let sso = pairing.session().clone();
     install_pairing_session(&host, session.clone());
     let lifecycle_epoch = pairing_host.grants_for_tests().lifecycle().revision();
     let allowance =
@@ -8068,5 +7927,124 @@ fn a_pairing_test_host_keeps_a_submitted_preimage_and_serves_it_back() {
         Ok(RemotePreimageLookupSubscribeItem::V1(
             v01::RemotePreimageLookupSubscribeItem { value: Some(value) }
         ))
+    );
+}
+
+/// A product reset concerns that product's grants, not which wallet is
+/// paired, so it no longer drops a session that is being activated.
+#[test]
+fn a_product_reset_during_activation_keeps_the_new_session() {
+    let (host, pairing) =
+        ProductRuntimeHost::new_compat_with_pairing(stub_platform(), test_spawner());
+    let accounts = pairing.accounts().clone();
+    let sso = pairing.session().clone();
+    let session = sso_session_info();
+    let blob = crate::host_logic::session::encode_persisted_session(&session);
+    let (activation_entered, resume_activation) =
+        sso.pause_external_session_activation_for_tests();
+    let activation = std::thread::spawn({
+        let sso = sso.clone();
+        move || futures::executor::block_on(sso.activate_external_session(&blob))
+    });
+    futures::executor::block_on(activation_entered)
+        .expect("external activation reached the installation fence");
+
+    futures::executor::block_on(accounts.clear_product_state("myapp.dot")).unwrap();
+    resume_activation
+        .send(())
+        .expect("external activation remains in flight");
+    activation
+        .join()
+        .expect("external activation thread panicked")
+        .expect("external activation completes");
+
+    assert_eq!(host.test_session_state().current(), Some(session));
+}
+
+/// Ending the paired session reaches the host that keeps its grants, which
+/// forgets what was allowed once, as a wallet change does on a signing host.
+#[test]
+fn a_paired_disconnect_forgets_allow_once() {
+    let platform = Arc::new(StubPlatform {
+        permission_confirmation_decisions: Mutex::new(
+            [
+                crate::platform::PermissionDecision::AllowOnce,
+                crate::platform::PermissionDecision::Deny,
+            ]
+            .into(),
+        ),
+        ..Default::default()
+    });
+    let (host, pairing) =
+        ProductRuntimeHost::new_compat_with_pairing(platform.clone(), test_spawner());
+    let sso = pairing.session().clone();
+    let get_other_account = || {
+        let session = sso_session_info();
+        install_pairing_session(&host, session.clone());
+        cache_test_product_subtree(&host, &session, "other.dot");
+        let request = HostAccountGetRequest::V1(v01::HostAccountGetRequest {
+            product_account_id: account_id("other.dot", 0),
+        });
+        futures::executor::block_on(host.get_account(&CallContext::default(), request)).is_ok()
+    };
+    let first = get_other_account();
+
+    futures::executor::block_on(HostSession::disconnect(sso.as_ref()));
+    let after_disconnect = get_other_account();
+
+    assert_eq!(
+        (
+            first,
+            after_disconnect,
+            platform.account_access_reviews.lock().unwrap().len()
+        ),
+        (true, false, 2),
+    );
+}
+
+/// The paired host's account holder keeps its copy of what the phone
+/// registered, so the host's own provider list shows the phone's answer.
+#[test]
+fn a_paired_registration_records_the_phones_key_locally() {
+    let session = sso_session_info();
+    let public_key = [7; 32];
+    let platform = Arc::new(StubPlatform {
+        sso_response_script: Some(sso_success_response_script(
+            &session,
+            RemoteMessage {
+                message_id: "wallet-register".to_string(),
+                data: RemoteMessageData::V1(v1::RemoteMessage::RegisterRingVrfKeyResponse(
+                    Response {
+                        responding_to: "register".to_string(),
+                        payload: Ok(public_key),
+                    },
+                )),
+            },
+        )),
+        ..Default::default()
+    });
+    let (host_config, product) = runtime_config("myapp.dot");
+    let (host, pairing) =
+        ProductRuntimeHost::new_pairing_for_tests(platform, host_config, product, test_spawner());
+    install_pairing_session(&host, session);
+    let accounts = pairing.accounts();
+    let authority_session = accounts.current_session().unwrap();
+
+    let registered = futures::executor::block_on(accounts.register_ring_vrf_key(
+        &authority_session,
+        &CallContext::with_request_id("register".to_string()),
+        &ProductContext::new("myapp.dot".to_string()).unwrap(),
+        v01::HostAccountRegisterRingVrfKeyRequest {
+            index: v01::DerivationIndex::Index(0),
+            ring: ring_location_fixture(),
+        },
+    ));
+
+    assert_eq!(
+        (
+            registered,
+            futures::executor::block_on(accounts.ring_vrf_providers(&ring_location_fixture())),
+        ),
+        (Ok(public_key), Ok(vec![account_id("myapp.dot", 0)])),
     );
 }

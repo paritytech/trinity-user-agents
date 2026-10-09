@@ -11,6 +11,8 @@
 //! same seam browser hosts use for their confirmation modals; a headless host
 //! implements it with its approval policy.
 
+mod replay;
+
 use crate::runtime::authority::AuthoritySession;
 use crate::runtime::signing_host::WalletAccountHolder;
 use crate::runtime::{AccountHolder, SsoAccountHolderService};
@@ -24,8 +26,8 @@ use futures::future::{Fuse, FusedFuture};
 use futures::{FutureExt, Stream, StreamExt, pin_mut};
 use tracing::{debug, instrument, warn};
 
-use super::SigningHost;
-use super::sso_replay::{ReplayExecution, SsoReplayScope, execute_once};
+use crate::runtime::authority::AuthorityError;
+use replay::{ReplayExecution, SsoReplayLocks, SsoReplayScope, execute_once};
 use crate::host_internal::sso_messages::{
     IncomingSsoRequest, RemoteMessage, RemoteMessageData, SsoResponseCode,
     build_outgoing_request_statement, build_signed_session_response_statement,
@@ -213,139 +215,210 @@ fn sanitize_pairing_metadata(value: String) -> Option<String> {
     (!value.is_empty()).then_some(value)
 }
 
-/// Answer `deeplink` and serve the resulting SSO session until it ends.
-#[instrument(skip_all, fields(runtime.method = "sso_responder.respond_to_pairing"))]
-pub async fn respond_to_pairing(
+/// Incoming SSO for one signing host: pairing answers, served sessions and
+/// duplicate detection, each peer answered by its own [`SsoAccountHolderService`].
+pub struct SsoResponderService {
     services: Arc<RuntimeServices>,
-    signing_host: Arc<SigningHost>,
-    deeplink: &str,
-) -> Result<ResponderExit, String> {
-    let established = establish_pairing_session(&services, &signing_host, deeplink).await?;
-    serve_session(
-        services,
-        signing_host,
-        established.session,
-        established.replay_scope,
-        established.wallet_session,
-    )
-    .await
+    wallet: Arc<WalletAccountHolder>,
+    /// Serializes replay-ledger updates within each wallet and peer scope.
+    replay_locks: SsoReplayLocks,
 }
 
-/// Answer a pairing host's handshake without entering its long-lived serve loop.
-pub async fn establish_pairing(
-    services: Arc<RuntimeServices>,
-    signing_host: Arc<SigningHost>,
-    deeplink: &str,
-) -> Result<(), String> {
-    establish_pairing_session(&services, &signing_host, deeplink).await?;
-    Ok(())
-}
-
-async fn establish_pairing_session(
-    services: &RuntimeServices,
-    signing_host: &SigningHost,
-    deeplink: &str,
-) -> Result<EstablishedPairing, String> {
-    let peer = PairedSsoPeer::from_deeplink(deeplink)?;
-    let wallet_session = signing_host
-        .wallet
-        .current_session()
-        .ok_or_else(|| "signing host has no active local session".to_string())?;
-    let device_enc_pub_key = x25519_public_key(services.device_encryption_secret().await?);
-    let (session, statement) = signing_host
-        .wallet
-        .pairing_answer(&wallet_session, peer, device_enc_pub_key)
-        .map_err(|error| error.to_string())?;
-    signing_host
-        .wallet
-        .require_current_session(&wallet_session)
-        .map_err(|error| error.to_string())?;
-    services
-        .statement_store
-        .submit(statement, "sso-responder handshake")
-        .await?;
-    signing_host
-        .wallet
-        .require_current_session(&wallet_session)
-        .map_err(|error| error.to_string())?;
-    debug!("answered pairing handshake");
-    // The submit is the earliest point the peer could read the answer.
-    if let Some(observer) = services.device_pairing_observer() {
-        observer.device_paired(peer);
+impl SsoResponderService {
+    /// Answer peers of `wallet` over the runtime's statement store.
+    pub fn new(services: Arc<RuntimeServices>, wallet: Arc<WalletAccountHolder>) -> Arc<Self> {
+        Arc::new(Self {
+            services,
+            wallet,
+            replay_locks: SsoReplayLocks::default(),
+        })
     }
 
-    Ok(EstablishedPairing {
-        wallet_session: wallet_session.clone(),
-        session,
-        replay_scope: SsoReplayScope {
-            root_public_key: wallet_session.public_key,
-            peer_statement_account_id: peer.statement_account_id,
-            peer_encryption_public_key: peer.encryption_public_key,
-        },
-    })
-}
-
-/// Resume a previously paired SSO session from its persisted public peer keys.
-pub async fn resume_pairing(
-    services: Arc<RuntimeServices>,
-    signing_host: Arc<SigningHost>,
-    peer: PairedSsoPeer,
-) -> Result<ResponderExit, String> {
-    let wallet_session = signing_host
-        .wallet
-        .current_session()
-        .ok_or_else(|| "signing host has no active local session".to_string())?;
-    let session = signing_host
-        .wallet
-        .sso_session(&wallet_session, peer)
-        .map_err(|error| error.to_string())?;
-    serve_session(
-        services,
-        signing_host,
-        session,
-        SsoReplayScope {
-            root_public_key: wallet_session.public_key,
-            peer_statement_account_id: peer.statement_account_id,
-            peer_encryption_public_key: peer.encryption_public_key,
-        },
-        wallet_session,
-    )
-    .await
-}
-
-/// Notify a paired host that this signing host is ending their SSO session.
-pub async fn disconnect_paired_host(
-    services: Arc<RuntimeServices>,
-    signing_host: Arc<SigningHost>,
-    peer: PairedSsoPeer,
-) -> Result<(), String> {
-    let wallet_session = signing_host
-        .wallet
-        .current_session()
-        .ok_or_else(|| "signing host has no active local session".to_string())?;
-    let session = signing_host
-        .wallet
-        .sso_session(&wallet_session, peer)
-        .map_err(|error| error.to_string())?;
-    let message_id = sso_message_id();
-    let message = RemoteMessage {
-        message_id: message_id.clone(),
-        data: RemoteMessageData::V1(v1::RemoteMessage::Disconnected),
-    };
-    let statement = build_outgoing_request_statement(
-        &session,
-        message_id,
-        vec![message],
-        fresh_statement_expiry(),
-    )?;
-    signing_host
-        .wallet
-        .require_current_session(&wallet_session)
-        .map_err(|error| error.to_string())?;
-    services
-        .statement_store
-        .submit_sso(statement, "sso-responder disconnect")
+    /// Answer `deeplink` and serve the resulting SSO session until it ends.
+    #[instrument(skip_all, fields(runtime.method = "sso_responder.respond_to_pairing"))]
+    pub async fn respond_to_pairing(&self, deeplink: &str) -> Result<ResponderExit, String> {
+        let established = self.establish_pairing_session(deeplink).await?;
+        serve_session(
+            self,
+            established.session,
+            established.replay_scope,
+            established.wallet_session,
+        )
         .await
+    }
+
+    /// Answer a pairing host's handshake without entering its long-lived serve loop.
+    pub async fn establish_pairing(&self, deeplink: &str) -> Result<(), String> {
+        self.establish_pairing_session(deeplink).await?;
+        Ok(())
+    }
+
+    async fn establish_pairing_session(&self, deeplink: &str) -> Result<EstablishedPairing, String> {
+        let peer = PairedSsoPeer::from_deeplink(deeplink)?;
+        let wallet_session = self
+            .wallet
+            .current_session()
+            .ok_or_else(|| "signing host has no active local session".to_string())?;
+        let device_enc_pub_key =
+            x25519_public_key(self.services.device_encryption_secret().await?);
+        let (session, statement) = self
+            .wallet
+            .pairing_answer(&wallet_session, peer, device_enc_pub_key)
+            .map_err(|error| error.to_string())?;
+        self.wallet
+            .require_current_session(&wallet_session)
+            .map_err(|error| error.to_string())?;
+        self.services
+            .statement_store
+            .submit(statement, "sso-responder handshake")
+            .await?;
+        self.wallet
+            .require_current_session(&wallet_session)
+            .map_err(|error| error.to_string())?;
+        debug!("answered pairing handshake");
+        // The submit is the earliest point the peer could read the answer.
+        if let Some(observer) = self.services.device_pairing_observer() {
+            observer.device_paired(peer);
+        }
+
+        Ok(EstablishedPairing {
+            wallet_session: wallet_session.clone(),
+            session,
+            replay_scope: SsoReplayScope {
+                root_public_key: wallet_session.public_key,
+                peer_statement_account_id: peer.statement_account_id,
+                peer_encryption_public_key: peer.encryption_public_key,
+            },
+        })
+    }
+
+    /// Resume a previously paired SSO session from its persisted public peer keys.
+    pub async fn resume_pairing(&self, peer: PairedSsoPeer) -> Result<ResponderExit, String> {
+        let wallet_session = self
+            .wallet
+            .current_session()
+            .ok_or_else(|| "signing host has no active local session".to_string())?;
+        let session = self
+            .wallet
+            .sso_session(&wallet_session, peer)
+            .map_err(|error| error.to_string())?;
+        serve_session(
+            self,
+            session,
+            SsoReplayScope {
+                root_public_key: wallet_session.public_key,
+                peer_statement_account_id: peer.statement_account_id,
+                peer_encryption_public_key: peer.encryption_public_key,
+            },
+            wallet_session,
+        )
+        .await
+    }
+
+    /// Notify a paired host that this signing host is ending their SSO session.
+    pub async fn disconnect_paired_host(&self, peer: PairedSsoPeer) -> Result<(), String> {
+        let wallet_session = self
+            .wallet
+            .current_session()
+            .ok_or_else(|| "signing host has no active local session".to_string())?;
+        let session = self
+            .wallet
+            .sso_session(&wallet_session, peer)
+            .map_err(|error| error.to_string())?;
+        let message_id = sso_message_id();
+        let message = RemoteMessage {
+            message_id: message_id.clone(),
+            data: RemoteMessageData::V1(v1::RemoteMessage::Disconnected),
+        };
+        let statement = build_outgoing_request_statement(
+            &session,
+            message_id,
+            vec![message],
+            fresh_statement_expiry(),
+        )?;
+        self.wallet
+            .require_current_session(&wallet_session)
+            .map_err(|error| error.to_string())?;
+        self.services
+            .statement_store
+            .submit_sso(statement, "sso-responder disconnect")
+            .await
+    }
+
+    /// Tell the pairing host that allowance allocation is under way, moving it off
+    /// its QR screen for however long the allocation takes.
+    ///
+    /// Answering at all needs this host's own statement-store allowance, which is
+    /// the `WalletSso` renewal target, so callers register that before calling.
+    /// Callers own the matching [`Self::notify_pairing_failed`]: the host has
+    /// dropped its QR and waits without a deadline, so an allocation that then
+    /// fails leaves it waiting forever unless it is told.
+    pub async fn notify_pairing_allowance_allocation(
+        &self,
+        deeplink: &str,
+    ) -> Result<AnnouncedPairing, String> {
+        let peer = PairedSsoPeer::from_deeplink(deeplink)?;
+        let wallet_session = self
+            .wallet
+            .current_session()
+            .ok_or_else(|| "signing host has no active local session".to_string())?;
+        let pending = v2::EncryptedResponse::Pending(v2::Status::AllowanceAllocation);
+        let statement = self
+            .wallet
+            .pairing_notice(&wallet_session, peer, &pending)
+            .map_err(|error| error.to_string())?;
+        self.services
+            .statement_store
+            .submit(statement, "sso-responder allowance allocation")
+            .await?;
+        debug!("told pairing host that allowance allocation started");
+        Ok(AnnouncedPairing {
+            wallet: self.wallet.clone(),
+            session: wallet_session,
+            peer,
+        })
+    }
+
+    /// Tell the pairing host that pairing failed, so it reports `reason` and offers
+    /// a retry rather than waiting on an answer that is never coming.
+    pub async fn notify_pairing_failed(
+        &self,
+        announced: &AnnouncedPairing,
+        reason: String,
+    ) -> Result<(), String> {
+        let statement = announced
+            .wallet
+            .pairing_notice(
+                &announced.session,
+                announced.peer,
+                &v2::EncryptedResponse::Failed(reason),
+            )
+            .map_err(|error| error.to_string())?;
+        self.services
+            .statement_store
+            .submit(statement, "sso-responder pairing failure")
+            .await?;
+        debug!("told pairing host that pairing failed");
+        Ok(())
+    }
+
+    /// Bind an external SSO transport to the wallet matching both of its keys.
+    pub fn open_service(
+        &self,
+        own_statement_account_id: [u8; 32],
+        own_encryption_public_key: [u8; 32],
+    ) -> Result<SsoAccountHolderService, AuthorityError> {
+        let session = self
+            .wallet
+            .current_session()
+            .ok_or(AuthorityError::Disconnected)?;
+        self.wallet.require_sso_identity(
+            &session,
+            own_statement_account_id,
+            own_encryption_public_key,
+        )?;
+        Ok(SsoAccountHolderService::new(self.wallet.clone(), session))
+    }
 }
 
 /// Wallet activation and peer bound to an in-progress pairing notice.
@@ -355,77 +428,19 @@ pub struct AnnouncedPairing {
     peer: PairedSsoPeer,
 }
 
-/// Tell the pairing host that allowance allocation is under way, moving it off
-/// its QR screen for however long the allocation takes.
-///
-/// Answering at all needs this host's own statement-store allowance, which is
-/// the `WalletSso` renewal target, so callers register that before calling.
-/// Callers own the matching [`notify_pairing_failed`]: the host has dropped its
-/// QR and waits without a deadline, so an allocation that then fails leaves it
-/// waiting forever unless it is told.
-pub async fn notify_pairing_allowance_allocation(
-    services: Arc<RuntimeServices>,
-    signing_host: Arc<SigningHost>,
-    deeplink: &str,
-) -> Result<AnnouncedPairing, String> {
-    let peer = PairedSsoPeer::from_deeplink(deeplink)?;
-    let wallet_session = signing_host
-        .wallet
-        .current_session()
-        .ok_or_else(|| "signing host has no active local session".to_string())?;
-    let pending = v2::EncryptedResponse::Pending(v2::Status::AllowanceAllocation);
-    let statement = signing_host
-        .wallet
-        .pairing_notice(&wallet_session, peer, &pending)
-        .map_err(|error| error.to_string())?;
-    services
-        .statement_store
-        .submit(statement, "sso-responder allowance allocation")
-        .await?;
-    debug!("told pairing host that allowance allocation started");
-    Ok(AnnouncedPairing {
-        wallet: signing_host.wallet.clone(),
-        session: wallet_session,
-        peer,
-    })
-}
-
-/// Tell the pairing host that pairing failed, so it reports `reason` and offers
-/// a retry rather than waiting on an answer that is never coming.
-pub async fn notify_pairing_failed(
-    services: Arc<RuntimeServices>,
-    announced: &AnnouncedPairing,
-    reason: String,
-) -> Result<(), String> {
-    let statement = announced
-        .wallet
-        .pairing_notice(
-            &announced.session,
-            announced.peer,
-            &v2::EncryptedResponse::Failed(reason),
-        )
-        .map_err(|error| error.to_string())?;
-    services
-        .statement_store
-        .submit(statement, "sso-responder pairing failure")
-        .await?;
-    debug!("told pairing host that pairing failed");
-    Ok(())
-}
-
 /// Serve inbound session statements until the session ends.
 #[instrument(skip_all, fields(runtime.method = "sso_responder.serve_session"))]
 async fn serve_session(
-    services: Arc<RuntimeServices>,
-    signing_host: Arc<SigningHost>,
+    responder: &SsoResponderService,
     session: SsoSessionInfo,
     replay_scope: SsoReplayScope,
     wallet_session: AuthoritySession,
 ) -> Result<ResponderExit, String> {
-    let service = SsoAccountHolderService::new(signing_host.wallet.clone(), wallet_session);
+    let service = SsoAccountHolderService::new(responder.wallet.clone(), wallet_session);
     service
         .require_current_session()
         .map_err(|error| error.to_string())?;
+    let services = &responder.services;
     let rpc_client = services
         .statement_store
         .client("sso-responder session")
@@ -435,7 +450,7 @@ async fn serve_session(
         statement_store_rpc::subscribe_match_all(&rpc_client, &[session.session_id_peer])
             .await
             .map_err(|err| format!("sso-responder subscribe failed: {err}"))?;
-    let (services, session) = (&services, &session);
+    let session = &session;
     let pages = futures::stream::unfold(
         (subscription, DecodeFailureRequestIds::new()),
         move |(mut subscription, mut decode_failure_request_ids)| async move {
@@ -457,16 +472,7 @@ async fn serve_session(
         |message| {
             service.handle_control(message);
         },
-        |incoming| {
-            serve_statement(
-            services,
-            &signing_host,
-            &service,
-            session,
-            replay_scope,
-            incoming,
-        )
-        },
+        |incoming| serve_statement(responder, &service, session, replay_scope, incoming),
     )
     .boxed()
     .await
@@ -621,8 +627,7 @@ fn log_request_received(incoming: &IncomingSsoRequest) {
 
 /// Serve one inbound request statement exactly once across redeliveries.
 async fn serve_statement(
-    services: &RuntimeServices,
-    signing_host: &SigningHost,
+    responder: &SsoResponderService,
     service: &SsoAccountHolderService,
     session: &SsoSessionInfo,
     replay_scope: SsoReplayScope,
@@ -631,9 +636,10 @@ async fn serve_statement(
     let request_id = incoming.request_id.clone();
     let expires_at_unix_secs = incoming.expires_at_unix_secs;
     let duplicate_exit = duplicate_request_exit(&incoming);
+    let services = &responder.services;
     let execution = execute_once(
         services.platform.as_ref(),
-        signing_host.sso_replay_locks(),
+        &responder.replay_locks,
         replay_scope,
         &request_id,
         expires_at_unix_secs,
@@ -808,6 +814,7 @@ fn response_cli_summary(
 #[cfg(test)]
 mod tests {
     use super::super::LocalActivation;
+    use crate::runtime::signing_host::SigningHost;
     use super::*;
     use crate::host_internal::sso_messages::OnExistingAllowancePolicy;
     use crate::host_internal::sso_messages::{
@@ -838,14 +845,14 @@ mod tests {
         const SUFFIX: &str = "paseo";
 
         let (_, signing_host) = signing_fixture(Arc::new(StubPlatform::default()));
-        let session = signing_host.wallet.current_session().unwrap();
+        let session = signing_host.wallet_for_tests().current_session().unwrap();
         let host = generate_pairing_device_identity().unwrap();
         let peer = PairedSsoPeer {
             statement_account_id: host.statement_store_public_key,
             encryption_public_key: host.encryption_public_key,
         };
         let (_, answer) = signing_host
-            .wallet
+            .wallet_for_tests()
             .pairing_answer(&session, peer, [0; 32])
             .unwrap();
         let verified =
@@ -881,7 +888,6 @@ mod tests {
     use crate::host_logic::statement_store::decode_verified_statement_data;
     use crate::platform::{HostInfo, Platform, PlatformInfo, SigningHostConfig};
     use crate::runtime::HostSession;
-    use crate::runtime::allowances::current_unix_secs;
     use crate::runtime::services::RuntimeServices;
     use crate::test_support::{StubPlatform, test_spawner};
     use std::sync::Arc;
@@ -925,7 +931,7 @@ mod tests {
     /// Metadata for the People chain the signing fixture is configured for.
     #[cfg(not(target_arch = "wasm32"))]
     const PEOPLE_METADATA: &[u8] =
-        include_bytes!("../../../tests/fixtures/paseo-next-v2-metadata-v16.scale");
+        include_bytes!("../../tests/fixtures/paseo-next-v2-metadata-v16.scale");
 
     /// An existing statement-store allowance must be served without resolving a
     /// ring or submitting anything. The cache and the scan are covered on their
@@ -951,7 +957,7 @@ mod tests {
         let people_row = slot::testing::slot_row(
             derive_full_person_ring_vrf_entropy(&ENTROPY, NETWORK_SUFFIX),
             NETWORK_SUFFIX.as_bytes(),
-            slot::current_period(current_unix_secs().unwrap()),
+            slot::current_period(statement_current_unix_secs()),
             &[Some(format!(r#""0x{}""#, hex::encode(&slot_entry)))],
         );
 
@@ -1014,9 +1020,9 @@ mod tests {
         // unbounded test would hang instead of reporting. The bound is generous
         // because it is catching a hang, not asserting latency.
         let allocation = futures::executor::block_on(async {
-            let session = signing_host.account_holder().current_session().unwrap();
+            let session = signing_host.wallet_for_tests().current_session().unwrap();
             futures::select! {
-                result = signing_host.wallet.allocate_statement_store_allowance(
+                result = signing_host.wallet_for_tests().allocate_statement_store_allowance(
                     &session,
                     product_id,
                     OnExistingAllowancePolicy::Ignore,
@@ -1062,7 +1068,7 @@ mod tests {
     fn responder_advertises_and_signs_with_the_local_uid_identity() {
         let (_services, signing_host) = signing_fixture(Arc::new(StubPlatform::default()));
         let local_identity = signing_host
-            .account_holder()
+            .wallet_for_tests()
             .current_session()
             .unwrap()
             .identity_account_id
@@ -1081,9 +1087,9 @@ mod tests {
         let (_, host_encryption_public_key) =
             derive_x25519_keypair_from_entropy(&[0x42; 16], b"sso");
         let session = signing_host
-            .wallet
+            .wallet_for_tests()
             .sso_session(
-                &signing_host.wallet.current_session().unwrap(),
+                &signing_host.wallet_for_tests().current_session().unwrap(),
                 PairedSsoPeer {
                     statement_account_id: [0x55; 32],
                     encryption_public_key: host_encryption_public_key,
@@ -1221,7 +1227,8 @@ mod tests {
             statement_account_id: [0x31; 32],
             encryption_public_key: x25519_public_key([0x42; 32]),
         });
-        let pairing = establish_pairing(services, signing_host.clone(), &deeplink);
+        let responder = signing_host.sso_responder();
+        let pairing = responder.establish_pairing(&deeplink);
         futures::pin_mut!(pairing);
         assert!(pairing.as_mut().now_or_never().is_none());
         futures::executor::block_on(signing_host.activate_local_session(vec![0xcd; 16])).unwrap();
@@ -1252,11 +1259,11 @@ mod tests {
         let observer = Arc::new(RecordingPairingObserver::default());
         assert!(services.install_device_pairing_observer(observer.clone()));
 
-        futures::executor::block_on(establish_pairing(
-            services,
-            signing_host,
-            &pairing_deeplink(peer),
-        ))
+        futures::executor::block_on(
+            signing_host
+                .sso_responder()
+                .establish_pairing(&pairing_deeplink(peer)),
+        )
         .expect("the handshake is answered");
 
         assert_eq!(observer.paired(), vec![peer]);
@@ -1275,11 +1282,11 @@ mod tests {
         let observer = Arc::new(RecordingPairingObserver::default());
         assert!(services.install_device_pairing_observer(observer.clone()));
 
-        let failure = futures::executor::block_on(establish_pairing(
-            services,
-            signing_host,
-            &pairing_deeplink(peer),
-        ))
+        let failure = futures::executor::block_on(
+            signing_host
+                .sso_responder()
+                .establish_pairing(&pairing_deeplink(peer)),
+        )
         .expect_err("a rejected handshake submit fails the pairing");
         // Without this the test would also pass on a failure from earlier,
         // leaving the rule unexercised.
@@ -1297,13 +1304,13 @@ mod tests {
             statement_account_id: [0x31; 32],
             encryption_public_key: x25519_public_key([0x42; 32]),
         };
-        let (services, signing_host) = pairing_fixture("new");
+        let (_, signing_host) = pairing_fixture("new");
 
-        futures::executor::block_on(establish_pairing(
-            services,
-            signing_host,
-            &pairing_deeplink(peer),
-        ))
+        futures::executor::block_on(
+            signing_host
+                .sso_responder()
+                .establish_pairing(&pairing_deeplink(peer)),
+        )
         .expect("the handshake is answered without an observer");
     }
 
@@ -1400,8 +1407,8 @@ mod tests {
         )
         .unwrap();
         let (_, signing_host) = signing_fixture(Arc::new(StubPlatform::default()));
-        let selected = signing_host.wallet.current_session().unwrap();
-        let resumed = signing_host.wallet.sso_session(&selected, peer).unwrap();
+        let selected = signing_host.wallet_for_tests().current_session().unwrap();
+        let resumed = signing_host.wallet_for_tests().sso_session(&selected, peer).unwrap();
 
         assert_eq!(
             crate::host_logic::statement_store::statement_public_key_from_secret(resumed.ss_secret)
@@ -1444,8 +1451,8 @@ mod tests {
         request: v1::RemoteMessage,
     ) -> v1::RemoteMessage {
         let service = SsoAccountHolderService::new(
-            signing_host.account_holder().clone(),
-            signing_host.account_holder().current_session().unwrap(),
+            signing_host.wallet_for_tests().clone(),
+            signing_host.wallet_for_tests().current_session().unwrap(),
         );
         let message = RemoteMessage {
             message_id: message_id.to_string(),
@@ -1497,8 +1504,8 @@ mod tests {
             ..StubPlatform::default()
         }));
         let service = SsoAccountHolderService::new(
-            signing_host.account_holder().clone(),
-            signing_host.account_holder().current_session().unwrap(),
+            signing_host.wallet_for_tests().clone(),
+            signing_host.wallet_for_tests().current_session().unwrap(),
         );
         let request = RemoteMessage::request(
             "allocation-1".to_string(),
@@ -1624,7 +1631,7 @@ mod tests {
             ..StubPlatform::default()
         });
         let (_, signing_host) = signing_fixture(platform.clone());
-        let session = signing_host.account_holder().current_session();
+        let session = signing_host.wallet_for_tests().current_session();
         let expected_secret = derive_product_subtree_keypair(
             &derive_root_keypair_from_entropy(&ENTROPY).unwrap(),
             "myapp.dot",
@@ -1634,8 +1641,8 @@ mod tests {
         .to_bytes();
         let expected_domain = derive_ring_vrf_domain_entropy(&ENTROPY, "myapp.dot").unwrap();
         let service = SsoAccountHolderService::new(
-            signing_host.account_holder().clone(),
-            signing_host.account_holder().current_session().unwrap(),
+            signing_host.wallet_for_tests().clone(),
+            signing_host.wallet_for_tests().current_session().unwrap(),
         );
         let answer = service.answer(allocation_request("remote-reset"));
         futures::pin_mut!(answer);
@@ -1653,7 +1660,7 @@ mod tests {
         assert_eq!(
             (
                 response.payload,
-                signing_host.account_holder().current_session(),
+                signing_host.wallet_for_tests().current_session(),
                 platform.resource_allocation_reviews.lock().unwrap().len()
             ),
             (
@@ -1680,8 +1687,8 @@ mod tests {
         });
         let (_, signing_host) = signing_fixture(platform.clone());
         let service = SsoAccountHolderService::new(
-            signing_host.account_holder().clone(),
-            signing_host.account_holder().current_session().unwrap(),
+            signing_host.wallet_for_tests().clone(),
+            signing_host.wallet_for_tests().current_session().unwrap(),
         );
         let message = RemoteMessage::request(
             "alloc-stale".to_string(),
@@ -1732,8 +1739,8 @@ mod tests {
             });
             let (_, signing_host) = signing_fixture(platform.clone());
             let service = SsoAccountHolderService::new(
-                signing_host.account_holder().clone(),
-                signing_host.account_holder().current_session().unwrap(),
+                signing_host.wallet_for_tests().clone(),
+                signing_host.wallet_for_tests().current_session().unwrap(),
             );
             futures::executor::block_on(signing_host.activate_local_session(entropy)).unwrap();
             let Ok(Dispatch::Response(answer)) =
@@ -1789,8 +1796,8 @@ mod tests {
         });
         let (_, signing_host) = signing_fixture(platform.clone());
         let service = SsoAccountHolderService::new(
-            signing_host.account_holder().clone(),
-            signing_host.account_holder().current_session().unwrap(),
+            signing_host.wallet_for_tests().clone(),
+            signing_host.wallet_for_tests().current_session().unwrap(),
         );
         let allocation = service.answer(allocation_request("alloc-1"));
         futures::pin_mut!(allocation);
@@ -1829,8 +1836,8 @@ mod tests {
         });
         let (_, signing_host) = signing_fixture(platform.clone());
         let service = SsoAccountHolderService::new(
-            signing_host.account_holder().clone(),
-            signing_host.account_holder().current_session().unwrap(),
+            signing_host.wallet_for_tests().clone(),
+            signing_host.wallet_for_tests().current_session().unwrap(),
         );
 
         futures::executor::block_on(service.answer(cancel("cancel-1", "alloc-1"))).unwrap();

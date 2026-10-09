@@ -14,7 +14,7 @@ use truapi::versioned::signing::{
 use truapi::{CallContext, CallError, v01};
 
 use crate::runtime::authority::{
-    AccountCaller, AuthorityError, CreateTransactionAuthorityRequest, SignPayloadAuthorityRequest,
+    AuthorityError, CreateTransactionAuthorityRequest, SignPayloadAuthorityRequest,
     SignRawAuthorityRequest,
 };
 use crate::runtime::{
@@ -63,19 +63,11 @@ impl<H: AccountHolder> Signing for ProductRuntimeHost<H> {
             )));
         };
         inner.account.dot_ns_identifier = owner;
-        let authorization = self
-            .accounts
-            .wallet_authorization(&authority_session, &self.connection.product)
-            .map_err(|reason| signing_call_error(HostSignPayloadError::V1, reason))?;
         self.accounts
             .sign_payload(
                 &authority_session,
                 cx,
-                AccountCaller::Local {
-                    product: &self.connection.product,
-                    authorization: authorization.as_ref(),
-                    outbound_review: None,
-                },
+                &self.connection.product,
                 SignPayloadAuthorityRequest::Product(inner),
             )
             .await
@@ -164,19 +156,11 @@ impl<H: AccountHolder> Signing for ProductRuntimeHost<H> {
                 };
                 CallError::Domain(HostCreateTransactionError::V1(error))
             })?;
-        let authorization = self
-            .accounts
-            .wallet_authorization(&authority_session, &self.connection.product)
-            .map_err(|reason| transaction_call_error(HostCreateTransactionError::V1, reason))?;
         self.accounts
             .create_transaction(
                 &authority_session,
                 cx,
-                AccountCaller::Local {
-                    product: &self.connection.product,
-                    authorization: authorization.as_ref(),
-                    outbound_review: None,
-                },
+                &self.connection.product,
                 CreateTransactionAuthorityRequest::Product(inner),
             )
             .await
@@ -223,11 +207,7 @@ impl<H: AccountHolder> Signing for ProductRuntimeHost<H> {
             .sign_payload(
                 &authority_session,
                 cx,
-                AccountCaller::Local {
-                    product: &self.connection.product,
-                    authorization: None,
-                    outbound_review: None,
-                },
+                &self.connection.product,
                 SignPayloadAuthorityRequest::LegacyAccount {
                     product_account: v01::ProductAccountId {
                         dot_ns_identifier: self.connection.product_id(),
@@ -312,11 +292,7 @@ impl<H: AccountHolder> Signing for ProductRuntimeHost<H> {
             .create_transaction(
                 &authority_session,
                 cx,
-                AccountCaller::Local {
-                    product: &self.connection.product,
-                    authorization: None,
-                    outbound_review: None,
-                },
+                &self.connection.product,
                 authority_request,
             )
             .await
@@ -372,19 +348,11 @@ impl<H: AccountHolder> ProductRuntimeHost<H> {
             )));
         };
         inner.account.dot_ns_identifier = owner;
-        let authorization = self
-            .accounts
-            .wallet_authorization(&authority_session, &self.connection.product)
-            .map_err(|reason| raw_signing_call_error(HostSignRawError::V1, reason))?;
         self.accounts
             .sign_raw(
                 &authority_session,
                 cx,
-                AccountCaller::Local {
-                    product: &self.connection.product,
-                    authorization: authorization.as_ref(),
-                    outbound_review: None,
-                },
+                &self.connection.product,
                 SignRawAuthorityRequest::Product(inner),
                 watermarked,
             )
@@ -436,11 +404,7 @@ impl<H: AccountHolder> ProductRuntimeHost<H> {
             .sign_raw(
                 &authority_session,
                 cx,
-                AccountCaller::Local {
-                    product: &self.connection.product,
-                    authorization: None,
-                    outbound_review: None,
-                },
+                &self.connection.product,
                 authority_request,
                 watermarked,
             )

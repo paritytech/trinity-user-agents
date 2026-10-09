@@ -2,7 +2,6 @@
 //!
 //! Caller origin separates local host permissions from remote wallet consent.
 
-use super::WalletAuthorization;
 use crate::platform::ProductContext;
 use async_trait::async_trait;
 use truapi::latest::{
@@ -36,58 +35,6 @@ pub struct AccountInvocation<'a> {
     pub caller: AccountCaller<'a>,
 }
 
-impl<'a> AccountInvocation<'a> {
-    /// Attach host review metadata while preserving the original caller binding.
-    pub fn with_outbound_review(self, review: &'a crate::platform::UserConfirmationReview) -> Self {
-        let caller = match self.caller {
-            AccountCaller::Local {
-                product,
-                authorization,
-                ..
-            } => AccountCaller::Local {
-                product,
-                authorization,
-                outbound_review: Some(review),
-            },
-            remote => remote,
-        };
-        Self { caller, ..self }
-    }
-
-    /// Review wallet work, preserving the local product's trusted-review policy.
-    pub async fn confirm(
-        &self,
-        platform: &dyn crate::platform::Platform,
-        review: crate::platform::UserConfirmationReview,
-    ) -> Result<(), AuthorityError> {
-        use crate::platform::{
-            CreateTransactionReview, SignPayloadReview, SignRawReview, UserConfirmationReview,
-        };
-        if let AccountCaller::Local { product, .. } = self.caller
-            && crate::platform::has_trusted_remote_permissions(&product.product_id)
-            && matches!(
-                review,
-                UserConfirmationReview::SignPayload(SignPayloadReview::Product { .. })
-                    | UserConfirmationReview::SignRaw(SignRawReview::Product { .. })
-                    | UserConfirmationReview::CreateTransaction(
-                        CreateTransactionReview::Product { .. }
-                    )
-                    | UserConfirmationReview::StatementStoreProductSign(_)
-            )
-        {
-            return Ok(());
-        }
-        let approved = super::until_cancelled(self.call, platform.confirm_user_action(review))
-            .await?
-            .map_err(AuthorityError::ConfirmationFailed)?;
-        if approved {
-            Ok(())
-        } else {
-            Err(AuthorityError::Rejected)
-        }
-    }
-}
-
 /// Trust boundary for product identity and host permissions.
 #[derive(Clone, Copy)]
 pub enum AccountCaller<'a> {
@@ -95,10 +42,6 @@ pub enum AccountCaller<'a> {
     Local {
         /// Product bound by the host runtime.
         product: &'a ProductContext,
-        /// Wallet-issued permission retained by this host.
-        authorization: Option<&'a WalletAuthorization>,
-        /// Host review prepared before conversion to an outbound SSO payload.
-        outbound_review: Option<&'a crate::platform::UserConfirmationReview>,
     },
     /// Product identity reported by an authenticated paired host.
     Remote {
@@ -111,7 +54,7 @@ impl AccountCaller<'_> {
     /// Product named by this invocation, when the transport supplied one.
     pub fn product_id(&self) -> Option<&str> {
         match self {
-            Self::Local { product, .. } => Some(&product.product_id),
+            Self::Local { product } => Some(&product.product_id),
             Self::Remote { product_id } => *product_id,
         }
     }
@@ -451,30 +394,11 @@ impl CreateTransactionAuthorityRequest {
     }
 }
 
-/// Whether blessed `calling_product_id` is using its own account, `owner`.
-pub fn is_blessed_owner(calling_product_id: &str, owner: &str) -> bool {
-    use crate::platform::{has_trusted_remote_permissions, normalize_product_identifier};
-    normalize_product_identifier(calling_product_id).is_ok_and(|caller| {
-        has_trusted_remote_permissions(&caller)
-            && normalize_product_identifier(owner).is_ok_and(|owner| owner == caller)
-    })
-}
-
-/// Whether a product-account call can be signed without a confirmation prompt.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum AutoSigningGrant {
-    /// Covered: the authority already holds the signing keys and raises no prompt.
-    Active,
-    /// Not covered: the caller must obtain user consent.
-    Absent,
-}
-
 /// Statement-store allowance signing material held by the authority layer.
 #[derive(Clone, PartialEq, Eq, zeroize::Zeroize, zeroize::ZeroizeOnDrop)]
 pub struct StatementStoreAllowanceKey {
-    /// sr25519 secret used to sign allowance statements.
-    pub secret: [u8; 64],
-    /// Public key derived from `secret`.
+    secret: [u8; 64],
+    /// Public key derived from the secret.
     pub public_key: [u8; 32],
 }
 
@@ -501,6 +425,11 @@ impl StatementStoreAllowanceKey {
             public_key,
         })
     }
+
+    /// sr25519 secret used to sign allowance statements.
+    pub fn as_secret_bytes(&self) -> &[u8; 64] {
+        &self.secret
+    }
 }
 
 /// Issued capability material, ready for the host to validate and retain.
@@ -518,8 +447,6 @@ pub enum AccountGrant {
     SmartContract,
     /// Exported product signing material.
     AutoSigning(AutoSigningKey),
-    /// Wallet permission without exported signing material.
-    WalletAuthorization(WalletAuthorization),
 }
 
 /// One resource result in an otherwise valid allocation batch.
@@ -632,14 +559,24 @@ pub trait AccountHolder: Send + Sync + 'static {
         request: HostAccountCreateProofRequest,
     ) -> Result<HostAccountCreateProofResponse, RingVrfError>;
 
-    /// Register a ring-VRF key owned by the calling product.
+    /// Register a ring-VRF key owned by the calling product and record it in
+    /// the registry this host reads.
     async fn register_ring_vrf_key(
         &self,
         invocation: AccountInvocation<'_>,
         request: HostAccountRegisterRingVrfKeyRequest,
     ) -> Result<HostAccountRegisterRingVrfKeyResponse, RingVrfError>;
 
-    /// List registered ring-VRF keys.
+    /// Record a key the host derived from the calling product's kept
+    /// AutoSigning key, so the holder stays the registry's only writer.
+    async fn record_ring_vrf_key(
+        &self,
+        invocation: AccountInvocation<'_>,
+        request: HostAccountRegisterRingVrfKeyRequest,
+        public_key: [u8; 32],
+    ) -> Result<(), RingVrfError>;
+
+    /// List an owner's registered ring-VRF keys, keeping the registry this host reads current.
     async fn list_ring_vrf_keys(
         &self,
         invocation: AccountInvocation<'_>,
@@ -669,12 +606,15 @@ pub trait AccountHolder: Send + Sync + 'static {
         context: &[u8],
     ) -> Result<[u8; 32], AuthorityError>;
 
-    /// Key material for minting contact handles.
+    /// Mint and resolve contact handles under the session's root entropy source.
     ///
-    /// Uses the session's secret root entropy source so handles match across
-    /// products and host roles. The key must remain inaccessible to products
-    /// to prevent recovering contacts by hashing candidate accounts.
-    fn contacts_handle_key(&self, session: &AuthoritySession) -> Result<[u8; 32], AuthorityError>;
+    /// Handles match across products and host roles. The key stays inside
+    /// `ContactHandles`, so no product can recover contacts by hashing
+    /// candidate accounts.
+    fn contact_handles(
+        &self,
+        session: &AuthoritySession,
+    ) -> Result<super::contacts::ContactHandles, AuthorityError>;
 }
 
 /// Build the neutral authority-session snapshot for `session`.

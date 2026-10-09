@@ -7,21 +7,11 @@ mod ring_vrf;
 pub use ring_vrf::{
     ChainRingResolver, MemberCandidate, RingResolver, create_proof, development_context_bytes,
 };
-mod sso_replay;
-mod sso_responder;
 mod wallet_account_holder;
 
 use std::sync::Arc;
 
 pub use local_activation::LocalActivation;
-pub use sso_responder::{
-    AnnouncedPairing, DevicePairingObserver, MAX_PAIRING_METADATA_CHARS, PairedSsoPeer,
-    PairingProposal, PairingProposalMetadata, ResponderExit,
-};
-pub use sso_responder::{
-    disconnect_paired_host, establish_pairing, notify_pairing_allowance_allocation,
-    notify_pairing_failed, respond_to_pairing, resume_pairing,
-};
 #[cfg(not(target_arch = "wasm32"))]
 pub use wallet_account_holder::TrackedStatementRenewalTarget;
 pub use wallet_account_holder::{StatementRenewalTarget, WalletAccountHolder};
@@ -34,11 +24,12 @@ use super::{
     AccountHolder, HostAccounts, HostGrantStore, HostSession, RuntimeServices,
     connected_session_ui_info,
 };
+use super::product_consent::ProductConsent;
 use crate::host_logic::session::SessionState;
 use crate::runtime::auth_state::AuthStateMachine;
 #[cfg(not(target_arch = "wasm32"))]
 use crate::runtime::statement_allowance;
-use sso_replay::SsoReplayLocks;
+use super::sso_responder_service::SsoResponderService;
 
 /// The network suffix the unit tests configure their signing host for. `dot`
 /// keeps the `peopl.dot` handles the RFC examples use meaningful; the
@@ -48,7 +39,7 @@ const TEST_NETWORK_SUFFIX: &str = "dot";
 
 #[cfg(test)]
 use crate::platform::Platform;
-use crate::platform::{ProductContext, normalize_product_identifier};
+use crate::platform::ProductContext;
 use truapi::CallError;
 use truapi::latest::{HostRequestLoginError, HostRequestLoginResponse};
 
@@ -58,20 +49,13 @@ pub struct SigningHost {
     services: Arc<RuntimeServices>,
     wallet: Arc<WalletAccountHolder>,
     auth_state: AuthStateMachine,
-    grants: Arc<HostGrantStore>,
     accounts: Arc<HostAccounts<WalletAccountHolder>>,
-    /// Serializes replay-ledger updates within each wallet and peer scope.
-    sso_replay_locks: SsoReplayLocks,
+    sso_responder: Arc<SsoResponderService>,
     #[cfg(not(target_arch = "wasm32"))]
     renewal_loop_started: std::sync::atomic::AtomicBool,
 }
 
 impl SigningHost {
-    /// Wallet shared by native account operations and incoming SSO.
-    pub fn account_holder(&self) -> &Arc<WalletAccountHolder> {
-        &self.wallet
-    }
-
     /// Product account policy and grants shared by native connections.
     pub fn accounts(&self) -> &Arc<HostAccounts<WalletAccountHolder>> {
         &self.accounts
@@ -81,38 +65,40 @@ impl SigningHost {
     pub fn new(services: Arc<RuntimeServices>, network_suffix: String) -> Arc<Self> {
         let platform = services.platform.clone();
         let registry = RingVrfRegistryStore::new(platform.clone());
+        let consent = Arc::new(ProductConsent::new(platform.clone()));
         let wallet = Arc::new(WalletAccountHolder::new(
             services.clone(),
             network_suffix,
+            consent.clone(),
             registry.clone(),
         ));
-        Self::with_wallet(services, wallet, registry)
+        Self::with_wallet(services, wallet, registry, consent)
     }
 
     fn with_wallet(
         services: Arc<RuntimeServices>,
         wallet: Arc<WalletAccountHolder>,
         registry: Arc<RingVrfRegistryStore>,
+        consent: Arc<ProductConsent>,
     ) -> Arc<Self> {
         let platform = services.platform.clone();
-        let grants = Arc::new(HostGrantStore::new(platform.clone()));
-        let accounts = HostAccounts::new(
+        let accounts = Arc::new(HostAccounts::new(
             services.clone(),
             wallet.clone(),
             wallet.session_state(),
-            grants.clone(),
+            Arc::new(HostGrantStore::new(platform.clone())),
             registry,
+            consent,
             #[cfg(feature = "test-host")]
             wallet.resource_controls().clone(),
-        );
+        ));
         Arc::new(Self {
             #[cfg(any(not(target_arch = "wasm32"), test))]
-            services,
+            services: services.clone(),
+            sso_responder: SsoResponderService::new(services, wallet.clone()),
             wallet,
             auth_state: AuthStateMachine::new(platform),
-            grants,
             accounts,
-            sso_replay_locks: SsoReplayLocks::default(),
             #[cfg(not(target_arch = "wasm32"))]
             renewal_loop_started: std::sync::atomic::AtomicBool::new(false),
         })
@@ -167,67 +153,52 @@ impl SigningHost {
             crate::test_support::test_spawner(),
         );
         let registry = RingVrfRegistryStore::new(platform.clone());
+        let consent = Arc::new(ProductConsent::new(platform.clone()));
         let wallet = Arc::new(WalletAccountHolder::new_with_ring_resolver(
             services.clone(),
             network_suffix.to_string(),
+            consent.clone(),
             ring_resolver,
             registry.clone(),
         ));
-        Self::with_wallet(services, wallet, registry)
+        Self::with_wallet(services, wallet, registry, consent)
     }
 
-    fn sso_replay_locks(&self) -> &SsoReplayLocks {
-        &self.sso_replay_locks
+    /// Incoming SSO for this host's wallet, answered by its runtime.
+    pub fn sso_responder(&self) -> Arc<SsoResponderService> {
+        self.sso_responder.clone()
     }
 
     /// Revoke one product's grants while preserving the active wallet.
-    pub async fn clear_product_state(&self, product_id: &str) -> Result<(), AuthorityError> {
-        let product_id = normalize_product_identifier(product_id).map_err(|error| {
-            AuthorityError::Unavailable {
-                reason: error.to_string(),
-            }
-        })?;
-        self.grants.lifecycle().revoke_native_product(&product_id);
-        let storage = self.grants.persistence().await;
-        storage.begin_cleanup();
-        storage
-            .drain_cleanup()
-            .await
-            .map_err(|reason| AuthorityError::Unavailable { reason })
+    pub async fn clear_product_state(&self, product_id: &str) -> Result<(), String> {
+        self.accounts.clear_native_product_state(product_id).await
     }
 
     /// Delete persisted grants when their wallet is removed, including while locked.
-    pub async fn clear_wallet_state(&self, owner: [u8; 32]) -> Result<(), AuthorityError> {
-        let disconnected = {
-            let mut lifecycle = self.grants.lifecycle();
-            lifecycle.revoke_native_owner(owner);
-            if self
-                .wallet
-                .current_session()
-                .is_some_and(|session| session.public_key == owner)
-            {
-                lifecycle.clear_memory();
-                self.wallet.clear();
-                true
-            } else {
-                false
-            }
-        };
-        if disconnected {
+    pub async fn clear_wallet_state(&self, owner: [u8; 32]) -> Result<(), String> {
+        if self.accounts.revoke_wallet(owner, || self.wallet.clear()) {
             self.auth_state.store_disconnected();
         }
-        self.grants
-            .persistence()
-            .await
-            .drain_cleanup()
-            .await
-            .map_err(|reason| AuthorityError::Unavailable { reason })
+        self.accounts.finish_grant_cleanup().await
+    }
+
+    /// The product's hard-subtree public key under the active wallet, or
+    /// `None` while the wallet is locked.
+    pub fn product_subtree_public_key(
+        &self,
+        product_id: &str,
+    ) -> Result<Option<[u8; 32]>, AuthorityError> {
+        self.wallet.derive_subtree_public_key(product_id)
+    }
+
+    /// Wallet held by this host, for tests that drive it without a product.
+    #[cfg(test)]
+    pub fn wallet_for_tests(&self) -> &Arc<WalletAccountHolder> {
+        &self.wallet
     }
 
     fn clear_local_session(&self) {
-        let mut state = self.grants.lifecycle();
-        state.clear_memory();
-        self.wallet.clear();
+        self.accounts.change_activation(|| self.wallet.clear());
     }
 }
 
@@ -259,6 +230,44 @@ impl SigningHost {
                 futures_timer::Delay::new(delay).await;
             }
         }));
+    }
+
+    /// Record statement accounts to keep renewed under the active wallet.
+    pub async fn track_statement_renewal_targets(
+        &self,
+        targets: Vec<StatementRenewalTarget>,
+    ) -> Result<(), String> {
+        self.wallet.track_statement_renewal_targets(targets).await
+    }
+
+    /// Every statement account the renewal ledger tracks.
+    pub async fn statement_renewal_targets(
+        &self,
+    ) -> Result<Vec<TrackedStatementRenewalTarget>, String> {
+        self.wallet.statement_renewal_targets().await
+    }
+
+    /// Root public key the active wallet records its ledger entries under.
+    pub fn statement_renewal_owner_key(&self) -> Result<[u8; 32], String> {
+        self.wallet.statement_renewal_owner_key()
+    }
+
+    /// Stop renewing one statement account.
+    pub async fn untrack_statement_renewal_account(
+        &self,
+        account_id: &[u8; 32],
+    ) -> Result<bool, String> {
+        self.wallet.untrack_statement_renewal_account(account_id).await
+    }
+
+    /// Run one renewal pass now.
+    pub async fn renew_statement_allowances(&self) -> Result<statement_allowance::renewal::StatementRenewalReport, String> {
+        self.wallet.renew_statement_allowances().await
+    }
+
+    /// The most recent pass the renewal loop ran.
+    pub fn last_statement_renewal_report(&self) -> Option<statement_allowance::renewal::StatementRenewalReport> {
+        self.wallet.last_statement_renewal_report()
     }
 }
 
@@ -494,6 +503,14 @@ mod tests {
         )
     }
 
+    /// Whether this host keeps an AutoSigning key for `product_id` in this activation.
+    fn keeps_auto_signing(authority: &SigningHostRole, product_id: &str) -> bool {
+        let session = authority.session_state().current().expect("an active wallet");
+        futures::executor::block_on(authority.accounts().grants_for_tests().auto_signing_key(&session, product_id))
+            .expect("kept keys are readable")
+            .is_some()
+    }
+
     fn vrf_request(product_id: &str) -> v01::HostAccountSignVrfRequest {
         v01::HostAccountSignVrfRequest {
             account: v01::ProductAccountId {
@@ -562,7 +579,7 @@ mod tests {
     /// Persist a user refusal of `caller`'s access to `target`'s account.
     fn deny_account_access(platform: &StubPlatform, caller: &str, target: &str) {
         futures::executor::block_on(
-            // Bare-labelled on both sides, as `account_access_authorization`
+            // Bare-labelled on both sides, as `ProductConsent::account_access`
             // writes it in production.
             crate::host_internal::permissions::set_account_access_status(
                 platform,
@@ -591,7 +608,7 @@ mod tests {
         futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
             .expect("activation succeeds");
         let session = authority
-            .account_holder()
+            .wallet_for_tests()
             .current_session()
             .expect("active session");
         let ring_location = full_person_ring_location();
@@ -618,7 +635,7 @@ mod tests {
         futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
             .expect("activation succeeds");
         let session = authority
-            .account_holder()
+            .wallet_for_tests()
             .current_session()
             .expect("active session");
         let ring_location = full_person_ring_location();
@@ -707,7 +724,7 @@ mod tests {
         futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
             .expect("activation succeeds");
         let session = authority
-            .account_holder()
+            .wallet_for_tests()
             .current_session()
             .expect("active session");
         let ring = full_person_ring_location();
@@ -717,14 +734,12 @@ mod tests {
             suffix: v01::DerivationIndex::Index(0),
         };
         let alias_for = |caller: &str| {
-            futures::executor::block_on(authority.account_holder().account_alias(
+            futures::executor::block_on(authority.wallet_for_tests().account_alias(
                 AccountInvocation {
                     call: &CallContext::default(),
                     session: &session,
                     caller: AccountCaller::Local {
                         product: &ProductContext::new(caller.to_string()).unwrap(),
-                        authorization: None,
-                        outbound_review: None,
                     },
                 },
                 v01::HostAccountGetAliasRequest {
@@ -778,7 +793,7 @@ mod tests {
         futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
             .expect("activation succeeds");
         let session = authority
-            .account_holder()
+            .wallet_for_tests()
             .current_session()
             .expect("active session");
         let ring = full_person_ring_location();
@@ -788,14 +803,12 @@ mod tests {
         // 32 bytes verbatim, so admitting it would let a grantee name any
         // context at all, including a third product's.
         let mint_raw = |caller: &str| {
-            futures::executor::block_on(authority.account_holder().create_proof(
+            futures::executor::block_on(authority.wallet_for_tests().create_proof(
                 AccountInvocation {
                     call: &CallContext::default(),
                     session: &session,
                     caller: AccountCaller::Local {
                         product: &ProductContext::new(caller.to_string()).unwrap(),
-                        authorization: None,
-                        outbound_review: None,
                     },
                 },
                 v01::HostAccountCreateProofRequest {
@@ -811,14 +824,12 @@ mod tests {
         };
 
         let mint = |caller: &str, context: &str| {
-            futures::executor::block_on(authority.account_holder().create_proof(
+            futures::executor::block_on(authority.wallet_for_tests().create_proof(
                 AccountInvocation {
                     call: &CallContext::default(),
                     session: &session,
                     caller: AccountCaller::Local {
                         product: &ProductContext::new(caller.to_string()).unwrap(),
-                        authorization: None,
-                        outbound_review: None,
                     },
                 },
                 v01::HostAccountCreateProofRequest {
@@ -889,20 +900,18 @@ mod tests {
         futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
             .expect("activation succeeds");
         let session = authority
-            .account_holder()
+            .wallet_for_tests()
             .current_session()
             .expect("active session");
         let ring = full_person_ring_location();
         register_full_person_key(&authority, &session, &ring);
 
-        let listed = futures::executor::block_on(authority.account_holder().list_ring_vrf_keys(
+        let listed = futures::executor::block_on(authority.wallet_for_tests().list_ring_vrf_keys(
             AccountInvocation {
                 call: &CallContext::default(),
                 session: &session,
                 caller: AccountCaller::Local {
                     product: &ProductContext::new("PEOPL.DOT".to_string()).unwrap(),
-                    authorization: None,
-                    outbound_review: None,
                 },
             },
             v01::HostAccountListRingVrfKeysRequest {
@@ -942,7 +951,7 @@ mod tests {
         futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
             .expect("activation succeeds");
         let session = authority
-            .account_holder()
+            .wallet_for_tests()
             .current_session()
             .expect("active session");
         let ring = full_person_ring_location();
@@ -950,14 +959,12 @@ mod tests {
 
         // `peopl.paseo` shares a label with the key's owner `peopl.dot` but is a
         // different product, so the grant admits it and the context still binds.
-        let minted = futures::executor::block_on(authority.account_holder().create_proof(
+        let minted = futures::executor::block_on(authority.wallet_for_tests().create_proof(
             AccountInvocation {
                 call: &CallContext::default(),
                 session: &session,
                 caller: AccountCaller::Local {
                     product: &ProductContext::new("peopl.paseo".to_string()).unwrap(),
-                    authorization: None,
-                    outbound_review: None,
                 },
             },
             v01::HostAccountCreateProofRequest {
@@ -991,20 +998,18 @@ mod tests {
         futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
             .expect("activation succeeds");
         let session = authority
-            .account_holder()
+            .wallet_for_tests()
             .current_session()
             .expect("active session");
         let ring = full_person_ring_location();
         register_full_person_key(&authority, &session, &ring);
         let mint = |context: &str| {
-            futures::executor::block_on(authority.account_holder().create_proof(
+            futures::executor::block_on(authority.wallet_for_tests().create_proof(
                 AccountInvocation {
                     call: &CallContext::default(),
                     session: &session,
                     caller: AccountCaller::Local {
                         product: &ProductContext::new("dim2.dot".to_string()).unwrap(),
-                        authorization: None,
-                        outbound_review: None,
                     },
                 },
                 v01::HostAccountCreateProofRequest {
@@ -1088,16 +1093,15 @@ mod tests {
         let platform = Arc::new(StubPlatform {
             // The user declines, so the refusal is written by the production
             // path rather than by a test helper: this has to pin where
-            // `account_access_authorization` files it, not where a fixture does.
+            // `ProductConsent::account_access` files it, not where a fixture does.
             account_access_confirmed: false,
             ..StubPlatform::default()
         });
         cache_grant(&platform, "peopl.dot", r#"{"ordinary":["context"]}"#);
-        futures::executor::block_on(crate::runtime::account_access_authorization(
-            platform.as_ref(),
-            "ordinary.dot",
-            "peopl.dot",
-        ))
+        futures::executor::block_on(
+            crate::runtime::product_consent::ProductConsent::new(platform.clone())
+                .account_access("ordinary.dot", "peopl.dot"),
+        )
         .expect("the stub records the declined decision");
         let (services, _authority) =
             signing_runtime_with_ring_resolver(platform.clone(), full_person_ring_resolver());
@@ -1131,20 +1135,18 @@ mod tests {
         futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
             .expect("activation succeeds");
         let session = authority
-            .account_holder()
+            .wallet_for_tests()
             .current_session()
             .expect("active session");
         let ring = full_person_ring_location();
         register_full_person_key(&authority, &session, &ring);
         let alias = |caller: &str, context: &str| {
-            futures::executor::block_on(authority.account_holder().account_alias(
+            futures::executor::block_on(authority.wallet_for_tests().account_alias(
                 AccountInvocation {
                     call: &CallContext::default(),
                     session: &session,
                     caller: AccountCaller::Local {
                         product: &ProductContext::new(caller.to_string()).unwrap(),
-                        authorization: None,
-                        outbound_review: None,
                     },
                 },
                 v01::HostAccountGetAliasRequest {
@@ -1203,13 +1205,13 @@ mod tests {
         futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
             .expect("activation succeeds");
         let session = authority
-            .account_holder()
+            .wallet_for_tests()
             .current_session()
             .expect("active session");
         let ring = full_person_ring_location();
         register_full_person_key(&authority, &session, &ring);
         let prove = |caller: &str| {
-            futures::executor::block_on(authority.account_holder().create_proof(
+            futures::executor::block_on(authority.wallet_for_tests().create_proof(
                 AccountInvocation {
                     call: &CallContext::default(),
                     session: &session,
@@ -1355,7 +1357,7 @@ mod tests {
     /// The stored `AccountAccess` decision is the only thing that can override a
     /// publisher's grant. Reading a storage fault as "not refused" would let a
     /// locked keychain turn the user's explicit no into a yes, on the strength
-    /// of a manifest the publisher controls. `account_access_authorization`,
+    /// of a manifest the publisher controls. `ProductConsent::account_access`,
     /// which writes that same decision, already fails closed; this is the read
     /// side agreeing with it.
     ///
@@ -1493,12 +1495,12 @@ mod tests {
         futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
             .expect("activation succeeds");
         let session = authority
-            .account_holder()
+            .wallet_for_tests()
             .current_session()
             .expect("active session");
         register_full_person_key(&authority, &session, &full_person_ring_location());
 
-        futures::executor::block_on(authority.account_holder().ring_vrf_sign(
+        futures::executor::block_on(authority.wallet_for_tests().ring_vrf_sign(
             AccountInvocation {
                 call: &CallContext::default(),
                 session: &session,
@@ -1538,12 +1540,12 @@ mod tests {
         futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
             .expect("activation succeeds");
         let session = authority
-            .account_holder()
+            .wallet_for_tests()
             .current_session()
             .expect("active session");
         register_full_person_key(&authority, &session, &full_person_ring_location());
 
-        futures::executor::block_on(authority.account_holder().ring_vrf_sign(
+        futures::executor::block_on(authority.wallet_for_tests().ring_vrf_sign(
             AccountInvocation {
                 call: &CallContext::default(),
                 session: &session,
@@ -1580,20 +1582,18 @@ mod tests {
         futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
             .expect("activation succeeds");
         let session = authority
-            .account_holder()
+            .wallet_for_tests()
             .current_session()
             .expect("active session");
         let ring_location = full_person_ring_location();
         register_full_person_key(&authority, &session, &ring_location);
 
-        futures::executor::block_on(authority.account_holder().create_proof(
+        futures::executor::block_on(authority.wallet_for_tests().create_proof(
             AccountInvocation {
                 call: &CallContext::default(),
                 session: &session,
                 caller: AccountCaller::Local {
                     product: &ProductContext::new("dim2.dot".to_string()).unwrap(),
-                    authorization: None,
-                    outbound_review: None,
                 },
             },
             v01::HostAccountCreateProofRequest {
@@ -1641,14 +1641,12 @@ mod tests {
         session: &AuthoritySession,
         ring: &v01::RingLocation,
     ) {
-        futures::executor::block_on(authority.account_holder().register_ring_vrf_key(
+        futures::executor::block_on(authority.wallet_for_tests().register_ring_vrf_key(
             AccountInvocation {
                 call: &CallContext::default(),
                 session,
                 caller: AccountCaller::Local {
                     product: &ProductContext::new("peopl.dot".to_string()).unwrap(),
-                    authorization: None,
-                    outbound_review: None,
                 },
             },
             HostAccountRegisterRingVrfKeyRequest {
@@ -1667,7 +1665,7 @@ mod tests {
         futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
             .expect("activation succeeds");
         let session = authority
-            .account_holder()
+            .wallet_for_tests()
             .current_session()
             .expect("active session");
         let cx = CallContext::default();
@@ -1678,14 +1676,12 @@ mod tests {
         let ring_location = full_person_ring_location();
         register_full_person_key(&authority, &session, &ring_location);
 
-        let alias = futures::executor::block_on(authority.account_holder().account_alias(
+        let alias = futures::executor::block_on(authority.wallet_for_tests().account_alias(
             AccountInvocation {
                 call: &cx,
                 session: &session,
                 caller: AccountCaller::Local {
                     product: &ProductContext::new("peopl.dot".to_string()).unwrap(),
-                    authorization: None,
-                    outbound_review: None,
                 },
             },
             HostAccountGetAliasRequest {
@@ -1695,14 +1691,12 @@ mod tests {
             },
         ))
         .expect("alias succeeds");
-        let proof = futures::executor::block_on(authority.account_holder().create_proof(
+        let proof = futures::executor::block_on(authority.wallet_for_tests().create_proof(
             AccountInvocation {
                 call: &cx,
                 session: &session,
                 caller: AccountCaller::Local {
                     product: &ProductContext::new("peopl.dot".to_string()).unwrap(),
-                    authorization: None,
-                    outbound_review: None,
                 },
             },
             HostAccountCreateProofRequest {
@@ -1728,20 +1722,18 @@ mod tests {
         futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
             .expect("activation succeeds");
         let session = authority
-            .account_holder()
+            .wallet_for_tests()
             .current_session()
             .expect("active session");
         let registered_ring = full_person_ring_location();
         register_full_person_key(&authority, &session, &registered_ring);
 
-        let error = futures::executor::block_on(authority.account_holder().account_alias(
+        let error = futures::executor::block_on(authority.wallet_for_tests().account_alias(
             AccountInvocation {
                 call: &CallContext::default(),
                 session: &session,
                 caller: AccountCaller::Local {
                     product: &ProductContext::new("peopl.dot".to_string()).unwrap(),
-                    authorization: None,
-                    outbound_review: None,
                 },
             },
             HostAccountGetAliasRequest {
@@ -1769,7 +1761,7 @@ mod tests {
         futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
             .expect("activation succeeds");
         let session = authority
-            .account_holder()
+            .wallet_for_tests()
             .current_session()
             .expect("active session");
         let handle = v01::ProductAccountId {
@@ -1787,14 +1779,12 @@ mod tests {
         )
         .expect("synthetic registry entry persists");
 
-        let error = futures::executor::block_on(authority.account_holder().ring_vrf_sign(
+        let error = futures::executor::block_on(authority.wallet_for_tests().ring_vrf_sign(
             AccountInvocation {
                 call: &CallContext::default(),
                 session: &session,
                 caller: AccountCaller::Local {
                     product: &ProductContext::new("myapp.dot".to_string()).unwrap(),
-                    authorization: None,
-                    outbound_review: None,
                 },
             },
             HostAccountRingVrfSignRequest {
@@ -1818,7 +1808,7 @@ mod tests {
         futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
             .expect("activation succeeds");
         let session = authority
-            .account_holder()
+            .wallet_for_tests()
             .current_session()
             .expect("active session");
         let cx = CallContext::default();
@@ -1829,14 +1819,12 @@ mod tests {
         let ring_location = full_person_ring_location();
         register_full_person_key(&authority, &session, &ring_location);
 
-        let alias = futures::executor::block_on(authority.account_holder().account_alias(
+        let alias = futures::executor::block_on(authority.wallet_for_tests().account_alias(
             AccountInvocation {
                 call: &cx,
                 session: &session,
                 caller: AccountCaller::Local {
                     product: &ProductContext::new("myapp.dot".to_string()).unwrap(),
-                    authorization: None,
-                    outbound_review: None,
                 },
             },
             HostAccountGetAliasRequest {
@@ -1847,14 +1835,12 @@ mod tests {
         ));
         assert_eq!(alias, Err(RingVrfError::Rejected));
 
-        let proof = futures::executor::block_on(authority.account_holder().create_proof(
+        let proof = futures::executor::block_on(authority.wallet_for_tests().create_proof(
             AccountInvocation {
                 call: &cx,
                 session: &session,
                 caller: AccountCaller::Local {
                     product: &ProductContext::new("myapp.dot".to_string()).unwrap(),
-                    authorization: None,
-                    outbound_review: None,
                 },
             },
             HostAccountCreateProofRequest {
@@ -1886,7 +1872,7 @@ mod tests {
         futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
             .expect("activation succeeds");
         let session = authority
-            .account_holder()
+            .wallet_for_tests()
             .current_session()
             .expect("active session");
         let cx = CallContext::default();
@@ -1903,27 +1889,23 @@ mod tests {
         };
         register_full_person_key(&authority, &session, &request.payload.ring_location);
 
-        futures::executor::block_on(authority.account_holder().account_alias(
+        futures::executor::block_on(authority.wallet_for_tests().account_alias(
             AccountInvocation {
                 call: &cx,
                 session: &session,
                 caller: AccountCaller::Local {
                     product: &ProductContext::new(request.calling_product_id.clone()).unwrap(),
-                    authorization: None,
-                    outbound_review: None,
                 },
             },
             request.payload.clone(),
         ))
         .expect("first alias succeeds");
-        futures::executor::block_on(authority.account_holder().account_alias(
+        futures::executor::block_on(authority.wallet_for_tests().account_alias(
             AccountInvocation {
                 call: &cx,
                 session: &session,
                 caller: AccountCaller::Local {
                     product: &ProductContext::new(request.calling_product_id.clone()).unwrap(),
-                    authorization: None,
-                    outbound_review: None,
                 },
             },
             request.payload,
@@ -1947,7 +1929,7 @@ mod tests {
             .expect("activation succeeds");
 
         let session = authority
-            .account_holder()
+            .wallet_for_tests()
             .current_session()
             .expect("active session");
         let identity = derive_identity_keypair(&ENTROPY, TEST_NETWORK_SUFFIX)
@@ -1997,7 +1979,7 @@ mod tests {
         futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
             .expect("activation succeeds");
         let session = authority
-            .account_holder()
+            .wallet_for_tests()
             .current_session()
             .expect("active session");
         let request = v01::HostAccountSignVrfRequest {
@@ -2015,14 +1997,12 @@ mod tests {
             ],
         };
 
-        let signature = futures::executor::block_on(authority.account_holder().sign_vrf(
+        let signature = futures::executor::block_on(authority.wallet_for_tests().sign_vrf(
             AccountInvocation {
                 call: &CallContext::default(),
                 session: &session,
                 caller: AccountCaller::Local {
                     product: &ProductContext::new("myapp.dot".to_string()).unwrap(),
-                    authorization: None,
-                    outbound_review: None,
                 },
             },
             request,
@@ -2072,30 +2052,17 @@ mod tests {
             1,
         );
 
-        let authorization = authority
-            .accounts()
-            .wallet_authorization(
-                &authority.accounts().current_session().unwrap(),
-                &ProductContext::new("myapp.dot".to_string()).unwrap(),
-            )
-            .unwrap();
         let session = authority
-            .account_holder()
+            .accounts()
             .current_session()
             .expect("active session");
-        futures::executor::block_on(authority.account_holder().sign_vrf(
-            AccountInvocation {
-                call: &CallContext::default(),
-                session: &session,
-                caller: AccountCaller::Local {
-                    product: &ProductContext::new("myapp.dot".to_string()).unwrap(),
-                    authorization: authorization.as_ref(),
-                    outbound_review: None,
-                },
-            },
+        futures::executor::block_on(authority.accounts().sign_vrf(
+            &session,
+            &CallContext::default(),
+            &ProductContext::new("myapp.dot".to_string()).unwrap(),
             vrf_request("myapp.dot"),
         ))
-        .expect("granted product signs without another confirmation");
+        .expect("granted product signs with its kept key");
         assert!(
             platform
                 .sign_vrf_reviews
@@ -2105,16 +2072,10 @@ mod tests {
             "the allocation grant bypasses only the subsequent VRF prompt",
         );
 
-        let error = futures::executor::block_on(authority.account_holder().sign_vrf(
-            AccountInvocation {
-                call: &CallContext::default(),
-                session: &session,
-                caller: AccountCaller::Local {
-                    product: &ProductContext::new("other.dot".to_string()).unwrap(),
-                    authorization: None,
-                    outbound_review: None,
-                },
-            },
+        let error = futures::executor::block_on(authority.accounts().sign_vrf(
+            &session,
+            &CallContext::default(),
+            &ProductContext::new("other.dot".to_string()).unwrap(),
             vrf_request("myapp.dot"),
         ))
         .expect_err("different calling product remains confirmation-bound");
@@ -2136,7 +2097,7 @@ mod tests {
         let (services, authority) = signing_runtime_with_platform(platform);
         futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec())).unwrap();
         let authority_session = authority.accounts().current_session().unwrap();
-        let revision = authority.grants.lifecycle().revision();
+        let revision = authority.accounts().grants_for_tests().lifecycle().revision();
         for product in ["myapp.dot", "other.dot"] {
             auto_signing::grant_auto_signing(&product_runtime_for(
                 services.clone(),
@@ -2144,47 +2105,38 @@ mod tests {
                 product,
             ));
         }
-        let authorization = authority
-            .accounts()
-            .wallet_authorization(
-                &authority_session,
-                &ProductContext::new("myapp.dot".to_string()).unwrap(),
-            )
-            .unwrap()
-            .unwrap();
+        let wallet_session = authority.session_state().current().unwrap();
+        let key = futures::executor::block_on(
+            authority
+                .accounts().grants_for_tests()
+                .auto_signing_key(&wallet_session, "myapp.dot"),
+        )
+        .unwrap()
+        .unwrap();
+        let root = derive_root_keypair_from_entropy(&ENTROPY).unwrap();
+        let subtree = crate::host_logic::product_account::derive_product_subtree_keypair(
+            &root,
+            "myapp.dot",
+        )
+        .unwrap();
         futures::executor::block_on(authority.clear_product_state("myapp.dot")).unwrap();
-        let current_session = authority.account_holder().current_session().unwrap();
-        let own = authority
-            .accounts()
-            .wallet_authorization(
-                &authority.accounts().current_session().unwrap(),
-                &ProductContext::new("myapp.dot".to_string()).unwrap(),
-            )
-            .map(|authorization| authorization.is_some());
-        let other = authority
-            .accounts()
-            .wallet_authorization(
-                &authority.accounts().current_session().unwrap(),
-                &ProductContext::new("other.dot".to_string()).unwrap(),
-            )
-            .map(|authorization| authorization.is_some());
+        let current_session = authority.wallet_for_tests().current_session().unwrap();
+        let own = keeps_auto_signing(&authority, "myapp.dot");
+        let other = keeps_auto_signing(&authority, "other.dot");
+        let stale = futures::executor::block_on(authority.accounts().grants_for_tests().remember_auto_signing_key(
+            &authority.session_state(),
+            &wallet_session,
+            revision,
+            "myapp.dot",
+            subtree.public.to_bytes(),
+            key,
+        ));
         assert_eq!(
-            (
-                current_session,
-                own,
-                other,
-                authority.grants.lifecycle().retain_wallet_authorization(
-                    &authority.session_state(),
-                    &authority_session,
-                    revision,
-                    "myapp.dot",
-                    authorization,
-                )
-            ),
+            (current_session, own, other, stale),
             (
                 authority_session.clone(),
-                Ok(false),
-                Ok(true),
+                false,
+                true,
                 Err(AuthorityError::Disconnected)
             ),
         );
@@ -2201,17 +2153,7 @@ mod tests {
             futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
                 .unwrap();
             auto_signing::grant_auto_signing(&product_runtime(services, authority.clone()));
-            let product = ProductContext::new("myapp.dot".to_string()).unwrap();
-            assert!(
-                authority
-                    .accounts()
-                    .wallet_authorization(
-                        &authority.accounts().current_session().unwrap(),
-                        &product
-                    )
-                    .unwrap()
-                    .is_some()
-            );
+            assert!(keeps_auto_signing(&authority, "myapp.dot"));
 
             let entropy = if disconnect {
                 futures::executor::block_on(authority.disconnect());
@@ -2220,15 +2162,8 @@ mod tests {
                 vec![0xCD; 16]
             };
             futures::executor::block_on(authority.activate_local_session(entropy)).unwrap();
-            assert_eq!(
-                authority
-                    .accounts()
-                    .wallet_authorization(
-                        &authority.accounts().current_session().unwrap(),
-                        &product
-                    )
-                    .map(|authorization| authorization.is_some()),
-                Ok(false),
+            assert!(
+                !keeps_auto_signing(&authority, "myapp.dot"),
                 "disconnect: {disconnect}",
             );
         }
@@ -2248,7 +2183,7 @@ mod tests {
         futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
             .expect("same wallet replacement activation succeeds");
         let current = authority
-            .account_holder()
+            .wallet_for_tests()
             .current_session()
             .expect("replacement session");
         assert_ne!(stale.validation_id, current.validation_id);
@@ -2265,18 +2200,14 @@ mod tests {
         assert_eq!(
             (
                 error,
-                authority
-                    .accounts()
-                    .wallet_authorization(
-                        &authority.accounts().current_session().unwrap(),
-                        &ProductContext::new("myapp.dot".to_string()).unwrap(),
-                    )
-                    .map(|authorization| authorization.is_some()),
+                keeps_auto_signing(&authority, "myapp.dot"),
             ),
-            (AuthorityError::Disconnected, Ok(false)),
+            (AuthorityError::Disconnected, false),
         );
     }
 
+    /// A wallet's own host keeps AutoSigning keys in memory for one activation, so
+    /// another runtime over the same wallet and storage starts without them.
     #[test]
     fn auto_signing_grant_does_not_cross_runtime_instance() {
         let platform = Arc::new(StubPlatform {
@@ -2299,35 +2230,12 @@ mod tests {
         let (_replacement_services, replacement) = signing_runtime_with_platform(platform);
         futures::executor::block_on(replacement.activate_local_session(ENTROPY.to_vec()))
             .expect("replacement runtime activates with the same root");
-        let authorization = granting_authority
-            .accounts()
-            .wallet_authorization(
-                &granting_authority.accounts().current_session().unwrap(),
-                &ProductContext::new("myapp.dot".to_string()).unwrap(),
-            )
-            .unwrap()
-            .unwrap();
-        let authority_session = replacement.accounts().current_session().unwrap();
-        let revision = replacement.grants.lifecycle().revision();
-        let retained = replacement.grants.lifecycle().retain_wallet_authorization(
-            &replacement.session_state(),
-            &authority_session,
-            revision,
-            "myapp.dot",
-            authorization,
-        );
         assert_eq!(
             (
-                retained,
-                replacement
-                    .accounts()
-                    .wallet_authorization(
-                        &replacement.accounts().current_session().unwrap(),
-                        &ProductContext::new("myapp.dot".to_string()).unwrap(),
-                    )
-                    .map(|authorization| authorization.is_some()),
+                keeps_auto_signing(&granting_authority, "myapp.dot"),
+                keeps_auto_signing(&replacement, "myapp.dot"),
             ),
-            (Err(AuthorityError::Rejected), Ok(false)),
+            (true, false),
         );
     }
 
@@ -2340,7 +2248,7 @@ mod tests {
         futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
             .expect("activation succeeds");
         let session = authority
-            .account_holder()
+            .wallet_for_tests()
             .current_session()
             .expect("active session");
         let cx = CallContext::default();
@@ -2357,14 +2265,12 @@ mod tests {
         let preimage = extrinsic_payload_preimage(&payload).expect("preimage builds");
 
         let product_response =
-            futures::executor::block_on(authority.account_holder().sign_payload(
+            futures::executor::block_on(authority.wallet_for_tests().sign_payload(
                 AccountInvocation {
                     call: &cx,
                     session: &session,
                     caller: AccountCaller::Local {
                         product: &ProductContext::new("myapp.dot".to_string()).unwrap(),
-                        authorization: None,
-                        outbound_review: None,
                     },
                 },
                 SignPayloadAuthorityRequest::Product(v01::HostSignPayloadRequest {
@@ -2404,14 +2310,12 @@ mod tests {
             .collect::<Vec<_>>();
         assert_eq!(tail, expected_tail);
 
-        let legacy_response = futures::executor::block_on(authority.account_holder().sign_payload(
+        let legacy_response = futures::executor::block_on(authority.wallet_for_tests().sign_payload(
             AccountInvocation {
                 call: &cx,
                 session: &session,
                 caller: AccountCaller::Local {
                     product: &ProductContext::new("myapp.dot".to_string()).unwrap(),
-                    authorization: None,
-                    outbound_review: None,
                 },
             },
             SignPayloadAuthorityRequest::LegacyAccount {
@@ -2440,7 +2344,7 @@ mod tests {
         futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
             .expect("activation succeeds");
         let session = authority
-            .account_holder()
+            .wallet_for_tests()
             .current_session()
             .expect("active session");
         let cx = CallContext::default();
@@ -2455,14 +2359,12 @@ mod tests {
             },
         };
 
-        let response = futures::executor::block_on(authority.account_holder().sign_raw(
+        let response = futures::executor::block_on(authority.wallet_for_tests().sign_raw(
             AccountInvocation {
                 call: &cx,
                 session: &session,
                 caller: AccountCaller::Local {
                     product: &ProductContext::new("myapp.dot".to_string()).unwrap(),
-                    authorization: None,
-                    outbound_review: None,
                 },
             },
             request(identity.public.to_bytes()),
@@ -2477,14 +2379,12 @@ mod tests {
                 .is_ok()
         );
 
-        let error = futures::executor::block_on(authority.account_holder().sign_raw(
+        let error = futures::executor::block_on(authority.wallet_for_tests().sign_raw(
             AccountInvocation {
                 call: &cx,
                 session: &session,
                 caller: AccountCaller::Local {
                     product: &ProductContext::new("myapp.dot".to_string()).unwrap(),
-                    authorization: None,
-                    outbound_review: None,
                 },
             },
             request([0xff; 32]),
@@ -2546,19 +2446,17 @@ mod tests {
         futures::executor::block_on(activation.activate_local_session(ENTROPY.to_vec()))
             .expect("activation succeeds");
         let session = activation
-            .account_holder()
+            .wallet_for_tests()
             .current_session()
             .expect("active session");
         let cx = CallContext::default();
 
-        let err = futures::executor::block_on(activation.account_holder().create_transaction(
+        let err = futures::executor::block_on(activation.wallet_for_tests().create_transaction(
             AccountInvocation {
                 call: &cx,
                 session: &session,
                 caller: AccountCaller::Local {
                     product: &ProductContext::new("myapp.dot".to_string()).unwrap(),
-                    authorization: None,
-                    outbound_review: None,
                 },
             },
             CreateTransactionAuthorityRequest::Product(tx_payload(0)),
@@ -2579,7 +2477,7 @@ mod tests {
         futures::executor::block_on(activation.activate_local_session(ENTROPY.to_vec()))
             .expect("activation succeeds");
         let session = activation
-            .account_holder()
+            .wallet_for_tests()
             .current_session()
             .expect("active session");
         let cx = CallContext::default();
@@ -2595,14 +2493,12 @@ mod tests {
                 tx_ext_version: 0,
             },
         };
-        let err = futures::executor::block_on(activation.account_holder().create_transaction(
+        let err = futures::executor::block_on(activation.wallet_for_tests().create_transaction(
             AccountInvocation {
                 call: &cx,
                 session: &session,
                 caller: AccountCaller::Local {
                     product: &ProductContext::new("myapp.dot".to_string()).unwrap(),
-                    authorization: None,
-                    outbound_review: None,
                 },
             },
             request,
@@ -2620,18 +2516,16 @@ mod tests {
         // request against a role that has never been activated.
         let (_s2, other) = signing_runtime();
         futures::executor::block_on(other.activate_local_session(ENTROPY.to_vec())).unwrap();
-        let stale_session = other.account_holder().current_session().expect("session");
+        let stale_session = other.wallet_for_tests().current_session().expect("session");
         futures::executor::block_on(other.disconnect());
         let cx = CallContext::default();
 
-        let err = futures::executor::block_on(activation.account_holder().create_transaction(
+        let err = futures::executor::block_on(activation.wallet_for_tests().create_transaction(
             AccountInvocation {
                 call: &cx,
                 session: &stale_session,
                 caller: AccountCaller::Local {
                     product: &ProductContext::new("myapp.dot".to_string()).unwrap(),
-                    authorization: None,
-                    outbound_review: None,
                 },
             },
             CreateTransactionAuthorityRequest::Product(tx_payload(0)),
@@ -2728,7 +2622,7 @@ mod tests {
         futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
             .expect("first activation");
         let stale = authority
-            .account_holder()
+            .wallet_for_tests()
             .current_session()
             .expect("snapshot");
 
@@ -2738,7 +2632,7 @@ mod tests {
             .expect("second activation");
         assert_ne!(
             authority
-                .account_holder()
+                .wallet_for_tests()
                 .current_session()
                 .expect("session")
                 .public_key,
@@ -2755,14 +2649,12 @@ mod tests {
                 bytes: vec![1, 2, 3],
             },
         };
-        let err = futures::executor::block_on(authority.account_holder().sign_raw(
+        let err = futures::executor::block_on(authority.wallet_for_tests().sign_raw(
             AccountInvocation {
                 call: &cx,
                 session: &stale,
                 caller: AccountCaller::Local {
                     product: &ProductContext::new("myapp.dot".to_string()).unwrap(),
-                    authorization: None,
-                    outbound_review: None,
                 },
             },
             SignRawAuthorityRequest::Product(request),
@@ -2778,12 +2670,12 @@ mod tests {
         futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
             .expect("activation");
         let session = authority
-            .account_holder()
+            .wallet_for_tests()
             .current_session()
             .expect("connected");
 
         futures::executor::block_on(authority.disconnect());
-        assert!(authority.account_holder().current_session().is_none());
+        assert!(authority.wallet_for_tests().current_session().is_none());
 
         let cx = CallContext::default();
         let request = v01::HostSignRawRequest {
@@ -2793,14 +2685,12 @@ mod tests {
             },
             payload: v01::RawPayload::Bytes { bytes: vec![1] },
         };
-        let err = futures::executor::block_on(authority.account_holder().sign_raw(
+        let err = futures::executor::block_on(authority.wallet_for_tests().sign_raw(
             AccountInvocation {
                 call: &cx,
                 session: &session,
                 caller: AccountCaller::Local {
                     product: &ProductContext::new("myapp.dot".to_string()).unwrap(),
-                    authorization: None,
-                    outbound_review: None,
                 },
             },
             SignRawAuthorityRequest::Product(request),
