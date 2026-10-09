@@ -192,6 +192,13 @@ starts or after it tears down its component. Tests needing app dependencies use
 the debug-only `IntegrationTestEntryPoint`; production service injection remains
 unchanged.
 
+Network security exceptions in `app/src/main/res/xml/network_security_config.xml`
+are shared by all host features. Declare each hostname only once: Android rejects
+duplicate domains while initializing the application, before instrumentation can
+run. Product bridges use the exact `127.0.0.1` and `localhost` exceptions; keep
+the default cleartext policy disabled and do not duplicate these entries when
+adding a bridge.
+
 The app talks to Polkadot system chains (People Chain, Asset Hub, Bulletin Chain). Which chains
 and RPC nodes it uses is not hard-coded: the `chains` / `chains_v2` Remote Config keys of your
 Firebase project define the set, so a fork can point the same build at Polkadot, at the

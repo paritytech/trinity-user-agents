@@ -259,6 +259,32 @@ must provision a missing profile for the configured team and App Group before
 the archive can succeed; disabling read-only signing is not a build workaround.
 Unsigned simulator builds do not require these provisioning profiles.
 
+For the checked-in Parity development signing configuration, the signing owner
+must register the explicit App ID
+`io.parity.polkadotapp.develop.MediaBroadcastExtension` under team `P2PX3JU8FT`,
+enable App Groups, and associate `group.io.parity.polkadotapp.develop` with it
+and the containing app. The extension's entitlements require that App Group;
+it does not request the app's push or associated-domain entitlements.
+Create the development profile using the team's development certificate and
+registered test devices, then store it through Match as
+`profiles/development/Development_io.parity.polkadotapp.develop.MediaBroadcastExtension.mobileprovision`
+in the encrypted `paritytech/fastlane-polkadotapp-develop` repository (`master`).
+Its profile name must be
+`match Development io.parity.polkadotapp.develop.MediaBroadcastExtension`.
+
+The existing `.github/workflows/ios-update-signing-data.yml` maintenance workflow
+runs `bundle exec fastlane update_signing_data` from `hosts/ios`; manual dispatch
+requires an actor in `IOS_SIGNING_ACTORS`. An authorized signing owner must run
+it from a revision whose signing lane includes the broadcast extension, after
+configuring the App ID and App Group in Apple Developer. It uses
+`FASTLANE_RW_PAT`, `MATCH_PASSWORD`, the `ASC_KEY_ID`/`ASC_ISSUER_ID`/
+`ASC_KEY_BASE64` credentials, and `KEYCHAIN_PASSWORD`. This is a deliberate
+write operation at Apple and in the signing repository, not part of build
+qualification. The lane refreshes development, ad-hoc, and App Store profiles,
+including the release and safety broadcast IDs; those IDs and their matching
+App Groups must also be configured before running the complete maintenance lane.
+Normal build jobs must remain read-only.
+
 ---
 
 ## 6. Build & archive
