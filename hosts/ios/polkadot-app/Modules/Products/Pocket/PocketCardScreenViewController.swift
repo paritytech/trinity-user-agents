@@ -99,9 +99,9 @@ final class PocketCardScreenViewController: UIViewController {
     }
 
     /// The face the card's product published for its opening, which no longer
-    /// applies once the user or the page has moved the face.
+    /// applies once the card is closed or the user or the page has moved the face.
     func applyOpeningFace(shown: Bool) {
-        guard !faceMovedSinceOpening else { return }
+        guard isOnDisplay, !faceMovedSinceOpening else { return }
 
         placeFace(shown: shown, animated: true)
     }

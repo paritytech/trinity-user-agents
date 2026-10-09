@@ -19,13 +19,4 @@ enum PocketCardFaceOnOpen {
 
         return published ?? true
     }
-
-    /// Gives an opened card's screen the face its product published, unless
-    /// the card has been closed while its product was asked.
-    @MainActor
-    static func apply(_ shown: Bool, to screen: PocketCardScreenViewController) {
-        guard screen.isOnDisplay else { return }
-
-        screen.applyOpeningFace(shown: shown)
-    }
 }

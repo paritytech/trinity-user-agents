@@ -33,7 +33,7 @@ enum PocketCardOpening {
                 for: card.key,
                 cards: PublishedPocketCards.makeDefault(products: flowState.productResolver)
             )
-            if let screen { PocketCardFaceOnOpen.apply(shown, to: screen) }
+            screen?.applyOpeningFace(shown: shown)
         }
     }
 
