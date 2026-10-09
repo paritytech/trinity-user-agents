@@ -8,11 +8,6 @@ final class TabBarBottomChromeController: UIViewController {
     private let barView = DSTabBarView()
     private let backdropView = DSTabBarBackdropView()
 
-    private weak var contentSafeAreaAdjustedViewController: UIViewController?
-
-    private weak var appliedTabController: UIViewController?
-    private weak var appliedContentController: UIViewController?
-
     private var slots: [TabBarSlot] = []
     private var slotMap = TabBarSlotMap(slots: [])
     private var spaTabCount = 0
@@ -66,10 +61,6 @@ final class TabBarBottomChromeController: UIViewController {
         }
     )
 
-    private lazy var widgetController = TabBarWidgetController { [weak self] in
-        self?.updateLayout()
-    }
-
     #if FEATURE_INPUT
         private lazy var inputFocusController = TabBarInputFocusController(
             surface: chromeSurface,
@@ -90,23 +81,36 @@ final class TabBarBottomChromeController: UIViewController {
     var onPanelChanged: ((TabBarPanelKind?) -> Void)?
     var onPanelDragCommitted: (() -> Void)?
 
+    /// The published clearance depends on the chrome's own safe area, so the host has to
+    /// recompute when that changes.
+    var onBottomClearanceInvalidated: (() -> Void)?
+
     /// The chain-status strip is installed by `MainTabBarViewController`, not by the chrome,
     /// so its tip anchor is handed down rather than reached for.
     var statusStripAnchorProvider: (() -> (any UIPopoverPresentationControllerSourceItem)?)?
 
-    private var occupiedHeight: CGFloat {
+    /// Height the bar occupies at the bottom edge once it has settled. Folding and panel
+    /// animations move the chrome without changing it, so the host can lay out against it.
+    var restingBarHeight: CGFloat {
         guard TabBarVisibilityPolicy.contributesClearance(isTabRoot: foldController.isTabRoot) else {
             return view.safeAreaInsets.bottom
         }
         return DSTabBarView.preferredHeight()
     }
 
-    private var contentClearance: CGFloat {
-        max(0, occupiedHeight - view.safeAreaInsets.bottom)
+    /// The part of `restingBarHeight` the safe area does not already cover.
+    var restingBottomClearance: CGFloat {
+        max(0, restingBarHeight - view.safeAreaInsets.bottom)
     }
 
     override func loadView() {
         view = TabBarChromePassthroughView()
+    }
+
+    override func viewSafeAreaInsetsDidChange() {
+        super.viewSafeAreaInsetsDidChange()
+
+        onBottomClearanceInvalidated?()
     }
 
     override func viewDidLoad() {
@@ -117,7 +121,6 @@ final class TabBarBottomChromeController: UIViewController {
         installChromeSurface()
         installBar()
         installBackdrop()
-        widgetController.install(in: view, below: chromeSurface)
 
         installOutsideTapRecognizer()
 
@@ -135,12 +138,6 @@ final class TabBarBottomChromeController: UIViewController {
     override func viewWillDisappear(_ animated: Bool) {
         super.viewWillDisappear(animated)
         tipController.stop()
-    }
-
-    override func viewSafeAreaInsetsDidChange() {
-        super.viewSafeAreaInsetsDidChange()
-
-        updateLayout()
     }
 
     override func viewDidLayoutSubviews() {
@@ -254,25 +251,10 @@ final class TabBarBottomChromeController: UIViewController {
         panelController.resizeForContentPanel()
     }
 
-    func apply(
-        _ context: TabBarChromeContext,
-        animatingAlongside transitionCoordinator: UIViewControllerTransitionCoordinator? = nil
-    ) {
+    func apply(_ context: TabBarChromeContext) {
         foldController.update(context: context)
-
-        applyLayout(context, animatingAlongside: transitionCoordinator)
         foldController.refresh()
         tipController.setBarShown(foldController.state == .shown)
-    }
-
-    func applyLayout(
-        _ context: TabBarChromeContext,
-        animatingAlongside transitionCoordinator: UIViewControllerTransitionCoordinator? = nil
-    ) {
-        appliedTabController = context.tabController
-        appliedContentController = context.contentController
-
-        updateLayout(animatingAlongside: transitionCoordinator)
     }
 
     /// Resolves the visibility state a context would settle on, without committing it — used to
@@ -285,14 +267,6 @@ final class TabBarBottomChromeController: UIViewController {
     /// it runs no animator of its own, so the caller's transition coordinator owns the timing.
     func setInteractiveTarget(_ state: TabBarVisibilityState) {
         foldController.setInteractiveTarget(state)
-    }
-
-    func attachWidget(_ configuration: any HashableContentConfiguration, for id: AppWidgetID) {
-        widgetController.attach(configuration, for: id)
-    }
-
-    func detachWidget(for id: AppWidgetID) {
-        widgetController.detach(for: id)
     }
 }
 
@@ -388,71 +362,14 @@ private extension TabBarBottomChromeController {
         }
     }
 
-    /// Inserted at the bottom so both the tab content and the floating widgets sit behind it.
+    /// Sits below the chrome surface so the dim covers the content and the floating widgets,
+    /// which sit below the chrome view.
     func installBackdrop() {
         view.insertSubview(backdropView, at: 0)
 
         backdropView.snp.makeConstraints { make in
             make.edges.equalToSuperview()
         }
-    }
-
-    func updateLayout(animatingAlongside transitionCoordinator: UIViewControllerTransitionCoordinator? = nil) {
-        guard view.window != nil else {
-            return
-        }
-
-        widgetController.setBottomOffset(-occupiedHeight)
-        updateContentSafeAreaInset()
-
-        guard widgetController.hasWidgets else {
-            return
-        }
-
-        animateFloatingWidgetConstraintChange(with: transitionCoordinator)
-    }
-
-    func updateContentSafeAreaInset() {
-        let contentController = appliedContentController
-
-        if contentSafeAreaAdjustedViewController !== contentController {
-            contentSafeAreaAdjustedViewController?.additionalSafeAreaInsets.bottom = 0
-        }
-
-        let tabController = appliedTabController
-        let barInset = contentClearance
-
-        guard let contentController else {
-            tabController?.additionalSafeAreaInsets.bottom = barInset
-            contentSafeAreaAdjustedViewController = nil
-            return
-        }
-
-        let widgetInset = widgetController.contentHeight(fittingWidth: view.bounds.width)
-
-        if contentController === tabController {
-            contentController.additionalSafeAreaInsets.bottom = barInset + widgetInset
-        } else {
-            tabController?.additionalSafeAreaInsets.bottom = barInset
-            contentController.additionalSafeAreaInsets.bottom = widgetInset
-        }
-
-        contentSafeAreaAdjustedViewController = widgetInset > 0 ? contentController : nil
-    }
-
-    func animateFloatingWidgetConstraintChange(with transitionCoordinator: UIViewControllerTransitionCoordinator?) {
-        view.setNeedsLayout()
-
-        guard let transitionCoordinator else {
-            view.layoutIfNeeded()
-            return
-        }
-
-        transitionCoordinator.animate(
-            alongsideTransition: { [weak self] _ in
-                self?.view.layoutIfNeeded()
-            }
-        )
     }
 }
 

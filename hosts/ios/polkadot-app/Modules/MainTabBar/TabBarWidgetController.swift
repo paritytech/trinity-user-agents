@@ -3,7 +3,7 @@ import SnapKit
 import UIKit
 
 /// Owns the floating widget stack under the bar: the container, its bottom constraint and the
-/// attached widget controllers. The chrome runs its own layout pass; this reports the height
+/// attached widget controllers. The host runs its own layout pass; this reports the height
 /// that pass needs and calls back when the content changes.
 @MainActor
 final class TabBarWidgetController {
@@ -22,8 +22,8 @@ final class TabBarWidgetController {
         !controllers.isEmpty
     }
 
-    /// The container goes below the chrome surface so the bar's glass draws over the widgets.
-    /// Widgets attached before the host loaded its view are installed here, not on attach.
+    /// The container goes below `sibling` so the bar's glass draws over the widgets. Widgets
+    /// attached before the host loaded its view are installed here, not on attach.
     func install(in view: UIView, below sibling: UIView) {
         containerView.translatesAutoresizingMaskIntoConstraints = false
         view.insertSubview(containerView, belowSubview: sibling)

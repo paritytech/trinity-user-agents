@@ -67,7 +67,7 @@ extension MainTabBarViewController {
             return
         }
         container.mountSPA(controller, for: tab.id)
-        chromeController.apply(.spa(controller))
+        applyChrome(.spa(controller))
         applyChips()
     }
 
