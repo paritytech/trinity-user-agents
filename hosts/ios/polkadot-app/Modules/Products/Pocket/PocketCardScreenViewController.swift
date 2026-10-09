@@ -192,7 +192,6 @@ private extension PocketCardScreenViewController {
         child.didMove(toParent: self)
     }
 
-    /// Before the first layout the face is only noted, and placed by that layout.
     func placeFace(shown: Bool, animated: Bool) {
         if pendingFaceShown == nil {
             moveFace(shown: shown, animated: animated)

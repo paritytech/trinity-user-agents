@@ -157,7 +157,6 @@ private extension RustRuntimeEnvironment {
 }
 
 extension ExecutionPurpose {
-    /// A page under a card's face is the product's widget, any other page its app.
     var executionKind: ProductExecutionKind {
         switch self {
         case let .page(cardFace): cardFace == nil ? .app : .widget

@@ -61,45 +61,36 @@ A product with **no published worker**, driven by hand.
 
 ## The expanded card, live
 
-An opened card shows its product's page under the face, and that page can call
-`truapi.expandedCard.setFaceShown({ shown })` to move the face away and back.
-To try it with the test page in
+An opened card's page can call `truapi.expandedCard.setFaceShown({ shown })` to
+move the face away and back. To try it with the
 [`pocket-worker`](../../android/feature/products/product-sample/pocket-worker/README.md)
-(its README has the details):
+test page:
 
-1. Build the test page against this checkout's client (the README's "Build"
-   section) and serve its `dist/` on port 5173:
-   `npx serve -l 5173 dist`.
-2. Loop B with worker URL `http://127.0.0.1:5173/worker.js`, card `loyalty`,
-   face URL `http://127.0.0.1:5173/faces/loyalty.json` and **Widget URL
-   (optional)** `http://127.0.0.1:5173/`. Not `/index.html`: `serve` redirects
-   it to a clean address and drops the query on the way. The app appends
-   `card=<id>` to the widget URL, keeping its own query, so use
-   `http://127.0.0.1:5173/?hideOnLoad` to test a call made as the page loads.
-   **Open with the face away** opens the card onto the page with the face out
-   of the way.
+1. Build it against this checkout's client, as its README says, and serve it
+   with `npx serve -l 5173 dist`.
+2. Run Loop B with worker URL `http://127.0.0.1:5173/worker.js`, card
+   `loyalty`, face URL `http://127.0.0.1:5173/faces/loyalty.json` and widget
+   URL `http://127.0.0.1:5173/`. Use `/`, not `/index.html`, which `serve`
+   redirects without its query. The app appends `card=<id>` to the widget URL.
+   Add `?hideOnLoad` to test a call made as the page loads, and turn on **Open
+   with the face away** to open the card with the face hidden.
 3. Add the card and open it.
 
-A card with a widget URL always loads through the TrUAPI runtime. A card that
-opens its product's published widget needs **Debug → TrUAPI Runtime** on,
-which applies at the next launch, since the native runtime has no expanded
-card.
+A card with a widget URL always loads through the TrUAPI runtime. A published
+widget needs **Debug → TrUAPI Runtime** on, which applies at the next launch.
 
-The page has buttons that hide and show the face, a log of each answer, its own
-height, and a red bar pinned to its bottom edge, which goes missing when the
-page is sized wrong. The answers:
+The page logs each answer, and a red bar pinned to its bottom edge goes missing
+when the page is sized wrong.
 
 | Answer | When |
 |---|---|
 | `ok` | the face moved, or was already where the page asked |
-| `UserMoving` | the user is dragging the face, or it is still gliding after the drag; nothing moves |
-| `NotPresented` | the card is closed, while its page stays loaded in the background |
+| `UserMoving` | the user is dragging the face or it is still gliding, and nothing moves |
+| `NotPresented` | the card is closed and its page is still loaded |
 | `Denied` | the page is shown somewhere other than a card |
 
-The user can always drag the face back, whatever the page asked.
-
-A card's page stays loaded after the card closes and is reused, so after
-editing a widget URL open another card first, or relaunch.
+A card's page stays loaded after the card closes. After editing a widget URL,
+open another card first or relaunch.
 
 ## What fails where
 
@@ -127,9 +118,7 @@ Work down this list. Each step rules out the one below it.
 
 ## When you are ready to publish
 
-Declare the card in the worker's manifest instead, and the debug card's fields
-stop being involved, all but its widget URL, which still opens in place of the
-published widget until the debug card is deleted:
+Declare the card in the worker's manifest:
 
 ```json
 {
@@ -144,12 +133,12 @@ published widget until the debug card is deleted:
 }
 ```
 
-`faceShown: false` opens the card with its face away; left out or `null`, the
-face shows, and a value that is not a boolean drops all of the product's cards
-while its worker keeps running.
+`faceShown: false` opens the card with its face away. Left out or `null`, the
+face shows. A value that is not a boolean drops all of the product's cards.
 
-The card opens at once and its product is asked afterwards. An answer that
-arrives before the card is laid out opens it onto the page; a later one folds
-the face away; one that arrives after the user or the page has moved the face is
-ignored. A product that has not answered within five seconds leaves the face
-shown.
+The card opens before its product answers. With no answer within five seconds
+the face stays shown, and an answer that comes after the user or the page has
+moved the face is ignored.
+
+A debug card's widget URL still opens in place of the published widget until
+the debug card is deleted.

@@ -16,7 +16,6 @@ import UIKit
 /// handed to the next session still talking to the last one's core.
 @MainActor
 final class PocketCardHosts {
-    /// A product and the surface its page reaches the card's screen through.
     struct CardProduct {
         let key: PocketCardKey
         let view: SPAViewProtocol
@@ -39,7 +38,6 @@ final class PocketCardHosts {
         return product
     }
 
-    /// Whether the card for `key` is open on screen now.
     func isOnDisplay(_ key: PocketCardKey) -> Bool {
         guard let held, held.key == key else { return false }
 
