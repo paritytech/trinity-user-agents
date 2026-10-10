@@ -66,6 +66,13 @@ public protocol HostBridge: AnyObject, Sendable {
     /// Open a URL in the system browser, suspending for any approval on the main actor.
     func navigateTo(url: String) async throws
 
+    /// Show or hide the face above this execution's expanded card. Answers
+    /// `.notPresented` when the product is not under its card and `.userMoving`
+    /// while the user drags it, and returns without waiting for the animation.
+    /// Defaults to `.unsupported`, so an app without cards says so instead of
+    /// pretending it moved one.
+    func setExpandedCardFaceShown(shown: Bool) async throws -> ExpandedCardFaceOutcome
+
     /// Deliver a push notification (`HostPushNotificationRequest`)
     /// and return the host-assigned notification id. Run any UI work on the main actor.
     func pushNotification(request: HostPushNotificationRequest) async throws -> UInt32
@@ -227,7 +234,14 @@ public protocol ChatHostBridge: AnyObject, Sendable {
     /// must name this message for as long as the host stores it. An id
     /// arriving in a `reaction` or `reactionRemoved` is product-chosen and
     /// untrusted: it may name a message in another room, or none at all.
-    func postMessage(roomId: String, content: ChatMessageContent) async throws -> String
+    ///
+    /// `alt` is the product's one-line description of the message, already
+    /// trimmed and screened, for places that list it without drawing it.
+    func postMessage(roomId: String, content: ChatMessageContent, alt: String?) async throws -> String
+
+    /// Set what a product's native Chat room shows below its messages, and
+    /// keep it until the product sets another.
+    func setRoomFooter(roomId: String, footer: ChatRoomFooter) async throws
 
     /// Return the current product-scoped native Chat rooms.
     func listRooms() async throws -> [ChatRoom]
@@ -303,6 +317,16 @@ public protocol ContactsHostBridge: AnyObject, Sendable {
     func pickContact(productId: String) async throws -> HostContactPick
 }
 
+/// Draws the viewfinder for `scanner.scan`, following the rules on the core's
+/// `ScannerPlatform`. Closes it when the task is cancelled.
+public protocol ScannerHostBridge: AnyObject, Sendable {
+    func scanCode(
+        productId: String,
+        executionKind: ProductExecutionKind,
+        request: HostScannerScanRequest
+    ) async throws -> HostScan
+}
+
 public extension HostBridge {
     /// Default no-op logger. Override to plumb into your logging framework.
     func onCoreLog(marker: String, detail: String) {}
@@ -330,6 +354,9 @@ public extension HostBridge {
     func devicePaired(device: PairedSsoPeer) {}
     func devicePermissionStatus(request: HostDevicePermissionRequest) async throws
         -> DevicePermissionStatus { .notApplicable }
+    func setExpandedCardFaceShown(shown: Bool) async throws -> ExpandedCardFaceOutcome {
+        .unsupported
+    }
     /// Defaults opt out of worker keep-alive; override to run background work
     /// past the product's surface. The id is still distinct per call, because
     /// an `OperationId` names one operation: a host overriding only
@@ -390,24 +417,20 @@ private final class ChatCallbackAdapter: NativeChatCallbacks, @unchecked Sendabl
         }
     }
 
-    func postMessage(roomId: String, content: ChatMessageContent) async throws -> String {
+    func postMessage(roomId: String, content: ChatMessageContent, alt: String?) async throws -> String {
         try await withHostRejection {
-            try await bridge.postMessage(roomId: roomId, content: content)
+            try await bridge.postMessage(roomId: roomId, content: content, alt: alt)
+        }
+    }
+
+    func setRoomFooter(roomId: String, footer: ChatRoomFooter) async throws {
+        try await withHostRejection {
+            try await bridge.setRoomFooter(roomId: roomId, footer: footer)
         }
     }
 
     func listRooms() async throws -> [ChatRoom] {
         try await withHostRejection { try await bridge.listRooms() }
-    }
-
-    private func withHostRejection<T>(_ operation: () async throws -> T) async throws -> T {
-        do {
-            return try await operation()
-        } catch let error as HostRejection {
-            throw error
-        } catch {
-            throw HostRejection.Rejected(reason: hostRejectionReason(error))
-        }
     }
 }
 
@@ -427,16 +450,6 @@ private final class PocketCallbackAdapter: NativePocketCallbacks, @unchecked Sen
     func removeCard(cardId: String) throws -> NativePocketRemoval {
         try withHostRejection { try bridge.removeCard(cardId: cardId) }
     }
-
-    private func withHostRejection<T>(_ operation: () throws -> T) throws -> T {
-        do {
-            return try operation()
-        } catch let error as HostRejection {
-            throw error
-        } catch {
-            throw HostRejection.Rejected(reason: hostRejectionReason(error))
-        }
-    }
 }
 
 /// Adapter that bridges the public `GameHostBridge` to the generated UniFFI
@@ -455,16 +468,6 @@ private final class GameCallbackAdapter: NativeGameCallbacks, @unchecked Sendabl
     func cancelReminder() async throws {
         try await withHostRejection { try await bridge.cancelReminder() }
     }
-
-    private func withHostRejection<T>(_ operation: () async throws -> T) async throws -> T {
-        do {
-            return try await operation()
-        } catch let error as HostRejection {
-            throw error
-        } catch {
-            throw HostRejection.Rejected(reason: hostRejectionReason(error))
-        }
-    }
 }
 
 /// Adapter that bridges the public `ContactsHostBridge` to the generated
@@ -477,22 +480,30 @@ private final class ContactsCallbackAdapter: NativeContactsCallbacks, @unchecked
     }
 
     func contacts(lookup: HostContactLookup) throws -> HostContactMatches {
-        do {
-            return try bridge.contacts(lookup: lookup)
-        } catch let error as HostRejection {
-            throw error
-        } catch {
-            throw HostRejection.Rejected(reason: hostRejectionReason(error))
-        }
+        try withHostRejection { try bridge.contacts(lookup: lookup) }
     }
 
     func pickContact(productId: String) async throws -> HostContactPick {
-        do {
-            return try await bridge.pickContact(productId: productId)
-        } catch let error as HostRejection {
-            throw error
-        } catch {
-            throw HostRejection.Rejected(reason: hostRejectionReason(error))
+        try await withHostRejection { try await bridge.pickContact(productId: productId) }
+    }
+}
+
+/// Adapter that bridges the public `ScannerHostBridge` to the generated UniFFI
+/// `NativeScannerCallbacks` protocol.
+private final class ScannerCallbackAdapter: NativeScannerCallbacks, @unchecked Sendable {
+    private let bridge: ScannerHostBridge
+
+    init(bridge: ScannerHostBridge) {
+        self.bridge = bridge
+    }
+
+    func scanCode(
+        productId: String,
+        executionKind: ProductExecutionKind,
+        request: HostScannerScanRequest
+    ) async throws -> HostScan {
+        try await withHostRejection {
+            try await bridge.scanCode(productId: productId, executionKind: executionKind, request: request)
         }
     }
 }
@@ -554,6 +565,12 @@ private final class HostCallbackAdapter: HostCallbacks, @unchecked Sendable {
     {
         try await withHostRejection {
             try await bridge.devicePermissionStatus(request: request)
+        }
+    }
+
+    func setExpandedCardFaceShown(shown: Bool) async throws -> ExpandedCardFaceOutcome {
+        try await withHostRejection {
+            try await bridge.setExpandedCardFaceShown(shown: shown)
         }
     }
 
@@ -681,26 +698,6 @@ private final class HostCallbackAdapter: HostCallbacks, @unchecked Sendable {
         }
     }
 
-    private func withHostRejection<T>(_ operation: () throws -> T) throws -> T {
-        do {
-            return try operation()
-        } catch let error as HostRejection {
-            throw error
-        } catch {
-            throw HostRejection.Rejected(reason: hostRejectionReason(error))
-        }
-    }
-
-    private func withHostRejection<T>(_ operation: () async throws -> T) async throws -> T {
-        do {
-            return try await operation()
-        } catch let error as HostRejection {
-            throw error
-        } catch {
-            throw HostRejection.Rejected(reason: hostRejectionReason(error))
-        }
-    }
-
     private func withNavigationRejection<T>(_ operation: () throws -> T) throws -> T {
         do {
             return try operation()
@@ -740,6 +737,7 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
     private let notificationCenter: NotificationCenter
     private let foregroundObserver: NSObjectProtocol
     private var contactsRetainer: NativeContactsCallbacks?
+    private var scannerRetainer: NativeScannerCallbacks?
 
     public convenience init(bridge: HostBridge, runtimeConfig: HostRuntimeConfig) throws {
         try self.init(bridge: bridge, runtimeConfig: runtimeConfig, notificationCenter: .default)
@@ -786,6 +784,15 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
         let adapter = ContactsCallbackAdapter(bridge: contacts)
         contactsRetainer = adapter
         return inner.setContactsCallbacks(callbacks: adapter)
+    }
+
+    /// Install the host's scanner before opening any product execution.
+    /// Set-once: answers whether this call installed it.
+    @discardableResult
+    public func setScanner(_ scanner: ScannerHostBridge) -> Bool {
+        let adapter = ScannerCallbackAdapter(bridge: scanner)
+        scannerRetainer = adapter
+        return inner.setScannerCallbacks(callbacks: adapter)
     }
 
     /// Tell the core the host's contacts changed. Call it whenever a contact
@@ -1166,6 +1173,26 @@ public final class TrUAPIProductExecution: TrUAPIProductExecutionProtocol, @unch
 
     public func notifyChatRoomsChanged(rooms: [ChatRoom]) {
         inner.notifyChatRoomsChanged(rooms: rooms)
+    }
+}
+
+private func withHostRejection<T>(_ operation: () throws -> T) throws -> T {
+    do {
+        return try operation()
+    } catch let error as HostRejection {
+        throw error
+    } catch {
+        throw HostRejection.Rejected(reason: hostRejectionReason(error))
+    }
+}
+
+private func withHostRejection<T>(_ operation: () async throws -> T) async throws -> T {
+    do {
+        return try await operation()
+    } catch let error as HostRejection {
+        throw error
+    } catch {
+        throw HostRejection.Rejected(reason: hostRejectionReason(error))
     }
 }
 

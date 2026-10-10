@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 import DesignSystem
 
 // MARK: - Action Handler
@@ -9,23 +10,24 @@ private struct WidgetActionHandlerKey: EnvironmentKey {
     static let defaultValue: WidgetActionHandler? = nil
 }
 
-/// Resolves where an image node's bytes can be fetched from. A source names a
-/// product archive path or a Bulletin CID, which only the host can turn into
-/// something loadable, so the renderer asks for it rather than knowing.
+/// Loads the picture an image node names. A source names a product archive
+/// path or a Bulletin CID, which only the host can fetch, so the renderer asks
+/// for the picture rather than knowing where it lives. Nil means it could not
+/// be loaded.
 ///
 /// A named type rather than a function typealias, because the resolver is held
 /// in the environment and read from a view body. A bare function value carries
 /// the isolation of wherever it was formed, which the environment then has to
 /// convert away.
 public struct WidgetImageResolver: Sendable {
-    private let resolve: @Sendable (CustomMessageWidgetNode.ImageSource) async -> URL?
+    private let load: @Sendable (CustomMessageWidgetNode.ImageSource) async -> UIImage?
 
-    public init(_ resolve: @escaping @Sendable (CustomMessageWidgetNode.ImageSource) async -> URL?) {
-        self.resolve = resolve
+    public init(_ load: @escaping @Sendable (CustomMessageWidgetNode.ImageSource) async -> UIImage?) {
+        self.load = load
     }
 
-    public func callAsFunction(_ source: CustomMessageWidgetNode.ImageSource) async -> URL? {
-        await resolve(source)
+    public func callAsFunction(_ source: CustomMessageWidgetNode.ImageSource) async -> UIImage? {
+        await load(source)
     }
 }
 
@@ -55,7 +57,7 @@ public struct CustomMessageWidgetView: View {
     public init(
         node: CustomMessageWidgetNode,
         onAction: WidgetActionHandler? = nil,
-        resolveImage: WidgetImageResolver? = nil
+        resolveImage: WidgetImageResolver?
     ) {
         self.node = node
         self.onAction = onAction
@@ -105,29 +107,42 @@ private struct NodeImageView: View {
     let props: CustomMessageWidgetNode.ImageProps
     let modifiers: CustomMessageWidgetNode.Modifiers
 
+    private enum Picture {
+        case loading
+        case loaded(UIImage)
+        case unavailable
+    }
+
     @Environment(\.widgetImageResolver) private var resolveImage
-    @State private var url: URL?
+    @State private var picture: Picture = .loading
 
     var body: some View {
         content
             .applyWidgetNodeModifiers(modifiers)
             .task(id: props.source) {
-                url = await resolveImage?(props.source)
+                picture = .loading
+                picture = await resolveImage?(props.source).map(Picture.loaded) ?? .unavailable
             }
     }
 
-    /// An image the host cannot fetch draws as empty space, so a missing file
-    /// costs the card one node rather than its layout.
+    /// Loading and failure both fill the space the node reserves, so a missing
+    /// file costs the card one node rather than its layout.
     @ViewBuilder
     private var content: some View {
-        if let url {
-            AsyncImage(url: url) { image in
-                props.fit.apply(to: image)
-            } placeholder: {
-                Color.clear
-            }
-        } else {
-            Color.clear
+        switch picture {
+        case .loading:
+            ProgressView()
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        case let .loaded(image):
+            props.fit.apply(to: Image(uiImage: image))
+        case .unavailable:
+            Image(.fileNotFound)
+                .resizable()
+                .scaledToFit()
+                .frame(maxWidth: 44, maxHeight: 44)
+                .foregroundStyle(Color.fgTertiary)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .accessibilityLabel(String(localized: .chatMediaNoLongerAvailable))
         }
     }
 }
@@ -424,10 +439,12 @@ private struct NodeTextFieldView: View {
     #Preview {
         ScrollView {
             CustomMessageWidgetView(
-                node: .previewTransferCard
-            ) { actionId, payload in
-                print("Action: \(actionId), payload: \(payload ?? "nil")")
-            }
+                node: .previewTransferCard,
+                onAction: { actionId, payload in
+                    print("Action: \(actionId), payload: \(payload ?? "nil")")
+                },
+                resolveImage: nil
+            )
             .padding()
         }
     }

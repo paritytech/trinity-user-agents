@@ -150,6 +150,16 @@ async function runStartupDiagnosis(): Promise<void> {
   await roomAppeared;
   diagnosis.pass("Chat/list_subscribe", "observed the newly created room");
 
+  // The diagnosis asks the user to type a command, so its room keeps the input.
+  const footer = await chat.setRoomFooter({
+    roomId: diagnosticRoomId,
+    footer: "TextInput",
+  });
+  if (footer.isErr()) {
+    throw new Error(`setRoomFooter failed: ${JSON.stringify(footer.error)}`);
+  }
+  diagnosis.pass("Chat/set_room_footer", "kept the text input");
+
   const textMessageId = await postMessage({
     tag: "Text",
     value: {

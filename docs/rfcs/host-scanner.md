@@ -57,7 +57,7 @@ pub enum CodeFormat {
 }
 
 pub struct HostScannerScanRequest {
-    /// Formats the product accepts. At least one.
+    /// Formats the product accepts. At least one, each named once.
     pub formats: Vec<CodeFormat>,
     /// Start the text must have, ignoring ASCII letter case. At most 256 bytes of UTF-8.
     pub prefix: Option<String>,
@@ -81,7 +81,7 @@ pub enum HostScannerScanError {
     Busy,
     /// The calling execution is not on screen, and is not a Worker handling a tap.
     NotVisible,
-    /// No formats, or a prefix or hint that breaks its limit.
+    /// No formats, a format named twice, or a prefix or hint that breaks its limit.
     InvalidRequest { reason: String },
     Unknown { reason: String },
 }
@@ -112,7 +112,8 @@ One call scans one code. A product that wants several calls again. Cancelling th
 **The host owns the viewfinder.** The host writes the title itself and names the product by its id, for example "Scan
 for greenmarket.dot". The product cannot draw over the viewfinder or change the title. The hint is shown below the
 title as the product's own words, so the user can tell it apart from host text. To keep it to one plain line, a hint
-may not contain control characters, line or paragraph separators, or characters that change text direction.
+may not contain control characters, line or paragraph separators, invisible characters, or characters that change text
+direction.
 
 **The host does not act on what it scanned.** The host's own scanner treats some codes as links. A link to another
 product opens it, a pairing link starts sign-in, and a payment link opens a payment screen. A product's scan skips all
@@ -120,8 +121,10 @@ of that and returns the text. If the product wants to follow a scanned link, it 
 rules.
 
 **A pairing request never reaches a product.** A pairing link lets whoever answers it first pair with the device that
-showed it, so it is a credential. The core refuses any code it would itself accept as a pairing request, whatever the
-request's formats and prefix, including the bare handshake without the `pair` link around it. In the viewfinder it is
+showed it, so it is a credential. The core refuses any code that carries a handshake in a form some wallet reads,
+whatever the request's formats and prefix: any `handshake=` value or the bare handshake, in hex with or without `0x`,
+of any proposal version. It matches the shape rather than decoding, so a wallet more lenient than the core is still
+covered. In the viewfinder it is
 treated like any code that is not for this product. The prefix stays optional, because a barcode such as an EAN-13
 grocery code has no prefix to give, and a required prefix would not help anyway: a product could pass
 `polkadotapp://pair?` as its prefix.

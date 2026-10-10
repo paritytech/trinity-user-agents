@@ -139,14 +139,18 @@ final class MyChatBridge: ChatHostBridge, @unchecked Sendable {
         store.putBot(botId, name: name, icon: icon) ? .new : .exists
     }
 
-    func postMessage(roomId: String, content: ChatMessageContent) throws -> String {
+    func postMessage(roomId: String, content: ChatMessageContent, alt: String?) throws -> String {
         if case .file = content {
             // Declining a variant is how a host opts out of rendering one.
             // Throw `HostRejection.Rejected` (or a `LocalizedError`) so the
             // product receives your reason rather than a bare type name.
             throw HostRejection.Rejected(reason: "this host cannot render file cards")
         }
-        return store.append(roomId, content: content)
+        return store.append(roomId, content: content, alt: alt)
+    }
+
+    func setRoomFooter(roomId: String, footer: ChatRoomFooter) throws {
+        store.setFooter(roomId, footer: footer)
     }
 
     func listRooms() throws -> [ChatRoom] { store.rooms() }
@@ -181,6 +185,10 @@ unverified. Contextual output escaping is the host's job.
 
 The id `postMessage` returns is the correlation key `ActionTrigger.messageId`
 carries back, so it must name that message for as long as the host stores it.
+`alt` is the product's one-line description of the message, already trimmed
+and screened. Show it where the message is listed rather than drawn, such as a
+chat list preview of a custom card. Only a custom message carries one, since
+every other kind previews from its own content.
 Ids arriving _in_ a `Reaction` or `ReactionRemoved` are product-chosen and
 untrusted: they may name a message in another room, or one that never existed.
 
@@ -341,7 +349,7 @@ the product as a host failure carrying its reason.
                    Product execution
 ```
 
-The bootstrap supplies the execution endpoint to the shared container, which consumes and removes `window.__truapi_localhost` before product scripts run. The container creates one SDK connection for public calls and private permission checks, then exposes its public client through `window.__HOST_API_CLIENT__`. The Rust core handles the wire protocol directly. Outbound responses and host-side capability callbacks (`navigateTo`, `pushNotification`, `cancelNotification`, `devicePermission`, `remotePermission`, `authStateChanged`, core storage, chain JSON-RPC, confirmations, preimage, theme, `featureSupported`, `storage`) reach the embedder through `HostCallbacks`.
+The bootstrap supplies the execution endpoint to the shared container, which consumes and removes `window.__truapi_localhost` before product scripts run. The container creates one SDK connection for public calls and private permission checks, then exposes its public client through `window.__HOST_API_CLIENT__`. The Rust core handles the wire protocol directly. Outbound responses and host-side capability callbacks (`navigateTo`, `pushNotification`, `cancelNotification`, `devicePermission`, `setExpandedCardFaceShown`, `remotePermission`, `authStateChanged`, core storage, chain JSON-RPC, confirmations, preimage, theme, `featureSupported`, `storage`) reach the embedder through `HostCallbacks`.
 
 ## Permissions split
 

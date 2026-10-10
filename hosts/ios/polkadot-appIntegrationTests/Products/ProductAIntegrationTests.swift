@@ -110,7 +110,7 @@ final class ProductAIntegrationTests: XCTestCase {
 
         guard
             let customMessage = nativeApi.consumeMessage(),
-            case let .custom(messageType, data) = customMessage else {
+            case let .custom(messageType, data, _) = customMessage else {
             XCTFail("No messages")
             return
         }

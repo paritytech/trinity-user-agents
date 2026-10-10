@@ -10,6 +10,7 @@ import {
   AllocatableResource,
   Bytes32,
   ChainIdentifier,
+  CodeFormat,
   HostAccountSignVrfRequest,
   HostDevicePermissionRequest,
   HostSignPayloadRequest,
@@ -33,6 +34,7 @@ import type {
   HostChatPostMessageResponse,
   HostChatRegisterBotRequest,
   HostChatRegisterBotResponse,
+  HostChatSetRoomFooterRequest,
   HostFeatureSupportedRequest,
   HostFeatureSupportedResponse,
   HostLocalStorageChangeItem,
@@ -49,6 +51,7 @@ import type {
   HostPocketRemoveCardRequest,
   HostPushNotificationRequest,
   HostPushNotificationResponse,
+  HostScannerScanRequest,
   HostThemeSubscribeItem,
   HostWorkerBeginOperationResponse,
   Result,
@@ -268,6 +271,15 @@ export type DevicePermissionStatus =
   | "NotApplicable";
 
 /**
+ * What the host did with a request to show or hide the expanded card face.
+ */
+export type ExpandedCardFaceOutcome =
+  | "Applied"
+  | "NotPresented"
+  | "UserMoving"
+  | "Unsupported";
+
+/**
  * One chain a host serves: a protocol chain role mapped to the concrete
  * chain of the host's configured environment.
  */
@@ -359,6 +371,30 @@ export type HostContactPick =
    * apart from "this host will never pick".
    */
   | { tag: "Unsupported"; value?: undefined };
+
+/**
+ * How the host's scanner ended.
+ */
+export type HostScan =
+  /**
+   * The user scanned a code the request accepts.
+   */
+  | { tag: "Scanned"; value: { text: string; format: CodeFormat } }
+  /**
+   * The user closed the viewfinder without scanning.
+   */
+  | { tag: "Dismissed"; value?: undefined }
+  /**
+   * The device has no camera, or the user refused the host application one.
+   * The host has already told the user how to turn it on.
+   */
+  | { tag: "CameraUnavailable"; value?: undefined }
+  /**
+   * The requesting App or Widget is not the screen the user sees, so the
+   * host opened nothing. A Worker's request was already checked by the core
+   * and is never answered this way.
+   */
+  | { tag: "NotVisible"; value?: undefined };
 
 /**
  * Review shown before a product learns the user's primary identity.
@@ -812,6 +848,14 @@ export const DevicePermissionStatus: S.Codec<DevicePermissionStatus> = S.lazy(
 );
 
 /**
+ * What the host did with a request to show or hide the expanded card face.
+ */
+export const ExpandedCardFaceOutcome: S.Codec<ExpandedCardFaceOutcome> = S.lazy(
+  (): S.Codec<ExpandedCardFaceOutcome> =>
+    S.Status("Applied", "NotPresented", "UserMoving", "Unsupported"),
+);
+
+/**
  * One chain a host serves: a protocol chain role mapped to the concrete
  * chain of the host's configured environment.
  */
@@ -873,6 +917,22 @@ export const HostContactPick: S.Codec<HostContactPick> = S.lazy(
       Dismissed: S._void,
       NoContacts: S._void,
       Unsupported: S._void,
+    }),
+);
+
+/**
+ * How the host's scanner ended.
+ */
+export const HostScan: S.Codec<HostScan> = S.lazy(
+  (): S.Codec<HostScan> =>
+    S.TaggedUnion({
+      Scanned: S.Struct({ text: S.str, format: CodeFormat }) as S.Codec<{
+        text: string;
+        format: CodeFormat;
+      }>,
+      Dismissed: S._void,
+      CameraUnavailable: S._void,
+      NotVisible: S._void,
     }),
 );
 
@@ -1155,8 +1215,8 @@ export interface ChainProvider {
  * answered `Unsupported`. See `OptionalPlatform`.
  *
  * The core bounds and screens the product-supplied fields it forwards. Ids,
- * names and icons on `create_chat_room`, `register_chat_bot` and
- * `post_chat_message` are NFC-normalized and rejected for control and bidi
+ * names and icons on `create_chat_room`, `register_chat_bot`,
+ * `post_chat_message` and `set_chat_room_footer` are NFC-normalized and rejected for control and bidi
  * characters. Message bodies are bounded and screened but pass through
  * byte-for-byte, keeping line breaks and tabs, so a product reads back the
  * bytes it sent. Counts and byte budgets are enforced, and any URL a host may
@@ -1201,6 +1261,17 @@ export interface ChatPlatform {
     product: ProductContext,
     request: HostChatPostMessageRequest,
   ): Promise<HostChatPostMessageResponse>;
+
+  /**
+   * Set what a product-scoped room shows below its messages, for the room
+   * as it is now and every later time it is shown. The core has already
+   * checked the product created the room. A room the product never set a
+   * footer on shows the text input.
+   */
+  setChatRoomFooter(
+    product: ProductContext,
+    request: HostChatSetRoomFooterRequest,
+  ): Promise<void>;
 
   /**
    * Emit the current product-scoped room list and later replacements.
@@ -1395,6 +1466,20 @@ export interface CoreStorage {
    * Clear a core-owned value by typed slot.
    */
   clearCoreStorage(key: CoreStorageKey): Promise<void>;
+}
+
+/**
+ * Host control of the card face drawn above an opened card's Widget.
+ *
+ * Carried per connection on `ConnectionAdapters`, because the host owns one
+ * drawer per product execution. A connection without one tells products
+ * `Unsupported`.
+ */
+export interface ExpandedCardHost {
+  /**
+   * Show (`true`) or hide (`false`) the face above the calling Widget.
+   */
+  setExpandedCardFaceShown(shown: boolean): Promise<ExpandedCardFaceOutcome>;
 }
 
 /**
@@ -1727,6 +1812,29 @@ export interface ProductStorage {
 }
 
 /**
+ * Host-owned viewfinder for QR codes and barcodes. Optional. The Swift and
+ * Kotlin bridges and the JS `scanner` callbacks follow the same rules.
+ *
+ * - Title the viewfinder with the product id. Show `request.hint` under it as
+ *   the product's words.
+ * - Pass every code the camera reads to a `ScanFilter` built from `request`,
+ *   and never follow a scanned link.
+ * - Answer `HostScan::NotVisible` for an App or Widget that is not on
+ *   screen. A Worker reaching the host already passed the core's tap check.
+ * - Close the viewfinder when the core drops the future, and close any still
+ *   open before opening another. A JS host is not told about a drop.
+ */
+export interface ScannerPlatform {
+  /**
+   * Open the viewfinder on behalf of `product` and wait for the user.
+   */
+  scanCode(
+    product: ProductContext,
+    request: HostScannerScanRequest,
+  ): Promise<HostScan>;
+}
+
+/**
  * Host theme source.
  */
 export interface ThemeHost {
@@ -1815,6 +1923,7 @@ export interface HostCallbacks {
   game?: GamePlatform;
   permissionStatus?: PermissionStatusHost;
   pocket?: PocketPlatform;
+  scanner?: ScannerPlatform;
 }
 
 export interface RequiredHostCallbacks {
@@ -1836,4 +1945,5 @@ export interface RequiredHostCallbacks {
   game?: Required<GamePlatform>;
   permissionStatus?: Required<PermissionStatusHost>;
   pocket?: Required<PocketPlatform>;
+  scanner?: Required<ScannerPlatform>;
 }

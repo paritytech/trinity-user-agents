@@ -410,15 +410,20 @@ AutoSigning without approval. Legacy-account signing still asks the user.
   approves, and stream each payment's status by its caller-chosen id.
   Installed with `set_payment_platform`; native hosts use
   `set_payment_callbacks` with `notify_payment_status`. The core requires a
-  session. Without it, `request` and
+  session and hands the host each id hashed with the product. Without it,
+  `request` and
   `statusSubscribe` answer `Unsupported`.
 - `TopUpPlatform`: claim a top-up source's funds into the user's balance and
   stream each top-up's status. Installed with `set_top_up_platform`; native
   hosts use `set_top_up_callbacks` with `notify_top_up_status`. The core
   requires a session and checks the source keys; a `ProductAccount` source is
-  passed through for the host to derive. The host owns claiming, retries,
-  partial claims, persistence and scoping ids to the product. Without it,
+  passed through for the host to derive, and hands the host each id hashed
+  with the product. The host owns claiming, retries, partial claims and
+  persistence. Without it,
   `topUp` and `topUpStatusSubscribe` answer `Unsupported`.
+- `ExpandedCardHost`: show or hide the card face drawn above an opened card's
+  Widget. It is carried per product connection on `ConnectionAdapters`, so only
+  the Widget under a card reaches that card.
 - `ContactsPlatform`: resolve the handles a transaction names to contacts, and
   render the picker that selects one. `contacts` is the only required method; `pick_contact`
   defaults to `Unsupported`, so a host serving no picker says so rather than
@@ -435,17 +440,25 @@ AutoSigning without approval. Legacy-account signing still asks the user.
   one and delivers a notification otherwise, may add a calendar event, and
   keeps the reminder across app kill and reboot. A schedule the host cannot
   hold fails as a host failure carrying its reason.
+- `ScannerPlatform`: open the host's QR and barcode viewfinder. Before calling
+  it the core refuses an invalid request, a Worker the user has not tapped in
+  the last 5 seconds, and a second open scan. After, it refuses a code the
+  request does not accept and any pairing request. The trait's docs list what
+  the host must do.
 
 `Platform` is a blanket-implemented supertrait that combines the capability
 traits above except `ChatPlatform`, `ContactsPlatform`, `PermissionStatusHost`,
-`PocketPlatform` and `GamePlatform`, which `OptionalPlatform` lists instead: a
-host supplies each only when it can serve it. Codegen reads `OptionalPlatform`
-to emit each listed capability as an optional group on the host-callback
-surface.
+`PocketPlatform`, `GamePlatform` and `ScannerPlatform`, which `OptionalPlatform`
+lists instead: a host supplies each only when it can serve it. `ExpandedCardHost`
+is in neither, because it travels per connection rather than with the platform.
+Codegen reads `OptionalPlatform` to emit each listed capability as an optional
+group on the host-callback surface.
 
 Omitting `ChatPlatform` makes the core answer Chat calls `Unsupported`, and
-omitting `ContactsPlatform`, `PocketPlatform` or `GamePlatform` does the same
-for Contacts, Pocket or Game calls.
+omitting `ContactsPlatform`, `PocketPlatform`, `GamePlatform` or
+`ScannerPlatform` does the same for Contacts, Pocket, Game or Scanner calls. A
+connection without an `ExpandedCardHost` answers a Widget's `ExpandedCard` calls
+`Unsupported`.
 Omitting `PermissionStatusHost` leaves device grants resolving from stored
 state alone, which is what a host with no OS permission model does anyway.
 Serving it gates both halves of the surface: a device permission request and a

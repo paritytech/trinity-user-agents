@@ -95,16 +95,16 @@ pub mod latest {
         AllocatableResource, AllocationOutcome, Arrangement, Background, BlendingMode, BorderStyle,
         BoxProps, ButtonProps, ButtonVariant, ChainIdentifier, ChatAction, ChatActionLayout,
         ChatActions, ChatBotRegistrationStatus, ChatCustomMessage, ChatFile, ChatMedia,
-        ChatMessageContent, ChatReaction, ChatRichText, ChatRoom, ChatRoomParticipation,
-        ChatRoomRegistrationStatus, CodeFormat, ColorToken, ColumnProps, ContactHandle,
-        ContactPickOutcome, ContentAlignment, ContextualAlias, DerivationIndex, Dimensions, Effect,
-        EffectProps, GenericError, HorizontalAlignment, HostAccountCreateProofRequest,
-        HostAccountGetAliasRequest, HostAccountListRingVrfKeysRequest,
-        HostAccountRegisterRingVrfKeyRequest, HostAccountRingVrfSignRequest,
-        HostAccountSignVrfError, HostAccountSignVrfRequest, HostPlatform, HostSignPayloadData,
-        HostWorkerOperationError, ImageFit, ImageProps, ImageSource, Modifier,
-        OperationStartedResult, PaymentTopUpSource, PocketCard, ProductAccountId,
-        ProductProofContext, RawPayload, RegisteredRingVrfKey, RemotePermission,
+        ChatMessageContent, ChatReaction, ChatRichText, ChatRoom, ChatRoomFooter,
+        ChatRoomParticipation, ChatRoomRegistrationStatus, CodeFormat, ColorToken, ColumnProps,
+        ContactHandle, ContactPickOutcome, ContentAlignment, ContextualAlias, DerivationIndex,
+        Dimensions, Effect, EffectProps, GenericError, HorizontalAlignment,
+        HostAccountCreateProofRequest, HostAccountGetAliasRequest,
+        HostAccountListRingVrfKeysRequest, HostAccountRegisterRingVrfKeyRequest,
+        HostAccountRingVrfSignRequest, HostAccountSignVrfError, HostAccountSignVrfRequest,
+        HostPlatform, HostSignPayloadData, HostWorkerOperationError, ImageFit, ImageProps,
+        ImageSource, Modifier, OperationStartedResult, PaymentTopUpSource, PocketCard,
+        ProductAccountId, ProductProofContext, RawPayload, RegisteredRingVrfKey, RemotePermission,
         RemoteStatementStoreCreateProofError, RemoteStatementStoreCreateProofRequest,
         RemoteStatementStoreCreateProofResponse, RemoteStatementStoreSubscribeItem,
         RemoteStatementStoreSubscribeRequest, RenderContext, RendererNode, RingLocation,
@@ -134,6 +134,10 @@ pub mod latest {
     pub type HostChatRegisterBotResponse = LatestOf<versioned::chat::HostChatRegisterBotResponse>;
     /// Native chat bot registration failure.
     pub type HostChatRegisterBotError = LatestOf<versioned::chat::HostChatRegisterBotError>;
+    /// Request to set what a native chat room shows below its messages.
+    pub type HostChatSetRoomFooterRequest = LatestOf<versioned::chat::HostChatSetRoomFooterRequest>;
+    /// Failure to set what a native chat room shows below its messages.
+    pub type HostChatSetRoomFooterError = LatestOf<versioned::chat::HostChatSetRoomFooterError>;
     /// Current native room list for a product.
     pub type HostChatListSubscribeItem = LatestOf<versioned::chat::HostChatListSubscribeItem>;
     /// Native chat message posting request.
@@ -242,6 +246,12 @@ pub mod latest {
     pub type HostPocketRemoveCardRequest = LatestOf<versioned::pocket::HostPocketRemoveCardRequest>;
     /// Pocket card removal failure.
     pub type HostPocketRemoveCardError = LatestOf<versioned::pocket::HostPocketRemoveCardError>;
+    /// Request to show or hide the face above the calling Widget.
+    pub type HostExpandedCardSetFaceShownRequest =
+        LatestOf<versioned::expanded_card::HostExpandedCardSetFaceShownRequest>;
+    /// Face visibility change failure.
+    pub type HostExpandedCardSetFaceShownError =
+        LatestOf<versioned::expanded_card::HostExpandedCardSetFaceShownError>;
     /// Push notification scheduling request.
     pub type HostPushNotificationRequest =
         LatestOf<versioned::notifications::HostPushNotificationRequest>;

@@ -42,7 +42,7 @@ pub enum WireKind {
 /// `TRUAPI_WIRE_SCHEMA_HASH`. A host stamps it on each debug envelope so
 /// the debugger refuses to decode a frame whose contract differs from
 /// its own, even when the coarse handshake codec version is unchanged.
-pub const TRUAPI_WIRE_SCHEMA_HASH: &str = "b638c30a3c319a2f";
+pub const TRUAPI_WIRE_SCHEMA_HASH: &str = "cd4caabd9eae3cde";
 
 /// Wire discriminants for `system_handshake`.
 pub const SYSTEM_HANDSHAKE: MethodIds = MethodIds {
@@ -252,6 +252,12 @@ pub const CHAT_POST_MESSAGE: MethodIds = MethodIds {
 pub const CHAT_ACTION_SUBSCRIBE: MethodIds = MethodIds {
     trait_id: 4,
     method_id: 4,
+};
+
+/// Wire discriminants for `chat_set_room_footer`.
+pub const CHAT_SET_ROOM_FOOTER: MethodIds = MethodIds {
+    trait_id: 4,
+    method_id: 6,
 };
 
 /// Wire discriminants for `coin_payment_create_purse`.
@@ -560,6 +566,12 @@ pub const GAME_CANCEL_NEXT_GAME: MethodIds = MethodIds {
     method_id: 1,
 };
 
+/// Wire discriminants for `expanded_card_set_face_shown`.
+pub const EXPANDED_CARD_SET_FACE_SHOWN: MethodIds = MethodIds {
+    trait_id: 23,
+    method_id: 0,
+};
+
 /// Wire discriminants for `scanner_scan`.
 pub const SCANNER_SCAN: MethodIds = MethodIds {
     trait_id: 25,
@@ -709,6 +721,10 @@ pub const WIRE_TABLE: &[WireEntry] = &[
     WireEntry {
         method: "chat_action_subscribe",
         kind: WireKind::Subscription(CHAT_ACTION_SUBSCRIBE),
+    },
+    WireEntry {
+        method: "chat_set_room_footer",
+        kind: WireKind::Request(CHAT_SET_ROOM_FOOTER),
     },
     WireEntry {
         method: "coin_payment_create_purse",
@@ -913,6 +929,10 @@ pub const WIRE_TABLE: &[WireEntry] = &[
     WireEntry {
         method: "game_cancel_next_game",
         kind: WireKind::Request(GAME_CANCEL_NEXT_GAME),
+    },
+    WireEntry {
+        method: "expanded_card_set_face_shown",
+        kind: WireKind::Request(EXPANDED_CARD_SET_FACE_SHOWN),
     },
     WireEntry {
         method: "scanner_scan",
