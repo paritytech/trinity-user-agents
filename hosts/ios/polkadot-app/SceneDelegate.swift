@@ -28,10 +28,6 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
             return
         }
 
-        #if targetEnvironment(simulator) && HOST_PLAYGROUND_E2E
-            HostPlaygroundE2E.install()
-        #endif
-
         initializeApp(windowScene)
         handleContexts(with: options.urlContexts)
         handleUserActivities(options.userActivities)

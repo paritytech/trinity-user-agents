@@ -1,4 +1,4 @@
-#if targetEnvironment(simulator) && HOST_PLAYGROUND_E2E
+#if targetEnvironment(simulator)
     import Foundation
     import KeyDerivation
     import NovaCrypto
@@ -9,6 +9,9 @@
 
     /// Runs the shared host-playground test list against the product inside this app, driven
     /// from outside by `e2e/host-playground/ios/run.mjs`.
+    ///
+    /// `e2e/host-playground/ios/build.sh` copies this directory into the app's sources for the
+    /// one build it makes, so no other build of the app contains it.
     ///
     /// The runner places `seed`, `tests.json` and `page-runner.js` in `tmp/truapi-e2e/` of the
     /// data container and launches with `TRUAPI_IOS_E2E_HOST_PLAYGROUND=1`. The seed phrase is
@@ -22,8 +25,9 @@
 
         static let log = os.Logger(subsystem: "io.parity.polkadotapp.e2e", category: "host-playground")
 
-        /// Seeds the wallet and theme, then starts the driver. Call before the root presenter is
-        /// attached; does nothing unless the runner asked for it.
+        /// Seeds the wallet and theme, then starts the driver. Runs once the app has finished
+        /// launching, before its scene connects and the root gates decide; does nothing unless
+        /// the runner asked for it.
         static func install() {
             guard ProcessInfo.processInfo.environment["TRUAPI_IOS_E2E_HOST_PLAYGROUND"] == "1" else {
                 return
@@ -79,6 +83,15 @@
             )
             try walletSetupManager.createWallets(with: AccountCreateMetadata(mnemonic: mnemonic))
             log.info("wallet restored from the runner's seed")
+        }
+    }
+
+    /// The entry `HostPlaygroundE2ELoader.m` calls once the app has finished launching. It has a
+    /// fixed Objective-C name because the loader finds it by that name.
+    @objc(HostPlaygroundE2EEntry)
+    final class HostPlaygroundE2EEntry: NSObject {
+        @objc static func install() {
+            HostPlaygroundE2E.install()
         }
     }
 

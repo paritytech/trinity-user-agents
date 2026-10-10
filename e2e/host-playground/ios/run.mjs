@@ -4,11 +4,11 @@
 //   node e2e/host-playground/ios/run.mjs --app <polkadot-app.app | .app.zip> \
 //     --mnemonic-file <path> --out <dir> [--device <udid>] [--timeout-minutes <n>]
 //
-// The app must be a simulator build with the HOST_PLAYGROUND_E2E compilation
-// condition (the `build_app_simulator` fastlane lane with HOST_PLAYGROUND_E2E=1). The runner installs it fresh,
-// places the seed phrase, tests.json and page-runner.js in the app's
-// `tmp/truapi-e2e/`, and launches it with TRUAPI_IOS_E2E_HOST_PLAYGROUND=1.
-// The app does the rest (see HostPlaygroundE2E.swift) and writes results.json
+// The app must be the simulator build `build.sh` makes, which carries the
+// driver in `app/`. The runner installs it fresh, places the seed phrase,
+// tests.json and page-runner.js in the app's `tmp/truapi-e2e/`, and launches it
+// with TRUAPI_IOS_E2E_HOST_PLAYGROUND=1. The app does the rest (see
+// app/HostPlaygroundE2E.swift) and writes results.json
 // and a `done` marker there. The seed phrase is never printed and is deleted by
 // the app on first read, and by this runner on exit.
 
@@ -230,7 +230,7 @@ async function waitForDone(timeoutMs) {
     }
 
     if (existsSync(seed) && Date.now() > seedDeadline) {
-      return "the app never read the seed; is this a HOST_PLAYGROUND_E2E simulator build?";
+      return "the app never read the seed; is this the simulator build e2e/host-playground/ios/build.sh makes?";
     }
 
     // A test that opens an external URL leaves Safari in front.

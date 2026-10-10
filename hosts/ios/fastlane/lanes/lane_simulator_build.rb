@@ -67,10 +67,7 @@ lane :build_app_simulator do |options|
         # reach a device or Release/Nightly App Store build. A plain simulator
         # build (local dev, or a Nightly sim build without this lane) keeps the
         # real code paths.
-        # HOST_PLAYGROUND_E2E adds the host-playground driver on top, only when
-        # the caller sets it, so the simulator build the nightly publishes never
-        # carries it.
-        "SWIFT_ACTIVE_COMPILATION_CONDITIONS='$(inherited) E2E_TEST#{ENV['HOST_PLAYGROUND_E2E'] == '1' ? ' HOST_PLAYGROUND_E2E' : ''}'",
+        "SWIFT_ACTIVE_COMPILATION_CONDITIONS='$(inherited) E2E_TEST'",
         'CODE_SIGN_IDENTITY="-"',
         "CODE_SIGNING_REQUIRED=NO",
         "CODE_SIGNING_ALLOWED=YES",

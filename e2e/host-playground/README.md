@@ -5,6 +5,7 @@ Runs the public `host-playground` product inside the iOS and Android host apps a
 - `tests.json` names the product, the host-playground commit the suite was written against, the tests to run in order, and under `knownFailures` the tests expected to fail for a reason outside the hosts, each with the error message it fails with and the reason. A test failing with exactly that message is reported apart and does not fail the run; any other failure of it still does.
 - `page-runner.js` is injected into the product page by each driver and runs one test per call. A test that navigates within the product passes once the page reaches its destination.
 - `report.mjs` turns a run's `results.json` into `report.md` and a one-line summary.
+- `android/` and `ios/` hold each platform's runner and the code added to its app for these builds only.
 
 `.github/workflows/host-playground-e2e.yml` runs both platforms in CI once a day on main at 18:00 UTC, two hours before the nightlies, on a pull request when it carries the `host-playground-e2e` label (and on each push while it does), and by manual dispatch, signing in with the `E2E_ANDROID_MNEMONIC` and `E2E_IOS_MNEMONIC` test accounts and uploading each run's results and report.
 
@@ -37,12 +38,9 @@ The runner reinstalls the app, grants its runtime permissions, copies the mnemon
 
 ## iOS
 
-The iOS host runs the list itself. A simulator build with the
-`HOST_PLAYGROUND_E2E` compilation condition carries `HostPlaygroundE2E` (in
-`hosts/ios/polkadot-app/Modules/Products/TrUAPI/`), which stays inert unless
-the app is launched with `TRUAPI_IOS_E2E_HOST_PLAYGROUND=1`. `ios/run.mjs`
-installs the app fresh, places the seed phrase, `tests.json` and
-`page-runner.js` in the app's `tmp/truapi-e2e/`, and launches it. The app then:
+The iOS host runs the list itself, through a driver in `ios/app/`: `HostPlaygroundE2E.swift`, `HostPlaygroundE2EApprover.swift`, and `HostPlaygroundE2ELoader.m`, which starts the driver once the app has finished launching, before its scene connects. `ios/build.sh` copies the directory into the app's sources, builds the simulator app with the regular simulator lane, and removes the copy when the build ends, so `hosts/ios` is unchanged and no other build of the app contains the driver. The driver stays inert unless the app is launched with `TRUAPI_IOS_E2E_HOST_PLAYGROUND=1`.
+
+`ios/run.mjs` installs the app fresh, places the seed phrase, `tests.json` and `page-runner.js` in the app's `tmp/truapi-e2e/`, and launches it. The app then:
 
 1. reads and deletes the seed, restores the wallet from it and marks the theme
    chosen, before the root gates decide, so launch lands on the regular
@@ -66,13 +64,10 @@ log lines (`io.parity.polkadotapp.e2e`), which carry no account data.
 The account must already have an on-chain username on the network the build
 targets: an account without one stops at the username claim screen.
 
-Build the app with the simulator lane and `HOST_PLAYGROUND_E2E=1`, which adds
-the condition; the nightly's published simulator build leaves it out. It needs the in-tree core bootstrapped first (`make ios-bootstrap`), a
-`GoogleService-Info.plist` for the app's bundle id and the generated secrets
-file, as in `.github/workflows/ios-nightly-simulator-release.yml`:
+Build the app with `ios/build.sh`. It needs the in-tree core bootstrapped first (`make ios-bootstrap`), a `GoogleService-Info.plist` for the app's bundle id and the generated secrets file, as in `.github/workflows/ios-nightly-simulator-release.yml`:
 
 ```bash
-( cd hosts/ios && HOST_PLAYGROUND_E2E=1 bundle exec fastlane build_app_simulator )
+e2e/host-playground/ios/build.sh
 ```
 
 Then run the list. The seed phrase is read from a file and never printed:

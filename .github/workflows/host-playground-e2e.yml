@@ -6,10 +6,10 @@ name: host-playground e2e
 #
 # Each platform signs in as its own registered Paseo test account. The app is
 # seeded from that account's mnemonic by hooks that exist only in these builds:
-# on Android a library added by a Gradle init script, on iOS code compiled only
-# into a simulator build with the HOST_PLAYGROUND_E2E condition, which only this
-# workflow asks for. Nothing here reaches a build that testers
-# or the public can download, and the mnemonic only ever travels as a file.
+# on Android a library added by a Gradle init script, on iOS a driver copied
+# into the app's sources only for the simulator build this workflow makes.
+# Nothing here reaches a build that testers or the public can download, and the
+# mnemonic only ever travels as a file.
 
 # Runs once a day on main, two hours before the iOS nightly starts at 20:00 UTC
 # so the result is in before either nightly ships. A pull request runs it on
@@ -209,14 +209,10 @@ jobs:
           sentry_dsn: ${{ secrets.SENTRY_DSN }}
           meld_basic_auth_token: ${{ secrets.MELD_BASIC_AUTH_TOKEN }}
 
-      # The simulator lane's build, plus the HOST_PLAYGROUND_E2E condition that
-      # compiles in the driver. The nightly's published simulator build never
-      # sets it.
+      # The simulator lane's build with the driver copied into the app's
+      # sources for this build only.
       - name: Build the E2E simulator app
-        working-directory: hosts/ios
-        env:
-          HOST_PLAYGROUND_E2E: "1"
-        run: bundle exec fastlane build_app_simulator
+        run: e2e/host-playground/ios/build.sh
 
       # Grants the notification and camera permissions simctl cannot. The tap is
       # third party, so it is pinned to a reviewed commit and Homebrew is kept

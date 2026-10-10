@@ -487,7 +487,7 @@ e2e-host-playground-android: ## Run host-playground in the nightly Android host 
 	cd hosts/android && ./gradlew --init-script $(abspath $(E2E_HOST_PLAYGROUND)/android/e2e.init.gradle.kts) :app:assembleGpNightly
 	node $(E2E_HOST_PLAYGROUND)/android/run.mjs --apk $(E2E_HOST_PLAYGROUND_APK) --mnemonic-file "$(MNEMONIC_FILE)" --out $(E2E_HOST_PLAYGROUND_OUT) $(if $(ANDROID_SERIAL),--serial $(ANDROID_SERIAL))
 
-e2e-host-playground-ios: ## Run host-playground in the iOS simulator app built by the simulator lane with HOST_PLAYGROUND_E2E=1. Needs MNEMONIC_FILE; IOS_SIMULATOR_DEVICE picks a simulator.
+e2e-host-playground-ios: ## Run host-playground in the iOS simulator app built by e2e/host-playground/ios/build.sh. Needs MNEMONIC_FILE; IOS_SIMULATOR_DEVICE picks a simulator.
 	@test -n "$(MNEMONIC_FILE)" || { echo "Set MNEMONIC_FILE to a file holding the test account's mnemonic."; exit 1; }
 	node $(E2E_HOST_PLAYGROUND)/ios/run.mjs --app $(E2E_HOST_PLAYGROUND_IOS_APP) --mnemonic-file "$(MNEMONIC_FILE)" --out $(E2E_HOST_PLAYGROUND_IOS_OUT) $(if $(IOS_SIMULATOR_DEVICE),--device $(IOS_SIMULATOR_DEVICE))
 

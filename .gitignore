@@ -28,6 +28,8 @@ local.properties
 .env.*
 !.env.example
 /.e2e-dotli/
+# The host-playground driver, copied into the iOS app only while e2e/host-playground/ios/build.sh runs
+/hosts/ios/polkadot-app/HostPlaygroundE2E/
 
 # Editor / OS
 .vscode/*
