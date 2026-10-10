@@ -25,6 +25,7 @@ final class TabBarBottomChromeController: UIViewController {
             (self?.viewIfLoaded as? TabBarChromePassthroughView)?.foldGrabZone = zone
         },
         closePanel: { [weak self] in
+            self?.barModel.setCenterPanelOpen(false)
             self?.setPanel(nil, animated: false)
         }
     )
@@ -38,10 +39,12 @@ final class TabBarBottomChromeController: UIViewController {
     private lazy var panelController = TabBarPanelController(
         surface: chromeSurface,
         onPanelChanged: { [weak self] kind in
+            self?.syncCenterPanel(with: kind)
             self?.onPanelChanged?(kind)
         },
         onOpenPanelChanged: { [weak self] kind in
             self?.updateActiveActionIndex()
+            self?.applyCenterRise()
             (self?.viewIfLoaded as? TabBarChromePassthroughView)?.isOutsideTapEnabled = kind != nil
         },
         tearDownContent: { [weak self] in
@@ -62,18 +65,18 @@ final class TabBarBottomChromeController: UIViewController {
         )
     #endif
 
-    private lazy var panelDragController = TabBarPanelDragController(
-        surface: chromeSurface,
-        panelController: panelController,
-        dismissSearch: { [weak self] in self?.onPanelDragCommitted?() }
-    )
-
     var onSelect: ((_ index: Int, _ isReselection: Bool) -> Void)?
     var onChipTapped: ((UUID) -> Void)?
     var onChipCloseRequested: ((UUID) -> Void)?
     var onPanelChanged: ((TabBarPanelKind?) -> Void)?
     var onConnectionStatusTapped: (() -> Void)?
-    var onPanelDragCommitted: (() -> Void)?
+
+    /// Builds the centre control's content. Called when the control first shows it, not when the panel commits.
+    var makeCenterContent: (() -> UIViewController?)?
+
+    /// Declares the centre content's height for a panel of the given width. The control sizes itself from this
+    /// before any content exists, so it cannot be measured from the content.
+    var contentHeightForCenterPanel: ((CGFloat) -> CGFloat)?
 
     /// The published clearance depends on the chrome's own safe area, so the host has to
     /// recompute when that changes.
@@ -128,6 +131,7 @@ final class TabBarBottomChromeController: UIViewController {
         super.viewDidLayoutSubviews()
 
         panelController.refreshHeightAfterLayout()
+        refreshCenterContentHeight()
 
         foldController.reapplyForWidthChange()
     }
@@ -185,19 +189,15 @@ final class TabBarBottomChromeController: UIViewController {
         panelController.setPanel(kind, animated: animated)
     }
 
-    func panelDragChanged(translation: CGFloat) {
-        panelDragController.dragChanged(translation: translation)
-    }
-
-    func panelDragEnded(translation: CGFloat) {
-        panelDragController.dragEnded(translation: translation)
-    }
-
-    /// Re-measures the open content panel after its hosted controller changed its own size.
-    /// The scan panel's camera resizes independently of the keyboard notifications, so the
-    /// height cannot be refreshed from those alone.
-    func resizeContentPanel() {
-        panelController.resizeForContentPanel()
+    /// Re-declares the centre content's height at the current bar width. Call it when the content's own
+    /// height changes, so an open panel regrows.
+    func refreshCenterContentHeight() {
+        guard let contentHeightForCenterPanel else {
+            return
+        }
+        let width = DSTabBarStyle.centerPanelWidth(inRowOfWidth: barHost.view.bounds.width)
+        barModel.centerContentHeight = contentHeightForCenterPanel(width)
+        applyCenterRise()
     }
 
     /// Selecting a different action closes the open panel before opening the new one, so the
@@ -264,6 +264,28 @@ private extension TabBarBottomChromeController {
 
     func updateActiveActionIndex() {
         barModel.activeActionItemIndex = panelController.open.flatMap { slotMap.itemIndex(for: $0.action) }
+    }
+
+    /// Any committed panel change moves the centre control to match, so a close from anywhere (outside tap,
+    /// a slot, a fold) also closes the control.
+    func syncCenterPanel(with kind: TabBarPanelKind?) {
+        barModel.setCenterPanelOpen(kind == .content(.scan))
+    }
+
+    /// Only the centre control's own panel is driven here; another open panel is left alone.
+    func centerPanelOpenChanged(_ isOpen: Bool) {
+        if isOpen, panelController.open != .content(.scan) {
+            setPanel(.content(.scan), animated: true)
+        } else if !isOpen, panelController.open == .content(.scan) {
+            setPanel(nil, animated: true)
+        }
+    }
+
+    /// The hosting view must contain the open centre panel for UIKit to deliver touches to it.
+    func applyCenterRise() {
+        let isOpen = panelController.open == .content(.scan)
+        let rise = isOpen ? DSTabBarStyle.centerPanelRise(contentHeight: barModel.centerContentHeight) : 0
+        chromeSurface.setBarRise(rise)
     }
 
     func handleSlotTap(itemIndex: Int) {
@@ -355,6 +377,12 @@ private extension TabBarBottomChromeController {
         barModel.onSlotTapped = { [weak self] itemIndex in
             self?.handleSlotTap(itemIndex: itemIndex)
         }
+        barModel.makeCenterContent = { [weak self] in
+            self?.makeCenterContent?()
+        }
+        barModel.onCenterPanelOpenChanged = { [weak self] isOpen in
+            self?.centerPanelOpenChanged(isOpen)
+        }
 
         let foldRecognizer = UIPanGestureRecognizer(target: self, action: #selector(handleFoldPan(_:)))
         foldRecognizer.delegate = self
@@ -373,11 +401,20 @@ private extension TabBarBottomChromeController {
 
     /// A fold drag starts on the bar row, outside the centre hole where the centre control sits.
     func canStartFoldDrag(at touch: UITouch) -> Bool {
+        // The hosting view is taller than the row while the centre panel is open, and the row sits at its bottom.
+        let bounds = barHost.view.bounds
+        let row = CGRect(
+            x: 0,
+            y: bounds.height - DSTabBarStyle.height,
+            width: bounds.width,
+            height: DSTabBarStyle.height
+        )
         let point = touch.location(in: barHost.view)
-        guard barHost.view.bounds.contains(point) else {
+        guard row.contains(point) else {
             return false
         }
-        return !DSTabBarStyle.isInCenterHole(point, inRowOfWidth: barHost.view.bounds.width)
+        let pointInRow = CGPoint(x: point.x, y: point.y - row.minY)
+        return !DSTabBarStyle.isInCenterHole(pointInRow, inRowOfWidth: row.width)
     }
 }
 

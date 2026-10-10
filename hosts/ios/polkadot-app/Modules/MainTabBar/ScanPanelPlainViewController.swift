@@ -8,8 +8,6 @@ final class ScanPanelPlainViewController: UIViewController, ViewHolder {
     private let scannerController: UIViewController
 
     var onSearchTap: (() -> Void)?
-    var onPanelDragChanged: ((CGFloat) -> Void)?
-    var onPanelDragEnded: ((CGFloat) -> Void)?
 
     init(scannerController: UIViewController) {
         self.scannerController = scannerController
@@ -34,14 +32,6 @@ final class ScanPanelPlainViewController: UIViewController, ViewHolder {
 
         rootView.searchButton.onTap = { [weak self] in
             self?.onSearchTap?()
-        }
-
-        rootView.grabber.onDragChanged = { [weak self] translation in
-            self?.onPanelDragChanged?(translation)
-        }
-
-        rootView.grabber.onDragEnded = { [weak self] translation in
-            self?.onPanelDragEnded?(translation)
         }
     }
 }

@@ -4,9 +4,10 @@ import PolkadotUI
 import SwiftUI
 import UIKit
 
-/// The bar row: four fixed slots around the centre hole. The centre control and the shelf are not wired yet.
+/// The bar row: four fixed slots around the centre hole, with the centre control in the hole.
+/// The shelf is not wired yet.
 struct TabBarBarView: View {
-    let model: TabBarBarViewModel
+    @Bindable var model: TabBarBarViewModel
 
     var body: some View {
         DSTabBarContainer(
@@ -16,9 +17,18 @@ struct TabBarBarView: View {
             second: { slot(at: 1) },
             third: { slot(at: 2) },
             fourth: { slot(at: 3) },
-            center: { EmptyView() },
+            center: {
+                DSTabBarCenterControl(progress: $model.centerProgress, contentHeight: model.centerContentHeight) {
+                    TabBarScanPanelContent(makeController: model.makeCenterContent)
+                }
+            },
             shelf: { EmptyView() }
         )
+        .onChange(of: model.centerProgress) { _, _ in
+            model.reportCenterProgressSettled()
+        }
+        // The hosting view grows upward while the centre panel is open, so the row stays at its bottom.
+        .frame(maxHeight: .infinity, alignment: .bottom)
     }
 
     @ViewBuilder
@@ -89,6 +99,18 @@ private struct TabBarSlotView: View {
                 .frame(width: Self.iconSize, height: Self.iconSize)
         }
     }
+}
+
+/// Builds the scan panel when the centre control first shows content, so the camera starts on the first
+/// drag and is released when the control removes its content.
+private struct TabBarScanPanelContent: UIViewControllerRepresentable {
+    let makeController: () -> UIViewController?
+
+    func makeUIViewController(context _: Context) -> UIViewController {
+        makeController() ?? UIViewController()
+    }
+
+    func updateUIViewController(_: UIViewController, context _: Context) {}
 }
 
 /// Renders the open-apps count glyph from the bar's UIKit component.

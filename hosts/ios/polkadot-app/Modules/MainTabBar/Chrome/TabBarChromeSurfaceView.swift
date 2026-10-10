@@ -10,6 +10,8 @@ final class TabBarChromeSurfaceView: UIView {
 
     private var panelContainerHeightConstraint: Constraint?
     private var appliedPanelContainerHeight: CGFloat = 0
+    private var barHeightConstraint: Constraint?
+    private var appliedBarRise: CGFloat = 0
     private var restingBottomConstraints: [Constraint] = []
     private var sunkenBottomConstraints: [Constraint] = []
     private var isPanelTrackingKeyboard = false
@@ -71,14 +73,26 @@ final class TabBarChromeSurfaceView: UIView {
 
         bar.snp.makeConstraints { make in
             make.leading.trailing.equalTo(panelContainer)
-            make.height.equalTo(DSTabBarStyle.height)
+            barHeightConstraint = make.height.equalTo(DSTabBarStyle.height).constraint
             pinBottom(make)
         }
     }
 
+    /// Grows the bar's hosting view upward so the open centre control lies inside its bounds, where
+    /// UIKit delivers touches to it. The row stays at the bottom of the hosting view.
+    func setBarRise(_ rise: CGFloat) {
+        guard rise != appliedBarRise else {
+            return
+        }
+        appliedBarRise = rise
+        barHeightConstraint?.update(offset: DSTabBarStyle.height + rise)
+        setNeedsLayout()
+    }
+
     func setPanelsOpen(_ kind: TabBarPanelKind?, animator: UIViewPropertyAnimator?) {
         tabsPanelView.setOpen(kind == .spaTabs, animator: animator)
-        contentPanelView.setOpen(kind?.contentAction != nil, animator: animator)
+        // The centre control hosts the scan panel itself, so the surface's content panel stays closed for it.
+        contentPanelView.setOpen(kind?.contentAction != nil && kind != .content(.scan), animator: animator)
 
         // Only an open panel can hold the focused search the sunken anchor belongs to.
         if kind == nil {
@@ -92,6 +106,9 @@ final class TabBarChromeSurfaceView: UIView {
             switch kind {
             case .spaTabs:
                 tabsPanelView.preferredHeight(availableHeight: availablePanelHeight)
+            case nil,
+                 .content(.scan):
+                DSTabBarStyle.height
             case .content:
                 // While a search is active the content fills the space above the keys or the
                 // tab bar instead of fitting its rows.
@@ -100,8 +117,6 @@ final class TabBarChromeSurfaceView: UIView {
                 } else {
                     contentPanelView.preferredHeight(availableHeight: availablePanelHeight)
                 }
-            case nil:
-                DSTabBarStyle.height
             }
 
         guard containerHeight != appliedPanelContainerHeight else {

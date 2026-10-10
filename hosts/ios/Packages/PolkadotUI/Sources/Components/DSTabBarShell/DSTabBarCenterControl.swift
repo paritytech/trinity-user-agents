@@ -62,9 +62,7 @@ private extension DSTabBarCenterControl {
     var travel: CGFloat { max(1, expandedHeight - DSTabBarStyle.centerButtonSize) }
 
     var expandedHeight: CGFloat {
-        // The frame covers body plus lobe, and the body's corner arcs need vertical room of their own.
-        let minimumHeight = DSTabBarStyle.centerPanelCornerRadius * 2 + lobeRadius
-        return max(minimumHeight, contentHeight + lobeRadius + DSTabBarStyle.centerGrabberHeight)
+        DSTabBarStyle.centerPanelHeight(contentHeight: contentHeight)
     }
 
     func lerp(_ from: CGFloat, _ to: CGFloat) -> CGFloat {
@@ -72,10 +70,7 @@ private extension DSTabBarCenterControl {
     }
 
     func frameSize(availableWidth: CGFloat) -> CGSize {
-        let expandedWidth = max(
-            DSTabBarStyle.centerButtonSize,
-            availableWidth - 2 * DSTabBarStyle.centerPanelMargin
-        )
+        let expandedWidth = DSTabBarStyle.centerPanelWidth(inRowOfWidth: availableWidth)
         return CGSize(
             width: lerp(DSTabBarStyle.centerButtonSize, expandedWidth),
             height: lerp(DSTabBarStyle.centerButtonSize, expandedHeight)
@@ -188,7 +183,12 @@ private extension DSTabBarCenterControl {
             progress = target
             return
         }
-        withAnimation(.spring(response: 0.42, dampingFraction: 0.82)) {
+        withAnimation(
+            .spring(
+                response: DSTabBarStyle.centerSpringResponse,
+                dampingFraction: DSTabBarStyle.centerSpringDamping
+            )
+        ) {
             progress = target
         }
     }

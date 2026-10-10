@@ -3,7 +3,6 @@ import UIKit
 internal import SnapKit
 
 public final class ScanPanelViewLayout: UIView {
-    public let grabber = DSPanelGrabberView()
     public let searchRow = DSSearchRowView()
     public let resultsView = SearchContactResultsView()
 
@@ -53,7 +52,6 @@ public final class ScanPanelViewLayout: UIView {
         resultsView.clipsToBounds = true
         contentStack.addArrangedSubview(resultsView)
         addSubview(contentStack)
-        addSubview(grabber)
 
         searchRowStack.addArrangedSubview(scanButton)
         searchRowStack.addArrangedSubview(searchRow)
@@ -67,13 +65,9 @@ public final class ScanPanelViewLayout: UIView {
         scanButton.onTap = { [weak self] in self?.onCameraTapped?() }
 
         contentStack.snp.makeConstraints { make in
-            make.top.equalTo(grabber.snp.bottom)
+            make.top.equalToSuperview()
             make.leading.trailing.equalToSuperview()
             make.bottom.equalTo(searchRowStack.snp.top).offset(-DSSpacings.small)
-        }
-
-        grabber.snp.makeConstraints { make in
-            make.top.leading.trailing.equalToSuperview()
         }
 
         resultsView.snp.makeConstraints { make in

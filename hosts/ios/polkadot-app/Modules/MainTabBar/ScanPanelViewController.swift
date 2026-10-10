@@ -11,8 +11,6 @@ final class ScanPanelViewController: UIViewController, ViewHolder {
 
     var onChatFound: ((ChatOpenModel) -> Void)?
     var onContentHeightChanged: (() -> Void)?
-    var onPanelDragChanged: ((CGFloat) -> Void)?
-    var onPanelDragEnded: ((CGFloat) -> Void)?
 
     init(
         scannerController: UIViewController & ScanPanelScannerControlling,
@@ -65,14 +63,6 @@ private extension ScanPanelViewController {
 
         rootView.resultsView.selectionHandler = { [weak self] identifier in
             self?.presenter.didSelectContact(identifier: identifier)
-        }
-
-        rootView.grabber.onDragChanged = { [weak self] translation in
-            self?.onPanelDragChanged?(translation)
-        }
-
-        rootView.grabber.onDragEnded = { [weak self] translation in
-            self?.onPanelDragEnded?(translation)
         }
     }
 }

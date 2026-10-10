@@ -70,6 +70,8 @@ final class MainTabBarViewController: UIViewController {
         installWidgets()
 
         chromeController.statusStripAnchorProvider = { [weak self] in self?.chainStatusAnchorGuide }
+        chromeController.makeCenterContent = { [weak self] in self?.makeScanPanel() }
+        chromeController.contentHeightForCenterPanel = ScanPanelContentHeight.height(forPanelWidth:)
 
         chromeController.onSelect = { [weak self] index, isReselection in
             self?.handleSelection(index: index, isReselection: isReselection)
@@ -343,40 +345,9 @@ extension MainTabBarViewController: MainTabBarViewProtocol {
         applyChips()
     }
 
-    func showScanPanel() {
-        let controller = viewFactory.makeScanController()
-        chromeController.setContentController(controller, for: .scan)
-
-        controller?.onPanelDragChanged = { [weak self] translation in
-            self?.chromeController.panelDragChanged(translation: translation)
-        }
-
-        controller?.onPanelDragEnded = { [weak self] translation in
-            self?.chromeController.panelDragEnded(translation: translation)
-        }
-
-        #if FEATURE_INPUT
-            // Opening the chat selects its tab, and tab selection closes the panel. A second close
-            // here would cancel that animation in place and leave the backdrop and panel frozen
-            // mid-way.
-            controller?.onChatFound = { [weak self] model in
-                self?.presenter.didFindChat(model)
-            }
-
-            controller?.onContentHeightChanged = { [weak self] in
-                self?.chromeController.resizeContentPanel()
-            }
-
-            chromeController.onPanelDragCommitted = { [weak controller] in
-                controller?.cancelSearch()
-            }
-        #else
-            controller?.onSearchTap = { [weak self] in
-                self?.chromeController.setPanel(nil, animated: true)
-                self?.presenter.didRequestContactSearch()
-            }
-        #endif
-    }
+    /// The centre control builds the scan panel through `makeScanPanel` when it first shows content. That can
+    /// land after this call, so nothing is wired here.
+    func showScanPanel() {}
 
     func showChainStatus(_ models: [ChainConnectionStatusViewModel]) {
         statusBarHost.rootView = ChainConnectionStatusBarView(models: models)
@@ -395,6 +366,28 @@ extension MainTabBarViewController: MainTabBarViewProtocol {
 extension MainTabBarViewController {
     func openScanPanel() {
         chromeController.setPanel(.content(.scan), animated: true)
+    }
+
+    func makeScanPanel() -> UIViewController? {
+        let controller = viewFactory.makeScanController()
+
+        #if FEATURE_INPUT
+            // Opening the chat selects its tab, and tab selection closes the panel. A second close
+            // here would cancel that animation in place and leave the backdrop and panel frozen
+            // mid-way.
+            controller?.onChatFound = { [weak self] model in
+                self?.presenter.didFindChat(model)
+            }
+            controller?.onContentHeightChanged = { [weak self] in
+                self?.chromeController.refreshCenterContentHeight()
+            }
+        #else
+            controller?.onSearchTap = { [weak self] in
+                self?.chromeController.setPanel(nil, animated: true)
+                self?.presenter.didRequestContactSearch()
+            }
+        #endif
+        return controller
     }
 }
 

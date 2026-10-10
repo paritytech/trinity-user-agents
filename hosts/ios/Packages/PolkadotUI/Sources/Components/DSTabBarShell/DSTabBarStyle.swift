@@ -51,6 +51,12 @@ public enum DSTabBarStyle {
     /// so the bar settles with at most a slight overshoot.
     static let shelfSpringResponse: Double = 0.38
     static let shelfSpringDamping: Double = 0.85
+
+    /// Response of the spring that settles the centre control open or closed. Public because a host
+    /// driving the control from UIKit has to match the control's own settle.
+    public static let centerSpringResponse: Double = 0.42
+    public static let centerSpringDamping: Double = 0.82
+
     /// Length of the eased shelf reveal under Reduce Motion, growth and fade together. Matches
     /// the centre control's.
     static let shelfFadeDuration: Double = 0.2
@@ -62,6 +68,25 @@ public enum DSTabBarStyle {
     static let centerPanelCornerRadius: CGFloat = 24
     /// Concave blend where the lobe meets the panel's bottom edge.
     static let centerPanelFillet: CGFloat = 18
+
+    /// Width the open centre panel takes in a bar row of `width`, inset from both sides.
+    public static func centerPanelWidth(inRowOfWidth width: CGFloat) -> CGFloat {
+        max(centerButtonSize, width - 2 * centerPanelMargin)
+    }
+
+    /// Height the open centre panel takes for content of `contentHeight`, grabber and lobe included.
+    /// The body's corner arcs need vertical room of their own, so the panel never drops below them.
+    public static func centerPanelHeight(contentHeight: CGFloat) -> CGFloat {
+        let lobeRadius = centerButtonSize / 2
+        let minimumHeight = centerPanelCornerRadius * 2 + lobeRadius
+        return max(minimumHeight, contentHeight + lobeRadius + centerGrabberHeight)
+    }
+
+    /// How far the open centre panel stands above the bar row. Its foot sits at the lobe's centre
+    /// plus the lobe radius, measured down from the top of the row.
+    public static func centerPanelRise(contentHeight: CGFloat) -> CGFloat {
+        centerPanelHeight(contentHeight: contentHeight) - (notchCenterY + centerButtonSize / 2)
+    }
 
     /// Strength of the top-lit sheen, which makes the centre control read as a dome.
     static let centerSheenStrength: Double = 0.35
