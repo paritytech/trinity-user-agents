@@ -6,6 +6,9 @@ enum SPAContentSource {
     case dotNs
     /// Debug: load the URL as-is, skipping resolution. Rust runtime only.
     case directURL(URL)
+    /// Debug: a product served from a development server on the developer's machine, loaded from
+    /// `origin` and run under the core's `localhost[:port]` identifier. Rust runtime only.
+    case devServer(origin: URL, productId: ProductId)
 }
 
 struct SPAConfiguration {
@@ -42,6 +45,17 @@ struct SPAConfiguration {
 }
 
 extension SPAConfiguration {
+    /// Identifier the product runs under, which storage, permissions and account derivation key off.
+    var productId: ProductId {
+        switch contentSource {
+        case .dotNs,
+             .directURL:
+            page.host.toDotDomain()
+        case let .devServer(_, productId):
+            productId
+        }
+    }
+
     static func browseRoot(host: ProductHost) -> SPAConfiguration {
         SPAConfiguration(
             title: nil,

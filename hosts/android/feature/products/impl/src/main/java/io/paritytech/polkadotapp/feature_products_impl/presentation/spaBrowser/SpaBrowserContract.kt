@@ -8,6 +8,8 @@ interface SpaBrowserContract {
     val state: StateFlow<SpaBrowserUiState>
 
     fun onBackPressed()
+
+    fun onRefresh()
 }
 
 data class SpaBrowserUiState(
@@ -15,6 +17,7 @@ data class SpaBrowserUiState(
     val subtitle: String? = "",
     val loadProgress: DotNsLoadProgress = DotNsLoadProgress.Idle,
     val pageState: SpaBrowserPageState = SpaBrowserPageState.Content,
+    val isDevServer: Boolean = false,
 )
 
 /** What the content area shows. Anything still in flight is [Content] with [SpaBrowserUiState.loadProgress] running. */

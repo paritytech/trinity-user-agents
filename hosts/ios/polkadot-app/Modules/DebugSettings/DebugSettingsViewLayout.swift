@@ -72,6 +72,11 @@ final class DebugSettingsViewLayout: UIView {
     }
 
     #if DEBUG
+        let openDevServerButton: RoundedButton = .create { button in
+            button.applyMainStyle()
+            button.imageWithTitleView?.title = "Open dev server"
+        }
+
         let openTrUAPIPlaygroundButton: RoundedButton = .create { button in
             button.applyMainStyle()
             button.imageWithTitleView?.title = "Open TrUAPI Playground"
@@ -179,7 +184,12 @@ final class DebugSettingsViewLayout: UIView {
         ]
 
         #if DEBUG
-            rows.append(contentsOf: [openTrUAPIPlaygroundButton, pocketFacePreviewButton, pocketCardsButton])
+            rows.append(contentsOf: [
+                openDevServerButton,
+                openTrUAPIPlaygroundButton,
+                pocketFacePreviewButton,
+                pocketCardsButton
+            ])
         #endif
 
         rows.append(contentsOf: [strategyDebugRow, truApiRuntimeRow, hostPlacedRow])

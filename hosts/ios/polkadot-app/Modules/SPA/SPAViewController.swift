@@ -120,7 +120,8 @@ private extension SPAViewController {
                     baseHost: configuration.page.host,
                     hostProvider: hostProvider
                 )
-            case let .directURL(url):
+            case let .directURL(url),
+                 let .devServer(url, _):
                 DirectURLNavigationDecisionHandler(baseURL: url)
             }
 

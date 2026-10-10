@@ -2,11 +2,13 @@ package io.paritytech.polkadotapp.feature_products_impl.domain.browser
 
 import android.net.Uri
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
+import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.navigation.NavigationPolicy
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.TrUAPISessionStarter
 import io.paritytech.polkadotapp.feature_products_impl.domain.webView.BrowserWebViewProvider
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
+import uniffi.truapi.DevServerProduct
 import javax.inject.Inject
 
 /**
@@ -21,12 +23,22 @@ class TrUAPIProductTabSessionFactory @Inject constructor(
     private val sessionStarter: TrUAPISessionStarter,
     private val dotNsTldProvider: DotNsTldProvider,
 ) {
-    fun create(url: String, scope: CoroutineScope, onDeeplink: (Uri) -> Unit): BrowserWebViewProvider {
+    fun create(
+        url: String,
+        scope: CoroutineScope,
+        onDeeplink: (Uri) -> Unit,
+        devServer: DevServerProduct?,
+    ): BrowserWebViewProvider {
+        // A dev server page loads from the address that reaches the developer's machine but runs under
+        // the core's `localhost` id, so neither can be read off the other.
+        val devServerProductId = devServer?.let { ProductId.fromStoredValue(it.productId) }
         val provider = browserWebViewProviderFactory.create(
             url,
             NavigationPolicy.InlineNavigation(onDeeplinkNavigation = onDeeplink),
             allowIframes = true,
             scope,
+            fixedProductId = devServerProductId,
+            firstPartyOrigin = devServer?.origin,
         )
 
         val hostApiNavigation = NavigationPolicy.HostApiNavigation(
@@ -35,7 +47,7 @@ class TrUAPIProductTabSessionFactory @Inject constructor(
             dotNsTldProvider = dotNsTldProvider,
         )
 
-        sessionStarter.start(provider, url, scope, hostApiNavigation)
+        sessionStarter.start(provider, url, scope, hostApiNavigation, explicitProductId = devServerProductId)
         return provider
     }
 }

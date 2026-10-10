@@ -31,6 +31,12 @@ interface DebugMenuContract {
 
     fun onSpaBrowserDialogDismissed()
 
+    fun onOpenDevServerClick()
+
+    fun onDevServerAddressEntered(address: String)
+
+    fun onDevServerDialogDismissed()
+
     fun onClearDotNsCacheClick()
 
     fun onClearJWTTokenClick()

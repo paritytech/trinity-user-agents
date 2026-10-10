@@ -10,10 +10,13 @@ import io.paritytech.polkadotapp.app.root.domain.debug.RestartAppUseCase
 import io.paritytech.polkadotapp.app.root.presentation.root.RootRouter
 import io.paritytech.polkadotapp.common.presentation.clipboard.ClipboardService
 import io.paritytech.polkadotapp.common.presentation.screens.BaseViewModel
+import io.paritytech.polkadotapp.common.utils.FeatureOption
 import io.paritytech.polkadotapp.common.utils.Urls
+import io.paritytech.polkadotapp.common.utils.isEnabled
 import io.paritytech.polkadotapp.common.utils.launchUnit
 import io.paritytech.polkadotapp.feature_coinage_api.domain.debug.CoinageDebugSettings
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsResolver
+import io.paritytech.polkadotapp.feature_products_api.domain.browser.DevServerAddresses
 import io.paritytech.polkadotapp.feature_products_api.domain.runtime.ProductRuntimeSettings
 import io.paritytech.polkadotapp.feature_products_api.presentation.SpaBrowserPayload
 import io.paritytech.polkadotapp.feature_videogame_impl.data.gameResults.GameResultsWebViewPreloader
@@ -23,6 +26,7 @@ import io.paritytech.polkadotapp.tools_jwt_auth_impl.data.store.JWTTokenStore
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.update
 import javax.inject.Inject
+import io.paritytech.polkadotapp.common.R as RCommon
 
 @HiltViewModel
 class DebugMenuViewModel @Inject constructor(
@@ -39,8 +43,11 @@ class DebugMenuViewModel @Inject constructor(
     private val coinageDebugSettings: CoinageDebugSettings,
     private val productRuntimeSettings: ProductRuntimeSettings,
     private val restartAppUseCase: RestartAppUseCase,
+    private val devServerAddresses: DevServerAddresses,
 ) : BaseViewModel(), DebugMenuContract {
-    override val state = MutableStateFlow(DebugMenuState())
+    override val state = MutableStateFlow(
+        DebugMenuState(devServerAvailable = FeatureOption.DEV_SERVER_PRODUCTS.isEnabled)
+    )
 
     init {
         refreshJWTTokenState()
@@ -114,6 +121,25 @@ class DebugMenuViewModel @Inject constructor(
 
     override fun onSpaBrowserDialogDismissed() {
         state.update { it.copy(showSpaBrowserDialog = false) }
+    }
+
+    override fun onOpenDevServerClick() {
+        state.update { it.copy(showDevServerDialog = true) }
+    }
+
+    override fun onDevServerAddressEntered(address: String) {
+        state.update { it.copy(showDevServerDialog = false) }
+
+        val origin = devServerAddresses.originOf(address)
+        if (origin == null) {
+            showMessage(RCommon.string.debug_dev_server_not_a_dev_server)
+        } else {
+            router.openSpaBrowser(SpaBrowserPayload.ByUrl(origin))
+        }
+    }
+
+    override fun onDevServerDialogDismissed() {
+        state.update { it.copy(showDevServerDialog = false) }
     }
 
     override fun onClearDotNsCacheClick() = launchUnit {

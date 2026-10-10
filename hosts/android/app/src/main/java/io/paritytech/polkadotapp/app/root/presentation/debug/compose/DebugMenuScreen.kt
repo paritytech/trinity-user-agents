@@ -58,6 +58,9 @@ fun DebugMenuScreen(contract: DebugMenuContract) {
         onOpenSpaBrowserClick = contract::onOpenSpaBrowserClick,
         onSpaBrowserUrlEntered = contract::onSpaBrowserUrlEntered,
         onSpaBrowserDialogDismissed = contract::onSpaBrowserDialogDismissed,
+        onOpenDevServerClick = contract::onOpenDevServerClick,
+        onDevServerAddressEntered = contract::onDevServerAddressEntered,
+        onDevServerDialogDismissed = contract::onDevServerDialogDismissed,
         onClearDotNsCacheClick = contract::onClearDotNsCacheClick,
         onClearJWTTokenClick = contract::onClearJWTTokenClick,
         onSimulateGameResultsClick = contract::onSimulateGameResultsClick,
@@ -85,6 +88,9 @@ private fun DebugMenuScreenInternal(
     onOpenSpaBrowserClick: () -> Unit,
     onSpaBrowserUrlEntered: (String) -> Unit,
     onSpaBrowserDialogDismissed: () -> Unit,
+    onOpenDevServerClick: () -> Unit,
+    onDevServerAddressEntered: (String) -> Unit,
+    onDevServerDialogDismissed: () -> Unit,
     onClearDotNsCacheClick: () -> Unit,
     onClearJWTTokenClick: () -> Unit,
     onSimulateGameResultsClick: () -> Unit,
@@ -199,6 +205,16 @@ private fun DebugMenuScreenInternal(
 
             VerticalSpacer { mediumIncreased }
 
+            if (state.devServerAvailable) {
+                DebugMenuItem(
+                    title = stringResource(RCommon.string.debug_menu_open_dev_server),
+                    enabled = true,
+                    onClick = onOpenDevServerClick
+                )
+
+                VerticalSpacer { mediumIncreased }
+            }
+
             VerticalSpacer { mediumIncreased }
 
             DebugMenuItem(
@@ -239,9 +255,20 @@ private fun DebugMenuScreenInternal(
     }
 
     if (state.showSpaBrowserDialog) {
-        SpaBrowserUrlDialog(
+        UrlDialog(
+            title = stringResource(RCommon.string.debug_spa_browser_title),
+            hint = stringResource(RCommon.string.debug_spa_browser_url_hint),
             onDismiss = onSpaBrowserDialogDismissed,
             onConfirm = onSpaBrowserUrlEntered,
+        )
+    }
+
+    if (state.showDevServerDialog) {
+        UrlDialog(
+            title = stringResource(RCommon.string.debug_dev_server_title),
+            hint = stringResource(RCommon.string.debug_dev_server_address_hint),
+            onDismiss = onDevServerDialogDismissed,
+            onConfirm = onDevServerAddressEntered,
         )
     }
 
@@ -302,7 +329,9 @@ private fun RuntimeRestartDialog(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun SpaBrowserUrlDialog(
+private fun UrlDialog(
+    title: String,
+    hint: String,
     onDismiss: () -> Unit,
     onConfirm: (String) -> Unit,
 ) {
@@ -318,7 +347,7 @@ private fun SpaBrowserUrlDialog(
                 modifier = Modifier.padding(PolkadotTheme.spacings.large),
             ) {
                 NovaText(
-                    text = stringResource(RCommon.string.debug_spa_browser_title),
+                    text = title,
                     style = PolkadotTheme.typography.headline.small,
                     color = PolkadotTheme.colors.fg.primary
                 )
@@ -331,7 +360,7 @@ private fun SpaBrowserUrlDialog(
                     onValueChange = { url = it },
                     placeholder = {
                         NovaText(
-                            text = stringResource(RCommon.string.debug_spa_browser_url_hint),
+                            text = hint,
                             style = PolkadotTheme.typography.body.large,
                             color = PolkadotTheme.colors.fg.tertiary
                         )
@@ -413,6 +442,9 @@ private fun DebugMenuScreenPreview() {
             onOpenSpaBrowserClick = {},
             onSpaBrowserUrlEntered = {},
             onSpaBrowserDialogDismissed = {},
+            onOpenDevServerClick = {},
+            onDevServerAddressEntered = {},
+            onDevServerDialogDismissed = {},
             onClearDotNsCacheClick = {},
             onClearJWTTokenClick = {},
             onSimulateGameResultsClick = {},

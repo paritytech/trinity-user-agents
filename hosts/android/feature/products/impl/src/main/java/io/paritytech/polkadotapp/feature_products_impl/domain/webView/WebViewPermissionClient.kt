@@ -127,11 +127,4 @@ class WebViewPermissionClient(
         val origin = originOrNull() ?: return false
         return origin.equals(firstPartyOrigin, ignoreCase = true)
     }
-
-    private fun Uri.originOrNull(): String? {
-        val scheme = scheme ?: return null
-        val host = host ?: return null
-        val port = port.takeIf { it != -1 }?.let { ":$it" }.orEmpty()
-        return "$scheme://$host$port"
-    }
 }
