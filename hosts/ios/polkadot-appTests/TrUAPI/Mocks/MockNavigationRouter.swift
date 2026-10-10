@@ -6,6 +6,7 @@ import UIKitExt
 @MainActor
 final class MockNavigationRouter: ProductsNavigationRouting {
     var openedURL: URL?
+    var openedHostLink: URL?
     var navigatedPage: ProductPage?
     var errorToThrow: Error?
 
@@ -24,5 +25,10 @@ final class MockNavigationRouter: ProductsNavigationRouting {
     func openExternalURL(_ url: URL) async throws {
         if let error = errorToThrow { throw error }
         openedURL = url
+    }
+
+    func openHostLink(_ url: URL) async throws {
+        if let error = errorToThrow { throw error }
+        openedHostLink = url
     }
 }

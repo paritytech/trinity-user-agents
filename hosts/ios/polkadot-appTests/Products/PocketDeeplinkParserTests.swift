@@ -71,4 +71,19 @@ struct PocketDeeplinkParserTests {
     func doesNotClaimAnUnrelatedUrl() {
         #expect(parser.classify("https://example.com/-/pocket/add?card=loyalty") == .notOurs)
     }
+
+    /// A product's own navigation hands the host only what opens the Pocket. The
+    /// core rejects more than malformed Pocket links (`javascript:` among them),
+    /// so a rejected link is never treated as one.
+    @Test(arguments: [
+        ("polkadot://game.dot/-/pocket/add?card=loyalty", true),
+        ("polkadot://game.dot/-/pocket/open?card=loyalty", true),
+        ("polkadot://game.dot/-/pocket", true),
+        ("polkadot://game.dot/-/pocket/add", false),
+        ("polkadot://game.dot/some/page", false),
+        ("javascript:alert(1)", false)
+    ])
+    func opensPocketOnlyForACardActionOrTheCollection(url: String, opens: Bool) {
+        #expect(parser.opensPocket(url) == opens)
+    }
 }
