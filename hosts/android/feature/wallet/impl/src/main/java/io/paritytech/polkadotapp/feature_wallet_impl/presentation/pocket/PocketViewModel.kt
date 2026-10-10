@@ -133,25 +133,23 @@ class PocketViewModel @Inject constructor(
             initialValue = persistentListOf()
         )
 
-    val collectiblesAvailable = flowOf {
-        collectiblesUrlResolver.resolveUrl() != null
-    }
+    private val collectiblesUrl = flowOf { collectiblesUrlResolver.resolveUrl() }
         .flowOn(dispatchers.computation)
-        .stateIn(scope = this, started = SharingStarted.Eagerly, initialValue = false)
+        .stateIn(scope = this, started = SharingStarted.Eagerly, initialValue = null)
 
     val state: StateFlow<PocketScreenState> = combine(
         cards,
         selectedCardId,
         collectiblesShown,
-        collectiblesAvailable,
+        collectiblesUrl,
         removalCandidate
-    ) { cards, selectedId, collectiblesShown, collectiblesAvailable, candidate ->
+    ) { cards, selectedId, collectiblesShown, collectiblesUrl, candidate ->
         val selectedCard = cards.firstOrNull { it.id == selectedId }
         when {
             selectedCard != null -> PocketScreenState.CardDetails(selectedCard = selectedCard)
             collectiblesShown -> PocketScreenState.Collectibles
             else -> PocketScreenState.List(
-                collectiblesAvailable = collectiblesAvailable,
+                collectiblesAvailable = collectiblesUrl != null,
                 removalCandidate = candidate
             )
         }
@@ -308,7 +306,7 @@ class PocketViewModel @Inject constructor(
     }
 
     fun openCollectibles() {
-        router.openCollectibles()
+        collectiblesUrl.value?.let { router.openSpaSheet(it.toString()) }
     }
 
     /**
