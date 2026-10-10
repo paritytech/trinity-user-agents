@@ -6,10 +6,10 @@
 //! reading usernames back through `ReviveApi_call`, and the raw storage keys of
 //! the gateway pallet.
 //!
-//! Username resolution ([`discover_pop_controller`], [`resolve_labels`]) is
+//! Username resolution ([`discover_pop_controller`], [`resolve_identity`]) is
 //! written once against the [`DotnsTransport`] trait. The headless CLI's
 //! plain-RPC reader and the in-core `chainHead_v1` lookup therefore walk the
-//! same contract chain.
+//! same contract chain and gateway pallet records.
 //!
 //! Byte layouts mirror `pallets/dotns-gateway` in `paritytech/individuality`
 //! and the dotNS contracts (`paritytech/dotns`).
@@ -687,10 +687,9 @@ pub async fn discover_pop_controller<T: DotnsTransport + ?Sized>(
 ///
 /// Two sources are merged. The controller's pending claims hold gateway-minted
 /// names the user has not settled into a `LabelStore` yet (`claimLabelStore`);
-/// those come first. A claim older than the controller's `reservationDuration`
-/// is lapsed — `claimLabelStore` skips it and `expirePendingClaim` will sweep
-/// it — so it is not a username here either, whether or not it has been swept. The user's `LabelStore`, when deployed, holds every name
-/// written for them: gateway names once settled, plus public registrations and
+/// those come first. A pending claim does not expire: the controller settles
+/// a claim of any age, so its `mintedAt` is not consulted. The user's
+/// `LabelStore`, when deployed, holds every name written for them: gateway names once settled, plus public registrations and
 /// incoming transfers. Store labels carry the network TLD (`alice01.paseo`),
 /// which is stripped here; subnames (`app.alice`) are dropped.
 ///
@@ -835,15 +834,15 @@ pub async fn label_available<T: DotnsTransport + ?Sized>(
 }
 
 /// Gateway-minted labels of `user` still waiting for `claimLabelStore`, paged
-/// out of `DotnsPopController.pendingClaims(address,uint256,uint256)`, without
-/// the entries that have lapsed (`mintedAt + reservationDuration < now`, the
-/// controller's own `_isExpired`; `now` is `Timestamp.Now` at the pinned block).
+/// out of `DotnsPopController.pendingClaims(address,uint256,uint256)`. Every
+/// entry counts whatever its `mintedAt`: the controller no longer expires
+/// pending claims, and `claimLabelStore` settles all of them.
 async fn pending_claim_labels<T: DotnsTransport + ?Sized>(
     transport: &mut T,
     controller: &[u8; 20],
     user: &[u8; 20],
 ) -> Result<Vec<String>, String> {
-    let mut claims = Vec::new();
+    let mut labels = Vec::new();
     for page in 0..CLAIM_PAGE_MAX {
         let output = match transport
             .view(
@@ -861,7 +860,7 @@ async fn pending_claim_labels<T: DotnsTransport + ?Sized>(
             Err(DotnsViewError::Reverted(reason)) => {
                 warn!(
                     %reason,
-                    retained = claims.len(),
+                    retained = labels.len(),
                     "DotnsPopController.pendingClaims page reverted; retaining earlier pages"
                 );
                 break;
@@ -873,7 +872,7 @@ async fn pending_claim_labels<T: DotnsTransport + ?Sized>(
         let page_claims = decode_pending_claims_array(&output)
             .map_err(|err| format!("DotnsPopController.pendingClaims: {err}"))?;
         let short_page = (page_claims.len() as u64) < CLAIM_PAGE_LIMIT;
-        claims.extend(page_claims);
+        labels.extend(page_claims.into_iter().map(|(label, _)| label));
         if short_page {
             break;
         }
@@ -885,40 +884,75 @@ async fn pending_claim_labels<T: DotnsTransport + ?Sized>(
             );
         }
     }
-    if claims.is_empty() {
-        return Ok(Vec::new());
+    Ok(labels)
+}
+
+/// Usernames of `account`: its contract labels ([`resolve_labels`], classified
+/// by [`classify_labels`]), with the lite username falling back to the gateway
+/// pallet's own record ([`gateway_lite_username`]) when the contracts yield
+/// none.
+pub async fn resolve_identity<T: DotnsTransport + ?Sized>(
+    transport: &mut T,
+    controller: &[u8; 20],
+    account: &[u8; 32],
+) -> Result<DotnsIdentity, String> {
+    let labels = resolve_labels(transport, controller, account).await?;
+    let mut identity = classify_labels(transport, controller, labels).await?;
+    if identity.lite_username.is_none() {
+        identity.lite_username = gateway_lite_username(transport, account).await?;
     }
-    let duration_output = transport
-        .view(controller, call_no_args("reservationDuration()"))
-        .await
-        .map_err(|err| format!("DotnsPopController.reservationDuration: {err}"))?;
-    let duration = decode_u64(&duration_output)
-        .map_err(|err| format!("DotnsPopController.reservationDuration: {err}"))?;
-    let now = chain_time_secs(transport).await?;
-    Ok(claims
-        .into_iter()
-        .filter(|(_, minted_at)| !claim_lapsed(*minted_at, duration, now))
-        .map(|(label, _)| label)
-        .collect())
+    Ok(identity)
 }
 
-/// Whether a pending claim minted at `minted_at` has lapsed at chain time
-/// `now`, mirroring `DotnsPopController._isExpired`.
-fn claim_lapsed(minted_at: u64, duration: u64, now: u64) -> bool {
-    minted_at.saturating_add(duration) < now
-}
-
-/// Asset Hub chain time in Unix seconds, from `Timestamp.Now` (milliseconds).
-async fn chain_time_secs<T: DotnsTransport + ?Sized>(transport: &mut T) -> Result<u64, String> {
-    let value = transport
-        .storage(timestamp_now_key())
-        .await?
-        .ok_or("Timestamp.Now is unset")?;
-    let millis: [u8; 8] = value
-        .as_slice()
-        .try_into()
-        .map_err(|_| "Timestamp.Now is not a u64".to_string())?;
-    Ok(u64::from_le_bytes(millis) / 1000)
+/// The lite username the gateway pallet recorded for `account`,
+/// `DotnsGateway.AccountNames[account].lite.label`. Accepted only when it is a
+/// dotted lite username ([`is_dotted_lite_username`]) and
+/// `DotnsGateway.LiteLabelOwner[label]` is `account`.
+///
+/// Only the gateway writes either map, so the record carries its own
+/// provenance. It covers names the contract path cannot vouch for: an account
+/// minted before the gateway switched to dotted labels holds an undotted
+/// pending claim (`alice01`) that `isPopIssued` rejects in both spellings,
+/// while the pallet records `alice.01`.
+pub async fn gateway_lite_username<T: DotnsTransport + ?Sized>(
+    transport: &mut T,
+    account: &[u8; 32],
+) -> Result<Option<String>, String> {
+    let Some(record) = transport.storage(account_names_key(account)).await? else {
+        return Ok(None);
+    };
+    // `AccountNameRecord { lite: Option<NameEntry>, full: Option<NameEntry> }`
+    // with `NameEntry { label: BaseLabel, chat: Option<ChatKey> }`: the lite
+    // label leads the record, so only that prefix is decoded.
+    let Some(label) = Option::<Vec<u8>>::decode(&mut record.as_slice())
+        .map_err(|err| format!("DotnsGateway.AccountNames: {err}"))?
+    else {
+        return Ok(None);
+    };
+    let label = match String::from_utf8(label) {
+        Ok(label) if is_dotted_lite_username(&label) => label,
+        Ok(label) => {
+            warn!(%label, "DotnsGateway.AccountNames lite label is not a dotted lite username");
+            return Ok(None);
+        }
+        Err(_) => {
+            warn!("DotnsGateway.AccountNames lite label is not UTF-8");
+            return Ok(None);
+        }
+    };
+    let owner = transport
+        .storage(lite_label_owner_key(label.as_bytes()))
+        .await?;
+    if owner.as_deref() != Some(account.as_slice()) {
+        warn!(
+            %label,
+            account = %hex::encode(account),
+            owner = %owner.as_deref().map(hex::encode).unwrap_or_default(),
+            "DotnsGateway.LiteLabelOwner does not name the account the lite label is recorded for"
+        );
+        return Ok(None);
+    }
+    Ok(Some(label))
 }
 
 /// `DotnsGateway.DispatcherAddress` storage key.
@@ -933,6 +967,15 @@ pub fn dispatcher_address_key() -> Vec<u8> {
 /// The value is the 32-byte alias the account registered with.
 pub fn account_alias_key(account: &[u8; 32]) -> Vec<u8> {
     let mut key = plain_key(b"DotnsGateway", b"AccountAlias");
+    key.extend_from_slice(&blake2_128(account));
+    key.extend_from_slice(account);
+    key
+}
+
+/// `DotnsGateway.AccountNames[account]` storage key. The value is the
+/// account's `AccountNameRecord`; see [`gateway_lite_username`].
+pub fn account_names_key(account: &[u8; 32]) -> Vec<u8> {
+    let mut key = plain_key(b"DotnsGateway", b"AccountNames");
     key.extend_from_slice(&blake2_128(account));
     key.extend_from_slice(account);
     key
@@ -1283,14 +1326,6 @@ mod tests {
         assert!(decode_bool(&high).is_err());
     }
 
-    #[test]
-    fn a_pending_claim_lapses_after_the_reservation_duration() {
-        // DotnsPopController._isExpired: mintedAt + reservationDuration < now.
-        assert!(!claim_lapsed(1_000, 100, 1_100));
-        assert!(claim_lapsed(1_000, 100, 1_101));
-        assert!(!claim_lapsed(u64::MAX, 100, u64::MAX));
-    }
-
     struct RevertingSecondClaimPage {
         first_page: Vec<(String, u64)>,
         pending_calls: usize,
@@ -1298,9 +1333,8 @@ mod tests {
 
     #[crate::platform::async_trait]
     impl DotnsTransport for RevertingSecondClaimPage {
-        async fn storage(&mut self, key: Vec<u8>) -> Result<Option<Vec<u8>>, String> {
-            assert_eq!(key, timestamp_now_key());
-            Ok(Some(100_000u64.to_le_bytes().to_vec()))
+        async fn storage(&mut self, _key: Vec<u8>) -> Result<Option<Vec<u8>>, String> {
+            unreachable!("pending claims read no storage")
         }
 
         async fn view(
@@ -1321,9 +1355,6 @@ mod tests {
                 return Err(DotnsViewError::Reverted(DotnsContractError::Reverted {
                     detail: "offset past end".to_string(),
                 }));
-            }
-            if function == selector("reservationDuration()") {
-                return Ok(abi_word(100).to_vec());
             }
             panic!("unscripted view {}", hex::encode(function));
         }
@@ -1348,6 +1379,162 @@ mod tests {
 
         assert_eq!(labels, expected);
         assert_eq!(transport.pending_calls, 2);
+    }
+
+    /// A gateway-only account: pending claims, `isPopIssued` answers and
+    /// pallet storage are scripted; no `LabelStore` is deployed.
+    struct ScriptedGatewayAccount {
+        claims: Vec<(String, u64)>,
+        issued: Vec<&'static str>,
+        storage: std::collections::HashMap<Vec<u8>, Vec<u8>>,
+    }
+
+    const GATEWAY_ACCOUNT: [u8; 32] = [0xaa; 32];
+
+    impl ScriptedGatewayAccount {
+        /// `AccountNames[GATEWAY_ACCOUNT].lite = label` (with a chat key, no
+        /// full name), and `LiteLabelOwner[label] = owner`.
+        fn with_gateway_record(mut self, label: &str, owner: [u8; 32]) -> Self {
+            let lite = (label.as_bytes().to_vec(), Some([0x02u8; 65]));
+            let record = (Some(lite), None::<(Vec<u8>, Option<[u8; 65]>)>).encode();
+            self.storage
+                .insert(account_names_key(&GATEWAY_ACCOUNT), record);
+            self.storage
+                .insert(lite_label_owner_key(label.as_bytes()), owner.to_vec());
+            self
+        }
+    }
+
+    #[crate::platform::async_trait]
+    impl DotnsTransport for ScriptedGatewayAccount {
+        async fn storage(&mut self, key: Vec<u8>) -> Result<Option<Vec<u8>>, String> {
+            Ok(self.storage.get(&key).cloned())
+        }
+
+        async fn view(
+            &mut self,
+            _dest: &[u8; 20],
+            input: Vec<u8>,
+        ) -> Result<Vec<u8>, DotnsViewError> {
+            let function: [u8; 4] = input[..4].try_into().expect("selector prefix");
+            if function == selector("pendingClaims(address,uint256,uint256)") {
+                return Ok(abi_pending_claims(&self.claims));
+            }
+            if function == selector("isPopIssued(string)") {
+                let label = decode_string(&input[4..]).expect("label argument");
+                return Ok(abi_word(self.issued.contains(&label.as_str()).into()).to_vec());
+            }
+            if function == selector("protocolRegistry()")
+                || function == selector("get(bytes32)")
+            {
+                return Ok(address_word(0x9e));
+            }
+            if function == selector("getLabelStore(address)") {
+                return Ok(address_word(0));
+            }
+            panic!("unscripted view {}", hex::encode(function));
+        }
+    }
+
+    fn resolve_gateway_account(transport: &mut ScriptedGatewayAccount) -> DotnsIdentity {
+        futures::executor::block_on(resolve_identity(transport, &[0xc0; 20], &GATEWAY_ACCOUNT))
+            .unwrap()
+    }
+
+    #[test]
+    fn a_pending_claim_resolves_however_long_ago_it_was_minted() {
+        // The controller settles pending claims of any age; one minted at the
+        // epoch is still the account's name.
+        let mut transport = ScriptedGatewayAccount {
+            claims: vec![("alice.01".to_string(), 0)],
+            issued: vec!["alice.01"],
+            storage: Default::default(),
+        };
+        let identity = resolve_gateway_account(&mut transport);
+        assert_eq!(identity.lite_username.as_deref(), Some("alice.01"));
+    }
+
+    #[test]
+    fn a_legacy_undotted_claim_resolves_through_the_gateway_record() {
+        // Minted before dotted labels: the claim is `alice01`, `isPopIssued`
+        // denies both spellings, and the pallet holds `alice.01`.
+        let mut transport = ScriptedGatewayAccount {
+            claims: vec![("alice01".to_string(), 0)],
+            issued: vec![],
+            storage: Default::default(),
+        }
+        .with_gateway_record("alice.01", GATEWAY_ACCOUNT);
+        let identity = resolve_gateway_account(&mut transport);
+        assert_eq!(identity.lite_username.as_deref(), Some("alice.01"));
+        assert_eq!(identity.full_username, None);
+    }
+
+    #[test]
+    fn the_gateway_record_needs_the_lite_label_owner_to_agree() {
+        let mut transport = ScriptedGatewayAccount {
+            claims: vec![("alice01".to_string(), 0)],
+            issued: vec![],
+            storage: Default::default(),
+        }
+        .with_gateway_record("alice.01", [0xbb; 32]);
+        assert_eq!(resolve_gateway_account(&mut transport), DotnsIdentity::default());
+
+        // No owner entry at all is no better.
+        transport
+            .storage
+            .remove(&lite_label_owner_key(b"alice.01"));
+        assert_eq!(resolve_gateway_account(&mut transport), DotnsIdentity::default());
+    }
+
+    #[test]
+    fn the_gateway_record_must_hold_a_dotted_lite_username() {
+        let mut transport = ScriptedGatewayAccount {
+            claims: vec![],
+            issued: vec![],
+            storage: Default::default(),
+        }
+        .with_gateway_record("alice01", GATEWAY_ACCOUNT);
+        assert_eq!(resolve_gateway_account(&mut transport), DotnsIdentity::default());
+    }
+
+    #[test]
+    fn the_gateway_record_decodes_the_live_layout() {
+        // `DotnsGateway.AccountNames` of 0x4caa74c5…1a78 on paseo-next-v2
+        // (2026-10-07): lite `tommyio.01` with a chat key, no full name.
+        let account: [u8; 32] =
+            hex::decode("4caa74c50849af0e9069b6bfae893057ef54f19ea2f820b6e451d2404df91a78")
+                .unwrap()
+                .try_into()
+                .unwrap();
+        let record = hex::decode(
+            "0128746f6d6d79696f2e30310100215dd1caafc6cb61355e790cf60f8d5fab38c837b62164ca68211\
+             24fa0c05819000000000000000000000000000000000000000000000000000000000000000000",
+        )
+        .unwrap();
+        let mut transport = ScriptedGatewayAccount {
+            claims: vec![],
+            issued: vec![],
+            storage: [
+                (account_names_key(&account), record),
+                (lite_label_owner_key(b"tommyio.01"), account.to_vec()),
+            ]
+            .into(),
+        };
+        let lite =
+            futures::executor::block_on(gateway_lite_username(&mut transport, &account)).unwrap();
+        assert_eq!(lite.as_deref(), Some("tommyio.01"));
+    }
+
+    #[test]
+    fn the_contract_lite_username_wins_over_the_gateway_record() {
+        let mut transport = ScriptedGatewayAccount {
+            claims: vec![("alice.01".to_string(), 0)],
+            issued: vec!["alice.01"],
+            storage: Default::default(),
+        }
+        .with_gateway_record("other.02", GATEWAY_ACCOUNT);
+        let identity = resolve_gateway_account(&mut transport);
+        assert_eq!(identity.lite_username.as_deref(), Some("alice.01"));
     }
 
     #[test]
@@ -1848,6 +2035,18 @@ mod tests {
         assert_eq!(&alias_key[..32], prefix.as_slice());
         // Blake2_128Concat over the raw account bytes.
         assert_eq!(&alias_key[48..], &[0x11; 32]);
+
+        let names_key = account_names_key(&[0x11; 32]);
+        assert_eq!(
+            &names_key[..32],
+            [
+                twox_128(b"DotnsGateway").as_slice(),
+                twox_128(b"AccountNames").as_slice(),
+            ]
+            .concat()
+        );
+        assert_eq!(&names_key[32..48], &blake2_128(&[0x11; 32]));
+        assert_eq!(&names_key[48..], &[0x11; 32]);
 
         assert_eq!(dispatcher_address_key().len(), 32);
         assert_eq!(timestamp_now_key().len(), 32);

@@ -4,10 +4,12 @@
 //! storage anchors the `DotnsPopController`. The protocol registry locates the
 //! `StoreFactory`. The account's labels come from its `LabelStore` on the warm
 //! path. On the cold path they come from its pending claim on the controller,
-//! covering gateway-minted names before the user settles their store.
+//! covering gateway-minted names before the user settles their store. When
+//! neither yields a lite username, the gateway pallet's own
+//! `DotnsGateway.AccountNames` record does.
 //!
-//! All reads run over one `chainHead_v1` follow via `ReviveApi_call` dry-runs.
-//! No chain metadata is needed.
+//! All reads run over one `chainHead_v1` follow: storage reads and
+//! `ReviveApi_call` dry-runs. No chain metadata is needed.
 
 #[cfg(not(target_arch = "wasm32"))]
 use std::time::Duration;
@@ -16,7 +18,7 @@ use web_time::Duration;
 
 use crate::chain_runtime::ChainRuntime;
 use crate::host_logic::dotns_gateway::{
-    DotnsIdentity, classify_labels, discover_pop_controller, resolve_labels,
+    DotnsIdentity, discover_pop_controller, resolve_identity,
 };
 use crate::host_logic::session::SessionInfo;
 use crate::runtime::dotns_lookup::DotnsLookup;
@@ -141,11 +143,11 @@ async fn lookup_and_apply(
     LookupOutcome::Failed
 }
 
-/// Resolves `account_id`'s usernames from the dotNS contracts at a fresh Asset
-/// Hub head. Each step carries the lookup transport's own step timeout; the caller's
+/// Resolves `account_id`'s usernames from dotNS at a fresh Asset Hub head.
+/// Each step carries the lookup transport's own step timeout; the caller's
 /// [`LOOKUP_BUDGET`] bounds the whole resolution. Returns `None` when the
-/// gateway is not deployed. Also returns `None` when the account holds no
-/// labels.
+/// gateway is not deployed. Also returns `None` when the account has no
+/// username.
 #[instrument(skip_all, fields(runtime.method = "session.identity.lookup"))]
 async fn lookup_dotns_identity(
     chain: &ChainRuntime,
@@ -162,13 +164,8 @@ async fn lookup_dotns_identity(
         let Some(controller) = discover_pop_controller(&mut lookup).await? else {
             return Ok(None);
         };
-        let labels = resolve_labels(&mut lookup, &controller, &account_id).await?;
-        if labels.is_empty() {
-            return Ok(None);
-        }
-        Ok(Some(
-            classify_labels(&mut lookup, &controller, labels).await?,
-        ))
+        let identity = resolve_identity(&mut lookup, &controller, &account_id).await?;
+        Ok((identity != DotnsIdentity::default()).then_some(identity))
     }
     .fuse();
     pin_mut!(lookup);
@@ -186,7 +183,8 @@ mod tests {
     use super::*;
     use crate::chain_runtime::{RuntimeChainProvider, RuntimeFailure};
     use crate::host_logic::dotns_gateway::{
-        VIEW_CALL_ORIGIN, account_to_h160, dispatcher_address_key, selector, timestamp_now_key,
+        VIEW_CALL_ORIGIN, account_names_key, account_to_h160, decode_string,
+        dispatcher_address_key, lite_label_owner_key, selector,
     };
     use crate::platform::JsonRpcConnection;
     use crate::subscription::thread_per_subscription_spawner;
@@ -206,6 +204,10 @@ mod tests {
     const FACTORY: [u8; 20] = [0xfa; 20];
     const STORE: [u8; 20] = [0x57; 20];
     const ACCOUNT: [u8; 32] = [0xaa; 32];
+    /// Onboarded before dotted labels: its pending claim is the undotted
+    /// `legacy01`, which `isPopIssued` denies, and the gateway pallet records
+    /// `legacy.01`.
+    const LEGACY_ACCOUNT: [u8; 32] = [0xbb; 32];
 
     fn abi_word(value: u64) -> [u8; 32] {
         let mut word = [0u8; 32];
@@ -274,11 +276,6 @@ mod tests {
         out
     }
 
-    /// Chain time the scripted `Timestamp.Now` reports, in seconds.
-    const NOW_SECS: u64 = 1_800_000_000;
-    /// The scripted controller's `reservationDuration()`.
-    const RESERVATION_DURATION: u64 = 604_800;
-
     /// `ReviveApi_call` output carrying successful return `data`.
     fn contract_result(data: &[u8]) -> Vec<u8> {
         contract_result_with_flags(0, data)
@@ -316,32 +313,35 @@ mod tests {
         let data = match (*dest, sel) {
             (DISPATCHER, s) if s == selector("TARGET()") => abi_address(&CONTROLLER),
             (CONTROLLER, s) if s == selector("pendingClaims(address,uint256,uint256)") => {
-                // First page for the mapped identity account.
-                assert_eq!(
-                    &input[4..36],
-                    abi_address(&account_to_h160(&ACCOUNT)).as_slice()
-                );
+                // First page for a mapped account.
                 assert_eq!(&input[36..68], &abi_word(0));
                 assert_eq!(&input[68..100], &abi_word(16));
-                // One live claim and one that lapsed a second ago.
-                abi_pending_claims(&[
-                    ("alice.01", NOW_SECS - 10),
-                    ("stale.01", NOW_SECS - RESERVATION_DURATION - 1),
-                ])
+                if input[4..36] == abi_address(&account_to_h160(&ACCOUNT)) {
+                    // Minted at the epoch: pending claims never lapse.
+                    abi_pending_claims(&[("alice.01", 1)])
+                } else {
+                    assert_eq!(
+                        &input[4..36],
+                        abi_address(&account_to_h160(&LEGACY_ACCOUNT)).as_slice()
+                    );
+                    abi_pending_claims(&[("legacy01", 1)])
+                }
             }
             (CONTROLLER, s) if s == selector("isPopIssued(string)") => {
-                // Both surviving labels were issued through the gateway.
-                abi_word(1).to_vec()
-            }
-            (CONTROLLER, s) if s == selector("reservationDuration()") => {
-                abi_word(RESERVATION_DURATION).to_vec()
+                // Every label but the legacy undotted claim came through the gateway.
+                let label = decode_string(&input[4..]).unwrap();
+                abi_word((label != "legacy01").into()).to_vec()
             }
             (CONTROLLER, s) if s == selector("protocolRegistry()") => abi_address(&REGISTRY),
             (REGISTRY, s) if s == selector("get(bytes32)") => abi_address(&FACTORY),
             (REGISTRY, s) if s == selector("tld()") => abi_string(".paseo"),
             (FACTORY, s) if s == selector("getLabelStore(address)") => {
-                assert_eq!(&input[16..36], account_to_h160(&ACCOUNT));
-                abi_address(&STORE)
+                if input[16..36] == account_to_h160(&ACCOUNT) {
+                    abi_address(&STORE)
+                } else {
+                    assert_eq!(&input[16..36], account_to_h160(&LEGACY_ACCOUNT));
+                    abi_address(&[0; 20])
+                }
             }
             (STORE, s) if s == selector("getLabels(uint256,uint256)") => {
                 abi_string_array(&["myproject.paseo", "app.myproject.paseo"])
@@ -353,6 +353,22 @@ mod tests {
             ),
         };
         contract_result(&data)
+    }
+
+    /// The scripted pallet storage: the dispatcher address, and the gateway's
+    /// own record of the legacy account's dotted lite name.
+    fn storage_value(key: &[u8]) -> Option<Vec<u8>> {
+        if key == dispatcher_address_key() {
+            return Some(DISPATCHER.to_vec());
+        }
+        if key == account_names_key(&LEGACY_ACCOUNT) {
+            let lite = (b"legacy.01".to_vec(), None::<[u8; 65]>);
+            return Some((Some(lite), None::<(Vec<u8>, Option<[u8; 65]>)>).encode());
+        }
+        if key == lite_label_owner_key(b"legacy.01") {
+            return Some(LEGACY_ACCOUNT.to_vec());
+        }
+        None
     }
 
     struct ScriptedAssetHub {
@@ -425,18 +441,11 @@ mod tests {
                     let mut frames = vec![response(
                         json!({"result": "started", "operationId": operation_id}),
                     )];
-                    if key_bytes == timestamp_now_key() {
+                    if let Some(value) = storage_value(&key_bytes) {
                         frames.push(follow_event(json!({
                             "event": "operationStorageItems",
                             "operationId": operation_id,
-                            "items": [{"key": key, "value": format!("0x{}", hex::encode((NOW_SECS * 1_000).to_le_bytes()))}]
-                        })));
-                    }
-                    if key_bytes == dispatcher_address_key() {
-                        frames.push(follow_event(json!({
-                            "event": "operationStorageItems",
-                            "operationId": operation_id,
-                            "items": [{"key": key, "value": format!("0x{}", hex::encode(DISPATCHER))}]
+                            "items": [{"key": key, "value": format!("0x{}", hex::encode(value))}]
                         })));
                     }
                     frames.push(follow_event(json!({
@@ -560,13 +569,38 @@ mod tests {
             .filter(|request| request.contains("chainHead_v1_call"))
             .count();
         // protocolRegistry (reverts on the dispatcher), TARGET, pendingClaims,
-        // reservationDuration, protocolRegistry, get(storeFactory), getLabelStore, tld,
-        // one short getLabels page, then one isPopIssued per surviving label
-        // (alice.01, myproject). A repointed chain resolves on the first probe
-        // and needs ten.
+        // protocolRegistry, get(storeFactory), getLabelStore, tld, one short
+        // getLabels page, then one isPopIssued per label (alice.01,
+        // myproject). A repointed chain resolves on the first probe and needs
+        // nine.
         assert_eq!(
-            calls, 11,
-            "the discovery, label and provenance chain is exactly eleven views on a dispatcher chain"
+            calls, 10,
+            "the discovery, label and provenance chain is exactly ten views on a dispatcher chain"
         );
+    }
+
+    #[test]
+    fn a_legacy_undotted_claim_resolves_through_the_gateway_record() {
+        let provider = Arc::new(ScriptedAssetHub::new());
+        let chain = ChainRuntime::new(provider.clone(), thread_per_subscription_spawner());
+        let session = SessionInfo {
+            public_key: [0x11; 32],
+            sso: None,
+            root_entropy_source: None,
+            identity_account_id: Some(LEGACY_ACCOUNT),
+            identity_chat_private_key: None,
+            device_enc_public_key: None,
+            lite_username: None,
+            full_username: None,
+        };
+
+        let resolved = futures::executor::block_on(resolve_session_identity_with_chain(
+            &chain, [0xcc; 32], session,
+        ));
+
+        // `isPopIssued` denies the undotted claim; `AccountNames` holds the
+        // dotted name and `LiteLabelOwner` confirms it.
+        assert_eq!(resolved.lite_username.as_deref(), Some("legacy.01"));
+        assert_eq!(resolved.full_username, None);
     }
 }

@@ -210,7 +210,8 @@ async fn live_asset_hub_reports_a_skipped_revision_as_pruned() {
 use truapi::host_logic::dotns_gateway::{
     DotnsTransport, DotnsViewError, VIEW_CALL_ORIGIN, call_bytes32, classify_labels,
     decode_address, discover_pop_controller, encode_revive_call, is_dotted_lite_username,
-    is_pop_issued, label_available, namehash_under, resolve_labels, selector, view_output,
+    is_pop_issued, label_available, namehash_under, resolve_identity, resolve_labels, selector,
+    view_output,
 };
 use truapi::statement_allowance::extension::AS_DOTNS_GATEWAY;
 
@@ -363,6 +364,46 @@ async fn live_asset_hub_resolves_a_settled_store_over_dotns_discovery() {
         identity.lite_username.is_some() || identity.full_username.is_some(),
         "labels classify into a username"
     );
+}
+
+/// An account onboarded before the gateway switched to dotted labels: its
+/// pending claim is undotted and not pop-issued, and its claim is older than
+/// the controller's `reservationDuration`, so only the gateway pallet's
+/// `AccountNames` record names it. `LIVE_LEGACY_ACCOUNT` (hex AccountId32) and
+/// `LIVE_LEGACY_LITE` override the paseo-next-v2 default.
+#[tokio::test]
+#[ignore = "needs network access to a live Asset Hub"]
+async fn live_asset_hub_resolves_a_legacy_lite_name_through_the_gateway_record() {
+    let account_hex = std::env::var("LIVE_LEGACY_ACCOUNT").unwrap_or_else(|_| {
+        "4caa74c50849af0e9069b6bfae893057ef54f19ea2f820b6e451d2404df91a78".to_string()
+    });
+    let expected = std::env::var("LIVE_LEGACY_LITE").unwrap_or_else(|_| "tommyio.01".to_string());
+    let account: [u8; 32] = hex::decode(account_hex.trim_start_matches("0x"))
+        .expect("hex account")
+        .try_into()
+        .expect("32-byte account");
+
+    let (rpc, _metadata) = asset_hub().await;
+    let mut transport = PlainRpc(rpc);
+    let controller = discover_pop_controller(&mut transport)
+        .await
+        .expect("discovery")
+        .expect("gateway deployed");
+
+    let labels = resolve_labels(&mut transport, &controller, &account)
+        .await
+        .expect("resolve labels");
+    let contract_only = classify_labels(&mut transport, &controller, &labels)
+        .await
+        .expect("classify labels");
+    let identity = resolve_identity(&mut transport, &controller, &account)
+        .await
+        .expect("resolve identity");
+    println!(
+        "live legacy account 0x{account_hex}: labels={labels:?} contract_only={contract_only:?} \
+         resolved={identity:?}"
+    );
+    assert_eq!(identity.lite_username.as_deref(), Some(expected.as_str()));
 }
 
 /// A reservation or registration for a name the registrar already minted can
