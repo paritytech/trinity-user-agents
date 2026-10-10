@@ -14,8 +14,8 @@ final class TabBarBarViewModel {
 
     /// Whether the shelf is open. Written by the chrome from the open panel, never by the shelf itself.
     var isShelfOpen = false
-    /// The room the shelf may take above the bar row, measured from the chrome's own safe area.
-    var shelfAvailableHeight: CGFloat = 0
+    /// The room open panels may take above the bar row, measured from the chrome's own safe area.
+    var availablePanelHeight: CGFloat = 0
     var shelfChips: [DSTabBarChip] = []
     var mountedChipId: UUID?
     var onShelfChipTapped: ((UUID) -> Void)?
@@ -50,11 +50,22 @@ final class TabBarBarViewModel {
         guard centerProgress != progress else {
             return
         }
-        let animation: Animation? = UIAccessibility.isReduceMotionEnabled
-            ? nil
-            : .spring(response: DSTabBarStyle.centerSpringResponse, dampingFraction: DSTabBarStyle.centerSpringDamping)
-        withAnimation(animation) {
+        withAnimation(centerAnimation) {
             centerProgress = progress
         }
+    }
+
+    /// Changes the declared height on the centre control's spring, so the open panel moves with the change
+    /// the way it moves on a settle.
+    func setCenterContentHeight(_ height: CGFloat) {
+        withAnimation(centerAnimation) {
+            centerContentHeight = height
+        }
+    }
+
+    private var centerAnimation: Animation? {
+        UIAccessibility.isReduceMotionEnabled
+            ? nil
+            : .spring(response: DSTabBarStyle.centerSpringResponse, dampingFraction: DSTabBarStyle.centerSpringDamping)
     }
 }

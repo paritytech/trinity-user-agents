@@ -12,7 +12,7 @@ struct TabBarBarView: View {
     var body: some View {
         DSTabBarContainer(
             isShelfOpen: $model.isShelfOpen,
-            availableHeight: model.shelfAvailableHeight,
+            availableHeight: model.availablePanelHeight,
             first: { slot(at: 0) },
             second: { slot(at: 1) },
             third: { slot(at: 2) },

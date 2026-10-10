@@ -104,13 +104,15 @@ final class TabBarBottomChromeController: UIViewController {
         installBackdrop()
 
         installOutsideTapRecognizer()
+        installKeyboardObserver()
     }
 
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
 
+        // Order matters: the centre content height is clamped to the available height the first call writes.
+        refreshAvailablePanelHeight()
         refreshCenterContentHeight()
-        refreshShelfAvailableHeight()
 
         foldController.reapplyForWidthChange()
     }
@@ -159,8 +161,14 @@ final class TabBarBottomChromeController: UIViewController {
             return
         }
         let width = DSTabBarStyle.centerPanelWidth(inRowOfWidth: barHost.view.bounds.width)
-        barModel.centerContentHeight = contentHeightForCenterPanel(width)
-        applyBarRise()
+        let contentHeight = min(
+            contentHeightForCenterPanel(width),
+            DSTabBarStyle.centerContentHeight(fittingPanelHeight: barModel.availablePanelHeight)
+        )
+        DSTabBarStyle.animateCenterChange(in: view) {
+            self.barModel.setCenterContentHeight(contentHeight)
+            self.applyBarRise()
+        }
     }
 
     /// Selecting a different action closes the open panel before opening the new one, so the
@@ -238,7 +246,7 @@ private extension TabBarBottomChromeController {
             case .content(.scan):
                 DSTabBarStyle.centerPanelRise(contentHeight: barModel.centerContentHeight)
             case .shelf:
-                barModel.shelfAvailableHeight
+                barModel.availablePanelHeight
             case nil,
                  .content:
                 0
@@ -246,10 +254,10 @@ private extension TabBarBottomChromeController {
         chromeSurface.setBarRise(rise)
     }
 
-    /// The shelf may take the space above the bar row down to the top safe area, which the chrome's own
-    /// layout already measures.
-    func refreshShelfAvailableHeight() {
-        barModel.shelfAvailableHeight = max(0, chromeSurface.availablePanelHeight)
+    /// The room above the bar row down to the top safe area, which the chrome's own layout already measures.
+    /// It caps both the shelf's growth and the centre panel's height.
+    func refreshAvailablePanelHeight() {
+        barModel.availablePanelHeight = max(0, chromeSurface.availablePanelHeight)
         applyBarRise()
     }
 
@@ -307,6 +315,29 @@ private extension TabBarBottomChromeController {
             return
         }
         panelController.setPanel(nil, animated: true)
+    }
+
+    func installKeyboardObserver() {
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleKeyboardFrameChange(_:)),
+            name: UIResponder.keyboardWillChangeFrameNotification,
+            object: nil
+        )
+    }
+
+    /// While the scan panel is open, the chrome moves up so the search row stays above the keyboard, keeping
+    /// the bar's resting gap. Any other keyboard, or a closed panel, returns the chrome to rest.
+    @objc func handleKeyboardFrameChange(_ notification: Notification) {
+        guard let keyboardFrame = notification.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect else {
+            return
+        }
+        let keyboardTop = view.convert(keyboardFrame, from: nil).minY
+        let isScanPanelOpen = panelController.open == .content(.scan)
+        let lift = isScanPanelOpen ? max(0, view.bounds.maxY - keyboardTop) : 0
+        DSTabBarStyle.animateCenterChange(in: view) {
+            self.chromeSurface.transform = CGAffineTransform(translationX: 0, y: -lift)
+        }
     }
 
     @objc func handleFoldPan(_ recognizer: UIPanGestureRecognizer) {

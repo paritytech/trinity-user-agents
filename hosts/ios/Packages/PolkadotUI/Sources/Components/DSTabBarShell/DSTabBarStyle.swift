@@ -1,4 +1,5 @@
 import CoreGraphics
+import UIKit
 
 /// Geometry and fixed visual values of the tab bar. The bar has one shape, so none of these are configurable.
 public enum DSTabBarStyle {
@@ -86,6 +87,30 @@ public enum DSTabBarStyle {
     /// plus the lobe radius, measured down from the top of the row.
     public static func centerPanelRise(contentHeight: CGFloat) -> CGFloat {
         centerPanelHeight(contentHeight: contentHeight) - (notchCenterY + centerButtonSize / 2)
+    }
+
+    /// The tallest content a centre panel can host without the panel exceeding `panelHeight`.
+    /// The inverse of `centerPanelHeight(contentHeight:)`, for a host that has to cap the panel.
+    public static func centerContentHeight(fittingPanelHeight panelHeight: CGFloat) -> CGFloat {
+        max(0, panelHeight - centerButtonSize / 2 - centerGrabberHeight)
+    }
+
+    /// Runs `changes` on the centre control's spring and lays out `view` inside the same animation, so UIKit
+    /// moves whatever `changes` touches in step with the control. Snaps under Reduce Motion.
+    public static func animateCenterChange(in view: UIView, _ changes: @escaping () -> Void) {
+        guard !UIAccessibility.isReduceMotionEnabled else {
+            changes()
+            return
+        }
+        UIView.animate(
+            withDuration: centerSpringResponse,
+            delay: 0,
+            usingSpringWithDamping: centerSpringDamping,
+            initialSpringVelocity: 0
+        ) {
+            changes()
+            view.layoutIfNeeded()
+        }
     }
 
     /// Strength of the top-lit sheen, which makes the centre control read as a dome.

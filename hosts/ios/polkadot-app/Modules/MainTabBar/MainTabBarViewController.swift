@@ -41,6 +41,11 @@ final class MainTabBarViewController: UIViewController {
     var spaChipViewModels: [SPATabChipViewModel] = []
     var productGamePill: ProductGamePillViewModel?
 
+    #if FEATURE_INPUT
+        /// The live scan panel, read for its declared height. Nil while the centre control has no content.
+        private weak var scanPanel: ScanPanelViewController?
+    #endif
+
     init(
         presenter: MainTabBarPresenterProtocol,
         viewFactory: TabFactoryProtocol,
@@ -71,7 +76,22 @@ final class MainTabBarViewController: UIViewController {
 
         chromeController.statusStripAnchorProvider = { [weak self] in self?.chainStatusAnchorGuide }
         chromeController.makeCenterContent = { [weak self] in self?.makeScanPanel() }
-        chromeController.contentHeightForCenterPanel = ScanPanelContentHeight.height(forPanelWidth:)
+        #if FEATURE_INPUT
+            chromeController.contentHeightForCenterPanel = { [weak self] width in
+                self?.scanPanel?.declaredContentHeight(forPanelWidth: width)
+                    ?? ScanPanelContentHeight.height(
+                        forPanelWidth: width,
+                        searchRowHeight: ScanPanelContentHeight.embeddedSearchRowHeight
+                    )
+            }
+        #else
+            chromeController.contentHeightForCenterPanel = { width in
+                ScanPanelContentHeight.height(
+                    forPanelWidth: width,
+                    searchRowHeight: ScanPanelContentHeight.plainSearchRowHeight
+                )
+            }
+        #endif
 
         chromeController.onSelect = { [weak self] index, isReselection in
             self?.handleSelection(index: index, isReselection: isReselection)
@@ -374,6 +394,7 @@ extension MainTabBarViewController {
             // Opening the chat selects its tab, and tab selection closes the panel. A second close
             // here would cancel that animation in place and leave the backdrop and panel frozen
             // mid-way.
+            scanPanel = controller
             controller?.onChatFound = { [weak self] model in
                 self?.presenter.didFindChat(model)
             }
