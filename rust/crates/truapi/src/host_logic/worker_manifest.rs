@@ -4,7 +4,8 @@
 //! Only the fields this core reads are modelled, and an `includes` key it does
 //! not recognise is ignored. The `includes.funding` configuration is read the
 //! way the RFC requires: a value this core does not recognise is ignored, never
-//! fatal, and a configuration left with nothing usable serves no Funding.
+//! fatal, and routes are optional, so a configuration with no usable route
+//! still serves Funding and leaves the quotes to say what it moves.
 
 use serde::Deserialize;
 
@@ -29,8 +30,7 @@ pub struct WorkerManifest {
     pub chat: bool,
     /// Whether the worker serves Input.
     pub input: bool,
-    /// How the worker serves Funding. `None` when it does not, including when
-    /// its configuration has no usable route.
+    /// How the worker serves Funding. `None` when it does not.
     pub funding: Option<FundingConfig>,
 }
 
@@ -42,8 +42,9 @@ pub struct WorkerManifest {
     derive(uniffi::Record)
 )]
 pub struct FundingConfig {
-    /// What the provider moves and how; never empty.
-    pub routes: Vec<FundingRoute>,
+    /// What the provider moves and how, when it declares a usable route. With
+    /// `None`, the provider's quotes say what it serves. Never empty.
+    pub routes: Option<Vec<FundingRoute>>,
     /// Onramp adapter id for calls that need the provider's key.
     pub backend: Option<String>,
 }
@@ -61,11 +62,12 @@ pub struct FundingRoute {
     pub directions: Vec<RouteDirection>,
     /// Symbols the user pays with or receives; never empty.
     pub assets: Vec<String>,
+    /// Networks a crypto route's assets move on, such as `polkadot` (Polkadot
+    /// Asset Hub), when declared. `None` for card and bank routes.
+    pub networks: Option<Vec<String>>,
     /// ISO 3166-1 alpha-2 codes the route serves, when declared. The quote
     /// still decides.
     pub countries: Option<Vec<String>>,
-    /// Whether the user needs an account with the provider.
-    pub requires_account: bool,
 }
 
 /// How the user pays or is paid.
@@ -120,7 +122,7 @@ struct PublishedIncludes {
 
 #[derive(Deserialize)]
 struct PublishedFunding {
-    routes: Vec<PublishedRoute>,
+    routes: Option<Vec<PublishedRoute>>,
     backend: Option<String>,
 }
 
@@ -130,9 +132,8 @@ struct PublishedRoute {
     mode: String,
     directions: Vec<String>,
     assets: Vec<String>,
+    networks: Option<Vec<String>>,
     countries: Option<Vec<String>>,
-    #[serde(default)]
-    requires_account: bool,
 }
 
 impl WorkerManifest {
@@ -161,24 +162,25 @@ impl WorkerManifest {
             funding: published
                 .includes
                 .funding
-                .and_then(PublishedFunding::usable),
+                .map(PublishedFunding::usable),
         })
     }
 }
 
 impl PublishedFunding {
-    /// The configuration with what this core does not recognise left out, or
-    /// `None` when no route is left.
-    fn usable(self) -> Option<FundingConfig> {
+    /// The configuration with what this core does not recognise left out. A
+    /// declaration with no usable route reads as one declaring none.
+    fn usable(self) -> FundingConfig {
         let routes: Vec<FundingRoute> = self
             .routes
+            .unwrap_or_default()
             .into_iter()
             .filter_map(PublishedRoute::usable)
             .collect();
-        (!routes.is_empty()).then_some(FundingConfig {
-            routes,
+        FundingConfig {
+            routes: (!routes.is_empty()).then_some(routes),
             backend: self.backend,
-        })
+        }
     }
 }
 
@@ -201,12 +203,13 @@ impl PublishedRoute {
                 directions.push(direction);
             }
         }
+        let networks = self.networks.filter(|_| mode == FundingMode::Crypto);
         (!directions.is_empty() && !self.assets.is_empty()).then_some(FundingRoute {
             mode,
             directions,
             assets: self.assets,
+            networks,
             countries: self.countries,
-            requires_account: self.requires_account,
         })
     }
 }
@@ -224,8 +227,8 @@ mod tests {
         "includes": {
             "funding": {
                 "routes": [
-                    { "mode": "CARD", "directions": ["In"], "assets": ["EUR", "USD"], "countries": ["DE", "FR", "US"], "requiresAccount": true },
-                    { "mode": "CRYPTO", "directions": ["In", "Out"], "assets": ["USDT", "DOT"] }
+                    { "mode": "CARD", "directions": ["In"], "assets": ["EUR", "USD"], "countries": ["DE", "FR", "US"] },
+                    { "mode": "CRYPTO", "directions": ["In", "Out"], "assets": ["USDT", "DOT"], "networks": ["polkadot", "ethereum"] }
                 ]
             }
         }
@@ -242,8 +245,8 @@ mod tests {
             mode: FundingMode::Card,
             directions: vec![RouteDirection::In],
             assets: vec!["EUR".to_string()],
+            networks: None,
             countries: None,
-            requires_account: false,
         }
     }
 
@@ -259,30 +262,41 @@ mod tests {
                 chat: false,
                 input: false,
                 funding: Some(FundingConfig {
-                    routes: vec![
+                    routes: Some(vec![
                         FundingRoute {
                             mode: FundingMode::Card,
                             directions: vec![RouteDirection::In],
                             assets: vec!["EUR".to_string(), "USD".to_string()],
+                            networks: None,
                             countries: Some(vec![
                                 "DE".to_string(),
                                 "FR".to_string(),
                                 "US".to_string()
                             ]),
-                            requires_account: true,
                         },
                         FundingRoute {
                             mode: FundingMode::Crypto,
                             directions: vec![RouteDirection::In, RouteDirection::Out],
                             assets: vec!["USDT".to_string(), "DOT".to_string()],
+                            networks: Some(vec!["polkadot".to_string(), "ethereum".to_string()]),
                             countries: None,
-                            requires_account: false,
                         },
-                    ],
+                    ]),
                     backend: None,
                 }),
             })
         );
+    }
+
+    // Networks only say where crypto moves, so a card route that names some
+    // reads as one that does not.
+    #[test]
+    fn only_a_crypto_route_keeps_its_networks() {
+        let card = r#"{ "mode": "CARD", "directions": ["In"], "assets": ["EUR"], "networks": ["polkadot"] }"#;
+        let manifest = WorkerManifest::parse(&with_funding(&format!(r#"{{ "routes": [{card}] }}"#)))
+            .expect("parsed");
+
+        assert_eq!(manifest.funding.map(|funding| funding.routes), Some(Some(vec![card_in()])));
     }
 
     // A worker that serves no Funding reads as it always did.
@@ -344,29 +358,37 @@ mod tests {
 
         assert_eq!(
             manifest.funding.map(|funding| funding.routes),
-            Some(vec![
+            Some(Some(vec![
                 card_in(),
                 FundingRoute {
                     mode: FundingMode::Crypto,
                     directions: vec![RouteDirection::Out],
                     assets: vec!["DOT".to_string()],
+                    networks: None,
                     countries: None,
-                    requires_account: false,
                 },
-            ])
+            ]))
         );
     }
 
-    // A provider with nothing it can offer is not listed, but its other
-    // surfaces still serve.
+    // Routes only narrow which providers a host asks for a quote, so a
+    // provider that declares none, or none this core can use, still serves
+    // Funding and its quotes say what it moves.
     #[test]
-    fn no_usable_route_serves_no_funding() {
-        let manifest = WorkerManifest::parse(&with_funding(
+    fn a_provider_without_usable_routes_still_serves_funding() {
+        let undeclared = FundingConfig {
+            routes: None,
+            backend: None,
+        };
+        for funding in [
+            "{}",
+            r#"{"routes":[]}"#,
             r#"{"routes":[{ "mode": "CASH", "directions": ["In"], "assets": ["EUR"] }]}"#,
-        ))
-        .expect("parses");
+        ] {
+            let manifest = WorkerManifest::parse(&with_funding(funding)).expect("parses");
 
-        assert_eq!((manifest.chat, manifest.funding), (true, None));
+            assert_eq!((manifest.chat, manifest.funding), (true, Some(undeclared.clone())), "{funding}");
+        }
     }
 
     #[test]
@@ -379,7 +401,7 @@ mod tests {
         assert_eq!(
             manifest.funding,
             Some(FundingConfig {
-                routes: vec![card_in()],
+                routes: Some(vec![card_in()]),
                 backend: Some("meld".to_string()),
             })
         );

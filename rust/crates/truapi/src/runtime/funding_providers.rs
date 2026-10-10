@@ -334,8 +334,8 @@ mod tests {
                     mode: FundingMode::Crypto,
                     directions: vec![RouteDirection::Out],
                     assets: vec!["USDT".to_string()],
+                    networks: None,
                     countries: None,
-                    requires_account: false,
                 }]],
             )
         );
