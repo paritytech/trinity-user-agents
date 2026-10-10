@@ -3152,7 +3152,8 @@ pub enum UserConfirmationReview {
     IdentityDisclosure(IdentityDisclosureReview),
     /// Allocate resources for the requesting product.
     ResourceAllocation(ResourceAllocationReview),
-    /// Submit a preimage to the host-selected backend.
+    /// Submit a preimage to the host-selected backend. The core does not raise
+    /// it: `preimage.submit` is authorized by the `PreimageSubmit` permission.
     PreimageSubmit(PreimageSubmitReview),
     /// Allow a product to access another product account.
     AccountAccess(AccountAccessReview),

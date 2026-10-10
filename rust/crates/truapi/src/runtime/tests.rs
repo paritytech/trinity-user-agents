@@ -4677,6 +4677,64 @@ fn preimage_submit_requires_remote_permission_before_backend_call() {
     );
 }
 
+/// Submit `uploads` preimages and report how many `PreimageSubmit` permission
+/// prompts and per-upload confirmations the host raised.
+fn preimage_prompts_for_uploads(
+    remote_permission_decisions: Vec<crate::platform::PermissionDecision>,
+    uploads: usize,
+) -> (usize, usize) {
+    let platform = Arc::new(StubPlatform {
+        remote_permission_decisions: Mutex::new(remote_permission_decisions.into()),
+        ..Default::default()
+    });
+    let host = ProductRuntimeHost::new(
+        platform.clone(),
+        runtime_config("t3ams.dot"),
+        test_spawner(),
+    );
+    install_pairing_session(&host, session_info());
+    for _ in 0..uploads {
+        let _ = futures::executor::block_on(Preimage::submit(
+            &host,
+            &CallContext::default(),
+            RemotePreimageSubmitRequest::V1(vec![1, 2, 3]),
+        ));
+    }
+    (
+        platform.remote_permission_requests.lock().unwrap().len(),
+        platform.preimage_submit_reviews.lock().unwrap().len(),
+    )
+}
+
+/// t3ams backs up in the background every 15 minutes. Once the user allows
+/// `PreimageSubmit` always, those uploads must not ask again, or the user
+/// either approves a task they did not start or dismisses it and the backups
+/// stop.
+#[test]
+fn an_always_preimage_grant_covers_every_upload_without_a_per_upload_prompt() {
+    assert_eq!(
+        preimage_prompts_for_uploads(
+            vec![crate::platform::PermissionDecision::AllowAlways],
+            3
+        ),
+        (1, 0)
+    );
+}
+
+#[test]
+fn a_one_use_preimage_grant_covers_one_upload() {
+    assert_eq!(
+        preimage_prompts_for_uploads(
+            vec![
+                crate::platform::PermissionDecision::AllowOnce,
+                crate::platform::PermissionDecision::AllowOnce,
+            ],
+            2
+        ),
+        (2, 0)
+    );
+}
+
 fn broadcast_request() -> RemoteChainTransactionBroadcastRequest {
     RemoteChainTransactionBroadcastRequest::V1(v01::RemoteChainTransactionBroadcastRequest {
         genesis_hash: vec![0; 32],
