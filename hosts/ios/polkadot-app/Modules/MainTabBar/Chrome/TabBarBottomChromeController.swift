@@ -1,11 +1,13 @@
 import UIKit
+import SwiftUI
 import DesignSystem
 import PolkadotUI
 import SnapKit
 
 final class TabBarBottomChromeController: UIViewController {
     private let chromeSurface = TabBarChromeSurfaceView()
-    private let barView = DSTabBarView()
+    private let barModel = TabBarBarViewModel()
+    private lazy var barHost = UIHostingController(rootView: TabBarBarView(model: barModel))
     private let backdropView = DSTabBarBackdropView()
 
     private var slots: [TabBarSlot] = []
@@ -17,7 +19,6 @@ final class TabBarBottomChromeController: UIViewController {
     private weak var hostedPanelController: UIViewController?
 
     private lazy var foldController = TabBarFoldController(
-        barView: barView,
         foldSurface: chromeSurface,
         chromeBounds: { [unowned self] in view.bounds },
         grabZoneSink: { [weak self] zone in
@@ -25,17 +26,12 @@ final class TabBarBottomChromeController: UIViewController {
         },
         closePanel: { [weak self] in
             self?.setPanel(nil, animated: false)
-        },
-        stateSink: { [weak self] state in
-            self?.tipController.setBarShown(state == .shown)
         }
     )
 
     private lazy var tipController = TabBarTipController(
         host: self,
-        barView: barView,
         sequence: TabBarTipOrderedSequence(steps: TabBarTips.steps),
-        itemIndex: { [weak self] slot in self?.slotMap.itemIndex(for: slot) },
         statusStripAnchor: { [weak self] in self?.statusStripAnchorProvider?() }
     )
 
@@ -47,9 +43,6 @@ final class TabBarBottomChromeController: UIViewController {
         onOpenPanelChanged: { [weak self] kind in
             self?.updateActiveActionIndex()
             (self?.viewIfLoaded as? TabBarChromePassthroughView)?.isOutsideTapEnabled = kind != nil
-        },
-        dismissTips: { [weak self] in
-            self?.tipController.dismissForPanel()
         },
         tearDownContent: { [weak self] in
             self?.detachHostedController()
@@ -96,7 +89,7 @@ final class TabBarBottomChromeController: UIViewController {
         guard TabBarVisibilityPolicy.contributesClearance(isTabRoot: foldController.isTabRoot) else {
             return view.safeAreaInsets.bottom
         }
-        return DSTabBarView.preferredHeight()
+        return DSTabBarStyle.restingHeight
     }
 
     /// The part of `restingBarHeight` the safe area does not already cover.
@@ -131,16 +124,6 @@ final class TabBarBottomChromeController: UIViewController {
         #endif
     }
 
-    override func viewDidAppear(_ animated: Bool) {
-        super.viewDidAppear(animated)
-        tipController.start()
-    }
-
-    override func viewWillDisappear(_ animated: Bool) {
-        super.viewWillDisappear(animated)
-        tipController.stop()
-    }
-
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
 
@@ -161,7 +144,7 @@ final class TabBarBottomChromeController: UIViewController {
         guard let itemIndex = slotMap.itemIndex(forTabIndex: tabIndex) else {
             return
         }
-        barView.selectedIndex = itemIndex
+        barModel.selectedItemIndex = itemIndex
     }
 
     func setBadge(_ badge: DSTabBarItem.Badge?, at tabIndex: Int) {
@@ -170,7 +153,7 @@ final class TabBarBottomChromeController: UIViewController {
         guard let itemIndex = slotMap.itemIndex(forTabIndex: tabIndex) else {
             return
         }
-        barView.setBadge(badge, at: itemIndex)
+        barModel.items[itemIndex].badge = badge
     }
 
     func setLabels(visible: Bool) {
@@ -247,7 +230,6 @@ final class TabBarBottomChromeController: UIViewController {
     func apply(_ context: TabBarChromeContext) {
         foldController.update(context: context)
         foldController.refresh()
-        tipController.setBarShown(foldController.state == .shown)
     }
 
     /// Resolves the visibility state a context would settle on, without committing it — used to
@@ -266,24 +248,52 @@ final class TabBarBottomChromeController: UIViewController {
 // MARK: - Bar items and panel content
 
 private extension TabBarBottomChromeController {
-    /// The SPA-tabs action is only shown while there are open apps, so the item list is derived
-    /// rather than stored — and with it the map every index conversion goes through.
+    /// The item list is derived from the slots rather than stored, and the map every index
+    /// conversion goes through is rebuilt with it.
     func rebuildItems() {
-        let effectiveSlots = spaTabCount > 0 ? slots : slots.filter { $0 != .action(.spaTabs) }
-        slotMap = TabBarSlotMap(slots: effectiveSlots)
+        slotMap = TabBarSlotMap(slots: slots)
 
-        barView.items = effectiveSlots.enumerated().map { itemIndex, slot in
+        barModel.items = slots.enumerated().map { itemIndex, slot in
             let badge = slotMap.tabIndex(forItemIndex: itemIndex).flatMap { badges[$0] }
             return slot.makeBarItem(badge: badge, spaTabCount: spaTabCount, showsLabel: showsLabels)
         }
 
         setSelectedIndex(selectedTabIndex)
         updateActiveActionIndex()
-        tipController.setBarLaidOut(false)
     }
 
     func updateActiveActionIndex() {
-        barView.activeActionIndex = panelController.open.flatMap { slotMap.itemIndex(for: $0.action) }
+        barModel.activeActionItemIndex = panelController.open.flatMap { slotMap.itemIndex(for: $0.action) }
+    }
+
+    func handleSlotTap(itemIndex: Int) {
+        guard !foldController.isFolded else {
+            foldController.setUserOverride(.shown, velocityX: 0)
+            return
+        }
+
+        if let action = slotMap.action(forItemIndex: itemIndex) {
+            handleAction(action)
+            return
+        }
+
+        guard let tabIndex = slotMap.tabIndex(forItemIndex: itemIndex) else {
+            return
+        }
+        let isReselection = tabIndex == selectedTabIndex
+        setSelectedIndex(tabIndex)
+        onSelect?(tabIndex, isReselection)
+    }
+
+    func handleAction(_ action: TabBarAction) {
+        switch action {
+        case .connectionStatus:
+            onConnectionStatusTapped?()
+        case .spaTabs:
+            togglePanel(.spaTabs)
+        case .scan:
+            togglePanel(.content(.scan))
+        }
     }
 
     func detachHostedController() {
@@ -317,49 +327,38 @@ private extension TabBarBottomChromeController {
     }
 
     @objc func handleOutsideTap() {
-        guard !barView.isFolded else {
+        guard !foldController.isFolded else {
             foldController.setUserOverride(.shown, velocityX: 0)
             return
         }
         panelController.setPanel(nil, animated: true)
     }
 
+    @objc func handleFoldPan(_ recognizer: UIPanGestureRecognizer) {
+        guard recognizer.state == .ended else {
+            return
+        }
+
+        foldController.foldPanEnded(
+            translationX: recognizer.translation(in: chromeSurface).x,
+            velocityX: recognizer.velocity(in: chromeSurface).x,
+            barWidth: barHost.view.bounds.width
+        )
+    }
+
     func installBar() {
-        chromeSurface.addBar(barView)
+        addChild(barHost)
+        chromeSurface.addBar(barHost.view)
+        barHost.didMove(toParent: self)
+        barHost.view.backgroundColor = .clear
 
-        barView.onFoldChangeRequested = { [weak self] folded, velocityX in
-            self?.foldController.setUserOverride(folded ? .folded : .shown, velocityX: velocityX)
+        barModel.onSlotTapped = { [weak self] itemIndex in
+            self?.handleSlotTap(itemIndex: itemIndex)
         }
 
-        barView.onSelect = { [weak self] itemIndex, isReselection in
-            self?.tipController.retireForUserInteraction()
-            guard let self, let tabIndex = slotMap.tabIndex(forItemIndex: itemIndex) else {
-                return
-            }
-            // The bar moves its own lens on a tap, so the selection has to be recorded here too:
-            // `rebuildItems` reapplies `selectedTabIndex`, and a stale one snaps the lens back.
-            selectedTabIndex = tabIndex
-            onSelect?(tabIndex, isReselection)
-        }
-
-        barView.onActionTapped = { [weak self] itemIndex in
-            self?.tipController.retireForUserInteraction()
-            guard let self, let action = slotMap.action(forItemIndex: itemIndex) else {
-                return
-            }
-            switch action {
-            case .connectionStatus:
-                onConnectionStatusTapped?()
-            case .spaTabs:
-                togglePanel(.spaTabs)
-            case .scan:
-                togglePanel(.content(.scan))
-            }
-        }
-
-        barView.onItemsLaidOut = { [weak self] in
-            self?.tipController.setBarLaidOut(true)
-        }
+        let foldRecognizer = UIPanGestureRecognizer(target: self, action: #selector(handleFoldPan(_:)))
+        foldRecognizer.delegate = self
+        chromeSurface.addGestureRecognizer(foldRecognizer)
     }
 
     /// Sits below the chrome surface so the dim covers the content and the floating widgets,
@@ -371,12 +370,33 @@ private extension TabBarBottomChromeController {
             make.edges.equalToSuperview()
         }
     }
+
+    /// A fold drag starts on the bar row, outside the centre hole where the centre control sits.
+    func canStartFoldDrag(at touch: UITouch) -> Bool {
+        let point = touch.location(in: barHost.view)
+        guard barHost.view.bounds.contains(point) else {
+            return false
+        }
+        return !DSTabBarStyle.isInCenterHole(point, inRowOfWidth: barHost.view.bounds.width)
+    }
 }
 
 // MARK: - UIGestureRecognizerDelegate
 
 extension TabBarBottomChromeController: UIGestureRecognizerDelegate {
-    func gestureRecognizer(_: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
-        touch.view === view
+    func gestureRecognizer(_ recognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
+        guard recognizer is UIPanGestureRecognizer else {
+            return touch.view === view
+        }
+        return canStartFoldDrag(at: touch)
+    }
+
+    /// Only a drag that leads horizontally folds the bar, so a vertical scroll past it is left alone.
+    func gestureRecognizerShouldBegin(_ recognizer: UIGestureRecognizer) -> Bool {
+        guard let pan = recognizer as? UIPanGestureRecognizer else {
+            return true
+        }
+        let translation = pan.translation(in: chromeSurface)
+        return abs(translation.x) > abs(translation.y)
     }
 }

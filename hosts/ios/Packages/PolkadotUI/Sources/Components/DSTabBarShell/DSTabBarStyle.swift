@@ -2,8 +2,19 @@ import CoreGraphics
 
 /// Geometry and fixed visual values of the tab bar. The bar has one shape, so none of these are configurable.
 public enum DSTabBarStyle {
-    /// Height the bar occupies once it has settled. Hosts publish bottom clearance from it.
+    /// Height of the bar row itself, not counting the gap below it.
     public static let height: CGFloat = 60
+
+    /// Gap between the bar row and the bottom of the screen.
+    public static let bottomGap: CGFloat = 21
+    /// Inset of the bar row from each side of the screen.
+    public static let horizontalMargin: CGFloat = 21
+    /// Widest the bar row grows. Wider screens leave the extra width to either side.
+    public static let maxWidth: CGFloat = 500
+
+    /// Height the bar occupies once it has settled, which is what a host publishes as bottom
+    /// clearance for its content.
+    public static var restingHeight: CGFloat { height + bottomGap }
     static let cornerRadius: CGFloat = 28
     static let itemInset: CGFloat = 6
     static let strokeWidth: CGFloat = 1
@@ -12,6 +23,13 @@ public enum DSTabBarStyle {
     static let notchRadius: CGFloat = 34
     /// Hole centre, measured down from the top of the bar row.
     static let notchCenterY: CGFloat = 16
+
+    /// Whether a point in the bar row's coordinate space falls on the centre button, which the
+    /// fold gesture must not claim.
+    public static func isInCenterHole(_ point: CGPoint, inRowOfWidth width: CGFloat) -> Bool {
+        let center = CGPoint(x: width / 2, y: notchCenterY)
+        return hypot(point.x - center.x, point.y - center.y) <= notchRadius
+    }
 
     /// Strength of the variable blur. A material property, not a colour.
     static let blurIntensity: Double = 0.35

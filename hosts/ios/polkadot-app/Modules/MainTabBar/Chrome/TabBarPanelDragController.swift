@@ -33,7 +33,7 @@ final class TabBarPanelDragController {
 
         let newHeight = max(
             min(openHeight - translation, openHeight),
-            DSTabBarView.capsuleHeight
+            DSTabBarStyle.height
         )
         surface.setPanelHeight(newHeight)
     }

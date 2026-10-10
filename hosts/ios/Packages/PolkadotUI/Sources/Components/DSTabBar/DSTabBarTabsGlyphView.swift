@@ -1,15 +1,15 @@
 import UIKit
 import DesignSystem
 
-final class DSTabBarTabsGlyphView: UIView {
-    var count: Int = 0 {
+public final class DSTabBarTabsGlyphView: UIView {
+    public var count: Int = 0 {
         didSet {
             guard count != oldValue else { return }
             countLabel.text = "\(count)"
         }
     }
 
-    var glyphColor: UIColor = .fgSecondary {
+    public var glyphColor: UIColor = .fgSecondary {
         didSet {
             guard glyphColor != oldValue else { return }
             applyColor()
@@ -20,7 +20,7 @@ final class DSTabBarTabsGlyphView: UIView {
     private let frontLayer = CAShapeLayer()
     private let countLabel = UILabel()
 
-    override init(frame: CGRect) {
+    override public init(frame: CGRect) {
         super.init(frame: frame)
 
         isUserInteractionEnabled = false
@@ -48,7 +48,7 @@ final class DSTabBarTabsGlyphView: UIView {
         applyColor()
     }
 
-    override func layoutSubviews() {
+    override public func layoutSubviews() {
         super.layoutSubviews()
 
         let side = min(bounds.width, bounds.height)

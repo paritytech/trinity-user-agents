@@ -12,8 +12,6 @@ final class TabBarPanelController {
     private let onPanelChanged: (TabBarPanelKind?) -> Void
     /// Receives the open panel and triggers active action index or outside-tap state updates.
     private let onOpenPanelChanged: (TabBarPanelKind?) -> Void
-    /// Dismisses tips when a panel opens.
-    private let dismissTips: () -> Void
     /// Detaches content controller and clears content from surface.
     private let tearDownContent: () -> Void
     /// Updates backdrop view visibility and animation.
@@ -30,14 +28,12 @@ final class TabBarPanelController {
         surface: TabBarChromeSurfaceView,
         onPanelChanged: @escaping (TabBarPanelKind?) -> Void,
         onOpenPanelChanged: @escaping (TabBarPanelKind?) -> Void,
-        dismissTips: @escaping () -> Void,
         tearDownContent: @escaping () -> Void,
         setBackdropOpen: @escaping (Bool, UIViewPropertyAnimator?) -> Void
     ) {
         self.surface = surface
         self.onPanelChanged = onPanelChanged
         self.onOpenPanelChanged = onOpenPanelChanged
-        self.dismissTips = dismissTips
         self.tearDownContent = tearDownContent
         self.setBackdropOpen = setBackdropOpen
     }
@@ -65,10 +61,6 @@ final class TabBarPanelController {
 
         setBackdropOpen(kind != nil, animator)
         surface.setPanelsOpen(kind, animator: animator)
-
-        if kind != nil {
-            dismissTips()
-        }
 
         open = kind
         onOpenPanelChanged(kind)

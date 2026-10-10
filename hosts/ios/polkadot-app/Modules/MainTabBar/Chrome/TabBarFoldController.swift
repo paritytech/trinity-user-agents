@@ -11,7 +11,11 @@ private struct ScreenOverride {
 /// keeps view installation and layout; this decides which state applies and drives the offset.
 @MainActor
 final class TabBarFoldController {
-    private unowned let barView: DSTabBarView
+    /// Width of the folded bar that stays on screen at the leading edge.
+    private static let foldedVisibleWidth: CGFloat = 19
+    /// Width of the strip at the leading edge that unfolds the folded bar.
+    private static let grabZoneWidth: CGFloat = 44
+
     private unowned let foldSurface: UIView
 
     /// Bounds of the chrome's own full-bleed view; every fold distance derives from it.
@@ -20,11 +24,11 @@ final class TabBarFoldController {
     private let grabZoneSink: (CGRect) -> Void
     /// A state other than `.shown` must dismiss any open panel.
     private let closePanel: () -> Void
-    /// Receives each committed visibility state; fires only when the state actually changes.
-    private let stateSink: (TabBarVisibilityState) -> Void
 
     private(set) var state: TabBarVisibilityState = .shown
     private(set) var isTabRoot = true
+    /// Set together with the offset, so it can lead `state` during an interactive transition.
+    private(set) var isFolded = false
 
     private var foldDerived: TabBarFoldDerived = .none
     private weak var navigationScreen: UIViewController?
@@ -35,19 +39,15 @@ final class TabBarFoldController {
     private var foldOffsetWidth: CGFloat?
 
     init(
-        barView: DSTabBarView,
         foldSurface: UIView,
         chromeBounds: @escaping () -> CGRect,
         grabZoneSink: @escaping (CGRect) -> Void,
-        closePanel: @escaping () -> Void,
-        stateSink: @escaping (TabBarVisibilityState) -> Void
+        closePanel: @escaping () -> Void
     ) {
-        self.barView = barView
         self.foldSurface = foldSurface
         self.chromeBounds = chromeBounds
         self.grabZoneSink = grabZoneSink
         self.closePanel = closePanel
-        self.stateSink = stateSink
     }
 
     deinit {
@@ -88,7 +88,7 @@ final class TabBarFoldController {
     /// it runs no animator of its own, so the caller's transition coordinator owns the timing.
     func setInteractiveTarget(_ state: TabBarVisibilityState) {
         isFoldInterpolating = true
-        barView.isFolded = state == .folded
+        isFolded = state == .folded
         applyFoldOffset(translationX(for: state))
     }
 
@@ -102,6 +102,27 @@ final class TabBarFoldController {
 
         pendingFoldVelocity = velocityX
         refresh()
+    }
+
+    /// Folds or unfolds from a horizontal pan on the bar. `barWidth` is the bar's own width, which
+    /// sets the settle threshold.
+    func foldPanEnded(translationX: CGFloat, velocityX: CGFloat, barWidth: CGFloat) {
+        let decision = DSTabBarFoldDecision.decide(
+            velocityX: velocityX,
+            translationX: translationX,
+            isFolded: isFolded,
+            foldDistance: Self.foldedTranslationX(availableWidth: barWidth)
+        )
+
+        switch decision {
+        case .fold:
+            setUserOverride(.folded, velocityX: velocityX)
+        case .unfold:
+            setUserOverride(.shown, velocityX: velocityX)
+        case .select,
+             .settle:
+            break
+        }
     }
 
     func refresh() {
@@ -139,11 +160,10 @@ private extension TabBarFoldController {
             closePanel()
         }
         applyVisibility(newState, animated: true, initialVelocity: foldVelocity)
-        stateSink(newState)
     }
 
     func applyVisibility(_ state: TabBarVisibilityState, animated: Bool, initialVelocity: CGFloat) {
-        barView.isFolded = state == .folded
+        isFolded = state == .folded
         foldOffsetWidth = chromeBounds().width
 
         let previousFoldAnimator = foldAnimator
@@ -177,22 +197,22 @@ private extension TabBarFoldController {
         case .shown:
             0
         case .folded:
-            DSTabBarView.foldedTranslationX(availableWidth: chromeBounds().width)
+            Self.foldedTranslationX(availableWidth: chromeBounds().width)
         case .hidden:
-            DSTabBarView.hiddenTranslationX(availableWidth: chromeBounds().width)
+            Self.hiddenTranslationX(availableWidth: chromeBounds().width)
         }
     }
 
     /// Normalises gesture velocity by the state's travel distance; `nil` when there is no travel.
     func foldReferenceDistance(for state: TabBarVisibilityState) -> CGFloat? {
         let distance = state == .hidden
-            ? abs(DSTabBarView.hiddenTranslationX(availableWidth: chromeBounds().width))
-            : abs(DSTabBarView.foldedTranslationX(availableWidth: chromeBounds().width))
+            ? abs(Self.hiddenTranslationX(availableWidth: chromeBounds().width))
+            : abs(Self.foldedTranslationX(availableWidth: chromeBounds().width))
         return distance > 0 ? distance : nil
     }
 
     /// The whole chrome surface is translated because the bar and both panels are siblings
-    /// of the glass, so translating the glass alone would leave them behind.
+    /// of the panel container, so translating the container alone would leave them behind.
     func applyFoldOffset(_ offset: CGFloat) {
         foldSurface.transform = CGAffineTransform(translationX: offset, y: 0)
         updateFoldGrabZone()
@@ -201,17 +221,31 @@ private extension TabBarFoldController {
     /// The inset container no longer reaches the screen edge, so the folded bar's tap target
     /// lives on the full-bleed chrome view instead.
     func updateFoldGrabZone() {
-        guard barView.isFolded else {
+        guard isFolded else {
             grabZoneSink(.zero)
             return
         }
 
-        let height = DSTabBarView.capsuleHeight
+        let height = DSTabBarStyle.height
         grabZoneSink(CGRect(
             x: 0,
-            y: chromeBounds().height - DSTabBarView.bottomGap - height,
-            width: DSTabBarView.foldGrabZoneWidth,
+            y: chromeBounds().height - DSTabBarStyle.bottomGap - height,
+            width: Self.grabZoneWidth,
             height: height
         ))
+    }
+
+    static func foldedTranslationX(availableWidth: CGFloat) -> CGFloat {
+        foldedVisibleWidth - barMaxX(availableWidth: availableWidth)
+    }
+
+    static func hiddenTranslationX(availableWidth: CGFloat) -> CGFloat {
+        -barMaxX(availableWidth: availableWidth)
+    }
+
+    /// Trailing edge of the bar, which is centred and capped at `DSTabBarStyle.maxWidth`.
+    static func barMaxX(availableWidth: CGFloat) -> CGFloat {
+        let width = min(max(0, availableWidth - DSTabBarStyle.horizontalMargin * 2), DSTabBarStyle.maxWidth)
+        return ((availableWidth - width) / 2).rounded() + width
     }
 }

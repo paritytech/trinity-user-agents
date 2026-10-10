@@ -1,0 +1,107 @@
+import DesignSystem
+import ExternalAccessibility
+import PolkadotUI
+import SwiftUI
+import UIKit
+
+/// The bar row: four fixed slots around the centre hole. The centre control and the shelf are not wired yet.
+struct TabBarBarView: View {
+    let model: TabBarBarViewModel
+
+    var body: some View {
+        DSTabBarContainer(
+            isShelfOpen: .constant(false),
+            availableHeight: 0,
+            first: { slot(at: 0) },
+            second: { slot(at: 1) },
+            third: { slot(at: 2) },
+            fourth: { slot(at: 3) },
+            center: { EmptyView() },
+            shelf: { EmptyView() }
+        )
+    }
+
+    @ViewBuilder
+    private func slot(at index: Int) -> some View {
+        if let item = model.items[safe: index] {
+            TabBarSlotView(
+                item: item,
+                isSelected: item.role == .tab && index == model.selectedItemIndex,
+                isActive: index == model.activeActionItemIndex,
+                action: { model.onSlotTapped?(index) }
+            )
+        }
+    }
+}
+
+private struct TabBarSlotView: View {
+    private static let iconSize: CGFloat = 28
+
+    let item: DSTabBarItem
+    let isSelected: Bool
+    let isActive: Bool
+    let action: () -> Void
+
+    private var isEmphasized: Bool {
+        isSelected || isActive
+    }
+
+    var body: some View {
+        Button(action: action) {
+            VStack(spacing: 0) {
+                icon
+                if let title = item.title {
+                    Text(title)
+                        .font(Font(UIFont.labelSmallEmphasized))
+                        .foregroundStyle(isEmphasized ? Color.fgPrimary : Color.fgSecondary)
+                        .padding(.top, 2)
+                }
+            }
+            .padding(.vertical, item.title == nil ? 0 : 6)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(item.accessibilityLabel)
+        .accessibilityId(rawValue: item.accessibilityIdentifier)
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
+    }
+
+    @ViewBuilder
+    private var icon: some View {
+        switch item.content {
+        case let .icon(image):
+            Image(uiImage: image)
+                .renderingMode(.template)
+                .resizable()
+                .scaledToFit()
+                .foregroundStyle(isEmphasized ? Color.fgPrimary : Color.fgSecondary)
+                .frame(width: Self.iconSize, height: Self.iconSize)
+                .overlay(alignment: .topTrailing) {
+                    if item.badge != nil {
+                        Circle()
+                            .fill(Color.bgStatusWarning)
+                            .frame(width: 8, height: 8)
+                    }
+                }
+        case let .tabsGlyph(count):
+            TabsGlyph(count: count, color: isEmphasized ? .fgPrimary : .fgSecondary)
+                .frame(width: Self.iconSize, height: Self.iconSize)
+        }
+    }
+}
+
+/// Renders the open-apps count glyph from the bar's UIKit component.
+private struct TabsGlyph: UIViewRepresentable {
+    let count: Int
+    let color: UIColor
+
+    func makeUIView(context _: Context) -> DSTabBarTabsGlyphView {
+        DSTabBarTabsGlyphView(frame: .zero)
+    }
+
+    func updateUIView(_ view: DSTabBarTabsGlyphView, context _: Context) {
+        view.count = count
+        view.glyphColor = color
+    }
+}

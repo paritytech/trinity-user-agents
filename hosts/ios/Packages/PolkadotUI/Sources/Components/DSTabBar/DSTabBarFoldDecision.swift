@@ -1,12 +1,13 @@
 import CoreGraphics
 
-enum DSTabBarFoldDecision: Equatable {
+/// Classifies the end of a horizontal drag on the bar as a selection, a fold, an unfold or a settle.
+public enum DSTabBarFoldDecision: Equatable {
     case select
     case fold
     case unfold
     case settle
 
-    static func decide(
+    public static func decide(
         velocityX: CGFloat,
         translationX: CGFloat,
         isFolded: Bool,

@@ -7,12 +7,8 @@ final class MainTabBarPresenter {
     let wireframe: MainTabBarWireframeProtocol
     let interactor: MainTabBarInteractorInputProtocol
 
-    /// `.spaTabs` is dropped by the chrome while no apps are open; it is declared here so its
-    /// position next to `.scan` is owned by the slot list rather than by insertion order.
-    let slots: [TabBarSlot] = [
-        .tab(.chat), .tab(.wallet), .action(.scan), .action(.spaTabs),
-        .tab(.browse), .tab(.settings)
-    ]
+    /// The four visible slots, left to right. The centre control is not a slot.
+    let slots: [TabBarSlot] = [.tab(.chat), .tab(.wallet), .tab(.browse), .action(.spaTabs)]
 
     private let chipViewModelFactory: SPATabChipViewModelFactory
     private let connectionStatusViewModel = ConnectionStatusSheetViewModel()

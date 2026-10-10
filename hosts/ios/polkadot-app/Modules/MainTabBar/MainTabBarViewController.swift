@@ -393,7 +393,6 @@ extension MainTabBarViewController: MainTabBarViewProtocol {
 // MARK: - Scan panel
 
 extension MainTabBarViewController {
-    /// Opens the scan panel from outside the bar, as a tap on the `.scan` action would.
     func openScanPanel() {
         chromeController.setPanel(.content(.scan), animated: true)
     }

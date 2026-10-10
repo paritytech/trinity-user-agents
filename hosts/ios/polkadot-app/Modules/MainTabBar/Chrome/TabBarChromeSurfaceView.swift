@@ -4,16 +4,12 @@ import PolkadotUI
 import SnapKit
 
 final class TabBarChromeSurfaceView: UIView {
-    private let glassContainer = DSGlassContainerView(
-        shape: .rounded(32),
-        tint: nil
-    )
+    private let panelContainer = TabBarPanelContainerView()
     private let tabsPanelView = DSTabBarTabsPanelView()
     private let contentPanelView = DSTabBarContentPanelView()
 
-    private weak var barView: DSTabBarView?
-    private var glassContainerHeightConstraint: Constraint?
-    private var appliedGlassContainerHeight: CGFloat = 0
+    private var panelContainerHeightConstraint: Constraint?
+    private var appliedPanelContainerHeight: CGFloat = 0
     private var restingBottomConstraints: [Constraint] = []
     private var sunkenBottomConstraints: [Constraint] = []
     private var isPanelTrackingKeyboard = false
@@ -21,16 +17,16 @@ final class TabBarChromeSurfaceView: UIView {
 
     /// The chrome sits at the bottom, clearing the home indicator gap, and a keyboard covers it
     /// like any other bottom bar. The one exception is the chrome's own search: focusing it sinks
-    /// the chrome by half a capsule, so the capsule's lower half hides behind the keys.
-    private static let restingBottomOffset = -DSTabBarView.bottomGap
-    private static let sunkenBottomOffset = DSTabBarView.capsuleHeight / 2
+    /// the chrome by half a bar row, so the bar row's lower half hides behind the keys.
+    private static let restingBottomOffset = -DSTabBarStyle.bottomGap
+    private static let sunkenBottomOffset = DSTabBarStyle.height / 2
 
     var availablePanelHeight: CGFloat {
         let occupiedHeight: CGFloat =
             if isPanelTrackingKeyboard {
                 bounds.height - keyboardLayoutGuide.layoutFrame.minY - Self.sunkenBottomOffset
             } else {
-                DSTabBarView.preferredHeight()
+                DSTabBarStyle.restingHeight
             }
 
         return bounds.height - topInset - occupiedHeight
@@ -46,7 +42,7 @@ final class TabBarChromeSurfaceView: UIView {
     }
 
     var panelHeight: CGFloat {
-        appliedGlassContainerHeight
+        appliedPanelContainerHeight
     }
 
     var onChipTapped: ((UUID) -> Void)?
@@ -55,7 +51,7 @@ final class TabBarChromeSurfaceView: UIView {
     override init(frame: CGRect) {
         super.init(frame: frame)
 
-        installGlassContainer()
+        installPanelContainer()
         installTabsPanel()
         installContentPanel()
     }
@@ -70,13 +66,12 @@ final class TabBarChromeSurfaceView: UIView {
         return hitView === self ? nil : hitView
     }
 
-    func addBar(_ bar: DSTabBarView) {
+    func addBar(_ bar: UIView) {
         addSubview(bar)
-        barView = bar
 
         bar.snp.makeConstraints { make in
-            make.leading.trailing.equalTo(glassContainer.contentView)
-            make.height.equalTo(DSTabBarView.capsuleHeight)
+            make.leading.trailing.equalTo(panelContainer)
+            make.height.equalTo(DSTabBarStyle.height)
             pinBottom(make)
         }
     }
@@ -106,15 +101,15 @@ final class TabBarChromeSurfaceView: UIView {
                     contentPanelView.preferredHeight(availableHeight: availablePanelHeight)
                 }
             case nil:
-                DSTabBarView.capsuleHeight
+                DSTabBarStyle.height
             }
 
-        guard containerHeight != appliedGlassContainerHeight else {
+        guard containerHeight != appliedPanelContainerHeight else {
             return false
         }
 
-        appliedGlassContainerHeight = containerHeight
-        glassContainerHeightConstraint?.update(offset: containerHeight)
+        appliedPanelContainerHeight = containerHeight
+        panelContainerHeightConstraint?.update(offset: containerHeight)
 
         animator?.addAnimations { [weak self] in
             self?.layoutIfNeeded()
@@ -123,11 +118,11 @@ final class TabBarChromeSurfaceView: UIView {
         return true
     }
 
-    /// Sets the panel height for interactive drag. Keeps `appliedGlassContainerHeight` in step
+    /// Sets the panel height for interactive drag. Keeps `appliedPanelContainerHeight` in step
     /// so a later `updateHeight` still sees a change.
     func setPanelHeight(_ height: CGFloat) {
-        appliedGlassContainerHeight = height
-        glassContainerHeightConstraint?.update(offset: height)
+        appliedPanelContainerHeight = height
+        panelContainerHeightConstraint?.update(offset: height)
         layoutIfNeeded()
     }
 
@@ -162,8 +157,6 @@ final class TabBarChromeSurfaceView: UIView {
             sunkenBottomConstraints.forEach { $0.deactivate() }
             restingBottomConstraints.forEach { $0.activate() }
         }
-
-        barView?.setKeyboardShadowVisible(tracking)
     }
 
     /// While a search is active the content panel fills the available height instead of fitting its rows.
@@ -189,14 +182,14 @@ private extension TabBarChromeSurfaceView {
         sunkenBottomConstraints.append(sunken)
     }
 
-    func installGlassContainer() {
-        insertSubview(glassContainer, at: 0)
-        glassContainer.snp.makeConstraints { make in
+    func installPanelContainer() {
+        insertSubview(panelContainer, at: 0)
+        panelContainer.snp.makeConstraints { make in
             make.centerX.equalToSuperview()
-            make.width.lessThanOrEqualTo(DSTabBarView.maxWidth)
-            make.width.equalToSuperview().offset(-DSTabBarView.horizontalMargin * 2).priority(.high)
+            make.width.lessThanOrEqualTo(DSTabBarStyle.maxWidth)
+            make.width.equalToSuperview().offset(-DSTabBarStyle.horizontalMargin * 2).priority(.high)
             pinBottom(make)
-            glassContainerHeightConstraint = make.height.equalTo(DSTabBarView.capsuleHeight).constraint
+            panelContainerHeightConstraint = make.height.equalTo(DSTabBarStyle.height).constraint
         }
     }
 
@@ -211,15 +204,24 @@ private extension TabBarChromeSurfaceView {
         installPanel(contentPanelView)
     }
 
-    /// Both panels fill the glass above the capsule, which stays uncovered at the bottom,
-    /// and always stop a capsule short of the glass bottom, at rest and over the keyboard alike.
+    /// Both panels fill the container above the bar row, which stays uncovered at the bottom,
+    /// and always stop a bar row short of the container bottom, at rest and over the keyboard alike.
     func installPanel(_ panel: UIView) {
         addSubview(panel)
 
         panel.snp.makeConstraints { make in
-            make.top.leading.trailing.equalTo(glassContainer.contentView)
-            make.bottom.equalTo(glassContainer.contentView)
-                .offset(-DSTabBarView.capsuleHeight)
+            make.top.leading.trailing.equalTo(panelContainer)
+            make.bottom.equalTo(panelContainer)
+                .offset(-DSTabBarStyle.height)
         }
+    }
+}
+
+/// Holds the panels above the bar row. It passes touches through wherever no panel is, so the
+/// content behind the chrome stays reachable.
+private final class TabBarPanelContainerView: UIView {
+    override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
+        let hitView = super.hitTest(point, with: event)
+        return hitView === self ? nil : hitView
     }
 }
