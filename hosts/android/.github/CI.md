@@ -44,6 +44,7 @@ fallback — the features they configure are not part of the current production 
 |----------|---------|
 | `APPLICATION_ID` | Base Android application ID. The build adds `.debug`, `.nightly` or `.safetynet` for those build types. Every resulting id must match a client in `google-services.json`. |
 | `APPLICATION_NAME` | Launcher name of the application. `DEBUG_APPLICATION_NAME`, `NIGHTLY_APPLICATION_NAME` and `SAFETYNET_APPLICATION_NAME` optionally override it per build type; when unset they are derived from this value. |
+| `IOS_BUNDLE_ID` | Bundle ID of the iOS app, sent as the APNs topic when a chat push goes to an iOS peer. Debug builds append `.develop`, safetynet builds `.safety`. |
 | `PRIVACY_POLICY_URL` | Privacy-policy destination shown by the application. |
 | `CURRENCY_SYMBOL` | Symbol of the in-app digital currency shown in the UI — card title, send/get actions, and every formatted amount. |
 | `FIAT_SYMBOL` | Fiat symbol prefixed to formatted amounts. `$` also puts the dollar icon on the chat pay button; any other value shows the neutral cash icon. |

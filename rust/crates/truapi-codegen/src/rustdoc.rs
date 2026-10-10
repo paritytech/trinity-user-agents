@@ -499,6 +499,42 @@ fn should_skip_type_candidate(name: &str, candidate: &ItemCandidate) -> bool {
     should_skip_type_name(name) || candidate.path.iter().any(|segment| segment == "latest")
 }
 
+/// Names the protocol types a platform signature refers to the way the
+/// generated clients do: the newest version of a type keeps its plain name and
+/// each older one carries its version, so a signature that names an older
+/// version explicitly still resolves to that version.
+pub fn protocol_name_context(krate: &Crate) -> NameContext {
+    let mut ctx = NameContext::default();
+    for (simple_name, candidates) in
+        collect_public_candidates(krate, &["struct", "enum", "type_alias"])
+    {
+        let versioned = candidates
+            .iter()
+            .filter_map(|candidate| {
+                let version = candidate
+                    .path
+                    .iter()
+                    .find_map(|segment| version_module_number(segment))?;
+                Some((version, candidate))
+            })
+            .collect::<Vec<_>>();
+        let Some(newest) = versioned.iter().map(|(version, _)| *version).max() else {
+            continue;
+        };
+        for (version, candidate) in versioned {
+            let output_name = if version == newest {
+                simple_name.clone()
+            } else {
+                versioned_type_name(version, &simple_name)
+            };
+            ctx.by_item_id
+                .insert(candidate.item_id.clone(), output_name.clone());
+            ctx.by_path.insert(candidate.path.join("::"), output_name);
+        }
+    }
+    ctx
+}
+
 fn build_name_context(type_candidates: &BTreeMap<String, Vec<ItemCandidate>>) -> NameContext {
     let mut ctx = NameContext::default();
     for (simple_name, candidates) in type_candidates {
@@ -521,6 +557,23 @@ fn build_name_context(type_candidates: &BTreeMap<String, Vec<ItemCandidate>>) ->
     ctx
 }
 
+/// The name generated code gives a protocol type at a version older than its
+/// newest, such as `V01HostChatPostMessageRequest`.
+fn versioned_type_name(version: u32, simple_name: &str) -> String {
+    format!("V{version:02}{simple_name}")
+}
+
+/// Splits a name built by [`versioned_type_name`] into its version and simple
+/// name, or `None` for a name that carries no version.
+pub fn split_versioned_type_name(name: &str) -> Option<(u32, &str)> {
+    let rest = name.strip_prefix('V')?;
+    let (digits, simple_name) = (rest.get(..2)?, rest.get(2..)?);
+    if simple_name.is_empty() || !digits.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+    Some((digits.parse().ok()?, simple_name))
+}
+
 fn disambiguated_type_name(simple_name: &str, path: &[String]) -> String {
     if path.iter().any(|segment| segment == "versioned") {
         return simple_name.to_string();
@@ -529,7 +582,7 @@ fn disambiguated_type_name(simple_name: &str, path: &[String]) -> String {
         .iter()
         .find_map(|segment| version_module_number(segment))
     {
-        return format!("V{version:02}{simple_name}");
+        return versioned_type_name(version, simple_name);
     }
     let module = path
         .iter()

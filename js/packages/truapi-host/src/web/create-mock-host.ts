@@ -42,6 +42,7 @@ import type {
   AuthState,
   CoreStorageKey,
   HostChainSet,
+  HostScan,
   JsonRpcConnection,
   PermissionDecision,
   RequiredHostCallbacks,
@@ -399,6 +400,8 @@ export interface MockHostConfig {
   languageTag?: string;
   /** Whether `confirmUserAction` confirms reviewed actions. Default `true`. */
   confirmUserActions?: boolean;
+  /** The scanner's answer. Unset serves no scanner, so scans are `Unsupported`. */
+  scanner?: HostScan;
   /**
    * JSON-RPC response frames the chain connection replays, in order. Empty
    * (the default) means a silent connection: it records outbound requests and
@@ -550,6 +553,8 @@ export interface MockHost {
   getTheme(): ThemeVariant;
   /** Replace the reported theme. */
   setTheme(variant: ThemeVariant): void;
+  /** Set the next scan's answer. Throws unless created with a `scanner` answer. */
+  setScanAnswer(answer: HostScan): void;
   /** State of the mock's chain connection. */
   getChainStatus(): ChainStatus;
   /** Mark the chain disconnected, as a dropped transport would. */
@@ -845,6 +850,7 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
     chainProxies = [],
     languageTag = "en",
     faults = {},
+    scanner,
     supportedChains = {
       network: "mock",
       chains: [
@@ -855,6 +861,7 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
     },
   } = config;
 
+  const scan = scanner === undefined ? undefined : { answer: scanner };
   const storage = new Map<string, Uint8Array>();
   const preimages = new Map<string, Uint8Array>();
   const navigations: string[] = [];
@@ -1161,6 +1168,21 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
       },
     },
 
+    game: {
+      async scheduleGameReminder() {},
+      async cancelGameReminder() {},
+    },
+
+    ...(scan === undefined
+      ? {}
+      : {
+          scanner: {
+            async scanCode() {
+              return scan.answer;
+            },
+          },
+        }),
+
     permissions: {
       async devicePermission(_product, request) {
         if (faults.permissionError) throw new Error(faults.permissionError);
@@ -1333,6 +1355,9 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
         });
         return { messageId };
       },
+      async setChatRoomFooter() {
+        if (faults.chatError) throw new Error(faults.chatError);
+      },
       subscribeChatRooms() {
         // The other chat calls fail with this reason, so the subscription
         // reports it too rather than handing back a stream that looks healthy
@@ -1489,6 +1514,14 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
       enforcePermissions = enforce;
     },
     getTheme: () => currentTheme,
+    setScanAnswer: (answer) => {
+      if (scan === undefined) {
+        throw new Error(
+          "this mock serves no scanner: create it with a `scanner` answer",
+        );
+      }
+      scan.answer = answer;
+    },
     setTheme: (variant) => {
       currentTheme = variant;
       const item: HostThemeSubscribeItem = {

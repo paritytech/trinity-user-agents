@@ -75,23 +75,23 @@ pub mod latest {
         AllocatableResource, AllocationOutcome, Arrangement, Background, BlendingMode, BorderStyle,
         BoxProps, ButtonProps, ButtonVariant, ChainIdentifier, ChatAction, ChatActionLayout,
         ChatActions, ChatBotRegistrationStatus, ChatCustomMessage, ChatFile, ChatMedia,
-        ChatMessageContent, ChatReaction, ChatRichText, ChatRoom, ChatRoomParticipation,
-        ChatRoomRegistrationStatus, ColorToken, ColumnProps, ContactHandle, ContactPickOutcome,
-        ContentAlignment, ContextualAlias, DerivationIndex, Dimensions, Effect, EffectProps,
-        GenericError, HorizontalAlignment, HostAccountCreateProofRequest,
-        HostAccountGetAliasRequest, HostAccountListRingVrfKeysRequest,
-        HostAccountRegisterRingVrfKeyRequest, HostAccountRingVrfSignRequest,
-        HostAccountSignVrfError, HostAccountSignVrfRequest, HostPlatform, HostSignPayloadData,
-        HostWorkerOperationError, ImageFit, ImageProps, ImageSource, Modifier,
-        OperationStartedResult, PocketCard, ProductAccountId, ProductProofContext, RawPayload,
-        RegisteredRingVrfKey, RemotePermission, RemoteStatementStoreCreateProofError,
-        RemoteStatementStoreCreateProofRequest, RemoteStatementStoreCreateProofResponse,
-        RemoteStatementStoreSubscribeItem, RemoteStatementStoreSubscribeRequest, RenderContext,
-        RendererNode, RingLocation, RingLocationJunction, RingVrfKeyDisclosure, RowProps,
-        RuntimeApi, RuntimeSpec, RuntimeType, Shape, SignedStatement, Size, Statement,
-        StatementProof, StorageQueryItem, StorageQueryType, StorageResultItem, TextFieldProps,
-        TextProps, ThemeName, ThemeVariant, TxPayloadExtension, TypographyStyle, VerticalAlignment,
-        VrfSignature,
+        ChatMessageContent, ChatReaction, ChatRichText, ChatRoom, ChatRoomFooter,
+        ChatRoomParticipation, ChatRoomRegistrationStatus, CodeFormat, ColorToken, ColumnProps,
+        ContactHandle, ContactPickOutcome, ContentAlignment, ContextualAlias, DerivationIndex,
+        Dimensions, Effect, EffectProps, GenericError, HorizontalAlignment,
+        HostAccountCreateProofRequest, HostAccountGetAliasRequest,
+        HostAccountListRingVrfKeysRequest, HostAccountRegisterRingVrfKeyRequest,
+        HostAccountRingVrfSignRequest, HostAccountSignVrfError, HostAccountSignVrfRequest,
+        HostPlatform, HostSignPayloadData, HostWorkerOperationError, ImageFit, ImageProps,
+        ImageSource, Modifier, OperationStartedResult, PocketCard, ProductAccountId,
+        ProductProofContext, RawPayload, RegisteredRingVrfKey, RemotePermission,
+        RemoteStatementStoreCreateProofError, RemoteStatementStoreCreateProofRequest,
+        RemoteStatementStoreCreateProofResponse, RemoteStatementStoreSubscribeItem,
+        RemoteStatementStoreSubscribeRequest, RenderContext, RendererNode, RingLocation,
+        RingLocationJunction, RingVrfKeyDisclosure, RowProps, RuntimeApi, RuntimeSpec, RuntimeType,
+        ScanOutcome, Shape, SignedStatement, Size, Statement, StatementProof, StorageQueryItem,
+        StorageQueryType, StorageResultItem, TextFieldProps, TextProps, ThemeName, ThemeVariant,
+        TxPayloadExtension, TypographyStyle, VerticalAlignment, VrfSignature,
     };
 
     /// Latest payload type of a versioned envelope.
@@ -114,6 +114,10 @@ pub mod latest {
     pub type HostChatRegisterBotResponse = LatestOf<versioned::chat::HostChatRegisterBotResponse>;
     /// Native chat bot registration failure.
     pub type HostChatRegisterBotError = LatestOf<versioned::chat::HostChatRegisterBotError>;
+    /// Request to set what a native chat room shows below its messages.
+    pub type HostChatSetRoomFooterRequest = LatestOf<versioned::chat::HostChatSetRoomFooterRequest>;
+    /// Failure to set what a native chat room shows below its messages.
+    pub type HostChatSetRoomFooterError = LatestOf<versioned::chat::HostChatSetRoomFooterError>;
     /// Current native room list for a product.
     pub type HostChatListSubscribeItem = LatestOf<versioned::chat::HostChatListSubscribeItem>;
     /// Native chat message posting request.
@@ -136,6 +140,12 @@ pub mod latest {
     pub type HostContactsPickResponse = LatestOf<versioned::contacts::HostContactsPickResponse>;
     /// Contact picker failure.
     pub type HostContactsPickError = LatestOf<versioned::contacts::HostContactsPickError>;
+    /// Scanner request.
+    pub type HostScannerScanRequest = LatestOf<versioned::scanner::HostScannerScanRequest>;
+    /// Scanner outcome.
+    pub type HostScannerScanResponse = LatestOf<versioned::scanner::HostScannerScanResponse>;
+    /// Scanner failure.
+    pub type HostScannerScanError = LatestOf<versioned::scanner::HostScannerScanError>;
     /// Contextual alias derivation result.
     pub type HostAccountGetAliasResponse =
         LatestOf<versioned::account::HostAccountGetAliasResponse>;
@@ -168,6 +178,12 @@ pub mod latest {
     /// Product context bound to the current host runtime.
     pub type HostGetProductContextResponse =
         LatestOf<versioned::system::HostGetProductContextResponse>;
+    /// Request to drop the calling product's game reminder.
+    pub type HostCancelNextGameRequest = LatestOf<versioned::game::HostCancelNextGameRequest>;
+    /// Request to remind the user when the calling product's next game starts.
+    pub type HostRemindNextGameRequest = LatestOf<versioned::game::HostRemindNextGameRequest>;
+    /// Why a game reminder was not taken.
+    pub type HostRemindNextGameError = LatestOf<versioned::game::HostRemindNextGameError>;
     /// Storage key change pushed to a subscriber.
     pub type HostLocalStorageChangeItem =
         LatestOf<versioned::local_storage::HostLocalStorageChangeItem>;
@@ -184,6 +200,12 @@ pub mod latest {
     pub type HostPocketRemoveCardRequest = LatestOf<versioned::pocket::HostPocketRemoveCardRequest>;
     /// Pocket card removal failure.
     pub type HostPocketRemoveCardError = LatestOf<versioned::pocket::HostPocketRemoveCardError>;
+    /// Request to show or hide the face above the calling Widget.
+    pub type HostExpandedCardSetFaceShownRequest =
+        LatestOf<versioned::expanded_card::HostExpandedCardSetFaceShownRequest>;
+    /// Face visibility change failure.
+    pub type HostExpandedCardSetFaceShownError =
+        LatestOf<versioned::expanded_card::HostExpandedCardSetFaceShownError>;
     /// Push notification scheduling request.
     pub type HostPushNotificationRequest =
         LatestOf<versioned::notifications::HostPushNotificationRequest>;

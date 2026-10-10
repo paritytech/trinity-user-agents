@@ -10,7 +10,9 @@ use crate::platform_callbacks::{
     platform_trait_names, raw_callback_field_name, raw_callback_name, raw_callback_wire_name,
     snake_case, stream_item, trait_object_return_name,
 };
-use crate::rustdoc::{ApiDefinition, TypeDef, TypeDefKind, TypeRef, VariantFields};
+use crate::rustdoc::{
+    ApiDefinition, TypeDef, TypeDefKind, TypeRef, VariantFields, split_versioned_type_name,
+};
 
 pub fn generate_wasm_bridge(
     definition: &PlatformDefinition,
@@ -39,7 +41,7 @@ pub fn generate_wasm_bridge(
         use futures::stream::BoxStream;
         use js_sys::{{Function, Uint8Array}};
         use parity_scale_codec::Encode;
-        use truapi::v01;
+        use truapi::latest;
         use wasm_bindgen::JsValue;
 
         use super::{{
@@ -531,7 +533,7 @@ fn rust_type(ty: &TypeRef, ctx: &BridgeCtx<'_>) -> Result<String> {
         )),
         TypeRef::Named { name, args } if ctx.api_types.contains_key(name.as_str()) => {
             if args.is_empty() {
-                Ok(format!("v01::{name}"))
+                Ok(protocol_type_path(name))
             } else {
                 bail!("generic API type `{name}` is not supported in wasm bridge")
             }
@@ -612,6 +614,7 @@ fn numeric_js_arg(name: &str, primitive: &str) -> Result<String> {
         "u8" | "u16" | "u32" | "i8" | "i16" | "i32" => {
             Ok(format!("JsValue::from_f64(f64::from({name}))"))
         }
+        "u64" | "i64" | "u128" | "i128" => Ok(format!("js_sys::BigInt::from({name}).into()")),
         "bool" => Ok(format!("JsValue::from_bool({name})")),
         other => bail!("numeric callback parameter `{name}: {other}` is not JS-number safe"),
     }
@@ -737,8 +740,10 @@ fn validate_error_name<'a>(
             })
             .collect::<Vec<_>>();
         if !versioned_payloads.is_empty() && versioned_payloads.len() == variants.len() {
+            // Each version walks its own path: two versions sharing one
+            // payload type are siblings, not a cycle.
             for payload in versioned_payloads {
-                validate_error_name(named_type_name(payload)?, ctx, seen)?;
+                validate_error_name(named_type_name(payload)?, ctx, &mut seen.clone())?;
             }
             return Ok(());
         }
@@ -759,6 +764,15 @@ fn resolve_alias_type<'a>(name: &'a str, ctx: &BridgeCtx<'a>) -> Option<&'a Type
             TypeDefKind::Alias(TypeRef::Named { name, .. }) => current = name,
             _ => return Some(type_def),
         }
+    }
+}
+
+/// The Rust path of a protocol type. A `V01`-style prefix is the version the
+/// signature names explicitly, and an unprefixed name is the latest version.
+fn protocol_type_path(name: &str) -> String {
+    match split_versioned_type_name(name) {
+        Some((version, simple_name)) => format!("truapi::v{version:02}::{simple_name}"),
+        None => format!("latest::{name}"),
     }
 }
 

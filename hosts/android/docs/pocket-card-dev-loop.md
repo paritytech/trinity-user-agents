@@ -109,6 +109,8 @@ published worker**:
 | Pocket card id | the id your worker answers `onRender` for, e.g. `loyalty` |
 | Pocket card title | what the approval sheet calls the card |
 | Pocket card face URL | `http://127.0.0.1:5173/faces/loyalty.json` |
+| App URL | optional, `http://127.0.0.1:<port>/...` only; the page the card opens over, in place of the product's published app |
+| Open with the face away | off by default; on, the card opens with its face out of the way |
 
 Two traps in this form:
 
@@ -166,6 +168,25 @@ the host releasing the render when the card leaves the screen.
   `adb shell am force-stop <package>` before retesting, or you will be reading results from the code
   you replaced.
 
+## The expanded card, live
+
+An opened card shows its product's page under the face, and that page can fold the face away and
+back. To try it with the sample worker in `feature/products/product-sample/pocket-worker` (its README
+has the details):
+
+1. Turn **TrUAPI runtime (products)** on in the debug menu.
+2. Build the sample and serve its `dist/` on port 5173, then `adb reverse tcp:5173 tcp:5173`.
+3. In the product form set Script URL `http://127.0.0.1:5173/worker.js`, face URL
+   `http://127.0.0.1:5173/faces/loyalty.json` and App URL `http://127.0.0.1:5173/index.html`. Add
+   `?hideOnLoad` to the App URL to test a call made as the page loads.
+4. Add the card and open it.
+
+The page has buttons that call `truapi.expandedCard.setFaceShown({ shown })` and a log of each
+answer, plus its own height and a red bar pinned to its bottom edge. The call answers `UserMoving`
+while the user drags the face (and until it has settled) and `NotPresented` when the card is not open.
+
+The WebView keeps the last card's page loaded, so restart the app after changing the App URL.
+
 ## When you are ready to publish
 
 Declare the card in the worker's manifest instead, and the debug fields stop being involved:
@@ -178,10 +199,12 @@ Declare the card in the worker's manifest instead, and the debug fields stop bei
   "entrypoint": "worker.js",
   "includes": { "chat": false, "pocket": true },
   "pocket": {
-    "cards": [{ "id": "loyalty", "title": "Loyalty", "preview": "faces/loyalty.json" }]
+    "cards": [{ "id": "loyalty", "title": "Loyalty", "preview": "faces/loyalty.json", "faceShown": false }]
   }
 }
 ```
+
+`faceShown` is optional and defaults to `true`; `false` opens the card with its face out of the way.
 
 `preview` is now a path **inside the worker archive**, not a URL — a published manifest cannot name a
 URL, by design. Publish with `bulletin-deploy`, which writes this as the `executable` record on

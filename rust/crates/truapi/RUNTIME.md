@@ -397,6 +397,9 @@ AutoSigning without approval. Legacy-account signing still asks the user.
 - `PocketPlatform`: stream the product's Pocket card collection and remove a
   card from it. The host owns the collection and decides which cards are
   privileged.
+- `ExpandedCardHost`: show or hide the card face drawn above an opened card's
+  Widget. It is carried per product connection on `ConnectionAdapters`, so only
+  the Widget under a card reaches that card.
 - `ContactsPlatform`: resolve the handles a transaction names to contacts, and
   render the picker that selects one. `contacts` is the only required method; `pick_contact`
   defaults to `Unsupported`, so a host serving no picker says so rather than
@@ -404,16 +407,34 @@ AutoSigning without approval. Legacy-account signing still asks the user.
   reaches the product — only a handle for the selection does. The core caches
   resolved handles; a host calls `notify_contacts_changed` on its runtime when
   a contact is removed or blocked.
+- `GamePlatform`: hold the game product's next-game reminder and drop it.
+  The core serves Game only to `dim2`, on every network, and answers
+  `Unsupported` to any other product without calling the host. A host
+  keeps one reminder per product: a schedule replaces the reminder the same
+  product already holds. The core asks for no per-product consent: the host
+  asks the OS for what the reminder needs, rings an alarm where the OS allows
+  one and delivers a notification otherwise, may add a calendar event, and
+  keeps the reminder across app kill and reboot. A schedule the host cannot
+  hold fails as a host failure carrying its reason.
+- `ScannerPlatform`: open the host's QR and barcode viewfinder. Before calling
+  it the core refuses an invalid request, a Worker the user has not tapped in
+  the last 5 seconds, and a second open scan. After, it refuses a code the
+  request does not accept and any pairing request. The trait's docs list what
+  the host must do.
 
 `Platform` is a blanket-implemented supertrait that combines the capability
-traits above except `ChatPlatform`, `ContactsPlatform`, `PermissionStatusHost`
-and `PocketPlatform`, which `OptionalPlatform` lists instead: a host supplies
-each only when it can serve it. Codegen reads `OptionalPlatform` to emit each listed
-capability as an optional group on the host-callback surface.
+traits above except `ChatPlatform`, `ContactsPlatform`, `PermissionStatusHost`,
+`PocketPlatform`, `GamePlatform` and `ScannerPlatform`, which `OptionalPlatform`
+lists instead: a host supplies each only when it can serve it. `ExpandedCardHost`
+is in neither, because it travels per connection rather than with the platform.
+Codegen reads `OptionalPlatform` to emit each listed capability as an optional
+group on the host-callback surface.
 
 Omitting `ChatPlatform` makes the core answer Chat calls `Unsupported`, and
-omitting `ContactsPlatform` or `PocketPlatform` does the same for Contacts or
-Pocket calls.
+omitting `ContactsPlatform`, `PocketPlatform`, `GamePlatform` or
+`ScannerPlatform` does the same for Contacts, Pocket, Game or Scanner calls. A
+connection without an `ExpandedCardHost` answers a Widget's `ExpandedCard` calls
+`Unsupported`.
 Omitting `PermissionStatusHost` leaves device grants resolving from stored
 state alone, which is what a host with no OS permission model does anyway.
 Serving it gates both halves of the surface: a device permission request and a

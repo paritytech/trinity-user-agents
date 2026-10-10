@@ -15,6 +15,7 @@ export const CALLBACK_NAMES = [
   "createChatRoom",
   "registerChatBot",
   "postChatMessage",
+  "setChatRoomFooter",
   "contacts",
   "pickContact",
   "readCoreStorage",
@@ -22,6 +23,8 @@ export const CALLBACK_NAMES = [
   "clearCoreStorage",
   "featureSupported",
   "supportedChains",
+  "scheduleGameReminder",
+  "cancelGameReminder",
   "navigateTo",
   "pushNotification",
   "cancelNotification",
@@ -34,6 +37,7 @@ export const CALLBACK_NAMES = [
   "read",
   "write",
   "clear",
+  "scanCode",
   "confirmPermission",
   "confirmUserAction",
 ] as const;
@@ -192,6 +196,7 @@ function chatRawCallbacks(
     | "createChatRoom"
     | "registerChatBot"
     | "postChatMessage"
+    | "setChatRoomFooter"
     | "subscribeChatRooms"
   >
 > {
@@ -211,6 +216,11 @@ function chatRawCallbacks(
         product,
         request,
       ]) as ReturnType<Required<RawCallbacks>["postChatMessage"]>,
+    setChatRoomFooter: (product, request) =>
+      bridge.callbackRequest("setChatRoomFooter", [
+        product,
+        request,
+      ]) as ReturnType<Required<RawCallbacks>["setChatRoomFooter"]>,
     subscribeChatRooms: (product, sendItem, sendError) =>
       bridge.startSubscription(
         "subscribeChatRooms",
@@ -232,6 +242,22 @@ function contactsRawCallbacks(
     pickContact: (product) =>
       bridge.callbackRequest("pickContact", [product]) as ReturnType<
         Required<RawCallbacks>["pickContact"]
+      >,
+  };
+}
+
+function gameRawCallbacks(
+  bridge: WorkerCallbackBridge,
+): Required<Pick<RawCallbacks, "scheduleGameReminder" | "cancelGameReminder">> {
+  return {
+    scheduleGameReminder: (product, startsAt) =>
+      bridge.callbackRequest("scheduleGameReminder", [
+        product,
+        startsAt,
+      ]) as ReturnType<Required<RawCallbacks>["scheduleGameReminder"]>,
+    cancelGameReminder: (product) =>
+      bridge.callbackRequest("cancelGameReminder", [product]) as ReturnType<
+        Required<RawCallbacks>["cancelGameReminder"]
       >,
   };
 }
@@ -266,6 +292,17 @@ function pocketRawCallbacks(
   };
 }
 
+function scannerRawCallbacks(
+  bridge: WorkerCallbackBridge,
+): Required<Pick<RawCallbacks, "scanCode">> {
+  return {
+    scanCode: (product, request) =>
+      bridge.callbackRequest("scanCode", [product, request]) as ReturnType<
+        Required<RawCallbacks>["scanCode"]
+      >,
+  };
+}
+
 /**
  * Optional capabilities the main-thread host actually serves. A
  * capability left out here is not proxied into the worker, so the
@@ -277,9 +314,13 @@ export interface OptionalCapabilities {
   /** Whether the host serves this capability. */
   contacts?: boolean;
   /** Whether the host serves this capability. */
+  game?: boolean;
+  /** Whether the host serves this capability. */
   permissionStatus?: boolean;
   /** Whether the host serves this capability. */
   pocket?: boolean;
+  /** Whether the host serves this capability. */
+  scanner?: boolean;
 }
 
 export function createWorkerRawCallbacks(
@@ -294,9 +335,12 @@ export function createWorkerRawCallbacks(
   if (capabilities.chat) Object.assign(callbacks, chatRawCallbacks(bridge));
   if (capabilities.contacts)
     Object.assign(callbacks, contactsRawCallbacks(bridge));
+  if (capabilities.game) Object.assign(callbacks, gameRawCallbacks(bridge));
   if (capabilities.permissionStatus)
     Object.assign(callbacks, permissionStatusRawCallbacks(bridge));
   if (capabilities.pocket) Object.assign(callbacks, pocketRawCallbacks(bridge));
+  if (capabilities.scanner)
+    Object.assign(callbacks, scannerRawCallbacks(bridge));
   return callbacks;
 }
 

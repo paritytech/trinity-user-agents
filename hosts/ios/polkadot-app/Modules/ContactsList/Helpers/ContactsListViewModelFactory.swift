@@ -15,6 +15,7 @@ protocol ContactsListViewModelMaking {
 final class ContactsListViewModelFactory {
     let messageTimestampFormatter: TimestampFormatting
     let chatMessageDecoderFactory: ChatMessageDecoderMaking
+    let productIconViewModelFactory: ProductIconViewModelMaking
     let chain: ChainModel
     let tokenFormatter: (AssetBalanceDisplayInfo) -> TransferAmountViewModelFactoryProtocol
     private var _tokenFormatter: TransferAmountViewModelFactoryProtocol?
@@ -22,11 +23,13 @@ final class ContactsListViewModelFactory {
     init(
         messageTimestampFormatter: TimestampFormatting = ContactTimestampFormatter(),
         chatMessageDecoderFactory: ChatMessageDecoderMaking,
+        productIconViewModelFactory: ProductIconViewModelMaking,
         chain: ChainModel,
         tokenFormatter: @escaping (AssetBalanceDisplayInfo) -> TransferAmountViewModelFactoryProtocol
     ) {
         self.messageTimestampFormatter = messageTimestampFormatter
         self.chatMessageDecoderFactory = chatMessageDecoderFactory
+        self.productIconViewModelFactory = productIconViewModelFactory
         self.chain = chain
         self.tokenFormatter = tokenFormatter
     }
@@ -65,6 +68,7 @@ extension ContactsListViewModelFactory: ContactsListViewModelMaking {
             let configuration = DSChatListItemConfiguration(
                 dateFormatter: messageTimestampFormatter,
                 avatarViewModel: avatarViewModel,
+                icon: peerMetadata.icon.imageViewModel(using: productIconViewModelFactory),
                 sender: peerMetadata.name,
                 message: lastMessage,
                 messageKind: messageKind(for: chat.message),
@@ -265,6 +269,10 @@ private extension ContactsListViewModelFactory {
             return content
 
         case let .customRendered(content):
+            if let alt = content.alt {
+                return alt
+            }
+
             let decoders = chatMessageDecoderFactory.makeDecoders(for: chain, chatId: chat.chatId)
             let preview = decoders
                 .first(where: { $0.identifier.rawValue == content.decoderId })?
