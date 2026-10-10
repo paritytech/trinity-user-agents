@@ -7,4 +7,7 @@ import Foundation
 public protocol ProductsNavigationRouting: ProductsRouting {
     func navigateTo(destination: ProductPage) async throws
     func openExternalURL(_ url: URL) async throws
+    /// Hands a link to the app's own link handling, for a target the host answers itself
+    /// (a Pocket link) rather than a page of the product.
+    func openHostLink(_ url: URL) async throws
 }

@@ -56,7 +56,9 @@ class RustProductExecutionBridge: HostBridge, @unchecked Sendable {
     }
 
     func navigateTo(url: String) async throws {
-        if let destination = dependencies.hostProvider.page(navigationDestination: url) {
+        if PocketDeeplinkParser().opensPocket(url), let link = URL(string: url) {
+            try await dependencies.navigationRouter.openHostLink(link)
+        } else if let destination = dependencies.hostProvider.page(navigationDestination: url) {
             try await dependencies.navigationRouter.navigateTo(destination: destination)
         } else if let parsed = URL(string: url) {
             try await dependencies.navigationRouter.openExternalURL(parsed)

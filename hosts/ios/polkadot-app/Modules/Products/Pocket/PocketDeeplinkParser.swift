@@ -64,4 +64,14 @@ struct PocketDeeplinkParser {
             return .notOurs
         }
     }
+
+    /// Whether `url` opens the Pocket: an action on one of its cards, or the collection.
+    func opensPocket(_ url: String) -> Bool {
+        switch classify(url) {
+        case .pocket,
+             .collection: true
+        case .malformed,
+             .notOurs: false
+        }
+    }
 }
