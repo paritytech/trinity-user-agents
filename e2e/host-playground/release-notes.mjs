@@ -12,7 +12,7 @@ import { attentionSections, summaryLine } from "./report.mjs";
 const START = "<!-- host-playground-e2e -->";
 const END = "<!-- /host-playground-e2e -->";
 
-export function section(artifactsDir, { commit, runUrl }) {
+function section(artifactsDir, { commit, runUrl }) {
   const platforms = existsSync(artifactsDir) ? readdirSync(artifactsDir).sort() : [];
   const lines = [
     START,
@@ -24,7 +24,7 @@ export function section(artifactsDir, { commit, runUrl }) {
   for (const platform of platforms) {
     const results = join(artifactsDir, platform, "results.json");
     if (!existsSync(results)) {
-      lines.push(`${platform}: the run wrote no results.`, "");
+      lines.push(`${platform.replace(/^host-playground-e2e-/, "")}: the run wrote no results.`, "");
       continue;
     }
     const run = JSON.parse(readFileSync(results, "utf8"));
@@ -35,7 +35,7 @@ export function section(artifactsDir, { commit, runUrl }) {
   return lines.join("\n");
 }
 
-export function merge(notes, block) {
+function merge(notes, block) {
   const start = notes.indexOf(START);
   const end = notes.indexOf(END);
   if (start !== -1 && end > start) return `${notes.slice(0, start)}${block}${notes.slice(end + END.length)}`;

@@ -73,7 +73,11 @@ jobs:
       platform: ios
       ref: ${{ needs.build_simulator.outputs.sha }}
       release_tag: ${{ needs.build_simulator.outputs.tag }}
-    secrets: inherit
+    secrets:
+      GOOGLE_SERVICE_INFO_RELEASE_BASE64: ${{ secrets.GOOGLE_SERVICE_INFO_RELEASE_BASE64 }}
+      MELD_BASIC_AUTH_TOKEN: ${{ secrets.MELD_BASIC_AUTH_TOKEN }}
+      SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
+      E2E_IOS_MNEMONIC: ${{ secrets.E2E_IOS_MNEMONIC }}
     permissions:
       contents: write
 

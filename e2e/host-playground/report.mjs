@@ -14,6 +14,7 @@ const KNOWN_FAILURES = JSON.parse(readFileSync(new URL("./tests.json", import.me
 
 const oneLine = (text) => String(text ?? "").replace(/\s+/g, " ").trim();
 const cell = (text) => oneLine(text).replace(/\|/g, "\\|").slice(0, 200);
+const failureText = (result) => oneLine(result.message) || result.status;
 
 export function classify(result) {
   if (result.status === "success") return "passed";
@@ -55,7 +56,7 @@ export function attentionSections(run, heading = "###") {
     sections.push(
       `${heading} Failed (${failed.length})`,
       "",
-      ...failed.map((result) => `- \`${result.id}\`: ${oneLine(result.message) || result.status}`),
+      ...failed.map((result) => `- \`${result.id}\`: ${failureText(result)}`),
       "",
     );
   }
@@ -95,10 +96,10 @@ function markdown(run) {
 
 /** One workflow error annotation per failed test, so failures show on the checks page. */
 function annotations(run) {
-  const escape = (text) => text.replace(/%/g, "%25").replace(/\r/g, "%0D").replace(/\n/g, "%0A");
+  const escapeData = (text) => text.replace(/%/g, "%25");
   return run.results
     .filter((result) => classify(result) === "failed")
-    .map((result) => `::error title=host-playground ${run.platform}::${escape(`${result.id}: ${oneLine(result.message) || result.status}`)}`);
+    .map((result) => `::error title=host-playground ${run.platform}::${escapeData(`${result.id}: ${failureText(result)}`)}`);
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {
