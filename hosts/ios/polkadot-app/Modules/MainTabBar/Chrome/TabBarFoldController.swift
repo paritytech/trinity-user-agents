@@ -37,6 +37,8 @@ final class TabBarFoldController {
     private var isFoldInterpolating = false
     private var foldAnimator: UIViewPropertyAnimator?
     private var foldOffsetWidth: CGFloat?
+    private var foldOffset: CGFloat = 0
+    private var keyboardLift: CGFloat = 0
 
     init(
         foldSurface: UIView,
@@ -90,6 +92,12 @@ final class TabBarFoldController {
         isFoldInterpolating = true
         isFolded = state == .folded
         applyFoldOffset(translationX(for: state))
+    }
+
+    /// Lifts the chrome above the keyboard. It composes with the fold translation rather than replacing it.
+    func setKeyboardLift(_ lift: CGFloat) {
+        keyboardLift = lift
+        updateFoldTransform()
     }
 
     func setUserOverride(_ override: TabBarFoldOverride, velocityX: CGFloat) {
@@ -214,8 +222,15 @@ private extension TabBarFoldController {
     /// The whole chrome surface is translated because the bar and both panels are siblings
     /// of the panel container, so translating the container alone would leave them behind.
     func applyFoldOffset(_ offset: CGFloat) {
-        foldSurface.transform = CGAffineTransform(translationX: offset, y: 0)
+        foldOffset = offset
+        updateFoldTransform()
         updateFoldGrabZone()
+    }
+
+    /// The only writer of the chrome's transform. Fold and keyboard are both translations, so one transform
+    /// carries both and each setter keeps the other's value.
+    func updateFoldTransform() {
+        foldSurface.transform = CGAffineTransform(translationX: foldOffset, y: -keyboardLift)
     }
 
     /// The inset container no longer reaches the screen edge, so the folded bar's tap target

@@ -29,9 +29,12 @@ public struct DSTabBarCenterControl<Content: View>: View {
 
     public var body: some View {
         GeometryReader { proxy in
-            panel(in: frameSize(availableWidth: proxy.size.width))
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
-                .offset(y: -(DSTabBarStyle.height - bottomFromRowTop + ring))
+            let size = frameSize(availableWidth: proxy.size.width)
+            panel(in: size)
+                .offset(
+                    x: (proxy.size.width - size.width) / 2,
+                    y: proxy.size.height - size.height - seatInset
+                )
         }
     }
 }
@@ -47,6 +50,10 @@ private extension DSTabBarCenterControl {
 
     /// Bottom edge of the resting notch, which the morph keeps fixed.
     var bottomFromRowTop: CGFloat { DSTabBarStyle.notchCenterY + DSTabBarStyle.notchRadius }
+
+    /// How far the control's foot sits above the bar row's bottom edge, so the lobe rests in the
+    /// notch with an even ring around it.
+    var seatInset: CGFloat { DSTabBarStyle.height - bottomFromRowTop + ring }
 
     /// Progress at which content, the grabber and its hit area appear.
     var revealStart: CGFloat { 0.45 }

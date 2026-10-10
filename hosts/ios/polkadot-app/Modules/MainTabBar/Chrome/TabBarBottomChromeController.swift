@@ -336,7 +336,7 @@ private extension TabBarBottomChromeController {
         let isScanPanelOpen = panelController.open == .content(.scan)
         let lift = isScanPanelOpen ? max(0, view.bounds.maxY - keyboardTop) : 0
         DSTabBarStyle.animateCenterChange(in: view) {
-            self.chromeSurface.transform = CGAffineTransform(translationX: 0, y: -lift)
+            self.foldController.setKeyboardLift(lift)
         }
     }
 
@@ -357,6 +357,8 @@ private extension TabBarBottomChromeController {
         chromeSurface.addBar(barHost.view)
         barHost.didMove(toParent: self)
         barHost.view.backgroundColor = .clear
+        // The pinned bar geometry owns the home-indicator gap. The default safe area would apply it a second time.
+        barHost.safeAreaRegions = []
 
         barModel.onSlotTapped = { [weak self] itemIndex in
             self?.handleSlotTap(itemIndex: itemIndex)
