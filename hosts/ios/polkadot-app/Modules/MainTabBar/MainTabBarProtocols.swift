@@ -12,6 +12,8 @@ protocol MainTabBarViewProtocol: ControllerBackedProtocol, AppWidgetManaging {
     func showScanPanel()
     func showChainStatus(_ rows: [ChainConnectionStatusViewModel])
     func showProductGamePill(_ viewModel: ProductGamePillViewModel?)
+    /// A fresh settings navigation stack each call, so a presentation never inherits the last one's pages.
+    func makeSettingsNavigation() -> UINavigationController?
 }
 
 @MainActor
@@ -20,6 +22,7 @@ protocol MainTabBarPresenterProtocol: AnyObject {
     func configureViews()
     func didRequestContentPanel(for action: TabBarAction)
     func didRequestConnectionStatus()
+    func didRequestSettings()
     #if FEATURE_INPUT
         func didFindChat(_ model: ChatOpenModel)
     #else
@@ -55,13 +58,13 @@ protocol MainTabBarWireframeProtocol: AnyObject {
         func showSearchContact(from view: MainTabBarViewProtocol?)
     #endif
     func showConnectionStatus(_ viewModel: ConnectionStatusSheetViewModel, from view: MainTabBarViewProtocol?)
+    func showSettings(from view: MainTabBarViewProtocol?)
 }
 
 enum TabBarItem: String, CaseIterable {
     case chat
     case wallet
     case browse
-    case settings
 
     var image: UIImage {
         let asset: UIImage =
@@ -69,7 +72,6 @@ enum TabBarItem: String, CaseIterable {
             case .chat: .tabChat
             case .wallet: .tabWallet
             case .browse: .tabBrowse
-            case .settings: .tabSettings
             }
         return asset.withRenderingMode(.alwaysTemplate)
     }
@@ -79,7 +81,6 @@ enum TabBarItem: String, CaseIterable {
         case .chat: String(localized: .tabChat)
         case .wallet: String(localized: .tabWallet)
         case .browse: String(localized: .tabBrowse)
-        case .settings: String(localized: .tabSettings)
         }
     }
 }

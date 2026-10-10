@@ -5,6 +5,7 @@ import Keystore_iOS
 @MainActor
 protocol TabFactoryProtocol {
     func view(for item: TabBarItem) -> UIViewController?
+    func makeSettingsNavigation() -> UINavigationController?
     #if FEATURE_INPUT
         func makeScanController() -> ScanPanelViewController?
     #else
@@ -42,11 +43,25 @@ final class TabFactory: TabFactoryProtocol {
                 createWalletTab()
             case .browse:
                 createBrowseTab()
-            case .settings:
-                createSettingsTab()
             }
 
         return mainContentVC
+    }
+
+    func makeSettingsNavigation() -> UINavigationController? {
+        guard let view = SettingsViewFactory.createView(
+            serviceCoordinator: serviceCoordinator,
+            flowStateProvider: flowStateProvider
+        ) else {
+            return nil
+        }
+
+        let navigation = AppNavigationController(rootViewController: view.controller)
+
+        navigation.barSettings = .shadowSettings
+        navigation.scrollEdgeBarSettings = .defaultSettings
+
+        return navigation
     }
 
     #if FEATURE_INPUT
@@ -127,22 +142,6 @@ private extension TabFactory {
         let view = BrowseViewFactory.createView(
             flowStateProvider: flowStateProvider
         )
-
-        let navigation = AppNavigationController(rootViewController: view.controller)
-
-        navigation.barSettings = .shadowSettings
-        navigation.scrollEdgeBarSettings = .defaultSettings
-
-        return navigation
-    }
-
-    private func createSettingsTab() -> UIViewController? {
-        guard let view = SettingsViewFactory.createView(
-            serviceCoordinator: serviceCoordinator,
-            flowStateProvider: flowStateProvider
-        ) else {
-            return nil
-        }
 
         let navigation = AppNavigationController(rootViewController: view.controller)
 

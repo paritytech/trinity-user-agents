@@ -49,6 +49,10 @@ extension MainTabBarPresenter: MainTabBarPresenterProtocol {
         wireframe.showConnectionStatus(connectionStatusViewModel, from: view)
     }
 
+    func didRequestSettings() {
+        wireframe.showSettings(from: view)
+    }
+
     #if FEATURE_INPUT
         func didFindChat(_ model: ChatOpenModel) {
             wireframe.openChat(model)

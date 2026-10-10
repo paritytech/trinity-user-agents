@@ -12,6 +12,16 @@ final class TabBarBarViewModel {
     var activeActionItemIndex: Int?
     var onSlotTapped: ((Int) -> Void)?
 
+    /// Whether the shelf is open. Written by the chrome from the open panel, never by the shelf itself.
+    var isShelfOpen = false
+    /// The room the shelf may take above the bar row, measured from the chrome's own safe area.
+    var shelfAvailableHeight: CGFloat = 0
+    var shelfChips: [DSTabBarChip] = []
+    var mountedChipId: UUID?
+    var onShelfChipTapped: ((UUID) -> Void)?
+    var onShelfSettingsTapped: (() -> Void)?
+    var onShelfConnectionStatusTapped: (() -> Void)?
+
     /// Open fraction of the centre control, 0 closed to 1 open. SwiftUI moves it during a drag or tap, and
     /// UIKit moves it through `setCenterPanelOpen`.
     var centerProgress: CGFloat = 0

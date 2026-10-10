@@ -149,14 +149,6 @@ final class TabBarPanelController {
         animator.startAnimation()
     }
 
-    /// Re-measures the open panel after the chip list changed. Only an open SPA-tabs panel
-    /// animates; any other state settles the height without an animator.
-    func refreshHeightAfterChipsChange() {
-        let animator = open == .spaTabs ? makePanelAnimator() : nil
-        surface.updateHeight(for: open, animator: animator)
-        animator?.startAnimation()
-    }
-
     /// Animates the container back to the open panel's height after an interrupted interactive drag.
     func restoreOpenHeight(completion: @escaping () -> Void) {
         let animator = makePanelAnimator()

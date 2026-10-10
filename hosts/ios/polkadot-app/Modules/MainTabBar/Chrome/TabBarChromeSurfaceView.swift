@@ -78,8 +78,8 @@ final class TabBarChromeSurfaceView: UIView {
         }
     }
 
-    /// Grows the bar's hosting view upward so the open centre control lies inside its bounds, where
-    /// UIKit delivers touches to it. The row stays at the bottom of the hosting view.
+    /// Grows the bar's hosting view upward so the open centre control or shelf lies inside its bounds,
+    /// where UIKit delivers touches to it. The row stays at the bottom of the hosting view.
     func setBarRise(_ rise: CGFloat) {
         guard rise != appliedBarRise else {
             return
@@ -107,6 +107,7 @@ final class TabBarChromeSurfaceView: UIView {
             case .spaTabs:
                 tabsPanelView.preferredHeight(availableHeight: availablePanelHeight)
             case nil,
+                 .shelf,
                  .content(.scan):
                 DSTabBarStyle.height
             case .content:
@@ -143,11 +144,6 @@ final class TabBarChromeSurfaceView: UIView {
 
     func setPanelContentClipped(_ clipped: Bool) {
         contentPanelView.setContentClipped(clipped)
-    }
-
-    func setChips(_ chips: [DSTabBarChip], selected: UUID?, closeActionTitle: String) {
-        tabsPanelView.setChips(chips, selected: selected)
-        tabsPanelView.closeActionTitle = closeActionTitle
     }
 
     func setContentConfiguration(_ configuration: (any HashableContentConfiguration)?) {

@@ -1034,6 +1034,17 @@
         }
       }
     },
+    "product.tabs.empty": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No open apps"
+          }
+        }
+      }
+    },
     "product.tabs.notAvailable": {
       "extractionState": "manual",
       "localizations": {

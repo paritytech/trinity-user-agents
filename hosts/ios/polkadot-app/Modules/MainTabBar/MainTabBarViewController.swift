@@ -85,7 +85,13 @@ final class MainTabBarViewController: UIViewController {
         }
 
         chromeController.onConnectionStatusTapped = { [weak self] in
+            self?.chromeController.setPanel(nil, animated: true)
             self?.presenter.didRequestConnectionStatus()
+        }
+
+        chromeController.onSettingsTapped = { [weak self] in
+            self?.chromeController.setPanel(nil, animated: true)
+            self?.presenter.didRequestSettings()
         }
 
         chromeController.onChipTapped = { [weak self] id in
@@ -358,6 +364,10 @@ extension MainTabBarViewController: MainTabBarViewProtocol {
     func showProductGamePill(_ viewModel: ProductGamePillViewModel?) {
         productGamePill = viewModel
         applyProductGamePill()
+    }
+
+    func makeSettingsNavigation() -> UINavigationController? {
+        viewFactory.makeSettingsNavigation()
     }
 }
 

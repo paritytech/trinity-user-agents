@@ -1,6 +1,7 @@
 import UIKit
 import PolkadotUI
 import Products
+import UIKitExt
 
 @MainActor
 final class MainTabBarWireframe: MainTabBarWireframeProtocol {
@@ -57,7 +58,14 @@ final class MainTabBarWireframe: MainTabBarWireframeProtocol {
 
     func showConnectionStatus(_ viewModel: ConnectionStatusSheetViewModel, from view: MainTabBarViewProtocol?) {
         let sheet = ConnectionStatusSheetViewFactory.createView(viewModel: viewModel)
-        view?.controller.present(sheet, animated: true)
+        view?.controller.topmostPresented.present(sheet, animated: true)
+    }
+
+    func showSettings(from view: MainTabBarViewProtocol?) {
+        guard let settings = view?.makeSettingsNavigation() else {
+            return
+        }
+        view?.controller.topmostPresented.present(settings, animated: true)
     }
 }
 
@@ -82,11 +90,8 @@ private extension MainTabBarWireframe {
     }
 
     func showDeviceDetails(_ device: Chat.LocalDevice, view: MainTabBarViewProtocol?) {
-        view?.select(tab: .settings)
-
         guard
-            let settingsNav = (view as? MainTabBarViewController)?.view(for: .settings) as? UINavigationController,
-            let settingsRoot = settingsNav.viewControllers.first,
+            let settings = view?.makeSettingsNavigation(),
             let linkedDevicesView = LinkedDevicesViewFactory.createView(serviceCoordinator: serviceCoordinator),
             let detailsView = DeviceDetailsViewFactory.createView(
                 device: device,
@@ -96,9 +101,8 @@ private extension MainTabBarWireframe {
             return
         }
 
-        settingsNav.setViewControllers(
-            [settingsRoot, linkedDevicesView.controller, detailsView.controller],
-            animated: true
-        )
+        settings.pushViewController(linkedDevicesView.controller, animated: false)
+        settings.pushViewController(detailsView.controller, animated: false)
+        view?.controller.topmostPresented.present(settings, animated: true)
     }
 }

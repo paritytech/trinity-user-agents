@@ -4,15 +4,15 @@ import PolkadotUI
 import SwiftUI
 import UIKit
 
-/// The bar row: four fixed slots around the centre hole, with the centre control in the hole.
-/// The shelf is not wired yet.
+/// The bar row: four fixed slots around the centre hole, with the centre control in the hole and the
+/// product shelf growing above it.
 struct TabBarBarView: View {
     @Bindable var model: TabBarBarViewModel
 
     var body: some View {
         DSTabBarContainer(
-            isShelfOpen: .constant(false),
-            availableHeight: 0,
+            isShelfOpen: $model.isShelfOpen,
+            availableHeight: model.shelfAvailableHeight,
             first: { slot(at: 0) },
             second: { slot(at: 1) },
             third: { slot(at: 2) },
@@ -22,7 +22,15 @@ struct TabBarBarView: View {
                     TabBarScanPanelContent(makeController: model.makeCenterContent)
                 }
             },
-            shelf: { EmptyView() }
+            shelf: {
+                TabBarShelfView(
+                    chips: model.shelfChips,
+                    mountedChipId: model.mountedChipId,
+                    onChipTapped: { model.onShelfChipTapped?($0) },
+                    onConnectionStatusTapped: { model.onShelfConnectionStatusTapped?() },
+                    onSettingsTapped: { model.onShelfSettingsTapped?() }
+                )
+            }
         )
         .onChange(of: model.centerProgress) { _, _ in
             model.reportCenterProgressSettled()

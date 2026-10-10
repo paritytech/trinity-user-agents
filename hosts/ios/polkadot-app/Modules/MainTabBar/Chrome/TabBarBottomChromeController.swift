@@ -40,11 +40,12 @@ final class TabBarBottomChromeController: UIViewController {
         surface: chromeSurface,
         onPanelChanged: { [weak self] kind in
             self?.syncCenterPanel(with: kind)
+            self?.syncShelf(with: kind)
             self?.onPanelChanged?(kind)
         },
         onOpenPanelChanged: { [weak self] kind in
             self?.updateActiveActionIndex()
-            self?.applyCenterRise()
+            self?.applyBarRise()
             (self?.viewIfLoaded as? TabBarChromePassthroughView)?.isOutsideTapEnabled = kind != nil
         },
         tearDownContent: { [weak self] in
@@ -70,6 +71,7 @@ final class TabBarBottomChromeController: UIViewController {
     var onChipCloseRequested: ((UUID) -> Void)?
     var onPanelChanged: ((TabBarPanelKind?) -> Void)?
     var onConnectionStatusTapped: (() -> Void)?
+    var onSettingsTapped: (() -> Void)?
 
     /// Builds the centre control's content. Called when the control first shows it, not when the panel commits.
     var makeCenterContent: (() -> UIViewController?)?
@@ -132,6 +134,7 @@ final class TabBarBottomChromeController: UIViewController {
 
         panelController.refreshHeightAfterLayout()
         refreshCenterContentHeight()
+        refreshShelfAvailableHeight()
 
         foldController.reapplyForWidthChange()
     }
@@ -173,16 +176,9 @@ final class TabBarBottomChromeController: UIViewController {
             spaTabCount = chips.count
             rebuildItems()
         }
-        chromeSurface.setChips(chips, selected: selected, closeActionTitle: String(localized: .Common.close))
-
-        if chips.isEmpty || chromeSurface.availablePanelHeight <= 0 {
-            if panelController.open == .spaTabs {
-                panelController.setPanel(nil, animated: true)
-            }
-            return
-        }
-
-        panelController.refreshHeightAfterChipsChange()
+        barModel.shelfChips = chips
+        barModel.mountedChipId = selected
+        updateActiveActionIndex()
     }
 
     func setPanel(_ kind: TabBarPanelKind?, animated: Bool) {
@@ -197,7 +193,7 @@ final class TabBarBottomChromeController: UIViewController {
         }
         let width = DSTabBarStyle.centerPanelWidth(inRowOfWidth: barHost.view.bounds.width)
         barModel.centerContentHeight = contentHeightForCenterPanel(width)
-        applyCenterRise()
+        applyBarRise()
     }
 
     /// Selecting a different action closes the open panel before opening the new one, so the
@@ -262,14 +258,22 @@ private extension TabBarBottomChromeController {
         updateActiveActionIndex()
     }
 
+    /// The Apps item reads active while a panel opened from it is open, and while a product is mounted.
     func updateActiveActionIndex() {
-        barModel.activeActionItemIndex = panelController.open.flatMap { slotMap.itemIndex(for: $0.action) }
+        let activeAction: TabBarAction? =
+            panelController.open?.action ?? (barModel.mountedChipId != nil ? .spaTabs : nil)
+        barModel.activeActionItemIndex = activeAction.flatMap { slotMap.itemIndex(for: $0) }
     }
 
     /// Any committed panel change moves the centre control to match, so a close from anywhere (outside tap,
     /// a slot, a fold) also closes the control.
     func syncCenterPanel(with kind: TabBarPanelKind?) {
         barModel.setCenterPanelOpen(kind == .content(.scan))
+    }
+
+    /// The shelf is drawn by the bar row, so it follows the committed panel the way the centre control does.
+    func syncShelf(with kind: TabBarPanelKind?) {
+        barModel.isShelfOpen = kind == .shelf
     }
 
     /// Only the centre control's own panel is driven here; another open panel is left alone.
@@ -281,11 +285,28 @@ private extension TabBarBottomChromeController {
         }
     }
 
-    /// The hosting view must contain the open centre panel for UIKit to deliver touches to it.
-    func applyCenterRise() {
-        let isOpen = panelController.open == .content(.scan)
-        let rise = isOpen ? DSTabBarStyle.centerPanelRise(contentHeight: barModel.centerContentHeight) : 0
+    /// The hosting view must contain the open panel for UIKit to deliver touches to it. The open panel is one
+    /// value, so the centre panel and the shelf never both contribute a rise.
+    func applyBarRise() {
+        let rise: CGFloat =
+            switch panelController.open {
+            case .content(.scan):
+                DSTabBarStyle.centerPanelRise(contentHeight: barModel.centerContentHeight)
+            case .shelf:
+                barModel.shelfAvailableHeight
+            case nil,
+                 .spaTabs,
+                 .content:
+                0
+            }
         chromeSurface.setBarRise(rise)
+    }
+
+    /// The shelf may take the space above the bar row down to the top safe area, which the chrome's own
+    /// layout already measures.
+    func refreshShelfAvailableHeight() {
+        barModel.shelfAvailableHeight = max(0, chromeSurface.availablePanelHeight)
+        applyBarRise()
     }
 
     func handleSlotTap(itemIndex: Int) {
@@ -312,7 +333,7 @@ private extension TabBarBottomChromeController {
         case .connectionStatus:
             onConnectionStatusTapped?()
         case .spaTabs:
-            togglePanel(.spaTabs)
+            togglePanel(.shelf)
         case .scan:
             togglePanel(.content(.scan))
         }
@@ -382,6 +403,15 @@ private extension TabBarBottomChromeController {
         }
         barModel.onCenterPanelOpenChanged = { [weak self] isOpen in
             self?.centerPanelOpenChanged(isOpen)
+        }
+        barModel.onShelfChipTapped = { [weak self] id in
+            self?.onChipTapped?(id)
+        }
+        barModel.onShelfSettingsTapped = { [weak self] in
+            self?.onSettingsTapped?()
+        }
+        barModel.onShelfConnectionStatusTapped = { [weak self] in
+            self?.onConnectionStatusTapped?()
         }
 
         let foldRecognizer = UIPanGestureRecognizer(target: self, action: #selector(handleFoldPan(_:)))
