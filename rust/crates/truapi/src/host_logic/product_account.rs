@@ -461,6 +461,15 @@ mod tests {
     }
 
     #[test]
+    fn product_ring_vrf_domain_entropy_matches_ios_vector() {
+        let root_entropy: Vec<u8> = (1..=32).collect();
+        assert_eq!(
+            hex::encode(derive_ring_vrf_domain_entropy(&root_entropy, "dim2.paseo").unwrap()),
+            "e1f3bf6ace06a2620ab57e03ad2dc8c7765d36f01cafbac7682fdbca565ff80f"
+        );
+    }
+
+    #[test]
     fn person_ring_vrf_entropy_follows_the_network_suffix() {
         // Same seed, one person per network. The vectors come from an
         // independent RFC-0022 implementation (`@web3-citizenship/accounts`

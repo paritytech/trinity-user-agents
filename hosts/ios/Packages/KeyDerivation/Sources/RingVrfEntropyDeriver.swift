@@ -14,12 +14,15 @@ public final class RingVrfEntropyDeriver: BandersnatchEntropyDeriving {
         self.index = index
     }
 
+    /// Entropy of `//{domain}` in the ring-VRF tree, the parent of every key in that domain.
+    public static func deriveDomainEntropy(domain: String, from rootEntropy: Data) throws -> Data {
+        let treeRoot = try KeyedHashChainDeriver.deriveRoot(entropy: rootEntropy, rootKey: rootKey)
+        return try KeyedHashChainDeriver.derive(parent: treeRoot, segments: [.string(domain)])
+    }
+
     public func deriveEntropy(from rootEntropy: Data) throws -> Data {
-        let treeRoot = try KeyedHashChainDeriver.deriveRoot(entropy: rootEntropy, rootKey: Self.rootKey)
+        let domainEntropy = try Self.deriveDomainEntropy(domain: domain, from: rootEntropy)
         let indexSegment = KeyedHashChainSegment.index(DerivationIndex32(index: index))
-        return try KeyedHashChainDeriver.derive(
-            parent: treeRoot,
-            segments: [.string(domain), indexSegment]
-        )
+        return try KeyedHashChainDeriver.derive(parent: domainEntropy, segments: [indexSegment])
     }
 }

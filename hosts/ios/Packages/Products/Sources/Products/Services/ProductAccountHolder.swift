@@ -58,7 +58,14 @@ extension ProductAccountHolder: ProductAccountHolding {
 
     public func deriveAutoSigningSecrets(for productId: ProductId) throws -> AutoSigningSecrets {
         let path = try ProductDerivationPath.productRoot(productId: productId)
-        return try AutoSigningSecrets(productRootPrivateKey: derivePrivateKey(at: path))
+        let entropy = try RingVrfEntropyDeriver.deriveDomainEntropy(
+            domain: productId,
+            from: entropyManager.fetchRootEntropy()
+        )
+        return try AutoSigningSecrets(
+            productRootPrivateKey: derivePrivateKey(at: path),
+            ringVrfDomainEntropy: entropy
+        )
     }
 }
 

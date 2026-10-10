@@ -38,6 +38,17 @@ struct KeyedHashChainDeriverTests {
         #expect(try litePerson.deriveEntropy(from: rootEntropy) == expectedLite)
     }
 
+    @Test("Product ring-VRF domain entropy matches the core's //dim2.paseo vector")
+    func productDomainEntropyVector() throws {
+        let expected = try Data(
+            hexString: "0xe1f3bf6ace06a2620ab57e03ad2dc8c7765d36f01cafbac7682fdbca565ff80f"
+        )
+
+        #expect(
+            try RingVrfEntropyDeriver.deriveDomainEntropy(domain: "dim2.paseo", from: rootEntropy) == expected
+        )
+    }
+
     @Test("ECDH key material matches the //{domain} vectors for chat, sso, and game")
     func ecdhDomainVectors() throws {
         let deriver = EcdhKeyMaterialDeriver(entropyManager: StubEntropyManager(entropy: rootEntropy))
