@@ -9,7 +9,6 @@ protocol MainTabBarViewProtocol: ControllerBackedProtocol, AppWidgetManaging {
     func select(tab: TabBarItem)
     func setLabels(visible: Bool)
     func showSPATabs(_ viewModels: [SPATabChipViewModel])
-    func showScanPanel()
     func showChainStatus(_ rows: [ChainConnectionStatusViewModel])
     func showProductGamePill(_ viewModel: ProductGamePillViewModel?)
     /// A fresh settings navigation stack each call, so a presentation never inherits the last one's pages.
@@ -20,7 +19,6 @@ protocol MainTabBarViewProtocol: ControllerBackedProtocol, AppWidgetManaging {
 protocol MainTabBarPresenterProtocol: AnyObject {
     func setup()
     func configureViews()
-    func didRequestContentPanel(for action: TabBarAction)
     func didRequestConnectionStatus()
     func didRequestSettings()
     #if FEATURE_INPUT
@@ -86,11 +84,10 @@ enum TabBarItem: String, CaseIterable {
 }
 
 extension TabBarItem {
-    func makeBarItem(badge: DSTabBarItem.Badge?, showsLabel: Bool) -> DSTabBarItem {
+    func makeBarItem(showsLabel: Bool) -> DSTabBarItem {
         DSTabBarItem(
             icon: image,
             title: showsLabel ? title : nil,
-            badge: badge,
             accessibilityLabel: title,
             accessibilityIdentifier: AccessibilityID.Tab.item(for: self)?.rawValue
         )

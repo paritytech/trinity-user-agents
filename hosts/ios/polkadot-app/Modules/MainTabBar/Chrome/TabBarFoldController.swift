@@ -107,7 +107,7 @@ final class TabBarFoldController {
     /// Folds or unfolds from a horizontal pan on the bar. `barWidth` is the bar's own width, which
     /// sets the settle threshold.
     func foldPanEnded(translationX: CGFloat, velocityX: CGFloat, barWidth: CGFloat) {
-        let decision = DSTabBarFoldDecision.decide(
+        let decision = TabBarFoldDecision.decide(
             velocityX: velocityX,
             translationX: translationX,
             isFolded: isFolded,

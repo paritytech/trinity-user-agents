@@ -77,13 +77,6 @@ final class MainTabBarViewController: UIViewController {
             self?.handleSelection(index: index, isReselection: isReselection)
         }
 
-        chromeController.onPanelChanged = { [weak self] kind in
-            guard let action = kind?.contentAction else {
-                return
-            }
-            self?.presenter.didRequestContentPanel(for: action)
-        }
-
         chromeController.onConnectionStatusTapped = { [weak self] in
             self?.chromeController.setPanel(nil, animated: true)
             self?.presenter.didRequestConnectionStatus()
@@ -350,10 +343,6 @@ extension MainTabBarViewController: MainTabBarViewProtocol {
         spaChipViewModels = viewModels
         applyChips()
     }
-
-    /// The centre control builds the scan panel through `makeScanPanel` when it first shows content. That can
-    /// land after this call, so nothing is wired here.
-    func showScanPanel() {}
 
     func showChainStatus(_ models: [ChainConnectionStatusViewModel]) {
         statusBarHost.rootView = ChainConnectionStatusBarView(models: models)

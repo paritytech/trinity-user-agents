@@ -33,18 +33,6 @@ extension MainTabBarPresenter: MainTabBarPresenterProtocol {
         view?.show(slots: slots, selecting: .chat)
     }
 
-    func didRequestContentPanel(for action: TabBarAction) {
-        switch action {
-        case .scan:
-            view?.showScanPanel()
-        // Neither pushes content into a panel: the apps panel renders the chips the view already
-        // holds, and the connection status arrives through `didRequestConnectionStatus`.
-        case .spaTabs,
-             .connectionStatus:
-            break
-        }
-    }
-
     func didRequestConnectionStatus() {
         wireframe.showConnectionStatus(connectionStatusViewModel, from: view)
     }

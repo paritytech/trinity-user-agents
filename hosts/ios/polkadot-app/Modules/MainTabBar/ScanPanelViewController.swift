@@ -67,17 +67,6 @@ private extension ScanPanelViewController {
     }
 }
 
-extension ScanPanelViewController: TabBarKeyboardTrackingContent {
-    var isKeyboardInputFocused: Bool {
-        rootView.searchRow.searchField.isFirstResponder
-    }
-
-    func setKeyboardInputFocused(_ focused: Bool) {
-        scannerController.setCaptureActive(!focused)
-        rootView.setSearchFocused(focused)
-    }
-}
-
 extension ScanPanelViewController: SearchContactViewProtocol {
     func didReceive(viewModel: SearchContactResultsView.ViewModel) {
         rootView.resultsView.bind(viewModel: viewModel)

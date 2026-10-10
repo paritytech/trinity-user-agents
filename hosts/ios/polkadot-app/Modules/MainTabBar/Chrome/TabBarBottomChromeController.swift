@@ -13,10 +13,8 @@ final class TabBarBottomChromeController: UIViewController {
     private var slots: [TabBarSlot] = []
     private var slotMap = TabBarSlotMap(slots: [])
     private var spaTabCount = 0
-    private var badges: [Int: DSTabBarItem.Badge] = [:]
     private var selectedTabIndex = 0
     private var showsLabels = false
-    private weak var hostedPanelController: UIViewController?
 
     private lazy var foldController = TabBarFoldController(
         foldSurface: chromeSurface,
@@ -37,39 +35,23 @@ final class TabBarBottomChromeController: UIViewController {
     )
 
     private lazy var panelController = TabBarPanelController(
-        surface: chromeSurface,
         onPanelChanged: { [weak self] kind in
             self?.syncCenterPanel(with: kind)
             self?.syncShelf(with: kind)
-            self?.onPanelChanged?(kind)
         },
         onOpenPanelChanged: { [weak self] kind in
             self?.updateActiveActionIndex()
             self?.applyBarRise()
             (self?.viewIfLoaded as? TabBarChromePassthroughView)?.isOutsideTapEnabled = kind != nil
         },
-        tearDownContent: { [weak self] in
-            self?.detachHostedController()
-            self?.chromeSurface.setContentHostedView(nil)
-            self?.chromeSurface.setContentConfiguration(nil)
-        },
         setBackdropOpen: { [weak self] isOpen, animator in
             self?.backdropView.setOpen(isOpen, animator: animator)
         }
     )
 
-    #if FEATURE_INPUT
-        private lazy var inputFocusController = TabBarInputFocusController(
-            surface: chromeSurface,
-            panelController: panelController,
-            content: { [weak self] in self?.hostedPanelController as? TabBarKeyboardTrackingContent }
-        )
-    #endif
-
     var onSelect: ((_ index: Int, _ isReselection: Bool) -> Void)?
     var onChipTapped: ((UUID) -> Void)?
     var onChipCloseRequested: ((UUID) -> Void)?
-    var onPanelChanged: ((TabBarPanelKind?) -> Void)?
     var onConnectionStatusTapped: (() -> Void)?
     var onSettingsTapped: (() -> Void)?
 
@@ -122,17 +104,11 @@ final class TabBarBottomChromeController: UIViewController {
         installBackdrop()
 
         installOutsideTapRecognizer()
-
-        #if FEATURE_INPUT
-            // Observers register on creation.
-            _ = inputFocusController
-        #endif
     }
 
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
 
-        panelController.refreshHeightAfterLayout()
         refreshCenterContentHeight()
         refreshShelfAvailableHeight()
 
@@ -152,15 +128,6 @@ final class TabBarBottomChromeController: UIViewController {
             return
         }
         barModel.selectedItemIndex = itemIndex
-    }
-
-    func setBadge(_ badge: DSTabBarItem.Badge?, at tabIndex: Int) {
-        badges[tabIndex] = badge
-
-        guard let itemIndex = slotMap.itemIndex(forTabIndex: tabIndex) else {
-            return
-        }
-        barModel.items[itemIndex].badge = badge
     }
 
     func setLabels(visible: Bool) {
@@ -202,27 +169,6 @@ final class TabBarBottomChromeController: UIViewController {
         panelController.togglePanel(kind)
     }
 
-    /// A camera controller needs its appearance callbacks, so it is hosted as a child rather than
-    /// wrapped in a content view.
-    func setContentController(_ controller: UIViewController?, for action: TabBarAction) {
-        guard panelController.open == .content(action) else {
-            return
-        }
-
-        detachHostedController()
-
-        if let controller {
-            addChild(controller)
-            chromeSurface.setContentHostedView(controller.view)
-            controller.didMove(toParent: self)
-            hostedPanelController = controller
-        } else {
-            chromeSurface.setContentHostedView(nil)
-        }
-
-        panelController.resizeForContentPanel()
-    }
-
     func apply(_ context: TabBarChromeContext) {
         foldController.update(context: context)
         foldController.refresh()
@@ -249,9 +195,8 @@ private extension TabBarBottomChromeController {
     func rebuildItems() {
         slotMap = TabBarSlotMap(slots: slots)
 
-        barModel.items = slots.enumerated().map { itemIndex, slot in
-            let badge = slotMap.tabIndex(forItemIndex: itemIndex).flatMap { badges[$0] }
-            return slot.makeBarItem(badge: badge, spaTabCount: spaTabCount, showsLabel: showsLabels)
+        barModel.items = slots.map { slot in
+            slot.makeBarItem(spaTabCount: spaTabCount, showsLabel: showsLabels)
         }
 
         setSelectedIndex(selectedTabIndex)
@@ -295,7 +240,6 @@ private extension TabBarBottomChromeController {
             case .shelf:
                 barModel.shelfAvailableHeight
             case nil,
-                 .spaTabs,
                  .content:
                 0
             }
@@ -338,15 +282,6 @@ private extension TabBarBottomChromeController {
             togglePanel(.content(.scan))
         }
     }
-
-    func detachHostedController() {
-        guard let controller = hostedPanelController else { return }
-
-        controller.willMove(toParent: nil)
-        controller.view.removeFromSuperview()
-        controller.removeFromParent()
-        hostedPanelController = nil
-    }
 }
 
 // MARK: - Layout
@@ -358,9 +293,6 @@ private extension TabBarBottomChromeController {
         chromeSurface.snp.makeConstraints { make in
             make.edges.equalToSuperview()
         }
-
-        chromeSurface.onChipTapped = { [weak self] id in self?.onChipTapped?(id) }
-        chromeSurface.onChipCloseRequested = { [weak self] id in self?.onChipCloseRequested?(id) }
     }
 
     func installOutsideTapRecognizer() {

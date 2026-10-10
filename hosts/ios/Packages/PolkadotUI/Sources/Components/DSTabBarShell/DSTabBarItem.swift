@@ -1,8 +1,7 @@
 import UIKit
 
 public struct DSTabBarItem: Equatable {
-    /// A `.tab` participates in selection and carries the lens; an `.action` triggers a panel and
-    /// is skipped by drag resolution.
+    /// A `.tab` takes the selection when tapped; an `.action` opens a panel and never does.
     public enum Role: Equatable {
         case tab
         case action
@@ -13,20 +12,9 @@ public struct DSTabBarItem: Equatable {
         case tabsGlyph(count: Int)
     }
 
-    public enum Badge: Equatable {
-        case attention
-
-        var color: UIColor {
-            switch self {
-            case .attention: .bgStatusWarning
-            }
-        }
-    }
-
     public let content: Content
     public let title: String?
     public let role: Role
-    public var badge: Badge?
     public var accessibilityLabel: String
     public var accessibilityIdentifier: String?
     public var showsGlassBackground: Bool
@@ -35,7 +23,6 @@ public struct DSTabBarItem: Equatable {
         content: Content,
         title: String?,
         role: Role = .tab,
-        badge: Badge? = nil,
         accessibilityLabel: String,
         accessibilityIdentifier: String? = nil,
         showsGlassBackground: Bool = false
@@ -43,7 +30,6 @@ public struct DSTabBarItem: Equatable {
         self.content = content
         self.title = title
         self.role = role
-        self.badge = badge
         self.accessibilityLabel = accessibilityLabel
         self.accessibilityIdentifier = accessibilityIdentifier
         self.showsGlassBackground = showsGlassBackground
@@ -53,7 +39,6 @@ public struct DSTabBarItem: Equatable {
         icon: UIImage,
         title: String?,
         role: Role = .tab,
-        badge: Badge? = nil,
         accessibilityLabel: String,
         accessibilityIdentifier: String? = nil,
         showsGlassBackground: Bool = false
@@ -62,7 +47,6 @@ public struct DSTabBarItem: Equatable {
             content: .icon(icon),
             title: title,
             role: role,
-            badge: badge,
             accessibilityLabel: accessibilityLabel,
             accessibilityIdentifier: accessibilityIdentifier,
             showsGlassBackground: showsGlassBackground

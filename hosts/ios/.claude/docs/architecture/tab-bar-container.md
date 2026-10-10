@@ -1,163 +1,221 @@
 # Tab Bar Container
 
-`MainTabBarViewController` is a plain `UIViewController` that owns tab switching itself, replacing `UITabBarController` so the bar could match the Figma spec and support drag-across-tabs. Switching cross-fades outgoing and incoming views over 150 ms (`TabBarContainer.mount`, animated switches only).
+The bottom tab bar is SwiftUI inside a thin UIKit shell. SwiftUI draws the bar row, the center control, the center panel and the shelf. UIKit keeps the three jobs that need a `UIViewControllerTransitionCoordinator` or a `UIView` hit test: the fold, the passthrough hit testing, and the resting bottom clearance that content is inset by. The reasoning is in [ADR 0001](../../../docs/adr/0001-uikit-shell-around-swiftui-tab-bar.md).
 
-The container mounts **either a tab or an SPA browser tab** — `TabBarContentSelection` is `.tab(Int)` or `.spa(UUID)`. An SPA is a peer of the tabs, not a child of one, so it is not pushed or presented; see [SPA Hosting](#spa-hosting).
+`MainTabBarViewController` is a plain `UIViewController`. It mounts one child at a time, owns the top status strip, and writes the bottom insets on the tab and content controllers.
 
-**`tabBarController` is `nil` everywhere.** Code reaching for it is dead. For the visible screen use `UIWindow.keyWindow?.topmostViewController`, which descends through `TopmostChildProviding`. To reach the container itself use `UIApplication.shared.mainTabBarController`.
+## Model in brief
+
+- The bar row has four fixed slots around a center hole. Slots select tabs or open the shelf.
+- The center control sits in the hole and morphs into the center panel. Every size is read from one progress value between 0 and 1.
+- One value, `TabBarPanelKind?`, says which panel is open: `.shelf` or `.content(.scan)`. The shelf and the center panel cannot both be open.
+- One value, `TabBarVisibilityState` (`shown`, `folded`, `hidden`), says where the bar sits. The fold controller animates it.
+
+## Ownership
+
+```
+MainTabBarViewController            container, status strip, widget and inset layout, SPAHosting
+├── TabBarContainer                 mounts one tab or one SPA
+├── ChainConnectionStatusBarView    20 pt strip, informational only
+└── TabBarBottomChromeController    bar, panels, fold, outside tap, bar items
+    └── TabBarChromePassthroughView full-bleed, hit tests only the grab zone and the outside-tap area
+        ├── DSTabBarBackdropView    dims everything below the chrome
+        └── TabBarChromeSurfaceView fold transform target, bar layout
+            └── UIHostingController<TabBarBarView>
+                                    SwiftUI bar row, center control, shelf
+```
 
 ## Where Things Live
 
 | Thing | Location |
 |---|---|
 | Container controller | `polkadot-app/Modules/MainTabBar/MainTabBarViewController.swift` |
+| Widget and inset layout | `polkadot-app/Modules/MainTabBar/MainTabBarViewController+Widgets.swift` |
+| SPA hosting | `polkadot-app/Modules/MainTabBar/MainTabBarViewController+SPA.swift` |
 | Child mounting | `polkadot-app/Modules/MainTabBar/Container/TabBarContainer.swift` |
 | Tab-vs-SPA selection | `polkadot-app/Modules/MainTabBar/Container/TabBarContentSelection.swift` |
 | `hidesBottomBarWhenPushed` resolution | `polkadot-app/Modules/MainTabBar/Container/TabBarHiddenPolicy.swift` |
 | Re-tap behaviour | `polkadot-app/Modules/MainTabBar/Container/TabBarReselectionPolicy.swift` |
 | Scroll-to-top target search | `polkadot-app/Modules/MainTabBar/Container/TabBarScrollToTopLocator.swift` |
+| Bottom chrome: bar, panels, fold, clearance | `polkadot-app/Modules/MainTabBar/Chrome/TabBarBottomChromeController.swift` |
+| Chrome apply input | `polkadot-app/Modules/MainTabBar/Chrome/TabBarChromeContext.swift` |
+| Passthrough hit testing | `polkadot-app/Modules/MainTabBar/Chrome/TabBarChromePassthroughView.swift` |
+| Fold transform target, bar width | `polkadot-app/Modules/MainTabBar/Chrome/TabBarChromeSurfaceView.swift` |
 | Fold state machine | `polkadot-app/Modules/MainTabBar/Chrome/TabBarFoldController.swift` |
 | Fold state resolution | `polkadot-app/Modules/MainTabBar/Chrome/TabBarVisibilityPolicy.swift` |
-| Fold animator utilities | `polkadot-app/Modules/MainTabBar/Chrome/UIViewPropertyAnimator+Cancel.swift` |
-| Bar, widgets and safe-area insets | `polkadot-app/Modules/MainTabBar/Chrome/TabBarBottomChromeController.swift` |
-| Chrome apply input | `polkadot-app/Modules/MainTabBar/Chrome/TabBarChromeContext.swift` |
+| Fold drag decision | `polkadot-app/Modules/MainTabBar/Chrome/DSTabBarFoldDecision.swift` |
+| Panel state machine and backdrop animation | `polkadot-app/Modules/MainTabBar/Chrome/TabBarPanelController.swift` |
 | Panel kinds | `polkadot-app/Modules/MainTabBar/Chrome/TabBarPanelKind.swift` |
-| Bar view and its parts | `Packages/PolkadotUI/Sources/Components/DSTabBar/` |
-| Row geometry (`DSTabBarRow`) | `Packages/PolkadotUI/Sources/Components/DSTabBar/DSTabBarGeometry.swift` |
-| Action slots and state | `polkadot-app/Modules/MainTabBar/TabBarSlot.swift`, `Chrome/TabBarSlotMap.swift` |
-| Backdrop dimming | `Packages/PolkadotUI/Sources/Components/DSTabBar/DSTabBarBackdropView.swift` |
-| Tabs panel | `.../DSTabBar/DSTabBarTabsPanelView.swift`, `DSTabBarPanelLayout.swift`, `DSTabBarChipView.swift` |
-| Content panel | `.../DSTabBar/DSTabBarContentPanelView.swift` |
-| Top status strip view | `Packages/PolkadotUI/Sources/Modules/MainTabBar/ChainConnectionStatusBarView.swift` |
-| Chrome glass surface | `Packages/PolkadotUI/Sources/Components/DSGlassBackground/` |
-| SPA tab store and controller pool | `polkadot-app/Modules/Browser/` |
+| Bar row view (SwiftUI) | `polkadot-app/Modules/MainTabBar/Chrome/TabBarBarView.swift` |
+| Bar row state | `polkadot-app/Modules/MainTabBar/Chrome/TabBarBarViewModel.swift` |
+| Shelf content (SwiftUI) | `polkadot-app/Modules/MainTabBar/Chrome/TabBarShelfView.swift` |
+| Slots | `polkadot-app/Modules/MainTabBar/TabBarSlot.swift`, slot list in `MainTabBarPresenter.swift` |
+| Slot-to-tab index mapping | `polkadot-app/Modules/MainTabBar/Chrome/TabBarSlotMap.swift` |
+| Tab items | `TabBarItem` in `polkadot-app/Modules/MainTabBar/MainTabBarProtocols.swift` |
+| Center panel content height | `polkadot-app/Modules/MainTabBar/ScanPanelContentHeight.swift` |
+| Center panel content (scanner) | `polkadot-app/Modules/MainTabBar/ScanPanelViewController.swift`, `ScanPanelPlainViewController.swift` (chosen by `FEATURE_INPUT`) |
+| Onboarding tips | `polkadot-app/Modules/MainTabBar/Chrome/TabBarTipController.swift`, `polkadot-app/Modules/MainTabBar/Tips/` |
+| Floating widgets | `polkadot-app/Modules/MainTabBar/TabBarWidgetController.swift`, `MainTabBarFloatingWidgetStackView.swift` |
+| Bar, center control, shelf container | `Packages/PolkadotUI/Sources/Components/DSTabBarShell/DSTabBarContainer.swift`, `DSTabBarCenterControl.swift` |
+| Bar outline, morph shape, geometry | `Packages/PolkadotUI/Sources/Components/DSTabBarShell/DSTabBarShape.swift`, `DSTabBarMorphShape.swift`, `DSTabBarStyle.swift` |
+| Bar material | `Packages/PolkadotUI/Sources/Components/DSTabBarShell/DSTabBarMaterial.swift`, `DSTabBarVariableBlur.swift` |
+| Bar item and chip models | `Packages/PolkadotUI/Sources/Components/DSTabBarShell/DSTabBarItem.swift`, `DSTabBarChip.swift` |
+| Bar icons | `Packages/PolkadotUI/Sources/Components/DSTabBarShell/DSTabBarConnectionGlyph.swift`, `DSTabBarTabsGlyphView.swift` |
+| Backdrop dim | `Packages/PolkadotUI/Sources/Components/DSTabBar/DSTabBarBackdropView.swift` |
+| Top status strip | `Packages/PolkadotUI/Sources/Modules/MainTabBar/ChainConnectionStatusBarView.swift` |
+| SPA tab store and controller pool | `polkadot-app/Modules/Browser/SPABrowserCoordinator.swift`, `Pool/SPAControllerPool.swift` |
 | SPA chip view models | `polkadot-app/Modules/MainTabBar/SPATabChipViewModel.swift` |
-| Placeholder trailing content | `polkadot-app/Modules/MainTabBar/TabBarPanelPlaceholderContent.swift` |
 | `topmostViewController` | `Packages/UIKitExt/Sources/UIWindow/UIWindow+keyWindow.swift` |
 | `mainTabBarController` | `polkadot-app/Common/Extension/UIApplication+MainContainer.swift` |
 
-## Fold State
+## Bar Row
 
-`.shown` is the full capsule; `.folded` is a leading-edge sliver, tappable to restore. `TabBarVisibilityPolicy.state(isTabRoot:derived:override:)` resolves in order:
+`DSTabBarContainer` lays out two slots left of the center hole and two right of it. The hole has a radius of 34 pt, and the bar row is 60 pt tall. The bar row takes four `TabBarSlot` values, in the order the presenter lists them: Chat, Pocket (`wallet`), Browse, and Apps (`.action(.spaTabs)`).
 
-1. Tab root → `.shown`. **A tab root can never fold.**
-2. A recorded per-screen user override (`.shown` / `.folded` / `.none`) wins.
-3. Otherwise the `derived` state (from stack content analysis).
+- A tab slot selects a tab. Taps are plain taps. There is no drag across tabs.
+- The Apps slot opens the shelf. It shows the open-product count and reads as active while the shelf is open or a product is mounted.
+- `TabBarSlotMap` converts between bar position (item index) and tab position (tab index). Only tab indices cross into `TabBarContainer`.
+- Titles appear under the icons only when the interactor enables labels (`setLabels(visible:)`).
+- While the bar is folded, a slot tap only unfolds the bar. It does not select.
 
-Overrides live in `screenOverrides`, weakly keyed on `navigationScreen`, so folding one pushed screen does not leak to another.
+## Center Control and Center Panel
 
-Nothing hides the bar programmatically — presented view controllers cover it structurally. Both LocalAuth screens are transparent by design, so the bar stays *visible* behind re-auth but untappable, since the presentation owns the touch.
+The center control, `DSTabBarCenterControl`, sits in the hole. A tap or an upward drag opens it. A downward drag or a tap closes it. A flick decides on its own, and otherwise the halfway point decides.
 
-## Bar Visibility
+Every width, height and radius is read from one progress value, so the shape is valid at any point of a drag. The content (the scanner) fades in from progress 0.45. The chrome builds the content the first time the control shows it, and the content is released when the control removes it.
 
-**The bar folds when *any* controller at or below the target sets `hidesBottomBarWhenPushed`, not just the top one.** `UITabBarController` behaved this way and screens rely on it. `TabBarHiddenPolicy.deriveFoldState(in:showing:)` scans `stack[...targetIndex].dropFirst()`; the root is excluded, so a tab root setting the flag does not fold.
+The panel declares its height rather than measuring the content. `ScanPanelContentHeight.height(forPanelWidth:)` computes it from the width. Measuring a live camera would start a second capture session. The chrome recomputes the height on layout and whenever the content reports a change.
 
-`stackAfterCancelledPop(stack:staying:)` covers the window where UIKit has already mutated `viewControllers` but the transition is reversing — a cancelled pop restores the *staying* screen's state, not the target's.
+The center panel can also open from code. `ModuleNavigator.openScanPanel()` sets `.content(.scan)`, and the control follows through `setCenterPanelOpen`. Closing the panel from any source closes the control.
 
-## Safe Area
+Under Reduce Motion the geometry snaps, and only the content cross-fades.
 
-Two insets stack at the bottom and go on **different** controllers so they compose instead of overwriting. They are unchanged by the top status strip and still go on the two child controllers below; **the top inset is the only inset the container writes on itself** — a constant, set once (see [Top Status Strip](#top-status-strip)).
+## Shelf
+
+The Apps slot opens the shelf, which grows upward from the bar row. Its height is the content height, capped at the space between the bar row and the top safe area. Beyond the cap the grid scrolls.
+
+- The top row holds a connection status icon and a settings icon. Neither is a tab. Connection status opens as a page sheet with medium and large detents. Settings opens as a modal navigation stack. Both close the shelf first.
+- The grid holds one cell per open product. Tapping a cell mounts that product and closes the shelf. A long press reveals a close control. The cell's Close accessibility action does the same.
+
+## Panels
+
+`TabBarPanelKind` is `.shelf` or `.content(TabBarAction)`. Because the shelf and the center panel are one value, opening one closes the other.
+
+`TabBarPanelController` runs the transition. The backdrop animates over 0.18 s with a spring (damping 0.9). Tapping a different action closes the open panel, then opens the new one when the close completes. Tapping the open panel's own action closes it.
+
+The open panel closes on:
+
+- a tap on the dimmed area (`isOutsideTapEnabled` on the passthrough view),
+- a tab selection,
+- a connection status or settings tap,
+- a product tap,
+- any fold state other than `shown`.
+
+## Hit Testing and Bar Rise
+
+UIKit stops hit testing at a view's bounds, so the bar's hosting view grows to contain an open panel. Its height is the bar row plus a rise: `DSTabBarStyle.centerPanelRise` for the center panel, or the shelf's available height for the shelf. The row stays at the bottom. The rise is set when the panel state commits and is not animated. The SwiftUI springs animate what is drawn inside it.
+
+`TabBarChromePassthroughView` claims a touch in only two cases: the folded grab zone, and the dismiss area while a panel is open. Every other touch goes to the content behind the chrome. `TabBarChromeSurfaceView` returns nil for hits on its own empty area.
+
+The fold pan recognizer starts only on the bar row outside the center hole, and only for a drag that leads horizontally.
+
+## Fold
+
+The three states are `shown`, `folded` and `hidden`.
+
+- **Shown.** The bar sits at the bottom of the screen.
+- **Folded.** The bar slides to the leading edge and leaves a 19 pt sliver. A 44 pt grab zone on the passthrough view restores it on tap.
+- **Hidden.** The bar slides fully off the leading edge. There is no sliver and no grab zone, so tab navigation is not available on that screen. The only conformer to `TabBarChromeVisibilityCustomizing` in the app is `ChatViewController`.
+
+`TabBarVisibilityPolicy.state(isTabRoot:derived:override:)` resolves the state in this order:
+
+1. A tab root is always `shown`. A tab root never folds.
+2. A per-screen user override (`folded` or `shown`) wins.
+3. Otherwise the derived state applies.
+
+The derived state comes from `TabBarHiddenPolicy.deriveFoldState(in:showing:)`. It is `hidden` when the target opts out. It is `folded` when any controller above the root, up to the target, sets `hidesBottomBarWhenPushed`. The root is excluded, so a tab root that sets the flag does not fold.
+
+Overrides are stored per screen, weakly keyed on the navigation screen, so folding one pushed screen does not affect another. The fold controller ignores override requests while the bar is `hidden`.
+
+**Interactive pops.** The transition coordinator drives the fold. `setInteractiveTarget` runs inside `animate(alongsideTransition:)`. When the interaction ends, the chrome commits the incoming screen's state. If the pop was cancelled, it commits the staying screen's state, rebuilt with `TabBarHiddenPolicy.stackAfterCancelledPop`.
+
+**Animation.** A spring (duration 0.45, damping 0.85) takes the gesture's velocity as its initial velocity.
+
+`DSTabBarFoldDecision` classifies a horizontal drag on the bar row. From `shown`, a fast leftward flick folds, and any other drag selects. From `folded`, a tap or a fast rightward flick unfolds. Otherwise the bar unfolds if the drag passes 30% of the fold distance, and settles back to folded if it does not.
+
+## Clearance and Safe Area
+
+Two bottom insets stack, and they go on different controllers so they compose.
 
 | Inset | Applied to |
 |---|---|
-| Bar clearance | the tab's `UINavigationController` — or the tab controller itself when there is none (Scan) |
-| Widget height | that nav's `topViewController` — summed onto the tab controller when there is no nav |
+| Bar clearance | the tab's `UINavigationController`, or the tab controller itself when there is none |
+| Widget height | the top screen's controller, or added to the tab controller when there is no navigation controller |
 
-Split because they change at different rates — the nav controller is stable for the tab's lifetime, widget height follows the top screen. `updateContentSafeAreaInset()` zeroes the previously-adjusted controller before writing the new one.
+The two change at different rates. The navigation controller is stable for the tab's lifetime, and the widget height follows the top screen. `updateContentSafeAreaInset()` zeroes the controller it inset last before it writes the new one.
 
-`occupiedHeight` is `DSTabBarView.preferredHeight()` on a tab root, the raw bottom safe-area inset elsewhere; `contentClearance` is `occupiedHeight` minus that inset, floored at 0. Neither reads fold state — both depend only on `isTabRoot`.
+- `restingBarHeight` is 81 pt (`DSTabBarStyle.restingHeight`) on a tab root. Elsewhere it is the raw bottom safe area.
+- `restingBottomClearance` is `restingBarHeight` minus the bottom safe area, floored at 0.
+- Clearance is contributed only on a tab root. A pushed screen that does not set `hidesBottomBarWhenPushed` reserves no space, so the bar floats over its bottom content and takes touches in its capsule. Such a screen should either set the flag or keep interactive content clear of the bottom.
+- The shelf and the center panel overlay content. They do not change clearance.
 
-**Clearance is contributed only on a tab root**, which is narrower than the bar being `.shown`. Off the root a screen can show the full capsule — no override, no fold requested — while reserving zero space, so the bar floats over its bottom content and swallows touches in the capsule rect. Pushed screens should either set `hidesBottomBarWhenPushed` or keep interactive content clear of the bottom.
+**Recalculation.** Three events recompute the insets from `container.selectedController`: the container's safe area changes, the chrome's safe area changes, and a tab mounts. Re-deriving from the selected controller stops a late `didShow` from a background tab pinning insets to a screen that is not on screen.
 
-### `apply` vs `applyLayout`
+**Fold inputs.** `isTabRoot`, the derived state and the screen change only through `applyChrome(_:animatingAlongside:)`. The inset path reads them but never writes them.
 
-- `apply(_:animatingAlongside:)` sets the fold inputs (`isTabRoot`, `stackFolds`, `navigationScreen`), retargets, then `refresh()` resolves and animates the fold.
-- `applyLayout(_:animatingAlongside:)` retargets only, leaving fold inputs untouched.
-
-**Mid-gesture, use `applyLayout`.** An interactive pop drives the fold through `setFoldProgress`; a full `apply` would let `refresh()` snap the bar and fight the gesture. `track(of:showing:animated:)` calls `applyLayout` while interactive, `apply` once `notifyWhenInteractionChanges` settles.
-
-`viewSafeAreaInsetsDidChange()` and `TabBarContainer`'s `onContentInsetInvalidated` also use `applyLayout`, re-deriving from `container.selectedController` instead of reusing the chrome's last-applied targets — reusing them let a late `didShow` from a background tab pin insets to a controller no longer visible. Fold inputs are still set only by `apply`, unchecked against the selected tab; no known live path, since `ModuleNavigator` selects the tab before navigating.
-
-`updateLayout` no-ops while the chrome's view has no window — a `.fullScreen` presentation elsewhere detaches it, where `safeAreaInsets` reads zero and clearance would compute too large. Last-applied insets hold until reattachment fires `viewSafeAreaInsetsDidChange`.
+**No window.** `updateWidgetLayout` returns while the view has no window, so a `.fullScreen` presentation elsewhere does not produce bad insets. The last applied insets hold until the view reattaches.
 
 ## Top Status Strip
 
-A permanent 20pt strip at the top of `MainTabBarViewController` holds one `ChainStatusRingView` per chain for the same three `ChainConnectionTarget`s (chat, bulletin, assethub). There is no visible chain name. **The strip is informational only**: no tap handling, no fold, no hide, constant height.
+A 20 pt strip sits at the top of the container. It shows one ring per connection row. Each ring's accessibility label is the chain title and its state. No chain name is drawn. The strip has no tap handling, does not fold, and does not hide.
 
-The chain name and state survive only as the ring's accessibility label, which the ring owns.
+- `installStatusBar()` sets `additionalSafeAreaInsets.top` to 20 once, in `viewDidLoad`. Every mounted navigation controller passes that inset to the screens it pushes, so a pushed screen's top safe area already includes the strip.
+- The strip paints no fill. The container's `.bgSurfaceMain` background shows behind the system status bar and the strip.
+- `installStatusBar()` runs before `installChromeController()`, so the bar stays above the strip. Mounted children insert at index 0, so they sit below it.
 
-`installStatusBar()` writes `additionalSafeAreaInsets.top = ChainConnectionStatusBarView.preferredHeight` on **the container itself**, once, in `viewDidLoad`. It is a constant and is never recomputed in `viewSafeAreaInsetsDidChange`. UIKit propagates the combined inset (system top + 20) down through each mounted nav controller to every screen it pushes, so **a pushed screen inherits the clearance with no bookkeeping**.
+## Mounting and Re-tap
 
-**There is one view, not two**: the `UIHostingController`'s, added straight to the container view with leading, trailing and **bottom pinned to `view.safeAreaLayoutGuide.snp.top`** — that guide already includes the 20pt once the inset is set, so the host occupies exactly the band the inset reserved. **No height constraint**; height comes from the SwiftUI view's own `.frame(height: Self.preferredHeight)` as intrinsic content size. The host's `backgroundColor` is `.clear` — **the strip paints no fill of its own**. What shows behind the system status bar and behind the icons is the container's own `.bgSurfaceMain`.
+`TabBarContainer` mounts one child at a time, full bleed into the container's view. A tab switch cross-fades over 0.15 s. The incoming view starts at scale 0.998. The outgoing view is removed when the fade completes. Non-animated mounts skip the fade.
 
-**Install order in `viewDidLoad` is load-bearing.** `installStatusBar()` runs *before* `installChromeController()` so the bottom chrome stays topmost, and mounted tab children insert at subview index 0 so they stay behind the strip. `TabBarContainer` is unchanged — children still mount full-bleed into the container's own view.
+A tap on the selected tab is a re-tap. `TabBarReselectionPolicy.action(for:)` checks these cases in order:
 
-## Re-tap
+1. A modal is presented from the target: ignore.
+2. The navigation stack is deeper than its root: pop to root.
+3. Otherwise: scroll to top.
 
-`TabBarReselectionPolicy.action(for:)`, in order: modal presented on the target → `.ignore`; stack deeper than its root → `.popToRoot`; otherwise `.scrollToTop`.
+Scroll-to-top fires only at the tab root, so returning from a detail screen keeps the root's scroll position. `TabBarScrollToTopLocator` picks the scroll view by visible area, then vertical scrolling, then depth. A screen cannot nominate one.
 
-Pop-to-root matches `UITabBarController`. Scroll-to-top is the addition and fires only at the tab root, so returning from a detail screen preserves the root's scroll position. `TabBarScrollToTopLocator` picks the scroll view heuristically — visible area, vertical scrollability, depth. A screen cannot opt in or nominate one.
-
-## Selection Gesture
-
-`DSTabSelectionRecognizer` tracks a single touch beginning anywhere `DSTabBarView.hitTest` claims — the capsule only. The folded bar's tap target lives on `TabBarChromePassthroughView`, which is full-bleed and can receive touches at the screen edge that the inset container cannot; a tap there routes through `setUserOverride(.shown,)`, the same path `onFoldChangeRequested` uses. The recognizer cancels once vertical travel exceeds `DSTabBarMetrics.selectionCancelVerticalSlop`; horizontal travel never cancels, since it drives drag-across-tabs (clamped by `DSTabBarGeometry.clampedPillOriginX`).
-
-Touch-to-item resolution is `resolvedTarget(atX:) -> Target?` (`.tab(Int)` or `.action(Int)`), tested in order: action frames, then nearest tab. A press beginning on an action creates no `dragState`, so the lens never lifts or parks on one. Only `.tab` taps can drag or perform selection; `.action` fires `onActionTapped` in the `.ended / .select` branch, guarded by `!isFolded` to match the `.began` phase.
-
-Cancelling does *not* hand the touch to the scroll view underneath — UIKit hit-tests once at `touchesBegan`, not on every move.
-
-**Two accepted gaps**, reviewed and kept deliberately — neither is an undiscovered bug:
-
-- A short, fast vertical flick stays under the slop and `DSTabBarFoldDecision.decideFromShown` tests `velocityX`, so it falls through to `.select`. On the selected tab of a deep stack that reaches `popToRoot`.
-- A wide drag-across-tabs whose arc deviates past the slop cancels itself mid-drag.
-
-They are coupled — raising the slop widens the second, lowering it widens the first. Decoupling needs an axis-relative test: cancel only when vertical travel both exceeds the slop and dominates horizontal.
-
-## Glass Container
-
-`DSGlassContainerView` owns exactly one `DSGlassBackgroundView` surface; the chrome content (bar, panel, widgets) lives inside that surface's `contentView`. No `UIGlassContainerEffect` or merge/spacing tuning.
-
-The container is constrained to the capsule's geometry: centred, `width <= 500`, `width == superview - 21*2` at `.high`. `DSTabBarView` lays out against its own bounds and no longer insets via `DSTabBarGeometry.capsuleFrame`.
-
-One `.capsule` shape serves both states: a true capsule at 62pt tall when collapsed, clamped to the same radius when the panel expands the container. No state-dependent shape switching.
-
-*Rationale:* Apple's guidance (WWDC 2025 session 284, "Build a UIKit app with the new design") is that glass elements should not overlap — one floating layer, not several merged shapes. Pre-iOS 26, the same surface renders blur + tinted substrate + border + shadow as a single material; the old `setCapsuleGlassHidden` workaround is gone.
-
-## Tabs Panel and Content Panel
-
-`DSTabBarTabsPanelView` holds open-SPA chips in a scroll view with no background of its own; installed by `TabBarBottomChromeController` and pinned `bottom == barView.top` with `leading/trailing.equalToSuperview()` to fill the container horizontally. Chips are a fixed 5-column grid (`DSTabBarPanelLayout`); height is `min(contentHeight + capsuleHeight, availableHeight)` since the container stacks the panel and the capsule.
-
-- Long-press a chip → context menu with Close (`onChipCloseRequested`).
-- Tap a chip → mount that SPA and close the panel.
-- `.spaTabs` panel closes on: outside tap, tab selection, `select(tab:)`, fold to `.folded`, chip list emptying, or no available height.
-
-The outside tap is why `TabBarChromePassthroughView` is no longer purely passthrough: while any panel is open it claims self-hits (`isOutsideTapEnabled`) so the recognizer can fire. The recognizer's delegate accepts only touches landing on the chrome view itself, so bar and widget touches are unaffected. The passthrough view also carries the fold grab zone and checks it *before* the outside-tap flag, so a folded bar unfolds rather than closing a panel.
-
-Chips reuse views across updates — `setChips` rebuilds only when the id sequence changes, otherwise it re-applies in place, and `DSTabBarChipView.apply` skips icon reload when the id is unchanged. The "chips empty or no available height" auto-close is guarded on `openPanel == .spaTabs` so it does not close an unrelated content panel on SPA mount/unmount.
-
-### Content Panel
-
-`DSTabBarContentPanelView` hosts any `HashableContentConfiguration` via `makeContentView()` — the same seam `AppWidgetContentViewController` uses — and reuses the content view when `defaultReuseIdentifier` is unchanged. It knows nothing about the content. Content must be self-sizing: height is `systemLayoutSizeFitting` clamped by `DSTabBarPanelLayout.panelHeight(contentHeight:availableHeight:)` (same layout the chips use), and it returns `capsuleHeight` when it has no configuration or no width yet.
-
-Panel state is `TabBarBottomChromeController.openPanel: TabBarPanelKind?` (`.spaTabs` / `.content(TabBarAction)`), so an open content panel names the action that owns it. Both panels' `setPanel` run through one animator, so closing one panel is automatic when opening another — exclusivity is structural.
+While an SPA is mounted, a tap on the selected tab switches back to the tab. It is not treated as a re-tap.
 
 ## SPA Hosting
 
-`MainTabBarViewController` conforms to `SPAHosting` (`openProduct(page:)`, `minimizeSPA()`, `closeSPA(tabId:)`). Every entry point routes there through `UIApplication.shared.mainTabBarController` — `ModuleNavigator.openProduct`, `ProductsNavigationRouter.navigateTo`, and `SPAWireframe`. **SPAs are no longer pushed onto the Browse stack or presented full-screen**; the old push/present/dedupe logic in `ModuleNavigator` and `SPAWireframe.showProductSPA` is gone.
+`TabBarContentSelection` is `.tab(Int)` or `.spa(UUID)`. An SPA is a peer of the tabs. It is not pushed onto a stack or presented over the container. `MainTabBarViewController` conforms to `SPAHosting`. `ModuleNavigator`, `ProductsNavigationRouter`, `SPAWireframe` and `ProductOpener` reach it through `UIApplication.shared.mainTabBarController`.
 
-Flow of one open:
+Opening a product:
 
-1. `SPABrowserCoordinator.findOrCreateTab(for:)` matches on `dotDomain`; an existing tab with a different `page` is navigated in place rather than duplicated.
-2. `SPAControllerPool` vends (and caches) one `SPAViewController` per tab id, all sharing a single lazily created `SPAFlowState`.
-3. `container.mountSPA(_:for:)` sets `selection = .spa(id)` and cross-fades it in.
-4. `chromeController.apply(.spa(controller))` — `TabBarChromeContext.spa` marks it `isTabRoot: false, foldDerived: .folded`. **An SPA behaves like a pushed screen: the bar folds and contributes no clearance.**
+1. `SPABrowserCoordinator.findOrCreateTab(for:)` matches on `dotDomain`. An existing tab with another page is navigated in place.
+2. `SPAControllerPool` vends one `SPAViewController` per tab id.
+3. `container.mountSPA(_:for:)` sets the selection to `.spa(id)` and cross-fades the controller in.
+4. `applyChrome(.spa(controller))` sets `isTabRoot: false` and a derived state of `folded`. The bar folds and contributes no clearance.
 
-`TabBarContainer.select(index:)` re-mounts even when the index is unchanged if the current selection is an SPA, and reselection of the already-selected tab index is treated as a real switch in that case (`handleSelection`). `minimizeSPA()` returns to `currentIndex`; `closeSPA` drops the pooled controller and the stored tab, then minimizes only if that tab was the mounted one.
+`presentProduct(page:)` is the one-shot path for funding products. It presents a page sheet at 92% of the maximum detent. The product never enters the tab store, so closing it leaves no chip.
 
-Chip state flows the VIPER way: `MainTabBarInteractor` observes `SPATabManaging` (`sendOnSubscription: true`), the presenter maps tabs through `SPATabChipViewModelFactory` (name from `ProductHost`, icon from the `.dot` domain via `DotNsResolver`), and the view converts to `DSTabBarChip`. `applyChips()` re-sends on every mount/unmount so `selected` tracks `mountedSPATabId`.
+**Chips.** `MainTabBarInteractor` sends the open tabs to the presenter (`didReceiveSPATabs`). The presenter maps them through `SPATabChipViewModelFactory`, and the view passes them to the chrome as `DSTabBarChip`. `applyChips()` runs on every mount and unmount, so the selected chip follows the mounted product.
+
+**Unmounting.** `minimizeSPA()` returns to the last tab index. `closeSPA(tabId:)` drops the tab and minimizes only when that tab was mounted. The product game pill widget is detached while the product it counts down to is mounted.
 
 ## Adding a Tab
 
-Add a case to `TabBarItem` (`polkadot-app/Modules/MainTabBar/MainTabBarProtocols.swift`) with a localized `title` and an asset, build the controller in `TabFactory.view(for:)`, and add an `AccessibilityID.Tab` entry. `DSTabBarView` lays items out from `DSTabBarRow`; nothing is hardcoded per tab count.
+The bar has four fixed slots. `DSTabBarContainer` lays out exactly four slot views, so the count of tabs does not change the layout. To add a tab that fits in the existing four slots:
 
-**Tab count affects all unit widths.** `unitWidth` scales with `unitCount`, so adding a tab narrows every item. All widths derive from `DSTabBarRow.unitWidth` divided across `itemCount`; no per-tab hardcoding means the layout adapts automatically.
+1. Add a case to `TabBarItem` with a localized `title` and an image.
+2. Build its controller in `TabFactory.view(for:)`.
+3. Add an entry to `AccessibilityID.Tab` so that `AccessibilityID.Tab.item(for:)` returns it.
+4. Place the new slot in the presenter's slot list. Its position in the list is its position in the bar.
+
+A fifth slot needs `DSTabBarContainer` to take a fifth view. Items past the fourth are not rendered, and a missing fourth item leaves a blank column.
+
+## Gotchas
+
+- **Tips on bar items do not show.** `TabBarTipController.anchorItem(for:)` returns nil for `.barItem` anchors, so only the status strip anchor can show a tip. The scan tip is anchored to `.action(.scan)`, which no bar slot uses.
+- **Two actions have no slot.** `TabBarAction.scan` and `TabBarAction.connectionStatus` have no bar slot. The center control and the shelf open them directly, so the branches for them in `handleAction` are not reached from a slot tap.

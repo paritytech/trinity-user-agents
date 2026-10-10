@@ -96,13 +96,6 @@ private struct TabBarSlotView: View {
                 .scaledToFit()
                 .foregroundStyle(isEmphasized ? Color.fgPrimary : Color.fgSecondary)
                 .frame(width: Self.iconSize, height: Self.iconSize)
-                .overlay(alignment: .topTrailing) {
-                    if item.badge != nil {
-                        Circle()
-                            .fill(Color.bgStatusWarning)
-                            .frame(width: 8, height: 8)
-                    }
-                }
         case let .tabsGlyph(count):
             TabsGlyph(count: count, color: isEmphasized ? .fgPrimary : .fgSecondary)
                 .frame(width: Self.iconSize, height: Self.iconSize)
