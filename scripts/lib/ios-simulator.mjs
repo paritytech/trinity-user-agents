@@ -122,9 +122,19 @@ export function selectSimulator() {
   return selected;
 }
 
+const runtimeVersion = (runtime) =>
+  (runtime.match(/iOS-(\d+)-(\d+)/) ?? [0, 0, 0]).slice(1).map(Number);
+
+const newestRuntimeFirst = ([left], [right]) => {
+  const [leftMajor, leftMinor] = runtimeVersion(left);
+  const [rightMajor, rightMinor] = runtimeVersion(right);
+  return rightMajor - leftMajor || rightMinor - leftMinor;
+};
+
 export function selectSimulatorFromList(simulatorList, requested) {
-  const available = Object.values(simulatorList.devices)
-    .flat()
+  const available = Object.entries(simulatorList.devices)
+    .sort(newestRuntimeFirst)
+    .flatMap(([, devices]) => devices)
     .filter((candidate) => candidate.isAvailable);
   if (requested) {
     return available.find(

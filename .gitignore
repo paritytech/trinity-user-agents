@@ -28,6 +28,8 @@ local.properties
 .env.*
 !.env.example
 /.e2e-dotli/
+# Copied in by e2e/host-playground/ios/build.sh
+/hosts/ios/polkadot-app/HostPlaygroundE2E/
 
 # Editor / OS
 .vscode/*

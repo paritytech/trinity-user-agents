@@ -1,0 +1,242 @@
+name: host-playground e2e
+
+# Runs host-playground inside the iOS and Android host apps built from this commit.
+# See e2e/host-playground/README.md.
+on:
+  schedule:
+    - cron: "0 18 * * *"
+  pull_request:
+    types: [labeled, synchronize]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  android:
+    name: Android emulator
+    # Only this label starts a pull request run, and never from a fork.
+    if: >-
+      github.event_name != 'pull_request'
+      || (github.event.pull_request.head.repo.full_name == github.repository
+          && ((github.event.action == 'labeled' && github.event.label.name == 'host-playground-e2e')
+              || (github.event.action == 'synchronize'
+                  && contains(github.event.pull_request.labels.*.name, 'host-playground-e2e'))))
+    # On the job, so a skipped run from another label never cancels this one.
+    concurrency:
+      group: host-playground-e2e-android-${{ github.event.pull_request.number || github.ref }}
+      cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      OUT: ${{ github.workspace }}/target/e2e-host-playground/android
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+
+      - name: Set up the Android build
+        uses: ./.github/actions/setup-android-build
+        with:
+          require_inputs: "true"
+          google_services_json_base64: ${{ secrets.GOOGLE_SERVICES_JSON_BASE64 }}
+          keystore_base64: ${{ secrets.CI_GITHUB_KEYSTORE_KEY_FILE }}
+          keystore_pass: ${{ secrets.CI_KEYSTORE_PASS }}
+          keystore_alias: ${{ secrets.CI_KEYSTORE_KEY_ALIAS }}
+          keystore_key_pass: ${{ secrets.CI_KEYSTORE_KEY_PASS }}
+
+      - name: Build the nightly APK with the e2e hooks
+        working-directory: hosts/android
+        env:
+          APPLICATION_ID: ${{ vars.APPLICATION_ID }}
+          IOS_BUNDLE_ID: ${{ vars.IOS_BUNDLE_ID || 'io.parity.polkadotapp' }}
+          APPLICATION_NAME: ${{ vars.APPLICATION_NAME }}
+          CONTACT_EMAIL: ${{ vars.CONTACT_EMAIL }}
+          CURRENCY_SYMBOL: ${{ vars.CURRENCY_SYMBOL }}
+          FIAT_SYMBOL: ${{ vars.FIAT_SYMBOL || '$' }}
+          LOG_COLLECTION_EMAIL: ${{ vars.LOG_COLLECTION_EMAIL }}
+          PRIVACY_POLICY_URL: ${{ vars.PRIVACY_POLICY_URL }}
+          TERMS_OF_USE_URL: ${{ vars.TERMS_OF_USE_URL }}
+          SENTRY_ORG: ${{ vars.SENTRY_ORG }}
+          SENTRY_PROJECT: ${{ vars.SENTRY_PROJECT }}
+          FIRESTORE_DATABASE_ID: ${{ secrets.FIRESTORE_DATABASE_ID }}
+          GOOGLE_OAUTH_ID: ${{ secrets.GOOGLE_OAUTH_ID }}
+          GOOGLE_PROJECT_ID: ${{ secrets.GOOGLE_PROJECT_ID }}
+          NIGHTLY_FUNDING_MNEMONIC: ${{ secrets.NIGHTLY_FUNDING_MNEMONIC }}
+          CI_KEYSTORE_PASS: ${{ secrets.CI_KEYSTORE_PASS }}
+          CI_KEYSTORE_KEY_ALIAS: ${{ secrets.CI_KEYSTORE_KEY_ALIAS }}
+          CI_KEYSTORE_KEY_PASS: ${{ secrets.CI_KEYSTORE_KEY_PASS }}
+        run: |
+          set -euo pipefail
+          ./gradlew --no-daemon \
+            --init-script "${GITHUB_WORKSPACE}/e2e/host-playground/android/e2e.init.gradle.kts" \
+            :app:assembleGpNightly
+          mv app/build/outputs/apk/gp/nightly/app-gp-nightly.apk "${RUNNER_TEMP}/app-e2e.apk"
+          rm -f develop_key.jks app/google-services.json
+
+      # Readable only by this user, and never on a command line.
+      - name: Write the test account's mnemonic
+        env:
+          MNEMONIC: ${{ secrets.E2E_ANDROID_MNEMONIC }}
+        run: |
+          set -euo pipefail
+          if [ -z "${MNEMONIC}" ]; then
+            echo "::error::E2E_ANDROID_MNEMONIC is not set"
+            exit 1
+          fi
+          umask 077
+          printf '%s' "${MNEMONIC}" > "${RUNNER_TEMP}/android.mnemonic"
+
+      - name: Enable KVM
+        run: |
+          set -euo pipefail
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      # Google APIs image, so Remote Config can deliver the app's chain list.
+      - name: Run host-playground on the emulator
+        env:
+          APPLICATION_ID: ${{ vars.APPLICATION_ID }}
+        uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2.38.0
+        with:
+          api-level: 34
+          arch: x86_64
+          target: google_apis
+          profile: pixel_6
+          disable-animations: true
+          emulator-boot-timeout: 900
+          emulator-options: -no-snapshot -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          script: node e2e/host-playground/android/run.mjs --apk "${RUNNER_TEMP}/app-e2e.apk" --mnemonic-file "${RUNNER_TEMP}/android.mnemonic" --out "${OUT}"
+
+      - name: Summary
+        if: always()
+        run: |
+          set -euo pipefail
+          rm -f "${RUNNER_TEMP}/android.mnemonic"
+          if [ -f "${OUT}/report.md" ]; then
+            cat "${OUT}/report.md" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "No report: the run did not reach the tests." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload the results
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: host-playground-e2e-android
+          path: ${{ env.OUT }}
+          retention-days: 7
+          if-no-files-found: ignore
+
+  ios:
+    name: iOS simulator
+    # Only this label starts a pull request run, and never from a fork.
+    if: >-
+      github.event_name != 'pull_request'
+      || (github.event.pull_request.head.repo.full_name == github.repository
+          && ((github.event.action == 'labeled' && github.event.label.name == 'host-playground-e2e')
+              || (github.event.action == 'synchronize'
+                  && contains(github.event.pull_request.labels.*.name, 'host-playground-e2e'))))
+    # On the job, so a skipped run from another label never cancels this one.
+    concurrency:
+      group: host-playground-e2e-ios-${{ github.event.pull_request.number || github.ref }}
+      cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+    runs-on: macos-26
+    timeout-minutes: 150
+    env:
+      IOS_BUNDLE_ID: "io.parity.polkadotapp"
+      RUN_IN_CI: "true"
+      OUT: ${{ github.workspace }}/target/e2e-host-playground/ios
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+
+      - name: Setup iOS Environment
+        uses: ./hosts/ios/.github/actions/install
+
+      - name: Bootstrap the in-tree core
+        uses: ./.github/actions/bootstrap-ios-core
+
+      - name: Configure Google services
+        uses: ./hosts/ios/.github/actions/configure-google-services
+        with:
+          google_service_info_base64: ${{ secrets.GOOGLE_SERVICE_INFO_RELEASE_BASE64 }}
+          expected_bundle_id: ${{ env.IOS_BUNDLE_ID }}
+
+      - name: Configure secrets
+        uses: ./hosts/ios/.github/actions/configure-secrets
+        with:
+          sentry_dsn: ${{ secrets.SENTRY_DSN }}
+          meld_basic_auth_token: ${{ secrets.MELD_BASIC_AUTH_TOKEN }}
+
+      - name: Build the E2E simulator app
+        run: e2e/host-playground/ios/build.sh
+
+      # Third-party tap, pinned to a reviewed commit.
+      - name: Install applesimutils
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: "1"
+          WIX_TAP_COMMIT: 8f636f84541e08e850f455d7cffdfbd7ba305d3f
+        run: |
+          set -euo pipefail
+          brew tap wix/brew
+          git -C "$(brew --repo wix/brew)" checkout --quiet "${WIX_TAP_COMMIT}"
+          brew trust wix/brew
+          brew install wix/brew/applesimutils
+          applesimutils --version
+
+      - name: Write the test account's mnemonic
+        env:
+          MNEMONIC: ${{ secrets.E2E_IOS_MNEMONIC }}
+        run: |
+          set -euo pipefail
+          if [ -z "${MNEMONIC}" ]; then
+            echo "::error::E2E_IOS_MNEMONIC is not set"
+            exit 1
+          fi
+          umask 077
+          printf '%s' "${MNEMONIC}" > "${RUNNER_TEMP}/ios.mnemonic"
+
+      - name: Run host-playground in the simulator
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          apps=(hosts/ios/build_simulator/*.app)
+          if [ ${#apps[@]} -ne 1 ]; then
+            echo "::error::Expected one .app under build_simulator, found ${#apps[@]}"
+            exit 1
+          fi
+          node e2e/host-playground/ios/run.mjs --app "${apps[0]}" \
+            --mnemonic-file "${RUNNER_TEMP}/ios.mnemonic" --out "${OUT}" \
+            --timeout-minutes 90
+
+      - name: Summary
+        if: always()
+        run: |
+          set -euo pipefail
+          rm -f "${RUNNER_TEMP}/ios.mnemonic"
+          if [ -f "${OUT}/report.md" ]; then
+            cat "${OUT}/report.md" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "No report: the run did not reach the tests." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload the results
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: host-playground-e2e-ios
+          path: ${{ env.OUT }}
+          retention-days: 7
+          if-no-files-found: ignore

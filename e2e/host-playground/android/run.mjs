@@ -1,0 +1,454 @@
+#!/usr/bin/env node
+// Runs host-playground inside the Android host on a device or emulator. See ../README.md.
+//
+//   node e2e/host-playground/android/run.mjs --apk <path> --mnemonic-file <path> --out <dir> [--serial <adb serial>]
+
+import { execFile, spawnSync } from "node:child_process";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import { parseArgs, promisify } from "node:util";
+import { classify } from "../report.mjs";
+
+const SUITE_DIR = dirname(dirname(fileURLToPath(import.meta.url)));
+const suite = JSON.parse(readFileSync(join(SUITE_DIR, "tests.json"), "utf8"));
+const pageRunner = readFileSync(join(SUITE_DIR, "page-runner.js"), "utf8");
+
+const PACKAGE = `${process.env.APPLICATION_ID || "io.parity.polkadotapp"}.nightly`;
+const ROOT_ACTIVITY = "io.paritytech.polkadotapp.app.root.presentation.root.RootActivity";
+const PRODUCT_DEEP_LINK = `polkadotapp://${suite.product}`;
+const PRODUCT_URL_FRAGMENT = suite.product.split(".")[0];
+const MARKER_TAG = "HostPlaygroundE2E";
+
+const RUNTIME_PERMISSIONS = [
+  "android.permission.CAMERA",
+  "android.permission.RECORD_AUDIO",
+  "android.permission.ACCESS_FINE_LOCATION",
+  "android.permission.ACCESS_COARSE_LOCATION",
+  "android.permission.BLUETOOTH_CONNECT",
+  "android.permission.POST_NOTIFICATIONS",
+];
+
+const APPROVE_LABELS = new Set([
+  "Sign",
+  "Approve",
+  "Allow once",
+  "Allow always",
+  "Allow",
+  "Grant",
+  "Confirm",
+  "Continue",
+  "Add",
+]);
+
+const SEED_TIMEOUT_MS = 5 * 60_000;
+const PRODUCT_OPEN_TIMEOUT_MS = 3 * 60_000;
+const DEEP_LINK_RETRY_MS = 20_000;
+const READY_TIMEOUT_MS = 2 * 60_000;
+const ANSWER_GRACE_MS = 60_000;
+const APPROVER_INTERVAL_MS = 1_500;
+const POLL_MS = 2_000;
+const READY_POLL_MS = 500;
+
+const exec = promisify(execFile);
+const sleep = (ms) => new Promise((done) => setTimeout(done, ms));
+const log = (message) => console.log(`[android e2e] ${message}`);
+const firstLine = (text) => String(text ?? "").split("\n")[0];
+
+function adbBinary() {
+  if (process.env.ADB) return process.env.ADB;
+  const sdk = process.env.ANDROID_HOME || process.env.ANDROID_SDK_ROOT;
+  return sdk ? join(sdk, "platform-tools", "adb") : "adb";
+}
+
+function createAdb(serial) {
+  const binary = adbBinary();
+  const target = serial ? ["-s", serial] : [];
+  async function adb(args, { allowFailure = false, binaryOutput = false } = {}) {
+    try {
+      const { stdout } = await exec(binary, [...target, ...args], {
+        maxBuffer: 64 * 1024 * 1024,
+        encoding: binaryOutput ? "buffer" : "utf8",
+      });
+      return stdout;
+    } catch (error) {
+      if (allowFailure) return null;
+      throw new Error(`adb ${args.join(" ")} failed: ${firstLine(error.stderr || error.message)}`);
+    }
+  }
+  adb.shell = (command, options) => adb(["shell", command], options);
+  return adb;
+}
+
+const nodeAttributes = (text) =>
+  Object.fromEntries([...text.matchAll(/([\w-]+)="([^"]*)"/g)].map(([, name, value]) => [name, value]));
+
+function centre(bounds) {
+  const match = bounds?.match(/\[(\d+),(\d+)\]\[(\d+),(\d+)\]/);
+  if (!match) return null;
+  const [left, top, right, bottom] = match.slice(1).map(Number);
+  return { x: Math.round((left + right) / 2), y: Math.round((top + bottom) / 2) };
+}
+
+// WebView nodes are skipped: a product button labelled "Sign" is not a host approval.
+function findApproveButton(dumpXml, packageName) {
+  const insideWebView = [];
+  for (const match of dumpXml.matchAll(/<node\b([^>]*?)(\/?)>|<\/node>/g)) {
+    if (match[0] === "</node>") {
+      insideWebView.pop();
+      continue;
+    }
+    const attributes = nodeAttributes(match[1]);
+    const isWebView = attributes.class === "android.webkit.WebView";
+    const nested = insideWebView.includes(true);
+    if (match[2] !== "/") insideWebView.push(isWebView);
+    if (nested || isWebView || attributes.package !== packageName || attributes.enabled === "false") continue;
+    const label = attributes.text?.trim();
+    if (!label || !APPROVE_LABELS.has(label)) continue;
+    const point = centre(attributes.bounds);
+    if (point) return { label, ...point };
+  }
+  return null;
+}
+
+function findSystemWaitButton(dumpXml) {
+  if (!dumpXml.includes("isn't responding") && !dumpXml.includes("isn&apos;t responding")) return null;
+  for (const match of dumpXml.matchAll(/<node\b([^>]*?)\/?>/g)) {
+    const attributes = nodeAttributes(match[1]);
+    if (attributes.package !== "android" || attributes.text?.trim() !== "Wait") continue;
+    const point = centre(attributes.bounds);
+    if (point) return point;
+  }
+  return null;
+}
+
+function startApprover(adb) {
+  let running = true;
+  const loop = (async () => {
+    while (running) {
+      const dump = await adb(["exec-out", "uiautomator", "dump", "/dev/tty"], { allowFailure: true });
+      // A launcher "isn't responding" dialog hides the app's sheet until dismissed.
+      const wait = dump && findSystemWaitButton(dump);
+      if (wait && running) {
+        log("dismissing a system \"isn't responding\" dialog");
+        await adb.shell(`input tap ${wait.x} ${wait.y}`, { allowFailure: true });
+        await sleep(APPROVER_INTERVAL_MS);
+        continue;
+      }
+      const button = dump && findApproveButton(dump, PACKAGE);
+      if (button && running) {
+        log(`tapping "${button.label}"`);
+        await adb.shell(`input tap ${button.x} ${button.y}`, { allowFailure: true });
+      }
+      await sleep(APPROVER_INTERVAL_MS);
+    }
+  })();
+  return async () => {
+    running = false;
+    await loop;
+  };
+}
+
+async function launchApp(adb) {
+  await adb.shell(`am start -W -n ${PACKAGE}/${ROOT_ACTIVITY}`);
+}
+
+async function installClean(adb, apk) {
+  log(`installing ${apk}`);
+  await adb(["uninstall", PACKAGE], { allowFailure: true });
+  await adb(["install", apk]);
+  await adb.shell("settings put global hide_error_dialogs 1", { allowFailure: true });
+  for (const permission of RUNTIME_PERMISSIONS) {
+    if ((await adb.shell(`pm grant ${PACKAGE} ${permission}`, { allowFailure: true })) === null) {
+      log(`could not grant ${permission}`);
+    }
+  }
+}
+
+/** Places the mnemonic without it appearing on any command line. */
+async function deliverSeed(adb, mnemonicFile) {
+  const staged = `/data/local/tmp/e2e-seed-${process.pid}`;
+  await adb(["push", mnemonicFile, staged]);
+  try {
+    await adb.shell(`chmod 600 ${staged}`);
+    await adb.shell(`run-as ${PACKAGE} mkdir -p files`);
+    await adb.shell(`cat ${staged} | run-as ${PACKAGE} sh -c 'cat > files/e2e-seed'`);
+  } finally {
+    await adb.shell(`rm -f ${staged}`, { allowFailure: true });
+  }
+}
+
+async function seedAccount(adb, mnemonicFile) {
+  await launchApp(adb);
+  await adb.shell(`am force-stop ${PACKAGE}`);
+  await deliverSeed(adb, mnemonicFile);
+  await adb(["logcat", "-c"]);
+  await launchApp(adb);
+
+  log("waiting for the account to be seeded");
+  const deadline = Date.now() + SEED_TIMEOUT_MS;
+  for (;;) {
+    const lines = (await adb(["logcat", "-d", "-v", "raw", "-s", `${MARKER_TAG}:*`])).split("\n");
+    if (lines.some((line) => line.trim() === "seeded")) break;
+    const failure = lines.find((line) => line.startsWith("seed failed:"));
+    if (failure) throw new Error(`the app could not seed the account (${failure.trim()})`);
+    if (Date.now() >= deadline) throw new Error(`no ${MARKER_TAG} marker within ${SEED_TIMEOUT_MS / 1000} s`);
+    await sleep(POLL_MS);
+  }
+
+  // Onboarding was read before the seed landed, so it counts from the next launch.
+  await adb.shell(`am force-stop ${PACKAGE}`);
+  await launchApp(adb);
+  log("account seeded");
+}
+
+async function listTargets(port) {
+  try {
+    const response = await fetch(`http://127.0.0.1:${port}/json/list`);
+    return response.ok ? await response.json() : [];
+  } catch {
+    return [];
+  }
+}
+
+const isProductUrl = (url) => url.includes(PRODUCT_URL_FRAGMENT);
+
+// WebView DevTools rejects Playwright's browser-level attach, so this drives the page target directly.
+class PageTarget {
+  #socket;
+  #pending = new Map();
+  #nextId = 1;
+
+  static async connect(port, target) {
+    const socket = new WebSocket(`ws://127.0.0.1:${port}/devtools/page/${target.id}`);
+    await new Promise((opened, failed) => {
+      socket.addEventListener("open", opened, { once: true });
+      socket.addEventListener("error", () => failed(new Error(`could not attach to ${target.url}`)), { once: true });
+    });
+    return new PageTarget(socket);
+  }
+
+  constructor(socket) {
+    this.#socket = socket;
+    socket.addEventListener("message", ({ data }) => {
+      const message = JSON.parse(data);
+      const pending = this.#pending.get(message.id);
+      if (!pending) return;
+      this.#pending.delete(message.id);
+      if (message.error) pending.reject(new Error(message.error.message));
+      else pending.resolve(message.result);
+    });
+    socket.addEventListener("close", () => {
+      for (const pending of this.#pending.values()) pending.reject(new Error("the page target closed"));
+      this.#pending.clear();
+    });
+  }
+
+  get closed() {
+    return this.#socket.readyState !== WebSocket.OPEN;
+  }
+
+  async evaluate(expression) {
+    if (this.closed) throw new Error("the page target closed");
+    const id = this.#nextId++;
+    const reply = new Promise((resolve, reject) => this.#pending.set(id, { resolve, reject }));
+    this.#socket.send(
+      JSON.stringify({ id, method: "Runtime.evaluate", params: { expression, awaitPromise: true, returnByValue: true } }),
+    );
+    const { result, exceptionDetails } = await reply;
+    if (exceptionDetails) throw new Error(exceptionDetails.exception?.description ?? exceptionDetails.text);
+    return result.value;
+  }
+
+  close() {
+    this.#socket.close();
+  }
+}
+
+/** Opens the product's deep link, at most once every DEEP_LINK_RETRY_MS. */
+function deepLinkOpener(adb, { immediately }) {
+  let next = immediately ? 0 : Date.now() + DEEP_LINK_RETRY_MS;
+  return async () => {
+    if (Date.now() < next) return;
+    log(`opening ${PRODUCT_DEEP_LINK}`);
+    await adb.shell(`am start -a android.intent.action.VIEW -d ${PRODUCT_DEEP_LINK} ${PACKAGE}`, { allowFailure: true });
+    next = Date.now() + DEEP_LINK_RETRY_MS;
+  };
+}
+
+async function openProduct(adb, forwards) {
+  const deadline = Date.now() + PRODUCT_OPEN_TIMEOUT_MS;
+  const openDeepLink = deepLinkOpener(adb, { immediately: true });
+  while (Date.now() < deadline) {
+    await openDeepLink();
+    await sleep(POLL_MS);
+
+    const pid = (await adb.shell(`pidof ${PACKAGE}`, { allowFailure: true }))?.trim().split(/\s+/)[0];
+    if (!pid) continue;
+    const socket = `webview_devtools_remote_${pid}`;
+    const sockets = (await adb.shell("cat /proc/net/unix", { allowFailure: true })) ?? "";
+    if (!sockets.includes(`@${socket}`)) continue;
+
+    if (!forwards.has(socket)) {
+      const port = Number((await adb(["forward", "tcp:0", `localabstract:${socket}`])).trim());
+      forwards.set(socket, port);
+    }
+    const port = forwards.get(socket);
+    const target = (await listTargets(port)).find((candidate) => candidate.type === "page" && isProductUrl(candidate.url));
+    if (!target) continue;
+
+    log(`attaching to ${target.url}`);
+    return PageTarget.connect(port, target);
+  }
+  throw new Error(`no WebView showing ${suite.product} within ${PRODUCT_OPEN_TIMEOUT_MS / 1000} s`);
+}
+
+async function readyPage(adb, forwards, page) {
+  const href = page && !page.closed ? await page.evaluate("location.href").catch(() => null) : null;
+  if (!href || !isProductUrl(href)) {
+    page?.close();
+    page = await openProduct(adb, forwards);
+  }
+  // A reload drops the injected runner, so injection and the ready check retry together.
+  const deadline = Date.now() + READY_TIMEOUT_MS;
+  // A paused page never becomes ready, so keep bringing the product to the front.
+  const openDeepLink = deepLinkOpener(adb, { immediately: false });
+  for (;;) {
+    await openDeepLink();
+    let ready = false;
+    try {
+      ready = await page.evaluate(`(() => { ${pageRunner}; return window.__hostPlaygroundE2E.ready(); })()`);
+    } catch {
+      if (page.closed) page = await openProduct(adb, forwards);
+    }
+    if (ready) return page;
+    if (Date.now() >= deadline) throw new Error(`host-playground rendered no tests within ${READY_TIMEOUT_MS / 1000} s`);
+    await sleep(READY_POLL_MS);
+  }
+}
+
+async function pageShowing(forwards, host) {
+  for (const port of forwards.values()) {
+    if ((await listTargets(port)).some((target) => target.type === "page" && target.url.includes(host))) return true;
+  }
+  return false;
+}
+
+async function runTest(page, id) {
+  const started = Date.now();
+  let timer;
+  const guard = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error("the page stopped answering")), suite.testTimeoutMs + ANSWER_GRACE_MS);
+  });
+  try {
+    const run = page.evaluate(`window.__hostPlaygroundE2E.runOne(${JSON.stringify(id)}, ${suite.testTimeoutMs})`);
+    return await Promise.race([run, guard]);
+  } catch (error) {
+    return { id, status: "error", message: `the page went away: ${firstLine(error.message)}`, durationMs: Date.now() - started };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function screenshot(adb, path) {
+  const png = await adb(["exec-out", "screencap", "-p"], { allowFailure: true, binaryOutput: true });
+  if (png?.length) writeFileSync(path, png);
+  const dump = await adb(["exec-out", "uiautomator", "dump", "/dev/tty"], { allowFailure: true });
+  writeFileSync(path.replace(/\.png$/, ".xml"), dump ?? "uiautomator dump failed\n");
+}
+
+/** The app's logcat, with long hex strings and addresses masked. */
+async function saveAppLogcat(adb, path) {
+  const uid = (await adb.shell(`pm list packages -U ${PACKAGE}`, { allowFailure: true }))?.match(/uid:(\d+)/)?.[1];
+  if (!uid) return;
+  const text = await adb(["logcat", "-d", "-v", "threadtime", `--uid=${uid}`], { allowFailure: true });
+  if (!text) return;
+  const masked = text
+    .replace(/\b(0x)?[0-9a-fA-F]{32,}\b/g, "<hex>")
+    .replace(/\b[1-9A-HJ-NP-Za-km-z]{46,48}\b/g, "<address>");
+  writeFileSync(path, masked);
+}
+
+async function appVersion(adb) {
+  const dump = await adb.shell(`dumpsys package ${PACKAGE}`, { allowFailure: true });
+  const version = dump?.match(/versionName=(\S+)/)?.[1];
+  return version ? `${PACKAGE} ${version}` : PACKAGE;
+}
+
+async function main() {
+  const { values } = parseArgs({
+    options: {
+      apk: { type: "string" },
+      "mnemonic-file": { type: "string" },
+      out: { type: "string" },
+      serial: { type: "string" },
+    },
+  });
+  if (!values.apk || !values["mnemonic-file"] || !values.out) {
+    console.error("usage: run.mjs --apk <path> --mnemonic-file <path> --out <dir> [--serial <adb serial>]");
+    process.exit(2);
+  }
+  const out = resolve(values.out);
+  mkdirSync(out, { recursive: true });
+  const adb = createAdb(values.serial);
+  const forwards = new Map();
+  const run = {
+    platform: "android",
+    app: PACKAGE,
+    product: suite.product,
+    hostPlaygroundCommit: suite.hostPlaygroundCommit,
+    startedAt: new Date().toISOString(),
+    results: [],
+  };
+  let stopApprover = null;
+  let page = null;
+  let fatal = null;
+
+  try {
+    await adb(["wait-for-device"]);
+    await installClean(adb, resolve(values.apk));
+    run.app = await appVersion(adb);
+    await seedAccount(adb, resolve(values["mnemonic-file"]));
+    stopApprover = startApprover(adb);
+
+    for (const id of suite.tests) {
+      page = await readyPage(adb, forwards, page);
+      log(`running ${id}`);
+      let result = await runTest(page, id);
+      // These leave the product before it can record a result, so they pass when the destination opens.
+      const destination = suite.navigationDestinations[id];
+      if (destination && result.status !== "success" && (await pageShowing(forwards, destination))) {
+        result = { ...result, status: "success", outcome: "navigated", message: `${destination} opened` };
+      }
+      log(`${id}: ${result.status}${result.outcome ? ` (${result.outcome})` : ""}`);
+      run.results.push(result);
+      if (classify(result) === "failed") await screenshot(adb, join(out, `failed-${id}.png`));
+    }
+  } catch (error) {
+    fatal = error;
+    run.fatal = error.message;
+    // Listed as not run, so the total stays the whole suite.
+    const ran = new Set(run.results.map((result) => result.id));
+    for (const id of suite.tests.filter((test) => !ran.has(test))) {
+      run.results.push({ id, status: "error", message: `not run: ${error.message}`, durationMs: 0 });
+    }
+    console.error(`[android e2e] ${error.stack ?? error.message}`);
+    await screenshot(adb, join(out, "fatal.png"));
+  } finally {
+    await stopApprover?.();
+    page?.close();
+    for (const port of forwards.values()) await adb(["forward", "--remove", `tcp:${port}`], { allowFailure: true });
+  }
+
+  const failed = fatal !== null || run.results.some((result) => classify(result) === "failed");
+  if (failed) await saveAppLogcat(adb, join(out, "logcat.txt"));
+
+  const resultsPath = join(out, "results.json");
+  writeFileSync(resultsPath, `${JSON.stringify(run, null, 2)}\n`);
+  spawnSync(process.execPath, [join(SUITE_DIR, "report.mjs"), resultsPath], { stdio: "inherit" });
+
+  if (fatal) process.exit(2);
+  if (failed) process.exit(1);
+}
+
+await main();
