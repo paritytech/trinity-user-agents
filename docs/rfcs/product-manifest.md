@@ -33,12 +33,13 @@ A product can expose one or more **modalities**, each a distinct user-facing sur
 - **Pocket** — passive surfaces such as cards, tickets, or certificates, served by a background JS worker.
 - **Chat** — chat bots and chat-room integrations, served by a background JS worker.
 - **Input** — an input surface for contextual interactions with the Products, served by a background JS worker.
+- **Funding** — moving value into or out of the user's balance through a provider, served by the provider's background JS worker.
 
 A modality is delivered by an **executable**. v1 defines three executable types:
 
 - **App** — the web application backing the App modality.
 - **Widget** — the web application backing the Widget modality.
-- **Worker** — a single background process. It may back any combination of Pocket, Chat, and Input, or serve no user-facing surface at all and run purely as background logic (see [Why one Worker, not per modality](#executable-manifest-v1)).
+- **Worker** — a single background process. It may back any combination of Pocket, Chat, Input, and Funding, or serve no user-facing surface at all and run purely as background logic (see [Why one Worker, not per modality](#executable-manifest-v1)).
 
 Throughout this RFC, *modality* means a user-facing surface; *executable* means a deployable artifact.
 
@@ -71,7 +72,7 @@ A product is rooted at a **dotNS base name** (e.g. `game.dot`). The base name's 
 game.dot                  → root manifest (displayName, icon, description)
 app.game.dot              → executable manifest (App)
 widget.game.dot           → executable manifest (Widget)
-worker.game.dot           → executable manifest (Worker; serves Pocket, Chat and/or Input)
+worker.game.dot           → executable manifest (Worker; serves Pocket, Chat, Input and/or Funding)
 ```
 
 A Host discovers a product's executables by querying these subnames. Absence of a subname means the product does not provide that executable.
@@ -179,6 +180,7 @@ type WorkerManifest = CommonExecutableFields & {
     pocket?: boolean;
     chat?: boolean;
     input?: boolean;
+    funding?: FundingConfig;                       // Present means the worker serves Funding; see [Funding configuration](#funding-configuration).
   };
 };
 
@@ -188,13 +190,58 @@ type SemVer = [major: number, minor: number, patch: number, build?: string];
 
 - `app` — full-screen App. No extra fields beyond the common ones.
 - `widget` — `dimensions.height` is the list of grid-step heights the widget can render at; the Host picks one per layout. `width` defaults to `1` column. The grid unit and bounds belong to the Host's dashboard spec (see [Future Directions](#future-directions)). By convention `8` in `height` signals a full-screen widget; this RFC does not normalise that convention.
-- `worker` — background JS worker. `entrypoint` is the module the Host loads inside the worker. `includes` declares which surfaces it serves.
+- `worker` — background JS worker. `entrypoint` is the module the Host loads inside the worker. `includes` declares which surfaces it serves. Hosts MUST ignore an `includes` key they do not recognise, so a surface added later does not break them.
 
 **`appVersion` is a label, not a change signal.** Hosts detect a new deployment from the subname's `contenthash`, not from this field (see [Cache invalidation](#resolving-a-product)). `appVersion` names the release for the user — "update to 1.4.0", "you declined 1.3.2" — so publishers SHOULD keep it meaningful, but nothing about resolution or caching depends on it moving.
 
 Publishers MUST set `kind` to match the subname label the manifest is written under: `app` under `app.<product_id>.<tld>`, `widget` under `widget.<product_id>.<tld>`, `worker` under `worker.<product_id>.<tld>`. Hosts MUST reject a manifest whose `kind` does not match the subname it was read from.
 
 **Why one Worker, not per modality.** A Worker is the product's single background process, carrying its full Host-API surface (signing, notifications, chain access, long-lived caches). Those capabilities do not split cleanly along the boundaries between Pocket, Chat, and Input, and one bundle per surface would duplicate that surface area and make the product's on-chain signing identity ambiguous. `includes` only advertises which user-facing affordances the same process serves; the executable remains a single artifact.
+
+#### Funding configuration
+
+`includes.funding` is the one surface that carries a configuration object rather than a flag. Its presence means the worker serves Funding. The provider's worker answers quotes, calling its own API directly or, when that needs the provider's key, through the onramp adapter `backend` names. What the provider moves comes from those quotes; `routes` can declare it up front so a Host skips asking a provider that cannot serve a request.
+
+```typescript
+type FundingConfig = {
+  routes?: FundingRoute[];       // What the provider moves, and how. Omitted means not declared.
+  backend?: string;              // Onramp adapter id for the worker's calls that need the provider's key.
+};
+
+type FundingRoute = {
+  mode: 'CARD' | 'BANK' | 'CRYPTO';
+  directions: ('In' | 'Out')[];  // In: into the user's balance. Out: out of it.
+  assets: string[];              // Symbols the user pays with (In) or receives (Out): ISO 4217 codes for CARD and BANK, token symbols for CRYPTO.
+  networks?: string[];           // CRYPTO only: networks the assets move on, such as "polkadot" (Polkadot Asset Hub), "ethereum", "tron", "solana", "bitcoin". Omitted means not declared.
+  countries?: string[];          // ISO 3166-1 alpha-2 codes the route serves. Omitted means not declared.
+};
+```
+
+- **Routes are optional and only narrow the quotes a Host asks for.** A provider's routes change more often than it publishes a release, and a Host reads a manifest again only when its `contenthash` changes, so declared routes can lag. A worker without `routes` is asked for every quote, and its answers say what it serves.
+- **One mode per route.** A provider serving card and bank publishes two routes.
+- **Unrecognised values are ignored, not fatal**, so later revisions can add modes and directions without a new `$v`. A route is ignored when its `mode` is unrecognised or it has no recognised direction or no assets; an unrecognised direction is dropped from a route that has others. A worker left with no usable route is treated as declaring none.
+- **Networks are lowercase ids**, and a Host asks for a quote on one of them. Unrecognised ids are ignored like other unknown values, and `networks` on a CARD or BANK route is ignored.
+- **The quote is authoritative.** A Host MAY leave out a route whose `countries` omit the user's country without quoting it; a declared country can still be refused, and a route without `countries` is checked by its quote. Limits, fees and timing come only from the quote, which the Funding runtime contract defines.
+- **`backend` is an onramp adapter id, never a key.** The adapter holds the provider's key, attaches it to the worker's call and returns the provider's answer to the worker.
+
+The smallest declaration is `"funding": {}`, a provider whose quotes say everything it serves. A provider serving inbound card payments in EUR and USD in three countries, and crypto deposits and withdrawals of USDT and DOT on Polkadot and Ethereum:
+
+```json
+{
+  "$v": 1,
+  "appVersion": [1, 2, 0],
+  "kind": "worker",
+  "entrypoint": "index.js",
+  "includes": {
+    "funding": {
+      "routes": [
+        { "mode": "CARD", "directions": ["In"], "assets": ["EUR", "USD"], "countries": ["DE", "FR", "US"] },
+        { "mode": "CRYPTO", "directions": ["In", "Out"], "assets": ["USDT", "DOT"], "networks": ["polkadot", "ethereum"] }
+      ]
+    }
+  }
+}
+```
 
 ### Executable structure (v1)
 
@@ -460,7 +507,7 @@ For a base name `B`:
 4. **Parse and validate the root manifest.**
   - Parse the string as JSON. Failure → malformed; surface a diagnostic.
   - Validate `$v`. Unknown version → undiscoverable; surface a diagnostic and keep working for other products.
-  - Validate against the v1 `RootManifest` schema. Validation failure → malformed; do not partially trust the result.
+  - Validate against the `RootManifest` schema. Validation failure → malformed; do not partially trust the result.
   - Two things are exempt and MUST NOT fail validation: an unrecognised `icon.format`, and an unrecognised grant value in `trustedProducts` (see [Root manifest (v1)](#root-manifest-v1)).
 5. **(Optional) Read the author.** Hosts that surface authorship in UI call `IDotnsRegistry.owner(node)` — a single call that returns the canonical owner. The registry transparently handles the ERC-721 fallback for second-level names, so callers do not need to distinguish that case from subnodes.
 6. **Probe executable subnames.** For each of `app.<product_id>.<tld>`, `widget.<product_id>.<tld>`, `worker.<product_id>.<tld>` whose executable type the Host can render (per [Subname convention](#subname-convention)): compute the subnode's namehash and repeat steps 2-4 against it, using `text(subnode, "executable")` instead of `text(node, "manifest")` and parsing against the matching `ExecutableManifest` variant. A subnode that does not exist (resolver `address(0)`) or has an empty text record means the product does not provide that executable — this is not an error.
@@ -500,6 +547,10 @@ A conforming Host implementation should produce well-defined behaviour for each 
 - Executable subname `contenthash` unset, non-IPFS codec, or undecodable → cannot launch that executable; surface a diagnostic.
 - Executable CID unreachable → cannot launch that executable; surface a diagnostic.
 - Executable subname owned by a different account than the base name (when strict provenance is enabled) → skip that executable.
+- Unrecognised key in `includes` → ignored; the other surfaces still serve.
+- Funding route with an unrecognised `mode`, no recognised direction, or no assets → route ignored; other routes still apply. An unrecognised direction alongside recognised ones is dropped.
+- No `routes`, or no usable funding route → the worker still serves Funding; the Host asks it for every quote.
+- `backend` naming an onramp adapter the Host does not know → the Host does not offer the provider.
 
 ## Drawbacks
 
@@ -511,6 +562,7 @@ A conforming Host implementation should produce well-defined behaviour for each 
 ## Alternatives
 
 - **Binary codec (SCALE/protobuf).** Lower wire cost but requires a codec library in every consumer. JSON with off-the-shelf parsers is simpler and fits within dotNS text-record budgets.
+- **Funding as a fourth executable type.** A separate `funding.<product_id>.<tld>` executable would duplicate the Worker's Host-API surface and split the provider's signing identity, for the reasons in [Why one Worker, not per modality](#executable-manifest-v1). Funding is served by the Worker instead.
 - **Single manifest per product.** Fewer lookups, but a single record grows with each executable type and cannot be independently updated.
 
 ## Security
@@ -520,6 +572,7 @@ A conforming Host implementation should produce well-defined behaviour for each 
 - **Trust grants are publisher-declared, not user-declared.** A grant is authenticated by nothing stronger than dotNS ownership, so a compromised or transferred name widens access with one `setText`. Two constraints follow. A grant MUST NOT override a denial the user already gave — it waives the publisher's prompt, never the user's. And revocation is a record edit with no signal attached, so a Host that honours a cached grant indefinitely cannot be revoked from (see [Cache invalidation](#resolving-a-product)).
 - **Size cap at publishing.** The publisher MUST validate every manifest against the v1 schema and reject payloads exceeding the dotNS text-record budget before submitting. dotNS enforces a wire-level cap on writes.
 - **Subname squatting is structurally prevented.** `setSubnodeOwner` is gated by parent-ownership: only the owner of `<product_id>.<tld>` can create the modality subnames.
+- **No provider keys in manifests.** A manifest is public, so `backend` names an onramp adapter the Host trusts and that adapter holds the key. Hosts MUST NOT read key material from a manifest.
 - **No user data.** The manifest carries no user data; privacy exposure is limited to whatever dotNS RPC traffic reveals about which products a client is resolving.
 
 ## Unresolved Questions
