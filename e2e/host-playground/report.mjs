@@ -12,6 +12,9 @@ import { dirname, join } from "node:path";
 const NOT_A_FAILURE = new Set(["unsupported", "permission-denied", "precondition-missing"]);
 const KNOWN_FAILURES = JSON.parse(readFileSync(new URL("./tests.json", import.meta.url), "utf8")).knownFailures ?? {};
 
+const oneLine = (text) => String(text ?? "").replace(/\s+/g, " ").trim();
+const cell = (text) => oneLine(text).replace(/\|/g, "\\|").slice(0, 200);
+
 export function classify(result) {
   if (result.status === "success") return "passed";
   if (result.status === "skipped") return "skipped";
@@ -21,7 +24,7 @@ export function classify(result) {
   return "failed";
 }
 
-function summaryLine(run) {
+export function summaryLine(run) {
   const counts = {};
   const failed = [];
   for (const result of run.results) {
@@ -43,10 +46,33 @@ function summaryLine(run) {
   return `${line}.`;
 }
 
+/** The failed tests with their messages, then the known failures with their reasons. */
+export function attentionSections(run, heading = "###") {
+  const failed = run.results.filter((result) => classify(result) === "failed");
+  const known = run.results.filter((result) => classify(result) === "known-failure");
+  const sections = [];
+  if (failed.length) {
+    sections.push(
+      `${heading} Failed (${failed.length})`,
+      "",
+      ...failed.map((result) => `- \`${result.id}\`: ${oneLine(result.message) || result.status}`),
+      "",
+    );
+  }
+  if (known.length) {
+    sections.push(
+      `${heading} Known failures (${known.length})`,
+      "",
+      ...known.map((result) => `- \`${result.id}\`: ${KNOWN_FAILURES[result.id].reason}`),
+      "",
+    );
+  }
+  return sections;
+}
+
 function markdown(run) {
-  const escape = (text) => String(text ?? "").replace(/\|/g, "\\|").replace(/\s+/g, " ").slice(0, 200);
   const rows = run.results.map(
-    (r) => `| \`${r.id}\` | ${classify(r)} | ${r.outcome ?? ""} | ${Math.round((r.durationMs ?? 0) / 100) / 10}s | ${escape(r.message)} |`,
+    (r) => `| \`${r.id}\` | ${classify(r)} | ${r.outcome ?? ""} | ${Math.round((r.durationMs ?? 0) / 100) / 10}s | ${cell(r.message)} |`,
   );
   return [
     `## host-playground on ${run.platform}`,
@@ -55,11 +81,24 @@ function markdown(run) {
     "",
     `App: ${run.app ?? "unknown"}. host-playground: \`${run.product}\` as deployed, test list from \`${run.hostPlaygroundCommit?.slice(0, 9)}\`. Started ${run.startedAt}.`,
     "",
+    ...attentionSections(run),
+    `<details><summary>All ${run.results.length} tests</summary>`,
+    "",
     "| Test | Result | Outcome | Time | Message |",
     "| --- | --- | --- | --- | --- |",
     ...rows,
     "",
+    "</details>",
+    "",
   ].join("\n");
+}
+
+/** One workflow error annotation per failed test, so failures show on the checks page. */
+function annotations(run) {
+  const escape = (text) => text.replace(/%/g, "%25").replace(/\r/g, "%0D").replace(/\n/g, "%0A");
+  return run.results
+    .filter((result) => classify(result) === "failed")
+    .map((result) => `::error title=host-playground ${run.platform}::${escape(`${result.id}: ${oneLine(result.message) || result.status}`)}`);
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {
@@ -70,5 +109,6 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   }
   const run = JSON.parse(readFileSync(path, "utf8"));
   writeFileSync(join(dirname(path), "report.md"), markdown(run));
+  if (process.env.GITHUB_ACTIONS === "true") for (const line of annotations(run)) console.log(line);
   console.log(summaryLine(run));
 }

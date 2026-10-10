@@ -453,6 +453,18 @@ jobs:
   # Announced the way the iOS nightly is, through the same relay and into the
   # same room.
 
+  # The commit this nightly built, with its results added to the prerelease. Never fails the night.
+  e2e:
+    name: host-playground e2e
+    needs: nightly
+    uses: ./.github/workflows/host-playground-e2e.yml
+    with:
+      platform: android
+      release_tag: ${{ needs.nightly.outputs.tag }}
+    secrets: inherit
+    permissions:
+      contents: write
+
   send-release-notification:
     name: Send Release Notification
     runs-on: ubuntu-latest
