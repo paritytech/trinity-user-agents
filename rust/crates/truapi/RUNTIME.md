@@ -397,6 +397,30 @@ AutoSigning without approval. Legacy-account signing still asks the user.
 - `PocketPlatform`: stream the product's Pocket card collection and remove a
   card from it. The host owns the collection and decides which cards are
   privileged.
+- `BalancePlatform`: stream what a payment request can spend right now, the
+  current value first and then each change. Installed with
+  `set_balance_platform`; native hosts use `set_balance_callbacks` with
+  `notify_balance`. The core requires a session and the product's
+  `BalanceAccess` remote permission, asking for it on the first subscription
+  and answering `PermissionDenied` when the user refuses. A host
+  `InsufficientBalance` reaches a product without that permission as
+  `Rejected`. Without a balance view, `balanceSubscribe` answers
+  `Unsupported`.
+- `PaymentPlatform`: pay from the user's balance to an account once the user
+  approves, and stream each payment's status by its caller-chosen id.
+  Installed with `set_payment_platform`; native hosts use
+  `set_payment_callbacks` with `notify_payment_status`. The core requires a
+  session and hands the host each id hashed with the product. Without it,
+  `request` and
+  `statusSubscribe` answer `Unsupported`.
+- `TopUpPlatform`: claim a top-up source's funds into the user's balance and
+  stream each top-up's status. Installed with `set_top_up_platform`; native
+  hosts use `set_top_up_callbacks` with `notify_top_up_status`. The core
+  requires a session and checks the source keys; a `ProductAccount` source is
+  passed through for the host to derive, and hands the host each id hashed
+  with the product. The host owns claiming, retries, partial claims and
+  persistence. Without it,
+  `topUp` and `topUpStatusSubscribe` answer `Unsupported`.
 - `ExpandedCardHost`: show or hide the card face drawn above an opened card's
   Widget. It is carried per product connection on `ConnectionAdapters`, so only
   the Widget under a card reaches that card.

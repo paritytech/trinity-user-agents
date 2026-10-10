@@ -52,6 +52,36 @@ impl From<uniffi::UnexpectedUniFFICallbackError> for v01::HostLocalStorageReadEr
     }
 }
 
+impl From<uniffi::UnexpectedUniFFICallbackError> for v01::HostPaymentError {
+    fn from(err: uniffi::UnexpectedUniFFICallbackError) -> Self {
+        tracing::warn!(
+            reason = %err.reason,
+            "host callback threw an undeclared error; reporting it as a rejection"
+        );
+        v01::HostPaymentError::Unknown { reason: err.reason }
+    }
+}
+
+impl From<uniffi::UnexpectedUniFFICallbackError> for v01::HostPaymentTopUpError {
+    fn from(err: uniffi::UnexpectedUniFFICallbackError) -> Self {
+        tracing::warn!(
+            reason = %err.reason,
+            "host callback threw an undeclared error; reporting it as a rejection"
+        );
+        v01::HostPaymentTopUpError::Unknown { reason: err.reason }
+    }
+}
+
+impl From<uniffi::UnexpectedUniFFICallbackError> for v01::HostPaymentBalanceSubscribeError {
+    fn from(err: uniffi::UnexpectedUniFFICallbackError) -> Self {
+        tracing::warn!(
+            reason = %err.reason,
+            "host callback threw an undeclared error; reporting it as a rejection"
+        );
+        v01::HostPaymentBalanceSubscribeError::Unknown { reason: err.reason }
+    }
+}
+
 impl From<uniffi::UnexpectedUniFFICallbackError> for v01::HostNavigateToError {
     fn from(err: uniffi::UnexpectedUniFFICallbackError) -> Self {
         tracing::warn!(

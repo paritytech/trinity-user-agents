@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, Weak};
+use std::sync::{Arc, Mutex, OnceLock, Weak};
 
 use crate::platform::{
     CoreAdmin, PermissionAuthorizationRequest, PermissionAuthorizationStatus, ProductContext,
@@ -25,8 +25,7 @@ use crate::subscription::Spawner;
 use crate::{PairedSsoPeer, ResponderExit, SigningHostRuntime};
 
 use super::callbacks::{
-    HostCallbacks, NativeChatCallbacks, NativeContactsCallbacks, NativeGameCallbacks,
-    NativePocketCallbacks, NativeScannerCallbacks,
+    HostCallbacks, NativeBalanceCallbacks, NativeChatCallbacks, NativeContactsCallbacks, NativeGameCallbacks, NativePaymentCallbacks, NativePocketCallbacks, NativeTopUpCallbacks, NativeScannerCallbacks,
 };
 use super::config::{
     HostRuntimeConfig, NativeResolvedHostRuntimeConfig, NativeRuntimeConfigError,
@@ -36,8 +35,7 @@ use super::errors::{HostRejection, NativeCoreDatabaseError};
 use super::executor::shared_native_executor;
 use super::events::NativeEventBus;
 use super::platform::{
-    CallbackPlatform, ChatCallbackPlatform, ContactsCallbackPlatform, GameCallbackPlatform,
-    PocketCallbackPlatform, ScannerCallbackPlatform,
+    BalanceCallbackPlatform, CallbackPlatform, ChatCallbackPlatform, ContactsCallbackPlatform, GameCallbackPlatform, PaymentCallbackPlatform, PocketCallbackPlatform, TopUpCallbackPlatform, ScannerCallbackPlatform,
 };
 #[cfg(doc)]
 use crate::WorkerTransition;
@@ -53,6 +51,13 @@ pub struct NativeTrUApiHostRuntime {
     ws_bridge: Arc<SharedWsBridge>,
     /// The one Worker execution per product; opening another replaces it.
     worker_executions: Mutex<HashMap<String, Weak<NativeProductExecution>>>,
+    /// The host's top-up engine, once installed, which later statuses are
+    /// pushed through.
+    top_up: OnceLock<Arc<TopUpCallbackPlatform>>,
+    /// The payment engine statuses are pushed to, once installed.
+    payments: OnceLock<Arc<PaymentCallbackPlatform>>,
+    /// The balance view changes are pushed to, once installed.
+    balance: OnceLock<Arc<BalanceCallbackPlatform>>,
 }
 
 impl NativeTrUApiHostRuntime {
@@ -118,6 +123,9 @@ impl NativeTrUApiHostRuntime {
                 callbacks.on_core_log(marker.to_string(), detail.to_string());
             }))),
             worker_executions: Mutex::new(HashMap::new()),
+            top_up: OnceLock::new(),
+            payments: OnceLock::new(),
+            balance: OnceLock::new(),
         }))
     }
 
@@ -245,6 +253,66 @@ impl From<v01::GenericError> for NativePairingError {
 #[derive(uniffi::Object)]
 pub struct NativeAnnouncedPairing {
     inner: AnnouncedPairing,
+}
+
+#[uniffi::export]
+impl NativeTrUApiHostRuntime {
+    /// Install the host's top-up engine. Set-once; answers whether this call
+    /// installed it. Report each later status with
+    /// [`Self::notify_top_up_status`].
+    pub fn set_top_up_callbacks(&self, callbacks: Arc<dyn NativeTopUpCallbacks>) -> bool {
+        let platform = Arc::new(TopUpCallbackPlatform::new(callbacks));
+        self.runtime.set_top_up_platform(platform.clone()) && self.top_up.set(platform).is_ok()
+    }
+
+    /// Report a later status of `product_id`'s top-up `id` to the products
+    /// following it.
+    pub fn notify_top_up_status(
+        &self,
+        product_id: String,
+        id: crate::Bytes32,
+        status: v01::HostPaymentTopUpStatusSubscribeItem,
+    ) {
+        if let Some(platform) = self.top_up.get() {
+            platform.notify_status(product_id, id, status);
+        }
+    }
+
+    /// Install the host's payment engine. Set-once; answers whether this
+    /// call installed it. Report each later status with
+    /// [`Self::notify_payment_status`].
+    pub fn set_payment_callbacks(&self, callbacks: Arc<dyn NativePaymentCallbacks>) -> bool {
+        let platform = Arc::new(PaymentCallbackPlatform::new(callbacks));
+        self.runtime.set_payment_platform(platform.clone()) && self.payments.set(platform).is_ok()
+    }
+
+    /// Report a later status of `product_id`'s payment `id` to the products
+    /// following it.
+    pub fn notify_payment_status(
+        &self,
+        product_id: String,
+        id: crate::Bytes32,
+        status: v01::HostPaymentStatusSubscribeItem,
+    ) {
+        if let Some(platform) = self.payments.get() {
+            platform.notify_status(product_id, id, status);
+        }
+    }
+
+    /// Install the host's balance view. Set-once; answers whether this call
+    /// installed it. Report each change with [`Self::notify_balance`].
+    pub fn set_balance_callbacks(&self, callbacks: Arc<dyn NativeBalanceCallbacks>) -> bool {
+        let platform = Arc::new(BalanceCallbackPlatform::new(callbacks));
+        self.runtime.set_balance_platform(platform.clone()) && self.balance.set(platform).is_ok()
+    }
+
+    /// Report the new balance of `purse` (`None` for the main purse), a
+    /// decimal string of CASH units, to the products following it.
+    pub fn notify_balance(&self, purse: Option<u32>, available: u128) {
+        if let Some(platform) = self.balance.get() {
+            platform.notify_balance(purse, available);
+        }
+    }
 }
 
 #[uniffi::export]

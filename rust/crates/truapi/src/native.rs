@@ -30,8 +30,7 @@ pub use crate::host_internal::sso_messages::SsoRequestOutcome;
 pub use crate::host_logic::dotns::{NavigateDecision, PocketDeeplinkAction};
 pub use crate::host_logic::scanner::{ScanFilter, ScanVerdict};
 pub use callbacks::{
-    HostCallbacks, NativeChatCallbacks, NativeContactsCallbacks, NativeGameCallbacks,
-    NativePocketCallbacks, NativePocketRemoval, NativeScannerCallbacks,
+    HostCallbacks, NativeBalanceCallbacks, NativeChatCallbacks, NativeContactsCallbacks, NativeGameCallbacks, NativePaymentCallbacks, NativePocketCallbacks, NativePocketRemoval, NativeTopUpCallbacks, NativeScannerCallbacks,
 };
 pub use config::{HostRuntimeConfig, NativeRuntimeConfigError, ProductExecutionConfig};
 pub use errors::{HostRejection, NativeChatFieldError, NativeCoreDatabaseError, NativeRendererError};
