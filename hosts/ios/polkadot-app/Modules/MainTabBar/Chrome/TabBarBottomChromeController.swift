@@ -407,6 +407,9 @@ private extension TabBarBottomChromeController {
         barModel.onShelfChipTapped = { [weak self] id in
             self?.onChipTapped?(id)
         }
+        barModel.onShelfChipCloseRequested = { [weak self] id in
+            self?.onChipCloseRequested?(id)
+        }
         barModel.onShelfSettingsTapped = { [weak self] in
             self?.onSettingsTapped?()
         }

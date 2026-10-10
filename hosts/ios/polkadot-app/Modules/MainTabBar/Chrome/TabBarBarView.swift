@@ -27,6 +27,7 @@ struct TabBarBarView: View {
                     chips: model.shelfChips,
                     mountedChipId: model.mountedChipId,
                     onChipTapped: { model.onShelfChipTapped?($0) },
+                    onChipCloseRequested: { model.onShelfChipCloseRequested?($0) },
                     onConnectionStatusTapped: { model.onShelfConnectionStatusTapped?() },
                     onSettingsTapped: { model.onShelfSettingsTapped?() }
                 )

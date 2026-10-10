@@ -19,6 +19,7 @@ final class TabBarBarViewModel {
     var shelfChips: [DSTabBarChip] = []
     var mountedChipId: UUID?
     var onShelfChipTapped: ((UUID) -> Void)?
+    var onShelfChipCloseRequested: ((UUID) -> Void)?
     var onShelfSettingsTapped: (() -> Void)?
     var onShelfConnectionStatusTapped: (() -> Void)?
 

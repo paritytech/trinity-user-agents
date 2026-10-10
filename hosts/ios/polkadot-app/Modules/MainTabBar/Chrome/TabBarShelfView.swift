@@ -10,8 +10,13 @@ struct TabBarShelfView: View {
     let chips: [DSTabBarChip]
     let mountedChipId: UUID?
     let onChipTapped: (UUID) -> Void
+    let onChipCloseRequested: (UUID) -> Void
     let onConnectionStatusTapped: () -> Void
     let onSettingsTapped: () -> Void
+
+    /// Held here so it leaves with the shelf: this view is only in the hierarchy while the shelf is open.
+    @State private var revealedChipId: UUID?
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         VStack(spacing: DSSpacings.large) {
@@ -24,6 +29,9 @@ struct TabBarShelfView: View {
         }
         .padding(DSSpacings.mediumIncreased)
         .frame(maxWidth: .infinity)
+        .contentShape(Rectangle())
+        .onTapGesture { revealedChipId = nil }
+        .sensoryFeedback(.impact(weight: .medium), trigger: revealedChipId) { _, revealed in revealed != nil }
     }
 }
 
@@ -31,6 +39,9 @@ private extension TabBarShelfView {
     static let iconSize: CGFloat = 28
     static let touchSize: CGFloat = 44
     static let columns = [GridItem(.adaptive(minimum: 84), spacing: DSSpacings.large)]
+
+    /// A literal because the `DSTabBarStyle` timings are internal to PolkadotUI.
+    static let reduceMotionRevealDuration: TimeInterval = 0.2
 
     var iconRow: some View {
         HStack(spacing: DSSpacings.large) {
@@ -59,11 +70,23 @@ private extension TabBarShelfView {
     var grid: some View {
         LazyVGrid(columns: Self.columns, spacing: DSSpacings.large) {
             ForEach(chips, id: \.id) { chip in
-                TabBarShelfCell(chip: chip, isSelected: chip.id == mountedChipId) {
-                    onChipTapped(chip.id)
-                }
+                TabBarShelfCell(
+                    chip: chip,
+                    isSelected: chip.id == mountedChipId,
+                    isRevealed: chip.id == revealedChipId,
+                    action: { onChipTapped(chip.id) },
+                    onLongPress: { revealedChipId = chip.id },
+                    onClose: {
+                        revealedChipId = nil
+                        onChipCloseRequested(chip.id)
+                    }
+                )
             }
         }
+        .animation(
+            reduceMotion ? .easeInOut(duration: Self.reduceMotionRevealDuration) : .snappy,
+            value: revealedChipId
+        )
     }
 
     func iconButton(_ image: UIImage, label: String, action: @escaping () -> Void) -> some View {
@@ -82,14 +105,20 @@ private extension TabBarShelfView {
     }
 }
 
-/// One open product: its icon with the name beneath, highlighted when it is the mounted product.
+/// One open product: its icon with the name beneath, highlighted when it is the mounted product. A long press
+/// reveals a close control over the icon. The Close accessibility action gives the same result without a long press.
 private struct TabBarShelfCell: View {
     let chip: DSTabBarChip
     let isSelected: Bool
+    let isRevealed: Bool
     let action: () -> Void
+    let onLongPress: () -> Void
+    let onClose: () -> Void
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        Button(action: action) {
+        ZStack(alignment: .topTrailing) {
             VStack(spacing: DSSpacings.small) {
                 icon
                 Text(verbatim: chip.name)
@@ -100,15 +129,40 @@ private struct TabBarShelfCell: View {
             }
             .frame(maxWidth: .infinity)
             .contentShape(Rectangle())
+            .onTapGesture(perform: action)
+            .onLongPressGesture(perform: onLongPress)
+            .accessibilityLabel(chip.name)
+            .accessibilityAddTraits(.isButton)
+            .accessibilityAddTraits(isSelected ? .isSelected : [])
+            .accessibilityAction(named: Text(String(localized: .Common.close)), onClose)
+
+            if isRevealed {
+                closeControl
+                    .transition(reduceMotion ? .opacity : .scale.combined(with: .opacity))
+            }
         }
-        .buttonStyle(.plain)
-        .accessibilityLabel(chip.name)
-        .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 }
 
 private extension TabBarShelfCell {
     static let iconSize: CGFloat = 48
+    static let closeSize: CGFloat = 32
+    static let closeTouchSize: CGFloat = 44
+
+    /// Hidden from accessibility because the Close action on the cell reaches the same close.
+    var closeControl: some View {
+        Button(action: onClose) {
+            Image(systemName: "xmark")
+                .font(.system(size: 12, weight: .bold))
+                .foregroundStyle(Color.fgPrimary)
+                .frame(width: Self.closeSize, height: Self.closeSize)
+                .background(Circle().fill(Color.bgSurfaceMain))
+                .frame(width: Self.closeTouchSize, height: Self.closeTouchSize)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityHidden(true)
+    }
 
     /// Reserves the icon's frame when the product has no icon, so names stay aligned across the grid.
     var icon: some View {
