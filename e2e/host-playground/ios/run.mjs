@@ -26,18 +26,22 @@ import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 
 import {
-  capture,
   captureOptional,
   delay,
   readPlistValue,
   run,
-  selectSimulatorFromList,
+  selectSimulator,
 } from "../../../scripts/lib/ios-simulator.mjs";
 import { classify } from "../report.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const shared = resolve(here, "..");
 const LOG_SUBSYSTEM = "io.parity.polkadotapp.e2e";
+const SEED_READ_TIMEOUT_MS = 60_000;
+const FIRST_LIVENESS_CHECK_MS = 30_000;
+const LIVENESS_INTERVAL_MS = 10_000;
+const MISSED_LIVENESS_CHECKS = 2;
+const POLL_MS = 2_000;
 
 const { values: args } = parseArgs({
   options: {
@@ -95,7 +99,7 @@ const dataContainer = appDataContainer();
 const exchange = join(dataContainer, "tmp", "truapi-e2e");
 const seed = join(exchange, "seed");
 
-let exitCode = 1;
+let exitCode = 2;
 try {
   rmSync(exchange, { recursive: true, force: true });
   mkdirSync(exchange, { recursive: true });
@@ -131,12 +135,13 @@ process.exit(exitCode);
 
 function fatal(message) {
   console.error(`run.mjs: ${message}`);
-  process.exit(1);
+  process.exit(2);
 }
 
 function unpackApp(path) {
   if (!path.endsWith(".zip")) return path;
   const target = mkdtempSync(join(tmpdir(), "host-playground-ios-"));
+  process.on("exit", () => rmSync(target, { recursive: true, force: true }));
   run("ditto", ["-x", "-k", path, target]);
   const found = findApp(target);
   if (!found) fatal(`no .app inside ${path}`);
@@ -156,10 +161,12 @@ function findApp(directory) {
 }
 
 function chooseDevice(requested) {
-  const list = JSON.parse(capture("xcrun", ["simctl", "list", "devices", "available", "-j"]));
-  const selected = selectSimulatorFromList(list, requested ?? process.env.TRUAPI_IOS_E2E_DEVICE);
-  if (!selected) fatal(requested ? `simulator ${requested} is unavailable` : "no available iPhone simulator");
-  return selected;
+  if (requested) process.env.TRUAPI_IOS_E2E_DEVICE = requested;
+  try {
+    return selectSimulator();
+  } catch (error) {
+    fatal(error.message);
+  }
 }
 
 function appDataContainer() {
@@ -195,19 +202,19 @@ function readResults() {
 
 async function waitForDone(timeoutMs) {
   const deadline = Date.now() + timeoutMs;
-  const seedDeadline = Date.now() + 60_000;
+  const seedDeadline = Date.now() + SEED_READ_TIMEOUT_MS;
   let reported = 0;
-  let nextLivenessCheck = Date.now() + 30_000;
+  let nextLivenessCheck = Date.now() + FIRST_LIVENESS_CHECK_MS;
   let missedChecks = 0;
 
   while (Date.now() < deadline) {
     if (existsSync(join(exchange, "done"))) return "done";
 
-    // A crashed app never writes `done`. Two misses, since a relaunch briefly drops it.
+    // A crashed app never writes `done`. More than one miss, since a relaunch briefly drops it.
     if (Date.now() >= nextLivenessCheck) {
-      nextLivenessCheck = Date.now() + 10_000;
+      nextLivenessCheck = Date.now() + LIVENESS_INTERVAL_MS;
       missedChecks = appRunning() ? 0 : missedChecks + 1;
-      if (missedChecks >= 2) return "the app stopped running before the run finished";
+      if (missedChecks >= MISSED_LIVENESS_CHECKS) return "the app stopped running before the run finished";
     }
 
     if (existsSync(seed) && Date.now() > seedDeadline) {
@@ -221,23 +228,24 @@ async function waitForDone(timeoutMs) {
       launch({ terminate: false });
     }
 
-    const run = readResults();
-    const results = run?.results ?? [];
+    const snapshot = readResults();
+    const results = snapshot?.results ?? [];
     for (const result of results.slice(reported)) {
+      const bucket = classify(result);
       const message = result.message ? `  ${String(result.message).replace(/\s+/g, " ").slice(0, 200)}` : "";
-      console.log(`  ${classify(result).padEnd(20)} ${result.id}${message}`);
-      if (classify(result) === "failed" && !existsSync(join(out, "first-failure.png"))) {
+      console.log(`  ${bucket.padEnd(20)} ${result.id}${message}`);
+      if (bucket === "failed" && !existsSync(join(out, "first-failure.png"))) {
         spawnSync("xcrun", ["simctl", "io", device.udid, "screenshot", join(out, "first-failure.png")], {
           stdio: "ignore",
         });
       }
     }
     if (results.length > reported) {
-      writeFileSync(join(out, "results.json"), `${JSON.stringify(run, null, 2)}\n`);
+      writeFileSync(join(out, "results.json"), `${JSON.stringify(snapshot, null, 2)}\n`);
     }
     reported = Math.max(reported, results.length);
 
-    await delay(2000);
+    await delay(POLL_MS);
   }
   return `no done marker within ${args["timeout-minutes"]} minutes`;
 }
@@ -257,20 +265,21 @@ function finish(outcome) {
   if (outcome !== "done") console.error(`run.mjs: ${outcome}`);
 
   const results = readResults();
-  let failed = outcome !== "done" || failure !== undefined;
+  const stoppedEarly = outcome !== "done" || failure !== undefined || !results;
+  let failed = false;
   if (results) {
     const resultsPath = join(out, "results.json");
     writeFileSync(resultsPath, `${JSON.stringify(results, null, 2)}\n`);
     const report = spawnSync(process.execPath, [join(shared, "report.mjs"), resultsPath], {
       stdio: "inherit",
     });
-    failed ||= report.status !== 0 || results.results.some((result) => classify(result) === "failed");
+    failed = report.status !== 0 || results.results.some((result) => classify(result) === "failed");
   } else {
     console.error("run.mjs: the app wrote no results.json");
-    failed = true;
   }
 
-  if (failed) captureDiagnostics();
+  if (stoppedEarly || failed) captureDiagnostics();
+  if (stoppedEarly) return 2;
   return failed ? 1 : 0;
 }
 

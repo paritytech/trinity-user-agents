@@ -61,7 +61,7 @@ class HostPlaygroundE2EInitializer @Inject constructor(
             ?: return "username recovery did not finish within $STEP_TIMEOUT"
         return recovered.fold(
             onSuccess = { found -> if (found) null else "no username is registered for this account" },
-            onFailure = { "username recovery threw ${it::class.simpleName}: ${it.message}" },
+            onFailure = { "username recovery threw ${it::class.simpleName}" },
         )
     }
 }

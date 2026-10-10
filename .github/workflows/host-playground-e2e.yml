@@ -74,14 +74,8 @@ jobs:
           set -euo pipefail
           ./gradlew --no-daemon \
             --init-script "${GITHUB_WORKSPACE}/e2e/host-playground/android/e2e.init.gradle.kts" \
-            assembleGpNightly
-          shopt -s nullglob
-          found=(app/build/outputs/apk/gp/nightly/*.apk)
-          if [ ${#found[@]} -ne 1 ]; then
-            echo "::error::Expected one APK, found ${#found[@]}"
-            exit 1
-          fi
-          mv "${found[0]}" "${RUNNER_TEMP}/app-e2e.apk"
+            :app:assembleGpNightly
+          mv app/build/outputs/apk/gp/nightly/app-gp-nightly.apk "${RUNNER_TEMP}/app-e2e.apk"
           rm -f develop_key.jks app/google-services.json
 
       # Readable only by this user, and never on a command line.
@@ -99,6 +93,7 @@ jobs:
 
       - name: Enable KVM
         run: |
+          set -euo pipefail
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
             | sudo tee /etc/udev/rules.d/99-kvm4all.rules
           sudo udevadm control --reload-rules
@@ -122,6 +117,7 @@ jobs:
       - name: Summary
         if: always()
         run: |
+          set -euo pipefail
           rm -f "${RUNNER_TEMP}/android.mnemonic"
           if [ -f "${OUT}/report.md" ]; then
             cat "${OUT}/report.md" >> "$GITHUB_STEP_SUMMARY"
@@ -212,28 +208,7 @@ jobs:
           umask 077
           printf '%s' "${MNEMONIC}" > "${RUNNER_TEMP}/ios.mnemonic"
 
-      - name: Boot a simulator
-        id: sim
-        run: |
-          set -euo pipefail
-          udid="$(xcrun simctl list devices available --json \
-            | python3 -c 'import json,sys
-          d=json.load(sys.stdin)["devices"]
-          for runtime in sorted(d, reverse=True):
-              for dev in d[runtime]:
-                  if "iOS" in runtime and dev["name"].startswith("iPhone"):
-                      print(dev["udid"]); sys.exit()')"
-          if [ -z "${udid}" ]; then
-            echo "::error::No available iPhone simulator"
-            exit 1
-          fi
-          xcrun simctl boot "${udid}" || true
-          xcrun simctl bootstatus "${udid}" -b
-          echo "udid=${udid}" >> "$GITHUB_OUTPUT"
-
       - name: Run host-playground in the simulator
-        env:
-          UDID: ${{ steps.sim.outputs.udid }}
         run: |
           set -euo pipefail
           shopt -s nullglob
@@ -243,12 +218,13 @@ jobs:
             exit 1
           fi
           node e2e/host-playground/ios/run.mjs --app "${apps[0]}" \
-            --mnemonic-file "${RUNNER_TEMP}/ios.mnemonic" --out "${OUT}" --device "${UDID}" \
+            --mnemonic-file "${RUNNER_TEMP}/ios.mnemonic" --out "${OUT}" \
             --timeout-minutes 90
 
       - name: Summary
         if: always()
         run: |
+          set -euo pipefail
           rm -f "${RUNNER_TEMP}/ios.mnemonic"
           if [ -f "${OUT}/report.md" ]; then
             cat "${OUT}/report.md" >> "$GITHUB_STEP_SUMMARY"

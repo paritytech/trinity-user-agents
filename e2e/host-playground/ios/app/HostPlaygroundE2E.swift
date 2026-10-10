@@ -92,13 +92,17 @@
     private struct HostPlaygroundTestList: Decodable {
         let product: String
         let hostPlaygroundCommit: String
+        let testTimeoutMs: Int
+        let navigationDestinations: [String: String]
         let tests: [String]
     }
 
     @MainActor
     private final class HostPlaygroundE2EDriver {
         private enum Timing {
-            static let testTimeoutMs = 120_000
+            static let answerGrace: Duration = .seconds(60)
+            static let destinationTimeout: Duration = .seconds(30)
+            static let evaluateTimeout: Duration = .seconds(30)
             static let tabBarTimeout: Duration = .seconds(600)
             static let productOpenTimeout: Duration = .seconds(180)
             static let productReopenInterval: Duration = .seconds(15)
@@ -149,8 +153,9 @@
 
                 for id in list.tests {
                     log.info("running \(id, privacy: .public)")
-                    var result = await runTest(id, host: host, runner: runner)
-                    if let destination = Self.navigationDestinations[id],
+                    var result = await runTest(id, host: host, runner: runner, timeoutMs: list.testTimeoutMs)
+                    // These leave the product before it can record a result, so they pass when the destination opens.
+                    if let destination = list.navigationDestinations[id],
                        result["status"] as? String != "success",
                        await destinationOpened(destination) {
                         result["status"] = "success"
@@ -196,7 +201,7 @@
             return host
         }
 
-        func runTest(_ id: String, host: ProductHost, runner: String) async -> [String: Any] {
+        func runTest(_ id: String, host: ProductHost, runner: String, timeoutMs: Int) async -> [String: Any] {
             let started = ContinuousClock.now
             do {
                 try await waitUntilActive()
@@ -209,8 +214,8 @@
                 let value = try await evaluate(
                     "return await window.__hostPlaygroundE2E.runOne(id, timeoutMs);",
                     in: webView,
-                    arguments: ["id": id, "timeoutMs": Timing.testTimeoutMs],
-                    timeout: .milliseconds(Timing.testTimeoutMs) + .seconds(60)
+                    arguments: ["id": id, "timeoutMs": timeoutMs],
+                    timeout: .milliseconds(timeoutMs) + Timing.answerGrace
                 )
                 guard let result = value as? [String: Any] else {
                     throw HostPlaygroundE2EError("runOne returned \(String(describing: value))")
@@ -222,7 +227,7 @@
                     "id": id,
                     "status": "error",
                     "message": "driver: \(error)",
-                    "durationMs": elapsed.components.seconds * 1000
+                    "durationMs": Int(elapsed / .milliseconds(1))
                 ]
             }
         }
@@ -286,11 +291,8 @@
     // MARK: - Helpers
 
     private extension HostPlaygroundE2EDriver {
-        /// These leave the product before it can record a result, so they pass when the destination opens.
-        static let navigationDestinations = ["navigate-polkadot": "truapi-playground.paseo"]
-
         func destinationOpened(_ host: String) async -> Bool {
-            let deadline = ContinuousClock.now + .seconds(30)
+            let deadline = ContinuousClock.now + Timing.destinationTimeout
             while ContinuousClock.now < deadline {
                 if visibleWebView(host: host) != nil {
                     return true
@@ -320,7 +322,7 @@
             _ body: String,
             in webView: WKWebView,
             arguments: [String: Any] = [:],
-            timeout: Duration = .seconds(30)
+            timeout: Duration = Timing.evaluateTimeout
         ) async throws -> Any? {
             try await withCheckedThrowingContinuation { continuation in
                 var finished = false

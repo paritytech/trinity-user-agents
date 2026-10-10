@@ -29,7 +29,7 @@ const RUNTIME_PERMISSIONS = [
   "android.permission.POST_NOTIFICATIONS",
 ];
 
-export const APPROVE_LABELS = new Set([
+const APPROVE_LABELS = new Set([
   "Sign",
   "Approve",
   "Allow once",
@@ -45,8 +45,10 @@ const SEED_TIMEOUT_MS = 5 * 60_000;
 const PRODUCT_OPEN_TIMEOUT_MS = 3 * 60_000;
 const DEEP_LINK_RETRY_MS = 20_000;
 const READY_TIMEOUT_MS = 2 * 60_000;
-const TEST_TIMEOUT_MS = 90_000;
+const ANSWER_GRACE_MS = 60_000;
 const APPROVER_INTERVAL_MS = 1_500;
+const POLL_MS = 2_000;
+const READY_POLL_MS = 500;
 
 const exec = promisify(execFile);
 const sleep = (ms) => new Promise((done) => setTimeout(done, ms));
@@ -78,42 +80,44 @@ function createAdb(serial) {
   return adb;
 }
 
+const nodeAttributes = (text) =>
+  Object.fromEntries([...text.matchAll(/([\w-]+)="([^"]*)"/g)].map(([, name, value]) => [name, value]));
+
+function centre(bounds) {
+  const match = bounds?.match(/\[(\d+),(\d+)\]\[(\d+),(\d+)\]/);
+  if (!match) return null;
+  const [left, top, right, bottom] = match.slice(1).map(Number);
+  return { x: Math.round((left + right) / 2), y: Math.round((top + bottom) / 2) };
+}
+
 // WebView nodes are skipped: a product button labelled "Sign" is not a host approval.
-export function findApproveButton(dumpXml, packageName) {
+function findApproveButton(dumpXml, packageName) {
   const insideWebView = [];
   for (const match of dumpXml.matchAll(/<node\b([^>]*?)(\/?)>|<\/node>/g)) {
     if (match[0] === "</node>") {
       insideWebView.pop();
       continue;
     }
-    const attributes = Object.fromEntries(
-      [...match[1].matchAll(/([\w-]+)="([^"]*)"/g)].map(([, name, value]) => [name, value]),
-    );
+    const attributes = nodeAttributes(match[1]);
     const isWebView = attributes.class === "android.webkit.WebView";
     const nested = insideWebView.includes(true);
     if (match[2] !== "/") insideWebView.push(isWebView);
     if (nested || isWebView || attributes.package !== packageName || attributes.enabled === "false") continue;
     const label = attributes.text?.trim();
     if (!label || !APPROVE_LABELS.has(label)) continue;
-    const bounds = attributes.bounds?.match(/\[(\d+),(\d+)\]\[(\d+),(\d+)\]/);
-    if (!bounds) continue;
-    const [left, top, right, bottom] = bounds.slice(1).map(Number);
-    return { label, x: Math.round((left + right) / 2), y: Math.round((top + bottom) / 2) };
+    const point = centre(attributes.bounds);
+    if (point) return { label, ...point };
   }
   return null;
 }
 
-export function findSystemWaitButton(dumpXml) {
+function findSystemWaitButton(dumpXml) {
   if (!dumpXml.includes("isn't responding") && !dumpXml.includes("isn&apos;t responding")) return null;
   for (const match of dumpXml.matchAll(/<node\b([^>]*?)\/?>/g)) {
-    const attributes = Object.fromEntries(
-      [...match[1].matchAll(/([\w-]+)="([^"]*)"/g)].map(([, name, value]) => [name, value]),
-    );
+    const attributes = nodeAttributes(match[1]);
     if (attributes.package !== "android" || attributes.text?.trim() !== "Wait") continue;
-    const bounds = attributes.bounds?.match(/\[(\d+),(\d+)\]\[(\d+),(\d+)\]/);
-    if (!bounds) continue;
-    const [left, top, right, bottom] = bounds.slice(1).map(Number);
-    return { x: Math.round((left + right) / 2), y: Math.round((top + bottom) / 2) };
+    const point = centre(attributes.bounds);
+    if (point) return point;
   }
   return null;
 }
@@ -183,14 +187,14 @@ async function seedAccount(adb, mnemonicFile) {
 
   log("waiting for the account to be seeded");
   const deadline = Date.now() + SEED_TIMEOUT_MS;
-  while (Date.now() < deadline) {
+  for (;;) {
     const lines = (await adb(["logcat", "-d", "-v", "raw", "-s", `${MARKER_TAG}:*`])).split("\n");
     if (lines.some((line) => line.trim() === "seeded")) break;
     const failure = lines.find((line) => line.startsWith("seed failed:"));
     if (failure) throw new Error(`the app could not seed the account (${failure.trim()})`);
-    await sleep(2_000);
+    if (Date.now() >= deadline) throw new Error(`no ${MARKER_TAG} marker within ${SEED_TIMEOUT_MS / 1000} s`);
+    await sleep(POLL_MS);
   }
-  if (Date.now() >= deadline) throw new Error(`no ${MARKER_TAG} marker within ${SEED_TIMEOUT_MS / 1000} s`);
 
   // Onboarding was read before the seed landed, so it counts from the next launch.
   await adb.shell(`am force-stop ${PACKAGE}`);
@@ -261,16 +265,23 @@ class PageTarget {
   }
 }
 
+/** Opens the product's deep link, at most once every DEEP_LINK_RETRY_MS. */
+function deepLinkOpener(adb, { immediately }) {
+  let next = immediately ? 0 : Date.now() + DEEP_LINK_RETRY_MS;
+  return async () => {
+    if (Date.now() < next) return;
+    log(`opening ${PRODUCT_DEEP_LINK}`);
+    await adb.shell(`am start -a android.intent.action.VIEW -d ${PRODUCT_DEEP_LINK} ${PACKAGE}`, { allowFailure: true });
+    next = Date.now() + DEEP_LINK_RETRY_MS;
+  };
+}
+
 async function openProduct(adb, forwards) {
   const deadline = Date.now() + PRODUCT_OPEN_TIMEOUT_MS;
-  let nextDeepLink = 0;
+  const openDeepLink = deepLinkOpener(adb, { immediately: true });
   while (Date.now() < deadline) {
-    if (Date.now() >= nextDeepLink) {
-      log(`opening ${PRODUCT_DEEP_LINK}`);
-      await adb.shell(`am start -a android.intent.action.VIEW -d ${PRODUCT_DEEP_LINK} ${PACKAGE}`, { allowFailure: true });
-      nextDeepLink = Date.now() + DEEP_LINK_RETRY_MS;
-    }
-    await sleep(2_000);
+    await openDeepLink();
+    await sleep(POLL_MS);
 
     const pid = (await adb.shell(`pidof ${PACKAGE}`, { allowFailure: true }))?.trim().split(/\s+/)[0];
     if (!pid) continue;
@@ -300,14 +311,10 @@ async function readyPage(adb, forwards, page) {
   }
   // A reload drops the injected runner, so injection and the ready check retry together.
   const deadline = Date.now() + READY_TIMEOUT_MS;
-  let nextDeepLink = Date.now() + DEEP_LINK_RETRY_MS;
+  // A paused page never becomes ready, so keep bringing the product to the front.
+  const openDeepLink = deepLinkOpener(adb, { immediately: false });
   for (;;) {
-    // A paused page never becomes ready, so keep bringing the product to the front.
-    if (Date.now() >= nextDeepLink) {
-      log(`reopening ${PRODUCT_DEEP_LINK}`);
-      await adb.shell(`am start -a android.intent.action.VIEW -d ${PRODUCT_DEEP_LINK} ${PACKAGE}`, { allowFailure: true });
-      nextDeepLink = Date.now() + DEEP_LINK_RETRY_MS;
-    }
+    await openDeepLink();
     let ready = false;
     try {
       ready = await page.evaluate(`(() => { ${pageRunner}; return window.__hostPlaygroundE2E.ready(); })()`);
@@ -316,14 +323,11 @@ async function readyPage(adb, forwards, page) {
     }
     if (ready) return page;
     if (Date.now() >= deadline) throw new Error(`host-playground rendered no tests within ${READY_TIMEOUT_MS / 1000} s`);
-    await sleep(500);
+    await sleep(READY_POLL_MS);
   }
 }
 
-// These leave the product before it can record a result, so they pass when the destination opens.
-const NAVIGATION_DESTINATIONS = { "navigate-polkadot": "truapi-playground.paseo" };
-
-async function pageShowing(adb, forwards, host) {
+async function pageShowing(forwards, host) {
   for (const port of forwards.values()) {
     if ((await listTargets(port)).some((target) => target.type === "page" && target.url.includes(host))) return true;
   }
@@ -334,10 +338,10 @@ async function runTest(page, id) {
   const started = Date.now();
   let timer;
   const guard = new Promise((_, reject) => {
-    timer = setTimeout(() => reject(new Error("the page stopped answering")), TEST_TIMEOUT_MS + 30_000);
+    timer = setTimeout(() => reject(new Error("the page stopped answering")), suite.testTimeoutMs + ANSWER_GRACE_MS);
   });
   try {
-    const run = page.evaluate(`window.__hostPlaygroundE2E.runOne(${JSON.stringify(id)}, ${TEST_TIMEOUT_MS})`);
+    const run = page.evaluate(`window.__hostPlaygroundE2E.runOne(${JSON.stringify(id)}, ${suite.testTimeoutMs})`);
     return await Promise.race([run, guard]);
   } catch (error) {
     return { id, status: "error", message: `the page went away: ${firstLine(error.message)}`, durationMs: Date.now() - started };
@@ -411,8 +415,9 @@ async function main() {
       page = await readyPage(adb, forwards, page);
       log(`running ${id}`);
       let result = await runTest(page, id);
-      const destination = NAVIGATION_DESTINATIONS[id];
-      if (destination && result.status !== "success" && (await pageShowing(adb, forwards, destination))) {
+      // These leave the product before it can record a result, so they pass when the destination opens.
+      const destination = suite.navigationDestinations[id];
+      if (destination && result.status !== "success" && (await pageShowing(forwards, destination))) {
         result = { ...result, status: "success", outcome: "navigated", message: `${destination} opened` };
       }
       log(`${id}: ${result.status}${result.outcome ? ` (${result.outcome})` : ""}`);
@@ -446,4 +451,4 @@ async function main() {
   if (failed) process.exit(1);
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) await main();
+await main();

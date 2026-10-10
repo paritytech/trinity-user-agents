@@ -11,6 +11,10 @@
         /// In order of preference when a sheet offers several.
         static let approvingLabels = ["Approve", "Allow once", "Allow always", "Sign", "Confirm"]
 
+        /// A tapped sheet takes a moment to dismiss; scanning it again would tap twice.
+        private static let dismissWait: Duration = .seconds(2)
+        private static let scanInterval: Duration = .milliseconds(500)
+
         private var task: Task<Void, Never>?
         private var lastSeen = ""
 
@@ -19,8 +23,7 @@
             task = Task { [weak self] in
                 while !Task.isCancelled {
                     let tapped = self?.tapApprovingControl() ?? false
-                    // A tapped sheet takes a moment to dismiss; scanning it again would tap twice.
-                    try? await Task.sleep(for: tapped ? .seconds(2) : .milliseconds(500))
+                    try? await Task.sleep(for: tapped ? Self.dismissWait : Self.scanInterval)
                 }
             }
         }

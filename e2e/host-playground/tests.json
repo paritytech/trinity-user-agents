@@ -1,6 +1,10 @@
 {
   "product": "host-playground.paseo",
   "hostPlaygroundCommit": "7b0795f64d0de513b5c3101ecb06985b20721e72",
+  "testTimeoutMs": 150000,
+  "navigationDestinations": {
+    "navigate-polkadot": "truapi-playground.paseo"
+  },
   "tests": [
     "accounts-provider-product",
     "accounts-provider-legacy",

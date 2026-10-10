@@ -2,7 +2,7 @@
 
 Runs the public `host-playground` product inside the iOS and Android host apps and reports how each test ended.
 
-- `tests.json`: the product, the host-playground commit the list matches, the tests in order, and `knownFailures`, tests expected to fail with a given message for a reason outside the hosts.
+- `tests.json`: the product, the host-playground commit the list matches, the per-test timeout, the tests that leave the product and where they land, the tests in order, and `knownFailures`, tests expected to fail with a given message for a reason outside the hosts.
 - `page-runner.js`: injected into the product page; runs one test per call.
 - `report.mjs`: turns `results.json` into `report.md` and a one-line summary.
 - `android/`, `ios/`: each platform's runner and the code added to its app for these builds only, so `hosts/` is never changed.

@@ -21,7 +21,7 @@ export function classify(result) {
   return "failed";
 }
 
-export function summaryLine(run) {
+function summaryLine(run) {
   const counts = {};
   const failed = [];
   for (const result of run.results) {
@@ -43,7 +43,7 @@ export function summaryLine(run) {
   return `${line}.`;
 }
 
-export function markdown(run) {
+function markdown(run) {
   const escape = (text) => String(text ?? "").replace(/\|/g, "\\|").replace(/\s+/g, " ").slice(0, 200);
   const rows = run.results.map(
     (r) => `| \`${r.id}\` | ${classify(r)} | ${r.outcome ?? ""} | ${Math.round((r.durationMs ?? 0) / 100) / 10}s | ${escape(r.message)} |`,
