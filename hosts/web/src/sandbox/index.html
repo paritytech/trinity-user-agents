@@ -1,0 +1,21 @@
+<!doctype html>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="referrer" content="no-referrer" />
+<title>Loading product</title>
+<style>
+  body {
+    font:
+      14px system-ui,
+      sans-serif;
+    margin: 0;
+    padding: 24px;
+    color: #444;
+    background: #fafafa;
+  }
+  #status[data-state="error"] {
+    color: #b00020;
+  }
+</style>
+<p id="status" data-state="loading">Loading…</p>
+<script src="./page.js"></script>

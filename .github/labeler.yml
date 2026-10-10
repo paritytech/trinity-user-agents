@@ -29,6 +29,7 @@ javascript:
           - "js/**"
           - "playground/**"
           - "explorer/**"
+          - "hosts/web/**"
 
 # The core reaches every host at once, so a change here is the most expensive
 # one to get wrong. It carried no label at all, which left it indistinguishable

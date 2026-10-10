@@ -1,0 +1,320 @@
+import { describe, expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
+import {
+  completeAddress,
+  displayAddress,
+  implicitSuffix,
+  parseTypedAddress,
+  effectiveProductId,
+  effectiveProductIdFor,
+  KNOWN_DOTNS_TLDS,
+  normalizeAddress,
+  parseAddress,
+} from "./address.js";
+import { parseProductUrl } from "./product.js";
+import { NETWORKS } from "./network-config.js";
+
+describe("normalizeAddress", () => {
+  test("adds http to a bare host and port", () => {
+    expect(normalizeAddress(" localhost:3000/app ")).toBe(
+      "http://localhost:3000/app",
+    );
+    expect(normalizeAddress("192.168.0.7:3000")).toBe(
+      "http://192.168.0.7:3000",
+    );
+  });
+
+  test("keeps an explicit scheme", () => {
+    expect(normalizeAddress("https://example.test/")).toBe(
+      "https://example.test/",
+    );
+  });
+
+  // A typed `javascript:` or `data:` address must still be refused, not
+  // rescued by the added scheme.
+  test("does not turn a script scheme into a URL", () => {
+    expect(() =>
+      parseProductUrl(normalizeAddress("javascript:alert(1)")),
+    ).toThrow();
+    expect(() =>
+      parseProductUrl(normalizeAddress("data:text/html,x")),
+    ).toThrow();
+  });
+
+  test("leaves empty text empty", () => {
+    expect(normalizeAddress("  ")).toBe("");
+  });
+});
+
+describe("effectiveProductId", () => {
+  test("derives a localhost id that keeps the port", () => {
+    expect(effectiveProductId(new URL("http://localhost:3000/"), "")).toEqual({
+      id: "localhost:3000",
+      source: "derived",
+      usable: true,
+    });
+  });
+
+  // The core refuses an IP address as a product id, so the host must say an id
+  // has to be entered instead of offering one that will fail.
+  test("marks a bare LAN address as needing an entered id", () => {
+    expect(effectiveProductId(new URL("http://192.168.0.7:3000/"), "")).toEqual(
+      {
+        id: "192.168.0.7",
+        source: "derived",
+        usable: false,
+      },
+    );
+  });
+
+  test("uses an entered id for any address", () => {
+    expect(
+      effectiveProductId(new URL("http://192.168.0.7:3000/"), " myapp.paseo "),
+    ).toEqual({ id: "myapp.paseo", source: "entered", usable: true });
+    expect(
+      effectiveProductId(new URL("http://localhost:3000/"), "myapp.paseo").id,
+    ).toBe("myapp.paseo");
+  });
+
+  // Editing the address must not silently reset a chosen id.
+  test("keeps the entered id when the address changes", () => {
+    for (const address of [
+      "http://localhost:3001/",
+      "http://192.168.0.94:3000/",
+    ])
+      expect(effectiveProductId(new URL(address), "myapp.paseo").id).toBe(
+        "myapp.paseo",
+      );
+  });
+});
+
+describe("parseAddress: product names", () => {
+  test("reads a bare name as a dotNS product name", () => {
+    expect(parseAddress("chat-spa-probe.paseo")).toEqual({
+      kind: "name",
+      name: "chat-spa-probe.paseo",
+      suffix: "",
+    });
+  });
+
+  // The address bar used to rewrite a typed name into http://name/, and that
+  // text is what people press Enter on next. It means the same name.
+  test("reads the http:// form the bar used to produce as the same name", () => {
+    expect(parseAddress("http://chat-spa-probe.paseo/")).toEqual(
+      parseAddress("chat-spa-probe.paseo"),
+    );
+    expect(parseAddress("https://Chat-Spa-Probe.PASEO")).toEqual(
+      parseAddress("chat-spa-probe.paseo"),
+    );
+  });
+
+  test("reads a polkadot:// name and keeps path, query and hash", () => {
+    expect(parseAddress("polkadot://myapp.paseo/a/b?x=1#top")).toEqual({
+      kind: "name",
+      name: "myapp.paseo",
+      suffix: "a/b?x=1#top",
+    });
+  });
+
+  test("gives a name its own id, and an entered id still wins", () => {
+    const address = parseAddress("myapp.paseo");
+    expect(effectiveProductIdFor(address, "")).toEqual({
+      id: "myapp.paseo",
+      source: "derived",
+      usable: true,
+    });
+    expect(effectiveProductIdFor(address, " other.paseo ")).toEqual({
+      id: "other.paseo",
+      source: "entered",
+      usable: true,
+    });
+  });
+
+  // .dot and .testnet are real dotNS TLDs on other networks. Opening them as
+  // web addresses would hide that this host cannot resolve them.
+  test("explains a name on another network", () => {
+    expect(() => parseAddress("myapp.dot")).toThrow("another network");
+    expect(() => parseAddress("myapp.testnet")).toThrow("Paseo");
+  });
+
+  test("refuses a name with a port or credentials", () => {
+    expect(() => parseAddress("myapp.paseo:8080")).toThrow("no port");
+    expect(() => parseAddress("user@myapp.paseo")).toThrow("no port");
+  });
+
+  test("refuses names that are not one label and the TLD", () => {
+    expect(() => parseAddress("app.myapp.paseo")).toThrow("one label");
+    expect(() => parseAddress("-bad.paseo")).toThrow("not a product name");
+    expect(() => parseAddress("bad_name.paseo")).toThrow("not a product name");
+  });
+
+  test("points a public gateway address back at the name", () => {
+    expect(() => parseAddress("https://chat-spa-probe.paseo.li/")).toThrow(
+      "Type chat-spa-probe.paseo instead",
+    );
+  });
+
+  test("refuses a polkadot:// address that is not a name", () => {
+    expect(() => parseAddress("polkadot://example.com")).toThrow("dotNS name");
+  });
+});
+
+describe("parseAddress: web addresses keep their meaning", () => {
+  test("opens localhost, a LAN address and an ordinary site as URLs", () => {
+    expect(parseAddress("localhost:3000")).toEqual({
+      kind: "url",
+      url: new URL("http://localhost:3000"),
+    });
+    expect(parseAddress("192.168.0.7:3000/app").kind).toBe("url");
+    expect(parseAddress("https://example.test/x").kind).toBe("url");
+  });
+
+  // A host name that only looks similar to a dotNS TLD is an ordinary host.
+  test("does not take a lookalike host for a name", () => {
+    expect(parseAddress("paseo.example.com").kind).toBe("url");
+    expect(parseAddress("macbook.local").kind).toBe("url");
+    expect(parseAddress("mypaseo").kind).toBe("url");
+  });
+
+  test("still refuses script schemes", () => {
+    expect(() => parseAddress("javascript:alert(1)")).toThrow();
+  });
+});
+
+describe("dotNS TLDs", () => {
+  // The core decides which TLDs are dotNS names. This host copies the list, so
+  // a TLD added or removed there must be added or removed here.
+  test("match the Rust core's DOTNS_TLDS", () => {
+    const platform = readFileSync(
+      new URL("../../../rust/crates/truapi/src/platform.rs", import.meta.url),
+      "utf8",
+    );
+    const list = /pub const DOTNS_TLDS: &\[&str\] = &\[([^\]]*)\];/.exec(
+      platform,
+    );
+    const core = [...(list?.[1] ?? "").matchAll(/"([a-z]+)"/g)].map(
+      (match) => match[1],
+    );
+    expect(KNOWN_DOTNS_TLDS).toEqual(core);
+  });
+});
+
+describe("bare product labels", () => {
+  test("a bare label means the name on this network, path and query kept", () => {
+    expect(completeAddress(" My-App ")).toBe("my-app.paseo");
+    expect(completeAddress("myapp/x?y=1#z")).toBe("myapp.paseo/x?y=1#z");
+    expect(completeAddress("polkadot://myapp")).toBe("myapp.paseo");
+    expect(parseTypedAddress("myapp")).toEqual({
+      kind: "name",
+      name: "myapp.paseo",
+      suffix: "",
+    });
+  });
+
+  // Typing the dot, a port, a scheme or brackets says the text is complete as written.
+  test("leaves everything that already says where it is", () => {
+    for (const typed of [
+      "myapp.paseo",
+      "myapp.",
+      "localhost",
+      "localhost:3000",
+      "localhost/app",
+      "devbox:3000",
+      "http://myapp",
+      "https://example.test/x",
+      "192.168.0.7:3000",
+      "[::1]:3000",
+      "3000",
+      "",
+    ])
+      expect(completeAddress(typed)).toBe(typed.trim());
+    expect(parseTypedAddress("localhost:3000").kind).toBe("url");
+    expect(() => parseTypedAddress("myapp.dot")).toThrow("another network");
+  });
+
+  test("the dimmed suffix shows only for a lone bare label", () => {
+    expect(implicitSuffix("chat-spa")).toBe(".paseo");
+    for (const typed of [
+      "chat-spa.",
+      "chat-spa.paseo",
+      "chat-spa/x",
+      "localhost",
+      "",
+    ])
+      expect(implicitSuffix(typed)).toBe("");
+  });
+
+  test("an opened name is shown without its TLD and reads back the same", () => {
+    expect(displayAddress("myapp.paseo")).toBe("myapp");
+    expect(displayAddress("myapp.paseo/x?y=1")).toBe("myapp/x?y=1");
+    expect(completeAddress(displayAddress("myapp.paseo/x?y=1"))).toBe(
+      "myapp.paseo/x?y=1",
+    );
+    // Not every name can lose its TLD and still read back as itself.
+    for (const whole of [
+      "123.paseo",
+      "localhost.paseo",
+      "http://a.test/",
+      "a.paseo.test",
+    ])
+      expect(displayAddress(whole)).toBe(whole);
+  });
+});
+
+describe("product-name routing on PreviewNet", () => {
+  const previewnet = NETWORKS.previewnet;
+
+  test("opens a name on the active network's TLD", () => {
+    expect(parseAddress("myapp.testnet", previewnet)).toEqual({
+      kind: "name",
+      name: "myapp.testnet",
+      suffix: "",
+    });
+    expect(parseAddress("myapp.testnet/a?x=1#top", previewnet)).toEqual({
+      kind: "name",
+      name: "myapp.testnet",
+      suffix: "a?x=1#top",
+    });
+  });
+
+  // A name on another known dotNS network must not be opened as a web address,
+  // and the message has to name the network this host is actually on.
+  test("explains a name on a network this host is not connected to", () => {
+    expect(() => parseAddress("myapp.paseo", previewnet)).toThrow(
+      "another network",
+    );
+    expect(() => parseAddress("myapp.paseo", previewnet)).toThrow("PreviewNet");
+    expect(() => parseAddress("myapp.dot", previewnet)).toThrow(
+      "another network",
+    );
+  });
+
+  test("completes a bare label with the active TLD and shows it dimmed", () => {
+    expect(completeAddress("myapp", previewnet)).toBe("myapp.testnet");
+    expect(completeAddress("myapp/x", previewnet)).toBe("myapp.testnet/x");
+    expect(implicitSuffix("myapp", previewnet)).toBe(".testnet");
+    expect(parseTypedAddress("myapp", previewnet)).toEqual({
+      kind: "name",
+      name: "myapp.testnet",
+      suffix: "",
+    });
+  });
+
+  test("shows an opened name without the active TLD", () => {
+    expect(displayAddress("myapp.testnet", previewnet)).toBe("myapp");
+    expect(displayAddress("myapp.testnet/x?y=1", previewnet)).toBe("myapp/x?y=1");
+    expect(displayAddress("myapp.paseo", previewnet)).toBe("myapp.paseo");
+  });
+
+  test("points the active network's public gateway back at the name", () => {
+    expect(() => parseAddress("https://myapp.testnet.li/", previewnet)).toThrow(
+      "Type myapp.testnet instead",
+    );
+  });
+
+  test("keeps URLs, localhost and LAN addresses working", () => {
+    expect(parseAddress("localhost:3000", previewnet).kind).toBe("url");
+    expect(parseAddress("192.168.0.7:3000/app", previewnet).kind).toBe("url");
+    expect(parseAddress("https://example.test/x", previewnet).kind).toBe("url");
+  });
+});

@@ -64,6 +64,19 @@ hosts/android/             Android host app
 hosts/imports.json         source repository and imported revision per host,
                            read and updated by scripts/refresh-host-import.sh
 hosts/dotli/               dotli submodule
+hosts/web/                 TrUAPI Web Host: a browser tab that holds its own wallet
+                           and signs with the `testing` core, with no pairing; built
+                           against the in-tree packages. A static build for one origin,
+                           such as GitHub Pages. Opens a product by DotNS name under
+                           its own path, per wallet: `src/archive/` verifies and
+                           unpacks CAR/UnixFS content, `src/sandbox/` and
+                           `sandbox-plugin.ts` are the loader page and service worker;
+                           `browser/` holds its headless-Chrome smoke test
+                           (`npm run test:browser`, run by hand; CI
+                           runs typecheck and unit tests).
+                           A trusted development tool with disposable plaintext wallets:
+                           a product's own requests follow the browser, and it is not
+                           a sandbox
 docs/                      design docs, RFCs, feature proposals
 scripts/codegen.sh         regenerate the TS client from the Rust crate
 scripts/battery.sh         run the generated battery against both headless CLI host roles,

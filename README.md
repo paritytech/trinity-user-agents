@@ -132,6 +132,8 @@ playground/                Interactive Next.js playground (truapi-playground dot
 hosts/ios/                 iOS host app; resolves the core from this tree
 hosts/android/             Android host app
 hosts/dotli/               dotli host, vendored as a submodule
+hosts/web/                 TrUAPI Web Host: development web host that holds its own wallet and signs
+                           locally, with no pairing; see hosts/web/README.md
 hosts/imports.json         Source repository and imported revision per host
 docs/                      Design docs, RFCs, feature proposals
 scripts/codegen.sh         Regenerate the TS client from the Rust source

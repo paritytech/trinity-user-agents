@@ -1,0 +1,349 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, viewport-fit=cover"
+    />
+    <title>TrUAPI Web Host</title>
+  </head>
+  <body
+    data-menu="closed"
+    data-inspector="closed"
+    data-product="closed"
+    data-loading="off"
+  >
+    <div class="top">
+      <header class="appbar">
+        <span class="brand" aria-hidden="true">
+          <svg viewBox="0 0 24 24">
+            <circle cx="12" cy="4.5" r="2.6" />
+            <circle cx="19" cy="9.5" r="2.6" />
+            <circle cx="16.5" cy="18" r="2.6" />
+            <circle cx="7.5" cy="18" r="2.6" />
+            <circle cx="5" cy="9.5" r="2.6" />
+          </svg>
+        </span>
+
+        <form id="address-form" class="address" autocomplete="off">
+          <label for="address" class="visually-hidden">Product address</label>
+          <div class="address-field">
+            <input
+              id="address"
+              type="text"
+              inputmode="url"
+              enterkeyhint="go"
+              spellcheck="false"
+              autocomplete="off"
+              autocapitalize="off"
+              autocorrect="off"
+              placeholder="Product name or URL"
+              role="combobox"
+              aria-expanded="false"
+              aria-controls="address-recents"
+              aria-autocomplete="list"
+            />
+            <span class="address-hint" aria-hidden="true"
+              ><span id="address-hint-typed"></span
+              ><span id="address-hint-suffix"></span
+            ></span>
+          </div>
+          <span id="address-id" class="address-id" hidden></span>
+          <button
+            id="address-go"
+            class="address-go"
+            type="submit"
+            aria-label="Open this address"
+            title="Open (Enter)"
+            disabled
+          >
+            <svg viewBox="0 0 20 20" aria-hidden="true">
+              <path d="M4 10h11M10.5 5.5L15 10l-4.5 4.5" />
+            </svg>
+          </button>
+          <ul
+            id="address-recents"
+            class="address-recents"
+            role="listbox"
+            aria-label="Recent products"
+            hidden
+          ></ul>
+        </form>
+
+        <div class="viewport-control">
+          <label for="viewport" class="visually-hidden">Product viewport</label>
+          <select id="viewport" title="Size of the product rectangle"></select>
+          <span id="viewport-custom" class="viewport-custom" hidden>
+            <input
+              id="viewport-width"
+              type="number"
+              inputmode="numeric"
+              aria-label="Width in pixels"
+            />
+            ×
+            <input
+              id="viewport-height"
+              type="number"
+              inputmode="numeric"
+              aria-label="Height in pixels"
+            />
+          </span>
+          <span
+            id="viewport-scale"
+            class="viewport-scale"
+            aria-live="polite"
+          ></span>
+        </div>
+
+        <button
+          id="inspector-toggle"
+          class="icon-button"
+          type="button"
+          aria-label="Inspector"
+          title="Inspector"
+          aria-controls="inspector"
+          aria-expanded="false"
+        >
+          <svg viewBox="0 0 20 20" aria-hidden="true">
+            <path d="M3 4.5h14v11H3zM3 12h14M7 12v3.5" />
+          </svg>
+        </button>
+        <button
+          id="menu-toggle"
+          class="icon-button"
+          type="button"
+          aria-controls="menu"
+          aria-expanded="false"
+          aria-label="Menu"
+          title="Menu"
+        >
+          <svg viewBox="0 0 20 20" aria-hidden="true">
+            <path d="M3 5.5h14M3 10h14M3 14.5h14" />
+          </svg>
+        </button>
+      </header>
+    </div>
+
+    <aside
+      id="menu"
+      class="panel menu"
+      role="region"
+      aria-labelledby="menu-title"
+      tabindex="-1"
+    >
+      <div class="panel-head">
+        <h1 id="menu-title">TrUAPI host</h1>
+        <span class="badge" title="Recovery phrases are stored unencrypted"
+          >Dev wallets</span
+        >
+        <button
+          class="icon-button panel-close"
+          type="button"
+          data-close="menu"
+          aria-label="Close menu"
+        >
+          <svg viewBox="0 0 20 20" aria-hidden="true">
+            <path d="M5 5l10 10M15 5L5 15" />
+          </svg>
+        </button>
+      </div>
+      <p id="core-status" class="status">Starting the core…</p>
+
+      <label for="network">Network</label>
+      <select
+        id="network"
+        title="The network this tab runs on. Switching reloads the tab."
+      ></select>
+
+      <section aria-labelledby="account-title">
+        <h2 id="account-title">Account</h2>
+        <p id="session" class="session">Signed out</p>
+        <label for="wallet" class="visually-hidden">Wallet</label>
+        <select id="wallet"></select>
+        <div id="wallet-actions" class="row">
+          <button id="sign-in" class="primary" type="button" disabled>
+            Sign in
+          </button>
+          <button id="sign-out" type="button" disabled>Sign out</button>
+          <button id="forget" type="button" disabled>Forget</button>
+        </div>
+        <details id="import" class="fold">
+          <summary>Import a wallet</summary>
+          <form id="import-form">
+            <label for="wallet-name">Name</label>
+            <input
+              id="wallet-name"
+              type="text"
+              autocomplete="off"
+              placeholder="Imported wallet"
+            />
+            <label for="mnemonic">Recovery phrase</label>
+            <textarea
+              id="mnemonic"
+              rows="3"
+              required
+              spellcheck="false"
+              autocomplete="off"
+              autocapitalize="off"
+              autocorrect="off"
+              placeholder="12 or 24 words"
+            ></textarea>
+            <button id="add-wallet" class="primary" type="submit" disabled>
+              Import
+            </button>
+            <p class="note warning">
+              Saved unencrypted in this browser. Use a disposable wallet.
+            </p>
+          </form>
+          <a
+            class="create-link"
+            href="https://web3-citizenship-web.netbird.parity.io/lite-personhood-faucet"
+            target="_blank"
+            rel="noopener noreferrer"
+            title="Lite personhood faucet: generates a recovery phrase and attests it as a lite person. Needs the Parity VPN and a login."
+            >Create a test wallet (lite personhood faucet) ↗</a
+          >
+        </details>
+        <details class="fold" id="account-status">
+          <summary>Account status</summary>
+          <dl id="account-status-rows" class="versions"></dl>
+          <p class="subhead">Current product</p>
+          <dl id="product-status-rows" class="versions"></dl>
+          <button id="account-status-refresh" type="button" disabled>
+            Refresh
+          </button>
+        </details>
+      </section>
+
+      <section aria-labelledby="product-title">
+        <h2 id="product-title">Product</h2>
+        <form id="product-form">
+          <label for="product-id">Product id</label>
+          <div class="field-row">
+            <input
+              id="product-id"
+              type="text"
+              spellcheck="false"
+              autocomplete="off"
+              autocapitalize="off"
+              placeholder="From the address"
+              aria-describedby="product-id-effective"
+              title="Overrides the id the core takes this page for. Not verified."
+            />
+            <button id="product-id-reset" type="button" disabled>Reset</button>
+          </div>
+          <p id="product-id-effective" class="effective" aria-live="polite">
+            Enter an address.
+          </p>
+          <div class="row">
+            <button id="open" class="primary" type="submit" disabled>
+              Open
+            </button>
+            <button id="close-product" type="button" disabled>Close</button>
+          </div>
+        </form>
+        <p id="product-status" class="status">No product open.</p>
+        <button
+          id="reset-data"
+          class="quiet"
+          type="button"
+          title="Clear this product's stored data for the signed-in wallet"
+          disabled
+        >
+          Reset app data…
+        </button>
+        <details class="fold" id="permissions-status">
+          <summary>Host permissions</summary>
+          <dl id="permissions-rows" class="versions"></dl>
+        </details>
+        <details class="fold" id="product-more" hidden>
+          <summary>Details</summary>
+          <p id="product-details" class="status"></p>
+        </details>
+      </section>
+
+      <section aria-labelledby="versions-title">
+        <h2 id="versions-title">Versions</h2>
+        <p
+          id="versions-warning"
+          class="versions-warning"
+          role="alert"
+          hidden
+        ></p>
+        <dl id="versions" class="versions"></dl>
+        <details class="fold">
+          <summary>Technical</summary>
+          <dl id="versions-technical" class="versions"></dl>
+        </details>
+      </section>
+
+      <details class="fold section-fold">
+        <summary>Log</summary>
+        <ol id="log" class="log"></ol>
+      </details>
+    </aside>
+
+    <main id="stage" class="stage">
+      <div id="viewport-area" class="viewport-area">
+        <div id="product-frame" class="product-frame"></div>
+        <button
+          id="viewport-handle"
+          class="viewport-handle"
+          type="button"
+          aria-label="Resize the product. Drag, or use the arrow keys."
+          title="Drag to resize"
+          hidden
+        ></button>
+      </div>
+      <div class="stage-loading" role="status" aria-live="polite">
+        <div id="stage-loading-pill" class="stage-loading-pill" hidden>
+          <span class="spinner" aria-hidden="true"></span>
+          <span id="stage-loading-text"></span>
+        </div>
+      </div>
+      <div class="stage-empty" aria-hidden="true">
+        <p>No product open</p>
+        <p class="note">Enter a URL or a product name above.</p>
+      </div>
+    </main>
+
+    <section
+      id="inspector"
+      class="panel inspector"
+      role="region"
+      aria-label="TrUAPI inspector"
+      tabindex="-1"
+    >
+      <div
+        id="inspector-resize"
+        class="inspector-resize"
+        role="separator"
+        aria-orientation="horizontal"
+        aria-label="Inspector height"
+        aria-valuemin="160"
+        tabindex="0"
+      ></div>
+      <div class="panel-head">
+        <p class="note">
+          Frames stay in this tab and may carry sensitive payloads.
+        </p>
+        <button
+          class="icon-button panel-close"
+          type="button"
+          data-close="inspector"
+          aria-label="Close inspector"
+        >
+          <svg viewBox="0 0 20 20" aria-hidden="true">
+            <path d="M5 5l10 10M15 5L5 15" />
+          </svg>
+        </button>
+      </div>
+      <div id="inspector-mount" class="inspector-mount"></div>
+    </section>
+
+    <div id="scrim" class="scrim" hidden></div>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
