@@ -16,6 +16,12 @@ final class TabBarBarViewModel {
     var isShelfOpen = false
     /// The room open panels may take above the bar row, measured from the chrome's own safe area.
     var availablePanelHeight: CGFloat = 0
+    /// The shelf content's measured height, written back by the bar row. The shelf is capped at `availablePanelHeight`.
+    var shelfContentHeight: CGFloat = 0 {
+        didSet { onShelfContentHeightChanged?() }
+    }
+
+    var onShelfContentHeightChanged: (() -> Void)?
     var shelfChips: [DSTabBarChip] = []
     var mountedChipId: UUID?
     var onShelfChipTapped: ((UUID) -> Void)?
@@ -56,8 +62,12 @@ final class TabBarBarViewModel {
     }
 
     /// Changes the declared height on the centre control's spring, so the open panel moves with the change
-    /// the way it moves on a settle.
-    func setCenterContentHeight(_ height: CGFloat) {
+    /// the way it moves on a settle. Unanimated changes land before the first settled layout places the bar.
+    func setCenterContentHeight(_ height: CGFloat, animated: Bool = true) {
+        guard animated else {
+            centerContentHeight = height
+            return
+        }
         withAnimation(centerAnimation) {
             centerContentHeight = height
         }

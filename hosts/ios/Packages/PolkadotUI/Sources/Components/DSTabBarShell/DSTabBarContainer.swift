@@ -14,6 +14,7 @@ public struct DSTabBarContainer<
     Shelf: View
 >: View {
     @Binding private var isShelfOpen: Bool
+    @Binding private var shelfContentHeight: CGFloat
     private let availableHeight: CGFloat
     private let first: First
     private let second: Second
@@ -23,15 +24,16 @@ public struct DSTabBarContainer<
     private let shelf: Shelf
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var shelfContentHeight: CGFloat = 0
 
     /// Slots are placed left to right, two either side of the hole, each taking an equal share
     /// of the width left over. The centre slot is laid over the bar after its mask, so a control
     /// in the hole can grow above the bar without being clipped. `availableHeight` is the height
     /// the shelf may take above the bar row; the container does not measure the screen. The shelf content
-    /// must have an intrinsic height because the shelf is sized from it.
+    /// must have an intrinsic height because the shelf is sized from it. `shelfContentHeight` receives the
+    /// shelf content's measured height, so the caller can size its touch region to the shelf.
     public init(
         isShelfOpen: Binding<Bool>,
+        shelfContentHeight: Binding<CGFloat>,
         availableHeight: CGFloat,
         @ViewBuilder first: () -> First,
         @ViewBuilder second: () -> Second,
@@ -41,6 +43,7 @@ public struct DSTabBarContainer<
         @ViewBuilder shelf: () -> Shelf
     ) {
         _isShelfOpen = isShelfOpen
+        _shelfContentHeight = shelfContentHeight
         self.availableHeight = availableHeight
         self.first = first()
         self.second = second()
@@ -52,9 +55,7 @@ public struct DSTabBarContainer<
 
     public var body: some View {
         VStack(spacing: 0) {
-            if isShelfOpen {
-                shelfPanel
-            }
+            shelfPanel
             HStack(spacing: 0) {
                 first.frame(maxWidth: .infinity)
                 second.frame(maxWidth: .infinity)
@@ -65,13 +66,13 @@ public struct DSTabBarContainer<
             .padding(.horizontal, DSTabBarStyle.itemInset)
             .frame(height: DSTabBarStyle.height)
         }
-        .animation(shelfAnimation, value: isShelfOpen)
         .background(DSTabBarMaterial())
         .clipShape(DSTabBarShape(), style: FillStyle(eoFill: true))
         .overlay(border)
         .shadow(color: Color.shadowSoft, radius: DSTabBarStyle.shadowRadius, y: DSTabBarStyle.shadowRadius / 3)
         .mask { DSTabBarShadowMask().fill(style: FillStyle(eoFill: true)) }
         .overlay(alignment: .bottom) { center }
+        .animation(shelfAnimation, value: isShelfOpen)
     }
 }
 
@@ -107,9 +108,18 @@ private extension DSTabBarContainer {
                     }
                 )
         }
-        .frame(height: min(shelfContentHeight, availableHeight))
-        .onPreferenceChange(DSTabBarShelfHeightKey.self) { shelfContentHeight = $0 }
-        .transition(.opacity)
+        .frame(height: isShelfOpen ? min(shelfContentHeight, availableHeight) : 0)
+        .clipped()
+        // The measurement arrives in a later update than the open, so without the animation here the height
+        // change falls outside the isShelfOpen transaction and the shelf snaps.
+        .onPreferenceChange(DSTabBarShelfHeightKey.self) { newHeight in
+            withAnimation(shelfAnimation) {
+                shelfContentHeight = newHeight
+            }
+        }
+        .opacity(isShelfOpen ? 1 : 0)
+        .allowsHitTesting(isShelfOpen)
+        .accessibilityHidden(!isShelfOpen)
     }
 
     /// Strokes the outline only. The hole is left unstroked because clipping its edge leaves
@@ -139,6 +149,7 @@ private extension DSTabBarContainer {
     private struct DSTabBarPreviewBar: View {
         @State private var shelfRowCount: Int
         @State private var isShelfOpen: Bool
+        @State private var shelfContentHeight: CGFloat = 0
         let showsRowControls: Bool
 
         init(shelfRowCount: Int = 0, showsRowControls: Bool = false) {
@@ -158,6 +169,7 @@ private extension DSTabBarContainer {
                 }
                 DSTabBarContainer(
                     isShelfOpen: $isShelfOpen,
+                    shelfContentHeight: $shelfContentHeight,
                     availableHeight: 320,
                     first: { item("house.fill") },
                     second: { item("bubble.left.fill") },

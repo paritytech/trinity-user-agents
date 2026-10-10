@@ -12,6 +12,7 @@ struct TabBarBarView: View {
     var body: some View {
         DSTabBarContainer(
             isShelfOpen: $model.isShelfOpen,
+            shelfContentHeight: $model.shelfContentHeight,
             availableHeight: model.availablePanelHeight,
             first: { slot(at: 0) },
             second: { slot(at: 1) },
@@ -36,7 +37,7 @@ struct TabBarBarView: View {
         .onChange(of: model.centerProgress) { _, _ in
             model.reportCenterProgressSettled()
         }
-        // The hosting view grows upward while the centre panel is open, so the row stays at its bottom.
+        // The bar sits at the bottom of a host sized once to the room above it.
         .frame(maxHeight: .infinity, alignment: .bottom)
     }
 

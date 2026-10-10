@@ -4,9 +4,10 @@ import SnapKit
 
 final class TabBarChromeSurfaceView: UIView {
     private let panelContainer = TabBarPanelContainerView()
+    private let barContainer = TabBarBarHostView()
 
     private var barHeightConstraint: Constraint?
-    private var appliedBarRise: CGFloat = 0
+    private var barHostHeight = DSTabBarStyle.height
 
     /// The chrome sits at the bottom, clearing the home indicator gap, and a keyboard covers it
     /// like any other bottom bar.
@@ -27,30 +28,34 @@ final class TabBarChromeSurfaceView: UIView {
         fatalError("init(coder:) has not been implemented")
     }
 
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        refreshBarHostHeight()
+    }
+
     override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
         let hitView = super.hitTest(point, with: event)
         return hitView === self ? nil : hitView
     }
 
+    /// The bar's hosted view sits in a container that stays at a constant height, so panels never resize it.
     func addBar(_ bar: UIView) {
-        addSubview(bar)
+        addSubview(barContainer)
+        barContainer.addSubview(bar)
 
         bar.snp.makeConstraints { make in
+            make.edges.equalToSuperview()
+        }
+        barContainer.snp.makeConstraints { make in
             make.leading.trailing.equalTo(panelContainer)
-            barHeightConstraint = make.height.equalTo(DSTabBarStyle.height).constraint
+            barHeightConstraint = make.height.equalTo(barHostHeight).constraint
             pinBottom(make)
         }
     }
 
-    /// Grows the bar's hosting view upward so the open centre control or shelf lies inside its bounds,
-    /// where UIKit delivers touches to it. The row stays at the bottom of the hosting view.
-    func setBarRise(_ rise: CGFloat) {
-        guard rise != appliedBarRise else {
-            return
-        }
-        appliedBarRise = rise
-        barHeightConstraint?.update(offset: DSTabBarStyle.height + rise)
-        setNeedsLayout()
+    /// Sets the region at the bottom that accepts touches. The container's own height does not change.
+    func setBarLiveHeight(_ liveHeight: CGFloat) {
+        barContainer.liveHeight = liveHeight
     }
 }
 
@@ -60,6 +65,17 @@ private extension TabBarChromeSurfaceView {
     /// Pins a view to the chrome's resting bottom.
     func pinBottom(_ make: ConstraintMaker) {
         make.bottom.equalToSuperview().offset(Self.restingBottomOffset)
+    }
+
+    /// Only a change in the available height reaches the constraint. A panel opening leaves it alone,
+    /// so the hosted view's coordinate space stays still during the animation.
+    func refreshBarHostHeight() {
+        let height = DSTabBarStyle.height + max(0, availablePanelHeight)
+        guard height != barHostHeight else {
+            return
+        }
+        barHostHeight = height
+        barHeightConstraint?.update(offset: height)
     }
 
     func installPanelContainer() {

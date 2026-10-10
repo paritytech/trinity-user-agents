@@ -15,6 +15,8 @@ final class TabBarBottomChromeController: UIViewController {
     private var spaTabCount = 0
     private var selectedTabIndex = 0
     private var showsLabels = false
+    /// The first settled layout places the bar. Animating it would spring the bar in from its unplaced frame at launch.
+    private var hasPerformedInitialLayout = false
 
     private lazy var foldController = TabBarFoldController(
         foldSurface: chromeSurface,
@@ -41,7 +43,7 @@ final class TabBarBottomChromeController: UIViewController {
         },
         onOpenPanelChanged: { [weak self] kind in
             self?.updateActiveActionIndex()
-            self?.applyBarRise()
+            self?.applyBarLiveHeight()
             (self?.viewIfLoaded as? TabBarChromePassthroughView)?.isOutsideTapEnabled = kind != nil
         },
         setBackdropOpen: { [weak self] isOpen, animator in
@@ -115,6 +117,9 @@ final class TabBarBottomChromeController: UIViewController {
         refreshCenterContentHeight()
 
         foldController.reapplyForWidthChange()
+        if view.window != nil, view.bounds.width > 0, view.bounds.height > 0 {
+            hasPerformedInitialLayout = true
+        }
     }
 
     func setItems(_ slots: [TabBarSlot]) {
@@ -165,9 +170,17 @@ final class TabBarBottomChromeController: UIViewController {
             contentHeightForCenterPanel(width),
             DSTabBarStyle.centerContentHeight(fittingPanelHeight: barModel.availablePanelHeight)
         )
+        guard contentHeight != barModel.centerContentHeight else {
+            return
+        }
+        guard hasPerformedInitialLayout else {
+            barModel.setCenterContentHeight(contentHeight, animated: false)
+            applyBarLiveHeight()
+            return
+        }
         DSTabBarStyle.animateCenterChange(in: view) {
             self.barModel.setCenterContentHeight(contentHeight)
-            self.applyBarRise()
+            self.applyBarLiveHeight()
         }
     }
 
@@ -238,27 +251,32 @@ private extension TabBarBottomChromeController {
         }
     }
 
-    /// The hosting view must contain the open panel for UIKit to deliver touches to it. The open panel is one
-    /// value, so the centre panel and the shelf never both contribute a rise.
-    func applyBarRise() {
+    /// The bar's host is a fixed size, so this sets the region of it that accepts touches: the bar row plus
+    /// the open panel's rise. The open panel is one value, so the centre panel and the shelf never both
+    /// contribute a rise.
+    func applyBarLiveHeight() {
         let rise: CGFloat =
             switch panelController.open {
             case .content(.scan):
                 DSTabBarStyle.centerPanelRise(contentHeight: barModel.centerContentHeight)
             case .shelf:
-                barModel.availablePanelHeight
+                min(barModel.shelfContentHeight, barModel.availablePanelHeight)
             case nil,
                  .content:
                 0
             }
-        chromeSurface.setBarRise(rise)
+        chromeSurface.setBarLiveHeight(DSTabBarStyle.height + rise)
     }
 
     /// The room above the bar row down to the top safe area, which the chrome's own layout already measures.
     /// It caps both the shelf's growth and the centre panel's height.
     func refreshAvailablePanelHeight() {
-        barModel.availablePanelHeight = max(0, chromeSurface.availablePanelHeight)
-        applyBarRise()
+        let availableHeight = max(0, chromeSurface.availablePanelHeight)
+        guard availableHeight != barModel.availablePanelHeight else {
+            return
+        }
+        barModel.availablePanelHeight = availableHeight
+        applyBarLiveHeight()
     }
 
     func handleSlotTap(itemIndex: Int) {
@@ -368,6 +386,9 @@ private extension TabBarBottomChromeController {
         }
         barModel.onCenterPanelOpenChanged = { [weak self] isOpen in
             self?.centerPanelOpenChanged(isOpen)
+        }
+        barModel.onShelfContentHeightChanged = { [weak self] in
+            self?.applyBarLiveHeight()
         }
         barModel.onShelfChipTapped = { [weak self] id in
             self?.onChipTapped?(id)
