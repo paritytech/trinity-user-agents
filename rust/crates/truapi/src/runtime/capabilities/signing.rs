@@ -521,15 +521,17 @@ impl ProductRuntimeHost {
             v01::HostSignPayloadError::PermissionDenied,
         ))
         .await?;
+        // Blessed products sign proofs with the user's identity (e.g. the
+        // People username claim) as part of their own flows; prompting there
+        // only interrupts a first-party product. Everyone else still confirms.
         let confirmed = until_cancelled(
             cx,
-            self.platform
-                .confirm_user_action(UserConfirmationReview::SignRaw(
-                    SignRawReview::LegacyAccount {
-                        request: inner.clone(),
-                        watermarked,
-                    },
-                )),
+            self.confirm_product_action(UserConfirmationReview::SignRaw(
+                SignRawReview::LegacyAccount {
+                    request: inner.clone(),
+                    watermarked,
+                },
+            )),
         )
         .await
         .map_err(|reason| signing_call_error(HostSignRawWithLegacyAccountError::V1, reason))?
