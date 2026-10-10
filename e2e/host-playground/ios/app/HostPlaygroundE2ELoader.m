@@ -1,10 +1,6 @@
-// Starts the host-playground driver in the e2e build of the app.
-//
-// Swift has no load-time hook, so this class's +load stands in for one. It
-// waits for the app to finish launching, which is before its scene connects,
-// and then calls the Swift entry by its Objective-C name. The name is resolved
-// at runtime rather than through the app's generated Swift header, which would
-// pull every @objc declaration in the app into this file.
+// Swift has no load-time hook, so +load starts the driver once the app finishes launching, before
+// its scene connects. The entry is looked up by name: the generated Swift header would pull in
+// every @objc declaration in the app.
 
 #import <TargetConditionals.h>
 

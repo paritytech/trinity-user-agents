@@ -1,20 +1,7 @@
 name: host-playground e2e
 
-# Runs the public host-playground product inside the iOS and Android host apps
-# built from this commit, and reports how each of its tests ended. The runners,
-# the test list and the page runner live in e2e/host-playground/.
-#
-# Each platform signs in as its own registered Paseo test account. The app is
-# seeded from that account's mnemonic by hooks that exist only in these builds:
-# on Android a library added by a Gradle init script, on iOS a driver copied
-# into the app's sources only for the simulator build this workflow makes.
-# Nothing here reaches a build that testers or the public can download, and the
-# mnemonic only ever travels as a file.
-
-# Runs once a day on main, two hours before the iOS nightly starts at 20:00 UTC
-# so the result is in before either nightly ships. A pull request runs it on
-# demand with the `host-playground-e2e` label, and again on each push while the
-# label stays on.
+# Runs host-playground inside the iOS and Android host apps built from this commit.
+# See e2e/host-playground/README.md.
 on:
   schedule:
     - cron: "0 18 * * *"
@@ -28,17 +15,14 @@ permissions:
 jobs:
   android:
     name: Android emulator
-    # Narrow on purpose: `labeled` fires for every label, so only this label
-    # being added, or a push while it is on, starts a pull request run. A fork
-    # gets none of the secrets the build and the account need.
+    # Only this label starts a pull request run, and never from a fork.
     if: >-
       github.event_name != 'pull_request'
       || (github.event.pull_request.head.repo.full_name == github.repository
           && ((github.event.action == 'labeled' && github.event.label.name == 'host-playground-e2e')
               || (github.event.action == 'synchronize'
                   && contains(github.event.pull_request.labels.*.name, 'host-playground-e2e'))))
-    # On the job, so a run started by another label never cancels one in
-    # progress: a skipped job never joins the group.
+    # On the job, so a skipped run from another label never cancels this one.
     concurrency:
       group: host-playground-e2e-android-${{ github.event.pull_request.number || github.ref }}
       cancel-in-progress: ${{ github.event_name == 'pull_request' }}
@@ -65,9 +49,6 @@ jobs:
           keystore_alias: ${{ secrets.CI_KEYSTORE_KEY_ALIAS }}
           keystore_key_pass: ${{ secrets.CI_KEYSTORE_KEY_PASS }}
 
-      # The nightly build type, which runs on Paseo where the account and
-      # host-playground.paseo live, with the e2e hooks added. Only this job
-      # applies the init script.
       - name: Build the nightly APK with the e2e hooks
         working-directory: hosts/android
         env:
@@ -103,8 +84,7 @@ jobs:
           mv "${found[0]}" "${RUNNER_TEMP}/app-e2e.apk"
           rm -f develop_key.jks app/google-services.json
 
-      # The mnemonic is written to a file only this user can read, and the
-      # runner hands it to the app through run-as, never on a command line.
+      # Readable only by this user, and never on a command line.
       - name: Write the test account's mnemonic
         env:
           MNEMONIC: ${{ secrets.E2E_ANDROID_MNEMONIC }}
@@ -117,7 +97,6 @@ jobs:
           umask 077
           printf '%s' "${MNEMONIC}" > "${RUNNER_TEMP}/android.mnemonic"
 
-      # Hardware acceleration for the emulator on a Linux runner.
       - name: Enable KVM
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
@@ -125,8 +104,7 @@ jobs:
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
 
-      # Google APIs image, so Firebase Remote Config, where the app reads its
-      # chain list, works. x86_64 matches the runner and the APK's slices.
+      # Google APIs image, so Remote Config can deliver the app's chain list.
       - name: Run host-playground on the emulator
         env:
           APPLICATION_ID: ${{ vars.APPLICATION_ID }}
@@ -162,17 +140,14 @@ jobs:
 
   ios:
     name: iOS simulator
-    # Narrow on purpose: `labeled` fires for every label, so only this label
-    # being added, or a push while it is on, starts a pull request run. A fork
-    # gets none of the secrets the build and the account need.
+    # Only this label starts a pull request run, and never from a fork.
     if: >-
       github.event_name != 'pull_request'
       || (github.event.pull_request.head.repo.full_name == github.repository
           && ((github.event.action == 'labeled' && github.event.label.name == 'host-playground-e2e')
               || (github.event.action == 'synchronize'
                   && contains(github.event.pull_request.labels.*.name, 'host-playground-e2e'))))
-    # On the job, so a run started by another label never cancels one in
-    # progress: a skipped job never joins the group.
+    # On the job, so a skipped run from another label never cancels this one.
     concurrency:
       group: host-playground-e2e-ios-${{ github.event.pull_request.number || github.ref }}
       cancel-in-progress: ${{ github.event_name == 'pull_request' }}
@@ -209,14 +184,10 @@ jobs:
           sentry_dsn: ${{ secrets.SENTRY_DSN }}
           meld_basic_auth_token: ${{ secrets.MELD_BASIC_AUTH_TOKEN }}
 
-      # The simulator lane's build with the driver copied into the app's
-      # sources for this build only.
       - name: Build the E2E simulator app
         run: e2e/host-playground/ios/build.sh
 
-      # Grants the notification and camera permissions simctl cannot. The tap is
-      # third party, so it is pinned to a reviewed commit and Homebrew is kept
-      # from updating it.
+      # Third-party tap, pinned to a reviewed commit.
       - name: Install applesimutils
         env:
           HOMEBREW_NO_AUTO_UPDATE: "1"

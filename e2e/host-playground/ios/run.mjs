@@ -1,16 +1,8 @@
 #!/usr/bin/env node
-// Runs the host-playground test list inside the iOS host app on a Simulator.
+// Runs host-playground inside the iOS host app on a simulator. See ../README.md.
 //
 //   node e2e/host-playground/ios/run.mjs --app <polkadot-app.app | .app.zip> \
 //     --mnemonic-file <path> --out <dir> [--device <udid>] [--timeout-minutes <n>]
-//
-// The app must be the simulator build `build.sh` makes, which carries the
-// driver in `app/`. The runner installs it fresh, places the seed phrase,
-// tests.json and page-runner.js in the app's `tmp/truapi-e2e/`, and launches it
-// with TRUAPI_IOS_E2E_HOST_PLAYGROUND=1. The app does the rest (see
-// app/HostPlaygroundE2E.swift) and writes results.json
-// and a `done` marker there. The seed phrase is never printed and is deleted by
-// the app on first read, and by this runner on exit.
 
 import { spawn, spawnSync } from "node:child_process";
 import {
@@ -79,20 +71,14 @@ const startedAt = new Date();
 if (device.state !== "Booted") run("xcrun", ["simctl", "boot", device.udid]);
 run("xcrun", ["simctl", "bootstatus", device.udid, "-b"]);
 
-// A fresh install removes the app group with the previous run's wallet and
-// username, so the gates start from onboarding every time.
 spawnSync("xcrun", ["simctl", "terminate", device.udid, bundle], { stdio: "ignore" });
 spawnSync("xcrun", ["simctl", "uninstall", device.udid, bundle], { stdio: "ignore" });
 run("xcrun", ["simctl", "install", device.udid, app]);
-// Granted up front because system permission alerts belong to SpringBoard,
-// which the app cannot answer from inside.
+// System permission alerts belong to SpringBoard, which the app cannot answer.
 for (const service of ["location", "microphone"]) {
   spawnSync("xcrun", ["simctl", "privacy", device.udid, "grant", service, bundle], { stdio: "ignore" });
 }
-// simctl cannot grant notifications or the camera. Their system alerts would
-// otherwise stay up for the whole run, and iOS shows one alert at a time, so
-// every later permission request would wait behind them. applesimutils, when
-// installed, writes those grants into the simulator directly.
+// simctl cannot grant notifications or the camera; applesimutils can.
 const applesimutils = spawnSync(
   "applesimutils",
   ["--byId", device.udid, "--bundle", bundle, "--setPermissions", "notifications=YES,camera=YES,faceid=YES"],
@@ -118,8 +104,7 @@ try {
   copyFileSync(mnemonicFile, seed);
   chmodSync(seed, 0o600);
 
-  // Streamed for the whole run: the simulator keeps info lines only briefly,
-  // so reading them back at the end loses all but the last few minutes.
+  // Streamed, because the simulator keeps info lines only briefly.
   const logFile = openSync(join(out, "app.log"), "w");
   const logStream = spawn(
     "xcrun",
@@ -149,7 +134,6 @@ function fatal(message) {
   process.exit(1);
 }
 
-/** The .app to install: the path itself, or the one bundle inside a zip. */
 function unpackApp(path) {
   if (!path.endsWith(".zip")) return path;
   const target = mkdtempSync(join(tmpdir(), "host-playground-ios-"));
@@ -178,7 +162,6 @@ function chooseDevice(requested) {
   return selected;
 }
 
-/** The data container exists once the app has launched; launch it once if it is not there yet. */
 function appDataContainer() {
   const query = () => captureOptional("xcrun", ["simctl", "get_app_container", device.udid, bundle, "data"]);
   let container = query();
@@ -191,7 +174,6 @@ function appDataContainer() {
   return container;
 }
 
-/** Launches the app with the hook enabled; without `terminate` it brings a running app forward. */
 function launch({ terminate }) {
   run(
     "xcrun",
@@ -221,8 +203,7 @@ async function waitForDone(timeoutMs) {
   while (Date.now() < deadline) {
     if (existsSync(join(exchange, "done"))) return "done";
 
-    // A crashed app never writes the done marker, so stop rather than wait out
-    // the whole timeout. Two misses in a row, since a relaunch briefly drops it.
+    // A crashed app never writes `done`. Two misses, since a relaunch briefly drops it.
     if (Date.now() >= nextLivenessCheck) {
       nextLivenessCheck = Date.now() + 10_000;
       missedChecks = appRunning() ? 0 : missedChecks + 1;
@@ -245,7 +226,6 @@ async function waitForDone(timeoutMs) {
     for (const result of results.slice(reported)) {
       const message = result.message ? `  ${String(result.message).replace(/\s+/g, " ").slice(0, 200)}` : "";
       console.log(`  ${classify(result).padEnd(20)} ${result.id}${message}`);
-      // The first failure's screen, while it is still showing.
       if (classify(result) === "failed" && !existsSync(join(out, "first-failure.png"))) {
         spawnSync("xcrun", ["simctl", "io", device.udid, "screenshot", join(out, "first-failure.png")], {
           stdio: "ignore",
@@ -253,7 +233,6 @@ async function waitForDone(timeoutMs) {
       }
     }
     if (results.length > reported) {
-      // Kept current so a cancelled job still uploads what ran.
       writeFileSync(join(out, "results.json"), `${JSON.stringify(run, null, 2)}\n`);
     }
     reported = Math.max(reported, results.length);
@@ -263,7 +242,6 @@ async function waitForDone(timeoutMs) {
   return `no done marker within ${args["timeout-minutes"]} minutes`;
 }
 
-/** Whether the app has a running process on the simulator. */
 function appRunning() {
   const list = spawnSync("xcrun", ["simctl", "spawn", device.udid, "launchctl", "list"], { encoding: "utf8" });
   // Unknown counts as running, so a flaky simctl call cannot end the run.
@@ -296,7 +274,6 @@ function finish(outcome) {
   return failed ? 1 : 0;
 }
 
-/** A screenshot and the names of any crash reports since the run began; app.log is streamed separately. */
 function captureDiagnostics() {
   spawnSync("xcrun", ["simctl", "io", device.udid, "screenshot", join(out, "failure.png")], {
     stdio: "ignore",

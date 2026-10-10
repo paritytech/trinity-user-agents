@@ -3,14 +3,8 @@
 //
 //   node e2e/host-playground/report.mjs <results.json>
 //
-// A test passes when its log entry ends in `success`. An error that the
-// playground marks as unsupported, permission-denied or precondition-missing
-// is counted apart from a failure, because it says what the host offers
-// rather than that something broke. A skip is a button that stayed disabled,
-// which is how the playground marks a test that only runs from a worker. An
-// error `tests.json` lists under `knownFailures` is counted apart too, since
-// its cause lies outside the hosts, but only while its message is the one
-// listed: the same test failing any other way is a failure.
+// Unsupported, permission-denied and precondition-missing describe the host, not a breakage,
+// and a known failure only counts as one while its message is the listed one.
 
 import { readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -18,7 +12,6 @@ import { dirname, join } from "node:path";
 const NOT_A_FAILURE = new Set(["unsupported", "permission-denied", "precondition-missing"]);
 const KNOWN_FAILURES = JSON.parse(readFileSync(new URL("./tests.json", import.meta.url), "utf8")).knownFailures ?? {};
 
-/** The bucket a single result falls in. */
 export function classify(result) {
   if (result.status === "success") return "passed";
   if (result.status === "skipped") return "skipped";
@@ -28,7 +21,6 @@ export function classify(result) {
   return "failed";
 }
 
-/** One line for an announcement: the pass count, then the names of the failures. */
 export function summaryLine(run) {
   const counts = {};
   const failed = [];
@@ -51,7 +43,6 @@ export function summaryLine(run) {
   return `${line}.`;
 }
 
-/** The markdown report: the summary, the build it ran on, then one row per test. */
 export function markdown(run) {
   const escape = (text) => String(text ?? "").replace(/\|/g, "\\|").replace(/\s+/g, " ").slice(0, 200);
   const rows = run.results.map(

@@ -1,11 +1,8 @@
-// Adds the host-playground e2e hooks to the Android host's nightly build.
+// Adds the e2e hooks to the nightly build without touching hosts/android.
 //
 //   hosts/android/gradlew --init-script e2e/host-playground/android/e2e.init.gradle.kts :app:assembleGpNightly
 //
-// The hooks live outside hosts/android, which is vendored and refreshed from
-// upstream, so they are included as an extra project and attached to `:app`
-// only through the nightly configuration. Gradle runs init scripts for every
-// build, so the included build-logic build is left alone.
+// Init scripts run for every build, so the included build-logic build is skipped.
 
 val hooksDir = initscript.sourceFile!!.parentFile.resolve("hooks")
 

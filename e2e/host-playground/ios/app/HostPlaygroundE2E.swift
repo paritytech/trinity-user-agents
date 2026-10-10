@@ -7,27 +7,15 @@
     import UIKit
     import WebKit
 
-    /// Runs the shared host-playground test list against the product inside this app, driven
-    /// from outside by `e2e/host-playground/ios/run.mjs`.
-    ///
-    /// `e2e/host-playground/ios/build.sh` copies this directory into the app's sources for the
-    /// one build it makes, so no other build of the app contains it.
-    ///
-    /// The runner places `seed`, `tests.json` and `page-runner.js` in `tmp/truapi-e2e/` of the
-    /// data container and launches with `TRUAPI_IOS_E2E_HOST_PLAYGROUND=1`. The seed phrase is
-    /// read and deleted before the root gates decide, so launch lands on the regular username
-    /// check for the restored wallet. Once the tab bar is the root, the product opens and each
-    /// test runs through the page runner while native confirmation sheets are answered
-    /// in-process. `results.json` is rewritten after every test and `done` is written last.
+    /// Runs the host-playground test list inside the app. Only the build `build.sh` makes contains
+    /// it; see `e2e/host-playground/README.md`.
     enum HostPlaygroundE2E {
         static let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("truapi-e2e", isDirectory: true)
 
         static let log = os.Logger(subsystem: "io.parity.polkadotapp.e2e", category: "host-playground")
 
-        /// Seeds the wallet and theme, then starts the driver. Runs once the app has finished
-        /// launching, before its scene connects and the root gates decide; does nothing unless
-        /// the runner asked for it.
+        /// Seeds the wallet before the root gates decide, then starts the driver.
         static func install() {
             guard ProcessInfo.processInfo.environment["TRUAPI_IOS_E2E_HOST_PLAYGROUND"] == "1" else {
                 return
@@ -38,8 +26,7 @@
                 try restoreWallet()
                 ThemeSelectionStorage().setSelected()
             } catch {
-                // Only the error's type and code: its description could quote a word of the
-                // mnemonic.
+                // Never the description, which could quote a word of the mnemonic.
                 let nsError = error as NSError
                 setupFailure = "wallet setup failed: \(type(of: error)) \(nsError.domain) \(nsError.code)"
             }
@@ -86,8 +73,7 @@
         }
     }
 
-    /// The entry `HostPlaygroundE2ELoader.m` calls once the app has finished launching. It has a
-    /// fixed Objective-C name because the loader finds it by that name.
+    /// Called by `HostPlaygroundE2ELoader.m`, which finds it by this Objective-C name.
     @objc(HostPlaygroundE2EEntry)
     final class HostPlaygroundE2EEntry: NSObject {
         @objc static func install() {
@@ -103,7 +89,6 @@
         }
     }
 
-    /// The test list the runner copies from `e2e/host-playground/tests.json`.
     private struct HostPlaygroundTestList: Decodable {
         let product: String
         let hostPlaygroundCommit: String
@@ -122,8 +107,7 @@
             static let poll: Duration = .seconds(1)
         }
 
-        /// The world page-runner.js lives in. It shares the DOM with the product but none of its
-        /// globals, so the product's own scripts cannot see or disturb the runner.
+        /// Shares the DOM with the product but none of its globals.
         private static let world = WKContentWorld.world(name: "host-playground-e2e")
 
         private let setupFailure: String?
@@ -243,8 +227,6 @@
             }
         }
 
-        /// The product's web view, opening the product again when it is not on screen: a test
-        /// can navigate away, open another product or minimize this one.
         func openProduct(_ host: ProductHost) async throws -> WKWebView {
             let domain = host.toDotDomain()
             let deadline = ContinuousClock.now + Timing.productOpenTimeout
@@ -264,9 +246,7 @@
             throw HostPlaygroundE2EError("\(domain) did not open")
         }
 
-        /// Injects page-runner.js when the page does not have it, which is after every reload,
-        /// and waits for the playground to render its run buttons. Both happen in one evaluation,
-        /// retried, because the product can reload while it settles and drop the runner in between.
+        /// One evaluation injects and checks, retried, since a reload can drop the runner in between.
         func ensureRunner(in webView: WKWebView, source: String) async throws {
             let deadline = ContinuousClock.now + Timing.pageReadyTimeout
             while ContinuousClock.now < deadline {
@@ -282,11 +262,7 @@
             throw HostPlaygroundE2EError("the playground rendered no run buttons")
         }
 
-        /// A test that opens an external URL sends the app to the background, where its web
-        /// views stop running script; the runner brings it back when `backgrounded` appears.
-        /// Waits out a trip to the background. A system alert, such as the notification prompt the
-        /// simulator cannot pre-grant, leaves the app inactive rather than backgrounded, and the page
-        /// keeps running underneath it, so inactive counts as foreground.
+        /// Inactive counts as foreground: the page keeps running under a system alert.
         func waitUntilActive() async throws {
             try await poll(for: Timing.foregroundTimeout, "the app did not return to the foreground") {
                 UIApplication.shared.applicationState != .background
@@ -310,8 +286,7 @@
     // MARK: - Helpers
 
     private extension HostPlaygroundE2EDriver {
-        /// Tests that leave the product for another one. The page that started them goes away
-        /// before it can record a result, so they pass when the destination opens.
+        /// These leave the product before it can record a result, so they pass when the destination opens.
         static let navigationDestinations = ["navigate-polkadot": "truapi-playground.paseo"]
 
         func destinationOpened(_ host: String) async -> Bool {

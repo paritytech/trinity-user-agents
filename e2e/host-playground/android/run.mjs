@@ -1,17 +1,7 @@
 #!/usr/bin/env node
-// Runs host-playground inside the Android host on a device or emulator.
+// Runs host-playground inside the Android host on a device or emulator. See ../README.md.
 //
 //   node e2e/host-playground/android/run.mjs --apk <path> --mnemonic-file <path> --out <dir> [--serial <adb serial>]
-//
-// The APK is a nightly build carrying the hooks in ./hooks (see
-// e2e.init.gradle.kts): they open WebViews to DevTools and restore an account
-// from a mnemonic left in the app's files directory. The runner installs the
-// APK clean, seeds the account, opens the product through its deep link,
-// drives every test in ../tests.json through ../page-runner.js over the
-// DevTools protocol, and
-// answers the native approval sheets the tests raise by tapping them through
-// uiautomator. It writes results.json and report.md into --out, plus a
-// screenshot per failed test and the app's own logcat when anything failed.
 
 import { execFile, spawnSync } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -39,7 +29,6 @@ const RUNTIME_PERMISSIONS = [
   "android.permission.POST_NOTIFICATIONS",
 ];
 
-/** Labels of the native buttons that approve whatever sheet a test raised. */
 export const APPROVE_LABELS = new Set([
   "Sign",
   "Approve",
@@ -89,12 +78,7 @@ function createAdb(serial) {
   return adb;
 }
 
-/**
- * The centre of the first native button whose label approves a sheet, or null.
- *
- * Nodes inside a WebView are skipped: they are the product's own DOM, and a
- * product button labelled "Sign" is not a host approval.
- */
+// WebView nodes are skipped: a product button labelled "Sign" is not a host approval.
 export function findApproveButton(dumpXml, packageName) {
   const insideWebView = [];
   for (const match of dumpXml.matchAll(/<node\b([^>]*?)(\/?)>|<\/node>/g)) {
@@ -119,7 +103,6 @@ export function findApproveButton(dumpXml, packageName) {
   return null;
 }
 
-/** The "Wait" button of a system "isn't responding" dialog, if one is showing. */
 export function findSystemWaitButton(dumpXml) {
   if (!dumpXml.includes("isn't responding") && !dumpXml.includes("isn&apos;t responding")) return null;
   for (const match of dumpXml.matchAll(/<node\b([^>]*?)\/?>/g)) {
@@ -135,14 +118,12 @@ export function findSystemWaitButton(dumpXml) {
   return null;
 }
 
-/** Polls the screen for native approval sheets until stopped. */
 function startApprover(adb) {
   let running = true;
   const loop = (async () => {
     while (running) {
       const dump = await adb(["exec-out", "uiautomator", "dump", "/dev/tty"], { allowFailure: true });
-      // The emulator's launcher can stop answering; its dialog then takes the
-      // focus and hides the app's sheet from the dump until it is dismissed.
+      // A launcher "isn't responding" dialog hides the app's sheet until dismissed.
       const wait = dump && findSystemWaitButton(dump);
       if (wait && running) {
         log("dismissing a system \"isn't responding\" dialog");
@@ -172,8 +153,6 @@ async function installClean(adb, apk) {
   log(`installing ${apk}`);
   await adb(["uninstall", PACKAGE], { allowFailure: true });
   await adb(["install", apk]);
-  // A slow emulator raises "isn't responding" dialogs for system apps, which
-  // cover the sheets the tests need answered.
   await adb.shell("settings put global hide_error_dialogs 1", { allowFailure: true });
   for (const permission of RUNTIME_PERMISSIONS) {
     if ((await adb.shell(`pm grant ${PACKAGE} ${permission}`, { allowFailure: true })) === null) {
@@ -182,7 +161,7 @@ async function installClean(adb, apk) {
   }
 }
 
-/** Places the mnemonic in the app's files directory without it appearing in any command line. */
+/** Places the mnemonic without it appearing on any command line. */
 async function deliverSeed(adb, mnemonicFile) {
   const staged = `/data/local/tmp/e2e-seed-${process.pid}`;
   await adb(["push", mnemonicFile, staged]);
@@ -213,14 +192,12 @@ async function seedAccount(adb, mnemonicFile) {
   }
   if (Date.now() >= deadline) throw new Error(`no ${MARKER_TAG} marker within ${SEED_TIMEOUT_MS / 1000} s`);
 
-  // The splash screen read the onboarding status before the seed landed, so
-  // the account only counts as onboarded from the next launch.
+  // Onboarding was read before the seed landed, so it counts from the next launch.
   await adb.shell(`am force-stop ${PACKAGE}`);
   await launchApp(adb);
   log("account seeded");
 }
 
-/** Every page target a DevTools endpoint lists. */
 async function listTargets(port) {
   try {
     const response = await fetch(`http://127.0.0.1:${port}/json/list`);
@@ -232,13 +209,7 @@ async function listTargets(port) {
 
 const isProductUrl = (url) => url.includes(PRODUCT_URL_FRAGMENT);
 
-/**
- * One page target driven over the DevTools protocol.
- *
- * WebView DevTools rejects the browser-level commands Playwright's
- * connectOverCDP sends on attach, so the runner talks to the page target
- * directly and only ever needs Runtime.evaluate.
- */
+// WebView DevTools rejects Playwright's browser-level attach, so this drives the page target directly.
 class PageTarget {
   #socket;
   #pending = new Map();
@@ -273,7 +244,6 @@ class PageTarget {
     return this.#socket.readyState !== WebSocket.OPEN;
   }
 
-  /** The value of `expression`, awaited if it is a promise. */
   async evaluate(expression) {
     if (this.closed) throw new Error("the page target closed");
     const id = this.#nextId++;
@@ -291,7 +261,6 @@ class PageTarget {
   }
 }
 
-/** Opens the product through its deep link and attaches to its WebView page. */
 async function openProduct(adb, forwards) {
   const deadline = Date.now() + PRODUCT_OPEN_TIMEOUT_MS;
   let nextDeepLink = 0;
@@ -323,21 +292,17 @@ async function openProduct(adb, forwards) {
   throw new Error(`no WebView showing ${suite.product} within ${PRODUCT_OPEN_TIMEOUT_MS / 1000} s`);
 }
 
-/** A page showing the product with the page runner loaded and ready. */
 async function readyPage(adb, forwards, page) {
   const href = page && !page.closed ? await page.evaluate("location.href").catch(() => null) : null;
   if (!href || !isProductUrl(href)) {
     page?.close();
     page = await openProduct(adb, forwards);
   }
-  // The product can reload while it settles, which drops the injected runner
-  // and destroys the context an evaluation was running in, so both are retried
-  // until the playground shows its buttons.
+  // A reload drops the injected runner, so injection and the ready check retry together.
   const deadline = Date.now() + READY_TIMEOUT_MS;
   let nextDeepLink = Date.now() + DEEP_LINK_RETRY_MS;
   for (;;) {
-    // A paused page behind another product never becomes ready, so bring the
-    // product back to the front while waiting.
+    // A paused page never becomes ready, so keep bringing the product to the front.
     if (Date.now() >= nextDeepLink) {
       log(`reopening ${PRODUCT_DEEP_LINK}`);
       await adb.shell(`am start -a android.intent.action.VIEW -d ${PRODUCT_DEEP_LINK} ${PACKAGE}`, { allowFailure: true });
@@ -347,7 +312,6 @@ async function readyPage(adb, forwards, page) {
     try {
       ready = await page.evaluate(`(() => { ${pageRunner}; return window.__hostPlaygroundE2E.ready(); })()`);
     } catch {
-      // A closed target is gone for good; attach to the product's new page.
       if (page.closed) page = await openProduct(adb, forwards);
     }
     if (ready) return page;
@@ -356,13 +320,9 @@ async function readyPage(adb, forwards, page) {
   }
 }
 
-/**
- * Tests that leave the product for another one. The page that started them is
- * paused before it can record a result, so they pass when the destination opens.
- */
+// These leave the product before it can record a result, so they pass when the destination opens.
 const NAVIGATION_DESTINATIONS = { "navigate-polkadot": "truapi-playground.paseo" };
 
-/** Whether a WebView page showing `host` exists in the app. */
 async function pageShowing(adb, forwards, host) {
   for (const port of forwards.values()) {
     if ((await listTargets(port)).some((target) => target.type === "page" && target.url.includes(host))) return true;
@@ -389,12 +349,11 @@ async function runTest(page, id) {
 async function screenshot(adb, path) {
   const png = await adb(["exec-out", "screencap", "-p"], { allowFailure: true, binaryOutput: true });
   if (png?.length) writeFileSync(path, png);
-  // What the approver sees on the same screen, or why it sees nothing.
   const dump = await adb(["exec-out", "uiautomator", "dump", "/dev/tty"], { allowFailure: true });
   writeFileSync(path.replace(/\.png$/, ".xml"), dump ?? "uiautomator dump failed\n");
 }
 
-/** The app's own logcat, with long hex strings and SS58-shaped addresses masked. */
+/** The app's logcat, with long hex strings and addresses masked. */
 async function saveAppLogcat(adb, path) {
   const uid = (await adb.shell(`pm list packages -U ${PACKAGE}`, { allowFailure: true }))?.match(/uid:(\d+)/)?.[1];
   if (!uid) return;
@@ -463,7 +422,7 @@ async function main() {
   } catch (error) {
     fatal = error;
     run.fatal = error.message;
-    // Listed rather than dropped, so the pass count keeps the whole suite as its total.
+    // Listed as not run, so the total stays the whole suite.
     const ran = new Set(run.results.map((result) => result.id));
     for (const id of suite.tests.filter((test) => !ran.has(test))) {
       run.results.push({ id, status: "error", message: `not run: ${error.message}`, durationMs: 0 });

@@ -2,23 +2,18 @@
     import PolkadotUI
     import UIKit
 
-    /// Answers the native confirmation sheets a host-playground test raises, such as the signing
-    /// sheet and the product permission prompt, by sending the approving control its tap.
-    ///
-    /// Only controls inside presented view controllers, or in windows other than the tab bar's,
-    /// are considered, so the product's own chrome is never tapped.
+    /// Taps the approving control on native sheets a test raises. Only presented controllers and
+    /// windows other than the tab bar's are searched, so the product's own chrome is never tapped.
     @MainActor
     final class HostPlaygroundE2EApprover {
-        /// Accessibility identifiers of approving controls, checked before any label.
         static let approvingIdentifiers = ["signing_approve_button"]
 
-        /// Titles of approving controls, in order of preference when a sheet offers several.
+        /// In order of preference when a sheet offers several.
         static let approvingLabels = ["Approve", "Allow once", "Allow always", "Sign", "Confirm"]
 
         private var task: Task<Void, Never>?
         private var lastSeen = ""
 
-        /// Starts answering sheets until ``stop()``.
         func start() {
             stop()
             task = Task { [weak self] in
@@ -30,7 +25,6 @@
             }
         }
 
-        /// Stops answering sheets.
         func stop() {
             task?.cancel()
             task = nil
@@ -57,8 +51,6 @@
             return true
         }
 
-        /// Logs the controls on screen whenever they change, so a sheet it could not answer shows up
-        /// in the run's log.
         private func logSeen(_ controls: [UIControl]) {
             let seen = controls
                 .map { "\(type(of: $0)):\(Self.title(of: $0) ?? $0.accessibilityIdentifier ?? "-")" }

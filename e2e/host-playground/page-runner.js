@@ -1,15 +1,5 @@
-// Runs one host-playground test inside the page and reports how it ended.
-//
-// Injected by both drivers: over CDP on Android, through the WKWebView on iOS.
-// It defines `window.__hostPlaygroundE2E.runOne(id, timeoutMs)`, which clicks
-// the test's run button and waits for the log entry the click adds to settle.
-// The driver calls it once per test, so a test that navigates away loses only
-// itself, and a native sheet the test raises can be answered from outside
-// while the promise is pending.
-//
-// Clicks go through `element.click()` rather than a pointer event, because on
-// a phone-width viewport the playground covers the page with its log sheet as
-// soon as a test starts.
+// Injected by both drivers. `runOne(id, timeoutMs)` clicks a test's run button and waits for its
+// log entry to settle. Clicks use `element.click()` because the log sheet covers the page on a phone.
 (() => {
   if (window.__hostPlaygroundE2E) return;
 
@@ -26,18 +16,13 @@
   }
 
   const entries = () => document.querySelectorAll('[data-testid="log-entry"]');
-  // Entries are prepended, so the newest is first. It is read again on every
-  // poll rather than held, since a re-render can replace the element.
+  // Re-read on every poll, since a re-render can replace the element.
   const newest = () => entries()[0] ?? null;
 
-  // Tests that navigate within the product, by the path they land on. The
-  // client navigation can land before the log entry settles, which takes the
-  // log away, or after it, which takes the next test's buttons away, so these
-  // pass once the page reaches the path.
+  // The navigation can land before or after the log entry settles, so these pass on reaching the path.
   const IN_APP_DESTINATIONS = { "navigate-internal": "/navigation" };
 
-  // Tests whose entry JSON holds key material for the test account. Results
-  // are published as artifacts, so these keep only their message.
+  // Their detail holds key material, and results are published as artifacts.
   const SECRET_DETAIL = new Set(["derive-entropy"]);
 
   async function runOne(id, timeoutMs = 60000) {
@@ -50,8 +35,7 @@
     );
     if (!button) return result({ status: "missing", message: "no run button in the page" });
 
-    // A button is disabled while another test runs, while its argument
-    // defaults resolve, and for good when the test only runs from a worker.
+    // Disabled for good when the test only runs from a worker.
     const enabled = await waitFor(() => !button.disabled, 15000);
     if (!enabled) return result({ status: "skipped", message: "run button stayed disabled" });
 
@@ -84,14 +68,11 @@
       status: settled.dataset.status,
       outcome: settled.dataset.outcome || undefined,
       message: settled.querySelector("div.break-all")?.textContent?.trim() || undefined,
-      // The entry's JSON, which carries what the message abbreviates, such as full addresses.
       detail: SECRET_DETAIL.has(id) ? undefined : settled.querySelector("pre")?.textContent?.trim().slice(0, 4000) || undefined,
     });
   }
 
-  // Whether the playground has finished deciding it is inside a host and has
-  // rendered its buttons. A test that navigates within the product leaves it on
-  // a page without tests, so that page is sent back to the list.
+  // Sends a page without tests back to the list.
   const ready = () => {
     if (document.querySelector('[data-testid^="run-"]') !== null) return true;
     if (location.pathname !== "/") location.assign("/");
