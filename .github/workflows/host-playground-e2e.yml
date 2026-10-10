@@ -23,6 +23,36 @@ on:
         required: false
         type: string
         default: ""
+    # Each caller passes only its own platform's.
+    secrets:
+      GOOGLE_SERVICES_JSON_BASE64:
+        required: false
+      CI_GITHUB_KEYSTORE_KEY_FILE:
+        required: false
+      CI_KEYSTORE_PASS:
+        required: false
+      CI_KEYSTORE_KEY_ALIAS:
+        required: false
+      CI_KEYSTORE_KEY_PASS:
+        required: false
+      FIRESTORE_DATABASE_ID:
+        required: false
+      GOOGLE_OAUTH_ID:
+        required: false
+      GOOGLE_PROJECT_ID:
+        required: false
+      NIGHTLY_FUNDING_MNEMONIC:
+        required: false
+      E2E_ANDROID_MNEMONIC:
+        required: false
+      GOOGLE_SERVICE_INFO_RELEASE_BASE64:
+        required: false
+      MELD_BASIC_AUTH_TOKEN:
+        required: false
+      SENTRY_DSN:
+        required: false
+      E2E_IOS_MNEMONIC:
+        required: false
 
 permissions:
   contents: read
@@ -40,7 +70,7 @@ jobs:
                   && contains(github.event.pull_request.labels.*.name, 'host-playground-e2e')))))
     # On the job, so a skipped run from another label never cancels this one.
     concurrency:
-      group: host-playground-e2e-android-${{ github.event.pull_request.number || github.ref }}
+      group: host-playground-e2e-android-${{ inputs.release_tag || github.event.pull_request.number || github.ref }}
       cancel-in-progress: ${{ github.event_name == 'pull_request' }}
     # In a nightly the results go to its prerelease, so a red run must not fail the night.
     continue-on-error: ${{ inputs.release_tag != '' }}
@@ -165,7 +195,7 @@ jobs:
                   && contains(github.event.pull_request.labels.*.name, 'host-playground-e2e')))))
     # On the job, so a skipped run from another label never cancels this one.
     concurrency:
-      group: host-playground-e2e-ios-${{ github.event.pull_request.number || github.ref }}
+      group: host-playground-e2e-ios-${{ inputs.release_tag || github.event.pull_request.number || github.ref }}
       cancel-in-progress: ${{ github.event_name == 'pull_request' }}
     continue-on-error: ${{ inputs.release_tag != '' }}
     runs-on: macos-26
@@ -267,7 +297,7 @@ jobs:
   publish:
     name: Add the results to the nightly prerelease
     needs: [android, ios]
-    if: always() && inputs.release_tag != ''
+    if: ${{ !cancelled() && inputs.release_tag != '' }}
     continue-on-error: true
     runs-on: ubuntu-latest
     permissions:

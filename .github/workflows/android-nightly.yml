@@ -450,9 +450,6 @@ jobs:
           done
 
 
-  # Announced the way the iOS nightly is, through the same relay and into the
-  # same room.
-
   # The commit this nightly built, with its results added to the prerelease. Never fails the night.
   e2e:
     name: host-playground e2e
@@ -461,10 +458,22 @@ jobs:
     with:
       platform: android
       release_tag: ${{ needs.nightly.outputs.tag }}
-    secrets: inherit
+    secrets:
+      GOOGLE_SERVICES_JSON_BASE64: ${{ secrets.GOOGLE_SERVICES_JSON_BASE64 }}
+      CI_GITHUB_KEYSTORE_KEY_FILE: ${{ secrets.CI_GITHUB_KEYSTORE_KEY_FILE }}
+      CI_KEYSTORE_PASS: ${{ secrets.CI_KEYSTORE_PASS }}
+      CI_KEYSTORE_KEY_ALIAS: ${{ secrets.CI_KEYSTORE_KEY_ALIAS }}
+      CI_KEYSTORE_KEY_PASS: ${{ secrets.CI_KEYSTORE_KEY_PASS }}
+      FIRESTORE_DATABASE_ID: ${{ secrets.FIRESTORE_DATABASE_ID }}
+      GOOGLE_OAUTH_ID: ${{ secrets.GOOGLE_OAUTH_ID }}
+      GOOGLE_PROJECT_ID: ${{ secrets.GOOGLE_PROJECT_ID }}
+      NIGHTLY_FUNDING_MNEMONIC: ${{ secrets.NIGHTLY_FUNDING_MNEMONIC }}
+      E2E_ANDROID_MNEMONIC: ${{ secrets.E2E_ANDROID_MNEMONIC }}
     permissions:
       contents: write
 
+  # Announced the way the iOS nightly is, through the same relay and into the
+  # same room.
   send-release-notification:
     name: Send Release Notification
     runs-on: ubuntu-latest
