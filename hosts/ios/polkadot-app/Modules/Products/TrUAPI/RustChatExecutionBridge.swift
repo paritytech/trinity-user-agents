@@ -42,7 +42,7 @@ final class RustChatExecutionBridge: RustProductExecutionBridge, ChatHostBridge,
         throw HostRejection.Rejected(reason: "bot registration is not supported by this host")
     }
 
-    func postMessage(roomId: String, content: ChatMessageContent) async throws -> String {
+    func postMessage(roomId: String, content: ChatMessageContent, alt: String?) async throws -> String {
         // Message bodies are user content and this logger has a file destination
         // on testnet builds: log the variant, never the payload.
         logger.debug("[truapi:chat-bridge] postMessage \(roomId) \(content.variantName)")
@@ -57,11 +57,24 @@ final class RustChatExecutionBridge: RustProductExecutionBridge, ChatHostBridge,
         case let .text(text):
             .text(text)
         case let .custom(custom):
-            .custom(messageType: custom.messageType, data: custom.payload)
+            .custom(messageType: custom.messageType, data: custom.payload, alt: alt)
         case .richText, .actions, .file, .reaction, .reactionRemoved:
             throw HostRejection.Rejected(reason: "this host renders text and custom messages only")
         }
         return try await chatMessaging.sendMessage(message, roomId: roomId)
+    }
+
+    func setRoomFooter(roomId: String, footer: ChatRoomFooter) async throws {
+        logger.debug("[truapi:chat-bridge] setRoomFooter \(roomId)")
+        guard let roomId = roomId.nilIfEmpty else {
+            throw HostRejection.Rejected(reason: "a chat room needs an id")
+        }
+
+        let roomFooter: Chat.RoomFooter = switch footer {
+        case .textInput: .textInput
+        case .empty: .empty
+        }
+        try await chatMessaging.setRoomFooter(roomId: roomId, footer: roomFooter)
     }
 
     func listRooms() async throws -> [ChatRoom] {

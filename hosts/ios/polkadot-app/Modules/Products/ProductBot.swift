@@ -1,4 +1,5 @@
 import Foundation
+import PolkadotUI
 import Products
 import SubstrateSdk
 import UIKitExt
@@ -14,7 +15,9 @@ import UIKitExt
 /// Each instance is created by ``ProductBotFactory`` for a specific ``Product``.
 final class ProductBot: ChatExtensionBot {
     let product: Product
+    private let description: String?
     private let runtime: ChatRuntimeProtocol
+    private let resolveImage: WidgetImageResolver
     private let logger: LoggerProtocol
 
     private var initTask: Task<Void, Never>?
@@ -22,16 +25,22 @@ final class ProductBot: ChatExtensionBot {
     lazy var messageDecoder = ProductMessageDecoder(
         runtime: runtime,
         tokenResolver: WidgetDesignTokenResolver(),
+        description: description,
+        resolveImage: resolveImage,
         logger: logger
     )
 
     init(
         product: Product,
+        description: String?,
         runtime: ChatRuntimeProtocol,
+        resolveImage: WidgetImageResolver,
         logger: LoggerProtocol = Logger.shared
     ) {
         self.product = product
+        self.description = description
         self.runtime = runtime
+        self.resolveImage = resolveImage
         self.logger = logger
     }
 
@@ -86,7 +95,7 @@ extension ProductBot: ChatExtensionBotProtocol {
         Chat.PeerMetadata(
             name: product.name,
             contactSource: .chat,
-            icon: .image(nil),
+            icon: .product(domain: product.id),
             input: .inputField(.init(canPay: false, canAttachFile: false)),
             moreActions: []
         )

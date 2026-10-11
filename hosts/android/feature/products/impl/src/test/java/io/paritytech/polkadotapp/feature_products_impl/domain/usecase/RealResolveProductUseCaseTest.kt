@@ -35,6 +35,8 @@ class RealResolveProductUseCaseTest {
     private val debugPocketCards = object : DebugPocketCards {
         override fun get(productId: ProductId): DebugPocketCard? = debugCard
         override fun set(productId: ProductId, card: DebugPocketCard?) = Unit
+        override fun appUrl(productId: ProductId): String? = null
+        override fun setAppUrl(productId: ProductId, appUrl: String?) = Unit
     }
 
     private fun useCase() = RealResolveProductUseCase(
@@ -149,7 +151,7 @@ class RealResolveProductUseCaseTest {
      */
     @Test
     fun `a debug worker carries the card the debug menu names`() = runBlocking {
-        debugCard = DebugPocketCard(PocketCardId("loyalty"), "Loyalty", DEV_FACE)
+        debugCard = DebugPocketCard(PocketCardId("loyalty"), "Loyalty", DEV_FACE, faceShown = true)
         whenever(dotNsResolver.getMetadataEntry(base, "manifest")).thenReturn(Result.success(null))
         whenever(productRepository.getUserWorkerUrl(productId)).thenReturn(DEV_WORKER)
 
@@ -176,7 +178,7 @@ class RealResolveProductUseCaseTest {
     /** A published worker is the product's own word; a local override must not quietly beat it. */
     @Test
     fun `a published worker still wins over the debug one`() = runBlocking {
-        debugCard = DebugPocketCard(PocketCardId("loyalty"), "Loyalty", DEV_FACE)
+        debugCard = DebugPocketCard(PocketCardId("loyalty"), "Loyalty", DEV_FACE, faceShown = true)
         whenever(dotNsResolver.getMetadataEntry(base, "manifest")).thenReturn(Result.success(rootJson()))
         whenever(dotNsResolver.getMetadataEntry("app.$base", "executable")).thenReturn(Result.success(appJson()))
         whenever(dotNsResolver.getMetadataEntry("widget.$base", "executable")).thenReturn(Result.success(null))

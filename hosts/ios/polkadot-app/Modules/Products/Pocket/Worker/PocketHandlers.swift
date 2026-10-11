@@ -103,16 +103,21 @@ final class PocketHandlers: PocketFaceStreamsResolving, @unchecked Sendable {
     ///
     /// Answers whether every card was looked up conclusively.
     func reconcile(_ cards: [PocketCardEntry]) async -> Bool {
-        var wanted: Set<ProductId> = []
-        var unanswered: Set<ProductId> = []
+        var offered: Set<ProductId> = []
+        var unread: Set<ProductId> = []
 
-        for card in cards where !wanted.contains(card.key.productId) {
+        for card in cards where !offered.contains(card.key.productId) {
             switch await offer(of: card.key) {
-            case .offered: wanted.insert(card.key.productId)
+            case .offered: offered.insert(card.key.productId)
             case .notOffered: break
-            case .unanswered: unanswered.insert(card.key.productId)
+            case .unanswered: unread.insert(card.key.productId)
             }
         }
+
+        // The lock runs its closure as concurrently executing code, which may
+        // read only values that can no longer change.
+        let wanted = offered
+        let unanswered = unread
 
         let (started, stopped) = running.withLock { running -> ([ProductId], [TrUAPIPocketHandler]) in
             guard !running.stopped else { return ([], []) }

@@ -181,13 +181,15 @@ pub fn text_chat_action(text: &str) -> v01::HostChatActionSubscribeItem {
 
 pub struct EventCallbacks {
     pub logs: Mutex<Vec<String>>,
+    pub face_requests: Mutex<Vec<bool>>,
     pub chat_room_status: Mutex<v01::ChatRoomRegistrationStatus>,
     pub chat_created_rooms: Mutex<Vec<(String, String, String)>>,
     pub chat_bot_status: Mutex<v01::ChatBotRegistrationStatus>,
     pub chat_registered_bots: Mutex<Vec<(String, String, String)>>,
     pub chat_bot_rejection: Mutex<Option<String>>,
     pub chat_post_rejection: Mutex<Option<String>>,
-    pub chat_posted: Mutex<Vec<(String, v01::ChatMessageContent)>>,
+    pub chat_posted: Mutex<Vec<(String, v01::ChatMessageContent, Option<String>)>>,
+    pub chat_room_footers: Mutex<Vec<(String, v01::ChatRoomFooter)>>,
     pub pocket_cards: Mutex<Vec<v01::PocketCard>>,
     pub pocket_removed: Mutex<Vec<String>>,
     pub theme: Mutex<v01::HostThemeSubscribeItem>,
@@ -236,6 +238,7 @@ impl EventCallbacks {
             chat_registered_bots: Mutex::new(Vec::new()),
             chat_bot_rejection: Mutex::new(None),
             chat_post_rejection: Mutex::new(None),
+            chat_room_footers: Mutex::new(Vec::new()),
             chat_posted: Mutex::new(Vec::new()),
             pocket_cards: Mutex::new(Vec::new()),
             pocket_removed: Mutex::new(Vec::new()),
@@ -262,6 +265,7 @@ impl EventCallbacks {
             permission_confirmation_result: PermissionDecision::Deny,
             remote_permission_calls: std::sync::atomic::AtomicUsize::new(0),
             remote_permission_products: Mutex::new(Vec::new()),
+            face_requests: Mutex::new(Vec::new()),
         }
     }
 }
@@ -312,6 +316,16 @@ impl HostCallbacks for EventCallbacks {
         } else {
             DevicePermissionStatus::NotApplicable
         })
+    }
+    async fn set_expanded_card_face_shown(
+        &self,
+        shown: bool,
+    ) -> Result<crate::platform::ExpandedCardFaceOutcome, HostRejection> {
+        self.face_requests
+            .lock()
+            .expect("face requests mutex poisoned")
+            .push(shown);
+        Ok(crate::platform::ExpandedCardFaceOutcome::Applied)
     }
     async fn remote_permission(
         &self,
@@ -523,6 +537,7 @@ impl NativeChatCallbacks for EventCallbacks {
         &self,
         room_id: String,
         content: v01::ChatMessageContent,
+        alt: Option<String>,
     ) -> Result<String, HostRejection> {
         if let Some(reason) = self
             .chat_post_rejection
@@ -536,10 +551,22 @@ impl NativeChatCallbacks for EventCallbacks {
             .chat_posted
             .lock()
             .expect("posted messages mutex poisoned");
-        posted.push((room_id, content));
+        posted.push((room_id, content, alt));
         // Distinct per message: a correlation assertion must not pass on a
         // constant the host happens to return every time.
         Ok(format!("message-{}", posted.len()))
+    }
+
+    async fn set_room_footer(
+        &self,
+        room_id: String,
+        footer: v01::ChatRoomFooter,
+    ) -> Result<(), HostRejection> {
+        self.chat_room_footers
+            .lock()
+            .expect("room footers mutex poisoned")
+            .push((room_id, footer));
+        Ok(())
     }
 
     async fn list_rooms(&self) -> Result<Vec<v01::ChatRoom>, HostRejection> {
@@ -1356,8 +1383,9 @@ fn native_chat_adapter_forwards_every_message_variant() {
         futures::executor::block_on(crate::platform::ChatPlatform::post_chat_message(
             &platform,
             &product,
-            v01::HostChatPostMessageRequest {
+            truapi::latest::HostChatPostMessageRequest {
                 room_id: "support".to_string(),
+                alt: None,
                 payload: payload.clone(),
             },
         ))
@@ -1375,8 +1403,50 @@ fn native_chat_adapter_forwards_every_message_variant() {
         posted,
         variants
             .iter()
-            .map(|content| ("support".to_string(), content.clone()))
+            .map(|content| ("support".to_string(), content.clone(), None))
             .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn native_chat_adapter_forwards_the_alt_of_a_message() {
+    let callbacks = Arc::new(EventCallbacks::new());
+    let platform = ChatCallbackPlatform {
+        chat: callbacks.clone(),
+        events: Arc::new(NativeEventBus::default()),
+    };
+    let product = ProductContext::new_with_execution(
+        "chat.dot".to_string(),
+        ProductExecutionKind::Worker,
+    )
+    .unwrap();
+    let card = v01::ChatMessageContent::Custom(v01::ChatCustomMessage {
+        message_type: "results".to_string(),
+        payload: vec![1],
+    });
+
+    futures::executor::block_on(crate::platform::ChatPlatform::post_chat_message(
+        &platform,
+        &product,
+        truapi::latest::HostChatPostMessageRequest {
+            room_id: "support".to_string(),
+            payload: card.clone(),
+            alt: Some("Week 12 results".to_string()),
+        },
+    ))
+    .expect("a card with an alt reaches the host");
+
+    assert_eq!(
+        callbacks
+            .chat_posted
+            .lock()
+            .expect("posted messages mutex poisoned")
+            .as_slice(),
+        &[(
+            "support".to_string(),
+            card,
+            Some("Week 12 results".to_string()),
+        )]
     );
 }
 
@@ -1405,8 +1475,9 @@ fn a_posted_action_set_round_trips_to_the_product_that_posted_it() {
     let posted = futures::executor::block_on(crate::platform::ChatPlatform::post_chat_message(
         &platform,
         &product,
-        v01::HostChatPostMessageRequest {
+        truapi::latest::HostChatPostMessageRequest {
             room_id: "support".to_string(),
+            alt: None,
             payload: v01::ChatMessageContent::Actions(v01::ChatActions {
                 text: Some("pick one".to_string()),
                 actions: vec![v01::ChatAction {
@@ -1485,8 +1556,9 @@ fn native_chat_adapter_surfaces_a_message_rejection() {
     let error = futures::executor::block_on(crate::platform::ChatPlatform::post_chat_message(
         &platform,
         &product,
-        v01::HostChatPostMessageRequest {
+        truapi::latest::HostChatPostMessageRequest {
             room_id: "support".to_string(),
+            alt: None,
             payload: v01::ChatMessageContent::File(v01::ChatFile {
                 url: "https://example.invalid/f".to_string(),
                 file_name: "f".to_string(),
@@ -1678,8 +1750,9 @@ fn native_chat_adapter_preserves_room_status_and_message_room() {
     let posted = futures::executor::block_on(crate::platform::ChatPlatform::post_chat_message(
         &platform,
         &product,
-        v01::HostChatPostMessageRequest {
+        truapi::latest::HostChatPostMessageRequest {
             room_id: "second-room".to_string(),
+            alt: None,
             payload: v01::ChatMessageContent::Text {
                 text: "Echo: hello".to_string(),
             },
@@ -1714,7 +1787,40 @@ fn native_chat_adapter_preserves_room_status_and_message_room() {
             v01::ChatMessageContent::Text {
                 text: "Echo: hello".to_string(),
             },
+            None,
         )]
+    );
+}
+
+#[test]
+fn native_chat_adapter_hands_the_room_footer_to_the_host() {
+    let callbacks = Arc::new(EventCallbacks::new());
+    let platform = ChatCallbackPlatform {
+        chat: callbacks.clone(),
+        events: Arc::new(NativeEventBus::default()),
+    };
+    let product = ProductContext::new_with_execution(
+        "chat.dot".to_string(),
+        ProductExecutionKind::Worker,
+    )
+    .unwrap();
+
+    futures::executor::block_on(crate::platform::ChatPlatform::set_chat_room_footer(
+        &platform,
+        &product,
+        v01::HostChatSetRoomFooterRequest {
+            room_id: "support".to_string(),
+            footer: v01::ChatRoomFooter::Empty,
+        },
+    ))
+    .unwrap();
+
+    assert_eq!(
+        *callbacks
+            .chat_room_footers
+            .lock()
+            .expect("room footers mutex poisoned"),
+        [("support".to_string(), v01::ChatRoomFooter::Empty)]
     );
 }
 
@@ -2001,6 +2107,12 @@ fn start_ws_bridge_twice_returns_already_running() {
         ) -> Result<DevicePermissionStatus, HostRejection> {
             Ok(DevicePermissionStatus::NotApplicable)
         }
+        async fn set_expanded_card_face_shown(
+            &self,
+            _shown: bool,
+        ) -> Result<crate::platform::ExpandedCardFaceOutcome, HostRejection> {
+            Ok(crate::platform::ExpandedCardFaceOutcome::Unsupported)
+        }
         async fn remote_permission(
             &self,
             _product: ProductExecutionConfig,
@@ -2182,6 +2294,12 @@ fn pending_permission_decision_does_not_stall_bridge() {
             _request: v01::HostDevicePermissionRequest,
         ) -> Result<DevicePermissionStatus, HostRejection> {
             Ok(DevicePermissionStatus::NotApplicable)
+        }
+        async fn set_expanded_card_face_shown(
+            &self,
+            _shown: bool,
+        ) -> Result<crate::platform::ExpandedCardFaceOutcome, HostRejection> {
+            Ok(crate::platform::ExpandedCardFaceOutcome::Unsupported)
         }
         async fn remote_permission(
             &self,

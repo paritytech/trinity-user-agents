@@ -2,12 +2,14 @@ import Foundation
 import Products
 import UIKit
 
-/// Routes `polkadot://<product>.<tld>/-/pocket/{add,open}?card=<id>`.
+/// Routes `polkadot://<product>.<tld>/-/pocket/{add,open}?card=<id>`, and
+/// `/-/pocket` alone for the collection.
 ///
 /// What the link means is entirely the core's to say. `parse_navigate` answers
 /// `pocket` for an action it serves, having screened the card id exactly as
-/// `remove_card` does, and `reject` for a link under the reserved target that
-/// it cannot make sense of. Those two are the host's to answer.
+/// `remove_card` does, `pocketCollection` for the bare target, and `reject` for
+/// a link under the reserved target that it cannot make sense of. Those three
+/// are the host's to answer.
 ///
 /// Anything else it answers is not ours, including a Pocket action this core
 /// does not serve: the core sends those to the App deliberately, so a link
@@ -15,13 +17,16 @@ import UIKit
 final class PocketOpenService: URLHandlingServiceProtocol {
     private let parser = PocketDeeplinkParser()
     private let present: @MainActor (PocketDeeplink) -> Void
+    private let openCollection: @MainActor () -> Void
     private let refuse: @MainActor (String) -> Void
 
     init(
         present: @escaping @MainActor (PocketDeeplink) -> Void,
+        openCollection: @escaping @MainActor () -> Void = {},
         refuse: @escaping @MainActor (String) -> Void = { _ in }
     ) {
         self.present = present
+        self.openCollection = openCollection
         self.refuse = refuse
     }
 
@@ -29,6 +34,9 @@ final class PocketOpenService: URLHandlingServiceProtocol {
         switch parser.classify(url.absoluteString) {
         case let .pocket(link):
             Task { @MainActor in present(link) }
+            return true
+        case .collection:
+            Task { @MainActor in openCollection() }
             return true
         case .malformed:
             Task { @MainActor in refuse(String(localized: .Products.pocketDeeplinkMalformed)) }
@@ -40,8 +48,9 @@ final class PocketOpenService: URLHandlingServiceProtocol {
 }
 
 extension PocketOpenService {
-    /// The chain's Pocket handler: an add link opens the approval sheet, and an
-    /// open link takes the user to the card the Pocket already holds.
+    /// The chain's Pocket handler: an add link opens the approval sheet, an open
+    /// link takes the user to the card the Pocket already holds, and a bare link
+    /// opens the Pocket.
     static func makeDefault(
         flowState: SPAFlowState,
         moduleNavigator: ModuleNavigating
@@ -81,6 +90,7 @@ extension PocketOpenService {
                     }
                 }
             },
+            openCollection: { moduleNavigator.openPocket() },
             refuse: { message in PocketRefusalPresenter.show(message) }
         )
     }

@@ -73,6 +73,7 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
     private val confirmationLauncher: TrUAPIConfirmationLauncher,
     private val appLifecycleObserver: AppLifecycleObserver,
     private val contactsBridge: AppContactsHostBridge,
+    private val scannerBridge: TrUAPIProductScans,
     // Lazy: the supervisor boots workers on this runtime, and reports back through this bridge.
     private val workerSupervisor: Lazy<TrUAPIWorkerSupervisor>,
     dispatchers: CoroutineDispatchers,
@@ -121,6 +122,7 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
         // Before any product execution opens, so a product never sees the
         // window where the host lists no contacts.
         runtime.setContacts(contactsBridge)
+        runtime.setScanner(scannerBridge)
         observeContactRemovals(runtime)
         chainProvider.attach(
             onResponse = runtime::notifyChainResponse,

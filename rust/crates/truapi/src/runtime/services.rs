@@ -5,7 +5,7 @@
 //! controls live on the concrete role objects.
 
 use std::collections::VecDeque;
-use std::sync::atomic::{AtomicU64, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 
 use crate::chain_runtime::{ChainRuntime, RuntimeChainProvider, RuntimeFailure};
@@ -53,6 +53,12 @@ pub struct RuntimeServices {
     /// Host Game adapter, installed once at startup by a host that can hold
     /// reminders. Unset leaves every product Game call `Unsupported`.
     game_platform: OnceLock<Arc<dyn crate::platform::GamePlatform>>,
+    /// Host scanner, installed once at startup by a host that can draw a
+    /// viewfinder. Unset leaves every product scan `Unsupported`.
+    scanner_platform: OnceLock<Arc<dyn crate::platform::ScannerPlatform>>,
+    /// Whether a scan is open. Shared by every product runtime of this host,
+    /// because the device has one viewfinder.
+    scan_open: AtomicBool,
     /// Host observer told when a device finishes pairing with this signing
     /// host. Unset leaves a paired device unannounced.
     device_pairing_observer: OnceLock<Arc<dyn DevicePairingObserver>>,
@@ -128,6 +134,8 @@ impl RuntimeServices {
             contacts_platform: OnceLock::new(),
             contact_handles: Default::default(),
             game_platform: OnceLock::new(),
+            scanner_platform: OnceLock::new(),
+            scan_open: AtomicBool::new(false),
             device_pairing_observer: OnceLock::new(),
             #[cfg(not(target_arch = "wasm32"))]
             core_db: OnceLock::new(),
@@ -248,6 +256,29 @@ impl RuntimeServices {
     /// The host's contacts adapter, when one is installed.
     pub fn contacts_platform(&self) -> Option<Arc<dyn crate::platform::ContactsPlatform>> {
         self.contacts_platform.get().cloned()
+    }
+
+    /// Install the host's scanner. Answers whether this call was the one that
+    /// installed it.
+    pub fn install_scanner_platform(
+        &self,
+        platform: Arc<dyn crate::platform::ScannerPlatform>,
+    ) -> bool {
+        self.scanner_platform.set(platform).is_ok()
+    }
+
+    /// The host's scanner, when one is installed.
+    pub fn scanner_platform(&self) -> Option<Arc<dyn crate::platform::ScannerPlatform>> {
+        self.scanner_platform.get().cloned()
+    }
+
+    /// Claim the one open scan, or `None` while another holds it. Dropping the
+    /// claim frees it, so a cancelled or failed scan cannot keep it.
+    pub fn claim_scan(&self) -> Option<ScanClaim<'_>> {
+        self.scan_open
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .ok()
+            .map(|_| ScanClaim(&self.scan_open))
     }
 
     /// Install the host's device-pairing observer.
@@ -473,5 +504,14 @@ impl RuntimeChainProvider for HostChainProvider {
             .map_err(|err| {
                 RuntimeFailure::unavailable_with_reason("remote_chain_connect", format!("{err:?}"))
             })
+    }
+}
+
+/// The open scan. Frees the slot when dropped.
+pub struct ScanClaim<'a>(&'a AtomicBool);
+
+impl Drop for ScanClaim<'_> {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::Release);
     }
 }
