@@ -71,6 +71,9 @@ dependencies {
     implementation(libs.nova.substrate.serialization)
 
     implementation(project(":bindings:truapi-host"))
+    // The app supplies ML Kit per flavor, as for :common.
+    compileOnly(libs.google.play.services.mlkit)
+    testImplementation(libs.google.play.services.mlkit)
     implementation(project(":bindings:sr25519-vrf"))
 
     implementation(project(":common"))

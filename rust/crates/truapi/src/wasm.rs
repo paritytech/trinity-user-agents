@@ -21,7 +21,7 @@ use crate::platform::SigningHostConfig;
 use crate::platform::{
     ChainProvider, ChatPlatform, ContactsPlatform, GamePlatform, HostInfo, JsonRpcConnection,
     PairingHostConfig, PermissionStatusHost, PlatformInfo, PocketPlatform, ProductContext,
-    ProductExecutionKind, ProviderError, RuntimeConfigValidationError,
+    ProductExecutionKind, ProviderError, RuntimeConfigValidationError, ScannerPlatform,
 };
 use futures::channel::mpsc;
 use futures::future::{AbortHandle, Abortable};
@@ -847,6 +847,7 @@ struct WasmPlatformAdapters {
     status_host: Option<Arc<dyn PermissionStatusHost>>,
     pocket_platform: Option<Arc<dyn PocketPlatform>>,
     game_platform: Option<Arc<dyn GamePlatform>>,
+    scanner_platform: Option<Arc<dyn ScannerPlatform>>,
 }
 
 /// Build the platform and the optional capability adapters supplied by the host.
@@ -856,12 +857,14 @@ fn wasm_platform(bridge: Arc<JsBridge>) -> WasmPlatformAdapters {
     let has_permission_status = bridge.has_permission_status();
     let has_pocket = bridge.has_pocket();
     let has_game = bridge.has_game();
+    let has_scanner = bridge.has_scanner();
     let platform = Arc::new(WasmPlatform::new(bridge));
     let chat = has_chat.then(|| platform.clone() as Arc<dyn ChatPlatform>);
     let contacts = has_contacts.then(|| platform.clone() as Arc<dyn ContactsPlatform>);
     let status = has_permission_status.then(|| platform.clone() as Arc<dyn PermissionStatusHost>);
     let pocket = has_pocket.then(|| platform.clone() as Arc<dyn PocketPlatform>);
     let game = has_game.then(|| platform.clone() as Arc<dyn GamePlatform>);
+    let scanner = has_scanner.then(|| platform.clone() as Arc<dyn ScannerPlatform>);
     WasmPlatformAdapters {
         platform,
         chat_platform: chat,
@@ -869,6 +872,7 @@ fn wasm_platform(bridge: Arc<JsBridge>) -> WasmPlatformAdapters {
         status_host: status,
         pocket_platform: pocket,
         game_platform: game,
+        scanner_platform: scanner,
     }
 }
 
@@ -946,6 +950,7 @@ impl WasmPairingHostRuntime {
             status_host,
             pocket_platform,
             game_platform,
+            scanner_platform,
         } = wasm_platform(bridge);
         let spawner: Spawner = Arc::new(|fut| {
             wasm_bindgen_futures::spawn_local(fut);
@@ -966,6 +971,9 @@ impl WasmPairingHostRuntime {
         }
         if let Some(game_platform) = game_platform {
             runtime.set_game_platform(game_platform);
+        }
+        if let Some(scanner_platform) = scanner_platform {
+            runtime.set_scanner_platform(scanner_platform);
         }
         install_worker_demand_observer(runtime.worker_ledger(), &callbacks)?;
         Ok(Self {
@@ -1290,20 +1298,35 @@ impl WasmSigningHostRuntime {
         let bridge = Arc::new(JsBridge::from_js(&callbacks)?);
         let WasmPlatformAdapters {
             platform,
+            chat_platform,
+            contacts_platform,
+            status_host,
             pocket_platform,
             game_platform,
-            ..
+            scanner_platform,
         } = wasm_platform(bridge);
         let spawner: Spawner = Arc::new(|fut| {
             wasm_bindgen_futures::spawn_local(fut);
         });
         let host_config = signing_host_config_from_js(&host_config)?;
-        let runtime = SigningHostRuntime::new(platform, host_config, spawner);
+        let runtime = SigningHostRuntime::with_platforms(
+            platform,
+            host_config,
+            spawner,
+            chat_platform,
+            contacts_platform,
+        );
+        if let Some(status_host) = status_host {
+            runtime.set_permission_status_host(status_host);
+        }
         if let Some(pocket_platform) = pocket_platform {
             runtime.set_pocket_platform(pocket_platform);
         }
         if let Some(game_platform) = game_platform {
             runtime.set_game_platform(game_platform);
+        }
+        if let Some(scanner_platform) = scanner_platform {
+            runtime.set_scanner_platform(scanner_platform);
         }
         install_worker_demand_observer(runtime.worker_ledger(), &callbacks)?;
         Ok(Self {
@@ -1355,11 +1378,78 @@ impl WasmSigningHostRuntime {
             .map_err(generic_error_to_js)
     }
 
+    /// Notify the runtime that the host's contacts changed, so cached contact
+    /// handles are dropped and the next resolution reads the list.
+    #[wasm_bindgen(js_name = notifyContactsChanged)]
+    pub fn notify_contacts_changed(&self) {
+        self.runtime.notify_contacts_changed();
+    }
+
     /// Revoke one product's grants from the current local activation.
     #[wasm_bindgen(js_name = clearProductState)]
     pub async fn clear_product_state(&self, product_id: String) -> Result<(), JsValue> {
         self.runtime
             .clear_product_state(&product_id)
+            .await
+            .map_err(generic_error_to_js)
+    }
+
+    /// Read a permission authorization status for a product.
+    ///
+    /// A device capability resolves the host application's OS gate as well as
+    /// storage, so an OS refusal reads as `Denied` whatever is stored. Remote,
+    /// identity-disclosure and account-access decisions have no OS gate.
+    #[wasm_bindgen(js_name = permissionAuthorizationStatus)]
+    pub async fn permission_authorization_status(
+        &self,
+        product_id: String,
+        payload: Vec<u8>,
+    ) -> Result<JsValue, JsValue> {
+        let request = decode_permission_authorization_request(&payload)?;
+        let status = self
+            .runtime
+            .permission_authorization_status(&product_id, request)
+            .await
+            .map_err(generic_error_to_js)?;
+        Ok(permission_authorization_status_to_js(status))
+    }
+
+    /// Read permission authorization statuses for a product.
+    ///
+    /// A device capability resolves the host application's OS gate as well as
+    /// storage, so an OS refusal reads as `Denied` whatever is stored. Remote,
+    /// identity-disclosure and account-access decisions have no OS gate.
+    #[wasm_bindgen(js_name = permissionAuthorizationStatuses)]
+    pub async fn permission_authorization_statuses(
+        &self,
+        product_id: String,
+        payloads: Array,
+    ) -> Result<Array, JsValue> {
+        let requests = decode_permission_authorization_requests(&payloads)?;
+        let statuses = self
+            .runtime
+            .permission_authorization_statuses(&product_id, requests)
+            .await
+            .map_err(generic_error_to_js)?;
+        let values = Array::new();
+        for status in statuses {
+            values.push(&permission_authorization_status_to_js(status));
+        }
+        Ok(values)
+    }
+
+    /// Update a stored permission authorization status for a product.
+    #[wasm_bindgen(js_name = setPermissionAuthorizationStatus)]
+    pub async fn set_permission_authorization_status(
+        &self,
+        product_id: String,
+        payload: Vec<u8>,
+        status: String,
+    ) -> Result<(), JsValue> {
+        let request = decode_permission_authorization_request(&payload)?;
+        let status = permission_authorization_status_from_js(&status)?;
+        self.runtime
+            .set_permission_authorization_status(&product_id, request, status)
             .await
             .map_err(generic_error_to_js)
     }
@@ -1500,6 +1590,7 @@ impl WasmProductRuntime {
             status_host,
             pocket_platform,
             game_platform,
+            scanner_platform,
         } = wasm_platform(bridge);
         let spawner: Spawner = Arc::new(|fut| {
             wasm_bindgen_futures::spawn_local(fut);
@@ -1517,6 +1608,9 @@ impl WasmProductRuntime {
         }
         if let Some(game_platform) = game_platform {
             pairing.set_game_platform(game_platform);
+        }
+        if let Some(scanner_platform) = scanner_platform {
+            pairing.set_scanner_platform(scanner_platform);
         }
         if let Some(contacts_platform) = contacts_platform {
             pairing.set_contacts_platform(contacts_platform);

@@ -75,6 +75,7 @@ fun PocketScreen() {
     val screenState by viewModel.state.collectAsStateWithLifecycle()
     val cards by viewModel.cards.collectAsStateWithLifecycle()
     val expandedProductSession by viewModel.expandedProductSession.collectAsStateWithLifecycle()
+    val openingFaceShown by viewModel.openingFaceShown.collectAsStateWithLifecycle()
 
     ObserveViewModelEvents(viewModel, rememberAppNotifier())
 
@@ -82,6 +83,7 @@ fun PocketScreen() {
         screenState = screenState,
         cards = cards,
         expandedProductSession = expandedProductSession,
+        openingFaceShown = openingFaceShown,
         bindingsOf = viewModel::bindingsOf,
         onCardSelected = viewModel::selectCard,
         onCardDismissed = viewModel::dismissCard,
@@ -101,6 +103,7 @@ private fun PocketScreenInternal(
     screenState: PocketScreenState,
     cards: ImmutableList<PocketCardUiModel>,
     expandedProductSession: SpaHostSession?,
+    openingFaceShown: Boolean?,
     bindingsOf: (PocketCardUiModel.ProductCard) -> ProductFaceBindings,
     onCardSelected: (PocketCardUiModel) -> Unit,
     onCardDismissed: () -> Unit,
@@ -155,6 +158,7 @@ private fun PocketScreenInternal(
                                     selectedCard = current.selectedCard,
                                     allCards = cards,
                                     expandedProductSession = expandedProductSession,
+                                    openingFaceShown = openingFaceShown,
                                     bindingsOf = bindingsOf,
                                     onSettled = onExpandedCardSettled,
                                     onBack = onCardDismissed,
@@ -181,6 +185,7 @@ private fun SelectedCardDetails(
     selectedCard: PocketCardUiModel,
     allCards: ImmutableList<PocketCardUiModel>,
     expandedProductSession: SpaHostSession?,
+    openingFaceShown: Boolean?,
     bindingsOf: (PocketCardUiModel.ProductCard) -> ProductFaceBindings,
     onSettled: (PocketCardUiModel.ProductCard) -> Unit,
     onBack: () -> Unit,
@@ -205,6 +210,7 @@ private fun SelectedCardDetails(
             card = selectedCard,
             bindings = bindingsOf(selectedCard),
             session = expandedProductSession,
+            openingFaceShown = openingFaceShown,
             cardIndex = cardIndex,
             onSettled = { onSettled(selectedCard) },
             onBack = onBack,
@@ -365,6 +371,7 @@ private fun PocketScreenPreview() {
                     )
                 ),
                 expandedProductSession = null,
+                openingFaceShown = null,
                 bindingsOf = { card ->
                     ProductFaceBindings(
                         face = MutableStateFlow(JsWidget.Text(text = card.title)),

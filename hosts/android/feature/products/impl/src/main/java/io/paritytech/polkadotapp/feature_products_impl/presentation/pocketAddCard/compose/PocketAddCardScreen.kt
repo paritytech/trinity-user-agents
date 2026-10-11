@@ -31,6 +31,7 @@ import io.paritytech.polkadotapp.feature_products_api.presentation.widget.JsImag
 import io.paritytech.polkadotapp.feature_products_api.presentation.widget.JsWidgetRenderer
 import io.paritytech.polkadotapp.feature_products_api.presentation.widget.LocalJsImageResolver
 import io.paritytech.polkadotapp.feature_products_api.presentation.widget.PocketCardSize
+import io.paritytech.polkadotapp.feature_products_api.presentation.widget.PocketCardTheme
 import io.paritytech.polkadotapp.feature_products_impl.presentation.pocketAddCard.PocketAddCardContract
 import io.paritytech.polkadotapp.feature_products_impl.presentation.pocketAddCard.PocketAddCardTestTags
 import io.paritytech.polkadotapp.feature_products_impl.presentation.pocketAddCard.PocketAddCardUiState
@@ -124,17 +125,19 @@ private fun OfferContent(offer: PocketAddCardUiState) {
 
     VerticalSpacer { mediumIncreased }
 
-    PolkadotSurface(
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(PocketCardSize.HEIGHT)
-            .testTag(PocketAddCardTestTags.PREVIEW),
-        shape = PolkadotTheme.shapes.large,
-        color = PolkadotTheme.colors.bg.surface.container,
-    ) {
-        // The face is product-authored and inert here: the card is not in the collection yet.
-        CompositionLocalProvider(LocalJsImageResolver provides offer.imageResolver) {
-            JsWidgetRenderer(widget = offer.face, jsEventHandler = { _, _ -> })
+    PocketCardTheme {
+        PolkadotSurface(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(PocketCardSize.HEIGHT)
+                .testTag(PocketAddCardTestTags.PREVIEW),
+            shape = PolkadotTheme.shapes.large,
+            color = PolkadotTheme.colors.bg.surface.container,
+        ) {
+            // The face is product-authored and inert here: the card is not in the collection yet.
+            CompositionLocalProvider(LocalJsImageResolver provides offer.imageResolver) {
+                JsWidgetRenderer(widget = offer.face, jsEventHandler = { _, _ -> })
+            }
         }
     }
 
