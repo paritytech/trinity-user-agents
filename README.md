@@ -183,6 +183,11 @@ Native Chat wire, cryptography, attachment codecs, and secret-zeroization change
 Distributing the runtime also requires the exact modified Corresponding Source, not only the base repository URLs in the
 notices.
 
+The [background receiving adapter](js/packages/truapi-host/README.md#durable-browser-receiving)
+keeps relay revocation and synchronization acknowledgements scoped to the full
+receiving authority. Retained records from a previous account or verified artifact
+cannot revoke the current enrollment.
+
 The [permission model](docs/rfcs/0002-permission-model.md) separates outbound domain access from `OpenUrl` external
 navigation and requires `Notifications` for push delivery. Hosts preserve the user's `AllowOnce`, `AllowAlways`, or
 `Deny` choice; Rust owns one-use grants for Rust-backed executions. Android permission prompts belong to one request and

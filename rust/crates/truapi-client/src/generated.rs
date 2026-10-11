@@ -5,7 +5,7 @@
 use super::*;
 
 /// Fingerprint of the generated wire contract.
-pub const TRUAPI_WIRE_SCHEMA_HASH: &str = "03b3b9bb1b82806c";
+pub const TRUAPI_WIRE_SCHEMA_HASH: &str = "ba82d1d4d20ed18f";
 
 /// `account_connection_status_subscribe` method marker.
 pub struct AccountConnectionStatusSubscribe;
@@ -1438,6 +1438,226 @@ impl RequestMethod for NotificationsCancelPushNotification {
     const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
 }
 
+/// `notifications_activation_events` method marker.
+pub struct NotificationsActivationEvents;
+impl NotificationsActivationEvents {
+    /// Canonical metadata and frame ids for this method.
+    pub const DESCRIPTOR: MethodDescriptor = MethodDescriptor {
+        service: "Notifications",
+        method: "activation_events",
+        wire_name: "notifications_activation_events",
+        request_type: "truapi::versioned::notifications::NotificationActivationEventsRequest",
+        response_type: "truapi::versioned::notifications::NotificationActivationEventsResponse",
+        error_type: Some("truapi::versioned::notifications::NotificationActivationEventsError"),
+        kind: MethodKind::Request,
+        direction: Direction::ProductToHost,
+        required_execution: None,
+        wire: MethodWire::Request(MethodIds {
+            trait_id: 8,
+            method_id: 8,
+        }),
+    };
+}
+impl RequestMethod for NotificationsActivationEvents {
+    type Request = truapi::versioned::notifications::NotificationActivationEventsRequest;
+    type Response = truapi::versioned::notifications::NotificationActivationEventsResponse;
+    type Error = truapi::versioned::notifications::NotificationActivationEventsError;
+    const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
+}
+
+/// `notifications_acknowledge_activation` method marker.
+pub struct NotificationsAcknowledgeActivation;
+impl NotificationsAcknowledgeActivation {
+    /// Canonical metadata and frame ids for this method.
+    pub const DESCRIPTOR: MethodDescriptor = MethodDescriptor {
+        service: "Notifications",
+        method: "acknowledge_activation",
+        wire_name: "notifications_acknowledge_activation",
+        request_type: "truapi::versioned::notifications::NotificationActivationAcknowledgeRequest",
+        response_type: "truapi::versioned::notifications::NotificationActivationAcknowledgeResponse",
+        error_type: Some(
+            "truapi::versioned::notifications::NotificationActivationAcknowledgeError",
+        ),
+        kind: MethodKind::Request,
+        direction: Direction::ProductToHost,
+        required_execution: None,
+        wire: MethodWire::Request(MethodIds {
+            trait_id: 8,
+            method_id: 9,
+        }),
+    };
+}
+impl RequestMethod for NotificationsAcknowledgeActivation {
+    type Request = truapi::versioned::notifications::NotificationActivationAcknowledgeRequest;
+    type Response = truapi::versioned::notifications::NotificationActivationAcknowledgeResponse;
+    type Error = truapi::versioned::notifications::NotificationActivationAcknowledgeError;
+    const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
+}
+
+/// `notifications_receiver_status` method marker.
+pub struct NotificationsReceiverStatus;
+impl NotificationsReceiverStatus {
+    /// Canonical metadata and frame ids for this method.
+    pub const DESCRIPTOR: MethodDescriptor = MethodDescriptor {
+        service: "Notifications",
+        method: "receiver_status",
+        wire_name: "notifications_receiver_status",
+        request_type: "truapi::versioned::notifications::HostNotificationReceiverStatusRequest",
+        response_type: "truapi::versioned::notifications::HostNotificationReceiverStatusResponse",
+        error_type: Some("truapi::versioned::notifications::HostNotificationReceivingError"),
+        kind: MethodKind::Request,
+        direction: Direction::ProductToHost,
+        required_execution: None,
+        wire: MethodWire::Request(MethodIds {
+            trait_id: 8,
+            method_id: 2,
+        }),
+    };
+}
+impl RequestMethod for NotificationsReceiverStatus {
+    type Request = truapi::versioned::notifications::HostNotificationReceiverStatusRequest;
+    type Response = truapi::versioned::notifications::HostNotificationReceiverStatusResponse;
+    type Error = truapi::versioned::notifications::HostNotificationReceivingError;
+    const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
+}
+
+/// `notifications_replace_receiver` method marker.
+pub struct NotificationsReplaceReceiver;
+impl NotificationsReplaceReceiver {
+    /// Canonical metadata and frame ids for this method.
+    pub const DESCRIPTOR: MethodDescriptor = MethodDescriptor {
+        service: "Notifications",
+        method: "replace_receiver",
+        wire_name: "notifications_replace_receiver",
+        request_type: "truapi::versioned::notifications::HostNotificationReplaceReceiverRequest",
+        response_type: "truapi::versioned::notifications::HostNotificationReplaceReceiverResponse",
+        error_type: Some("truapi::versioned::notifications::HostNotificationReceivingError"),
+        kind: MethodKind::Request,
+        direction: Direction::ProductToHost,
+        required_execution: None,
+        wire: MethodWire::Request(MethodIds {
+            trait_id: 8,
+            method_id: 3,
+        }),
+    };
+}
+impl RequestMethod for NotificationsReplaceReceiver {
+    type Request = truapi::versioned::notifications::HostNotificationReplaceReceiverRequest;
+    type Response = truapi::versioned::notifications::HostNotificationReplaceReceiverResponse;
+    type Error = truapi::versioned::notifications::HostNotificationReceivingError;
+    const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
+}
+
+/// `notifications_disable_receiver` method marker.
+pub struct NotificationsDisableReceiver;
+impl NotificationsDisableReceiver {
+    /// Canonical metadata and frame ids for this method.
+    pub const DESCRIPTOR: MethodDescriptor = MethodDescriptor {
+        service: "Notifications",
+        method: "disable_receiver",
+        wire_name: "notifications_disable_receiver",
+        request_type: "truapi::versioned::notifications::HostNotificationDisableReceiverRequest",
+        response_type: "truapi::versioned::notifications::HostNotificationDisableReceiverResponse",
+        error_type: Some("truapi::versioned::notifications::HostNotificationReceivingError"),
+        kind: MethodKind::Request,
+        direction: Direction::ProductToHost,
+        required_execution: None,
+        wire: MethodWire::Request(MethodIds {
+            trait_id: 8,
+            method_id: 4,
+        }),
+    };
+}
+impl RequestMethod for NotificationsDisableReceiver {
+    type Request = truapi::versioned::notifications::HostNotificationDisableReceiverRequest;
+    type Response = truapi::versioned::notifications::HostNotificationDisableReceiverResponse;
+    type Error = truapi::versioned::notifications::HostNotificationReceivingError;
+    const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
+}
+
+/// `notifications_record_receipt` method marker.
+pub struct NotificationsRecordReceipt;
+impl NotificationsRecordReceipt {
+    /// Canonical metadata and frame ids for this method.
+    pub const DESCRIPTOR: MethodDescriptor = MethodDescriptor {
+        service: "Notifications",
+        method: "record_receipt",
+        wire_name: "notifications_record_receipt",
+        request_type: "truapi::versioned::notifications::HostNotificationRecordReceiptRequest",
+        response_type: "truapi::versioned::notifications::HostNotificationRecordReceiptResponse",
+        error_type: Some("truapi::versioned::notifications::HostNotificationReceivingError"),
+        kind: MethodKind::Request,
+        direction: Direction::ProductToHost,
+        required_execution: None,
+        wire: MethodWire::Request(MethodIds {
+            trait_id: 8,
+            method_id: 5,
+        }),
+    };
+}
+impl RequestMethod for NotificationsRecordReceipt {
+    type Request = truapi::versioned::notifications::HostNotificationRecordReceiptRequest;
+    type Response = truapi::versioned::notifications::HostNotificationRecordReceiptResponse;
+    type Error = truapi::versioned::notifications::HostNotificationReceivingError;
+    const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
+}
+
+/// `notifications_receiver_events` method marker.
+pub struct NotificationsReceiverEvents;
+impl NotificationsReceiverEvents {
+    /// Canonical metadata and frame ids for this method.
+    pub const DESCRIPTOR: MethodDescriptor = MethodDescriptor {
+        service: "Notifications",
+        method: "receiver_events",
+        wire_name: "notifications_receiver_events",
+        request_type: "truapi::versioned::notifications::HostNotificationReceiverEventsRequest",
+        response_type: "truapi::versioned::notifications::HostNotificationReceiverEventsResponse",
+        error_type: Some("truapi::versioned::notifications::HostNotificationReceivingError"),
+        kind: MethodKind::Request,
+        direction: Direction::ProductToHost,
+        required_execution: None,
+        wire: MethodWire::Request(MethodIds {
+            trait_id: 8,
+            method_id: 6,
+        }),
+    };
+}
+impl RequestMethod for NotificationsReceiverEvents {
+    type Request = truapi::versioned::notifications::HostNotificationReceiverEventsRequest;
+    type Response = truapi::versioned::notifications::HostNotificationReceiverEventsResponse;
+    type Error = truapi::versioned::notifications::HostNotificationReceivingError;
+    const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
+}
+
+/// `notifications_acknowledge_receiver_event` method marker.
+pub struct NotificationsAcknowledgeReceiverEvent;
+impl NotificationsAcknowledgeReceiverEvent {
+    /// Canonical metadata and frame ids for this method.
+    pub const DESCRIPTOR: MethodDescriptor = MethodDescriptor {
+        service: "Notifications",
+        method: "acknowledge_receiver_event",
+        wire_name: "notifications_acknowledge_receiver_event",
+        request_type: "truapi::versioned::notifications::HostNotificationAcknowledgeReceiverEventRequest",
+        response_type: "truapi::versioned::notifications::HostNotificationAcknowledgeReceiverEventResponse",
+        error_type: Some("truapi::versioned::notifications::HostNotificationReceivingError"),
+        kind: MethodKind::Request,
+        direction: Direction::ProductToHost,
+        required_execution: None,
+        wire: MethodWire::Request(MethodIds {
+            trait_id: 8,
+            method_id: 7,
+        }),
+    };
+}
+impl RequestMethod for NotificationsAcknowledgeReceiverEvent {
+    type Request =
+        truapi::versioned::notifications::HostNotificationAcknowledgeReceiverEventRequest;
+    type Response =
+        truapi::versioned::notifications::HostNotificationAcknowledgeReceiverEventResponse;
+    type Error = truapi::versioned::notifications::HostNotificationReceivingError;
+    const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
+}
+
 /// `payment_balance_subscribe` method marker.
 pub struct PaymentBalanceSubscribe;
 impl PaymentBalanceSubscribe {
@@ -2467,6 +2687,14 @@ pub const APP_METHODS: &[MethodDescriptor] = &[
     LocaleLocalizeTimestamps::DESCRIPTOR,
     NotificationsSendPushNotification::DESCRIPTOR,
     NotificationsCancelPushNotification::DESCRIPTOR,
+    NotificationsActivationEvents::DESCRIPTOR,
+    NotificationsAcknowledgeActivation::DESCRIPTOR,
+    NotificationsReceiverStatus::DESCRIPTOR,
+    NotificationsReplaceReceiver::DESCRIPTOR,
+    NotificationsDisableReceiver::DESCRIPTOR,
+    NotificationsRecordReceipt::DESCRIPTOR,
+    NotificationsReceiverEvents::DESCRIPTOR,
+    NotificationsAcknowledgeReceiverEvent::DESCRIPTOR,
     PaymentBalanceSubscribe::DESCRIPTOR,
     PaymentRequest::DESCRIPTOR,
     PaymentStatusSubscribe::DESCRIPTOR,
@@ -2549,6 +2777,14 @@ pub const WIDGET_METHODS: &[MethodDescriptor] = &[
     LocaleLocalizeTimestamps::DESCRIPTOR,
     NotificationsSendPushNotification::DESCRIPTOR,
     NotificationsCancelPushNotification::DESCRIPTOR,
+    NotificationsActivationEvents::DESCRIPTOR,
+    NotificationsAcknowledgeActivation::DESCRIPTOR,
+    NotificationsReceiverStatus::DESCRIPTOR,
+    NotificationsReplaceReceiver::DESCRIPTOR,
+    NotificationsDisableReceiver::DESCRIPTOR,
+    NotificationsRecordReceipt::DESCRIPTOR,
+    NotificationsReceiverEvents::DESCRIPTOR,
+    NotificationsAcknowledgeReceiverEvent::DESCRIPTOR,
     PaymentBalanceSubscribe::DESCRIPTOR,
     PaymentRequest::DESCRIPTOR,
     PaymentStatusSubscribe::DESCRIPTOR,
@@ -2635,6 +2871,14 @@ pub const WORKER_METHODS: &[MethodDescriptor] = &[
     LocaleLocalizeTimestamps::DESCRIPTOR,
     NotificationsSendPushNotification::DESCRIPTOR,
     NotificationsCancelPushNotification::DESCRIPTOR,
+    NotificationsActivationEvents::DESCRIPTOR,
+    NotificationsAcknowledgeActivation::DESCRIPTOR,
+    NotificationsReceiverStatus::DESCRIPTOR,
+    NotificationsReplaceReceiver::DESCRIPTOR,
+    NotificationsDisableReceiver::DESCRIPTOR,
+    NotificationsRecordReceipt::DESCRIPTOR,
+    NotificationsReceiverEvents::DESCRIPTOR,
+    NotificationsAcknowledgeReceiverEvent::DESCRIPTOR,
     PaymentBalanceSubscribe::DESCRIPTOR,
     PaymentRequest::DESCRIPTOR,
     PaymentStatusSubscribe::DESCRIPTOR,

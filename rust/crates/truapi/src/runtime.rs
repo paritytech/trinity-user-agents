@@ -29,6 +29,10 @@ mod native_chat;
 mod pairing_host;
 pub mod product_manifest;
 mod product_subtree;
+/// Durable, host-owned notification registration and activation policy.
+pub mod receiving;
+/// Transport-independent authenticated notification frames.
+pub mod notification_envelope;
 mod renderer;
 mod ring_vrf_registry;
 /// Role-neutral runtime services shared by product-facing runtimes.

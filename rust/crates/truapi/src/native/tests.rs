@@ -312,6 +312,19 @@ impl HostCallbacks for EventCallbacks {
         self.permission_changes.lock().push(product_id);
     }
 
+    async fn receiver_authority(&self, _: String) -> Result<Option<crate::platform::ReceivingAuthority>, HostRejection> {
+        Ok(None)
+    }
+    async fn receiver_consent(&self, _: crate::platform::ReceivingAuthority, _: Vec<crate::latest::ReceivingWatch>) -> Result<bool, HostRejection> {
+        Err(HostRejection::Rejected { reason: "background receiving unsupported".into() })
+    }
+    async fn receiver_changed(&self) -> Result<(), HostRejection> {
+        Err(HostRejection::Rejected { reason: "background receiving unsupported".into() })
+    }
+    async fn receiver_command(&self, _: String, _: u8, _: Vec<u8>) -> Result<Option<Vec<u8>>, HostRejection> {
+        Ok(None)
+    }
+
     fn on_core_log(&self, marker: String, _detail: String) {
         self.logs.lock().expect("logs mutex poisoned").push(marker);
     }
@@ -339,6 +352,12 @@ impl HostCallbacks for EventCallbacks {
     }
     fn cancel_notification(&self, _id: u32) -> Result<(), HostRejection> {
         Ok(())
+    }
+    async fn activation_events(&self) -> Result<Vec<v01::NotificationActivation>, HostRejection> {
+        Err(HostRejection::Rejected { reason: "notification activation unsupported".into() })
+    }
+    async fn acknowledge_activation(&self, _sequence: u64) -> Result<(), HostRejection> {
+        Err(HostRejection::Rejected { reason: "notification activation unsupported".into() })
     }
     async fn device_permission(
         &self,
@@ -1992,6 +2011,19 @@ fn start_ws_bridge_twice_returns_already_running() {
         fn permission_authorizations_changed(&self, _product_id: String) {
             panic!("bridge startup must not change permissions");
         }
+        async fn receiver_authority(&self, _: String) -> Result<Option<crate::platform::ReceivingAuthority>, HostRejection> {
+            Ok(None)
+        }
+        async fn receiver_consent(&self, _: crate::platform::ReceivingAuthority, _: Vec<crate::latest::ReceivingWatch>) -> Result<bool, HostRejection> {
+            Err(HostRejection::Rejected { reason: "background receiving unsupported".into() })
+        }
+        async fn receiver_changed(&self) -> Result<(), HostRejection> {
+            Err(HostRejection::Rejected { reason: "background receiving unsupported".into() })
+        }
+        async fn receiver_command(&self, _: String, _: u8, _: Vec<u8>) -> Result<Option<Vec<u8>>, HostRejection> {
+            Ok(None)
+        }
+
         async fn confirm_permission(
             &self,
             _review: UserConfirmationReview,
@@ -2013,6 +2045,12 @@ fn start_ws_bridge_twice_returns_already_running() {
         }
         fn cancel_notification(&self, _id: u32) -> Result<(), HostRejection> {
             Ok(())
+        }
+        async fn activation_events(&self) -> Result<Vec<v01::NotificationActivation>, HostRejection> {
+            Err(HostRejection::Rejected { reason: "notification activation unsupported".into() })
+        }
+        async fn acknowledge_activation(&self, _sequence: u64) -> Result<(), HostRejection> {
+            Err(HostRejection::Rejected { reason: "notification activation unsupported".into() })
         }
         async fn device_permission(
             &self,
@@ -2187,6 +2225,19 @@ fn pending_permission_decision_does_not_stall_bridge() {
         fn permission_authorizations_changed(&self, product_id: String) {
             self.permission_changes.lock().push(product_id);
         }
+        async fn receiver_authority(&self, _: String) -> Result<Option<crate::platform::ReceivingAuthority>, HostRejection> {
+            Ok(None)
+        }
+        async fn receiver_consent(&self, _: crate::platform::ReceivingAuthority, _: Vec<crate::latest::ReceivingWatch>) -> Result<bool, HostRejection> {
+            Err(HostRejection::Rejected { reason: "background receiving unsupported".into() })
+        }
+        async fn receiver_changed(&self) -> Result<(), HostRejection> {
+            Err(HostRejection::Rejected { reason: "background receiving unsupported".into() })
+        }
+        async fn receiver_command(&self, _: String, _: u8, _: Vec<u8>) -> Result<Option<Vec<u8>>, HostRejection> {
+            Ok(None)
+        }
+
         async fn confirm_permission(
             &self,
             _review: UserConfirmationReview,
@@ -2208,6 +2259,12 @@ fn pending_permission_decision_does_not_stall_bridge() {
         }
         fn cancel_notification(&self, _id: u32) -> Result<(), HostRejection> {
             Ok(())
+        }
+        async fn activation_events(&self) -> Result<Vec<v01::NotificationActivation>, HostRejection> {
+            Err(HostRejection::Rejected { reason: "notification activation unsupported".into() })
+        }
+        async fn acknowledge_activation(&self, _sequence: u64) -> Result<(), HostRejection> {
+            Err(HostRejection::Rejected { reason: "notification activation unsupported".into() })
         }
         async fn device_permission(
             &self,

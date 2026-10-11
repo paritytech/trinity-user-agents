@@ -187,6 +187,11 @@ pub struct PairingHostRuntime {
 }
 
 impl PairingHostRuntime {
+    /// Host-only receiving engine, independent of product execution lifetime.
+    pub fn receiving(&self) -> &Arc<crate::runtime::receiving::ReceivingService> {
+        &self.services.receiving
+    }
+
     /// Keep preimage submissions in the core instead of the Bulletin chain.
     ///
     /// For test hosts only, with the `test-host` feature enabled.
@@ -360,12 +365,22 @@ impl PairingHostRuntime {
     ///
     /// The next product login request generates a fresh pairing identity and
     /// presents a new deeplink suitable for another signing host.
+    /// Local receiving revocation is attempted first; even if persistence fails,
+    /// the captured session is closed and a warning is returned.
     #[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.logout"))]
     pub async fn logout(&self) -> Result<(), v01::GenericError> {
-        self.pairing_host
-            .logout_and_reset_pairing()
-            .await
-            .map_err(|reason| v01::GenericError { reason })
+        let revocation = self.services.receiving.revoke_all().await;
+        let logout = self.pairing_host.logout_and_reset_pairing().await;
+        if revocation.is_err() {
+            return Err(v01::GenericError {
+                reason: if logout.is_ok() {
+                    "logged out, but background receiving could not be durably revoked and may remain enabled"
+                } else {
+                    "background receiving could not be durably revoked and may remain enabled; logout reset also failed"
+                }.to_string(),
+            });
+        }
+        logout.map_err(|reason| v01::GenericError { reason })
     }
 
     /// Clear one product's capability state while preserving the active
@@ -603,6 +618,11 @@ pub struct SigningHostRuntime {
 }
 
 impl SigningHostRuntime {
+    /// Host-only receiving engine, independent of product execution lifetime.
+    pub fn receiving(&self) -> &Arc<crate::runtime::receiving::ReceivingService> {
+        &self.services.receiving
+    }
+
     /// Answer resource allocation as granted without performing it.
     ///
     /// For test hosts only, with the `test-host` feature enabled.
