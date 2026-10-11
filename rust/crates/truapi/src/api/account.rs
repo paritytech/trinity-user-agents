@@ -313,12 +313,17 @@ pub trait Account: Send + Sync {
     /// persist every page before committing its migration.
     ///
     /// Method 11 (the former raw-crypto interface) and method 12's former V1 actor
-    /// operations are retired, not forwarded. This boundary uses V2 payloads.
+    /// operations are retired, not forwarded. Ordinary outer V2 requests retain
+    /// their original response bytes. Outer V3 adds `PrepareWithNotification`,
+    /// `NotificationForMessage` and `NotificationWatches`, with a response wrapping
+    /// the ordinary `chat` state plus optional `wakes` and authenticated `watches`.
+    /// Submit wakes only after the ordinary encrypted statement is accepted.
+    /// These operations neither enroll receiving nor grant notification consent.
     ///
     /// ```ts
     /// const result = await truapi.account.deviceChat({ tag: "Initialize" });
     /// assert(result.isOk(), "deviceChat failed:", result);
-    /// console.log("Host-owned Chat device:", result.value.device);
+    /// console.log("Host-owned Chat device:", result.value.chat.device);
     /// ```
     #[wire(id = 12)]
     async fn product_device_chat(

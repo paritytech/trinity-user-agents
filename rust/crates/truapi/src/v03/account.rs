@@ -86,6 +86,29 @@ pub enum HostProductDeviceChatRequest {
     /// Read configured raw chain units per native Coinage cent, without spending.
     #[codec(index = 12)]
     PaymentDenomination,
+    /// Prepare an ordinary message plus an optional authenticated wake sidecar.
+    /// Consent to receiving is independent; this never enrolls a receiver.
+    #[codec(index = 13)]
+    PrepareWithNotification {
+        /// Host-authenticated recipient identity.
+        peer_identity: [u8; 32],
+        /// Only established device-route user messages produce wakes.
+        route: HostNativeChatRoute,
+        /// Unchanged native Chat plaintext.
+        plaintext: Vec<u8>,
+    },
+    /// Return notification filters derived solely from authenticated active peers.
+    #[codec(index = 14)]
+    NotificationWatches,
+    /// Prepare an optional wake for a retained host-owned new file/payment message.
+    /// Does not send, select files, spend, or accept caller-supplied ciphertext.
+    #[codec(index = 15)]
+    NotificationForMessage {
+        /// Authenticated recipient of the retained outgoing message.
+        peer_identity: [u8; 32],
+        /// Exact native transport request identifier returned in prepared metadata.
+        request_id: String,
+    },
 }
 
 impl fmt::Debug for HostProductDeviceChatRequest {
@@ -94,6 +117,11 @@ impl fmt::Debug for HostProductDeviceChatRequest {
             Self::Initialize => f.write_str("Initialize"),
             Self::Bind { username } => f.debug_struct("Bind").field("username", username).finish(),
             Self::Prepare {
+                peer_identity,
+                route,
+                ..
+            }
+            | Self::PrepareWithNotification {
                 peer_identity,
                 route,
                 ..
@@ -151,13 +179,20 @@ impl fmt::Debug for HostProductDeviceChatRequest {
                 .field("cursor", cursor)
                 .finish(),
             Self::PaymentDenomination => f.write_str("PaymentDenomination"),
+            Self::NotificationWatches => f.write_str("NotificationWatches"),
+            Self::NotificationForMessage { peer_identity, request_id } => f
+                .debug_struct("NotificationForMessage")
+                .field("peer_identity", peer_identity)
+                .field("request_id", request_id)
+                .finish(),
         }
     }
 }
 
 impl Drop for HostProductDeviceChatRequest {
     fn drop(&mut self) {
-        if let Self::Prepare { plaintext, .. } = self {
+        if let Self::Prepare { plaintext, .. }
+            | Self::PrepareWithNotification { plaintext, .. } = self {
             plaintext.zeroize();
         }
     }
@@ -291,4 +326,26 @@ pub struct HostProductDeviceChatResponse {
     /// Configured raw chain units per native Coinage cent, only when requested.
     /// This is positive denomination metadata, never a balance or fiat price.
     pub coinage_cents_unit: Option<u128>,
+}
+
+/// Optional signed wake, submitted only after the corresponding Chat statement.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+pub struct HostNativeChatWake {
+    /// Authenticated recipient identity.
+    pub peer_identity: [u8; 32],
+    /// Original Chat request identifier, not a delivery receipt.
+    pub request_id: String,
+    /// Separate authenticated Gordian carrier; never replaces Chat ciphertext.
+    pub statement: SignedStatement,
+}
+
+/// Additive response for notification-aware operations only.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+pub struct HostNativeChatNotificationResponse {
+    /// Unchanged native Chat response.
+    pub chat: HostProductDeviceChatResponse,
+    /// Optional wakes; failure to prepare one never fails ordinary Chat.
+    pub wakes: Vec<HostNativeChatWake>,
+    /// Exact host-derived peer-device filters, without guest-chosen signer keys.
+    pub watches: Vec<crate::v01::ReceivingWatch>,
 }

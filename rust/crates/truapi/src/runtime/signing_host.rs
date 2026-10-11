@@ -1574,7 +1574,7 @@ impl ProductAuthority for SigningHost {
         _cx: &CallContext,
         session: &AuthoritySession,
         request: ProductDeviceChatAuthorityRequest,
-    ) -> Result<truapi::latest::HostProductDeviceChatResponse, ProductDeviceChatAuthorityError>
+    ) -> Result<truapi::versioned::account::HostProductDeviceChatResponse, ProductDeviceChatAuthorityError>
     {
         let (_, activation_generation) = self.require_current_session(session)?;
         let calling_product_id = normalize_product_identifier(&request.calling_product_id)
@@ -1599,7 +1599,7 @@ impl ProductAuthority for SigningHost {
         }
         let context = self.native_chat_context(session)?;
         self.native_chat
-            .execute(context, calling_product_id, request.operation)
+            .execute_response(context, calling_product_id, request.operation)
             .await
             .map_err(ProductDeviceChatAuthorityError::Domain)
     }
@@ -4917,11 +4917,11 @@ mod tests {
             let HostProductDeviceChatResponse::V2(first) = runtime
                 .product_device_chat(&cx, initialize.clone())
                 .await
-                .unwrap();
+                .unwrap() else { panic!("legacy operation must retain V2 response") };
             let HostProductDeviceChatResponse::V2(second) = runtime
                 .product_device_chat(&cx, initialize.clone())
                 .await
-                .unwrap();
+                .unwrap() else { panic!("legacy operation must retain V2 response") };
             assert_eq!(first.device, second.device);
             assert_eq!(first.device.product_account.dot_ns_identifier, "myapp.dot");
             assert_eq!(platform.chat_authority_reviews.lock().len(), 1);
@@ -5219,9 +5219,9 @@ mod tests {
                 truapi::latest::HostProductDeviceChatRequest::Initialize,
             );
             let HostProductDeviceChatResponse::V2(first) =
-                sso_chat(&service, initialize.clone()).await.unwrap();
+                sso_chat(&service, initialize.clone()).await.unwrap() else { panic!("legacy operation must retain V2 response") };
             let HostProductDeviceChatResponse::V2(second) =
-                sso_chat(&service, initialize.clone()).await.unwrap();
+                sso_chat(&service, initialize.clone()).await.unwrap() else { panic!("legacy operation must retain V2 response") };
             assert_eq!(first.device, second.device);
             assert_eq!(first.device.product_account.dot_ns_identifier, "myapp.dot");
             assert_eq!(platform.chat_authority_reviews.lock().len(), 1);
@@ -5348,7 +5348,7 @@ mod tests {
             let HostProductDeviceChatResponse::V2(approved) =
                 sso_chat_as(&service, "approved.dot", initialize.clone())
                     .await
-                    .unwrap();
+                    .unwrap() else { panic!("legacy operation must retain V2 response") };
             assert_eq!(
                 approved.device.product_account.dot_ns_identifier,
                 "approved.dot"
@@ -5356,7 +5356,7 @@ mod tests {
             let HostProductDeviceChatResponse::V2(other) =
                 sso_chat_as(&service, "other.dot", initialize)
                     .await
-                    .unwrap();
+                    .unwrap() else { panic!("legacy operation must retain V2 response") };
             assert_eq!(other.device.product_account.dot_ns_identifier, "other.dot");
             assert_ne!(approved.device.account_id, other.device.account_id);
             assert_eq!(

@@ -261,6 +261,10 @@ fn attachment_preparation_retries_exact_upload_and_restores_download_custody() {
         let prepared = &view.prepared[0];
         assert_eq!(prepared.peer_identity, identity.account);
         assert!(prepared.requires_ack);
+        let wake = actor.retained_notification(&resumed.context, identity.account, &prepared.request_id)
+            .await.unwrap().expect("new attachment has an optional wake");
+        super::super::notifications::assert_wake(&wake, &resumed.context);
+        assert_ne!(wake.statement.channel, prepared.statement.channel);
         // Upload completion returns opaque native ciphertext for guest delivery;
         // the unavailable Chat network does not participate in file progress.
         assert_eq!(

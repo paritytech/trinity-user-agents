@@ -62,7 +62,7 @@ use crate::platform::{
 use futures::StreamExt;
 use tracing::{instrument, warn};
 use truapi::versioned::account::{HostRequestLoginError, HostRequestLoginResponse};
-use truapi::{CallContext, CallError, latest, v01};
+use truapi::{CallContext, CallError, v01};
 use zeroize::Zeroizing;
 
 use super::ring_vrf_registry::{RingVrfRegistryStore, validate_owner_listing};
@@ -2510,7 +2510,7 @@ impl PairingHost {
         cx: &CallContext,
         session: &AuthoritySession,
         request: ProductDeviceChatAuthorityRequest,
-    ) -> Result<latest::HostProductDeviceChatResponse, ProductDeviceChatAuthorityError> {
+    ) -> Result<truapi::versioned::account::HostProductDeviceChatResponse, ProductDeviceChatAuthorityError> {
         let private_session = self
             .current_private_session(session)
             .map_err(|_| ProductDeviceChatAuthorityError::Disconnected)?;
@@ -2823,7 +2823,7 @@ impl ProductAuthority for PairingHost {
         cx: &CallContext,
         session: &AuthoritySession,
         request: ProductDeviceChatAuthorityRequest,
-    ) -> Result<latest::HostProductDeviceChatResponse, ProductDeviceChatAuthorityError> {
+    ) -> Result<truapi::versioned::account::HostProductDeviceChatResponse, ProductDeviceChatAuthorityError> {
         PairingHost::product_device_chat(self, cx, session, request).await
     }
 

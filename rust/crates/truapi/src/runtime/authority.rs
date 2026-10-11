@@ -16,7 +16,7 @@ use truapi::latest::{
     HostAccountRegisterRingVrfKeyResponse, HostAccountRingVrfSignRequest,
     HostAccountRingVrfSignResponse, HostAccountSignVrfError, HostAccountSignVrfRequest,
     HostCreateTransactionResponse, HostProductDeviceChatError, HostProductDeviceChatRequest,
-    HostProductDeviceChatResponse, HostRequestResourceAllocationRequest,
+    HostRequestResourceAllocationRequest,
     HostRequestResourceAllocationResponse, HostSignPayloadRequest, HostSignPayloadResponse,
     HostSignPayloadWithLegacyAccountRequest, HostSignRawRequest,
     HostSignRawWithLegacyAccountRequest, LegacyAccountTxPayload, ProductAccountId,
@@ -308,6 +308,9 @@ pub(crate) fn chat_requires_preimage_submit(operation: &HostProductDeviceChatReq
         HostProductDeviceChatRequest::Initialize
         | HostProductDeviceChatRequest::Bind { .. }
         | HostProductDeviceChatRequest::Prepare { .. }
+        | HostProductDeviceChatRequest::PrepareWithNotification { .. }
+        | HostProductDeviceChatRequest::NotificationWatches
+        | HostProductDeviceChatRequest::NotificationForMessage { .. }
         | HostProductDeviceChatRequest::Open { .. }
         | HostProductDeviceChatRequest::SendPayment { .. }
         | HostProductDeviceChatRequest::PaymentStatus { .. }
@@ -633,7 +636,7 @@ pub trait ProductAuthority: Send + Sync {
         cx: &CallContext,
         session: &AuthoritySession,
         request: ProductDeviceChatAuthorityRequest,
-    ) -> Result<HostProductDeviceChatResponse, ProductDeviceChatAuthorityError>;
+    ) -> Result<truapi::versioned::account::HostProductDeviceChatResponse, ProductDeviceChatAuthorityError>;
 
     /// Credit caller-supplied incoming funding; no outgoing-spend or Chat grant.
     async fn payment_top_up(

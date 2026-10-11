@@ -5,6 +5,7 @@
 mod contacts;
 mod hop_history;
 mod native_wallet;
+mod notifications;
 
 use super::*;
 use crate::platform::CoreStorageKey;

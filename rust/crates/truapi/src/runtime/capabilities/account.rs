@@ -415,7 +415,13 @@ impl Account for ProductRuntimeHost {
         request: HostProductDeviceChatRequest,
     ) -> Result<HostProductDeviceChatResponse, CallError<HostProductDeviceChatError>> {
         let operation = match request {
-            HostProductDeviceChatRequest::V2(operation) => operation,
+            HostProductDeviceChatRequest::V2(
+                latest::HostProductDeviceChatRequest::PrepareWithNotification { .. }
+                | latest::HostProductDeviceChatRequest::NotificationWatches
+                | latest::HostProductDeviceChatRequest::NotificationForMessage { .. },
+            ) => return Err(CallError::unavailable()),
+            HostProductDeviceChatRequest::V2(operation)
+            | HostProductDeviceChatRequest::V3(operation) => operation,
             HostProductDeviceChatRequest::V1(_) => {
                 return Err(CallError::unavailable());
             }
@@ -474,7 +480,6 @@ impl Account for ProductRuntimeHost {
                 .product_device_chat(&cx, &session, authority_request),
         )
         .await
-        .map(HostProductDeviceChatResponse::V2)
         .map_err(product_device_chat_authority_error)
     }
 

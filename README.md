@@ -126,6 +126,18 @@ permission is not spending permission: every outgoing main-purse payment require
 retries resume the same recipient/amount operation; incoming batches require durable custody and complete claim plans
 before acknowledgment. Delivery acknowledgment and finalized clearing are separate states.
 
+Native Chat's outer method-12 request/response `V3` adds `PrepareWithNotification`,
+`NotificationForMessage` and `NotificationWatches`; ordinary `V2` calls keep their existing response.
+The Host derives watches from authenticated peer devices and signs a separate opaque v2 sr25519
+wake on a domain-separated channel **and topic**, never exporting device keys or message content.
+Guests submit that optional wake only after the ordinary encrypted statement is accepted.
+Incoming invitations have no authenticated-peer watch and do not receive these alerts.
+Receiving enrollment still requires explicit product/Host/OS consent. Watches expire after seven
+days; the guest must preserve the enrolled expiry and mute policy on background refresh, remove
+revoked devices, and require explicit enrollment for renewed or added authority. The receiver's
+256-watch limit fails closed rather than silently dropping peers. These capabilities do not
+provision a relay, grant browser permission, or establish OS delivery guarantees.
+
 Signing hosts can use the host-private `getNativeChatContacts()` directory for trusted Contacts UI. It restores
 authenticated, ready peers from authorized native Chat products, scopes them to the active wallet and People chain,
 and never exposes a product or SSO directory method. Actors opened on this version are durably indexed; historical

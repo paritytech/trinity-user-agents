@@ -4,6 +4,8 @@
 
 mod files;
 mod history;
+mod notifications;
+pub use notifications::notification_message;
 mod receive;
 #[cfg(test)]
 mod tests;
@@ -15,6 +17,7 @@ use std::sync::{
     atomic::{AtomicBool, AtomicUsize, Ordering},
 };
 use truapi::latest::*;
+use truapi::latest::HostNativeChatStateResponse as HostProductDeviceChatResponse;
 use truapi_chat_v2 as wire;
 use zeroize::{Zeroize, Zeroizing};
 

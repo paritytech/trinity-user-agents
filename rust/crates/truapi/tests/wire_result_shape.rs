@@ -561,6 +561,60 @@ fn product_device_chat_initialize_reaches_authorization_at_method_twelve() {
 }
 
 #[test]
+fn chat_notifications_require_v3_and_keep_authorization() {
+    use truapi::latest::HostProductDeviceChatRequest as Operation;
+
+    let core = make_core();
+    for operation in [
+        Operation::PrepareWithNotification {
+            peer_identity: [1; 32],
+            route: truapi::latest::HostNativeChatRoute::Device,
+            plaintext: vec![],
+        },
+        Operation::NotificationWatches,
+        Operation::NotificationForMessage {
+            peer_identity: [1; 32],
+            request_id: "request".into(),
+        },
+    ] {
+        for request in [
+            account::HostProductDeviceChatRequest::V2(operation.clone()),
+            account::HostProductDeviceChatRequest::V3(operation.clone()),
+        ] {
+            let notification_version =
+                matches!(request, account::HostProductDeviceChatRequest::V3(_));
+            let response = dispatch(
+                &core,
+                ProtocolMessage {
+                    request_id: "p:chat-notification".into(),
+                    payload: Payload {
+                        trait_id: 2,
+                        method_id: 12,
+                        message_type: MESSAGE_TYPE_REQUEST,
+                        value: request.encode(),
+                    },
+                },
+            );
+            let result = Result::<
+                account::HostProductDeviceChatResponse,
+                CallError<account::HostProductDeviceChatError>,
+            >::decode(&mut response.payload.value.as_slice())
+            .expect("notification request must return a canonical result");
+            if notification_version {
+                assert_eq!(
+                    result,
+                    Err(CallError::Domain(account::HostProductDeviceChatError::V1(
+                        truapi::latest::HostProductDeviceChatError::NotConnected,
+                    ))),
+                );
+            } else {
+                assert!(matches!(result, Err(CallError::HostFailure { .. })));
+            }
+        }
+    }
+}
+
+#[test]
 fn retired_high_level_chat_cannot_dispatch_at_method_twelve() {
     let core = make_core();
     let request = account::HostProductDeviceChatRequest::V1(

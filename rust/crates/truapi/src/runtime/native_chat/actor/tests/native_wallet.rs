@@ -260,6 +260,10 @@ fn native_handoff_repairs_lost_commit_after_actor_restart_without_spending_again
             Err(Error::OperationConflict)
         );
         let packet = outgoing(&actor, OutgoingKind::Payment(id)).await;
+        let wake = actor.retained_notification(&restarted.context, identity.account, &packet.request_id)
+            .await.unwrap().expect("accepted new payment has an optional wake");
+        super::notifications::assert_wake(&wake, &restarted.context);
+        assert_eq!(custody.lock().allocations, 1);
         // Even the peer's attempt to rewrap the outgoing ciphertext cannot turn
         // this response into an export of Host-generated bearer keys.
         assert_eq!(
@@ -276,6 +280,8 @@ fn native_handoff_repairs_lost_commit_after_actor_restart_without_spending_again
             )
             .await
             .unwrap();
+        assert!(actor.retained_notification(&restarted.context, identity.account, &packet.request_id)
+            .await.unwrap().is_none(), "acknowledgment never creates another wake");
         assert_eq!(
             wallet.views(&restarted.context, PRODUCT).await.unwrap()[0].state,
             HostNativeChatPaymentState::Delivered

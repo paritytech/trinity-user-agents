@@ -126,6 +126,8 @@ pub mod latest {
     pub use crate::v03::{
         HostNativeChatBinding, HostNativeChatMigrationInvitation, HostNativeChatOpenPage,
         HostNativeChatOpened, HostNativeChatPrepared, HostNativeChatRoute, HostNativeChatStatePage,
+        HostNativeChatWake, HostNativeChatNotificationResponse,
+        HostProductDeviceChatResponse as HostNativeChatStateResponse,
     };
 
     /// Latest payload type of a versioned envelope.

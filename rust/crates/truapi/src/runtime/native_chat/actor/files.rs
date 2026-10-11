@@ -103,6 +103,13 @@ pub(super) struct RichRecord {
     published: bool,
 }
 
+pub(super) fn notification_candidate(state: &State, key: &[u8; 32]) -> bool {
+    state.rich_messages.iter().any(|message| {
+        message.key == *key && !message.incoming && message.published
+            && matches!(message.kind, HostNativeChatRichMessageKind::Message | HostNativeChatRichMessageKind::Reply { .. })
+    })
+}
+
 pub(super) struct IncomingRich {
     messages: Vec<RichRecord>,
     files: Vec<FileRecord>,

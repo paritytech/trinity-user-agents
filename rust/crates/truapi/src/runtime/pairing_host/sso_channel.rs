@@ -594,7 +594,7 @@ impl PairingHost {
         cx: &CallContext,
         session: &SessionInfo,
         request: ProductDeviceChatAuthorityRequest,
-    ) -> Result<latest::HostProductDeviceChatResponse, ProductDeviceChatAuthorityError> {
+    ) -> Result<truapi::versioned::account::HostProductDeviceChatResponse, ProductDeviceChatAuthorityError> {
         let response = self
             .call(
                 cx,
@@ -610,7 +610,6 @@ impl PairingHost {
                 let truapi::versioned::account::HostProductDeviceChatError::V1(error) = error;
                 ProductDeviceChatAuthorityError::Domain(error)
             })?;
-        let truapi::versioned::account::HostProductDeviceChatResponse::V2(response) = response;
         Ok(response)
     }
 

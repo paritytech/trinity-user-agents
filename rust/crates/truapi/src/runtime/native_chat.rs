@@ -24,7 +24,7 @@ use futures::{channel::oneshot, lock::Mutex};
 use parity_scale_codec::{DecodeAll, Encode};
 use truapi::latest::{
     HostProductDeviceChatError as ChatError, HostProductDeviceChatRequest as Request,
-    HostProductDeviceChatResponse as Response,
+    HostNativeChatStateResponse as Response,
 };
 use zeroize::Zeroizing;
 
@@ -109,6 +109,67 @@ pub(crate) struct NativeChatRegistry {
 }
 
 impl NativeChatRegistry {
+    /// Keep legacy response bytes unchanged; only explicit notification calls
+    /// receive the additive response variant.
+    pub(crate) async fn execute_response(
+        &self,
+        context: NativeChatContext,
+        product: String,
+        mut request: Request,
+    ) -> Result<truapi::versioned::account::HostProductDeviceChatResponse, ChatError> {
+        use truapi::versioned::account::HostProductDeviceChatResponse as WireResponse;
+        let (ordinary, notify) = match &mut request {
+            Request::PrepareWithNotification { peer_identity, route, plaintext } => {
+                let notify = actor::notification_message(*route, plaintext);
+                (Some(Request::Prepare {
+                    peer_identity: *peer_identity,
+                    route: *route,
+                    plaintext: std::mem::take(plaintext),
+                }), notify)
+            }
+            Request::NotificationWatches | Request::NotificationForMessage { .. } => (None, None),
+            _ => return self.execute(context, product, request).await.map(WireResponse::V2),
+        };
+        let actor = self.chat(&context, &product).await?;
+        let chat = if let Some(ordinary) = ordinary {
+            self.execute(context.clone(), product, ordinary).await?
+        } else {
+            self.execute(context.clone(), product, Request::Initialize).await?
+        };
+        let mut wakes = Vec::new();
+        if let Some(request_id) = notify {
+            for prepared in chat.prepared.iter().filter(|prepared| {
+                prepared.request_id == request_id
+                    && matches!(&request, Request::PrepareWithNotification { peer_identity, .. }
+                        if *peer_identity == prepared.peer_identity)
+            }) {
+                // Optional wake failure never changes the ordinary preparation.
+                if let Ok(Some(wake)) = actor.notification_wake(&context, prepared).await {
+                    wakes.push(wake);
+                }
+            }
+        }
+        if let Request::NotificationForMessage { peer_identity, request_id } = &request {
+            if let Ok(Some(wake)) = actor.retained_notification(&context, *peer_identity, request_id).await {
+                wakes.push(wake);
+            }
+        }
+        let watches = if matches!(request, Request::NotificationWatches) {
+            actor.notification_watches(&context).await?
+        } else {
+            Vec::new()
+        };
+        context.require_current()?;
+        let mut response = truapi::latest::HostNativeChatNotificationResponse { chat, wakes, watches };
+        if response.encoded_size() >= 1024 * 1024 - 1024 {
+            response.wakes.clear();
+            if response.encoded_size() >= 1024 * 1024 - 1024 {
+                return Err(ChatError::InvalidRequest);
+            }
+        }
+        Ok(WireResponse::V3(response))
+    }
+
     /// Release session secrets without cancelling already-owned durable work.
     /// Store ownership excludes a new allocator until that work ends.
     pub(crate) fn release(&self) {
@@ -581,6 +642,10 @@ impl NativeChatRegistry {
                     chat.commit_migration(&context, *migration_id).await?;
                 }
                 Request::ContinueState { .. } => unreachable!("handled before actor dispatch"),
+                Request::PrepareWithNotification { .. } | Request::NotificationWatches
+                    | Request::NotificationForMessage { .. } => {
+                    return Err(ChatError::InvalidRequest);
+                }
             }
             Ok::<(), ChatError>(())
         }

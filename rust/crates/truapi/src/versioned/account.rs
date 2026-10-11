@@ -40,12 +40,37 @@ truapi_macros::versioned_type! {
     pub enum HostProductDeviceChatRequest {
         /// Retired actor protocol, recognized only to reject at dispatch.
         V1 => v02::HostProductDeviceChatRequest,
-        V2 => v03::HostProductDeviceChatRequest
+        V2 => v03::HostProductDeviceChatRequest,
+        V3 => v03::HostProductDeviceChatRequest
     }
     pub enum HostProductDeviceChatResponse {
-        V2 => v03::HostProductDeviceChatResponse
+        V2 => v03::HostProductDeviceChatResponse,
+        V3 => v03::HostNativeChatNotificationResponse
     }
     pub enum HostProductDeviceChatError { V1 => v02::HostProductDeviceChatError }
+}
+
+impl super::IntoLatest for HostProductDeviceChatResponse {
+    fn into_latest(self) -> Self::Latest {
+        match self {
+            Self::V2(chat) => v03::HostNativeChatNotificationResponse {
+                chat,
+                wakes: Vec::new(),
+                watches: Vec::new(),
+            },
+            Self::V3(response) => response,
+        }
+    }
+}
+
+impl super::FromLatest for HostProductDeviceChatResponse {
+    fn from_latest(response: Self::Latest, target: u8) -> Self {
+        if target >= 3 {
+            Self::V3(response)
+        } else {
+            Self::V2(response.chat)
+        }
+    }
 }
 
 impl core::fmt::Display for HostProductDeviceChatError {

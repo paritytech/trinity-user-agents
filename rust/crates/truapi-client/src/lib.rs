@@ -496,7 +496,7 @@ mod tests {
         );
 
         let response =
-            account::HostProductDeviceChatResponse::V2(dto::HostProductDeviceChatResponse {
+            account::HostProductDeviceChatResponse::V2(dto::HostNativeChatStateResponse {
                 device: dto::HostNativeChatDevice {
                     identity_account_id: [1; 32],
                     identity_chat_public_key: [2; 32],
@@ -545,6 +545,38 @@ mod tests {
                 },
             }),
         );
+    }
+
+    #[test]
+    fn native_chat_notification_requests_use_additive_v3_envelopes() {
+        use truapi::{latest as dto, versioned::account};
+
+        let requests = [
+            (
+                dto::HostProductDeviceChatRequest::PrepareWithNotification {
+                    peer_identity: [1; 32],
+                    route: dto::HostNativeChatRoute::Device,
+                    plaintext: vec![2, 3],
+                },
+                13,
+            ),
+            (dto::HostProductDeviceChatRequest::NotificationWatches, 14),
+            (
+                dto::HostProductDeviceChatRequest::NotificationForMessage {
+                    peer_identity: [1; 32],
+                    request_id: "request".into(),
+                },
+                15,
+            ),
+        ];
+        for (operation, discriminant) in requests {
+            let request = account::HostProductDeviceChatRequest::V3(operation);
+            let encoded = encode_request::<AccountProductDeviceChat>("p:1", &request);
+            assert_eq!(
+                &encoded[..9],
+                &[12, b'p', b':', b'1', 2, 12, 0, 2, discriminant],
+            );
+        }
     }
 
     #[test]

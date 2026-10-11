@@ -662,9 +662,7 @@ impl SigningHostSsoService {
         cx: &SsoRequestContext,
         request: ProductRequest<SsoProductDeviceChatOperation>,
     ) -> ProductDeviceChatResponse {
-        use truapi::versioned::account::{
-            HostProductDeviceChatError as WireError, HostProductDeviceChatResponse as WireResponse,
-        };
+        use truapi::versioned::account::HostProductDeviceChatError as WireError;
 
         self.signing_host
             .require_current_session(&cx.session)
@@ -741,7 +739,6 @@ impl SigningHostSsoService {
                 },
             )
             .await
-            .map(WireResponse::V2)
             .map_err(|error| WireError::V1(error.into()))
     }
 }

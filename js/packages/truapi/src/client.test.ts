@@ -255,7 +255,7 @@ describe("generated client transport", () => {
         expect(toHex(fixture.sent[0])).toBe(toHex(expectedFrame));
     });
 
-    it("keeps V2 methods callable with V1 domain errors", async () => {
+    it("keeps V3 methods callable with V1 domain errors", async () => {
         const fixture = providerFixture();
         const client = createClient(createTransport(fixture.provider));
         const ids = { trait: 2, method: 12 };
@@ -265,7 +265,7 @@ describe("generated client transport", () => {
         );
         const denied = client.account.deviceChat({ tag: "PaymentDenomination" });
         expect(fixture.sent[0]).toEqual(
-            wireFrame("p:1", ids, MESSAGE_TYPE_REQUEST, new Uint8Array([1, 12])),
+            wireFrame("p:1", ids, MESSAGE_TYPE_REQUEST, new Uint8Array([2, 12])),
         );
         const reason = { tag: "V1", value: "StorageUnavailable" } as const;
         fixture.receive(
