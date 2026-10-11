@@ -27,12 +27,6 @@ export function makeHostCallbacks(
     notifications: {
       pushNotification: async () => ({ id: 0 }),
       cancelNotification: async () => {},
-      activationEvents: async () => {
-        throw new Error("notification activation is unsupported");
-      },
-      acknowledgeActivation: async () => {
-        throw new Error("notification activation is unsupported");
-      },
     },
     permissions: {
       devicePermission: async () => "Deny",
