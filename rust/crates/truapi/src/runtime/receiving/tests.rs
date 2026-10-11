@@ -61,6 +61,58 @@ async fn deliver(service: &ReceivingService, revision: u64, event: u8) -> Result
 }
 
 #[test]
+fn sr25519_requires_qualified_consent_and_preserves_product_replay_and_revoke_fences() {
+    use crate::runtime::notification_envelope::{NotificationHeader, encode_notification_envelope, signing_bytes};
+    block_on(async {
+        let (_, service) = setup();
+        let signer = schnorrkel::MiniSecretKey::from_bytes(&[7; 32]).unwrap()
+            .expand_to_keypair(schnorrkel::ExpansionMode::Ed25519);
+        let sender = hex::encode(signer.public.to_bytes());
+        let mut policy = watch();
+        policy.senders = vec![sender.clone()];
+        let mut revision = service.replace(PRODUCT, 0, vec![policy.clone()]).await.unwrap().revision;
+        let create = |product: &str, event: u8| {
+            let created_at = now();
+            let mut header = NotificationHeader {
+                v: 2, product: product.into(), genesis: policy.genesis.clone(), channel: policy.channel.clone(),
+                topics: policy.topics.clone(), event_id: hex::encode([event; 32]),
+                created_at, expires_at: created_at + 60_000,
+                ciphertext_digest: hex::encode(Sha256::digest(b"wake")), sender_key: sender.clone(), signature: String::new(),
+            };
+            header.signature = hex::encode(signer.sign_simple(b"substrate", &signing_bytes(&header).unwrap()).to_bytes());
+            encode_notification_envelope(&header, b"wake").unwrap()
+        };
+        let ingest = |revision, bytes| service.ingest(PRODUCT, revision, policy.id.clone(),
+            policy.genesis.clone(), policy.channel.clone(), policy.topics.clone(), bytes);
+        assert!(ingest(revision, create(PRODUCT, 70)).await.unwrap().is_empty());
+        let mut qualified = policy.clone();
+        qualified.senders = vec![format!("sr25519:{sender}")];
+        revision = service.replace(PRODUCT, revision, vec![qualified.clone()]).await.unwrap().revision;
+        assert!(ingest(revision, create("another.paseo", 70)).await.unwrap().is_empty());
+        let accepted = create(PRODUCT, 70);
+        assert_eq!(ingest(revision, accepted.clone()).await.unwrap().len(), 1);
+        assert!(ingest(revision, accepted).await.unwrap().is_empty());
+        let disabled = service.disable(PRODUCT, revision).await.unwrap();
+        assert!(ingest(disabled.revision, create(PRODUCT, 71)).await.is_err());
+    });
+}
+
+#[test]
+fn sr25519_policy_cannot_authorize_ed25519_and_unknown_policy_is_rejected() {
+    block_on(async {
+        let (_, service) = setup();
+        let mut policy = watch();
+        policy.senders = vec![format!("sr25519:{}", policy.senders[0])];
+        let revision = service.replace(PRODUCT, 0, vec![policy.clone()]).await.unwrap().revision;
+        assert!(deliver(&service, revision, 72).await.unwrap().is_empty());
+        for invalid in ["ed25519:".to_owned() + &"11".repeat(32), "sr25519:".to_owned() + &"AA".repeat(32)] {
+            policy.senders = vec![invalid];
+            assert!(matches!(service.replace(PRODUCT, revision, vec![policy.clone()]).await, Err(Error::InvalidRequest { .. })));
+        }
+    });
+}
+
+#[test]
 fn missing_backend_is_unsupported_and_os_grant_is_not_consent() {
     block_on(async {
         let service = ReceivingService::new(Arc::new(StubPlatform::default()), test_spawner());

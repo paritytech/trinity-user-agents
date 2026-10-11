@@ -24,11 +24,11 @@ pub const FUTURE_SKEW_MS: u64 = 60_000;
 const MAX_SAFE_INTEGER: u64 = 9_007_199_254_740_991;
 const PREDICATE: &str = "truapiNotification";
 
-/// Strict version-one metadata. Hex fields are lowercase without a prefix.
+/// Strict metadata: v1 Ed25519, v2 sr25519. Hex is lowercase without a prefix.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct NotificationHeader {
-    /// Exactly one.
+    /// One for Ed25519; two for sr25519 under the Substrate signing context.
     pub v: u64,
     /// ASCII product label matching `[a-z0-9._-]{1,128}`.
     pub product: String,
@@ -46,9 +46,9 @@ pub struct NotificationHeader {
     pub expires_at: u64,
     /// SHA-256 of a byte-leaf witness in the carrier, not application assertions.
     pub ciphertext_digest: String,
-    /// Raw Ed25519 public key.
+    /// Raw public key for the algorithm selected by `v`.
     pub sender_key: String,
-    /// Raw Ed25519 signature of the domain-separated tuple.
+    /// Raw signature of the version-domain-separated tuple.
     pub signature: String,
 }
 
@@ -65,7 +65,7 @@ fn canonical_hex(value: &str, bytes: usize) -> bool {
 }
 
 fn validate_header(header: &NotificationHeader) -> Result<(), String> {
-    if header.v != 1
+    if !matches!(header.v, 1 | 2)
         || header.product.is_empty()
         || header.product.len() > 128
         || !header.product.bytes().all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || b"._-".contains(&byte))
@@ -87,12 +87,72 @@ fn validate_header(header: &NotificationHeader) -> Result<(), String> {
     Ok(())
 }
 
-fn signing_bytes(header: &NotificationHeader) -> Result<Vec<u8>, String> {
+/// Exact UTF-8 JSON signing tuple. The signature field is not included.
+/// sr25519 signs these bytes with schnorrkel's `substrate` context.
+pub fn signing_bytes(header: &NotificationHeader) -> Result<Vec<u8>, String> {
+    let domain = match header.v {
+        1 => "truapi:notification:v1",
+        2 => "truapi:notification:v2",
+        _ => return Err("unsupported notification version".into()),
+    };
     serde_json::to_vec(&(
-        "truapi:notification:v1", header.v, &header.product, &header.genesis,
+        domain, header.v, &header.product, &header.genesis,
         &header.channel, &header.topics, &header.event_id, header.created_at,
         header.expires_at, &header.ciphertext_digest, &header.sender_key,
     )).map_err(|error| error.to_string())
+}
+
+/// Validate an algorithm-qualified sender policy without interpreting a raw key
+/// as authority for a different algorithm.
+pub fn valid_sender_policy(sender: &str) -> bool {
+    canonical_hex(sender.strip_prefix("sr25519:").unwrap_or(sender), 32)
+}
+
+/// Match only the signature algorithm selected by the authenticated version.
+pub fn sender_policy_matches(header: &NotificationHeader, sender: &str) -> bool {
+    match header.v {
+        1 => sender == header.sender_key,
+        2 => sender.strip_prefix("sr25519:") == Some(header.sender_key.as_str()),
+        _ => false,
+    }
+}
+
+/// Encode a minimal standard Gordian carrier with a byte-leaf witness.
+/// The supplied proof is not verified; callers sign `signing_bytes` first.
+pub fn encode_notification_envelope(header: &NotificationHeader, carrier: &[u8]) -> Result<Vec<u8>, String> {
+    validate_header(header)?;
+    if carrier.len() > MAX_CARRIER_BYTES { return Err("notification carrier too large".into()); }
+    if hex::encode(Sha256::digest(carrier)) != header.ciphertext_digest {
+        return Err("notification byte witness digest mismatch".into());
+    }
+    let json = serde_json::to_vec(header).map_err(|error| error.to_string())?;
+    if json.len() > MAX_HEADER_BYTES { return Err("notification header too large".into()); }
+    let mut frame = Vec::with_capacity(carrier.len() + json.len() + PREDICATE.len() + 32);
+    frame.extend_from_slice(&[0xd8, 200, 0x82, 0xd8, 201]);
+    append_cbor_head(&mut frame, 2, carrier.len());
+    frame.extend_from_slice(carrier);
+    frame.extend_from_slice(&[0xa1, 0xd8, 201]);
+    append_cbor_head(&mut frame, 3, PREDICATE.len());
+    frame.extend_from_slice(PREDICATE.as_bytes());
+    frame.extend_from_slice(&[0xd8, 201]);
+    append_cbor_head(&mut frame, 3, json.len());
+    frame.extend_from_slice(&json);
+    if frame.len() > MAX_FULL_FRAME_BYTES { return Err("notification container too large".into()); }
+    Ok(frame)
+}
+
+fn append_cbor_head(output: &mut Vec<u8>, major: u8, length: usize) {
+    if length < 24 {
+        output.push((major << 5) | length as u8);
+    } else if length < 256 {
+        output.extend_from_slice(&[(major << 5) | 24, length as u8]);
+    } else if length < 65_536 {
+        output.push((major << 5) | 25);
+        output.extend_from_slice(&(length as u16).to_be_bytes());
+    } else {
+        output.push((major << 5) | 26);
+        output.extend_from_slice(&(length as u32).to_be_bytes());
+    }
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -310,6 +370,15 @@ fn verify_candidate(
     let mut signature_bytes = [0u8; 64];
     hex::decode_to_slice(&header.sender_key, &mut key_bytes).map_err(|error| error.to_string())?;
     hex::decode_to_slice(&header.signature, &mut signature_bytes).map_err(|error| error.to_string())?;
+    if header.v == 2 {
+        let key = schnorrkel::PublicKey::from_bytes(&key_bytes).map_err(|error| error.to_string())?;
+        // Match the JS verifier's rejection of the Ristretto identity key.
+        if key_bytes == [0; 32] { return Err("invalid sr25519 public key".into()); }
+        let signature = schnorrkel::Signature::from_bytes(&signature_bytes).map_err(|error| error.to_string())?;
+        key.verify_simple(b"substrate", &signing_bytes(&header)?, &signature)
+            .map_err(|_| "invalid notification signature".to_owned())?;
+        return Ok(VerifiedNotification { header });
+    }
     let mut field_modulus = [0xff; 32];
     field_modulus[0] = 0xed;
     field_modulus[31] = 0x7f;
@@ -402,6 +471,69 @@ mod tests {
 
     fn verify(bytes: &[u8]) -> Result<VerifiedNotification, String> {
         verify_frame(bytes, &"11".repeat(32), &"55".repeat(32), &["22".repeat(32), "33".repeat(32)], NOW)
+    }
+
+    // @scure/sr25519: seed 00..1f, explicit nonce entropy [42;32]; verified with 2.4.0.
+    // Shared with JS; verification never relies on a mocked crypto result.
+    fn sr25519_vector() -> NotificationHeader {
+        let mut header: NotificationHeader = serde_json::from_str(VECTOR).unwrap();
+        header.v = 2;
+        header.sender_key = "e2111779981618705ecacea1af6ff9350bce2b2dccd03e0c3e01eb0c823d2666".into();
+        header.signature = "626d34d4b5ac0674fd7f59d4a84304ff4fab63c1d3bf0907e86be668f5d2624b73bfb67bafe4a3c7c2e3b1d7305a99aecb492183b143666045948f80fae7a784".into();
+        header
+    }
+
+    #[test]
+    fn sr25519_cross_language_profile_and_encoder() {
+        let header = sr25519_vector();
+        let bytes = encode_notification_envelope(&header, b"abc").unwrap();
+        assert_eq!(bytes, frame(&serde_json::to_string(&header).unwrap(), b"abc"));
+        assert_eq!(verify(&bytes).unwrap().header.signature, header.signature);
+        let expected = SIGNED.replace("truapi:notification:v1\",1", "truapi:notification:v2\",2")
+            .replace("03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8", &header.sender_key);
+        assert_eq!(signing_bytes(&header).unwrap(), expected.as_bytes());
+        assert!(sender_policy_matches(&header, &format!("sr25519:{}", header.sender_key)));
+        assert!(!sender_policy_matches(&header, &header.sender_key));
+        let v1: NotificationHeader = serde_json::from_str(VECTOR).unwrap();
+        assert!(sender_policy_matches(&v1, &v1.sender_key));
+        assert!(!sender_policy_matches(&v1, &format!("sr25519:{}", v1.sender_key)));
+        assert!(encode_notification_envelope(&header, b"wrong").is_err());
+    }
+
+    #[test]
+    fn sr25519_rejects_downgrades_wrong_context_and_tampering() {
+        let header = sr25519_vector();
+        for (field, value) in [
+            ("v", serde_json::json!(1)), ("v", serde_json::json!(3)),
+            ("product", serde_json::json!("other.paseo")),
+            ("eventId", serde_json::json!("66".repeat(32))),
+            ("senderKey", serde_json::json!("00".repeat(32))),
+            ("signature", serde_json::json!("00".repeat(64))),
+            ("ciphertextDigest", serde_json::json!("00".repeat(32))),
+        ] {
+            let mut changed = serde_json::to_value(&header).unwrap();
+            changed[field] = value;
+            assert!(verify(&frame(&changed.to_string(), b"abc")).is_err(), "{field}");
+        }
+        let bytes = encode_notification_envelope(&header, b"abc").unwrap();
+        assert!(verify_frame(&bytes, &"00".repeat(32), &header.channel, &header.topics, NOW).is_err());
+        assert!(verify_frame(&bytes, &header.genesis, &"00".repeat(32), &header.topics, NOW).is_err());
+        assert!(verify_frame(&bytes, &header.genesis, &header.channel, &header.topics[..1], NOW).is_err());
+        assert!(verify_frame(&bytes, &header.genesis, &header.channel, &header.topics, header.expires_at).is_err());
+        let key = schnorrkel::MiniSecretKey::from_bytes(&[7; 32]).unwrap()
+            .expand_to_keypair(schnorrkel::ExpansionMode::Ed25519);
+        let mut signed = header;
+        signed.sender_key = hex::encode(key.public.to_bytes());
+        for context in [b"substrate".as_slice(), b"not-substrate".as_slice()] {
+            signed.signature = hex::encode(key.sign_simple(context, &signing_bytes(&signed).unwrap()).to_bytes());
+            assert_eq!(verify(&encode_notification_envelope(&signed, b"abc").unwrap()).is_ok(), context == b"substrate");
+        }
+        let mut v1: NotificationHeader = serde_json::from_str(VECTOR).unwrap();
+        v1.v = 2;
+        assert!(verify(&encode_notification_envelope(&v1, b"abc").unwrap()).is_err());
+        for invalid in ["ed25519:".to_owned() + &"11".repeat(32), "sr25519:".to_owned() + &"AA".repeat(32), "sr25519:00".into()] {
+            assert!(!valid_sender_policy(&invalid));
+        }
     }
 
     #[test]

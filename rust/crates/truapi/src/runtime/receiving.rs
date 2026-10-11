@@ -11,7 +11,7 @@ use crate::latest::{HostNotificationReceiverStatus, HostNotificationReceiptResul
     ReceivingEvent, ReceivingEventKind, ReceivingReceiptKind, ReceivingWatch};
 use crate::platform::{CoreStorageKey, Platform, ProductContext, ReceivingAuthority, ReceivingRegistration};
 use crate::subscription::Spawner;
-use super::notification_envelope::verify_frames;
+use super::notification_envelope::{sender_policy_matches, valid_sender_policy, verify_frames};
 
 const MAX_REGISTRATIONS: usize = 32;
 const MAX_WATCHES: usize = 256;
@@ -562,7 +562,7 @@ impl ReceivingService {
             let record = find_mut(&mut ledger, &authority).expect("record retained");
             let watch = record.watches.iter().find(|w| w.policy.id == watch_id).expect("watch retained");
             let header = candidate.header;
-            if header.product != product || !watch.policy.senders.contains(&header.sender_key)
+            if header.product != product || !watch.policy.senders.iter().any(|sender| sender_policy_matches(&header, sender))
                 || !watch.policy.topics.iter().all(|topic| header.topics.contains(topic))
                 || header.created_at < watch.not_before || header.created_at < watch.policy.muted_until
                 || record.receipts.iter().any(|r| r.event_id == header.event_id) { continue; }
@@ -746,7 +746,7 @@ fn validate_watches(watches: &[ReceivingWatch], authority: &ReceivingAuthority, 
             || watch.topics.iter().collect::<HashSet<_>>().len() != watch.topics.len() { return Err(invalid("invalid topics")); }
         senders += watch.senders.len();
         if watch.senders.is_empty() || watch.senders.len() > MAX_SENDERS || senders > MAX_TOTAL_SENDERS { return Err(Error::Capacity); }
-        if watch.senders.iter().any(|s| !hex32(s)) || watch.senders.iter().collect::<HashSet<_>>().len() != watch.senders.len() {
+        if watch.senders.iter().any(|s| !valid_sender_policy(s)) || watch.senders.iter().collect::<HashSet<_>>().len() != watch.senders.len() {
             return Err(invalid("invalid sender policy"));
         }
         if watch.expires_at <= timestamp || watch.expires_at > timestamp.saturating_add(30 * DAY)

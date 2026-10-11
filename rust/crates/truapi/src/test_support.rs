@@ -94,6 +94,8 @@ pub struct StubPlatform {
     /// URLs handed to `navigate_to`. Empty means the gate blocked before the
     /// platform was ever reached.
     pub navigations: Arc<Mutex<Vec<String>>>,
+    /// Optional activation batch used to exercise the runtime's batch bound.
+    pub notification_activations: Option<v01::NotificationActivations>,
     pub account_alias_confirmed: bool,
     pub account_alias_error: Option<&'static str>,
     pub create_proof_confirmed: bool,
@@ -1172,6 +1174,12 @@ impl PlatformNavigation for StubPlatform {
 
 #[crate::platform::async_trait]
 impl PlatformNotifications for StubPlatform {
+
+    async fn activation_events(&self) -> Result<v01::NotificationActivations, v01::GenericError> {
+        self.notification_activations.clone().ok_or_else(|| v01::GenericError {
+            reason: "notification activation is unsupported".to_string(),
+        })
+    }
     async fn receiver_authority(&self, product_id: &str) -> Result<Option<crate::platform::ReceivingAuthority>, v01::GenericError> {
         Ok(self.receiving_authority.lock().clone().filter(|a| a.product_id == product_id))
     }

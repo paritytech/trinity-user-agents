@@ -2,6 +2,7 @@ import { ed25519 } from "@noble/curves/ed25519.js";
 import { bytesToNumberLE } from "@noble/curves/utils.js";
 import { sha256, sha512 } from "@noble/hashes/sha2.js";
 import { bytesToHex, hexToBytes } from "@noble/hashes/utils.js";
+import { verify as verifySr25519 } from "@scure/sr25519";
 import { decodeNotificationContainer, encodeNotificationContainer, MAX_CONTAINER_BYTES } from "./notification-container.js";
 export { NOTIFICATION_PREDICATE, MAX_NOTIFICATION_CANDIDATES } from "./notification-container.js";
 
@@ -14,7 +15,7 @@ const encoder = new TextEncoder();
 
 /** Public authenticated metadata. Hex is lowercase, without a 0x prefix. */
 export interface NotificationHeader {
-  v: 1;
+  v: 1 | 2;
   product: string;
   genesis: string;
   channel: string;
@@ -25,6 +26,17 @@ export interface NotificationHeader {
   ciphertextDigest: string;
   senderKey: string;
   signature: string;
+}
+/** Raw lowercase hex authorizes v1 Ed25519 only; sr25519-prefixed hex authorizes v2 only. */
+export function isNotificationSenderPolicy(value: unknown): value is string {
+  return typeof value === "string" && /^(?:sr25519:)?[0-9a-f]{64}$/.test(value);
+}
+
+/** Use only after authenticating the header; never compare an unqualified v2 key. */
+export function notificationSenderPolicy(header: NotificationHeader): string {
+  if (header.v === 1) return header.senderKey;
+  if (header.v === 2) return `sr25519:${header.senderKey}`;
+  throw new Error("unsupported notification version");
 }
 export type UnsignedNotificationHeader = Omit<NotificationHeader, "signature">;
 export type NotificationMetadata = Omit<UnsignedNotificationHeader, "v" | "ciphertextDigest" | "senderKey">;
@@ -42,7 +54,7 @@ function validateHeader(value: unknown): asserts value is NotificationHeader {
   if (value === null || typeof value !== "object" || Array.isArray(value)) throw new Error("invalid notification header");
   const header = value as NotificationHeader;
   if (Object.keys(header).length !== fields.length || fields.some((field) => !Object.hasOwn(header, field))
-    || header.v !== 1 || typeof header.product !== "string" || !/^[a-z0-9._-]{1,128}$/.test(header.product)
+    || (header.v !== 1 && header.v !== 2) || typeof header.product !== "string" || !/^[a-z0-9._-]{1,128}$/.test(header.product)
     || !isHex(header.genesis) || !isHex(header.channel) || !isHex(header.eventId) || !isHex(header.ciphertextDigest) || !isHex(header.senderKey)
     || !isHex(header.signature, /^[0-9a-f]{128}$/)
     || !Array.isArray(header.topics) || header.topics.length < 1 || header.topics.length > 4
@@ -56,7 +68,7 @@ function validateHeader(value: unknown): asserts value is NotificationHeader {
 export function notificationSigningBytes(header: UnsignedNotificationHeader): Uint8Array {
   validateHeader({ ...header, signature: "00".repeat(64) });
   return encoder.encode(JSON.stringify([
-    "truapi:notification:v1", header.v, header.product, header.genesis, header.channel,
+    `truapi:notification:v${header.v}`, header.v, header.product, header.genesis, header.channel,
     header.topics, header.eventId, header.createdAt, header.expiresAt, header.ciphertextDigest, header.senderKey,
   ]));
 }
@@ -136,7 +148,7 @@ export function signNotificationEnvelope(metadata: NotificationMetadata, carrier
 }
 
 /** Authenticate optional stored metadata against supplied opaque bytes.
- * Checks strict JSON, static bounds, digest and Ed25519 proof only.
+ * Checks strict JSON, static bounds, digest and version-selected signature only.
  * Does NOT establish current-time eligibility, actual source, product authority,
  * enrollment or sender approval. Hosts/relays must use whole-carrier verification.
  */
@@ -169,6 +181,12 @@ function authenticateCandidate(envelope: NotificationEnvelope, actualGenesis: st
 function verifyHeaderProof(header: NotificationHeader): void {
   const key = hexToBytes(header.senderKey);
   const signature = hexToBytes(header.signature);
+  if (header.v === 2) {
+    // Audited synchronous implementation, using schnorrkel's Substrate context.
+    // No WASM initialization or ambient Web Crypto is needed for verification.
+    if (!verifySr25519(notificationSigningBytes(header), signature, key)) throw new Error("invalid notification signature");
+    return;
+  }
   const publicPoint = ed25519.Point.fromBytes(key, false);
   const noncePoint = ed25519.Point.fromBytes(signature.subarray(0, 32), false);
   const order = ed25519.Point.CURVE().n;

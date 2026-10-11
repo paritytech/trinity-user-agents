@@ -72,6 +72,20 @@ For local iteration without publishing, set `TRUAPI_USE_LOCAL_BINARY=1` so the r
 
 The embedding app implements `HostBridge` (defined in `TrUAPIHost.swift`): navigation, push, permissions, auth state, scoped + core storage, chain JSON-RPC, confirmations, preimage, theme, feature support, and the served chain set. UI-decision callbacks are `async` and awaited by the Rust core. `HostCallbackAdapter` translates it to the UniFFI-generated `HostCallbacks` protocol; `TrUAPIHostRuntime` and each product execution retain their own adapter. Conform to `HostBridge` rather than to the generated protocol: its extension defaults the optional callbacks, so a newly added one does not break the build. Storage arrives as the `storage` and `coreStorage` sub-objects, which the adapter flattens.
 
+Ordinary notification taps use `HostBridge.activationEvents()` and
+`acknowledgeActivation(sequence:)`, independently of background receiver enrollment.
+The embedder persists a tap before opening or focusing the verified product and
+returns a non-consuming, sequence-ordered batch of at most 32 events. Bind events
+and exact, idempotent acknowledgements to the execution's verified product,
+artifact, account and environment; an event sequence is not a notification id.
+Do not change accounts or navigate an arbitrary URL from an OS payload. Neither
+callback requests notification permission. Hosts without activation support
+reject these callbacks explicitly.
+
+Rebuild the Rust library, UniFFI bindings and Swift/Kotlin adapters together after
+changing these callbacks. Successful binding generation on Linux does not verify
+Swift compilation, OS notification presentation or physical-device APNs delivery.
+
 ## Integrating in an iOS app
 
 Add the package as an SPM dependency and link the `TrUAPIHost` product into the app target:

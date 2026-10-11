@@ -1,10 +1,12 @@
 import { describe, expect, it } from "bun:test";
 import { sha256 } from "@noble/hashes/sha2.js";
-import { concatBytes, hexToBytes } from "@noble/hashes/utils.js";
+import { bytesToHex, concatBytes, hexToBytes } from "@noble/hashes/utils.js";
+import { getPublicKey, secretFromSeed, sign as signSr25519 } from "@scure/sr25519";
 import {
   authenticateNotificationEnvelope, authenticateNotificationHeader, decodeNotificationEnvelope, encodeNotificationEnvelope,
   isNotificationEnvelope, notificationSigningBytes, signNotificationEnvelope, signNotificationHeader,
   verifyNotificationEnvelope, verifyNotificationEnvelopes, MAX_CARRIER_BYTES, MAX_FULL_FRAME_BYTES,
+  isNotificationSenderPolicy, notificationSenderPolicy,
   MAX_HEADER_BYTES, type NotificationHeader,
 } from "./notification-envelope.js";
 
@@ -56,6 +58,40 @@ function verify(bytes: Uint8Array) {
 }
 
 describe("standard generic notification carriers", () => {
+  it("verifies the shared sr25519 fixture under the exact version domain and qualified policy", () => {
+    const secret = secretFromSeed(seed);
+    const srHeader: NotificationHeader = { ...header, v: 2,
+      senderKey: "e2111779981618705ecacea1af6ff9350bce2b2dccd03e0c3e01eb0c823d2666",
+      signature: "626d34d4b5ac0674fd7f59d4a84304ff4fab63c1d3bf0907e86be668f5d2624b73bfb67bafe4a3c7c2e3b1d7305a99aecb492183b143666045948f80fae7a784",
+    };
+    expect(bytesToHex(getPublicKey(secret))).toBe(srHeader.senderKey);
+    // Explicit deterministic entropy is a fixture input, never a production signer.
+    expect(bytesToHex(signSr25519(secret, notificationSigningBytes(srHeader), new Uint8Array(32).fill(42)))).toBe(srHeader.signature);
+    const bytes = encodeNotificationEnvelope(srHeader, carrier);
+    expect(verify(bytes).header).toEqual(srHeader);
+    expect(authenticateNotificationHeader(JSON.stringify(srHeader), carrier)).toEqual(srHeader);
+    expect(notificationSenderPolicy(srHeader)).toBe(`sr25519:${srHeader.senderKey}`);
+    expect(notificationSenderPolicy(header)).toBe(header.senderKey);
+    expect(notificationSenderPolicy(srHeader)).not.toBe(srHeader.senderKey);
+    expect(isNotificationSenderPolicy(notificationSenderPolicy(srHeader))).toBe(true);
+    for (const invalid of [`ed25519:${header.senderKey}`, `sr25519:${"AB".repeat(32)}`, "sr25519:00"]) {
+      expect(isNotificationSenderPolicy(invalid)).toBe(false);
+    }
+    for (const changed of [
+      { ...srHeader, v: 1 }, { ...srHeader, v: 3 }, { ...header, v: 2 },
+      { ...srHeader, product: "other.paseo" }, { ...srHeader, eventId: "66".repeat(32) },
+      { ...srHeader, senderKey: "00".repeat(32) }, { ...srHeader, signature: "00".repeat(64) },
+      { ...srHeader, ciphertextDigest: "00".repeat(32) },
+    ]) {
+      expect(() => verify(frame(JSON.stringify(changed)))).toThrow();
+    }
+    expect(() => verify(frame(JSON.stringify(srHeader), encoder.encode("wrong")))).toThrow();
+    expect(() => verifyNotificationEnvelope(bytes, "00".repeat(32), channel, topics, createdAt)).toThrow();
+    expect(() => verifyNotificationEnvelope(bytes, genesis, "00".repeat(32), topics, createdAt)).toThrow();
+    expect(() => verifyNotificationEnvelope(bytes, genesis, channel, topics.slice(0, 1), createdAt)).toThrow();
+    expect(() => verifyNotificationEnvelope(bytes, genesis, channel, topics, expiresAt)).toThrow();
+  });
+
   it("matches the independent fixed signing bytes, signature and standard encoding used by Rust", () => {
     expect(new TextDecoder().decode(notificationSigningBytes(header))).toBe('["truapi:notification:v1",1,"example.paseo","' + genesis + '","' + channel + '",["' + topics[0] + '","' + topics[1] + '"],"' + eventId + '",1700000000000,1700000060000,"ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad","03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8"]');
     expect(signNotificationHeader(metadata, carrier, seed)).toEqual(header);
