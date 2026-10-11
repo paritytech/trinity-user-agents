@@ -324,16 +324,6 @@ impl HostCallbacks for EventCallbacks {
     fn cancel_notification(&self, _id: u32) -> Result<(), HostRejection> {
         Ok(())
     }
-    async fn activation_events(&self) -> Result<Vec<v01::NotificationActivation>, HostRejection> {
-        Err(HostRejection::Rejected {
-            reason: "notification activation unsupported".into(),
-        })
-    }
-    async fn acknowledge_activation(&self, _sequence: u64) -> Result<(), HostRejection> {
-        Err(HostRejection::Rejected {
-            reason: "notification activation unsupported".into(),
-        })
-    }
     async fn device_permission(
         &self,
         _product: ProductExecutionConfig,
@@ -2042,18 +2032,6 @@ fn start_ws_bridge_twice_returns_already_running() {
         fn cancel_notification(&self, _id: u32) -> Result<(), HostRejection> {
             Ok(())
         }
-        async fn activation_events(
-            &self,
-        ) -> Result<Vec<v01::NotificationActivation>, HostRejection> {
-            Err(HostRejection::Rejected {
-                reason: "notification activation unsupported".into(),
-            })
-        }
-        async fn acknowledge_activation(&self, _sequence: u64) -> Result<(), HostRejection> {
-            Err(HostRejection::Rejected {
-                reason: "notification activation unsupported".into(),
-            })
-        }
         async fn device_permission(
             &self,
             _product: ProductExecutionConfig,
@@ -2238,18 +2216,6 @@ fn pending_permission_decision_does_not_stall_bridge() {
         }
         fn cancel_notification(&self, _id: u32) -> Result<(), HostRejection> {
             Ok(())
-        }
-        async fn activation_events(
-            &self,
-        ) -> Result<Vec<v01::NotificationActivation>, HostRejection> {
-            Err(HostRejection::Rejected {
-                reason: "notification activation unsupported".into(),
-            })
-        }
-        async fn acknowledge_activation(&self, _sequence: u64) -> Result<(), HostRejection> {
-            Err(HostRejection::Rejected {
-                reason: "notification activation unsupported".into(),
-            })
         }
         async fn device_permission(
             &self,
