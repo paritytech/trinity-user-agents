@@ -10,10 +10,7 @@ use crate::versioned::notifications::{
     HostNotificationReplaceReceiverRequest, HostNotificationReplaceReceiverResponse,
     HostPushNotificationCancelError, HostPushNotificationCancelRequest,
     HostPushNotificationCancelResponse, HostPushNotificationError, HostPushNotificationRequest,
-    HostPushNotificationResponse, NotificationActivationAcknowledgeError,
-    NotificationActivationAcknowledgeRequest, NotificationActivationAcknowledgeResponse,
-    NotificationActivationEventsError, NotificationActivationEventsRequest,
-    NotificationActivationEventsResponse,
+    HostPushNotificationResponse,
 };
 
 /// Local notification scheduling and consent-scoped background receiving.
@@ -64,38 +61,4 @@ pub trait Notifications: Send + Sync {
         cx: &CallContext,
         request: HostPushNotificationCancelRequest,
     ) -> Result<HostPushNotificationCancelResponse, CallError<HostPushNotificationCancelError>>;
-
-    /// Retrieve up to 32 pending activations for this runtime's authenticated
-    /// product, account and environment. Retrieval does not consume events,
-    /// prompt for permissions or enroll a background receiver.
-    ///
-    /// ```ts
-    /// const result = await truapi.notifications.activationEvents();
-    /// assert(result.isOk(), "activationEvents failed:", result);
-    /// console.log("pending activations:", result.value);
-    /// ```
-    #[wire(id = 8)]
-    async fn activation_events(
-        &self,
-        cx: &CallContext,
-        request: NotificationActivationEventsRequest,
-    ) -> Result<NotificationActivationEventsResponse, CallError<NotificationActivationEventsError>>;
-
-    /// Acknowledge exactly one activation after the product router handles it.
-    /// Unknown or already acknowledged sequences are idempotent, and can never
-    /// remove an activation from another product, account or environment.
-    ///
-    /// ```ts
-    /// const result = await truapi.notifications.acknowledgeActivation({ sequence: 1n });
-    /// assert(result.isOk(), "acknowledgeActivation failed:", result);
-    /// ```
-    #[wire(id = 9)]
-    async fn acknowledge_activation(
-        &self,
-        cx: &CallContext,
-        request: NotificationActivationAcknowledgeRequest,
-    ) -> Result<
-        NotificationActivationAcknowledgeResponse,
-        CallError<NotificationActivationAcknowledgeError>,
-    >;
 }
