@@ -588,16 +588,17 @@ impl crate::platform::ChatPlatform for ChatCallbackPlatform {
     async fn post_chat_message(
         &self,
         _product: &ProductContext,
-        request: v01::HostChatPostMessageRequest,
-    ) -> Result<v01::HostChatPostMessageResponse, v01::HostChatPostMessageError> {
+        request: truapi::latest::HostChatPostMessageRequest,
+    ) -> Result<truapi::latest::HostChatPostMessageResponse, truapi::latest::HostChatPostMessageError>
+    {
         let message_id = self
             .chat
-            .post_message(request.room_id, request.payload)
+            .post_message(request.room_id, request.payload, request.alt)
             .await
-            .map_err(|error| v01::HostChatPostMessageError::Unknown {
+            .map_err(|error| truapi::latest::HostChatPostMessageError::Unknown {
                 reason: error.to_string(),
             })?;
-        Ok(v01::HostChatPostMessageResponse { message_id })
+        Ok(truapi::latest::HostChatPostMessageResponse { message_id })
     }
 
     async fn set_chat_room_footer(

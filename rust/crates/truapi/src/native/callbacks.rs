@@ -245,11 +245,15 @@ pub trait NativeChatCallbacks: Send + Sync {
     /// The returned id is [`HostChatPostMessageResponse`]'s `message_id`, which
     /// chat actions carry back for as long as the host stores this message.
     ///
+    /// `alt` is the product's one-line description of the message, for places
+    /// that list it without drawing it, such as a chat list preview.
+    ///
     /// [`HostChatPostMessageResponse`]: truapi::latest::HostChatPostMessageResponse
     async fn post_message(
         &self,
         room_id: String,
         content: v01::ChatMessageContent,
+        alt: Option<String>,
     ) -> Result<String, HostRejection>;
 
     /// Set what a product's native Chat room shows below its messages, and keep
