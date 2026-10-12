@@ -1,13 +1,14 @@
 import UIKit
 import TipKit
+import IssueMonitoring
 import Keystore_iOS
 
 @main
 final class AppDelegate: UIResponder, UIApplicationDelegate {
     let logger: LoggerProtocol = Logger.shared
-    #if TESTNET_FEATURE
-        let issueMonitoringService: IssueMonitoringServicing = IssueMonitoringService()
-    #endif
+    let issueMonitoringService: IssueMonitoringServiceProtocol = IssueMonitoringFactory.createService(
+        dsn: GeneratedSecrets.sentryDSN
+    )
 
     var apnsTokenProvider: APNSTokenProviding {
         APNSTokenProviderFacade.sharedManager
@@ -26,9 +27,7 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
 
         configureTips()
 
-        #if TESTNET_FEATURE
-            issueMonitoringService.setup()
-        #endif
+        issueMonitoringService.setup()
 
         #if FEATURE_DIMS
             DIM1BackgroundTaskRegistrator.shared.registerBackgroundTask()

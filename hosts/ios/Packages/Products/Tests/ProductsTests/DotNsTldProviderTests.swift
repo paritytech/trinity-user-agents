@@ -33,6 +33,42 @@ private final class StubDotNsTldStore: DotNsTldStoring {
     }
 }
 
+/// Suspends the first read until `release` is called; later reads return `laterTld` at once.
+private final class GatedTldReader: DotNsTldReading {
+    let started: AsyncStream<Void>
+    private let startedContinuation: AsyncStream<Void>.Continuation
+    private let lock = NSLock()
+    private var pending: CheckedContinuation<String, Never>?
+    private var isFirstRead = true
+    var laterTld = ""
+
+    init() {
+        (started, startedContinuation) = AsyncStream.makeStream()
+    }
+
+    func release(with tld: String) {
+        let continuation = lock.withLock {
+            defer { pending = nil }
+            return pending
+        }
+        continuation?.resume(returning: tld)
+    }
+
+    func readTld() async throws -> String {
+        let shouldSuspend = lock.withLock {
+            defer { isFirstRead = false }
+            return isFirstRead
+        }
+
+        guard shouldSuspend else { return laterTld }
+
+        return await withCheckedContinuation { continuation in
+            lock.withLock { pending = continuation }
+            startedContinuation.yield()
+        }
+    }
+}
+
 /// Test clock whose reading can be moved forward between assertions.
 private final class MutableClock {
     var seconds: Double = 0
@@ -180,5 +216,57 @@ struct DotNsTldProviderTests {
         let provider = DotNsTldProvider(reader: stub, store: nil)
 
         #expect(provider.currentTld() == nil)
+    }
+
+    @Test func resetForgetsCachedAndPersistedTld() async throws {
+        let stub = StubTldReader()
+        stub.readTldResult = .success("new")
+        let store = StubDotNsTldStore()
+        store.loadedTld = "old"
+        let provider = DotNsTldProvider(reader: stub, store: store)
+
+        _ = try await provider.resolveTld()
+        provider.reset()
+
+        #expect(provider.currentTld() == nil)
+    }
+
+    @Test func resolveAfterResetReadsChainAgain() async throws {
+        let stub = StubTldReader()
+        stub.readTldResult = .success("old")
+        let provider = DotNsTldProvider(reader: stub)
+
+        _ = try await provider.resolveTld()
+        provider.reset()
+        stub.readTldResult = .success("new")
+
+        let tld = try await provider.resolveTld()
+
+        #expect(tld == "new")
+        #expect(stub.readTldCallCount == 2)
+    }
+
+    @Test func readInFlightDuringResetIsNeitherCachedNorPersisted() async throws {
+        let reader = GatedTldReader()
+        let store = StubDotNsTldStore()
+        let provider = DotNsTldProvider(reader: reader, store: store)
+
+        let staleRead = Task { try await provider.resolveTld() }
+        var startedIterator = reader.started.makeAsyncIterator()
+        await startedIterator.next()
+
+        provider.reset()
+        reader.release(with: "old")
+
+        await #expect(throws: DotNsTldProviderError.resetDuringRead) {
+            _ = try await staleRead.value
+        }
+        #expect(store.savedTlds.isEmpty)
+
+        reader.laterTld = "new"
+        let tld = try await provider.resolveTld()
+
+        #expect(tld == "new")
+        #expect(store.savedTlds == ["new"])
     }
 }

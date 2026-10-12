@@ -121,7 +121,9 @@ const callbacks: HostCallbacks = {
   chat, // optional: leave it out and chat products get `Unsupported`
   permissionStatus, // optional: reports live OS permission state
   pocket, // optional: serves the host's Pocket card collection
+  game, // optional: holds the host's game reminders
   contacts, // optional: leave it out and contacts calls get `Unsupported`
+  scanner, // optional: draws the host's QR and barcode viewfinder
 };
 ```
 
@@ -134,6 +136,17 @@ stops reading as usable. Omit it and a stored grant answers on its own.
 calling product's cards and every later replacement, and `removePocketCard`
 takes one out. The host owns the collection: removing an absent card succeeds,
 and a card the host pins is refused with `Privileged`.
+
+`game` holds the host's game reminder. `scheduleGameReminder` replaces the
+product's held reminder, and `cancelGameReminder` drops it. The core asks for
+no per-product consent, so the host asks the platform for what the reminder
+needs, and a rejected schedule reaches the product as a host failure. A host
+keeps one reminder per product. The core serves
+`game` to the game product, `dim2`, alone. The mock test host
+(`@parity/truapi-host/testing`) accepts every reminder and cancel without
+holding them once it runs as that product; its default `mock.dot` gets
+`Unsupported`, so a suite that exercises `game` passes
+`productId: "dim2.dot"`.
 
 Under `createWebWorkerPairingHostRuntime` the presence of each optional group is
 reported to the worker in its `init` message, so the core sees the same
@@ -225,6 +238,38 @@ already carries, so the 32-byte chain code behind it stays core-owned and a host
 never reconstructs it. `productAccountAddress` applies the prefix host-spec C.6
 fixes, rather than leaving each host to choose one.
 
+### The same name in a test suite
+
+`@parity/truapi-host/testing/playwright` exports a second `productAccountAddress`.
+It is asynchronous, it takes the account and product to derive rather than a
+public key, and it loads the testing WASM bundle itself:
+
+```ts
+import { productAccountAddress } from "@parity/truapi-host/testing/playwright";
+
+const address = await productAccountAddress({
+  account: "bob", // a dev account name, or a `DevAccount`
+  productId: "tx-demo.dot",
+  index: 0, // optional, defaults to 0
+});
+```
+
+Which one to reach for:
+
+- `productAccountAddress(publicKey)` from `@parity/truapi-host/wasm/web` is
+  synchronous and formats a subtree-derived public key the host already holds.
+  This is the one a host ships.
+- `productAccountAddress(query)` from `@parity/truapi-host/testing/playwright`
+  is asynchronous and runs the whole derivation from a dev account's session
+  root. It needs the built testing bundle, so it is for suites only. Because
+  the address depends on nothing but the root, the product id and the index, a
+  suite can work it out in a `globalSetup` and fund it once rather than per
+  test.
+
+A running fixture answers the same address through
+`testHost.getProductAccountAddress(productId?, index?)`, which reads the session
+the host actually holds and so returns `undefined` while it is signed out.
+
 `contacts` needs both callbacks, or the group counts as absent. `pickContact`
 draws the picker and returns the chosen account, or `NoContacts` when there is
 nobody to show. `contacts({ handleKey, handles })` resolves the handles a
@@ -234,6 +279,11 @@ account (`blake2b(account, { key: handleKey, dkLen: 32 })` in `@noble/hashes`).
 The core re-checks every account returned. It caches what it resolves, so call
 `notifyContactsChanged()` whenever a contact is removed or blocked. Omit blocked
 contacts from both. See the contacts RFC (`docs/rfcs/contacts-api.md`).
+
+`scanner.scanCode(product, request)` opens the host's viewfinder. The rules it
+follows are on `ScannerPlatform` in the generated callbacks. The mock test host
+serves a scanner only when created with `createMockHost({ scanner: answer })`,
+and `setScanAnswer(answer)` changes the next answer.
 
 ## Generated WASM artefacts
 

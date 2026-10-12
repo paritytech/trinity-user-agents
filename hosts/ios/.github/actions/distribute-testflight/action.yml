@@ -107,7 +107,8 @@ runs:
     - name: Configure secrets
       uses: ./hosts/ios/.github/actions/configure-secrets
       with:
-        sentry_dsn: ${{ inputs.sentry_dsn }}
+        # Release links no Sentry, so the DSN would only sit unused in the shipped binary.
+        sentry_dsn: ${{ inputs.build_configuration != 'Release' && inputs.sentry_dsn || '' }}
         meld_basic_auth_token: ${{ inputs.meld_basic_auth_token }}
 
     - name: Configure Google services for tests

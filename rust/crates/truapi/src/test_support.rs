@@ -37,6 +37,10 @@ use truapi::versioned::account::{HostAccountCreateProofRequest, HostAccountGetAl
 use truapi::versioned::resource_allocation::HostRequestResourceAllocationRequest;
 use x25519_dalek::{PublicKey as X25519PublicKey, StaticSecret as X25519SecretKey};
 
+mod scripted_chain;
+
+pub use scripted_chain::{ScriptedProvider, extract_id, notification_sender, wait_for_sent};
+
 /// Block until `condition` holds, failing with `message` after two seconds.
 /// Background runtime tasks run on their own threads, so a test that observes
 /// their effects polls for them instead of assuming an ordering.

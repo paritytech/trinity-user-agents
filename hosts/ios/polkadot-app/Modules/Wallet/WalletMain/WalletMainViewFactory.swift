@@ -19,7 +19,10 @@ enum WalletMainViewFactory {
         else {
             return nil
         }
-        let wireframe = WalletMainWireframe(personDataStore: context.personDataStore)
+        let wireframe = WalletMainWireframe(
+            personDataStore: context.personDataStore,
+            flowState: context.flowState
+        )
 
         let networkStatusObserver = NetworkStatusObserver(
             networkStatusService: context.networkStatusService,
@@ -34,7 +37,12 @@ enum WalletMainViewFactory {
                 remoteConfig: FirebaseFacade.shared,
                 firebaseFallback: { FirebaseApplicationService.shared.asyncWaitCollectiblesFallbackURL() }
             ),
-            networkStatusObserver: networkStatusObserver
+            networkStatusObserver: networkStatusObserver,
+            pocketPrewarmer: PocketPrewarmer(
+                products: context.flowState.productResolver,
+                dotNsResolver: context.flowState.dotNsResolver
+            ),
+            pocket: .current
         )
 
         let presenter = WalletMainPresenter(

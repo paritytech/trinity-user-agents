@@ -91,7 +91,7 @@ install: headless ## Install the truapi-host CLI into Cargo's bin dir; use as `m
 # Release packaging for the truapi-host binary. CLI_TARGET picks the triple;
 # CLI_VERSION defaults to the crate version, which tracks the protocol version.
 # The layout here is what scripts/truapi-host-installer.sh expects to download.
-CLI_INSTALLER_URL := https://raw.githubusercontent.com/paritytech/host-rust-core/main/scripts/truapi-host-installer.sh
+CLI_INSTALLER_URL := https://raw.githubusercontent.com/paritytech/trinity-user-agents/main/scripts/truapi-host-installer.sh
 CLI_DIST_DIR := target/dist
 # Default to the triple that is actually published, not the rustc host: the
 # Linux releases are musl so one artifact per architecture runs anywhere.

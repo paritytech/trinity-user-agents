@@ -301,7 +301,7 @@ Here the model is **user-approval driven**: an unapproved foreign access produce
 
 For these two the allowlist is not an optimization but the whole gate, per the rule above: a prompt is not a substitute and MUST NOT be offered, because consenting to an opaque message is not meaningful consent. **The interim fallback of the previous paragraph does not apply here** — the consequence is that foreign proofs and foreign signatures are simply **unavailable until the manifest RFC lands**, since there is nowhere yet to express the allowlist. Own-key use is unaffected and needs nothing.
 
-The allowlist belongs to the product manifest, specified separately ([RFC: Product Manifest Format](https://github.com/paritytech/host-rust-core/pull/206)), with two requirements from here: it must be **structurally extensible**, so a richer scheme (per-method grants, attestation thresholds) can replace a flat product-id list without a wire break; and it should be expressible **per method or category**, so "read my key handles" and "produce a proof with my key" need not be one grant.
+The allowlist belongs to the product manifest, specified separately ([RFC: Product Manifest Format](https://github.com/paritytech/trinity-user-agents/pull/206)), with two requirements from here: it must be **structurally extensible**, so a richer scheme (per-method grants, attestation thresholds) can replace a flat product-id list without a wire break; and it should be expressible **per method or category**, so "read my key handles" and "produce a proof with my key" need not be one grant.
 
 ### Accounts Protocol
 
@@ -379,11 +379,11 @@ AutoSigning {
 ## Prior Art and References
 
 - [RFC-0004 — Redesign `account_create_account_proof`](0004-ringlocation-redesign.md) — `RingLocation`, `ProductProofContext`, the context derivation, and the member-key selection contract this RFC deletes. Its "Out of scope: explicit member-key management … left to a future RFC" is this RFC.
-- **RFC-0022 — Account key derivations** ([PR #296](https://github.com/paritytech/host-rust-core/pull/296)) — the ring-VRF tree, `Either<u32, [u8; 32]>` indices, the reserved `peopl.dot` identity, and the `AutoSigning` payload this RFC extends. Its deferral of well-known alias accounts is resolved here.
-- **RFC-0023 — sr25519 VRF signing for product accounts** ([PR #301](https://github.com/paritytech/host-rust-core/pull/301)) — the complementary non-member path, where this RFC's ring VRF path serves members.
+- **RFC-0022 — Account key derivations** ([PR #296](https://github.com/paritytech/trinity-user-agents/pull/296)) — the ring-VRF tree, `Either<u32, [u8; 32]>` indices, the reserved `peopl.dot` identity, and the `AutoSigning` payload this RFC extends. Its deferral of well-known alias accounts is resolved here.
+- **RFC-0023 — sr25519 VRF signing for product accounts** ([PR #301](https://github.com/paritytech/trinity-user-agents/pull/301)) — the complementary non-member path, where this RFC's ring VRF path serves members.
 - [RFC-0020 — `signing_create_transaction` and its AP mirror](0020-create-transaction.md) — the pattern of specifying a TrUAPI call together with its AP companion, followed here.
 - [RFC-0010 — W3S Allowance Management](0010-allowance.md) — AutoSigning and the PGAS / Bulletin / SSS flows that consume the person key.
-- [RFC-0002 — Permission Model](0002-permission-model.md) — the prompt-once lifecycle every cross-product grant reuses · [RFC-0009](0009-unauthenticated-product-access.md) — `NotConnected` semantics · [RFC: Product Manifest Format](https://github.com/paritytech/host-rust-core/pull/206) — where the allowlist is specified.
+- [RFC-0002 — Permission Model](0002-permission-model.md) — the prompt-once lifecycle every cross-product grant reuses · [RFC-0009](0009-unauthenticated-product-access.md) — `NotConnected` semantics · [RFC: Product Manifest Format](https://github.com/paritytech/trinity-user-agents/pull/206) — where the allowlist is specified.
 - [_SSO background availability — common model_](https://hackmd.io/rBEBjBzLQdOHvzwJkfufIQ) — the layered availability ladder the `onLoad` and AutoSigning sections lean on.
 - `rust/crates/truapi/src/runtime/signing_host/ring_vrf.rs` — the compiled-in selection this RFC removes.
 - [Polkadot People Registry / Ring VRF](https://forum.polkadot.network/t/the-people-registry/12749) · [individuality#878](https://github.com/paritytech/individuality/pull/878) — alias-account assignment for derived product addresses.

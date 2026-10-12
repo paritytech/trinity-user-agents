@@ -82,7 +82,7 @@ These terms recur as thresholds throughout the docs. Use these definitions; don'
 ## Reference material
 
 The "north star" for chat:
-**RFC-0002 Chat Extension v2** — https://raw.githubusercontent.com/paritytech/host-rust-core/517e9e23e193f2341dfaadac2f0626f7eb1d1436/docs/rfcs/0002-chat-extension-v2.md
+**RFC-0002 Chat Extension v2** — https://raw.githubusercontent.com/paritytech/trinity-user-agents/517e9e23e193f2341dfaadac2f0626f7eb1d1436/docs/rfcs/0002-chat-extension-v2.md
 Local notes on the direction live in `architecture/chat-extension.md` (§ "North star").
 
 Canonical positive examples (cited throughout docs):

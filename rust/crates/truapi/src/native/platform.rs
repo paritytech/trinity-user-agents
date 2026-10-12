@@ -16,8 +16,8 @@ use crate::host_logic::worker::WorkerTransition;
 use crate::{DevicePairingObserver, PairedSsoPeer};
 
 use super::callbacks::{
-    HostCallbacks, NativeChatCallbacks, NativeContactsCallbacks, NativePocketCallbacks,
-    NativePocketRemoval,
+    HostCallbacks, NativeChatCallbacks, NativeContactsCallbacks, NativeGameCallbacks,
+    NativePocketCallbacks, NativePocketRemoval, NativeScannerCallbacks,
 };
 use super::errors::HostRejection;
 use super::events::NativeEventBus;
@@ -48,6 +48,33 @@ impl crate::platform::ContactsPlatform for ContactsCallbackPlatform {
     ) -> Result<crate::platform::HostContactPick, v01::GenericError> {
         self.contacts
             .pick_contact(product.product_id.clone())
+            .await
+            .map_err(|error| v01::GenericError {
+                reason: error.to_string(),
+            })
+    }
+}
+
+/// [`crate::platform::ScannerPlatform`] served by host-provided
+/// [`NativeScannerCallbacks`]; constructed only when the host passed one.
+pub struct ScannerCallbackPlatform {
+    /// Host viewfinder.
+    pub scanner: Arc<dyn NativeScannerCallbacks>,
+}
+
+#[async_trait]
+impl crate::platform::ScannerPlatform for ScannerCallbackPlatform {
+    async fn scan_code(
+        &self,
+        product: &ProductContext,
+        request: &truapi::latest::HostScannerScanRequest,
+    ) -> Result<crate::platform::HostScan, v01::GenericError> {
+        self.scanner
+            .scan_code(
+                product.product_id.clone(),
+                product.execution_kind,
+                request.clone(),
+            )
             .await
             .map_err(|error| v01::GenericError {
                 reason: error.to_string(),
@@ -135,6 +162,24 @@ impl crate::platform::PermissionStatusHost for CallbackPlatform {
 
         self.callbacks
             .device_permission_status(request)
+            .await
+            .map_err(v01::GenericError::from)
+    }
+}
+
+#[async_trait]
+impl crate::platform::ExpandedCardHost for CallbackPlatform {
+    async fn set_expanded_card_face_shown(
+        &self,
+        shown: bool,
+    ) -> Result<crate::platform::ExpandedCardFaceOutcome, v01::GenericError> {
+        self.callbacks.on_core_log(
+            "truapi.native.callback.set_expanded_card_face_shown".to_string(),
+            format!("{shown}"),
+        );
+
+        self.callbacks
+            .set_expanded_card_face_shown(shown)
             .await
             .map_err(v01::GenericError::from)
     }
@@ -543,16 +588,28 @@ impl crate::platform::ChatPlatform for ChatCallbackPlatform {
     async fn post_chat_message(
         &self,
         _product: &ProductContext,
-        request: v01::HostChatPostMessageRequest,
-    ) -> Result<v01::HostChatPostMessageResponse, v01::HostChatPostMessageError> {
+        request: truapi::latest::HostChatPostMessageRequest,
+    ) -> Result<truapi::latest::HostChatPostMessageResponse, truapi::latest::HostChatPostMessageError>
+    {
         let message_id = self
             .chat
-            .post_message(request.room_id, request.payload)
+            .post_message(request.room_id, request.payload, request.alt)
             .await
-            .map_err(|error| v01::HostChatPostMessageError::Unknown {
+            .map_err(|error| truapi::latest::HostChatPostMessageError::Unknown {
                 reason: error.to_string(),
             })?;
-        Ok(v01::HostChatPostMessageResponse { message_id })
+        Ok(truapi::latest::HostChatPostMessageResponse { message_id })
+    }
+
+    async fn set_chat_room_footer(
+        &self,
+        _product: &ProductContext,
+        request: v01::HostChatSetRoomFooterRequest,
+    ) -> Result<(), v01::GenericError> {
+        self.chat
+            .set_room_footer(request.room_id, request.footer)
+            .await
+            .map_err(v01::GenericError::from)
     }
 
     fn subscribe_chat_rooms(
@@ -630,5 +687,36 @@ impl crate::platform::PocketPlatform for PocketCallbackPlatform {
                 Ok(())
             }
         }
+    }
+}
+
+/// [`crate::platform::GamePlatform`] served by host-provided
+/// [`NativeGameCallbacks`]; constructed only when the host passed one.
+pub struct GameCallbackPlatform {
+    /// Host game-reminder surface.
+    pub game: Arc<dyn NativeGameCallbacks>,
+}
+
+#[async_trait]
+impl crate::platform::GamePlatform for GameCallbackPlatform {
+    async fn schedule_game_reminder(
+        &self,
+        _product: &ProductContext,
+        starts_at: u64,
+    ) -> Result<(), v01::GenericError> {
+        self.game
+            .schedule_reminder(starts_at)
+            .await
+            .map_err(v01::GenericError::from)
+    }
+
+    async fn cancel_game_reminder(
+        &self,
+        _product: &ProductContext,
+    ) -> Result<(), v01::GenericError> {
+        self.game
+            .cancel_reminder()
+            .await
+            .map_err(v01::GenericError::from)
     }
 }

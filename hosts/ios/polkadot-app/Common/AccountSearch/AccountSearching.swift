@@ -7,5 +7,7 @@ protocol AccountSearching<RecentPayload, MatchPayload>: AnyObject {
 
     func setup()
     func sourcesChanged() -> AnyAsyncSequence<Void>
-    func search(query: String?) async throws -> AccountSearchSections<RecentPayload, MatchPayload>
+    func searchPhases(
+        query: String?
+    ) -> AsyncThrowingStream<AccountSearchSections<RecentPayload, MatchPayload>, Error>
 }

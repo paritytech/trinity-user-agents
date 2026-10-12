@@ -4,9 +4,10 @@ use std::fs;
 use std::fs::OpenOptions;
 use std::path::{Component, Path, PathBuf};
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use fs2::FileExt;
 use serde::{Deserialize, Serialize};
+use truapi::host_logic::dotns_gateway::is_lite_label;
 
 use crate::accounts;
 
@@ -204,6 +205,70 @@ impl SessionProfile {
     }
 }
 
+/// A promoted profile whose original storage is restored unless activation commits.
+pub struct SessionPromotion {
+    profile: SessionProfile,
+    moved_paths: Vec<(PathBuf, PathBuf)>,
+    created_target: bool,
+    original_metadata: Option<Vec<u8>>,
+    committed: bool,
+}
+
+impl SessionPromotion {
+    /// Borrow the prepared locations while retaining rollback ownership.
+    pub fn profile(&self) -> &SessionProfile {
+        &self.profile
+    }
+
+    /// Retain the promoted storage after successful activation and selection.
+    pub fn commit(mut self) -> SessionProfile {
+        self.committed = true;
+        self.profile.clone()
+    }
+
+    fn move_path(&mut self, source: &Path, target: PathBuf) -> Result<()> {
+        fs::rename(source, &target)
+            .with_context(|| format!("move {} to {}", source.display(), target.display()))?;
+        self.moved_paths.push((source.to_path_buf(), target));
+        Ok(())
+    }
+}
+
+impl Drop for SessionPromotion {
+    fn drop(&mut self) {
+        if self.committed || self.moved_paths.is_empty() && !self.created_target {
+            return;
+        }
+        let metadata = self.profile.path.join(SESSION_INFO_FILE);
+        let restoration = match &self.original_metadata {
+            Some(contents) => fs::write(&metadata, contents).map_err(anyhow::Error::from),
+            None => remove_file_if_exists(&metadata),
+        };
+        let mut restored = match restoration {
+            Ok(()) => true,
+            Err(error) => {
+                tracing::error!(%error, path = %metadata.display(), "failed to restore session metadata");
+                false
+            }
+        };
+        for (source, target) in self.moved_paths.iter().rev() {
+            if source.exists() {
+                tracing::error!(path = %source.display(), "session rollback destination already exists");
+                restored = false;
+            } else if let Err(error) = fs::rename(target, source) {
+                tracing::error!(%error, path = %source.display(), "failed to restore session storage");
+                restored = false;
+            }
+        }
+        if self.created_target
+            && restored
+            && let Err(error) = fs::remove_dir_all(&self.profile.path)
+        {
+            tracing::error!(%error, path = %self.profile.path.display(), "failed to remove uncommitted session profile");
+        }
+    }
+}
+
 /// Persistent session catalog for one network.
 #[derive(Debug, Clone)]
 pub struct SessionCatalog {
@@ -289,27 +354,59 @@ impl SessionCatalog {
         })
     }
 
-    /// The session a caller-chosen name refers to now.
-    ///
-    /// A name that provisioned a session is promoted away to the Lite username,
-    /// so it stops naming anything. The promoted session records the name that
-    /// created it, which keeps the caller's own name usable instead of
-    /// provisioning a second identity under it. A name whose session has since
-    /// been cleared names a fresh session again.
+    /// Resolve an exact username, or the newest account matching a base or original alias.
     pub fn resolve_session_name(&self, name: &str) -> Result<String> {
+        let numbered = username_base(name).is_some();
         if self.exists(name) {
-            return Ok(name.to_string());
-        }
-        for candidate in self.list()? {
-            if read_session_info(&self.identity_path(&candidate))?
-                .created_as
-                .as_deref()
-                == Some(name)
-            {
-                return Ok(candidate);
+            let info = read_session_info(&self.identity_path(name))?;
+            if numbered || (info.user_id.is_none() && info.account_name.is_some()) {
+                return Ok(name.to_string());
             }
         }
-        Ok(name.to_string())
+        let prefix = (!numbered).then(|| lite_username_prefix(name)).flatten();
+        let mut candidates = Vec::new();
+        let mut aliases = Vec::new();
+        for candidate in self.list()? {
+            let profile = self.profile(&candidate)?;
+            let info = read_session_info(&profile.path)?;
+            if (profile.is_provisioned() || info.account_name.is_some())
+                && (candidate == name
+                    || prefix
+                        .as_deref()
+                        .is_some_and(|prefix| username_base(&candidate) == Some(prefix)))
+            {
+                candidates.push((profile, info));
+            } else if info.created_as.as_deref() == Some(name) {
+                aliases.push((profile, info));
+            }
+        }
+        if candidates.is_empty() {
+            candidates = aliases;
+        }
+        let mut latest_created_at = None;
+        let mut latest = Vec::new();
+        for (profile, info) in candidates {
+            let created_at = accounts::AccountStore::load(&profile.account_base_path)?
+                .created_at(&self.network_id, info.account_name.as_deref())?;
+            if created_at > latest_created_at {
+                latest_created_at = created_at;
+                latest.clear();
+            }
+            if created_at == latest_created_at {
+                latest.push(profile.name);
+            }
+        }
+        match latest.as_slice() {
+            [] if numbered => {
+                bail!("session {name:?} was not found; use /session --list to see saved sessions")
+            }
+            [] => Ok(name.to_string()),
+            [candidate] => Ok(candidate.clone()),
+            _ => bail!(
+                "sessions {} have the same creation time; select an exact session name",
+                latest.join(", ")
+            ),
+        }
     }
 
     pub fn set_current(&self, name: &str) -> Result<()> {
@@ -424,34 +521,55 @@ impl SessionCatalog {
     ///
     /// The public session name is the Lite username. The suffix is only a
     /// filesystem discriminator so pairing and signing state cannot collide.
+    #[cfg(test)]
     pub fn promote_to_user(
         &self,
         profile: &SessionProfile,
         user_id: &str,
     ) -> Result<SessionProfile> {
+        Ok(self.prepare_promotion(profile, user_id)?.commit())
+    }
+
+    /// Prepare a promotion that restores moved storage if activation fails or is cancelled.
+    pub fn prepare_promotion(
+        &self,
+        profile: &SessionProfile,
+        user_id: &str,
+    ) -> Result<SessionPromotion> {
         validate_name(user_id).map_err(anyhow::Error::msg)?;
         let target_path = self.identity_path(user_id);
+        let mut promotion = SessionPromotion {
+            profile: SessionProfile {
+                name: user_id.to_string(),
+                path: target_path.clone(),
+                product_storage_dir: target_path.join("storage"),
+                account_base_path: target_path.clone(),
+            },
+            moved_paths: Vec::new(),
+            created_target: false,
+            original_metadata: None,
+            committed: false,
+        };
         if profile.path != target_path && !target_path.exists() {
+            let metadata = profile.path.join(SESSION_INFO_FILE);
+            promotion.original_metadata = match fs::read(&metadata) {
+                Ok(contents) => Some(contents),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+                Err(error) => {
+                    return Err(error)
+                        .with_context(|| format!("read session metadata {}", metadata.display()));
+                }
+            };
             if profile.path == self.role_path {
-                fs::create_dir_all(&target_path)
+                fs::create_dir(&target_path)
                     .with_context(|| format!("create user host {}", target_path.display()))?;
-                migrate_default_profile(profile, &target_path)?;
+                promotion.created_target = true;
+                migrate_default_profile(profile, &target_path, &mut promotion)?;
             } else {
-                fs::rename(&profile.path, &target_path).with_context(|| {
-                    format!(
-                        "move host profile {} to {}",
-                        profile.path.display(),
-                        target_path.display()
-                    )
-                })?;
+                promotion.move_path(&profile.path, target_path.clone())?;
             }
         }
-        let promoted = SessionProfile {
-            name: user_id.to_string(),
-            path: target_path.clone(),
-            product_storage_dir: target_path.join("storage"),
-            account_base_path: target_path,
-        };
+        let promoted = &promotion.profile;
         fs::create_dir_all(&promoted.path)
             .with_context(|| format!("create user host {}", promoted.path.display()))?;
         let mut info = read_session_info(&promoted.path)?;
@@ -460,7 +578,7 @@ impl SessionCatalog {
             info.created_as = Some(profile.name.clone());
         }
         write_session_info(&promoted.path, &info)?;
-        Ok(promoted)
+        Ok(promotion)
     }
 
     pub fn cached_user_id(&self, profile: &SessionProfile) -> Result<Option<String>> {
@@ -596,22 +714,23 @@ fn remove_file_if_exists(path: &Path) -> Result<()> {
     }
 }
 
-fn migrate_default_profile(profile: &SessionProfile, target_path: &Path) -> Result<()> {
+fn migrate_default_profile(
+    profile: &SessionProfile,
+    target_path: &Path,
+    promotion: &mut SessionPromotion,
+) -> Result<()> {
     for name in ["core-storage.json", SESSION_INFO_FILE, PAIRED_HOSTS_FILE] {
         let source = profile.path.join(name);
         if source.is_file() {
-            fs::rename(&source, target_path.join(name))
-                .with_context(|| format!("move {}", source.display()))?;
+            promotion.move_path(&source, target_path.join(name))?;
         }
     }
     let scripts = profile.path.join("scripts");
     if scripts.is_dir() {
-        fs::rename(&scripts, target_path.join("scripts"))
-            .with_context(|| format!("move {}", scripts.display()))?;
+        promotion.move_path(&scripts, target_path.join("scripts"))?;
     }
     if profile.product_storage_dir.is_dir() {
-        fs::rename(&profile.product_storage_dir, target_path.join("storage"))
-            .with_context(|| format!("move {}", profile.product_storage_dir.display()))?;
+        promotion.move_path(&profile.product_storage_dir, target_path.join("storage"))?;
     }
     let account_store = profile.account_base_path.join("accounts.json");
     if account_store.is_file() {
@@ -794,14 +913,10 @@ pub fn validate_selectable_name(name: &str) -> Result<(), String> {
 ///
 /// Lite username bases accept lowercase ASCII letters only, while session
 /// names additionally accept digits and separators. Preserve the recognizable
-/// alphabetic portion of a named session and use a neutral fallback when it is
-/// shorter than the backend's six-letter minimum. The default session retains
-/// the account manager's historical default unless an explicit prefix was
-/// supplied.
-pub fn lite_username_prefix(name: &str, explicit: Option<&str>) -> Option<String> {
-    if let Some(explicit) = explicit {
-        return Some(explicit.to_string());
-    }
+/// alphabetic portion without substituting another base. New accounts require
+/// at least six letters. The default session retains the account manager's
+/// historical default.
+pub fn lite_username_prefix(name: &str) -> Option<String> {
     if name == DEFAULT_SESSION_NAME {
         return None;
     }
@@ -810,11 +925,13 @@ pub fn lite_username_prefix(name: &str, explicit: Option<&str>) -> Option<String
         .filter(u8::is_ascii_lowercase)
         .map(char::from)
         .collect();
-    Some(if prefix.len() < 6 {
-        "session".to_string()
-    } else {
-        prefix
-    })
+    Some(prefix)
+}
+
+fn username_base(name: &str) -> Option<&str> {
+    name.rsplit_once('.')
+        .filter(|_| is_lite_label(name))
+        .map(|(base, _)| base)
 }
 
 fn absolute_path(path: PathBuf) -> Result<PathBuf> {
@@ -850,27 +967,12 @@ mod tests {
 
     #[test]
     fn derives_lite_username_prefix_from_session_name() {
-        assert_eq!(
-            lite_username_prefix("pgtest", None).as_deref(),
-            Some("pgtest")
-        );
-        assert_eq!(
-            lite_username_prefix("pg-test_2", None).as_deref(),
-            Some("pgtest")
-        );
-        assert_eq!(
-            lite_username_prefix("bob", None).as_deref(),
-            Some("session")
-        );
-        assert_eq!(
-            lite_username_prefix("123", None).as_deref(),
-            Some("session")
-        );
-        assert_eq!(lite_username_prefix(DEFAULT_SESSION_NAME, None), None);
-        assert_eq!(
-            lite_username_prefix("pgtest", Some("custom")).as_deref(),
-            Some("custom")
-        );
+        assert_eq!(lite_username_prefix("pgtest").as_deref(), Some("pgtest"));
+        assert_eq!(lite_username_prefix("pg-test_2").as_deref(), Some("pgtest"));
+        assert_eq!(lite_username_prefix("bob").as_deref(), Some("bob"));
+        assert_eq!(lite_username_prefix("foo").as_deref(), Some("foo"));
+        assert_eq!(lite_username_prefix("123").as_deref(), Some(""));
+        assert_eq!(lite_username_prefix(DEFAULT_SESSION_NAME), None);
     }
 
     #[test]
@@ -1386,6 +1488,110 @@ mod tests {
     }
 
     #[test]
+    fn a_username_prefix_selects_creation_order_instead_of_the_numerical_suffix() -> Result<()> {
+        for (first, second) in [
+            ("workbench.42", "workbench.73"),
+            ("workbench.73", "workbench.42"),
+        ] {
+            let temporary = tempdir()?;
+            let catalog = SessionCatalog::new(temporary.path().to_path_buf(), "testnet")?;
+            saved_session(&catalog, first, None, 100)?;
+            saved_session(&catalog, second, None, 200)?;
+            saved_session(&catalog, "workbenchextra.99", None, 300)?;
+            catalog.ensure_profile("workbench")?;
+
+            assert_eq!(
+                (
+                    catalog.resolve_session_name("workbench")?,
+                    catalog.resolve_session_name(first)?,
+                    catalog.resolve_session_name(second)?,
+                ),
+                (second.to_string(), first.to_string(), second.to_string())
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn a_broken_binding_cannot_silently_select_an_older_identity() -> Result<()> {
+        let temporary = tempdir()?;
+        let catalog = SessionCatalog::new(temporary.path().to_path_buf(), "testnet")?;
+        saved_session(&catalog, "workbench.42", None, 100)?;
+        let broken = saved_session(&catalog, "workbench.73", None, 200)?;
+        catalog.store_signer_binding(&broken, "workbench.73", "missing")?;
+
+        for remove_store in [false, true] {
+            if remove_store {
+                fs::remove_file(broken.account_base_path.join("accounts.json"))?;
+            }
+            assert_eq!(
+                catalog
+                    .resolve_session_name("workbench")
+                    .unwrap_err()
+                    .to_string(),
+                "account \"missing\" not found for testnet"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn equal_creation_times_require_an_exact_session_name() -> Result<()> {
+        let temporary = tempdir()?;
+        let catalog = SessionCatalog::new(temporary.path().to_path_buf(), "testnet")?;
+        saved_session(&catalog, "workbench.42", None, 100)?;
+        saved_session(&catalog, "workbench.73", None, 100)?;
+
+        assert_eq!(
+            catalog
+                .resolve_session_name("workbench")
+                .unwrap_err()
+                .to_string(),
+            "sessions workbench.42, workbench.73 have the same creation time; select an exact session name"
+        );
+        assert_eq!(
+            catalog.resolve_session_name("workbench.42")?,
+            "workbench.42"
+        );
+        Ok(())
+    }
+
+    fn saved_session(
+        catalog: &SessionCatalog,
+        name: &str,
+        created_as: Option<&str>,
+        created_at: u64,
+    ) -> Result<SessionProfile> {
+        let profile = catalog.ensure_profile(name)?;
+        fs::write(
+            profile.account_base_path.join("accounts.json"),
+            serde_json::to_vec(&serde_json::json!({
+                "version": 1,
+                "accounts": [{
+                    "name": "auto-1",
+                    "network": catalog.network_id,
+                    "mnemonic": "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
+                    "lite_username": name,
+                    "public_key_hex": "0x00",
+                    "address": "test",
+                    "created_at_unix": created_at,
+                    "attested": true
+                }]
+            }))?,
+        )?;
+        write_session_info(
+            &profile.path,
+            &SessionInfo {
+                user_id: Some(name.to_string()),
+                account_name: Some("auto-1".to_string()),
+                created_as: created_as.map(str::to_string),
+                ..SessionInfo::default()
+            },
+        )?;
+        Ok(profile)
+    }
+
+    #[test]
     fn a_promoted_session_still_resolves_under_the_name_that_created_it() -> Result<()> {
         let temporary = tempdir()?;
         let catalog = SessionCatalog::new(temporary.path().to_path_buf(), "testnet")?;
@@ -1404,7 +1610,10 @@ mod tests {
         let catalog = SessionCatalog::new(temporary.path().to_path_buf(), "testnet")?;
         let provisional = catalog.ensure_profile("worker-0")?;
         let promoted = catalog.promote_to_user(&provisional, "alice.01")?;
-        fs::write(promoted.path.join("accounts.json"), "{}")?;
+        fs::write(
+            promoted.path.join("accounts.json"),
+            r#"{"version":1,"accounts":[]}"#,
+        )?;
 
         let cleared = catalog.clear(&SessionClearTarget::Named("worker-0".to_string()))?;
 

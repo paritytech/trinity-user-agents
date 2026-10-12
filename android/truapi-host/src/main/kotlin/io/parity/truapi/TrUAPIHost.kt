@@ -35,6 +35,7 @@ import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.flow.conflate
 import uniffi.truapi.ChatMessageContent
 import uniffi.truapi.ChatRoom
+import uniffi.truapi.ChatRoomFooter
 import uniffi.truapi.HostChatActionSubscribeItem
 import uniffi.truapi.HostDevicePermissionRequest
 import uniffi.truapi.HostFeatureSupportedRequest
@@ -61,10 +62,12 @@ import uniffi.truapi.ChatBotRegistrationStatus
 import uniffi.truapi.NativeChatCallbacks
 import uniffi.truapi.NativeCoreDatabaseException
 import uniffi.truapi.ChatRoomRegistrationStatus
+import uniffi.truapi.NativeGameCallbacks
 import uniffi.truapi.NativePocketCallbacks
 import uniffi.truapi.NativePocketRemoval
 import uniffi.truapi.NativeRendererObserver
 import uniffi.truapi.DevicePermissionStatus
+import uniffi.truapi.ExpandedCardFaceOutcome
 import uniffi.truapi.NativeProductExecution
 import uniffi.truapi.NativeTrUApiHostRuntime
 import uniffi.truapi.NativeAnnouncedPairing
@@ -88,6 +91,10 @@ import uniffi.truapi.HostContactLookup
 import uniffi.truapi.HostContactMatches
 import uniffi.truapi.HostContactPick
 import uniffi.truapi.NativeContactsCallbacks
+import uniffi.truapi.HostScan
+import uniffi.truapi.HostScannerScanRequest
+import uniffi.truapi.NativeScannerCallbacks
+import uniffi.truapi.ProductExecutionKind
 
 /** Package metadata. */
 object TrUAPIHost {
@@ -199,6 +206,18 @@ interface HostBridge {
     suspend fun devicePermissionStatus(
         request: HostDevicePermissionRequest,
     ): DevicePermissionStatus = DevicePermissionStatus.NOT_APPLICABLE
+
+    /**
+     * Show or hide the face above this execution's expanded card. Answers
+     * [ExpandedCardFaceOutcome.NOT_PRESENTED] when the product is not under its
+     * card and [ExpandedCardFaceOutcome.USER_MOVING] while the user drags it,
+     * and returns without waiting for the animation.
+     *
+     * Defaults to [ExpandedCardFaceOutcome.UNSUPPORTED], so an app without cards
+     * says so instead of pretending it moved one.
+     */
+    suspend fun setExpandedCardFaceShown(shown: Boolean): ExpandedCardFaceOutcome =
+        ExpandedCardFaceOutcome.UNSUPPORTED
 
     /**
      * Prompt for a remote permission bundle [product] requested on the main
@@ -378,9 +397,19 @@ interface ChatHostBridge {
      * must name this message for as long as the host stores it. An id arriving
      * in a `Reaction` or `ReactionRemoved` is product-chosen and untrusted: it
      * may name a message in another room, or none at all.
+     *
+     * `alt` is the product's one-line description of the message, already
+     * trimmed and screened, for places that list it without drawing it.
      */
     @Throws(HostRejection::class)
-    suspend fun postMessage(roomId: String, content: ChatMessageContent): String
+    suspend fun postMessage(roomId: String, content: ChatMessageContent, alt: String?): String
+
+    /**
+     * Set what a product's native Chat room shows below its messages, and keep
+     * it until the product sets another.
+     */
+    @Throws(HostRejection::class)
+    suspend fun setRoomFooter(roomId: String, footer: ChatRoomFooter)
 
     /** Return the current product-scoped native Chat rooms. */
     @Throws(HostRejection::class)
@@ -411,6 +440,35 @@ interface PocketHostBridge {
      */
     @Throws(HostRejection::class)
     suspend fun removeCard(cardId: String): NativePocketRemoval
+}
+
+/**
+ * Native game-reminder surface. Implement and pass to
+ * [TrUAPIHostRuntime.openProductExecution] when the host can hold reminders;
+ * hosts without one pass nothing.
+ *
+ * The host holds one reminder per product: a schedule replaces the reminder
+ * the same product already holds. The core asks for no per-product consent;
+ * the host asks the OS for what it needs, rings an alarm where the OS allows
+ * one and delivers a notification otherwise, may add the game to the
+ * calendar, keeps the reminder across app kill and reboot, and drops it once
+ * the game starts.
+ *
+ * Threading: both calls suspend, so an implementation may switch to its own
+ * dispatcher to answer; implementations must be safe to enter concurrently.
+ */
+interface GameHostBridge {
+    /**
+     * Hold [startsAt] (Unix milliseconds, UTC) as this product's reminder, replacing any it holds.
+     * Any exception, including an OS that allows neither alarms nor notifications, reaches the
+     * product as a host failure carrying its reason.
+     */
+    @Throws(HostRejection::class)
+    suspend fun scheduleReminder(startsAt: ULong)
+
+    /** Drop this product's reminder. Dropping none succeeds. */
+    @Throws(HostRejection::class)
+    suspend fun cancelReminder()
 }
 
 /**
@@ -456,6 +514,9 @@ private class HostCallbackAdapter(private val bridge: HostBridge) : HostCallback
     override suspend fun devicePermissionStatus(
         request: HostDevicePermissionRequest,
     ): DevicePermissionStatus = withHostRejection { bridge.devicePermissionStatus(request) }
+
+    override suspend fun setExpandedCardFaceShown(shown: Boolean): ExpandedCardFaceOutcome =
+        withHostRejection { bridge.setExpandedCardFaceShown(shown) }
 
     override suspend fun remotePermission(
         product: ProductExecutionConfig,
@@ -594,8 +655,11 @@ private class ChatCallbackAdapter(private val bridge: ChatHostBridge) : NativeCh
         icon: String,
     ): ChatBotRegistrationStatus = withHostRejection { bridge.registerBot(botId, name, icon) }
 
-    override suspend fun postMessage(roomId: String, content: ChatMessageContent): String =
-        withHostRejection { bridge.postMessage(roomId, content) }
+    override suspend fun postMessage(roomId: String, content: ChatMessageContent, alt: String?): String =
+        withHostRejection { bridge.postMessage(roomId, content, alt) }
+
+    override suspend fun setRoomFooter(roomId: String, footer: ChatRoomFooter) =
+        withHostRejection { bridge.setRoomFooter(roomId, footer) }
 
     override suspend fun listRooms(): List<ChatRoom> = withHostRejection { bridge.listRooms() }
 }
@@ -638,13 +702,28 @@ private class ContactsCallbackAdapter(private val bridge: ContactsHostBridge) : 
         withHostRejection { bridge.contacts(lookup) }
 
     override suspend fun pickContact(productId: String): HostContactPick =
-        try {
-            bridge.pickContact(productId)
-        } catch (error: HostRejection) {
-            throw error
-        } catch (error: Throwable) {
-            throw HostRejection.Rejected(hostRejectionReason(error))
-        }
+        withHostRejection { bridge.pickContact(productId) }
+}
+
+/**
+ * Draws the viewfinder for `scanner.scan`, following the rules on the core's
+ * `ScannerPlatform`. Closes it when the coroutine is cancelled.
+ */
+interface ScannerHostBridge {
+    @Throws(HostRejection::class)
+    suspend fun scanCode(
+        productId: String,
+        executionKind: ProductExecutionKind,
+        request: HostScannerScanRequest,
+    ): HostScan
+}
+
+private class ScannerCallbackAdapter(private val bridge: ScannerHostBridge) : NativeScannerCallbacks {
+    override suspend fun scanCode(
+        productId: String,
+        executionKind: ProductExecutionKind,
+        request: HostScannerScanRequest,
+    ): HostScan = withHostRejection { bridge.scanCode(productId, executionKind, request) }
 }
 
 private class PocketCallbackAdapter(private val bridge: PocketHostBridge) : NativePocketCallbacks {
@@ -652,6 +731,16 @@ private class PocketCallbackAdapter(private val bridge: PocketHostBridge) : Nati
 
     override suspend fun removeCard(cardId: String): NativePocketRemoval =
         withHostRejection { bridge.removeCard(cardId) }
+}
+
+/**
+ * Adapter from the public [GameHostBridge] surface to the generated UniFFI
+ * [NativeGameCallbacks] interface.
+ */
+private class GameCallbackAdapter(private val bridge: GameHostBridge) : NativeGameCallbacks {
+    override suspend fun scheduleReminder(startsAt: ULong) = withHostRejection { bridge.scheduleReminder(startsAt) }
+
+    override suspend fun cancelReminder() = withHostRejection { bridge.cancelReminder() }
 }
 
 /**
@@ -698,6 +787,19 @@ class TrUAPIHostRuntime @Throws(NativeRuntimeConfigException::class) constructor
         return inner.setContactsCallbacks(adapter)
     }
 
+    // Co-owns the scanner adapter for as long as the runtime holds it.
+    private var scannerRetainer: NativeScannerCallbacks? = null
+
+    /**
+     * Install the host's scanner before opening any product execution.
+     * Set-once: returns whether this call installed it.
+     */
+    fun setScanner(scanner: ScannerHostBridge): Boolean {
+        val adapter = ScannerCallbackAdapter(scanner)
+        scannerRetainer = adapter
+        return inner.setScannerCallbacks(adapter)
+    }
+
     /**
      * Tell the core the host's contacts changed. Call it whenever a contact is
      * removed or blocked, so a contact handle the core cached stops resolving.
@@ -710,7 +812,8 @@ class TrUAPIHostRuntime @Throws(NativeRuntimeConfigException::class) constructor
      * Open one executable connection with a host-assigned immutable context.
      * Pass [chat] to install the host's Chat adapter; hosts without the Chat
      * modality omit it. Pass [pocket] to install the card collection, and omit
-     * that where the host has no Pocket surface.
+     * that where the host has no Pocket surface. Pass [game] to hold game
+     * reminders, and omit it where the host cannot.
      */
     @Throws(NativeRuntimeConfigException::class)
     fun openProductExecution(
@@ -718,18 +821,21 @@ class TrUAPIHostRuntime @Throws(NativeRuntimeConfigException::class) constructor
         configuration: ProductExecutionConfig,
         chat: ChatHostBridge? = null,
         pocket: PocketHostBridge? = null,
+        game: GameHostBridge? = null,
     ): TrUAPIProductExecution {
         val adapter = HostCallbackAdapter(bridge)
         val chatAdapter = chat?.let { ChatCallbackAdapter(it) }
         val pocketAdapter = pocket?.let { PocketCallbackAdapter(it) }
+        val gameAdapter = game?.let { GameCallbackAdapter(it) }
         val execution =
             inner.openProductExecution(
                 adapter,
                 chatAdapter,
                 pocketAdapter,
+                gameAdapter,
                 configuration,
             )
-        return TrUAPIProductExecution(execution, adapter, chatAdapter, pocketAdapter)
+        return TrUAPIProductExecution(execution, adapter, chatAdapter, pocketAdapter, gameAdapter)
     }
 
     /**
@@ -933,6 +1039,7 @@ class TrUAPIProductExecution internal constructor(
     private val callbackRetainer: HostCallbacks,
     private val chatRetainer: NativeChatCallbacks?,
     private val pocketRetainer: NativePocketCallbacks?,
+    private val gameRetainer: NativeGameCallbacks?,
 ) : AutoCloseable {
     private val shutDown = AtomicBoolean(false)
 

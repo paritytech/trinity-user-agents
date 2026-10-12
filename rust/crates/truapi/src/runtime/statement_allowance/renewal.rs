@@ -616,11 +616,10 @@ mod tests {
         let existing_target = target_with("existing", [0xa2; 32]);
         let targets = [new_target.clone(), existing_target.clone()];
 
-        let mut owned = vec![entry(existing_target.account_id, 1_000)];
-        owned.extend((1..10u64).map(|seq| entry([0x99; 32], 1_000 + seq)));
-        owned.push(entry(existing_target.account_id, 1_000));
-        owned.push(entry(existing_target.account_id, 1_000));
-        owned.extend((1..10u64).map(|seq| entry([0x99; 32], 1_000 + seq)));
+        // The full table, read by each target's pre-scan and by the rescan.
+        let mut table = vec![entry(existing_target.account_id, 1_000)];
+        table.extend((1..10u64).map(|seq| entry([0x99; 32], 1_000 + seq)));
+        let mut owned = [table.clone(), table.clone(), table].concat();
         owned.push(clock());
         owned.push("null".to_string());
         owned.push(entry(new_target.account_id, NOW));

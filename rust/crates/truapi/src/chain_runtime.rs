@@ -22,6 +22,7 @@ use core::task::{Context, Poll};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
 use std::sync::Mutex;
+use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 #[cfg(not(target_arch = "wasm32"))]
 use std::time::Duration;
@@ -41,12 +42,13 @@ use parking_lot::Mutex as ParkingMutex;
 use serde::de::{Deserializer, Error as DeError};
 use serde_json::Value;
 use subxt::OnlineClient;
-use subxt::backend::ChainHeadBackend;
+use subxt::backend::{ChainHeadBackend, LegacyBackend};
+use subxt::config::RpcConfigFor;
 use subxt::config::substrate::{SubstrateConfig, SubstrateConfigBuilder};
 use subxt::utils::H256;
 use subxt_rpcs::client::RpcClient;
 use subxt_rpcs::methods::chain_head as subxt_chain;
-use subxt_rpcs::{ChainHeadRpcMethods, Error as SubxtRpcError, RpcConfig};
+use subxt_rpcs::{ChainHeadRpcMethods, Error as SubxtRpcError, LegacyRpcMethods, RpcConfig};
 use tracing::{instrument, warn};
 use truapi::v01::{
     OperationStartedResult, RemoteChainHeadBodyRequest, RemoteChainHeadBodyResponse,
@@ -64,6 +66,8 @@ use crate::host_rpc_client::HostRpcClient;
 use crate::subscription::Spawner;
 
 const FOLLOW_METHOD: &str = "remote_chain_head_follow";
+/// Method tag for failures building or using the legacy Subxt client.
+const LEGACY_CONNECTION: &str = "legacy_connection";
 
 struct TruapiRpcConfig;
 
@@ -125,6 +129,20 @@ pub struct SubxtConnection {
     pub client: OnlineClient<SubstrateConfig>,
 }
 
+/// Cached Subxt client over the legacy JSON-RPC methods, which reach any
+/// block the node still keeps rather than only blocks pinned by a chainHead
+/// follow. It shares its chain config, and so its metadata cache, with the
+/// connection's [`SubxtConnection`].
+#[derive(Clone)]
+pub struct LegacyConnection {
+    /// Client for metadata-aware reads at a block, such as events.
+    pub client: OnlineClient<SubstrateConfig>,
+    /// Backend for block-level reads that need no metadata.
+    pub backend: Arc<LegacyBackend<SubstrateConfig>>,
+    /// Legacy methods the backend does not expose, such as the best block hash.
+    pub methods: LegacyRpcMethods<RpcConfigFor<SubstrateConfig>>,
+}
+
 /// Classification of framework-level chain failures separate from JSON-RPC
 /// domain errors. Maps cleanly to [`truapi::CallError`] variants at the
 /// `ProductRuntimeHost` boundary.
@@ -182,7 +200,7 @@ impl RuntimeFailure {
 
     /// Failure classification.
     #[cfg(test)]
-    fn kind(&self) -> RuntimeFailureKind {
+    pub fn kind(&self) -> RuntimeFailureKind {
         self.kind
     }
 
@@ -695,6 +713,19 @@ impl ChainRuntime {
             .clone())
     }
 
+    /// Legacy-RPC Subxt client for the chain identified by `genesis_hash`,
+    /// for reads at blocks a chainHead follow no longer pins.
+    #[instrument(skip_all, fields(runtime.method = "chain_runtime.legacy_connection"))]
+    pub async fn legacy_connection(
+        &self,
+        genesis_hash: &[u8],
+    ) -> Result<LegacyConnection, RuntimeFailure> {
+        self.connection_for(LEGACY_CONNECTION, genesis_hash)
+            .await?
+            .legacy_connection()
+            .await
+    }
+
     async fn subxt_connection(
         &self,
         genesis_hash: &[u8],
@@ -930,6 +961,10 @@ struct ChainConnection {
     /// rebuild.
     subxt_connection_setup: Mutex<Option<(u64, SubxtConnectionSetup)>>,
     subxt_connection_generation: AtomicU64,
+    /// Config shared by every Subxt client on this connection, so they share
+    /// one metadata cache.
+    chain_config: OnceLock<SubstrateConfig>,
+    legacy_connection: Mutex<Option<LegacyConnection>>,
 }
 
 impl ChainConnection {
@@ -945,6 +980,8 @@ impl ChainConnection {
             follow_setups: Mutex::new(HashMap::new()),
             subxt_connection_setup: Mutex::new(None),
             subxt_connection_generation: AtomicU64::new(0),
+            chain_config: OnceLock::new(),
+            legacy_connection: Mutex::new(None),
         })
     }
 
@@ -1004,15 +1041,7 @@ impl ChainConnection {
         generation: u64,
     ) -> Result<SubxtConnection, RuntimeFailure> {
         const METHOD: &str = "subxt_connection";
-        let genesis_hash: [u8; 32] = self.genesis_hash.as_slice().try_into().map_err(|_| {
-            RuntimeFailure::host_failure(
-                METHOD,
-                format!(
-                    "expected 32-byte genesis hash, got {}",
-                    self.genesis_hash.len()
-                ),
-            )
-        })?;
+        let config = self.chain_config(METHOD)?;
         let (backend, mut driver) = ChainHeadBackend::<SubstrateConfig>::builder()
             .build(RpcClient::new(self.rpc_client.clone()));
         // The pump holds only a weak handle so a torn-down connection is not
@@ -1035,13 +1064,62 @@ impl ChainConnection {
             .boxed(),
         );
         let backend = Arc::new(backend);
-        let config = SubstrateConfigBuilder::new()
-            .set_genesis_hash(H256(genesis_hash))
-            .build();
         let client = OnlineClient::from_backend_with_config(config, backend.clone())
             .await
             .map_err(|error| RuntimeFailure::host_failure(METHOD, error.to_string()))?;
         Ok(SubxtConnection { client })
+    }
+
+    /// The config every Subxt client on this connection is built with. It
+    /// pins the host-configured genesis hash, so Subxt never reads a
+    /// provider-echoed one.
+    fn chain_config(&self, method: &'static str) -> Result<SubstrateConfig, RuntimeFailure> {
+        if let Some(config) = self.chain_config.get() {
+            return Ok(config.clone());
+        }
+        let genesis_hash: [u8; 32] = self.genesis_hash.as_slice().try_into().map_err(|_| {
+            RuntimeFailure::host_failure(
+                method,
+                format!(
+                    "expected 32-byte genesis hash, got {}",
+                    self.genesis_hash.len()
+                ),
+            )
+        })?;
+        Ok(self
+            .chain_config
+            .get_or_init(|| {
+                SubstrateConfigBuilder::new()
+                    .set_genesis_hash(H256(genesis_hash))
+                    .build()
+            })
+            .clone())
+    }
+
+    /// Lazily build and cache the legacy Subxt client. Building it sends no
+    /// request and starts no background task, so concurrent first callers
+    /// may each build one; the first one stored is kept.
+    async fn legacy_connection(&self) -> Result<LegacyConnection, RuntimeFailure> {
+        if let Some(existing) = self.legacy_connection.lock().unwrap().clone() {
+            return Ok(existing);
+        }
+        let config = self.chain_config(LEGACY_CONNECTION)?;
+        let rpc = RpcClient::new(self.rpc_client.clone());
+        let backend = Arc::new(LegacyBackend::builder().build(rpc.clone()));
+        let client = OnlineClient::from_backend_with_config(config, backend.clone())
+            .await
+            .map_err(|error| RuntimeFailure::host_failure(LEGACY_CONNECTION, error.to_string()))?;
+        let built = LegacyConnection {
+            client,
+            backend,
+            methods: LegacyRpcMethods::new(rpc),
+        };
+        Ok(self
+            .legacy_connection
+            .lock()
+            .unwrap()
+            .get_or_insert(built)
+            .clone())
     }
 
     /// Whether the already-resolved follow was registered with runtime metadata.
@@ -1783,9 +1861,9 @@ fn decode_hex(value: &str) -> Result<Vec<u8>, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::{ScriptedProvider, extract_id, notification_sender, wait_for_sent};
     use async_trait::async_trait;
-    use futures::channel::mpsc as fut_mpsc;
-    use futures::stream::{self, BoxStream};
+    use futures::stream;
     use parking_lot::{Condvar, Mutex as ParkingMutex};
     use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -1891,98 +1969,6 @@ mod tests {
         }
     }
 
-    /// Provider that echoes a canned response for every request it sees,
-    /// driven by a `respond` closure. The closure receives each json-rpc
-    /// request string and returns the response string the test wants the
-    /// server to deliver. Keeps the response loop synchronized with the
-    /// request stream so there is no race between `send` and the response
-    /// loop draining frames before pending requests have registered.
-    type Responder = Arc<dyn Fn(&str) -> Option<String> + Send + Sync>;
-
-    struct ScriptedProvider {
-        respond: Responder,
-        sent: Arc<Mutex<Vec<String>>>,
-        sender: Arc<Mutex<Option<fut_mpsc::UnboundedSender<String>>>>,
-        receiver: Arc<Mutex<Option<fut_mpsc::UnboundedReceiver<String>>>>,
-        connect_calls: Arc<AtomicUsize>,
-    }
-
-    impl ScriptedProvider {
-        fn new<F>(respond: F) -> Self
-        where
-            F: Fn(&str) -> Option<String> + Send + Sync + 'static,
-        {
-            let (tx, rx) = fut_mpsc::unbounded();
-            Self {
-                respond: Arc::new(respond),
-                sent: Arc::new(Mutex::new(Vec::new())),
-                sender: Arc::new(Mutex::new(Some(tx))),
-                receiver: Arc::new(Mutex::new(Some(rx))),
-                connect_calls: Arc::new(AtomicUsize::new(0)),
-            }
-        }
-    }
-
-    struct ScriptedConnection {
-        respond: Responder,
-        sent: Arc<Mutex<Vec<String>>>,
-        sender: Arc<Mutex<Option<fut_mpsc::UnboundedSender<String>>>>,
-        receiver: Mutex<Option<fut_mpsc::UnboundedReceiver<String>>>,
-    }
-
-    impl JsonRpcConnection for ScriptedConnection {
-        fn send(&self, request: String) {
-            self.sent.lock().unwrap().push(request.clone());
-            if let Some(response) = (self.respond)(&request)
-                && let Some(sender) = self.sender.lock().unwrap().as_ref()
-            {
-                let _ = sender.unbounded_send(response);
-            }
-        }
-        fn responses(&self) -> BoxStream<'static, String> {
-            let rx = self
-                .receiver
-                .lock()
-                .unwrap()
-                .take()
-                .expect("ScriptedConnection::responses called twice");
-            rx.boxed()
-        }
-
-        fn close(&self) {
-            self.sender.lock().unwrap().take();
-        }
-    }
-
-    #[async_trait]
-    impl RuntimeChainProvider for ScriptedProvider {
-        async fn connect(
-            &self,
-            _genesis_hash: Vec<u8>,
-        ) -> Result<Arc<dyn JsonRpcConnection>, RuntimeFailure> {
-            self.connect_calls.fetch_add(1, Ordering::SeqCst);
-            let receiver = self.receiver.lock().unwrap().take();
-            Ok(Arc::new(ScriptedConnection {
-                respond: self.respond.clone(),
-                sent: self.sent.clone(),
-                sender: self.sender.clone(),
-                receiver: Mutex::new(receiver),
-            }))
-        }
-    }
-
-    /// Clone of the scripted notification sender, used by tests to push
-    /// asynchronous frames (e.g. follow events) into the response stream.
-    fn notification_sender(provider: &ScriptedProvider) -> fut_mpsc::UnboundedSender<String> {
-        provider
-            .sender
-            .lock()
-            .unwrap()
-            .as_ref()
-            .expect("notification sender available")
-            .clone()
-    }
-
     #[test]
     fn unavailable_provider_surfaces_failure() {
         let provider = Arc::new(UnavailableChainProvider);
@@ -1993,27 +1979,6 @@ mod tests {
         };
         assert_eq!(err.kind(), RuntimeFailureKind::Unavailable);
         assert_eq!(err.method(), "remote_chain_connect");
-    }
-
-    /// Find the json-rpc request id of the just-sent frame so the scripted
-    /// responder can mirror it back to the dispatcher.
-    fn extract_id(request: &str) -> Option<String> {
-        let value: Value = serde_json::from_str(request).ok()?;
-        value.get("id")?.as_str().map(ToString::to_string)
-    }
-
-    fn wait_for_sent(
-        provider: &ScriptedProvider,
-        predicate: impl Fn(&[String]) -> bool,
-    ) -> Vec<String> {
-        for _ in 0..500 {
-            let sent = provider.sent.lock().unwrap().clone();
-            if predicate(&sent) {
-                return sent;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(10));
-        }
-        provider.sent.lock().unwrap().clone()
     }
 
     #[test]

@@ -518,17 +518,6 @@
         }
       }
     },
-    "statementStoreStatusActive" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Connection active"
-          }
-        }
-      }
-    },
     "statementStoreStatusConnecting" : {
       "extractionState" : "manual",
       "localizations" : {

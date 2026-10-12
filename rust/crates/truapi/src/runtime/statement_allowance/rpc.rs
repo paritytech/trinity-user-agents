@@ -349,6 +349,28 @@ pub mod testing {
         }
     }
 
+    /// Answer a batched storage read with one scripted answer per key, in key
+    /// order, as if each key had been read on its own.
+    fn batched_storage_answer(responses: &mut Vec<String>, params: &str) -> String {
+        let params: serde_json::Value =
+            serde_json::from_str(params).expect("batched read params are JSON");
+        let keys = params[0].as_array().expect("batched read names its keys");
+        assert!(
+            responses.len() >= keys.len(),
+            "unscripted batched read of {} keys",
+            keys.len()
+        );
+        let changes: Vec<serde_json::Value> = keys
+            .iter()
+            .map(|key| {
+                let value: serde_json::Value = serde_json::from_str(&responses.remove(0))
+                    .expect("scripted response is valid JSON");
+                serde_json::json!([key, value])
+            })
+            .collect();
+        serde_json::json!([{ "block": "0xscripted", "changes": changes }]).to_string()
+    }
+
     fn params_json(params: Option<Box<RawValue>>) -> String {
         params.map_or_else(|| "[]".to_string(), |p| p.get().to_owned())
     }
@@ -359,14 +381,19 @@ pub mod testing {
             method: &'a str,
             params: Option<Box<RawValue>>,
         ) -> RawRpcFuture<'a, Box<RawValue>> {
+            let params = params_json(params);
             self.0
                 .calls
                 .lock()
                 .unwrap()
-                .push((method.to_owned(), params_json(params)));
+                .push((method.to_owned(), params.clone()));
             let mut responses = self.0.responses.lock().unwrap();
             assert!(!responses.is_empty(), "unscripted request `{method}`");
-            let response = responses.remove(0);
+            let response = if method == "state_queryStorageAt" {
+                batched_storage_answer(&mut responses, &params)
+            } else {
+                responses.remove(0)
+            };
             Box::pin(async move {
                 Ok(RawValue::from_string(response).expect("scripted response is valid JSON"))
             })

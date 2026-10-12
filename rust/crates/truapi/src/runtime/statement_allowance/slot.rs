@@ -474,8 +474,8 @@ pub struct SlotScan<'a> {
     pub reuse_existing: bool,
 }
 
-/// Scan slots `0..max` for the scan's period, returning the first non-excluded
-/// free seq (or detecting that the target already holds one).
+/// Scan slots `0..max` for the scan's period in one round trip, returning the
+/// first non-excluded free seq (or detecting that the target already holds one).
 pub async fn scan_slot_excluding(
     rpc: &RpcClient,
     metadata: &Metadata,
@@ -491,13 +491,17 @@ pub async fn scan_slot_excluding(
         reuse_existing,
     } = scan;
     let max = max_slots(rpc, metadata, collection).await?;
+    let mut keys = Vec::with_capacity(max as usize);
+    for seq in 0..max {
+        let alias = slot_alias(entropy, network_suffix, period, seq).await?;
+        keys.push(statement_store_allowance_key(period, &alias));
+    }
+    let entries = rpc.get_storage_many(&keys).await?;
     let mut first_free: Option<u32> = None;
     let mut excluded_free = false;
     let mut occupied = Vec::new();
-    for seq in 0..max {
-        let alias = slot_alias(entropy, network_suffix, period, seq).await?;
-        let key = statement_store_allowance_key(period, &alias);
-        match rpc.get_storage(&key).await? {
+    for (seq, entry) in (0..max).zip(entries) {
+        match entry {
             None => {
                 if excluded.contains(&seq) {
                     excluded_free = true;
@@ -635,6 +639,36 @@ pub async fn scan_long_term_storage_counter_excluding(
 }
 
 #[cfg(test)]
+pub mod testing {
+    //! Scripted chain answers for slot scans.
+
+    use super::{slot_alias, statement_store_allowance_key};
+
+    /// A `state_queryStorageAt` answer for `entropy`'s `period` row, where
+    /// `entries[seq]` is slot `seq`'s JSON storage value. Like the node, it
+    /// lists only the slots that exist.
+    pub fn slot_row(
+        entropy: [u8; 32],
+        network_suffix: &[u8],
+        period: u32,
+        entries: &[Option<String>],
+    ) -> String {
+        let changes: Vec<String> = entries
+            .iter()
+            .enumerate()
+            .filter_map(|(seq, entry)| {
+                let alias =
+                    futures::executor::block_on(slot_alias(entropy, network_suffix, period, seq as u32))
+                        .unwrap();
+                let key = hex::encode(statement_store_allowance_key(period, &alias));
+                Some(format!(r#"["0x{key}",{}]"#, entry.as_ref()?))
+            })
+            .collect();
+        format!(r#"[{{"block":"0xb10c","changes":[{}]}}]"#, changes.join(","))
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use subxt_rpcs::RpcClient as HostRpcClient;
 
@@ -724,6 +758,40 @@ mod tests {
         slots[2] = Some([0x22; 32]);
 
         assert_eq!(scripted_find(&slots), SlotSelection::AlreadyAllocated(2));
+    }
+
+    /// The whole row is read in one round trip. One request per slot, one after
+    /// another, cost seconds per statement proof against a live chain.
+    #[test]
+    fn the_slot_scan_reads_its_row_in_one_round_trip() {
+        let mut entries = vec!["null".to_string(); SLOTS];
+        entries[SLOTS - 1] = slot_entry([0x22; 32]);
+        let scripted = ScriptedRpc::new(entries.iter().map(String::as_str));
+        let rpc = RpcClient::new(HostRpcClient::new(scripted.clone()));
+
+        let selection = futures::executor::block_on(scan_slot_excluding(
+            &rpc,
+            test_fixtures::people(),
+            SlotScan {
+                collection: PersonhoodCollection::LitePeople,
+                entropy: [0x11; 32],
+                network_suffix: NETWORK_SUFFIX,
+                period: 7,
+                target: &[0x22; 32],
+                excluded: &[],
+                reuse_existing: true,
+            },
+        ))
+        .unwrap();
+
+        let methods: Vec<String> = scripted.calls().into_iter().map(|(method, _)| method).collect();
+        assert_eq!(
+            (selection, methods),
+            (
+                SlotSelection::AlreadyAllocated(SLOTS as u32 - 1),
+                vec!["state_queryStorageAt".to_string()],
+            ),
+        );
     }
 
     #[test]
@@ -938,28 +1006,9 @@ mod tests {
         const ENTROPY: [u8; 32] = [0x11; 32];
         const DAY: u32 = 20678;
 
-        // Slots 0-2 are claimed; 3 is free. `state_queryStorageAt` reports only the
-        // keys that exist, so the absent ones are simply missing from `changes`.
-        let claimed: Vec<String> = (0..3u32)
-            .map(|slot_index| {
-                let alias = futures::executor::block_on(pgas_alias(
-                    ENTROPY,
-                    NETWORK_SUFFIX,
-                    DAY,
-                    slot_index,
-                ))
-                .unwrap();
-                format!(
-                    r#"["0x{}","0x"]"#,
-                    hex::encode(claimed_gas_alias_key(DAY, &alias))
-                )
-            })
-            .collect();
-        let response = format!(
-            r#"[{{"block":"0xb10c","changes":[{}]}}]"#,
-            claimed.join(",")
-        );
-        let scripted = ScriptedRpc::new(vec![response.as_str()]);
+        // Slots 0-2 are claimed; 3 is free. The batch of ten is answered key by key.
+        let answers: Vec<&str> = (0..10).map(|slot| if slot < 3 { r#""0x""# } else { "null" }).collect();
+        let scripted = ScriptedRpc::new(answers);
         let rpc = RpcClient::new(HostRpcClient::new(scripted.clone()));
 
         let chosen = futures::executor::block_on(scan_pgas_slot_in(

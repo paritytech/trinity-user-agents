@@ -25,7 +25,7 @@ pub const CURRENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 const BINARY: &str = "truapi-host";
 
 /// Release host. `TRUAPI_HOST_RELEASE_BASE_URL` overrides it for mirrors and tests.
-const DEFAULT_BASE_URL: &str = "https://github.com/paritytech/host-rust-core";
+const DEFAULT_BASE_URL: &str = "https://github.com/paritytech/trinity-user-agents";
 
 /// Rolling release whose `version` asset names the current stable version.
 const STABLE_TAG: &str = "truapi-host-cli-stable";
@@ -49,7 +49,7 @@ const CHECK_STATE_FILE: &str = "update-check.json";
 const LOCK_FILE: &str = "update.lock";
 
 /// One-liner that installs or repairs a managed install.
-const INSTALLER_URL: &str = "https://raw.githubusercontent.com/paritytech/host-rust-core/main/scripts/truapi-host-installer.sh";
+const INSTALLER_URL: &str = "https://raw.githubusercontent.com/paritytech/trinity-user-agents/main/scripts/truapi-host-installer.sh";
 
 /// An install laid out by the installer.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -570,7 +570,7 @@ mod tests {
     fn unmanaged_binaries_are_left_alone() {
         for path in [
             "/home/dev/.cargo/bin/truapi-host",
-            "/home/dev/src/host-rust-core/target/release/truapi-host",
+            "/home/dev/src/trinity-user-agents/target/release/truapi-host",
             "/usr/local/bin/truapi-host",
         ] {
             assert_eq!(

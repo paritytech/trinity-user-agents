@@ -16,8 +16,6 @@ import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import io.paritytech.polkadotapp.common.presentation.search.SearchState
-import io.paritytech.polkadotapp.common.utils.toSizedList
 import io.paritytech.polkadotapp.design.components.avatar.AvatarUiModel
 import io.paritytech.polkadotapp.design.components.avatar.Mock
 import io.paritytech.polkadotapp.design.components.button.common.PolkadotButtonStyle
@@ -38,6 +36,7 @@ import io.paritytech.polkadotapp.design.theme.PolkadotTheme
 import io.paritytech.polkadotapp.design.utils.collectAsEffect
 import io.paritytech.polkadotapp.feature_account_api.presentation.address.model.ExtractedAddress
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.sendPayment.PaymentSearchResultUiModel
+import io.paritytech.polkadotapp.feature_wallet_impl.presentation.sendPayment.PaymentSearchResults
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.sendPayment.PaymentSearchSectionUiModel
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.sendPayment.SendPaymentContract
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.sendPayment.SendPaymentUiState
@@ -139,12 +138,13 @@ private fun SendPaymentScreenInternal(
 
             VerticalSpacer { mediumIncreased }
 
-            when (val searchState = state.searchState) {
-                is SearchState.Loaded -> SearchResult(searchState.results, onRecipientSelect)
-                SearchState.Empty -> if (state.input.isNotEmpty()) {
+            when (val results = state.results) {
+                is PaymentSearchResults.Sections -> SearchResult(results.sections, onRecipientSelect)
+                PaymentSearchResults.Waiting -> Unit
+                PaymentSearchResults.Loading -> LoadingScreenState()
+                PaymentSearchResults.Empty -> if (state.input.isNotEmpty()) {
                     SendPaymentEmptySearch(state.input)
                 }
-                SearchState.Initial, SearchState.Loading, is SearchState.Error -> LoadingScreenState()
             }
         }
     }
@@ -157,11 +157,11 @@ private fun SendPaymentScreenPreview() {
         SendPaymentScreenInternal(
             state = SendPaymentUiState(
                 input = "alice",
-                searchState = SearchState.Loaded(
+                results = PaymentSearchResults.Sections(
                     persistentListOf(
                         PaymentSearchSectionUiModel(
                             key = "contacts",
-                            titleRes = RCommon.string.address_section_my_contacts,
+                            titleRes = RCommon.string.search_section_contacts,
                             items = persistentListOf(
                                 PaymentSearchResultUiModel(
                                     extractedAddress = ExtractedAddress(
@@ -175,7 +175,7 @@ private fun SendPaymentScreenPreview() {
                         ),
                         PaymentSearchSectionUiModel(
                             key = "general",
-                            titleRes = RCommon.string.send_payment_section_global_search,
+                            titleRes = RCommon.string.search_section_all_users,
                             items = persistentListOf(
                                 PaymentSearchResultUiModel(
                                     extractedAddress = ExtractedAddress(
@@ -195,7 +195,7 @@ private fun SendPaymentScreenPreview() {
                                 )
                             )
                         )
-                    ).toSizedList()
+                    )
                 )
             ),
             onInputChange = {},

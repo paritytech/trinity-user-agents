@@ -34,6 +34,11 @@ extension SearchAccountViewModel {
         var selectedAccount: AccountType?
     }
 
+    struct Status {
+        let message: String?
+        let showsLoader: Bool
+    }
+
     struct Content {
         let recent: [RecipientViewModel]
         let contacts: [AccountType]

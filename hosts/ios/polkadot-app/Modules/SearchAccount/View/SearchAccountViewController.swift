@@ -34,7 +34,7 @@ final class SearchAccountViewController: UIViewController, ViewHolder {
     let presenter: SearchAccountPresenterProtocol
     private(set) var viewModel = SearchAccountViewModel()
     private lazy var dataSource = configureDataSource()
-    private var noResultsQuery: String?
+    private var statusMessage: String?
 
     // MARK: Initial methods
 
@@ -73,9 +73,9 @@ final class SearchAccountViewController: UIViewController, ViewHolder {
     override func updateContentUnavailableConfiguration(
         using _: UIContentUnavailableConfigurationState
     ) {
-        if let noResultsQuery {
+        if let statusMessage {
             contentUnavailableConfiguration = UIContentUnavailableConfiguration.titleSubtitle(
-                with: String(localized: .searchContactNoSuchUsername(username: noResultsQuery)),
+                with: statusMessage,
                 subtitle: ""
             )
         } else {
@@ -189,34 +189,19 @@ extension SearchAccountViewController: SearchAccountViewProtocol {
         self.viewModel = viewModel
         let snapshot = prepareData(viewModel.content)
         applySnapshot(snapshot)
-
-        let query = rootView.addressInputView.inputValue?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        let isEmpty = viewModel.content.recent.isEmpty
-            && viewModel.content.contacts.isEmpty
-            && viewModel.content.global.isEmpty
-
-        noResultsQuery = (!query.isEmpty && isEmpty) ? query : nil
-        setNeedsUpdateContentUnavailableConfiguration()
     }
 
-    func didStartLoading() {
-        noResultsQuery = nil
+    func didReceive(status: SearchAccountViewModel.Status) {
+        statusMessage = status.message
         setNeedsUpdateContentUnavailableConfiguration()
-        let snapshot = dataSource.snapshot()
-        let items = snapshot.itemIdentifiers
-        if items.isEmpty {
+
+        if status.showsLoader {
             rootView.loadingView.startAnimating()
             rootView.loadingView.isHidden = false
+        } else if !rootView.loadingView.isHidden {
+            rootView.loadingView.stopAnimating()
+            rootView.loadingView.isHidden = true
         }
-    }
-
-    func didStopLoading() {
-        guard rootView.loadingView.isHidden == false else {
-            return
-        }
-
-        rootView.loadingView.stopAnimating()
-        rootView.loadingView.isHidden = true
     }
 }
 

@@ -14,6 +14,7 @@ android {
     defaultConfig {
         buildConfigString("CURRENCY_SYMBOL", localProperties.readSecretOrThrow("CURRENCY_SYMBOL"))
         buildConfigString("FIAT_SYMBOL", localProperties.readSecretOrThrow("FIAT_SYMBOL"))
+        buildConfigString("APP_NAME", localProperties.readSecretOrThrow("APPLICATION_NAME"))
 
         buildConfigField("String", "TESTNET_ENVIRONMENT", "\"TESTNET\"")
         buildConfigField("boolean", "ALLOW_SHORT_EVIDENCE_VIDEO", "true")
@@ -23,7 +24,6 @@ android {
         buildConfigField("boolean", "TESTNET_FUND_ENABLED", "true")
         buildConfigField("boolean", "PEER_BOT_BY_DEFAULT", "true")
         buildConfigField("boolean", "DIM1_BOT_BY_DEFAULT", "true")
-        buildConfigField("boolean", "DIM2_BOT_BY_DEFAULT", "true")
         buildConfigField("boolean", "SAMPLE_BOT", "true")
         buildConfigField("boolean", "SAFETY_MODE", "false")
         buildConfigField("boolean", "TAB_BAR_CONNECTIVITY_INDICATOR", "false")
@@ -43,7 +43,6 @@ android {
             buildConfigField("boolean", "TESTNET_FUND_ENABLED", "false")
             buildConfigField("boolean", "PEER_BOT_BY_DEFAULT", "false")
             buildConfigField("boolean", "DIM1_BOT_BY_DEFAULT", "false")
-            buildConfigField("boolean", "DIM2_BOT_BY_DEFAULT", "false")
             buildConfigField("boolean", "SAMPLE_BOT", "false")
             buildConfigField("boolean", "DEBUG_TOOLS_ENABLED", "false")
         }
@@ -61,7 +60,6 @@ android {
             buildConfigField("boolean", "ALLOW_SHORT_EVIDENCE_VIDEO", "false")
             buildConfigField("boolean", "PEER_BOT_BY_DEFAULT", "false")
             buildConfigField("boolean", "DIM1_BOT_BY_DEFAULT", "false")
-            buildConfigField("boolean", "DIM2_BOT_BY_DEFAULT", "false")
             buildConfigField("boolean", "SAMPLE_BOT", "false")
         }
     }

@@ -19,6 +19,7 @@ enum SettingsKey: String {
     case gameAlarmId
     case gameAlarmFireDate
     case gameAlarmTimingSeconds
+    case productGameReminders
     // Balance restored notification
     case deviceEncryptId = "deviceEncryptId.v3"
     // App Group suite. The raw key predates the rename from "entropy id" and is kept so existing
@@ -34,6 +35,7 @@ enum SettingsKey: String {
     case hostPlacementEnabled
     case coinageRecyclingStrategy
     case tabBarLabelsEnabled
+    case debugPocketCards
     #if TESTNET_FEATURE
         case tipsResetPending
     #endif
@@ -69,10 +71,18 @@ extension SettingsManagerProtocol {
     }
 
     func set(string value: String, for key: SettingsKey) {
-        set(anyValue: value, for: key.rawValue)
+        set(string: value, for: key.rawValue)
     }
 
     func string(for key: SettingsKey) -> String? {
-        anyValue(for: key.rawValue) as? String
+        string(for: key.rawValue)
+    }
+
+    func set(string value: String, for key: String) {
+        set(anyValue: value, for: key)
+    }
+
+    func string(for key: String) -> String? {
+        anyValue(for: key) as? String
     }
 }

@@ -1,4 +1,5 @@
 import Foundation
+import FoundationExt
 import TrUAPIHost
 import Products
 import ChainRegistry
@@ -19,6 +20,8 @@ class RustProductExecutionBridge: HostBridge, @unchecked Sendable {
         let permissionGuard: ProductPermissionGuarding
         let osPermissionAsker: OSPermissionAsking
         let notificationScheduler: ProductNotificationScheduling
+        let gameReminders: ProductGameReminderScheduling?
+        let reminderPermissionAsker: ReminderPermissionAsking
         let navigationRouter: ProductsNavigationRouting
         let chainRegistry: ChainRegistryProtocol
         let chainConnections: TrUAPIChainConnecting
@@ -197,6 +200,32 @@ extension RustProductExecutionBridge: TrUAPIChainEventHandling {
 
     func chainDidClose(connectionId: UInt32) {
         execution?.notifyChainClosed(connectionId: connectionId)
+    }
+}
+
+// MARK: - Game reminders
+
+extension RustProductExecutionBridge: GameHostBridge {
+    func scheduleReminder(startsAt: UInt64) async throws {
+        let asker = dependencies.reminderPermissionAsker
+        let ringAlarm: Bool
+        if await asker.askAlarm() {
+            ringAlarm = true
+        } else if await asker.askNotifications() {
+            ringAlarm = false
+        } else {
+            throw HostRejection.Rejected(reason: "alarms and notifications are both turned off")
+        }
+        await dependencies.gameReminders?.schedule(
+            productId: dependencies.productId,
+            startsAt: Date(timeIntervalSince1970: startsAt.millisecondsToSeconds()),
+            ringAlarm: ringAlarm,
+            addCalendarEvent: true
+        )
+    }
+
+    func cancelReminder() async throws {
+        await dependencies.gameReminders?.cancel(productId: dependencies.productId)
     }
 }
 

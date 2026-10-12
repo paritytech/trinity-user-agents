@@ -538,6 +538,7 @@ private extension ChainStatusProviderTests {
             anchorProvider: anchorProvider ?? MockChainLivenessAnchorProvider(),
             appStateStreamFactory: ApplicationStateStreamFactory(),
             statementStoreStatusProvider: MockStatementStoreStatusProvider(),
+            chainRegistry: MockChainRegistry(),
             logger: StubLogger()
         )
     }

@@ -132,9 +132,15 @@ impl StatementStore for ProductRuntimeHost {
             }))
         })?;
         self.statement_store_rpc()
-            .submit(encoded, "statement-store")
+            .submit_sso(encoded, "statement-store")
             .await
             .map_err(|reason| {
+                if let latest::StatementProof::Sr25519 { signer, .. } = statement.proof
+                    && statement_store_rpc::is_no_allowance_rejection(&reason)
+                {
+                    self.authority
+                        .forget_statement_store_allowance_key(&self.product_id(), signer);
+                }
                 CallError::Domain(RemoteStatementStoreSubmitError::V1(latest::GenericError {
                     reason: format!("statement-store submit failed: {reason}"),
                 }))

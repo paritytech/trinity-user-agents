@@ -31,7 +31,7 @@ js/packages/
                           via `make wasm`: `web/` is the production browser host
                           and `testing/` adds the `wasm-signing-host` and
                           `test-host` Cargo features the test host needs
-  truapi-debugger/        @parity/truapi-debugger (published to npm): the debugger.
+  truapi-debugger/        @parity/truapi-debugger (private, never published): the debugger.
                           Owns all decoding of the wire frames the Rust host tap
                           (truapi's DebugSink) streams out, and decodes
                           every frame by default (no denylist, no reveal toggle).
@@ -185,7 +185,10 @@ nightly-toolchain          the dated nightly for rustfmt, CI clippy and rustdoc 
   main's entries; release and publish jobs restore without saving. A composite
   action that needs a Rust cache calls Swatinem/rust-cache directly with the
   same main-only `save-if`, because a post step two composites deep loses its
-  inputs and never saves. See `docs/RELEASE_PROCESS.md` for
+  inputs and never saves. `prune-caches.yml` runs after each CI and iOS CI
+  push to main and deletes Rust entries on main that a newer entry of the same
+  key family supersedes, so a `Cargo.lock` or toolchain change does not leave
+  the old set holding cache space until eviction. See `docs/RELEASE_PROCESS.md` for
   label setup and release recovery.
   Hosts implement `HostBridge`, whose protocol extension defaults the optional
   callbacks; `TrUAPIHostRuntime` and each product execution retain one.

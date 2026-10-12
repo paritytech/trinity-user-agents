@@ -68,7 +68,7 @@ needs the Remote Config parameters from §3.
 
 | Variable | Used for | If empty |
 |----------|----------|----------|
-| `SENTRY_DSN` | Sentry crash/issue reporting DSN (`TESTNET_FEATURE` builds only) | Issue monitoring disabled |
+| `SENTRY_DSN` | Sentry crash/issue reporting DSN (ignored unless the build links Sentry — see §9) | Issue monitoring disabled |
 | `MELD_BASIC_AUTH_TOKEN` | Meld fiat on-ramp basic auth (`<key>:<secret>`, base64) | Fiat on-ramp auth unset |
 
 ### Signing & distribution — GitHub Actions secrets (not needed for local simulator runs)
@@ -327,11 +327,19 @@ service-account JSON, or `--service-credentials-file`).
 
 ## 9. Crash symbols (Sentry)
 
-Sentry is disabled for `Release` builds — the SDK is only compiled into
-`TESTNET_FEATURE` configurations (`Debug`/`DevCI`/`Nightly`). Accordingly, the
-**"Upload Debug Symbols to Sentry"** Xcode build phase uploads dSYMs on all
+Sentry is **linked only when the build environment sets `ISSUE_MONITORING=sentry`**.
+`Packages/IssueMonitoring/Package.swift` reads it at resolve time, so without it
+sentry-cocoa never enters the dependency graph.
+
+Fastlane sets the variable for every configuration except `Release`, caches
+resolved packages per flavour, and `verify_no_issue_monitoring` fails the build on
+any Sentry symbol or DSN found in the archive. Local `Debug` builds and the nightly
+simulator build also run without Sentry, since neither sets the variable.
+
+The **"Upload Debug Symbols to Sentry"** Xcode build phase uploads dSYMs on all
 configurations except `Debug` and `Release`, and only when `sentry-cli` is
-installed; otherwise it prints a warning and continues.
+installed; otherwise it prints a warning and continues. The `distribute_testflight`
+lane skips its `sentry_debug_files_upload` for `Release` on the same grounds.
 
 > The build phase currently hardcodes `SENTRY_ORG` and `SENTRY_PROJECT` (set to
 > the upstream project). **Change these to your own org/project** — or remove

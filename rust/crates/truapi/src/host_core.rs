@@ -14,7 +14,10 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use crate::platform::{ChatPlatform, ContactsPlatform, PermissionStatusHost, PocketPlatform};
+use crate::platform::{
+    ChatPlatform, ContactsPlatform, ExpandedCardHost, GamePlatform, PermissionStatusHost,
+    PocketPlatform, ScannerPlatform,
+};
 use crate::platform::{
     CoreAdmin, PairingHostAdmin, PairingHostConfig, PermissionAuthorizationRequest,
     PermissionAuthorizationStatus, Platform, ProductContext, SigningHostConfig,
@@ -184,6 +187,14 @@ pub struct PairingHostRuntime {
 }
 
 impl PairingHostRuntime {
+    /// Keep preimage submissions in the core instead of the Bulletin chain.
+    ///
+    /// For test hosts only, with the `test-host` feature enabled.
+    #[cfg(feature = "test-host")]
+    pub fn set_submit_preimages_locally(&self, local: bool) {
+        self.pairing_host.set_submit_preimages_locally(local);
+    }
+
     /// Build a long-lived pairing-host runtime around a platform implementation.
     #[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.new"))]
     pub fn new<P>(platform: Arc<P>, config: PairingHostConfig, spawner: Spawner) -> Self
@@ -263,6 +274,24 @@ impl PairingHostRuntime {
     #[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.set_pocket_platform"))]
     pub fn set_pocket_platform(&self, platform: Arc<dyn PocketPlatform>) -> bool {
         self.services.install_pocket_platform(platform)
+    }
+
+    /// Install the host's [`GamePlatform`], which holds each product's game
+    /// reminder.
+    ///
+    /// Set-once, so reminders cannot change hands under a running product.
+    /// Returns whether this call installed it. Call it before serving any
+    /// product runtime.
+    #[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.set_game_platform"))]
+    pub fn set_game_platform(&self, platform: Arc<dyn GamePlatform>) -> bool {
+        self.services.install_game_platform(platform)
+    }
+
+    /// Install the host's [`ScannerPlatform`] before serving any product
+    /// runtime. Set-once: returns whether this call installed it.
+    #[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.set_scanner_platform"))]
+    pub fn set_scanner_platform(&self, platform: Arc<dyn ScannerPlatform>) -> bool {
+        self.services.install_scanner_platform(platform)
     }
 
     /// Install the host's [`ContactsPlatform`], which owns the contact list and
@@ -572,6 +601,38 @@ impl SigningHostRuntime {
         self.signing_host.set_grant_allowances_unchecked(granted);
     }
 
+    /// Keep preimage submissions in the core instead of the Bulletin chain.
+    ///
+    /// For test hosts only, with the `test-host` feature enabled.
+    #[cfg(feature = "test-host")]
+    pub fn set_submit_preimages_locally(&self, local: bool) {
+        self.signing_host.set_submit_preimages_locally(local);
+    }
+
+    /// The product's hard-subtree public key, derived from the active session
+    /// root, or `None` while no session is active.
+    ///
+    /// A signing host holds the root, so it answers this locally where a
+    /// pairing host has to ask the Account Holder.
+    pub fn product_subtree_public_key(
+        &self,
+        product_id: &str,
+    ) -> Result<Option<[u8; 32]>, v01::GenericError> {
+        self.signing_host
+            .derive_subtree_public_key(product_id)
+            .map_err(|err| v01::GenericError {
+                reason: err.to_string(),
+            })
+    }
+
+    /// Answer these resource tags as refused, replacing any earlier set.
+    ///
+    /// For test hosts only, with the `test-host` feature enabled.
+    #[cfg(feature = "test-host")]
+    pub fn set_withheld_resources(&self, tags: Vec<String>) {
+        self.signing_host.set_withheld_resources(tags);
+    }
+
     /// Build a long-lived signing-host runtime around a platform implementation.
     /// Optional capabilities are answered `Unsupported`;
     /// [`Self::with_platforms`] serves them.
@@ -661,6 +722,24 @@ impl SigningHostRuntime {
     #[instrument(skip_all, fields(runtime.method = "signing_host_runtime.set_pocket_platform"))]
     pub fn set_pocket_platform(&self, platform: Arc<dyn PocketPlatform>) -> bool {
         self.services.install_pocket_platform(platform)
+    }
+
+    /// Install the host's [`GamePlatform`], which holds each product's game
+    /// reminder.
+    ///
+    /// Set-once, so reminders cannot change hands under a running product.
+    /// Returns whether this call installed it. Call it before serving any
+    /// product runtime.
+    #[instrument(skip_all, fields(runtime.method = "signing_host_runtime.set_game_platform"))]
+    pub fn set_game_platform(&self, platform: Arc<dyn GamePlatform>) -> bool {
+        self.services.install_game_platform(platform)
+    }
+
+    /// Install the host's [`ScannerPlatform`] before serving any product
+    /// runtime. Set-once: returns whether this call installed it.
+    #[instrument(skip_all, fields(runtime.method = "signing_host_runtime.set_scanner_platform"))]
+    pub fn set_scanner_platform(&self, platform: Arc<dyn ScannerPlatform>) -> bool {
+        self.services.install_scanner_platform(platform)
     }
 
     /// Install the host's [`ContactsPlatform`], which owns the contact list and
@@ -798,6 +877,51 @@ impl SigningHostRuntime {
             .map_err(|error| v01::GenericError {
                 reason: error.to_string(),
             })
+    }
+
+    /// Read a stored permission authorization status for a product without prompting.
+    ///
+    /// A device capability also resolves the host application's OS gate, so an
+    /// OS refusal reads as `Denied` whatever is stored. Remote,
+    /// identity-disclosure and account-access decisions have no OS gate.
+    #[instrument(skip_all, fields(runtime.method = "signing_host_runtime.permission_authorization_status", product_id = %product_id))]
+    pub async fn permission_authorization_status(
+        &self,
+        product_id: &str,
+        request: PermissionAuthorizationRequest,
+    ) -> Result<PermissionAuthorizationStatus, v01::GenericError> {
+        self.product_admin(product_context(product_id)?)
+            .permission_authorization_status(request)
+            .await
+    }
+
+    /// Read stored permission authorization statuses for a product without prompting.
+    ///
+    /// A device capability also resolves the host application's OS gate, so an
+    /// OS refusal reads as `Denied` whatever is stored. Remote,
+    /// identity-disclosure and account-access decisions have no OS gate.
+    #[instrument(skip_all, fields(runtime.method = "signing_host_runtime.permission_authorization_statuses", product_id = %product_id))]
+    pub async fn permission_authorization_statuses(
+        &self,
+        product_id: &str,
+        requests: Vec<PermissionAuthorizationRequest>,
+    ) -> Result<Vec<PermissionAuthorizationStatus>, v01::GenericError> {
+        self.product_admin(product_context(product_id)?)
+            .permission_authorization_statuses(requests)
+            .await
+    }
+
+    /// Update a stored permission authorization status for a product.
+    #[instrument(skip_all, fields(runtime.method = "signing_host_runtime.set_permission_authorization_status", product_id = %product_id))]
+    pub async fn set_permission_authorization_status(
+        &self,
+        product_id: &str,
+        request: PermissionAuthorizationRequest,
+        status: PermissionAuthorizationStatus,
+    ) -> Result<(), v01::GenericError> {
+        self.product_admin(product_context(product_id)?)
+            .set_permission_authorization_status(request, status)
+            .await
     }
 
     /// Registered providers available for an internal well-known-ring feature.
@@ -1071,7 +1195,7 @@ impl SigningHostRuntime {
 /// host-fed action streams. Non-native connections use [`Self::from_services`].
 ///
 /// `pocket_platform` is the same kind of optional adapter for the card
-/// collection.
+/// collection, and `game_platform` for the product's game reminder.
 #[derive(Clone)]
 pub struct ConnectionAdapters {
     pub platform: Arc<dyn Platform>,
@@ -1086,6 +1210,9 @@ pub struct ConnectionAdapters {
     pub chat: Arc<ActionChannel<truapi::versioned::chat::HostChatActionSubscribeItem>>,
     pub renderer: Arc<ActionChannel<truapi::versioned::renderer::HostRendererActionSubscribeItem>>,
     pub pocket_platform: Option<Arc<dyn PocketPlatform>>,
+    pub game_platform: Option<Arc<dyn GamePlatform>>,
+    /// Control of the card face above this connection's Widget, when the host draws one.
+    pub expanded_card: Option<Arc<dyn ExpandedCardHost>>,
 }
 
 impl ConnectionAdapters {
@@ -1099,6 +1226,8 @@ impl ConnectionAdapters {
             chat: Arc::new(ActionChannel::chat()),
             renderer: Arc::new(ActionChannel::renderer()),
             pocket_platform: services.pocket_platform(),
+            expanded_card: None,
+            game_platform: services.game_platform(),
         }
     }
 }

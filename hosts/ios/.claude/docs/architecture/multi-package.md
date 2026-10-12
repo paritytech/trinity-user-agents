@@ -18,6 +18,7 @@ The project uses local SPM packages under `Packages/`, with `AppDependencies` as
 - **CommonService** — Common service protocols
 - **StateMachine** — Generic state machine primitives
 - **JailbreakDetection** — Device integrity checks
+- **IssueMonitoring** — Crash/issue reporting seam
 
 ### Blockchain & Crypto
 - **SubstrateOperation** — Substrate blockchain operations

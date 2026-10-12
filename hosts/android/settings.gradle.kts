@@ -58,7 +58,7 @@ run {
         error(
             "A truapi checkout is required to build this project ($configured). " +
                 "Run scripts/setup-truapi.py, which clones " +
-                "https://github.com/paritytech/host-rust-core at the `truapi_ref` pin from " +
+                "https://github.com/paritytech/trinity-user-agents at the `truapi_ref` pin from " +
                 ".github/actions/install/action.yaml and sets truapi.dir in local.properties. " +
                 "Pass --dir to keep the checkout somewhere else, or set TRUAPI_DIR yourself.",
         )

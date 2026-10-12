@@ -1,9 +1,9 @@
 # A signed build that installs on a phone, produced on demand rather than on
 # every commit.
 #
-# Its own workflow rather than a job in ios-pr.yml, because starting it needs
-# the `labeled` event and adding that to ios-pr.yml would rerun the whole iOS
-# pipeline every time any label changed.
+# Its own workflow rather than a job in ios-pr.yml, because it exports ad-hoc,
+# signed by an Apple Distribution certificate against a profile naming
+# registered devices, and is asked for with a label of its own.
 #
 # It exports ad-hoc, which is signed by an Apple Distribution certificate
 # against a profile naming specific devices. It does not upload to Apple or to

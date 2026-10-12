@@ -649,10 +649,14 @@ pub fn build_signed_extrinsic_v5(
 pub mod tests {
     use super::*;
     use crate::runtime::statement_allowance::collection::PersonhoodCollection;
-    use parity_scale_codec::{Compact, Decode};
+    use parity_scale_codec::{Compact, Decode, Encode};
+    use scale_info::{PortableRegistry, TypeDef, TypeDefPrimitive};
     use subxt::client::{OfflineClient, OfflineClientAtBlock};
     use subxt::config::substrate::{SpecVersionForRange, SubstrateConfigBuilder};
+    use subxt::events::Phase;
     use subxt::ext::frame_metadata::{RuntimeMetadata, RuntimeMetadataPrefixed};
+    use subxt::ext::scale_encode::{EncodeAsFields, Field};
+    use subxt::ext::scale_value::{Primitive, Value as ScaleValue};
     use subxt::metadata::{ArcMetadata, Metadata};
     use subxt::utils::H256;
 
@@ -712,6 +716,121 @@ pub mod tests {
             spec_version: 1_000_020,
             transaction_version: 1,
             metadata: ArcMetadata::from(bulletin_metadata()),
+        }
+    }
+
+    /// Output of the runtime calls a subxt client makes to load the bulletin
+    /// fixture: `Core_version` (spec 1) and the metadata calls.
+    pub fn bulletin_runtime_call(method: &str) -> Option<Vec<u8>> {
+        Some(match method {
+            "Core_version" => (
+                "bulletin",
+                "bulletin",
+                1u32,
+                1u32,
+                1u32,
+                Vec::<([u8; 8], u32)>::new(),
+                1u32,
+            )
+                .encode(),
+            "Metadata_metadata_versions" => vec![14u32].encode(),
+            "Metadata_metadata_at_version" => {
+                let mut output = vec![1];
+                Compact(u32::try_from(BULLETIN_METADATA_BYTES.len()).unwrap())
+                    .encode_to(&mut output);
+                output.extend_from_slice(BULLETIN_METADATA_BYTES);
+                output
+            }
+            _ => return None,
+        })
+    }
+
+    /// Encoded `System.Events` over the bulletin fixture: one event per
+    /// `(extrinsic index, System event name)`, each with default field values.
+    pub fn system_events(events: &[(u32, &str)]) -> Vec<u8> {
+        let metadata = ArcMetadata::from(bulletin_metadata());
+        let system = metadata.pallet_by_name("System").unwrap();
+        let mut bytes = Vec::new();
+        Compact(u32::try_from(events.len()).unwrap()).encode_to(&mut bytes);
+        for (extrinsic_index, event_name) in events {
+            let event = system
+                .event_variants()
+                .unwrap()
+                .iter()
+                .find(|event| event.name == *event_name)
+                .unwrap();
+            let values = ScaleValue::unnamed_composite(
+                event
+                    .fields
+                    .iter()
+                    .map(|field| default_value(metadata.types(), field.ty.id)),
+            );
+            let mut fields = event
+                .fields
+                .iter()
+                .map(|field| Field::new(field.ty.id, field.name.as_deref()));
+            Phase::ApplyExtrinsic(*extrinsic_index).encode_to(&mut bytes);
+            system.event_index().encode_to(&mut bytes);
+            event.index.encode_to(&mut bytes);
+            values
+                .encode_as_fields_to(&mut fields, metadata.types(), &mut bytes)
+                .unwrap();
+            Vec::<[u8; 32]>::new().encode_to(&mut bytes);
+        }
+        bytes
+    }
+
+    /// The first-variant, zero-valued instance of a metadata type.
+    fn default_value(types: &PortableRegistry, type_id: u32) -> ScaleValue {
+        let ty = types.resolve(type_id).expect("metadata type exists");
+        match &ty.type_def {
+            TypeDef::Composite(composite) => ScaleValue::unnamed_composite(
+                composite
+                    .fields
+                    .iter()
+                    .map(|field| default_value(types, field.ty.id)),
+            ),
+            TypeDef::Variant(variants) => {
+                let variant = variants.variants.first().expect("variant exists");
+                ScaleValue::unnamed_variant(
+                    variant.name.clone(),
+                    variant
+                        .fields
+                        .iter()
+                        .map(|field| default_value(types, field.ty.id)),
+                )
+            }
+            TypeDef::Sequence(_) => ScaleValue::unnamed_composite([]),
+            TypeDef::Array(array) => ScaleValue::unnamed_composite(
+                (0..array.len).map(|_| default_value(types, array.type_param.id)),
+            ),
+            TypeDef::Tuple(tuple) => ScaleValue::unnamed_composite(
+                tuple
+                    .fields
+                    .iter()
+                    .map(|field| default_value(types, field.id)),
+            ),
+            TypeDef::Primitive(primitive) => match primitive {
+                TypeDefPrimitive::Bool => ScaleValue::bool(false),
+                TypeDefPrimitive::Char => ScaleValue::char('\0'),
+                TypeDefPrimitive::Str => ScaleValue::string(""),
+                TypeDefPrimitive::U8
+                | TypeDefPrimitive::U16
+                | TypeDefPrimitive::U32
+                | TypeDefPrimitive::U64
+                | TypeDefPrimitive::U128 => ScaleValue::u128(0),
+                TypeDefPrimitive::U256 => ScaleValue::primitive(Primitive::U256([0; 32])),
+                TypeDefPrimitive::I8
+                | TypeDefPrimitive::I16
+                | TypeDefPrimitive::I32
+                | TypeDefPrimitive::I64
+                | TypeDefPrimitive::I128 => ScaleValue::i128(0),
+                TypeDefPrimitive::I256 => ScaleValue::primitive(Primitive::I256([0; 32])),
+            },
+            TypeDef::Compact(_) => ScaleValue::u128(0),
+            TypeDef::BitSequence(_) => {
+                ScaleValue::bit_sequence(subxt::ext::scale_bits::Bits::new())
+            }
         }
     }
 

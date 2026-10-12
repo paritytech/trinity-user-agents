@@ -25,7 +25,8 @@ use crate::subscription::Spawner;
 use crate::{PairedSsoPeer, ResponderExit, SigningHostRuntime};
 
 use super::callbacks::{
-    HostCallbacks, NativeChatCallbacks, NativeContactsCallbacks, NativePocketCallbacks,
+    HostCallbacks, NativeChatCallbacks, NativeContactsCallbacks, NativeGameCallbacks,
+    NativePocketCallbacks, NativeScannerCallbacks,
 };
 use super::config::{
     HostRuntimeConfig, NativeResolvedHostRuntimeConfig, NativeRuntimeConfigError,
@@ -35,7 +36,8 @@ use super::errors::{HostRejection, NativeCoreDatabaseError};
 use super::executor::shared_native_executor;
 use super::events::NativeEventBus;
 use super::platform::{
-    CallbackPlatform, ChatCallbackPlatform, ContactsCallbackPlatform, PocketCallbackPlatform,
+    CallbackPlatform, ChatCallbackPlatform, ContactsCallbackPlatform, GameCallbackPlatform,
+    PocketCallbackPlatform, ScannerCallbackPlatform,
 };
 #[cfg(doc)]
 use crate::WorkerTransition;
@@ -124,6 +126,7 @@ impl NativeTrUApiHostRuntime {
         callbacks: Arc<dyn HostCallbacks>,
         chat_callbacks: Option<Arc<dyn NativeChatCallbacks>>,
         pocket_callbacks: Option<Arc<dyn NativePocketCallbacks>>,
+        game_callbacks: Option<Arc<dyn NativeGameCallbacks>>,
         product: ProductContext,
     ) -> Arc<NativeProductExecution> {
         let events = Arc::new(NativeEventBus::default());
@@ -134,6 +137,7 @@ impl NativeTrUApiHostRuntime {
         });
         let permission_status: Arc<dyn crate::platform::PermissionStatusHost> =
             callback_platform.clone();
+        let expanded_card: Arc<dyn crate::platform::ExpandedCardHost> = callback_platform.clone();
         let platform: Arc<dyn crate::platform::Platform> = callback_platform;
         let chat: Option<Arc<dyn crate::platform::ChatPlatform>> =
             chat_callbacks.map(|chat| -> Arc<dyn crate::platform::ChatPlatform> {
@@ -149,13 +153,19 @@ impl NativeTrUApiHostRuntime {
                     events: events.clone(),
                 })
             });
+        let game: Option<Arc<dyn crate::platform::GamePlatform>> =
+            game_callbacks.map(|game| -> Arc<dyn crate::platform::GamePlatform> {
+                Arc::new(GameCallbackPlatform { game })
+            });
         let execution = Arc::new(NativeProductExecution {
             runtime: self.runtime.clone(),
             product: product.clone(),
             platform,
             chat,
             pocket,
+            game,
             permission_status,
+            expanded_card,
             permission_grants: Arc::new(TemporaryPermissions::default()),
             events,
             shared_events: self.events.clone(),
@@ -268,6 +278,13 @@ impl NativeTrUApiHostRuntime {
             }))
     }
 
+    /// Install the host's scanner before opening any product execution.
+    /// Set-once: answers whether this call installed it.
+    pub fn set_scanner_callbacks(&self, callbacks: Arc<dyn NativeScannerCallbacks>) -> bool {
+        self.runtime
+            .set_scanner_platform(Arc::new(ScannerCallbackPlatform { scanner: callbacks }))
+    }
+
     /// Tell the core the host's contacts changed. Call it whenever a contact
     /// is removed or blocked, so a handle the core cached stops resolving.
     pub fn notify_contacts_changed(&self) {
@@ -277,12 +294,13 @@ impl NativeTrUApiHostRuntime {
     /// Open a connection-scoped execution with immutable trusted context.
     /// `chat_callbacks` installs the host's Chat adapter; hosts without the
     /// Chat modality pass `None`. `pocket_callbacks` does the same for the
-    /// card collection.
+    /// card collection. `game_callbacks` does the same for game reminders.
     pub fn open_product_execution(
         &self,
         callbacks: Arc<dyn HostCallbacks>,
         chat_callbacks: Option<Arc<dyn NativeChatCallbacks>>,
         pocket_callbacks: Option<Arc<dyn NativePocketCallbacks>>,
+        game_callbacks: Option<Arc<dyn NativeGameCallbacks>>,
         execution_config: ProductExecutionConfig,
     ) -> Result<Arc<NativeProductExecution>, NativeRuntimeConfigError> {
         let product: ProductContext = execution_config.try_into()?;
@@ -290,6 +308,7 @@ impl NativeTrUApiHostRuntime {
             callbacks,
             chat_callbacks,
             pocket_callbacks,
+            game_callbacks,
             product,
         ))
     }
@@ -598,9 +617,12 @@ pub struct NativeProductExecution {
     platform: Arc<dyn crate::platform::Platform>,
     chat: Option<Arc<dyn crate::platform::ChatPlatform>>,
     pocket: Option<Arc<dyn crate::platform::PocketPlatform>>,
+    game: Option<Arc<dyn crate::platform::GamePlatform>>,
     /// The same `CallbackPlatform` as `platform`, kept separately because
     /// `Arc<dyn Platform>` cannot be downcast to the optional capability.
     permission_status: Arc<dyn crate::platform::PermissionStatusHost>,
+    /// The same `CallbackPlatform`, so a Widget's call reaches this execution's callbacks.
+    expanded_card: Arc<dyn crate::platform::ExpandedCardHost>,
     /// One-use grants follow this execution across its product and admin connections.
     permission_grants: Arc<TemporaryPermissions>,
     events: Arc<NativeEventBus>,
@@ -635,6 +657,8 @@ impl NativeProductExecution {
             chat: self.chat_connection.clone(),
             renderer: self.renderer_connection.clone(),
             pocket_platform: self.pocket.clone(),
+            expanded_card: Some(self.expanded_card.clone()),
+            game_platform: self.game.clone(),
         }
     }
 
@@ -969,12 +993,14 @@ mod tests {
                 callbacks.clone(),
                 None,
                 None,
+                None,
                 native_execution_config("myapp.dot", ProductExecutionKind::App),
             )
             .expect("open app execution");
         let worker = host
             .open_product_execution(
                 callbacks.clone(),
+                None,
                 None,
                 None,
                 native_execution_config("myapp.dot", ProductExecutionKind::Worker),
@@ -1012,6 +1038,7 @@ mod tests {
         let execution = host
             .open_product_execution(
                 callbacks.clone(),
+                None,
                 None,
                 None,
                 native_execution_config("myapp.dot", ProductExecutionKind::App),
@@ -1067,6 +1094,7 @@ mod tests {
                 Arc::new(EventCallbacks::new()),
                 None,
                 None,
+                None,
                 native_execution_config("shared.dot", ProductExecutionKind::App),
             )
             .expect("App execution should open");
@@ -1075,6 +1103,7 @@ mod tests {
             .open_product_execution(
                 chat_host.clone(),
                 Some(chat_host.clone()),
+                None,
                 None,
                 native_execution_config("shared.dot", ProductExecutionKind::Worker),
             )
@@ -1092,6 +1121,7 @@ mod tests {
             .open_product_execution(
                 chat_host.clone(),
                 Some(chat_host.clone()),
+                None,
                 None,
                 native_execution_config("shared.dot", ProductExecutionKind::Worker),
             )
@@ -1118,6 +1148,7 @@ mod tests {
         let execution = host
             .open_product_execution(
                 Arc::new(EventCallbacks::new()),
+                None,
                 None,
                 None,
                 native_execution_config("chat.dot", ProductExecutionKind::Worker),
@@ -1155,6 +1186,55 @@ mod tests {
             panic!("expected a renderer action item")
         };
         assert_eq!(delivered, published);
+        // The scanner checks taps on a connection, while hosts publish them here.
+        assert!(admin.product_runtime().recently_tapped());
+    }
+
+    #[test]
+    fn an_expanded_card_face_request_reaches_only_the_execution_that_made_it() {
+        let host = NativeTrUApiHostRuntime::with_runtime_config(
+            Arc::new(EventCallbacks::new()),
+            native_host_runtime_config(),
+        )
+        .expect("host runtime config should be valid");
+        let open_widget = |product_id: &str| {
+            let callbacks = Arc::new(EventCallbacks::new());
+            let execution = host
+                .open_product_execution(
+                    callbacks.clone(),
+                    None,
+                    None,
+                    None,
+                    native_execution_config(product_id, ProductExecutionKind::Widget),
+                )
+                .expect("Widget execution should open");
+            (execution, callbacks)
+        };
+        let (card, card_callbacks) = open_widget("card.dot");
+        let (_other, other_callbacks) = open_widget("other.dot");
+
+        let admin = card.admin();
+        let reply = futures::executor::block_on(truapi::api::ExpandedCard::set_face_shown(
+            admin.product_runtime().as_ref(),
+            &truapi::CallContext::default(),
+            truapi::versioned::expanded_card::HostExpandedCardSetFaceShownRequest::V1(
+                v01::HostExpandedCardSetFaceShownRequest { shown: false },
+            ),
+        ));
+
+        assert!(reply.is_ok(), "the card's own host applied the request: {reply:?}");
+        assert_eq!(
+            *card_callbacks.face_requests.lock().expect("face requests"),
+            [false]
+        );
+        assert!(
+            other_callbacks
+                .face_requests
+                .lock()
+                .expect("face requests")
+                .is_empty(),
+            "another product's card must not be asked to move its face"
+        );
     }
 
     #[test]
@@ -1167,6 +1247,7 @@ mod tests {
         let execution = host
             .open_product_execution(
                 Arc::new(EventCallbacks::new()),
+                None,
                 None,
                 None,
                 native_execution_config("chain.dot", ProductExecutionKind::App),
@@ -1208,6 +1289,7 @@ mod tests {
         let open = || {
             host.open_product_execution(
                 callbacks.clone(),
+                None,
                 None,
                 None,
                 native_execution_config("fetch.dot", ProductExecutionKind::App),

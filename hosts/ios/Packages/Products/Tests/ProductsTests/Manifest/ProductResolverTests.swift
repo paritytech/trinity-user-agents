@@ -46,7 +46,8 @@ struct ProductResolverTests {
         let resolver = ProductResolver(
             dotNsResolver: StubDotNsResolver(),
             hostProvider: ProductHostFactory(tldProvider: FailingTldProvider()),
-            logger: SilentLogger()
+            logger: SilentLogger(),
+            screening: .passingThrough
         )
 
         let resolved = try await resolver.resolve("worker.hackm3.dot")
@@ -93,19 +94,45 @@ struct ProductResolverTests {
         #expect(resolved.executables.worker?.entrypoint == "src/worker.js")
     }
 
-    /// Widgets are modelled but unrendered, so the subname is not read at all — three names per
-    /// product rather than four.
-    @Test func readsOnlyTheKindsTheHostCanRun() async throws {
+    /// An expanded Pocket card runs the widget, so the subname is read: a
+    /// product whose widget went unread opens its app instead, which is a
+    /// different archive and a different screen.
+    @Test func readsTheWidgetAnExpandedCardRuns() async throws {
         let stub = StubDotNsResolver()
         stub.set(Fixtures.root, name: "hackm3.dot", key: "manifest")
         stub.set(Fixtures.app, name: "app.hackm3.dot", key: "executable")
+        stub.set(Fixtures.widget, name: "widget.hackm3.dot", key: "executable")
 
         let resolved = try await makeResolver(stub).resolve("hackm3.dot")
 
-        #expect(stub.readNames.contains("app.hackm3.dot"))
-        #expect(stub.readNames.contains("worker.hackm3.dot"))
-        #expect(!stub.readNames.contains("widget.hackm3.dot"))
-        #expect(resolved.executables.widget == nil)
+        #expect(resolved.executables.widget?.identifier == "widget.hackm3.dot")
+        #expect(resolved.contentId(for: .widget) == "widget.hackm3.dot")
+    }
+
+    /// A product that publishes no executable of a kind is served from its base
+    /// name, which is where a legacy product and a script installed by hand
+    /// both live. Every caller asking which archive backs a surface has to get
+    /// the same answer.
+    @Test func servesAnUnpublishedKindFromTheBaseName() async throws {
+        let resolved = try await makeResolver(StubDotNsResolver()).resolve("hackm3.dot")
+
+        #expect(resolved.contentId(for: .app) == "hackm3.dot")
+        #expect(resolved.contentId(for: .widget) == "hackm3.dot")
+        #expect(resolved.contentId(for: .worker) == "hackm3.dot")
+    }
+
+    @Test func servesEachPublishedKindFromItsOwnSubname() async throws {
+        let stub = StubDotNsResolver()
+        stub.set(Fixtures.root, name: "hackm3.dot", key: "manifest")
+        stub.set(Fixtures.app, name: "app.hackm3.dot", key: "executable")
+        stub.set(Fixtures.widget, name: "widget.hackm3.dot", key: "executable")
+        stub.set(Fixtures.worker, name: "worker.hackm3.dot", key: "executable")
+
+        let resolved = try await makeResolver(stub).resolve("hackm3.dot")
+
+        #expect(resolved.contentId(for: .app) == "app.hackm3.dot")
+        #expect(resolved.contentId(for: .widget) == "widget.hackm3.dot")
+        #expect(resolved.contentId(for: .worker) == "worker.hackm3.dot")
     }
 
     @Test func skipsAMalformedExecutableWithoutLosingItsSiblings() async throws {
@@ -118,6 +145,20 @@ struct ProductResolverTests {
 
         #expect(resolved.executables.app != nil)
         #expect(resolved.executables.worker == nil)
+    }
+
+    /// Chat and Pocket ride on one worker record, so a pocket section the
+    /// publisher typed wrong must not take the product's chat off the air.
+    @Test func keepsAChatWorkerWhoseProductPublishedAMalformedPocketSection() async throws {
+        let stub = StubDotNsResolver()
+        stub.set(Fixtures.root, name: "hackm3.dot", key: "manifest")
+        stub.set(Fixtures.workerWithMalformedPocket, name: "worker.hackm3.dot", key: "executable")
+
+        let resolved = try await makeResolver(stub).resolve("hackm3.dot")
+
+        #expect(resolved.executables.worker?.serves(.chat) == true)
+        #expect(resolved.executables.worker?.entrypoint == "src/worker.js")
+        #expect(resolved.executables.worker?.pocketCards.isEmpty == true)
     }
 
     @Test func failsWhenTheRootManifestItselfIsMalformed() async {
@@ -184,7 +225,8 @@ private func makeResolver(_ stub: StubDotNsResolver) -> ProductResolver {
     ProductResolver(
         dotNsResolver: stub,
         hostProvider: ProductHostFactory(tldProvider: StubTldProvider()),
-        logger: SilentLogger()
+        logger: SilentLogger(),
+        screening: .passingThrough
     )
 }
 
@@ -196,8 +238,17 @@ private enum Fixtures {
 
     static let app = #"{"$v":1,"kind":"app","appVersion":[1,0,0]}"#
 
+    static let widget = """
+    {"$v":1,"kind":"widget","appVersion":[1,0,0],"dimensions":{"height":[2],"width":4}}
+    """
+
     static let worker = """
     {"$v":1,"kind":"worker","appVersion":[1,0,0],"entrypoint":"src/worker.js",
      "includes":{"chat":true,"pocket":false}}
+    """
+
+    static let workerWithMalformedPocket = """
+    {"$v":1,"kind":"worker","appVersion":[1,0,0],"entrypoint":"src/worker.js",
+     "includes":{"chat":true,"pocket":true},"pocket":{"cards":{"loyalty":"Loyalty"}}}
     """
 }

@@ -74,6 +74,17 @@ pub trait HostCallbacks: Send + Sync {
         request: v01::HostDevicePermissionRequest,
     ) -> Result<DevicePermissionStatus, HostRejection>;
 
+    /// Show (`true`) or hide (`false`) the face above this execution's
+    /// expanded card.
+    ///
+    /// Answer `NotPresented` when the execution is not under its card and
+    /// `UserMoving` while the user drags it. Return without waiting for the
+    /// animation to finish.
+    async fn set_expanded_card_face_shown(
+        &self,
+        shown: bool,
+    ) -> Result<crate::platform::ExpandedCardFaceOutcome, HostRejection>;
+
     /// Prompt the user for a remote permission `product` requested.
     async fn remote_permission(
         &self,
@@ -234,12 +245,26 @@ pub trait NativeChatCallbacks: Send + Sync {
     /// The returned id is [`HostChatPostMessageResponse`]'s `message_id`, which
     /// chat actions carry back for as long as the host stores this message.
     ///
+    /// `alt` is the product's one-line description of the message, for places
+    /// that list it without drawing it, such as a chat list preview.
+    ///
     /// [`HostChatPostMessageResponse`]: truapi::latest::HostChatPostMessageResponse
     async fn post_message(
         &self,
         room_id: String,
         content: v01::ChatMessageContent,
+        alt: Option<String>,
     ) -> Result<String, HostRejection>;
+
+    /// Set what a product's native Chat room shows below its messages, and keep
+    /// it until the product sets another. The core has already checked the
+    /// product created the room. A room the product never set a footer on shows
+    /// the text input.
+    async fn set_room_footer(
+        &self,
+        room_id: String,
+        footer: v01::ChatRoomFooter,
+    ) -> Result<(), HostRejection>;
 
     /// Return the current product-scoped native Chat room list.
     async fn list_rooms(&self) -> Result<Vec<v01::ChatRoom>, HostRejection>;
@@ -277,6 +302,25 @@ pub enum NativePocketRemoval {
     Privileged,
 }
 
+/// Native game-reminder adapter. Hosts that can hold reminders pass an
+/// implementation to [`NativeTrUApiHostRuntime::open_product_execution`];
+/// hosts without one pass `None`. Both callbacks are async, so a host may hop
+/// to its own thread to answer without blocking the core's dispatch pool.
+///
+/// The execution is bound to one product, so neither call names it. The host
+/// owns the reminder: see [`crate::platform::GamePlatform`] for what it must
+/// do with one.
+#[uniffi::export(rust, foreign)]
+#[async_trait::async_trait]
+pub trait NativeGameCallbacks: Send + Sync {
+    /// Hold `starts_at` (Unix milliseconds, UTC) as this product's reminder,
+    /// replacing any it holds.
+    async fn schedule_reminder(&self, starts_at: u64) -> Result<(), HostRejection>;
+
+    /// Drop this product's reminder. Idempotent.
+    async fn cancel_reminder(&self) -> Result<(), HostRejection>;
+}
+
 /// Native contacts adapter. A host with a contact list and a picker passes an
 /// implementation to [`NativeTrUApiHostRuntime::set_contacts_callbacks`]; one
 /// without leaves `contacts.pick` answering `Unsupported`.
@@ -305,4 +349,19 @@ pub trait NativeContactsCallbacks: Send + Sync {
         &self,
         product_id: String,
     ) -> Result<crate::platform::HostContactPick, HostRejection>;
+}
+
+/// Native form of [`crate::platform::ScannerPlatform`], whose rules it follows.
+/// Installed with [`NativeTrUApiHostRuntime::set_scanner_callbacks`].
+#[uniffi::export(rust, foreign)]
+#[async_trait::async_trait]
+pub trait NativeScannerCallbacks: Send + Sync {
+    /// Open the viewfinder on behalf of `product_id`'s execution of
+    /// `execution_kind` and report how it ended.
+    async fn scan_code(
+        &self,
+        product_id: String,
+        execution_kind: crate::platform::ProductExecutionKind,
+        request: truapi::latest::HostScannerScanRequest,
+    ) -> Result<crate::platform::HostScan, HostRejection>;
 }
