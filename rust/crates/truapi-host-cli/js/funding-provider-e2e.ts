@@ -231,9 +231,9 @@ export async function runProviderStart(
   await check("provider_present_frame", async () => {
     const framed = await client.fundingProvider.presentFrame({
       intent: inbound,
-      route: "/kyc",
+      target: { tag: "App", value: { route: "/kyc" } },
     });
-    if (framed.isErr() || framed.value.outcome !== "Closed") {
+    if (framed.isErr() || framed.value.outcome.tag !== "Closed") {
       throw new Error(`presentFrame: ${stringify(framed)}`);
     }
     await waitForTranscript(
@@ -245,6 +245,25 @@ export async function runProviderStart(
       "the provider frame",
     );
     return "the host showed the provider's screen and it closed";
+  });
+
+  await check("provider_present_page", async () => {
+    const returnUrl = "https://onramp.example.com/meld/return?flow=buy";
+    const framed = await client.fundingProvider.presentFrame({
+      intent: inbound,
+      target: {
+        tag: "Page",
+        value: { url: "https://widget.example.com/buy", returnUrl },
+      },
+    });
+    if (
+      framed.isErr() ||
+      framed.value.outcome.tag !== "Returned" ||
+      framed.value.outcome.value.url !== returnUrl
+    ) {
+      throw new Error(`presentFrame page: ${stringify(framed)}`);
+    }
+    return "the host showed the provider's page and handed back its return URL";
   });
 
   await check("provider_reports_forward_only", async () => {

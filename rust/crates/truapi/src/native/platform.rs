@@ -694,10 +694,10 @@ impl crate::platform::FundingPlatform for FundingCallbackPlatform {
         &self,
         provider: &ProductContext,
         intent: String,
-        route: String,
+        target: v01::FundingFrameTarget,
     ) -> Result<v01::FundingFrameOutcome, v01::GenericError> {
         self.funding
-            .present_provider_frame(provider.product_id.clone(), intent, route)
+            .present_provider_frame(provider.product_id.clone(), intent, target)
             .await
             .map_err(v01::GenericError::from)
     }

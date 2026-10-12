@@ -324,12 +324,35 @@ pub enum HostFundingReportError {
 pub struct HostFundingPresentFrameRequest {
     /// Session the screen belongs to.
     pub intent: String,
-    /// Route of the provider's App to show, such as its KYC or card entry.
-    pub route: String,
+    /// What the frame shows.
+    pub target: FundingFrameTarget,
+}
+
+/// What a provider frame shows.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(
+    all(feature = "runtime", not(target_arch = "wasm32")),
+    derive(uniffi::Enum)
+)]
+pub enum FundingFrameTarget {
+    /// A route of the provider's own App, such as its KYC or card entry.
+    App {
+        /// The route.
+        route: String,
+    },
+    /// An external https page, such as an onramp's widget, shown with its
+    /// origin visible.
+    Page {
+        /// The page to open.
+        url: String,
+        /// An https URL the page navigates to when it is done. The host
+        /// closes the frame on reaching it and answers `Returned`.
+        return_url: Option<String>,
+    },
 }
 
 /// How a provider screen closed.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 #[cfg_attr(
     all(feature = "runtime", not(target_arch = "wasm32")),
     derive(uniffi::Enum)
@@ -339,6 +362,11 @@ pub enum FundingFrameOutcome {
     Closed,
     /// The user closed it.
     Dismissed,
+    /// The page navigated to the request's `return_url`.
+    Returned {
+        /// The full URL it navigated to, query included.
+        url: String,
+    },
 }
 
 /// Response of [`crate::api::FundingProvider::present_frame`].
@@ -353,6 +381,9 @@ pub struct HostFundingPresentFrameResponse {
 pub enum HostFundingPresentFrameError {
     /// No open session with this id is assigned to the caller.
     NotFound,
+    /// A page or return URL that is not an https URL with a host, or that
+    /// carries credentials.
+    InvalidUrl,
     /// Catch-all.
     Unknown {
         /// Human-readable failure reason.
