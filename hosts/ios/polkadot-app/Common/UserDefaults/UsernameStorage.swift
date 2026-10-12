@@ -5,7 +5,6 @@ import EventCenter
 protocol UsernameStoring: AnyObject {
     var username: Username? { get set }
     var usernameClaimed: Bool { get set }
-    var isPerson: Bool { get set }
 }
 
 extension UsernameStoring {
@@ -46,14 +45,6 @@ extension UsernameStorage: UsernameStoring {
             settingsManager.bool(for: SettingsKey.usernameClaimed.rawValue) ?? false
         } set {
             settingsManager.set(value: newValue, for: SettingsKey.usernameClaimed.rawValue)
-        }
-    }
-
-    var isPerson: Bool {
-        get {
-            settingsManager.bool(for: SettingsKey.isPerson.rawValue) ?? false
-        } set {
-            settingsManager.set(value: newValue, for: SettingsKey.isPerson.rawValue)
         }
     }
 }

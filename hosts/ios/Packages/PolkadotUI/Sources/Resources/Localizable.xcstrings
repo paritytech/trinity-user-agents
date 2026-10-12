@@ -437,94 +437,6 @@
         }
       }
     },
-    "chat.evidence.approved" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Approved"
-          }
-        }
-      }
-    },
-    "chat.evidence.inReview" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "In review"
-          }
-        }
-      }
-    },
-    "chat.evidence.message.photo" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Photo evidence"
-          }
-        }
-      }
-    },
-    "chat.evidence.message.video" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Documentation video"
-          }
-        }
-      }
-    },
-    "chat.evidence.retry" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Retry"
-          }
-        }
-      }
-    },
-    "chat.evidence.uploadFailed" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Upload failed"
-          }
-        }
-      }
-    },
-    "chat.evidence.uploading" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Uploading"
-          }
-        }
-      }
-    },
-    "chat.evidence.uploadQueued" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Upload queued"
-          }
-        }
-      }
-    },
     "Chat.InputPlaceholder" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -620,28 +532,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "%1$(username)@ left the chat"
-          }
-        }
-      }
-    },
-    "chat.personhood.registered.message" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : ""
-          }
-        }
-      }
-    },
-    "chat.personhood.registered.prefix" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "You got Membership!"
           }
         }
       }
@@ -763,17 +653,6 @@
         }
       }
     },
-    "chat.requested.banner.game.message" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "You will be able to start chatting with this player once they also add you to their contacts."
-          }
-        }
-      }
-    },
     "chat.requested.banner.message" : {
       "comment" : "Displayed in the bottom of the chat when peer hasn’t accepted request yet",
       "extractionState" : "manual",
@@ -874,17 +753,6 @@
         }
       }
     },
-    "collectibles.card.action.view" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "View Collectibles"
-          }
-        }
-      }
-    },
     "common.accept" : {
       "comment" : "Accept button title",
       "extractionState" : "manual",
@@ -971,83 +839,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Creating account"
-          }
-        }
-      }
-    },
-    "deposit.required.description" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Deposited funds will be held from you dollar account and sent back after tattoo evidence has been confirmed."
-          }
-        }
-      }
-    },
-    "deposit.required.title" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Deposit %@ to Select\nand Reserve a Tattoo"
-          }
-        }
-      }
-    },
-    "dim.footer.switch.action.title" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Edit"
-          }
-        }
-      }
-    },
-    "dim1.footer.becomingPeer" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "**Evidence Approved: Becoming a Peer.**\nIssuing Peer status can can take some time"
-          }
-        }
-      }
-    },
-    "dim1.footer.evidenceProvided" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Evidence has been provided, wait for the upload and review. This process can take anywhere from one day to a week."
-          }
-        }
-      }
-    },
-    "dim1.footer.switchDim" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "You’re applying to become a Peer through the weekly game. To switch to the unique tattoo option, press “Edit”."
-          }
-        }
-      }
-    },
-    "dim2.footer.switchDim" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "You're joining Peers through the Unique Tattoo. Press \"Edit\" to switch to the Weekly Game option."
           }
         }
       }
@@ -1250,28 +1041,6 @@
         }
       }
     },
-    "message.commit.preview" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Tattoo committed"
-          }
-        }
-      }
-    },
-    "message.commit.tattoo" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "You’ve committed to **%1$(name)@** tattoo"
-          }
-        }
-      }
-    },
     "message.edited" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -1279,125 +1048,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Edited"
-          }
-        }
-      }
-    },
-    "mobRule.availableCases.title" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Judge the case to unlock %1$(count)lld More"
-          }
-        }
-      }
-    },
-    "mobRule.case.archived" : {
-      "comment" : "Mob rule case: judged case has been archived",
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Judged case has been archived"
-          }
-        }
-      }
-    },
-    "mobRule.case.number" : {
-      "comment" : "Mob rule case: case number label e.g. Mob Rule Case #1",
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Mob Rule Case #%1$(index)lld"
-          }
-        }
-      }
-    },
-    "mobRule.case.viewCase" : {
-      "comment" : "Mob rule case: button to open case details",
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "View Case"
-          }
-        }
-      }
-    },
-    "mobRule.details.showLess" : {
-      "comment" : "Mob rule case: collapse expanded description",
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Show Less"
-          }
-        }
-      }
-    },
-    "mobRule.details.showMore" : {
-      "comment" : "Mob rule case: expand description",
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Show More"
-          }
-        }
-      }
-    },
-    "mobRule.sensitiveContent.skipEvidence" : {
-      "comment" : "Mob rule case: skip judging this sensitive evidence",
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Skip This Evidence"
-          }
-        }
-      }
-    },
-    "mobRule.sensitiveContent.viewAndJudge" : {
-      "comment" : "Mob rule case: reveal sensitive content and vote",
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "View & Judge"
-          }
-        }
-      }
-    },
-    "mobRule.vote.false" : {
-      "comment" : "Mob rule case: vote False / reject claim",
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "False"
-          }
-        }
-      }
-    },
-    "mobRule.vote.true" : {
-      "comment" : "Mob rule case: vote True / accept claim",
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "True"
           }
         }
       }
@@ -1619,72 +1269,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Start upgrading"
-          }
-        }
-      }
-    },
-    "username.upgrade.description" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "As a Member, you are eligible for a clean username without a suffix. How cool!"
-          }
-        }
-      }
-    },
-    "username.upgrade.subtitle" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "or any other available name"
-          }
-        }
-      }
-    },
-    "username.upgrade.title" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Get your new username!"
-          }
-        }
-      }
-    },
-    "username.upgraded" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Keep playing to retain your Membership, win prizes, and get other perks!"
-          }
-        }
-      }
-    },
-    "username.upgraded.subtitle" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Congrats on securing this name!"
-          }
-        }
-      }
-    },
-    "username.upgraded.title" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "✅ Your new username is"
           }
         }
       }
