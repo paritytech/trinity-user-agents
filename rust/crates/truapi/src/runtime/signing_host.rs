@@ -1,16 +1,4 @@
-//! Signing-host role for wallet-local account authority.
-//!
-//! A signing host owns the user's keys and serves authority requests locally,
-//! with no pairing flow and no SSO channel. Secret material is provided by the
-//! embedding host at unlock through [`LocalActivation::activate_local_session`]
-//! (the host owns its persistence, e.g. the OS keychain) and kept in memory
-//! for the session, zeroized on disconnect.
-//!
-//! Implemented: local session lifecycle, raw-bytes signing, extrinsic-payload
-//! signing, v4 transaction construction (payload fields and extensions arrive
-//! pre-encoded, so no chain metadata is needed), RFC-0007 product entropy,
-//! bandersnatch ring-VRF aliases and membership proofs, and product-scoped
-//! Statement Store and Bulletin allowance keys (native only).
+//! Wallet-local signing authority and incoming SSO handling.
 
 // Allocation uses `track`; the renewal loop around it is driven by native
 // entry points only, so on wasm the rest of the module is not reached yet.

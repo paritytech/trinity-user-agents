@@ -308,8 +308,7 @@ pub enum LocalTransactionError {
 	Other(String),
 }
 
-/// Assemble a transaction locally from caller-supplied, pre-encoded parts,
-/// against the runtime metadata of the genesis-pinned Subxt client.
+/// Assemble a local transaction using the client's runtime metadata.
 pub async fn build_local_transaction(
 	chain: &ChainRuntime,
 	keypair: &schnorrkel::Keypair,

@@ -154,12 +154,7 @@ impl RenewalState {
 	}
 }
 
-/// Read the renewal ledger; an absent or undecodable slot is an empty ledger.
-///
-/// A ledger this build cannot decode is treated as empty rather than failing
-/// the pass: the entries are recipes and raw account ids that
-/// [`track_targets`] rebuilds on the next allocation or pairing, so refusing to
-/// renew anything is strictly worse than starting over.
+/// Discard unreadable entries; later allocations rebuild the ledger.
 async fn read_entries(
 	storage: &(impl CoreStorage + ?Sized),
 ) -> Result<Vec<TrackedStatementRenewalTarget>, String> {

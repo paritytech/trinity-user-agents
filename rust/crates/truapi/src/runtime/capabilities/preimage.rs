@@ -136,10 +136,6 @@ impl Preimage for ProductRuntimeHost {
 		.await
 		.map_err(|err| preimage_submit_error(bulletin_allowance_error_reason(err)))?;
 
-		// A test host's allowance was never authorized on chain, so a Bulletin
-		// `store` signed with it would always be refused. The value is kept in
-		// the core under its content key, and the product reads it back through
-		// the same lookup a landed submission answers.
 		#[cfg(feature = "test-host")]
 		if self.authority.submits_preimages_locally() {
 			let key = preimage_key(&value);
@@ -150,9 +146,6 @@ impl Preimage for ProductRuntimeHost {
 		let key = match bulletin.submit_preimage(cx, submission_deadline, &allowance, &value).await
 		{
 			Ok(key) => key,
-			// A rejected allowance is the one case a refresh-and-retry can fix:
-			// evict the exhausted key, allocate a fresh (increased) allowance,
-			// and try exactly once more.
 			Err(BulletinSubmitError::AllowanceRejected { .. }) => {
 				let authority_cx = remote_authority_context_until(
 					cx,

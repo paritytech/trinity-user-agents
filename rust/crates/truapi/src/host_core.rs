@@ -1072,12 +1072,7 @@ impl SigningHostRuntime {
 			.map_err(|reason| v01::GenericError { reason })
 	}
 
-	/// Answer one decrypted SSO remote message with this signing host.
-	///
-	/// Session control stays with the caller: `Disconnected` is reported as an
-	/// outcome, never handled here. A `Cancel` withdraws the request it names,
-	/// even while that request is still being answered by another call, and a
-	/// withdrawn request is answered `Ignored`.
+	/// Answer one SSO request using this signing host.
 	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.answer_sso_request"))]
 	pub async fn answer_sso_request(&self, message: RemoteMessage) -> SsoRequestOutcome {
 		let service = SigningHostSsoService::new(self.signing_host.clone());
@@ -1287,14 +1282,13 @@ pub struct HostAdmin {
 }
 
 impl HostAdmin {
-	/// Access the execution's product-facing capabilities and permission grants.
+	/// Product runtime managed by this admin handle.
 	#[cfg(any(test, not(target_arch = "wasm32")))]
 	pub fn product_runtime(&self) -> &Arc<ProductRuntimeHost> {
 		&self.product_runtime
 	}
 
-	/// Build an admin handle from a long-lived host runtime and the adapters
-	/// scoped to one product connection.
+	/// Build an admin handle for one product connection.
 	#[instrument(skip_all, fields(runtime.method = "host_admin.new"))]
 	pub fn new(
 		services: Arc<RuntimeServices>,
@@ -1570,7 +1564,7 @@ struct WorkerReference {
 }
 
 impl WorkerReference {
-	/// Take a reference on the worker of the product `runtime` serves.
+	/// Hold a worker reference for this product runtime.
 	fn acquire(runtime: Arc<ProductRuntimeHost>) -> Self {
 		runtime.acquire_worker_reference();
 		Self { runtime }
@@ -1663,7 +1657,7 @@ impl ProductRuntime {
 		pairing.product_runtime(product, sink)
 	}
 
-	/// Build a product-facing runtime from shared services and an authority.
+	/// Build a product runtime with connection-scoped adapters.
 	#[instrument(skip_all, fields(runtime.method = "product_runtime.new"))]
 	pub fn new(
 		services: Arc<RuntimeServices>,
@@ -3339,8 +3333,6 @@ mod tests {
 
 		runtime.dispose();
 
-		// A disposed connection can outlive its last `Arc` holder, so the
-		// release cannot wait for `Drop`.
 		assert_eq!(
 			host.services().worker_ledger.count("myapp.dot"),
 			0,
@@ -3373,7 +3365,6 @@ mod tests {
 
 		runtime.dispose();
 
-		// Teardown ends the operation off the disposing thread.
 		let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
 		loop {
 			let ended = platform

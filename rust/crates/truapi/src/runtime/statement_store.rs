@@ -331,7 +331,6 @@ impl ProductRuntimeHost {
 			.map_err(StatementProofFailure::InvalidStatement)?;
 		let payload = unsigned_statement_signing_payload(fields)
 			.map_err(StatementProofFailure::UnableToSign)?;
-		// A publisher's grant does not replace an ordinary caller's signature approval.
 		if product_account_id.dot_ns_identifier != self.product_id() {
 			let confirmed = self
 				.confirm_product_action(UserConfirmationReview::StatementStoreProductSign(

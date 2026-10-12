@@ -1,9 +1,4 @@
-//! Bulletin `TransactionStorage.store` construction and signing.
-//!
-//! This module is the only place allowance-key material becomes a signer, and
-//! it only ever signs the `store` call it builds itself: the public surface
-//! takes raw preimage bytes plus a `BulletinAllowanceKey`, never
-//! caller-supplied call data.
+//! Bulletin store transaction construction and signing.
 
 use subxt::{
 	client::{ClientAtBlock, OnlineClientAtBlockT},
@@ -57,10 +52,7 @@ pub fn preimage_cid(key: &[u8; 32]) -> String {
 	cid
 }
 
-/// Build and sign a `TransactionStorage.store { data }` transaction with the
-/// Bulletin allowance signer against the client's block. Subxt chooses the
-/// supported transaction version and injects the nonce and mortality anchor
-/// from that same at-block client, so signing and dry-run stay aligned.
+/// Build and sign a Bulletin store transaction with its allowance key.
 pub async fn build_signed_store_transaction<C: OnlineClientAtBlockT<SubstrateConfig>>(
 	client: &ClientAtBlock<SubstrateConfig, C>,
 	signer: &Sr25519Signer,

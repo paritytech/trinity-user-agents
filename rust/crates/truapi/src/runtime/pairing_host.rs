@@ -1,8 +1,4 @@
-//! Pairing-host role for inter-host account authority.
-//!
-//! A pairing host does not own the user's signing keys. It pairs with a signing
-//! host, keeps the active inter-host session, and sends authority requests to
-//! that signing host over the SSO channel in [`sso_channel`].
+//! Pairing role: product calls reach a wallet on a paired phone.
 
 mod sso_channel;
 

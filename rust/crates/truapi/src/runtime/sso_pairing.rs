@@ -70,8 +70,7 @@ fn pairing_deadline_reason() -> String {
 
 /// Terminal outcome of [`SsoPairingFlow::request_session`].
 pub enum SsoPairingOutcome {
-	/// The login was cancelled (host `cancel_login`, `disconnect`, or a
-	/// cross-tab session win).
+	/// Pairing was cancelled or another activation won.
 	Cancelled,
 	/// Wallet handshake completed; the session is resolved and persisted.
 	Success(Box<SessionInfo>),
@@ -109,10 +108,7 @@ impl<'a> SsoPairingFlow<'a> {
 		Self { host }
 	}
 
-	/// `request_session` pairing flow: emits `AuthState::Pairing` for the host
-	/// to present, then races host cancellation against the wallet handshake
-	/// arriving on the statement store; on success it resolves identity,
-	/// persists the new session, and returns it to the pairing host.
+	/// Run pairing and persist the resolved wallet session.
 	pub async fn request_session(
 		&self,
 	) -> Result<SsoPairingOutcome, CallError<HostRequestLoginError>> {
@@ -191,16 +187,11 @@ impl<'a> SsoPairingFlow<'a> {
 		}
 	}
 
-	/// Emit `LoginFailed` for an error raised before the pairing was entered
-	/// and map it onto the `request_login` error shape.
 	fn fail_before_pairing(&self, reason: String) -> CallError<HostRequestLoginError> {
 		self.host.auth_state.login_failed_before_pairing(reason.clone());
 		CallError::Domain(HostRequestLoginError::V1(api::HostRequestLoginError::Unknown { reason }))
 	}
 
-	/// Everything between the `Pairing` emission and a terminal outcome.
-	/// Every error returned here maps to `AuthState::LoginFailed` at the
-	/// single exit in [`Self::request_login`].
 	async fn run_pairing_flow(
 		&self,
 		bootstrap: &PairingBootstrap,

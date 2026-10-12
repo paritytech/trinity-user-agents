@@ -575,8 +575,6 @@ fn create_transaction_accepts_confirmation_then_returns_sso_response() {
 	));
 }
 
-/// A `createTransaction` on a paired session whose confirmation prompt stays
-/// open until the returned sender releases it.
 fn gated_create_transaction(
 	request_id: &str,
 ) -> (Arc<StubPlatform>, ProductRuntimeHost, CallContext, futures::channel::oneshot::Sender<()>) {
@@ -593,9 +591,6 @@ fn gated_create_transaction(
 	(platform, host, cx, release)
 }
 
-/// A person who has not answered yet must not be able to authorize a
-/// transaction the product has already withdrawn, and the product must not
-/// wait on that person to learn the call is over.
 #[test]
 fn a_create_transaction_withdrawn_at_the_prompt_never_reaches_the_phone() {
 	let (platform, host, cx, _release) = gated_create_transaction("create-tx-withdrawn");
@@ -622,10 +617,6 @@ fn a_create_transaction_withdrawn_at_the_prompt_never_reaches_the_phone() {
 	assert_eq!(recorded_rpc_method_count(&platform.sent_rpc, "statement_subscribeStatement"), 0);
 }
 
-/// An approval that lands after the withdrawal is an answer to a call that no
-/// longer exists, so it must authorize nothing. Either the prompt race or the
-/// authority call's own check is enough to hold this; the test pins that at
-/// least one of them does.
 #[test]
 fn a_create_transaction_approved_after_its_withdrawal_never_reaches_the_phone() {
 	let (platform, host, cx, release) = gated_create_transaction("create-tx-approved-late");
@@ -653,8 +644,6 @@ fn a_create_transaction_approved_after_its_withdrawal_never_reaches_the_phone() 
 	assert_eq!(recorded_rpc_method_count(&platform.sent_rpc, "statement_subscribeStatement"), 0);
 }
 
-/// A withdrawal that lands while the paired-host request is still subscribing
-/// must stop it before the request itself is published.
 #[test]
 fn a_signature_withdrawn_during_sso_setup_is_never_submitted() {
 	let (release, gate) = futures::channel::oneshot::channel();

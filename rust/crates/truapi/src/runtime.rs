@@ -29,7 +29,7 @@ mod ring_vrf_registry;
 /// Role-neutral runtime services shared by product-facing runtimes.
 pub mod services;
 mod signing_host;
-/// SSO pairing (login) flow over the statement store bootstrap topic.
+/// Pairing flow for wallet login.
 pub mod sso_pairing;
 /// SSO remote request/response messaging over the statement store.
 pub mod sso_remote;
@@ -298,8 +298,7 @@ fn authority_cancellation_error(cx: &CallContext, reason: CancellationReason) ->
 	AuthorityError::Cancelled(AuthorityCancelError::new(cx.request_id(), reason))
 }
 
-/// Product-scoped adapter that exposes a long-lived host runtime through the
-/// `truapi::api::*` trait set the generated dispatcher routes to.
+/// Product adapter for the generated TrUAPI dispatcher.
 pub struct ProductRuntimeHost {
 	services: Arc<RuntimeServices>,
 	platform: Arc<dyn Platform>,
@@ -326,9 +325,6 @@ pub struct ProductRuntimeHost {
 /// transient user activation.
 pub const USER_TAP_WINDOW_SECS: u64 = 5;
 
-/// A connection that goes away without ending its operations still owes the
-/// ledger their references, so the host is told to stop rather than keeping a
-/// worker alive for a product that is gone.
 impl Drop for ProductRuntimeHost {
 	fn drop(&mut self) {
 		self.release_open_operations();
@@ -516,55 +512,22 @@ impl ProductRuntimeHost {
 		self.authority.disconnect().await;
 	}
 
-	/// The product account id the caller may act with, or `None` when it may
-	/// not.
-	///
-	/// Its own account needs no grant and reaches nothing to find that out.
-	/// Any other product's account needs that product to name this caller in
-	/// its manifest's `trustedProducts` with `context` or `all`. That is the
-	/// same grant a cross-product alias needs, because a signature and an
-	/// alias both act as the account and the identity behind it.
-	///
-	/// Returns the canonical spelling rather than a bare yes, so the grant and
-	/// the key derivation that follows are decided against one string.
+	/// Resolve the canonical account owner this product may access.
 	pub async fn authorized_product_account(
 		&self,
 		dot_ns_identifier: &str,
 		cx: &CallContext,
 	) -> Option<String> {
 		let product_id = self.product_id();
-		// Localhost products are development-only wildcards once a host admits
-		// them. Production hosts must reject localhost products before creating
-		// the product runtime.
 		if crate::platform::is_localhost_product_identifier(&product_id) {
 			return normalize_product_identifier(dot_ns_identifier).ok();
 		}
-		// Bounded here rather than left to the lookup: it can reach dotNS on
-		// the Asset Hub, and a caller's own deadline is what decides how long
-		// that may take. Expiry answers the same refusal as a target that
-		// granted nothing, so the wait cannot be read as an answer.
 		let cx = remote_authority_context(cx);
 		self.bounded_cross_product_scope_target(dot_ns_identifier, Granted::Context, &cx)
 			.await
 	}
 
-	/// Resolve the grant under the caller's deadline and cancellation, answering
-	/// the uniform refusal if either fires.
-	///
-	/// Called before `remote_authority_call`, not inside it. Inside, two timers
-	/// armed on the same budget race, and whichever fires first decides the
-	/// error the caller sees: this one answers the uniform refusal, that one
-	/// answers `Unknown` with a reason. The refusal shape would then depend on
-	/// scheduling. Bounded here instead, the gate is decided before the
-	/// authority call is made at all.
-	///
-	/// Left to `remote_authority_call`, a deadline that expires during the
-	/// lookup surfaces as `Unknown { reason }`, while an already-cached target
-	/// that grants nothing answers immediately, so the error tag alone tells a
-	/// caller which targets this device has resolved before. That is the
-	/// enumeration the denial read was moved after the manifest to avoid,
-	/// arriving by another route. Expiry here is indistinguishable from
-	/// "granted nothing", like every other refusal on this path.
+	/// Resolve the grant within the caller's deadline and cancellation.
 	pub async fn bounded_cross_product_scope_target(
 		&self,
 		target: &str,
@@ -589,16 +552,7 @@ impl ProductRuntimeHost {
 		}
 	}
 
-	/// The normalized id to act on when the calling product may reach `target`
-	/// under `scope`, or `None` when it may not.
-	///
-	/// The caller's own id is not a cross-product access and consults no grant.
-	/// Any other product must name this caller in its manifest's
-	/// `trustedProducts` with `scope` or `all`.
-	///
-	/// Returning the id rather than a bare yes keeps one canonical spelling for
-	/// the callers that go on to address the target — the grant and whatever it
-	/// admits are then decided against the same string.
+	/// Return the canonical target if this product has the requested access.
 	pub async fn cross_product_scope_target(&self, target: &str, scope: Granted) -> Option<String> {
 		let normalized = normalize_product_identifier(target).ok()?;
 		if normalized == self.product_id() {
@@ -669,15 +623,6 @@ impl ProductRuntimeHost {
 		.map_err(|err| err.to_string())
 	}
 
-	/// The storage key `owner` holds `key` under.
-	///
-	/// The owner is explicit because a read may be addressed at another product:
-	/// deriving it from `self` would hand a granted foreign read the caller's own
-	/// values instead of the ones it asked for.
-	///
-	/// `owner` must already be normalized — either this product's validated id or
-	/// an id returned by [`Self::cross_product_scope_target`]. `ProductStorageKey`
-	/// re-applies the same normalization, so the key cannot fail to build.
 	fn product_storage_key(&self, owner: &str, key: String) -> String {
 		ProductStorageKey::new(owner, key)
 			.expect("storage key owner was already normalized")
@@ -845,18 +790,7 @@ async fn account_access_authorization(
 		return Ok(PermissionAuthorizationStatus::Authorized);
 	}
 
-	// Both sides bare-labelled, matching the grant this decision overrides and
-	// the key `user_denied_account_access` reads back. A decision filed against
-	// the full target would not be found when the grant is resolved for a
-	// subname of it.
 	let target = crate::host_internal::product_manifest::bare_product_label(target_product_id);
-	// Stored per product, not per executable, because that is the granularity a
-	// manifest grant uses: `dim2.dot`, `app.dim2.dot` and `worker.dim2.dot` are
-	// one grantee. A decision filed under the full id could be missed by the
-	// same product arriving under a subname it already owns, which would let a
-	// refused product keep a `context` grant by respelling itself. The prompt
-	// still names the id the user saw; only the slot it is filed under is the
-	// product's.
 	let caller = crate::host_internal::product_manifest::bare_product_label(requesting_product_id);
 	let cached = crate::host_internal::permissions::account_access_status(platform, caller, target)
 		.await
@@ -1143,16 +1077,7 @@ impl ProductRuntimeHost {
 		}
 	}
 
-	/// Drop every worker reference this connection's open operations hold.
-	///
-	/// Teardown calls this rather than leaving it to `Drop`: a disposed
-	/// connection can outlive its last `Arc` holder, and a reference kept past
-	/// dispose would leave the host running a worker for a connection that is
-	/// gone.
-	///
-	/// Telling the host runs on the spawner, so a spawner whose runtime is
-	/// already gone drops that work. The references are still released, and
-	/// the host is shutting down with its own records anyway.
+	/// Release operation references and ask the host to end those operations.
 	pub fn release_open_operations(&self) {
 		let open = core::mem::take(
 			&mut *self.open_operations.lock().expect("open operations mutex poisoned"),
@@ -1163,11 +1088,6 @@ impl ProductRuntimeHost {
 		for _ in &open {
 			self.release_worker_reference();
 		}
-		// The host holds its own record of each operation, and nothing else
-		// ever ends one for a connection that is gone: left alone they
-		// accumulate against whatever limit the host puts on a product's open
-		// operations. Ending them reaches the host, so it runs off this
-		// thread.
 		let platform = self.platform.clone();
 		let product = self.product.clone();
 		(self.services.spawner)(Box::pin(async move {
@@ -1198,11 +1118,6 @@ impl ProductRuntimeHost {
 		self.renderer.publish(item)
 	}
 
-	/// Pocket access policy for this connection: the collection is reachable
-	/// only from a Worker execution with an active session, and only where the
-	/// host installed an adapter. The kind and session checks come first, so a
-	/// connection that may never reach Pocket is told `Denied` even on a host
-	/// that serves nothing.
 	fn pocket_platform<E>(&self) -> Result<Arc<dyn crate::platform::PocketPlatform>, CallError<E>> {
 		if self.product.execution_kind != crate::platform::ProductExecutionKind::Worker ||
 			self.authority.session_state().current().is_none()
@@ -1212,14 +1127,7 @@ impl ProductRuntimeHost {
 		self.pocket_platform.clone().ok_or(CallError::Unsupported)
 	}
 
-	/// Replace the contact handles a call declares with the accounts they
-	/// name, before the call is shown to the user or signed.
-	///
-	/// Substituting here rather than at the authority is what lets the
-	/// confirmation show who is being paid: the host draws the review from the
-	/// call it is about to sign, and by then the handle is an account it can
-	/// put a name to. A call declaring no contacts reaches for no host, but is
-	/// still refused if it carries a handle it forgot to declare.
+	/// Replace declared contact handles with their accounts before review or signing.
 	pub async fn substitute_declared_contacts(
 		&self,
 		call_data: Vec<u8>,

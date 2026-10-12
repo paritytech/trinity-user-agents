@@ -3692,8 +3692,6 @@ fn get_account_own_product_prompts_and_rejects_on_a_cold_subtree() {
 		runtime_config("myapp.dot"),
 		test_spawner(),
 	);
-	// Session without a cached subtree: resolving it must reach the
-	// Account Holder, which is the one point the consent prompt fires.
 	host.test_session_state().set_session(sso_session_info());
 	let request = HostAccountGetRequest::V1(v01::HostAccountGetRequest {
 		product_account_id: account_id("myapp.dot", 0),
@@ -5194,8 +5192,6 @@ fn resource_allocation_respects_a_shorter_call_context_timeout() {
 	);
 }
 
-/// An allocation the person approves spends chain resources on the phone, so
-/// one the product withdrew while the prompt was open must never be sent.
 #[test]
 fn resource_allocation_withdrawn_at_the_prompt_is_never_requested() {
 	let (_release, gate) = futures::channel::oneshot::channel();
@@ -5534,8 +5530,6 @@ fn a_grant_still_asks_the_user_when_a_call_names_a_contact() {
 	);
 }
 
-/// The confirmation is drawn from the substituted call, so the user is asked
-/// about the person being paid rather than about 32 opaque bytes.
 #[test]
 fn the_confirmation_shows_the_account_not_the_handle() {
 	const ALICE: [u8; 32] = [0xA1; 32];
@@ -7041,19 +7035,6 @@ fn feature_supported_encodes_response_to_known_bytes() {
 
 mod signing;
 
-/// The pairing authority's cross-product gate, driven directly.
-///
-/// `pairing_host.rs` carried no `#[test]` at all: every grant test drove the
-/// signing role, and the e2e drives the signing-host CLI. Replacing the body of
-/// `PairingHost::require_ring_vrf_key_access` with `Ok(())`, which lets any
-/// paired peer reach any product's ring-VRF key by naming it, left the entire
-/// package green. That is the exact threat #655 gives as the reason the authority must
-/// adjudicate for itself rather than trust a relayed verdict, so it cannot be
-/// the one path with no coverage.
-///
-/// Driven at the authority, which is where a pairing-wire request arrives:
-/// `sso_responder` hands `calling_product_id` and `key_handle` straight here,
-/// both decoded from the peer's message.
 #[test]
 fn the_pairing_authority_refuses_a_foreign_ring_vrf_key_without_a_grant() {
 	let (host_config, product) = runtime_config("dim2.dot");

@@ -1,10 +1,6 @@
-//! Role-neutral account authority contracts used by product runtimes.
+//! Account authority contracts shared by product runtimes.
 //!
-//! Pairing and signing hosts implement these traits differently, but
-//! `ProductRuntimeHost` can use this module's shared request/session types
-//! without knowing where the key material lives.
-//! Alias, proof, and ring-VRF operations reuse the request payloads in
-//! `host_internal::sso_messages` for both local calls and SSO transport.
+//! Local and paired hosts use the same request and session types.
 
 use crate::platform::ProductContext;
 use async_trait::async_trait;
@@ -39,10 +35,7 @@ use crate::{
 	},
 };
 
-/// Secret key allocated for Bulletin preimage submission.
-///
-/// The core is the sole holder: the secret never crosses the host boundary.
-/// Zeroized on drop, and its `Debug` redacts the material.
+/// Core-only Bulletin key, zeroized on drop and redacted in diagnostics.
 #[derive(Clone, zeroize::Zeroize, zeroize::ZeroizeOnDrop, derive_more::Debug)]
 pub struct BulletinAllowanceKey {
 	#[debug("\"<redacted>\"")]
@@ -280,21 +273,21 @@ pub(crate) fn is_blessed_owner(calling_product_id: &str, owner: &str) -> bool {
 	})
 }
 
-/// Whether a product-account call can be signed without a confirmation prompt.
+/// Whether this product account can sign without confirmation.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AutoSigningGrant {
-	/// Covered: the authority already holds the signing keys and raises no prompt.
+	/// The authority holds the signing keys and needs no prompt.
 	Active,
-	/// Not covered: the caller must obtain user consent.
+	/// User consent is required.
 	Absent,
 }
 
 /// Statement-store allowance signing material held by the authority layer.
 #[derive(Clone, PartialEq, Eq, zeroize::Zeroize, zeroize::ZeroizeOnDrop)]
 pub struct StatementStoreAllowanceKey {
-	/// sr25519 secret used to sign allowance statements.
+	/// Secret used to sign allowance statements.
 	pub secret: [u8; 64],
-	/// Public key derived from `secret`.
+	/// Public key derived from the secret.
 	pub public_key: [u8; 32],
 }
 
@@ -315,23 +308,16 @@ impl StatementStoreAllowanceKey {
 	}
 }
 
-/// Host-level account authority used by product runtimes.
-///
-/// Pairing hosts implement this by forwarding authority requests to a paired
-/// signing host. A signing-host implementation can later provide the same
-/// surface from local keys without changing product runtime code.
+/// Host account authority used by product runtimes.
 #[async_trait]
 pub trait ProductAuthority: Send + Sync {
 	/// Current account-authority session, if connected.
 	fn current_session(&self) -> Option<AuthoritySession>;
 
-	/// Shared session holder owned by this authority.
-	///
-	/// Product runtimes use it for connection-status subscriptions. The
-	/// concrete authority keeps ownership of the actual session material.
+	/// Session state shared with this authority.
 	fn session_state(&self) -> Arc<SessionState>;
 
-	/// Seed a paired product subtree in unit tests that exercise later authority calls.
+	/// Seed a product subtree for authority tests.
 	#[cfg(test)]
 	fn cache_product_subtree_for_test(
 		&self,
@@ -355,10 +341,7 @@ pub trait ProductAuthority: Send + Sync {
 		self.current_session()
 	}
 
-	/// Return the public key of `//product//{product_id}`.
-	///
-	/// Pairing hosts obtain this consent-free value from the Account Holder;
-	/// signing hosts derive it locally from root entropy.
+	/// Resolve the public key for a product's hard subtree.
 	async fn product_subtree_public_key(
 		&self,
 		cx: &CallContext,
@@ -366,35 +349,14 @@ pub trait ProductAuthority: Send + Sync {
 		product_id: String,
 	) -> Result<[u8; 32], AuthorityError>;
 
-	/// Whether subtree resolution needs SSO and therefore host consent.
-	///
-	/// True for a paired cache miss; false for local derivation or a cached subtree.
+	/// Whether subtree resolution needs SSO and host consent.
 	async fn subtree_resolution_reaches_account_holder(
 		&self,
 		session: &AuthoritySession,
 		product_id: &str,
 	) -> bool;
 
-	/// Whether `calling_product_id` may sign with `account` without confirmation.
-	///
-	/// Only a product's own accounts are covered. Signing hosts trust
-	/// first-party products on the remote-permission allowlist; pairing hosts
-	/// require an explicitly allocated product subtree secret. Neither grants
-	/// access to legacy or identity accounts.
-	///
-	/// [`AutoSigningGrant::Active`] is a promise, not a hint: the matching
-	/// `sign_*` call uses keys already held by this authority, without reaching
-	/// a paired host or raising a prompt on either side. The capability layer
-	/// skips its consent gate on that promise, so an authority that cannot keep
-	/// it answers `Absent`.
-	///
-	/// `Err` is a hard failure - a broken or foreign grant slot, a stale
-	/// session, unreadable core storage - and is propagated rather than
-	/// downgraded into a prompt. A grant slot the authority has just decided to
-	/// erase must not produce a modal asking the user to approve it.
-	///
-	/// Required rather than defaulted, so a new authority can neither skip the
-	/// consent gate nor silently claim a grant by omission.
+	/// Whether this product account can sign without confirmation.
 	async fn auto_signing_status(
 		&self,
 		session: &AuthoritySession,
@@ -413,11 +375,7 @@ pub trait ProductAuthority: Send + Sync {
 
 	/// Sign a SCALE transaction payload for a product account.
 	///
-	/// `calling_product_id` is the product making the call, which is not always
-	/// the product the account belongs to; an authority that can serve the
-	/// account locally must bind the two before it does. `None` is a path that
-	/// carries no caller identity — the SSO relay — and an authority that
-	/// cannot identify the caller must not serve the account locally.
+	/// Bind the caller to the account before local signing; `None` denotes an SSO relay.
 	async fn sign_payload(
 		&self,
 		cx: &CallContext,
@@ -428,8 +386,7 @@ pub trait ProductAuthority: Send + Sync {
 
 	/// Sign arbitrary bytes for a product account.
 	///
-	/// `calling_product_id` carries the same binding obligation as
-	/// [`ProductAuthority::sign_payload`].
+	/// Uses the same caller binding as [`ProductAuthority::sign_payload`].
 	async fn sign_raw(
 		&self,
 		cx: &CallContext,
@@ -441,8 +398,7 @@ pub trait ProductAuthority: Send + Sync {
 
 	/// Build a transaction for a product account, signed unless the request
 	/// supplies its own V5 `VerifyMultiSignature` extension.
-	/// `calling_product_id` carries the same binding obligation as
-	/// [`ProductAuthority::sign_payload`].
+	/// Uses the same caller binding as [`ProductAuthority::sign_payload`].
 	async fn create_transaction(
 		&self,
 		cx: &CallContext,
@@ -564,11 +520,7 @@ pub trait ProductAuthority: Send + Sync {
 		context: &[u8],
 	) -> Result<[u8; 32], AuthorityError>;
 
-	/// Key material for minting contact handles.
-	///
-	/// Uses the session's secret root entropy source so handles match across
-	/// products and host roles. The key must remain inaccessible to products
-	/// to prevent recovering contacts by hashing candidate accounts.
+	/// Core-only root-derived key for stable contact handles across products.
 	fn contacts_handle_key(&self, session: &AuthoritySession) -> Result<[u8; 32], AuthorityError>;
 }
 

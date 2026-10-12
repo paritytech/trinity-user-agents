@@ -179,10 +179,6 @@ impl Signing for ProductRuntimeHost {
 			.auto_signing_status(&session, &inner.signer)
 			.await
 			.map_err(|reason| transaction_call_error(HostCreateTransactionError::V1, reason))?;
-		// The signed call goes back to the product with each contact's real
-		// account in it, so naming a contact always asks the user: an
-		// auto-signing grant must not let a product read accounts out of
-		// handles unseen.
 		if grant == AutoSigningGrant::Absent || names_contacts {
 			let confirmed = until_cancelled(
 				cx,
@@ -393,11 +389,7 @@ impl Signing for ProductRuntimeHost {
 }
 
 impl ProductRuntimeHost {
-	/// Whether the authority permits this product-account call without confirmation.
-	///
-	/// Not wrapped in `remote_authority_call`: no authority answers this over
-	/// SSO, so there is no remote hop to cancel or time out. That is the same
-	/// locality assumption `confirm_user_action` already makes here.
+	/// Whether the local authority can sign without confirmation.
 	async fn auto_signing_status(
 		&self,
 		session: &AuthoritySession,
@@ -434,8 +426,6 @@ impl ProductRuntimeHost {
 			)));
 		};
 		inner.account.dot_ns_identifier = owner;
-		// Ordinary products cannot use an AutoSigning grant for unwatermarked
-		// bytes, which are not separated from transaction signatures.
 		let grant = if watermarked {
 			self.auto_signing_status(&session, &inner.account)
 				.await

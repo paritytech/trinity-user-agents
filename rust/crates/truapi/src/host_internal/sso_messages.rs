@@ -106,25 +106,18 @@ pub struct Response<P> {
 	pub payload: P,
 }
 
-/// Outcome of answering one SSO remote message on behalf of a caller that
-/// owns the session transport.
-///
-/// The response is carried SCALE-encoded: the caller forwards it over the
-/// session verbatim and never constructs or inspects it.
+/// Result of answering an SSO message for a caller-owned session.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
 pub enum SsoRequestOutcome {
-	/// Response to post back over the session.
+	/// Encoded response to post on the session.
 	Response {
-		/// SCALE-encoded `RemoteMessage` response, ready to submit over the
-		/// session statement store.
+		/// SCALE-encoded `RemoteMessage` response.
 		message: Vec<u8>,
 	},
-	/// The peer ended the session; the caller tears down its transport and
-	/// records (host entry, device record, device-removed broadcast). The
-	/// core holds no per-peer state to clear.
+	/// The peer ended the session.
 	Disconnected,
-	/// Not a request; nothing to post.
+	/// The message did not require a response.
 	Ignored,
 }
 

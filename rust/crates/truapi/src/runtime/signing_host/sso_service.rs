@@ -1,5 +1,4 @@
-//! The signing host's answers to paired hosts: consent prompts, then the
-//! local authority.
+//! Incoming SSO requests, consent prompts and wallet authority calls.
 
 use std::sync::Arc;
 

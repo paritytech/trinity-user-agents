@@ -1,7 +1,4 @@
-//! Product-facing account capability adapters.
-//!
-//! Account management uses shared session state and the account authority
-//! for alias, proof, and login operations.
+//! Product-facing account operations and login lifecycle.
 
 use crate::platform::{
 	PermissionAuthorizationStatus, ProductSubtreeReview, UserConfirmationReview,
@@ -89,9 +86,6 @@ impl Account for ProductRuntimeHost {
 			)
 			.await
 		{
-			// Own-account resolution has no access review, so a cold subtree
-			// that must reach the Account Holder is the one point a host can
-			// surface and reject before the SSO call.
 			let approved = until_cancelled(
 				cx,
 				self.confirm_product_action(UserConfirmationReview::ProductSubtree(
@@ -171,11 +165,6 @@ impl Account for ProductRuntimeHost {
 					},
 				))
 			})?;
-		// The session is consulted before the grant, matching `ring_vrf_sign`.
-		// The other order makes the pair of refusals a probe for who granted
-		// whom: with no session a granting target answers `Rejected` and a
-		// non-granting one `NotAllowlisted`, which is exactly what the uniform
-		// cross-product refusal exists to prevent.
 		let Some(session) = self.authority.current_session() else {
 			return Err(CallError::Domain(HostAccountCreateProofError::V1(
 				v01::HostAccountCreateProofError::Rejected,
@@ -184,20 +173,6 @@ impl Account for ProductRuntimeHost {
 
 		let calling_product_id = self.product_id();
 		let cx = remote_authority_context(cx);
-		// The grant lookup runs *before* `remote_authority_call`, under a bound of
-		// its own. It can reach dotNS on the Asset Hub, several sequential chain
-		// operations each bounded only by `OPERATION_TIMEOUT`, so it needs a
-		// deadline either way. Running it inside would arm two timers on one
-		// budget, and whichever fired first would decide whether the caller sees
-		// the uniform refusal or a transport error naming a reason, making the
-		// refusal shape depend on scheduling. Decided here instead, a lookup that
-		// runs out of time answers `NotAllowlisted` like every other refusal on
-		// this path. The stages are bounded separately, so a caller asking for
-		// one second can wait up to two.
-		//
-		// The gate returns the normalized owner it decided about and the handle
-		// is rebuilt from it, so authorization and key derivation agree by
-		// construction rather than by a registry lookup happening to miss.
 		let Some(owner) = self
 			.bounded_cross_product_scope_target(
 				&request.key_handle.dot_ns_identifier,
@@ -206,11 +181,6 @@ impl Account for ProductRuntimeHost {
 			)
 			.await
 		else {
-			// Recorded here, because this door answers without reaching the
-			// authority. Without this line a product probing which handles
-			// exist on the device leaves no trace, while every success is
-			// logged. The wire answers one refusal for every
-			// reason; this is the operator's copy.
 			tracing::info!(
 				caller = %calling_product_id,
 				owner = %request.key_handle.dot_ns_identifier,
@@ -322,9 +292,6 @@ impl Account for ProductRuntimeHost {
 		};
 		let calling_product_id = self.product_id();
 		let cx = remote_authority_context(cx);
-		// As in `create_account_proof`: the lookup is bounded before the authority
-		// call rather than inside it, and the handle carried on is the normalized
-		// owner the gate decided about rather than the spelling the caller sent.
 		let Some(owner) = self
 			.bounded_cross_product_scope_target(
 				&request.key_handle.dot_ns_identifier,
@@ -333,11 +300,6 @@ impl Account for ProductRuntimeHost {
 			)
 			.await
 		else {
-			// Recorded here, because this door answers without reaching the
-			// authority. Without this line a product probing which handles
-			// exist on the device leaves no trace, while every success is
-			// logged. The wire answers one refusal for every
-			// reason; this is the operator's copy.
 			tracing::info!(
 				caller = %calling_product_id,
 				owner = %request.key_handle.dot_ns_identifier,

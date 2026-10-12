@@ -469,12 +469,7 @@ async fn submit_handshake_answer(
 	services.statement_store.submit(statement, context).await
 }
 
-/// The identity and peer a pairing notice went out under.
-///
-/// Carries the responder secret rather than re-deriving it, because the signer
-/// this host is allocating under can rotate between the two notices: the
-/// account that sent the first one is the one already holding an allowance to
-/// send the second.
+/// Keep the responder identity and peer for both pairing notices.
 // No `Debug`: it holds the responder statement secret.
 pub struct AnnouncedPairing {
 	identity: ResponderIdentity,
