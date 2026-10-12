@@ -89,7 +89,7 @@ final class TabFactory: TabFactoryProtocol {
             guard let scanner = WalletQRScanViewFactory.createView(
                 for: scanResultHandler,
                 presentation: .embedded
-            )?.controller else {
+            )?.controller as? (UIViewController & ScanPanelScannerControlling) else {
                 return nil
             }
 

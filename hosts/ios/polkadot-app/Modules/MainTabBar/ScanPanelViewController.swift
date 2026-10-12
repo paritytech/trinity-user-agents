@@ -118,3 +118,9 @@ extension ScanPanelViewController: SearchContactViewProtocol {
         onContentHeightChanged?()
     }
 }
+
+extension ScanPanelViewController: ScanPanelScannerControlling {
+    func setCaptureActive(_ active: Bool) {
+        scannerController.setCaptureActive(active)
+    }
+}

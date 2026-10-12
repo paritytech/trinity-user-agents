@@ -62,6 +62,9 @@ final class TabBarBottomChromeController: UIViewController {
     /// and the keyboard drops in the same movement.
     var onCenterPanelWillClose: (() -> Void)?
 
+    /// Fires once the centre panel has settled fully open or fully closed, not during the drag.
+    var onCenterPanelDidChangeOpen: ((Bool) -> Void)?
+
     /// Builds the centre control's content. Called when the control first shows it, not when the panel commits.
     var makeCenterContent: (() -> UIViewController?)?
 
@@ -275,6 +278,7 @@ private extension TabBarBottomChromeController {
         } else if !isOpen, panelController.open == .content(.scan) {
             setPanel(nil)
         }
+        onCenterPanelDidChangeOpen?(isOpen)
     }
 
     /// The bar's host is a fixed size, so this sets the region of it that accepts touches: the bar row plus

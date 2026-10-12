@@ -41,6 +41,6 @@ final class EmbeddedQRScannerViewController: QRScannerViewController, ScanPanelS
 
 private extension EmbeddedQRScannerViewController {
     var layout: EmbeddedQRScannerViewLayout? {
-        view as? EmbeddedQRScannerViewLayout
+        viewIfLoaded as? EmbeddedQRScannerViewLayout
     }
 }
