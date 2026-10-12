@@ -314,11 +314,24 @@ jobs:
           reviewdog -f=rdjson -name="warning-ratchet-out-of-diff" \
             -reporter=github-check -filter-mode=nofilter -fail-level=none < warnings.rdjson
 
+      # The step below tells you to regenerate the baseline, which otherwise
+      # means owning a Mac on the same Xcode this job used. Hand the generated
+      # file back instead, so accepting a new warning floor is a download and a
+      # commit.
+      - name: Upload the warnings this build produced
+        if: always() && hashFiles('hosts/ios/current_warnings.json') != ''
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: warnings-${{ github.run_number }}
+          path: hosts/ios/current_warnings.json
+          retention-days: 7
+
       - name: Fail on new warnings
         if: always() && steps.ratchet.outcome == 'failure'
         run: |
           echo "New build warnings introduced. See the annotations above."
-          echo "Fix them, or regenerate & commit build-logs/warnings.json if intentional."
+          echo "Fix them, or replace build-logs/warnings.json with the"
+          echo "warnings-${{ github.run_number }} artifact if intentional."
           exit 1
 
       # Upload build artifacts for debugging - only when DEBUG_CI is enabled
