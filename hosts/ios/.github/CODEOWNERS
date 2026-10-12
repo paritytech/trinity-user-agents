@@ -53,14 +53,12 @@
 /polkadot-app/Modules/Coinage @sergkononenko
 /polkadot-app/Modules/ContactsList @sergkononenko
 /polkadot-app/Modules/Deposit @sergkononenko @ERussel
-/polkadot-app/Modules/DIMs @ERussel
 /polkadot-app/Modules/FiatOnRamp @sergkononenko
 /polkadot-app/Modules/FiatOnRampProvider @sergkononenko
 /polkadot-app/Modules/IdentityDetails @sergkononenko @ERussel
 /polkadot-app/Modules/IncomingChatRequest @ERussel
 /polkadot-app/Modules/LocalAuth @sergkononenko @ERussel
 /polkadot-app/Modules/MainTabBar @sergkononenko @ERussel
-/polkadot-app/Modules/MobRule @ERussel
 /polkadot-app/Modules/Onboarding @sergkononenko
 /polkadot-app/Modules/PolkadotSignIn @ERussel
 /polkadot-app/Modules/Products @ERussel

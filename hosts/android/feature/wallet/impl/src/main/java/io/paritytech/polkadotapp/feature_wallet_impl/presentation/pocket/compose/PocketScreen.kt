@@ -46,7 +46,6 @@ import io.paritytech.polkadotapp.feature_products_api.presentation.widget.JsImag
 import io.paritytech.polkadotapp.feature_tokens_api.presentation.formatter.LocalTokenAmountFormatter
 import io.paritytech.polkadotapp.feature_tokens_api.presentation.formatter.TokenAmountFormatter
 import io.paritytech.polkadotapp.feature_tokens_api.presentation.model.TokenAmountModel
-import io.paritytech.polkadotapp.feature_wallet_impl.domain.model.PocketRank
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.PocketTestTags
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.PocketViewModel
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.ProductFaceBindings
@@ -55,8 +54,6 @@ import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compose
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compose.components.*
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compose.components.digitalDollar.DigitalDollarCard
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compose.components.digitalDollar.DigitalDollarCardDetails
-import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compose.components.id.IdCard
-import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compose.components.id.IdCardDetails
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compose.components.product.ProductPocketCard
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compose.components.product.ProductPocketCardDetails
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.PocketCardUiModel
@@ -75,6 +72,7 @@ fun PocketScreen() {
     val screenState by viewModel.state.collectAsStateWithLifecycle()
     val cards by viewModel.cards.collectAsStateWithLifecycle()
     val expandedProductSession by viewModel.expandedProductSession.collectAsStateWithLifecycle()
+    val openingFaceShown by viewModel.openingFaceShown.collectAsStateWithLifecycle()
 
     ObserveViewModelEvents(viewModel, rememberAppNotifier())
 
@@ -82,10 +80,10 @@ fun PocketScreen() {
         screenState = screenState,
         cards = cards,
         expandedProductSession = expandedProductSession,
+        openingFaceShown = openingFaceShown,
         bindingsOf = viewModel::bindingsOf,
         onCardSelected = viewModel::selectCard,
         onCardDismissed = viewModel::dismissCard,
-        onShareId = viewModel::onShareId,
         onSketchbookSelected = viewModel::showCollectiblesSketchbook,
         onSketchbookDismissed = viewModel::hideCollectiblesSketchbook,
         onOpenCollectibles = viewModel::openCollectibles,
@@ -101,10 +99,10 @@ private fun PocketScreenInternal(
     screenState: PocketScreenState,
     cards: ImmutableList<PocketCardUiModel>,
     expandedProductSession: SpaHostSession?,
+    openingFaceShown: Boolean?,
     bindingsOf: (PocketCardUiModel.ProductCard) -> ProductFaceBindings,
     onCardSelected: (PocketCardUiModel) -> Unit,
     onCardDismissed: () -> Unit,
-    onShareId: () -> Unit,
     onSketchbookSelected: () -> Unit,
     onSketchbookDismissed: () -> Unit,
     onOpenCollectibles: () -> Unit,
@@ -155,10 +153,10 @@ private fun PocketScreenInternal(
                                     selectedCard = current.selectedCard,
                                     allCards = cards,
                                     expandedProductSession = expandedProductSession,
+                                    openingFaceShown = openingFaceShown,
                                     bindingsOf = bindingsOf,
                                     onSettled = onExpandedCardSettled,
                                     onBack = onCardDismissed,
-                                    onShareId = onShareId,
                                 )
                             }
 
@@ -181,10 +179,10 @@ private fun SelectedCardDetails(
     selectedCard: PocketCardUiModel,
     allCards: ImmutableList<PocketCardUiModel>,
     expandedProductSession: SpaHostSession?,
+    openingFaceShown: Boolean?,
     bindingsOf: (PocketCardUiModel.ProductCard) -> ProductFaceBindings,
     onSettled: (PocketCardUiModel.ProductCard) -> Unit,
     onBack: () -> Unit,
-    onShareId: () -> Unit,
 ) {
     val cardIndex = allCards.indexOfFirst { it.id == selectedCard.id }
     when (selectedCard) {
@@ -194,17 +192,11 @@ private fun SelectedCardDetails(
             cardIndex = cardIndex
         )
 
-        is PocketCardUiModel.IdCard -> IdCardDetails(
-            card = selectedCard,
-            onBack = onBack,
-            onShareClick = onShareId,
-            cardIndex = cardIndex,
-        )
-
         is PocketCardUiModel.ProductCard -> ProductPocketCardDetails(
             card = selectedCard,
             bindings = bindingsOf(selectedCard),
             session = expandedProductSession,
+            openingFaceShown = openingFaceShown,
             cardIndex = cardIndex,
             onSettled = { onSettled(selectedCard) },
             onBack = onBack,
@@ -286,14 +278,6 @@ private fun PocketList(
                             )
                         }
 
-                        is PocketCardUiModel.IdCard -> {
-                            IdCard(
-                                modifier = cardModifier,
-                                card = card,
-                                onSelected = onCardSelected,
-                            )
-                        }
-
                         is PocketCardUiModel.ProductCard -> {
                             ProductPocketCard(
                                 modifier = cardModifier,
@@ -357,7 +341,6 @@ private fun PocketScreenPreview() {
                         syncInProgress = false,
                         accountBackupPending = false,
                     ),
-                    PocketCardUiModel.IdCard("username.99", "15oF4u...zaC1Ap", PocketRank.Basic),
                     PocketCardUiModel.ProductCard(
                         key = PocketCardKey(ProductId.fromStoredValue("peopl.dot"), PocketCardId("humanity")),
                         title = "Humanity",
@@ -365,6 +348,7 @@ private fun PocketScreenPreview() {
                     )
                 ),
                 expandedProductSession = null,
+                openingFaceShown = null,
                 bindingsOf = { card ->
                     ProductFaceBindings(
                         face = MutableStateFlow(JsWidget.Text(text = card.title)),
@@ -375,7 +359,6 @@ private fun PocketScreenPreview() {
                 onExpandedCardSettled = {},
                 onCardSelected = {},
                 onCardDismissed = {},
-                onShareId = {},
                 onSketchbookSelected = {},
                 onSketchbookDismissed = {},
                 onOpenCollectibles = {},

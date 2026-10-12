@@ -215,7 +215,6 @@ without it. JSON values are stored as Remote Config strings.
 | `payment_asset_config` | JSON object | payment asset branding (optional) | `feature/tokens` — `RealPaymentAssetBrandProvider` | `{ "symbol": "CASH", "iconSquareUrl": "https://…/square.svg", "iconWideUrl": "https://…/wide.svg" }` — the payment asset's symbol and logos: a square mark for amounts and chat payments, a wide mark-plus-wordmark for the balance card, as absolute `http(s)` URLs (SVG or PNG). Every field is optional; anything missing or failing to load falls back to `CURRENCY_SYMBOL` and the built-in mark. The last activated value applies at start-up and the object is re-read right after the first sync; logos load on display through the app image loader and are cached by URL, so publish a changed logo under a new URL. |
 | `collectibles_enabled` | boolean | collectibles (optional) | `feature/videogame` | Feature gate for the collectibles webview. |
 | `collectibles_fallback_url` | string (URL) | collectibles (optional) | `feature/videogame` | Fallback URL of the collectibles webview when DotNS resolution fails. |
-| `app_sharing_url` | string (URL) | Share ID on the Pocket tab | `feature/wallet` — `RealAppSharingConfigRepository` | Download link placed in the invite text the ID card shares ("Download it at {link} and add me – my username is {username}."). A plain URL, not JSON-quoted. The share waits briefly for Remote Config to sync; when it does not sync in time or the key is empty, the share reports an error instead of sending a message without a link. |
 
 A chain descriptor in `chains` / `chains_v2` is a JSON object deserialised into
 `chains/src/main/java/io/paritytech/polkadotapp/chains/multiNetwork/chain/remote/model/ChainRemote.kt`
@@ -245,7 +244,7 @@ The mandatory set, in the order Gradle reports them when absent:
 `APPLICATION_ID`, `APPLICATION_NAME`, `CONTACT_EMAIL`, `LOG_COLLECTION_EMAIL`,
 `PRIVACY_POLICY_URL`, `TERMS_OF_USE_URL`, `SENTRY_ORG`, `SENTRY_PROJECT`, `CURRENCY_SYMBOL`,
 `FIAT_SYMBOL`, `NIGHTLY_FUNDING_MNEMONIC`, `GOOGLE_OAUTH_ID`, `FIRESTORE_DATABASE_ID`,
-`GOOGLE_PROJECT_ID`.
+`GOOGLE_PROJECT_ID`, `IOS_BUNDLE_ID`.
 
 In GitHub Actions, non-sensitive values from this section can be mapped from GitHub
 variables while credentials and mnemonics must be mapped from GitHub secrets.
@@ -292,6 +291,7 @@ or a `BuildConfig` field. Mandatory ones have no fallback; optional ones list th
 | `DEBUG_APPLICATION_NAME`    | `app` debug build             | no       | `[Debug] <APPLICATION_NAME>`   | Debug launcher name                                                          |
 | `NIGHTLY_APPLICATION_NAME`  | `app` nightly build           | no       | `<APPLICATION_NAME>`           | Nightly launcher name                                                        |
 | `SAFETYNET_APPLICATION_NAME`| `app` safetynet build         | no       | `[Safetynet] <APPLICATION_NAME>` | Safetynet launcher name                                                    |
+| `IOS_BUNDLE_ID`             | `tools/push-notifications/impl` | yes    | —                              | Bundle ID of the iOS app, sent as the APNs topic for chat pushes to iOS peers; debug appends `.develop`, safetynet `.safety` |
 | `PRIVACY_POLICY_URL`        | `app`                         | yes      | —                              | Privacy-policy destination                                                   |
 | `TERMS_OF_USE_URL`          | `app`                         | yes      | —                              | Terms-of-use destination                                                     |
 | `LOG_COLLECTION_EMAIL`      | `app`                         | yes      | —                              | Recipient address for the in-app "collect logs" debug share action          |
@@ -377,7 +377,7 @@ instead. Change them there if your fork needs a different cut.
 | Field | `debug` | `nightly` | `safetynet` | `release` | Effect |
 |-------|---------|-----------|-------------|-----------|--------|
 | `TESTNET_ENVIRONMENT` | `TESTNET` | `NIGHTLY` | `NIGHTLY` | `PRODUCTION` | Chain environment. Only `PRODUCTION` reads the `chains` Remote Config key; the others read `chains_v2` (§4.1). Also enables the faucet top-up outside `PRODUCTION`. |
-| `SAFETY_MODE` | off | off | on | on | On hides the full feature set: arbitrary `.dot` products, browse tab, full tab bar, all chat extensions, linked devices, product settings, personhood, collectibles, ID-card rank. |
+| `SAFETY_MODE` | off | off | on | on | On hides the full feature set: arbitrary `.dot` products, browse tab, full tab bar, all chat extensions, linked devices, product settings, personhood, collectibles. |
 | `TAB_BAR_CONNECTIVITY_INDICATOR` | off | off | on | on | Chain-health indicators in the tab bar. |
 | `COINAGE_DEBUG_FEATURES` | on | on | on | off | "Debug features" card under the balance card (breakdown, faucet top-up, log sharing). |
 | `TESTNET_FUND_ENABLED` | on | on | on | off | Log-sharing action on the Coinage card. |
@@ -521,6 +521,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       APPLICATION_ID: ${{ vars.APPLICATION_ID }}
+      IOS_BUNDLE_ID: ${{ vars.IOS_BUNDLE_ID }}
       APPLICATION_NAME: ${{ vars.APPLICATION_NAME }}
       DEBUG_APPLICATION_NAME: ${{ vars.DEBUG_APPLICATION_NAME }}
       NIGHTLY_APPLICATION_NAME: ${{ vars.NIGHTLY_APPLICATION_NAME }}

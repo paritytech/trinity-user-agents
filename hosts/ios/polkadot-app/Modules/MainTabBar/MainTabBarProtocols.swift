@@ -13,6 +13,7 @@ protocol MainTabBarViewProtocol: ControllerBackedProtocol, AppWidgetManaging {
     func showTabBarPanelContent(_ configuration: (any HashableContentConfiguration)?, for action: TabBarAction)
     func showScanPanel()
     func showChainStatus(_ rows: [ChainConnectionStatusViewModel])
+    func showProductGamePill(_ viewModel: ProductGamePillViewModel?)
 }
 
 @MainActor
@@ -43,11 +44,13 @@ protocol MainTabBarInteractorOutputProtocol: AnyObject {
     func didReceiveSPATabs(_ tabs: [SPATab])
     func didReceiveChainStatus(_ rows: [ChainConnectionStatusViewModel])
     func didReceiveTabBarLabelsEnabled(_ isEnabled: Bool)
+    func didReceiveProductGamePill(_ pill: ProductGamePill?)
 }
 
 @MainActor
 protocol MainTabBarWireframeProtocol: AnyObject {
     func showPolkadotSignIn(with url: URL, view: MainTabBarViewProtocol?)
+    func openProduct(productId: ProductId)
     #if FEATURE_INPUT
         func openChat(_ model: ChatOpenModel)
     #else

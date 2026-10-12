@@ -78,6 +78,7 @@ sdk.dir=/path/to/android-sdk
 
 # Build identity (public values, compiled into the APK)
 APPLICATION_ID=com.example.polkadot
+IOS_BUNDLE_ID=com.example.polkadot
 APPLICATION_NAME=Polkadot
 PRIVACY_POLICY_URL=https://example.com/privacy
 TERMS_OF_USE_URL=https://example.com/terms
