@@ -18,7 +18,7 @@ use crate::host_logic::statement_store::{
 };
 
 use crate::platform::{
-    CrossProductSignature, StatementStoreProductSignReview, UserConfirmationReview,
+    CrossProductSignatureKind, StatementStoreProductSignReview, UserConfirmationReview,
 };
 use serde_json::Value;
 use subxt_rpcs::client::RpcSubscription;
@@ -358,7 +358,7 @@ impl ProductRuntimeHost {
         if product_account_id.dot_ns_identifier != self.product_id() {
             let confirmed = self
                 .confirm_signature(
-                    CrossProductSignature::StatementProof,
+                    CrossProductSignatureKind::StatementProof,
                     &product_account_id,
                     || {
                         UserConfirmationReview::StatementStoreProductSign(

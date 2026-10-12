@@ -1,7 +1,7 @@
 //! Product-facing signing capability adapters.
 
 use crate::platform::{
-    CreateTransactionReview, CrossProductSignature, SignPayloadReview, SignRawReview,
+    CreateTransactionReview, CrossProductSignatureKind, SignPayloadReview, SignRawReview,
     UserConfirmationReview,
 };
 use tracing::{debug, instrument};
@@ -68,7 +68,7 @@ impl Signing for ProductRuntimeHost {
         if grant == AutoSigningGrant::Absent {
             let confirmed = until_cancelled(
                 cx,
-                self.confirm_signature(CrossProductSignature::Payload, &inner.account, || {
+                self.confirm_signature(CrossProductSignatureKind::Payload, &inner.account, || {
                     UserConfirmationReview::SignPayload(SignPayloadReview::Product {
                         calling_product_id: Some(self.product_id()),
                         request: inner.clone(),
@@ -195,7 +195,7 @@ impl Signing for ProductRuntimeHost {
                 if names_contacts {
                     self.confirm_product_action(review()).await
                 } else {
-                    self.confirm_signature(CrossProductSignature::Transaction, &inner.signer, review)
+                    self.confirm_signature(CrossProductSignatureKind::Transaction, &inner.signer, review)
                         .await
                 }
             })
@@ -475,7 +475,7 @@ impl ProductRuntimeHost {
             };
             let confirmed = until_cancelled(cx, async {
                 if watermarked {
-                    self.confirm_signature(CrossProductSignature::Raw, &inner.account, review)
+                    self.confirm_signature(CrossProductSignatureKind::Raw, &inner.account, review)
                         .await
                 } else {
                     self.confirm_product_action(review()).await

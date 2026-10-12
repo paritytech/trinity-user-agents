@@ -1229,7 +1229,7 @@ pub enum PermissionAuthorizationRequest {
         /// Product whose accounts sign.
         target_product_id: String,
         /// Kind of signature the user approved.
-        kind: CrossProductSignature,
+        kind: CrossProductSignatureKind,
     },
 }
 
@@ -1239,7 +1239,7 @@ pub enum PermissionAuthorizationRequest {
 /// through without a prompt.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
-pub enum CrossProductSignature {
+pub enum CrossProductSignatureKind {
     /// `sign_payload`.
     Payload,
     /// `create_transaction` naming no contacts.

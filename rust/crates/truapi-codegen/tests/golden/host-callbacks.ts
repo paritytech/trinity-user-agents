@@ -254,7 +254,7 @@ export type CreateTransactionReview =
  * The user approves each kind separately: approving one never lets another
  * through without a prompt.
  */
-export type CrossProductSignature =
+export type CrossProductSignatureKind =
   | "Payload"
   | "Transaction"
   | "Raw"
@@ -444,7 +444,7 @@ export type PermissionAuthorizationRequest =
    */
   | {
       tag: "CrossProductSignature";
-      value: { targetProductId: string; kind: CrossProductSignature };
+      value: { targetProductId: string; kind: CrossProductSignatureKind };
     };
 
 /**
@@ -853,10 +853,11 @@ export const CreateTransactionReview: S.Codec<CreateTransactionReview> = S.lazy(
  * The user approves each kind separately: approving one never lets another
  * through without a prompt.
  */
-export const CrossProductSignature: S.Codec<CrossProductSignature> = S.lazy(
-  (): S.Codec<CrossProductSignature> =>
-    S.Status("Payload", "Transaction", "Raw", "StatementProof"),
-);
+export const CrossProductSignatureKind: S.Codec<CrossProductSignatureKind> =
+  S.lazy(
+    (): S.Codec<CrossProductSignatureKind> =>
+      S.Status("Payload", "Transaction", "Raw", "StatementProof"),
+  );
 
 /**
  * What the operating system currently says about a device capability.
@@ -993,8 +994,11 @@ export const PermissionAuthorizationRequest: S.Codec<PermissionAuthorizationRequ
         }>,
         CrossProductSignature: S.Struct({
           targetProductId: S.str,
-          kind: CrossProductSignature,
-        }) as S.Codec<{ targetProductId: string; kind: CrossProductSignature }>,
+          kind: CrossProductSignatureKind,
+        }) as S.Codec<{
+          targetProductId: string;
+          kind: CrossProductSignatureKind;
+        }>,
       }),
   );
 

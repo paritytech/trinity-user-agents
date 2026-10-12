@@ -42,7 +42,7 @@ use parity_scale_codec::{Decode, Encode};
 
 use crate::host_internal::product_manifest::bare_product_label;
 use crate::platform::{
-    BLESSED_REMOTE_DOMAINS, CoreStorage, CoreStorageKey, CrossProductSignature, DevicePermissionStatus,
+    BLESSED_REMOTE_DOMAINS, CoreStorage, CoreStorageKey, CrossProductSignatureKind, DevicePermissionStatus,
     PermissionAuthorizationRequest, PermissionAuthorizationStatus, PermissionDecision,
     PermissionStatusHost, Permissions, ProductContext, has_trusted_remote_permissions,
     is_valid_remote_domain_pattern, normalize_remote_domain, remote_domain_candidates,
@@ -107,7 +107,7 @@ enum BundleResolution {
 pub fn cross_product_signature_key(
     product_id: &str,
     target_product_id: &str,
-    kind: CrossProductSignature,
+    kind: CrossProductSignatureKind,
 ) -> CoreStorageKey {
     CoreStorageKey::PermissionAuthorization {
         product_id: bare_product_label(product_id).to_string(),
@@ -2854,10 +2854,10 @@ mod tests {
             .with_temporary_permissions(Arc::clone(&grants));
         let request = PermissionAuthorizationRequest::CrossProductSignature {
             target_product_id: "dim2.dot".to_string(),
-            kind: CrossProductSignature::Payload,
+            kind: CrossProductSignatureKind::Payload,
         };
         let checked_by_runtime =
-            cross_product_signature_key("product.dot", "dim2.dot", CrossProductSignature::Payload);
+            cross_product_signature_key("product.dot", "dim2.dot", CrossProductSignatureKind::Payload);
 
         futures::executor::block_on(
             service.set_authorization_status(&request, PermissionAuthorizationStatus::Authorized),

@@ -80,7 +80,7 @@ pub use vrf::ring_vrf_member;
 // `TrackedStatementRenewalTarget` is only read back by the native renewal
 // reporting, so re-exporting it on wasm leaves an unused import.
 use crate::platform::{
-    AccountAccessReview, ChatFieldError, CrossProductSignature, IdentityDisclosureReview,
+    AccountAccessReview, ChatFieldError, CrossProductSignatureKind, IdentityDisclosureReview,
     PermissionAuthorizationRequest,
     PermissionAuthorizationStatus, PermissionDecision, Platform, ProductContext, ProductStorageKey,
     SessionUiInfo, UserConfirmationReview, normalize_chat_identifier, normalize_product_identifier,
@@ -796,7 +796,7 @@ impl ProductRuntimeHost {
     /// already approved never waits for one.
     async fn confirm_signature(
         &self,
-        kind: CrossProductSignature,
+        kind: CrossProductSignatureKind,
         account: &v01::ProductAccountId,
         review: impl FnOnce() -> UserConfirmationReview,
     ) -> Result<bool, v01::GenericError> {
