@@ -118,8 +118,8 @@ private extension DSTabBarCenterControl {
         .overlay(alignment: .bottom) { glyph }
         .overlay(alignment: .top) { grabber }
         .background(material)
-        .clipShape(shape)
         .overlay(rim)
+        .clipShape(shape)
         .shadow(color: Color.shadowSoft, radius: DSTabBarStyle.centerShadowRadius, y: DSTabBarStyle.centerShadowY)
         .contentShape(shape)
     }
@@ -224,11 +224,11 @@ private extension DSTabBarCenterControl {
     }
 
     /// Hairline that catches the light along the top edge and fades by the
-    /// bottom, so the control sits above the bar instead of in it. Stroked
-    /// after the clip, so the full line width shows.
+    /// bottom, so the control sits above the bar instead of in it. A border
+    /// stroke, so the clip leaves its full width.
     var rim: some View {
         shape
-            .stroke(
+            .strokeBorder(
                 LinearGradient(
                     colors: [
                         Color.fgPrimary.opacity(DSTabBarStyle.centerRimTopOpacity),

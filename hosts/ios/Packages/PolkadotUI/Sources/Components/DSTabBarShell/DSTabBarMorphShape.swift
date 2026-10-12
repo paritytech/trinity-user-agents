@@ -6,7 +6,7 @@ import SwiftUI
 /// one subpath. At `width == height`, `topRadius == lobeRadius == width / 2` and a zero bottom
 /// radius, the outline is a circle, so the resting button and the open panel are the same shape
 /// at different sizes.
-struct DSTabBarMorphShape: Shape {
+struct DSTabBarMorphShape: InsettableShape {
     /// Corners of the body's top edge.
     var topRadius: CGFloat
     /// Corners where the body's bottom edge meets its sides.
@@ -15,6 +15,8 @@ struct DSTabBarMorphShape: Shape {
     var lobeRadius: CGFloat
     /// Concave blend where the lobe meets the body's bottom edge.
     var filletRadius: CGFloat
+    /// How far `inset(by:)` has pulled the outline in, so a border stroke stays inside the shape.
+    var insetAmount: CGFloat = 0
 
     var animatableData: AnimatablePair<AnimatablePair<CGFloat, CGFloat>, AnimatablePair<CGFloat, CGFloat>> {
         get {
@@ -31,7 +33,19 @@ struct DSTabBarMorphShape: Shape {
         }
     }
 
+    func inset(by amount: CGFloat) -> DSTabBarMorphShape {
+        var shape = self
+        shape.insetAmount += amount
+        return shape
+    }
+
     func path(in rect: CGRect) -> Path {
+        let rect = rect.insetBy(dx: insetAmount, dy: insetAmount)
+        let topRadius = max(0, topRadius - insetAmount)
+        let bottomRadius = max(0, bottomRadius - insetAmount)
+        let lobeRadius = max(0, lobeRadius - insetAmount)
+        let filletRadius = filletRadius + insetAmount
+
         var path = Path()
 
         guard rect.width > 0, rect.height > 0 else { return path }
