@@ -80,6 +80,8 @@ pub type StorageWriteHook = Arc<dyn Fn() + Send + Sync>;
 /// can exercise its delegation paths without pulling in a real backend.
 #[derive(Default)]
 pub struct StubPlatform {
+    /// Delay completion after a durable core write takes effect.
+    pub core_storage_write_gate: Mutex<Option<futures::channel::oneshot::Receiver<()>>>,
     pub device_permission_decisions:
         Mutex<std::collections::VecDeque<crate::platform::PermissionDecision>>,
     pub device_permission_requests: Mutex<Vec<v01::HostDevicePermissionRequest>>,
@@ -101,6 +103,8 @@ pub struct StubPlatform {
     pub account_access_confirmed: bool,
     pub account_access_error: Option<&'static str>,
     pub account_access_reviews: Arc<Mutex<Vec<AccountAccessReview>>>,
+    /// Holds the account-access prompt open until the sender fires.
+    pub account_access_confirmation_gate: Mutex<Option<futures::channel::oneshot::Receiver<()>>>,
     /// Permission answers retain their lifetime separately from action confirmations.
     pub permission_confirmation_decisions:
         Mutex<std::collections::VecDeque<crate::platform::PermissionDecision>>,
@@ -122,6 +126,8 @@ pub struct StubPlatform {
     pub sign_vrf_confirmed: bool,
     pub sign_vrf_error: Option<&'static str>,
     pub sign_vrf_reviews: Arc<Mutex<Vec<SignVrfReview>>>,
+    /// Pause a VRF review until the test releases its confirmation.
+    pub sign_vrf_confirmation_gate: Mutex<Option<futures::channel::oneshot::Receiver<()>>>,
     /// Every `StatementStoreProductSign` review passed to `confirm_user_action`, in order.
     pub statement_store_product_sign_reviews: Arc<Mutex<Vec<StatementStoreProductSignReview>>>,
     pub create_transaction_confirmed: bool,
@@ -202,6 +208,8 @@ pub struct StubPlatform {
     /// Hold every core-storage read pending forever, standing in for a host
     /// callback that is never answered.
     pub core_storage_pending: bool,
+    /// Pause the first core-storage read until released.
+    pub core_storage_read_gate: Mutex<Option<futures::channel::oneshot::Receiver<()>>>,
     /// Substitute storage for wallet lifecycle tests.
     pub core_storage_override: Option<Arc<dyn PlatformCoreStorage>>,
     pub chain_connect_pending: bool,
@@ -1092,6 +1100,10 @@ impl PlatformCoreStorage for StubPlatform {
         if let Some(storage) = &self.core_storage_override {
             return storage.read_core_storage(key).await;
         }
+        let gate = self.core_storage_read_gate.lock().unwrap().take();
+        if let Some(gate) = gate {
+            let _ = gate.await;
+        }
         if self.core_storage_pending {
             futures::future::pending::<()>().await;
         }
@@ -1155,6 +1167,10 @@ impl PlatformCoreStorage for StubPlatform {
             .lock()
             .expect("local storage mutex poisoned")
             .insert(core_storage_test_key(key), value);
+        let gate = self.core_storage_write_gate.lock().unwrap().take();
+        if let Some(gate) = gate {
+            let _ = gate.await;
+        }
         Ok(())
     }
 
@@ -1900,6 +1916,10 @@ impl UserConfirmation for StubPlatform {
                     .lock()
                     .expect("VRF signing review list mutex poisoned")
                     .push(review);
+                let gate = self.sign_vrf_confirmation_gate.lock().unwrap().take();
+                if let Some(gate) = gate {
+                    gate.await.expect("VRF confirmation gate was released");
+                }
                 (self.sign_vrf_error, self.sign_vrf_confirmed)
             }
             UserConfirmationReview::StatementStoreProductSign(review) => {
@@ -1939,6 +1959,14 @@ impl UserConfirmation for StubPlatform {
                     .lock()
                     .expect("account access review list mutex poisoned")
                     .push(review);
+                let gate = self
+                    .account_access_confirmation_gate
+                    .lock()
+                    .expect("account access gate mutex poisoned")
+                    .take();
+                if let Some(gate) = gate {
+                    gate.await.expect("account access gate was released");
+                }
                 (self.account_access_error, self.account_access_confirmed)
             }
             UserConfirmationReview::IdentityDisclosure(_) => {

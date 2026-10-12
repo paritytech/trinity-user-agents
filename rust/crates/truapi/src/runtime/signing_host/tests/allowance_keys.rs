@@ -185,6 +185,94 @@ fn a_second_proof_in_the_same_session_sends_nothing_to_the_chain() {
 }
 
 #[test]
+fn a_new_period_keeps_the_sponsorship_key_until_submission() {
+    let platform = chain_with_allocated_slot();
+    let signing_host = active_signing_host(platform.clone());
+    let period = slot::current_period(crate::unix_time::current_unix_secs());
+    remember(&signing_host, PRODUCT_ID, period.checked_sub(1).unwrap());
+
+    let signer = proof_signer(&signing_host);
+    assert_eq!(
+        (
+            signer == secret_key().public_key,
+            sent_rpc_count(&platform) > 0
+        ),
+        (true, false),
+        "proof creation reuses the key; submission renews its sponsorship",
+    );
+}
+
+#[test]
+fn a_new_session_reuses_the_same_wallet_allowance() {
+    let platform = Arc::new(StubPlatform::default());
+    let signing_host = active_signing_host(platform.clone());
+    remember(&signing_host, PRODUCT_ID, PERIOD);
+
+    futures::executor::block_on(signing_host.disconnect());
+    futures::executor::block_on(signing_host.activate_local_session(ENTROPY.to_vec())).unwrap();
+    let after_lock = remembered(&signing_host, PRODUCT_ID);
+    let restarted = active_signing_host(platform);
+    let state = restarted.session_state();
+    let session = state.current().unwrap();
+    let revision = restarted.accounts().grants_for_tests().lifecycle().revision();
+    let restored = futures::executor::block_on(restarted.accounts().grants_for_tests().cached_allowance(
+        &state,
+        &session,
+        revision,
+        PRODUCT_ID,
+        AllowanceResource::StatementStore,
+    ))
+    .unwrap();
+    futures::executor::block_on(restarted.activate_local_session(vec![0xAC; 16])).unwrap();
+
+    assert_eq!(
+        (
+            after_lock,
+            restored.map(|grant| match grant {
+                AccountGrant::StatementStore { key, period } => (period, *key.as_secret_bytes()),
+                _ => panic!("expected statement-store grant"),
+            }),
+            remembered(&restarted, PRODUCT_ID)
+        ),
+        (Some(SECRET), Some((None, SECRET)), None),
+        "same-wallet restart retains its key without exposing it to another owner",
+    );
+}
+
+#[test]
+fn deleting_a_wallet_clears_its_grants_and_only_disconnects_that_wallet() {
+    let platform = Arc::new(StubPlatform::default());
+    let host = active_signing_host(platform.clone());
+    let owner = host.session_state().current().unwrap().public_key;
+    remember(&host, PRODUCT_ID, PERIOD);
+    futures::executor::block_on(host.activate_local_session(vec![0xAC; 16])).unwrap();
+    let other_owner = host.session_state().current().unwrap().public_key;
+    remember(&host, PRODUCT_ID, PERIOD);
+    futures::executor::block_on(host.clear_wallet_state(owner)).unwrap();
+    let other_grant = remembered(&host, PRODUCT_ID);
+    let other_selected = host.session_state().current().unwrap().public_key;
+    futures::executor::block_on(host.activate_local_session(ENTROPY.to_vec())).unwrap();
+    let deleted_grant = remembered(&host, PRODUCT_ID);
+    futures::executor::block_on(host.clear_wallet_state(owner)).unwrap();
+    assert_eq!(
+        (
+            other_selected,
+            other_grant,
+            deleted_grant,
+            host.session_state().current().is_none(),
+            platform.auth_states.lock().unwrap().last().cloned(),
+        ),
+        (
+            other_owner,
+            Some(SECRET),
+            None,
+            true,
+            Some(crate::platform::AuthState::Disconnected)
+        ),
+    );
+}
+
+#[test]
 fn clearing_a_product_forgets_only_its_key() {
     let signing_host = active_signing_host(Arc::new(StubPlatform::default()));
     remember(&signing_host, PRODUCT_ID, PERIOD);
@@ -255,6 +343,44 @@ fn a_key_allocated_under_a_replaced_session_is_not_remembered() {
         ),
         (Err(AuthorityError::Disconnected), None),
         "a key allocated for a replaced session was handed back or remembered",
+    );
+}
+
+#[test]
+fn product_reset_does_not_restore_a_pending_allowance() {
+    let (release, gate) = futures::channel::oneshot::channel();
+    let platform = chain_with_allocated_slot();
+    *platform.rpc_method_responses_gate.lock().unwrap() = Some(gate);
+    let signing_host = active_signing_host(platform.clone());
+    let authority_session = signing_host.accounts().current_session().unwrap();
+    let cx = CallContext::default();
+    let allocation = signing_host.accounts().create_authorized_statement_proof(
+        &cx,
+        &authority_session,
+        PRODUCT_ID.to_string(),
+        crate::test_support::statement(),
+    );
+    futures::pin_mut!(allocation);
+    assert!(allocation.as_mut().now_or_never().is_none());
+    crate::test_support::wait_until(
+        || sent_rpc_count(&platform) > 0,
+        "allowance preparation did not reach the chain",
+    );
+    futures::executor::block_on(signing_host.clear_product_state(PRODUCT_ID)).unwrap();
+    release.send(()).unwrap();
+    let result = futures::executor::block_on(async {
+        futures::select! {
+            result = allocation.fuse() => result.map(|_| ()),
+            _ = futures_timer::Delay::new(std::time::Duration::from_secs(5)).fuse() => panic!("stale acquisition did not stop"),
+        }
+    });
+    assert_eq!(
+        (
+            matches!(result, Err(StatementProofFailure::NoSession)),
+            remembered(&signing_host, PRODUCT_ID),
+        ),
+        (true, None),
+        "a late grant cannot restore the cleared key in memory",
     );
 }
 
@@ -364,4 +490,237 @@ fn another_rejection_keeps_the_key() {
     );
 }
 
+#[cfg(feature = "test-host")]
+#[test]
+fn native_bulletin_submission_uses_the_retained_key() {
+    use crate::runtime::BulletinAllowanceKey;
 
+    let host = active_signing_host(Arc::new(StubPlatform::default()));
+    host.set_grant_allowances_unchecked(true);
+    let retained = derive_sr25519_hard_path(&ENTROPY, &["previous-bulletin-grant"])
+        .unwrap()
+        .secret
+        .to_bytes();
+    let state = host.session_state();
+    let session = state.current().unwrap();
+    let authority_session = host.accounts().current_session().unwrap();
+    let revision = host.accounts().grants_for_tests().lifecycle().revision();
+    let result = futures::executor::block_on(async {
+        host.accounts().grants_for_tests()
+            .retain_allowance(
+                &state,
+                &session,
+                revision,
+                PRODUCT_ID,
+                &AccountGrant::Bulletin(
+                    BulletinAllowanceKey::from_secret_bytes(retained.to_vec()).unwrap(),
+                ),
+            )
+            .await
+            .unwrap();
+        let cx = CallContext::default();
+        host.accounts()
+            .submit_preimage(
+                &cx,
+                std::time::Instant::now() + std::time::Duration::from_secs(1),
+                &authority_session,
+                PRODUCT_ID.to_string(),
+                b"retained key",
+            )
+            .await
+            .unwrap();
+        let cached = host
+            .accounts().grants_for_tests()
+            .cached_allowance(
+                &state,
+                &session,
+                revision,
+                PRODUCT_ID,
+                AllowanceResource::Bulletin,
+            )
+            .await
+            .unwrap();
+        cached.and_then(|grant| match grant {
+            AccountGrant::Bulletin(key) => Some(*key.as_secret_bytes()),
+            _ => None,
+        })
+    });
+
+    assert_eq!(result, Some(retained));
+}
+
+#[test]
+fn only_a_retained_sponsorship_renews_without_another_approval() {
+    let mut platform = chain_with_allocated_slot();
+    Arc::get_mut(&mut platform)
+        .unwrap()
+        .resource_allocation_confirmed = false;
+    let host = active_signing_host(platform.clone());
+    let key =
+        derive_sr25519_hard_path(&ENTROPY, &["allowance", "statement-store", PRODUCT_ID]).unwrap();
+    let state = host.session_state();
+    let session = state.current().unwrap();
+    let revision = host.accounts().grants_for_tests().lifecycle().revision();
+    let product = crate::platform::ProductContext::new(PRODUCT_ID.to_string()).unwrap();
+    futures::executor::block_on(async {
+        host.accounts().grants_for_tests()
+            .retain_allowance(
+                &state,
+                &session,
+                revision,
+                PRODUCT_ID,
+                &AccountGrant::StatementStore {
+                    key: StatementStoreAllowanceKey::from_secret_bytes(
+                        key.secret.to_bytes().to_vec(),
+                    )
+                    .unwrap(),
+                    period: Some(PERIOD),
+                },
+            )
+            .await
+            .unwrap();
+        host.accounts()
+            .renew_statement_sponsorship(&CallContext::default(), &product, [0x11; 32])
+            .await
+            .unwrap();
+        assert_eq!(sent_rpc_count(&platform), 0);
+        host.accounts()
+            .renew_statement_sponsorship(&CallContext::default(), &product, key.public.to_bytes())
+            .await
+            .unwrap();
+    });
+    assert_eq!(
+        (
+            sent_rpc_count(&platform) > 0,
+            platform.resource_allocation_reviews.lock().unwrap().len(),
+            remembered(&host, PRODUCT_ID)
+        ),
+        (true, 0, Some(key.secret.to_bytes()))
+    );
+}
+
+#[test]
+fn a_declined_bulletin_extension_keeps_the_retained_key() {
+    let platform = Arc::new(StubPlatform {
+        rpc_method_responses: vec![("state_getStorage", "null".to_string())],
+        ..Default::default()
+    });
+    let host = active_signing_host(platform.clone());
+    let state = host.session_state();
+    let session = state.current().unwrap();
+    let authority_session = host.accounts().current_session().unwrap();
+    let revision = host.accounts().grants_for_tests().lifecycle().revision();
+    let key = derive_sr25519_hard_path(&ENTROPY, &["retained-bulletin"]).unwrap();
+    let outcome = futures::executor::block_on(async {
+        host.accounts().grants_for_tests()
+            .retain_allowance(
+                &state,
+                &session,
+                revision,
+                PRODUCT_ID,
+                &AccountGrant::Bulletin(
+                    crate::runtime::BulletinAllowanceKey::from_secret_bytes(
+                        key.secret.to_bytes().to_vec(),
+                    )
+                    .unwrap(),
+                ),
+            )
+            .await
+            .unwrap();
+        let submission = host
+            .accounts()
+            .submit_preimage(
+                &CallContext::default(),
+                std::time::Instant::now() + std::time::Duration::from_secs(1),
+                &authority_session,
+                PRODUCT_ID.to_string(),
+                b"quota required",
+            )
+            .await;
+        let retained = host
+            .accounts().grants_for_tests()
+            .cached_allowance(
+                &state,
+                &session,
+                revision,
+                PRODUCT_ID,
+                AllowanceResource::Bulletin,
+            )
+            .await
+            .unwrap();
+        (
+            matches!(
+                submission,
+                Err(
+                    crate::runtime::bulletin_rpc::BulletinSubmitError::Authority(
+                        AuthorityError::Rejected
+                    )
+                )
+            ),
+            retained.and_then(|grant| match grant {
+                AccountGrant::Bulletin(key) => Some(*key.as_secret_bytes()),
+                _ => None,
+            }),
+        )
+    });
+    assert_eq!(
+        (
+            outcome,
+            platform.resource_allocation_reviews.lock().unwrap().len()
+        ),
+        ((true, Some(key.secret.to_bytes())), 1)
+    );
+}
+
+
+#[test]
+fn started_native_writes_survive_lock_but_not_an_interrupted_product_reset() {
+    for change in ["lock", "reset-and-drop-write", "reset"] {
+        let platform = Arc::new(StubPlatform::default());
+        let host = active_signing_host(platform.clone());
+        remember(&host, "other.dot", PERIOD);
+        let state = host.session_state();
+        let session = state.current().unwrap();
+        let revision = host.accounts().grants_for_tests().lifecycle().revision();
+        let (release, gate) = futures::channel::oneshot::channel();
+        *platform.core_storage_write_gate.lock().unwrap() = Some(gate);
+        let grant = AccountGrant::StatementStore {
+            key: secret_key(),
+            period: Some(PERIOD),
+        };
+        let mut write = Box::pin(
+            host.accounts().grants_for_tests()
+                .retain_allowance(&state, &session, revision, PRODUCT_ID, &grant),
+        );
+        assert!(write.as_mut().now_or_never().is_none());
+        if change == "lock" {
+            futures::executor::block_on(host.disconnect());
+        } else {
+            let mut reset = Box::pin(host.clear_product_state(PRODUCT_ID));
+            assert!(reset.as_mut().now_or_never().is_none());
+            drop(reset);
+        }
+        if change == "reset-and-drop-write" {
+            drop(write);
+            let _ = release.send(());
+        } else {
+            release.send(()).unwrap();
+            assert_eq!(
+                futures::executor::block_on(write).map(|_| ()),
+                Err(AuthorityError::Disconnected)
+            );
+        }
+        futures::executor::block_on(host.activate_local_session(ENTROPY.to_vec())).unwrap();
+        assert_eq!(
+            (
+                remembered(&host, PRODUCT_ID),
+                remembered(&host, "other.dot")
+            ),
+            (
+                if change == "lock" { Some(SECRET) } else { None },
+                Some(SECRET)
+            ),
+            "{change}",
+        );
+    }
+}

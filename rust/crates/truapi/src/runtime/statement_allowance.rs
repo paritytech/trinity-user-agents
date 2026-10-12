@@ -1268,6 +1268,18 @@ mod tests {
     }
 
     #[test]
+    fn bulletin_authorization_covers_the_whole_submission() {
+        let results = [
+            allowance(128, 1, 11),
+            allowance(127, 1, 11),
+            allowance(128, 0, 11),
+            allowance(128, 1, 10),
+        ]
+        .map(|info| info.can_store(128));
+        assert_eq!(results, [true, false, false, false]);
+    }
+
+    #[test]
     fn bulletin_refresh_accepts_available_state_when_baseline_was_unusable() {
         let exhausted_by_size = allowance(0, 4, 100);
         let refreshed_same_transactions = allowance(4096, 4, 100);

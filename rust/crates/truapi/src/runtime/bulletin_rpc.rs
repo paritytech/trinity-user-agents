@@ -874,7 +874,7 @@ mod tests {
         use crate::subscription::thread_per_subscription_spawner;
         use async_trait::async_trait;
         use futures::StreamExt;
-        use futures::channel::mpsc;
+        use futures::channel::{mpsc, oneshot};
         use futures::stream::BoxStream;
         use parity_scale_codec::{Compact, Encode};
         use schnorrkel::{SecretKey, Signature};
@@ -914,6 +914,7 @@ mod tests {
             current_best_hash: String,
             advance_best_block_after_rejection: bool,
             stall_headers: bool,
+            nonce_reply: Option<oneshot::Sender<Vec<String>>>,
             last_transaction: Option<String>,
             omit_transaction_from_next_body: bool,
         }
@@ -946,6 +947,7 @@ mod tests {
                         current_best_hash: BLOCK_HASH.to_string(),
                         advance_best_block_after_rejection: false,
                         stall_headers,
+                        nonce_reply: None,
                         last_transaction: None,
                         omit_transaction_from_next_body: false,
                     })),
@@ -972,6 +974,12 @@ mod tests {
                     state.advance_best_block_after_rejection = advance_best_block_after_rejection;
                 }
                 self
+            }
+
+            fn hold_nonce_reply(&self) -> oneshot::Receiver<Vec<String>> {
+                let (sender, receiver) = oneshot::channel();
+                self.state.lock().unwrap().nonce_reply = Some(sender);
+                receiver
             }
 
             fn method_count(&self, method: &str) -> usize {
@@ -1135,6 +1143,12 @@ mod tests {
                             "output": format!("0x{}", hex::encode(output))
                         })),
                     ];
+                    if runtime_method == "AccountNonceApi_account_nonce"
+                        && let Some(reply) = state.nonce_reply.take()
+                    {
+                        reply.send(frames).unwrap();
+                        return Vec::new();
+                    }
                     if validation_outcome == ValidationOutcome::AllowanceRejected
                         && state.advance_best_block_after_rejection
                     {
@@ -1417,6 +1431,53 @@ mod tests {
                     &Signature::from_bytes(&signature).unwrap(),
                 )
                 .unwrap();
+        }
+
+        #[test]
+        fn a_signer_refusal_after_preparation_prevents_broadcast() {
+            let provider = Arc::new(BulletinScriptedProvider::new([
+                TransactionOutcome::Included,
+            ]));
+            let nonce_reply = provider.hold_nonce_reply();
+            let fixture = rpc(provider.clone());
+            let error = futures::executor::block_on(async {
+                let submission = fixture
+                    .submit(b"reactivated wallet", Duration::from_secs(2))
+                    .fuse();
+                let nonce_reply = nonce_reply.fuse();
+                futures::pin_mut!(submission, nonce_reply);
+                let frames = futures::select! {
+                    result = submission => panic!("submission ended before nonce preparation: {result:?}"),
+                    frames = nonce_reply => frames.unwrap(),
+                };
+                fixture
+                    .signing_available
+                    .store(false, core::sync::atomic::Ordering::Relaxed);
+                for frame in frames {
+                    provider
+                        .sender
+                        .lock()
+                        .unwrap()
+                        .as_ref()
+                        .unwrap()
+                        .unbounded_send(frame)
+                        .unwrap();
+                }
+                submission.await.unwrap_err()
+            });
+
+            assert!(matches!(
+                error,
+                BulletinSubmitError::Authority(AuthorityError::Disconnected)
+            ));
+            assert_eq!(
+                (
+                    provider.runtime_call_count("AccountNonceApi_account_nonce"),
+                    provider.runtime_call_count("TaggedTransactionQueue_validate_transaction"),
+                    provider.method_count("transactionWatch_v1_submitAndWatch"),
+                ),
+                (1, 0, 0)
+            );
         }
 
         #[test]

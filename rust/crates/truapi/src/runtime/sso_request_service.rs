@@ -2,6 +2,8 @@
 
 mod channel;
 mod pairing;
+#[cfg(test)]
+mod tests;
 
 use super::auth_state::AuthStateMachine;
 use super::authority::{AuthoritySession, authority_session};

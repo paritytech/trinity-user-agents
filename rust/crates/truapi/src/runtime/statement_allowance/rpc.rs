@@ -313,6 +313,7 @@ pub mod testing {
     struct Inner {
         calls: Mutex<Vec<(String, String)>>,
         responses: Mutex<Vec<String>>,
+        response_gate: Mutex<Option<(usize, futures::channel::oneshot::Receiver<()>)>>,
         subscription_batches: Mutex<Vec<Vec<String>>>,
         subscription_errors: Mutex<Vec<String>>,
     }
@@ -324,6 +325,13 @@ pub mod testing {
             *scripted.0.responses.lock().unwrap() =
                 responses.into_iter().map(str::to_owned).collect();
             scripted
+        }
+
+        /// Hold one response after recording its request; indices include subscriptions.
+        pub fn pause_response(&self, index: usize) -> futures::channel::oneshot::Sender<()> {
+            let (release, gate) = futures::channel::oneshot::channel();
+            *self.0.response_gate.lock().unwrap() = Some((index, gate));
+            release
         }
 
         /// Queue the notification items for one subscription. Call once per
@@ -382,11 +390,20 @@ pub mod testing {
             params: Option<Box<RawValue>>,
         ) -> RawRpcFuture<'a, Box<RawValue>> {
             let params = params_json(params);
-            self.0
-                .calls
-                .lock()
-                .unwrap()
-                .push((method.to_owned(), params.clone()));
+            let index = {
+                let mut calls = self.0.calls.lock().unwrap();
+                let index = calls.len();
+                calls.push((method.to_owned(), params.clone()));
+                index
+            };
+            let gate = {
+                let mut gate = self.0.response_gate.lock().unwrap();
+                if gate.as_ref().is_some_and(|(paused, _)| *paused == index) {
+                    gate.take().map(|(_, gate)| gate)
+                } else {
+                    None
+                }
+            };
             let mut responses = self.0.responses.lock().unwrap();
             assert!(!responses.is_empty(), "unscripted request `{method}`");
             let response = if method == "state_queryStorageAt" {
@@ -395,6 +412,9 @@ pub mod testing {
                 responses.remove(0)
             };
             Box::pin(async move {
+                if let Some(gate) = gate {
+                    gate.await.expect("scripted response released");
+                }
                 Ok(RawValue::from_string(response).expect("scripted response is valid JSON"))
             })
         }

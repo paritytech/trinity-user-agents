@@ -290,12 +290,14 @@ impl HostSession for SigningHost {
 
 #[cfg(test)]
 mod tests {
+    mod activation;
     mod allowance_keys;
     mod auto_signing;
     mod cross_product_account;
     #[cfg(feature = "test-host")]
     mod local_preimages;
     mod raw_signing;
+    mod remote_consent;
     #[cfg(feature = "test-host")]
     mod withheld_resources;
 
@@ -2049,6 +2051,33 @@ mod tests {
                 Err(AuthorityError::Disconnected)
             ),
         );
+    }
+
+    #[test]
+    fn auto_signing_grant_does_not_survive_wallet_replacement() {
+        for disconnect in [false, true] {
+            let platform = Arc::new(StubPlatform {
+                resource_allocation_confirmed: true,
+                ..StubPlatform::default()
+            });
+            let (services, authority) = signing_runtime_with_platform(platform);
+            futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
+                .unwrap();
+            auto_signing::grant_auto_signing(&product_runtime(services, authority.clone()));
+            assert!(keeps_auto_signing(&authority, "myapp.dot"));
+
+            let entropy = if disconnect {
+                futures::executor::block_on(authority.disconnect());
+                ENTROPY.to_vec()
+            } else {
+                vec![0xCD; 16]
+            };
+            futures::executor::block_on(authority.activate_local_session(entropy)).unwrap();
+            assert!(
+                !keeps_auto_signing(&authority, "myapp.dot"),
+                "disconnect: {disconnect}",
+            );
+        }
     }
 
     #[test]

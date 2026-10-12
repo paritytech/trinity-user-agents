@@ -4011,6 +4011,48 @@ fn get_account_other_product_maps_confirmation_failure_to_host_failure() {
     assert!(matches!(err, CallError::HostFailure { reason } if reason.contains("modal failed")));
 }
 
+/// Account access asks through the runtime's one prompt channel, so every
+/// connection shares its decisions and its one-prompt-at-a-time rule.
+#[test]
+fn get_account_asks_through_the_runtime_channel_not_the_connection() {
+    let runtime_platform = Arc::new(StubPlatform {
+        account_access_confirmed: true,
+        ..Default::default()
+    });
+    let connection_platform = stub_platform();
+    let host = ProductRuntimeHost::new(
+        runtime_platform.clone(),
+        runtime_config("myapp.dot"),
+        test_spawner(),
+    );
+    let mut adapters =
+        crate::host_core::ConnectionAdapters::from_services(&host.connection.services);
+    adapters.platform = connection_platform.clone();
+    let host = ProductRuntimeHost::from_services(
+        host.connection.services.clone(),
+        adapters,
+        host.accounts.clone(),
+        host.host_session.clone(),
+        host.connection.product.clone(),
+    );
+    let session = sso_session_info();
+    install_pairing_session(&host, session.clone());
+    cache_test_product_subtree(&host, &session, "other.dot");
+    let request = HostAccountGetRequest::V1(v01::HostAccountGetRequest {
+        product_account_id: account_id("other.dot", 0),
+    });
+    let HostAccountGetResponse::V1(inner) =
+        futures::executor::block_on(host.get_account(&CallContext::default(), request)).unwrap();
+    assert_eq!(
+        (
+            inner.account.public_key,
+            runtime_platform.account_access_reviews.lock().unwrap().len(),
+            connection_platform.account_access_reviews.lock().unwrap().len(),
+        ),
+        (test_product_account_public("other.dot", 0).to_vec(), 1, 0)
+    );
+}
+
 #[test]
 fn get_account_other_product_skips_confirmation_for_a_blessed_product() {
     let platform = stub_platform();
@@ -4104,6 +4146,52 @@ fn get_account_derives_rfc0022_product_key() {
     assert_eq!(
         hex::encode(inner.account.public_key),
         "1c1ae478b564572f806ffa6352b4273d612beb01610b19f4e5bf444521cd5b5c"
+    );
+}
+
+/// A product's own subtree key is public, so the phone serves it without a
+/// prompt and the paired host adds none of its own.
+#[test]
+fn get_account_own_product_resolves_a_cold_subtree_without_a_prompt() {
+    let session = sso_session_info();
+    let platform = Arc::new(StubPlatform {
+        product_subtree_denied: true,
+        sso_response_script: Some(sso_success_response_script(
+            &session,
+            RemoteMessage {
+                message_id: "wallet-subtree-1".to_string(),
+                data: RemoteMessageData::V1(v1::RemoteMessage::ProductSubtreeResponse(
+                    crate::host_internal::sso_messages::Response {
+                        responding_to: "subtree-1".to_string(),
+                        payload: Ok(test_product_subtree("myapp.dot")),
+                    },
+                )),
+            },
+        )),
+        ..Default::default()
+    });
+    let host = ProductRuntimeHost::new(
+        platform.clone(),
+        runtime_config("myapp.dot"),
+        test_spawner(),
+    );
+    host.test_session_state().set_session(session);
+    let request = HostAccountGetRequest::V1(v01::HostAccountGetRequest {
+        product_account_id: account_id("myapp.dot", 0),
+    });
+
+    let HostAccountGetResponse::V1(inner) = futures::executor::block_on(host.get_account(
+        &CallContext::with_request_id("subtree-1".to_string()),
+        request,
+    ))
+    .unwrap();
+
+    assert_eq!(
+        (
+            inner.account.public_key,
+            platform.product_subtree_reviews.lock().unwrap().len()
+        ),
+        (test_product_account_public("myapp.dot", 0).to_vec(), 0)
     );
 }
 
@@ -5939,6 +6027,52 @@ fn auto_signing_serves_sign_raw_locally_without_prompt_or_sso() {
     );
 }
 
+#[test]
+fn legacy_raw_review_preserves_cached_product_signing() {
+    let session = sso_session_info();
+    let mut platform = auto_signing_test_platform(&session, "auto-1");
+    Arc::get_mut(&mut platform).unwrap().sign_raw_confirmed = true;
+    let host = ProductRuntimeHost::new(
+        platform.clone(),
+        runtime_config("myapp.dot"),
+        test_spawner(),
+    );
+    install_pairing_session(&host, session);
+    request_auto_signing(&host, "auto-1");
+    let keypair = granted_keypair();
+    let request = v01::HostSignRawWithLegacyAccountRequest {
+        signer: subxt::utils::AccountId32(keypair.public.to_bytes()).to_string(),
+        payload: v01::RawPayload::Bytes {
+            bytes: b"legacy cached".to_vec(),
+        },
+    };
+    let HostSignRawWithLegacyAccountResponse::V1(response) =
+        futures::executor::block_on(host.sign_raw_with_legacy_account(
+            &CallContext::default(),
+            HostSignRawWithLegacyAccountRequest::V1(request.clone()),
+        ))
+        .expect("the reviewed legacy request uses the cached key without another SSO response");
+    let signature = schnorrkel::Signature::from_bytes(&response.signature).unwrap();
+    assert_eq!(
+        (
+            keypair
+                .public
+                .verify_simple(b"substrate", b"<Bytes>legacy cached</Bytes>", &signature)
+                .is_ok(),
+            response.signed_transaction,
+            platform.sign_raw_reviews.lock().unwrap().clone()
+        ),
+        (
+            true,
+            None,
+            vec![crate::platform::SignRawReview::LegacyAccount {
+                request,
+                watermarked: true
+            }]
+        ),
+    );
+}
+
 /// The account a picked contact resolves to, and the handle a product holds
 /// for them. Minted through the real picker so the handle is keyed the way a
 /// product's would be.
@@ -6234,6 +6368,35 @@ fn a_broken_auto_signing_slot_fails_sign_raw_rather_than_prompting() {
             .expect("raw signing review list mutex poisoned")
             .is_empty(),
         "no prompt is raised for a capability the host just erased",
+    );
+}
+
+/// The deprecated unwatermarked API is never covered by a grant: the paired
+/// host does not answer it with its kept key, and adds no review of its own,
+/// since the phone reviews what it signs.
+#[test]
+fn an_unwatermarked_sign_raw_is_not_signed_with_the_kept_key() {
+    let (platform, host) = granted_pairing_host();
+    let mut cx = CallContext::default();
+    cx.set_timeout(Duration::from_millis(20));
+
+    #[allow(deprecated)]
+    let result = futures::executor::block_on(host.sign_raw_unwatermarked_deprecated(
+        &cx,
+        HostSignRawRequest::V1(v01::HostSignRawRequest {
+            account: account_id("myapp.dot", 0),
+            payload: v01::RawPayload::Bytes {
+                bytes: b"hello world".to_vec(),
+            },
+        }),
+    ));
+
+    assert_eq!(
+        (
+            result.is_ok(),
+            platform.sign_raw_reviews.lock().unwrap().len()
+        ),
+        (false, 0),
     );
 }
 
@@ -8486,3 +8649,121 @@ fn a_pairing_test_host_keeps_a_submitted_preimage_and_serves_it_back() {
     );
 }
 
+/// A product reset concerns that product's grants, not which wallet is
+/// paired, so it keeps a session that is being activated.
+#[test]
+fn a_product_reset_during_activation_keeps_the_new_session() {
+    let (host, pairing) =
+        ProductRuntimeHost::new_compat_with_pairing(stub_platform(), test_spawner());
+    let accounts = pairing.accounts().clone();
+    let sso = pairing.session().clone();
+    let session = sso_session_info();
+    let blob = crate::host_logic::session::encode_persisted_session(&session);
+    let (activation_entered, resume_activation) =
+        sso.pause_external_session_activation_for_tests();
+    let activation = std::thread::spawn({
+        let sso = sso.clone();
+        move || futures::executor::block_on(sso.activate_external_session(&blob))
+    });
+    futures::executor::block_on(activation_entered)
+        .expect("external activation reached the installation fence");
+
+    futures::executor::block_on(accounts.clear_product_state("myapp.dot")).unwrap();
+    resume_activation
+        .send(())
+        .expect("external activation remains in flight");
+    activation
+        .join()
+        .expect("external activation thread panicked")
+        .expect("external activation completes");
+
+    assert_eq!(host.test_session_state().current(), Some(session));
+}
+
+/// Ending the paired session reaches the host that keeps its grants, which
+/// forgets what was allowed once, as a wallet change does on a signing host.
+#[test]
+fn a_paired_disconnect_forgets_allow_once() {
+    let platform = Arc::new(StubPlatform {
+        permission_confirmation_decisions: Mutex::new(
+            [
+                crate::platform::PermissionDecision::AllowOnce,
+                crate::platform::PermissionDecision::Deny,
+            ]
+            .into(),
+        ),
+        ..Default::default()
+    });
+    let (host, pairing) =
+        ProductRuntimeHost::new_compat_with_pairing(platform.clone(), test_spawner());
+    let sso = pairing.session().clone();
+    let get_other_account = || {
+        let session = sso_session_info();
+        install_pairing_session(&host, session.clone());
+        cache_test_product_subtree(&host, &session, "other.dot");
+        let request = HostAccountGetRequest::V1(v01::HostAccountGetRequest {
+            product_account_id: account_id("other.dot", 0),
+        });
+        futures::executor::block_on(host.get_account(&CallContext::default(), request)).is_ok()
+    };
+    let first = get_other_account();
+
+    futures::executor::block_on(HostSession::disconnect(sso.as_ref()));
+    let after_disconnect = get_other_account();
+
+    assert_eq!(
+        (
+            first,
+            after_disconnect,
+            platform.account_access_reviews.lock().unwrap().len()
+        ),
+        (true, false, 2),
+    );
+}
+
+/// The paired host's account holder keeps its copy of what the phone
+/// registered, so the host's own provider list shows the phone's answer.
+#[test]
+fn a_paired_registration_records_the_phones_key_locally() {
+    let session = sso_session_info();
+    let public_key = [7; 32];
+    let platform = Arc::new(StubPlatform {
+        sso_response_script: Some(sso_success_response_script(
+            &session,
+            RemoteMessage {
+                message_id: "wallet-register".to_string(),
+                data: RemoteMessageData::V1(v1::RemoteMessage::RegisterRingVrfKeyResponse(
+                    Response {
+                        responding_to: "register".to_string(),
+                        payload: Ok(public_key),
+                    },
+                )),
+            },
+        )),
+        ..Default::default()
+    });
+    let (host_config, product) = runtime_config("myapp.dot");
+    let (host, pairing) =
+        ProductRuntimeHost::new_pairing_for_tests(platform, host_config, product, test_spawner());
+    install_pairing_session(&host, session);
+    let accounts = pairing.accounts();
+    let authority_session = accounts.current_session().unwrap();
+
+    let registered = futures::executor::block_on(accounts.register_ring_vrf_key(
+        &authority_session,
+        &CallContext::with_request_id("register".to_string()),
+        &ProductContext::new("myapp.dot".to_string()).unwrap(),
+        v01::HostAccountRegisterRingVrfKeyRequest {
+            index: v01::DerivationIndex::Index(0),
+            ring: ring_location_fixture(),
+        },
+    ));
+
+    assert_eq!(
+        (
+            registered,
+            futures::executor::block_on(accounts.ring_vrf_providers(&ring_location_fixture())),
+        ),
+        (Ok(public_key), Ok(vec![account_id("myapp.dot", 0)])),
+    );
+}

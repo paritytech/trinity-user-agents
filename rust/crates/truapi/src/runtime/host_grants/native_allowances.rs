@@ -153,3 +153,79 @@ fn storage_error(error: crate::latest::GenericError) -> AuthorityError {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::platform::CoreStorage;
+    use super::super::HostGrantStore;
+    use crate::runtime::authority::GrantKeeping;
+    use crate::test_support::StubPlatform;
+    use futures::executor::block_on;
+    use std::sync::Arc;
+
+    #[test]
+    fn corrupt_grants_are_isolated_and_removable_by_product_or_owner() {
+        block_on(async {
+            let platform = Arc::new(StubPlatform::default());
+            let store = HostGrantStore::new(platform.clone(), GrantKeeping::Wallet);
+            let guard = store.persistence().await;
+            let secret = crate::host_logic::product_account::derive_sr25519_hard_path(
+                &[7; 16],
+                &["allowance", "bulletin"],
+            )
+            .unwrap()
+            .secret
+            .to_bytes()
+            .to_vec();
+            let broken =
+                storage_key([7; 32], "myapp.dot", AllowanceResource::StatementStore).unwrap();
+            let other_product =
+                storage_key([7; 32], "other.dot", AllowanceResource::Bulletin).unwrap();
+            let other_wallet =
+                storage_key([8; 32], "other.dot", AllowanceResource::Bulletin).unwrap();
+            platform
+                .write_core_storage(broken.clone(), vec![0xff])
+                .await
+                .unwrap();
+            for key in [&other_product, &other_wallet] {
+                platform
+                    .write_core_storage(key.clone(), secret.clone())
+                    .await
+                    .unwrap();
+            }
+            assert!(
+                native_allowance(
+                    &guard,
+                    [7; 32],
+                    "myapp.dot",
+                    AllowanceResource::StatementStore
+                )
+                .await
+                .is_err()
+            );
+            assert!(matches!(
+                native_allowance(&guard, [7; 32], "other.dot", AllowanceResource::Bulletin)
+                    .await
+                    .unwrap(),
+                Some(AccountGrant::Bulletin(_))
+            ));
+            delete_native_allowances(
+                &guard,
+                &NativeAllowanceDeletion::Product("myapp.dot".to_string()),
+            )
+            .await
+            .unwrap();
+            assert_eq!(platform.read_core_storage(broken).await.unwrap(), None);
+            delete_native_allowances(&guard, &NativeAllowanceDeletion::Owner([7; 32]))
+                .await
+                .unwrap();
+            assert_eq!(
+                (
+                    platform.read_core_storage(other_product).await.unwrap(),
+                    platform.read_core_storage(other_wallet).await.unwrap()
+                ),
+                (None, Some(secret.clone()))
+            );
+        });
+    }
+}

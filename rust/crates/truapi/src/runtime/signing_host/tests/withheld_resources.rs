@@ -1,6 +1,12 @@
 //! A withheld resource is refused while the rest of the request is granted.
 
 use super::*;
+use crate::host_internal::sso_messages::{
+    OnExistingAllowancePolicy, RemoteMessage, RemoteMessageData, ResourceAllocationRequest,
+    SsoAllocationOutcome, v1,
+};
+use crate::runtime::SsoAccountHolderService;
+use crate::runtime::sso_service::Dispatch;
 use crate::test_support::statement;
 use truapi::api::StatementStore;
 use truapi::versioned::statement_store::RemoteStatementStoreCreateProofAuthorizedRequest;
@@ -55,6 +61,38 @@ fn a_withheld_resource_is_refused_while_the_others_are_granted() {
             v01::AllocationOutcome::Allocated,
         ],
     );
+}
+
+/// The test wallet withholds a resource from every caller, so a paired host
+/// is refused it too; the SSO answer reports a refused item as not available.
+#[test]
+fn a_paired_request_is_refused_a_withheld_resource() {
+    let (_, activation) = signing_runtime_with_platform(granting_platform());
+    futures::executor::block_on(activation.activate_local_session(ENTROPY.to_vec()))
+        .expect("activation succeeds");
+    activation.set_withheld_resources(vec!["AutoSigning".to_string()]);
+    let Ok(Dispatch::Response(answer)) = futures::executor::block_on(
+        SsoAccountHolderService::new(
+            activation.wallet_for_tests().clone(),
+            activation.wallet_for_tests().current_session().unwrap(),
+        )
+        .answer(RemoteMessage::request(
+            "remote-allocation".to_string(),
+            ResourceAllocationRequest {
+                calling_product_id: "myapp.dot".to_string(),
+                resources: vec![v01::AllocatableResource::AutoSigning],
+                on_existing: OnExistingAllowancePolicy::Increase,
+            },
+        )),
+    ) else {
+        panic!("expected an allocation response")
+    };
+    let RemoteMessageData::V1(v1::RemoteMessage::ResourceAllocationResponse(response)) =
+        answer.message.data
+    else {
+        panic!("expected a resource allocation response")
+    };
+    assert_eq!(response.payload, Ok(vec![SsoAllocationOutcome::NotAvailable]));
 }
 
 #[test]
@@ -142,3 +180,22 @@ fn a_granted_statement_store_allowance_signs_the_proof_path() {
     assert!(proof_is_signed(&runtime));
 }
 
+#[test]
+fn a_withheld_bulletin_allowance_prevents_submission() {
+    let (_services, activation) = signing_runtime_with_platform(granting_platform());
+    futures::executor::block_on(activation.activate_local_session(ENTROPY.to_vec())).unwrap();
+    activation.set_grant_allowances_unchecked(true);
+    activation.set_withheld_resources(vec!["BulletinAllowance".to_string()]);
+    let session = activation.accounts().current_session().unwrap();
+    let result = futures::executor::block_on(activation.accounts().submit_preimage(
+        &CallContext::default(),
+        std::time::Instant::now() + std::time::Duration::from_secs(1),
+        &session,
+        "myapp.dot".to_string(),
+        b"withheld",
+    ));
+    assert!(matches!(
+        result,
+        Err(crate::runtime::bulletin_rpc::BulletinSubmitError::Authority(AuthorityError::Rejected))
+    ));
+}

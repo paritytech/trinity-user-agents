@@ -3492,6 +3492,65 @@ mod tests {
         );
     }
 
+    fn begin_worker_operation(runtime: &ProductRuntime) {
+        let ids = request_ids("worker_begin_operation").expect("known Worker request");
+        let frame = ProtocolMessage {
+            request_id: "worker:begin".to_string(),
+            payload: Payload {
+                trait_id: ids.trait_id,
+                method_id: ids.method_id,
+                message_type: crate::frame::MESSAGE_TYPE_REQUEST,
+                value: truapi::versioned::worker::HostWorkerBeginOperationRequest::V1(
+                    truapi::latest::HostWorkerBeginOperationRequest { label: None },
+                )
+                .encode(),
+            },
+        };
+        futures::executor::block_on(runtime.receive_frame(frame.encode()))
+            .expect("begin operation frame");
+    }
+
+    #[test]
+    fn open_operation_demand_lasts_until_dispose_or_the_last_control() {
+        for dispose in [false, true] {
+            let platform = Arc::new(StubPlatform::default());
+            let sink = Arc::new(RecordingSink::default());
+            let (host_config, mut product) = runtime_config("myapp.dot");
+            product.execution_kind = crate::platform::ProductExecutionKind::Worker;
+            let runtime = ProductRuntime::from_platform_with_config(
+                platform.clone(),
+                host_config,
+                product,
+                test_spawner(),
+                sink,
+            );
+            let services = runtime.connection.services().clone();
+            let control = runtime.control();
+
+            begin_worker_operation(&runtime);
+            assert_eq!(services.worker_ledger.count("myapp.dot"), 1);
+
+            if dispose {
+                runtime.dispose();
+                wait_until(
+                    || {
+                        *platform.ended_operations.lock().unwrap()
+                            == vec![("myapp.dot".to_string(), 1)]
+                    },
+                    "disposing the runtime must end its host operations while controls still exist",
+                );
+            }
+            drop(runtime);
+            assert_eq!(
+                services.worker_ledger.count("myapp.dot"),
+                usize::from(!dispose)
+            );
+
+            drop(control);
+            assert_eq!(services.worker_ledger.count("myapp.dot"), 0);
+        }
+    }
+
     #[test]
     fn dispose_cancels_active_subscriptions() {
         let theme_stream_dropped = Arc::new(AtomicBool::new(false));

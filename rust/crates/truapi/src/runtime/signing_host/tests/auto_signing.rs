@@ -6,6 +6,7 @@ use crate::host_internal::sso_messages::{RemoteMessage, RemoteMessageData, v1};
 use crate::runtime::SsoAccountHolderService;
 use crate::runtime::sso_service::Dispatch;
 use truapi::versioned::account::HostAccountSignVrfRequest;
+use truapi::versioned::resource_allocation::HostRequestResourceAllocationError;
 use truapi::versioned::signing::HostSignRawWithLegacyAccountRequest;
 
 /// Allocate an AutoSigning grant for the runtime's own product.
@@ -242,3 +243,91 @@ fn a_blessed_product_still_confirms_legacy_account_signing() {
     );
 }
 
+#[test]
+fn direct_allocation_cannot_authorize_signing_without_wallet_approval() {
+    let platform = Arc::new(StubPlatform::default());
+    let (_, authority) = signing_runtime_with_platform(platform.clone());
+    futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec())).unwrap();
+    let authority_session = authority.accounts().current_session().unwrap();
+    let request = truapi::latest::HostRequestResourceAllocationRequest {
+        resources: vec![truapi::latest::AllocatableResource::AutoSigning],
+    };
+    let result = futures::executor::block_on(authority.accounts().allocate_resources(
+        &CallContext::default(),
+        &authority_session,
+        &ProductContext::new("myapp.dot".to_string()).unwrap(),
+        request.clone(),
+    ));
+    let grant = keeps_auto_signing(&authority, "myapp.dot");
+    assert_eq!(
+        (
+            result,
+            grant,
+            platform.resource_allocation_reviews.lock().unwrap().clone()
+        ),
+        (
+            Ok(truapi::latest::HostRequestResourceAllocationResponse {
+                outcomes: vec![truapi::latest::AllocationOutcome::Rejected],
+            }),
+            false,
+            vec![crate::platform::ResourceAllocationReview {
+                calling_product_id: "myapp.dot".to_string(),
+                resources: request.resources,
+            }],
+        ),
+    );
+}
+
+#[test]
+fn cancelling_a_later_resource_keeps_the_first_native_authorization() {
+    use std::future::Future;
+    use std::task::{Context, Poll};
+
+    let platform = Arc::new(StubPlatform {
+        resource_allocation_confirmed: true,
+        chain_connect_pending: true,
+        ..StubPlatform::default()
+    });
+    let (services, authority) = signing_runtime_with_platform(platform);
+    futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec())).unwrap();
+    let runtime = product_runtime(services, authority.clone());
+    let cancel = truapi::CancellationToken::default();
+    let cx = CallContext::with_parts("partial-allocation".to_string(), cancel.clone());
+    let mut allocation = Box::pin(ResourceAllocation::request(
+        &runtime,
+        &cx,
+        HostRequestResourceAllocationRequest::V1(
+            truapi::latest::HostRequestResourceAllocationRequest {
+                resources: vec![
+                    truapi::latest::AllocatableResource::AutoSigning,
+                    truapi::latest::AllocatableResource::SmartContractAllowance(
+                        truapi::latest::DerivationIndex::Index(0),
+                    ),
+                ],
+            },
+        ),
+    ));
+    assert_eq!(
+        allocation
+            .as_mut()
+            .poll(&mut Context::from_waker(&futures::task::noop_waker())),
+        Poll::Pending,
+    );
+    let retained_before_cancel = keeps_auto_signing(&authority, "myapp.dot");
+    cancel.cancel();
+    let result = futures::executor::block_on(allocation);
+    let retained_after_cancel = keeps_auto_signing(&authority, "myapp.dot");
+    assert_eq!(
+        (result, retained_before_cancel, retained_after_cancel),
+        (
+            Err(CallError::Domain(HostRequestResourceAllocationError::V1(
+                truapi::latest::ResourceAllocationError::Unknown {
+                    reason: "Account authority request cancelled for partial-allocation"
+                        .to_string(),
+                }
+            ))),
+            true,
+            true,
+        ),
+    );
+}

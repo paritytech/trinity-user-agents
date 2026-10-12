@@ -816,8 +816,9 @@ mod tests {
         SsoAllocationOutcome,
     };
     use crate::host_internal::sso_wire::ResponseOutcome;
+    use crate::host_logic::product_account::derive_ring_vrf_domain_entropy;
     use crate::host_logic::product_account::{
-        derive_identity_keypair, derive_root_keypair_from_entropy,
+        derive_identity_keypair, derive_product_subtree_keypair, derive_root_keypair_from_entropy,
     };
     use crate::host_logic::sso::pairing::{
         ResponderIdentity, VersionedHandshakeResponse, decode_app_handshake_data,
@@ -1205,6 +1206,41 @@ mod tests {
         }))
     }
 
+    #[test]
+    fn a_wallet_change_during_device_key_read_never_answers_pairing() {
+        let (release, gate) = futures::channel::oneshot::channel();
+        let platform = Arc::new(StubPlatform {
+            core_storage_read_gate: std::sync::Mutex::new(Some(gate)),
+            rpc_method_responses: vec![("statement_submit", r#"{"status":"new"}"#.to_string())],
+            ..StubPlatform::default()
+        });
+        let (services, signing_host) = signing_fixture(platform.clone());
+        let observer = Arc::new(RecordingPairingObserver::default());
+        services.install_device_pairing_observer(observer.clone());
+        let deeplink = pairing_deeplink(PairedSsoPeer {
+            statement_account_id: [0x31; 32],
+            encryption_public_key: x25519_public_key([0x42; 32]),
+        });
+        let responder = signing_host.sso_responder();
+        let pairing = responder.establish_pairing(&deeplink);
+        futures::pin_mut!(pairing);
+        assert!(pairing.as_mut().now_or_never().is_none());
+        futures::executor::block_on(signing_host.activate_local_session(vec![0xcd; 16])).unwrap();
+        release.send(()).unwrap();
+        assert_eq!(
+            (
+                futures::executor::block_on(pairing),
+                platform.sent_rpc.lock().unwrap().len(),
+                observer.paired()
+            ),
+            (
+                Err(crate::runtime::AuthorityError::Disconnected.to_string()),
+                0,
+                Vec::new()
+            ),
+        );
+    }
+
     /// Without this the host never learns a device paired, so no contact is
     /// told a new device joined.
     #[test]
@@ -1580,6 +1616,60 @@ mod tests {
         assert_eq!(reviews[0].calling_product_id, "myapp.dot");
     }
 
+    #[test]
+    fn native_product_reset_does_not_invalidate_remote_allocation_review() {
+        let (release, gate) = futures::channel::oneshot::channel();
+        let platform = Arc::new(StubPlatform {
+            resource_allocation_confirmed: true,
+            resource_allocation_confirmation_gate: std::sync::Mutex::new(Some(gate)),
+            ..StubPlatform::default()
+        });
+        let (_, signing_host) = signing_fixture(platform.clone());
+        let session = signing_host.wallet_for_tests().current_session();
+        let expected_secret = derive_product_subtree_keypair(
+            &derive_root_keypair_from_entropy(&ENTROPY).unwrap(),
+            "myapp.dot",
+        )
+        .unwrap()
+        .secret
+        .to_bytes();
+        let expected_domain = derive_ring_vrf_domain_entropy(&ENTROPY, "myapp.dot").unwrap();
+        let service = SsoAccountHolderService::new(
+            signing_host.wallet_for_tests().clone(),
+            signing_host.wallet_for_tests().current_session().unwrap(),
+        );
+        let answer = service.answer(allocation_request("remote-reset"));
+        futures::pin_mut!(answer);
+        assert!(answer.as_mut().now_or_never().is_none());
+        futures::executor::block_on(signing_host.clear_product_state("myapp.dot")).unwrap();
+        release.send(()).unwrap();
+        let Ok(Dispatch::Response(answer)) = futures::executor::block_on(answer) else {
+            panic!("expected an allocation response")
+        };
+        let RemoteMessageData::V1(v1::RemoteMessage::ResourceAllocationResponse(response)) =
+            answer.message.data
+        else {
+            panic!("expected an allocation response")
+        };
+        assert_eq!(
+            (
+                response.payload,
+                signing_host.wallet_for_tests().current_session(),
+                platform.resource_allocation_reviews.lock().unwrap().len()
+            ),
+            (
+                Ok(vec![SsoAllocationOutcome::Allocated(
+                    SsoAllocatedResource::AutoSigning {
+                        product_root_private_key: expected_secret,
+                        ring_vrf_domain_entropy: expected_domain
+                    }
+                )]),
+                session,
+                1
+            ),
+        );
+    }
+
     fn allocation_after_session_change(replacement: Option<Vec<u8>>) {
         use futures::{FutureExt, channel::oneshot};
 
@@ -1632,6 +1722,39 @@ mod tests {
             );
             assert!(platform.sent_rpc.lock().unwrap().is_empty());
         });
+    }
+
+    #[test]
+    fn a_bound_service_cannot_follow_a_replaced_wallet() {
+        for entropy in [vec![0xcd; 16], ENTROPY.to_vec()] {
+            let platform = Arc::new(StubPlatform {
+                resource_allocation_confirmed: true,
+                ..StubPlatform::default()
+            });
+            let (_, signing_host) = signing_fixture(platform.clone());
+            let service = SsoAccountHolderService::new(
+                signing_host.wallet_for_tests().clone(),
+                signing_host.wallet_for_tests().current_session().unwrap(),
+            );
+            futures::executor::block_on(signing_host.activate_local_session(entropy)).unwrap();
+            let Ok(Dispatch::Response(answer)) =
+                futures::executor::block_on(service.answer(allocation_request("stale-service")))
+            else {
+                panic!("expected a disconnected response")
+            };
+            let RemoteMessageData::V1(v1::RemoteMessage::ResourceAllocationResponse(response)) =
+                answer.message.data
+            else {
+                panic!("expected an allocation response")
+            };
+            assert_eq!(
+                (
+                    response.payload,
+                    platform.resource_allocation_reviews.lock().unwrap().len()
+                ),
+                (Err("signing host session is not active".to_string()), 0),
+            );
+        }
     }
 
     fn allocation_request(message_id: &str) -> RemoteMessage {
