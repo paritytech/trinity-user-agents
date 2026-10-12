@@ -61,7 +61,7 @@ import uniffi.truapi.HostCallbacks
 import uniffi.truapi.ChatBotRegistrationStatus
 import uniffi.truapi.NativeChatCallbacks
 import uniffi.truapi.NativeCoreDatabaseException
-import uniffi.truapi.NativeDurableRecoveryException
+import uniffi.truapi.RecoveryException
 import uniffi.truapi.ChatRoomRegistrationStatus
 import uniffi.truapi.NativeGameCallbacks
 import uniffi.truapi.NativePocketCallbacks
@@ -961,7 +961,7 @@ class TrUAPIHostRuntime @Throws(NativeRuntimeConfigException::class) constructor
      * asks for; a throw means recovery stopped early and the task should be
      * retried. Cancelling the coroutine stops it.
      */
-    @Throws(NativeDurableRecoveryException::class)
+    @Throws(RecoveryException::class)
     suspend fun runDurableRecovery() = inner.runDurableRecovery()
 
     /** Activate or replace the process-wide local signing session. */
