@@ -13,6 +13,7 @@ use super::reject_undecodable_deeplink;
 use super::renderer::observe_renderer;
 use super::renderer::{NativeRendererObserver, NativeRendererSubscription};
 use super::ws_bridge::{BridgeLogger, SharedWsBridge, WsBridgeEndpoint, WsBridgeStartError};
+use crate::durable::RecoveryError;
 use crate::host_internal::permissions::TemporaryPermissions;
 use crate::host_internal::sso_messages::SsoRequestOutcome;
 use crate::host_internal::sso_messages::{
@@ -32,7 +33,7 @@ use super::config::{
     HostRuntimeConfig, NativeResolvedHostRuntimeConfig, NativeRuntimeConfigError,
     ProductExecutionConfig,
 };
-use super::errors::{HostRejection, NativeCoreDatabaseError, NativeDurableRecoveryError};
+use super::errors::{HostRejection, NativeCoreDatabaseError};
 use super::executor::shared_native_executor;
 use super::events::NativeEventBus;
 use super::platform::{
@@ -571,11 +572,8 @@ impl NativeTrUApiHostRuntime {
     /// [`HostCallbacks::durable_work_changed`] asks for; an error means
     /// recovery stopped early and the task should be retried. Dropping the
     /// future stops it.
-    pub async fn run_durable_recovery(&self) -> Result<(), NativeDurableRecoveryError> {
-        self.runtime
-            .run_durable_recovery()
-            .await
-            .map_err(Into::into)
+    pub async fn run_durable_recovery(&self) -> Result<(), RecoveryError> {
+        self.runtime.run_durable_recovery().await
     }
 
     /// Answer one decrypted SSO remote message from a wallet-managed
