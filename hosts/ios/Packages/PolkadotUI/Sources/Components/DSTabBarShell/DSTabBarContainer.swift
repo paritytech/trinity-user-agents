@@ -4,7 +4,9 @@ import SwiftUI
 /// Notched tab bar with four caller-supplied slots and a centre slot. The first two sit left of a
 /// centre gap the width of the hole, the last two sit right of it. The bar supplies chrome and
 /// layout only; each slot draws itself. A shelf of caller-supplied content grows upward from the
-/// bar row while open, up to `availableHeight`, and scrolls beyond that.
+/// bar row while open, up to `availableHeight`, and scrolls beyond that. The container draws the
+/// shelf and animates its own content-height changes; the caller animates opening and closing by
+/// writing `isShelfOpen` inside `withAnimation`.
 public struct DSTabBarContainer<
     First: View,
     Second: View,
@@ -72,7 +74,6 @@ public struct DSTabBarContainer<
         .shadow(color: Color.shadowSoft, radius: DSTabBarStyle.shadowRadius, y: DSTabBarStyle.shadowRadius / 3)
         .mask { DSTabBarShadowMask().fill(style: FillStyle(eoFill: true)) }
         .overlay(alignment: .bottom) { center }
-        .animation(shelfAnimation, value: isShelfOpen)
     }
 }
 
@@ -165,6 +166,16 @@ private extension DSTabBarContainer {
                     HStack(spacing: 16) {
                         Button("Fewer") { shelfRowCount = max(shelfRowCount - 1, 0) }
                         Button("More") { shelfRowCount += 1 }
+                        Button(isShelfOpen ? "Close" : "Open") {
+                            withAnimation(
+                                .spring(
+                                    response: DSTabBarStyle.shelfSpringResponse,
+                                    dampingFraction: DSTabBarStyle.shelfSpringDamping
+                                )
+                            ) {
+                                isShelfOpen.toggle()
+                            }
+                        }
                     }
                     .foregroundStyle(Color.fgPrimary)
                 }

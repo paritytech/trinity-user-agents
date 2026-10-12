@@ -49,9 +49,10 @@ public enum DSTabBarStyle {
     static let shadowMaskSpread: CGFloat = shadowRadius * 4 + 40
 
     /// Response of the spring that grows and collapses the shelf. Damping sits just under critical,
-    /// so the bar settles with at most a slight overshoot.
-    static let shelfSpringResponse: Double = 0.38
-    static let shelfSpringDamping: Double = 0.85
+    /// so the bar settles with at most a slight overshoot. Public because a host driving the shelf
+    /// from UIKit has to match its settle.
+    public static let shelfSpringResponse: Double = 0.38
+    public static let shelfSpringDamping: Double = 0.85
 
     /// Response of the spring that settles the centre control open or closed. Public because a host
     /// driving the control from UIKit has to match the control's own settle.

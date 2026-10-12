@@ -106,8 +106,7 @@ private extension DSTabBarCenterControl {
         ZStack {
             if progress > 0 {
                 content
-                    .opacity(Double(reveal))
-                    .animation(reduceMotion ? .easeInOut(duration: 0.2) : nil, value: reveal)
+                    .animation(reduceMotion ? .easeInOut(duration: 0.2) : nil) { $0.opacity(Double(reveal)) }
             }
         }
         .padding(.top, lerp(0, DSTabBarStyle.centerGrabberHeight))
@@ -152,8 +151,7 @@ private extension DSTabBarCenterControl {
             .frame(height: DSTabBarStyle.centerGrabberHeight)
             .frame(maxWidth: .infinity)
             .contentShape(Rectangle())
-            .opacity(Double(reveal))
-            .animation(reduceMotion ? .easeInOut(duration: 0.2) : nil, value: reveal)
+            .animation(reduceMotion ? .easeInOut(duration: 0.2) : nil) { $0.opacity(Double(reveal)) }
             .allowsHitTesting(progress > revealStart)
             .gesture(drag)
     }

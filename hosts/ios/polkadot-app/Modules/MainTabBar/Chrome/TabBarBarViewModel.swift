@@ -51,13 +51,30 @@ final class TabBarBarViewModel {
     }
 
     /// Matches the centre control's own settle, so a UIKit-driven move looks like a tap. Snaps under Reduce Motion.
-    func setCenterPanelOpen(_ isOpen: Bool) {
+    func setCenterPanelOpen(_ isOpen: Bool, completion: (() -> Void)? = nil) {
         let progress: CGFloat = isOpen ? 1 : 0
         guard centerProgress != progress else {
+            completion?()
             return
         }
-        withAnimation(centerAnimation) {
+        withAnimation(centerAnimation, completionCriteria: .logicallyComplete) {
             centerProgress = progress
+        } completion: {
+            completion?()
+        }
+    }
+
+    /// Opens or closes the shelf on the shelf spring. `completion` runs once the move has logically finished,
+    /// or at once when the shelf already matches.
+    func setShelfOpen(_ isOpen: Bool, completion: (() -> Void)? = nil) {
+        guard isShelfOpen != isOpen else {
+            completion?()
+            return
+        }
+        withAnimation(shelfAnimation, completionCriteria: .logicallyComplete) {
+            isShelfOpen = isOpen
+        } completion: {
+            completion?()
         }
     }
 
@@ -77,5 +94,11 @@ final class TabBarBarViewModel {
         UIAccessibility.isReduceMotionEnabled
             ? nil
             : .spring(response: DSTabBarStyle.centerSpringResponse, dampingFraction: DSTabBarStyle.centerSpringDamping)
+    }
+
+    private var shelfAnimation: Animation? {
+        UIAccessibility.isReduceMotionEnabled
+            ? nil
+            : .spring(response: DSTabBarStyle.shelfSpringResponse, dampingFraction: DSTabBarStyle.shelfSpringDamping)
     }
 }

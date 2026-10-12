@@ -8,14 +8,14 @@ final class TabBarBottomChromeController: UIViewController {
     private let chromeSurface = TabBarChromeSurfaceView()
     private let barModel = TabBarBarViewModel()
     private lazy var barHost = UIHostingController(rootView: TabBarBarView(model: barModel))
-    private let backdropView = DSTabBarBackdropView()
 
     private var slots: [TabBarSlot] = []
     private var slotMap = TabBarSlotMap(slots: [])
     private var spaTabCount = 0
     private var selectedTabIndex = 0
     private var showsLabels = false
-    /// The last panel that reached `syncCenterPanel`. By then `TabBarPanelController.open` is already the new panel.
+    /// The last panel that reached `applyCommittedPanel`. By then `TabBarPanelController.open` is already the new
+    /// panel.
     private var committedPanel: TabBarPanelKind?
     /// The first settled layout places the bar. Animating it would spring the bar in from its unplaced frame at launch.
     private var hasPerformedInitialLayout = false
@@ -28,7 +28,7 @@ final class TabBarBottomChromeController: UIViewController {
         },
         closePanel: { [weak self] in
             self?.barModel.setCenterPanelOpen(false)
-            self?.setPanel(nil, animated: false)
+            self?.setPanel(nil)
         }
     )
 
@@ -40,16 +40,12 @@ final class TabBarBottomChromeController: UIViewController {
 
     private lazy var panelController = TabBarPanelController(
         onPanelChanged: { [weak self] kind in
-            self?.syncCenterPanel(with: kind)
-            self?.syncShelf(with: kind)
+            self?.applyCommittedPanel(kind)
         },
         onOpenPanelChanged: { [weak self] kind in
             self?.updateActiveActionIndex()
             self?.applyBarLiveHeight()
             (self?.viewIfLoaded as? TabBarChromePassthroughView)?.isOutsideTapEnabled = kind != nil
-        },
-        setBackdropOpen: { [weak self] isOpen, animator in
-            self?.backdropView.setOpen(isOpen, animator: animator)
         }
     )
 
@@ -109,7 +105,6 @@ final class TabBarBottomChromeController: UIViewController {
 
         installChromeSurface()
         installBar()
-        installBackdrop()
 
         installOutsideTapRecognizer()
         installKeyboardObserver()
@@ -161,8 +156,8 @@ final class TabBarBottomChromeController: UIViewController {
         updateActiveActionIndex()
     }
 
-    func setPanel(_ kind: TabBarPanelKind?, animated: Bool) {
-        panelController.setPanel(kind, animated: animated)
+    func setPanel(_ kind: TabBarPanelKind?) {
+        panelController.setPanel(kind)
     }
 
     /// Re-declares the centre content's height at the current bar width. Call it when the content's own
@@ -241,27 +236,40 @@ private extension TabBarBottomChromeController {
         barModel.activeActionItemIndex = activeAction.flatMap { slotMap.itemIndex(for: $0) }
     }
 
-    /// Any committed panel change moves the centre control to match, so a close from anywhere (outside tap,
-    /// a slot, a fold) also closes the control.
-    func syncCenterPanel(with kind: TabBarPanelKind?) {
+    /// Any committed panel change moves the centre control and the shelf to match, so a close from anywhere
+    /// (outside tap, a slot, a fold) also closes whichever surface was showing. The surface that animates the
+    /// close reports it back, which releases a queued reopen.
+    func applyCommittedPanel(_ kind: TabBarPanelKind?) {
+        // `committedPanel` still names the panel being replaced, so it names the surface a close belongs to.
+        let closingSurface = kind == nil ? committedPanel : nil
+        let reportClose: () -> Void = { [weak self] in self?.panelController.panelCloseDidComplete() }
+
         if committedPanel == .content(.scan), kind != .content(.scan) {
             onCenterPanelWillClose?()
         }
         committedPanel = kind
-        barModel.setCenterPanelOpen(kind == .content(.scan))
-    }
 
-    /// The shelf is drawn by the bar row, so it follows the committed panel the way the centre control does.
-    func syncShelf(with kind: TabBarPanelKind?) {
-        barModel.isShelfOpen = kind == .shelf
+        barModel.setCenterPanelOpen(
+            kind == .content(.scan),
+            completion: closingSurface == .content(.scan) ? reportClose : nil
+        )
+        barModel.setShelfOpen(
+            kind == .shelf,
+            completion: closingSurface == .shelf ? reportClose : nil
+        )
+
+        // A close no surface animates still reports back, so a queued reopen is not stranded.
+        if let closingSurface, closingSurface != .content(.scan), closingSurface != .shelf {
+            reportClose()
+        }
     }
 
     /// Only the centre control's own panel is driven here; another open panel is left alone.
     func centerPanelOpenChanged(_ isOpen: Bool) {
         if isOpen, panelController.open != .content(.scan) {
-            setPanel(.content(.scan), animated: true)
+            setPanel(.content(.scan))
         } else if !isOpen, panelController.open == .content(.scan) {
-            setPanel(nil, animated: true)
+            setPanel(nil)
         }
     }
 
@@ -346,7 +354,7 @@ private extension TabBarBottomChromeController {
             foldController.setUserOverride(.shown, velocityX: 0)
             return
         }
-        panelController.setPanel(nil, animated: true)
+        panelController.setPanel(nil)
     }
 
     func installKeyboardObserver() {
@@ -423,16 +431,6 @@ private extension TabBarBottomChromeController {
         let foldRecognizer = UIPanGestureRecognizer(target: self, action: #selector(handleFoldPan(_:)))
         foldRecognizer.delegate = self
         chromeSurface.addGestureRecognizer(foldRecognizer)
-    }
-
-    /// Sits below the chrome surface so the dim covers the content and the floating widgets,
-    /// which sit below the chrome view.
-    func installBackdrop() {
-        view.insertSubview(backdropView, at: 0)
-
-        backdropView.snp.makeConstraints { make in
-            make.edges.equalToSuperview()
-        }
     }
 
     /// A fold drag starts on the bar row, outside the centre hole where the centre control sits.

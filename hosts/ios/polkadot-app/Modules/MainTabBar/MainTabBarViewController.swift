@@ -103,12 +103,12 @@ final class MainTabBarViewController: UIViewController {
         }
 
         chromeController.onConnectionStatusTapped = { [weak self] in
-            self?.chromeController.setPanel(nil, animated: true)
+            self?.chromeController.setPanel(nil)
             self?.presenter.didRequestConnectionStatus()
         }
 
         chromeController.onSettingsTapped = { [weak self] in
-            self?.chromeController.setPanel(nil, animated: true)
+            self?.chromeController.setPanel(nil)
             self?.presenter.didRequestSettings()
         }
 
@@ -310,7 +310,7 @@ private extension MainTabBarViewController {
 
 extension MainTabBarViewController {
     func handleSelection(index: Int, isReselection: Bool) {
-        chromeController.setPanel(nil, animated: true)
+        chromeController.setPanel(nil)
 
         guard tabs.indices.contains(index) else { return }
 
@@ -347,7 +347,7 @@ extension MainTabBarViewController: MainTabBarViewProtocol {
     }
 
     func select(tab: TabBarItem) {
-        chromeController.setPanel(nil, animated: true)
+        chromeController.setPanel(nil)
 
         guard let index = tabs.firstIndex(of: tab) else { return }
 
@@ -389,16 +389,15 @@ extension MainTabBarViewController: MainTabBarViewProtocol {
 
 extension MainTabBarViewController {
     func openScanPanel() {
-        chromeController.setPanel(.content(.scan), animated: true)
+        chromeController.setPanel(.content(.scan))
     }
 
     func makeScanPanel() -> UIViewController? {
         let controller = viewFactory.makeScanController()
 
         #if FEATURE_INPUT
-            // Opening the chat selects its tab, and tab selection closes the panel. A second close
-            // here would cancel that animation in place and leave the backdrop and panel frozen
-            // mid-way.
+            // Opening the chat selects its tab, and tab selection already closes the panel, so this
+            // path does not close it again.
             scanPanel = controller
             controller?.onChatFound = { [weak self] model in
                 self?.presenter.didFindChat(model)
@@ -408,7 +407,7 @@ extension MainTabBarViewController {
             }
         #else
             controller?.onSearchTap = { [weak self] in
-                self?.chromeController.setPanel(nil, animated: true)
+                self?.chromeController.setPanel(nil)
                 self?.presenter.didRequestContactSearch()
             }
         #endif

@@ -96,7 +96,7 @@ extension MainTabBarViewController {
         guard let tab = browserCoordinator.tabs.first(where: predicate) else {
             return false
         }
-        chromeController.setPanel(nil, animated: true)
+        chromeController.setPanel(nil)
         mountSPA(for: tab)
         return true
     }
