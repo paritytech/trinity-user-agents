@@ -187,7 +187,7 @@ class ProductChatExtension(
         private fun ProductBotMessage.toChatMessageContent(): ChatMessage.Content = when (this) {
             is ProductBotMessage.Text -> ChatMessage.Content.Text(text)
             is ProductBotMessage.Custom -> {
-                val messageContent = ProductsMessageContent(messageType, data)
+                val messageContent = ProductsMessageContent(messageType, data, alt)
                 ChatMessage.Content.Custom(
                     rendererId = messageRenderer.id,
                     content = Result.success(messageContent)

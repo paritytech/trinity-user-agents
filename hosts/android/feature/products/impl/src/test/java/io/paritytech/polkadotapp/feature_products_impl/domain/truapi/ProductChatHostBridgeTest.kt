@@ -1,10 +1,12 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.truapi
 
+import io.paritytech.polkadotapp.common.domain.model.toDataByteArray
 import io.paritytech.polkadotapp.feature_chats_api.domain.extension.CreateRoomStatus
 import io.paritytech.polkadotapp.feature_products_api.model.ProductChatIdParameter
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_api.model.RoomParticipation
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.FakeChatMessaging
+import io.paritytech.polkadotapp.feature_products_impl.domain.bot.ProductBotMessage
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.model.CreateProductRoomResult
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.model.ProductChatRoom
 import io.paritytech.polkadotapp.feature_products_impl.domain.jsEngine.HostCallException
@@ -14,6 +16,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import uniffi.truapi.ChatCustomMessage
 import uniffi.truapi.ChatMessageContent
 import uniffi.truapi.ChatReaction
 import uniffi.truapi.ChatRoomFooter
@@ -31,9 +34,20 @@ class ProductChatHostBridgeTest {
     fun `a text message is posted to the room the core names`() = runTest {
         val api = FakeChatMessaging(onSendMessage = { _, _ -> Result.success("message-id") })
 
-        bridge(api).postMessage(ROOM, ChatMessageContent.Text("hi"))
+        bridge(api).postMessage(ROOM, ChatMessageContent.Text("hi"), alt = null)
 
         assertEquals(listOf(ROOM to "hi"), api.sentText)
+    }
+
+    @Test
+    fun `a custom message carries the product's alt to the host`() = runTest {
+        var sent: ProductBotMessage? = null
+        val api = FakeChatMessaging(onSendMessage = { _, message -> sent = message; Result.success("message-id") })
+
+        val content = ChatMessageContent.Custom(ChatCustomMessage(messageType = "weekly-draw", payload = byteArrayOf(1)))
+        bridge(api).postMessage(ROOM, content, alt = "Weekly draw")
+
+        assertEquals(ProductBotMessage.Custom("weekly-draw", byteArrayOf(1).toDataByteArray(), alt = "Weekly draw"), sent)
     }
 
     @Test
@@ -41,7 +55,7 @@ class ProductChatHostBridgeTest {
         val api = FakeChatMessaging(onSendMessage = { _, _ -> Result.success("message-id") })
         val bridge = bridge(api)
 
-        val posted = runCatching { bridge.postMessage("", ChatMessageContent.Text("hi")) }.exceptionOrNull()
+        val posted = runCatching { bridge.postMessage("", ChatMessageContent.Text("hi"), alt = null) }.exceptionOrNull()
         val created = runCatching { bridge.createRoom("", "Jollity", "icon") }.exceptionOrNull()
         val footed = runCatching { bridge.setRoomFooter("", ChatRoomFooter.EMPTY) }.exceptionOrNull()
 
@@ -60,7 +74,7 @@ class ProductChatHostBridgeTest {
         val api = FakeChatMessaging()
 
         val thrown = runCatching {
-            bridge(api).postMessage(ROOM, ChatMessageContent.Reaction(reaction()))
+            bridge(api).postMessage(ROOM, ChatMessageContent.Reaction(reaction()), alt = null)
         }.exceptionOrNull()
 
         assertTrue(thrown is HostRejection)

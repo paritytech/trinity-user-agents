@@ -46,7 +46,8 @@ import kotlin.time.ExperimentalTime
 import kotlin.time.Instant
 
 sealed interface ProductBotMessage {
-    data class Custom(val messageType: String, val data: DataByteArray) : ProductBotMessage
+    /** [alt] is the product's one-line description, shown where the message is listed rather than drawn. */
+    data class Custom(val messageType: String, val data: DataByteArray, val alt: String? = null) : ProductBotMessage
 
     data class Text(val text: String) : ProductBotMessage
 }

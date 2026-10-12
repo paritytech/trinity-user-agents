@@ -119,13 +119,13 @@ class ProductsMessageRenderer(
     override suspend fun formatNotificationContent(
         message: ChatMessage.Content.Custom<ProductsMessageContent>,
     ): Result<String> {
-        return message.content.map { appContext.getString(RCommon.string.products_message_custom_preview) }
+        return message.content.map { it.alt ?: appContext.getString(RCommon.string.products_message_custom_preview) }
     }
 
     @Composable
     override fun formatChatPreview(
         message: LastMessageUiModel.Custom<ProductsMessageContent>,
     ): Result<String> {
-        return message.content.map { stringResource(RCommon.string.products_message_custom_preview) }
+        return message.content.map { it.alt ?: stringResource(RCommon.string.products_message_custom_preview) }
     }
 }

@@ -32,9 +32,9 @@ class ProductChatHostBridge(
     override suspend fun registerBot(botId: String, name: String, icon: String): ChatBotRegistrationStatus =
         throw HostRejection.Rejected("this host has no bot registry")
 
-    override suspend fun postMessage(roomId: String, content: ChatMessageContent): String {
+    override suspend fun postMessage(roomId: String, content: ChatMessageContent, alt: String?): String {
         if (roomId.isEmpty()) throw HostRejection.Rejected("a chat message needs a room")
-        val message = content.toProductBotMessage()
+        val message = content.toProductBotMessage(alt)
             ?: throw HostRejection.Rejected(
                 "this host cannot render a ${content.javaClass.simpleName} message",
             )
@@ -59,9 +59,9 @@ class ProductChatHostBridge(
         throw HostRejection.Rejected(failure.message ?: failure.toString())
     }
 
-    private fun ChatMessageContent.toProductBotMessage(): ProductBotMessage? = when (this) {
+    private fun ChatMessageContent.toProductBotMessage(alt: String?): ProductBotMessage? = when (this) {
         is ChatMessageContent.Text -> ProductBotMessage.Text(text)
-        is ChatMessageContent.Custom -> ProductBotMessage.Custom(v1.messageType, v1.payload.toDataByteArray())
+        is ChatMessageContent.Custom -> ProductBotMessage.Custom(v1.messageType, v1.payload.toDataByteArray(), alt)
         is ChatMessageContent.RichText,
         is ChatMessageContent.Actions,
         is ChatMessageContent.File,
