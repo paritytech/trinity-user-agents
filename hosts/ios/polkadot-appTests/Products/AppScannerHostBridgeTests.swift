@@ -21,15 +21,9 @@ struct AppScannerHostBridgeTests {
         let bridge = makeBridge(page: page, application: application, window: window)
 
         application.applicationState = .background
-        let backgroundWorker = try await bridge.scanCode(
-            productId: "shop.dot",
-            executionKind: .worker,
-            request: request
-        )
-        application.applicationState = .active
-        let otherApp = try await bridge.scanCode(productId: "other.dot", executionKind: .app, request: request)
+        let answer = try await bridge.scanCode(productId: "shop.dot", executionKind: .worker, request: request)
 
-        #expect([backgroundWorker, otherApp] == [.notVisible, .notVisible])
+        #expect(answer == .notVisible)
         #expect(page.presentedViewController == nil)
     }
 

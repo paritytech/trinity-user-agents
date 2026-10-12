@@ -18,8 +18,8 @@ extension SPASimplifiedViewController: ProductPageShowing {
 }
 
 /// Whether the user can see the product asking, so a host screen may open
-/// for it. An App needs its page to be the top screen, whether a tab or a
-/// modal. A Worker has no page, so the app in front is enough.
+/// for it. An App or Widget needs its page on the top screen. A Worker has no
+/// page, so the app in front is enough.
 struct ProductVisibility {
     private let application: ApplicationStateProviding
     private let window: @MainActor () -> UIWindow?
