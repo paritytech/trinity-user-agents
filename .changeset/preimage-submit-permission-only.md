@@ -1,6 +1,6 @@
 ---
-"@parity/truapi": patch
-"@parity/truapi-host": patch
+"@parity/truapi": major
+"@parity/truapi-host": major
 ---
 
-`preimage.submit` no longer asks the user to confirm each upload. The `PreimageSubmit` permission authorizes it: an always grant covers every upload, and a one-use grant covers one upload. Bulletin allowance checks and renewal are unchanged. Hosts no longer receive `UserConfirmationReview::PreimageSubmit`.
+`preimage.submit` raises no per-upload confirmation. The `PreimageSubmit` permission authorizes it: `AllowAlways` covers every upload, and `AllowOnce` covers a single upload. Allocating or renewing the Bulletin allowance may still ask the paired wallet. `UserConfirmationReview` has no `PreimageSubmit` variant and `PreimageSubmitReview` is not exported, so hosts that match on either remove that case; the remaining review variants keep their wire discriminants.

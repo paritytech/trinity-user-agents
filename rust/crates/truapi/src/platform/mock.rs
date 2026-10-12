@@ -76,8 +76,6 @@ pub enum ConfirmKind {
     CreateProof,
     /// [`UserConfirmationReview::ResourceAllocation`].
     ResourceAllocation,
-    /// [`UserConfirmationReview::PreimageSubmit`].
-    PreimageSubmit,
     /// [`UserConfirmationReview::IdentityDisclosure`].
     IdentityDisclosure,
     /// [`UserConfirmationReview::AccountAccess`].
@@ -99,7 +97,6 @@ impl ConfirmKind {
             UserConfirmationReview::AccountAlias(_) => ConfirmKind::AccountAlias,
             UserConfirmationReview::CreateProof(_) => ConfirmKind::CreateProof,
             UserConfirmationReview::ResourceAllocation(_) => ConfirmKind::ResourceAllocation,
-            UserConfirmationReview::PreimageSubmit(_) => ConfirmKind::PreimageSubmit,
             UserConfirmationReview::IdentityDisclosure(_) => ConfirmKind::IdentityDisclosure,
             UserConfirmationReview::AccountAccess(_) => ConfirmKind::AccountAccess,
             UserConfirmationReview::StatementStoreProductSign(_) => {
