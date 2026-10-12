@@ -2579,6 +2579,7 @@ struct RecordingFundingPlatform {
     outcome: crate::platform::FundingPresentOutcome,
     presented: Mutex<Vec<(Option<String>, crate::platform::FundingPresentation)>>,
     announced: Mutex<Vec<String>>,
+    framed: Mutex<Vec<truapi::latest::FundingFrameTarget>>,
 }
 
 impl RecordingFundingPlatform {
@@ -2587,6 +2588,7 @@ impl RecordingFundingPlatform {
             outcome,
             presented: Mutex::new(Vec::new()),
             announced: Mutex::new(Vec::new()),
+            framed: Mutex::new(Vec::new()),
         })
     }
 }
@@ -2609,8 +2611,9 @@ impl crate::platform::FundingPlatform for RecordingFundingPlatform {
         &self,
         _provider: &ProductContext,
         _intent: String,
-        _route: String,
+        target: truapi::latest::FundingFrameTarget,
     ) -> Result<truapi::latest::FundingFrameOutcome, truapi::latest::GenericError> {
+        self.framed.lock().expect("framed mutex poisoned").push(target);
         Ok(truapi::latest::FundingFrameOutcome::Closed)
     }
 
@@ -2696,7 +2699,7 @@ impl crate::platform::FundingPlatform for ObservingFundingPlatform {
         &self,
         _provider: &ProductContext,
         _intent: String,
-        _route: String,
+        _target: truapi::latest::FundingFrameTarget,
     ) -> Result<truapi::latest::FundingFrameOutcome, truapi::latest::GenericError> {
         Ok(truapi::latest::FundingFrameOutcome::Closed)
     }
@@ -8434,6 +8437,59 @@ fn a_session_settles_from_the_top_up_the_provider_started() {
         (
             Some(v01::HostFundingStatusSubscribeItem::Delivered { credited: 1_000 }),
             vec![("ramp.dot".to_string(), started_id)],
+        )
+    );
+}
+
+// The host opens a provider's page in its own frame, so the core refuses one
+// that is not plain https before the host sees it.
+#[test]
+fn a_provider_frame_opens_only_https_pages() {
+    let services = funding_services();
+    let platform = RecordingFundingPlatform::answering(crate::platform::FundingPresentOutcome::Started);
+    assert!(services.funding().install_platform(platform.clone()));
+    offer_provider(&services, "ramp.dot", RAMP_MANIFEST);
+    let intent = futures::executor::block_on(services.open_funding(None, v01::FundingDirection::In, None))
+        .expect("opened")
+        .intent;
+    assert!(futures::executor::block_on(services.select_funding_provider(&intent, "ramp.dot", None)).expect("selected"));
+    let worker = provider_worker(&services, "ramp.dot");
+    let present = |url: &str| {
+        futures::executor::block_on(truapi::api::FundingProvider::present_frame(
+            &worker,
+            &CallContext::default(),
+            truapi::versioned::funding_provider::HostFundingPresentFrameRequest::V1(
+                v01::HostFundingPresentFrameRequest {
+                    intent: intent.clone(),
+                    target: v01::FundingFrameTarget::Page {
+                        url: url.to_string(),
+                        return_url: None,
+                    },
+                },
+            ),
+        ))
+    };
+
+    let refused = present("http://widget.example.com/");
+    let shown = present("https://widget.example.com/buy");
+
+    assert_eq!(
+        (
+            refused.map(|_| ()),
+            shown.map(|_| ()),
+            platform.framed.lock().expect("framed mutex poisoned").clone(),
+        ),
+        (
+            Err(CallError::Domain(
+                truapi::versioned::funding_provider::HostFundingPresentFrameError::V1(
+                    v01::HostFundingPresentFrameError::InvalidUrl
+                )
+            )),
+            Ok(()),
+            vec![v01::FundingFrameTarget::Page {
+                url: "https://widget.example.com/buy".to_string(),
+                return_url: None,
+            }],
         )
     );
 }

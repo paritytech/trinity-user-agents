@@ -1724,8 +1724,13 @@ impl FundingProvider for ProductRuntimeHost {
                 v01::HostFundingPresentFrameError::NotFound,
             )));
         }
+        let target = crate::host_logic::funding::checked_frame_target(request.target).ok_or(
+            CallError::Domain(HostFundingPresentFrameError::V1(
+                v01::HostFundingPresentFrameError::InvalidUrl,
+            )),
+        )?;
         let outcome = platform
-            .present_provider_frame(&self.product, request.intent, request.route)
+            .present_provider_frame(&self.product, request.intent, target)
             .await
             .map_err(|error| CallError::HostFailure {
                 reason: error.reason,
