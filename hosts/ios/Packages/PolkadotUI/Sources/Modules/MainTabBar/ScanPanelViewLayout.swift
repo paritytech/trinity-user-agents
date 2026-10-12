@@ -109,7 +109,9 @@ public final class ScanPanelViewLayout: UIView {
             resultsCollapsedConstraint?.activate()
         }
         resultsView.alpha = focused ? 1 : 0
-        contentStack.directionalLayoutMargins.top = focused ? DSSpacings.tiny : DSSpacings.mediumIncreased
+        contentStack.directionalLayoutMargins.top = focused
+            ? DSSpacings.tiny
+            : DSTabBarStyle.centerGrabberHeight + DSSpacings.mediumIncreased
 
         if focused {
             fullCameraWidthConstraint?.deactivate()

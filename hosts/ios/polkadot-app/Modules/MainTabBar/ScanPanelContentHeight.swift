@@ -1,7 +1,9 @@
 import DesignSystem
+import PolkadotUI
 import UIKit
 
-/// The height the scan panel declares for its content at a given panel width. Declared rather than measured:
+/// The height the scan panel declares for its content at a given panel width, including the grabber's
+/// clearance at the top, which the scan layouts provide. Declared rather than measured:
 /// measuring a live scanner would start a second capture session. The camera is square, as
 /// `EmbeddedQRScannerViewLayout` pins it, and the rows around it are fixed in both scan layouts.
 enum ScanPanelContentHeight {
@@ -13,7 +15,7 @@ enum ScanPanelContentHeight {
     static let plainSearchRowHeight: CGFloat = 48
 
     static func height(forPanelWidth width: CGFloat, searchRowHeight: CGFloat) -> CGFloat {
-        let topInset = DSSpacings.mediumIncreased
+        let topInset = DSTabBarStyle.centerGrabberHeight + DSSpacings.mediumIncreased
         let gapBelowContent = DSSpacings.small
         let bottomInset = DSSpacings.small
         let cameraSide = width - 2 * cameraSideInset

@@ -76,12 +76,13 @@ public enum DSTabBarStyle {
         max(centerButtonSize, width - 2 * centerPanelMargin)
     }
 
-    /// Height the open centre panel takes for content of `contentHeight`, grabber and lobe included.
+    /// Height the open centre panel takes for content of `contentHeight`, lobe included. The grabber
+    /// floats over the content, so the caller provides its clearance inside `contentHeight`.
     /// The body's corner arcs need vertical room of their own, so the panel never drops below them.
     public static func centerPanelHeight(contentHeight: CGFloat) -> CGFloat {
         let lobeRadius = centerButtonSize / 2
         let minimumHeight = centerPanelCornerRadius * 2 + lobeRadius
-        return max(minimumHeight, contentHeight + lobeRadius + centerGrabberHeight)
+        return max(minimumHeight, contentHeight + lobeRadius)
     }
 
     /// How far the open centre panel stands above the bar row. Its foot sits at the lobe's centre
@@ -93,7 +94,7 @@ public enum DSTabBarStyle {
     /// The tallest content a centre panel can host without the panel exceeding `panelHeight`.
     /// The inverse of `centerPanelHeight(contentHeight:)`, for a host that has to cap the panel.
     public static func centerContentHeight(fittingPanelHeight panelHeight: CGFloat) -> CGFloat {
-        max(0, panelHeight - centerButtonSize / 2 - centerGrabberHeight)
+        max(0, panelHeight - centerButtonSize / 2)
     }
 
     /// Runs `changes` on the centre control's spring and lays out `view` inside the same animation, so UIKit
@@ -124,9 +125,9 @@ public enum DSTabBarStyle {
     static let centerRimBottomOpacity: Double = 0.042
 
     static let centerGlyphSize: CGFloat = 22
-    /// Room the grabber takes at the top of the panel. Counted in the panel's height as well as
-    /// padded, or it eats into the content.
-    static let centerGrabberHeight: CGFloat = 26
+    /// Clearance the grabber needs at the top of the panel. The grabber floats over the content, so
+    /// the content must inset its own top by this much to keep clear of it.
+    public static let centerGrabberHeight: CGFloat = 26
     static let centerGrabberWidth: CGFloat = 36
     static let centerGrabberThickness: CGFloat = 5
     static let centerGrabberOpacity: Double = 0.35

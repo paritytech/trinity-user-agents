@@ -35,7 +35,7 @@ final class ScanPanelPlainViewLayout: UIView {
         insertSubview(scannerView, at: 1)
 
         scannerView.snp.makeConstraints { make in
-            make.top.equalToSuperview().offset(DSSpacings.mediumIncreased)
+            make.top.equalToSuperview().offset(DSTabBarStyle.centerGrabberHeight + DSSpacings.mediumIncreased)
             make.leading.trailing.equalToSuperview().inset(DSSpacings.mediumIncreased)
         }
 
