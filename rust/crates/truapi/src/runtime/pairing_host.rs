@@ -2333,7 +2333,6 @@ impl PairingHost {
         // The owner's own calls are unaffected.
         crate::runtime::product_manifest::require_context_access(
             &self.services,
-            self.platform.as_ref(),
             &access,
             &request.payload.context,
         )

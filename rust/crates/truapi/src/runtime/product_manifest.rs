@@ -461,7 +461,6 @@ async fn with_ceiling<T>(ceiling: Duration, future: impl Future<Output = T>) -> 
 /// the proof alone leaves the same bytes reachable through the read.
 pub async fn require_context_access(
     services: &RuntimeServices,
-    platform: &dyn Platform,
     access: &AuthorizedAccess,
     context: &v01::ProductProofContext,
 ) -> Result<(), RingVrfError> {
@@ -502,7 +501,7 @@ pub async fn require_context_access(
     }
     let decision = scope_grant(
         services,
-        platform,
+        services.platform.as_ref(),
         &access.caller,
         &context_id,
         Granted::Context,

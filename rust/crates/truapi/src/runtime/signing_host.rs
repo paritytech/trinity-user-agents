@@ -1236,7 +1236,6 @@ impl ProductAuthority for SigningHost {
             Some((key_handle, access)) => {
                 crate::runtime::product_manifest::require_context_access(
                     &self.services,
-                    self.platform.as_ref(),
                     &access,
                     &request.payload.context,
                 )
@@ -1314,7 +1313,6 @@ impl ProductAuthority for SigningHost {
         // The owner's own calls are unaffected.
         crate::runtime::product_manifest::require_context_access(
             &self.services,
-            self.platform.as_ref(),
             &access,
             &request.payload.context,
         )
