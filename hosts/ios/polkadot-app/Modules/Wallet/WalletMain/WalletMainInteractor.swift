@@ -74,7 +74,9 @@ private extension WalletMainInteractor {
                 let host = hostProvider.host(label: AppConfig.DotNs.dotNsCollectibles)
             else { return }
 
-            await self?.presenter?.didReceiveCollectibles(page: ProductPage(host: host))
+            await MainActor.run {
+                self?.presenter?.didReceiveCollectibles(page: ProductPage(host: host))
+            }
         }
     }
 
