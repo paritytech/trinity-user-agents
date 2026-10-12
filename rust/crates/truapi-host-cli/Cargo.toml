@@ -42,7 +42,7 @@ serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 sha2 = { workspace = true }
 shlex = { workspace = true }
-subxt-rpcs = { workspace = true, features = ["jsonrpsee", "native"] }
+subxt-rpcs = { workspace = true, features = ["jsonrpsee", "native", "reconnecting-rpc-client"] }
 tar = { workspace = true }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "sync", "io-util", "io-std", "net", "time", "signal", "process"] }
 tokio-stream = { workspace = true, features = ["sync"] }

@@ -5076,6 +5076,7 @@ dependencies = [
  "serde_json",
  "subxt-lightclient",
  "thiserror 2.0.19",
+ "tokio",
  "tokio-util",
  "tracing",
  "url",
