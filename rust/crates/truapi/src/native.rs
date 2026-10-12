@@ -59,6 +59,13 @@ pub fn parse_navigate(input: String) -> NavigateDecision {
     dotns::parse_navigate(&input)
 }
 
+/// The `@parity/truapi-host` release this core was built from, which the
+/// native host packages share.
+#[uniffi::export]
+pub fn truapi_host_version() -> String {
+    env!("CARGO_PKG_VERSION").to_string()
+}
+
 /// The bridge script a host injects into a product's web view, for the `port`
 /// and `token` a `WsBridgeEndpoint` carries.
 ///
