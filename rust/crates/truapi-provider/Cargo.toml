@@ -141,4 +141,9 @@ required-features = ["ws", "networks"]
 # `deny` rather than `forbid`: the `uniffi` feature scopes an `allow(unsafe_code)`
 # for UniFFI's generated FFI glue (see src/lib.rs). Every other build has no unsafe.
 [lints.rust]
+missing_docs = "warn"
 unsafe_code = "deny"
+
+[lints.clippy]
+complexity = "warn"
+correctness = "warn"

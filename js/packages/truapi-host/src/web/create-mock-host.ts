@@ -994,7 +994,8 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
       const request = decoded.value.request;
       if (
         (request.tag === "Device" && request.value === permission) ||
-        (request.tag === "Remote" && request.value.permission.tag === permission)
+        (request.tag === "Remote" &&
+          request.value.permission.tag === permission)
       )
         storage.delete(key);
     }

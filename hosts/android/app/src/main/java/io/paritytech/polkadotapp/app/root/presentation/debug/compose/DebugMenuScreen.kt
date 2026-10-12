@@ -120,7 +120,7 @@ private fun DebugMenuScreenInternal(
             VerticalSpacer { large }
 
             DebugMenuToggleItem(
-                title = stringResource(RCommon.string.debug_menu_truapi_runtime),
+                title = stringResource(RCommon.string.debug_menu_truapi_runtime, state.truapiHostVersion),
                 checked = state.truapiRuntimeEnabled,
                 onCheckedChange = onTruapiRuntimeToggled
             )
@@ -399,7 +399,7 @@ private fun DebugMenuToggleItem(
 private fun DebugMenuScreenPreview() {
     PolkadotTheme {
         DebugMenuScreenInternal(
-            state = DebugMenuState(),
+            state = DebugMenuState(truapiHostVersion = "0.24.0"),
             onBackClick = {},
             onClearBackupClick = {},
             onCopyWalletAccountClick = {},

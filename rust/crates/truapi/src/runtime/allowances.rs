@@ -4,8 +4,7 @@ use crate::platform::{CoreStorage, CoreStorageKey};
 use parity_scale_codec::{Decode, Encode};
 use truapi::latest::GenericError;
 
-use super::authority::AuthorityError;
-use super::sso_remote::SsoSessionKey;
+use super::{authority::AuthorityError, sso_remote::SsoSessionKey};
 use crate::host_logic::session::{SessionInfo, SsoSessionInfo};
 
 pub use crate::platform::AllowanceResource;
@@ -13,376 +12,350 @@ pub use crate::platform::AllowanceResource;
 /// Canonical wallet and optional paired channel owning in-memory grants.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct GrantScope {
-    root_public_key: [u8; 32],
-    channel: Option<SsoSessionKey>,
+	root_public_key: [u8; 32],
+	channel: Option<SsoSessionKey>,
 }
 
 impl GrantScope {
-    /// Use session identity directly, without interpreting an authority token.
-    pub fn from_session(session: &SessionInfo) -> Self {
-        Self {
-            root_public_key: session.public_key,
-            channel: session.sso.as_ref().map(SsoSessionKey::from_session),
-        }
-    }
+	/// Use session identity directly, without interpreting an authority token.
+	pub fn from_session(session: &SessionInfo) -> Self {
+		Self {
+			root_public_key: session.public_key,
+			channel: session.sso.as_ref().map(SsoSessionKey::from_session),
+		}
+	}
 
-    /// Whether this owner remains selected by the canonical session.
-    pub fn matches(self, state: &crate::host_logic::session::SessionState) -> bool {
-        state
-            .current()
-            .as_ref()
-            .is_some_and(|session| Self::from_session(session) == self)
-    }
+	/// Whether this owner remains selected by the canonical session.
+	pub fn matches(self, state: &crate::host_logic::session::SessionState) -> bool {
+		state
+			.current()
+			.as_ref()
+			.is_some_and(|session| Self::from_session(session) == self)
+	}
 }
 
 /// Memory-cache key: `(session, product_id, resource)`.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct AllowanceCacheKey {
-    session: GrantScope,
-    product_id: String,
-    resource: AllowanceResource,
+	session: GrantScope,
+	product_id: String,
+	resource: AllowanceResource,
 }
 
 impl AllowanceCacheKey {
-    /// Key for the wallet and authenticated channel that received this grant.
-    pub fn new(session: &SessionInfo, product_id: &str, resource: AllowanceResource) -> Self {
-        Self {
-            session: GrantScope::from_session(session),
-            product_id: product_id.to_string(),
-            resource,
-        }
-    }
+	/// Key for the wallet and authenticated channel that received this grant.
+	pub fn new(session: &SessionInfo, product_id: &str, resource: AllowanceResource) -> Self {
+		Self {
+			session: GrantScope::from_session(session),
+			product_id: product_id.to_string(),
+			resource,
+		}
+	}
 
-    /// Whether this key belongs to the given SSO session.
-    pub fn is_for_session(&self, session: GrantScope) -> bool {
-        self.session == session
-    }
+	/// Whether this key belongs to the given SSO session.
+	pub fn is_for_session(&self, session: GrantScope) -> bool {
+		self.session == session
+	}
 
-    /// Whether this grant belongs to a wallet being removed.
-    pub fn is_for_owner(&self, owner: [u8; 32]) -> bool {
-        self.session.root_public_key == owner
-    }
+	/// Whether this grant belongs to a wallet being removed.
+	pub fn is_for_owner(&self, owner: [u8; 32]) -> bool {
+		self.session.root_public_key == owner
+	}
 
-    /// Whether this key belongs to the given product.
-    pub fn is_for_product(&self, product_id: &str) -> bool {
-        self.product_id == product_id
-    }
+	/// Whether this key belongs to the given product.
+	pub fn is_for_product(&self, product_id: &str) -> bool {
+		self.product_id == product_id
+	}
 }
 
 #[derive(Clone, PartialEq, Eq, Encode, Decode)]
 struct StoredAllowanceEntry {
-    product_id: String,
-    resource: AllowanceResource,
-    slot_account_key: Vec<u8>,
+	product_id: String,
+	resource: AllowanceResource,
+	slot_account_key: Vec<u8>,
 }
 
 /// Read the persisted allowance key for `(product_id, resource)`, if any.
 pub async fn read_allowance_key(
-    storage: &(impl CoreStorage + ?Sized),
-    session: &SessionInfo,
-    product_id: &str,
-    resource: AllowanceResource,
+	storage: &(impl CoreStorage + ?Sized),
+	session: &SessionInfo,
+	product_id: &str,
+	resource: AllowanceResource,
 ) -> Result<Option<Vec<u8>>, AuthorityError> {
-    let entries = read_entries(storage, session).await?;
-    Ok(entries
-        .into_iter()
-        .find(|entry| entry.product_id == product_id && entry.resource == resource)
-        .map(|entry| entry.slot_account_key))
+	let entries = read_entries(storage, session).await?;
+	Ok(entries
+		.into_iter()
+		.find(|entry| entry.product_id == product_id && entry.resource == resource)
+		.map(|entry| entry.slot_account_key))
 }
 
 /// Persist an allowance key, replacing any prior key for the same
 /// `(product_id, resource)`.
 pub async fn write_allowance_key(
-    storage: &(impl CoreStorage + ?Sized),
-    session: &SessionInfo,
-    product_id: &str,
-    resource: AllowanceResource,
-    slot_account_key: Vec<u8>,
+	storage: &(impl CoreStorage + ?Sized),
+	session: &SessionInfo,
+	product_id: &str,
+	resource: AllowanceResource,
+	slot_account_key: Vec<u8>,
 ) -> Result<(), AuthorityError> {
-    let mut entries = read_entries(storage, session).await?;
-    entries.retain(|entry| !(entry.product_id == product_id && entry.resource == resource));
-    entries.push(StoredAllowanceEntry {
-        product_id: product_id.to_string(),
-        resource,
-        slot_account_key,
-    });
-    storage
-        .write_core_storage(storage_key(session)?, encode_entries(entries))
-        .await
-        .map_err(storage_error)
+	let mut entries = read_entries(storage, session).await?;
+	entries.retain(|entry| !(entry.product_id == product_id && entry.resource == resource));
+	entries.push(StoredAllowanceEntry {
+		product_id: product_id.to_string(),
+		resource,
+		slot_account_key,
+	});
+	storage
+		.write_core_storage(storage_key(session)?, encode_entries(entries))
+		.await
+		.map_err(storage_error)
 }
 
 /// Remove the persisted allowance key for `(product_id, resource)`; a miss is
 /// not an error.
 pub async fn remove_allowance_key(
-    storage: &(impl CoreStorage + ?Sized),
-    session: &SessionInfo,
-    product_id: &str,
-    resource: AllowanceResource,
+	storage: &(impl CoreStorage + ?Sized),
+	session: &SessionInfo,
+	product_id: &str,
+	resource: AllowanceResource,
 ) -> Result<(), AuthorityError> {
-    let mut entries = read_entries(storage, session).await?;
-    let before = entries.len();
-    entries.retain(|entry| !(entry.product_id == product_id && entry.resource == resource));
-    if entries.len() == before {
-        return Ok(());
-    }
-    storage
-        .write_core_storage(storage_key(session)?, encode_entries(entries))
-        .await
-        .map_err(storage_error)
+	let mut entries = read_entries(storage, session).await?;
+	let before = entries.len();
+	entries.retain(|entry| !(entry.product_id == product_id && entry.resource == resource));
+	if entries.len() == before {
+		return Ok(());
+	}
+	storage
+		.write_core_storage(storage_key(session)?, encode_entries(entries))
+		.await
+		.map_err(storage_error)
 }
 
 /// Remove every persisted allowance key for `product_id` in the active SSO
 /// session while preserving entries owned by other products.
 pub async fn clear_product_allowance_keys(
-    storage: &(impl CoreStorage + ?Sized),
-    session: &SessionInfo,
-    product_id: &str,
+	storage: &(impl CoreStorage + ?Sized),
+	session: &SessionInfo,
+	product_id: &str,
 ) -> Result<(), AuthorityError> {
-    let key = storage_key(session)?;
-    let Some(blob) = storage
-        .read_core_storage(key.clone())
-        .await
-        .map_err(storage_error)?
-    else {
-        return Ok(());
-    };
-    let mut entries = match decode_entries(&blob) {
-        Ok(entries) => entries,
-        Err(_) => {
-            return storage.clear_core_storage(key).await.map_err(storage_error);
-        }
-    };
-    let before = entries.len();
-    entries.retain(|entry| entry.product_id != product_id);
-    if entries.len() == before {
-        return Ok(());
-    }
-    if entries.is_empty() {
-        storage.clear_core_storage(key).await.map_err(storage_error)
-    } else {
-        storage
-            .write_core_storage(key, encode_entries(entries))
-            .await
-            .map_err(storage_error)
-    }
+	let key = storage_key(session)?;
+	let Some(blob) = storage.read_core_storage(key.clone()).await.map_err(storage_error)? else {
+		return Ok(());
+	};
+	let mut entries = match decode_entries(&blob) {
+		Ok(entries) => entries,
+		Err(_) => {
+			return storage.clear_core_storage(key).await.map_err(storage_error);
+		},
+	};
+	let before = entries.len();
+	entries.retain(|entry| entry.product_id != product_id);
+	if entries.len() == before {
+		return Ok(());
+	}
+	if entries.is_empty() {
+		storage.clear_core_storage(key).await.map_err(storage_error)
+	} else {
+		storage
+			.write_core_storage(key, encode_entries(entries))
+			.await
+			.map_err(storage_error)
+	}
 }
 
 /// Drop every persisted allowance key belonging to the session.
 pub async fn clear_session_allowance_keys(
-    storage: &(impl CoreStorage + ?Sized),
-    session: &SessionInfo,
+	storage: &(impl CoreStorage + ?Sized),
+	session: &SessionInfo,
 ) -> Result<(), AuthorityError> {
-    storage
-        .clear_core_storage(storage_key(session)?)
-        .await
-        .map_err(storage_error)
+	storage.clear_core_storage(storage_key(session)?).await.map_err(storage_error)
 }
 
 async fn read_entries(
-    storage: &(impl CoreStorage + ?Sized),
-    session: &SessionInfo,
+	storage: &(impl CoreStorage + ?Sized),
+	session: &SessionInfo,
 ) -> Result<Vec<StoredAllowanceEntry>, AuthorityError> {
-    let Some(blob) = storage
-        .read_core_storage(storage_key(session)?)
-        .await
-        .map_err(storage_error)?
-    else {
-        return Ok(Vec::new());
-    };
-    decode_entries(&blob)
+	let Some(blob) =
+		storage.read_core_storage(storage_key(session)?).await.map_err(storage_error)?
+	else {
+		return Ok(Vec::new());
+	};
+	decode_entries(&blob)
 }
 
 fn encode_entries(entries: Vec<StoredAllowanceEntry>) -> Vec<u8> {
-    entries.encode()
+	entries.encode()
 }
 
 fn decode_entries(blob: &[u8]) -> Result<Vec<StoredAllowanceEntry>, AuthorityError> {
-    let mut input = blob;
-    let entries =
-        Vec::<StoredAllowanceEntry>::decode(&mut input).map_err(|err| AuthorityError::Unknown {
-            reason: format!("invalid persisted allowance keys: {err}"),
-        })?;
-    if !input.is_empty() {
-        return Err(AuthorityError::Unknown {
-            reason: "invalid persisted allowance keys: trailing bytes".to_string(),
-        });
-    }
-    Ok(entries)
+	let mut input = blob;
+	let entries = Vec::<StoredAllowanceEntry>::decode(&mut input).map_err(|err| {
+		AuthorityError::Unknown { reason: format!("invalid persisted allowance keys: {err}") }
+	})?;
+	if !input.is_empty() {
+		return Err(AuthorityError::Unknown {
+			reason: "invalid persisted allowance keys: trailing bytes".to_string(),
+		});
+	}
+	Ok(entries)
 }
 
 fn storage_key(session: &SessionInfo) -> Result<CoreStorageKey, AuthorityError> {
-    Ok(CoreStorageKey::AllowanceKeys {
-        session_id: session_storage_id(session.sso.as_ref().ok_or(AuthorityError::Disconnected)?),
-    })
+	Ok(CoreStorageKey::AllowanceKeys {
+		session_id: session_storage_id(session.sso.as_ref().ok_or(AuthorityError::Disconnected)?),
+	})
 }
 
 pub fn session_storage_id(session: &SsoSessionInfo) -> String {
-    let mut bytes = Vec::with_capacity(64);
-    bytes.extend_from_slice(&session.session_id_own);
-    bytes.extend_from_slice(&session.session_id_peer);
-    hex::encode(bytes)
+	let mut bytes = Vec::with_capacity(64);
+	bytes.extend_from_slice(&session.session_id_own);
+	bytes.extend_from_slice(&session.session_id_peer);
+	hex::encode(bytes)
 }
 
 fn storage_error(err: GenericError) -> AuthorityError {
-    AuthorityError::Unknown {
-        reason: format!("allowance storage failed: {}", err.reason),
-    }
+	AuthorityError::Unknown { reason: format!("allowance storage failed: {}", err.reason) }
 }
 
 /// Allowance period clock, using web-time on browsers to avoid SystemTime panics.
 pub fn current_unix_secs() -> Result<u64, AuthorityError> {
-    #[cfg(not(target_arch = "wasm32"))]
-    use std::time::{SystemTime, UNIX_EPOCH};
-    #[cfg(target_arch = "wasm32")]
-    use web_time::{SystemTime, UNIX_EPOCH};
+	#[cfg(not(target_arch = "wasm32"))]
+	use std::time::{SystemTime, UNIX_EPOCH};
+	#[cfg(target_arch = "wasm32")]
+	use web_time::{SystemTime, UNIX_EPOCH};
 
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_secs())
-        .map_err(|_| AuthorityError::Unavailable {
-            reason: "system clock before UNIX epoch".to_string(),
-        })
+	SystemTime::now()
+		.duration_since(UNIX_EPOCH)
+		.map(|duration| duration.as_secs())
+		.map_err(|_| AuthorityError::Unavailable {
+			reason: "system clock before UNIX epoch".to_string(),
+		})
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use std::collections::HashMap;
-    use std::sync::Mutex;
+	use super::*;
+	use std::{collections::HashMap, sync::Mutex};
 
-    use crate::test_support::sso_session_info;
+	use crate::test_support::sso_session_info;
 
-    #[derive(Default)]
-    struct MemStorage {
-        inner: Mutex<HashMap<Vec<u8>, Vec<u8>>>,
-    }
+	#[derive(Default)]
+	struct MemStorage {
+		inner: Mutex<HashMap<Vec<u8>, Vec<u8>>>,
+	}
 
-    #[crate::platform::async_trait]
-    impl CoreStorage for MemStorage {
-        async fn read_core_storage(
-            &self,
-            key: CoreStorageKey,
-        ) -> Result<Option<Vec<u8>>, GenericError> {
-            Ok(self
-                .inner
-                .lock()
-                .expect("storage mutex poisoned")
-                .get(&key.encode())
-                .cloned())
-        }
+	#[crate::platform::async_trait]
+	impl CoreStorage for MemStorage {
+		async fn read_core_storage(
+			&self,
+			key: CoreStorageKey,
+		) -> Result<Option<Vec<u8>>, GenericError> {
+			Ok(self.inner.lock().expect("storage mutex poisoned").get(&key.encode()).cloned())
+		}
 
-        async fn write_core_storage(
-            &self,
-            key: CoreStorageKey,
-            value: Vec<u8>,
-        ) -> Result<(), GenericError> {
-            self.inner
-                .lock()
-                .expect("storage mutex poisoned")
-                .insert(key.encode(), value);
-            Ok(())
-        }
+		async fn write_core_storage(
+			&self,
+			key: CoreStorageKey,
+			value: Vec<u8>,
+		) -> Result<(), GenericError> {
+			self.inner.lock().expect("storage mutex poisoned").insert(key.encode(), value);
+			Ok(())
+		}
 
-        async fn clear_core_storage(&self, key: CoreStorageKey) -> Result<(), GenericError> {
-            self.inner
-                .lock()
-                .expect("storage mutex poisoned")
-                .remove(&key.encode());
-            Ok(())
-        }
-    }
+		async fn clear_core_storage(&self, key: CoreStorageKey) -> Result<(), GenericError> {
+			self.inner.lock().expect("storage mutex poisoned").remove(&key.encode());
+			Ok(())
+		}
+	}
 
-    #[test]
-    fn stores_allowance_keys_by_product_and_resource() {
-        let storage = MemStorage::default();
-        let session = sso_session_info();
+	#[test]
+	fn stores_allowance_keys_by_product_and_resource() {
+		let storage = MemStorage::default();
+		let session = sso_session_info();
 
-        futures::executor::block_on(async {
-            write_allowance_key(
-                &storage,
-                &session,
-                "dotli.localhost",
-                AllowanceResource::Bulletin,
-                vec![1; 64],
-            )
-            .await
-            .unwrap();
-            write_allowance_key(
-                &storage,
-                &session,
-                "dotli.localhost",
-                AllowanceResource::StatementStore,
-                vec![2; 64],
-            )
-            .await
-            .unwrap();
+		futures::executor::block_on(async {
+			write_allowance_key(
+				&storage,
+				&session,
+				"dotli.localhost",
+				AllowanceResource::Bulletin,
+				vec![1; 64],
+			)
+			.await
+			.unwrap();
+			write_allowance_key(
+				&storage,
+				&session,
+				"dotli.localhost",
+				AllowanceResource::StatementStore,
+				vec![2; 64],
+			)
+			.await
+			.unwrap();
 
-            assert_eq!(
-                read_allowance_key(
-                    &storage,
-                    &session,
-                    "dotli.localhost",
-                    AllowanceResource::Bulletin
-                )
-                .await
-                .unwrap(),
-                Some(vec![1; 64])
-            );
-            assert_eq!(
-                read_allowance_key(
-                    &storage,
-                    &session,
-                    "dotli.localhost",
-                    AllowanceResource::StatementStore
-                )
-                .await
-                .unwrap(),
-                Some(vec![2; 64])
-            );
-            assert_eq!(
-                read_allowance_key(
-                    &storage,
-                    &session,
-                    "other.localhost",
-                    AllowanceResource::Bulletin
-                )
-                .await
-                .unwrap(),
-                None
-            );
-        });
-    }
+			assert_eq!(
+				read_allowance_key(
+					&storage,
+					&session,
+					"dotli.localhost",
+					AllowanceResource::Bulletin
+				)
+				.await
+				.unwrap(),
+				Some(vec![1; 64])
+			);
+			assert_eq!(
+				read_allowance_key(
+					&storage,
+					&session,
+					"dotli.localhost",
+					AllowanceResource::StatementStore
+				)
+				.await
+				.unwrap(),
+				Some(vec![2; 64])
+			);
+			assert_eq!(
+				read_allowance_key(
+					&storage,
+					&session,
+					"other.localhost",
+					AllowanceResource::Bulletin
+				)
+				.await
+				.unwrap(),
+				None
+			);
+		});
+	}
 
-    #[test]
-    fn clears_session_allowance_keys() {
-        let storage = MemStorage::default();
-        let session = sso_session_info();
+	#[test]
+	fn clears_session_allowance_keys() {
+		let storage = MemStorage::default();
+		let session = sso_session_info();
 
-        futures::executor::block_on(async {
-            write_allowance_key(
-                &storage,
-                &session,
-                "dotli.localhost",
-                AllowanceResource::Bulletin,
-                vec![1; 64],
-            )
-            .await
-            .unwrap();
-            clear_session_allowance_keys(&storage, &session)
-                .await
-                .unwrap();
-            assert_eq!(
-                read_allowance_key(
-                    &storage,
-                    &session,
-                    "dotli.localhost",
-                    AllowanceResource::Bulletin
-                )
-                .await
-                .unwrap(),
-                None
-            );
-        });
-    }
+		futures::executor::block_on(async {
+			write_allowance_key(
+				&storage,
+				&session,
+				"dotli.localhost",
+				AllowanceResource::Bulletin,
+				vec![1; 64],
+			)
+			.await
+			.unwrap();
+			clear_session_allowance_keys(&storage, &session).await.unwrap();
+			assert_eq!(
+				read_allowance_key(
+					&storage,
+					&session,
+					"dotli.localhost",
+					AllowanceResource::Bulletin
+				)
+				.await
+				.unwrap(),
+				None
+			);
+		});
+	}
 }
