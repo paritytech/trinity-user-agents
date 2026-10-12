@@ -28,7 +28,8 @@ impl SsoRequestContext {
         }
     }
 
-    /// Bind the peer's reported caller without inheriting this host's product permissions.
+    /// Bind the product the peer reported. Stored permission decisions apply to it as to a
+    /// local caller, but a paired caller never skips a review.
     pub fn account_invocation<'a>(&'a self, product_id: Option<&'a str>) -> AccountInvocation<'a> {
         AccountInvocation {
             call: &self.call,
