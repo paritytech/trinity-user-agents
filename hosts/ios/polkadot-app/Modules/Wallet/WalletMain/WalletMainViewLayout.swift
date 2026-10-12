@@ -18,8 +18,9 @@ struct WalletView: View {
             ScrollViewReader { scrollProxy in
                 ScrollView {
                     VStack(spacing: -cardOverlap) {
-                        // Builds with product cards pin the Humanity card in
-                        // the Pocket, which replaces the ID card.
+                        // Builds with product cards show humanity as the
+                        // Humanity card the Pocket pins, so only the others
+                        // draw the ID card.
                         #if FEATURE_PRODUCTS
                             assetCard
                         #else
