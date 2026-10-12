@@ -32,10 +32,8 @@ enum ProductScanViewFactory {
         view.messageVisibilityDuration = 2
         // Nothing of the product shows through before the camera starts.
         view.rootView.backgroundColor = .black
-        if let hint = request.hint {
-            view.rootView.titleLabel.text = hint
-            view.rootView.titleLabel.numberOfLines = 1
-        }
+        view.rootView.titleLabel.text = request.hint
+        view.rootView.titleLabel.numberOfLines = 1
         presenter.view = view
 
         let navigationController = AppNavigationController(rootViewController: view)
