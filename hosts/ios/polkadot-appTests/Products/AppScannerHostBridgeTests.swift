@@ -55,6 +55,23 @@ struct AppScannerHostBridgeTests {
         #expect(firstAnswer == .dismissed)
     }
 
+    @Test("A cancelled scan also closes what its scanner opened, such as the Settings alert")
+    func cancelledScanClosesWhatItOpened() async throws {
+        let page = StubProductPage(productId: "shop.dot")
+        let window = try makeTestWindow(root: page)
+        let bridge = makeBridge(page: page, application: StubApplication(), window: window)
+
+        let scan = Task { try await bridge.scanCode(productId: "shop.dot", executionKind: .worker, request: request) }
+        try await waitUntil { page.presentedViewController is StubScanner }
+        let scanner = try #require(page.presentedViewController)
+        try await waitUntil { !scanner.isBeingPresented }
+        await present(UIViewController(), over: scanner)
+        scan.cancel()
+        _ = try await scan.value
+
+        try await waitUntil { page.presentedViewController == nil }
+    }
+
     @Test("A scan cancelled while waiting for its page opens nothing")
     func scanCancelledWhileWaitingOpensNothing() async throws {
         let page = StubProductPage(productId: "shop.dot")

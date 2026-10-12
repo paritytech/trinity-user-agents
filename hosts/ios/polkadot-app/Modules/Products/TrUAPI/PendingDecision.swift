@@ -65,6 +65,7 @@ final class PendingDecision<Decision: Sendable> {
             return
         }
         finish(cancelled)
-        screen?.dismiss(animated: true)
+        // From its presenter, so whatever the screen opened on top closes with it.
+        screen?.presentingViewController?.dismiss(animated: true)
     }
 }
