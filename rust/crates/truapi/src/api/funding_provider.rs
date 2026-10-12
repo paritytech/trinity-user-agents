@@ -62,13 +62,14 @@ pub trait FundingProvider: Send + Sync {
         Err(CallError::unavailable())
     }
 
-    /// Show one of the provider's screens, such as KYC or card entry, in a
-    /// frame the host owns. Answers once it closes.
+    /// Show one of the provider's screens, such as KYC or card entry, or an
+    /// external https page such as an onramp's widget, in a frame the host
+    /// owns. Answers once it closes.
     ///
     /// ```ts
     /// const result = await truapi.fundingProvider.presentFrame({
     ///   intent: "fs_example",
-    ///   route: "/kyc",
+    ///   target: { tag: "App", value: { route: "/kyc" } },
     /// });
     /// console.log("provider frame:", result);
     /// ```

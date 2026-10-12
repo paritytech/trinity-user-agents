@@ -9,6 +9,7 @@
 | `Funding/status_subscribe_unknown` | ✅ |  |
 | `Funding/provider_assigned` | ✅ |  |
 | `Funding/provider_present_frame` | ✅ |  |
+| `Funding/provider_present_page` | ✅ |  |
 | `Funding/provider_reports_forward_only` | ✅ |  |
 | `Funding/provider_credits_through_top_up` | ✅ |  |
 | `Funding/provider_out_released` | ✅ |  |

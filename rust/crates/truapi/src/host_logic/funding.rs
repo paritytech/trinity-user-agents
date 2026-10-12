@@ -10,9 +10,10 @@
 use parity_scale_codec::{Decode, Encode};
 use tracing::warn;
 use truapi::latest::{
-    FundingAssignment, FundingDirection, FundingFailure, FundingUpdate,
+    FundingAssignment, FundingDirection, FundingFailure, FundingFrameTarget, FundingUpdate,
     HostFundingStatusSubscribeItem,
 };
+use url::Url;
 
 use crate::platform::{CoreStorage, CoreStorageKey};
 
@@ -452,6 +453,31 @@ pub enum FundingSessionError {
     },
 }
 
+/// `target` as the host may show it: a page and its return URL must be https
+/// URLs with a host and no credentials. A page is passed on as parsed, so the
+/// host opens exactly what was checked.
+pub fn checked_frame_target(target: FundingFrameTarget) -> Option<FundingFrameTarget> {
+    match target {
+        FundingFrameTarget::App { route } => Some(FundingFrameTarget::App { route }),
+        FundingFrameTarget::Page { url, return_url } => Some(FundingFrameTarget::Page {
+            url: checked_page_url(&url)?,
+            return_url: match return_url {
+                Some(return_url) => Some(checked_page_url(&return_url)?),
+                None => None,
+            },
+        }),
+    }
+}
+
+fn checked_page_url(raw: &str) -> Option<String> {
+    let url = Url::parse(raw).ok()?;
+    let plain = url.scheme() == "https"
+        && url.host().is_some()
+        && url.username().is_empty()
+        && url.password().is_none();
+    plain.then(|| url.into())
+}
+
 /// The sessions worth keeping: every open one, then the ended ones the host
 /// has not recorded yet, newest first up to a fixed bound. The host owns the
 /// history; a session it has recorded is no longer kept.
@@ -516,6 +542,42 @@ mod tests {
 
     const NOW: u64 = 1_700_000_000_000;
     const PROVIDER: &str = "ramp.dot";
+
+    // The host opens a provider page in its own frame, so only an https page
+    // it can show the origin of reaches it, never one carrying credentials
+    // or another scheme, and the return URL is held to the same rule.
+    #[test]
+    fn a_frame_opens_only_plain_https_pages() {
+        let page = |url: &str, return_url: Option<&str>| {
+            checked_frame_target(FundingFrameTarget::Page {
+                url: url.to_string(),
+                return_url: return_url.map(str::to_string),
+            })
+        };
+        let widget = "https://widget.example.com/buy?amount=10&token=a%2Fb";
+
+        assert_eq!(
+            (
+                page(widget, Some("https://onramp.example.com/meld/return?flow=sell")),
+                page("http://widget.example.com/", None),
+                page("https://user:pass@widget.example.com/", None),
+                page("javascript:alert(1)", None),
+                page(widget, Some("polkadotapp://done")),
+                checked_frame_target(FundingFrameTarget::App { route: "/kyc".to_string() }),
+            ),
+            (
+                Some(FundingFrameTarget::Page {
+                    url: widget.to_string(),
+                    return_url: Some("https://onramp.example.com/meld/return?flow=sell".to_string()),
+                }),
+                None,
+                None,
+                None,
+                None,
+                Some(FundingFrameTarget::App { route: "/kyc".to_string() }),
+            )
+        );
+    }
 
     fn session(direction: FundingDirection) -> FundingSession {
         FundingSession::new(

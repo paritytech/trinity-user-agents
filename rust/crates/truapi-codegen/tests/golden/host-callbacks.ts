@@ -27,6 +27,7 @@ import {
 
 import type {
   FundingFrameOutcome,
+  FundingFrameTarget,
   GenericError,
   HostChatCreateRoomRequest,
   HostChatCreateRoomResponse,
@@ -1485,13 +1486,15 @@ export interface FundingPlatform {
   ): Promise<FundingPresentOutcome>;
 
   /**
-   * Show `provider`'s screen at `route` for session `intent`, such as its
-   * KYC or card entry, in a frame the host owns, and answer once it closes.
+   * Show `target` for `provider`'s session `intent` in a frame the host
+   * owns, and answer once it closes. A page is an https URL the core has
+   * checked: the host shows its origin, and closes the frame with
+   * `Returned` when the page reaches its return URL.
    */
   presentProviderFrame(
     provider: ProductContext,
     intent: string,
-    route: string,
+    target: FundingFrameTarget,
   ): Promise<FundingFrameOutcome>;
 
   /**
