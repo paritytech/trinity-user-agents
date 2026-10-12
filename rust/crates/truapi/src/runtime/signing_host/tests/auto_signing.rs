@@ -210,30 +210,37 @@ fn a_blessed_vrf_signature_skips_the_prompt_only_locally_for_its_own_account() {
     );
 }
 
-/// Legacy accounts sign with the user's own keys, not a product's.
+/// Blessed products raw-sign with the user's identity without a prompt (the
+/// People username claim needs this); ordinary products still confirm.
 #[test]
-fn a_blessed_product_still_confirms_legacy_account_signing() {
-    let platform = granting_platform();
-    let (services, activation) = signing_runtime_with_platform(platform.clone());
-    futures::executor::block_on(activation.activate_local_session(ENTROPY.to_vec()))
-        .expect("activation succeeds");
-    let runtime = product_runtime_for(services, activation, "dim2.paseo");
-    let identity = derive_identity_keypair(&ENTROPY, TEST_NETWORK_SUFFIX).unwrap();
-    let request =
-        HostSignRawWithLegacyAccountRequest::V1(v01::HostSignRawWithLegacyAccountRequest {
-            signer: subxt::utils::AccountId32(identity.public.to_bytes()).to_string(),
-            payload: v01::RawPayload::Bytes {
-                bytes: b"hello world".to_vec(),
-            },
-        });
+fn only_a_blessed_product_raw_signs_with_a_legacy_account_unprompted() {
+    for (product_id, blessed) in [("peopl.paseo", true), ("jollity.paseo", false)] {
+        let platform = granting_platform();
+        let (services, activation) = signing_runtime_with_platform(platform.clone());
+        futures::executor::block_on(activation.activate_local_session(ENTROPY.to_vec()))
+            .expect("activation succeeds");
+        let runtime = product_runtime_for(services, activation, product_id);
+        let identity = derive_identity_keypair(&ENTROPY, TEST_NETWORK_SUFFIX).unwrap();
+        let request =
+            HostSignRawWithLegacyAccountRequest::V1(v01::HostSignRawWithLegacyAccountRequest {
+                signer: subxt::utils::AccountId32(identity.public.to_bytes()).to_string(),
+                payload: v01::RawPayload::Bytes {
+                    bytes: [7u8; 32].to_vec(),
+                },
+            });
 
-    let signed = futures::executor::block_on(
-        runtime.sign_raw_with_legacy_account(&CallContext::default(), request),
-    )
-    .is_ok();
+        let signed = futures::executor::block_on(
+            runtime.sign_raw_unwatermarked_deprecated_with_legacy_account(
+                &CallContext::default(),
+                request,
+            ),
+        )
+        .is_ok();
 
-    assert_eq!(
-        (signed, platform.sign_raw_reviews.lock().unwrap().len()),
-        (false, 1),
-    );
+        assert_eq!(
+            (signed, platform.sign_raw_reviews.lock().unwrap().len()),
+            (blessed, usize::from(!blessed)),
+            "{product_id}",
+        );
+    }
 }
