@@ -63,6 +63,8 @@ pub mod platform;
 #[cfg(any(feature = "ws", feature = "smoldot"))]
 mod provider;
 #[cfg(feature = "smoldot")]
+mod statement_snapshot;
+#[cfg(feature = "smoldot")]
 mod storage;
 #[cfg(all(feature = "ws", not(target_arch = "wasm32")))]
 mod ws;
