@@ -2,7 +2,6 @@ package io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compos
 
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -14,11 +13,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import io.paritytech.polkadotapp.common.utils.FeatureOption
-import io.paritytech.polkadotapp.common.utils.isEnabled
 import io.paritytech.polkadotapp.design.components.icon.NovaIcon
 import io.paritytech.polkadotapp.design.components.icon.NovaIcons
 import io.paritytech.polkadotapp.design.components.icon.vectors.QrCode
@@ -28,15 +24,12 @@ import io.paritytech.polkadotapp.design.theme.PolkadotTheme
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.PocketTestTags
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compose.components.CardSizes
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compose.components.PocketCardColors
-import io.paritytech.polkadotapp.common.R as RCommon
 
 @Composable
 internal fun IdCardContent(
     username: String,
     avatarPainter: Painter,
-    rankValue: String,
     primaryTextColor: Color,
-    secondaryTextColor: Color,
     onQrClick: () -> Unit
 ) {
     Row(
@@ -61,32 +54,14 @@ internal fun IdCardContent(
                 contentDescription = "avatar"
             )
 
-            Column(
-                verticalArrangement = Arrangement.spacedBy(PolkadotTheme.spacings.tiny)
-            ) {
-                NovaText(
-                    modifier = Modifier.testTag(PocketTestTags.USERNAME_DISPLAY),
-                    text = username,
-                    style = PolkadotTheme.typography.title.large,
-                    color = primaryTextColor,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis
-                )
-                if (FeatureOption.ID_CARD_RANK.isEnabled) {
-                    Column {
-                        NovaText(
-                            text = stringResource(RCommon.string.identity_card_rank_label),
-                            style = PolkadotTheme.typography.body.small,
-                            color = secondaryTextColor
-                        )
-                        NovaText(
-                            text = rankValue,
-                            style = PolkadotTheme.typography.title.small,
-                            color = primaryTextColor
-                        )
-                    }
-                }
-            }
+            NovaText(
+                modifier = Modifier.testTag(PocketTestTags.USERNAME_DISPLAY),
+                text = username,
+                style = PolkadotTheme.typography.title.large,
+                color = primaryTextColor,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis
+            )
         }
 
         PolkadotSurface(

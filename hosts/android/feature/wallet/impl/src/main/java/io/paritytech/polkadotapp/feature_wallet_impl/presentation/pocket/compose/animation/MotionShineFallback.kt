@@ -8,10 +8,13 @@ import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.BlendMode
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Paint
 import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
+import kotlin.math.abs
 import kotlin.math.exp
 
 private const val PROFILE_STOPS = 25
@@ -79,3 +82,19 @@ private fun profileStops(colorAt: (Float) -> Color): Array<Pair<Float, Color>> =
         val t = index / (PROFILE_STOPS - 1f)
         t to colorAt(t)
     }
+
+private fun axisGradient(
+    colorStops: Array<Pair<Float, Color>>,
+    axis: Offset,
+    size: Size,
+    shift: Float
+): Brush {
+    val centre = Offset(size.width * 0.5f, size.height * 0.5f)
+    val halfSpan = 0.5f * (abs(axis.x) * size.width + abs(axis.y) * size.height)
+    val translation = axis * (-shift * 2f * halfSpan)
+    return Brush.linearGradient(
+        colorStops = colorStops,
+        start = centre - axis * halfSpan + translation,
+        end = centre + axis * halfSpan + translation
+    )
+}

@@ -18,7 +18,6 @@ import io.paritytech.polkadotapp.common.presentation.paymentAsset.LocalPaymentAs
 import io.paritytech.polkadotapp.common.presentation.paymentAsset.PaymentAssetBrand
 import io.paritytech.polkadotapp.design.components.bottomsheet.NovaModalBottomSheet
 import io.paritytech.polkadotapp.design.theme.PolkadotTheme
-import io.paritytech.polkadotapp.feature_wallet_impl.domain.model.PocketRank
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compose.components.digitalDollar.IdDetailsBottomSheetContent
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.PocketCardUiModel
 
@@ -29,10 +28,7 @@ fun IdCard(
     onSelected: ((PocketCardUiModel.IdCard) -> Unit)? = null,
 ) {
     var qrDetailsVisible by remember { mutableStateOf(false) }
-    when (card.rank) {
-        PocketRank.Basic -> BasicIdCard(modifier, card, onSelected) { qrDetailsVisible = true }
-        PocketRank.Member -> MemberIdCard(modifier, card, onSelected) { qrDetailsVisible = true }
-    }
+    BasicIdCard(modifier, card, onSelected) { qrDetailsVisible = true }
 
     NovaModalBottomSheet(
         isVisible = qrDetailsVisible,
@@ -53,8 +49,7 @@ private fun IdCardPreview() = CompositionLocalProvider(
 ) {
     PolkadotTheme {
         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            IdCard(card = PocketCardUiModel.IdCard("username.99", "15oF4u...zaC1Ap", PocketRank.Basic))
-            IdCard(card = PocketCardUiModel.IdCard("username.99", "15oF4u...zaC1Ap", PocketRank.Member))
+            IdCard(card = PocketCardUiModel.IdCard("username.99", "15oF4u...zaC1Ap"))
         }
     }
 }

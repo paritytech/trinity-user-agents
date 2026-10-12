@@ -6,13 +6,11 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
-import androidx.compose.ui.res.stringResource
 import io.paritytech.polkadotapp.design.components.surface.PolkadotSurface
 import io.paritytech.polkadotapp.design.theme.PolkadotTheme
 import io.paritytech.polkadotapp.feature_wallet_impl.R
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compose.components.PocketCardColors
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.PocketCardUiModel
-import io.paritytech.polkadotapp.common.R as RCommon
 
 @Composable
 internal fun BasicIdCard(
@@ -39,9 +37,7 @@ internal fun BasicIdCard(
         IdCardContent(
             username = card.username,
             avatarPainter = painterResource(R.drawable.basic_card_placeholder),
-            rankValue = stringResource(RCommon.string.identity_card_rank_basic),
             primaryTextColor = PocketCardColors.Secondary,
-            secondaryTextColor = PocketCardColors.Secondary,
             onQrClick = onQrClick
         )
     }
