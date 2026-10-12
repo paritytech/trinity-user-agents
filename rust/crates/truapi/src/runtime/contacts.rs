@@ -28,7 +28,7 @@ pub const CONTACT_HANDLE_CONTEXT: &[u8] = b"truapi-contact-handle";
 
 /// Domain-separate the session's root entropy source into the contact-handle
 /// key, so this key cannot collide with another derived from the same source.
-pub fn handle_key_from_root_source(root_entropy_source: &[u8; 32]) -> [u8; 32] {
+fn handle_key_from_root_source(root_entropy_source: &[u8; 32]) -> [u8; 32] {
     blake2b256_keyed(root_entropy_source, CONTACT_HANDLE_CONTEXT)
 }
 
@@ -59,14 +59,10 @@ pub struct ContactHandles {
 
 impl ContactHandles {
     /// Derive the handle key from the session's root entropy source.
-    #[cfg(test)]
     pub fn from_root_entropy_source(root_entropy_source: &[u8; 32]) -> Self {
-        Self::from_handle_key(handle_key_from_root_source(root_entropy_source))
-    }
-
-    /// Take the handle key an authority already derived.
-    pub fn from_handle_key(handle_key: [u8; 32]) -> Self {
-        Self { handle_key }
+        Self {
+            handle_key: handle_key_from_root_source(root_entropy_source),
+        }
     }
 
     /// The handle this user knows `account` by.
@@ -74,9 +70,13 @@ impl ContactHandles {
         contact_handle(&self.handle_key, account)
     }
 
-    /// The key handles are minted under, which a host needs to look them up.
-    pub fn handle_key(&self) -> [u8; 32] {
-        self.handle_key
+    /// Ask the host for the accounts `handles` name; the host needs the key
+    /// handles are minted under to look them up.
+    pub fn lookup(&self, handles: Vec<[u8; 32]>) -> crate::platform::HostContactLookup {
+        crate::platform::HostContactLookup {
+            handle_key: self.handle_key,
+            handles,
+        }
     }
 
     /// Whether `account` is the one `handle` names.

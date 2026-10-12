@@ -13,7 +13,7 @@ use truapi::versioned::game::{
 use truapi::{CallContext, CallError};
 
 use crate::platform::GamePlatform;
-use crate::runtime::ProductRuntimeHost;
+use crate::runtime::{AccountHolder, ProductConnection, ProductRuntimeHost};
 use crate::unix_time::current_unix_secs;
 
 /// A reminder for a game that has begun brings nobody back. Whole seconds are
@@ -28,7 +28,7 @@ fn ensure_upcoming(starts_at: u64) -> Result<(), CallError<HostRemindNextGameErr
     }
 }
 
-impl ProductRuntimeHost {
+impl ProductConnection {
     /// The host's Game adapter, for the game product only. Any other product,
     /// or a host without an adapter, gets `Unsupported` before anything else
     /// runs. Serving one product is why the API asks for no per-product
@@ -42,21 +42,21 @@ impl ProductRuntimeHost {
 }
 
 #[truapi::async_trait]
-impl Game for ProductRuntimeHost {
+impl<H: AccountHolder> Game for ProductRuntimeHost<H> {
     #[instrument(skip_all, fields(runtime.method = "game.remind_next_game"))]
     async fn remind_next_game(
         &self,
         cx: &CallContext,
         request: HostRemindNextGameRequest,
     ) -> Result<HostRemindNextGameResponse, CallError<HostRemindNextGameError>> {
-        let platform = self.game_platform()?;
+        let platform = self.connection.game_platform()?;
         let latest::HostRemindNextGameRequest { starts_at } = request.into_latest();
         ensure_upcoming(starts_at)?;
         if cx.cancel().is_cancelled() {
             return Err(CallError::Cancelled);
         }
         platform
-            .schedule_game_reminder(&self.product, starts_at)
+            .schedule_game_reminder(&self.connection.product, starts_at)
             .await
             .map(|()| HostRemindNextGameResponse::V1)
             .map_err(|error| CallError::HostFailure {
@@ -70,10 +70,10 @@ impl Game for ProductRuntimeHost {
         _cx: &CallContext,
         request: HostCancelNextGameRequest,
     ) -> Result<HostCancelNextGameResponse, CallError<HostCancelNextGameError>> {
-        let platform = self.game_platform()?;
+        let platform = self.connection.game_platform()?;
         let latest::HostCancelNextGameRequest {} = request.into_latest();
         platform
-            .cancel_game_reminder(&self.product)
+            .cancel_game_reminder(&self.connection.product)
             .await
             .map(|()| HostCancelNextGameResponse::V1)
             .map_err(|error| CallError::Domain(HostCancelNextGameError::V1(error)))

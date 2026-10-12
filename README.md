@@ -179,13 +179,11 @@ The [container permission boundary](js/container/README.md) documents the protec
 operations and the built-ins that remain mutable for product compatibility.
 Native bindings expose the canonical Rust domain and protocol value types;
 native-only adapter types are limited to lifecycle and callback behavior.
-On iOS, a wallet host that manages its own statement-store SSO session can call
-`handleSsoRequest` (routes one decrypted remote message through the core,
-returning a typed outcome: response bytes to post back, a disconnect marker, or
-ignored; a `Cancel` returns at once, so the wallet passes it on without queueing
-it behind the request it withdraws) and `prepareDisconnectRequest` (builds the SCALE-encoded wire message
-for a wallet-initiated disconnect) on `TrUAPIHostRuntime`. Response posting and
-session-record cleanup remain on the wallet side.
+A native wallet that runs its own SSO transport opens one SSO service per peer with `openSsoService` and passes it each incoming message; `prepareDisconnectRequest` builds a wallet-initiated disconnect. The core binds each service to the wallet activation that authenticated the peer. The [iOS SDK guide](ios/truapi-host/README.md#sso-session-handling) gives the call sequence.
+
+`HostAccounts` serves every product account operation on both host roles: it checks access, keeps the grants it was issued in its `HostGrantStore`, and signs with delegated keys. Wallet work sits behind an `AccountHolder`: `WalletAccountHolder` on a signing host, or `RemoteAccountHolder` on a paired host, which forwards each request to the phone for review. One `ProductConsent` per runtime holds account-access decisions and runs their prompts. `PairingHost` and `SigningHost` build these parts for their role and own login, logout and the wallet lifecycle; see [runtime ownership and lifecycle](rust/crates/truapi/RUNTIME.md#the-two-roles).
+
+Each product connection is served by a `ProductRuntimeHost`, which combines `HostAccounts`, a `HostSession` (`SigningHost` or `SsoRequestService`) for login, disconnect and identity lookup, and a per-product `ProductConnection` for adapters, permissions and action streams.
 See the core's [inter-host SSO design](rust/crates/truapi/RUNTIME.md#inter-host-sso)
 for typed handlers, canonical resource types, and consent bound to the signing session.
 Product and SSO signing share canonical payloads and the one-byte `OptionBool`
@@ -282,6 +280,8 @@ make wasm     # rebuild truapi WASM artifacts under js/packages/truapi-host/dist
 
 CI regenerates the shared bindings before building and testing both npm
 packages, so generated client and host callback changes are checked together.
+
+Rust runtime tests live beside their components; [native binding tests](rust/crates/truapi/src/native/tests.rs) exercise the exported host API.
 
 The native `truapi-host` utility runs pairing and signing hosts against the real
 SSO transport for local end-to-end work. See [Install the CLI](#install-the-cli)

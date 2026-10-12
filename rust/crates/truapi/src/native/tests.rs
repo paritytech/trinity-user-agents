@@ -2804,14 +2804,6 @@ pub fn native_host_runtime_no_session() -> Arc<NativeTrUApiHostRuntime> {
 }
 
 #[test]
-fn handle_sso_request_rejects_undecodable_bytes() {
-    let runtime = native_host_runtime_no_session();
-    let result =
-        futures::executor::block_on(runtime.handle_sso_request(vec![0xFF, 0xFF, 0xFF]));
-    assert!(result.is_err(), "garbage bytes must be a decode error");
-}
-
-#[test]
 fn prepare_disconnect_request_round_trips_with_fresh_ids() {
     use crate::host_internal::sso_messages::{RemoteMessage, RemoteMessageData, v1};
     use parity_scale_codec::Decode;

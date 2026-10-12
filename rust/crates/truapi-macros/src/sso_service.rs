@@ -150,7 +150,7 @@ fn expand_sso_service(mut item: ItemImpl) -> syn::Result<TokenStream> {
         /// Answer one wire message with this service.
         ///
         /// `cx` is the context for `message`, built by the caller around the
-        /// signing host's current session; without one every request is
+        /// transport's bound wallet session; without one every request is
         /// answered with its error type's `not_connected()`.
         pub async fn dispatch(
             &self,

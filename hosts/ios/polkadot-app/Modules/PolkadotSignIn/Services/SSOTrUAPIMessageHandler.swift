@@ -1,13 +1,14 @@
 import Foundation
 import Operation_iOS
+import TrUAPIHost
 
 final class SSOTrUAPIMessageHandler {
-    private let processingContext: SSORequestProcessingContext<SSORawHostMessage>
+    private let processingContext: SSORequestProcessingContext<SSOTrUAPIRequest>
     private let handledRequestRepository: AnyDataProviderRepository<SSOHandledRequest>
     private let logger: LoggerProtocol
 
     init(
-        processingContext: SSORequestProcessingContext<SSORawHostMessage>,
+        processingContext: SSORequestProcessingContext<SSOTrUAPIRequest>,
         handledRequestRepositoryFactory: SSOHandledRequestRepositoryMaking = SSOHandledRequestRepositoryFactory(),
         logger: LoggerProtocol = Logger.shared
     ) {
@@ -17,17 +18,26 @@ final class SSOTrUAPIMessageHandler {
     }
 }
 
-extension SSOTrUAPIMessageHandler: PolkadotHostMessageHandling {
+extension SSOTrUAPIMessageHandler {
     func handleMessages(
         _ messages: [SSORawHostMessage],
-        from host: PolkadotSignInHost
+        from host: PolkadotSignInHost,
+        service: any NativeSsoAccountHolderServiceProtocol
     ) async {
         let newMessages = await filterAlreadyHandled(messages)
 
         logger.info("New raw messages: \(newMessages.count)")
 
         for message in newMessages {
-            await processingContext.enqueue(message: message, from: host)
+            do {
+                guard try service.handleSsoControl(message: message.rawBytes) == nil else { continue }
+                await processingContext.enqueue(
+                    message: SSOTrUAPIRequest(message: message, service: service),
+                    from: host
+                )
+            } catch {
+                logger.error("Invalid SSO control for \(message.messageId): \(error)")
+            }
         }
 
         await markMessagesAsHandled(newMessages)

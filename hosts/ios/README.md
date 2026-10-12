@@ -113,6 +113,8 @@ Polkadot iOS is a self-custodial superapp: your keys are created on your phone, 
 
 Built with **UIKit** and programmatic layout (no Storyboards), using **VIPER** for every feature module: code is split between the main app target and 28 local Swift packages under [`Packages/`](./Packages) with `AppDependencies` as the root package, chain access goes through [substrate-sdk-ios](https://github.com/novasamatech/substrate-sdk-ios) (JSON-RPC, storage subscriptions, extrinsics), and local data lives in CoreData.
 
+With the Rust runtime enabled, the SSO coordinator binds its transport keys to one wallet activation and retains a separate account-holder service for each peer. Ordinary requests share one FIFO queue; cancellation reaches its peer's service immediately. Replies validate the same wallet activation before posting.
+
 This repository ships a **GitHub Actions + Fastlane CI/CD setup** — PR build and
 tests, plus maintainer-gated TestFlight and Firebase App Distribution. Build-time
 configuration, signing, the required secrets, and the pipeline itself are

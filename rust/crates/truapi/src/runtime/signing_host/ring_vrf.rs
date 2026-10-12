@@ -227,7 +227,7 @@ impl RingResolver for ChainRingResolver {
 
 // TODO(development_createAccountProof): dev-only escape hatch, yet to be
 // removed before a production release. Delete this module and point its
-// callers in `signing_host.rs` and `pairing_host.rs` back at `context_bytes`.
+// wallet and host-account callers back at `context_bytes`.
 mod development {
     use truapi::v01::{DerivationIndex, ProductProofContext};
 

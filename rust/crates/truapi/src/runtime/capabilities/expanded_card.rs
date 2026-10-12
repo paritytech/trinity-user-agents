@@ -10,10 +10,10 @@ use truapi::versioned::expanded_card::{
 use truapi::{CallContext, CallError};
 
 use crate::platform::{ExpandedCardFaceOutcome, ProductExecutionKind};
-use crate::runtime::ProductRuntimeHost;
+use crate::runtime::{AccountHolder, ProductRuntimeHost};
 
 #[truapi::async_trait]
-impl ExpandedCard for ProductRuntimeHost {
+impl<H: AccountHolder> ExpandedCard for ProductRuntimeHost<H> {
     #[instrument(skip_all, fields(runtime.method = "expanded_card.set_face_shown"))]
     async fn set_face_shown(
         &self,
@@ -22,10 +22,10 @@ impl ExpandedCard for ProductRuntimeHost {
     ) -> Result<HostExpandedCardSetFaceShownResponse, CallError<HostExpandedCardSetFaceShownError>>
     {
         // Admin connections call the trait without the dispatcher's kind filter.
-        if self.product.execution_kind != ProductExecutionKind::Widget {
+        if self.connection.product.execution_kind != ProductExecutionKind::Widget {
             return Err(CallError::Denied);
         }
-        let Some(card) = &self.expanded_card else {
+        let Some(card) = &self.connection.expanded_card else {
             return Err(CallError::Unsupported);
         };
         let HostExpandedCardSetFaceShownRequest::V1(request) = request;

@@ -123,15 +123,13 @@ fn sign_vrf_forwards_cross_product_mobile_sso_request_and_response() {
     .unwrap();
 
     assert_eq!(response, HostAccountSignVrfResponse::V1(signature));
-    assert_eq!(
-        *platform
+    assert!(
+        platform
             .sign_vrf_reviews
             .lock()
-            .expect("VRF signing review list mutex poisoned"),
-        vec![crate::platform::SignVrfReview {
-            calling_product_id: "myapp.dot".to_string(),
-            request: request.clone(),
-        }]
+            .expect("VRF signing review list mutex poisoned")
+            .is_empty(),
+        "the phone reviews forwarded VRF signing; the paired host adds no prompt",
     );
     let message = submitted_remote_message(&platform, &session);
     let RemoteMessageData::V1(v1::RemoteMessage::SignVrfRequest(request_message)) = message.data
@@ -140,73 +138,6 @@ fn sign_vrf_forwards_cross_product_mobile_sso_request_and_response() {
     };
     assert_eq!(request_message.calling_product_id, "myapp.dot");
     assert_eq!(request_message.payload, request);
-}
-
-#[test]
-fn sign_vrf_rejects_declined_pairing_host_confirmation_before_mobile_sso() {
-    let session = sso_session_info();
-    let platform = Arc::new(StubPlatform {
-        sso_response_script: Some(sso_success_response_script(
-            &session,
-            RemoteMessage {
-                message_id: "wallet-vrf-declined".to_string(),
-                data: RemoteMessageData::V1(v1::RemoteMessage::SignVrfResponse(
-                    crate::host_internal::sso_messages::Response {
-                        responding_to: "vrf-declined".to_string(),
-                        payload: Ok(v01::VrfSignature {
-                            pre_output: [0x11; 32],
-                            proof: [0x22; 64],
-                        }),
-                    },
-                )),
-            },
-        )),
-        ..Default::default()
-    });
-    let host = ProductRuntimeHost::new(
-        platform.clone(),
-        runtime_config("myapp.dot"),
-        test_spawner(),
-    );
-    install_pairing_session(&host, session);
-    let request = v01::HostAccountSignVrfRequest {
-        account: account_id("other-product.dot", 0),
-        transcript_label: b"ctx".to_vec(),
-        items: vec![v01::VrfTranscriptItem {
-            label: b"domain".to_vec(),
-            value: vec![1, 2],
-        }],
-    };
-
-    let err = futures::executor::block_on(host.sign_vrf(
-        &CallContext::with_request_id("vrf-declined".to_string()),
-        HostAccountSignVrfRequest::V1(request.clone()),
-    ))
-    .unwrap_err();
-
-    assert!(matches!(
-        err,
-        CallError::Domain(HostAccountSignVrfError::V1(
-            v01::HostAccountSignVrfError::Rejected
-        ))
-    ));
-    assert_eq!(
-        *platform
-            .sign_vrf_reviews
-            .lock()
-            .expect("VRF signing review list mutex poisoned"),
-        vec![crate::platform::SignVrfReview {
-            calling_product_id: "myapp.dot".to_string(),
-            request,
-        }]
-    );
-    assert!(
-        platform
-            .sent_rpc
-            .lock()
-            .expect("RPC request list mutex poisoned")
-            .is_empty()
-    );
 }
 
 #[test]
@@ -301,24 +232,7 @@ fn sign_raw_denies_when_chain_submit_denied() {
 }
 
 #[test]
-fn sign_raw_rejects_when_user_declines_confirmation() {
-    let host =
-        ProductRuntimeHost::new(stub_platform(), runtime_config("myapp.dot"), test_spawner());
-    install_pairing_session(&host, session_info());
-    let cx = CallContext::default();
-    let request = HostSignRawRequest::V1(v01::HostSignRawRequest {
-        account: account_id("myapp.dot", 0),
-        payload: raw_payload(),
-    });
-    let err = futures::executor::block_on(host.sign_raw(&cx, request)).unwrap_err();
-    assert!(matches!(
-        err,
-        CallError::Domain(HostSignRawError::V1(v01::HostSignPayloadError::Rejected))
-    ));
-}
-
-#[test]
-fn sign_raw_accepts_confirmation_then_returns_sso_response() {
+fn sign_raw_forwards_to_the_phone_and_returns_its_response() {
     let session = sso_session_info();
     let platform = Arc::new(StubPlatform {
         sign_raw_confirmed: true,
@@ -558,26 +472,6 @@ fn sign_payload_denies_when_chain_submit_denied() {
 }
 
 #[test]
-fn sign_payload_maps_confirmation_failure_to_host_failure() {
-    let host = ProductRuntimeHost::new(
-        Arc::new(StubPlatform {
-            sign_payload_error: Some("modal failed"),
-            ..Default::default()
-        }),
-        runtime_config("myapp.dot"),
-        test_spawner(),
-    );
-    install_pairing_session(&host, session_info());
-    let cx = CallContext::default();
-    let request = HostSignPayloadRequest::V1(v01::HostSignPayloadRequest {
-        account: account_id("myapp.dot", 0),
-        payload: sign_payload_data(),
-    });
-    let err = futures::executor::block_on(host.sign_payload(&cx, request)).unwrap_err();
-    assert!(matches!(err, CallError::HostFailure { reason } if reason.contains("modal failed")));
-}
-
-#[test]
 fn sign_payload_accepts_confirmation_then_returns_sso_response() {
     let session = sso_session_info();
     let platform = Arc::new(StubPlatform {
@@ -655,98 +549,6 @@ fn create_transaction_accepts_confirmation_then_returns_sso_response() {
             crate::host_internal::sso_messages::v1::RemoteMessage::CreateTransactionRequest(_)
         )
     ));
-}
-
-/// A `createTransaction` on a paired session whose confirmation prompt stays
-/// open until the returned sender releases it.
-fn gated_create_transaction(
-    request_id: &str,
-) -> (
-    Arc<StubPlatform>,
-    ProductRuntimeHost,
-    CallContext,
-    futures::channel::oneshot::Sender<()>,
-) {
-    let (release, gate) = futures::channel::oneshot::channel();
-    let platform = Arc::new(StubPlatform {
-        create_transaction_confirmed: true,
-        create_transaction_confirmation_gate: Mutex::new(Some(gate)),
-        ..Default::default()
-    });
-    let host = ProductRuntimeHost::new(
-        platform.clone(),
-        runtime_config("myapp.dot"),
-        test_spawner(),
-    );
-    install_pairing_session(&host, sso_session_info());
-    let cx = CallContext::with_parts(request_id.to_string(), truapi::CancellationToken::default());
-    (platform, host, cx, release)
-}
-
-/// A person who has not answered yet must not be able to authorize a
-/// transaction the product has already withdrawn, and the product must not
-/// wait on that person to learn the call is over.
-#[test]
-fn a_create_transaction_withdrawn_at_the_prompt_never_reaches_the_phone() {
-    let (platform, host, cx, _release) = gated_create_transaction("create-tx-withdrawn");
-    let request = HostCreateTransactionRequest::V1(product_tx_payload("myapp.dot"));
-    let mut call = Box::pin(host.create_transaction(&cx, request));
-    assert!(call.as_mut().now_or_never().is_none());
-    assert_eq!(platform.create_transaction_reviews.lock().unwrap().len(), 1);
-
-    cx.cancel().cancel();
-
-    let err = call
-        .as_mut()
-        .now_or_never()
-        .expect("a withdrawn call stops waiting on the prompt")
-        .unwrap_err();
-    assert_eq!(
-        err,
-        CallError::Domain(HostCreateTransactionError::V1(
-            v01::HostCreateTransactionError::Unknown {
-                reason: "Account authority request cancelled for create-tx-withdrawn".to_string(),
-            }
-        ))
-    );
-    assert_eq!(
-        recorded_rpc_method_count(&platform.sent_rpc, "statement_subscribeStatement"),
-        0
-    );
-}
-
-/// An approval that lands after the withdrawal is an answer to a call that no
-/// longer exists, so it must authorize nothing. Either the prompt race or the
-/// authority call's own check is enough to hold this; the test pins that at
-/// least one of them does.
-#[test]
-fn a_create_transaction_approved_after_its_withdrawal_never_reaches_the_phone() {
-    let (platform, host, cx, release) = gated_create_transaction("create-tx-approved-late");
-    let request = HostCreateTransactionRequest::V1(product_tx_payload("myapp.dot"));
-    let mut call = Box::pin(host.create_transaction(&cx, request));
-    assert!(call.as_mut().now_or_never().is_none());
-
-    cx.cancel().cancel();
-    release.send(()).unwrap();
-
-    let err = call
-        .as_mut()
-        .now_or_never()
-        .expect("a withdrawn call settles without waiting")
-        .unwrap_err();
-    assert_eq!(
-        err,
-        CallError::Domain(HostCreateTransactionError::V1(
-            v01::HostCreateTransactionError::Unknown {
-                reason: "Account authority request cancelled for create-tx-approved-late"
-                    .to_string(),
-            }
-        ))
-    );
-    assert_eq!(
-        recorded_rpc_method_count(&platform.sent_rpc, "statement_subscribeStatement"),
-        0
-    );
 }
 
 /// A withdrawal that lands while the paired-host request is still subscribing

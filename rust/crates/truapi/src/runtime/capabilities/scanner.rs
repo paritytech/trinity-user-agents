@@ -10,7 +10,7 @@ use truapi::{CallContext, CallError};
 
 use crate::host_logic::scanner::{accepts, validate_request};
 use crate::platform::{HostScan, ProductExecutionKind};
-use crate::runtime::{ProductRuntimeHost, until_cancelled};
+use crate::runtime::{AccountHolder, ProductRuntimeHost, until_cancelled};
 
 fn domain(error: latest::HostScannerScanError) -> CallError<HostScannerScanError> {
     CallError::Domain(HostScannerScanError::V1(error))
@@ -23,7 +23,7 @@ fn unknown(reason: impl ToString) -> CallError<HostScannerScanError> {
 }
 
 #[truapi::async_trait]
-impl Scanner for ProductRuntimeHost {
+impl<H: AccountHolder> Scanner for ProductRuntimeHost<H> {
     /// Checked in this order so a host without a scanner, or a request the
     /// product could not make, never opens a viewfinder.
     #[instrument(skip_all, fields(runtime.method = "scanner.scan"))]
@@ -34,20 +34,24 @@ impl Scanner for ProductRuntimeHost {
     ) -> Result<HostScannerScanResponse, CallError<HostScannerScanError>> {
         let HostScannerScanRequest::V1(request) = request;
         let platform = self
+            .connection
             .services
             .scanner_platform()
             .ok_or(CallError::Unsupported)?;
         validate_request(&request)
             .map_err(|reason| domain(latest::HostScannerScanError::InvalidRequest { reason }))?;
-        if self.execution_kind() == ProductExecutionKind::Worker && !self.recently_tapped() {
+        if self.connection.execution_kind() == ProductExecutionKind::Worker
+            && !self.connection.recently_tapped()
+        {
             return Err(domain(latest::HostScannerScanError::NotVisible));
         }
         let _claim = self
+            .connection
             .services
             .claim_scan()
             .ok_or_else(|| domain(latest::HostScannerScanError::Busy))?;
 
-        let answer = until_cancelled(cx, platform.scan_code(&self.product, &request))
+        let answer = until_cancelled(cx, platform.scan_code(&self.connection.product, &request))
             .await
             .map_err(unknown)?
             .map_err(|error| unknown(error.reason))?;

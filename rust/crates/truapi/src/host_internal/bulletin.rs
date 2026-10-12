@@ -1,18 +1,9 @@
-//! Bulletin `TransactionStorage.store` construction and signing.
-//!
-//! This module is the only place allowance-key material becomes a signer, and
-//! it only ever signs the `store` call it builds itself: the public surface
-//! takes raw preimage bytes plus a `BulletinAllowanceKey`, never
-//! caller-supplied call data.
+//! Validated Bulletin store payloads and allowance-key parsing.
 
-use subxt::client::{ClientAtBlock, OnlineClientAtBlockT};
-use subxt::config::DefaultExtrinsicParamsBuilder;
-use subxt::config::substrate::SubstrateConfig;
-use subxt::error::ExtrinsicError;
 use subxt::ext::codec::Encode;
 use subxt::ext::scale_encode::{self, EncodeAsFields, FieldIter, TypeResolver};
 use subxt::ext::scale_type_resolver::{Primitive, visitor};
-use subxt::tx::{StaticPayload, SubmittableTransaction};
+use subxt::tx::StaticPayload;
 
 use crate::host_internal::extrinsic::Sr25519Signer;
 use crate::runtime::BulletinAllowanceKey;
@@ -23,7 +14,7 @@ pub const STORE_PALLET_NAME: &str = "TransactionStorage";
 pub const STORE_CALL_NAME: &str = "store";
 
 /// Mortality window for store transactions.
-const MORTAL_PERIOD_BLOCKS: u64 = 64;
+pub const MORTAL_PERIOD_BLOCKS: u64 = 64;
 
 /// Preimage key: blake2b-256 of the raw preimage bytes.
 pub fn preimage_key(value: &[u8]) -> [u8; 32] {
@@ -55,21 +46,9 @@ pub fn preimage_cid(key: &[u8; 32]) -> String {
     cid
 }
 
-/// Build and sign a `TransactionStorage.store { data }` transaction with the
-/// Bulletin allowance signer against the client's block. Subxt chooses the
-/// supported transaction version and injects the nonce and mortality anchor
-/// from that same at-block client, so signing and dry-run stay aligned.
-pub async fn build_signed_store_transaction<C: OnlineClientAtBlockT<SubstrateConfig>>(
-    client: &ClientAtBlock<SubstrateConfig, C>,
-    signer: &Sr25519Signer,
-    data: &[u8],
-) -> Result<SubmittableTransaction<SubstrateConfig, C>, ExtrinsicError> {
-    let payload = StaticPayload::new(STORE_PALLET_NAME, STORE_CALL_NAME, StoreCallData(data));
-    let params = DefaultExtrinsicParamsBuilder::<SubstrateConfig>::new()
-        .mortal(MORTAL_PERIOD_BLOCKS)
-        .build();
-    let mut tx = client.tx();
-    tx.create_signed(&payload, signer, params).await
+/// Store payload whose call data is checked against the chain metadata.
+pub fn store_transaction_payload(data: &[u8]) -> impl subxt::tx::Payload + '_ {
+    StaticPayload::new(STORE_PALLET_NAME, STORE_CALL_NAME, StoreCallData(data))
 }
 
 /// The only [`BulletinAllowanceKey`] -> signer conversion in the crate. The
@@ -133,6 +112,9 @@ fn require_u8_sequence<R: TypeResolver>(
 
 #[cfg(test)]
 mod tests {
+    use subxt::config::{DefaultExtrinsicParamsBuilder, substrate::SubstrateConfig};
+    use subxt::tx::SubmittableTransaction;
+
     use super::*;
     use crate::host_internal::extrinsic::tests::{
         OfflineChainState, bulletin_chain_state, split_v4,
@@ -557,9 +539,10 @@ mod tests {
 
     #[test]
     fn rejects_secret_of_wrong_shape() {
-        let error =
-            allowance_signer(&BulletinAllowanceKey::from_secret_bytes(vec![0xff; 64]).unwrap())
-                .unwrap_err();
-        assert!(error.contains("invalid bulletin allowance key"), "{error}");
+        let error = BulletinAllowanceKey::from_secret_bytes(vec![0xff; 64]).unwrap_err();
+        assert!(
+            error.to_string().contains("invalid bulletin allowance key"),
+            "{error}"
+        );
     }
 }

@@ -27,10 +27,10 @@ use truapi::versioned::payment::{
 };
 use truapi::{CallContext, CallError, Subscription, v01};
 
-use crate::runtime::{PAYMENTS_NOT_IMPLEMENTED, ProductRuntimeHost};
+use crate::runtime::{AccountHolder, PAYMENTS_NOT_IMPLEMENTED, ProductRuntimeHost};
 
 #[truapi::async_trait]
-impl CoinPayment for ProductRuntimeHost {
+impl<H: AccountHolder> CoinPayment for ProductRuntimeHost<H> {
     #[instrument(skip_all, fields(runtime.method = "coin_payment.create_purse"))]
     async fn create_purse(
         &self,
@@ -123,7 +123,7 @@ impl CoinPayment for ProductRuntimeHost {
 }
 
 #[truapi::async_trait]
-impl Payment for ProductRuntimeHost {
+impl<H: AccountHolder> Payment for ProductRuntimeHost<H> {
     #[instrument(skip_all, fields(runtime.method = "payment.balance_subscribe"))]
     async fn balance_subscribe(
         &self,
