@@ -52,7 +52,7 @@ A cross-product signature is confirmed by the user, and the prompt names the cal
 
 While the calling product is open, the user confirms each kind of signature once per owning product. The kinds are `sign_payload`, `create_transaction`, `sign_raw` and the statement-store product proof. After that, further signatures of that kind with any of the owning product's accounts go through without a prompt. If a game requests a proof for every message, the user is asked only once. Confirming one kind does not let another through. A product without the grant is refused before the user is asked.
 
-A transaction that names contacts prompts every time. The product refers to each contact by a handle, and the signed call it gets back contains the contact's real account. An earlier approval does not cover that. Unwatermarked `sign_raw` also prompts every time, because its bytes may be a transaction's signing payload.
+A transaction that names contacts prompts every time, as the [Contacts API](contacts-api.md#substitution-at-signing) requires. Unwatermarked `sign_raw` also prompts every time, because its bytes may be a transaction's signing payload.
 
 The grant is consulted after the session, so a caller with no session cannot learn from the refusal whether the account it named would have admitted it, nor make the device resolve a manifest to find out.
 
