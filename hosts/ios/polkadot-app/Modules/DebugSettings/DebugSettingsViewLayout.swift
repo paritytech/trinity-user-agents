@@ -94,7 +94,7 @@ final class DebugSettingsViewLayout: UIView {
     private let truApiRuntimeLabel: Label = .create { (view: Label) in
         view.typography = .bodyMedium
         view.textColor = .fgPrimary
-        view.text = "TrUAPI Runtime \(truapiHostVersion())"
+        view.text = "TrUAPI Runtime (\(truapiHostVersion()))"
     }
 
     private let truApiRuntimeRow: UIStackView = .create { stack in
