@@ -108,6 +108,7 @@ private extension DSTabBarContainer {
                     }
                 )
         }
+        .scrollBounceBehavior(.basedOnSize)
         .frame(height: isShelfOpen ? min(shelfContentHeight, availableHeight) : 0)
         .clipped()
         // The measurement arrives in a later update than the open, so without the animation here the height
