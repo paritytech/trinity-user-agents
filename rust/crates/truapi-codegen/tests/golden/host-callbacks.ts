@@ -1165,8 +1165,8 @@ export interface ChainProvider {
  *
  * The core bounds and screens the product-supplied fields it forwards. Ids,
  * names and icons on `create_chat_room`, `register_chat_bot`,
- * `post_chat_message` and `set_chat_room_footer` are NFC-normalized and rejected for control and bidi
- * characters. Message bodies are bounded and screened but pass through
+ * `post_chat_message` and `set_chat_room_footer` are NFC-normalized and rejected for control and
+ * bidi characters. Message bodies are bounded and screened but pass through
  * byte-for-byte, keeping line breaks and tabs, so a product reads back the
  * bytes it sent. Counts and byte budgets are enforced, and any URL a host may
  * fetch or open is restricted to `https` or an inline raster image and
@@ -1732,14 +1732,13 @@ export interface ProductStorage {
  * Host-owned viewfinder for QR codes and barcodes. Optional. The Swift and
  * Kotlin bridges and the JS `scanner` callbacks follow the same rules.
  *
- * - Title the viewfinder with the product id. Show `request.hint` under it as
- *   the product's words.
- * - Pass every code the camera reads to a `ScanFilter` built from `request`,
- *   and never follow a scanned link.
- * - Answer `HostScan::NotVisible` for an App or Widget that is not on
- *   screen. A Worker reaching the host already passed the core's tap check.
- * - Close the viewfinder when the core drops the future, and close any still
- *   open before opening another. A JS host is not told about a drop.
+ * - Title the viewfinder with the product id. Show `request.hint` under it as the product's words.
+ * - Pass every code the camera reads to a `ScanFilter` built from `request`, and never follow a
+ *   scanned link.
+ * - Answer `HostScan::NotVisible` for an App or Widget that is not on screen. A Worker reaching
+ *   the host already passed the core's tap check.
+ * - Close the viewfinder when the core drops the future, and close any still open before opening
+ *   another. A JS host is not told about a drop.
  */
 export interface ScannerPlatform {
   /**

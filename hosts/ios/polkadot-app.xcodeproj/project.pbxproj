@@ -28,7 +28,6 @@
 		A526CB302EBBA06D00D2987B /* PolkadotUI in Frameworks */ = {isa = PBXBuildFile; productRef = A526CB2F2EBBA06D00D2987B /* PolkadotUI */; };
 		A57CAF662F45ECB70066D722 /* StructuredConcurrency in Frameworks */ = {isa = PBXBuildFile; productRef = A57CAF652F45ECB70066D722 /* StructuredConcurrency */; };
 		A57CAF682F45ED940066D722 /* StructuredConcurrency in Frameworks */ = {isa = PBXBuildFile; productRef = A57CAF672F45ED940066D722 /* StructuredConcurrency */; };
-		C5C7E5710000000000000001 /* StructuredConcurrencyTestSupport in Frameworks */ = {isa = PBXBuildFile; productRef = C5C7E5710000000000000002 /* StructuredConcurrencyTestSupport */; };
 		A5A948F02F4CA925001E514C /* Coinage in Frameworks */ = {isa = PBXBuildFile; productRef = A5A948EF2F4CA925001E514C /* Coinage */; };
 		A5A948F22F4CA925001E5150 /* ExtrinsicServiceExt in Frameworks */ = {isa = PBXBuildFile; productRef = A5A948F12F4CA925001E5150 /* ExtrinsicServiceExt */; };
 		A5B2502E2F47481900E46E09 /* KeyDerivation in Frameworks */ = {isa = PBXBuildFile; productRef = A5B2502D2F47481900E46E09 /* KeyDerivation */; };
@@ -42,6 +41,7 @@
 		B10000022F7C000000000AAA /* Products in Frameworks */ = {isa = PBXBuildFile; productRef = B10000012F7C000000000AAA /* Products */; };
 		B10000042F7C000000000BBB /* BulletinChain in Frameworks */ = {isa = PBXBuildFile; productRef = B10000032F7C000000000BBB /* BulletinChain */; };
 		B1A2C3D42F8A000000000001 /* BlurHash in Frameworks */ = {isa = PBXBuildFile; productRef = B1A2C3D42F8A000000000002 /* BlurHash */; };
+		C5C7E5710000000000000001 /* StructuredConcurrencyTestSupport in Frameworks */ = {isa = PBXBuildFile; productRef = C5C7E5710000000000000002 /* StructuredConcurrencyTestSupport */; };
 		CC0CC0102FBA000100CCAA01 /* ChainRegistry in Frameworks */ = {isa = PBXBuildFile; productRef = CC0CC0202FBA000100CCAA02 /* ChainRegistry */; };
 		CC0CC0302FBA000100CCAA03 /* ChainRegistry in Frameworks */ = {isa = PBXBuildFile; productRef = CC0CC0402FBA000100CCAA04 /* ChainRegistry */; };
 		CC0CC0502FBA000100CCAA05 /* EventCenter in Frameworks */ = {isa = PBXBuildFile; productRef = CC0CC0602FBA000100CCAA06 /* EventCenter */; };
@@ -1058,6 +1058,8 @@
 		};
 		A539854B2E93F1A600A5BB13 /* DevCI */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReferenceAnchor = A5EDAAE62E93ECB0005DDA62 /* polkadot-appTests */;
+			baseConfigurationReferenceRelativePath = "Configs/polkadot-appTests.devci.xcconfig";
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
@@ -1294,6 +1296,8 @@
 		};
 		A5EDAAFB2E93ECB0005DDA62 /* Debug */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReferenceAnchor = A5EDAAE62E93ECB0005DDA62 /* polkadot-appTests */;
+			baseConfigurationReferenceRelativePath = "Configs/polkadot-appTests.debug.xcconfig";
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
@@ -1318,6 +1322,8 @@
 		};
 		A5EDAAFC2E93ECB0005DDA62 /* Release */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReferenceAnchor = A5EDAAE62E93ECB0005DDA62 /* polkadot-appTests */;
+			baseConfigurationReferenceRelativePath = "Configs/polkadot-appTests.release.xcconfig";
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
@@ -1444,6 +1450,8 @@
 		};
 		A6F1C0102F00A10000AA0003 /* Safetynet */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReferenceAnchor = A5EDAAE62E93ECB0005DDA62 /* polkadot-appTests */;
+			baseConfigurationReferenceRelativePath = "Configs/polkadot-appTests.safetynet.xcconfig";
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
@@ -1628,6 +1636,8 @@
 		};
 		E97BAB582F7BDE6700ED9B80 /* Nightly */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReferenceAnchor = A5EDAAE62E93ECB0005DDA62 /* polkadot-appTests */;
+			baseConfigurationReferenceRelativePath = "Configs/polkadot-appTests.nightly.xcconfig";
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
@@ -1854,10 +1864,6 @@
 			isa = XCSwiftPackageProductDependency;
 			productName = StructuredConcurrency;
 		};
-		C5C7E5710000000000000002 /* StructuredConcurrencyTestSupport */ = {
-			isa = XCSwiftPackageProductDependency;
-			productName = StructuredConcurrencyTestSupport;
-		};
 		A5A948EF2F4CA925001E514C /* Coinage */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = Coinage;
@@ -1909,6 +1915,10 @@
 		B1A2C3D42F8A000000000002 /* BlurHash */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = BlurHash;
+		};
+		C5C7E5710000000000000002 /* StructuredConcurrencyTestSupport */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = StructuredConcurrencyTestSupport;
 		};
 		CC0CC0202FBA000100CCAA02 /* ChainRegistry */ = {
 			isa = XCSwiftPackageProductDependency;

@@ -66,6 +66,9 @@ dependencies {
     implementation(libs.hilt.lifecycle.viewmodel.compose)
     implementation(libs.androidx.fragment.ktx)
     implementation(libs.androidx.webkit)
+    implementation(libs.androidx.work.runtime)
+    implementation(libs.hilt.androidx.work)
+    ksp(libs.hilt.androidx.compiler)
 
     implementation(libs.kotlinx.serialization.json)
     implementation(libs.nova.substrate.serialization)

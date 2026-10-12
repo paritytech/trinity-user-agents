@@ -160,6 +160,7 @@ dependencies {
     implementation(project(":feature:mobrules:api"))
     implementation(project(":feature:mobrules:impl"))
     implementation(project(":feature:products:impl"))
+    implementation(project(":bindings:truapi-host"))
     implementation(project(":feature:upgrade-username:impl"))
     implementation(project(":feature:calls:api"))
     implementation(project(":feature:calls:impl"))
@@ -201,7 +202,6 @@ dependencies {
     androidTestImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.test.runner)
-    androidTestImplementation(project(":bindings:truapi-host"))
     androidTestImplementation(libs.androidx.work.testing)
     androidTestImplementation(libs.hilt.android.testing)
     androidTestImplementation(libs.mockk.android) {
