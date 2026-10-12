@@ -71,7 +71,7 @@ pub trait FundingProvider {
     async fn serve_subscribe(&self, cx) -> Subscription<HostFundingServeSubscribeItem, _>;
     #[wire(id = 1)] // stored before it answers
     async fn report(&self, cx, request: HostFundingReportRequest) -> Result<(), HostFundingReportError>;
-    #[wire(id = 2)] // answers once the frame closes
+    #[wire(id = 2)] // an App route or an external https page, answers once the frame closes
     async fn present_frame(&self, cx, request: HostFundingPresentFrameRequest)
         -> Result<HostFundingPresentFrameResponse, HostFundingPresentFrameError>;
     #[wire(id = 3)]
@@ -169,11 +169,36 @@ enum FundingDeposit {
 - `Deposit` and `Details` carry what the host draws: where and what the user pays, and the provider's references. The
   latest of each is shown.
 
-### `present_frame` and `save`
+### `present_frame`
 
-`present_frame` shows a route of the provider's App, such as KYC or card entry, in a frame the host owns, and answers
-`Closed` or `Dismissed`. `save` stores opaque state for a session, such as the provider's order id, and replaces what
-was saved before. It comes back in `Assigned.saved` and is dropped when the session ends.
+The host shows provider screens in a frame it owns: an iframe in a browser host, a WebView in a native one.
+
+```rust
+struct HostFundingPresentFrameRequest { intent: String, target: FundingFrameTarget }
+
+enum FundingFrameTarget {
+    App { route: String },                              // a route of the provider's own App
+    Page { url: String, return_url: Option<String> },   // an external https page, such as an onramp's widget
+}
+
+enum FundingFrameOutcome {
+    Closed,                                             // the screen finished and closed itself
+    Dismissed,                                          // the user closed it
+    Returned { url: String },                           // the page reached `return_url`; the full URL, query included
+}
+```
+
+- A page and its return URL must be https URLs with a host and no credentials; anything else fails with `InvalidUrl`
+  before the host sees it. Any https origin is allowed, since onramps hand users on to changing sub-providers.
+- The host shows the page's origin in its own chrome, with a close button, and allows what KYC and card checks need:
+  scripts, forms, popups and the camera.
+- When the page navigates to `return_url`, the host closes the frame and hands the URL back, so the worker reads the
+  result from its query. This works the same in an iframe and a native WebView, where a page has no parent to post to.
+
+### `save`
+
+`save` stores opaque state for a session, such as the provider's order id, and replaces what was saved before. It
+comes back in `Assigned.saved` and is dropped when the session ends.
 
 ## Outcome
 
