@@ -103,6 +103,7 @@ export function makeHostCallbacks(
             createChatRoom: async () => ({ status: "New" as const }),
             registerChatBot: async () => ({ status: "New" as const }),
             postChatMessage: async () => ({ messageId: "message" }),
+            setChatRoomFooter: async () => {},
             async *subscribeChatRooms() {},
             ...overrides.chat,
           },

@@ -421,7 +421,6 @@ private extension RootInteractorSetupTests {
             RemoteAppConfig(
                 identityBackendUrl: URL(string: "https://example.com"),
                 ipfsGatewayUrl: URL(string: "https://ipfs.example.com"),
-                gameDashboardUrl: URL(string: "https://game.example.com"),
                 dotNsResolver: "resolver.example.com",
                 dotNsNameRegistry: nil,
                 coinageInstanceId: 1,

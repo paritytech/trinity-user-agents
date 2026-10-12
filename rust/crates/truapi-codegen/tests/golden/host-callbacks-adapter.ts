@@ -13,6 +13,7 @@ import {
   HostChatPostMessageResponse,
   HostChatRegisterBotRequest,
   HostChatRegisterBotResponse,
+  HostChatSetRoomFooterRequest,
   HostDevicePermissionRequest,
   HostFeatureSupportedRequest,
   HostFeatureSupportedResponse,
@@ -66,6 +67,7 @@ export interface RawCallbacks {
     product: Uint8Array,
     request: Uint8Array,
   ): Promise<Uint8Array>;
+  setChatRoomFooter?(product: Uint8Array, request: Uint8Array): Promise<void>;
   subscribeChatRooms?(
     product: Uint8Array,
     sendItem: (item?: Uint8Array) => void,
@@ -162,6 +164,11 @@ export function createWasmRawCallbacks(
                 ProductContext.dec(product),
                 HostChatPostMessageRequest.dec(request),
               ),
+            ),
+          setChatRoomFooter: async (product, request) =>
+            await chat.setChatRoomFooter(
+              ProductContext.dec(product),
+              HostChatSetRoomFooterRequest.dec(request),
             ),
           subscribeChatRooms: (product, sendItem, sendError) =>
             driveResultStream(
