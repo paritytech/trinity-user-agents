@@ -14,17 +14,15 @@ final class TabBarChromeSurfaceView: UIView {
     private static let restingBottomOffset = -DSTabBarStyle.bottomGap
 
     /// The distance the chrome is raised by the keyboard. It shrinks the room left above the bar.
-    var keyboardLift: CGFloat = 0 {
-        didSet {
-            guard keyboardLift != oldValue else {
-                return
-            }
-            setNeedsLayout()
-        }
-    }
+    var keyboardLift: CGFloat = 0
 
     var availablePanelHeight: CGFloat {
-        max(0, bounds.height - safeAreaInsets.top - DSTabBarStyle.restingHeight - keyboardLift)
+        max(0, restingPanelHeight - keyboardLift)
+    }
+
+    /// The room above the bar at rest. The bar host is sized from this, never from the lifted room.
+    private var restingPanelHeight: CGFloat {
+        max(0, bounds.height - safeAreaInsets.top - DSTabBarStyle.restingHeight)
     }
 
     override init(frame: CGRect) {
@@ -77,10 +75,11 @@ private extension TabBarChromeSurfaceView {
         make.bottom.equalToSuperview().offset(Self.restingBottomOffset)
     }
 
-    /// Only a change in the available height reaches the constraint. A panel opening leaves it alone,
-    /// so the hosted view's coordinate space stays still during the animation.
+    /// Only a change in the resting room reaches the constraint. A panel opening or the keyboard lifting leaves it
+    /// alone: resizing the host mid-animation lays its SwiftUI content out at the final size at once, so the bar
+    /// would snap ahead of the transform that lifts it.
     func refreshBarHostHeight() {
-        let height = DSTabBarStyle.height + max(0, availablePanelHeight)
+        let height = DSTabBarStyle.height + restingPanelHeight
         guard height != barHostHeight else {
             return
         }

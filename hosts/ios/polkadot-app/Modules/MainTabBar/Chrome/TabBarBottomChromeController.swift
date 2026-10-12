@@ -374,15 +374,17 @@ private extension TabBarBottomChromeController {
         )
     }
 
-    /// While the scan panel is open, the chrome moves up so the search row stays above the keyboard, keeping
-    /// the bar's resting gap. Any other keyboard, or a closed panel, returns the chrome to rest.
+    /// While the scan panel is open, the chrome moves up until the keyboard covers the lower half of the bar
+    /// row, keeping the panel above it clear. Any other keyboard, or a closed panel, returns the chrome to rest.
     @objc func handleKeyboardFrameChange(_ notification: Notification) {
         guard let keyboardFrame = notification.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect else {
             return
         }
         let keyboardTop = view.convert(keyboardFrame, from: nil).minY
         let isScanPanelOpen = panelController.open == .content(.scan)
-        let lift = isScanPanelOpen ? max(0, view.bounds.maxY - keyboardTop) : 0
+        let keyboardOverlap = max(0, view.bounds.maxY - keyboardTop)
+        let barMidlineOffset = DSTabBarStyle.bottomGap + DSTabBarStyle.height / 2
+        let lift = isScanPanelOpen ? max(0, keyboardOverlap - barMidlineOffset) : 0
         DSTabBarStyle.animateCenterChange(in: view) {
             self.foldController.setKeyboardLift(lift)
             self.chromeSurface.keyboardLift = lift
