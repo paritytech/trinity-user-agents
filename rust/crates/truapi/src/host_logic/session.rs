@@ -66,7 +66,16 @@ fn non_empty_username(value: &Option<String>) -> bool {
 }
 
 /// SSO session material negotiated by the pairing host with the signing host.
-#[derive(derive_more::Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[derive(
+    derive_more::Debug,
+    Clone,
+    PartialEq,
+    Eq,
+    Encode,
+    Decode,
+    zeroize::Zeroize,
+    zeroize::ZeroizeOnDrop,
+)]
 pub struct SsoSessionInfo {
     /// Pairing host's own 64-byte expanded sr25519 statement-store secret.
     #[debug("\"<redacted>\"")]
