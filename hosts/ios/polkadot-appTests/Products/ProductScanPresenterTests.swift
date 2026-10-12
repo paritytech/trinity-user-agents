@@ -59,11 +59,12 @@ struct ProductScanPresenterTests {
         #expect(scanner.answers.scans == [.cameraUnavailable])
     }
 
-    @Test("A scanner closed without a code answers Dismissed")
+    @Test("A scanner closed without a code answers Dismissed, without waiting for a message to fade")
     func closedScannerAnswersDismissed() async throws {
         let answers = Answers()
         do {
             let scanner = try await OpenScanner(answers: answers)
+            scanner.presenter.handle(codes: [poster])
             scanner.view.dismiss(animated: false)
         }
 
