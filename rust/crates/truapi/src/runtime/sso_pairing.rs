@@ -55,17 +55,7 @@ const PAIRING_QUERY_TIMEOUT_TICKS: u8 = 15;
 #[cfg(test)]
 const PAIRING_QUERY_TIMEOUT_TICKS: u8 = 10;
 
-/// Longest a pairing attempt may spend reaching a wallet handshake: the stored
-/// identity reads, the statement-store connect, the topic subscribe, and the
-/// wait for a decryptable answer. Resolving the session and persisting it carry
-/// their own budgets and are not counted here.
-///
-/// A peer that answers on a different SSO envelope publishes statements this
-/// host cannot open, which is indistinguishable from a peer that has not
-/// answered yet: both are silence on the topic. Without a bound the flow waits
-/// on that silence forever. Generous enough to outlast a QR scan and an
-/// on-device confirmation, so only a pairing that was never going to complete
-/// reaches it.
+// Bound silent handshakes, including storage and RPC setup before the first answer.
 #[cfg(not(test))]
 const PAIRING_DEADLINE: Duration = Duration::from_secs(300);
 #[cfg(test)]
@@ -87,9 +77,7 @@ pub enum SsoPairingOutcome {
 	Success(Box<SessionInfo>),
 }
 
-/// Resets a `Pairing` state left behind by a dropped login future (e.g. the
-/// transport dropping in-flight calls on connection close). A no-op once the
-/// flow reached any terminal transition or a newer pairing took over.
+// Dropped requests must not leave their pairing UI active.
 struct AbandonedPairingGuard {
 	auth_state: AuthStateMachine,
 	epoch: u64,
