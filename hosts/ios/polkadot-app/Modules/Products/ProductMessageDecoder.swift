@@ -10,17 +10,20 @@ final class ProductMessageDecoder: ChatMessageCustomDecoding {
 
     private let runtime: ChatRuntimeProtocol
     private let tokenResolver: any WidgetDesignTokenResolving
+    private let description: String?
     private let logger: LoggerProtocol
     private var viewModels: [String: ProductWidgetViewModel] = [:]
 
     init(
         runtime: ChatRuntimeProtocol,
         tokenResolver: any WidgetDesignTokenResolving,
+        description: String?,
         resolveImage: WidgetImageResolver,
         logger: LoggerProtocol
     ) {
         self.runtime = runtime
         self.tokenResolver = tokenResolver
+        self.description = description
         self.resolveImage = resolveImage
         self.logger = logger
     }
@@ -57,6 +60,6 @@ final class ProductMessageDecoder: ChatMessageCustomDecoding {
     }
 
     func previewString(data _: Data) -> String {
-        String(localized: .Common.productWidgetMessage)
+        description ?? String(localized: .Common.productWidgetMessage)
     }
 }
