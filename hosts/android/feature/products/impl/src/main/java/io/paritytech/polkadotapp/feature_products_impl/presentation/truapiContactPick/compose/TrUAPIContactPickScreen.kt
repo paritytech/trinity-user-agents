@@ -10,6 +10,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.paritytech.polkadotapp.common.presentation.loading.onLoaded
 import io.paritytech.polkadotapp.design.components.bottomsheet.NovaBottomSheetSurface
@@ -27,6 +29,7 @@ import io.paritytech.polkadotapp.common.R as RCommon
 @Composable
 fun TrUAPIContactPickScreen(contract: TrUAPIContactPickContract) {
     val state by contract.state.collectAsStateWithLifecycle()
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { contract.onShown() }
 
     state.onLoaded { data ->
         TrUAPIContactPickScreenInternal(

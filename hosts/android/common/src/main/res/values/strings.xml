@@ -480,6 +480,8 @@ I’m attaching PDF with more information and details regarding the Tattoo Stenc
 
     <string name="coinage_recovery_worker_notification_title">Confirming payments</string>
     <string name="coinage_recovery_worker_notification_message">Waiting for your recent payments to settle on chain</string>
+    <string name="core_recovery_worker_notification_title">Confirming transactions</string>
+    <string name="core_recovery_worker_notification_message">Waiting for your recent transactions to settle on chain</string>
 
     <string name="revoke_payments_toolbar_title">Revoke Payments</string>
     <string name="revoke_payments_title">Revoke pending payments?</string>
@@ -679,7 +681,7 @@ I’m attaching PDF with more information and details regarding the Tattoo Stenc
     <string name="debug_menu_clear_jwt_token_stored">Clear JWT token (stored)</string>
     <string name="debug_menu_simulate_game_results">Simulate game-results WebView</string>
     <string name="debug_menu_coinage_debug_widgets">Coinage debug overlays</string>
-    <string name="debug_menu_truapi_runtime">TrUAPI runtime (products)</string>
+    <string name="debug_menu_truapi_runtime">TrUAPI Runtime (%1$s)</string>
     <string name="debug_menu_runtime_restart_title">Restart required</string>
     <string name="debug_menu_runtime_restart_message">The product runtime changed. Restart the app to apply it — a running product keeps the runtime it started with, and the two do not share stored data.</string>
     <string name="debug_menu_runtime_restart_confirm">Restart</string>
@@ -731,16 +733,6 @@ I’m attaching PDF with more information and details regarding the Tattoo Stenc
         <item quantity="other">%d Designs</item>
     </plurals>
 
-    <string name="identity_details_description_text">Use your ID to start a chat or\nreceive digital dollars.</string>
-    <string name="identity_details_share_button_label">Share ID</string>
-    <string name="identity_details_copy_username_description">Copy username</string>
-    <string name="identity_card_top_bar_title">ID card</string>
-    <string name="identity_card_rank_label">Rank</string>
-    <string name="identity_card_rank_basic">Basic</string>
-    <string name="identity_card_rank_member">Member</string>
-    <string name="pocket_id_share_subtitle">Show this QR to someone who wants to add you as a contact or send you %1$s</string>
-    <string name="pocket_id_share_scan_title">Scan with a camera</string>
-    <string name="pocket_id_share_message">Hey! I’m using the Polkadot app for chat. It’s private and easy to use. Download it at %1$s and add me – my username is %2$s.</string>
 
     <string name="send_payment_toolbar_title">Send Payment</string>
     <string name="send_payment_search_placeholder">Type username or wallet address</string>
@@ -1538,7 +1530,6 @@ I’m attaching PDF with more information and details regarding the Tattoo Stenc
     <string name="pocket_deeplink_unknown_card">This product doesn\'t publish that card.</string>
     <string name="pocket_deeplink_no_pocket">This product has no Pocket cards.</string>
     <string name="pocket_deeplink_malformed">That Pocket link is incomplete.</string>
-    <string name="pocket_error_share_id_failed">Couldn\'t share your ID. Try again.</string>
     <string name="pocket_coinage_balance_title">Total</string>
     <string name="pocket_coinage_ready">Ready</string>
     <string name="pocket_coinage_clearing">Clearing</string>
@@ -1633,6 +1624,8 @@ I’m attaching PDF with more information and details regarding the Tattoo Stenc
     <string name="truapi_contact_pick_body">%1$s learns only who you choose, and never your contact list.</string>
     <string name="truapi_contact_pick_unnamed">Unnamed contact</string>
     <string name="truapi_contact_pick_dismiss">Not now</string>
+    <string name="truapi_product_scan_title">Scan for %1$s</string>
+    <string name="truapi_product_scan_not_for_product">This code isn\'t for %1$s</string>
     <string name="debug_report_title">Report app issue</string>
     <string name="debug_report_what_happened">What happened?</string>
     <string name="debug_report_placeholder">Tell us about the issue you encountered</string>
