@@ -30,7 +30,7 @@ public struct DSTabBarCenterControl<Content: View>: View {
     public var body: some View {
         GeometryReader { proxy in
             let size = frameSize(availableWidth: proxy.size.width)
-            panel(in: size)
+            panel(in: size, availableWidth: proxy.size.width)
                 .offset(
                     x: (proxy.size.width - size.width) / 2,
                     y: proxy.size.height - size.height - seatInset
@@ -102,15 +102,18 @@ private extension DSTabBarCenterControl {
 // MARK: - Body
 
 private extension DSTabBarCenterControl {
-    func panel(in size: CGSize) -> some View {
-        ZStack {
+    func panel(in size: CGSize, availableWidth: CGFloat) -> some View {
+        let openWidth = DSTabBarStyle.centerPanelWidth(inRowOfWidth: availableWidth)
+        return ZStack {
             if progress > 0 {
+                // Fixed at the open size so it is laid out once; clipShape crops it as the panel morphs.
                 content
+                    .frame(width: openWidth, height: contentHeight)
                     .animation(reduceMotion ? .easeInOut(duration: 0.2) : nil) { $0.opacity(Double(reveal)) }
             }
         }
-        .padding(.top, lerp(0, DSTabBarStyle.centerGrabberHeight))
-        .padding(.bottom, lerp(0, lobeRadius))
+        .padding(.top, DSTabBarStyle.centerGrabberHeight)
+        .padding(.bottom, lobeRadius)
         .foregroundStyle(Color.fgPrimary)
         .frame(width: size.width, height: size.height, alignment: progress > 0 ? .top : .center)
         // After the frame, so each lands against the panel rather than against

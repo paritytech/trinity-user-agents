@@ -17,6 +17,9 @@ final class TabBarBottomChromeController: UIViewController {
     /// The last panel that reached `applyCommittedPanel`. By then `TabBarPanelController.open` is already the new
     /// panel.
     private var committedPanel: TabBarPanelKind?
+    /// The centre panel's content, built once per open. SwiftUI may build the content more than once while
+    /// measuring, and the capture session must be built only once.
+    private var centerPanelContent: UIViewController?
     /// The first settled layout places the bar. Animating it would spring the bar in from its unplaced frame at launch.
     private var hasPerformedInitialLayout = false
 
@@ -246,6 +249,7 @@ private extension TabBarBottomChromeController {
 
         if committedPanel == .content(.scan), kind != .content(.scan) {
             onCenterPanelWillClose?()
+            centerPanelContent = nil
         }
         committedPanel = kind
 
@@ -407,7 +411,10 @@ private extension TabBarBottomChromeController {
             self?.handleSlotTap(itemIndex: itemIndex)
         }
         barModel.makeCenterContent = { [weak self] in
-            self?.makeCenterContent?()
+            if self?.centerPanelContent == nil {
+                self?.centerPanelContent = self?.makeCenterContent?()
+            }
+            return self?.centerPanelContent
         }
         barModel.onCenterPanelOpenChanged = { [weak self] isOpen in
             self?.centerPanelOpenChanged(isOpen)
