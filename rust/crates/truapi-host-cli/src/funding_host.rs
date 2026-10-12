@@ -32,10 +32,10 @@ use truapi::SigningHostRuntime;
 use truapi::host_logic::funding::FundingStage;
 use truapi::host_logic::funding_providers::FundingProviderEntry;
 use truapi::latest::{
-    FundingDirection, FundingFailure, FundingFrameOutcome, FundingQuoteAsk, FundingRail,
-    GenericError, HostFundingStatusSubscribeItem, HostPaymentError, HostPaymentRequest,
-    HostPaymentStatusSubscribeError, HostPaymentStatusSubscribeItem, HostPaymentTopUpError,
-    HostPaymentTopUpRequest, HostPaymentTopUpStatusSubscribeError,
+    FundingDirection, FundingFailure, FundingFrameOutcome, FundingFrameTarget, FundingQuoteAsk,
+    FundingRail, GenericError, HostFundingStatusSubscribeItem, HostPaymentError,
+    HostPaymentRequest, HostPaymentStatusSubscribeError, HostPaymentStatusSubscribeItem,
+    HostPaymentTopUpError, HostPaymentTopUpRequest, HostPaymentTopUpStatusSubscribeError,
     HostPaymentTopUpStatusSubscribeItem,
 };
 use truapi::platform::{
@@ -344,15 +344,25 @@ impl FundingPlatform for CliFundingHost {
         &self,
         provider: &ProductContext,
         intent: String,
-        route: String,
+        target: FundingFrameTarget,
     ) -> Result<FundingFrameOutcome, GenericError> {
+        let (shown, outcome) = match target {
+            FundingFrameTarget::App { route } => (route, FundingFrameOutcome::Closed),
+            FundingFrameTarget::Page { url, return_url } => {
+                let outcome = match return_url {
+                    Some(url) => FundingFrameOutcome::Returned { url },
+                    None => FundingFrameOutcome::Closed,
+                };
+                (url, outcome)
+            }
+        };
         self.record(serde_json::json!({
             "kind": "frame",
             "intent": intent,
             "provider": provider.product_id,
-            "route": route,
+            "route": shown,
         }));
-        Ok(FundingFrameOutcome::Closed)
+        Ok(outcome)
     }
 
     fn funding_session_changed(&self, intent: String, status: HostFundingStatusSubscribeItem) {
