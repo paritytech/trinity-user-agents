@@ -6,13 +6,13 @@
 //! statement-store RPC.
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Mutex;
+use std::time::Duration;
 
 use async_trait::async_trait;
 use futures::stream::BoxStream;
 use futures_util::{SinkExt, StreamExt};
-use tokio::sync::{broadcast, mpsc};
+use tokio::sync::{broadcast, mpsc, watch};
 use tokio_stream::wrappers::BroadcastStream;
 use tokio_tungstenite::connect_async;
 use tokio_tungstenite::tungstenite::Message;
@@ -101,8 +101,19 @@ impl ChainProvider for WsChainProvider {
     }
 }
 
-/// One WebSocket JSON-RPC connection: outbound requests are queued to a writer
-/// task, inbound frames are broadcast to every `responses()` stream.
+/// How often a quiet connection is pinged, and how long the reader waits for any frame, a
+/// Pong included, before treating the socket as half-open. Closing it ends the response
+/// streams, which is what the runtime reconnects on.
+///
+/// The timeout spans three pings, so one lost Pong does not tear down a healthy connection.
+/// No Ping goes out while a frame is being sent, so one frame must also transfer within it.
+const KEEPALIVE_INTERVAL: Duration = Duration::from_secs(15);
+const KEEPALIVE_TIMEOUT: Duration = Duration::from_secs(45);
+
+/// One WebSocket JSON-RPC connection: outbound requests and keepalive pings are
+/// sent by a writer task, and inbound frames are broadcast to every
+/// `responses()` stream by a reader task that closes the connection when the
+/// socket falls silent.
 pub struct WsJsonRpcConnection {
     outbound: mpsc::UnboundedSender<Message>,
     inbound: broadcast::Sender<String>,
@@ -110,46 +121,95 @@ pub struct WsJsonRpcConnection {
     /// stream takes it so an immediate RPC response cannot race subscription
     /// setup and disappear while the broadcast channel has no receivers.
     initial_inbound: Mutex<Option<broadcast::Receiver<String>>>,
-    closed: Arc<AtomicBool>,
+    /// True once the socket is gone: set by the reader on a close frame, a read
+    /// error or silence, by the writer on a failed send, or by `close`. Every
+    /// response stream ends on it, and `send` drops requests after it.
+    closed: watch::Sender<bool>,
+}
+
+/// Resolves once `closed` is true, or once its sender is gone.
+async fn until_closed(mut closed: watch::Receiver<bool>) {
+    let _ = closed.wait_for(|&is_closed| is_closed).await;
 }
 
 impl WsJsonRpcConnection {
     async fn connect(url: &str) -> Result<Self, String> {
+        Self::connect_with_keepalive(url, KEEPALIVE_INTERVAL, KEEPALIVE_TIMEOUT).await
+    }
+
+    async fn connect_with_keepalive(
+        url: &str,
+        keepalive_interval: Duration,
+        keepalive_timeout: Duration,
+    ) -> Result<Self, String> {
         let (stream, _response) = connect_async(url)
             .await
             .map_err(|err| format!("statement-store websocket connect failed: {err}"))?;
         let (mut write, mut read) = stream.split();
         let (outbound_tx, mut outbound_rx) = mpsc::unbounded_channel::<Message>();
         let (inbound_tx, initial_inbound) = broadcast::channel(INBOUND_CHANNEL_CAPACITY);
-        let closed = Arc::new(AtomicBool::new(false));
+        let closed = watch::Sender::new(false);
 
+        let writer_closed = closed.clone();
         tokio::spawn(async move {
-            while let Some(message) = outbound_rx.recv().await {
-                if write.send(message).await.is_err() {
+            let mut ticker = tokio::time::interval_at(
+                tokio::time::Instant::now() + keepalive_interval,
+                keepalive_interval,
+            );
+            ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+            loop {
+                let message = tokio::select! {
+                    message = outbound_rx.recv() => match message {
+                        Some(message) => message,
+                        None => break,
+                    },
+                    _ = ticker.tick() => Message::Ping(Vec::new()),
+                    () = until_closed(writer_closed.subscribe()) => break,
+                };
+                let sent = tokio::select! {
+                    sent = write.send(message) => sent.is_ok(),
+                    () = until_closed(writer_closed.subscribe()) => false,
+                };
+                if !sent {
                     break;
                 }
             }
-            let _ = write.close().await;
+            // A failed send means the socket is dead, even if the reader has not noticed yet.
+            writer_closed.send_replace(true);
+            let _ = tokio::time::timeout(keepalive_timeout, write.close()).await;
         });
 
         let reader_inbound = inbound_tx.clone();
         let reader_closed = closed.clone();
+        let reader_url = url.to_string();
         tokio::spawn(async move {
-            while let Some(message) = read.next().await {
+            loop {
+                let next = tokio::time::timeout(keepalive_timeout, read.next());
+                let message = tokio::select! {
+                    message = next => match message {
+                        Ok(message) => message,
+                        Err(_elapsed) => {
+                            let url = &reader_url;
+                            warn!(%url, "chain socket silent; closing it to reconnect");
+                            break;
+                        }
+                    },
+                    () = until_closed(reader_closed.subscribe()) => break,
+                };
                 match message {
-                    Ok(Message::Text(text)) => {
+                    Some(Ok(Message::Text(text))) => {
                         let _ = reader_inbound.send(text.to_string());
                     }
-                    Ok(Message::Binary(bytes)) => {
+                    Some(Ok(Message::Binary(bytes))) => {
                         if let Ok(text) = String::from_utf8(bytes.to_vec()) {
                             let _ = reader_inbound.send(text);
                         }
                     }
-                    Ok(Message::Close(_)) | Err(_) => break,
-                    Ok(_) => {}
+                    Some(Ok(Message::Close(_))) | Some(Err(_)) | None => break,
+                    Some(Ok(_)) => {}
                 }
             }
-            reader_closed.store(true, Ordering::Release);
+            reader_closed.send_replace(true);
         });
 
         Ok(Self {
@@ -159,11 +219,25 @@ impl WsJsonRpcConnection {
             closed,
         })
     }
+
+    #[cfg(test)]
+    fn for_test(
+        outbound: mpsc::UnboundedSender<Message>,
+        inbound: broadcast::Sender<String>,
+        initial_inbound: broadcast::Receiver<String>,
+    ) -> Self {
+        Self {
+            outbound,
+            inbound,
+            initial_inbound: Mutex::new(Some(initial_inbound)),
+            closed: watch::Sender::new(false),
+        }
+    }
 }
 
 impl JsonRpcConnection for WsJsonRpcConnection {
     fn send(&self, request: String) {
-        if self.closed.load(Ordering::Acquire) {
+        if *self.closed.borrow() {
             return;
         }
         let _ = self.outbound.send(Message::Text(request));
@@ -176,6 +250,7 @@ impl JsonRpcConnection for WsJsonRpcConnection {
             .expect("initial chain response receiver mutex poisoned")
             .take()
             .unwrap_or_else(|| self.inbound.subscribe());
+        let closed = self.closed.subscribe();
         BroadcastStream::new(receiver)
             .filter_map(|item| async move {
                 match item {
@@ -188,11 +263,12 @@ impl JsonRpcConnection for WsJsonRpcConnection {
                     }
                 }
             })
+            .take_until(until_closed(closed))
             .boxed()
     }
 
     fn close(&self) {
-        self.closed.store(true, Ordering::Release);
+        self.closed.send_replace(true);
     }
 }
 
@@ -207,12 +283,7 @@ mod tests {
     fn first_response_stream_receives_frames_buffered_during_setup() {
         let (outbound, _outbound_rx) = mpsc::unbounded_channel();
         let (inbound, initial_inbound) = broadcast::channel(INBOUND_CHANNEL_CAPACITY);
-        let connection = WsJsonRpcConnection {
-            outbound,
-            inbound: inbound.clone(),
-            initial_inbound: Mutex::new(Some(initial_inbound)),
-            closed: Arc::new(AtomicBool::new(false)),
-        };
+        let connection = WsJsonRpcConnection::for_test(outbound, inbound.clone(), initial_inbound);
 
         inbound
             .send(r#"{"jsonrpc":"2.0","id":1,"result":"ready"}"#.to_string())
@@ -221,6 +292,82 @@ mod tests {
         let mut responses = connection.responses();
         let frame = futures::executor::block_on(responses.next()).expect("buffered response");
         assert_eq!(frame, r#"{"jsonrpc":"2.0","id":1,"result":"ready"}"#);
+    }
+
+    /// The runtime reconnects only once a connection's response stream ends, so closing the
+    /// connection must end every stream.
+    #[tokio::test]
+    async fn response_streams_end_once_the_connection_is_closed() {
+        let (outbound, mut outbound_rx) = mpsc::unbounded_channel();
+        let (inbound, initial_inbound) = broadcast::channel(INBOUND_CHANNEL_CAPACITY);
+        let connection = WsJsonRpcConnection::for_test(outbound, inbound, initial_inbound);
+        let mut before = connection.responses();
+        connection.close();
+        let mut after = connection.responses();
+        let ended = |stream| tokio::time::timeout(Duration::from_secs(5), StreamExt::next(stream));
+        assert_eq!(
+            ended(&mut before)
+                .await
+                .expect("a stream from before the close ends"),
+            None
+        );
+        assert_eq!(
+            ended(&mut after)
+                .await
+                .expect("a stream from after the close ends"),
+            None
+        );
+        connection.send("dropped after close".to_string());
+        assert!(outbound_rx.try_recv().is_err());
+    }
+
+    /// A peer that answers pings but has nothing to say must stay connected: closing it would
+    /// drop every subscription on the socket each timeout.
+    #[tokio::test]
+    async fn a_quiet_socket_that_answers_pings_stays_open() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let (socket, _) = listener.accept().await.unwrap();
+            let mut peer = tokio_tungstenite::accept_async(socket).await.unwrap();
+            // Reading is what makes tungstenite answer each Ping.
+            while peer.next().await.is_some() {}
+        });
+        let connection = WsJsonRpcConnection::connect_with_keepalive(
+            &format!("ws://{address}"),
+            Duration::from_millis(20),
+            Duration::from_millis(500),
+        )
+        .await
+        .unwrap();
+        let mut responses = connection.responses();
+        let open = tokio::time::timeout(Duration::from_millis(1500), responses.next()).await;
+        assert!(open.is_err(), "a peer that answers pings was closed");
+        assert!(!*connection.closed.borrow());
+    }
+
+    /// A peer that holds the socket open but never reads it (so never pongs), as a load
+    /// balancer or a restarted node leaves behind, must be closed by the keepalive.
+    #[tokio::test]
+    async fn a_silent_socket_is_closed_by_the_keepalive() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let (socket, _) = listener.accept().await.unwrap();
+            let _held = tokio_tungstenite::accept_async(socket).await.unwrap();
+            tokio::time::sleep(Duration::from_secs(60)).await;
+        });
+        let connection = WsJsonRpcConnection::connect_with_keepalive(
+            &format!("ws://{address}"),
+            Duration::from_millis(50),
+            Duration::from_millis(200),
+        )
+        .await
+        .unwrap();
+        let mut responses = connection.responses();
+        let ended = tokio::time::timeout(Duration::from_secs(5), responses.next()).await;
+        assert_eq!(ended.expect("the keepalive closes a silent socket"), None);
+        assert!(*connection.closed.borrow());
     }
 
     /// Every role the host says it serves has to route to that role's own chain
