@@ -85,6 +85,11 @@ export interface AccountAliasReview {
 }
 
 /**
+ * Chain resource an allowance key grants access to.
+ */
+export type AllowanceResource = "Bulletin" | "StatementStore";
+
+/**
  * Auth/session lifecycle state the core projects for host UI. The core owns
  * every transition and emits states in order; hosts render the current state
  * and never derive auth UI from any other signal.
@@ -205,7 +210,28 @@ export type CoreStorageKey =
    * core honours it for a bounded lifetime, which is what makes a revoked
    * trust grant eventually take effect.
    */
-  | { tag: "ProductManifest"; value: { productId: string } };
+  | { tag: "ProductManifest"; value: { productId: string } }
+  /**
+   * One wallet's retained allowance for a product and chain resource.
+   */
+  | {
+      tag: "NativeAllowanceKey";
+      value: {
+        rootPublicKey: Uint8Array;
+        productId: string;
+        resource: AllowanceResource;
+      };
+    };
+
+/**
+ * Stored key inventory, independent of value decoding or decryption.
+ */
+export interface CoreStorageKeys {
+  /**
+   * Opaque keys, including keys unknown to this core version.
+   */
+  encodedKeys: Array<Uint8Array>;
+}
 
 /**
  * Review shown before a product creates a ring-VRF proof (RFC 0004).
@@ -727,6 +753,13 @@ export const AccountAliasReview: S.Codec<AccountAliasReview> = S.lazy(
 );
 
 /**
+ * Chain resource an allowance key grants access to.
+ */
+export const AllowanceResource: S.Codec<AllowanceResource> = S.lazy(
+  (): S.Codec<AllowanceResource> => S.Status("Bulletin", "StatementStore"),
+);
+
+/**
  * Auth/session lifecycle state the core projects for host UI. The core owns
  * every transition and emits states in order; hosts render the current state
  * and never derive auth UI from any other signal.
@@ -793,7 +826,24 @@ export const CoreStorageKey: S.Codec<CoreStorageKey> = S.lazy(
       ProductManifest: S.Struct({ productId: S.str }) as S.Codec<{
         productId: string;
       }>,
+      NativeAllowanceKey: S.Struct({
+        rootPublicKey: S.Bytes(32),
+        productId: S.str,
+        resource: AllowanceResource,
+      }) as S.Codec<{
+        rootPublicKey: Uint8Array;
+        productId: string;
+        resource: AllowanceResource;
+      }>,
     }),
+);
+
+/**
+ * Stored key inventory, independent of value decoding or decryption.
+ */
+export const CoreStorageKeys: S.Codec<CoreStorageKeys> = S.lazy(
+  (): S.Codec<CoreStorageKeys> =>
+    S.Struct({ encodedKeys: S.Vector(S.Bytes()) }) as S.Codec<CoreStorageKeys>,
 );
 
 /**
@@ -1411,6 +1461,10 @@ export interface CoreAdmin {
 /**
  * Host-private persistence for core-owned state.
  *
+ * Secret slots require protected storage. Only absence returns ``undefined``; failures
+ * must propagate. Successful secret writes and clears are durable and ordered
+ * after earlier writes, including writes whose awaiting task was cancelled.
+ *
  * Clearing product-indexed slots is the host's job. The core drops the ones
  * it is holding when a session ends, but a product it never opened this run
  * has no entry to drop, so those slots outlive the disconnect. A host that
@@ -1424,6 +1478,11 @@ export interface CoreAdmin {
  * makes the sweep a prefix delete rather than a scan.
  */
 export interface CoreStorage {
+  /**
+   * Enumerate encoded keys without reading values, including undecodable records.
+   */
+  coreStorageKeys?(): Promise<CoreStorageKeys>;
+
   /**
    * Read a core-owned value by typed slot.
    */

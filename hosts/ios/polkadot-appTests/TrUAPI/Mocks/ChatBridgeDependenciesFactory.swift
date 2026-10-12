@@ -1,3 +1,4 @@
+import Keystore_iOS
 import ChainRegistry
 import Foundation
 import Products
@@ -27,7 +28,7 @@ func makeChatBridgeDependencies(
             productId: productId,
             defaults: defaults
         ),
-        coreStorage: TrUAPILocalStorage.createCoreLocalStorage(defaults: defaults),
+        coreStorage: CoreStorageBackend.create(defaults: defaults, keychain: InMemoryKeychain()),
         confirmationPresenter: MockConfirmationPresenter(),
         preimageCache: TrUAPIPreimageCache { _ in nil },
         hostProvider: InertHostProvider(),

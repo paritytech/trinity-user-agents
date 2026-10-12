@@ -1,5 +1,8 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.truapi
 
+import io.mockk.every
+import io.mockk.mockk
+import io.paritytech.polkadotapp.common.data.storage.preferences.Preferences
 import io.paritytech.polkadotapp.common.data.storage.preferences.encrypted.EncryptedPreferences
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flowOf
@@ -14,6 +17,7 @@ import uniffi.truapi.HostLocalStorageReadException
 
 class EncryptedTrUAPIStorageTest {
     private val prefs = FakeEncryptedPreferences()
+    private val backing = mockk<Preferences> { every { edit().commit() } returns true }
 
     @Test
     fun `an empty value is a value, not a miss`() = runTest {
@@ -98,16 +102,20 @@ class EncryptedTrUAPIStorageTest {
 
     @Test
     fun `core storage is shared across products by design`() = runTest {
-        val first = EncryptedHostCoreStorage(prefs)
+        val first = EncryptedHostCoreStorage(prefs, backing)
         first.write(byteArrayOf(1), byteArrayOf(42))
 
-        assertArrayEquals(byteArrayOf(42), EncryptedHostCoreStorage(prefs).read(byteArrayOf(1)))
+        assertArrayEquals(byteArrayOf(42), EncryptedHostCoreStorage(prefs, backing).read(byteArrayOf(1)))
     }
 }
 
 private class FakeEncryptedPreferences(
     private val dropWrites: Boolean = false,
 ) : EncryptedPreferences {
+    override fun putEncryptedStringCommitted(field: String, value: String) = putEncryptedString(field, value)
+    override fun getDecryptedStringOrThrow(field: String): String? = getDecryptedString(field)
+    override fun removeKeyCommitted(field: String) = removeKey(field)
+
     private val values = mutableMapOf<String, String>()
 
     /** Mirrors EncryptionUtil storing "" when it cannot encrypt. */

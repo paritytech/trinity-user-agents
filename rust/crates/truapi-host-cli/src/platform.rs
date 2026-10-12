@@ -543,6 +543,26 @@ impl ProductOperations for CliPlatform {
 
 #[async_trait]
 impl CoreStorage for CliPlatform {
+    async fn core_storage_keys(
+        &self,
+    ) -> Result<truapi::platform::CoreStorageKeys, api::GenericError> {
+        let mut keys: Vec<_> = self
+            .core_storage
+            .lock()
+            .expect("core storage mutex poisoned")
+            .keys()
+            .cloned()
+            .collect();
+        keys.extend(
+            self.device_storage
+                .lock()
+                .expect("device storage mutex poisoned")
+                .keys()
+                .cloned(),
+        );
+        Ok(truapi::platform::CoreStorageKeys { encoded_keys: keys })
+    }
+
     async fn read_core_storage(
         &self,
         key: CoreStorageKey,

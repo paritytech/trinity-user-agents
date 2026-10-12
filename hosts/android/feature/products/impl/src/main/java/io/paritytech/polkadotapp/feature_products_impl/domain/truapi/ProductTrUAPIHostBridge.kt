@@ -75,6 +75,7 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
     private val hostApiInteractor: HostApiInteractor,
     @param:TrUAPIChainHttpClient private val chainHttpClient: OkHttpClient,
     private val encryptedPreferences: EncryptedPreferences,
+    private val coreStorage: EncryptedHostCoreStorage,
     private val confirmationLauncher: TrUAPIConfirmationLauncher,
     private val appLifecycleObserver: AppLifecycleObserver,
     private val dotNsTldProvider: DotNsTldProvider,
@@ -129,7 +130,7 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
         override val storage: HostStorage =
             EncryptedHostStorage(encryptedPreferences, callingProductId.value)
 
-        override val coreStorage: HostCoreStorage = EncryptedHostCoreStorage(encryptedPreferences)
+        override val coreStorage: HostCoreStorage = this@ProductTrUAPIHostBridge.coreStorage
 
         override fun onCoreLog(marker: String, detail: String) {
             Timber.tag("truapi.core").d("%s: %s", marker, detail)

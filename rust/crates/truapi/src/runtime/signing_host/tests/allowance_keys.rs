@@ -185,22 +185,6 @@ fn a_second_proof_in_the_same_session_sends_nothing_to_the_chain() {
 }
 
 #[test]
-fn a_new_session_looks_the_allowance_up_again() {
-    let signing_host = active_signing_host(Arc::new(StubPlatform::default()));
-    remember(&signing_host, PRODUCT_ID, PERIOD);
-
-    futures::executor::block_on(signing_host.disconnect());
-    futures::executor::block_on(signing_host.activate_local_session(ENTROPY.to_vec()))
-        .expect("re-activation succeeds");
-
-    assert_eq!(
-        remembered(&signing_host, PRODUCT_ID),
-        None,
-        "the second session served the first session's key"
-    );
-}
-
-#[test]
 fn clearing_a_product_forgets_only_its_key() {
     let signing_host = active_signing_host(Arc::new(StubPlatform::default()));
     remember(&signing_host, PRODUCT_ID, PERIOD);
