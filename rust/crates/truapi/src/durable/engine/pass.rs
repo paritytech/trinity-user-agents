@@ -1,16 +1,17 @@
 //! The recovery pass: one evaluation of every live transaction no submission
 //! watch owns.
 
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeSet, HashMap};
 use std::sync::Arc;
 
+use itertools::Itertools;
 use subxt::utils::H256;
 use tracing::warn;
 
 use super::DurableTxEngine;
 use crate::chain_runtime::RuntimeFailure;
 use crate::durable::dao;
-use crate::durable::ladder::{PinnedView, RuleOutcome, evaluate_ladder};
+use crate::durable::ladder::{PinnedView, RecordedCanonicity, RuleOutcome, evaluate_ladder};
 use crate::durable::model::{DomainId, DurableTxEntry, DurableTxId, Verdict};
 use crate::durable::oracle::{CompletionOracle, LedgerView};
 use crate::durable::search::PinnedChain;
@@ -52,26 +53,28 @@ impl DurableTxEngine {
     }
 
     /// Groups `domains` by the chain their oracle names, so each chain's
-    /// heads are read once. A domain with no oracle has no chain and is
-    /// skipped.
+    /// heads are read once.
     fn group_domains_by_chain(
         &self,
         domains: Vec<DomainId>,
-    ) -> BTreeMap<H256, Vec<LiveDomain<'_>>> {
-        let mut by_chain: BTreeMap<H256, Vec<LiveDomain<'_>>> = BTreeMap::new();
-        for domain in domains {
-            match self.registry.oracle(&domain) {
-                Some(oracle) => by_chain
-                    .entry(oracle.chain())
-                    .or_default()
-                    .push(LiveDomain { domain, oracle }),
-                None => warn!(
-                    domain = domain.as_str(),
-                    "durable recovery pass skips a domain with no oracle"
-                ),
-            }
-        }
-        by_chain
+    ) -> HashMap<H256, Vec<LiveDomain<'_>>> {
+        domains
+            .into_iter()
+            .filter_map(|domain| self.live_domain(domain))
+            .into_group_map_by(|live| live.oracle.chain())
+    }
+
+    /// `domain` with its oracle. A domain with no oracle has no chain and is
+    /// skipped.
+    fn live_domain(&self, domain: DomainId) -> Option<LiveDomain<'_>> {
+        let Some(oracle) = self.registry.oracle(&domain) else {
+            warn!(
+                domain = domain.as_str(),
+                "durable recovery pass skips a domain with no oracle"
+            );
+            return None;
+        };
+        Some(LiveDomain { domain, oracle })
     }
 
     /// Pins the chain with `genesis` and decides each of its domains.
@@ -130,8 +133,11 @@ impl DurableTxEngine {
 
         let mut written = 0;
         for tx in &decidable {
-            let outcome =
-                evaluate_ladder(tx, scope.as_ref(), view, canonical.get(&tx.id).copied()).await;
+            let recorded = canonical
+                .get(&tx.id)
+                .copied()
+                .unwrap_or(RecordedCanonicity::Unknown);
+            let outcome = evaluate_ladder(tx, scope.as_ref(), view, recorded).await;
             if let RuleOutcome::Decided(verdict) = outcome
                 && self.write_if_changed(tx, verdict).await
             {
@@ -183,13 +189,14 @@ impl DurableTxEngine {
     }
 
     /// Whether each recorded success block is still canonical. A failed read
-    /// leaves its transactions out, so Rule 0 stays undecided instead of
+    /// leaves its transactions out, so they count as
+    /// [`RecordedCanonicity::Unknown`] and Rule 0 stays undecided instead of
     /// discarding a record on a transport error.
     async fn recorded_canonicity(
         &self,
         genesis: H256,
         transactions: &[DurableTxEntry],
-    ) -> HashMap<DurableTxId, bool> {
+    ) -> HashMap<DurableTxId, RecordedCanonicity> {
         let heights = transactions
             .iter()
             .filter_map(|tx| tx.success_detected_at.map(|block| block.number));
@@ -200,7 +207,12 @@ impl DurableTxEngine {
                 let recorded = tx.success_detected_at?;
                 // A chain shorter than the record no longer has its block.
                 let hash = hashes.get(&recorded.number)?;
-                Some((tx.id, *hash == Some(recorded.hash)))
+                let canonicity = if *hash == Some(recorded.hash) {
+                    RecordedCanonicity::Canonical
+                } else {
+                    RecordedCanonicity::Reorged
+                };
+                Some((tx.id, canonicity))
             })
             .collect()
     }

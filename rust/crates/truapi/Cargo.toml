@@ -81,6 +81,7 @@ runtime = [
     "dep:rusqlite",
     "dep:async-sqlite",
     "dep:rusqlite_migration",
+    "dep:itertools",
 ]
 wasm-signing-host = ["runtime"]
 # Test-host-only shortcuts a shipping host must not carry, such as answering
@@ -142,6 +143,7 @@ base64 = { workspace = true, optional = true }
 rusqlite = { workspace = true, features = ["bundled", "fallible_uint", "hooks"], optional = true }
 async-sqlite = { workspace = true, features = ["bundled"], optional = true }
 rusqlite_migration = { workspace = true, optional = true }
+itertools = { workspace = true, optional = true }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 futures-timer = { workspace = true, features = ["wasm-bindgen"], optional = true }

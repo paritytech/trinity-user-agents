@@ -20,9 +20,9 @@ use crate::durable::model::DomainId;
 enum Trigger {
     /// Something may have changed: run another pass.
     Pass,
-    /// The loop can no longer follow the new blocks of the chain with this
-    /// genesis, for the given reason.
-    ChainLost(H256, String),
+    /// The loop can no longer follow the new blocks of the chain with
+    /// `genesis`.
+    HeadsLost { genesis: H256, reason: String },
 }
 
 type Triggers = BoxStream<'static, Trigger>;
@@ -118,16 +118,16 @@ impl DurableTxEngine {
     }
 
     /// One trigger per head of the chain with `genesis`, ending in
-    /// [`Trigger::ChainLost`] when the node's head subscription cannot open
+    /// [`Trigger::HeadsLost`] when the node's head subscription cannot open
     /// or ends.
     async fn head_triggers(&self, genesis: H256) -> Triggers {
         let heads = match self.heads.head_events(genesis).await {
             Ok(heads) => heads,
-            Err(error) => return chain_lost(genesis, error.to_string()),
+            Err(error) => return heads_lost(genesis, error.to_string()),
         };
         heads
             .filter_map(move |head| ready(as_trigger(genesis, head)))
-            .chain(chain_lost(genesis, "head events ended".into()))
+            .chain(heads_lost(genesis, "head events ended".into()))
             .boxed()
     }
 
@@ -184,8 +184,8 @@ fn as_trigger(genesis: H256, head: Result<HeadEvent, RuntimeFailure>) -> Option<
     }
 }
 
-fn chain_lost(genesis: H256, reason: String) -> Triggers {
-    stream::once(ready(Trigger::ChainLost(genesis, reason))).boxed()
+fn heads_lost(genesis: H256, reason: String) -> Triggers {
+    stream::once(ready(Trigger::HeadsLost { genesis, reason })).boxed()
 }
 
 /// Waits for the next trigger, then takes every one already queued behind
@@ -199,7 +199,7 @@ async fn next_trigger(triggers: &mut Triggers, lost: &mut LostChains) {
 }
 
 fn record(trigger: Trigger, lost: &mut LostChains) {
-    if let Trigger::ChainLost(genesis, reason) = trigger {
+    if let Trigger::HeadsLost { genesis, reason } = trigger {
         warn!(?genesis, %reason, "durable recovery lost a chain's heads");
         lost.0.insert(genesis, reason);
     }

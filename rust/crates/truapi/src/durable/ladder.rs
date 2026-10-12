@@ -47,14 +47,25 @@ pub enum RuleOutcome {
     Undecided,
 }
 
-/// Decides `tx`. `recorded_canonical` says whether the block its success was
-/// recorded at is still canonical, `None` when that read failed; the pass
-/// resolves it for every recorded transaction at once.
+/// Whether the block a transaction's success was recorded at is still on the
+/// canonical chain.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RecordedCanonicity {
+    /// The canonical block at that height is the recorded one.
+    Canonical,
+    /// Another block, or none, is canonical at that height now.
+    Reorged,
+    /// The read failed, or the transaction has no recorded success.
+    Unknown,
+}
+
+/// Decides `tx`. The pass resolves `recorded_canonical` for every recorded
+/// transaction at once.
 pub async fn evaluate_ladder(
     tx: &DurableTxEntry,
     scope: &dyn PassScope,
     view: &dyn PinnedView,
-    recorded_canonical: Option<bool>,
+    recorded_canonical: RecordedCanonicity,
 ) -> RuleOutcome {
     let heads = view.heads();
     if let Some(recorded) = tx.success_detected_at {
@@ -159,23 +170,23 @@ fn recorded_inclusion(
     recorded: HashAndNumber,
     scope: &dyn PassScope,
     heads: &Heads,
-    recorded_canonical: Option<bool>,
+    recorded_canonical: RecordedCanonicity,
 ) -> RuleOutcome {
     match recorded_canonical {
-        None => RuleOutcome::Undecided,
-        Some(true) if recorded.number <= heads.finalized.number => {
+        RecordedCanonicity::Unknown => RuleOutcome::Undecided,
+        RecordedCanonicity::Canonical if recorded.number <= heads.finalized.number => {
             decided(DurableTxStatus::FinalizedSuccess, Some(recorded), None)
         }
-        Some(true) => decided(DurableTxStatus::PendingSuccess, Some(recorded), None),
-        Some(false) if scope.proven_completed(tx, HeadKind::Finalized) => decided(
+        RecordedCanonicity::Canonical => decided(DurableTxStatus::PendingSuccess, Some(recorded), None),
+        RecordedCanonicity::Reorged if scope.proven_completed(tx, HeadKind::Finalized) => decided(
             DurableTxStatus::FinalizedSuccess,
             Some(heads.finalized),
             None,
         ),
-        Some(false) if scope.proven_completed(tx, HeadKind::Best) => {
+        RecordedCanonicity::Reorged if scope.proven_completed(tx, HeadKind::Best) => {
             decided(DurableTxStatus::PendingSuccess, Some(heads.best), None)
         }
-        Some(false) => decided(DurableTxStatus::Pending, None, None),
+        RecordedCanonicity::Reorged => decided(DurableTxStatus::Pending, None, None),
     }
 }
 
@@ -225,7 +236,7 @@ mod tests {
         tx: DurableTxEntry,
         scope: ScriptedScope,
         finalized: u64,
-        recorded_canonical: Option<bool>,
+        recorded_canonical: RecordedCanonicity,
         search: SearchResult,
     ) -> RuleOutcome {
         evaluate_ladder(
@@ -285,7 +296,7 @@ mod tests {
     #[test]
     fn rule_0_a_canonical_record_at_or_below_finalized_finalizes() {
         block_on(async {
-            let outcome = evaluate(tx(Some(block(120))), says(), 130, Some(true), INCOMPLETE).await;
+            let outcome = evaluate(tx(Some(block(120))), says(), 130, RecordedCanonicity::Canonical, INCOMPLETE).await;
 
             assert_eq!(
                 outcome,
@@ -297,7 +308,7 @@ mod tests {
     #[test]
     fn rule_0_a_canonical_record_above_finalized_holds_pending_success() {
         block_on(async {
-            let outcome = evaluate(tx(Some(block(140))), says(), 130, Some(true), INCOMPLETE).await;
+            let outcome = evaluate(tx(Some(block(140))), says(), 130, RecordedCanonicity::Canonical, INCOMPLETE).await;
 
             assert_eq!(
                 outcome,
@@ -313,7 +324,7 @@ mod tests {
     fn rule_0_a_gone_record_with_nothing_visible_demotes_and_clears() {
         block_on(async {
             let outcome =
-                evaluate(tx(Some(block(120))), says(), 130, Some(false), INCOMPLETE).await;
+                evaluate(tx(Some(block(120))), says(), 130, RecordedCanonicity::Reorged, INCOMPLETE).await;
 
             assert_eq!(outcome, decided(DurableTxStatus::Pending, None, None));
         })
@@ -330,7 +341,7 @@ mod tests {
             };
             let view = FakeView::new(130, INCOMPLETE);
 
-            let outcome = evaluate_ladder(&tx(Some(block(120))), &scope, &view, Some(false)).await;
+            let outcome = evaluate_ladder(&tx(Some(block(120))), &scope, &view, RecordedCanonicity::Reorged).await;
 
             assert_eq!(
                 outcome,
@@ -355,7 +366,7 @@ mod tests {
             };
             let view = FakeView::new(130, INCOMPLETE);
 
-            let outcome = evaluate_ladder(&tx(Some(block(120))), &scope, &view, Some(false)).await;
+            let outcome = evaluate_ladder(&tx(Some(block(120))), &scope, &view, RecordedCanonicity::Reorged).await;
 
             assert_eq!(
                 outcome,
@@ -378,7 +389,7 @@ mod tests {
                 ..says()
             };
 
-            let outcome = evaluate(tx(Some(block(120))), scope, 130, None, INCOMPLETE).await;
+            let outcome = evaluate(tx(Some(block(120))), scope, 130, RecordedCanonicity::Unknown, INCOMPLETE).await;
 
             assert_eq!(outcome, RuleOutcome::Undecided);
         })
@@ -392,7 +403,7 @@ mod tests {
                 ..says()
             };
 
-            let outcome = evaluate(tx(None), scope, 130, None, INCOMPLETE).await;
+            let outcome = evaluate(tx(None), scope, 130, RecordedCanonicity::Unknown, INCOMPLETE).await;
 
             assert_eq!(
                 outcome,
@@ -410,7 +421,7 @@ mod tests {
             };
             let view = FakeView::new(130, INCOMPLETE);
 
-            let outcome = evaluate_ladder(&tx(None), &scope, &view, None).await;
+            let outcome = evaluate_ladder(&tx(None), &scope, &view, RecordedCanonicity::Unknown).await;
 
             assert_eq!(
                 outcome,
@@ -432,7 +443,7 @@ mod tests {
                 ..says()
             };
 
-            let outcome = evaluate(tx(None), scope, 130, None, INCOMPLETE).await;
+            let outcome = evaluate(tx(None), scope, 130, RecordedCanonicity::Unknown, INCOMPLETE).await;
 
             assert_eq!(
                 outcome,
@@ -449,7 +460,7 @@ mod tests {
                 ..says()
             };
 
-            let outcome = evaluate(tx(None), scope, DEATH + 1, None, INCOMPLETE).await;
+            let outcome = evaluate(tx(None), scope, DEATH + 1, RecordedCanonicity::Unknown, INCOMPLETE).await;
 
             assert_eq!(
                 outcome,
@@ -468,7 +479,7 @@ mod tests {
                 ..says()
             };
 
-            let outcome = evaluate(tx(None), scope, BIRTH + 1, None, read_to(BIRTH + 1)).await;
+            let outcome = evaluate(tx(None), scope, BIRTH + 1, RecordedCanonicity::Unknown, read_to(BIRTH + 1)).await;
 
             assert_eq!(outcome, pending_scanned_to(BIRTH + 1));
         })
@@ -484,7 +495,7 @@ mod tests {
                 ..says()
             };
 
-            let outcome = evaluate(tx(None), scope, DEATH, None, ABSENT).await;
+            let outcome = evaluate(tx(None), scope, DEATH, RecordedCanonicity::Unknown, ABSENT).await;
 
             assert_eq!(outcome, pending_scanned_to(DEATH));
         })
@@ -500,7 +511,7 @@ mod tests {
                 ..says()
             };
 
-            let outcome = evaluate(tx(None), scope, DEATH + 1, None, INCOMPLETE).await;
+            let outcome = evaluate(tx(None), scope, DEATH + 1, RecordedCanonicity::Unknown, INCOMPLETE).await;
 
             assert_eq!(
                 outcome,
@@ -520,7 +531,7 @@ mod tests {
             };
             let view = FakeView::new(BIRTH + 1, INCOMPLETE);
 
-            let outcome = evaluate_ladder(&tx(None), &scope, &view, None).await;
+            let outcome = evaluate_ladder(&tx(None), &scope, &view, RecordedCanonicity::Unknown).await;
 
             assert_eq!(outcome, decided(DurableTxStatus::Pending, None, None));
             assert_eq!(view.searches(), 0);
@@ -537,7 +548,7 @@ mod tests {
             };
             let view = FakeView::new(DEATH + 1, INCOMPLETE);
 
-            evaluate_ladder(&tx(None), &scope, &view, None).await;
+            evaluate_ladder(&tx(None), &scope, &view, RecordedCanonicity::Unknown).await;
 
             assert_eq!(view.searches(), 1);
         })
@@ -551,7 +562,7 @@ mod tests {
                 outcome: Some(DispatchOutcome::Succeeded),
             };
 
-            let outcome = evaluate(tx(None), says(), 130, None, found).await;
+            let outcome = evaluate(tx(None), says(), 130, RecordedCanonicity::Unknown, found).await;
 
             assert_eq!(
                 outcome,
@@ -570,7 +581,7 @@ mod tests {
                 outcome: Some(DispatchOutcome::Failed),
             };
 
-            let outcome = evaluate(tx(None), says(), 130, None, found).await;
+            let outcome = evaluate(tx(None), says(), 130, RecordedCanonicity::Unknown, found).await;
 
             assert_eq!(
                 outcome,
@@ -592,7 +603,7 @@ mod tests {
                 outcome: None,
             };
 
-            let outcome = evaluate(tx(None), says(), DEATH + 1, None, found).await;
+            let outcome = evaluate(tx(None), says(), DEATH + 1, RecordedCanonicity::Unknown, found).await;
 
             assert_eq!(outcome, decided(DurableTxStatus::Pending, None, None));
         })
@@ -603,7 +614,7 @@ mod tests {
     #[test]
     fn rule_5_absence_over_the_whole_closed_window_expires() {
         block_on(async {
-            let outcome = evaluate(tx(None), says(), DEATH + 1, None, ABSENT).await;
+            let outcome = evaluate(tx(None), says(), DEATH + 1, RecordedCanonicity::Unknown, ABSENT).await;
 
             assert_eq!(
                 outcome,
@@ -616,7 +627,7 @@ mod tests {
     #[test]
     fn rule_5_a_partially_read_window_stays_pending() {
         block_on(async {
-            let outcome = evaluate(tx(None), says(), DEATH + 1, None, INCOMPLETE).await;
+            let outcome = evaluate(tx(None), says(), DEATH + 1, RecordedCanonicity::Unknown, INCOMPLETE).await;
 
             assert_eq!(outcome, decided(DurableTxStatus::Pending, None, None));
         })
@@ -628,8 +639,8 @@ mod tests {
             let early = FakeView::new(130, INCOMPLETE);
             let late = FakeView::new(DEATH + 50, INCOMPLETE);
 
-            evaluate_ladder(&tx(None), &says(), &early, None).await;
-            evaluate_ladder(&tx(None), &says(), &late, None).await;
+            evaluate_ladder(&tx(None), &says(), &early, RecordedCanonicity::Unknown).await;
+            evaluate_ladder(&tx(None), &says(), &late, RecordedCanonicity::Unknown).await;
 
             assert_eq!(early.searched_ranges(), vec![(BIRTH, 130)]);
             assert_eq!(late.searched_ranges(), vec![(BIRTH, DEATH)]);
@@ -643,7 +654,7 @@ mod tests {
         block_on(async {
             let view = FakeView::new(BIRTH - 1, INCOMPLETE);
 
-            let outcome = evaluate_ladder(&tx(None), &says(), &view, None).await;
+            let outcome = evaluate_ladder(&tx(None), &says(), &view, RecordedCanonicity::Unknown).await;
 
             assert_eq!(outcome, decided(DurableTxStatus::Pending, None, None));
             assert_eq!(view.searches(), 0);
@@ -665,7 +676,7 @@ mod tests {
                 .await
                 .unwrap();
 
-            let outcome = evaluate_ladder(&tx(None), scope.as_ref(), &view, None).await;
+            let outcome = evaluate_ladder(&tx(None), scope.as_ref(), &view, RecordedCanonicity::Unknown).await;
 
             assert_eq!(
                 outcome,
@@ -681,7 +692,7 @@ mod tests {
         block_on(async {
             let view = FakeView::new(123, INCOMPLETE);
 
-            evaluate_ladder(&scanned_to(120), &says(), &view, None).await;
+            evaluate_ladder(&scanned_to(120), &says(), &view, RecordedCanonicity::Unknown).await;
 
             assert_eq!(view.searched_ranges(), vec![(121, 123)]);
         })
@@ -690,7 +701,7 @@ mod tests {
     #[test]
     fn rule_5_records_how_far_the_search_read() {
         block_on(async {
-            let outcome = evaluate(scanned_to(120), says(), 123, None, read_to(123)).await;
+            let outcome = evaluate(scanned_to(120), says(), 123, RecordedCanonicity::Unknown, read_to(123)).await;
 
             assert_eq!(outcome, pending_scanned_to(123));
         })
@@ -701,7 +712,7 @@ mod tests {
     #[test]
     fn rule_5_an_unreadable_first_block_leaves_the_cursor() {
         block_on(async {
-            let outcome = evaluate(scanned_to(120), says(), 123, None, INCOMPLETE).await;
+            let outcome = evaluate(scanned_to(120), says(), 123, RecordedCanonicity::Unknown, INCOMPLETE).await;
 
             assert_eq!(outcome, decided(DurableTxStatus::Pending, None, None));
         })
@@ -714,7 +725,7 @@ mod tests {
         block_on(async {
             let view = FakeView::new(DEATH + 1, INCOMPLETE);
 
-            let outcome = evaluate_ladder(&scanned_to(DEATH), &says(), &view, None).await;
+            let outcome = evaluate_ladder(&scanned_to(DEATH), &says(), &view, RecordedCanonicity::Unknown).await;
 
             assert_eq!(
                 outcome,
@@ -729,7 +740,7 @@ mod tests {
     #[test]
     fn rule_5_absence_read_across_passes_expires() {
         block_on(async {
-            let outcome = evaluate(scanned_to(150), says(), DEATH + 1, None, ABSENT).await;
+            let outcome = evaluate(scanned_to(150), says(), DEATH + 1, RecordedCanonicity::Unknown, ABSENT).await;
 
             assert_eq!(
                 outcome,
@@ -744,7 +755,7 @@ mod tests {
         block_on(async {
             let view = FakeView::new(120, INCOMPLETE);
 
-            let outcome = evaluate_ladder(&scanned_to(120), &says(), &view, None).await;
+            let outcome = evaluate_ladder(&scanned_to(120), &says(), &view, RecordedCanonicity::Unknown).await;
 
             assert_eq!(outcome, decided(DurableTxStatus::Pending, None, None));
             assert_eq!(view.searches(), 0);

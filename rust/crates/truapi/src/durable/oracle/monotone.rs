@@ -88,7 +88,7 @@ mod tests {
     use futures::executor::block_on;
 
     use super::*;
-    use crate::durable::ladder::{RuleOutcome, SearchResult, evaluate_ladder};
+    use crate::durable::ladder::{RecordedCanonicity, RuleOutcome, SearchResult, evaluate_ladder};
     use crate::durable::model::DurableTxStatus;
     use crate::durable::testing::{FakeView, entry};
 
@@ -157,7 +157,7 @@ mod tests {
                 )
                 .await
                 .unwrap();
-            match evaluate_ladder(&transactions[0], scope.as_ref(), &view, None).await {
+            match evaluate_ladder(&transactions[0], scope.as_ref(), &view, RecordedCanonicity::Unknown).await {
                 RuleOutcome::Decided(verdict) => verdict.status,
                 RuleOutcome::Undecided => panic!("expected a decision"),
             }
