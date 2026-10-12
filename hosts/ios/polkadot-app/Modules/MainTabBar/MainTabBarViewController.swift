@@ -100,8 +100,11 @@ final class MainTabBarViewController: UIViewController {
             }
         #endif
 
+        // Close does not stop capture: the panel's teardown releases the camera, and an explicit stop
+        // here can race the preview layer's session attach.
         chromeController.onCenterPanelDidChangeOpen = { [weak self] isOpen in
-            self?.scanPanelController?.setCaptureActive(isOpen)
+            guard isOpen else { return }
+            self?.scanPanelController?.setCaptureActive(true)
         }
 
         chromeController.onSelect = { [weak self] index, isReselection in
