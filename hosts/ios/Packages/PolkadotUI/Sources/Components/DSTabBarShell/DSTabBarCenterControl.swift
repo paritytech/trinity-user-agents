@@ -112,7 +112,6 @@ private extension DSTabBarCenterControl {
                     .animation(reduceMotion ? .easeInOut(duration: 0.2) : nil) { $0.opacity(Double(reveal)) }
             }
         }
-        .padding(.top, DSTabBarStyle.centerGrabberHeight)
         .padding(.bottom, lobeRadius)
         .foregroundStyle(Color.fgPrimary)
         .frame(width: size.width, height: size.height, alignment: progress > 0 ? .top : .center)
@@ -146,7 +145,7 @@ private extension DSTabBarCenterControl {
     }
 
     /// Second grip at the top of the panel, for closing without reaching down
-    /// to the lobe. Fades in with the content and takes the same gesture.
+    /// to the lobe. Fades in with the content and drags the panel without toggling it.
     var grabber: some View {
         Capsule()
             .fill(Color.fgPrimary.opacity(DSTabBarStyle.centerGrabberOpacity))
@@ -156,7 +155,7 @@ private extension DSTabBarCenterControl {
             .contentShape(Rectangle())
             .animation(reduceMotion ? .easeInOut(duration: 0.2) : nil) { $0.opacity(Double(reveal)) }
             .allowsHitTesting(progress > revealStart)
-            .gesture(drag)
+            .gesture(grabberDrag)
     }
 
     /// Drag up to open, down to close; a drag that barely moves is a tap.
@@ -164,9 +163,7 @@ private extension DSTabBarCenterControl {
     var drag: some Gesture {
         DragGesture(minimumDistance: 0)
             .onChanged { value in
-                let start = dragStart ?? progress
-                dragStart = start
-                progress = min(1, max(0, start - value.translation.height / travel))
+                followDrag(translationHeight: value.translation.height)
             }
             .onEnded { value in
                 let start = dragStart ?? progress
@@ -181,6 +178,29 @@ private extension DSTabBarCenterControl {
                 let projected = start - value.predictedEndTranslation.height / travel
                 settle(to: projected > 0.5 ? 1 : 0)
             }
+    }
+
+    /// Drag-only gesture for the grabber. The grabber drags the panel but does not toggle it, so a
+    /// tap there does nothing. The minimum distance keeps a tap from starting the drag.
+    var grabberDrag: some Gesture {
+        DragGesture(minimumDistance: tapSlop)
+            .onChanged { value in
+                followDrag(translationHeight: value.translation.height)
+            }
+            .onEnded { value in
+                let start = dragStart ?? progress
+                dragStart = nil
+
+                let projected = start - value.predictedEndTranslation.height / travel
+                settle(to: projected > 0.5 ? 1 : 0)
+            }
+    }
+
+    /// Moves the panel with the finger from the progress at which the drag began.
+    func followDrag(translationHeight: CGFloat) {
+        let start = dragStart ?? progress
+        dragStart = start
+        progress = min(1, max(0, start - translationHeight / travel))
     }
 
     /// Under Reduce Motion the geometry snaps and only the content cross-fades, so the morph
