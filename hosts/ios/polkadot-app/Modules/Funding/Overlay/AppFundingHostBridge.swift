@@ -16,7 +16,8 @@ protocol FundingOverlayPresenting: AnyObject, Sendable {
         amount: U128?
     ) async -> FundingPresentOutcome
 
-    func presentProviderFrame(providerId: String, intent: String, route: String) async -> FundingFrameOutcome
+    func presentProviderFrame(providerId: String, intent: String, target: FundingFrameTarget) async
+        -> FundingFrameOutcome
 
     func fundingSessionChanged(intent: String, status: HostFundingStatusSubscribeItem)
 
@@ -48,8 +49,12 @@ final class AppFundingHostBridge: FundingHostBridge, @unchecked Sendable {
         await overlay.presentFunding(productId: productId, intent: intent, direction: direction, amount: amount)
     }
 
-    func presentProviderFrame(providerId: String, intent: String, route: String) async throws -> FundingFrameOutcome {
-        await overlay.presentProviderFrame(providerId: providerId, intent: intent, route: route)
+    func presentProviderFrame(
+        providerId: String,
+        intent: String,
+        target: FundingFrameTarget
+    ) async throws -> FundingFrameOutcome {
+        await overlay.presentProviderFrame(providerId: providerId, intent: intent, target: target)
     }
 
     func fundingSessionChanged(intent: String, status: HostFundingStatusSubscribeItem) {

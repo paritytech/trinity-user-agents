@@ -42,8 +42,12 @@ final class AppFundingOverlay: FundingOverlayPresenting, @unchecked Sendable {
         await present(intent: intent, direction: direction, amount: amount)
     }
 
-    func presentProviderFrame(providerId: String, intent: String, route: String) async -> FundingFrameOutcome {
-        await frame(providerId: providerId, intent: intent, route: route)
+    func presentProviderFrame(
+        providerId: String,
+        intent: String,
+        target: FundingFrameTarget
+    ) async -> FundingFrameOutcome {
+        await frame(providerId: providerId, intent: intent, target: target)
     }
 
     func fundingSessionChanged(intent: String, status _: HostFundingStatusSubscribeItem) {
@@ -81,9 +85,14 @@ private extension AppFundingOverlay {
     }
 
     @MainActor
-    func frame(providerId: String, intent: String, route: String) async -> FundingFrameOutcome {
+    func frame(providerId: String, intent: String, target: FundingFrameTarget) async -> FundingFrameOutcome {
         guard let coordinator else { return .dismissed }
-        return await coordinator.presentFrame(providerId: providerId, intent: intent, route: route)
+        switch target {
+        case let .app(route):
+            return await coordinator.presentFrame(providerId: providerId, intent: intent, route: route)
+        case let .page(url, returnUrl):
+            return await coordinator.presentPage(url: url, returnUrl: returnUrl)
+        }
     }
 }
 
@@ -170,6 +179,24 @@ final class FundingOverlayCoordinator {
 
             if !environment.present(frame) {
                 frame.finish(.dismissed)
+            }
+        }
+    }
+
+    /// Shows an external page in a frame the host owns, answering
+    /// `.returned` when it reaches `returnUrl` and `.dismissed` when the user
+    /// closes it.
+    func presentPage(url: String, returnUrl: String?) async -> FundingFrameOutcome {
+        guard let pageURL = URL(string: url) else { return .dismissed }
+
+        return await withCheckedContinuation { continuation in
+            let page = FundingWebPageController(
+                url: pageURL,
+                returnURL: returnUrl.flatMap(URL.init(string:)),
+                completion: continuation.resume(returning:)
+            )
+            if !environment.present(page) {
+                page.finish(.dismissed)
             }
         }
     }

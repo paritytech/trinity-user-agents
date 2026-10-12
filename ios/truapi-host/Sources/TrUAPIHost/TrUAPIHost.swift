@@ -328,13 +328,14 @@ public protocol FundingHostBridge: AnyObject, Sendable {
         amount: U128?
     ) async throws -> FundingPresentOutcome
 
-    /// Show provider `providerId`'s screen at `route` for session `intent` in
-    /// a frame the host owns, and report whether it closed itself or the user
-    /// closed it.
+    /// Show `target` for provider `providerId`'s session `intent` in a frame
+    /// the host owns, and report how it closed. A page is a checked https
+    /// URL: show its origin, and answer `.returned` when it reaches its
+    /// return URL.
     func presentProviderFrame(
         providerId: String,
         intent: String,
-        route: String
+        target: FundingFrameTarget
     ) async throws -> FundingFrameOutcome
 
     /// Session `intent`'s status changed, for host UI such as the in-flight
@@ -569,10 +570,10 @@ private final class FundingCallbackAdapter: NativeFundingCallbacks, @unchecked S
     func presentProviderFrame(
         providerId: String,
         intent: String,
-        route: String
+        target: FundingFrameTarget
     ) async throws -> FundingFrameOutcome {
         try await withHostRejection {
-            try await bridge.presentProviderFrame(providerId: providerId, intent: intent, route: route)
+            try await bridge.presentProviderFrame(providerId: providerId, intent: intent, target: target)
         }
     }
 
