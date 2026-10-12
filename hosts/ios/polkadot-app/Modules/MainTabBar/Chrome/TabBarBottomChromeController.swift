@@ -15,6 +15,8 @@ final class TabBarBottomChromeController: UIViewController {
     private var spaTabCount = 0
     private var selectedTabIndex = 0
     private var showsLabels = false
+    /// The last panel that reached `syncCenterPanel`. By then `TabBarPanelController.open` is already the new panel.
+    private var committedPanel: TabBarPanelKind?
     /// The first settled layout places the bar. Animating it would spring the bar in from its unplaced frame at launch.
     private var hasPerformedInitialLayout = false
 
@@ -57,12 +59,16 @@ final class TabBarBottomChromeController: UIViewController {
     var onConnectionStatusTapped: (() -> Void)?
     var onSettingsTapped: (() -> Void)?
 
+    /// Fires as the centre panel starts closing, before the animation, so content can give up first responder
+    /// and the keyboard drops in the same movement.
+    var onCenterPanelWillClose: (() -> Void)?
+
     /// Builds the centre control's content. Called when the control first shows it, not when the panel commits.
     var makeCenterContent: (() -> UIViewController?)?
 
     /// Declares the centre content's height for a panel of the given width. The control sizes itself from this
     /// before any content exists, so it cannot be measured from the content.
-    var contentHeightForCenterPanel: ((CGFloat) -> CGFloat)?
+    var contentHeightForCenterPanel: ((CGFloat) -> TabBarCenterContentHeight)?
 
     /// The published clearance depends on the chrome's own safe area, so the host has to
     /// recompute when that changes.
@@ -166,10 +172,14 @@ final class TabBarBottomChromeController: UIViewController {
             return
         }
         let width = DSTabBarStyle.centerPanelWidth(inRowOfWidth: barHost.view.bounds.width)
-        let contentHeight = min(
-            contentHeightForCenterPanel(width),
-            DSTabBarStyle.centerContentHeight(fittingPanelHeight: barModel.availablePanelHeight)
-        )
+        let cap = DSTabBarStyle.centerContentHeight(fittingPanelHeight: barModel.availablePanelHeight)
+        let contentHeight: CGFloat =
+            switch contentHeightForCenterPanel(width) {
+            case let .fits(declared):
+                min(declared, cap)
+            case .fill:
+                cap
+            }
         guard contentHeight != barModel.centerContentHeight else {
             return
         }
@@ -234,6 +244,10 @@ private extension TabBarBottomChromeController {
     /// Any committed panel change moves the centre control to match, so a close from anywhere (outside tap,
     /// a slot, a fold) also closes the control.
     func syncCenterPanel(with kind: TabBarPanelKind?) {
+        if committedPanel == .content(.scan), kind != .content(.scan) {
+            onCenterPanelWillClose?()
+        }
+        committedPanel = kind
         barModel.setCenterPanelOpen(kind == .content(.scan))
     }
 
@@ -355,6 +369,9 @@ private extension TabBarBottomChromeController {
         let lift = isScanPanelOpen ? max(0, view.bounds.maxY - keyboardTop) : 0
         DSTabBarStyle.animateCenterChange(in: view) {
             self.foldController.setKeyboardLift(lift)
+            self.chromeSurface.keyboardLift = lift
+            self.refreshAvailablePanelHeight()
+            self.refreshCenterContentHeight()
         }
     }
 

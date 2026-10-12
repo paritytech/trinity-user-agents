@@ -13,8 +13,18 @@ final class TabBarChromeSurfaceView: UIView {
     /// like any other bottom bar.
     private static let restingBottomOffset = -DSTabBarStyle.bottomGap
 
+    /// The distance the chrome is raised by the keyboard. It shrinks the room left above the bar.
+    var keyboardLift: CGFloat = 0 {
+        didSet {
+            guard keyboardLift != oldValue else {
+                return
+            }
+            setNeedsLayout()
+        }
+    }
+
     var availablePanelHeight: CGFloat {
-        bounds.height - safeAreaInsets.top - DSTabBarStyle.restingHeight
+        max(0, bounds.height - safeAreaInsets.top - DSTabBarStyle.restingHeight - keyboardLift)
     }
 
     override init(frame: CGRect) {

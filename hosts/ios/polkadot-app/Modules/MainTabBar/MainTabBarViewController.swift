@@ -79,16 +79,21 @@ final class MainTabBarViewController: UIViewController {
         #if FEATURE_INPUT
             chromeController.contentHeightForCenterPanel = { [weak self] width in
                 self?.scanPanel?.declaredContentHeight(forPanelWidth: width)
-                    ?? ScanPanelContentHeight.height(
-                        forPanelWidth: width,
-                        searchRowHeight: ScanPanelContentHeight.embeddedSearchRowHeight
+                    ?? .fits(
+                        ScanPanelContentHeight.height(
+                            forPanelWidth: width,
+                            searchRowHeight: ScanPanelContentHeight.embeddedSearchRowHeight
+                        )
                     )
             }
+            chromeController.onCenterPanelWillClose = { [weak self] in self?.scanPanel?.cancelSearch() }
         #else
             chromeController.contentHeightForCenterPanel = { width in
-                ScanPanelContentHeight.height(
-                    forPanelWidth: width,
-                    searchRowHeight: ScanPanelContentHeight.plainSearchRowHeight
+                .fits(
+                    ScanPanelContentHeight.height(
+                        forPanelWidth: width,
+                        searchRowHeight: ScanPanelContentHeight.plainSearchRowHeight
+                    )
                 )
             }
         #endif

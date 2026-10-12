@@ -3,8 +3,7 @@ import UIKit
 
 /// The height the scan panel declares for its content at a given panel width. Declared rather than measured:
 /// measuring a live scanner would start a second capture session. The camera is square, as
-/// `EmbeddedQRScannerViewLayout` pins it, and the rows around it are fixed in both scan layouts. While the
-/// search is focused the camera collapses and the results take its place, so the height follows the results.
+/// `EmbeddedQRScannerViewLayout` pins it, and the rows around it are fixed in both scan layouts.
 enum ScanPanelContentHeight {
     /// Inset the camera keeps on each side in both scan layouts.
     private static let cameraSideInset = DSSpacings.mediumIncreased
@@ -13,23 +12,11 @@ enum ScanPanelContentHeight {
     /// Height of the search button in the plain layout.
     static let plainSearchRowHeight: CGFloat = 48
 
-    /// `resultsHeight` only counts while the search is focused, when the results sit where the camera does.
-    static func height(
-        forPanelWidth width: CGFloat,
-        searchRowHeight: CGFloat,
-        isSearchFocused: Bool = false,
-        resultsHeight: CGFloat = 0
-    ) -> CGFloat {
+    static func height(forPanelWidth width: CGFloat, searchRowHeight: CGFloat) -> CGFloat {
+        let topInset = DSSpacings.mediumIncreased
         let gapBelowContent = DSSpacings.small
         let bottomInset = DSSpacings.small
-
-        guard isSearchFocused else {
-            let topInset = DSSpacings.mediumIncreased
-            let cameraSide = width - 2 * cameraSideInset
-            return topInset + cameraSide + gapBelowContent + searchRowHeight + bottomInset
-        }
-
-        let topInset = DSSpacings.tiny
-        return topInset + resultsHeight + gapBelowContent + searchRowHeight + bottomInset
+        let cameraSide = width - 2 * cameraSideInset
+        return topInset + cameraSide + gapBelowContent + searchRowHeight + bottomInset
     }
 }

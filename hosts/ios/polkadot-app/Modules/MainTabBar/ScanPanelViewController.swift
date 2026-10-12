@@ -50,13 +50,15 @@ final class ScanPanelViewController: UIViewController, ViewHolder {
     }
 
     /// The height this panel declares at `width`. The tab bar chrome reads it whenever it sizes the open panel.
-    func declaredContentHeight(forPanelWidth width: CGFloat) -> CGFloat {
-        ScanPanelContentHeight.height(
+    func declaredContentHeight(forPanelWidth width: CGFloat) -> TabBarCenterContentHeight {
+        guard !isSearchFocused else {
+            return .fill
+        }
+        let height = ScanPanelContentHeight.height(
             forPanelWidth: width,
-            searchRowHeight: ScanPanelContentHeight.embeddedSearchRowHeight,
-            isSearchFocused: isSearchFocused,
-            resultsHeight: rootView.resultsView.contentHeight
+            searchRowHeight: ScanPanelContentHeight.embeddedSearchRowHeight
         )
+        return .fits(height)
     }
 }
 
