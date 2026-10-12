@@ -7,9 +7,8 @@ import Products
 /// an empty list while the worker downloads and boots. Pocket bundles a card's face for the same
 /// reason; Android's chat side uses `ProductChatExtension.defaultRoomMetadata`.
 ///
-/// The product's own `createRoom` finds this row and answers `exists`, because both address it by
-/// `(extensionId, roomId)`. That answer returns before metadata is written and nothing updates a
-/// room afterwards, so the row keeps this name and a nil icon for good.
+/// The product's own `createRoom` finds this row by `(extensionId, roomId)`, answers `exists`, and
+/// replaces this name and nil icon with the ones the product gives.
 ///
 /// It does not cover a product that never resolves: `ContactsListInteractor` draws an extension
 /// row only while a bot is registered, and `ProductBotFactory` builds none without a worker.
