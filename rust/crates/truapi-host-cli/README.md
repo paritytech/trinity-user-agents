@@ -23,9 +23,6 @@ One binary, `truapi-host`:
 | `signing-host` | Wallet-local host: owns signer identity, can run product scripts, decodes copied pairing QR images or accepts deeplinks, registers statement allowance on-chain, signs. |
 | `dev` | Run a local development product with the shared container loaded by a script tag. |
 | `identity-check` | Probe the root and the network's `uid.<tld>` identity account for a registered username (read from the dotNS contracts on Asset Hub). |
-| `register-name` | Register a full-person username via `DotnsGateway.register_name` on Asset Hub, linked to a lite username or standalone with a chat key. |
-| `alloc-check` | Diagnose (or `--submit`) on-chain statement-store allowance: ring membership, chosen slot, and the `set_statement_store_account` extrinsic. On a full period it prints each occupied slot's age and which one would be replaced. |
-| `pgas-check` | Diagnose (or `--submit`) an Asset Hub PGAS allowance claim: ring membership on People, whether Asset Hub has imported that ring revision, the day's first unclaimed slot, and the `Pgas.claim_pgas` extrinsic. |
 
 The repository's `make e2e-dotli` target builds this binary and runs the
 dotli/playground Diagnosis suite with a non-interactive signing-host responder.
@@ -435,8 +432,8 @@ reports an error; the CLI does not generate alternative bases or random suffixes
 The base is saved with the pending account, so retrying unfinished setup keeps
 the same identity.
 `--reserved-username <label>` additionally reserves a
-full-person base name on dotNS for a newly created account, to be claimed later
-with `register-name`; the CLI refuses labels the registrar has already minted.
+full-person base name on dotNS for a newly created account; the CLI refuses
+labels the registrar has already minted.
 The selected username and last script reference are cached in `session.json`
 inside the displayed session path. Legacy session-local scripts use a portable
 filename; managed projects and explicit scripts use an absolute path. On restart
@@ -951,16 +948,14 @@ than pooling across both, so it is bounded by that collection's budget alone.
 
 Registration pools across every collection the signer can prove, and a free slot
 anywhere is taken before any live slot is replaced. Whether a live slot may be
-replaced at all depends on the caller. The renewal pass, the pairing-time grant,
-and `alloc-check --submit` may replace, and then take the globally oldest
+replaced at all depends on the caller. The renewal pass and the pairing-time
+grant may replace, and then take the globally oldest
 replaceable slot across all collections. Allocation on behalf of a connecting
 product may not: it reports the period as exhausted, because every entry in the
 table is one of this wallet's own products and reclaiming space belongs to the
-renewal pass. `alloc-check` prints both collections' member keys, ring indices and
-slot tables. Auto-managed accounts are stored in
+renewal pass. Auto-managed accounts are stored in
 `accounts.json` under `<base-path>/v2`; mnemonics are plaintext local test secrets
-and the file is written with `0600` permissions on Unix. `alloc-check` verifies
-membership and can submit a test registration.
+and the file is written with `0600` permissions on Unix.
 
 When a managed session has saved pairings, Statement Store exhaustion does not
 mark its signer as exhausted or rotate to another identity. If there is no slot
@@ -981,9 +976,6 @@ truapi-host pairing-host --product-id myapp.dot --script js/scripts/battery.ts -
 # otherwise the CLI auto-selects or creates an attested account.
 truapi-host signing-host --deeplink '<deeplink>' --auto-accept
 HOST_CLI_SIGNER_MNEMONIC="spin battle …" truapi-host signing-host --deeplink '<deeplink>' --auto-accept
-
-# Inspect on-chain statement-store allowance for a mnemonic:
-truapi-host alloc-check --mnemonic "spin battle …" --lookback 100
 ```
 
 Both hosts take `--network`, either `paseo-next-v2` (default) or `previewnet`.

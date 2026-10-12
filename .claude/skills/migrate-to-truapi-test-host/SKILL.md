@@ -180,10 +180,6 @@ Pass an enrolled identity as explicit entropy to get past that:
 accounts: [{ name: "enrolled", entropy: entropyFromMnemonic(PHRASE) }]
 ```
 
-`truapi-host alloc-check --mnemonic "<phrase>"` reports whether an identity is a
-ring member, read-only and in seconds. Run it before a browser suite: it answers
-in one line what the suite takes twenty minutes to say less clearly.
-
 ### A suite that allocates allowances on-chain must serve the People chain
 
 Only with `allowances: "chain"`. Allowance registration reads personhood

@@ -284,9 +284,6 @@ Commands:
 | `dev` | Run a development command against a loopback signing host and browser bridge. |
 | `signing-host` | Run the wallet-local signing host. |
 | `identity-check` | Probe dotNS identity records on Asset Hub for a mnemonic. |
-| `register-name` | Register a full-person username via `DotnsGateway.register_name`. |
-| `alloc-check` | Inspect or submit Statement Store allowance registration. |
-| `pgas-check` | Inspect or submit an Asset Hub PGAS allowance claim. |
 
 ### 4.1 Global logging option
 
@@ -2043,89 +2040,6 @@ IDENTITY_ERROR path=<path> account=<ss58> error=<reason>
 Per-path RPC errors are printed and do not make the command itself fail.
 Mnemonic parsing failures do fail the command. The mnemonic is not persisted.
 
-### 19.2 `register-name`
-
-```text
-truapi-host register-name \
-  --mnemonic <BIP-39> \
-  --label <base-label> \
-  [--network paseo-next-v2] \
-  [--link-lite <name.NN> | --chat-key <65-byte-hex>]
-```
-
-Registers `label` as the full-person username of the mnemonic's RFC-0022
-`uid.<tld>` identity account, through `DotnsGateway.register_name` on Asset Hub.
-The account must be a recognized full person: its ring-VRF key must be built
-into a People-collection ring root on People, and Asset Hub's
-`members-subscriber` must already hold that root revision (the command waits for
-it). The People ring, its members and its root revision are read at one
-finalized People block.
-
-`--link-lite` links the new name to a dotted lite username, inheriting that
-name's chat key; without it and without `--chat-key`, the account's own lite
-username (from dotNS) is linked. `--chat-key` registers standalone with the
-given ECDH key. The two are mutually exclusive.
-
-The transaction is a General (v5) extrinsic authorized by the `AsDotnsGateway`
-extension: `RegisterFullName { proof, ring_index, revision, signature }`, where
-`signature` is the account's sr25519 signature over the inherited-implication
-digest and `proof` the ring-VRF membership proof, built for the `revision` read
-above. `RestrictOrigins` carries `true`. Success prints:
-
-```text
-REGISTER_SUBMITTED label=<label> block=<hash>
-REGISTER_ALIAS alias=0x<alias>
-REGISTER_CONFIRMED label=<label> full_username=<name>
-```
-
-`REGISTER_ALIAS` is printed once `DotnsGateway.AccountAlias` records the
-account, `REGISTER_CONFIRMED` once the dotNS contracts return the name (or
-`<pending>`). Before signing: the label must be unminted on `DotnsRegistrar` (a
-pending reservation is not a mint and stays claimable); the account must not
-already hold a `DotnsGateway.AccountAlias`; a linked lite username must be
-owned by the account per `DotnsGateway.LiteLabelOwner`; and runtimes whose
-`RegisterFullName` shape differs are rejected.
-
-### 19.3 `alloc-check`
-
-```text
-truapi-host alloc-check \
-  --mnemonic <BIP-39> \
-  [--network paseo-next-v2] \
-  [--target <32-byte-hex>] \
-  [--lookback 8] \
-  [--submit]
-```
-
-It prints:
-
-- runtime spec version;
-- transaction version;
-- genesis hash;
-- per personhood collection, the derived bandersnatch member key and that
-  collection's current ring index;
-- per collection, matching ring details, or a single onboarding-pending line when
-  no collection includes the member key;
-- current allowance period;
-- target account;
-- per collection, the free or already-allocated slot, a scan error, or a note that
-  the chain does not offer that collection; and
-- the submission result, naming the collection the slot was taken in, when
-  requested.
-
-Each collection is a separate alias space with its own slot budget, so the scan
-reports one table per collection rather than one combined table.
-
-Without `--target`, the target is all zeroes and the command is scan-only.
-`--submit` requires an explicit 32-byte target. `0x` is optional on target
-hex.
-
-Submission uses the shared metadata-driven `set_statement_store_account`
-implementation, pooled across every collection whose membership the signer can
-prove. An allocation already held in any collection is reused. When every
-collection is full it replaces the globally oldest replaceable slot across all of
-them; on-demand allocation for a product reports exhaustion instead.
-
 ## 20. Exit status and shutdown
 
 | Status | Meaning |
@@ -2165,7 +2079,7 @@ ended. This preserves the child status but bypasses later Rust destructors.
 | `TRUAPI_HOST_BIN_DIR` | Directory the installer puts the `PATH` symlink in. |
 | `TRUAPI_HOST_VERSION` | Version the installer installs, instead of the current stable one. |
 | `TRUAPI_HOST_RELEASE_BASE_URL` | Release host for the installer and the updater, for mirrors and tests. |
-| `HOST_CLI_SIGNER_MNEMONIC` | Mnemonic for `dev`, `signing-host`, `identity-check`, `register-name`, `alloc-check` and `pgas-check` when `--mnemonic` is omitted. |
+| `HOST_CLI_SIGNER_MNEMONIC` | Mnemonic for `dev`, `signing-host` and `identity-check` when `--mnemonic` is omitted. |
 | `HOST_CLI_IDENTITY_BACKEND_BASE` | Identity backend base URL override, including `/api/v1`, for instance a local backend. Chain endpoints stay on the preset. |
 | `HOST_CLI_IDENTITY_BACKEND_TOKEN` | Bearer token for the identity backend's username routes. For registration its subject must be the candidate `uid.<tld>` account. Unset, the CLI mints one itself through the backend's `auth/challenges` → `auth/token` sr25519 handshake with that identity key. |
 | `HOST_CLI_DOTNS_POP_CONTROLLER` | `DotnsPopController` H160 override, skipping on-chain discovery (`DotnsGateway.DispatcherAddress`, used directly when `protocolRegistry()` answers on it, otherwise resolved through `TARGET()`). Only needed where discovery fails. The controller is `0xCC932348606cc1f3318cADeC5A5Cd2CA447f8a4b` on paseo-next-v2 and previewnet; `DEPLOYMENTS.md` in paritytech/dotns is the authority per network. |

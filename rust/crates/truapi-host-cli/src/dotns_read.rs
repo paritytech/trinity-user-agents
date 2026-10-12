@@ -10,9 +10,9 @@ use serde_json::Value;
 use subxt_rpcs::client::{RpcClient, rpc_params};
 use truapi::{
 	host_logic::dotns_gateway::{
-		DotnsIdentity, DotnsTransport, DotnsViewError, VIEW_CALL_ORIGIN, account_alias_key,
-		classify_labels, discover_pop_controller, encode_revive_call, label_available,
-		lite_label_owner_key, resolve_labels, timestamp_now_key, view_output,
+		DotnsIdentity, DotnsTransport, DotnsViewError, VIEW_CALL_ORIGIN, classify_labels,
+		discover_pop_controller, encode_revive_call, label_available, resolve_labels,
+		timestamp_now_key, view_output,
 	},
 	platform::async_trait,
 };
@@ -56,19 +56,6 @@ impl AssetHubReader {
 			.try_into()
 			.map_err(|_| anyhow::anyhow!("Timestamp.Now is not a u64"))?;
 		Ok(u64::from_le_bytes(millis) / 1000)
-	}
-
-	/// Alias `account` registered with, per `DotnsGateway.AccountAlias`.
-	pub async fn account_alias(&self, account: &[u8; 32]) -> Result<Option<[u8; 32]>> {
-		let value = self.raw_storage(&account_alias_key(account)).await?;
-		account_id_value("DotnsGateway.AccountAlias", value)
-	}
-
-	/// Account that reserved the dotted lite username `lite_label` through the
-	/// gateway, per `DotnsGateway.LiteLabelOwner`.
-	pub async fn lite_label_owner(&self, lite_label: &str) -> Result<Option<[u8; 32]>> {
-		let value = self.raw_storage(&lite_label_owner_key(lite_label.as_bytes())).await?;
-		account_id_value("DotnsGateway.LiteLabelOwner", value)
 	}
 
 	/// Usernames of `account` as recorded by the dotNS contracts.
@@ -165,19 +152,6 @@ impl AssetHubReader {
 			})
 			.transpose()
 	}
-}
-
-/// Decodes an optional 32-byte account id storage value. A value of another
-/// length is an error, not "absent": treating it as absent would let a
-/// registration proceed that the gateway then rejects.
-fn account_id_value(entry: &str, value: Option<Vec<u8>>) -> Result<Option<[u8; 32]>> {
-	value
-		.map(|bytes| {
-			let len = bytes.len();
-			<[u8; 32]>::try_from(bytes)
-				.map_err(|_| anyhow::anyhow!("{entry} value is {len} bytes, expected 32"))
-		})
-		.transpose()
 }
 
 #[async_trait]
