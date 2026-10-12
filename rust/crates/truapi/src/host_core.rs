@@ -16,7 +16,7 @@ use std::time::Duration;
 
 use crate::platform::{
     ChatPlatform, ContactsPlatform, ExpandedCardHost, GamePlatform, PermissionStatusHost,
-    PocketPlatform,
+    PocketPlatform, ScannerPlatform,
 };
 use crate::platform::{
     CoreAdmin, PairingHostAdmin, PairingHostConfig, PermissionAuthorizationRequest,
@@ -285,6 +285,13 @@ impl PairingHostRuntime {
     #[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.set_game_platform"))]
     pub fn set_game_platform(&self, platform: Arc<dyn GamePlatform>) -> bool {
         self.services.install_game_platform(platform)
+    }
+
+    /// Install the host's [`ScannerPlatform`] before serving any product
+    /// runtime. Set-once: returns whether this call installed it.
+    #[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.set_scanner_platform"))]
+    pub fn set_scanner_platform(&self, platform: Arc<dyn ScannerPlatform>) -> bool {
+        self.services.install_scanner_platform(platform)
     }
 
     /// Install the host's [`ContactsPlatform`], which owns the contact list and
@@ -728,6 +735,13 @@ impl SigningHostRuntime {
         self.services.install_game_platform(platform)
     }
 
+    /// Install the host's [`ScannerPlatform`] before serving any product
+    /// runtime. Set-once: returns whether this call installed it.
+    #[instrument(skip_all, fields(runtime.method = "signing_host_runtime.set_scanner_platform"))]
+    pub fn set_scanner_platform(&self, platform: Arc<dyn ScannerPlatform>) -> bool {
+        self.services.install_scanner_platform(platform)
+    }
+
     /// Install the host's [`ContactsPlatform`], which owns the contact list and
     /// draws the picker.
     ///
@@ -893,6 +907,51 @@ impl SigningHostRuntime {
             .map_err(|error| v01::GenericError {
                 reason: error.to_string(),
             })
+    }
+
+    /// Read a stored permission authorization status for a product without prompting.
+    ///
+    /// A device capability also resolves the host application's OS gate, so an
+    /// OS refusal reads as `Denied` whatever is stored. Remote,
+    /// identity-disclosure and account-access decisions have no OS gate.
+    #[instrument(skip_all, fields(runtime.method = "signing_host_runtime.permission_authorization_status", product_id = %product_id))]
+    pub async fn permission_authorization_status(
+        &self,
+        product_id: &str,
+        request: PermissionAuthorizationRequest,
+    ) -> Result<PermissionAuthorizationStatus, v01::GenericError> {
+        self.product_admin(product_context(product_id)?)
+            .permission_authorization_status(request)
+            .await
+    }
+
+    /// Read stored permission authorization statuses for a product without prompting.
+    ///
+    /// A device capability also resolves the host application's OS gate, so an
+    /// OS refusal reads as `Denied` whatever is stored. Remote,
+    /// identity-disclosure and account-access decisions have no OS gate.
+    #[instrument(skip_all, fields(runtime.method = "signing_host_runtime.permission_authorization_statuses", product_id = %product_id))]
+    pub async fn permission_authorization_statuses(
+        &self,
+        product_id: &str,
+        requests: Vec<PermissionAuthorizationRequest>,
+    ) -> Result<Vec<PermissionAuthorizationStatus>, v01::GenericError> {
+        self.product_admin(product_context(product_id)?)
+            .permission_authorization_statuses(requests)
+            .await
+    }
+
+    /// Update a stored permission authorization status for a product.
+    #[instrument(skip_all, fields(runtime.method = "signing_host_runtime.set_permission_authorization_status", product_id = %product_id))]
+    pub async fn set_permission_authorization_status(
+        &self,
+        product_id: &str,
+        request: PermissionAuthorizationRequest,
+        status: PermissionAuthorizationStatus,
+    ) -> Result<(), v01::GenericError> {
+        self.product_admin(product_context(product_id)?)
+            .set_permission_authorization_status(request, status)
+            .await
     }
 
     /// Registered providers available for an internal well-known-ring feature.

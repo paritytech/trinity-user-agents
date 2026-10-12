@@ -29,15 +29,11 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
 
         issueMonitoringService.setup()
 
-        #if FEATURE_DIMS
-            DIM1BackgroundTaskRegistrator.shared.registerBackgroundTask()
-            PersonRegistrationBackgroundTaskRegistrator.shared.registerBackgroundTask()
-            PersonSelfIncludeBackgroundTaskRegistrator.shared.registerBackgroundTask()
-        #endif
-
         CoreDurableRecoveryTask.shared.register()
 
         UserNotificationService.shared.startGatheringNotifications()
+
+        LegacyGameAlarmCleanup.run()
 
         PushKitService.shared.register(for: [.voIP])
         application.registerForRemoteNotifications()
