@@ -319,17 +319,6 @@ pub struct ProductRuntimeHost {
 	game_platform: Option<Arc<dyn crate::platform::GamePlatform>>,
 	/// Control of the card face above this connection's Widget, when the host draws one.
 	expanded_card: Option<Arc<dyn crate::platform::ExpandedCardHost>>,
-	/// Host-assigned ids of this connection's open pending operations, each
-	/// holding one worker reference until it ends or the connection is torn
-	/// down.
-	///
-	/// Scoped to the connection rather than the product, which holds because
-	/// only a Worker execution reaches `begin_operation`/`end_operation` and a
-	/// product has one of those at a time.
-	///
-	/// The set is unbounded here. Whether a product may hold a thousand open
-	/// operations is the host's call, made in `begin_operation`, since the
-	/// host is what the operations keep running.
 	open_operations: Mutex<HashSet<u32>>,
 }
 
@@ -386,12 +375,6 @@ impl ProductRuntimeHost {
 		&self.services
 	}
 
-	/// Permission service for this product.
-	///
-	/// Every device-reaching path is built here so a request and a status read
-	/// resolve the same two gates. Remote, identity-disclosure and
-	/// account-access decisions have no OS gate and are unaffected by the
-	/// status adapter.
 	fn permissions_service(&self) -> PermissionsService<'_, dyn Platform, dyn Platform> {
 		PermissionsService::new(self.platform.as_ref(), self.platform.as_ref(), &self.product)
 			.with_status_host(self.permission_status.as_deref())

@@ -1778,7 +1778,7 @@ mod tests {
 	/// Persist a user refusal of `caller`'s access to `target`'s account.
 	fn deny_account_access(platform: &StubPlatform, caller: &str, target: &str) {
 		futures::executor::block_on(
-			// Bare-labelled on both sides, as `account_access_authorization`
+			// Bare-labelled on both sides, as `ProductConsent::account_access`
 			// writes it in production.
 			crate::host_internal::permissions::set_account_access_status(
 				platform,
@@ -2494,7 +2494,7 @@ mod tests {
 	/// The stored `AccountAccess` decision is the only thing that can override a
 	/// publisher's grant. Reading a storage fault as "not refused" would let a
 	/// locked keychain turn the user's explicit no into a yes, on the strength
-	/// of a manifest the publisher controls. `account_access_authorization`,
+	/// of a manifest the publisher controls. `ProductConsent::account_access`,
 	/// which writes that same decision, already fails closed; this is the read
 	/// side agreeing with it.
 	///

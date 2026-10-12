@@ -292,23 +292,6 @@ pub async fn scope_grant(
 	if !manifest.grants(bare_product_label(caller_id), scope) {
 		return Err(RefusedBecause::NotGranted);
 	}
-	// A publisher's grant waives the publisher's own prompt. For ordinary
-	// products, a refusal the user already gave still overrides it,
-	// read-only: raising the prompt here would turn a grant into a way to ask
-	// again.
-	//
-	// Read after the manifest rather than before it. The read is the same either
-	// way, but taking it first let a denied pair refuse without the chain lookup
-	// every other refusal pays for, and that difference in cost enumerates the
-	// user's stored denials to anyone who can ask. On the wire path the caller
-	// id is supplied by the peer, so that is anyone it chooses to name.
-	//
-	// Scope-specific by design, and in this shared helper rather than in
-	// `ring_vrf_key_access_granted`: the stored decision is `AccountAccess`, so
-	// it answers about reaching another product's account and says nothing about
-	// its storage, and keeping it here means the frontend and the authority
-	// inherit one implementation. A later scope that also implies account access
-	// has to name itself here; it does not inherit this.
 	if scope == Granted::Context &&
 		!crate::platform::normalizes_to_trusted_remote_permissions(caller_id)
 	{
@@ -488,25 +471,8 @@ pub struct AuthorizedAccess {
 	pub owner: String,
 }
 
-/// Whether `calling_product_id` may act on `handle`'s ring-VRF key, adjudicated
-/// by the component that holds the key.
-///
-/// The caller owns the key, or the owner's published manifest grants the caller
-/// `context`, subject to stored refusals for ordinary products, resolved against
-/// the chain here rather than accepted from the request. On a paired host the request
-/// arrives over the wire, and a verdict relayed by the caller would take the
-/// manifest out of this decision entirely: the peer would reach every handle on
-/// the device by setting one field, instead of only the handles a publisher
-/// really granted.
-///
-/// Returns the **normalized** owner it decided about. Callers must derive from
-/// that value rather than from the handle they were given: otherwise access is
-/// authorized about `peopl.dot` while the key is derived from whatever spelling
-/// arrived, and only a registry lookup miss separates the two.
-///
-/// The owner check runs first and costs nothing, so a product proving with its
-/// own key never touches the network. Everything after it is a cross-product
-/// access, and every reason it is refused answers the same way.
+/// Own-key or published access, honoring stored account-access refusals.
+/// Returns canonical identities for key derivation and context checks.
 pub async fn ring_vrf_key_access_granted(
 	services: &RuntimeServices,
 	platform: &dyn Platform,
@@ -538,14 +504,6 @@ pub async fn ring_vrf_key_access_granted(
 	}
 	let decision = scope_grant(services, platform, &caller, &owner, Granted::Context).await;
 	if decision.is_ok() {
-		// Recorded, because nothing else records it. A granted cross-product
-		// access raises no prompt and writes no stored decision, so without this
-		// line the only audible half of the decision is the refusal below: a
-		// publisher's grant would let one product act with another's keys and
-		// leave no trace on the device that it happened. This does not make the
-		// access revocable, which needs a surface for the user to record a
-		// decision about a pair they were never asked about, but it is what any
-		// such surface would have to be built on.
 		info!(
 			caller = %caller,
 			owner = %owner,
@@ -553,23 +511,6 @@ pub async fn ring_vrf_key_access_granted(
 		);
 		return Ok(AuthorizedAccess { caller, owner });
 	}
-	// The wire answer is one refusal for every reason, so the reason lives here
-	// or nowhere. Which door the request came through is not repeated: the
-	// enclosing span already says it (`account.*` for a local product runtime,
-	// `sso_responder.*` for a paired peer).
-	//
-	// That span is also what says how far to trust `caller`. Under `account.*`
-	// it is the product id the host bound to the connection. Under
-	// `sso_responder.*` it is `calling_product_id` as decoded from the peer's
-	// message: what the authenticated paired host said, not something this host
-	// verified. The refusal is sound either way, because the grant is resolved
-	// from the owner's manifest and never from this field, but an operator
-	// reading the line should not take it as proof of who asked.
-	// `info!`, not `debug!`: this is the only per-event record that a
-	// cross-product key access was refused, and the wire deliberately answers
-	// one error for every reason. `logging.rs` installs `LevelFilter::OFF` and
-	// the CLI defaults to `info`, so at `debug` this reaches nobody on any
-	// shipped host and the refusal is invisible everywhere.
 	info!(
 		caller = %caller,
 		owner = %owner,

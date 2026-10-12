@@ -1105,8 +1105,6 @@ mod tests {
 
 	#[test]
 	fn a_renderer_action_reaches_the_product_that_rendered_it() {
-		// The channel is execution-scoped, so the admin handle built from this
-		// execution reads what the execution published.
 		let host = NativeTrUApiHostRuntime::with_runtime_config(
 			Arc::new(EventCallbacks::new()),
 			native_host_runtime_config(),

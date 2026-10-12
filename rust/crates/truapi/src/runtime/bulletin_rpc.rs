@@ -299,10 +299,6 @@ impl BulletinRpc {
 			_ = lock_cancelled => return Err(BulletinSubmitError::Cancelled),
 		};
 
-		// The Preimage::submit boundary owns one absolute chain deadline across
-		// the initial submission and an optional refreshed-allowance retry.
-		// The context is used only for cancellation. Dropping the flow on
-		// timeout/cancel drops its in-flight chain work.
 		let mut attempt = 0;
 		loop {
 			attempt += 1;

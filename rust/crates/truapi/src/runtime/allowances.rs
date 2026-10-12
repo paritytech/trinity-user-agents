@@ -1,12 +1,4 @@
-//! Persistent allowance-key repository for pairing-host SSO sessions.
-//!
-//! Implements the host-side allowance cache described in
-//! `docs/rfcs/0010-allowance.md`.
-//!
-//! This mirrors host-papp's allowance repository shape: keys are grouped by
-//! SSO session and then indexed by `(product_id, resource)`. The runtime keeps
-//! a short-lived memory cache in `PairingHost`; this module owns the durable
-//! CoreStorage encoding.
+//! Retained allowance scopes and paired-session storage encoding.
 
 use crate::platform::{CoreStorage, CoreStorageKey};
 use parity_scale_codec::{Decode, Encode};

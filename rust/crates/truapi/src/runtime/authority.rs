@@ -50,7 +50,7 @@ pub struct BulletinAllowanceKey {
 }
 
 impl BulletinAllowanceKey {
-	/// Wrap a 64-byte sr25519 secret; other lengths are `Unavailable`.
+	/// Reject invalid sr25519 material before it can be retained.
 	pub fn from_secret_bytes(secret: Vec<u8>) -> Result<Self, AuthorityError> {
 		let secret: [u8; 64] =
 			secret.try_into().map_err(|secret: Vec<u8>| AuthorityError::Unavailable {
