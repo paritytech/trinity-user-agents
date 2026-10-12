@@ -493,7 +493,11 @@ pub async fn renew_now(
         .map_err(|err| err.to_string())?;
     // Every ring back to index 0, because a membership that stopped being
     // re-included still proves against the ring that holds it.
-    let memberships = find_including_rings(&rpc, &metadata, &candidates, u32::MAX)
+    let signer = statement_allowance::FixedPersonhoodSigner::new(&candidates)
+        .await
+        .map_err(|err| err.to_string())?;
+    let collections: Vec<_> = candidates.iter().map(|candidate| candidate.collection).collect();
+    let memberships = find_including_rings(&rpc, &metadata, &signer, &collections, u32::MAX)
         .await
         .map_err(|err| err.to_string())?;
     if memberships.is_empty() {
@@ -507,7 +511,8 @@ pub async fn renew_now(
         metadata: &metadata,
         chain_state: &chain_state,
         network_suffix: &network_suffix,
-        candidates: &candidates,
+        signer: &signer,
+        collections: &collections,
         memberships: &memberships,
     };
     let mut report = renew_targets(
@@ -516,7 +521,8 @@ pub async fn renew_now(
         &resolved,
         signing_host.renewal.registration_lock(),
     )
-    .await;
+    .await
+    .map_err(|err| err.to_string())?;
     report.pruned = pruned;
     Ok(report)
 }
