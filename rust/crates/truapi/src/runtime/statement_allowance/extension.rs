@@ -32,10 +32,6 @@ pub const AS_PGAS: &str = "AsPgas";
 /// Signed-extension identifier that carries the `AsResources` authorization.
 pub const AS_RESOURCES: &str = "AsResources";
 
-/// Signed-extension identifier that carries the `AsDotnsGateway`
-/// authorization on Asset Hub.
-pub const AS_DOTNS_GATEWAY: &str = "AsDotnsGateway";
-
 /// Error while decoding runtime metadata or resolving allowance-specific
 /// metadata entries.
 #[derive(Debug, Error)]
@@ -91,15 +87,6 @@ pub enum MetadataError {
 		identifier: String,
 		/// Variant name.
 		variant: String,
-	},
-	/// `AsDotnsGatewayInfo::RegisterFullName` did not have the expected field shape.
-	#[error(
-		"AsDotnsGatewayInfo::RegisterFullName fields are [{actual}], expected \
-         [proof, ring_index, revision, signature]; the runtime shape drifted"
-	)]
-	RegisterFullNameShapeDrift {
-		/// Actual comma-separated field names.
-		actual: String,
 	},
 	/// Info variant carried no enum field holding the requested variant.
 	#[error(
@@ -559,27 +546,6 @@ impl Metadata {
 		variant: &str,
 	) -> Result<u8, StatementAllowanceError> {
 		Ok(self.extension_info_variant(identifier, variant)?.index)
-	}
-
-	/// Resolve `AsDotnsGatewayInfo::RegisterFullName` to its variant index.
-	///
-	/// Asserts the exact `{proof, ring_index, revision, signature}` field shape
-	/// (the People-collection root revision the proof was built against). A
-	/// runtime that changes the variant then fails loudly instead of
-	/// mis-encoding.
-	pub fn dotns_register_full_name_variant(&self) -> Result<u8, StatementAllowanceError> {
-		let variant = self.extension_info_variant(AS_DOTNS_GATEWAY, "RegisterFullName")?;
-		let fields: Vec<&str> = variant
-			.fields
-			.iter()
-			.map(|field| field.name.as_deref().unwrap_or("<unnamed>"))
-			.collect();
-		if fields != ["proof", "ring_index", "revision", "signature"] {
-			return Err(
-				MetadataError::RegisterFullNameShapeDrift { actual: fields.join(", ") }.into()
-			);
-		}
-		Ok(variant.index)
 	}
 
 	/// Resolve one named authorization variant on an extension shaped as
@@ -1145,49 +1111,6 @@ mod tests {
 					.is_err(),
 			),
 			(true, true, true),
-		);
-	}
-
-	/// Asset Hub fixture metadata (V16, spec 2000036; previewnet serves the
-	/// same runtime). The dotNS gateway flows are validated against it.
-	const AH_FIXTURE: &[u8] =
-		include_bytes!("../../../tests/fixtures/paseo-next-asset-hub-metadata.scale");
-
-	#[test]
-	fn dotns_gateway_pipeline_matches_the_reference_transaction_layout() {
-		let metadata = Metadata::decode(AH_FIXTURE).unwrap();
-		let state = ChainState { restrict_origins: true, ..fixture_state() };
-
-		// RegisterFullName resolves with the asserted field shape.
-		assert_eq!(metadata.dotns_register_full_name_variant().unwrap(), 0);
-		assert!(metadata.call_indices("DotnsGateway", "register_name").is_ok());
-
-		// The extension tail after AsDotnsGateway encodes exactly the bytes the
-		// reference implementation registerTx.ts hand-builds. Extras are
-		// RestrictOrigin(true) ‖ CheckEra(Immortal) ‖ CheckNonce(0) ‖
-		// ChargePGAS(tip 0, asset None) ‖ CheckMetadataHash(Disabled). The
-		// implicit half is specVersion ‖ txVersion ‖ genesis ‖ genesis ‖
-		// metadata-hash None.
-		let all = metadata.encode_signed_extensions(&state);
-		let tail_start = metadata.extension_index(AS_DOTNS_GATEWAY).unwrap() + 1;
-		let tail = &all[tail_start..];
-		let extras: Vec<u8> = tail.iter().flat_map(|e| e.extra.clone()).collect();
-		assert_eq!(
-			hex::encode(extras),
-			"010000000000",
-			"tail extras: RestrictOrigin true, era, nonce, tip, asset, metadata hash"
-		);
-		let implicit: Vec<u8> = tail.iter().flat_map(|e| e.additional_signed.clone()).collect();
-		assert_eq!(
-			implicit,
-			[
-				state.spec_version.to_le_bytes().to_vec(),
-				state.transaction_version.to_le_bytes().to_vec(),
-				state.genesis_hash.to_vec(),
-				state.genesis_hash.to_vec(),
-				vec![0x00],
-			]
-			.concat()
 		);
 	}
 

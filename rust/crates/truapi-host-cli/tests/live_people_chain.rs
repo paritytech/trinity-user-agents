@@ -270,9 +270,6 @@ async fn both_personhood_collections_resolve_on_the_live_chain() {
 			.slots_per_period(&rpc, &chain.metadata)
 			.await
 			.unwrap_or_else(|err| panic!("{collection} declares no slot budget: {err}"));
-		let ring_index = alloc::ring::read_current_ring_index(&rpc, collection)
-			.await
-			.unwrap_or_else(|err| panic!("{collection} has no current ring: {err}"));
 		let (_, variant) = chain
 			.metadata
 			.as_resources_variant_indices("RegisterStatementStoreAllowance", collection)
@@ -280,7 +277,7 @@ async fn both_personhood_collections_resolve_on_the_live_chain() {
 
 		println!(
 			"live {collection}: slots={slots} ring_exponent={exponent} \
-             current_ring_index={ring_index} extension_variant={variant}"
+             extension_variant={variant}"
 		);
 		assert!(slots > 0, "{collection} declares a zero slot budget");
 	}

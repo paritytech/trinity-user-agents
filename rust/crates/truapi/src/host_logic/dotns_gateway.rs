@@ -1,10 +1,9 @@
 //! dotNS gateway (Asset Hub) payload building and contract reads.
 //!
 //! Every host shares these helpers. They cover the candidate-signed
-//! reservation message for `pallet_dotns_gateway::reserve_name`, the ring-VRF
-//! proof message for `register_name`, the minimal Solidity ABI surface for
-//! reading usernames back through `ReviveApi_call`, and the raw storage keys of
-//! the gateway pallet.
+//! reservation message for `pallet_dotns_gateway::reserve_name`, the minimal
+//! Solidity ABI surface for reading usernames back through `ReviveApi_call`,
+//! and the raw storage keys of the gateway pallet.
 //!
 //! Username resolution ([`discover_pop_controller`], [`resolve_labels`]) is
 //! written once against the [`DotnsTransport`] trait. The headless CLI's
@@ -15,17 +14,11 @@
 //! and the dotNS contracts (`paritytech/dotns`).
 
 use parity_scale_codec::{Compact, Decode, Encode};
-use sp_crypto_hashing::{blake2_128, blake2_256, keccak_256, twox_128};
+use sp_crypto_hashing::{keccak_256, twox_128};
 use thiserror::Error;
 use tracing::warn;
 
 use crate::dotns_views::{call_string, network_tld, tld_node};
-
-/// Ring-VRF context for `register_name` proofs.
-///
-/// The ASCII label, space-padded to 32 bytes. Matches `DOTNS_GATEWAY_CONTEXT`
-/// in the gateway pallet.
-pub const DOTNS_GATEWAY_CONTEXT: [u8; 32] = *b"pop:polkadot.network/dotns      ";
 
 /// Reservation message prefix, matching `RESERVE_MSG_PREFIX` in the gateway
 /// pallet.
@@ -65,62 +58,6 @@ pub fn build_reservation_message(
 		signed_at_secs,
 	)
 		.encode()
-}
-
-/// The `Link` argument of `register_name`: how the new full-person username
-/// relates to the account's previous lite identity.
-#[derive(Debug, Clone, PartialEq, Eq, Encode)]
-pub enum Link {
-	/// Links the full username to an existing lite username, in dotted form
-	/// such as `alice.01`. The chat key is inherited from the lite entry.
-	LiteUsername(Vec<u8>),
-	/// Standalone registration carrying a fresh 65-byte uncompressed ECDH
-	/// chat key.
-	None([u8; 65]),
-}
-
-/// Hashes the registration intent into the 32-byte ring-VRF proof message.
-/// Matches the pallet's `(who, label, link).using_encoded(blake2_256)`.
-pub fn build_register_proof_message(who: &[u8; 32], label: &[u8], link: &Link) -> [u8; 32] {
-	blake2_256(&(who, label, link).encode())
-}
-
-/// Encodes the `DotnsGateway.register_name { who, label, link }` call.
-/// Layout: dispatch indices, the raw account, the compact-prefixed label, then
-/// the link.
-pub fn encode_register_name_call(
-	call_indices: [u8; 2],
-	who: &[u8; 32],
-	label: &[u8],
-	link: &Link,
-) -> Vec<u8> {
-	let mut call = call_indices.to_vec();
-	(who, label, link).encode_to(&mut call);
-	call
-}
-
-/// Encodes the `AsDotnsGateway` extension extra.
-///
-/// The value is `Some(RegisterFullName { proof, ring_index, revision,
-/// signature })`; `revision` is the People-collection root revision the proof
-/// was built against, which Asset Hub's `members-subscriber` must hold. The
-/// signature is wrapped as `MultiSignature::Sr25519`.
-pub fn encode_register_full_name_extra(
-	info_variant: u8,
-	proof: &[u8],
-	ring_index: u32,
-	revision: u32,
-	signature: &[u8; 64],
-) -> Vec<u8> {
-	// Option::Some ‖ info variant ‖ Vec(proof) ‖ ring_index ‖ revision ‖
-	// Sr25519 ‖ sig.
-	let mut extra = vec![0x01, info_variant];
-	proof.encode_to(&mut extra);
-	ring_index.encode_to(&mut extra);
-	revision.encode_to(&mut extra);
-	extra.push(0x01);
-	extra.extend_from_slice(signature);
-	extra
 }
 
 /// Maps an AccountId32 to the H160 the contracts see.
@@ -878,25 +815,6 @@ pub fn dispatcher_address_key() -> Vec<u8> {
 	plain_key(b"DotnsGateway", b"DispatcherAddress")
 }
 
-/// `DotnsGateway.AccountAlias[account]` storage key.
-/// The value is the 32-byte alias the account registered with.
-pub fn account_alias_key(account: &[u8; 32]) -> Vec<u8> {
-	let mut key = plain_key(b"DotnsGateway", b"AccountAlias");
-	key.extend_from_slice(&blake2_128(account));
-	key.extend_from_slice(account);
-	key
-}
-
-/// `DotnsGateway.LiteLabelOwner[lite_label]` storage key, the dotted lite
-/// username (`alice.01`) as a `BaseLabel`. The value is the owning account.
-pub fn lite_label_owner_key(lite_label: &[u8]) -> Vec<u8> {
-	let encoded = lite_label.encode();
-	let mut key = plain_key(b"DotnsGateway", b"LiteLabelOwner");
-	key.extend_from_slice(&blake2_128(&encoded));
-	key.extend_from_slice(&encoded);
-	key
-}
-
 /// `Timestamp.Now` storage key. The value is a u64 of Unix milliseconds.
 pub fn timestamp_now_key() -> Vec<u8> {
 	plain_key(b"Timestamp", b"Now")
@@ -938,49 +856,6 @@ mod tests {
 			1749573123,
 		);
 		assert_eq!(hex::encode(&without), RESERVATION_NO_RESERVED);
-	}
-
-	#[test]
-	fn link_and_proof_message_match_reference_vectors() {
-		let lite = Link::LiteUsername(b"alice.01".to_vec());
-		assert_eq!(hex::encode(lite.encode()), "0020616c6963652e3031");
-		assert_eq!(
-			hex::encode(build_register_proof_message(&[0x44; 32], b"alicebc", &lite)),
-			"506fe3afcb13b2e4fd182d49ff165bc9c834f9dd21d0d545eccb925993b68675"
-		);
-
-		let standalone = Link::None([0x55; 65]);
-		assert_eq!(hex::encode(standalone.encode()), format!("01{}", hex::encode([0x55; 65])));
-		assert_eq!(
-			hex::encode(build_register_proof_message(&[0x44; 32], b"alicebc", &standalone)),
-			"255da65ea6687123d5ac035a438a5c6fa18f7d04f23433611095a0fe58c479ab"
-		);
-	}
-
-	#[test]
-	fn register_name_call_and_extension_extra_have_the_reference_layout() {
-		let link = Link::LiteUsername(b"alice.01".to_vec());
-		let call = encode_register_name_call([0x6a, 0x01], &[0x44; 32], b"alicebc", &link);
-		assert_eq!(&call[..2], &[0x6a, 0x01]);
-		assert_eq!(&call[2..34], &[0x44; 32]);
-		assert_eq!(&call[34..], &[b"alicebc".to_vec().encode(), link.encode()].concat()[..]);
-
-		// Layout: 0x01 (Some) ‖ variant ‖ compact-len proof ‖ ring_index LE ‖
-		// revision LE ‖ 0x01 (Sr25519) ‖ signature, the AsDotnsGatewayInfo::
-		// RegisterFullName field order.
-		let extra = encode_register_full_name_extra(0, &[0xEE; 785], 3, 5, &[0xAB; 64]);
-		assert_eq!(
-			extra,
-			[
-				vec![0x01, 0x00],
-				vec![0xEEu8; 785].encode(),
-				3u32.to_le_bytes().to_vec(),
-				5u32.to_le_bytes().to_vec(),
-				vec![0x01],
-				vec![0xAB; 64],
-			]
-			.concat()
-		);
 	}
 
 	#[test]
@@ -1698,24 +1573,6 @@ mod tests {
 
 	#[test]
 	fn storage_keys_have_the_expected_layout() {
-		// Blake2_128Concat over the SCALE-encoded BaseLabel (compact length ‖ bytes).
-		let owner_key = lite_label_owner_key(b"alice.01");
-		let encoded = [&[0x20u8][..], b"alice.01"].concat();
-		assert_eq!(
-			&owner_key[..32],
-			[twox_128(b"DotnsGateway").as_slice(), twox_128(b"LiteLabelOwner").as_slice(),]
-				.concat()
-		);
-		assert_eq!(&owner_key[32..48], &blake2_128(&encoded));
-		assert_eq!(&owner_key[48..], &encoded);
-
-		let alias_key = account_alias_key(&[0x11; 32]);
-		let prefix =
-			[twox_128(b"DotnsGateway").as_slice(), twox_128(b"AccountAlias").as_slice()].concat();
-		assert_eq!(&alias_key[..32], prefix.as_slice());
-		// Blake2_128Concat over the raw account bytes.
-		assert_eq!(&alias_key[48..], &[0x11; 32]);
-
 		assert_eq!(dispatcher_address_key().len(), 32);
 		assert_eq!(timestamp_now_key().len(), 32);
 	}
