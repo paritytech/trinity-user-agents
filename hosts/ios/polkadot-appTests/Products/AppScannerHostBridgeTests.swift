@@ -78,12 +78,12 @@ struct AppScannerHostBridgeTests {
         let window = try makeTestWindow(root: page)
         let bridge = makeBridge(page: page, application: StubApplication(), window: window)
         await present(UIViewController(), over: page)
+        page.dismiss(animated: true)
 
         let scan = Task { try await bridge.scanCode(productId: "shop.dot", executionKind: .app, request: request) }
-        try await Task.sleep(for: .milliseconds(100))
+        try await Task.sleep(for: .milliseconds(50))
         scan.cancel()
         _ = try await scan.value
-        page.dismiss(animated: true)
         try await waitUntil { page.presentedViewController == nil }
         try await Task.sleep(for: .milliseconds(200))
 
