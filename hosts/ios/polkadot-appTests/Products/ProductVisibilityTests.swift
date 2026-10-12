@@ -38,18 +38,35 @@ struct ProductVisibilityTests {
         #expect([inFront, inBackground] == [true, false])
     }
 
-    @Test("An app in the background is refused at once, not when it comes back")
-    func backgroundAppIsNotWaitedFor() async throws {
-        let window = try makeTestWindow(root: UIViewController())
+    @Test("A Widget's page may sit inside the screen that shows it, as on an open Pocket card")
+    func widgetPageInsideItsScreen() throws {
+        let screen = UIViewController()
+        screen.addChild(StubProductPage(productId: "shop.dot"))
+        let window = try makeTestWindow(root: screen)
+        let visibility = ProductVisibility(application: StubApplication(), window: { window })
+
+        #expect(visibility.canShow(productId: "shop.dot", executionKind: .widget))
+    }
+
+    @Test("Only a screen still opening or closing is waited for, so a hidden product is refused at once")
+    func hiddenProductIsNotWaitedFor() async throws {
+        let page = StubProductPage(productId: "shop.dot")
+        let window = try makeTestWindow(root: page)
         let application = StubApplication()
-        application.applicationState = .background
         let visibility = ProductVisibility(application: application, window: { window })
+        await present(UIViewController(), over: page)
+        let clock = ContinuousClock()
 
-        let visible = Task { await visibility.waitUntilVisible(productId: "shop.dot", executionKind: .worker) }
-        try await Task.sleep(for: .milliseconds(100))
-        application.applicationState = .active
+        let covered = await clock.measure {
+            _ = await visibility.waitUntilVisible(productId: "shop.dot", executionKind: .app)
+        }
+        application.applicationState = .background
+        let background = await clock.measure {
+            _ = await visibility.waitUntilVisible(productId: "shop.dot", executionKind: .worker)
+        }
 
-        #expect(await visible.value == false)
+        #expect(covered < .milliseconds(300))
+        #expect(background < .milliseconds(300))
     }
 
     @Test("A screen closing over the page holds the request until it has gone")

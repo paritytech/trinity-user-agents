@@ -34,12 +34,9 @@ struct ProductVisibility {
 
     @MainActor
     func canShow(productId: ProductId, executionKind: ProductExecutionKind) -> Bool {
-        guard application.applicationState == .active, let top = window()?.topmostViewController else {
-            return false
-        }
-        let screens = sequence(first: top, next: \.parent)
-        // A screen still opening or closing cannot be presented over.
-        guard !screens.contains(where: { $0.isBeingPresented || $0.isBeingDismissed }) else {
+        guard application.applicationState == .active,
+              let top = window()?.topmostViewController,
+              !isMoving(top) else {
             return false
         }
         switch executionKind {
@@ -47,24 +44,38 @@ struct ProductVisibility {
             return true
         case .app,
              .widget:
-            return screens.contains { ($0 as? ProductPageShowing)?.productId == productId }
+            return top.showsPage(of: productId)
         }
     }
 
     /// Gives a host screen over the page, such as the last scanner, time to
-    /// finish opening and then closing.
+    /// finish opening and then closing. Nothing else is waited for.
     @MainActor
     func waitUntilVisible(productId: ProductId, executionKind: ProductExecutionKind) async -> Bool {
         for _ in 0 ..< 40 {
             if canShow(productId: productId, executionKind: executionKind) {
                 return true
             }
-            // A screen closing is waited for, the app coming back is not.
-            guard application.applicationState == .active else {
+            guard application.applicationState == .active,
+                  let top = window()?.topmostViewController,
+                  isMoving(top) else {
                 return false
             }
             try? await Task.sleep(for: .milliseconds(50))
         }
         return canShow(productId: productId, executionKind: executionKind)
+    }
+
+    /// A screen still opening or closing cannot be presented over.
+    @MainActor
+    private func isMoving(_ top: UIViewController) -> Bool {
+        sequence(first: top, next: \.parent).contains { $0.isBeingPresented || $0.isBeingDismissed }
+    }
+}
+
+private extension UIViewController {
+    /// An open Pocket card shows the product's page as a child of its screen.
+    func showsPage(of productId: ProductId) -> Bool {
+        (self as? ProductPageShowing)?.productId == productId || children.contains { $0.showsPage(of: productId) }
     }
 }
