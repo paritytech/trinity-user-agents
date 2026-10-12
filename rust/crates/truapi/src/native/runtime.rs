@@ -26,7 +26,7 @@ use crate::{PairedSsoPeer, ResponderExit, SigningHostRuntime};
 
 use super::callbacks::{
     HostCallbacks, NativeChatCallbacks, NativeContactsCallbacks, NativeGameCallbacks,
-    NativePocketCallbacks,
+    NativePocketCallbacks, NativeScannerCallbacks,
 };
 use super::config::{
     HostRuntimeConfig, NativeResolvedHostRuntimeConfig, NativeRuntimeConfigError,
@@ -37,7 +37,7 @@ use super::executor::shared_native_executor;
 use super::events::NativeEventBus;
 use super::platform::{
     CallbackPlatform, ChatCallbackPlatform, ContactsCallbackPlatform, GameCallbackPlatform,
-    PocketCallbackPlatform,
+    PocketCallbackPlatform, ScannerCallbackPlatform,
 };
 #[cfg(doc)]
 use crate::WorkerTransition;
@@ -276,6 +276,13 @@ impl NativeTrUApiHostRuntime {
             .set_contacts_platform(Arc::new(ContactsCallbackPlatform {
                 contacts: callbacks,
             }))
+    }
+
+    /// Install the host's scanner before opening any product execution.
+    /// Set-once: answers whether this call installed it.
+    pub fn set_scanner_callbacks(&self, callbacks: Arc<dyn NativeScannerCallbacks>) -> bool {
+        self.runtime
+            .set_scanner_platform(Arc::new(ScannerCallbackPlatform { scanner: callbacks }))
     }
 
     /// Tell the core the host's contacts changed. Call it whenever a contact
@@ -1179,6 +1186,8 @@ mod tests {
             panic!("expected a renderer action item")
         };
         assert_eq!(delivered, published);
+        // The scanner checks taps on a connection, while hosts publish them here.
+        assert!(admin.product_runtime().recently_tapped());
     }
 
     #[test]

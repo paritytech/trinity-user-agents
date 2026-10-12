@@ -61,8 +61,12 @@ A face is a body drawn through [Renderer](https://github.com/paritytech/trinity-
 tree per item; presses and edits inside the tree arrive on `action_subscribe` under the same context, so one handler
 serves every card of the product.
 
-Pocket adds one rule on top: the host caches the newest tree per card durably, so a face is shown offline and at cold
-start before the worker answers, and a privileged card has something to show on first run.
+Pocket adds two rules on top. First, the host caches the newest tree per card durably, so a face is shown offline and at
+cold start before the worker answers, and a privileged card has something to show on first run.
+
+Second, the host draws every face in one fixed theme, whatever theme the user picked, so a card looks the same in every
+theme. In the Polkadot Android app that theme is Berlin Night: `FgPrimary` is `#F4F4F5` and `BgSurfaceMain` is
+`#0B0C0F`. `theme.subscribe` still reports the user's theme, for the product's own screens.
 
 ### Expanded card
 
@@ -119,9 +123,14 @@ The first path segment `-` is reserved for host-handled targets and cannot be an
 
 ```text
 polkadot://<product_id>.<tld>/<path>                     App, unchanged
+polkadot://<product_id>.<tld>/-/pocket                   Open the Pocket
 polkadot://<product_id>.<tld>/-/pocket/add?card=<id>     Offer to add a published card
 polkadot://<product_id>.<tld>/-/pocket/open?card=<id>    Expand a card that is present
 ```
+
+`/-/pocket` with no action opens the Pocket itself, for a product that sends the user to the collection without naming a
+card. Arguments are ignored. Expanding a card opens the Pocket on that card, the same view a tap on it gives (see
+[Expanded card](#expanded-card)).
 
 A host without the named modality, or one that does not know the action, opens the App instead. Products reach a
 deeplink from their own web UI through `system.navigate_to`, which already lets `polkadot:` through without a grant, so
