@@ -37,6 +37,7 @@ enum WalletMainViewFactory {
             ),
             pocket: .current,
             tldProvider: DotNsTldProviderFacade.shared,
+            hostProvider: context.flowState.hostProvider,
             remoteConfig: FirebaseFacade.shared
         )
 

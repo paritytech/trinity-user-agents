@@ -8,9 +8,9 @@ final class WalletMainInteractor {
     private let pocketPrewarmer: PocketPrewarmer
     private let pocket: ProductPocketService?
     private let tldProvider: DotNsTldProviding
+    private let hostProvider: ProductHostProviding
     private let remoteConfig: RemoteConfigManaging
     private var resolutionTask: Task<Void, Never>?
-    private var collectiblesTask: Task<Void, Never>?
     private var pocketTask: Task<Void, Never>?
     private var warming: Task<Void, Never>?
 
@@ -19,18 +19,19 @@ final class WalletMainInteractor {
         pocketPrewarmer: PocketPrewarmer,
         pocket: ProductPocketService?,
         tldProvider: DotNsTldProviding,
+        hostProvider: ProductHostProviding,
         remoteConfig: RemoteConfigManaging
     ) {
         self.networkStatusObserver = networkStatusObserver
         self.pocketPrewarmer = pocketPrewarmer
         self.pocket = pocket
         self.tldProvider = tldProvider
+        self.hostProvider = hostProvider
         self.remoteConfig = remoteConfig
     }
 
     deinit {
         resolutionTask?.cancel()
-        collectiblesTask?.cancel()
         pocketTask?.cancel()
         warming?.cancel()
     }
@@ -67,10 +68,10 @@ private extension WalletMainInteractor {
     func showCollectibles() {
         guard remoteConfig.syncedCollectiblesEnabled() else { return }
 
-        collectiblesTask = Task { [weak self, tldProvider] in
+        resolutionTask = Task { [weak self, tldProvider, hostProvider] in
             guard
                 await tldProvider.tldRetrying() != nil,
-                let host = ProductHostFactory(tldProvider: tldProvider).host(label: AppConfig.DotNs.dotNsCollectibles)
+                let host = hostProvider.host(label: AppConfig.DotNs.dotNsCollectibles)
             else { return }
 
             await self?.presenter?.didReceiveCollectibles(page: ProductPage(host: host))

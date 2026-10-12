@@ -1,5 +1,6 @@
 import Foundation
 import AsyncExtensions
+import os
 import ChainRegistry
 import PolkadotUI
 import Products
@@ -92,7 +93,10 @@ struct WalletMainPocketTests {
         let screen = CollectiblesScreen(tld: LateTld())
 
         screen.presenter.setup()
-        try await Task.sleep(for: .seconds(4))
+        let deadline = ContinuousClock.now + .seconds(10)
+        while !screen.view.showsCollectibles, ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(100))
+        }
 
         #expect(screen.view.showsCollectibles)
     }
@@ -134,6 +138,7 @@ private func makeInteractor(
         ),
         pocket: ProductPocketService(collection: collection),
         tldProvider: tld,
+        hostProvider: ProductHostFactory(tldProvider: tld),
         remoteConfig: remoteConfig
     )
     interactor.presenter = presenter
@@ -196,16 +201,22 @@ private final class RecordingWireframe: WalletMainWireframeProtocol {
 }
 
 /// A chain that has not answered the tab's first read, then does.
-private final class LateTld: DotNsTldProviding, @unchecked Sendable {
-    private(set) var reads = 0
+private final class LateTld: DotNsTldProviding {
+    private let readCount = OSAllocatedUnfairLock(initialState: 0)
+
+    var reads: Int {
+        readCount.withLock { $0 }
+    }
 
     func currentTld() -> String? {
-        defer { reads += 1 }
-        return reads == 0 ? nil : "paseo"
+        readCount.withLock { count in
+            defer { count += 1 }
+            return count == 0 ? nil : "paseo"
+        }
     }
 
     func resolveTld() async throws -> String {
-        reads += 1
+        readCount.withLock { $0 += 1 }
         throw DotNsTldError.unavailable
     }
 
