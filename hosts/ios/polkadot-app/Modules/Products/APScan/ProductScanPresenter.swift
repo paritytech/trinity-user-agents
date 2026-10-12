@@ -83,12 +83,12 @@ final class ProductScanPresenter: QRScannerPresenter {
         }
         choice = scan
         view?.controller.dismiss(animated: true) { [weak self] in
-            MainActor.assumeIsolated { self?.deliverChoice() }
+            MainActor.assumeIsolated { self?.deliver(scan) }
         }
     }
 
-    private func deliverChoice() {
-        answer?(choice ?? .dismissed)
+    private func deliver(_ scan: HostScan) {
+        answer?(scan)
         answer = nil
     }
 }
