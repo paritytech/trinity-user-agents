@@ -83,10 +83,6 @@ extension FirebaseFacade: RemoteConfigManaging, ChainRegistryConfiguring {
         firebaseService.asyncWaitW3sMerchants()
     }
 
-    func syncedCollectiblesEnabled() -> Bool {
-        firebaseService.syncedCollectiblesEnabled()
-    }
-
     func syncedTxExtensionVersions() -> [ChainModel.Id: UInt8] {
         firebaseService.syncedTxExtensionVersions()
     }

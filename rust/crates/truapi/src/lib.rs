@@ -75,24 +75,25 @@ pub mod latest {
 		AllocatableResource, AllocationOutcome, Arrangement, Background, BlendingMode, BorderStyle,
 		BoxProps, ButtonProps, ButtonVariant, ChainIdentifier, ChatAction, ChatActionLayout,
 		ChatActions, ChatBotRegistrationStatus, ChatCustomMessage, ChatFile, ChatMedia,
-		ChatMessageContent, ChatReaction, ChatRichText, ChatRoom, ChatRoomParticipation,
-		ChatRoomRegistrationStatus, CodeFormat, ColorToken, ColumnProps, ContactHandle,
-		ContactPickOutcome, ContentAlignment, ContextualAlias, DerivationIndex, Dimensions, Effect,
-		EffectProps, GenericError, HorizontalAlignment, HostAccountCreateProofRequest,
-		HostAccountGetAliasRequest, HostAccountGetError, HostAccountListRingVrfKeysRequest,
-		HostAccountRegisterRingVrfKeyRequest, HostAccountRingVrfSignRequest,
-		HostAccountSignVrfError, HostAccountSignVrfRequest, HostPlatform, HostSignPayloadData,
-		HostWorkerBeginOperationRequest, HostWorkerOperationError, ImageFit, ImageProps,
-		ImageSource, Modifier, OperationStartedResult, PocketCard, ProductAccountId,
-		ProductProofContext, RawPayload, RegisteredRingVrfKey, RemoteChainTransactionStopRequest,
-		RemotePermission, RemoteStatementStoreCreateProofError,
-		RemoteStatementStoreCreateProofRequest, RemoteStatementStoreCreateProofResponse,
-		RemoteStatementStoreSubscribeItem, RemoteStatementStoreSubscribeRequest, RenderContext,
-		RendererNode, ResourceAllocationError, RingLocation, RingLocationJunction,
-		RingVrfKeyDisclosure, RowProps, RuntimeApi, RuntimeSpec, RuntimeType, ScanOutcome, Shape,
-		SignedStatement, Size, Statement, StatementProof, StorageQueryItem, StorageQueryType,
-		StorageResultItem, TextFieldProps, TextProps, ThemeName, ThemeVariant, TxPayloadExtension,
-		TypographyStyle, VerticalAlignment, VrfSignature,
+		ChatMessageContent, ChatReaction, ChatRichText, ChatRoom, ChatRoomFooter,
+		ChatRoomParticipation, ChatRoomRegistrationStatus, CodeFormat, ColorToken, ColumnProps,
+		ContactHandle, ContactPickOutcome, ContentAlignment, ContextualAlias, DerivationIndex,
+		Dimensions, Effect, EffectProps, GenericError, HorizontalAlignment,
+		HostAccountCreateProofRequest, HostAccountGetAliasRequest, HostAccountGetError,
+		HostAccountListRingVrfKeysRequest, HostAccountRegisterRingVrfKeyRequest,
+		HostAccountRingVrfSignRequest, HostAccountSignVrfError, HostAccountSignVrfRequest,
+		HostPlatform, HostSignPayloadData, HostWorkerBeginOperationRequest,
+		HostWorkerOperationError, ImageFit, ImageProps, ImageSource, Modifier,
+		OperationStartedResult, PocketCard, ProductAccountId, ProductProofContext, RawPayload,
+		RegisteredRingVrfKey, RemoteChainTransactionStopRequest, RemotePermission,
+		RemoteStatementStoreCreateProofError, RemoteStatementStoreCreateProofRequest,
+		RemoteStatementStoreCreateProofResponse, RemoteStatementStoreSubscribeItem,
+		RemoteStatementStoreSubscribeRequest, RenderContext, RendererNode, ResourceAllocationError,
+		RingLocation, RingLocationJunction, RingVrfKeyDisclosure, RowProps, RuntimeApi,
+		RuntimeSpec, RuntimeType, ScanOutcome, Shape, SignedStatement, Size, Statement,
+		StatementProof, StorageQueryItem, StorageQueryType, StorageResultItem, TextFieldProps,
+		TextProps, ThemeName, ThemeVariant, TxPayloadExtension, TypographyStyle, VerticalAlignment,
+		VrfSignature,
 	};
 
 	/// Latest payload type of a versioned envelope.
@@ -115,6 +116,10 @@ pub mod latest {
 	pub type HostChatRegisterBotResponse = LatestOf<versioned::chat::HostChatRegisterBotResponse>;
 	/// Native chat bot registration failure.
 	pub type HostChatRegisterBotError = LatestOf<versioned::chat::HostChatRegisterBotError>;
+	/// Request to set what a native chat room shows below its messages.
+	pub type HostChatSetRoomFooterRequest = LatestOf<versioned::chat::HostChatSetRoomFooterRequest>;
+	/// Failure to set what a native chat room shows below its messages.
+	pub type HostChatSetRoomFooterError = LatestOf<versioned::chat::HostChatSetRoomFooterError>;
 	/// Current native room list for a product.
 	pub type HostChatListSubscribeItem = LatestOf<versioned::chat::HostChatListSubscribeItem>;
 	/// Native chat message posting request.
@@ -606,6 +611,13 @@ pub mod native_debug;
 pub mod store;
 
 #[cfg(feature = "runtime")]
+#[cfg(not(target_arch = "wasm32"))]
+pub mod durable;
+
+#[cfg(feature = "runtime")]
+pub use truapi_core::TrUApiCore;
+
+#[cfg(feature = "runtime")]
 pub use host_core::{
 	ChannelId, DebugEvent, DebugSink, FrameDirection, FrameSink, HostAdmin, PairingHostRuntime,
 	ProductRuntime, ProductRuntimeControl, ProductRuntimeError, SigningHostRuntime,
@@ -618,6 +630,11 @@ pub use host_logic::session::{
 };
 #[cfg(feature = "runtime")]
 pub use host_logic::worker::{WorkerLedger, WorkerTransition};
+#[cfg(feature = "runtime")]
+#[cfg(not(target_arch = "wasm32"))]
+pub use native::{
+	NativeRendererObserver, NativeRendererSubscription, WsBridgeEndpoint, WsBridgeStartError,
+};
 #[cfg(feature = "runtime")]
 #[cfg(not(target_arch = "wasm32"))]
 pub use native_debug::{DebugSinkError, WsDebugSink};
@@ -641,14 +658,6 @@ pub use runtime::statement_allowance;
 pub use runtime::{
 	AnnouncedPairing, DevicePairingObserver, MAX_PAIRING_METADATA_CHARS, PairedSsoPeer,
 	PairingProposal, PairingProposalMetadata, ResponderExit,
-};
-#[cfg(feature = "runtime")]
-pub use truapi_core::TrUApiCore;
-
-#[cfg(feature = "runtime")]
-#[cfg(not(target_arch = "wasm32"))]
-pub use native::{
-	NativeRendererObserver, NativeRendererSubscription, WsBridgeEndpoint, WsBridgeStartError,
 };
 
 #[cfg(feature = "runtime")]

@@ -5577,6 +5577,7 @@ dependencies = [
  "getrandom 0.2.17",
  "hex",
  "hkdf",
+ "itertools 0.14.0",
  "js-sys",
  "libc",
  "merlin",

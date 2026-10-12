@@ -21,8 +21,8 @@ use std::{
 use crate::platform::{
 	ChatPlatform, ContactsPlatform, CoreAdmin, ExpandedCardHost, GamePlatform, PairingHostAdmin,
 	PairingHostConfig, PermissionAuthorizationRequest, PermissionAuthorizationStatus,
-	PermissionStatusHost, Platform, PocketPlatform, ProductContext, SigningHostConfig,
-	normalize_product_identifier,
+	PermissionStatusHost, Platform, PocketPlatform, ProductContext, ScannerPlatform,
+	SigningHostConfig, normalize_product_identifier,
 };
 use futures::{
 	FutureExt, StreamExt,
@@ -285,6 +285,13 @@ impl PairingHostRuntime {
 	#[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.set_game_platform"))]
 	pub fn set_game_platform(&self, platform: Arc<dyn GamePlatform>) -> bool {
 		self.services.install_game_platform(platform)
+	}
+
+	/// Install the host's [`ScannerPlatform`] before serving any product
+	/// runtime. Set-once: returns whether this call installed it.
+	#[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.set_scanner_platform"))]
+	pub fn set_scanner_platform(&self, platform: Arc<dyn ScannerPlatform>) -> bool {
+		self.services.install_scanner_platform(platform)
 	}
 
 	/// Install the host's [`ContactsPlatform`], which owns the contact list and
@@ -715,6 +722,13 @@ impl SigningHostRuntime {
 		self.services.install_game_platform(platform)
 	}
 
+	/// Install the host's [`ScannerPlatform`] before serving any product
+	/// runtime. Set-once: returns whether this call installed it.
+	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.set_scanner_platform"))]
+	pub fn set_scanner_platform(&self, platform: Arc<dyn ScannerPlatform>) -> bool {
+		self.services.install_scanner_platform(platform)
+	}
+
 	/// Install the host's [`ContactsPlatform`], which owns the contact list and
 	/// draws the picker.
 	///
@@ -749,10 +763,40 @@ impl SigningHostRuntime {
 	///
 	/// Set-once, so durable state cannot move to another file under a running
 	/// consumer. Returns whether this call installed it.
+	///
+	/// Also starts the durable transaction engine over it, which reports
+	/// pending work to the observer installed with
+	/// [`Self::set_durable_work_observer`]; install that first.
 	#[cfg(not(target_arch = "wasm32"))]
 	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.set_core_db"))]
 	pub fn set_core_db(&self, db: crate::store::Db) -> bool {
-		self.services.install_core_db(db)
+		if !self.services.install_core_db(db.clone()) {
+			return false;
+		}
+		let engine = durable_engine(&self.services, db);
+		self.services.install_durable_engine(engine.clone());
+		forward_durable_work(&self.services, &engine);
+		true
+	}
+
+	/// Install the host observer told whether durable transactions are
+	/// pending. Set-once; returns whether this call installed it.
+	#[cfg(not(target_arch = "wasm32"))]
+	pub fn set_durable_work_observer(
+		&self,
+		observer: Arc<dyn crate::durable::DurableWorkObserver>,
+	) -> bool {
+		self.services.install_durable_work_observer(observer)
+	}
+
+	/// Runs durable recovery until no transaction is live.
+	#[cfg(not(target_arch = "wasm32"))]
+	pub async fn run_durable_recovery(&self) -> Result<(), crate::durable::RecoveryError> {
+		self.services
+			.durable_engine()
+			.ok_or(crate::durable::RecoveryError::NotConfigured)?
+			.run_until_settled()
+			.await
 	}
 
 	/// Reports the core database's state.
@@ -843,6 +887,51 @@ impl SigningHostRuntime {
 		self.signing_host
 			.clear_product_state(product_id)
 			.map_err(|error| v01::GenericError { reason: error.to_string() })
+	}
+
+	/// Read a stored permission authorization status for a product without prompting.
+	///
+	/// A device capability also resolves the host application's OS gate, so an
+	/// OS refusal reads as `Denied` whatever is stored. Remote,
+	/// identity-disclosure and account-access decisions have no OS gate.
+	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.permission_authorization_status", product_id = %product_id))]
+	pub async fn permission_authorization_status(
+		&self,
+		product_id: &str,
+		request: PermissionAuthorizationRequest,
+	) -> Result<PermissionAuthorizationStatus, v01::GenericError> {
+		self.product_admin(product_context(product_id)?)
+			.permission_authorization_status(request)
+			.await
+	}
+
+	/// Read stored permission authorization statuses for a product without prompting.
+	///
+	/// A device capability also resolves the host application's OS gate, so an
+	/// OS refusal reads as `Denied` whatever is stored. Remote,
+	/// identity-disclosure and account-access decisions have no OS gate.
+	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.permission_authorization_statuses", product_id = %product_id))]
+	pub async fn permission_authorization_statuses(
+		&self,
+		product_id: &str,
+		requests: Vec<PermissionAuthorizationRequest>,
+	) -> Result<Vec<PermissionAuthorizationStatus>, v01::GenericError> {
+		self.product_admin(product_context(product_id)?)
+			.permission_authorization_statuses(requests)
+			.await
+	}
+
+	/// Update a stored permission authorization status for a product.
+	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.set_permission_authorization_status", product_id = %product_id))]
+	pub async fn set_permission_authorization_status(
+		&self,
+		product_id: &str,
+		request: PermissionAuthorizationRequest,
+		status: PermissionAuthorizationStatus,
+	) -> Result<(), v01::GenericError> {
+		self.product_admin(product_context(product_id)?)
+			.set_permission_authorization_status(request, status)
+			.await
 	}
 
 	/// Registered providers available for an internal well-known-ring feature.
@@ -1002,6 +1091,41 @@ impl SigningHostRuntime {
 			},
 		}
 	}
+}
+
+/// The durable transaction engine over `db`, reading and submitting through
+/// the runtime's chain connections.
+#[cfg(not(target_arch = "wasm32"))]
+fn durable_engine(
+	services: &RuntimeServices,
+	db: crate::store::Db,
+) -> Arc<crate::durable::DurableTxEngine> {
+	use crate::durable::{DurableDeps, DurableRegistry, DurableTxEngine, RealTimer};
+
+	let chain = Arc::new(services.chain.clone());
+	DurableTxEngine::new(DurableDeps {
+		db,
+		registry: DurableRegistry::new(),
+		heads: chain.clone(),
+		blocks: chain.clone(),
+		validator: chain.clone(),
+		submitter: chain,
+		timer: Arc::new(RealTimer),
+		spawner: services.spawner.clone(),
+	})
+}
+
+/// Reports every change of the engine's pending work to the host observer,
+/// for as long as the engine lives.
+#[cfg(not(target_arch = "wasm32"))]
+fn forward_durable_work(services: &Arc<RuntimeServices>, engine: &crate::durable::DurableTxEngine) {
+	let services = Arc::downgrade(services);
+	engine.report_work_to(move |pending| {
+		let observer = services.upgrade().and_then(|services| services.durable_work_observer());
+		if let Some(observer) = observer {
+			observer.durable_work_changed(pending);
+		}
+	});
 }
 
 #[cfg(not(target_arch = "wasm32"))]

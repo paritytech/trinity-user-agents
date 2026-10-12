@@ -58,6 +58,32 @@ suite("createMockClient", () => {
     }
   });
 
+  it("serves a scanner only when the test configures one", async () => {
+    // The browser joins for an optional capability are written by hand, so
+    // only a call through the real core proves the scanner is reachable.
+    const receipt = {
+      tag: "Scanned",
+      value: { text: "https://greenmarket.example/r/1", format: "Qr" },
+    } as const;
+    const served = await createMockClient({ mock: { scanner: receipt } });
+    const bare = await createMockClient();
+    try {
+      const scan = () => served.client.scanner.scan({ formats: ["Qr"] });
+      expect((await scan())._unsafeUnwrap().outcome).toEqual(receipt);
+      served.host.setScanAnswer({ tag: "Dismissed" });
+      expect((await scan())._unsafeUnwrap().outcome).toEqual({
+        tag: "Dismissed",
+      });
+
+      const unserved = await bare.client.scanner.scan({ formats: ["Qr"] });
+      expect(unserved._unsafeUnwrapErr().tag).toBe("Unsupported");
+      expect(() => bare.host.setScanAnswer({ tag: "Dismissed" })).toThrow();
+    } finally {
+      served.dispose();
+      bare.dispose();
+    }
+  });
+
   it("resolves a seeded preimage, so the seeded key is the one the core asks for", async () => {
     // `seedPreimage` is only worth anything if the key it hands back is the key
     // the core asks the host for. The core content-addresses preimages and

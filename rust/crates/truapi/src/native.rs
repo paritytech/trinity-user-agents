@@ -28,11 +28,14 @@ mod ws_bridge;
 
 pub use crate::{
 	host_internal::sso_messages::SsoRequestOutcome,
-	host_logic::dotns::{NavigateDecision, PocketDeeplinkAction},
+	host_logic::{
+		dotns::{NavigateDecision, PocketDeeplinkAction},
+		scanner::{ScanFilter, ScanVerdict},
+	},
 };
 pub use callbacks::{
 	HostCallbacks, NativeChatCallbacks, NativeContactsCallbacks, NativeGameCallbacks,
-	NativePocketCallbacks, NativePocketRemoval,
+	NativePocketCallbacks, NativePocketRemoval, NativeScannerCallbacks,
 };
 pub use config::{HostRuntimeConfig, NativeRuntimeConfigError, ProductExecutionConfig};
 pub use errors::{
@@ -59,6 +62,13 @@ use crate::{PairingProposal, host_logic::dotns};
 #[uniffi::export]
 pub fn parse_navigate(input: String) -> NavigateDecision {
 	dotns::parse_navigate(&input)
+}
+
+/// The `@parity/truapi-host` release this core was built from, which the
+/// native host packages share.
+#[uniffi::export]
+pub fn truapi_host_version() -> String {
+	env!("CARGO_PKG_VERSION").to_string()
 }
 
 /// The bridge script a host injects into a product's web view, for the `port`

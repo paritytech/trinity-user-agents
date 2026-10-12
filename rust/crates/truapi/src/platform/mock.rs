@@ -45,9 +45,9 @@ use truapi::latest;
 
 use crate::platform::{
 	AuthPresenter, AuthState, ChainProvider, ChatPlatform, CoreStorage, CoreStorageKey, Features,
-	JsonRpcConnection, LocaleHost, Navigation, Notifications, PermissionDecision, Permissions,
-	PreimageHost, ProductContext, ProductOperations, ProductStorage, ProviderError, ThemeHost,
-	UserConfirmation, UserConfirmationReview, async_trait,
+	HostScan, JsonRpcConnection, LocaleHost, Navigation, Notifications, PermissionDecision,
+	Permissions, PreimageHost, ProductContext, ProductOperations, ProductStorage, ProviderError,
+	ScannerPlatform, ThemeHost, UserConfirmation, UserConfirmationReview, async_trait,
 };
 
 /// How the mock answers a permission prompt for one capability.
@@ -171,6 +171,8 @@ pub struct ChatMessageRecord {
 	pub room_id: String,
 	/// What was posted.
 	pub payload: latest::ChatMessageContent,
+	/// The product's one-line description of the message.
+	pub alt: Option<String>,
 }
 
 /// How the mock's chain connection behaves.
@@ -296,6 +298,8 @@ pub struct MockPlatform {
 	/// Current theme. Seeded from the config and replaced by `set_theme`.
 	theme: Arc<Mutex<latest::ThemeVariant>>,
 	theme_subscribers: Arc<Mutex<Vec<mpsc::UnboundedSender<latest::HostThemeSubscribeItem>>>>,
+	/// What the next scan answers. Starts as a dismissal.
+	scan_answer: Arc<Mutex<HostScan>>,
 	storage_subscribers:
 		Arc<Mutex<HashMap<String, Vec<mpsc::UnboundedSender<latest::HostLocalStorageChangeItem>>>>>,
 	chain_status: Arc<Mutex<ChainStatus>>,
@@ -342,6 +346,7 @@ impl MockPlatform {
 			open_operations: Arc::new(Mutex::new(Vec::new())),
 			theme: Arc::new(Mutex::new(theme)),
 			theme_subscribers: Arc::new(Mutex::new(Vec::new())),
+			scan_answer: Arc::new(Mutex::new(HostScan::Dismissed)),
 			storage_subscribers: Arc::new(Mutex::new(HashMap::new())),
 			chain_status: Arc::new(Mutex::new(ChainStatus::Idle)),
 			chain_disconnectors: Arc::new(Mutex::new(Vec::new())),
@@ -574,6 +579,11 @@ impl MockPlatform {
 	/// The theme the mock currently reports.
 	pub fn theme(&self) -> latest::ThemeVariant {
 		*self.theme.lock().expect("theme poisoned")
+	}
+
+	/// Set what the next product scan answers.
+	pub fn set_scan_answer(&self, answer: HostScan) {
+		*self.scan_answer.lock().expect("scan answer poisoned") = answer;
 	}
 
 	/// Replace the reported theme and push it to every live subscriber.
@@ -1175,6 +1185,17 @@ impl ProductOperations for MockPlatform {
 }
 
 #[async_trait]
+impl ScannerPlatform for MockPlatform {
+	async fn scan_code(
+		&self,
+		_product: &ProductContext,
+		_request: &latest::HostScannerScanRequest,
+	) -> Result<HostScan, latest::GenericError> {
+		Ok(self.scan_answer.lock().expect("scan answer poisoned").clone())
+	}
+}
+
+#[async_trait]
 impl ChatPlatform for MockPlatform {
 	async fn create_chat_room(
 		&self,
@@ -1254,8 +1275,20 @@ impl ChatPlatform for MockPlatform {
 				message_id: message_id.clone(),
 				room_id: request.room_id,
 				payload: request.payload,
+				alt: request.alt,
 			});
 		Ok(latest::HostChatPostMessageResponse { message_id })
+	}
+
+	async fn set_chat_room_footer(
+		&self,
+		_product: &ProductContext,
+		_request: latest::HostChatSetRoomFooterRequest,
+	) -> Result<(), latest::GenericError> {
+		match &self.config.faults.chat_error {
+			Some(reason) => Err(latest::GenericError { reason: reason.clone() }),
+			None => Ok(()),
+		}
 	}
 
 	fn subscribe_chat_rooms(
@@ -1837,6 +1870,7 @@ mod tests {
 			latest::HostChatPostMessageRequest {
 				room_id: room_id.to_string(),
 				payload: latest::ChatMessageContent::Text { text: body.to_string() },
+				alt: None,
 			},
 		))
 	}

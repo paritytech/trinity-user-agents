@@ -30,7 +30,7 @@ use truapi::{
 		HostChatCreateRoomError, HostChatCreateRoomRequest, HostChatCreateRoomResponse,
 		HostChatListSubscribeItem, HostChatPostMessageError, HostChatPostMessageRequest,
 		HostChatPostMessageResponse, HostChatRegisterBotError, HostChatRegisterBotRequest,
-		HostChatRegisterBotResponse,
+		HostChatRegisterBotResponse, HostChatSetRoomFooterRequest,
 	},
 	platform::{ChatPlatform, ProductContext, async_trait},
 	v01::{ChatRoom, ChatRoomParticipation},
@@ -113,6 +113,7 @@ impl CliChatHost {
 			// difference between what a product sent and what a host stored
 			// hide behind the summary.
 			"payload": hex::encode(request.payload.encode()),
+			"alt": request.alt,
 		}));
 	}
 
@@ -212,6 +213,14 @@ impl ChatPlatform for CliChatHost {
 		Ok(HostChatPostMessageResponse { message_id })
 	}
 
+	async fn set_chat_room_footer(
+		&self,
+		_product: &ProductContext,
+		_request: HostChatSetRoomFooterRequest,
+	) -> Result<(), GenericError> {
+		Ok(())
+	}
+
 	fn subscribe_chat_rooms(
 		&self,
 		_product: &ProductContext,
@@ -254,7 +263,11 @@ mod tests {
 
 		let posted = futures::executor::block_on(host.post_chat_message(
 			&product(),
-			HostChatPostMessageRequest { room_id: "support".to_string(), payload: text("hello") },
+			HostChatPostMessageRequest {
+				room_id: "support".to_string(),
+				payload: text("hello"),
+				alt: None,
+			},
 		));
 
 		assert!(matches!(posted, Err(HostChatPostMessageError::Unknown { .. })));
@@ -273,7 +286,11 @@ mod tests {
 		let payload = text("line one\nline two");
 		let posted = futures::executor::block_on(host.post_chat_message(
 			&product(),
-			HostChatPostMessageRequest { room_id: "support".to_string(), payload: payload.clone() },
+			HostChatPostMessageRequest {
+				room_id: "support".to_string(),
+				payload: payload.clone(),
+				alt: Some("Two lines".to_string()),
+			},
 		))
 		.expect("a message posts into a room this host created");
 
@@ -294,6 +311,7 @@ mod tests {
 		// The payload as bytes, so a difference between what a product sent
 		// and what the host received cannot hide behind a rendering.
 		assert_eq!(recorded["payload"], hex::encode(payload.encode()));
+		assert_eq!(recorded["alt"], "Two lines");
 	}
 
 	#[test]

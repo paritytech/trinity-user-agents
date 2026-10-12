@@ -20,6 +20,7 @@ use super::{
 };
 use crate::{
 	PairedSsoPeer, ResponderExit, SigningHostRuntime,
+	durable::RecoveryError,
 	host_internal::{
 		permissions::TemporaryPermissions,
 		sso_messages::{
@@ -36,7 +37,7 @@ use super::parse_pairing_deeplink;
 use super::{
 	callbacks::{
 		HostCallbacks, NativeChatCallbacks, NativeContactsCallbacks, NativeGameCallbacks,
-		NativePocketCallbacks,
+		NativePocketCallbacks, NativeScannerCallbacks,
 	},
 	config::{
 		HostRuntimeConfig, NativeResolvedHostRuntimeConfig, NativeRuntimeConfigError,
@@ -47,7 +48,7 @@ use super::{
 	executor::shared_native_executor,
 	platform::{
 		CallbackPlatform, ChatCallbackPlatform, ContactsCallbackPlatform, GameCallbackPlatform,
-		PocketCallbackPlatform,
+		PocketCallbackPlatform, ScannerCallbackPlatform,
 	},
 };
 #[cfg(doc)]
@@ -98,6 +99,10 @@ impl NativeTrUApiHostRuntime {
 		assert!(
 			runtime.worker_ledger().install_demand_observer(platform.clone()),
 			"a freshly built runtime installs its worker demand observer once"
+		);
+		assert!(
+			runtime.set_durable_work_observer(platform.clone()),
+			"a freshly built runtime installs its durable work observer once"
 		);
 		assert!(
 			runtime.set_device_pairing_observer(platform),
@@ -272,6 +277,13 @@ impl NativeTrUApiHostRuntime {
 	pub fn set_contacts_callbacks(&self, callbacks: Arc<dyn NativeContactsCallbacks>) -> bool {
 		self.runtime
 			.set_contacts_platform(Arc::new(ContactsCallbackPlatform { contacts: callbacks }))
+	}
+
+	/// Install the host's scanner before opening any product execution.
+	/// Set-once: answers whether this call installed it.
+	pub fn set_scanner_callbacks(&self, callbacks: Arc<dyn NativeScannerCallbacks>) -> bool {
+		self.runtime
+			.set_scanner_platform(Arc::new(ScannerCallbackPlatform { scanner: callbacks }))
 	}
 
 	/// Tell the core the host's contacts changed. Call it whenever a contact
@@ -540,6 +552,15 @@ impl NativeTrUApiHostRuntime {
 		&self,
 	) -> Result<crate::store::DbStatus, NativeCoreDatabaseError> {
 		self.runtime.core_database_status().await.map_err(Into::into)
+	}
+
+	/// Decides durable transactions from the chain until none is live, then
+	/// returns. Await it from the background task
+	/// [`HostCallbacks::durable_work_changed`] asks for; an error means
+	/// recovery stopped early and the task should be retried. Dropping the
+	/// future stops it.
+	pub async fn run_durable_recovery(&self) -> Result<(), RecoveryError> {
+		self.runtime.run_durable_recovery().await
 	}
 
 	/// Answer one decrypted SSO remote message from a wallet-managed
@@ -1132,6 +1153,8 @@ mod tests {
 			panic!("expected a renderer action item")
 		};
 		assert_eq!(delivered, published);
+		// The scanner checks taps on a connection, while hosts publish them here.
+		assert!(admin.product_runtime().recently_tapped());
 	}
 
 	#[test]
@@ -1310,6 +1333,51 @@ mod tests {
 			Some(file.to_string_lossy().into_owned()),
 			"the database lives in the configured directory"
 		);
+	}
+
+	/// Rows a previous process left live are decided by recovery, so the
+	/// host has to be asked for its background task as soon as the runtime
+	/// exists.
+	#[test]
+	fn durable_work_left_by_a_previous_process_is_reported_at_startup() {
+		let dir = tempfile::tempdir().unwrap();
+		let previous = futures::executor::block_on(Db::open(core_db_config(dir.path()))).unwrap();
+		futures::executor::block_on(previous.write(|tx| {
+			tx.execute(
+				"INSERT INTO durable_tx (domain, tx_hash, birth_number, birth_hash, period, status)
+                 VALUES ('nft', zeroblob(32), 0, zeroblob(32), 64, 'PENDING')",
+				[],
+			)?;
+			Ok(())
+		}))
+		.unwrap();
+		futures::executor::block_on(previous.close()).unwrap();
+		let callbacks = Arc::new(EventCallbacks::new());
+
+		let _host = NativeTrUApiHostRuntime::with_runtime_config(
+			callbacks.clone(),
+			HostRuntimeConfig {
+				database_directory: dir.path().to_string_lossy().into_owned(),
+				..native_host_runtime_config()
+			},
+		)
+		.expect("host runtime config should be valid");
+
+		crate::test_support::wait_until(
+			|| *callbacks.durable_work.lock().unwrap() == vec![true],
+			"the host is told durable work is pending",
+		);
+	}
+
+	#[test]
+	fn durable_recovery_returns_once_nothing_is_live() {
+		let host = NativeTrUApiHostRuntime::with_runtime_config(
+			Arc::new(EventCallbacks::new()),
+			native_host_runtime_config(),
+		)
+		.expect("host runtime config should be valid");
+
+		assert!(futures::executor::block_on(host.run_durable_recovery()).is_ok());
 	}
 
 	#[test]

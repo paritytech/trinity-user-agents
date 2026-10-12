@@ -37,6 +37,7 @@ hex = "0.4"
 hkdf = "0.12"
 image = { version = "0.25", default-features = false }
 indoc = "2"
+itertools = "0.14"
 js-sys = "0.3"
 jsonrpsee = "0.26"
 jsonrpsee-client-transport = "0.26"

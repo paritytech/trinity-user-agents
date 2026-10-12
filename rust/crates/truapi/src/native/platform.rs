@@ -21,7 +21,7 @@ use crate::{DevicePairingObserver, PairedSsoPeer, host_logic::worker::WorkerTran
 use super::{
 	callbacks::{
 		HostCallbacks, NativeChatCallbacks, NativeContactsCallbacks, NativeGameCallbacks,
-		NativePocketCallbacks, NativePocketRemoval,
+		NativePocketCallbacks, NativePocketRemoval, NativeScannerCallbacks,
 	},
 	errors::HostRejection,
 	events::NativeEventBus,
@@ -56,6 +56,27 @@ impl crate::platform::ContactsPlatform for ContactsCallbackPlatform {
 	}
 }
 
+/// [`crate::platform::ScannerPlatform`] served by host-provided
+/// [`NativeScannerCallbacks`]; constructed only when the host passed one.
+pub struct ScannerCallbackPlatform {
+	/// Host viewfinder.
+	pub scanner: Arc<dyn NativeScannerCallbacks>,
+}
+
+#[async_trait]
+impl crate::platform::ScannerPlatform for ScannerCallbackPlatform {
+	async fn scan_code(
+		&self,
+		product: &ProductContext,
+		request: &truapi::latest::HostScannerScanRequest,
+	) -> Result<crate::platform::HostScan, v01::GenericError> {
+		self.scanner
+			.scan_code(product.product_id.clone(), product.execution_kind, request.clone())
+			.await
+			.map_err(|error| v01::GenericError { reason: error.to_string() })
+	}
+}
+
 /// Every [`crate::platform::Platform`] trait served by one execution's
 /// [`HostCallbacks`].
 pub struct CallbackPlatform {
@@ -72,6 +93,12 @@ pub struct CallbackPlatform {
 impl crate::host_logic::worker::WorkerDemandObserver for CallbackPlatform {
 	fn worker_demand_changed(&self, product_id: &str, transition: WorkerTransition) {
 		self.callbacks.worker_demand_changed(product_id.to_string(), transition);
+	}
+}
+
+impl crate::durable::DurableWorkObserver for CallbackPlatform {
+	fn durable_work_changed(&self, pending: bool) {
+		self.callbacks.durable_work_changed(pending);
 	}
 }
 
@@ -517,16 +544,28 @@ impl crate::platform::ChatPlatform for ChatCallbackPlatform {
 	async fn post_chat_message(
 		&self,
 		_product: &ProductContext,
-		request: v01::HostChatPostMessageRequest,
-	) -> Result<v01::HostChatPostMessageResponse, v01::HostChatPostMessageError> {
-		let message_id =
-			self.chat
-				.post_message(request.room_id, request.payload)
-				.await
-				.map_err(|error| v01::HostChatPostMessageError::Unknown {
-					reason: error.to_string(),
-				})?;
-		Ok(v01::HostChatPostMessageResponse { message_id })
+		request: truapi::latest::HostChatPostMessageRequest,
+	) -> Result<truapi::latest::HostChatPostMessageResponse, truapi::latest::HostChatPostMessageError>
+	{
+		let message_id = self
+			.chat
+			.post_message(request.room_id, request.payload, request.alt)
+			.await
+			.map_err(|error| truapi::latest::HostChatPostMessageError::Unknown {
+				reason: error.to_string(),
+			})?;
+		Ok(truapi::latest::HostChatPostMessageResponse { message_id })
+	}
+
+	async fn set_chat_room_footer(
+		&self,
+		_product: &ProductContext,
+		request: v01::HostChatSetRoomFooterRequest,
+	) -> Result<(), v01::GenericError> {
+		self.chat
+			.set_room_footer(request.room_id, request.footer)
+			.await
+			.map_err(v01::GenericError::from)
 	}
 
 	fn subscribe_chat_rooms(

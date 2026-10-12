@@ -4,14 +4,14 @@
 //! and signing hosts. Pairing state, signing state, active sessions, and role
 //! controls live on the concrete role objects.
 
+use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::{
 	collections::VecDeque,
-	sync::{
-		Arc, Mutex, OnceLock,
-		atomic::{AtomicU64, Ordering},
-	},
+	sync::{Arc, Mutex, OnceLock},
 };
 
+#[cfg(not(target_arch = "wasm32"))]
+use crate::durable::{DurableTxEngine, DurableWorkObserver};
 #[cfg(not(target_arch = "wasm32"))]
 use crate::store::{Db, DbError};
 use crate::{
@@ -60,6 +60,12 @@ pub struct RuntimeServices {
 	/// Host Game adapter, installed once at startup by a host that can hold
 	/// reminders. Unset leaves every product Game call `Unsupported`.
 	game_platform: OnceLock<Arc<dyn crate::platform::GamePlatform>>,
+	/// Host scanner, installed once at startup by a host that can draw a
+	/// viewfinder. Unset leaves every product scan `Unsupported`.
+	scanner_platform: OnceLock<Arc<dyn crate::platform::ScannerPlatform>>,
+	/// Whether a scan is open. Shared by every product runtime of this host,
+	/// because the device has one viewfinder.
+	scan_open: AtomicBool,
 	/// Host observer told when a device finishes pairing with this signing
 	/// host. Unset leaves a paired device unannounced.
 	device_pairing_observer: OnceLock<Arc<dyn DevicePairingObserver>>,
@@ -68,6 +74,13 @@ pub struct RuntimeServices {
 	/// [`DbError::NotConfigured`].
 	#[cfg(not(target_arch = "wasm32"))]
 	core_db: OnceLock<Db>,
+	/// Durable transaction engine over the core database, installed with it.
+	#[cfg(not(target_arch = "wasm32"))]
+	durable_engine: OnceLock<Arc<DurableTxEngine>>,
+	/// Host observer told whether durable work is pending. Unset leaves
+	/// recovery to whoever calls it.
+	#[cfg(not(target_arch = "wasm32"))]
+	durable_work_observer: OnceLock<Arc<dyn DurableWorkObserver>>,
 	/// Asset Hub the dotNS contracts are deployed on. All-zero says this host
 	/// has none, which leaves every manifest unresolvable.
 	asset_hub_chain_genesis_hash: [u8; 32],
@@ -133,9 +146,15 @@ impl RuntimeServices {
 			contacts_platform: OnceLock::new(),
 			contact_handles: Default::default(),
 			game_platform: OnceLock::new(),
+			scanner_platform: OnceLock::new(),
+			scan_open: AtomicBool::new(false),
 			device_pairing_observer: OnceLock::new(),
 			#[cfg(not(target_arch = "wasm32"))]
 			core_db: OnceLock::new(),
+			#[cfg(not(target_arch = "wasm32"))]
+			durable_engine: OnceLock::new(),
+			#[cfg(not(target_arch = "wasm32"))]
+			durable_work_observer: OnceLock::new(),
 			asset_hub_chain_genesis_hash,
 			worker_ledger: WorkerLedger::default(),
 			chain,
@@ -252,6 +271,29 @@ impl RuntimeServices {
 		self.contacts_platform.get().cloned()
 	}
 
+	/// Install the host's scanner. Answers whether this call was the one that
+	/// installed it.
+	pub fn install_scanner_platform(
+		&self,
+		platform: Arc<dyn crate::platform::ScannerPlatform>,
+	) -> bool {
+		self.scanner_platform.set(platform).is_ok()
+	}
+
+	/// The host's scanner, when one is installed.
+	pub fn scanner_platform(&self) -> Option<Arc<dyn crate::platform::ScannerPlatform>> {
+		self.scanner_platform.get().cloned()
+	}
+
+	/// Claim the one open scan, or `None` while another holds it. Dropping the
+	/// claim frees it, so a cancelled or failed scan cannot keep it.
+	pub fn claim_scan(&self) -> Option<ScanClaim<'_>> {
+		self.scan_open
+			.compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+			.ok()
+			.map(|_| ScanClaim(&self.scan_open))
+	}
+
 	/// Install the host's device-pairing observer.
 	///
 	/// Set-once, like every optional capability, so the surface that announces
@@ -282,6 +324,32 @@ impl RuntimeServices {
 	#[cfg(not(target_arch = "wasm32"))]
 	pub(crate) fn core_db(&self) -> Result<Db, DbError> {
 		self.core_db.get().cloned().ok_or(DbError::NotConfigured)
+	}
+
+	/// Install the durable transaction engine. Set-once, like the database it
+	/// runs on. Returns whether this call installed it.
+	#[cfg(not(target_arch = "wasm32"))]
+	pub fn install_durable_engine(&self, engine: Arc<DurableTxEngine>) -> bool {
+		self.durable_engine.set(engine).is_ok()
+	}
+
+	/// The durable transaction engine, once the core database is installed.
+	#[cfg(not(target_arch = "wasm32"))]
+	pub fn durable_engine(&self) -> Option<Arc<DurableTxEngine>> {
+		self.durable_engine.get().cloned()
+	}
+
+	/// Install the host's durable work observer. Returns whether this call
+	/// installed it.
+	#[cfg(not(target_arch = "wasm32"))]
+	pub fn install_durable_work_observer(&self, observer: Arc<dyn DurableWorkObserver>) -> bool {
+		self.durable_work_observer.set(observer).is_ok()
+	}
+
+	/// The host's durable work observer, when one is installed.
+	#[cfg(not(target_arch = "wasm32"))]
+	pub fn durable_work_observer(&self) -> Option<Arc<dyn DurableWorkObserver>> {
+		self.durable_work_observer.get().cloned()
 	}
 
 	/// This device's persisted X25519 encryption secret, created on first use.
@@ -460,5 +528,14 @@ impl RuntimeChainProvider for HostChainProvider {
 		self.platform.connect(genesis_hash).await.map(Arc::from).map_err(|err| {
 			RuntimeFailure::unavailable_with_reason("remote_chain_connect", format!("{err:?}"))
 		})
+	}
+}
+
+/// The open scan. Frees the slot when dropped.
+pub struct ScanClaim<'a>(&'a AtomicBool);
+
+impl Drop for ScanClaim<'_> {
+	fn drop(&mut self) {
+		self.0.store(false, Ordering::Release);
 	}
 }
