@@ -161,7 +161,7 @@ private extension DSTabBarCenterControl {
     /// Drag up to open, down to close; a drag that barely moves is a tap.
     /// `minimumDistance: 0` so one gesture serves both and they cannot conflict.
     var drag: some Gesture {
-        DragGesture(minimumDistance: 0)
+        DragGesture(minimumDistance: 0, coordinateSpace: .global)
             .onChanged { value in
                 followDrag(translationHeight: value.translation.height)
             }
@@ -183,7 +183,7 @@ private extension DSTabBarCenterControl {
     /// Drag-only gesture for the grabber. The grabber drags the panel but does not toggle it, so a
     /// tap there does nothing. The minimum distance keeps a tap from starting the drag.
     var grabberDrag: some Gesture {
-        DragGesture(minimumDistance: tapSlop)
+        DragGesture(minimumDistance: tapSlop, coordinateSpace: .global)
             .onChanged { value in
                 followDrag(translationHeight: value.translation.height)
             }
@@ -196,7 +196,9 @@ private extension DSTabBarCenterControl {
             }
     }
 
-    /// Moves the panel with the finger from the progress at which the drag began.
+    /// Moves the panel with the finger from the progress at which the drag began. Both grips measure in the
+    /// global space: the grabber rides the panel's top edge, so in its own space the translation would shrink
+    /// as the panel follows the finger and the panel would fight the drag.
     func followDrag(translationHeight: CGFloat) {
         let start = dragStart ?? progress
         dragStart = start
