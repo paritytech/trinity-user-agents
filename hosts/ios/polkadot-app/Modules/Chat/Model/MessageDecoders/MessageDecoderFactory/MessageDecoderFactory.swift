@@ -12,10 +12,8 @@ final class ChatMessageDecoderFactory: ChatMessageDecoderMaking {
         self.extensionsRegistry = extensionsRegistry
     }
 
-    func makeDecoders(for chain: ChainModel, chatId: Chat.Id) -> [ChatMessageCustomDecoding] {
-        let staticDecoders: [ChatMessageCustomDecoding] = [
-            GameDepositMessageDecoder(chain: chain)
-        ] + makeCommonDecoders()
+    func makeDecoders(for _: ChainModel, chatId: Chat.Id) -> [ChatMessageCustomDecoding] {
+        let staticDecoders: [ChatMessageCustomDecoding] = makeCommonDecoders()
 
         let extensionDecoders = extensionsRegistry
             .getExtensions(for: chatId)
@@ -27,15 +25,6 @@ final class ChatMessageDecoderFactory: ChatMessageDecoderMaking {
 
 private extension ChatMessageDecoderFactory {
     func makeCommonDecoders() -> [ChatMessageCustomDecoding] {
-        [
-            GameResultsMessageDecoder(gameVoteRepositoryFactory: GameVoteRepositoryFactory()),
-            GameRegistrationMessageDecoder(),
-            VideoEvidenceMessageDecoder(),
-            TattooCommitmentMessageDecoder(),
-            PhotoEvidenceMessageDecoder(),
-            FullUsernameClaimedMessageDecoder(),
-            PersonhoodRegisteredMessageDecoder(),
-            MobRuleMessageDecoder()
-        ]
+        []
     }
 }

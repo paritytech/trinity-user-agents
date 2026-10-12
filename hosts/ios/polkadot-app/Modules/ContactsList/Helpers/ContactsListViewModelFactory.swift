@@ -75,7 +75,7 @@ extension ContactsListViewModelFactory: ContactsListViewModelMaking {
                 date: messageDate,
                 hasReaction: chat.hasIncomingReaction,
                 unreadCount: unreadCount,
-                accessibilityId: AccessibilityID.Chats.chatListRow(chat)
+                accessibilityId: nil
             )
             let identifiable = IdentifiableContentConfiguration(
                 id: chat.identifier,

@@ -279,9 +279,7 @@ private extension ChatViewModelFactory {
             ? Date.fromChatTimestamp(message.timestamp)
             : nil
 
-        let inboxBubbleStyle = PolkadotPrizesBubbleStyleResolver.style(
-            for: metadata.chatMetadata.chatId
-        )
+        let inboxBubbleStyle: InboxBubbleStyle? = nil
 
         switch message.content {
         case let .text(text),
@@ -905,7 +903,7 @@ private extension ChatViewModelFactory {
         actions: ChatViewModelActions,
         inboxBubbleStyle: InboxBubbleStyle? = nil
     ) -> IdentifiableAnyContentConfiguration<ChatViewLayout.ItemIdentifierType> {
-        let accessibilityId = AccessibilityID.Game.welcomeCard(text: text)
+        let accessibilityId: (any AccessibilityIdentifying)? = nil
         var cellConfig: ChatMessageContainerConfiguration =
             if let style = inboxBubbleStyle {
                 .botTextImage(
