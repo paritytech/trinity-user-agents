@@ -88,7 +88,10 @@ export interface WorkerPairingHostRuntime {
    * Signing hosts only. A pairing host has no local secret and rejects this:
    * it waits for a wallet to answer over the statement-store channel instead.
    */
-  activateLocalSession(secret: Uint8Array, liteUsername?: string): Promise<void>;
+  activateLocalSession(
+    secret: Uint8Array,
+    liteUsername?: string,
+  ): Promise<void>;
   /**
    * Answer resource allocation as granted without performing it.
    *

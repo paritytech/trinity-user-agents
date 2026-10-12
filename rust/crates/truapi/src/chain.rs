@@ -35,32 +35,32 @@ mod tests;
 /// An encoded extrinsic, ready to submit.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct EncodedExtrinsic {
-    bytes: Vec<u8>,
+	bytes: Vec<u8>,
 }
 
 impl EncodedExtrinsic {
-    /// Wrap a fully encoded extrinsic, including its compact length prefix.
-    pub fn new(bytes: Vec<u8>) -> Self {
-        Self { bytes }
-    }
+	/// Wrap a fully encoded extrinsic, including its compact length prefix.
+	pub fn new(bytes: Vec<u8>) -> Self {
+		Self { bytes }
+	}
 
-    /// The encoded extrinsic.
-    pub fn bytes(&self) -> &[u8] {
-        &self.bytes
-    }
+	/// The encoded extrinsic.
+	pub fn bytes(&self) -> &[u8] {
+		&self.bytes
+	}
 
-    /// The extrinsic's Blake2-256 hash, as reported in blocks and
-    /// transaction pools.
-    pub fn hash(&self) -> H256 {
-        H256(blake2_256(&self.bytes))
-    }
+	/// The extrinsic's Blake2-256 hash, as reported in blocks and
+	/// transaction pools.
+	pub fn hash(&self) -> H256 {
+		H256(blake2_256(&self.bytes))
+	}
 }
 
 /// A block identified by both its hash and its number.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct HashAndNumber {
-    /// Block hash.
-    pub hash: H256,
-    /// Block number.
-    pub number: u64,
+	/// Block hash.
+	pub hash: H256,
+	/// Block number.
+	pub number: u64,
 }

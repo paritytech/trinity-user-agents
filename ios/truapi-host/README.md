@@ -372,8 +372,8 @@ func prepareDisconnectRequest() -> Data
 `handleSsoRequest(message:)` takes one SCALE-encoded `RemoteMessage` exactly as decrypted from the statement-store session and routes it through the Rust core. The returned `SsoRequestOutcome` is the generated UniFFI enum (no Swift mirror):
 
 - `.response(message:)` — SCALE-encoded reply; post it back over the same session.
-- `.disconnected` — the peer ended the session; tear down the transport and records on the wallet side.
-- `.ignored` — the message was not a request; nothing to post.
+- `.disconnected`: the peer ended the session; tear down its transport and records.
+- `.ignored`: nothing to post.
 
 Confirmation-gated requests suspend on `confirmUserAction` or `confirmPermission`, so `handleSsoRequest` can take arbitrarily long. Always call it from a `Task`, never the main thread.
 

@@ -38,8 +38,8 @@ export VITE_NETWORKS
 # preview behavior.
 DOTLI_PREVIEW ?= preview:debug
 
-# The truapi runtime declares these modules unconditionally, so the crate does
-# not parse without them. They are gitignored and produced by scripts/codegen.sh.
+# The default runtime feature enables these generated modules. They are
+# gitignored and produced by scripts/codegen.sh.
 GENERATED_RUST := \
 	rust/crates/truapi/src/generated/mod.rs \
 	rust/crates/truapi/src/generated/dispatcher.rs \
