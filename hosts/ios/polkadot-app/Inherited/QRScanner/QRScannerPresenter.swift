@@ -75,15 +75,14 @@ class QRScannerPresenter: QRScannerPresenterProtocol {
                 animated: true,
                 autoDismiss: false
             )
-        case .deviceAccessDeniedPreviously:
+        case .deviceAccessDeniedPreviously,
+             .deviceAccessDeniedNow:
             wireframe.askOpenSettings(from: view)
         case .unsupportedFormat:
             view.present(
                 message: errorDisplayFactory.createStringCapture(error: error),
                 animated: true
             )
-        default:
-            break
         }
     }
 

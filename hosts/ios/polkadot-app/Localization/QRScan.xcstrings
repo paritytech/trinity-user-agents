@@ -1,6 +1,17 @@
 {
   "sourceLanguage": "en",
   "strings": {
+    "error.camera.denied": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No camera access"
+          }
+        }
+      }
+    },
     "error.camera.restricted": {
       "extractionState": "manual",
       "localizations": {
