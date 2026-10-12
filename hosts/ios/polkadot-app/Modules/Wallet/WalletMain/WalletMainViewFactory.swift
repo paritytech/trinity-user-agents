@@ -35,7 +35,9 @@ enum WalletMainViewFactory {
                 products: context.flowState.productResolver,
                 dotNsResolver: context.flowState.dotNsResolver
             ),
-            pocket: .current
+            pocket: .current,
+            tldProvider: DotNsTldProviderFacade.shared,
+            remoteConfig: FirebaseFacade.shared
         )
 
         let presenter = WalletMainPresenter(
