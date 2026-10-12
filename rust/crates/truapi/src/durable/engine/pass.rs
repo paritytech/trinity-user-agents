@@ -173,8 +173,7 @@ impl DurableTxEngine {
         let scan_moved = verdict
             .scanned_to
             .is_some_and(|scanned| Some(scanned) != tx.scanned_to);
-        let restated =
-            verdict.status == tx.status && verdict.success_detected_at == tx.success_detected_at;
+        let restated = verdict.status == tx.status;
         if restated && !scan_moved {
             return false;
         }
@@ -199,12 +198,12 @@ impl DurableTxEngine {
     ) -> HashMap<DurableTxId, RecordedCanonicity> {
         let heights = transactions
             .iter()
-            .filter_map(|tx| tx.success_detected_at.map(|block| block.number));
+            .filter_map(|tx| tx.status.success_block().map(|block| block.number));
         let hashes = self.canonical_hashes(genesis, heights).await;
         transactions
             .iter()
             .filter_map(|tx| {
-                let recorded = tx.success_detected_at?;
+                let recorded = tx.status.success_block()?;
                 // A chain shorter than the record no longer has its block.
                 let hash = hashes.get(&recorded.number)?;
                 let canonicity = if *hash == Some(recorded.hash) {
@@ -244,7 +243,7 @@ mod tests {
     use super::*;
     use crate::chain::{DispatchOutcome, HashAndNumber, Heads};
     use crate::chain_runtime::RuntimeFailure;
-    use crate::durable::model::{DurableTxStatus, HeadKind};
+    use crate::durable::model::{DurableTxStatus, FailureKind, HeadKind};
     use crate::durable::oracle::{DurableRegistry, PassScope, Unobservable};
     use crate::durable::testing::{
         FakeChain, GENESIS, ScriptedScope, block, engine_with, extrinsic, insert,
@@ -338,7 +337,10 @@ mod tests {
 
         block_on(engine.run_pass());
 
-        assert_eq!(status(&engine.db, id), DurableTxStatus::FinalizedSuccess);
+        assert_eq!(
+            status(&engine.db, id),
+            DurableTxStatus::FinalizedSuccess { at: None }
+        );
     }
 
     /// A watch is following the transaction right now and will decide it
@@ -396,7 +398,8 @@ mod tests {
         // finalized status, as coinage infers a minter from its consumer.
         let oracle = ScriptedOracle::new(|ledger: &LedgerView| {
             let mut completed = vec![SUCCESSOR];
-            if ledger.status_of(SUCCESSOR) == Some(DurableTxStatus::FinalizedSuccess) {
+            let successor = ledger.status_of(SUCCESSOR);
+            if matches!(successor, Some(DurableTxStatus::FinalizedSuccess { .. })) {
                 completed.push(PREDECESSOR);
             }
             Box::new(CompletedAtFinalized(completed)) as Box<dyn PassScope>
@@ -417,11 +420,11 @@ mod tests {
 
         assert_eq!(
             status(&engine.db, PREDECESSOR),
-            DurableTxStatus::FinalizedSuccess
+            DurableTxStatus::FinalizedSuccess { at: None }
         );
         assert_eq!(
             status(&engine.db, SUCCESSOR),
-            DurableTxStatus::FinalizedSuccess
+            DurableTxStatus::FinalizedSuccess { at: None }
         );
     }
 
@@ -498,7 +501,6 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(entry.status, DurableTxStatus::Pending);
-        assert_eq!(entry.success_detected_at, None);
     }
 
     /// The node cannot serve the hash at the recorded height, for example after
@@ -516,7 +518,10 @@ mod tests {
 
         block_on(engine.run_pass());
 
-        assert_eq!(status(&engine.db, id), DurableTxStatus::PendingSuccess);
+        assert_eq!(
+            status(&engine.db, id),
+            DurableTxStatus::PendingSuccess { at: block(160) }
+        );
     }
 
     /// A reorg replaced the branch with a shorter one that does not reach the
@@ -554,8 +559,12 @@ mod tests {
         let entry = block_on(engine.db.read(move |conn| dao::entry(conn, id)))
             .unwrap()
             .unwrap();
-        assert_eq!(entry.status, DurableTxStatus::FinalizedSuccess);
-        assert_eq!(entry.success_detected_at, Some(block(120)));
+        assert_eq!(
+            entry.status,
+            DurableTxStatus::FinalizedSuccess {
+                at: Some(block(120))
+            }
+        );
     }
 
     /// Finality stalls while best blocks keep coming. The era has passed on the
@@ -585,7 +594,10 @@ mod tests {
 
         block_on(engine.run_pass());
 
-        assert_eq!(status(&engine.db, id), DurableTxStatus::Failure);
+        assert_eq!(
+            status(&engine.db, id),
+            DurableTxStatus::Failure(FailureKind::Expired)
+        );
     }
 
     /// Recovery runs on every finalized head while a transaction stays
@@ -614,12 +626,7 @@ mod tests {
             dao::compare_and_set(
                 tx,
                 &observed,
-                &crate::durable::model::Verdict {
-                    status: DurableTxStatus::PendingSuccess,
-                    success_detected_at: Some(at),
-                    failure: None,
-                    scanned_to: None,
-                },
+                &DurableTxStatus::PendingSuccess { at }.into(),
             )?;
             Ok(())
         }))

@@ -442,7 +442,7 @@ mod tests {
         ));
         assert_eq!(
             block_on(engine.status(other)).unwrap(),
-            Some(DurableTxStatus::FinalizedSuccess)
+            Some(DurableTxStatus::FinalizedSuccess { at: None })
         );
     }
 

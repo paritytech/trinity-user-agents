@@ -7,7 +7,8 @@ use rusqlite::{Connection, Row, Transaction, named_params};
 use subxt::utils::H256;
 
 use super::model::{
-    DomainId, DurableTxEntry, DurableTxId, DurableTxState, DurableTxStatus, GroupId, Verdict,
+    DomainId, DurableTxEntry, DurableTxId, DurableTxState, DurableTxStatus, FailureKind, GroupId,
+    Verdict,
 };
 use crate::chain::{HashAndNumber, MortalExtrinsic, Mortality};
 use crate::store::{Db, DbError};
@@ -41,7 +42,7 @@ pub fn insert(
 
 const COMPARE_AND_SET: &str = "UPDATE durable_tx
     SET status = :status, success_number = :success_number, success_hash = :success_hash,
-        scanned_number = COALESCE(:scanned_number, scanned_number)
+        failure_kind = :failure_kind, scanned_number = COALESCE(:scanned_number, scanned_number)
     WHERE id = :id AND status = :expected AND tx_hash = :expected_hash
     AND status IN ('PENDING', 'PENDING_SUCCESS')";
 
@@ -52,14 +53,15 @@ pub fn compare_and_set(
     observed: &DurableTxEntry,
     verdict: &Verdict,
 ) -> Result<bool, DbError> {
-    let success = verdict.success_detected_at;
+    let success = verdict.status.success_block();
     let changed = tx.prepare_cached(COMPARE_AND_SET)?.execute(named_params! {
-        ":status": verdict.status,
+        ":status": status_name(verdict.status),
         ":success_number": success.map(|block| block.number),
         ":success_hash": success.map(|block| block.hash.0),
+        ":failure_kind": failure_kind(verdict.status),
         ":scanned_number": verdict.scanned_to,
         ":id": observed.id.0,
-        ":expected": observed.status,
+        ":expected": status_name(observed.status),
         ":expected_hash": observed.tx_hash.0,
     })?;
     Ok(changed == 1)
@@ -74,13 +76,20 @@ pub fn entry(conn: &Connection, id: DurableTxId) -> Result<Option<DurableTxEntry
     Ok(rows.next()?.map(DurableTxEntry::from_row).transpose()?)
 }
 
-const STATUS: &str = "SELECT status FROM durable_tx WHERE id = :id";
+/// The columns [`status_from_row`] reads.
+macro_rules! status_columns {
+    () => {
+        "status, success_number, success_hash, failure_kind"
+    };
+}
+
+const STATUS: &str = concat!("SELECT ", status_columns!(), " FROM durable_tx WHERE id = :id");
 
 /// The status of the row with `id`.
 pub fn status(conn: &Connection, id: DurableTxId) -> Result<Option<DurableTxStatus>, DbError> {
     let mut stmt = conn.prepare_cached(STATUS)?;
     let mut rows = stmt.query(named_params! { ":id": id.0 })?;
-    Ok(rows.next()?.map(|row| row.get("status")).transpose()?)
+    Ok(rows.next()?.map(status_from_row).transpose()?)
 }
 
 /// [`status`], re-read after every commit that changes it.
@@ -89,12 +98,15 @@ pub fn observe_status(
     id: DurableTxId,
 ) -> BoxStream<'static, Result<Option<DurableTxStatus>, DbError>> {
     db.observe(STATUS, move |stmt| {
-        stmt.query_optional(named_params! { ":id": id.0 }, |row| row.get("status"))
+        stmt.query_optional(named_params! { ":id": id.0 }, status_from_row)
     })
 }
 
-const GROUP: &str = "SELECT id, status FROM durable_tx
-    WHERE domain = :domain AND group_id = :group_id ORDER BY id";
+const GROUP: &str = concat!(
+    "SELECT id, ",
+    status_columns!(),
+    " FROM durable_tx WHERE domain = :domain AND group_id = :group_id ORDER BY id"
+);
 
 /// The transactions of one group, in registration order.
 pub fn group(
@@ -169,8 +181,7 @@ impl DurableTxEntry {
             group: row.get::<_, Option<String>>("group_id")?.map(GroupId::new),
             tx_hash: H256(row.get("tx_hash")?),
             mortality: mortality_from_row(row)?,
-            status: row.get("status")?,
-            success_detected_at: success_from_row(row)?,
+            status: status_from_row(row)?,
             scanned_to: row.get("scanned_number")?,
         })
     }
@@ -201,33 +212,78 @@ impl DurableTxState {
     fn from_row(row: &Row<'_>) -> rusqlite::Result<Self> {
         Ok(Self {
             id: DurableTxId(row.get("id")?),
-            status: row.get("status")?,
+            status: status_from_row(row)?,
         })
     }
 }
 
-impl ToSql for DurableTxStatus {
+/// The row's status, with the evidence its columns hold for it.
+fn status_from_row(row: &Row<'_>) -> rusqlite::Result<DurableTxStatus> {
+    let name: String = row.get("status")?;
+    match name.as_str() {
+        "PENDING" => Ok(DurableTxStatus::Pending),
+        "PENDING_SUCCESS" => pending_success_from_row(row),
+        "FINALIZED_SUCCESS" => Ok(DurableTxStatus::FinalizedSuccess {
+            at: success_from_row(row)?,
+        }),
+        "FAILURE" => Ok(DurableTxStatus::Failure(row.get("failure_kind")?)),
+        other => Err(invalid_status(format!(
+            "unknown durable status {other:?}, expected PENDING, PENDING_SUCCESS, \
+             FINALIZED_SUCCESS or FAILURE"
+        ))),
+    }
+}
+
+/// A `PENDING_SUCCESS` row, which must name the block it was seen at.
+fn pending_success_from_row(row: &Row<'_>) -> rusqlite::Result<DurableTxStatus> {
+    let at = success_from_row(row)?.ok_or_else(|| {
+        invalid_status("PENDING_SUCCESS row without success_number and success_hash".into())
+    })?;
+    Ok(DurableTxStatus::PendingSuccess { at })
+}
+
+fn invalid_status(message: String) -> rusqlite::Error {
+    rusqlite::Error::FromSqlConversionFailure(0, Type::Text, message.into())
+}
+
+/// The `status` column's value for `status`.
+fn status_name(status: DurableTxStatus) -> &'static str {
+    match status {
+        DurableTxStatus::Pending => "PENDING",
+        DurableTxStatus::PendingSuccess { .. } => "PENDING_SUCCESS",
+        DurableTxStatus::FinalizedSuccess { .. } => "FINALIZED_SUCCESS",
+        DurableTxStatus::Failure(_) => "FAILURE",
+    }
+}
+
+/// The `failure_kind` column's value for `status`.
+fn failure_kind(status: DurableTxStatus) -> Option<FailureKind> {
+    match status {
+        DurableTxStatus::Failure(kind) => Some(kind),
+        _ => None,
+    }
+}
+
+impl ToSql for FailureKind {
     fn to_sql(&self) -> rusqlite::Result<ToSqlOutput<'_>> {
         Ok(ToSqlOutput::from(match self {
-            Self::Pending => "PENDING",
-            Self::PendingSuccess => "PENDING_SUCCESS",
-            Self::FinalizedSuccess => "FINALIZED_SUCCESS",
-            Self::Failure => "FAILURE",
+            Self::Expired => "EXPIRED",
+            Self::DispatchFailed => "DISPATCH_FAILED",
+            Self::Rejected => "REJECTED",
         }))
     }
 }
 
-impl FromSql for DurableTxStatus {
+impl FromSql for FailureKind {
     fn column_result(value: ValueRef<'_>) -> FromSqlResult<Self> {
         match value.as_str()? {
-            "PENDING" => Ok(Self::Pending),
-            "PENDING_SUCCESS" => Ok(Self::PendingSuccess),
-            "FINALIZED_SUCCESS" => Ok(Self::FinalizedSuccess),
-            "FAILURE" => Ok(Self::Failure),
+            "EXPIRED" => Ok(Self::Expired),
+            "DISPATCH_FAILED" => Ok(Self::DispatchFailed),
+            "REJECTED" => Ok(Self::Rejected),
             other => Err(FromSqlError::Other(
                 format!(
-                    "unknown durable status {other:?}, expected PENDING, PENDING_SUCCESS, \
-                     FINALIZED_SUCCESS or FAILURE"
+                    "unknown durable failure kind {other:?}, expected EXPIRED, \
+                     DISPATCH_FAILED or REJECTED"
                 )
                 .into(),
             )),
@@ -241,7 +297,6 @@ mod tests {
     use futures::executor::block_on;
 
     use super::*;
-    use crate::durable::model::FailureKind;
     use crate::durable::testing::{block, extrinsic, open_db};
 
     fn domain() -> DomainId {
@@ -266,15 +321,6 @@ mod tests {
         block_on(db.write(move |tx| compare_and_set(tx, &observed, &verdict))).unwrap()
     }
 
-    fn verdict(status: DurableTxStatus, success_detected_at: Option<HashAndNumber>) -> Verdict {
-        Verdict {
-            status,
-            success_detected_at,
-            failure: None,
-            scanned_to: None,
-        }
-    }
-
     #[test]
     fn an_inserted_row_reads_back_pending_with_its_attempt() {
         let (_dir, db) = open_db();
@@ -289,7 +335,6 @@ mod tests {
                 tx_hash: extrinsic(7, 100, 64).extrinsic.hash(),
                 mortality: extrinsic(7, 100, 64).mortality,
                 status: DurableTxStatus::Pending,
-                success_detected_at: None,
                 scanned_to: None,
             })
         );
@@ -326,15 +371,14 @@ mod tests {
         let wrote = write_verdict(
             &db,
             observed.clone(),
-            verdict(DurableTxStatus::PendingSuccess, Some(at)),
+            DurableTxStatus::PendingSuccess { at }.into(),
         );
 
         assert!(wrote);
         assert_eq!(
             read(&db, move |conn| entry(conn, id)).unwrap(),
             DurableTxEntry {
-                status: DurableTxStatus::PendingSuccess,
-                success_detected_at: Some(at),
+                status: DurableTxStatus::PendingSuccess { at },
                 ..observed
             }
         );
@@ -351,15 +395,16 @@ mod tests {
         write_verdict(
             &db,
             observed.clone(),
-            verdict(DurableTxStatus::PendingSuccess, Some(block(120))),
+            DurableTxStatus::PendingSuccess { at: block(120) }.into(),
         );
+        let expired = DurableTxStatus::Failure(FailureKind::Expired);
 
-        let wrote = write_verdict(&db, observed, verdict(DurableTxStatus::Failure, None));
+        let wrote = write_verdict(&db, observed, expired.into());
 
         assert!(!wrote);
         assert_eq!(
             read(&db, move |conn| status(conn, id)),
-            Some(DurableTxStatus::PendingSuccess)
+            Some(DurableTxStatus::PendingSuccess { at: block(120) })
         );
     }
 
@@ -376,7 +421,7 @@ mod tests {
         assert!(!write_verdict(
             &db,
             observed,
-            verdict(DurableTxStatus::FinalizedSuccess, None)
+            DurableTxStatus::FinalizedSuccess { at: None }.into()
         ));
     }
 
@@ -388,23 +433,45 @@ mod tests {
         write_verdict(
             &db,
             observed.clone(),
-            Verdict {
-                status: DurableTxStatus::Failure,
-                success_detected_at: None,
-                failure: Some(FailureKind::Expired),
-                scanned_to: None,
-            },
+            DurableTxStatus::Failure(FailureKind::Expired).into(),
         );
         let terminal = DurableTxEntry {
-            status: DurableTxStatus::Failure,
+            status: DurableTxStatus::Failure(FailureKind::Expired),
             ..observed
         };
 
         assert!(!write_verdict(
             &db,
             terminal,
-            verdict(DurableTxStatus::FinalizedSuccess, None)
+            DurableTxStatus::FinalizedSuccess { at: None }.into()
         ));
+    }
+
+    /// Each status is read back with the evidence it was written with: the
+    /// block a success was seen at, and why a transaction failed.
+    #[test]
+    fn a_status_reads_back_with_its_evidence() {
+        let (_dir, db) = open_db();
+        let written = [
+            DurableTxStatus::PendingSuccess { at: block(120) },
+            DurableTxStatus::FinalizedSuccess { at: Some(block(121)) },
+            DurableTxStatus::FinalizedSuccess { at: None },
+            DurableTxStatus::Failure(FailureKind::Expired),
+            DurableTxStatus::Failure(FailureKind::DispatchFailed),
+            DurableTxStatus::Failure(FailureKind::Rejected),
+        ];
+
+        let read_back: Vec<_> = (1..)
+            .zip(written)
+            .map(|(tag, status)| {
+                let id = register(&db, None, tag);
+                let observed = read(&db, move |conn| entry(conn, id)).unwrap();
+                write_verdict(&db, observed, status.into());
+                read(&db, move |conn| super::status(conn, id)).unwrap()
+            })
+            .collect();
+
+        assert_eq!(read_back, written);
     }
 
     /// Two domains may pick the same group name, such as an operation id; a
@@ -417,8 +484,8 @@ mod tests {
         let id = register(&db, None, 7);
         let observed = read(&db, move |conn| entry(conn, id)).unwrap();
         let scanned = Verdict {
+            status: DurableTxStatus::Pending,
             scanned_to: Some(120),
-            ..verdict(DurableTxStatus::Pending, None)
         };
         write_verdict(&db, observed, scanned);
         let scanned_entry = read(&db, move |conn| entry(conn, id)).unwrap();
@@ -426,7 +493,7 @@ mod tests {
         write_verdict(
             &db,
             scanned_entry,
-            verdict(DurableTxStatus::PendingSuccess, Some(block(125))),
+            DurableTxStatus::PendingSuccess { at: block(125) }.into(),
         );
 
         let recorded = read(&db, move |conn| entry(conn, id)).unwrap();
@@ -487,7 +554,7 @@ mod tests {
         write_verdict(
             &db,
             observed,
-            verdict(DurableTxStatus::FinalizedSuccess, None),
+            DurableTxStatus::FinalizedSuccess { at: None }.into(),
         );
 
         assert_eq!(read(&db, live_domains), Vec::<DomainId>::new());

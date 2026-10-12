@@ -61,6 +61,7 @@ pub fn core_migrations() -> Migrations<'static> {
             scanned_number INTEGER,
             status TEXT NOT NULL CHECK (status IN
                 ('PENDING_SUBMISSION', 'PENDING', 'PENDING_SUCCESS', 'FINALIZED_SUCCESS', 'FAILURE')),
+            failure_kind TEXT CHECK (failure_kind IN ('EXPIRED', 'DISPATCH_FAILED', 'REJECTED')),
             policy_id TEXT,
             policy_params BLOB
         );
