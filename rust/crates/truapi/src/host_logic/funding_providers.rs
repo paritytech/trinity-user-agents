@@ -124,7 +124,8 @@ pub struct FundingCandidate {
     /// The provider's product id.
     pub provider_id: String,
     /// Routes serving the direction, as its manifest declares them and its
-    /// recent quote answers confirmed; never empty.
+    /// recent quote answers confirmed. Empty when it declares none and no
+    /// answer has confirmed one yet, so only its quotes say what it serves.
     pub routes: Vec<FundingRoute>,
     /// What its recent quote answers refused, which its routes may still
     /// declare.
@@ -140,7 +141,8 @@ impl FundingCandidate {
     /// declares for it, with what its answers learned in the last
     /// [`LEARNED_SUPPORT_TTL_MS`] folded in. A provider whose answers showed
     /// it serves the direction is a candidate even if its manifest does not
-    /// say so.
+    /// say so, and one that serves Funding without declaring routes is a
+    /// candidate for either direction.
     pub fn for_direction(
         provider_id: &str,
         manifest: Option<&WorkerManifest>,
@@ -153,10 +155,10 @@ impl FundingCandidate {
             FundingDirection::In => RouteDirection::In,
             FundingDirection::Out => RouteDirection::Out,
         };
-        let mut routes: Vec<FundingRoute> = funding
-            .map(|funding| {
-                funding
-                    .routes
+        let declared = funding.and_then(|funding| funding.routes.as_ref());
+        let mut routes: Vec<FundingRoute> = declared
+            .map(|routes| {
+                routes
                     .iter()
                     .filter(|route| route.directions.contains(&route_direction))
                     .cloned()
@@ -191,7 +193,8 @@ impl FundingCandidate {
                 });
             }
         }
-        (!routes.is_empty()).then(|| Self {
+        let undeclared = funding.is_some() && declared.is_none();
+        (undeclared || !routes.is_empty()).then(|| Self {
             provider_id: provider_id.to_string(),
             routes,
             unsupported,
@@ -215,7 +218,6 @@ fn confirm(
             assets: vec![support.asset.clone()],
             networks: support.network.clone().map(|network| vec![network]),
             countries: support.country.clone().map(|country| vec![country]),
-            requires_account: false,
         });
         return;
     };
@@ -265,6 +267,34 @@ mod tests {
         }
     }
 
+    // Routes only narrow which providers are asked, so a provider that
+    // declares none is a candidate either way and its quotes decide, while
+    // declared routes still leave out a direction they do not serve.
+    #[test]
+    fn a_provider_without_routes_is_a_candidate_for_either_direction() {
+        let manifest = |funding: &str| {
+            WorkerManifest::parse(&format!(
+                r#"{{"$v":1,"appVersion":[1,0,0],"kind":"worker","entrypoint":"index.js","includes":{{"funding":{funding}}}}}"#
+            ))
+            .expect("parses")
+        };
+        let undeclared = manifest("{}");
+        let card_in = manifest(r#"{"routes":[{"mode":"CARD","directions":["In"],"assets":["EUR"]}]}"#);
+        let candidate = |manifest: &WorkerManifest, direction| {
+            FundingCandidate::for_direction("ramp.dot", Some(manifest), &[], direction, NOW)
+                .map(|candidate| candidate.routes)
+        };
+
+        assert_eq!(
+            (
+                candidate(&undeclared, FundingDirection::In),
+                candidate(&undeclared, FundingDirection::Out),
+                candidate(&card_in, FundingDirection::Out),
+            ),
+            (Some(Vec::new()), Some(Vec::new()), None)
+        );
+    }
+
     // What an answer showed stands in for the manifest only while it is
     // trusted; after that the manifest applies again.
     #[test]
@@ -289,7 +319,6 @@ mod tests {
                     assets: vec!["EUR".to_string()],
                     networks: None,
                     countries: Some(vec!["DE".to_string()]),
-                    requires_account: false,
                 }]),
                 None,
             )
@@ -323,7 +352,6 @@ mod tests {
                     assets: vec!["USDT".to_string()],
                     networks: Some(vec!["polkadot".to_string()]),
                     countries: None,
-                    requires_account: false,
                 }],
                 vec![FundingLimit {
                     rail: FundingRail::Crypto,

@@ -350,7 +350,6 @@ mod tests {
                     assets: vec!["USDT".to_string()],
                     networks: None,
                     countries: None,
-                    requires_account: false,
                 }]],
             )
         );
