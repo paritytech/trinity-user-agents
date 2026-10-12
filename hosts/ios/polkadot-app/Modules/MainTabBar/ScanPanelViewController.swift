@@ -98,6 +98,7 @@ private extension ScanPanelViewController {
             return
         }
         isSearchFocused = focused
+        scannerController.setCaptureActive(!focused)
 
         let layout = rootView
         DSTabBarStyle.animateCenterChange(in: view) {
