@@ -16,7 +16,7 @@ extension QRScannerViewProtocol {
 
 @MainActor
 protocol QRScannerWireframeProtocol {
-    func askOpenSettings(from view: QRScannerViewProtocol?)
+    func askOpenSettings(from view: QRScannerViewProtocol?, completion: ((ApplicationSettingsAlertResult) -> Void)?)
 }
 
 @MainActor
