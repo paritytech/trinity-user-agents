@@ -1,152 +1,146 @@
 //! A withheld resource is refused while the rest of the request is granted.
 
 use super::*;
-use crate::host_internal::sso_messages::{
-    OnExistingAllowancePolicy, RemoteMessage, RemoteMessageData, ResourceAllocationRequest,
-    SsoAllocationOutcome, v1,
+use crate::{
+	host_internal::sso_messages::{
+		OnExistingAllowancePolicy, RemoteMessage, RemoteMessageData, ResourceAllocationRequest,
+		SsoAllocationOutcome, v1,
+	},
+	runtime::{SsoAccountHolderService, sso_service::Dispatch},
+	test_support::statement,
 };
-use crate::runtime::SsoAccountHolderService;
-use crate::runtime::sso_service::Dispatch;
-use crate::test_support::statement;
-use truapi::api::StatementStore;
-use truapi::versioned::statement_store::RemoteStatementStoreCreateProofAuthorizedRequest;
+use truapi::{
+	api::StatementStore,
+	versioned::statement_store::RemoteStatementStoreCreateProofAuthorizedRequest,
+};
 
 /// A platform that approves the allocation, so a refusal below is the
 /// withholding rather than a declined confirmation.
 fn granting_platform() -> Arc<StubPlatform> {
-    Arc::new(StubPlatform {
-        resource_allocation_confirmed: true,
-        ..StubPlatform::default()
-    })
+	Arc::new(StubPlatform { resource_allocation_confirmed: true, ..StubPlatform::default() })
 }
 
 /// Ask for `resources` and return the per-resource outcomes.
 fn allocate(
-    runtime: &ProductRuntimeHost<WalletAccountHolder>,
-    resources: Vec<v01::AllocatableResource>,
+	runtime: &ProductRuntimeHost<WalletAccountHolder>,
+	resources: Vec<v01::AllocatableResource>,
 ) -> Vec<v01::AllocationOutcome> {
-    let response = futures::executor::block_on(ResourceAllocation::request(
-        runtime,
-        &CallContext::default(),
-        HostRequestResourceAllocationRequest::V1(v01::HostRequestResourceAllocationRequest {
-            resources,
-        }),
-    ))
-    .expect("an approved allocation request is answered");
-    let HostRequestResourceAllocationResponse::V1(response) = response;
-    response.outcomes
+	let response = futures::executor::block_on(ResourceAllocation::request(
+		runtime,
+		&CallContext::default(),
+		HostRequestResourceAllocationRequest::V1(v01::HostRequestResourceAllocationRequest {
+			resources,
+		}),
+	))
+	.expect("an approved allocation request is answered");
+	let HostRequestResourceAllocationResponse::V1(response) = response;
+	response.outcomes
 }
 
 #[test]
 fn a_withheld_resource_is_refused_while_the_others_are_granted() {
-    let (services, activation) = signing_runtime_with_platform(granting_platform());
-    futures::executor::block_on(activation.activate_local_session(ENTROPY.to_vec()))
-        .expect("activation succeeds");
-    activation.set_grant_allowances_unchecked(true);
-    activation.set_withheld_resources(vec!["AutoSigning".to_string()]);
-    let runtime = product_runtime(services, activation);
+	let (services, activation) = signing_runtime_with_platform(granting_platform());
+	futures::executor::block_on(activation.activate_local_session(ENTROPY.to_vec()))
+		.expect("activation succeeds");
+	activation.set_grant_allowances_unchecked(true);
+	activation.set_withheld_resources(vec!["AutoSigning".to_string()]);
+	let runtime = product_runtime(services, activation);
 
-    // The order is the request's, so a suite reads each resource's own answer
-    // rather than one verdict for the batch.
-    assert_eq!(
-        allocate(
-            &runtime,
-            vec![
-                v01::AllocatableResource::AutoSigning,
-                v01::AllocatableResource::StatementStoreAllowance,
-            ],
-        ),
-        vec![
-            v01::AllocationOutcome::Rejected,
-            v01::AllocationOutcome::Allocated,
-        ],
-    );
+	// The order is the request's, so a suite reads each resource's own answer
+	// rather than one verdict for the batch.
+	assert_eq!(
+		allocate(
+			&runtime,
+			vec![
+				v01::AllocatableResource::AutoSigning,
+				v01::AllocatableResource::StatementStoreAllowance,
+			],
+		),
+		vec![v01::AllocationOutcome::Rejected, v01::AllocationOutcome::Allocated,],
+	);
 }
 
 /// The test wallet withholds a resource from every caller, so a paired host
 /// is refused it too; the SSO answer reports a refused item as not available.
 #[test]
 fn a_paired_request_is_refused_a_withheld_resource() {
-    let (_, activation) = signing_runtime_with_platform(granting_platform());
-    futures::executor::block_on(activation.activate_local_session(ENTROPY.to_vec()))
-        .expect("activation succeeds");
-    activation.set_withheld_resources(vec!["AutoSigning".to_string()]);
-    let Ok(Dispatch::Response(answer)) = futures::executor::block_on(
-        SsoAccountHolderService::new(
-            activation.wallet_for_tests().clone(),
-            activation.wallet_for_tests().current_session().unwrap(),
-        )
-        .answer(RemoteMessage::request(
-            "remote-allocation".to_string(),
-            ResourceAllocationRequest {
-                calling_product_id: "myapp.dot".to_string(),
-                resources: vec![v01::AllocatableResource::AutoSigning],
-                on_existing: OnExistingAllowancePolicy::Increase,
-            },
-        )),
-    ) else {
-        panic!("expected an allocation response")
-    };
-    let RemoteMessageData::V1(v1::RemoteMessage::ResourceAllocationResponse(response)) =
-        answer.message.data
-    else {
-        panic!("expected a resource allocation response")
-    };
-    assert_eq!(response.payload, Ok(vec![SsoAllocationOutcome::NotAvailable]));
+	let (_, activation) = signing_runtime_with_platform(granting_platform());
+	futures::executor::block_on(activation.activate_local_session(ENTROPY.to_vec()))
+		.expect("activation succeeds");
+	activation.set_withheld_resources(vec!["AutoSigning".to_string()]);
+	let Ok(Dispatch::Response(answer)) = futures::executor::block_on(
+		SsoAccountHolderService::new(
+			activation.wallet_for_tests().clone(),
+			activation.wallet_for_tests().current_session().unwrap(),
+		)
+		.answer(RemoteMessage::request(
+			"remote-allocation".to_string(),
+			ResourceAllocationRequest {
+				calling_product_id: "myapp.dot".to_string(),
+				resources: vec![v01::AllocatableResource::AutoSigning],
+				on_existing: OnExistingAllowancePolicy::Increase,
+			},
+		)),
+	) else {
+		panic!("expected an allocation response")
+	};
+	let RemoteMessageData::V1(v1::RemoteMessage::ResourceAllocationResponse(response)) =
+		answer.message.data
+	else {
+		panic!("expected a resource allocation response")
+	};
+	assert_eq!(response.payload, Ok(vec![SsoAllocationOutcome::NotAvailable]));
 }
 
 #[test]
 fn withholding_nothing_leaves_every_resource_granted() {
-    let (services, activation) = signing_runtime_with_platform(granting_platform());
-    futures::executor::block_on(activation.activate_local_session(ENTROPY.to_vec()))
-        .expect("activation succeeds");
-    activation.set_grant_allowances_unchecked(true);
-    let runtime = product_runtime(services, activation.clone());
+	let (services, activation) = signing_runtime_with_platform(granting_platform());
+	futures::executor::block_on(activation.activate_local_session(ENTROPY.to_vec()))
+		.expect("activation succeeds");
+	activation.set_grant_allowances_unchecked(true);
+	let runtime = product_runtime(services, activation.clone());
 
-    assert_eq!(
-        (
-            allocate(&runtime, vec![v01::AllocatableResource::AutoSigning]),
-            keeps_auto_signing(&activation, "myapp.dot"),
-        ),
-        (vec![v01::AllocationOutcome::Allocated], false),
-    );
+	assert_eq!(
+		(
+			allocate(&runtime, vec![v01::AllocatableResource::AutoSigning]),
+			keeps_auto_signing(&activation, "myapp.dot"),
+		),
+		(vec![v01::AllocationOutcome::Allocated], false),
+	);
 }
 
 #[test]
 fn a_later_set_replaces_the_earlier_one() {
-    let (services, activation) = signing_runtime_with_platform(granting_platform());
-    futures::executor::block_on(activation.activate_local_session(ENTROPY.to_vec()))
-        .expect("activation succeeds");
-    activation.set_grant_allowances_unchecked(true);
-    activation.set_withheld_resources(vec!["AutoSigning".to_string()]);
-    activation.set_withheld_resources(vec!["BulletinAllowance".to_string()]);
-    let runtime = product_runtime(services, activation);
+	let (services, activation) = signing_runtime_with_platform(granting_platform());
+	futures::executor::block_on(activation.activate_local_session(ENTROPY.to_vec()))
+		.expect("activation succeeds");
+	activation.set_grant_allowances_unchecked(true);
+	activation.set_withheld_resources(vec!["AutoSigning".to_string()]);
+	activation.set_withheld_resources(vec!["BulletinAllowance".to_string()]);
+	let runtime = product_runtime(services, activation);
 
-    // Replacing rather than accumulating: a suite that narrows what it withholds
-    // would otherwise keep refusing whatever it named first.
-    assert_eq!(
-        allocate(
-            &runtime,
-            vec![
-                v01::AllocatableResource::AutoSigning,
-                v01::AllocatableResource::BulletinAllowance,
-            ],
-        ),
-        vec![
-            v01::AllocationOutcome::Allocated,
-            v01::AllocationOutcome::Rejected,
-        ],
-    );
+	// Replacing rather than accumulating: a suite that narrows what it withholds
+	// would otherwise keep refusing whatever it named first.
+	assert_eq!(
+		allocate(
+			&runtime,
+			vec![
+				v01::AllocatableResource::AutoSigning,
+				v01::AllocatableResource::BulletinAllowance,
+			],
+		),
+		vec![v01::AllocationOutcome::Allocated, v01::AllocationOutcome::Rejected,],
+	);
 }
 
 /// Ask for a statement proof the way `createProofAuthorized` does.
 fn proof_is_signed(runtime: &ProductRuntimeHost<WalletAccountHolder>) -> bool {
-    futures::executor::block_on(StatementStore::create_proof_authorized(
-        runtime,
-        &CallContext::default(),
-        RemoteStatementStoreCreateProofAuthorizedRequest::V1(statement()),
-    ))
-    .is_ok()
+	futures::executor::block_on(StatementStore::create_proof_authorized(
+		runtime,
+		&CallContext::default(),
+		RemoteStatementStoreCreateProofAuthorizedRequest::V1(statement()),
+	))
+	.is_ok()
 }
 
 /// A product reaching a statement-store allowance never asks for an
@@ -156,14 +150,14 @@ fn proof_is_signed(runtime: &ProductRuntimeHost<WalletAccountHolder>) -> bool {
 /// the allowance would be watching the path where it has one.
 #[test]
 fn a_withheld_statement_store_allowance_leaves_the_proof_path_unsigned() {
-    let (services, activation) = signing_runtime_with_platform(granting_platform());
-    futures::executor::block_on(activation.activate_local_session(ENTROPY.to_vec()))
-        .expect("activation succeeds");
-    activation.set_grant_allowances_unchecked(true);
-    activation.set_withheld_resources(vec!["StatementStoreAllowance".to_string()]);
-    let runtime = product_runtime(services, activation);
+	let (services, activation) = signing_runtime_with_platform(granting_platform());
+	futures::executor::block_on(activation.activate_local_session(ENTROPY.to_vec()))
+		.expect("activation succeeds");
+	activation.set_grant_allowances_unchecked(true);
+	activation.set_withheld_resources(vec!["StatementStoreAllowance".to_string()]);
+	let runtime = product_runtime(services, activation);
 
-    assert!(!proof_is_signed(&runtime));
+	assert!(!proof_is_signed(&runtime));
 }
 
 /// The control the case above needs. Unchecked granting is what lets either
@@ -171,31 +165,31 @@ fn a_withheld_statement_store_allowance_leaves_the_proof_path_unsigned() {
 /// equally be a host that was never going to sign.
 #[test]
 fn a_granted_statement_store_allowance_signs_the_proof_path() {
-    let (services, activation) = signing_runtime_with_platform(granting_platform());
-    futures::executor::block_on(activation.activate_local_session(ENTROPY.to_vec()))
-        .expect("activation succeeds");
-    activation.set_grant_allowances_unchecked(true);
-    let runtime = product_runtime(services, activation);
+	let (services, activation) = signing_runtime_with_platform(granting_platform());
+	futures::executor::block_on(activation.activate_local_session(ENTROPY.to_vec()))
+		.expect("activation succeeds");
+	activation.set_grant_allowances_unchecked(true);
+	let runtime = product_runtime(services, activation);
 
-    assert!(proof_is_signed(&runtime));
+	assert!(proof_is_signed(&runtime));
 }
 
 #[test]
 fn a_withheld_bulletin_allowance_prevents_submission() {
-    let (_services, activation) = signing_runtime_with_platform(granting_platform());
-    futures::executor::block_on(activation.activate_local_session(ENTROPY.to_vec())).unwrap();
-    activation.set_grant_allowances_unchecked(true);
-    activation.set_withheld_resources(vec!["BulletinAllowance".to_string()]);
-    let session = activation.accounts().current_session().unwrap();
-    let result = futures::executor::block_on(activation.accounts().submit_preimage(
-        &CallContext::default(),
-        std::time::Instant::now() + std::time::Duration::from_secs(1),
-        &session,
-        "myapp.dot".to_string(),
-        b"withheld",
-    ));
-    assert!(matches!(
-        result,
-        Err(crate::runtime::bulletin_rpc::BulletinSubmitError::Authority(AuthorityError::Rejected))
-    ));
+	let (_services, activation) = signing_runtime_with_platform(granting_platform());
+	futures::executor::block_on(activation.activate_local_session(ENTROPY.to_vec())).unwrap();
+	activation.set_grant_allowances_unchecked(true);
+	activation.set_withheld_resources(vec!["BulletinAllowance".to_string()]);
+	let session = activation.accounts().current_session().unwrap();
+	let result = futures::executor::block_on(activation.accounts().submit_preimage(
+		&CallContext::default(),
+		std::time::Instant::now() + std::time::Duration::from_secs(1),
+		&session,
+		"myapp.dot".to_string(),
+		b"withheld",
+	));
+	assert!(matches!(
+		result,
+		Err(crate::runtime::bulletin_rpc::BulletinSubmitError::Authority(AuthorityError::Rejected))
+	));
 }
