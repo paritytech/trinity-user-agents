@@ -303,6 +303,23 @@ public protocol ContactsHostBridge: AnyObject, Sendable {
     func pickContact(productId: String) async throws -> HostContactPick
 }
 
+/// Host-implemented auth token keeper: holds the tokens products obtain from
+/// their own services, following the rules on the core's `AuthTokenPlatform`.
+///
+/// Installed once on the runtime with
+/// ``TrUAPIHostRuntime/setAuthTokens(_:)``. A runtime without one answers
+/// every `authTokens` call with `Unsupported`.
+public protocol AuthTokenHostBridge: AnyObject, Sendable {
+    /// Keep `token` for `productId`'s `service`, replacing any kept for it.
+    func storeAuthToken(productId: String, service: String, token: AuthToken) async throws
+
+    /// The token kept for `productId`'s `service`, or `nil`.
+    func authToken(productId: String, service: String) async throws -> AuthToken?
+
+    /// Drop the token kept for `productId`'s `service`. Dropping none succeeds.
+    func removeAuthToken(productId: String, service: String) async throws
+}
+
 public extension HostBridge {
     /// Default no-op logger. Override to plumb into your logging framework.
     func onCoreLog(marker: String, detail: String) {}
@@ -454,6 +471,40 @@ private final class GameCallbackAdapter: NativeGameCallbacks, @unchecked Sendabl
 
     func cancelReminder() async throws {
         try await withHostRejection { try await bridge.cancelReminder() }
+    }
+
+    private func withHostRejection<T>(_ operation: () async throws -> T) async throws -> T {
+        do {
+            return try await operation()
+        } catch let error as HostRejection {
+            throw error
+        } catch {
+            throw HostRejection.Rejected(reason: hostRejectionReason(error))
+        }
+    }
+}
+
+/// Adapter that bridges the public `AuthTokenHostBridge` to the generated
+/// UniFFI `NativeAuthTokenCallbacks` protocol.
+private final class AuthTokenCallbackAdapter: NativeAuthTokenCallbacks, @unchecked Sendable {
+    private let bridge: AuthTokenHostBridge
+
+    init(bridge: AuthTokenHostBridge) {
+        self.bridge = bridge
+    }
+
+    func storeAuthToken(productId: String, service: String, token: AuthToken) async throws {
+        try await withHostRejection {
+            try await bridge.storeAuthToken(productId: productId, service: service, token: token)
+        }
+    }
+
+    func authToken(productId: String, service: String) async throws -> AuthToken? {
+        try await withHostRejection { try await bridge.authToken(productId: productId, service: service) }
+    }
+
+    func removeAuthToken(productId: String, service: String) async throws {
+        try await withHostRejection { try await bridge.removeAuthToken(productId: productId, service: service) }
     }
 
     private func withHostRejection<T>(_ operation: () async throws -> T) async throws -> T {
@@ -740,6 +791,7 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
     private let notificationCenter: NotificationCenter
     private let foregroundObserver: NSObjectProtocol
     private var contactsRetainer: NativeContactsCallbacks?
+    private var authTokensRetainer: NativeAuthTokenCallbacks?
 
     public convenience init(bridge: HostBridge, runtimeConfig: HostRuntimeConfig) throws {
         try self.init(bridge: bridge, runtimeConfig: runtimeConfig, notificationCenter: .default)
@@ -786,6 +838,15 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
         let adapter = ContactsCallbackAdapter(bridge: contacts)
         contactsRetainer = adapter
         return inner.setContactsCallbacks(callbacks: adapter)
+    }
+
+    /// Install the host's auth token keeper before opening any product
+    /// execution. Set-once: answers whether this call installed it.
+    @discardableResult
+    public func setAuthTokens(_ authTokens: AuthTokenHostBridge) -> Bool {
+        let adapter = AuthTokenCallbackAdapter(bridge: authTokens)
+        authTokensRetainer = adapter
+        return inner.setAuthTokenCallbacks(callbacks: adapter)
     }
 
     /// Tell the core the host's contacts changed. Call it whenever a contact

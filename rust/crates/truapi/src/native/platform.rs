@@ -16,9 +16,9 @@ use crate::host_logic::worker::WorkerTransition;
 use crate::{DevicePairingObserver, PairedSsoPeer};
 
 use super::callbacks::{
-    HostCallbacks, NativeBalanceCallbacks, NativeChatCallbacks, NativeContactsCallbacks,
-    NativeFundingCallbacks, NativeGameCallbacks, NativePaymentCallbacks, NativePocketCallbacks,
-    NativePocketRemoval, NativeTopUpCallbacks,
+    HostCallbacks, NativeAuthTokenCallbacks, NativeBalanceCallbacks, NativeChatCallbacks,
+    NativeContactsCallbacks, NativeFundingCallbacks, NativeGameCallbacks, NativePaymentCallbacks,
+    NativePocketCallbacks, NativePocketRemoval, NativeTopUpCallbacks,
 };
 use super::errors::HostRejection;
 use super::events::NativeEventBus;
@@ -660,6 +660,50 @@ impl crate::platform::GamePlatform for GameCallbackPlatform {
     ) -> Result<(), v01::GenericError> {
         self.game
             .cancel_reminder()
+            .await
+            .map_err(v01::GenericError::from)
+    }
+}
+
+/// [`crate::platform::AuthTokenPlatform`] served by host-provided
+/// [`NativeAuthTokenCallbacks`].
+pub struct AuthTokenCallbackPlatform {
+    /// Host secure token storage.
+    pub tokens: Arc<dyn NativeAuthTokenCallbacks>,
+}
+
+#[async_trait]
+impl crate::platform::AuthTokenPlatform for AuthTokenCallbackPlatform {
+    async fn store_auth_token(
+        &self,
+        product: &ProductContext,
+        service: String,
+        token: v01::AuthToken,
+    ) -> Result<(), v01::GenericError> {
+        self.tokens
+            .store_auth_token(product.product_id.clone(), service, token)
+            .await
+            .map_err(v01::GenericError::from)
+    }
+
+    async fn auth_token(
+        &self,
+        product: &ProductContext,
+        service: String,
+    ) -> Result<Option<v01::AuthToken>, v01::GenericError> {
+        self.tokens
+            .auth_token(product.product_id.clone(), service)
+            .await
+            .map_err(v01::GenericError::from)
+    }
+
+    async fn remove_auth_token(
+        &self,
+        product: &ProductContext,
+        service: String,
+    ) -> Result<(), v01::GenericError> {
+        self.tokens
+            .remove_auth_token(product.product_id.clone(), service)
             .await
             .map_err(v01::GenericError::from)
     }

@@ -66,6 +66,9 @@ pub struct RuntimeServices {
     /// Host Game adapter, installed once at startup by a host that can hold
     /// reminders. Unset leaves every product Game call `Unsupported`.
     game_platform: OnceLock<Arc<dyn crate::platform::GamePlatform>>,
+    /// Host keeper of product auth tokens, installed once at startup by a host
+    /// with secure storage. Unset leaves every AuthTokens call `Unsupported`.
+    auth_token_platform: OnceLock<Arc<dyn crate::platform::AuthTokenPlatform>>,
     /// Host observer told when a device finishes pairing with this signing
     /// host. Unset leaves a paired device unannounced.
     device_pairing_observer: OnceLock<Arc<dyn DevicePairingObserver>>,
@@ -147,6 +150,7 @@ impl RuntimeServices {
             contacts_platform: OnceLock::new(),
             contact_handles: Default::default(),
             game_platform: OnceLock::new(),
+            auth_token_platform: OnceLock::new(),
             device_pairing_observer: OnceLock::new(),
             #[cfg(not(target_arch = "wasm32"))]
             core_db: OnceLock::new(),
@@ -291,6 +295,22 @@ impl RuntimeServices {
     /// The host's Game adapter, when one is installed.
     pub fn game_platform(&self) -> Option<Arc<dyn crate::platform::GamePlatform>> {
         self.game_platform.get().cloned()
+    }
+
+    /// Install the host's auth token keeper.
+    ///
+    /// Set-once, like every optional capability, so tokens cannot change hands
+    /// under a running product. Returns whether this call installed it.
+    pub fn install_auth_token_platform(
+        &self,
+        platform: Arc<dyn crate::platform::AuthTokenPlatform>,
+    ) -> bool {
+        self.auth_token_platform.set(platform).is_ok()
+    }
+
+    /// The host's auth token keeper, when one is installed.
+    pub fn auth_token_platform(&self) -> Option<Arc<dyn crate::platform::AuthTokenPlatform>> {
+        self.auth_token_platform.get().cloned()
     }
 
     /// Install the host's contacts adapter. Answers whether this call was the

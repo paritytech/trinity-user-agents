@@ -42,7 +42,7 @@ pub enum WireKind {
 /// `TRUAPI_WIRE_SCHEMA_HASH`. A host stamps it on each debug envelope so
 /// the debugger refuses to decode a frame whose contract differs from
 /// its own, even when the coarse handshake codec version is unchanged.
-pub const TRUAPI_WIRE_SCHEMA_HASH: &str = "e8f956bbe4981b93";
+pub const TRUAPI_WIRE_SCHEMA_HASH: &str = "2615502e6f4c5a26";
 
 /// Wire discriminants for `system_handshake`.
 pub const SYSTEM_HANDSHAKE: MethodIds = MethodIds {
@@ -608,6 +608,24 @@ pub const SCANNER_SCAN: MethodIds = MethodIds {
     method_id: 0,
 };
 
+/// Wire discriminants for `auth_tokens_store`.
+pub const AUTH_TOKENS_STORE: MethodIds = MethodIds {
+    trait_id: 26,
+    method_id: 0,
+};
+
+/// Wire discriminants for `auth_tokens_get`.
+pub const AUTH_TOKENS_GET: MethodIds = MethodIds {
+    trait_id: 26,
+    method_id: 1,
+};
+
+/// Wire discriminants for `auth_tokens_remove`.
+pub const AUTH_TOKENS_REMOVE: MethodIds = MethodIds {
+    trait_id: 26,
+    method_id: 2,
+};
+
 /// The full wire table. Trait ids and per-trait method ordering are
 /// part of the wire protocol; only ever append within a trait.
 /// Removed methods leave their slot empty.
@@ -987,5 +1005,17 @@ pub const WIRE_TABLE: &[WireEntry] = &[
     WireEntry {
         method: "scanner_scan",
         kind: WireKind::Request(SCANNER_SCAN),
+    },
+    WireEntry {
+        method: "auth_tokens_store",
+        kind: WireKind::Request(AUTH_TOKENS_STORE),
+    },
+    WireEntry {
+        method: "auth_tokens_get",
+        kind: WireKind::Request(AUTH_TOKENS_GET),
+    },
+    WireEntry {
+        method: "auth_tokens_remove",
+        kind: WireKind::Request(AUTH_TOKENS_REMOVE),
     },
 ];

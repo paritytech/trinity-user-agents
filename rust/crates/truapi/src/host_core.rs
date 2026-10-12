@@ -15,8 +15,8 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use crate::platform::{
-    BalancePlatform, ChatPlatform, ContactsPlatform, FundingPlatform, GamePlatform,
-    PaymentPlatform, PermissionStatusHost, PocketPlatform, TopUpPlatform,
+    AuthTokenPlatform, BalancePlatform, ChatPlatform, ContactsPlatform, FundingPlatform,
+    GamePlatform, PaymentPlatform, PermissionStatusHost, PocketPlatform, TopUpPlatform,
 };
 use crate::platform::{
     CoreAdmin, PairingHostAdmin, PairingHostConfig, PermissionAuthorizationRequest,
@@ -333,6 +333,17 @@ impl PairingHostRuntime {
     #[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.set_game_platform"))]
     pub fn set_game_platform(&self, platform: Arc<dyn GamePlatform>) -> bool {
         self.services.install_game_platform(platform)
+    }
+
+    /// Install the host's [`AuthTokenPlatform`], which keeps the tokens
+    /// products obtain from their own services.
+    ///
+    /// Set-once, so tokens cannot change hands under a running product.
+    /// Returns whether this call installed it. Call it before serving any
+    /// product runtime.
+    #[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.set_auth_token_platform"))]
+    pub fn set_auth_token_platform(&self, platform: Arc<dyn AuthTokenPlatform>) -> bool {
+        self.services.install_auth_token_platform(platform)
     }
 
     /// Install the host's [`TopUpPlatform`], which claims funds into the
@@ -993,6 +1004,17 @@ impl SigningHostRuntime {
     #[instrument(skip_all, fields(runtime.method = "signing_host_runtime.set_game_platform"))]
     pub fn set_game_platform(&self, platform: Arc<dyn GamePlatform>) -> bool {
         self.services.install_game_platform(platform)
+    }
+
+    /// Install the host's [`AuthTokenPlatform`], which keeps the tokens
+    /// products obtain from their own services.
+    ///
+    /// Set-once, so tokens cannot change hands under a running product.
+    /// Returns whether this call installed it. Call it before serving any
+    /// product runtime.
+    #[instrument(skip_all, fields(runtime.method = "signing_host_runtime.set_auth_token_platform"))]
+    pub fn set_auth_token_platform(&self, platform: Arc<dyn AuthTokenPlatform>) -> bool {
+        self.services.install_auth_token_platform(platform)
     }
 
     /// Install the host's [`TopUpPlatform`], which claims funds into the

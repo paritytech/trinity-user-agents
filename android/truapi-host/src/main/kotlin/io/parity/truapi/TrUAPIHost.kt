@@ -89,6 +89,8 @@ import uniffi.truapi.HostContactLookup
 import uniffi.truapi.HostContactMatches
 import uniffi.truapi.HostContactPick
 import uniffi.truapi.NativeContactsCallbacks
+import uniffi.truapi.AuthToken
+import uniffi.truapi.NativeAuthTokenCallbacks
 
 /** Package metadata. */
 object TrUAPIHost {
@@ -677,6 +679,37 @@ private class ContactsCallbackAdapter(private val bridge: ContactsHostBridge) : 
         }
 }
 
+/**
+ * Native auth token keeper: holds the tokens products obtain from their own
+ * services, following the rules on the core's `AuthTokenPlatform`. Install
+ * with [TrUAPIHostRuntime.setAuthTokens]; a runtime without one answers every
+ * `authTokens` call with `Unsupported`.
+ */
+interface AuthTokenHostBridge {
+    /** Keep [token] for [productId]'s [service], replacing any kept for it. */
+    @Throws(HostRejection::class)
+    suspend fun storeAuthToken(productId: String, service: String, token: AuthToken)
+
+    /** The token kept for [productId]'s [service], or `null`. */
+    @Throws(HostRejection::class)
+    suspend fun authToken(productId: String, service: String): AuthToken?
+
+    /** Drop the token kept for [productId]'s [service]. Dropping none succeeds. */
+    @Throws(HostRejection::class)
+    suspend fun removeAuthToken(productId: String, service: String)
+}
+
+private class AuthTokenCallbackAdapter(private val bridge: AuthTokenHostBridge) : NativeAuthTokenCallbacks {
+    override suspend fun storeAuthToken(productId: String, service: String, token: AuthToken) =
+        withHostRejection { bridge.storeAuthToken(productId, service, token) }
+
+    override suspend fun authToken(productId: String, service: String): AuthToken? =
+        withHostRejection { bridge.authToken(productId, service) }
+
+    override suspend fun removeAuthToken(productId: String, service: String) =
+        withHostRejection { bridge.removeAuthToken(productId, service) }
+}
+
 private class PocketCallbackAdapter(private val bridge: PocketHostBridge) : NativePocketCallbacks {
     override fun listCards(): List<PocketCard> = withHostRejection { bridge.listCards() }
 
@@ -736,6 +769,19 @@ class TrUAPIHostRuntime @Throws(NativeRuntimeConfigException::class) constructor
         val adapter = ContactsCallbackAdapter(contacts)
         contactsRetainer = adapter
         return inner.setContactsCallbacks(adapter)
+    }
+
+    // Co-owns the auth token adapter for as long as the runtime holds it.
+    private var authTokensRetainer: NativeAuthTokenCallbacks? = null
+
+    /**
+     * Install the host's auth token keeper before opening any product
+     * execution. Set-once: returns whether this call installed it.
+     */
+    fun setAuthTokens(authTokens: AuthTokenHostBridge): Boolean {
+        val adapter = AuthTokenCallbackAdapter(authTokens)
+        authTokensRetainer = adapter
+        return inner.setAuthTokenCallbacks(adapter)
     }
 
     /**

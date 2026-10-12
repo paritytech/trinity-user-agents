@@ -29,9 +29,9 @@ mod ws_bridge;
 pub use crate::host_internal::sso_messages::SsoRequestOutcome;
 pub use crate::host_logic::dotns::{NavigateDecision, PocketDeeplinkAction};
 pub use callbacks::{
-    HostCallbacks, NativeBalanceCallbacks, NativeChatCallbacks, NativeContactsCallbacks,
-    NativeFundingCallbacks, NativeGameCallbacks, NativePaymentCallbacks, NativePocketCallbacks,
-    NativePocketRemoval, NativeTopUpCallbacks,
+    HostCallbacks, NativeAuthTokenCallbacks, NativeBalanceCallbacks, NativeChatCallbacks,
+    NativeContactsCallbacks, NativeFundingCallbacks, NativeGameCallbacks, NativePaymentCallbacks,
+    NativePocketCallbacks, NativePocketRemoval, NativeTopUpCallbacks,
 };
 pub use config::{HostRuntimeConfig, NativeRuntimeConfigError, ProductExecutionConfig};
 pub use errors::{

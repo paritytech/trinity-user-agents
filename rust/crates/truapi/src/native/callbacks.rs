@@ -296,6 +296,39 @@ pub trait NativeGameCallbacks: Send + Sync {
     async fn cancel_reminder(&self) -> Result<(), HostRejection>;
 }
 
+/// Native auth token keeper. A host with secure storage passes an
+/// implementation to [`NativeTrUApiHostRuntime::set_auth_token_callbacks`]; one
+/// without leaves every AuthTokens call answering `Unsupported`.
+///
+/// Every call names the product, and the host keeps each product's tokens
+/// apart, in Keychain or Keystore, dropping them all on sign-out. See
+/// [`crate::platform::AuthTokenPlatform`] for the full contract.
+#[uniffi::export(rust, foreign)]
+#[async_trait::async_trait]
+pub trait NativeAuthTokenCallbacks: Send + Sync {
+    /// Keep `token` for `product_id`'s `service`, replacing any kept for it.
+    async fn store_auth_token(
+        &self,
+        product_id: String,
+        service: String,
+        token: v01::AuthToken,
+    ) -> Result<(), HostRejection>;
+
+    /// The token kept for `product_id`'s `service`, or `None`.
+    async fn auth_token(
+        &self,
+        product_id: String,
+        service: String,
+    ) -> Result<Option<v01::AuthToken>, HostRejection>;
+
+    /// Drop the token kept for `product_id`'s `service`. Idempotent.
+    async fn remove_auth_token(
+        &self,
+        product_id: String,
+        service: String,
+    ) -> Result<(), HostRejection>;
+}
+
 /// Native contacts adapter. A host with a contact list and a picker passes an
 /// implementation to [`NativeTrUApiHostRuntime::set_contacts_callbacks`]; one
 /// without leaves `contacts.pick` answering `Unsupported`.

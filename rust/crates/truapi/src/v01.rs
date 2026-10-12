@@ -1,6 +1,7 @@
 //! TrUAPI Protocol v0.1 type definitions.
 
 mod account;
+mod auth_tokens;
 mod chain;
 mod chat;
 mod coin_payment;
@@ -28,6 +29,7 @@ mod transaction;
 mod worker;
 
 pub use account::*;
+pub use auth_tokens::*;
 pub use chain::*;
 pub use chat::*;
 pub use coin_payment::*;

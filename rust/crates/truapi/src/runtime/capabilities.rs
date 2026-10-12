@@ -1,6 +1,7 @@
 //! Capability implementations for the product runtime.
 
 mod account;
+mod auth_tokens;
 mod chain;
 mod game;
 mod payment;

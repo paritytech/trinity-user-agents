@@ -522,6 +522,15 @@ AutoSigning without approval. Legacy-account signing still asks the user.
   one and delivers a notification otherwise, may add a calendar event, and
   keeps the reminder across app kill and reboot. A schedule the host cannot
   hold fails as a host failure carrying its reason.
+- `AuthTokenPlatform`: keep the tokens a product obtained by signing in to
+  its own services, in platform secure storage (Keychain, Keystore), scoped to
+  the product and dropped for every product on sign-out. Installed with
+  `set_auth_token_platform`; native hosts use `set_auth_token_callbacks`. The
+  host only stores tokens: products sign in and refresh themselves. The core
+  requires a session, checks the service id (1 to 64 of `[a-z0-9._-]`) and the
+  8192-byte limit on `token` plus `refresh_token` before calling the host, and
+  caches nothing. Without it, as on the browser host, every `authTokens` call
+  answers `Unsupported`. See [the RFC](../../../docs/rfcs/auth-tokens.md).
 
 `Platform` is a blanket-implemented supertrait that combines the capability
 traits above except `ChatPlatform`, `ContactsPlatform`, `PermissionStatusHost`,

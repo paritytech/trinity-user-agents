@@ -14,6 +14,7 @@
 
 mod accounts;
 mod attestation;
+mod auth_tokens;
 mod bootstrap;
 mod bulletin_lookup;
 mod chain;
@@ -1257,6 +1258,7 @@ async fn run_pairing_host(
         pairing_runtime.set_pocket_platform(pocket);
     }
     pairing_runtime.set_game_platform(Arc::new(game::CliGameHost));
+    pairing_runtime.set_auth_token_platform(Arc::new(auth_tokens::CliAuthTokens::default()));
     pairing_runtime.set_contacts_platform(contacts::CliContactsHost::from_env(
         storage_platform.clone(),
     ));
@@ -1825,6 +1827,7 @@ fn build_signing_runtime(
     #[cfg(feature = "test-host")]
     funding_host::CliFundingHost::install_from_env(&runtime);
     runtime.set_game_platform(Arc::new(game::CliGameHost));
+    runtime.set_auth_token_platform(Arc::new(auth_tokens::CliAuthTokens::default()));
     runtime.set_core_db(core_db);
     runtime.start_statement_allowance_renewal();
     Ok((runtime, platform))

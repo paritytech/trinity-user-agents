@@ -9331,3 +9331,220 @@ fn a_top_up_of_nothing_is_refused_before_the_host_sees_it() {
         )
     );
 }
+
+/// A token keeper holding each product's tokens apart, as a host's secure
+/// storage does, and counting every call it gets.
+#[derive(Default)]
+struct MemoryAuthTokens {
+    tokens: Mutex<std::collections::HashMap<(String, String), v01::AuthToken>>,
+    calls: Mutex<usize>,
+}
+
+impl MemoryAuthTokens {
+    fn call_count(&self) -> usize {
+        *self.calls.lock().expect("calls mutex poisoned")
+    }
+
+    fn record_call(&self) {
+        *self.calls.lock().expect("calls mutex poisoned") += 1;
+    }
+}
+
+#[truapi::async_trait]
+impl crate::platform::AuthTokenPlatform for MemoryAuthTokens {
+    async fn store_auth_token(
+        &self,
+        product: &ProductContext,
+        service: String,
+        token: v01::AuthToken,
+    ) -> Result<(), v01::GenericError> {
+        self.record_call();
+        self.tokens.lock().expect("tokens mutex poisoned").insert((product.product_id.clone(), service), token);
+        Ok(())
+    }
+
+    async fn auth_token(
+        &self,
+        product: &ProductContext,
+        service: String,
+    ) -> Result<Option<v01::AuthToken>, v01::GenericError> {
+        self.record_call();
+        Ok(self.tokens.lock().expect("tokens mutex poisoned").get(&(product.product_id.clone(), service)).cloned())
+    }
+
+    async fn remove_auth_token(
+        &self,
+        product: &ProductContext,
+        service: String,
+    ) -> Result<(), v01::GenericError> {
+        self.record_call();
+        self.tokens.lock().expect("tokens mutex poisoned").remove(&(product.product_id.clone(), service));
+        Ok(())
+    }
+}
+
+fn onramp_token() -> v01::AuthToken {
+    v01::AuthToken {
+        token: "eyJhbGciOiJIUzI1NiJ9.e30.sig".to_string(),
+        refresh_token: Some("refresh".to_string()),
+        expires_at: Some(1_900_000_000_000),
+    }
+}
+
+fn store_auth_token(
+    host: &ProductRuntimeHost,
+    service: &str,
+    token: v01::AuthToken,
+) -> Result<truapi::versioned::auth_tokens::HostAuthTokensStoreResponse, CallError<truapi::versioned::auth_tokens::HostAuthTokensStoreError>> {
+    futures::executor::block_on(truapi::api::AuthTokens::store(
+        host,
+        &CallContext::default(),
+        truapi::versioned::auth_tokens::HostAuthTokensStoreRequest::V1(v01::HostAuthTokensStoreRequest {
+            service: service.to_string(),
+            token,
+        }),
+    ))
+}
+
+fn get_auth_token(
+    host: &ProductRuntimeHost,
+    service: &str,
+) -> Result<Option<v01::AuthToken>, CallError<truapi::versioned::auth_tokens::HostAuthTokensGetError>> {
+    futures::executor::block_on(truapi::api::AuthTokens::get(
+        host,
+        &CallContext::default(),
+        truapi::versioned::auth_tokens::HostAuthTokensGetRequest::V1(v01::HostAuthTokensGetRequest {
+            service: service.to_string(),
+        }),
+    ))
+    .map(|truapi::versioned::auth_tokens::HostAuthTokensGetResponse::V1(response)| response.token)
+}
+
+fn remove_auth_token(
+    host: &ProductRuntimeHost,
+    service: &str,
+) -> Result<truapi::versioned::auth_tokens::HostAuthTokensRemoveResponse, CallError<truapi::versioned::auth_tokens::HostAuthTokensRemoveError>> {
+    futures::executor::block_on(truapi::api::AuthTokens::remove(
+        host,
+        &CallContext::default(),
+        truapi::versioned::auth_tokens::HostAuthTokensRemoveRequest::V1(v01::HostAuthTokensRemoveRequest {
+            service: service.to_string(),
+        }),
+    ))
+}
+
+// A token is a credential for one product's own service, so another product
+// asking for the same service name must never receive it.
+#[test]
+fn a_kept_token_is_returned_only_to_the_product_that_stored_it() {
+    let services = payment_services();
+    assert!(services.install_auth_token_platform(Arc::new(MemoryAuthTokens::default())));
+    let wallet = payment_host(&services, "wallet.dot", true);
+    let shop = payment_host(&services, "shop.dot", true);
+
+    let stored = store_auth_token(&wallet, "onramp", onramp_token());
+
+    assert_eq!(
+        (stored, get_auth_token(&wallet, "onramp"), get_auth_token(&shop, "onramp")),
+        (
+            Ok(truapi::versioned::auth_tokens::HostAuthTokensStoreResponse::V1),
+            Ok(Some(onramp_token())),
+            Ok(None),
+        )
+    );
+}
+
+// The worker signs in again when it finds no token, so a removed token has to
+// read as absent, and removing it twice is not an error.
+#[test]
+fn a_removed_token_reads_as_absent() {
+    let services = payment_services();
+    assert!(services.install_auth_token_platform(Arc::new(MemoryAuthTokens::default())));
+    let wallet = payment_host(&services, "wallet.dot", true);
+    store_auth_token(&wallet, "onramp", onramp_token()).expect("token stored");
+
+    let removed = remove_auth_token(&wallet, "onramp");
+    let removed_again = remove_auth_token(&wallet, "onramp");
+
+    let removed_ok = Ok(truapi::versioned::auth_tokens::HostAuthTokensRemoveResponse::V1);
+    assert_eq!(
+        (removed, removed_again, get_auth_token(&wallet, "onramp")),
+        (removed_ok.clone(), removed_ok, Ok(None))
+    );
+}
+
+// The host builds storage keys from the service id and keeps tokens in secure
+// storage meant for small secrets, so the core refuses a bad id or an
+// oversized token before the host sees either.
+#[test]
+fn a_bad_service_or_oversized_token_is_refused_before_the_host_sees_it() {
+    let services = payment_services();
+    let keeper = Arc::new(MemoryAuthTokens::default());
+    assert!(services.install_auth_token_platform(keeper.clone()));
+    let wallet = payment_host(&services, "wallet.dot", true);
+    let oversized = v01::AuthToken {
+        token: "t".repeat(8_000),
+        refresh_token: Some("r".repeat(193)),
+        expires_at: None,
+    };
+
+    let refusals = (
+        store_auth_token(&wallet, "On/Ramp", onramp_token()),
+        store_auth_token(&wallet, "onramp", oversized),
+        get_auth_token(&wallet, ""),
+        remove_auth_token(&wallet, "../onramp"),
+        keeper.call_count(),
+    );
+
+    assert_eq!(
+        refusals,
+        (
+            Err(CallError::Domain(truapi::versioned::auth_tokens::HostAuthTokensStoreError::V1(
+                v01::HostAuthTokensStoreError::InvalidService
+            ))),
+            Err(CallError::Domain(truapi::versioned::auth_tokens::HostAuthTokensStoreError::V1(
+                v01::HostAuthTokensStoreError::TooLarge { max: 8192 }
+            ))),
+            Err(CallError::Domain(truapi::versioned::auth_tokens::HostAuthTokensGetError::V1(
+                v01::HostAuthTokensGetError::InvalidService
+            ))),
+            Err(CallError::Domain(truapi::versioned::auth_tokens::HostAuthTokensRemoveError::V1(
+                v01::HostAuthTokensGetError::InvalidService
+            ))),
+            0,
+        )
+    );
+}
+
+// Tokens belong to the signed-in user and are dropped on sign-out, so a
+// product without a session reaches no keeper; a host without one says so.
+#[test]
+fn auth_tokens_need_a_session_and_a_keeper() {
+    let services = payment_services();
+    let unsupported = payment_host(&services, "wallet.dot", true);
+    let unsupported_answers = (
+        store_auth_token(&unsupported, "onramp", onramp_token()),
+        get_auth_token(&unsupported, "onramp"),
+        remove_auth_token(&unsupported, "onramp"),
+    );
+    let keeper = Arc::new(MemoryAuthTokens::default());
+    assert!(services.install_auth_token_platform(keeper.clone()));
+    let signed_out = payment_host(&services, "wallet.dot", false);
+
+    assert_eq!(
+        (
+            unsupported_answers,
+            (
+                store_auth_token(&signed_out, "onramp", onramp_token()),
+                get_auth_token(&signed_out, "onramp"),
+                remove_auth_token(&signed_out, "onramp"),
+            ),
+            keeper.call_count(),
+        ),
+        (
+            (Err(CallError::Unsupported), Err(CallError::Unsupported), Err(CallError::Unsupported)),
+            (Err(CallError::Denied), Err(CallError::Denied), Err(CallError::Denied)),
+            0,
+        )
+    );
+}

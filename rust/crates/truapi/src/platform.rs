@@ -26,9 +26,9 @@ use truapi::Bytes32;
 pub mod mock;
 
 use truapi::latest::{
-    AllocatableResource, ChainIdentifier, ChatAction, ChatActions, ChatCustomMessage, ChatFile,
-    ChatMedia, ChatMessageContent, ChatReaction, ChatRichText, FundingDirection, FundingQuote,
-    FundingQuoteRefusal, GenericError,
+    AllocatableResource, AuthToken, ChainIdentifier, ChatAction, ChatActions, ChatCustomMessage,
+    ChatFile, ChatMedia, ChatMessageContent, ChatReaction, ChatRichText, FundingDirection,
+    FundingQuote, FundingQuoteRefusal, GenericError,
     HostChatCreateRoomError, HostChatCreateRoomRequest, HostChatCreateRoomResponse,
     HostChatListSubscribeItem, HostChatPostMessageError, HostChatPostMessageRequest,
     HostChatPostMessageResponse, HostChatRegisterBotError, HostChatRegisterBotRequest,
@@ -3541,6 +3541,43 @@ pub trait GamePlatform: Send + Sync {
 
     /// Drop the product's reminder. Idempotent: dropping none succeeds.
     async fn cancel_game_reminder(&self, product: &ProductContext) -> Result<(), GenericError>;
+}
+
+/// Host-implemented keeper of the auth tokens products obtain from their own
+/// services. Optional: a host that omits it leaves AuthTokens requests
+/// answered `Unsupported`.
+///
+/// The host keeps each token in the platform's secure storage (Keychain on
+/// iOS, Keystore-backed storage on Android), scoped to `product`: one product
+/// never reads, replaces or drops another's tokens. It keeps them across app
+/// restarts and drops every product's tokens when the user signs out. The host
+/// neither authenticates nor refreshes anything: it stores what it is given.
+/// The core requires a session and checks the service id and size limits in
+/// [`crate::host_logic::auth_tokens`] before calling here.
+#[async_trait]
+pub trait AuthTokenPlatform: Send + Sync {
+    /// Keep `token` for the product's `service`, replacing any kept for it.
+    async fn store_auth_token(
+        &self,
+        product: &ProductContext,
+        service: String,
+        token: AuthToken,
+    ) -> Result<(), GenericError>;
+
+    /// The token kept for the product's `service`, or `None`.
+    async fn auth_token(
+        &self,
+        product: &ProductContext,
+        service: String,
+    ) -> Result<Option<AuthToken>, GenericError>;
+
+    /// Drop the token kept for the product's `service`. Idempotent: dropping
+    /// none succeeds.
+    async fn remove_auth_token(
+        &self,
+        product: &ProductContext,
+        service: String,
+    ) -> Result<(), GenericError>;
 }
 
 /// What the operating system currently says about a device capability.
