@@ -153,6 +153,64 @@ pub struct FundingProgress {
 	/// What a failed payout's refund returned to the user's balance, once
 	/// its claims are final.
 	pub refunded: Option<u128>,
+	/// Where the session stands, in one line the host words.
+	pub status: FundingStatus,
+	/// When the status turns to [`FundingStatus::TakingLonger`] unless the
+	/// provider reports first, in Unix milliseconds, so the host reads the
+	/// progress again then.
+	pub longer_at_ms: Option<u64>,
+}
+
+/// Where a session stands, one line for the host to word: in flight by
+/// rail, then how it ended.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
+pub enum FundingStatus {
+	/// Inbound bank: waiting for the user's transfer.
+	WaitingForTransfer,
+	/// Inbound card: waiting for the user to pay on the provider's screens.
+	WaitingForPayment,
+	/// Inbound crypto: waiting for the user's deposit.
+	WaitingForDeposit,
+	/// Inbound: the provider has the payment and is turning it into the
+	/// user's balance asset.
+	ConvertingToCash,
+	/// Outbound: the user started the withdrawal and pays the provider.
+	TransactionInitiated,
+	/// Outbound crypto, after release: the provider converts what it
+	/// collected to `asset`.
+	ConvertingTo {
+		/// The asset the user receives.
+		asset: String,
+	},
+	/// Outbound card or bank, after release: the provider prepares the
+	/// payout.
+	PreparingPayout,
+	/// Inbound: the provider is retrying, with another top-up after one
+	/// claimed only part of the amount.
+	Retrying,
+	/// Nothing came from the provider for longer than its quote said the
+	/// session takes.
+	TakingLonger,
+	/// Inbound, ended: the balance was credited.
+	ToppedUp,
+	/// Outbound, ended: the provider paid the user out.
+	Sent,
+	/// Inbound, ended: the provider gave the user's payment back instead of
+	/// crediting it.
+	Refunded,
+	/// Outbound: the payout failed after the balance was debited. `refunded`
+	/// is what the provider's refund returned, once final.
+	PayoutFailed {
+		/// What came back to the balance. `None` until the refund's claims
+		/// are final.
+		refunded: Option<u128>,
+	},
+	/// Ended without moving value.
+	Failed {
+		/// Why.
+		reason: FundingFailure,
+	},
 }
 
 /// One step of a session's progress.
@@ -351,8 +409,8 @@ impl FundingSession {
 			.find(|update| update_rank(update).is_some())
 	}
 
-	/// The session's progress for its direction and rail.
-	pub fn progress(&self) -> FundingProgress {
+	/// The session's progress for its direction and rail at `now_ms`.
+	pub fn progress(&self, now_ms: u64) -> FundingProgress {
 		let steps: &[FundingStep] =
 			match (self.direction, self.choice.as_ref().map(|choice| choice.rail)) {
 				(FundingDirection::Out, _) => &[
@@ -439,10 +497,77 @@ impl FundingSession {
 					_ => None,
 				})
 				.flatten(),
-			retrying: !self.is_terminal() && self.top_up_ids().len() > 1,
+			retrying: self.progress_retrying(),
 			payout: self.payout().cloned(),
 			refunded: self.refund.as_ref().and_then(|refund| refund.refunded),
+			status: self.status(now_ms),
+			longer_at_ms: self.longer_at_ms().filter(|at_ms| *at_ms > now_ms),
 		}
+	}
+
+	/// Where the session stands at `now_ms`.
+	pub fn status(&self, now_ms: u64) -> FundingStatus {
+		let rail = self.choice.as_ref().map(|choice| choice.rail);
+		match &self.stage {
+			FundingStage::Delivered { .. } => return FundingStatus::ToppedUp,
+			FundingStage::Failed { reason: FundingFailure::Refunded, .. } => {
+				return FundingStatus::Refunded;
+			},
+			FundingStage::Failed { reason, .. } => {
+				return FundingStatus::Failed { reason: reason.clone() };
+			},
+			FundingStage::Released { .. } => match self.payout() {
+				Some(FundingPayout::PaidOut) => return FundingStatus::Sent,
+				Some(FundingPayout::Failed { .. }) => {
+					return FundingStatus::PayoutFailed {
+						refunded: self.refund.as_ref().and_then(|refund| refund.refunded),
+					};
+				},
+				None => {},
+			},
+			FundingStage::Open => {},
+		}
+		if self.progress_retrying() {
+			return FundingStatus::Retrying;
+		}
+		if self.longer_at_ms().is_some_and(|at_ms| now_ms >= at_ms) {
+			return FundingStatus::TakingLonger;
+		}
+		match (self.direction, &self.stage) {
+			(FundingDirection::Out, FundingStage::Released { .. }) => match &self.choice {
+				Some(choice) if choice.rail == FundingRail::Crypto => {
+					FundingStatus::ConvertingTo { asset: choice.asset.clone() }
+				},
+				_ => FundingStatus::PreparingPayout,
+			},
+			(FundingDirection::Out, _) => FundingStatus::TransactionInitiated,
+			(FundingDirection::In, _) => match self.last_step() {
+				None | Some(FundingUpdate::AwaitingPayment) => match rail {
+					Some(FundingRail::Bank) => FundingStatus::WaitingForTransfer,
+					Some(FundingRail::Crypto) => FundingStatus::WaitingForDeposit,
+					Some(FundingRail::Card) | None => FundingStatus::WaitingForPayment,
+				},
+				Some(_) => FundingStatus::ConvertingToCash,
+			},
+		}
+	}
+
+	/// When a session the provider still works on counts as taking longer:
+	/// its chosen quote's time after the provider's latest report, or after
+	/// it was assigned. `None` without a quoted time or once it ended.
+	fn longer_at_ms(&self) -> Option<u64> {
+		if !self.serves_provider() {
+			return None;
+		}
+		let eta_ms = self.choice.as_ref()?.quote.eta_secs?.saturating_mul(1_000);
+		let heard_at_ms = self.updates.last().map(|record| record.at_ms).or(self.assigned_at_ms)?;
+		Some(heard_at_ms.saturating_add(eta_ms))
+	}
+
+	/// Whether the provider is retrying: it named another top-up after a
+	/// first one claimed only part of the amount.
+	fn progress_retrying(&self) -> bool {
+		!self.is_terminal() && self.top_up_ids().len() > 1
 	}
 
 	/// What `field` reads from the provider's most recent update it reads
@@ -1356,6 +1481,129 @@ mod tests {
 		session
 	}
 
+	// Each in-flight line follows the rail: a bank transfer waits for the
+	// transfer, a card for the payment and crypto for the deposit, and all
+	// convert once the provider has the money. A withdrawal is initiated
+	// until released, then converts to the asset on crypto or prepares the
+	// payout on card and bank.
+	#[test]
+	fn the_status_follows_the_direction_and_rail() {
+		let status = |direction, rail, updates: &[FundingUpdate]| {
+			let mut session = chosen(direction, rail);
+			for (index, update) in updates.iter().enumerate() {
+				report_at(&mut session, update.clone(), NOW + 1 + index as u64);
+			}
+			session.status(NOW + 10)
+		};
+		let received = FundingUpdate::PaymentReceived { finalized: false, mismatch: None };
+		let collecting = FundingUpdate::Collecting { payment_id: [2; 32], amount: 100 };
+		let released = |rail, asset: &str| {
+			let mut session = chosen(FundingDirection::Out, rail);
+			if let Some(choice) = session.choice.as_mut() {
+				choice.asset = asset.to_string();
+			}
+			report_at(&mut session, collecting.clone(), NOW + 1);
+			assert!(session.settle(100, NOW + 2));
+			session.status(NOW + 10)
+		};
+
+		assert_eq!(
+			[
+				status(FundingDirection::In, FundingRail::Bank, &[]),
+				status(FundingDirection::In, FundingRail::Card, &[FundingUpdate::AwaitingPayment]),
+				status(FundingDirection::In, FundingRail::Crypto, &[]),
+				status(FundingDirection::In, FundingRail::Card, &[received]),
+				status(FundingDirection::Out, FundingRail::Bank, &[collecting.clone()]),
+				released(FundingRail::Bank, "EUR"),
+				released(FundingRail::Crypto, "USDT"),
+			],
+			[
+				FundingStatus::WaitingForTransfer,
+				FundingStatus::WaitingForPayment,
+				FundingStatus::WaitingForDeposit,
+				FundingStatus::ConvertingToCash,
+				FundingStatus::TransactionInitiated,
+				FundingStatus::PreparingPayout,
+				FundingStatus::ConvertingTo { asset: "USDT".to_string() },
+			]
+		);
+	}
+
+	// A provider that stays silent past the time its quote gave is taking a
+	// little longer, which the host learns to read again for; a report starts
+	// the clock again.
+	#[test]
+	fn a_session_past_its_quoted_time_is_taking_longer() {
+		let mut session = chosen(FundingDirection::In, FundingRail::Card);
+		if let Some(choice) = session.choice.as_mut() {
+			choice.quote.eta_secs = Some(60);
+		}
+		let before = session.progress(NOW + 59_999);
+		let after = session.status(NOW + 60_000);
+		report_at(&mut session, FundingUpdate::AwaitingPayment, NOW + 60_001);
+
+		assert_eq!(
+			(before.status, before.longer_at_ms, after, session.status(NOW + 60_002)),
+			(
+				FundingStatus::WaitingForPayment,
+				Some(NOW + 60_000),
+				FundingStatus::TakingLonger,
+				FundingStatus::WaitingForPayment,
+			)
+		);
+	}
+
+	// How a session ended is one line too: credited, paid out, the payment
+	// given back, a failed payout with what its refund returned, or a failure
+	// with its reason.
+	#[test]
+	fn the_status_says_how_the_session_ended() {
+		let mut delivered = chosen(FundingDirection::In, FundingRail::Card);
+		assert!(delivered.settle(100, NOW + 1));
+		let mut refunded = chosen(FundingDirection::In, FundingRail::Card);
+		assert!(refunded.fail(FundingFailure::Refunded, NOW + 1));
+		let mut expired = chosen(FundingDirection::In, FundingRail::Card);
+		assert!(expired.fail(FundingFailure::Expired, NOW + 1));
+		let paid = |outcome| {
+			let mut session = chosen(FundingDirection::Out, FundingRail::Card);
+			report_at(
+				&mut session,
+				FundingUpdate::Collecting { payment_id: [2; 32], amount: 100 },
+				NOW + 1,
+			);
+			assert!(session.settle(100, NOW + 2));
+			report_at(&mut session, FundingUpdate::Payout { outcome }, NOW + 3);
+			session
+		};
+		let mut payout_failed = paid(FundingPayout::Failed { reason: "closed".to_string() });
+		let failed_before_refund = payout_failed.status(NOW + 4);
+		report_at(
+			&mut payout_failed,
+			FundingUpdate::Refunding { top_up_id: [6; 32], amount: 95 },
+			NOW + 4,
+		);
+		assert!(payout_failed.settle_refund(95));
+
+		assert_eq!(
+			[
+				delivered.status(NOW + 5),
+				paid(FundingPayout::PaidOut).status(NOW + 5),
+				refunded.status(NOW + 5),
+				failed_before_refund,
+				payout_failed.status(NOW + 5),
+				expired.status(NOW + 5),
+			],
+			[
+				FundingStatus::ToppedUp,
+				FundingStatus::Sent,
+				FundingStatus::Refunded,
+				FundingStatus::PayoutFailed { refunded: None },
+				FundingStatus::PayoutFailed { refunded: Some(95) },
+				FundingStatus::Failed { reason: FundingFailure::Expired },
+			]
+		);
+	}
+
 	fn report_at(session: &mut FundingSession, update: FundingUpdate, at_ms: u64) {
 		if let Some((id, amount)) = named_funds(&update) {
 			session.record_start(*id, amount);
@@ -1397,7 +1645,7 @@ mod tests {
 		report_at(&mut out, FundingUpdate::Payout { outcome: FundingPayout::PaidOut }, NOW + 6);
 
 		assert_eq!(
-			(steps(&card.progress()), steps(&bank.progress()), steps(&out.progress())),
+			(steps(&card.progress(NOW)), steps(&bank.progress(NOW)), steps(&out.progress(NOW))),
 			(
 				vec![
 					(FundingStep::Started, Some(NOW)),
@@ -1480,7 +1728,7 @@ mod tests {
 				FundingUpdate::Delivered,
 			],
 		);
-		let progress = session.progress();
+		let progress = session.progress(NOW);
 
 		assert_eq!(
 			(
@@ -1557,7 +1805,7 @@ mod tests {
 				FundingUpdate::Deposit { deposit: usdt_deposit(40) },
 			],
 		);
-		let progress = session.progress();
+		let progress = session.progress(NOW);
 		reported(&mut session, &[FundingUpdate::Crediting { top_up_id: [1; 32], amount: 100 }]);
 		let after_funds_move =
 			report(&mut session, FundingUpdate::Deposit { deposit: usdt_deposit(1) });
@@ -1609,7 +1857,7 @@ mod tests {
 				too_early,
 				after_recording,
 				recorded.acknowledged,
-				released.progress().payout,
+				released.progress(NOW).payout,
 			),
 			(
 				Ok(()),
@@ -1687,7 +1935,7 @@ mod tests {
 		assert_eq!(
 			(
 				settled,
-				released.progress().refunded,
+				released.progress(NOW).refunded,
 				released.acknowledged,
 				released.awaits_provider(),
 				released.settlement_due(),
@@ -1744,10 +1992,10 @@ mod tests {
 	fn a_second_top_up_reads_as_retrying() {
 		let mut session = served(FundingDirection::In);
 		reported(&mut session, &[FundingUpdate::Crediting { top_up_id: [1; 32], amount: 60 }]);
-		let after_one = session.progress().retrying;
+		let after_one = session.progress(NOW).retrying;
 		reported(&mut session, &[FundingUpdate::Crediting { top_up_id: [2; 32], amount: 40 }]);
 
-		assert_eq!((after_one, session.progress().retrying), (false, true));
+		assert_eq!((after_one, session.progress(NOW).retrying), (false, true));
 	}
 
 	// A partial claim is retried with a new top-up, as getcash does in up to

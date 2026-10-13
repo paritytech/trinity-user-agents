@@ -832,7 +832,10 @@ impl SigningHostRuntime {
 		&self,
 		intent: &str,
 	) -> Option<crate::host_logic::funding::FundingProgress> {
-		self.services.funding().get(intent).map(|session| session.progress())
+		self.services
+			.funding()
+			.get(intent)
+			.map(|session| session.progress(crate::unix_time::current_unix_millis()))
 	}
 
 	/// Every funding session the core keeps, in flight first, then ended,
