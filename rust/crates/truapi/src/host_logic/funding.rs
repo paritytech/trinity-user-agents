@@ -1269,6 +1269,36 @@ mod tests {
 		);
 	}
 
+	// The RFC lets a provider send its references at any point while the
+	// session is open, in either direction: before any step, once funds move,
+	// and after it is done but before the core settled the session. Once the
+	// session ended, nothing more is taken.
+	#[test]
+	fn details_are_taken_while_the_session_is_open() {
+		let details =
+			|| FundingUpdate::Details { transaction_id: Some("tx".into()), reference: None };
+		let mut inbound = served(FundingDirection::In);
+		let fresh = report(&mut inbound, details());
+		reported(
+			&mut inbound,
+			&[
+				FundingUpdate::Crediting { top_up_id: [1; 32], amount: 100 },
+				FundingUpdate::Delivered,
+			],
+		);
+		let done = report(&mut inbound, details());
+		let mut outbound = served(FundingDirection::Out);
+		reported(&mut outbound, &[FundingUpdate::Collecting { payment_id: [2; 32], amount: 100 }]);
+		let collecting = report(&mut outbound, details());
+		assert!(outbound.settle(100, NOW));
+		let ended = report(&mut outbound, details());
+
+		assert_eq!(
+			(fresh, done, collecting, ended),
+			(Ok(()), Ok(()), Ok(()), Err(HostFundingReportError::NotFound))
+		);
+	}
+
 	fn usdt_deposit(amount: u128) -> FundingDeposit {
 		FundingDeposit::Crypto {
 			address: "0xdeposit".to_string(),
