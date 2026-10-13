@@ -113,7 +113,7 @@ struct FundingQuoteAsk {
     asset: String,                           // symbol paid (In) or received (Out)
     network: Option<String>,                 // Crypto only, such as "polkadot"
     amount: u128,                            // balance units, credited (In) or debited (Out)
-    country: Option<String>,                 // ISO 3166-1 alpha-2, when known
+    country: Option<String>,                 // ISO 3166-1 alpha-2: the user's pick, else the host's guess
 }
 
 enum FundingQuoteAnswer {
@@ -133,7 +133,12 @@ struct FundingQuote {
 }
 ```
 
-An ask unanswered after 10 seconds shows as timed out. An answer is reused for 30 seconds. What answers show about a
+An ask unanswered after 10 seconds shows as timed out. An answer is reused for 30 seconds. The host's list marks the
+best quote, the least to pay inbound or the most to receive outbound, and the host selects it until the user picks
+another. While the user has not chosen, the core asks every provider again each minute.
+
+Until the user picks a country, an ask carries the one the host detects without asking for a permission: the device's
+coarse location if already permitted, then its SIM or network country, then its locale's region. What answers show about a
 provider, served or refused for a country the ask named, is kept for 12 hours and folded into its manifest's routes
 while that manifest serves Funding. A provider whose manifest is withdrawn or stops serving Funding is no longer a
 candidate.
@@ -156,6 +161,7 @@ enum FundingUpdate {
     Deposit { deposit: FundingDeposit },              // In, until funds move, outside the order
     Details { transaction_id: Option<String>, reference: Option<String> }, // any time, outside the order
     Payout { outcome: FundingPayout },                // Out: once, after release
+    Refunding { top_up_id: [u8; 32], amount: u128 }, // Out: once, after a failed payout
 }
 
 enum FundingDeposit {
@@ -169,9 +175,11 @@ enum FundingDeposit {
 - The core stores each report before answering and keeps the session until the host has written it to its history.
 - The core records every top-up and payment request a provider's worker starts while it serves an open session in
   that direction, with the amount: on the one such session asking for that amount when exactly one does, otherwise
-  on each of them (the report names which). `Crediting` must name a recorded
-  top-up and `Collecting` a recorded payment request, at the recorded amount, once across the provider's sessions;
-  anything else fails with `NotStarted`. Funds started before the session was assigned were never recorded for it.
+  on each of them (the report names which). A withdrawal whose payout failed takes top-ups too, as its refund,
+  asking for what it debited. `Crediting` and `Refunding` must name a recorded top-up and `Collecting` a recorded
+  payment request, at the recorded amount, once across the provider's sessions; anything else fails with
+  `NotStarted`. Funds started before the session was assigned were never recorded for it.
+- `Converting`, `Payout` or `Refunding` on a withdrawal that is not released yet fails with `OutOfOrder`.
 - A report on a session the user chose a provider for while the overlay is still up is stored like any other.
 - `Deposit` and `Details` carry what the host draws: where and what the user pays, and the provider's references. The
   latest of each is shown.
@@ -205,7 +213,8 @@ enum FundingFrameOutcome {
 ### `save`
 
 `save` stores opaque state for a session, such as the provider's order id, and replaces what was saved before. It
-comes back in `Assigned.saved` and is dropped when the session ends.
+comes back in `Assigned.saved` and is dropped once the provider has no more work on the session: for a withdrawal,
+after the payout and any refund.
 
 ## Outcome
 
@@ -217,6 +226,10 @@ comes back in `Assigned.saved` and is dropped when the session ends.
   top-up or payment the host does not know yet leaves the session open, and the core reads the status again with
   backoff. One the host still does not know an hour after the report named it, the time a payment can wait on the
   user's approval, counts as nothing moved.
+- **A failed payout is refunded.** The user's CASH left with the release, so a provider whose payout failed gives it
+  back with a top-up it names in `Refunding`. The core follows its claims and keeps what they returned beside the
+  `Released` outcome. The provider keeps the session until it has reported the payout and any refund, whether or not
+  the host recorded it, and nothing expires it meanwhile.
 - **Funds moving locks the session.** Once a top-up or payment request is named, the provider can no longer fail the
   session, the user can no longer cancel it and nothing expires it.
 - **Cancel** ends a session no provider serves and asks the assigned provider otherwise. Asked again before the
@@ -229,6 +242,9 @@ comes back in `Assigned.saved` and is dropped when the session ends.
   still owed to the user.
 - **Closing the overlay after choosing a provider** keeps the session as started, since the provider may already be
   working on it, and asks the provider to stop unless funds move.
+- **One status per session.** The host words a typed status: waiting for the transfer, payment or deposit by rail,
+  converting, initiated, converting to the asset or preparing the payout, retrying, taking longer once the provider
+  has been silent past the chosen quote's `eta_secs`, and how it ended.
 - **Ids are scoped.** The core hashes the provider's product into every top-up and payment id it hands the host, and
   follows them under the same id.
 
