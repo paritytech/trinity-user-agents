@@ -448,7 +448,7 @@ AutoSigning without approval. Legacy-account signing still asks the user.
   as nothing moved. Once funds move, the provider can no longer fail the
   session and nothing expires it. Before that, an unassigned session expires
   24 hours after it opened and an assigned one 7 days after its provider last
-  reported. A cancel ends an unassigned session, asks the provider of an
+  reported, until the provider has seen the user's payment. A cancel ends an unassigned session, asks the provider of an
   assigned one, ends it when asked again before the provider answered, and is
   refused once the provider has seen the user's payment. An overlay closed
   after the user chose a provider keeps the session as started and asks the

@@ -165,7 +165,8 @@ enum FundingDeposit {
   fails with `NotFound` or `OutOfOrder`.
 - The core stores each report before answering and keeps the session until the host has written it to its history.
 - The core records every top-up and payment request a provider's worker starts while it serves an open session in
-  that direction, with the amount, on each such session (the report names which). `Crediting` must name a recorded
+  that direction, with the amount: on the one such session asking for that amount when exactly one does, otherwise
+  on each of them (the report names which). `Crediting` must name a recorded
   top-up and `Collecting` a recorded payment request, at the recorded amount, once across the provider's sessions;
   anything else fails with `NotStarted`. Funds started before the session was assigned were never recorded for it.
 - A report on a session the user chose a provider for while the overlay is still up is stored like any other.
@@ -219,8 +220,10 @@ comes back in `Assigned.saved` and is dropped when the session ends.
   provider answered, it ends the session as `Failed { Cancelled }` and the core lets the worker go. It is refused
   once the user's payment reached the provider.
 - **Expiry** ends a session as `Failed { Expired }`: 24 hours after it opened while no provider has taken it, and 7
-  days after the provider's last update while it is assigned and no funds move, so a provider that went silent cannot
-  hold it. A bank transfer can take days, so a provider that keeps reporting keeps the session.
+  days after the provider's last update while it is assigned and the user's payment has not reached the provider, so
+  a provider that went silent cannot hold it. A bank transfer can take days, so a provider that keeps reporting keeps
+  the session. Once the provider holds the user's payment, nothing expires the session: that would write off money
+  still owed to the user.
 - **Closing the overlay after choosing a provider** keeps the session as started, since the provider may already be
   working on it, and asks the provider to stop unless funds move.
 - **Ids are scoped.** The core hashes the provider's product into every top-up and payment id it hands the host, and

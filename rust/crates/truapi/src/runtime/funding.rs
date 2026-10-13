@@ -207,9 +207,11 @@ impl FundingRegistry {
 		.await
 	}
 
-	/// Record funds `provider_id` started under `host_id` on every open
-	/// session it serves that moves value `direction`, so a report can name
-	/// them. Returns whether any session recorded them.
+	/// Record funds `provider_id` started under `host_id`, so a report can
+	/// name them: on the one open session it serves in `direction` whose
+	/// amount is `amount`, when exactly one is, and otherwise on every such
+	/// session, since a top-up does not say which session it is for. Returns
+	/// whether any session recorded them.
 	pub async fn record_start(
 		&self,
 		storage: &(impl CoreStorage + ?Sized),
@@ -220,10 +222,19 @@ impl FundingRegistry {
 		amount: u128,
 	) -> Result<bool, FundingSessionError> {
 		self.commit(storage, now_ms, |sessions| {
+			let served = |session: &FundingSession| {
+				!session.is_terminal() &&
+					session.direction == direction &&
+					session.provider_id.as_deref() == Some(provider_id)
+			};
+			let matching: Vec<String> = sessions
+				.values()
+				.filter(|session| served(session) && session.amount == Some(amount))
+				.map(|session| session.intent.clone())
+				.collect();
 			let mut recorded = false;
 			for session in sessions.values_mut().filter(|session| {
-				session.direction == direction &&
-					session.provider_id.as_deref() == Some(provider_id)
+				served(session) && (matching.len() != 1 || matching.contains(&session.intent))
 			}) {
 				recorded |= session.record_start(host_id, amount);
 			}
@@ -1179,6 +1190,50 @@ mod tests {
 	fn worker(provider_id: &str) -> ProductContext {
 		ProductContext::new_with_execution(provider_id.to_string(), ProductExecutionKind::Worker)
 			.expect("test provider id is valid")
+	}
+
+	// A top-up does not say which session it is for, so its amount picks the
+	// session when exactly one asks for it; otherwise every session the
+	// provider serves may name it.
+	#[test]
+	fn started_funds_go_to_the_one_session_asking_for_that_amount() {
+		let storage = stub_platform();
+		let registry = FundingRegistry::default();
+		for (intent, amount) in [("fs_fifty", 50), ("fs_thirty", 30)] {
+			let mut session = FundingSession::new(
+				intent.to_string(),
+				Some("wallet.dot".to_string()),
+				FundingDirection::In,
+				Some(amount),
+				NOW,
+			);
+			assert!(session.assign("ramp.dot", NOW));
+			insert(&registry, storage.as_ref(), session);
+		}
+		let record = |id: u8, amount: u128| {
+			block_on(registry.record_start(
+				storage.as_ref(),
+				NOW,
+				"ramp.dot",
+				FundingDirection::In,
+				[id; 32],
+				amount,
+			))
+			.expect("recorded")
+		};
+		record(1, 50);
+		record(2, 20);
+		let started = |intent: &str| {
+			registry
+				.get(intent)
+				.expect("kept")
+				.started
+				.iter()
+				.map(|record| record.host_id[0])
+				.collect::<Vec<_>>()
+		};
+
+		assert_eq!((started("fs_fifty"), started("fs_thirty")), (vec![1, 2], vec![2]));
 	}
 
 	// A top-up settles one session once, from the amount it was started with:
