@@ -167,11 +167,13 @@ impl<S: BlobSource + 'static> BulletinLookup<S> {
 			match lookup.read(&cid, &key).await {
 				Ok(Some(value)) => return stream::once(future::ready(Ok(Some(value)))).boxed(),
 				Ok(None) => {},
-				Err(SourceError::Transient(reason)) => warn!(
-					key = %hex::encode(key),
-					%reason,
-					"preimage lookup failed, still trying"
-				),
+				Err(SourceError::Transient(reason)) => {
+					warn!(
+						key = %hex::encode(key),
+						%reason,
+						"preimage lookup failed, still trying"
+					)
+				},
 				Err(SourceError::Permanent(reason)) => {
 					return stream::iter([Ok(None), Err(api::GenericError { reason })]).boxed();
 				},
@@ -195,11 +197,13 @@ impl<S: BlobSource + 'static> BulletinLookup<S> {
 			match self.read(&cid, &key).await {
 				Ok(Some(value)) => return Ok(value),
 				Ok(None) => {},
-				Err(SourceError::Transient(reason)) => debug!(
-					key = %hex::encode(key),
-					%reason,
-					"preimage lookup failed, still trying"
-				),
+				Err(SourceError::Transient(reason)) => {
+					debug!(
+						key = %hex::encode(key),
+						%reason,
+						"preimage lookup failed, still trying"
+					)
+				},
 				Err(SourceError::Permanent(reason)) => return Err(api::GenericError { reason }),
 			}
 		}

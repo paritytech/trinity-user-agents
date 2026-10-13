@@ -410,10 +410,12 @@ pub async fn lookup_backend_username(
 	match matches.len() {
 		0 => Ok(None),
 		1 => Ok(matches.into_iter().next()),
-		_ => bail!(
-			"identity backend returned multiple assigned usernames for {candidate_account_id}: {}",
-			matches.into_iter().collect::<Vec<_>>().join(", ")
-		),
+		_ => {
+			bail!(
+				"identity backend returned multiple assigned usernames for {candidate_account_id}: {}",
+				matches.into_iter().collect::<Vec<_>>().join(", ")
+			)
+		},
 	}
 }
 

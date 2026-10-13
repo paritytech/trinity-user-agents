@@ -28,10 +28,17 @@ struct Row {
 /// defensive fallback here would let a symmetric codegen-format change collapse
 /// both tables to `0`s and pass the parity check while real drift slipped by.
 fn parse_id(raw: &str, method: &str) -> u8 {
-	raw.trim_end_matches(',')
+	raw.trim_end_matches([',', '}', ';'])
 		.trim()
 		.parse()
 		.unwrap_or_else(|_| panic!("unparseable wire id for `{method}`: {raw:?}"))
+}
+
+fn parse_rust_id(block: &str, field: &str, method: &str) -> Option<u8> {
+	let marker = format!("{field}: ");
+	let (_, raw) = block.split_once(&marker)?;
+	let raw = raw.split([',', '}', ';']).next()?;
+	Some(parse_id(raw, method))
 }
 
 fn parse_rust(src: &str) -> Vec<Row> {
@@ -54,29 +61,42 @@ fn parse_rust(src: &str) -> Vec<Row> {
 			continue;
 		}
 		let method = rest[..colon].trim().to_ascii_lowercase();
-		let mut trait_id = None;
-		let mut method_id = None;
-		for inner in iter.by_ref() {
-			let t = inner.trim();
-			if t.starts_with("};") {
+		let mut block = trimmed.to_owned();
+		while !block.contains("};") {
+			let Some(inner) = iter.next() else {
 				break;
-			}
-			if let Some(rest) = t.strip_prefix("trait_id: ") {
-				trait_id = Some(parse_id(rest, &method));
-			}
-			if let Some(rest) = t.strip_prefix("method_id: ") {
-				method_id = Some(parse_id(rest, &method));
-			}
+			};
+			block.push(' ');
+			block.push_str(inner.trim());
 		}
 		out.push(Row {
-			trait_id: trait_id
+			trait_id: parse_rust_id(&block, "trait_id", &method)
 				.unwrap_or_else(|| panic!("missing trait_id for `{method}` in Rust table")),
-			method_id: method_id
+			method_id: parse_rust_id(&block, "method_id", &method)
 				.unwrap_or_else(|| panic!("missing method_id for `{method}` in Rust table")),
 			method,
 		});
 	}
 	out
+}
+
+#[test]
+fn rust_parser_accepts_compact_and_multiline_struct_literals() {
+	let src = "\
+pub const COMPACT: MethodIds = MethodIds { trait_id: 1, method_id: 2 };
+pub const MULTILINE: MethodIds = MethodIds {
+	trait_id: 3,
+	method_id: 4,
+};
+";
+
+	assert_eq!(
+		parse_rust(src),
+		vec![
+			Row { method: "compact".into(), trait_id: 1, method_id: 2 },
+			Row { method: "multiline".into(), trait_id: 3, method_id: 4 },
+		]
+	);
 }
 
 fn parse_ts(src: &str) -> Vec<Row> {

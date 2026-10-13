@@ -1,7 +1,6 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.truapi.worker
 
 import dagger.Lazy
-import uniffi.truapi.ProductExecutionKind
 import io.parity.truapi.TrUAPIProductExecution
 import io.paritytech.polkadotapp.common.utils.CoroutineDispatchers
 import io.paritytech.polkadotapp.common.utils.childScope
@@ -12,12 +11,14 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.navigation
 import io.paritytech.polkadotapp.feature_products_impl.domain.jsRuntime.WebViewRuntime
 import io.paritytech.polkadotapp.feature_products_impl.domain.product.ProductScriptResolver
 import io.paritytech.polkadotapp.feature_products_impl.domain.scriptExecutor.WorkerScript
+import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.ProductChatHostBridge
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.ProductTrUAPIHostBridge
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.TrUAPIBootstrapInstaller
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.TrUAPIChainDirectory
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.TrUAPIHostRuntimeProvider
 import io.paritytech.polkadotapp.feature_products_impl.domain.webView.ChatWebViewConfig
 import io.paritytech.polkadotapp.feature_products_impl.domain.webView.ChatWebViewProvider
+import io.paritytech.polkadotapp.feature_products_impl.domain.worker.ProductWorkerRefCounter
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
@@ -31,16 +32,21 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeout
 import timber.log.Timber
+import uniffi.truapi.ProductExecutionKind
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlin.time.Duration.Companion.seconds
 
 enum class WorkerDemand { START, STOP }
 
+sealed interface WorkerExecutionState {
+    data class Running(val execution: TrUAPIProductExecution) : WorkerExecutionState
+    data class Failed(val reason: Throwable) : WorkerExecutionState
+}
+
 /**
  * Runs product workers on the core for as long as the core's reference ledger wants them: a `Start`
  * boots the worker script in a hidden WebView behind a `WORKER` execution, a `Stop` tears it down.
- * Chat is not served on this path; chat products keep their native worker.
  */
 @Singleton
 class TrUAPIWorkerSupervisor @Inject constructor(
@@ -51,6 +57,7 @@ class TrUAPIWorkerSupervisor @Inject constructor(
     private val scriptResolver: ProductScriptResolver,
     private val webViewProviderFactory: ChatWebViewProvider.Factory,
     private val bootstrapInstaller: TrUAPIBootstrapInstaller,
+    private val refCounter: Lazy<ProductWorkerRefCounter>,
     dispatchers: CoroutineDispatchers,
 ) {
     private class RunningWorker(val scope: CoroutineScope) {
@@ -61,7 +68,7 @@ class TrUAPIWorkerSupervisor @Inject constructor(
     private val scope = CoroutineScope(SupervisorJob() + dispatchers.main)
     private val transitions = Mutex()
     private val workers = mutableMapOf<ProductId, RunningWorker>()
-    private val executions = MutableStateFlow<Map<ProductId, TrUAPIProductExecution>>(emptyMap())
+    private val executionStates = MutableStateFlow<Map<ProductId, WorkerExecutionState>>(emptyMap())
 
     /** Demand crossing zero, as the core reports it. May arrive on any thread, so the work is handed to [scope]. */
     fun onDemandChanged(productId: ProductId, demand: WorkerDemand) {
@@ -77,22 +84,41 @@ class TrUAPIWorkerSupervisor @Inject constructor(
 
     /** The product's worker execution while it runs, null otherwise. */
     fun execution(productId: ProductId): Flow<TrUAPIProductExecution?> =
-        executions.map { it[productId] }.distinctUntilChanged()
+        executionState(productId).map { (it as? WorkerExecutionState.Running)?.execution }.distinctUntilChanged()
 
-    fun currentExecution(productId: ProductId): TrUAPIProductExecution? = executions.value[productId]
+    fun currentExecution(productId: ProductId): TrUAPIProductExecution? =
+        (executionStates.value[productId] as? WorkerExecutionState.Running)?.execution
+
+    fun executionState(productId: ProductId): Flow<WorkerExecutionState?> =
+        executionStates.map { it[productId] }.distinctUntilChanged()
 
     private fun start(productId: ProductId) {
         if (productId in workers) return
         val worker = RunningWorker(scope.childScope())
         workers[productId] = worker
+        executionStates.update { it - productId }
         worker.scope.launch {
             boot(productId, worker)
                 .logFailure("TrUAPI worker for ${productId.value} failed to start")
                 // A half-booted worker left in the map swallows every later start, and the core
                 // keeps counting the reference the card holds, so no stop ever arrives to clear it.
                 // Only this one: a stop and a new start may have overtaken the failure.
-                .onFailure { transitions.withLock { if (workers[productId] === worker) stop(productId) } }
-                .onSuccess { Timber.d("TrUAPI worker for %s is running", productId.value) }
+                .onFailure { cause ->
+                    transitions.withLock {
+                        if (workers[productId] === worker) {
+                            stop(productId)
+                            executionStates.update { it + (productId to WorkerExecutionState.Failed(cause)) }
+                        }
+                    }
+                }
+                .onSuccess { execution ->
+                    transitions.withLock {
+                        if (workers[productId] === worker) {
+                            executionStates.update { it + (productId to WorkerExecutionState.Running(execution)) }
+                            Timber.d("TrUAPI worker for %s is running", productId.value)
+                        }
+                    }
+                }
         }
     }
 
@@ -117,6 +143,11 @@ class TrUAPIWorkerSupervisor @Inject constructor(
                 chainDirectory.resolve(),
                 ignoredNavigation(),
                 ProductExecutionKind.WORKER,
+                chat = if (script.includesChat) {
+                    ProductChatHostBridge(productId, refCounter.get().chatMessaging(productId))
+                } else {
+                    null
+                },
             ) { bootstrap -> provider.addWebViewSetup(installBootstrap(bootstrap)) }
             .flatMap { execution ->
                 runCatching {
@@ -131,14 +162,13 @@ class TrUAPIWorkerSupervisor @Inject constructor(
                     .flatMap { webViewRuntime.loadEntryModule(workerScript.entrypoint) }
                     .map { execution }
             }
-            .onSuccess { execution -> executions.update { it + (productId to execution) } }
     }
 
     // The renderer takes the running script with it, and only a fresh boot runs the script again.
     private fun rebootAfterRendererLoss(productId: ProductId, worker: RunningWorker) {
         scope.launch {
             transitions.withLock {
-                if (workers[productId] !== worker || productId !in executions.value) return@withLock
+                if (workers[productId] !== worker || currentExecution(productId) == null) return@withLock
                 stop(productId)
                 start(productId)
             }
@@ -146,8 +176,8 @@ class TrUAPIWorkerSupervisor @Inject constructor(
     }
 
     private fun stop(productId: ProductId) {
+        executionStates.update { it - productId }
         val worker = workers.remove(productId) ?: return
-        executions.update { it - productId }
         worker.webViewRuntime?.dispose()
         worker.scope.cancel()
     }
@@ -157,8 +187,10 @@ class TrUAPIWorkerSupervisor @Inject constructor(
         onDeeplinkNavigation = { Timber.d("Ignored navigation from a Pocket worker: %s", it) },
     )
 
-    private companion object {
+    companion object {
         // Generous: a cold WebView on a slow device fetching a worker archive over dotNS.
-        val READY_TIMEOUT = 60.seconds
+        private val READY_TIMEOUT = 60.seconds
+
+        val EXECUTION_WAIT_TIMEOUT = READY_TIMEOUT + 30.seconds
     }
 }

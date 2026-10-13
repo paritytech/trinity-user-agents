@@ -634,12 +634,16 @@ fn emit_worker_callback_entry(method: &PlatformMethod) -> Result<String> {
 fn emit_worker_subscription_entry(method: &PlatformMethod) -> Result<String> {
 	let raw = raw_callback_name(method);
 	Ok(match worker_subscription_payload_param(method)? {
-		Some(param) => format!(
-			"    {raw}: ({param}, sendItem, sendError) =>\n      bridge.startSubscription(\"{raw}\", {param}, sendItem, sendError),\n"
-		),
-		None => format!(
-			"    {raw}: (sendItem, sendError) =>\n      bridge.startSubscription(\"{raw}\", null, sendItem, sendError),\n"
-		),
+		Some(param) => {
+			format!(
+				"    {raw}: ({param}, sendItem, sendError) =>\n      bridge.startSubscription(\"{raw}\", {param}, sendItem, sendError),\n"
+			)
+		},
+		None => {
+			format!(
+				"    {raw}: (sendItem, sendError) =>\n      bridge.startSubscription(\"{raw}\", null, sendItem, sendError),\n"
+			)
+		},
 	})
 }
 
@@ -704,7 +708,9 @@ fn worker_subscription_payload_param(method: &PlatformMethod) -> Result<Option<S
 	match method.params.as_slice() {
 		[] => Ok(None),
 		[param] => Ok(Some(to_camel_case(&param.name))),
-		_ => bail!("subscription callback `{}` has more than one payload parameter", method.name),
+		_ => {
+			bail!("subscription callback `{}` has more than one payload parameter", method.name)
+		},
 	}
 }
 
@@ -1461,11 +1467,13 @@ fn emit_enum_type(enum_def: &TypeDef) -> Result<String> {
 fn enum_variant_type(variant: &VariantDef) -> Result<String> {
 	Ok(match &variant.fields {
 		VariantFields::Unit => format!("{{ tag: \"{}\"; value?: undefined }}", variant.name),
-		VariantFields::Unnamed(types) => format!(
-			"{{ tag: \"{}\"; value: {} }}",
-			variant.name,
-			unnamed_variant_value_type(types)?
-		),
+		VariantFields::Unnamed(types) => {
+			format!(
+				"{{ tag: \"{}\"; value: {} }}",
+				variant.name,
+				unnamed_variant_value_type(types)?
+			)
+		},
 		VariantFields::Named(fields) => {
 			format!("{{ tag: \"{}\"; value: {} }}", variant.name, inline_object_type(fields)?)
 		},

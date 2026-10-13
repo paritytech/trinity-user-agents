@@ -569,7 +569,9 @@ fn subscription_payload(method: &PlatformMethod, ctx: &BridgeCtx<'_>) -> Result<
 	match method.params.as_slice() {
 		[] => Ok("None".to_string()),
 		[param] => Ok(format!("Some({})", js_arg_expr(&param.name, &param.type_ref, ctx)?)),
-		_ => bail!("subscription `{}` has more than one payload parameter", method.name),
+		_ => {
+			bail!("subscription `{}` has more than one payload parameter", method.name)
+		},
 	}
 }
 
