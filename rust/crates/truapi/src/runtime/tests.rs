@@ -7833,7 +7833,7 @@ impl crate::platform::PaymentPlatform for RecordingPaymentPlatform {
 			.push((product.product_id.clone(), id));
 		Box::pin(futures::stream::iter([
 			Ok(v01::HostPaymentStatusSubscribeItem::Processing),
-			Ok(v01::HostPaymentStatusSubscribeItem::PartiallyClaimed { actual_claimed: 600 }),
+			Ok(v01::HostPaymentStatusSubscribeItem::ClaimedPartially { actual_claimed: 600 }),
 		]))
 	}
 }
@@ -7904,7 +7904,7 @@ fn a_payment_reaches_the_host_engine_and_its_status_is_relayed() {
 					v01::HostPaymentStatusSubscribeItem::Processing
 				)),
 				Ok(truapi::versioned::payment::HostPaymentStatusSubscribeItem::V1(
-					v01::HostPaymentStatusSubscribeItem::PartiallyClaimed { actual_claimed: 600 }
+					v01::HostPaymentStatusSubscribeItem::ClaimedPartially { actual_claimed: 600 }
 				)),
 			],
 			vec![(

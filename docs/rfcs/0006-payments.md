@@ -108,7 +108,8 @@ enum PaymentTopUpStatus {
 }
 
 enum PaymentTopUpStatusErr {
-    NotFound,
+    /// The top-up id was not found or does not belong to the current product
+    TopUpNotFound,
     Unknown(GenericErr)
 }
 ```
@@ -148,7 +149,7 @@ A successful response means the user has authorized the payment and the host has
 
 #### 4. Payment Status Subscription
 
-Subscribe to status updates for a previously requested payment. The subscription emits status changes until the payment reaches a terminal state (`Completed`, `Failed` or `PartiallyClaimed`), which stays readable after the payment ends.
+Subscribe to status updates for a previously requested payment. The subscription emits status changes until the payment reaches a terminal state (`Completed`, `Failed` or `ClaimedPartially`), which stays readable after the payment ends.
 
 ```rust
 fn host_payment_status_subscribe(
@@ -164,7 +165,7 @@ enum PaymentStatus {
     /// Payment has failed
     Failed(str),
     /// Only this amount reached the destination, less than requested
-    PartiallyClaimed(Balance)
+    ClaimedPartially(Balance)
 }
 
 enum PaymentStatusErr {
@@ -182,7 +183,7 @@ enum PaymentStatusErr {
 
 3. **Payment ID scoping**: A `PaymentId` is scoped to the product that created it. A product cannot query or subscribe to payment status for another product's payments. The core enforces this: the id a host receives is the product's id hashed with the product.
 
-4. **Terminal status delivery**: Once a payment reaches `Completed`, `Failed` or `PartiallyClaimed`, the host must deliver that status to any active subscriber and may then close the subscription. The host should make a best effort to deliver terminal status even across session restarts.
+4. **Terminal status delivery**: Once a payment reaches `Completed`, `Failed` or `ClaimedPartially`, the host must deliver that status to any active subscriber and may then close the subscription. The host should make a best effort to deliver terminal status even across session restarts.
 
 5. **Top-up idempotency**: If the same top-up is submitted multiple times (e.g. due to a retry), the host should ensure funds are only transferred once where possible. However, this is a best-effort guarantee -- products should implement their own idempotency checks for critical flows.
 

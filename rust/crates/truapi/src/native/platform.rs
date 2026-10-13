@@ -847,7 +847,7 @@ impl crate::platform::TopUpPlatform for TopUpCallbackPlatform {
 		self.statuses.follow(product_id.clone(), id, || {
 			match self.top_up.top_up_status(product_id, id) {
 				Ok(Some(status)) => Ok(status),
-				Ok(None) => Err(v01::HostPaymentTopUpStatusSubscribeError::NotFound),
+				Ok(None) => Err(v01::HostPaymentTopUpStatusSubscribeError::TopUpNotFound),
 				Err(error) => Err(v01::HostPaymentTopUpStatusSubscribeError::Unknown {
 					reason: error.to_string(),
 				}),
@@ -889,7 +889,7 @@ fn payment_rank(status: &v01::HostPaymentStatusSubscribeItem) -> u8 {
 		v01::HostPaymentStatusSubscribeItem::Processing => 0,
 		v01::HostPaymentStatusSubscribeItem::Completed |
 		v01::HostPaymentStatusSubscribeItem::Failed { .. } |
-		v01::HostPaymentStatusSubscribeItem::PartiallyClaimed { .. } => TERMINAL_RANK,
+		v01::HostPaymentStatusSubscribeItem::ClaimedPartially { .. } => TERMINAL_RANK,
 	}
 }
 
@@ -1063,7 +1063,7 @@ mod status_relay_tests {
 					Ok(v01::HostPaymentTopUpStatusSubscribeItem::Claiming),
 					Ok(v01::HostPaymentTopUpStatusSubscribeItem::Claimed { finalized: true }),
 				],
-				vec![Err(v01::HostPaymentTopUpStatusSubscribeError::NotFound)],
+				vec![Err(v01::HostPaymentTopUpStatusSubscribeError::TopUpNotFound)],
 				0,
 			)
 		);

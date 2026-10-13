@@ -82,7 +82,7 @@ pub struct HostPaymentRequest {
 
 /// Payment lifecycle status pushed to subscribers.
 ///
-/// `Completed`, `Failed` and `PartiallyClaimed` are terminal, and stay
+/// `Completed`, `Failed` and `ClaimedPartially` are terminal, and stay
 /// readable after the payment ends.
 ///
 /// See [RFC 0006].
@@ -101,7 +101,7 @@ pub enum HostPaymentStatusSubscribeItem {
 		reason: String,
 	},
 	/// Less than the requested amount reached the destination.
-	PartiallyClaimed {
+	ClaimedPartially {
 		/// Amount that did.
 		actual_claimed: u128,
 	},
@@ -234,7 +234,7 @@ pub enum HostPaymentTopUpStatusSubscribeItem {
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 pub enum HostPaymentTopUpStatusSubscribeError {
 	/// No top-up with this id for the calling product.
-	NotFound,
+	TopUpNotFound,
 	/// Catch-all.
 	Unknown {
 		/// Human-readable failure reason.
