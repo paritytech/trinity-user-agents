@@ -670,25 +670,48 @@ struct Follower<S> {
 	sender: mpsc::UnboundedSender<S>,
 }
 
-/// Who follows which status, per product and id.
-struct Followers<S> {
+/// Who follows which host-pushed value, per key.
+struct Followers<K, S> {
 	next: u64,
-	by_id: std::collections::HashMap<(String, crate::Bytes32), Vec<Follower<S>>>,
+	by_key: std::collections::HashMap<K, Vec<Follower<S>>>,
 }
 
-impl<S> Default for Followers<S> {
+impl<K, S> Default for Followers<K, S> {
 	fn default() -> Self {
-		Self { next: 0, by_id: std::collections::HashMap::new() }
+		Self { next: 0, by_key: std::collections::HashMap::new() }
 	}
 }
 
-impl<S> Followers<S> {
+impl<K: Eq + std::hash::Hash, S: Clone> Followers<K, S> {
+	/// Follow `key` through `sender`, forgetting dropped followers first so
+	/// re-subscribing does not grow the map. Returns the subscription number.
+	fn register(&mut self, key: K, sender: mpsc::UnboundedSender<S>) -> u64 {
+		self.prune();
+		self.next += 1;
+		let subscription = self.next;
+		self.by_key.entry(key).or_default().push(Follower { subscription, sender });
+		subscription
+	}
+
+	/// Send `value` to everyone following `key`.
+	fn send(&self, key: &K, value: &S) {
+		for follower in self.by_key.get(key).into_iter().flatten() {
+			let _ = follower.sender.unbounded_send(value.clone());
+		}
+	}
+
 	/// Forget followers whose streams were dropped.
 	fn prune(&mut self) {
-		self.by_id.retain(|_, senders| {
+		self.by_key.retain(|_, senders| {
 			senders.retain(|follower| !follower.sender.is_closed());
 			!senders.is_empty()
 		});
+	}
+
+	/// How many followers are registered.
+	#[cfg(test)]
+	fn len(&self) -> usize {
+		self.by_key.values().map(Vec::len).sum()
 	}
 }
 
@@ -698,13 +721,13 @@ const TERMINAL_RANK: u8 = 3;
 /// Statuses a host answers once and pushes after, relayed to every stream
 /// following an id: each starts at the host's current status and shows every
 /// later one once, never stepping back, and ends at a terminal one.
-struct StatusRelay<T, E> {
-	followers: Mutex<Followers<Result<T, E>>>,
+struct StatusRelay<T> {
+	followers: Mutex<Followers<(String, crate::Bytes32), T>>,
 	/// How far along a status is; [`TERMINAL_RANK`] ends a stream.
 	rank: fn(&T) -> u8,
 }
 
-impl<T: Clone + Send + 'static, E: Send + 'static> StatusRelay<T, E> {
+impl<T: Clone + Send + 'static> StatusRelay<T> {
 	fn new(rank: fn(&T) -> u8) -> Self {
 		Self { followers: Mutex::new(Followers::default()), rank }
 	}
@@ -715,20 +738,16 @@ impl<T: Clone + Send + 'static, E: Send + 'static> StatusRelay<T, E> {
 		let terminal = (self.rank)(&status) == TERMINAL_RANK;
 		let mut followers = self.lock_followers();
 		let key = (product_id, id);
-		if let Some(senders) = followers.by_id.get_mut(&key) {
-			for follower in senders.iter() {
-				let _ = follower.sender.unbounded_send(Ok(status.clone()));
-			}
-		}
+		followers.send(&key, &status);
 		if terminal {
-			followers.by_id.remove(&key);
+			followers.by_key.remove(&key);
 		}
 		followers.prune();
 	}
 
 	/// Follow `product_id`'s `id` from `current`, the host's answer for it
 	/// now; an error ends the stream there.
-	fn follow(
+	fn follow<E: Send + 'static>(
 		&self,
 		product_id: String,
 		id: crate::Bytes32,
@@ -739,36 +758,25 @@ impl<T: Clone + Send + 'static, E: Send + 'static> StatusRelay<T, E> {
 		// pushes in between is not lost; the stream below drops it if it
 		// repeats or precedes the current one.
 		let (sender, changes) = mpsc::unbounded();
-		let follower = {
-			let mut followers = self.lock_followers();
-			followers.prune();
-			followers.next += 1;
-			let follower = followers.next;
-			followers
-				.by_id
-				.entry(key.clone())
-				.or_default()
-				.push(Follower { subscription: follower, sender });
-			follower
-		};
+		let follower = self.lock_followers().register(key.clone(), sender);
 		let rank = self.rank;
 		let first = current();
 		let last_rank = first.as_ref().map_or(TERMINAL_RANK, rank);
 		if last_rank == TERMINAL_RANK {
 			let mut followers = self.lock_followers();
-			if let Some(senders) = followers.by_id.get_mut(&key) {
+			if let Some(senders) = followers.by_key.get_mut(&key) {
 				senders.retain(|registered| registered.subscription != follower);
 			}
 			followers.prune();
 			return stream::iter([first]).boxed();
 		}
-		let later = changes.scan(last_rank, move |shown, status: Result<T, E>| {
-			let next = status.as_ref().map_or(TERMINAL_RANK, rank);
-			let fresh = next > *shown || (next == *shown && next == TERMINAL_RANK);
+		let later = changes.scan(last_rank, move |shown, status: T| {
+			let next = rank(&status);
+			let fresh = next > *shown;
 			if fresh {
 				*shown = next;
 			}
-			futures::future::ready(Some(fresh.then_some(status)))
+			futures::future::ready(Some(fresh.then_some(Ok(status))))
 		});
 		stream::iter([first]).chain(later.filter_map(futures::future::ready)).boxed()
 	}
@@ -776,10 +784,10 @@ impl<T: Clone + Send + 'static, E: Send + 'static> StatusRelay<T, E> {
 	/// How many ids are followed.
 	#[cfg(test)]
 	fn followed(&self) -> usize {
-		self.lock_followers().by_id.len()
+		self.lock_followers().by_key.len()
 	}
 
-	fn lock_followers(&self) -> std::sync::MutexGuard<'_, Followers<Result<T, E>>> {
+	fn lock_followers(&self) -> std::sync::MutexGuard<'_, Followers<(String, crate::Bytes32), T>> {
 		self.followers.lock().expect("status followers mutex poisoned")
 	}
 }
@@ -789,10 +797,7 @@ impl<T: Clone + Send + 'static, E: Send + 'static> StatusRelay<T, E> {
 /// pushes each later one through [`Self::notify_status`].
 pub struct TopUpCallbackPlatform {
 	top_up: Arc<dyn NativeTopUpCallbacks>,
-	statuses: StatusRelay<
-		v01::HostPaymentTopUpStatusSubscribeItem,
-		v01::HostPaymentTopUpStatusSubscribeError,
-	>,
+	statuses: StatusRelay<v01::HostPaymentTopUpStatusSubscribeItem>,
 }
 
 impl TopUpCallbackPlatform {
@@ -861,8 +866,7 @@ impl crate::platform::TopUpPlatform for TopUpCallbackPlatform {
 /// and pushes each later one through [`Self::notify_status`].
 pub struct PaymentCallbackPlatform {
 	payments: Arc<dyn NativePaymentCallbacks>,
-	statuses:
-		StatusRelay<v01::HostPaymentStatusSubscribeItem, v01::HostPaymentStatusSubscribeError>,
+	statuses: StatusRelay<v01::HostPaymentStatusSubscribeItem>,
 }
 
 impl PaymentCallbackPlatform {
@@ -924,18 +928,12 @@ impl crate::platform::PaymentPlatform for PaymentCallbackPlatform {
 	}
 }
 
-/// One product following the balance of a purse.
-struct BalanceFollower {
-	purse: Option<u32>,
-	sender: mpsc::UnboundedSender<u128>,
-}
-
 /// [`crate::platform::BalancePlatform`] served by host-provided
 /// [`NativeBalanceCallbacks`]: the host answers a product's current balance,
 /// and pushes each change through [`Self::notify_balance`].
 pub struct BalanceCallbackPlatform {
 	balance: Arc<dyn NativeBalanceCallbacks>,
-	followers: Arc<Mutex<Vec<BalanceFollower>>>,
+	followers: Mutex<Followers<Option<u32>, u128>>,
 }
 
 impl BalanceCallbackPlatform {
@@ -946,10 +944,13 @@ impl BalanceCallbackPlatform {
 
 	/// Deliver the new balance of `purse` to every product following it.
 	pub fn notify_balance(&self, purse: Option<u32>, available: u128) {
-		let mut followers = self.followers.lock().expect("balance followers mutex poisoned");
-		followers.retain(|follower| {
-			follower.purse != purse || follower.sender.unbounded_send(available).is_ok()
-		});
+		let mut followers = self.lock_followers();
+		followers.send(&purse, &available);
+		followers.prune();
+	}
+
+	fn lock_followers(&self) -> std::sync::MutexGuard<'_, Followers<Option<u32>, u128>> {
+		self.followers.lock().expect("balance followers mutex poisoned")
 	}
 }
 
@@ -965,12 +966,7 @@ impl crate::platform::BalancePlatform for BalanceCallbackPlatform {
 		// Registered before the host answers, so a change it pushes in
 		// between is not lost.
 		let (sender, changes) = mpsc::unbounded();
-		let mut followers = self.followers.lock().expect("balance followers mutex poisoned");
-		// Forget followers whose streams were dropped, so re-subscribing
-		// while the balance holds still does not grow the list.
-		followers.retain(|follower| !follower.sender.is_closed());
-		followers.push(BalanceFollower { purse, sender });
-		drop(followers);
+		self.lock_followers().register(purse, sender);
 		let balance = self.balance.clone();
 		let product_id = product.product_id.clone();
 		stream::once(async move { (balance.balance(product_id, purse).await, changes) })
@@ -1228,6 +1224,6 @@ mod status_relay_tests {
 			drop(platform.subscribe_balance(&product(), None));
 		}
 		let _live = platform.subscribe_balance(&product(), None);
-		assert_eq!(platform.followers.lock().unwrap().len(), 1);
+		assert_eq!(platform.lock_followers().len(), 1);
 	}
 }
