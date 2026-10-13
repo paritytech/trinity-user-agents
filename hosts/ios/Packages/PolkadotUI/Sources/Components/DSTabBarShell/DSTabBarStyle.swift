@@ -18,6 +18,14 @@ public enum DSTabBarStyle {
     public static var restingHeight: CGFloat { height + bottomGap }
     static let cornerRadius: CGFloat = 28
     static let itemInset: CGFloat = 6
+    /// Vertical inset of the selection pill inside the bar row.
+    static let selectionInset: CGFloat = 4
+    /// A flat fill rather than glass, because glass samples whatever scrolls under the bar and the
+    /// selection would drift in colour from screen to screen.
+    static let selectionFillOpacity: Double = 0.12
+    /// Response of the spring that carries the selection pill between slots.
+    static let selectionSpringResponse: Double = 0.4
+    static let selectionSpringDamping: Double = 0.8
     static let strokeWidth: CGFloat = 1
 
     /// Radius of the hole cut from the bar. The centre control sits inside it with a ring gap.

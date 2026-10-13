@@ -14,6 +14,7 @@ struct TabBarBarView: View {
             isShelfOpen: $model.isShelfOpen,
             shelfContentHeight: $model.shelfContentHeight,
             availableHeight: model.availablePanelHeight,
+            selectedSlot: model.selectedItemIndex,
             first: { slot(at: 0) },
             second: { slot(at: 1) },
             third: { slot(at: 2) },

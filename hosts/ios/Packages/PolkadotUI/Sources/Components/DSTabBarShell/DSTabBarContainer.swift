@@ -18,6 +18,7 @@ public struct DSTabBarContainer<
     @Binding private var isShelfOpen: Bool
     @Binding private var shelfContentHeight: CGFloat
     private let availableHeight: CGFloat
+    private let selectedSlot: Int?
     private let first: First
     private let second: Second
     private let third: Third
@@ -26,17 +27,20 @@ public struct DSTabBarContainer<
     private let shelf: Shelf
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Namespace private var selectionNamespace
 
     /// Slots are placed left to right, two either side of the hole, each taking an equal share
     /// of the width left over. The centre slot is laid over the bar after its mask, so a control
     /// in the hole can grow above the bar without being clipped. `availableHeight` is the height
     /// the shelf may take above the bar row; the container does not measure the screen. The shelf content
     /// must have an intrinsic height because the shelf is sized from it. `shelfContentHeight` receives the
-    /// shelf content's measured height, so the caller can size its touch region to the shelf.
+    /// shelf content's measured height, so the caller can size its touch region to the shelf. `selectedSlot`
+    /// is the index, 0 to 3 left to right, of the slot the selection pill sits behind; `nil` draws no pill.
     public init(
         isShelfOpen: Binding<Bool>,
         shelfContentHeight: Binding<CGFloat>,
         availableHeight: CGFloat,
+        selectedSlot: Int?,
         @ViewBuilder first: () -> First,
         @ViewBuilder second: () -> Second,
         @ViewBuilder third: () -> Third,
@@ -47,6 +51,7 @@ public struct DSTabBarContainer<
         _isShelfOpen = isShelfOpen
         _shelfContentHeight = shelfContentHeight
         self.availableHeight = availableHeight
+        self.selectedSlot = selectedSlot
         self.first = first()
         self.second = second()
         self.third = third()
@@ -59,14 +64,15 @@ public struct DSTabBarContainer<
         VStack(spacing: 0) {
             shelfPanel
             HStack(spacing: 0) {
-                first.frame(maxWidth: .infinity)
-                second.frame(maxWidth: .infinity)
+                slot(first, at: 0)
+                slot(second, at: 1)
                 Color.clear.frame(width: DSTabBarStyle.notchRadius * 2)
-                third.frame(maxWidth: .infinity)
-                fourth.frame(maxWidth: .infinity)
+                slot(third, at: 2)
+                slot(fourth, at: 3)
             }
             .padding(.horizontal, DSTabBarStyle.itemInset)
             .frame(height: DSTabBarStyle.height)
+            .animation(selectionAnimation, value: selectedSlot)
         }
         .background(DSTabBarMaterial())
         .clipShape(DSTabBarShape(), style: FillStyle(eoFill: true))
@@ -87,6 +93,32 @@ private struct DSTabBarShelfHeightKey: PreferenceKey {
 }
 
 private extension DSTabBarContainer {
+    func slot(_ content: some View, at index: Int) -> some View {
+        content
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background {
+                if selectedSlot == index {
+                    selectionPill
+                }
+            }
+    }
+
+    var selectionPill: some View {
+        Capsule(style: .continuous)
+            .fill(Color.bgSurfaceContainerInverted.opacity(DSTabBarStyle.selectionFillOpacity))
+            .padding(.vertical, DSTabBarStyle.selectionInset)
+            .matchedGeometryEffect(id: "selection", in: selectionNamespace)
+    }
+
+    /// Snaps under Reduce Motion so the pill jumps between slots without the spring's travel.
+    var selectionAnimation: Animation? {
+        guard !reduceMotion else { return nil }
+        return .spring(
+            response: DSTabBarStyle.selectionSpringResponse,
+            dampingFraction: DSTabBarStyle.selectionSpringDamping
+        )
+    }
+
     /// Eased rather than sprung under Reduce Motion, so the shelf reveals without the overshoot
     /// that makes the growth read as motion.
     var shelfAnimation: Animation {
@@ -154,6 +186,7 @@ private extension DSTabBarContainer {
         @State private var shelfRowCount: Int
         @State private var isShelfOpen: Bool
         @State private var shelfContentHeight: CGFloat = 0
+        @State private var selectedSlot = 0
         let showsRowControls: Bool
 
         init(shelfRowCount: Int = 0, showsRowControls: Bool = false) {
@@ -185,10 +218,11 @@ private extension DSTabBarContainer {
                     isShelfOpen: $isShelfOpen,
                     shelfContentHeight: $shelfContentHeight,
                     availableHeight: 320,
-                    first: { item("house.fill") },
-                    second: { item("bubble.left.fill") },
-                    third: { item("safari.fill") },
-                    fourth: { item("gearshape.fill") },
+                    selectedSlot: selectedSlot,
+                    first: { item("house.fill", at: 0) },
+                    second: { item("bubble.left.fill", at: 1) },
+                    third: { item("safari.fill", at: 2) },
+                    fourth: { item("gearshape.fill", at: 3) },
                     center: { EmptyView() },
                     shelf: { shelfRows }
                 )
@@ -199,10 +233,14 @@ private extension DSTabBarContainer {
             .background(Color.bgSurfaceMain)
         }
 
-        private func item(_ symbol: String) -> some View {
-            Image(systemName: symbol)
-                .font(.system(size: 17, weight: .semibold))
-                .foregroundStyle(Color.fgPrimary)
+        private func item(_ symbol: String, at index: Int) -> some View {
+            Button {
+                selectedSlot = index
+            } label: {
+                Image(systemName: symbol)
+                    .font(.system(size: 17, weight: .semibold))
+                    .foregroundStyle(Color.fgPrimary)
+            }
         }
 
         private var shelfRows: some View {
