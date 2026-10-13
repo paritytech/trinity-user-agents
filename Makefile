@@ -3,7 +3,7 @@
 # Run `make help` for the list of targets.
 
 .DEFAULT_GOAL := help
-.PHONY: help setup build codegen test check fmt fmt-check check-generated clean playground wasm wasm-crypto-test uniffi uniffi-kotlin android-check provider-android-check ios-build ios-run ios-chat-run ios-chat-host-playground-run ios-chat-all android-jni android-publish-local dotli-link dev dev-cli dev-bootstrap debugger dev-link-check e2e-dotli e2e-cli-diagnosis e2e-signing-cli e2e-pairing-cli e2e-chat-cli e2e-pocket-cli e2e-cross-product e2e-cli-update headless install cli-runner cli-dist matrix explorer xcframework android-chat-playground-run
+.PHONY: help setup build codegen test check fmt fmt-check check-generated clean playground wasm wasm-crypto-test uniffi uniffi-kotlin android-check provider-android-check ios-build ios-run ios-chat-run ios-chat-host-playground-run ios-chat-all android-jni android-publish-local dotli-link dev dev-cli dev-bootstrap debugger dev-link-check e2e-dotli e2e-cli-diagnosis e2e-signing-cli e2e-pairing-cli e2e-chat-cli e2e-pocket-cli e2e-cross-product e2e-preimage-submit-prompt e2e-cli-update headless install cli-runner cli-dist matrix explorer xcframework android-chat-playground-run
 
 CARGO ?= cargo
 # The dated nightly CI runs; see nightly-toolchain.
@@ -485,6 +485,9 @@ CROSS_PRODUCT_SCENARIOS := $(patsubst scripts/cross-product-%-e2e.sh,%,$(wildcar
 e2e-cross-product: ## One product uses another's storage, keys or accounts on the signing-host CLI. Pick a scenario with SCENARIO=<name>.
 	@test -x scripts/cross-product-$(SCENARIO)-e2e.sh || { echo "SCENARIO must be one of: $(CROSS_PRODUCT_SCENARIOS)" >&2; exit 1; }
 	scripts/cross-product-$(SCENARIO)-e2e.sh
+
+e2e-preimage-submit-prompt: ## Upload preimages under a PreimageSubmit grant on the signing-host CLI with no per-upload confirmation.
+	scripts/preimage-submit-prompt-e2e.sh
 
 e2e-cli-update: cli-dist ## Install the packaged truapi-host from a fake release and self-update it, with no network.
 	node scripts/e2e-cli-update.mjs
