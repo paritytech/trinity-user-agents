@@ -94,7 +94,7 @@ struct FundingAssignment {
     intent: String,
     direction: FundingDirection,             // In | Out
     amount: Option<u128>,                    // None: the user picks it on the provider's screens
-    expires_at: u64,                         // Unix ms
+    expires_at: Option<u64>,                 // Unix ms; None once funds move
     last_update: Option<FundingUpdate>,      // where a restarted worker resumes
     quote: Option<FundingQuote>,             // the quote the user chose
     saved: Option<Vec<u8>>,                  // what `save` last stored
@@ -164,8 +164,11 @@ enum FundingDeposit {
 - Only the provider a session is assigned to may report on it, and updates only move forward. Otherwise the report
   fails with `NotFound` or `OutOfOrder`.
 - The core stores each report before answering and keeps the session until the host has written it to its history.
-- `Crediting` names a top-up the worker started with `payment.topUp`, `Collecting` a payment it requested with
-  `payment.request`. An id another of the provider's sessions names fails with `DuplicateId`.
+- The core records every top-up and payment request a provider's worker starts while it serves an open session in
+  that direction, with the amount, on each such session (the report names which). `Crediting` must name a recorded
+  top-up and `Collecting` a recorded payment request, at the recorded amount, once across the provider's sessions;
+  anything else fails with `NotStarted`. Funds started before the session was assigned were never recorded for it.
+- A report on a session the user chose a provider for while the overlay is still up is stored like any other.
 - `Deposit` and `Details` carry what the host draws: where and what the user pays, and the provider's references. The
   latest of each is shown.
 
@@ -202,15 +205,24 @@ comes back in `Assigned.saved` and is dropped when the session ends.
 
 ## Outcome
 
-- **The core decides success, never the worker.** An inbound session is `Delivered { credited }` with what its named
-  top-ups claimed: the full amount, a partial claim, or nothing. An outbound session is `Released { debited }` once its
-  named payment completes. Nothing moved ends the session as failed.
+- **The core decides success, never the worker.** An inbound session is `Delivered { credited }` with the recorded
+  amounts of its named top-ups whose claims are final (`Claimed { finalized: true }`), what a partial claim reports, or
+  nothing for one not claimed. An outbound session is `Released { debited }` with the recorded amount once its named
+  payment completes. Nothing moved ends the session as failed.
+- **Undecided statuses are read again.** A claim that is not final, a status stream that ends or fails first, or a
+  top-up or payment the host does not know yet leaves the session open, and the core reads the status again with
+  backoff. One the host still does not know an hour after the report named it, the time a payment can wait on the
+  user's approval, counts as nothing moved.
 - **Funds moving locks the session.** Once a top-up or payment request is named, the provider can no longer fail the
-  session and the user can no longer cancel it.
-- **Cancel** ends a session no provider serves, asks the assigned provider otherwise, and is refused once the user's
-  payment reached the provider.
-- **Expiry** applies only to a session no provider has taken, 24 hours after it opened. An assigned session waits for
-  its provider, since a bank transfer can take days.
+  session, the user can no longer cancel it and nothing expires it.
+- **Cancel** ends a session no provider serves and asks the assigned provider otherwise. Asked again before the
+  provider answered, it ends the session as `Failed { Cancelled }` and the core lets the worker go. It is refused
+  once the user's payment reached the provider.
+- **Expiry** ends a session as `Failed { Expired }`: 24 hours after it opened while no provider has taken it, and 7
+  days after the provider's last update while it is assigned and no funds move, so a provider that went silent cannot
+  hold it. A bank transfer can take days, so a provider that keeps reporting keeps the session.
+- **Closing the overlay after choosing a provider** keeps the session as started, since the provider may already be
+  working on it, and asks the provider to stop unless funds move.
 - **Ids are scoped.** The core hashes the provider's product into every top-up and payment id it hands the host, and
   follows them under the same id.
 
