@@ -16,7 +16,6 @@ import io.paritytech.polkadotapp.design.components.bottomsheet.NovaBottomSheetSu
 import io.paritytech.polkadotapp.design.components.progress.Shimmer
 import io.paritytech.polkadotapp.design.theme.PolkadotTheme
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.FundingScreen
-import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.FundingSheetUiState
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.FundingViewModel
 
 private val SKELETON_FIGURE_HEIGHT = 64.dp
@@ -35,85 +34,79 @@ fun FundingSheetScreen(viewModel: FundingViewModel) {
             .padding(PolkadotTheme.spacings.mediumIncreased)
 
         when (val current = state) {
-            is LoadingState.Loaded -> FundingSheetContent(modifier = contentModifier, state = current.data, viewModel = viewModel)
+            is LoadingState.Loaded -> {
+                when (current.data.screen) {
+                    FundingScreen.SUMMARY -> FundingSummaryScreen(
+                        modifier = contentModifier,
+                        state = current.data.summary,
+                        onBack = viewModel::onBack,
+                        onFees = viewModel::onOpenFees,
+                        onCountry = viewModel::onOpenCountry,
+                        onProviders = viewModel::onOpenProviders,
+                        onContinue = viewModel::onStart,
+                    )
+
+                    FundingScreen.FEES -> FundingFeesScreen(modifier = contentModifier, state = current.data.fees, onBack = viewModel::onBack)
+
+                    FundingScreen.COUNTRY -> FundingCountryScreen(
+                        modifier = contentModifier,
+                        state = current.data.country,
+                        onBack = viewModel::onBack,
+                        onQueryChanged = viewModel::onCountryQueryChanged,
+                        onCountry = viewModel::onCountryChosen,
+                    )
+
+                    FundingScreen.PROVIDERS -> FundingProvidersScreen(
+                        modifier = contentModifier,
+                        state = current.data.providers,
+                        onBack = viewModel::onBack,
+                        onProvider = viewModel::onProviderChosen,
+                    )
+
+                    FundingScreen.NETWORK -> FundingNetworkScreen(
+                        modifier = contentModifier,
+                        rows = current.data.networks,
+                        onBack = viewModel::onBack,
+                        onNetwork = viewModel::onNetworkChosen,
+                    )
+
+                    FundingScreen.TOKEN -> FundingTokenScreen(
+                        modifier = contentModifier,
+                        state = current.data.tokens,
+                        onBack = viewModel::onBack,
+                        onToken = viewModel::onTokenChosen,
+                    )
+
+                    FundingScreen.DEPOSIT -> FundingDepositScreen(
+                        modifier = contentModifier,
+                        state = current.data.deposit,
+                        onBack = viewModel::onBack,
+                        onCopy = viewModel::onCopy,
+                        onCancel = viewModel::onCancelTopUp,
+                        onClose = viewModel::onClose,
+                    )
+
+                    FundingScreen.CANCEL_CONFIRM -> FundingCancelConfirmScreen(
+                        modifier = contentModifier,
+                        isCancelling = current.data.deposit.isCancelling,
+                        onBack = viewModel::onBack,
+                        onConfirm = viewModel::onConfirmCancel,
+                    )
+
+                    FundingScreen.AMOUNT -> FundingAmountScreen(
+                        modifier = contentModifier,
+                        state = current.data.amount,
+                        onRailSelected = viewModel::onRailSelected,
+                        onKey = viewModel::onKey,
+                        onPreset = viewModel::onPreset,
+                        onContinue = viewModel::onContinueFromAmount,
+                        onClose = viewModel::onClose,
+                    )
+                }
+            }
+
             else -> FundingSkeleton(modifier = contentModifier)
         }
-    }
-}
-
-@Composable
-private fun FundingSheetContent(
-    state: FundingSheetUiState,
-    viewModel: FundingViewModel,
-    modifier: Modifier = Modifier,
-) {
-    when (state.screen) {
-        FundingScreen.SUMMARY -> FundingSummaryScreen(
-            modifier = modifier,
-            state = state.summary,
-            onBack = viewModel::onBack,
-            onFees = viewModel::onOpenFees,
-            onCountry = viewModel::onOpenCountry,
-            onProviders = viewModel::onOpenProviders,
-            onContinue = viewModel::onStart,
-        )
-
-        FundingScreen.FEES -> FundingFeesScreen(modifier = modifier, state = state.fees, onBack = viewModel::onBack)
-
-        FundingScreen.COUNTRY -> FundingCountryScreen(
-            modifier = modifier,
-            state = state.country,
-            onBack = viewModel::onBack,
-            onQueryChanged = viewModel::onCountryQueryChanged,
-            onCountry = viewModel::onCountryChosen,
-        )
-
-        FundingScreen.PROVIDERS -> FundingProvidersScreen(
-            modifier = modifier,
-            state = state.providers,
-            onBack = viewModel::onBack,
-            onProvider = viewModel::onProviderChosen,
-        )
-
-        FundingScreen.NETWORK -> FundingNetworkScreen(
-            modifier = modifier,
-            rows = state.networks,
-            onBack = viewModel::onBack,
-            onNetwork = viewModel::onNetworkChosen,
-        )
-
-        FundingScreen.TOKEN -> FundingTokenScreen(
-            modifier = modifier,
-            state = state.tokens,
-            onBack = viewModel::onBack,
-            onToken = viewModel::onTokenChosen,
-        )
-
-        FundingScreen.DEPOSIT -> FundingDepositScreen(
-            modifier = modifier,
-            state = state.deposit,
-            onBack = viewModel::onBack,
-            onCopy = viewModel::onCopy,
-            onCancel = viewModel::onCancelTopUp,
-            onClose = viewModel::onClose,
-        )
-
-        FundingScreen.CANCEL_CONFIRM -> FundingCancelConfirmScreen(
-            modifier = modifier,
-            isCancelling = state.deposit.isCancelling,
-            onBack = viewModel::onBack,
-            onConfirm = viewModel::onConfirmCancel,
-        )
-
-        FundingScreen.AMOUNT -> FundingAmountScreen(
-            modifier = modifier,
-            state = state.amount,
-            onRailSelected = viewModel::onRailSelected,
-            onKey = viewModel::onKey,
-            onPreset = viewModel::onPreset,
-            onContinue = viewModel::onContinueFromAmount,
-            onClose = viewModel::onClose,
-        )
     }
 }
 
