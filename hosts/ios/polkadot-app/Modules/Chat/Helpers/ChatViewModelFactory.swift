@@ -991,6 +991,7 @@ extension Chat.LocalMessage.Status.OutgoingStatus {
         case .new: .pending
         case .sent: .sent
         case .delivered: .delivered
+        case .failed: .failed
         }
     }
 }
