@@ -12,6 +12,7 @@ final class ScanPanelViewController: UIViewController, ViewHolder {
 
     var onChatFound: ((ChatOpenModel) -> Void)?
     var onContentHeightChanged: (() -> Void)?
+    var onSearchFocusChanged: ((Bool) -> Void)?
 
     init(
         scannerController: UIViewController & ScanPanelScannerControlling,
@@ -102,6 +103,7 @@ private extension ScanPanelViewController {
             layout.setSearchFocused(focused)
         }
         onContentHeightChanged?()
+        onSearchFocusChanged?(focused)
     }
 }
 

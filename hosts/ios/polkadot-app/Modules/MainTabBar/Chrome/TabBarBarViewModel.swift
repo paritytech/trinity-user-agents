@@ -10,6 +10,8 @@ final class TabBarBarViewModel {
     var items: [DSTabBarItem] = []
     var selectedItemIndex = 0
     var activeActionItemIndex: Int?
+    /// Whether the bar row is faded out, leaving only an open centre panel. Set while the panel's search is focused.
+    var isBarHidden = false
     var onSlotTapped: ((Int) -> Void)?
 
     /// Whether the shelf is open. Written by the chrome from the open panel, never by the shelf itself.

@@ -19,6 +19,7 @@ public struct DSTabBarContainer<
     @Binding private var shelfContentHeight: CGFloat
     private let availableHeight: CGFloat
     private let selectedSlot: Int?
+    private let isBarHidden: Bool
     private let first: First
     private let second: Second
     private let third: Third
@@ -36,11 +37,13 @@ public struct DSTabBarContainer<
     /// must have an intrinsic height because the shelf is sized from it. `shelfContentHeight` receives the
     /// shelf content's measured height, so the caller can size its touch region to the shelf. `selectedSlot`
     /// is the index, 0 to 3 left to right, of the slot the selection pill sits behind; `nil` draws no pill.
+    /// `isBarHidden` fades the bar out, shelf included, leaving the centre slot.
     public init(
         isShelfOpen: Binding<Bool>,
         shelfContentHeight: Binding<CGFloat>,
         availableHeight: CGFloat,
         selectedSlot: Int?,
+        isBarHidden: Bool,
         @ViewBuilder first: () -> First,
         @ViewBuilder second: () -> Second,
         @ViewBuilder third: () -> Third,
@@ -52,6 +55,7 @@ public struct DSTabBarContainer<
         _shelfContentHeight = shelfContentHeight
         self.availableHeight = availableHeight
         self.selectedSlot = selectedSlot
+        self.isBarHidden = isBarHidden
         self.first = first()
         self.second = second()
         self.third = third()
@@ -79,6 +83,10 @@ public struct DSTabBarContainer<
         .overlay(border)
         .shadow(color: Color.shadowSoft, radius: DSTabBarStyle.shadowRadius, y: DSTabBarStyle.shadowRadius / 3)
         .mask { DSTabBarShadowMask().fill(style: FillStyle(eoFill: true)) }
+        .opacity(isBarHidden ? 0 : 1)
+        .allowsHitTesting(!isBarHidden)
+        .accessibilityHidden(isBarHidden)
+        .animation(barFadeAnimation, value: isBarHidden)
         .overlay(alignment: .bottom) { center }
     }
 }
@@ -108,6 +116,11 @@ private extension DSTabBarContainer {
             .fill(Color.bgSurfaceContainerInverted.opacity(DSTabBarStyle.selectionFillOpacity))
             .padding(.vertical, DSTabBarStyle.selectionInset)
             .matchedGeometryEffect(id: "selection", in: selectionNamespace)
+    }
+
+    /// Eased in every mode: a fade has no travel for Reduce Motion to remove.
+    var barFadeAnimation: Animation {
+        .easeInOut(duration: DSTabBarStyle.shelfFadeDuration)
     }
 
     /// Snaps under Reduce Motion so the pill jumps between slots without the spring's travel.
@@ -158,14 +171,13 @@ private extension DSTabBarContainer {
         .accessibilityHidden(!isShelfOpen)
     }
 
-    /// Strokes the outline only. The hole is left unstroked because clipping its edge leaves
-    /// a hairline around it instead of a clean edge. The stroke is clipped back to the bar,
-    /// which keeps only the inner half of every line, so its width is doubled first.
+    /// Strokes the outline and the edge of the hole. The stroke is clipped back to the bar, which
+    /// keeps only the inner half of every line, so its width is doubled first.
     ///
     /// The rim runs on the same axis as the material's wash, so it lightens the bar on dark
     /// themes and darkens it on light ones, brightest at the top and faded by the foot.
     var border: some View {
-        RoundedRectangle(cornerRadius: DSTabBarStyle.cornerRadius, style: .continuous)
+        DSTabBarShape()
             .stroke(
                 LinearGradient(
                     colors: [
@@ -219,6 +231,7 @@ private extension DSTabBarContainer {
                     shelfContentHeight: $shelfContentHeight,
                     availableHeight: 320,
                     selectedSlot: selectedSlot,
+                    isBarHidden: false,
                     first: { item("house.fill", at: 0) },
                     second: { item("bubble.left.fill", at: 1) },
                     third: { item("safari.fill", at: 2) },

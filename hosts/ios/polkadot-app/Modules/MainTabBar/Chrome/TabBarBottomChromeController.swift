@@ -5,6 +5,9 @@ import PolkadotUI
 import SnapKit
 
 final class TabBarBottomChromeController: UIViewController {
+    /// Space kept between the keyboard and the open centre panel's button.
+    private static let keyboardButtonGap: CGFloat = -4
+
     private let chromeSurface = TabBarChromeSurfaceView()
     private let barModel = TabBarBarViewModel()
     private lazy var barHost = UIHostingController(rootView: TabBarBarView(model: barModel))
@@ -164,6 +167,11 @@ final class TabBarBottomChromeController: UIViewController {
 
     func setPanel(_ kind: TabBarPanelKind?) {
         panelController.setPanel(kind)
+    }
+
+    /// Fades the bar row out or back in. An open centre panel stays.
+    func setBarHidden(_ hidden: Bool) {
+        barModel.isBarHidden = hidden
     }
 
     /// Re-declares the centre content's height at the current bar width. Call it when the content's own
@@ -374,8 +382,9 @@ private extension TabBarBottomChromeController {
         )
     }
 
-    /// While the scan panel is open, the chrome moves up until the keyboard covers the lower half of the bar
-    /// row, keeping the panel above it clear. Any other keyboard, or a closed panel, returns the chrome to rest.
+    /// While the scan panel is open, the chrome moves up until the keyboard's top sits `keyboardButtonGap` below
+    /// the centre button, keeping the panel above it clear. Any other keyboard, or a closed panel, returns the
+    /// chrome to rest.
     @objc func handleKeyboardFrameChange(_ notification: Notification) {
         guard let keyboardFrame = notification.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect else {
             return
@@ -383,8 +392,9 @@ private extension TabBarBottomChromeController {
         let keyboardTop = view.convert(keyboardFrame, from: nil).minY
         let isScanPanelOpen = panelController.open == .content(.scan)
         let keyboardOverlap = max(0, view.bounds.maxY - keyboardTop)
-        let barMidlineOffset = DSTabBarStyle.bottomGap + DSTabBarStyle.height / 2
-        let lift = isScanPanelOpen ? max(0, keyboardOverlap - barMidlineOffset) : 0
+        let buttonFootOffset = DSTabBarStyle.restingHeight - DSTabBarStyle.centerButtonFootFromRowTop
+        let allowedOverlap = buttonFootOffset - Self.keyboardButtonGap
+        let lift = isScanPanelOpen ? max(0, keyboardOverlap - allowedOverlap) : 0
         DSTabBarStyle.animateCenterChange(in: view) {
             self.foldController.setKeyboardLift(lift)
             self.chromeSurface.keyboardLift = lift

@@ -397,6 +397,9 @@ extension MainTabBarViewController {
         controller?.onContentHeightChanged = { [weak self] in
             self?.chromeController.refreshCenterContentHeight()
         }
+        controller?.onSearchFocusChanged = { [weak self] focused in
+            self?.chromeController.setBarHidden(focused)
+        }
         return controller
     }
 }

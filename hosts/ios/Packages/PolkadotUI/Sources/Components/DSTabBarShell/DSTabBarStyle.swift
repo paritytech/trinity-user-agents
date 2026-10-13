@@ -4,7 +4,7 @@ import UIKit
 /// Geometry and fixed visual values of the tab bar. The bar has one shape, so none of these are configurable.
 public enum DSTabBarStyle {
     /// Height of the bar row itself, not counting the gap below it.
-    public static let height: CGFloat = 60
+    public static let height: CGFloat = 62
 
     /// Gap between the bar row and the bottom of the screen.
     public static let bottomGap: CGFloat = 21
@@ -31,9 +31,12 @@ public enum DSTabBarStyle {
     /// Radius of the hole cut from the bar. The centre control sits inside it with a ring gap.
     static let notchRadius: CGFloat = 34
     /// Hole centre, measured down from the top of the bar row.
-    static let notchCenterY: CGFloat = 16
+    static let notchCenterY: CGFloat = 22
     /// How far the hole reaches above the bar row, into the shelf.
     static var notchOverhang: CGFloat { notchRadius - notchCenterY }
+    /// Radius of the rounding where the hole meets the bar's top edge. It shrinks with how far the hole
+    /// reaches above that edge, so the outline does not jump as the shelf grows past the hole.
+    static let notchFilletRadius: CGFloat = 4
 
     /// Whether a point in the bar row's coordinate space falls on the centre button, which the
     /// fold gesture must not claim.
@@ -74,7 +77,7 @@ public enum DSTabBarStyle {
     static let shelfFadeDuration: Double = 0.2
 
     /// Diameter of the centre control at rest. It sits in the hole with a ring gap.
-    static let centerButtonSize: CGFloat = 60
+    static let centerButtonSize: CGFloat = 64
     static let centerPanelCornerRadius: CGFloat = 24
     /// Concave blend where the lobe meets the panel's bottom edge.
     static let centerPanelFillet: CGFloat = 18
@@ -93,10 +96,12 @@ public enum DSTabBarStyle {
         return max(minimumHeight, contentHeight + lobeRadius)
     }
 
-    /// How far the open centre panel stands above the bar row. Its foot sits at the lobe's centre
-    /// plus the lobe radius, measured down from the top of the row.
+    /// Foot of the centre button, measured down from the top of the bar row. The open panel's lobe keeps it.
+    public static var centerButtonFootFromRowTop: CGFloat { notchCenterY + centerButtonSize / 2 }
+
+    /// How far the open centre panel stands above the bar row.
     public static func centerPanelRise(contentHeight: CGFloat) -> CGFloat {
-        centerPanelHeight(contentHeight: contentHeight) - (notchCenterY + centerButtonSize / 2)
+        centerPanelHeight(contentHeight: contentHeight) - centerButtonFootFromRowTop
     }
 
     /// The tallest content a centre panel can host without the panel exceeding `panelHeight`.
