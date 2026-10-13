@@ -683,6 +683,8 @@ pub use runtime::{
 	AnnouncedPairing, DevicePairingObserver, MAX_PAIRING_METADATA_CHARS, PairedSsoPeer,
 	PairingProposal, PairingProposalMetadata, ResponderExit,
 };
+#[cfg(feature = "runtime")]
+pub use unix_time::current_unix_millis;
 
 #[cfg(feature = "runtime")]
 #[cfg(all(target_arch = "wasm32", feature = "wasm-signing-host"))]

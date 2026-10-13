@@ -15,21 +15,20 @@
 
 use std::{
 	collections::VecDeque,
-	fs::OpenOptions,
-	io::Write,
-	path::PathBuf,
-	sync::{Arc, Mutex, OnceLock, Weak},
+	sync::{Arc, Mutex, Weak},
 	time::Duration,
 };
 
 use truapi::{
-	SigningHostRuntime,
+	SigningHostRuntime, current_unix_millis,
 	host_logic::funding::FundingStage,
 	latest::{FundingDirection, FundingFailure, GenericError, HostFundingStatusSubscribeItem},
 	platform::{
 		FundingPlatform, FundingPresentOutcome, FundingPresentation, ProductContext, async_trait,
 	},
 };
+
+use crate::transcript::Transcript;
 
 /// How long a started session stays in flight before it is settled, so a
 /// product sees its first status before the terminal one.
@@ -65,8 +64,8 @@ fn parse_outcomes(spec: &str) -> VecDeque<Outcome> {
 /// A funding overlay and provider that follow a script.
 pub struct CliFundingHost {
 	outcomes: Mutex<VecDeque<Outcome>>,
-	transcript: Option<PathBuf>,
-	runtime: OnceLock<Weak<SigningHostRuntime>>,
+	transcript: Transcript,
+	runtime: Weak<SigningHostRuntime>,
 }
 
 impl CliFundingHost {
@@ -76,36 +75,11 @@ impl CliFundingHost {
 		let Ok(spec) = std::env::var("TRUAPI_FUNDING_OUTCOMES") else {
 			return;
 		};
-		let transcript = std::env::var_os("TRUAPI_FUNDING_LOG").map(PathBuf::from);
-		// Truncated at startup, so a run never reads an earlier run's lines.
-		if let Some(path) = transcript.as_ref() &&
-			let Err(error) = std::fs::write(path, b"")
-		{
-			tracing::warn!(?path, %error, "funding transcript could not be truncated");
-		}
-		let host = Arc::new(Self {
+		runtime.set_funding_platform(Arc::new(Self {
 			outcomes: Mutex::new(parse_outcomes(&spec)),
-			transcript,
-			runtime: OnceLock::new(),
-		});
-		let _ = host.runtime.set(Arc::downgrade(runtime));
-		runtime.set_funding_platform(host);
-	}
-
-	/// Append one line to the transcript, in a single write so concurrent
-	/// lines never interleave.
-	fn record(&self, line: serde_json::Value) {
-		let Some(path) = self.transcript.as_ref() else {
-			return;
-		};
-		let appended = OpenOptions::new()
-			.create(true)
-			.append(true)
-			.open(path)
-			.and_then(|mut file| file.write_all(format!("{line}\n").as_bytes()));
-		if let Err(error) = appended {
-			tracing::warn!(?path, %error, "funding transcript could not be appended to");
-		}
+			transcript: Transcript::from_env("TRUAPI_FUNDING_LOG", "funding"),
+			runtime: Arc::downgrade(runtime),
+		}));
 	}
 
 	fn next_outcome(&self) -> Outcome {
@@ -119,9 +93,7 @@ impl CliFundingHost {
 
 /// The stage `outcome` ends a started session in.
 fn settled_stage(outcome: Outcome) -> Option<FundingStage> {
-	let settled_at_ms = std::time::SystemTime::now()
-		.duration_since(std::time::UNIX_EPOCH)
-		.map_or(0, |elapsed| u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX));
+	let settled_at_ms = current_unix_millis();
 	match outcome {
 		Outcome::Deliver(credited) => Some(FundingStage::Delivered { credited, settled_at_ms }),
 		Outcome::Release(debited) => Some(FundingStage::Released { debited, settled_at_ms }),
@@ -144,7 +116,7 @@ impl FundingPlatform for CliFundingHost {
 		session: FundingPresentation,
 	) -> Result<FundingPresentOutcome, GenericError> {
 		let outcome = self.next_outcome();
-		self.record(serde_json::json!({
+		self.transcript.record(serde_json::json!({
 			"kind": "presented",
 			"intent": session.intent,
 			"direction": match session.direction {
@@ -158,11 +130,11 @@ impl FundingPlatform for CliFundingHost {
 		let Some(stage) = settled_stage(outcome) else {
 			return Ok(FundingPresentOutcome::Dismissed);
 		};
-		let runtime = self.runtime.get().cloned();
+		let runtime = self.runtime.clone();
 		let intent = session.intent;
 		tokio::spawn(async move {
 			tokio::time::sleep(SETTLE_AFTER).await;
-			let Some(runtime) = runtime.and_then(|runtime| runtime.upgrade()) else {
+			let Some(runtime) = runtime.upgrade() else {
 				return;
 			};
 			match runtime.settle_funding_for_test(&intent, stage).await {
@@ -185,7 +157,7 @@ impl FundingPlatform for CliFundingHost {
 			HostFundingStatusSubscribeItem::Released { debited } => ("Released", Some(debited)),
 			HostFundingStatusSubscribeItem::Failed { .. } => ("Failed", None),
 		};
-		self.record(serde_json::json!({
+		self.transcript.record(serde_json::json!({
 			"kind": "status",
 			"intent": intent,
 			"tag": tag,

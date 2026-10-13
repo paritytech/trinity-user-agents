@@ -35,6 +35,7 @@ mod script_runner;
 mod sessions;
 mod signing_shell;
 mod terminal_ui;
+mod transcript;
 mod update;
 
 use std::{
