@@ -238,12 +238,6 @@ host owns where the bytes live. The crate stores nothing itself: a host implemen
 `StorageClient` over storage it already owns, on web and native alike, so it keeps
 control of quota and of whether the bytes are backed up or encrypted.
 
-### Bulletin preimages
-
-Bulletin preimage submissions anchor their 64-block mortal era to a finalized
-block so a discarded fork cannot invalidate the signature. Nonce lookup and
-dry-run validation use the best block to account for recently included submissions.
-
 ### Durable transactions
 
 Native signing hosts keep a ledger of signed transactions in the core database,
