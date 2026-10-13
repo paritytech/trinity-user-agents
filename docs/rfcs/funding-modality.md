@@ -56,8 +56,8 @@ flowchart LR
   ephemeral --> chain
 ```
 
-The onramp adapter holds the provider's API keys and is only needed when the provider's API requires one. Otherwise the
-worker calls the provider directly. Keys never reach the core or the worker.
+A provider signs in to its own API itself and keeps its tokens with the host; the Worker manifest names no backend.
+The worker prices quotes and runs sessions against that API.
 
 ## The `FundingProvider` trait
 
@@ -106,8 +106,8 @@ on without its own bookkeeping. A worker answers `Cancel` by reporting `Failed {
 
 ### `answer_quote`
 
-The core sends every ask to every funding provider, whatever its manifest declares. The worker prices it through its
-own API, directly or through the onramp adapter, and answers by `ask_id`.
+The core sends every ask to every funding provider, whatever its manifest declares. The worker prices it from its own
+API and answers by `ask_id`.
 
 ```rust
 struct FundingQuoteAsk {
@@ -236,5 +236,5 @@ comes back in `Assigned.saved` and is dropped when the session ends.
 - **The worker holds the provider's flow.** Ephemeral accounts, conversion and payout live in the worker
   (`deriveEntropy` under the provider's product), so the core needs no XCM, swap or provider-specific code, and signs
   no funding transaction.
-- **No provider keys in the worker.** A provider whose API needs a key depends on an onramp adapter the host connects
-  to.
+- **No backend in the manifest.** A provider signs in to its own API and keeps its tokens with the host, so the
+  manifest only says what the provider moves.

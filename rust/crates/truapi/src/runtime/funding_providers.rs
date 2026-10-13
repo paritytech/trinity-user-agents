@@ -298,7 +298,9 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 mod tests {
 	use super::*;
 
-	use crate::host_logic::worker_manifest::{FundingMode, FundingRoute, RouteDirection};
+	use truapi::latest::FundingRail;
+
+	use crate::host_logic::worker_manifest::FundingRoute;
 
 	fn manifest(routes: &str) -> String {
 		format!(
@@ -346,8 +348,8 @@ mod tests {
 			(
 				vec!["card.dot".to_string(), "both.dot".to_string()],
 				vec![vec![FundingRoute {
-					mode: FundingMode::Crypto,
-					directions: vec![RouteDirection::Out],
+					rail: FundingRail::Crypto,
+					directions: vec![FundingDirection::Out],
 					assets: vec!["USDT".to_string()],
 					networks: None,
 					countries: None,

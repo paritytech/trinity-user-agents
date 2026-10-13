@@ -11,9 +11,7 @@
 use parity_scale_codec::{Decode, Encode};
 use truapi::latest::{FundingDirection, FundingRail};
 
-use crate::host_logic::worker_manifest::{
-	FundingMode, FundingRoute, RouteDirection, WorkerManifest,
-};
+use crate::host_logic::worker_manifest::{FundingRoute, WorkerManifest};
 
 /// A provider the host offers, as the host supplies it.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -93,8 +91,6 @@ pub struct FundingCandidate {
 	/// What its recent quote answers refused, which its routes may still
 	/// declare.
 	pub unsupported: Vec<FundingUnsupported>,
-	/// Onramp adapter id for calls that need the provider's key.
-	pub backend: Option<String>,
 }
 
 impl FundingCandidate {
@@ -112,16 +108,12 @@ impl FundingCandidate {
 		now_ms: u64,
 	) -> Option<Self> {
 		let funding = manifest.and_then(|manifest| manifest.funding.as_ref());
-		let route_direction = match direction {
-			FundingDirection::In => RouteDirection::In,
-			FundingDirection::Out => RouteDirection::Out,
-		};
 		let declared = funding.and_then(|funding| funding.routes.as_ref());
 		let mut routes: Vec<FundingRoute> = declared
 			.map(|routes| {
 				routes
 					.iter()
-					.filter(|route| route.directions.contains(&route_direction))
+					.filter(|route| route.directions.contains(&direction))
 					.cloned()
 					.collect()
 			})
@@ -133,9 +125,8 @@ impl FundingCandidate {
 				support.is_fresh(now_ms)
 		});
 		for support in fresh {
-			let mode = mode_of(support.rail);
 			if support.supported {
-				confirm(&mut routes, mode, route_direction, support);
+				confirm(&mut routes, support);
 			} else {
 				unsupported.push(FundingUnsupported {
 					rail: support.rail,
@@ -149,22 +140,16 @@ impl FundingCandidate {
 			provider_id: provider_id.to_string(),
 			routes,
 			unsupported,
-			backend: funding.and_then(|funding| funding.backend.clone()),
 		})
 	}
 }
 
 /// Fold a confirmed rail, asset and country into `routes`.
-fn confirm(
-	routes: &mut Vec<FundingRoute>,
-	mode: FundingMode,
-	direction: RouteDirection,
-	support: &LearnedSupport,
-) {
-	let Some(route) = routes.iter_mut().find(|route| route.mode == mode) else {
+fn confirm(routes: &mut Vec<FundingRoute>, support: &LearnedSupport) {
+	let Some(route) = routes.iter_mut().find(|route| route.rail == support.rail) else {
 		routes.push(FundingRoute {
-			mode,
-			directions: vec![direction],
+			rail: support.rail,
+			directions: vec![support.direction],
 			assets: vec![support.asset.clone()],
 			networks: None,
 			countries: support.country.clone().map(|country| vec![country]),
@@ -178,15 +163,6 @@ fn confirm(
 		!countries.contains(country)
 	{
 		countries.push(country.clone());
-	}
-}
-
-/// The manifest's mode for a quote's rail.
-pub fn mode_of(rail: FundingRail) -> FundingMode {
-	match rail {
-		FundingRail::Card => FundingMode::Card,
-		FundingRail::Bank => FundingMode::Bank,
-		FundingRail::Crypto => FundingMode::Crypto,
 	}
 }
 
@@ -256,8 +232,8 @@ mod tests {
 			(candidate(NOW - LEARNED_SUPPORT_TTL_MS + 1), candidate(NOW - LEARNED_SUPPORT_TTL_MS)),
 			(
 				Some(vec![FundingRoute {
-					mode: FundingMode::Bank,
-					directions: vec![RouteDirection::In],
+					rail: FundingRail::Bank,
+					directions: vec![FundingDirection::In],
 					assets: vec!["EUR".to_string()],
 					networks: None,
 					countries: Some(vec!["DE".to_string()]),

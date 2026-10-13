@@ -8648,13 +8648,11 @@ fn quotes_ask_every_provider_and_learn_what_it_serves() {
 			.into_iter()
 			.find(|candidate| candidate.provider_id == provider)
 	};
-	let card = crate::host_logic::worker_manifest::FundingMode::Card;
 	let serves_card_eur = |services: &Arc<RuntimeServices>| {
 		candidate(services, "chain.dot").is_some_and(|candidate| {
-			candidate
-				.routes
-				.iter()
-				.any(|route| route.mode == card && route.assets.contains(&"EUR".to_string()))
+			candidate.routes.iter().any(|route| {
+				route.rail == v01::FundingRail::Card && route.assets.contains(&"EUR".to_string())
+			})
 		})
 	};
 	let us_unsupported = |services: &Arc<RuntimeServices>| {

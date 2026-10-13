@@ -86,9 +86,8 @@ pub trait FundingProvider: Send + Sync {
 	}
 
 	/// Answer a `Quote` the host sent on `serveSubscribe`, with the
-	/// provider's price or why it will not give one. The worker calls its own
-	/// API for it, through the onramp adapter when that needs the provider's
-	/// key.
+	/// provider's price or why it will not give one. The worker prices it
+	/// from its own API.
 	///
 	/// ```ts
 	/// const result = await truapi.fundingProvider.answerQuote({

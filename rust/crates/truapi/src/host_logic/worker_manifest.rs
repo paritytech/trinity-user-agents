@@ -8,6 +8,7 @@
 //! still serves Funding and leaves the quotes to say what it moves.
 
 use serde::Deserialize;
+use truapi::latest::{FundingDirection, FundingRail};
 
 /// The executable kind a Worker manifest must declare.
 const WORKER_KIND: &str = "worker";
@@ -39,18 +40,16 @@ pub struct FundingConfig {
 	/// What the provider moves and how, when it declares a usable route. With
 	/// `None`, the provider's quotes say what it serves. Never empty.
 	pub routes: Option<Vec<FundingRoute>>,
-	/// Onramp adapter id for calls that need the provider's key.
-	pub backend: Option<String>,
 }
 
 /// One payment mode a provider serves.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
 pub struct FundingRoute {
-	/// The payment mode.
-	pub mode: FundingMode,
+	/// The rail, published as the route's `mode`.
+	pub rail: FundingRail,
 	/// Directions served; never empty.
-	pub directions: Vec<RouteDirection>,
+	pub directions: Vec<FundingDirection>,
 	/// Symbols the user pays with or receives; never empty.
 	pub assets: Vec<String>,
 	/// Networks a crypto route's assets move on, such as `polkadot` (Polkadot
@@ -59,28 +58,6 @@ pub struct FundingRoute {
 	/// ISO 3166-1 alpha-2 codes the route serves, when declared. The quote
 	/// still decides.
 	pub countries: Option<Vec<String>>,
-}
-
-/// How the user pays or is paid.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
-pub enum FundingMode {
-	/// A card payment.
-	Card,
-	/// A bank transfer.
-	Bank,
-	/// A crypto transfer.
-	Crypto,
-}
-
-/// Which way a route moves value.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
-pub enum RouteDirection {
-	/// Into the user's balance.
-	In,
-	/// Out of the user's balance.
-	Out,
 }
 
 /// The manifest as published, before the RFC's ignore rules are applied.
@@ -108,11 +85,9 @@ struct PublishedIncludes {
 #[derive(Deserialize)]
 struct PublishedFunding {
 	routes: Option<Vec<PublishedRoute>>,
-	backend: Option<String>,
 }
 
 #[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
 struct PublishedRoute {
 	mode: String,
 	directions: Vec<String>,
@@ -156,32 +131,32 @@ impl PublishedFunding {
 			.into_iter()
 			.filter_map(PublishedRoute::usable)
 			.collect();
-		FundingConfig { routes: (!routes.is_empty()).then_some(routes), backend: self.backend }
+		FundingConfig { routes: (!routes.is_empty()).then_some(routes) }
 	}
 }
 
 impl PublishedRoute {
 	fn usable(self) -> Option<FundingRoute> {
-		let mode = match self.mode.as_str() {
-			"CARD" => FundingMode::Card,
-			"BANK" => FundingMode::Bank,
-			"CRYPTO" => FundingMode::Crypto,
+		let rail = match self.mode.as_str() {
+			"CARD" => FundingRail::Card,
+			"BANK" => FundingRail::Bank,
+			"CRYPTO" => FundingRail::Crypto,
 			_ => return None,
 		};
 		let mut directions = Vec::new();
 		for direction in &self.directions {
 			let direction = match direction.as_str() {
-				"In" => RouteDirection::In,
-				"Out" => RouteDirection::Out,
+				"In" => FundingDirection::In,
+				"Out" => FundingDirection::Out,
 				_ => continue,
 			};
 			if !directions.contains(&direction) {
 				directions.push(direction);
 			}
 		}
-		let networks = self.networks.filter(|_| mode == FundingMode::Crypto);
+		let networks = self.networks.filter(|_| rail == FundingRail::Crypto);
 		(!directions.is_empty() && !self.assets.is_empty()).then_some(FundingRoute {
-			mode,
+			rail,
 			directions,
 			assets: self.assets,
 			networks,
@@ -218,8 +193,8 @@ mod tests {
 
 	fn card_in() -> FundingRoute {
 		FundingRoute {
-			mode: FundingMode::Card,
-			directions: vec![RouteDirection::In],
+			rail: FundingRail::Card,
+			directions: vec![FundingDirection::In],
 			assets: vec!["EUR".to_string()],
 			networks: None,
 			countries: None,
@@ -240,8 +215,8 @@ mod tests {
 				funding: Some(FundingConfig {
 					routes: Some(vec![
 						FundingRoute {
-							mode: FundingMode::Card,
-							directions: vec![RouteDirection::In],
+							rail: FundingRail::Card,
+							directions: vec![FundingDirection::In],
 							assets: vec!["EUR".to_string(), "USD".to_string()],
 							networks: None,
 							countries: Some(vec![
@@ -251,14 +226,13 @@ mod tests {
 							]),
 						},
 						FundingRoute {
-							mode: FundingMode::Crypto,
-							directions: vec![RouteDirection::In, RouteDirection::Out],
+							rail: FundingRail::Crypto,
+							directions: vec![FundingDirection::In, FundingDirection::Out],
 							assets: vec!["USDT".to_string(), "DOT".to_string()],
 							networks: Some(vec!["polkadot".to_string(), "ethereum".to_string()]),
 							countries: None,
 						},
 					]),
-					backend: None,
 				}),
 			})
 		);
@@ -339,8 +313,8 @@ mod tests {
 			Some(Some(vec![
 				card_in(),
 				FundingRoute {
-					mode: FundingMode::Crypto,
-					directions: vec![RouteDirection::Out],
+					rail: FundingRail::Crypto,
+					directions: vec![FundingDirection::Out],
 					assets: vec!["DOT".to_string()],
 					networks: None,
 					countries: None,
@@ -354,7 +328,7 @@ mod tests {
 	// Funding and its quotes say what it moves.
 	#[test]
 	fn a_provider_without_usable_routes_still_serves_funding() {
-		let undeclared = FundingConfig { routes: None, backend: None };
+		let undeclared = FundingConfig { routes: None };
 		for funding in [
 			"{}",
 			r#"{"routes":[]}"#,
@@ -368,22 +342,6 @@ mod tests {
 				"{funding}"
 			);
 		}
-	}
-
-	#[test]
-	fn a_backend_is_kept() {
-		let manifest = WorkerManifest::parse(&with_funding(&format!(
-			r#"{{"routes":[{CARD_IN}],"backend":"meld"}}"#
-		)))
-		.expect("parses");
-
-		assert_eq!(
-			manifest.funding,
-			Some(FundingConfig {
-				routes: Some(vec![card_in()]),
-				backend: Some("meld".to_string()),
-			})
-		);
 	}
 
 	#[test]

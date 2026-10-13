@@ -442,8 +442,9 @@ AutoSigning without approval. Legacy-account signing still asks the user.
   country) with every funding provider, whatever its manifest says it serves,
   since a provider can serve more or less than it last published: core sends
   each provider's worker a `Quote` item on `serveSubscribe`, holding the worker
-  while it waits, and the worker answers with `answerQuote`, from its own API
-  directly or through the onramp adapter when that needs the provider's key.
+  while it waits, and the worker answers with `answerQuote`, priced from its
+  own API. The manifest names no backend: a provider signs in to its own API
+  itself and keeps its tokens with the host.
   Each provider's row is `Pending`, then `Quoted` or `Unavailable`, and a
   provider that does not answer within 10 seconds is unavailable. A provider's
   answer is reused for the same ask for 30 seconds. What an answer shows (a

@@ -3,11 +3,10 @@
 //! The host asks once per amount, rail and asset; the core sends the ask to
 //! every funding provider, on `serveSubscribe`, whatever its manifest says it
 //! serves, since a provider can serve more or less than it last published.
-//! The worker prices it from its own API, through the onramp adapter when that
-//! needs the provider's key, and answers with `answerQuote`. Each provider's
-//! row resolves on its own: a provider that does not answer in time is
-//! unavailable, so a slow one never holds the list. What an answer shows about
-//! what the provider serves is kept for twelve hours and folded into the
+//! The worker prices it from its own API and answers with `answerQuote`. Each
+//! provider's row resolves on its own: a provider that does not answer in time
+//! is unavailable, so a slow one never holds the list. What an answer shows
+//! about what the provider serves is kept for twelve hours and folded into the
 //! candidates.
 
 use std::{
