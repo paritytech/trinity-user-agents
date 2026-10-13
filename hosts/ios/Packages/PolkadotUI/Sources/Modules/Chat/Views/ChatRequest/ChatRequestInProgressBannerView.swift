@@ -104,7 +104,7 @@ extension ChatRequestInProgressBannerView.ViewModel: ChatInputViewConfigurationP
 #Preview(traits: .fixedLayout(width: 375, height: 300)) {
     ChatRequestInProgressBannerView.ViewModel(
         username: "Marcelos.87",
-        inputConfig: .chat(canPay: false, canAttachFile: false)
+        inputConfig: .chatRequest()
     )
     .makeContentView(for: nil)
 }
