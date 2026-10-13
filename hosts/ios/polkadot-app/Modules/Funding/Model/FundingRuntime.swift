@@ -9,6 +9,9 @@ protocol FundingRuntime: AnyObject, Sendable {
     func fundingSessions() -> [FundingSession]
     func fundingCandidates(intent: String) -> [FundingCandidate]
     func getFundingQuote(intent: String, ask: FundingQuoteAsk)
+    func stopFundingQuotes(intent: String)
+    func fundingCountries(intent: String, rail: FundingRail, asset: String) -> [FundingCountry]
+    func detectedFundingCountry() async -> String?
     func selectFundingProvider(intent: String, providerId: String, quoteId: String?) async throws -> Bool
     func cancelFunding(intent: String) async throws -> Bool
     func acknowledgeFundingSession(intent: String) async throws -> Bool
@@ -18,29 +21,12 @@ protocol FundingRuntime: AnyObject, Sendable {
 extension TrUAPIHostRuntime: FundingRuntime {}
 
 extension FundingRail {
-    var mode: FundingMode {
-        switch self {
-        case .card: .card
-        case .bank: .bank
-        case .crypto: .crypto
-        }
-    }
-
     static let displayOrder: [FundingRail] = [.crypto, .card, .bank]
-}
-
-extension FundingDirection {
-    var routeDirection: RouteDirection {
-        switch self {
-        case .in: .in
-        case .out: .out
-        }
-    }
 }
 
 extension FundingCandidate {
     func routes(rail: FundingRail, direction: FundingDirection) -> [FundingRoute] {
-        routes.filter { $0.mode == rail.mode && $0.directions.contains(direction.routeDirection) }
+        routes.filter { $0.rail == rail && $0.directions.contains(direction) }
     }
 
     func serves(rail: FundingRail, direction: FundingDirection) -> Bool {

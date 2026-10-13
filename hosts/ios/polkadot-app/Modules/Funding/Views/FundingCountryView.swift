@@ -1,14 +1,14 @@
 import DesignSystem
 import SwiftUI
 
-/// Where the user pays from, which the quote is asked for. Countries every
-/// provider on this rail refuses are listed apart and cannot be picked.
+/// Where the user pays from, which the quote is asked for. The core says
+/// which countries a provider serves, with the smallest amount it takes
+/// there, and which none does: those cannot be picked.
 struct FundingCountryView: View {
     let model: FundingFlowModel
 
     @State private var query = ""
     private let countries = FundingCountries.all()
-    private let detected = FundingCountries.detected()
 
     var body: some View {
         VStack(spacing: DSSpacings.medium) {
@@ -17,12 +17,17 @@ struct FundingCountryView: View {
 
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: DSSpacings.extraSmall) {
-                    if query.isEmpty, let detected {
+                    if query.isEmpty, let detected = model.detectedCountry {
                         sectionTitle(String(localized: .Funding.countryDetected))
                         row(detected)
                         sectionTitle(String(localized: .Funding.countryOther))
                     }
-                    ForEach(supported) { row($0) }
+                    ForEach(open) { row($0) }
+
+                    if !withMinimum.isEmpty {
+                        sectionTitle(String(localized: .Funding.countryMinimumSection))
+                        ForEach(withMinimum) { row($0) }
+                    }
 
                     if !unsupported.isEmpty {
                         sectionTitle(String(localized: .Funding.countryUnsupported))
@@ -36,20 +41,25 @@ struct FundingCountryView: View {
 }
 
 private extension FundingCountryView {
-    var matching: [FundingCountry] {
-        guard !query.isEmpty else { return countries }
-        return countries.filter { country in
+    var matching: [PaymentCountry] {
+        let listed = countries.filter { query.isEmpty ? $0 != model.detectedCountry : true }
+        guard !query.isEmpty else { return listed }
+        return listed.filter { country in
             country.name.localizedCaseInsensitiveContains(query)
                 || (country.currencyName?.localizedCaseInsensitiveContains(query) ?? false)
                 || (country.currencyCode?.localizedCaseInsensitiveContains(query) ?? false)
         }
     }
 
-    var supported: [FundingCountry] {
-        matching.filter { !model.unsupportedCountries.contains($0.code) && (!query.isEmpty || $0 != detected) }
+    var open: [PaymentCountry] {
+        matching.filter { !model.unsupportedCountries.contains($0.code) && model.minimum(country: $0.code) == nil }
     }
 
-    var unsupported: [FundingCountry] {
+    var withMinimum: [PaymentCountry] {
+        matching.filter { !model.unsupportedCountries.contains($0.code) && model.minimum(country: $0.code) != nil }
+    }
+
+    var unsupported: [PaymentCountry] {
         matching.filter { model.unsupportedCountries.contains($0.code) }
     }
 
@@ -75,7 +85,7 @@ private extension FundingCountryView {
             .padding(.bottom, DSSpacings.extraSmall)
     }
 
-    func row(_ country: FundingCountry) -> some View {
+    func row(_ country: PaymentCountry) -> some View {
         let isRefused = model.unsupportedCountries.contains(country.code)
         let isSelected = country == model.country
 
@@ -102,11 +112,15 @@ private extension FundingCountryView {
     }
 
     @ViewBuilder
-    func subtitle(_ country: FundingCountry, isRefused: Bool) -> some View {
+    func subtitle(_ country: PaymentCountry, isRefused: Bool) -> some View {
         if isRefused {
             Text(.Funding.countryRefused)
                 .typography(.bodySmall)
                 .foregroundStyle(.fgTertiary)
+        } else if let minimum = model.minimum(country: country.code) {
+            Text(.Funding.countryMinimum(amount: model.cash.label(minimum)))
+                .typography(.bodySmall)
+                .foregroundStyle(.fgSecondary)
         } else if let currency = country.currencyName {
             Text(verbatim: currency)
                 .typography(.bodySmall)

@@ -10,7 +10,6 @@ struct FundingProgressView: View {
     let model: FundingFlowModel
 
     @State private var copied: String?
-    @State private var now = Date()
 
     var body: some View {
         Group {
@@ -34,15 +33,14 @@ struct FundingProgressView: View {
 // MARK: - State
 
 private extension FundingProgressView {
-    /// The CASH card row for the session, for its amount and whether it is
-    /// slower than quoted.
+    /// The CASH card row for the session, for its amount.
     var item: FundingActivityItem? {
-        model.session.map { FundingActivityItem(session: $0, progress: model.progress, now: now) }
+        model.session.map { FundingActivityItem(session: $0, progress: model.progress) }
     }
 
+    /// Slower than its quote said, which the core reports as taking longer.
     var isDelayed: Bool {
-        guard case let .inProgress(_, isDelayed)? = item?.status else { return false }
-        return isDelayed
+        model.progress?.status == .takingLonger
     }
 
     var isRetrying: Bool {
@@ -267,11 +265,11 @@ private extension FundingProgressView {
     }
 
     /// Reads the session again while the screen is up, besides the core's
-    /// change events, so a step that is only slow turns amber in time.
+    /// change events, so a session the core now counts as taking longer
+    /// turns amber in time.
     func follow() async {
         while !Task.isCancelled {
             if model.hasStarted { model.refreshSession() }
-            now = Date()
             try? await Task.sleep(for: .seconds(3))
         }
     }

@@ -33,6 +33,8 @@ struct FundingRecord: Identifiable, Equatable {
     let paidNetwork: String?
     let outcome: Outcome
     let payout: Payout?
+    /// What a failed payout's refund returned to the balance, once final.
+    let refundedAmount: U128?
     let transactionId: String?
     let reference: String?
     let openedAt: Date
@@ -71,20 +73,12 @@ extension FundingRecord {
         paidNetwork = progress?.deposit.flatMap(\.network) ?? session.choice?.network
         outcome = settled.outcome
         payout = progress?.payout.map(Payout.init)
+        refundedAmount = progress?.refunded
         transactionId = progress?.transactionId
         reference = progress?.reference
         openedAt = Date(milliseconds: session.openedAtMs)
         settledAt = Date(milliseconds: settled.atMs)
     }
-
-    /// Outbound value is only done once the provider says it paid out; until
-    /// then, or for a day, the core keeps the session so a payout can arrive.
-    func isFinal(now: Date = Date()) -> Bool {
-        guard direction == .out, outcome == .released, payout == nil else { return true }
-        return now.timeIntervalSince(settledAt) >= Self.payoutWait
-    }
-
-    static let payoutWait: TimeInterval = 24 * 60 * 60
 }
 
 private struct Settled {

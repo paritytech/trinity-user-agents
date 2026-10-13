@@ -3,8 +3,8 @@ import PolkadotUI
 import SwiftUI
 import TrUAPIHost
 
-/// Every provider's live quote for the ask, the cheapest marked, with how long
-/// the prices hold before they are asked for again.
+/// Every provider's live quote for the ask, the one the core marks best
+/// tagged, with how long until the core asks every provider again.
 struct FundingProviderListView: View {
     let model: FundingFlowModel
 
@@ -14,7 +14,6 @@ struct FundingProviderListView: View {
 
             TimelineView(.periodic(from: .now, by: 1)) { context in
                 countdown(now: context.date)
-                    .onChange(of: context.date) { _, now in model.refreshIfExpired(now: now) }
             }
 
             VStack(spacing: DSSpacings.extraSmall) {

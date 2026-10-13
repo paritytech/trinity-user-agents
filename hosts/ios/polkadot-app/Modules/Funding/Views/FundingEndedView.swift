@@ -249,6 +249,9 @@ private extension FundingEndedView {
         case .succeeded:
             return ""
         case let .payoutFailed(reason):
+            if let refunded = ended.record.refundedAmount {
+                return String(localized: .Funding.endedWithdrawRefunded(amount: cash.label(cash.decimal(refunded))))
+            }
             if ended.record.rail == .crypto { return String(localized: .Funding.progressPayoutFailed(reason: reason)) }
             return String(localized: .Funding.endedPayoutFailed)
         case let .failed(failure):

@@ -22,7 +22,7 @@ extension BundledProducts {
                 return nil
             }
 
-            return FundingProviderEntry(productId: product.id, workerManifest: manifest, bundled: true)
+            return FundingProviderEntry(productId: product.id, workerManifest: manifest, origin: .bundled)
         }
     }
 

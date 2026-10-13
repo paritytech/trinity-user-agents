@@ -4,12 +4,14 @@ import TrUAPIHost
 /// One row of the CASH card's funding lists.
 struct FundingActivityItem: Identifiable, Equatable {
     enum Status: Equatable {
-        /// In flight, with where it has got to.
-        case inProgress(FundingActivityStep, isDelayed: Bool)
+        /// In flight, where the core says it stands.
+        case inProgress(FundingStatus)
         case toppedUp
         case sent
         case refunded
-        case payoutFailed
+        /// The payout failed after the balance was debited; `refunded` is what
+        /// the provider's refund returned, once final.
+        case payoutFailed(refunded: U128?)
         case failed(FundingFailure)
     }
 
@@ -21,23 +23,8 @@ struct FundingActivityItem: Identifiable, Equatable {
     let status: Status
 }
 
-/// Where a session in flight stands, as its subtitle says it.
-///
-/// Read from the session's progress in ``FundingActivityItem/step(session:progress:)``
-/// until the core reports a typed status of its own.
-enum FundingActivityStep: Equatable {
-    case waitingForPayment
-    case waitingForTransfer
-    case waitingForDeposit
-    case converting
-    case retrying
-    case transactionInitiated
-    case preparingPayout
-    case convertingOut(asset: String)
-}
-
 extension FundingActivityItem {
-    init(session: FundingSession, progress: FundingProgress?, now: Date = Date()) {
+    init(session: FundingSession, progress: FundingProgress?) {
         id = session.intent
         direction = session.direction
         rail = session.choice?.rail
@@ -45,9 +32,8 @@ extension FundingActivityItem {
             session.direction == .in ? choice.quote.receiveAmount : choice.quote.sendAmount
         }
         date = Date(milliseconds: session.openedAtMs)
-
-        let step = Self.step(session: session, progress: progress)
-        status = .inProgress(step, isDelayed: step != .retrying && Self.isDelayed(session, progress, now: now))
+        status = .inProgress(progress?
+            .status ?? (session.direction == .in ? .waitingForPayment : .transactionInitiated))
     }
 
     init(record: FundingRecord) {
@@ -62,7 +48,7 @@ extension FundingActivityItem {
             status = .toppedUp
         case .released:
             if case .failed = record.payout {
-                status = .payoutFailed
+                status = .payoutFailed(refunded: record.refundedAmount)
             } else {
                 status = .sent
             }
@@ -79,40 +65,38 @@ extension FundingActivityItem {
     }
 }
 
-private extension FundingActivityItem {
-    static func reached(_ progress: FundingProgress?) -> Set<FundingStep> {
-        Set(progress?.steps.filter { $0.reachedAtMs != nil }.map(\.step) ?? [])
-    }
-
-    static func step(session: FundingSession, progress: FundingProgress?) -> FundingActivityStep {
-        if progress?.retrying == true { return .retrying }
-
-        let reached = reached(progress)
-        let rail = session.choice?.rail
-        switch session.direction {
-        case .in:
-            if reached.contains(.payment) || reached.contains(.conversion) { return .converting }
-            switch rail {
-            case .bank: return .waitingForTransfer
-            case .crypto: return .waitingForDeposit
-            case .card,
-                 nil: return .waitingForPayment
-            }
-        case .out:
-            guard reached.contains(.sent) else { return .transactionInitiated }
-            if rail == .crypto, let asset = session.choice?.asset {
-                return .convertingOut(asset: asset)
-            }
-            return .preparingPayout
+extension FundingStatus {
+    /// Still moving: the CASH card lists it under In progress, and the host
+    /// keeps it out of its own history until it is not.
+    var isInFlight: Bool {
+        switch self {
+        case .waitingForTransfer,
+             .waitingForPayment,
+             .waitingForDeposit,
+             .convertingToCash,
+             .transactionInitiated,
+             .convertingTo,
+             .preparingPayout,
+             .retrying,
+             .takingLonger:
+            true
+        case .toppedUp,
+             .sent,
+             .refunded,
+             .payoutFailed,
+             .failed:
+            false
         }
     }
 
-    /// Slower than the provider said: the latest step is older than the time
-    /// the chosen quote gave for the whole session.
-    static func isDelayed(_ session: FundingSession, _ progress: FundingProgress?, now: Date) -> Bool {
-        guard let eta = session.choice?.quote.etaSecs else { return false }
-
-        let latest = progress?.steps.compactMap(\.reachedAtMs).max() ?? session.openedAtMs
-        return now.timeIntervalSince(Date(milliseconds: latest)) > TimeInterval(eta)
+    /// Slower than it should be, which the row draws in amber.
+    var isDelayed: Bool {
+        switch self {
+        case .retrying,
+             .takingLonger:
+            true
+        default:
+            false
+        }
     }
 }

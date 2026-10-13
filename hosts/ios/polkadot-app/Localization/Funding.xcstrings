@@ -78,6 +78,17 @@
         }
       }
     },
+    "activity.refundedAmount" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Refunded %1$(amount)@"
+          }
+        }
+      }
+    },
     "activity.retrying" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -283,6 +294,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Detected country"
+          }
+        }
+      }
+    },
+    "country.minimum" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Minimum for this country is %1$(amount)@"
+          }
+        }
+      }
+    },
+    "country.minimumSection" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Minimum payment amount"
           }
         }
       }
@@ -756,28 +789,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Select network"
-          }
-        }
-      }
-    },
-    "outsidePocket.subtitle" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "To your bank, crypto wallet, or card"
-          }
-        }
-      }
-    },
-    "outsidePocket.title" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Move money out"
           }
         }
       }
@@ -1845,17 +1856,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Preparing payout"
-          }
-        }
-      }
-    },
-    "activity.retryingPayout" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Retrying the payout…"
           }
         }
       }

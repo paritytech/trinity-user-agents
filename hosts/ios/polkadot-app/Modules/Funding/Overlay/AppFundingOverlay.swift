@@ -54,8 +54,8 @@ final class AppFundingOverlay: FundingOverlayPresenting, @unchecked Sendable {
         Task { @MainActor in coordinator?.sessionChanged(intent: intent) }
     }
 
-    func fundingQuoteChanged(intent: String, row: FundingQuoteRow) {
-        Task { @MainActor in coordinator?.quoteChanged(intent: intent, row: row) }
+    func fundingQuotesChanged(intent: String, quotes: FundingQuoteList) {
+        Task { @MainActor in coordinator?.quotesChanged(intent: intent, quotes: quotes) }
     }
 
     func reopen(intent: String) {
@@ -209,8 +209,8 @@ final class FundingOverlayCoordinator {
         environment.fundingSessionChanged(intent: intent)
     }
 
-    func quoteChanged(intent: String, row: FundingQuoteRow) {
-        flows[intent]?.receive(row: row)
+    func quotesChanged(intent: String, quotes: FundingQuoteList) {
+        flows[intent]?.receive(quotes: quotes)
     }
 }
 

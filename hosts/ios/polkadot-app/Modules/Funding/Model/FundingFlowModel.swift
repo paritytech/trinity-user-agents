@@ -40,7 +40,9 @@ final class FundingFlowModel {
     var rail: FundingRail
     var amountText: String
     var path: [Screen] = []
-    var country: FundingCountry?
+    /// Where the user pays from: the core's detected country until the user
+    /// picks one.
+    var country: PaymentCountry?
     var network: String?
     var asset: String?
     var chosenProviderId: String?
@@ -48,6 +50,12 @@ final class FundingFlowModel {
 
     private(set) var candidates: [FundingCandidate]
     private(set) var rows: [String: FundingQuoteState] = [:]
+    /// The provider the core marked as quoting best for the user.
+    private(set) var bestProviderId: String?
+    /// What the core knows about each country on the current rail, by code.
+    private(set) var countrySupport: [String: FundingCountrySupport] = [:]
+    /// The country the core detected, which the country list leads with.
+    private(set) var detectedCountry: PaymentCountry?
     private(set) var ask: FundingQuoteAsk?
     private(set) var brands: [String: FundingProviderBrand] = [:]
     private(set) var isStarting = false
@@ -67,8 +75,8 @@ final class FundingFlowModel {
 
     let runtime: FundingRuntime
     let branding: FundingProviderBranding
-    /// When the prices on screen are asked for again: a minute after every
-    /// provider answered, until the core sends a refresh deadline of its own.
+    /// When the core asks every provider again, and the prices on screen
+    /// change.
     private(set) var quotesRefreshAt: Date?
     private var startsWhenQuoted = false
     private var quoteTask: Task<Void, Never>?
@@ -76,8 +84,7 @@ final class FundingFlowModel {
     init(
         context: Context,
         runtime: FundingRuntime,
-        branding: FundingProviderBranding,
-        country: FundingCountry? = FundingCountries.detected()
+        branding: FundingProviderBranding
     ) {
         intent = context.intent
         direction = context.direction
@@ -85,13 +92,13 @@ final class FundingFlowModel {
         spendable = context.spendable
         self.runtime = runtime
         self.branding = branding
-        self.country = country
         amountText = context.amount.map { Self.text(for: context.cash.decimal($0)) } ?? ""
 
         let candidates = runtime.fundingCandidates(intent: context.intent)
         self.candidates = candidates
         rail = Self.defaultRail(candidates: candidates, direction: context.direction)
         loadBrands()
+        detectCountry()
     }
 
     var brandsInOrder: [String] {
@@ -113,7 +120,9 @@ extension FundingFlowModel {
         network = nil
         asset = nil
         rows = [:]
+        bestProviderId = nil
         ask = nil
+        loadCountrySupport()
         amountChanged()
     }
 
@@ -148,7 +157,7 @@ extension FundingFlowModel {
         }
     }
 
-    func chooseCountry(_ newCountry: FundingCountry) {
+    func chooseCountry(_ newCountry: PaymentCountry) {
         country = newCountry
         path.removeLast()
         requestQuote()
@@ -174,7 +183,10 @@ extension FundingFlowModel {
     /// overlay, and only ``cancelTopUp()`` ends it.
     func close() {
         quoteTask?.cancel()
-        if !hasStarted { onOutcome?(.dismissed) }
+        if !hasStarted {
+            runtime.stopFundingQuotes(intent: intent)
+            onOutcome?(.dismissed)
+        }
         onClose?()
     }
 
@@ -307,11 +319,11 @@ extension FundingFlowModel {
         progress = runtime.fundingProgress(intent: intent)
     }
 
-    func receive(row: FundingQuoteRow) {
-        rows[row.providerId] = row.state
-        if !rows.values.contains(where: \.isPending) {
-            quotesRefreshAt = Date().addingTimeInterval(Self.quoteLifetime)
-        }
+    func receive(quotes: FundingQuoteList) {
+        rows = Dictionary(quotes.rows.map { ($0.providerId, $0.state) }) { _, latest in latest }
+        bestProviderId = quotes.best
+        quotesRefreshAt = Date(milliseconds: quotes.refreshAtMs)
+        loadCountrySupport()
 
         guard startsWhenQuoted, !isStarting, !hasStarted, !rows.values.contains(where: \.isPending) else { return }
 
@@ -329,8 +341,6 @@ private extension FundingFlowModel {
         }
         return served.first ?? .crypto
     }
-
-    static let quoteLifetime: TimeInterval = 60
 
     static func text(for value: Decimal) -> String {
         NSDecimalNumber(decimal: value.fundingRounded(scale: 2, mode: .down)).stringValue
@@ -350,6 +360,16 @@ private extension FundingFlowModel {
             if path.last != .deposit { path.append(.deposit) }
         } else {
             path = [.progress]
+        }
+    }
+
+    /// Starts at the country the core detected, unless the user has picked
+    /// one meanwhile.
+    func detectCountry() {
+        Task { [runtime] in
+            guard let code = await runtime.detectedFundingCountry() else { return }
+            detectedCountry = FundingCountries.country(code: code)
+            if country == nil { country = detectedCountry }
         }
     }
 
@@ -385,15 +405,25 @@ extension FundingFlowModel {
 
         ask = newAsk
         quotesRefreshAt = nil
+        bestProviderId = nil
         rows = Dictionary(uniqueKeysWithValues: servingCandidates.map { ($0.providerId, .pending) })
         runtime.getFundingQuote(intent: intent, ask: newAsk)
     }
 
-    /// Asks again once the prices on screen are due for a refresh.
-    func refreshIfExpired(now: Date = Date()) {
-        guard let quotesRefreshAt, quotesRefreshAt <= now, !rows.values.contains(where: \.isPending) else { return }
+    /// What the core has learned about each country for this rail and asset.
+    func loadCountrySupport() {
+        let asked = ask?.asset ?? (rail == .crypto ? asset : fiatAsset)
+        guard let asked else {
+            countrySupport = [:]
+            return
+        }
 
-        requestQuote()
+        countrySupport = Dictionary(
+            runtime.fundingCountries(intent: intent, rail: rail, asset: asked).map { (
+                $0.country.uppercased(),
+                $0.support
+            ) }
+        ) { _, latest in latest }
     }
 
     func currentAsk() -> FundingQuoteAsk? {

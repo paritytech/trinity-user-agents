@@ -21,7 +21,7 @@ protocol FundingOverlayPresenting: AnyObject, Sendable {
 
     func fundingSessionChanged(intent: String, status: HostFundingStatusSubscribeItem)
 
-    func fundingQuoteChanged(intent: String, row: FundingQuoteRow)
+    func fundingQuotesChanged(intent: String, quotes: FundingQuoteList)
 
     /// Shows session `intent` again after the user left it running.
     func reopen(intent: String)
@@ -61,7 +61,13 @@ final class AppFundingHostBridge: FundingHostBridge, @unchecked Sendable {
         overlay.fundingSessionChanged(intent: intent, status: status)
     }
 
-    func fundingQuoteChanged(intent: String, row: FundingQuoteRow) {
-        overlay.fundingQuoteChanged(intent: intent, row: row)
+    func fundingQuotesChanged(intent: String, quotes: FundingQuoteList) {
+        overlay.fundingQuotesChanged(intent: intent, quotes: quotes)
+    }
+
+    /// The device's region. The app holds no location permission, and iOS no
+    /// longer tells apps the SIM's country, so the region is all it has.
+    func detectedCountry() async -> String? {
+        FundingCountries.localeRegion()
     }
 }

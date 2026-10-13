@@ -32,8 +32,8 @@ extension FundingFlowModel {
 
     /// The lowest minimum and highest maximum any provider has refused with
     /// for this rail, which the core learns and keeps on the candidates. The
-    /// minimum is never below ``minimumAmount``; no provider refusing yet
-    /// means no maximum to show.
+    /// minimum is never below ``minimumAmount`` or the payment country's own
+    /// minimum; no provider refusing yet means no maximum to show.
     var learnedLimits: (min: Decimal, max: Decimal?) {
         let limits = servingCandidates
             .flatMap(\.limits)
@@ -45,7 +45,8 @@ extension FundingFlowModel {
 
         let refusedMinimum = limits.compactMap { cash.decimal($0.min) }.min() ?? Self.minimumAmount
         let maximum = limits.compactMap { cash.decimal($0.max) }.max()
-        return (max(refusedMinimum, Self.minimumAmount), maximum)
+        let countryMinimum = country.flatMap { minimum(country: $0.code) } ?? 0
+        return (max(refusedMinimum, Self.minimumAmount, countryMinimum), maximum)
     }
 
     var amountIssue: FundingAmountIssue? {
@@ -110,20 +111,6 @@ extension FundingFlowModel {
 extension FundingFlowModel {
     var quotedProviders: [(providerId: String, quote: FundingQuote)] {
         rows.compactMap { providerId, state in state.quote.map { (providerId, $0) } }
-    }
-
-    /// The cheapest quote: least to pay for value in, most received for value
-    /// out. Ranked here only until the core marks the best quote itself.
-    var bestProviderId: String? {
-        let quoted = quotedProviders
-        switch direction {
-        case .in:
-            return quoted.min { quoteUnit.decimal($0.quote.sendAmount) < quoteUnit.decimal($1.quote.sendAmount) }?
-                .providerId
-        case .out:
-            return quoted.max { quoteUnit.decimal($0.quote.receiveAmount) < quoteUnit.decimal($1.quote.receiveAmount) }?
-                .providerId
-        }
     }
 
     var selectedProviderId: String? {
@@ -202,20 +189,17 @@ extension FundingFlowModel {
         return seen.map(FundingToken.init(symbol:))
     }
 
-    /// Countries no provider serving this rail takes payment from.
+    /// Countries the core says no provider takes payment from on this rail.
     var unsupportedCountries: Set<String> {
-        let serving = servingCandidates
-        guard !serving.isEmpty else { return [] }
+        Set(countrySupport.compactMap { code, support in
+            guard case .unsupported = support else { return nil }
+            return code
+        })
+    }
 
-        let perProvider = serving.map { candidate in
-            Set(candidate.unsupported.filter { $0.rail == rail }.compactMap { $0.country?.uppercased() })
-        }
-        var refused = perProvider.dropFirst().reduce(perProvider[0]) { $0.intersection($1) }
-
-        let everyRowRefusedCountry = !rows.isEmpty && rows.values.allSatisfy { $0.refusal == .countryUnsupported }
-        if everyRowRefusedCountry, let code = ask?.country {
-            refused.insert(code.uppercased())
-        }
-        return refused
+    /// The smallest amount a provider showed it takes in `code`, when one did.
+    func minimum(country code: String) -> Decimal? {
+        guard case let .supported(min) = countrySupport[code.uppercased()], let min else { return nil }
+        return cash.decimal(min)
     }
 }

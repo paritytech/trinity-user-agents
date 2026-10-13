@@ -365,10 +365,16 @@ public protocol FundingHostBridge: AnyObject, Sendable {
     /// pill. Called inline, so hand it off rather than drawing here.
     func fundingSessionChanged(intent: String, status: HostFundingStatusSubscribeItem)
 
-    /// One provider's row of a quote list requested with
-    /// ``TrUAPIHostRuntime/getFundingQuote(intent:ask:)``: `pending` first,
-    /// then its quote or why it is unavailable. Called inline.
-    func fundingQuoteChanged(intent: String, row: FundingQuoteRow)
+    /// The quote list requested with
+    /// ``TrUAPIHostRuntime/getFundingQuote(intent:ask:)``: again whenever a
+    /// provider answers, and each time the core asks every provider again
+    /// at `refreshAtMs`. Called inline.
+    func fundingQuotesChanged(intent: String, quotes: FundingQuoteList)
+
+    /// The country the user is likely in, as an ISO 3166-1 alpha-2 code:
+    /// coarse location when already permitted, then the SIM or network
+    /// country, then the locale's region. Never asks for a permission.
+    func detectedCountry() async -> String?
 }
 
 /// Draws the viewfinder for `scanner.scan`, following the rules on the core's
@@ -602,8 +608,12 @@ private final class FundingCallbackAdapter: NativeFundingCallbacks, @unchecked S
         bridge.fundingSessionChanged(intent: intent, status: status)
     }
 
-    func fundingQuoteChanged(intent: String, row: FundingQuoteRow) {
-        bridge.fundingQuoteChanged(intent: intent, row: row)
+    func fundingQuotesChanged(intent: String, quotes: FundingQuoteList) {
+        bridge.fundingQuotesChanged(intent: intent, quotes: quotes)
+    }
+
+    func detectedCountry() async -> String? {
+        await bridge.detectedCountry()
     }
 
     private func withHostRejection<T>(_ operation: () async throws -> T) async throws -> T {
@@ -976,11 +986,30 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
         inner.fundingCandidates(intent: intent)
     }
 
-    /// Ask every provider to price `ask` for session `intent`. Each
-    /// provider's row arrives through
-    /// ``FundingHostBridge/fundingQuoteChanged(intent:row:)``.
+    /// Ask every provider to price `ask` for session `intent`. The list
+    /// arrives through ``FundingHostBridge/fundingQuotesChanged(intent:quotes:)``
+    /// and is asked for again every minute until a provider is chosen, the
+    /// session ends, another ask replaces it, or
+    /// ``stopFundingQuotes(intent:)``.
     public func getFundingQuote(intent: String, ask: FundingQuoteAsk) {
         inner.getFundingQuote(intent: intent, ask: ask)
+    }
+
+    /// Stop asking again for session `intent`'s quotes, as when the user
+    /// leaves the provider list.
+    public func stopFundingQuotes(intent: String) {
+        inner.stopFundingQuotes(intent: intent)
+    }
+
+    /// What the core knows about each country for session `intent` on
+    /// `rail` and `asset`. Countries it knows nothing about are left out.
+    public func fundingCountries(intent: String, rail: FundingRail, asset: String) -> [FundingCountry] {
+        inner.fundingCountries(intent: intent, rail: rail, asset: asset)
+    }
+
+    /// The country quotes go by until the user picks one.
+    public func detectedFundingCountry() async -> String? {
+        await inner.detectedFundingCountry()
     }
 
     /// Hand open session `intent` to the provider the user chose, on the

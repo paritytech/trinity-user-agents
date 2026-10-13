@@ -166,8 +166,8 @@ struct FundingActivityRow: View {
 
 private extension FundingActivityRow {
     var isAmber: Bool {
-        guard case let .inProgress(step, isDelayed) = item.status else { return false }
-        return isDelayed || step == .retrying
+        guard case let .inProgress(status) = item.status else { return false }
+        return status.isDelayed
     }
 
     @ViewBuilder
@@ -222,30 +222,43 @@ private extension FundingActivityRow {
     }
 
     var subtitle: String {
-        if case let .failed(failure) = item.status {
-            return failure.failedText
+        switch item.status {
+        case let .failed(failure):
+            failure.failedText
+        case let .payoutFailed(.some(refunded)):
+            String(localized: .Funding.activityRefundedAmount(amount: cash.label(cash.decimal(refunded))))
+        case let .inProgress(status):
+            inProgressText(status) ?? moment
+        case .toppedUp,
+             .sent,
+             .refunded,
+             .payoutFailed:
+            moment
         }
-        guard case let .inProgress(step, isDelayed) = item.status else {
-            let when = FundingActivityDate.moment(item.date)
-            guard let rail = item.rail else { return when }
-            return "\(rail.title) · \(when)"
-        }
+    }
 
-        if isDelayed { return String(localized: .Funding.activityDelayed) }
+    var moment: String {
+        let when = FundingActivityDate.moment(item.date)
+        guard let rail = item.rail else { return when }
+        return "\(rail.title) · \(when)"
+    }
 
-        switch step {
-        case .waitingForPayment: return String(localized: .Funding.activityWaitingPayment)
-        case .waitingForTransfer: return String(localized: .Funding.activityWaitingTransfer)
-        case .waitingForDeposit: return String(localized: .Funding.activityWaitingDeposit)
-        case .converting: return String(localized: .Funding.activityConverting(symbol: cash.symbol))
-        case .retrying:
-            if item.direction == .in {
-                return String(localized: .Funding.activityRetrying)
-            }
-            return String(localized: .Funding.activityRetryingPayout)
-        case .transactionInitiated: return String(localized: .Funding.activityInitiated)
-        case .preparingPayout: return String(localized: .Funding.activityPreparingPayout)
-        case let .convertingOut(asset): return String(localized: .Funding.activityConvertingOut(asset: asset))
+    func inProgressText(_ status: FundingStatus) -> String? {
+        switch status {
+        case .waitingForPayment: String(localized: .Funding.activityWaitingPayment)
+        case .waitingForTransfer: String(localized: .Funding.activityWaitingTransfer)
+        case .waitingForDeposit: String(localized: .Funding.activityWaitingDeposit)
+        case .convertingToCash: String(localized: .Funding.activityConverting(symbol: cash.symbol))
+        case .retrying: String(localized: .Funding.activityRetrying)
+        case .takingLonger: String(localized: .Funding.activityDelayed)
+        case .transactionInitiated: String(localized: .Funding.activityInitiated)
+        case .preparingPayout: String(localized: .Funding.activityPreparingPayout)
+        case let .convertingTo(asset): String(localized: .Funding.activityConvertingOut(asset: asset))
+        case .toppedUp,
+             .sent,
+             .refunded,
+             .payoutFailed,
+             .failed: nil
         }
     }
 

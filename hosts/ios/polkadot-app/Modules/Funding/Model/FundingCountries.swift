@@ -2,7 +2,7 @@ import Foundation
 
 /// A country the user can pay from, as ISO 3166-1 alpha-2, with the currency
 /// a card or bank payment there is made in.
-struct FundingCountry: Identifiable, Hashable {
+struct PaymentCountry: Identifiable, Hashable {
     let code: String
     let name: String
     let currencyCode: String?
@@ -22,7 +22,7 @@ struct FundingCountry: Identifiable, Hashable {
 
 /// Every ISO 3166-1 country Foundation knows, named in the user's language.
 enum FundingCountries {
-    static func all(locale: Locale = .current) -> [FundingCountry] {
+    static func all(locale: Locale = .current) -> [PaymentCountry] {
         Locale.Region.isoRegions
             .map(\.identifier)
             .filter(isAlpha2)
@@ -30,19 +30,18 @@ enum FundingCountries {
             .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
     }
 
-    /// The region the device is set to, which the payment country starts at.
-    static func detected(locale: Locale = .current) -> FundingCountry? {
+    /// The region the device is set to.
+    static func localeRegion(locale: Locale = .current) -> String? {
         guard let code = locale.region?.identifier, isAlpha2(code) else { return nil }
-
-        return country(code: code, locale: locale)
+        return code
     }
 
-    static func country(code: String, locale: Locale = .current) -> FundingCountry? {
+    static func country(code: String, locale: Locale = .current) -> PaymentCountry? {
         let upper = code.uppercased()
         guard let name = locale.localizedString(forRegionCode: upper) else { return nil }
 
         let currency = Locale(identifier: "en_\(upper)").currency?.identifier
-        return FundingCountry(
+        return PaymentCountry(
             code: upper,
             name: name,
             currencyCode: currency,

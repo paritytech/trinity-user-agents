@@ -6,10 +6,10 @@ import TrUAPIHost
 /// The CASH card's funding lists: sessions still in the core, then the ended
 /// ones the host keeps.
 ///
-/// An ended session is written to the host's store, then acknowledged, after
-/// which the core drops it. Outbound value waits for its payout outcome, or a
-/// day, before it is acknowledged, and its row is rewritten if the payout
-/// arrives in that time.
+/// A session that is no longer in flight is written to the host's store, then
+/// acknowledged, after which the core drops it. A withdrawal stays in flight
+/// until its payout is reported. When a late report brings an acknowledged
+/// session back, such as a failed payout's refund, its row is written again.
 @MainActor
 @Observable
 final class FundingActivityCenter {
@@ -24,6 +24,8 @@ final class FundingActivityCenter {
     private var records: [String: FundingRecord] = [:]
     private let store: FundingHistoryStoring
     private var refreshTask: Task<Void, Never>?
+    /// Reads the sessions again when one turns to taking longer.
+    private var longerTask: Task<Void, Never>?
     private var needsRefresh = false
 
     init(store: FundingHistoryStoring) {
@@ -91,35 +93,45 @@ private extension FundingActivityCenter {
             (session: session, progress: runtime.fundingProgress(intent: session.intent))
         }
 
-        inFlight = sessions
-            .filter { Self.isInFlight($0.session, progress: $0.progress) }
+        let moving = sessions.filter { Self.isInFlight($0.session, progress: $0.progress) }
+        inFlight = moving
             .map { FundingActivityItem(session: $0.session, progress: $0.progress) }
             .sorted { $0.date > $1.date }
+        scheduleTakingLonger(moving.compactMap(\.progress?.longerAtMs))
 
-        let ended = sessions.compactMap { entry in
-            FundingRecord(session: entry.session, progress: entry.progress)
-        }
+        let ended = sessions
+            .filter { !Self.isInFlight($0.session, progress: $0.progress) }
+            .compactMap { FundingRecord(session: $0.session, progress: $0.progress) }
         await settle(ended, runtime: runtime)
         await loadStored(coreSessions: ended)
     }
 
-    /// Open, or a withdrawal released to its provider that has not paid it
-    /// out yet.
     static func isInFlight(_ session: FundingSession, progress: FundingProgress?) -> Bool {
-        if session.stage.isOpen { return true }
-        guard case .released = session.stage else { return false }
-        return progress?.payout == nil
+        progress?.status.isInFlight ?? session.stage.isOpen
     }
 
     func settle(_ ended: [FundingRecord], runtime: FundingRuntime) async {
         for record in ended {
             do {
                 try await store.save(record)
-                guard record.isFinal() else { continue }
                 _ = try await runtime.acknowledgeFundingSession(intent: record.intent)
             } catch {
                 continue
             }
+        }
+    }
+
+    /// The core turns a session to taking longer at `longerAtMs` without a
+    /// report to announce it, so read the sessions again then.
+    func scheduleTakingLonger(_ deadlines: [UInt64]) {
+        longerTask?.cancel()
+        let now = Date()
+        guard let next = deadlines.map(Date.init(milliseconds:)).filter({ $0 > now }).min() else { return }
+
+        longerTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(next.timeIntervalSince(now)))
+            guard !Task.isCancelled else { return }
+            self?.refresh()
         }
     }
 

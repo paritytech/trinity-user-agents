@@ -61,6 +61,7 @@ extension FundingRecordMapper: CoreDataMapperProtocol {
             paidNetwork: entity.paidNetwork,
             outcome: outcome,
             payout: entity.payout.flatMap { FundingRecord.Payout(storageValue: $0, reason: entity.payoutReason) },
+            refundedAmount: entity.refundedAmount,
             transactionId: entity.transactionId,
             reference: entity.reference,
             openedAt: openedAt,
@@ -84,6 +85,7 @@ extension FundingRecordMapper: CoreDataMapperProtocol {
         entity.failureMessage = model.outcome.failure?.message
         entity.payout = model.payout?.storageValue
         entity.payoutReason = model.payout?.reason
+        entity.refundedAmount = model.refundedAmount
         entity.transactionId = model.transactionId
         entity.reference = model.reference
         entity.openedAt = model.openedAt

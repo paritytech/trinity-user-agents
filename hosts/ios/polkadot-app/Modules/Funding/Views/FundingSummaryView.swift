@@ -43,7 +43,6 @@ struct FundingSummaryView: View {
                 action: model.start
             )
         }
-        .task { await expiryTimer() }
     }
 }
 
@@ -202,13 +201,6 @@ private extension FundingSummaryView {
         case .notEnoughBalance,
              nil:
             return model.quoteFailureText ?? String(localized: .Funding.errorNoProvider)
-        }
-    }
-
-    func expiryTimer() async {
-        while !Task.isCancelled {
-            model.refreshIfExpired()
-            try? await Task.sleep(for: .seconds(1))
         }
     }
 }
