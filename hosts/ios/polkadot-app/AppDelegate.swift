@@ -29,7 +29,11 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
 
         issueMonitoringService.setup()
 
+        CoreDurableRecoveryTask.shared.register()
+
         UserNotificationService.shared.startGatheringNotifications()
+
+        LegacyGameAlarmCleanup.run()
 
         PushKitService.shared.register(for: [.voIP])
         application.registerForRemoteNotifications()

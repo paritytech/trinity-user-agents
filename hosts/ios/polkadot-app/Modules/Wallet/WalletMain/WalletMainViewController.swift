@@ -56,6 +56,14 @@ final class WalletMainViewController: UIHostingController<WalletView>, RootScree
         rootView.viewModel.onCollapse = { [weak self] in
             self?.collapseExpandedSection()
         }
+
+        rootView.viewModel.onOpenPocketCard = { [weak presenter] card in
+            presenter?.showPocketCard(card)
+        }
+
+        rootView.viewModel.onRemovePocketCard = { [weak presenter] card in
+            presenter?.removePocketCard(card)
+        }
     }
 
     private func setShareButton() {
@@ -89,6 +97,10 @@ final class WalletMainViewController: UIHostingController<WalletView>, RootScree
 }
 
 extension WalletMainViewController: WalletMainViewProtocol {
+    func didReceive(pocketCards: [PocketCardViewModel]) {
+        rootView.viewModel.pocketCards = pocketCards
+    }
+
     @objc
     func didTapShare() {
         identityDetailsScene.share()

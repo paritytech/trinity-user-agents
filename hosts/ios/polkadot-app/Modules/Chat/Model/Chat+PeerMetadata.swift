@@ -51,5 +51,7 @@ extension Chat.PeerMetadata {
     enum Icon: Equatable {
         case image(Data?)
         case bot
+        /// The icon the product's manifest declares, loaded on demand.
+        case product(domain: String)
     }
 }

@@ -23,6 +23,39 @@
         }
       }
     },
+    "game.alarm.playGame": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Play game"
+          }
+        }
+      }
+    },
+    "game.notification.game.start.body": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The game is starting! Jump in!"
+          }
+        }
+      }
+    },
+    "game.notification.game.start.title": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Game Starts in %@ Seconds!"
+          }
+        }
+      }
+    },
     "notification.person.added.body": {
       "extractionState": "manual",
       "localizations": {

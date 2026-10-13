@@ -56,6 +56,14 @@ extension DebugSettingsPresenter: DebugSettingsPresenterProtocol {
         wireframe.showProducts(from: view)
     }
 
+    func showPocketFacePreview() {
+        wireframe.showPocketFacePreview(from: view)
+    }
+
+    func showPocketCards() {
+        wireframe.showPocketCards(from: view)
+    }
+
     func showDotNsBrowser() {
         wireframe.showDotNsBrowser(from: view)
     }

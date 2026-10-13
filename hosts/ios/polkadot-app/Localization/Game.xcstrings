@@ -1,0 +1,72 @@
+{
+  "sourceLanguage": "en",
+  "strings": {
+    "calendar.event.game.title": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Polkadot Prizes Game"
+          }
+        }
+      }
+    },
+    "game.room.pill.finished.title": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Complete"
+          }
+        }
+      }
+    },
+    "game.room.pill.finished.value": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Review"
+          }
+        }
+      }
+    },
+    "game.room.pill.live.round": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Round %1$(currentRound)lld / %2$(totalRounds)lld"
+          }
+        }
+      }
+    },
+    "game.room.pill.live.title": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Game live"
+          }
+        }
+      }
+    },
+    "game.room.pill.waiting.title": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Game starts in"
+          }
+        }
+      }
+    }
+  },
+  "version": "1.1"
+}

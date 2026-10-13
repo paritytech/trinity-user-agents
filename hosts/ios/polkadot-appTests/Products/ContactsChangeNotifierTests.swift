@@ -57,6 +57,9 @@ private let bob = Data(repeating: 0xB0, count: 32)
 
 private final class RemovalCounter {
     var count = 0
+
+    /// SwiftFormat's `isEmpty` rule rewrites `count == 0` on anything with a
+    /// `count`, so the type answers the spelling it is left with.
     var isEmpty: Bool { count == 0 }
 }
 

@@ -5,10 +5,12 @@ import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardKe
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketFaceSource
 import io.paritytech.polkadotapp.feature_products_api.model.JsImageSource
 import io.paritytech.polkadotapp.feature_products_api.model.JsWidget
+import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.renderer.toJsWidget
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.flow
 import timber.log.Timber
+import uniffi.truapi.RendererNode
 import javax.inject.Inject
 
 /** Shows the cached face at once, then every live face the product draws, caching the newest. */
@@ -23,19 +25,19 @@ class RealPocketFaceSource @Inject constructor(
      * since this flow is shared into a ViewModel scope that has no handler for a throw.
      */
     override fun observeFace(key: PocketCardKey): Flow<JsWidget> = flow {
-        cachedFace(key)?.let { emit(it) }
+        cachedFace(key)?.let { emit(it.toJsWidget()) }
         streams.renderFaces(key).collect { face ->
-            emit(face)
+            emit(face.toJsWidget())
             keep(key, face)
         }
     }
         .catch { Timber.e(it, "pocket: the face stream for %s ended", key.cardId.value) }
 
-    private suspend fun cachedFace(key: PocketCardKey): JsWidget? = runCatching { store.cachedFace(key) }
+    private suspend fun cachedFace(key: PocketCardKey): RendererNode? = runCatching { store.cachedFace(key) }
         .onFailure { Timber.w(it, "pocket: no kept face for %s", key.cardId.value) }
         .getOrNull()
 
-    private suspend fun keep(key: PocketCardKey, face: JsWidget) {
+    private suspend fun keep(key: PocketCardKey, face: RendererNode) {
         runCatching { store.cacheFace(key, face) }
             .onFailure { Timber.w(it, "pocket: could not keep the newest face for %s", key.cardId.value) }
     }

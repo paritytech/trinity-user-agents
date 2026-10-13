@@ -8,18 +8,15 @@ import Operation_iOS
 import ChainRegistry
 
 extension ServiceCoordinator {
+    @MainActor
     static func createChatExtensionsRegistry(
         accountManager: ProductsAccountManaging,
         truapiRuntimeProvider: TrUAPIHostRuntimeProviding,
-        spaFlowState: SPAFlowState
+        spaFlowState: SPAFlowState,
+        productFileProvider: any ChatProductFileProviding,
+        pocket: ProductPocketService?
     ) -> (registry: ChatExtensionsRegistering, workerFacade: ProductWorkerFacade) {
         let productRepositoryFactory = ProductRepositoryFactory()
-
-        let productFileProvider = CompositeProductFileProvider(
-            dotNsContentStorage: DotNsContentStorage(),
-            chatScriptStorage: FileChatScriptStorage(),
-            contentHashCache: ContentHashCache.shared
-        )
 
         // The builder gets the operations service (the worker's own JS uses it),
         // which lets the facade wire the factory into the manager in `init`.
@@ -38,10 +35,10 @@ extension ServiceCoordinator {
 
         let botFactory = ProductBotFactory(
             productFileProvider: productFileProvider,
-            chainRegistry: ChainRegistryFacade.sharedRegistry,
-            hostProvider: spaFlowState.hostProvider,
             runtimeProvider: truapiRuntimeProvider,
-            workerManager: workerFacade.manager
+            workers: { pocket?.workers },
+            workerManager: workerFacade.manager,
+            productImages: spaFlowState.productImages
         )
 
         let productBotProvider = ProductBotProvider(

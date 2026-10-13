@@ -1,7 +1,6 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.pocket
 
 import io.paritytech.polkadotapp.common.utils.CoroutineDispatchers
-import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.renderer.RendererNodeJsonDecoder
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.asCoroutineDispatcher
@@ -51,7 +50,6 @@ class OkHttpRemoteFaceSourceTest {
 
     private val source = OkHttpRemoteFaceSource(
         calls = calls,
-        faceDecoder = PocketFaceJsonDecoder(RendererNodeJsonDecoder()),
         dispatchers = dispatchers,
     )
 
