@@ -443,16 +443,6 @@ export type PermissionAuthorizationStatus =
 export type PermissionDecision = "AllowOnce" | "AllowAlways" | "Deny";
 
 /**
- * Review shown before a preimage is submitted.
- */
-export interface PreimageSubmitReview {
-  /**
-   * Size of the preimage in bytes.
-   */
-  size: bigint;
-}
-
-/**
  * Product identity attached to one product-facing TrUAPI connection.
  *
  * A host may create multiple product runtimes from the same long-lived host
@@ -686,10 +676,6 @@ export type UserConfirmationReview =
    * Allocate resources for the requesting product.
    */
   | { tag: "ResourceAllocation"; value: ResourceAllocationReview }
-  /**
-   * Submit a preimage to the host-selected backend.
-   */
-  | { tag: "PreimageSubmit"; value: PreimageSubmitReview }
   /**
    * Allow a product to access another product account.
    */
@@ -983,14 +969,6 @@ export const PermissionDecision: S.Codec<PermissionDecision> = S.lazy(
 );
 
 /**
- * Review shown before a preimage is submitted.
- */
-export const PreimageSubmitReview: S.Codec<PreimageSubmitReview> = S.lazy(
-  (): S.Codec<PreimageSubmitReview> =>
-    S.Struct({ size: S.u64 }) as S.Codec<PreimageSubmitReview>,
-);
-
-/**
  * Product identity attached to one product-facing TrUAPI connection.
  *
  * A host may create multiple product runtimes from the same long-lived host
@@ -1134,19 +1112,18 @@ export const StatementStoreProductSignReview: S.Codec<StatementStoreProductSignR
  */
 export const UserConfirmationReview: S.Codec<UserConfirmationReview> = S.lazy(
   (): S.Codec<UserConfirmationReview> =>
-    S.TaggedUnion({
-      SignPayload: SignPayloadReview,
-      SignRaw: SignRawReview,
-      StatementStoreProductSign: StatementStoreProductSignReview,
-      CreateTransaction: CreateTransactionReview,
-      AccountAlias: AccountAliasReview,
-      CreateProof: CreateProofReview,
-      IdentityDisclosure: IdentityDisclosureReview,
-      ResourceAllocation: ResourceAllocationReview,
-      PreimageSubmit: PreimageSubmitReview,
-      AccountAccess: AccountAccessReview,
-      SignVrf: SignVrfReview,
-      ProductSubtree: ProductSubtreeReview,
+    S.indexedTaggedUnion({
+      SignPayload: [0, SignPayloadReview] as const,
+      SignRaw: [1, SignRawReview] as const,
+      StatementStoreProductSign: [2, StatementStoreProductSignReview] as const,
+      CreateTransaction: [3, CreateTransactionReview] as const,
+      AccountAlias: [4, AccountAliasReview] as const,
+      CreateProof: [5, CreateProofReview] as const,
+      IdentityDisclosure: [6, IdentityDisclosureReview] as const,
+      ResourceAllocation: [7, ResourceAllocationReview] as const,
+      AccountAccess: [9, AccountAccessReview] as const,
+      SignVrf: [10, SignVrfReview] as const,
+      ProductSubtree: [11, ProductSubtreeReview] as const,
     }),
 );
 

@@ -2660,6 +2660,25 @@ mod tests {
 			CoreStorageKey::remote_permission_authorization("product.dot", &injecting_reordered)
 		);
 	}
+
+	/// A host decodes reviews with its own codec. If a discriminant moves, a
+	/// host one version apart shows the user a different consent prompt from
+	/// the one its answer approves.
+	#[test]
+	fn review_discriminants_do_not_move() {
+		let discriminants = [
+			UserConfirmationReview::AccountAccess(AccountAccessReview {
+				requesting_product_id: "caller.dot".to_string(),
+				target_product_id: "target.dot".to_string(),
+			}),
+			UserConfirmationReview::ProductSubtree(ProductSubtreeReview {
+				product_id: "caller.dot".to_string(),
+			}),
+		]
+		.map(|review| review.encode()[0]);
+
+		assert_eq!(discriminants, [9, 11]);
+	}
 }
 
 /// Host-private persistence for core-owned state.
@@ -2938,14 +2957,6 @@ pub struct ProductSubtreeReview {
 	pub product_id: String,
 }
 
-/// Review shown before a preimage is submitted.
-#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
-#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
-pub struct PreimageSubmitReview {
-	/// Size of the preimage in bytes.
-	pub size: u64,
-}
-
 /// Review shown before a user-confirmed core action continues.
 #[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
@@ -2967,13 +2978,16 @@ pub enum UserConfirmationReview {
 	IdentityDisclosure(IdentityDisclosureReview),
 	/// Allocate resources for the requesting product.
 	ResourceAllocation(ResourceAllocationReview),
-	/// Submit a preimage to the host-selected backend.
-	PreimageSubmit(PreimageSubmitReview),
+	// Index 8 stays unused so a host whose codec is older or newer than the
+	// core cannot decode one review as another.
 	/// Allow a product to access another product account.
+	#[codec(index = 9)]
 	AccountAccess(AccountAccessReview),
 	/// Sign an RFC-0023 VRF transcript with a product account.
+	#[codec(index = 10)]
 	SignVrf(SignVrfReview),
 	/// Resolve a product's own account subtree over SSO.
+	#[codec(index = 11)]
 	ProductSubtree(ProductSubtreeReview),
 }
 

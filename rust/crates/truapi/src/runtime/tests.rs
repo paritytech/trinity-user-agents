@@ -4342,6 +4342,69 @@ fn preimage_submit_requires_remote_permission_before_backend_call() {
 	assert!(platform.sent_rpc.lock().expect("rpc list mutex poisoned").is_empty());
 }
 
+/// A product that backs up in the background must not ask again once the user
+/// allows `PreimageSubmit` always, or the user either approves a task they did
+/// not start or dismisses it and the backups stop. `AllowOnce` covers a single
+/// upload.
+#[test]
+fn a_preimage_grant_covers_uploads_without_a_per_upload_prompt() {
+	use crate::platform::PermissionDecision::{AllowAlways, AllowOnce};
+
+	#[derive(Debug, PartialEq)]
+	struct Outcome {
+		permission_prompts: usize,
+		uploads_authorized: usize,
+	}
+
+	// The stub has no signing host, so an authorized upload fails at the
+	// allowance step. Getting that error means nothing between the permission
+	// check and the allowance refused the upload.
+	let allowance_error = AuthorityError::Disconnected.to_string();
+
+	let outcomes = [(vec![AllowAlways], 3), (vec![AllowOnce, AllowOnce], 2)].map(
+		|(remote_permission_decisions, uploads)| {
+			let platform = Arc::new(StubPlatform {
+				remote_permission_decisions: Mutex::new(remote_permission_decisions.into()),
+				..Default::default()
+			});
+			let host = ProductRuntimeHost::new(
+				platform.clone(),
+				runtime_config("t3ams.dot"),
+				test_spawner(),
+			);
+			install_pairing_session(&host, session_info());
+			let mut uploads_authorized = 0;
+			for _ in 0..uploads {
+				let result = futures::executor::block_on(Preimage::submit(
+					&host,
+					&CallContext::default(),
+					RemotePreimageSubmitRequest::V1(vec![1, 2, 3]),
+				));
+				if matches!(
+					result,
+					Err(CallError::Domain(RemotePreimageSubmitError::V1(
+						v01::PreimageSubmitError::Unknown { reason },
+					))) if reason == allowance_error
+				) {
+					uploads_authorized += 1;
+				}
+			}
+			Outcome {
+				permission_prompts: platform.remote_permission_requests.lock().unwrap().len(),
+				uploads_authorized,
+			}
+		},
+	);
+
+	assert_eq!(
+		outcomes,
+		[
+			Outcome { permission_prompts: 1, uploads_authorized: 3 },
+			Outcome { permission_prompts: 2, uploads_authorized: 2 },
+		]
+	);
+}
+
 fn broadcast_request() -> RemoteChainTransactionBroadcastRequest {
 	RemoteChainTransactionBroadcastRequest::V1(v01::RemoteChainTransactionBroadcastRequest {
 		genesis_hash: vec![0; 32],
@@ -7292,6 +7355,76 @@ fn host_accounts_refuse_a_foreign_ring_vrf_key_without_a_grant() {
 		signed.err(),
 		Some(RingVrfError::NotAllowlisted),
 		"and the same on the signing method, which arrives through the same door"
+	);
+}
+
+/// The pairing authority holds a grantee's proof context to the same rule as
+/// the signing authority: a third product's context needs that product's own
+/// `context` grant.
+///
+/// Driven at the authority, as `sso_responder` would. The admitted case is
+/// asserted as "not refused by the gate", since the stub has no AutoSigning key
+/// or ring to finish the proof with; what it pins is that the context guard
+/// let it through.
+#[test]
+fn the_pairing_authority_admits_a_context_only_its_product_granted() {
+	let prove_in = |context_grants: &str| {
+		let (host_config, product) = runtime_config("dim2next.dot");
+		let platform = stub_platform();
+		cache_manifest(&platform, "peopl.dot", r#"{"dim2next":["context"]}"#, 0);
+		cache_manifest(&platform, "dim2.dot", context_grants, 0);
+		let platform: Arc<dyn Platform> = platform;
+		let services = RuntimeServices::new(
+			platform.clone(),
+			host_config.host.host_info.clone(),
+			host_config.people_chain_genesis_hash,
+			host_config.bulletin_chain_genesis_hash,
+			host_config.asset_hub_chain_genesis_hash,
+			test_spawner(),
+		);
+		let pairing = PairingHost::new(services.clone(), host_config);
+		let accounts = pairing.accounts().clone();
+		let adapters = crate::host_core::ConnectionAdapters::from_services(&services);
+		let host = ProductRuntimeHost::from_services(
+			services,
+			adapters,
+			accounts.clone(),
+			pairing.session().clone(),
+			product,
+		);
+		install_pairing_session(&host, session_info());
+		let authority_session =
+			accounts.current_session().expect("the pairing host has an active session");
+		let mut cx = CallContext::default();
+		cx.set_timeout(Duration::from_millis(200));
+		futures::executor::block_on(accounts.create_proof(
+			&authority_session,
+			&cx,
+			&ProductContext::new("dim2next.dot".to_string()).unwrap(),
+			v01::HostAccountCreateProofRequest {
+				key_handle: v01::ProductAccountId {
+					dot_ns_identifier: "peopl.dot".to_string(),
+					derivation_index: v01::DerivationIndex::Index(0),
+				},
+				context: v01::ProductProofContext {
+					product_id: "dim2.dot".to_string(),
+					suffix: v01::DerivationIndex::Index(0),
+				},
+				ring_location: ring_location_fixture(),
+				message: b"prove me".to_vec(),
+			},
+		))
+	};
+
+	assert_ne!(
+		prove_in(r#"{"dim2next":["context"]}"#).err(),
+		Some(RingVrfError::NotAllowlisted),
+		"the context product's grant admits its context"
+	);
+	assert_eq!(
+		prove_in(r#"{"other":["context"]}"#).err(),
+		Some(RingVrfError::NotAllowlisted),
+		"a grant to another product admits nothing"
 	);
 }
 
