@@ -27,7 +27,6 @@ flowchart LR
     overlay["Overlay UI<br/>list · summary · frame"]
     pocket["Pocket<br/>balance card · history"]
   end
-  adapter["Onramp adapter<br/>key manager · optional"]
   subgraph core["Rust core · funding modality"]
     discovery["Discovery + quotes"]
     sessions["Sessions + report store<br/>validates, persists, maps status"]
@@ -44,14 +43,12 @@ flowchart LR
   product --> sessions
   overlay <-->|quotes · select| discovery
   sessions -->|balance · history| pocket
-  host <-->|connects| adapter
   discovery -->|quote| provider
   sessions -->|Assigned / Cancel| provider
   provider -->|report| sessions
   provider -->|payment.topUp| payments
-  provider -->|backend.request via host| adapter
-  adapter -->|key attached| onramp
-  provider -.->|direct| onramp
+  provider -->|signs in · quotes · orders| onramp
+  provider -->|keeps its auth token| host
   provider --- ephemeral
   ephemeral --> chain
 ```
