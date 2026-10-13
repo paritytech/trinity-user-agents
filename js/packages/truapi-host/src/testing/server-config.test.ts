@@ -29,6 +29,108 @@ describe("createTestHostServer host configuration", () => {
     await server.close();
   });
 
+  it("serves the chains `networks` names, expanded as the fixture expands them", async () => {
+    // Dropping `networks` here left a suite with no chain proxied and every
+    // read failing, with nothing saying why.
+    const genesisHash = `0x${"aa".repeat(32)}`;
+    const server = await createTestHostServer({
+      unref: true,
+      productUrl: "http://localhost:5173",
+      networks: [
+        { id: "paseo-asset-hub", genesisHash, rpcUrl: "wss://hub.invalid" },
+      ],
+    });
+    const url = new URL(server.url);
+    expect(JSON.parse(url.searchParams.get("mock")!)).toMatchObject({
+      chainProxies: [{ rpcUrl: "wss://hub.invalid" }],
+      supportedChains: {
+        network: "paseo",
+        chains: [{ identifier: "AssetHub", genesisHash }],
+      },
+    });
+    expect(JSON.parse(url.searchParams.get("runtimeConfig")!)).toEqual({
+      assetHub: { genesisHash },
+    });
+    await server.close();
+  });
+
+  it("lets explicit mock settings win over what `networks` derives", async () => {
+    const server = await createTestHostServer({
+      unref: true,
+      productUrl: "http://localhost:5173",
+      networks: [
+        {
+          id: "paseo-asset-hub",
+          genesisHash: `0x${"aa".repeat(32)}`,
+          rpcUrl: "wss://hub.invalid",
+        },
+      ],
+      mock: { chainProxies: [] },
+    });
+    const mock = JSON.parse(new URL(server.url).searchParams.get("mock")!);
+    expect(mock.chainProxies).toEqual([]);
+    expect(mock.supportedChains.network).toBe("paseo");
+    await server.close();
+  });
+
+  it("refuses `chain` and `networks` together", async () => {
+    const chain = {
+      id: "paseo-asset-hub",
+      genesisHash: `0x${"aa".repeat(32)}`,
+      rpcUrl: "wss://hub.invalid",
+    };
+    await expect(
+      createTestHostServer({
+        unref: true,
+        productUrl: "http://localhost:5173",
+        chain,
+        networks: [chain],
+      }),
+    ).rejects.toThrow(/either `chain`/);
+  });
+
+  it("refuses chains it could not apply, rather than dropping them", async () => {
+    // Without a `productUrl` the server returns a bare base the fixture
+    // configures per test, so chains given here would reach no page.
+    await expect(
+      createTestHostServer({
+        unref: true,
+        networks: [
+          {
+            id: "paseo-asset-hub",
+            genesisHash: `0x${"aa".repeat(32)}`,
+            rpcUrl: "wss://hub.invalid",
+          },
+        ],
+      }),
+    ).rejects.toThrow(/`networks` needs `productUrl`/);
+  });
+
+  it("accepts settings that ask for nothing without a productUrl", async () => {
+    const server = await createTestHostServer({
+      unref: true,
+      loopbackStatements: false,
+      networks: [],
+    });
+    expect(new URL(server.url).search).toBe("");
+    await server.close();
+  });
+
+  it("rejects a derivation-path account, and says why", async () => {
+    await expect(
+      createTestHostServer({
+        unref: true,
+        productUrl: "http://localhost:5173",
+        accounts: [
+          { name: "alice", uri: "//Alice" } as unknown as {
+            name: string;
+            entropy: Uint8Array;
+          },
+        ],
+      }),
+    ).rejects.toThrow(/`uri` is not supported/);
+  });
+
   it("rejects a pinned product account, and says why", async () => {
     await expect(
       createTestHostServer({
@@ -52,6 +154,20 @@ describe("createTestHostServer host configuration", () => {
     );
     const url = new URL(hostPageUrl("http://127.0.0.1:1234", config));
     expect(url.searchParams.get("login")).toBe("manual");
+  });
+});
+
+describe("host page URL", () => {
+  it("carries boot-time product storage", () => {
+    const url = new URL(
+      hostPageUrl("http://127.0.0.1:1234", {
+        productUrl: "http://localhost:5173",
+        productStorage: { "app:state": "{}" },
+      }),
+    );
+    expect(JSON.parse(url.searchParams.get("storage")!)).toEqual({
+      "app:state": "{}",
+    });
   });
 });
 

@@ -11,8 +11,9 @@ import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
 import { dirname, extname, join, normalize, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
-import { hostPageUrl } from "./host-page-url.js";
+import { accountNames, hostPageUrl } from "./host-page-url.js";
 import type { HostPageConfig } from "./host-page-url.js";
+import { withNetworks, type NetworkConfig } from "./networks.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 /**
@@ -26,6 +27,17 @@ const distRoot = resolve(__dirname, "../..", "dist");
 export interface TestHostServerOptions extends Partial<HostPageConfig> {
   /** Port to listen on. `0` (the default) picks a free one. */
   port?: number;
+  /**
+   * Chains to serve, expanded the way the Playwright fixture expands them.
+   * Explicit `mock` and `runtimeConfig` values win over what they derive.
+   * Needs `productUrl`: without one the server returns a bare base and the
+   * fixture configures each test, so pass chains to the fixture instead.
+   */
+  networks?: NetworkConfig[];
+  /** A single chain, exactly `networks: [chain]`. Passing both is refused. */
+  chain?: NetworkConfig;
+  /** Whether statements are served in-page. Same default as the fixture's. */
+  loopbackStatements?: boolean;
   /**
    * Accepted only to fail with an explanation: TrUAPI derives a product
    * account from (session root, product id), so it cannot be mapped to a
@@ -44,8 +56,10 @@ export interface TestHostServerOptions extends Partial<HostPageConfig> {
 /** A running test host server. */
 export interface TestHostServer {
   /**
-   * URL to open. Carries whatever host configuration was passed here; with no
-   * configuration it is the bare base the fixture appends its own to.
+   * URL to open. With a `productUrl` it carries the host configuration passed
+   * here and is complete: open it directly rather than passing it to the
+   * fixture as `hostUrl`, whose own options replace what it carries. Without
+   * one it is the bare base the fixture appends its configuration to.
    */
   url: string;
   /** Stop listening. */
@@ -153,6 +167,31 @@ export async function createTestHostServer(
         "back from the host and fund that, rather than pinning one.",
     );
   }
+  // Without a `productUrl` the server answers a bare base, so chains, an
+  // in-page statement store or seeded storage asked for here would reach no
+  // page. Refused rather than dropped.
+  if (!options.productUrl) {
+    const dropped = [
+      options.networks?.length && "networks",
+      options.chain && "chain",
+      options.loopbackStatements && "loopbackStatements",
+      Object.keys(options.productStorage ?? {}).length && "productStorage",
+    ].filter((name): name is string => typeof name === "string");
+    if (dropped.length) {
+      throw new Error(
+        `createTestHostServer: ${dropped.map((name) => `\`${name}\``).join(", ")} ` +
+          "needs `productUrl`. Without one the server returns a bare base " +
+          "that the Playwright fixture configures per test, so pass these to " +
+          "the fixture instead.",
+      );
+    }
+  }
+  const accounts = options.accounts && accountNames(options.accounts);
+  const { mock, runtimeConfig } = withNetworks(
+    options,
+    options.loopbackStatements ??
+      ((options.allowances ?? "granted") === "granted" ? "default" : false),
+  );
   // Two bundles: the page entry, and the worker the production topology runs
   // the core in. The worker is a separate script because that is what `new
   // Worker(url)` needs.
@@ -207,7 +246,12 @@ export async function createTestHostServer(
       // fixture appends its own per-test configuration to.
       resolveUrl(
         options.productUrl
-          ? hostPageUrl(base, options as HostPageConfig)
+          ? hostPageUrl(base, {
+              ...options,
+              accounts,
+              mock,
+              runtimeConfig,
+            } as HostPageConfig)
           : base,
       );
     });
