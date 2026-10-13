@@ -19,9 +19,9 @@ MainTabBarViewController            container, status strip, widget and inset la
 ├── ChainConnectionStatusBarView    20 pt strip, informational only
 └── TabBarBottomChromeController    bar, panels, fold, outside tap, bar items
     └── TabBarChromePassthroughView full-bleed, hit tests only the grab zone and the outside-tap area
-        ├── DSTabBarBackdropView    dims everything below the chrome
         └── TabBarChromeSurfaceView fold transform target, bar layout
-            └── UIHostingController<TabBarBarView>
+            └── TabBarBarHostView   accepts touches in the bar row and the open panel's rise
+                └── UIHostingController<TabBarBarView>
                                     SwiftUI bar row, center control, shelf
 ```
 
@@ -44,7 +44,7 @@ MainTabBarViewController            container, status strip, widget and inset la
 | Fold state machine | `polkadot-app/Modules/MainTabBar/Chrome/TabBarFoldController.swift` |
 | Fold state resolution | `polkadot-app/Modules/MainTabBar/Chrome/TabBarVisibilityPolicy.swift` |
 | Fold drag decision | `polkadot-app/Modules/MainTabBar/Chrome/DSTabBarFoldDecision.swift` |
-| Panel state machine and backdrop animation | `polkadot-app/Modules/MainTabBar/Chrome/TabBarPanelController.swift` |
+| Panel state machine | `polkadot-app/Modules/MainTabBar/Chrome/TabBarPanelController.swift` |
 | Panel kinds | `polkadot-app/Modules/MainTabBar/Chrome/TabBarPanelKind.swift` |
 | Bar row view (SwiftUI) | `polkadot-app/Modules/MainTabBar/Chrome/TabBarBarView.swift` |
 | Bar row state | `polkadot-app/Modules/MainTabBar/Chrome/TabBarBarViewModel.swift` |
@@ -61,16 +61,21 @@ MainTabBarViewController            container, status strip, widget and inset la
 | Bar material | `Packages/PolkadotUI/Sources/Components/DSTabBarShell/DSTabBarMaterial.swift`, `DSTabBarVariableBlur.swift` |
 | Bar item and chip models | `Packages/PolkadotUI/Sources/Components/DSTabBarShell/DSTabBarItem.swift`, `DSTabBarChip.swift` |
 | Bar icons | `Packages/PolkadotUI/Sources/Components/DSTabBarShell/DSTabBarConnectionGlyph.swift`, `DSTabBarTabsGlyphView.swift` |
-| Backdrop dim | `Packages/PolkadotUI/Sources/Components/DSTabBar/DSTabBarBackdropView.swift` |
 | Top status strip | `Packages/PolkadotUI/Sources/Modules/MainTabBar/ChainConnectionStatusBarView.swift` |
-| SPA tab store and controller pool | `polkadot-app/Modules/Browser/SPABrowserCoordinator.swift`, `Pool/SPAControllerPool.swift` |
+| SPA tab store and controller pool | `polkadot-app/Modules/Browser/SPABrowserCoordinator.swift`, `polkadot-app/Modules/Browser/Pool/SPAControllerPool.swift` |
 | SPA chip view models | `polkadot-app/Modules/MainTabBar/SPATabChipViewModel.swift` |
 | `topmostViewController` | `Packages/UIKitExt/Sources/UIWindow/UIWindow+keyWindow.swift` |
 | `mainTabBarController` | `polkadot-app/Common/Extension/UIApplication+MainContainer.swift` |
 
 ## Bar Row
 
-`DSTabBarContainer` lays out two slots left of the center hole and two right of it. The hole has a radius of 34 pt, and the bar row is 60 pt tall. The bar row takes four `TabBarSlot` values, in the order the presenter lists them: Chat, Pocket (`wallet`), Browse, and Apps (`.action(.spaTabs)`).
+`DSTabBarContainer` lays out two slots left of the center hole and two right of it. The bar row is 62 pt tall (`DSTabBarStyle.height`) with a 21 pt bottom gap. The bar row takes four `TabBarSlot` values, in the order the presenter lists them: Chat, Pocket (`wallet`), Browse, and Apps (`.action(.spaTabs)`).
+
+`DSTabBarStyle.rowWidth(inAvailableWidth:)` gives the bar row width. It is the available width minus 21 pt on each side, capped at 500 pt. The fold controller and the center panel sizing both use it.
+
+**Center hole.** The center button is 64 pt (`centerButtonSize`). The hole radius is derived as `notchRadius = centerButtonSize / 2 + notchRingGap`, which gives 35 pt with the 3 pt `notchRingGap`. The hole center sits 22 pt below the top of the bar row (`notchCenterY`), so the center button stands 10 pt above the bar. Where the hole meets the bar's top edge, both corners are rounded with `notchFilletRadius` (4 pt). The rounding shrinks as the hole reaches higher above that edge, so it fades out smoothly when the shelf rises past the hole. `DSTabBarShape` and `DSTabBarShadowMask` subtract the same cut-out, the hole plus its rounded corners, from the bar. The rim strokes the bar outline and the edge of the hole.
+
+**Selection pill.** `DSTabBarContainer` draws the pill behind the selected slot, from its `selectedSlot` parameter. It is a capsule filled with `bgSurfaceContainerInverted` at 12% opacity, inset 4 pt vertically. It slides between slots on a spring (response 0.4, damping 0.8) and snaps under Reduce Motion. The Apps slot never takes the pill. It reads as active through its color.
 
 - A tab slot selects a tab. Taps are plain taps. There is no drag across tabs.
 - The Apps slot opens the shelf. It shows the open-product count and reads as active while the shelf is open or a product is mounted.
@@ -80,11 +85,17 @@ MainTabBarViewController            container, status strip, widget and inset la
 
 ## Center Control and Center Panel
 
-The center control, `DSTabBarCenterControl`, sits in the hole. A tap or an upward drag opens it. A downward drag or a tap closes it. A flick decides on its own, and otherwise the halfway point decides.
+The center control, `DSTabBarCenterControl`, sits in the hole. A tap or an upward drag opens it. A downward drag or a tap closes it. A flick decides on its own, and otherwise the halfway point decides. The control uses the same material as the bar (`DSTabBarMaterial`), with its own rim and shadow.
 
 Every width, height and radius is read from one progress value, so the shape is valid at any point of a drag. The content (the scanner) fades in from progress 0.45. The chrome builds the content the first time the control shows it, and the content is released when the control removes it.
 
-The panel declares its height rather than measuring the content. `ScanPanelContentHeight.height(forPanelWidth:)` computes it from the width. Measuring a live camera would start a second capture session. The chrome recomputes the height on layout and whenever the content reports a change.
+The panel declares its height rather than measuring the content. `ScanPanelContentHeight.height(forPanelWidth:)` computes it from the panel width. The chrome takes that width from `DSTabBarStyle.rowWidth(inAvailableWidth:)` of its own view width, not from the hosting view, because the hosting view is laid out after the chrome and is 0 wide on the first pass. Measuring a live camera would start a second capture session. The chrome recomputes the height on layout and whenever the content reports a change.
+
+**Search focus.** The scan panel's search field is always present. Focusing it reports through `ScanPanelViewController.onSearchFocusChanged`. `MainTabBarViewController` passes that to `TabBarBottomChromeController.setBarHidden(_:)`. `DSTabBarContainer`'s `isBarHidden` fades the bar row out (0.2 s ease) while the panel stays. The bar returns when focus ends. Closing or folding the panel also ends focus.
+
+While search is focused, the panel declares `.fill` instead of a height. The chrome caps the panel with `DSTabBarStyle.centerContentHeight(fittingRise:)` at `availablePanelHeight`, the room between the bar row and the bottom of the chain status strip. A filled panel's top meets the strip.
+
+**Keyboard.** While the scan panel is open, `TabBarBottomChromeController` lifts the chrome until the keyboard covers the center button's foot by `keyboardButtonOverlap` (4 pt). Any other keyboard, or a closed panel, leaves the chrome at rest. The lift shrinks `availablePanelHeight` by the same amount.
 
 The center panel can also open from code. `ModuleNavigator.openScanPanel()` sets `.content(.scan)`, and the control follows through `setCenterPanelOpen`. Closing the panel from any source closes the control.
 
@@ -101,11 +112,11 @@ The Apps slot opens the shelf, which grows upward from the bar row. Its height i
 
 `TabBarPanelKind` is `.shelf` or `.content(TabBarAction)`. Because the shelf and the center panel are one value, opening one closes the other.
 
-`TabBarPanelController` runs the transition. The backdrop animates over 0.18 s with a spring (damping 0.9). Tapping a different action closes the open panel, then opens the new one when the close completes. Tapping the open panel's own action closes it.
+`TabBarPanelController` runs the transition. Tapping a different action closes the open panel, then opens the new one when the close completes. Tapping the open panel's own action closes it.
 
 The open panel closes on:
 
-- a tap on the dimmed area (`isOutsideTapEnabled` on the passthrough view),
+- a tap outside the open panel (`isOutsideTapEnabled` on the passthrough view),
 - a tab selection,
 - a connection status or settings tap,
 - a product tap,
@@ -115,7 +126,7 @@ The open panel closes on:
 
 UIKit stops hit testing at a view's bounds, so the bar's hosting view grows to contain an open panel. Its height is the bar row plus a rise: `DSTabBarStyle.centerPanelRise` for the center panel, or the shelf's available height for the shelf. The row stays at the bottom. The rise is set when the panel state commits and is not animated. The SwiftUI springs animate what is drawn inside it.
 
-`TabBarChromePassthroughView` claims a touch in only two cases: the folded grab zone, and the dismiss area while a panel is open. Every other touch goes to the content behind the chrome. `TabBarChromeSurfaceView` returns nil for hits on its own empty area.
+`TabBarChromePassthroughView` claims a touch in only two cases: the folded grab zone, and the dismiss area while a panel is open. Every other touch goes to the content behind the chrome. `TabBarChromeSurfaceView` returns nil for hits on its own empty area. `TabBarBarHostView` accepts touches in its live region, which is the bar row plus the open panel's rise.
 
 The fold pan recognizer starts only on the bar row outside the center hole, and only for a drag that leads horizontally.
 
@@ -154,7 +165,7 @@ Two bottom insets stack, and they go on different controllers so they compose.
 
 The two change at different rates. The navigation controller is stable for the tab's lifetime, and the widget height follows the top screen. `updateContentSafeAreaInset()` zeroes the controller it inset last before it writes the new one.
 
-- `restingBarHeight` is 81 pt (`DSTabBarStyle.restingHeight`) on a tab root. Elsewhere it is the raw bottom safe area.
+- `restingBarHeight` is 83 pt (`DSTabBarStyle.restingHeight`) on a tab root. Elsewhere it is the raw bottom safe area.
 - `restingBottomClearance` is `restingBarHeight` minus the bottom safe area, floored at 0.
 - Clearance is contributed only on a tab root. A pushed screen that does not set `hidesBottomBarWhenPushed` reserves no space, so the bar floats over its bottom content and takes touches in its capsule. Such a screen should either set the flag or keep interactive content clear of the bottom.
 - The shelf and the center panel overlay content. They do not change clearance.
@@ -218,4 +229,5 @@ A fifth slot needs `DSTabBarContainer` to take a fifth view. Items past the four
 ## Gotchas
 
 - **Tips on bar items do not show.** `TabBarTipController.anchorItem(for:)` returns nil for `.barItem` anchors, so only the status strip anchor can show a tip. The scan tip is anchored to `.action(.scan)`, which no bar slot uses.
+- **Size the center panel from the chrome's width.** The hosting view is 0 wide when the chrome first lays out. A height computed from it starts the scan panel at the wrong size, and SwiftUI then routes the first taps on the embedded UIKit panel to its own host view, so the search field ignores them until the panel is reopened.
 - **Two actions have no slot.** `TabBarAction.scan` and `TabBarAction.connectionStatus` have no bar slot. The center control and the shelf open them directly, so the branches for them in `handleAction` are not reached from a slot tap.
