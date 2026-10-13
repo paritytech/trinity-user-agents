@@ -19,28 +19,15 @@ final class TabBarPanelController {
         self.onOpenPanelChanged = onOpenPanelChanged
     }
 
+    /// Sets the panel directly. Any queued switch is cancelled.
     func setPanel(_ kind: TabBarPanelKind?) {
         pendingPanel = nil
-
-        // `open` is cleared the moment a close starts, so a repeated close returns early. The pending
-        // reopen above is still cleared, which is all a repeated close can mean.
-        guard kind != nil || open != nil else {
-            return
-        }
-
-        let previousPanel = open
-
-        open = kind
-        onOpenPanelChanged(kind)
-
-        if previousPanel != kind {
-            onPanelChanged(kind)
-        }
+        commitPanel(kind)
     }
 
     /// Called by the chrome once the closing surface has finished animating. The queued panel opens here, so
-    /// the reopen starts when the close ends. `togglePanel` sets `pendingPanel` after its close returns, and a
-    /// fold or another tap before this call clears it, which cancels the switch.
+    /// the reopen starts when the close ends. A fold or another `setPanel` before this call clears the queue,
+    /// which cancels the switch.
     func panelCloseDidComplete() {
         guard let pendingPanel else {
             return
@@ -62,7 +49,26 @@ final class TabBarPanelController {
             return
         }
 
-        setPanel(nil)
+        // Queued before the close starts, since a close can complete synchronously and open the queued panel.
         pendingPanel = kind
+        commitPanel(nil)
+    }
+}
+
+private extension TabBarPanelController {
+    func commitPanel(_ kind: TabBarPanelKind?) {
+        // `open` is cleared the moment a close starts, so a repeated close returns early.
+        guard kind != nil || open != nil else {
+            return
+        }
+
+        let previousPanel = open
+
+        open = kind
+        onOpenPanelChanged(kind)
+
+        if previousPanel != kind {
+            onPanelChanged(kind)
+        }
     }
 }

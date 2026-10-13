@@ -21,7 +21,12 @@ struct TabBarBarView: View {
             third: { slot(at: 2) },
             fourth: { slot(at: 3) },
             center: {
-                DSTabBarCenterControl(progress: $model.centerProgress, contentHeight: model.centerContentHeight) {
+                DSTabBarCenterControl(
+                    progress: $model.centerProgress,
+                    contentHeight: model.centerContentHeight,
+                    accessibilityLabel: String(localized: .Products.productTabsAccessibilityScanner),
+                    onSettled: { model.onCenterPanelOpenChanged?($0) }
+                ) {
                     TabBarScanPanelContent(makeController: model.makeCenterContent)
                 }
             },
@@ -36,9 +41,6 @@ struct TabBarBarView: View {
                 )
             }
         )
-        .onChange(of: model.centerProgress) { _, _ in
-            model.reportCenterProgressSettled()
-        }
         // The bar sits at the bottom of a host sized once to the room above it.
         .frame(maxHeight: .infinity, alignment: .bottom)
     }
@@ -59,7 +61,7 @@ struct TabBarBarView: View {
 private struct TabBarSlotView: View {
     private static let iconSize: CGFloat = 28
 
-    let item: DSTabBarItem
+    let item: TabBarBarItem
     let isSelected: Bool
     let isActive: Bool
     let action: () -> Void
@@ -85,7 +87,7 @@ private struct TabBarSlotView: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel(item.accessibilityLabel)
-        .accessibilityId(rawValue: item.accessibilityIdentifier)
+        .accessibilityId(item.accessibilityID)
         .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 

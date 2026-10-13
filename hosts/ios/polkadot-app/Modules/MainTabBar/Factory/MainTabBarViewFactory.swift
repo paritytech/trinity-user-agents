@@ -56,12 +56,6 @@ enum MainTabBarViewFactory {
             dsfinvkRouter: W3sDsfinvkRouter.createDefault(coinageService: serviceCoordinator.coinageService)
         )
 
-        let wireframe = MainTabBarWireframe(
-            serviceCoordinator: serviceCoordinator,
-            scanResultHandler: qrHandler,
-            moduleNavigator: moduleNavigator
-        )
-
         let chipViewModelFactory = SPATabChipViewModelFactory(
             flowStateProvider: flowStateProvider
         )
@@ -71,6 +65,12 @@ enum MainTabBarViewFactory {
             scanResultHandler: qrHandler,
             flowStateProvider: flowStateProvider,
             foregroundVisibilityReporter: foregroundVisibilityReporter
+        )
+
+        let wireframe = MainTabBarWireframe(
+            serviceCoordinator: serviceCoordinator,
+            tabFactory: tabFactory,
+            moduleNavigator: moduleNavigator
         )
 
         let presenter = MainTabBarPresenter(

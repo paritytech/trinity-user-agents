@@ -1,7 +1,8 @@
 import Foundation
 
-/// Products that never see a permission or payment prompt. The shipped funding product is
-/// allowlisted: the user cannot review a grant it would otherwise ask for.
+/// Labels of the funding products, which skip the permission and payment prompts. Funding products
+/// open modally as one-off flows and are not listed for review in Apps, so there is no grant the
+/// user could review first. Payment approvals read this same list.
 enum ProductAutoAllowList {
     static func labels(fundingProvider: FundingDomainProviding) -> Set<String> {
         fundingProvider.fundingLabels()

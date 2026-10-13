@@ -3,6 +3,15 @@ import UIKit
 internal import SnapKit
 
 public final class ScanPanelViewLayout: UIView {
+    /// Inset the camera keeps on each side of the panel.
+    private static let cameraSideInset = DSSpacings.mediumIncreased
+    /// Clearance above the content for the grabber that floats over the panel.
+    private static let contentTopInset = DSTabBarStyle.centerGrabberHeight + DSSpacings.mediumIncreased
+    private static let gapBelowContent = DSSpacings.small
+    /// The 48pt capsule of the search row plus its 8pt margin on each edge.
+    private static let searchRowHeight: CGFloat = 64
+    private static let searchRowBottomInset = DSSpacings.small
+
     public let searchRow = DSSearchRowView()
     public let resultsView = SearchContactResultsView()
 
@@ -59,7 +68,11 @@ public final class ScanPanelViewLayout: UIView {
 
         searchRowStack.snp.makeConstraints { make in
             make.leading.trailing.equalToSuperview().inset(DSSpacings.mediumIncreased)
-            make.bottom.equalToSuperview().inset(DSSpacings.small)
+            make.bottom.equalToSuperview().inset(Self.searchRowBottomInset)
+        }
+
+        searchRow.snp.makeConstraints { make in
+            make.height.equalTo(Self.searchRowHeight)
         }
 
         scanButton.onTap = { [weak self] in self?.onCameraTapped?() }
@@ -67,7 +80,7 @@ public final class ScanPanelViewLayout: UIView {
         contentStack.snp.makeConstraints { make in
             make.top.equalToSuperview()
             make.leading.trailing.equalToSuperview()
-            make.bottom.equalTo(searchRowStack.snp.top).offset(-DSSpacings.small)
+            make.bottom.equalTo(searchRowStack.snp.top).offset(-Self.gapBelowContent)
         }
 
         resultsView.snp.makeConstraints { make in
@@ -81,6 +94,14 @@ public final class ScanPanelViewLayout: UIView {
         fatalError("init(coder:) has not been implemented")
     }
 
+    /// Height the panel declares at `width`, grabber clearance included. The tab bar reads it before the
+    /// panel lays out, so it is computed from the constants the constraints use. The camera is square, as the
+    /// app's embedded scanner layout pins it.
+    public static func declaredHeight(forWidth width: CGFloat) -> CGFloat {
+        let cameraSide = width - 2 * cameraSideInset
+        return contentTopInset + cameraSide + gapBelowContent + searchRowHeight + searchRowBottomInset
+    }
+
     public func setupScannerView(_ scannerView: UIView) {
         contentStack.addArrangedSubview(scannerView)
         insertSubview(placeholderView, at: 0)
@@ -91,7 +112,7 @@ public final class ScanPanelViewLayout: UIView {
 
         scannerView.snp.makeConstraints { make in
             fullCameraWidthConstraint = make.width.equalTo(contentStack)
-                .offset(-DSSpacings.mediumIncreased * 2).constraint
+                .offset(-Self.cameraSideInset * 2).constraint
             collapsedCameraWidthConstraint = make.width.equalTo(0).constraint
         }
 
@@ -100,8 +121,8 @@ public final class ScanPanelViewLayout: UIView {
 
     /// When search is focused, the camera collapses away entirely and a scan button appears
     /// to the left of the search field. Unfocused, the camera expands to full width and the
-    /// button hides. The collapse is a constraint, not the stack's animated hide, because the
-    /// panel measures its height mid-animation and the hide still reports the rows' height then.
+    /// button hides. The collapse is a constraint, not the stack's animated hide, so the layout
+    /// reaches its final height at once and `declaredHeight(forWidth:)` matches it.
     public func setSearchFocused(_ focused: Bool) {
         if focused {
             resultsCollapsedConstraint?.deactivate()
@@ -111,7 +132,7 @@ public final class ScanPanelViewLayout: UIView {
         resultsView.alpha = focused ? 1 : 0
         contentStack.directionalLayoutMargins.top = focused
             ? DSSpacings.tiny
-            : DSTabBarStyle.centerGrabberHeight + DSSpacings.mediumIncreased
+            : Self.contentTopInset
 
         if focused {
             fullCameraWidthConstraint?.deactivate()

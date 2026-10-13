@@ -106,6 +106,10 @@ public enum DSTabBarStyle {
     /// Foot of the centre button, measured down from the top of the bar row. The open panel's lobe keeps it.
     public static var centerButtonFootFromRowTop: CGFloat { notchCenterY + centerButtonSize / 2 }
 
+    /// How far the resting centre button stands above the bar row. A host's touch region has to reach this
+    /// high, or the top of the button passes touches through.
+    public static var centerButtonRestingRise: CGFloat { centerButtonSize / 2 - notchCenterY }
+
     /// How far the open centre panel stands above the bar row.
     public static func centerPanelRise(contentHeight: CGFloat) -> CGFloat {
         centerPanelHeight(contentHeight: contentHeight) - centerButtonFootFromRowTop

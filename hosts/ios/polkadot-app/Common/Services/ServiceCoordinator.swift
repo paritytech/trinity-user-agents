@@ -334,7 +334,7 @@ extension ServiceCoordinator {
                 productFileProvider: productFileProvider,
                 chainRegistry: ChainRegistryFacade.sharedRegistry,
                 gameReminders: gameReminders,
-                themeManager: MainActor.assumeIsolated { ThemeManager.shared }
+                themeManager: ThemeManager.shared
             )
             pocket = service
         }

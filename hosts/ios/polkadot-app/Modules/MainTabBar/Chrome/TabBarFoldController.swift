@@ -38,7 +38,8 @@ final class TabBarFoldController {
     private var foldAnimator: UIViewPropertyAnimator?
     private var foldOffsetWidth: CGFloat?
     private var foldOffset: CGFloat = 0
-    private var keyboardLift: CGFloat = 0
+    /// The lift is owned here because this controller writes the transform that carries it.
+    private(set) var keyboardLift: CGFloat = 0
 
     init(
         foldSurface: UIView,
@@ -112,14 +113,14 @@ final class TabBarFoldController {
         refresh()
     }
 
-    /// Folds or unfolds from a horizontal pan on the bar. `barWidth` is the bar's own width, which
-    /// sets the settle threshold.
-    func foldPanEnded(translationX: CGFloat, velocityX: CGFloat, barWidth: CGFloat) {
+    /// Folds or unfolds from a horizontal pan on the bar. The fold distance comes from the chrome's own width,
+    /// which is the width the fold travels across.
+    func foldPanEnded(translationX: CGFloat, velocityX: CGFloat) {
         let decision = TabBarFoldDecision.decide(
             velocityX: velocityX,
             translationX: translationX,
             isFolded: isFolded,
-            foldDistance: Self.foldedTranslationX(availableWidth: barWidth)
+            foldDistance: Self.foldedTranslationX(availableWidth: chromeBounds().width)
         )
 
         switch decision {
@@ -127,6 +128,7 @@ final class TabBarFoldController {
             setUserOverride(.folded, velocityX: velocityX)
         case .unfold:
             setUserOverride(.shown, velocityX: velocityX)
+        // Neither a fold nor an unfold. The bar takes no action on it, and taps are handled by the slots.
         case .select,
              .settle:
             break

@@ -73,11 +73,7 @@ extension ModuleNavigator: ModuleNavigating {
     }
 
     func openProduct(page: ProductPage) {
-        guard let tabBar = UIWindow.keyWindow?.rootViewController as? MainTabBarViewController else {
-            return
-        }
-
-        tabBar.openProduct(page: page)
+        UIApplication.shared.mainTabBarController?.openProduct(page: page)
     }
 
     func presentProduct(page: ProductPage) {

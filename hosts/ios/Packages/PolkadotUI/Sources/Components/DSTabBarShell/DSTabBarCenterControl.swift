@@ -11,19 +11,28 @@ import SwiftUI
 public struct DSTabBarCenterControl<Content: View>: View {
     @Binding private var progress: CGFloat
     private let contentHeight: CGFloat
+    private let accessibilityLabel: String
+    private let onSettled: (Bool) -> Void
     private let content: Content
 
     @State private var dragStart: CGFloat?
+    @GestureState private var isDragging = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    /// `contentHeight` is the height `content` takes when laid out at the panel's open width.
+    /// `contentHeight` is the height `content` takes when laid out at the panel's open width. `accessibilityLabel`
+    /// names the control for VoiceOver. `onSettled` receives whether the panel ended open after each settle the
+    /// control runs. It is not called while a drag is in flight.
     public init(
         progress: Binding<CGFloat>,
         contentHeight: CGFloat,
+        accessibilityLabel: String,
+        onSettled: @escaping (Bool) -> Void,
         @ViewBuilder content: () -> Content
     ) {
         _progress = progress
         self.contentHeight = contentHeight
+        self.accessibilityLabel = accessibilityLabel
+        self.onSettled = onSettled
         self.content = content()
     }
 
@@ -35,6 +44,14 @@ public struct DSTabBarCenterControl<Content: View>: View {
                     x: (proxy.size.width - size.width) / 2,
                     y: proxy.size.height - size.height - seatInset
                 )
+        }
+        .onChange(of: isDragging) { _, dragging in
+            // A cancelled drag never reaches `onEnded`, so it settles here to the nearer end.
+            guard !dragging, dragStart != nil else {
+                return
+            }
+            dragStart = nil
+            settle(to: progress > 0.5 ? 1 : 0)
         }
     }
 }
@@ -57,10 +74,6 @@ private extension DSTabBarCenterControl {
 
     /// Movement below which a drag counts as a tap.
     var tapSlop: CGFloat { 4 }
-
-    /// Content appears over the back part of the travel, so it never shows while the panel is too
-    /// small to hold it.
-    var reveal: CGFloat { max(0, progress - revealStart) / (1 - revealStart) }
 
     /// Distance the finger travels to open the panel fully.
     var travel: CGFloat { max(1, expandedHeight - DSTabBarStyle.centerButtonSize) }
@@ -106,7 +119,9 @@ private extension DSTabBarCenterControl {
                 // Fixed at the open size so it is laid out once; clipShape crops it as the panel morphs.
                 content
                     .frame(width: openWidth, height: contentHeight)
-                    .animation(reduceMotion ? .easeInOut(duration: 0.2) : nil) { $0.opacity(Double(reveal)) }
+                    .modifier(
+                        CenterRevealModifier(progress: progress, revealStart: revealStart, crossFades: reduceMotion)
+                    )
             }
         }
         .padding(.bottom, lobeRadius)
@@ -139,6 +154,16 @@ private extension DSTabBarCenterControl {
             .frame(width: lobeRadius * 2, height: lobeRadius * 2)
             .contentShape(Circle())
             .gesture(drag)
+            .accessibilityElement()
+            .accessibilityLabel(accessibilityLabel)
+            .accessibilityAddTraits(.isButton)
+            .accessibilityAction { settle(to: progress > 0.5 ? 0 : 1) }
+            .accessibilityAction(.escape) {
+                guard progress > 0.5 else {
+                    return
+                }
+                settle(to: 0)
+            }
     }
 
     /// Second grip at the top of the panel, for closing without reaching down
@@ -150,7 +175,7 @@ private extension DSTabBarCenterControl {
             .frame(height: DSTabBarStyle.centerGrabberHeight)
             .frame(maxWidth: .infinity)
             .contentShape(Rectangle())
-            .animation(reduceMotion ? .easeInOut(duration: 0.2) : nil) { $0.opacity(Double(reveal)) }
+            .modifier(CenterRevealModifier(progress: progress, revealStart: revealStart, crossFades: reduceMotion))
             .allowsHitTesting(progress > revealStart)
             .gesture(grabberDrag)
     }
@@ -159,6 +184,9 @@ private extension DSTabBarCenterControl {
     /// `minimumDistance: 0` so one gesture serves both and they cannot conflict.
     var drag: some Gesture {
         DragGesture(minimumDistance: 0, coordinateSpace: .global)
+            .updating($isDragging) { _, dragging, _ in
+                dragging = true
+            }
             .onChanged { value in
                 followDrag(translationHeight: value.translation.height)
             }
@@ -179,6 +207,9 @@ private extension DSTabBarCenterControl {
     /// tap there does nothing. The minimum distance keeps a tap from starting the drag.
     var grabberDrag: some Gesture {
         DragGesture(minimumDistance: tapSlop, coordinateSpace: .global)
+            .updating($isDragging) { _, dragging, _ in
+                dragging = true
+            }
             .onChanged { value in
                 followDrag(translationHeight: value.translation.height)
             }
@@ -207,19 +238,55 @@ private extension DSTabBarCenterControl {
 
     /// Under Reduce Motion the geometry snaps and only the content cross-fades, so the morph
     /// itself never plays. Dragging is never animated either way, so the control still tracks
-    /// the finger.
+    /// the finger. `onSettled` runs once the move has logically finished, or at once under Reduce
+    /// Motion, and only if no later move has taken the progress elsewhere.
     func settle(to target: CGFloat) {
         guard !reduceMotion else {
             progress = target
+            onSettled(target == 1)
             return
         }
         withAnimation(
             .spring(
                 response: DSTabBarStyle.centerSpringResponse,
                 dampingFraction: DSTabBarStyle.centerSpringDamping
-            )
+            ),
+            completionCriteria: .logicallyComplete
         ) {
             progress = target
+        } completion: {
+            guard progress == target else {
+                return
+            }
+            onSettled(target == 1)
+        }
+    }
+}
+
+// MARK: - Reveal
+
+/// Fades content in over the back part of the travel. Its animatable data is the progress, so the fade
+/// follows whatever animation moves the progress. Under Reduce Motion the progress snaps, so the fade is
+/// eased on its own.
+private struct CenterRevealModifier: ViewModifier, Animatable {
+    var progress: CGFloat
+    let revealStart: CGFloat
+    let crossFades: Bool
+
+    var animatableData: CGFloat {
+        get { progress }
+        set { progress = newValue }
+    }
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        let reveal = max(0, progress - revealStart) / (1 - revealStart)
+        if crossFades {
+            content
+                .opacity(reveal)
+                .animation(.easeInOut(duration: DSTabBarStyle.shelfFadeDuration), value: reveal)
+        } else {
+            content.opacity(reveal)
         }
     }
 }

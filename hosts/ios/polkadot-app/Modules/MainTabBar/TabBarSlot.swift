@@ -21,7 +21,7 @@ extension TabBarSlot {
         return item
     }
 
-    func makeBarItem(spaTabCount: Int, showsLabel: Bool) -> DSTabBarItem {
+    func makeBarItem(spaTabCount: Int, showsLabel: Bool) -> TabBarBarItem {
         switch self {
         case let .tab(item):
             item.makeBarItem(showsLabel: showsLabel)
@@ -32,13 +32,12 @@ extension TabBarSlot {
 }
 
 extension TabBarAction {
-    func makeBarItem(spaTabCount: Int, showsLabel: Bool) -> DSTabBarItem {
-        DSTabBarItem(
+    func makeBarItem(spaTabCount: Int, showsLabel: Bool) -> TabBarBarItem {
+        TabBarBarItem(
             content: content(spaTabCount: spaTabCount),
             title: showsLabel ? title : nil,
             role: .action,
-            accessibilityLabel: accessibilityLabel(spaTabCount: spaTabCount),
-            showsGlassBackground: showsGlassBackground
+            accessibilityLabel: accessibilityLabel(spaTabCount: spaTabCount)
         )
     }
 }
@@ -52,14 +51,7 @@ private extension TabBarAction {
         }
     }
 
-    var showsGlassBackground: Bool {
-        switch self {
-        case .scan: true
-        default: false
-        }
-    }
-
-    func content(spaTabCount: Int) -> DSTabBarItem.Content {
+    func content(spaTabCount: Int) -> TabBarBarItem.Content {
         switch self {
         case .scan:
             .icon(UIImage.tabScan.withRenderingMode(.alwaysTemplate))

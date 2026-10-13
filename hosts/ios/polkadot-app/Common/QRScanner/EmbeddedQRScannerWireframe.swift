@@ -11,4 +11,8 @@ final class EmbeddedQRScannerWireframe: QRScannerWireframeProtocol {
             autoDismiss: false
         )
     }
+
+    func didDenyCameraAccess(from view: QRScannerViewProtocol?) {
+        askOpenSettings(from: view)
+    }
 }

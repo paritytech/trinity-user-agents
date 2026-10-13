@@ -7,7 +7,7 @@ import UIKit
 @MainActor
 @Observable
 final class TabBarBarViewModel {
-    var items: [DSTabBarItem] = []
+    var items: [TabBarBarItem] = []
     var selectedItemIndex = 0
     var activeActionItemIndex: Int?
     /// Whether the bar row is faded out, leaving only an open centre panel. Set while the panel's search is focused.
@@ -24,7 +24,7 @@ final class TabBarBarViewModel {
     }
 
     var onShelfContentHeightChanged: (() -> Void)?
-    var shelfChips: [DSTabBarChip] = []
+    var shelfChips: [TabBarShelfChip] = []
     var mountedChipId: UUID?
     var onShelfChipTapped: ((UUID) -> Void)?
     var onShelfChipCloseRequested: ((UUID) -> Void)?
@@ -39,20 +39,9 @@ final class TabBarBarViewModel {
     /// Fires only when the progress settles at either end, not on every intermediate frame of a drag.
     var onCenterPanelOpenChanged: ((Bool) -> Void)?
 
-    /// Reports the panel through `onCenterPanelOpenChanged` once the progress has settled at one end of
-    /// its travel. Anything in between is a drag still in flight and reports nothing.
-    func reportCenterProgressSettled() {
-        switch centerProgress {
-        case 0:
-            onCenterPanelOpenChanged?(false)
-        case 1:
-            onCenterPanelOpenChanged?(true)
-        default:
-            break
-        }
-    }
-
     /// Matches the centre control's own settle, so a UIKit-driven move looks like a tap. Snaps under Reduce Motion.
+    /// Once the move has logically finished it reports through `onCenterPanelOpenChanged`, as a settle from the
+    /// control does, and then runs `completion`.
     func setCenterPanelOpen(_ isOpen: Bool, completion: (() -> Void)? = nil) {
         let progress: CGFloat = isOpen ? 1 : 0
         guard centerProgress != progress else {
@@ -62,6 +51,9 @@ final class TabBarBarViewModel {
         withAnimation(centerAnimation, completionCriteria: .logicallyComplete) {
             centerProgress = progress
         } completion: {
+            if self.centerProgress == progress {
+                self.onCenterPanelOpenChanged?(isOpen)
+            }
             completion?()
         }
     }

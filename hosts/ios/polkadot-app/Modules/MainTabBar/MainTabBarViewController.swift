@@ -17,12 +17,6 @@ final class MainTabBarViewController: UIViewController {
         self?.updateWidgetLayout()
     }
 
-    // Extensions cannot hold stored properties, so the widget layout
-    // in MainTabBarViewController+Widgets.swift reads these from here.
-    weak var contentSafeAreaAdjustedViewController: UIViewController?
-    weak var appliedTabController: UIViewController?
-    weak var appliedContentController: UIViewController?
-
     private lazy var statusBarHost = UIHostingController(rootView: ChainConnectionStatusBarView(models: []))
 
     /// The rings sit at the trailing end of the full-width strip, so the tip anchors here
@@ -76,9 +70,9 @@ final class MainTabBarViewController: UIViewController {
         chromeController.makeCenterContent = { [weak self] in self?.makeScanPanel() }
         chromeController.contentHeightForCenterPanel = { [weak self] width in
             self?.scanPanel?.declaredContentHeight(forPanelWidth: width)
-                ?? .fits(ScanPanelContentHeight.height(forPanelWidth: width))
+                ?? .fits(ScanPanelViewLayout.declaredHeight(forWidth: width))
         }
-        chromeController.onCenterPanelWillClose = { [weak self] in self?.scanPanel?.cancelSearch() }
+        chromeController.onCenterPanelWillClose = { [weak self] in self?.scanPanel?.prepareForClose() }
 
         // Close does not stop capture: the panel's teardown releases the camera, and an explicit stop
         // here can race the preview layer's session attach.
@@ -367,10 +361,6 @@ extension MainTabBarViewController: MainTabBarViewProtocol {
     func showProductGamePill(_ viewModel: ProductGamePillViewModel?) {
         productGamePill = viewModel
         applyProductGamePill()
-    }
-
-    func makeSettingsNavigation() -> UINavigationController? {
-        viewFactory.makeSettingsNavigation()
     }
 }
 

@@ -3,7 +3,8 @@ import UIKit
 /// Holds the bar's hosted view at a fixed size and accepts touches only in the live region at its bottom.
 /// The hosted view is never resized, so its coordinate space stays still while panels animate.
 final class TabBarBarHostView: UIView {
-    /// Height of the live region at the bottom, the bar row plus whatever the open panel adds.
+    /// Height of the live region at the bottom, the bar row plus the rise of the resting centre button or the open
+    /// panel.
     /// Touches above it pass through, so the oversized host does not swallow the app's content.
     var liveHeight: CGFloat = 0
 

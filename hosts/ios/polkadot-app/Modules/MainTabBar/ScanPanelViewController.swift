@@ -9,6 +9,7 @@ final class ScanPanelViewController: UIViewController, ViewHolder {
     private let scannerController: UIViewController & ScanPanelScannerControlling
     private let presenter: SearchContactPresenterProtocol
     private var isSearchFocused = false
+    private var isClosing = false
 
     var onChatFound: ((ChatOpenModel) -> Void)?
     var onContentHeightChanged: (() -> Void)?
@@ -50,13 +51,21 @@ final class ScanPanelViewController: UIViewController, ViewHolder {
         searchField.resignFirstResponder()
     }
 
+    /// Suspends capture before the search is cancelled, so the focus change that cancelling causes does not
+    /// restart it while the panel closes. Suspending detaches the preview first, so tearing the panel down does
+    /// not reconfigure a session that is stopping.
+    func prepareForClose() {
+        isClosing = true
+        scannerController.setCaptureActive(false)
+        cancelSearch()
+    }
+
     /// The height this panel declares at `width`. The tab bar chrome reads it whenever it sizes the open panel.
     func declaredContentHeight(forPanelWidth width: CGFloat) -> TabBarCenterContentHeight {
         guard !isSearchFocused else {
             return .fill
         }
-        let height = ScanPanelContentHeight.height(forPanelWidth: width)
-        return .fits(height)
+        return .fits(ScanPanelViewLayout.declaredHeight(forWidth: width))
     }
 }
 
@@ -96,7 +105,7 @@ private extension ScanPanelViewController {
             return
         }
         isSearchFocused = focused
-        scannerController.setCaptureActive(!focused)
+        scannerController.setCaptureActive(!focused && !isClosing)
 
         let layout = rootView
         DSTabBarStyle.animateCenterChange(in: view) {

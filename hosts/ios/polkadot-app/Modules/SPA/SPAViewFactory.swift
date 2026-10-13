@@ -247,7 +247,7 @@ extension SPAViewFactory {
 // MARK: - Private
 
 private extension SPAViewFactory {
-    /// The browser chrome — floating pills, chrome collapse, minimize — only makes sense where a
+    /// The browser chrome: floating pills, chrome collapse, minimize, only makes sense where a
     /// product lives on as a tab, so a modal product gets the simplified screen.
     @MainActor
     static func createViewController(

@@ -73,7 +73,7 @@ extension MainTabBarViewController {
 
     func applyChips() {
         let chips = spaChipViewModels.map {
-            DSTabBarChip(id: $0.id, name: $0.name, icon: $0.icon)
+            TabBarShelfChip(id: $0.id, name: $0.name, icon: $0.icon)
         }
         chromeController.setSPATabs(chips, selected: mountedSPATabId)
         applyProductGamePill()

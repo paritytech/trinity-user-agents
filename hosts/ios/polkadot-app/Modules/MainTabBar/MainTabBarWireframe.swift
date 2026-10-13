@@ -6,16 +6,17 @@ import UIKitExt
 @MainActor
 final class MainTabBarWireframe: MainTabBarWireframeProtocol {
     private let serviceCoordinator: ServiceCoordinatorProtocol
-    private let scanResultHandler: WalletQRScanDelegate
+    private let tabFactory: TabFactoryProtocol
     private let moduleNavigator: ModuleNavigating
+    private weak var presentedSettings: UINavigationController?
 
     init(
         serviceCoordinator: ServiceCoordinatorProtocol,
-        scanResultHandler: WalletQRScanDelegate,
+        tabFactory: TabFactoryProtocol,
         moduleNavigator: ModuleNavigating
     ) {
         self.serviceCoordinator = serviceCoordinator
-        self.scanResultHandler = scanResultHandler
+        self.tabFactory = tabFactory
         self.moduleNavigator = moduleNavigator
     }
 
@@ -46,9 +47,10 @@ final class MainTabBarWireframe: MainTabBarWireframeProtocol {
     }
 
     func showSettings(from view: MainTabBarViewProtocol?) {
-        guard let settings = view?.makeSettingsNavigation() else {
+        guard let settings = tabFactory.makeSettingsNavigation() else {
             return
         }
+        presentedSettings = settings
         view?.controller.topmostPresented.present(settings, animated: true)
     }
 }
@@ -75,7 +77,7 @@ private extension MainTabBarWireframe {
 
     func showDeviceDetails(_ device: Chat.LocalDevice, view: MainTabBarViewProtocol?) {
         guard
-            let settings = view?.makeSettingsNavigation(),
+            let presenter = view?.controller.topmostPresented,
             let linkedDevicesView = LinkedDevicesViewFactory.createView(serviceCoordinator: serviceCoordinator),
             let detailsView = DeviceDetailsViewFactory.createView(
                 device: device,
@@ -85,8 +87,18 @@ private extension MainTabBarWireframe {
             return
         }
 
+        if let settings = presentedSettings, settings === presenter {
+            settings.pushViewController(linkedDevicesView.controller, animated: false)
+            settings.pushViewController(detailsView.controller, animated: true)
+            return
+        }
+
+        guard let settings = tabFactory.makeSettingsNavigation() else {
+            return
+        }
+        presentedSettings = settings
         settings.pushViewController(linkedDevicesView.controller, animated: false)
         settings.pushViewController(detailsView.controller, animated: false)
-        view?.controller.topmostPresented.present(settings, animated: true)
+        presenter.present(settings, animated: true)
     }
 }

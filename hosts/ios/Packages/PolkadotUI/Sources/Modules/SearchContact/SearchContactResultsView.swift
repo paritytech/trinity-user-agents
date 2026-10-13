@@ -127,17 +127,6 @@ public final class SearchContactResultsView: DiffableCollectionViewProviderView<
         let sections = viewModel.sections.map(makeSectionProvider(for:))
         applySnapshot(sections: sections)
     }
-
-    /// Height the rows and status need at the current width. A pending bind has to lay out before the list's
-    /// content size is current, and that size is read rather than this view's frame, because the frame only
-    /// reflects whatever height the host gave the view.
-    public var contentHeight: CGFloat {
-        layoutIfNeeded()
-        let statusHeight = statusFloorConstraint?.isActive == true ? Constants.statusHeight : 0
-        let listHeight = collectionView.collectionViewLayout.collectionViewContentSize.height
-            + collectionView.contentInset.bottom
-        return max(statusHeight, listHeight)
-    }
 }
 
 public extension SearchContactResultsView {

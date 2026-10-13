@@ -79,9 +79,10 @@ class QRScannerPresenter: QRScannerPresenterProtocol {
                 animated: true,
                 autoDismiss: false
             )
-        case .deviceAccessDeniedPreviously,
-             .deviceAccessDeniedNow:
+        case .deviceAccessDeniedPreviously:
             wireframe.askOpenSettings(from: view)
+        case .deviceAccessDeniedNow:
+            wireframe.didDenyCameraAccess(from: view)
         case .unsupportedFormat:
             view.present(
                 message: errorDisplayFactory.createStringCapture(error: error),

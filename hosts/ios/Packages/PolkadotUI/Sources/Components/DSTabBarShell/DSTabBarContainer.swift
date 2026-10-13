@@ -76,6 +76,8 @@ public struct DSTabBarContainer<
             }
             .padding(.horizontal, DSTabBarStyle.itemInset)
             .frame(height: DSTabBarStyle.height)
+            .accessibilityElement(children: .contain)
+            .accessibilityAddTraits(.isTabBar)
             .animation(selectionAnimation, value: selectedSlot)
         }
         .background(DSTabBarMaterial())

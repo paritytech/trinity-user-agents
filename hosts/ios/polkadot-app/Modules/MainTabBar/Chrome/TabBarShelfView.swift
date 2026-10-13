@@ -7,7 +7,7 @@ import UIKit
 /// The shelf's content: the settings and connection status pair at its top edge, then the open products
 /// as a grid. The bar supplies the material and the growth; this view supplies what the shelf shows.
 struct TabBarShelfView: View {
-    let chips: [DSTabBarChip]
+    let chips: [TabBarShelfChip]
     let mountedChipId: UUID?
     let onChipTapped: (UUID) -> Void
     let onChipCloseRequested: (UUID) -> Void
@@ -89,7 +89,7 @@ private extension TabBarShelfView {
 /// One open product: its icon with the name beneath, highlighted when it is the mounted product. A long press
 /// opens a context menu holding Close.
 private struct TabBarShelfCell: View {
-    let chip: DSTabBarChip
+    let chip: TabBarShelfChip
     let isSelected: Bool
     let action: () -> Void
     let onClose: () -> Void
@@ -116,6 +116,9 @@ private struct TabBarShelfCell: View {
             } label: {
                 Label(String(localized: .Common.close), systemImage: "xmark")
             }
+        }
+        .accessibilityAction(named: String(localized: .Common.close)) {
+            onClose()
         }
     }
 }

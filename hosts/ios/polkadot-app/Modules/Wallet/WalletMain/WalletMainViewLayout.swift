@@ -3,7 +3,6 @@ import PolkadotUI
 
 struct WalletView: View {
     @State var viewModel: WalletViewModelProtocol = WalletViewModel()
-    @State private var viewHeight: CGFloat = 0
     @State private var scrollAtTop: Bool = true
     @Namespace private var cardNamespace
     private let peekHeight: CGFloat = 64
@@ -18,30 +17,11 @@ struct WalletView: View {
             ScrollViewReader { scrollProxy in
                 ScrollView {
                     VStack(spacing: -cardOverlap) {
-                        // Builds with product cards show humanity as the
-                        // Humanity card the Pocket pins, so only the others
-                        // draw the ID card.
-                        #if FEATURE_PRODUCTS
-                            assetCard
-                        #else
-                            ZStack(alignment: .top) {
-                                assetCard
-                                identityCard
-                            }
-                            // The identity card is drawn offset down by the peek, which
-                            // the stack's own height does not account for, so without
-                            // this the product cards would start a peek too high.
-                            .padding(.bottom, viewModel.expandedSection == .none ? peekHeight : 0)
-                        #endif
+                        assetCard
                         pocketCards
                     }
                     .padding(.horizontal, 24)
                     .padding(.top, 16)
-                    .onGeometryChange(for: CGFloat.self) { proxy in
-                        proxy.size.height + proxy.safeAreaInsets.bottom
-                    } action: {
-                        viewHeight = $0
-                    }
                     .id(scrollTopAnchor)
                 }
                 .safeAreaInset(edge: .bottom) {
@@ -62,8 +42,7 @@ struct WalletView: View {
     }
 
     /// Product-backed cards follow the host's own, and are hidden while a
-    /// native card is expanded so they do not sit under it. The Pocket is a
-    /// product surface, so it ships with the rest of them.
+    /// native card is expanded so they do not sit under it.
     @ViewBuilder
     private var pocketCards: some View {
         if viewModel.expandedSection == .none {
@@ -88,23 +67,6 @@ struct WalletView: View {
     }
 
     @ViewBuilder
-    private var identityCard: some View {
-        IdentityDetailsViewLayout(
-            viewModel: viewModel.identityDetailsViewModel,
-            isExpanded: viewModel.expandedSection == .identityDetails,
-            onCardTapped: { viewModel.onUsername?() },
-            overscroll: overscroll,
-            onCollapse: { viewModel.onCollapse?() }
-        )
-        .matchedGeometryEffect(id: "identity", in: cardNamespace)
-        .scaleEffect(identityScale)
-        .opacity(identityOpacity)
-        .offset(y: identityOffsetY)
-        .zIndex(identityZIndex)
-        .allowsHitTesting(identityHitTest)
-    }
-
-    @ViewBuilder
     private var assetCard: some View {
         AssetDetailsView(
             viewModel: viewModel.assetDetailsViewModel,
@@ -121,55 +83,6 @@ struct WalletView: View {
         .offset(y: assetOffsetY)
         .zIndex(assetZIndex)
         .allowsHitTesting(assetHitTest)
-    }
-
-    private var offScreenOffset: CGFloat {
-        max(viewHeight, 1_000)
-    }
-
-    private var identityScale: CGFloat {
-        1.0
-    }
-
-    private var identityOpacity: Double {
-        switch viewModel.expandedSection {
-        case .none,
-             .identityDetails:
-            1
-        case .assetDetails:
-            0
-        }
-    }
-
-    private var identityOffsetY: CGFloat {
-        switch viewModel.expandedSection {
-        case .none:
-            peekHeight
-        case .identityDetails:
-            0
-        case .assetDetails:
-            offScreenOffset
-        }
-    }
-
-    private var identityZIndex: Double {
-        switch viewModel.expandedSection {
-        case .none,
-             .identityDetails:
-            1
-        case .assetDetails:
-            0
-        }
-    }
-
-    private var identityHitTest: Bool {
-        switch viewModel.expandedSection {
-        case .none,
-             .identityDetails:
-            true
-        case .assetDetails:
-            false
-        }
     }
 
     private var assetScale: CGFloat {

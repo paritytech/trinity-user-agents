@@ -25,6 +25,8 @@ final class TabBarBottomChromeController: UIViewController {
     private var centerPanelContent: UIViewController?
     /// The first settled layout places the bar. Animating it would spring the bar in from its unplaced frame at launch.
     private var hasPerformedInitialLayout = false
+    /// The last keyboard frame in screen coordinates, kept so the lift can be re-derived when the scan panel changes.
+    private var keyboardFrame: CGRect?
 
     private lazy var foldController = TabBarFoldController(
         foldSurface: chromeSurface,
@@ -51,6 +53,7 @@ final class TabBarBottomChromeController: UIViewController {
         onOpenPanelChanged: { [weak self] kind in
             self?.updateActiveActionIndex()
             self?.applyBarLiveHeight()
+            self?.refreshKeyboardLift()
             (self?.viewIfLoaded as? TabBarChromePassthroughView)?.isOutsideTapEnabled = kind != nil
         }
     )
@@ -155,7 +158,7 @@ final class TabBarBottomChromeController: UIViewController {
         rebuildItems()
     }
 
-    func setSPATabs(_ chips: [DSTabBarChip], selected: UUID?) {
+    func setSPATabs(_ chips: [TabBarShelfChip], selected: UUID?) {
         if spaTabCount != chips.count {
             spaTabCount = chips.count
             rebuildItems()
@@ -259,14 +262,18 @@ private extension TabBarBottomChromeController {
         }
         committedPanel = kind
 
-        barModel.setCenterPanelOpen(
-            kind == .content(.scan),
-            completion: closingSurface == .content(.scan) ? reportClose : nil
-        )
-        barModel.setShelfOpen(
-            kind == .shelf,
-            completion: closingSurface == .shelf ? reportClose : nil
-        )
+        // The surface whose close reports back is updated last. A synchronous completion can open a queued panel,
+        // and the other surface's update must not run after that open and undo it.
+        if closingSurface == .shelf {
+            barModel.setCenterPanelOpen(kind == .content(.scan))
+            barModel.setShelfOpen(kind == .shelf, completion: reportClose)
+        } else {
+            barModel.setShelfOpen(kind == .shelf)
+            barModel.setCenterPanelOpen(
+                kind == .content(.scan),
+                completion: closingSurface == .content(.scan) ? reportClose : nil
+            )
+        }
 
         // A close no surface animates still reports back, so a queued reopen is not stranded.
         if let closingSurface, closingSurface != .content(.scan), closingSurface != .shelf {
@@ -285,8 +292,8 @@ private extension TabBarBottomChromeController {
     }
 
     /// The bar's host is a fixed size, so this sets the region of it that accepts touches: the bar row plus
-    /// the open panel's rise. The open panel is one value, so the centre panel and the shelf never both
-    /// contribute a rise.
+    /// the taller of the resting centre button's stand and the open panel's rise. The open panel is one value,
+    /// so the centre panel and the shelf never both contribute a rise.
     func applyBarLiveHeight() {
         let rise: CGFloat =
             switch panelController.open {
@@ -298,13 +305,13 @@ private extension TabBarBottomChromeController {
                  .content:
                 0
             }
-        chromeSurface.setBarLiveHeight(DSTabBarStyle.height + rise)
+        chromeSurface.setBarLiveHeight(DSTabBarStyle.height + max(DSTabBarStyle.centerButtonRestingRise, rise))
     }
 
-    /// The room above the bar row down to the top safe area, which the chrome's own layout already measures.
-    /// It caps both the shelf's growth and the centre panel's height.
+    /// The room above the bar row down to the top safe area, which the chrome's own layout already measures,
+    /// less whatever the keyboard lifts the chrome by. It caps both the shelf's growth and the centre panel's height.
     func refreshAvailablePanelHeight() {
-        let availableHeight = max(0, chromeSurface.availablePanelHeight)
+        let availableHeight = max(0, chromeSurface.restingPanelHeight - foldController.keyboardLift)
         guard availableHeight != barModel.availablePanelHeight else {
             return
         }
@@ -377,25 +384,51 @@ private extension TabBarBottomChromeController {
         )
     }
 
+    /// The keyboard's own animation drives the lift, so the chrome moves in step with the keyboard.
+    @objc func handleKeyboardFrameChange(_ notification: Notification) {
+        guard let userInfo = notification.userInfo,
+              let frame = userInfo[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect else {
+            return
+        }
+        keyboardFrame = frame
+        let duration = userInfo[UIResponder.keyboardAnimationDurationUserInfoKey] as? Double ?? 0
+        let curve = userInfo[UIResponder.keyboardAnimationCurveUserInfoKey] as? Int
+            ?? UIView.AnimationCurve.easeInOut.rawValue
+        UIView.animate(
+            withDuration: duration,
+            delay: 0,
+            options: UIView.AnimationOptions(rawValue: UInt(curve) << 16)
+        ) {
+            self.applyKeyboardLift()
+        }
+    }
+
+    /// Moves the chrome to the lift the keyboard and scan panel call for, then re-declares the room above it.
+    func applyKeyboardLift() {
+        foldController.setKeyboardLift(currentKeyboardLift())
+        refreshAvailablePanelHeight()
+        refreshCenterContentHeight()
+    }
+
+    /// Re-derives the lift on the centre spring, so a panel commit moves the chrome with the centre control.
+    func refreshKeyboardLift() {
+        DSTabBarStyle.animateCenterChange(in: view) {
+            self.applyKeyboardLift()
+        }
+    }
+
     /// While the scan panel is open, the chrome moves up until the keyboard covers the centre button's foot by
     /// `keyboardButtonOverlap`, keeping the panel above it clear. Any other keyboard, or a closed panel, returns the
     /// chrome to rest.
-    @objc func handleKeyboardFrameChange(_ notification: Notification) {
-        guard let keyboardFrame = notification.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect else {
-            return
+    func currentKeyboardLift() -> CGFloat {
+        guard panelController.open == .content(.scan), let keyboardFrame else {
+            return 0
         }
         let keyboardTop = view.convert(keyboardFrame, from: nil).minY
-        let isScanPanelOpen = panelController.open == .content(.scan)
         let keyboardOverlap = max(0, view.bounds.maxY - keyboardTop)
         let buttonFootOffset = DSTabBarStyle.restingHeight - DSTabBarStyle.centerButtonFootFromRowTop
         let allowedOverlap = buttonFootOffset + Self.keyboardButtonOverlap
-        let lift = isScanPanelOpen ? max(0, keyboardOverlap - allowedOverlap) : 0
-        DSTabBarStyle.animateCenterChange(in: view) {
-            self.foldController.setKeyboardLift(lift)
-            self.chromeSurface.keyboardLift = lift
-            self.refreshAvailablePanelHeight()
-            self.refreshCenterContentHeight()
-        }
+        return max(0, keyboardOverlap - allowedOverlap)
     }
 
     @objc func handleFoldPan(_ recognizer: UIPanGestureRecognizer) {
@@ -405,8 +438,7 @@ private extension TabBarBottomChromeController {
 
         foldController.foldPanEnded(
             translationX: recognizer.translation(in: chromeSurface).x,
-            velocityX: recognizer.velocity(in: chromeSurface).x,
-            barWidth: barHost.view.bounds.width
+            velocityX: recognizer.velocity(in: chromeSurface).x
         )
     }
 
@@ -452,6 +484,9 @@ private extension TabBarBottomChromeController {
         let foldRecognizer = UIPanGestureRecognizer(target: self, action: #selector(handleFoldPan(_:)))
         foldRecognizer.delegate = self
         chromeSurface.addGestureRecognizer(foldRecognizer)
+
+        // The resting centre button stands above the row, so its top has to be live before any layout pass.
+        applyBarLiveHeight()
     }
 
     /// A fold drag starts on the bar row, outside the centre hole where the centre control sits.
@@ -483,10 +518,14 @@ extension TabBarBottomChromeController: UIGestureRecognizerDelegate {
         return canStartFoldDrag(at: touch)
     }
 
-    /// Only a drag that leads horizontally folds the bar, so a vertical scroll past it is left alone.
+    /// Only a drag that leads horizontally folds the bar, so a vertical scroll past it is left alone. A tab root
+    /// cannot fold, and a hidden bar has nothing to fold.
     func gestureRecognizerShouldBegin(_ recognizer: UIGestureRecognizer) -> Bool {
         guard let pan = recognizer as? UIPanGestureRecognizer else {
             return true
+        }
+        guard !foldController.isTabRoot, foldController.state != .hidden else {
+            return false
         }
         let translation = pan.translation(in: chromeSurface)
         return abs(translation.x) > abs(translation.y)
