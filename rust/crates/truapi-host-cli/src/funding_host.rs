@@ -274,10 +274,18 @@ impl CliPaymentHost {
 			})
 	}
 
-	/// Record a start; `false` when the id was already used.
-	fn start(&self, kind: &str, product: &ProductContext, id: &[u8; 32], amount: u128) -> bool {
+	/// Record a start: `Ok(false)` when the id was already used, an error
+	/// when the ledger could not be written, as a start it does not keep would
+	/// read as unknown after a restart.
+	fn start(
+		&self,
+		kind: &str,
+		product: &ProductContext,
+		id: &[u8; 32],
+		amount: u128,
+	) -> Result<bool, String> {
 		if self.started(kind, product, id) {
-			return false;
+			return Ok(false);
 		}
 		let line = serde_json::json!({
 			"kind": kind,
@@ -290,10 +298,9 @@ impl CliPaymentHost {
 			.append(true)
 			.open(&self.ledger)
 			.and_then(|mut file| file.write_all(format!("{line}\n").as_bytes()));
-		if let Err(error) = appended {
-			tracing::warn!(path = ?self.ledger, %error, "funding ledger could not be appended to");
-		}
-		true
+		appended
+			.map(|()| true)
+			.map_err(|error| format!("funding ledger could not be appended to: {error}"))
 	}
 }
 
@@ -304,10 +311,10 @@ impl TopUpPlatform for CliPaymentHost {
 		product: &ProductContext,
 		request: HostPaymentTopUpRequest,
 	) -> Result<(), HostPaymentTopUpError> {
-		if self.start("top_up", product, &request.id, request.amount) {
-			Ok(())
-		} else {
-			Err(HostPaymentTopUpError::AlreadyExists)
+		match self.start("top_up", product, &request.id, request.amount) {
+			Ok(true) => Ok(()),
+			Ok(false) => Err(HostPaymentTopUpError::AlreadyExists),
+			Err(reason) => Err(HostPaymentTopUpError::Unknown { reason }),
 		}
 	}
 
@@ -339,10 +346,10 @@ impl PaymentPlatform for CliPaymentHost {
 		product: &ProductContext,
 		request: HostPaymentRequest,
 	) -> Result<(), HostPaymentError> {
-		if self.start("payment", product, &request.id, request.amount) {
-			Ok(())
-		} else {
-			Err(HostPaymentError::AlreadyExists)
+		match self.start("payment", product, &request.id, request.amount) {
+			Ok(true) => Ok(()),
+			Ok(false) => Err(HostPaymentError::AlreadyExists),
+			Err(reason) => Err(HostPaymentError::Unknown { reason }),
 		}
 	}
 
@@ -366,6 +373,34 @@ impl PaymentPlatform for CliPaymentHost {
 #[cfg(test)]
 mod tests {
 	use super::*;
+
+	// The worker is told a top-up started only once the ledger holds it, as a
+	// start this host forgets would read as unknown after a restart and never
+	// settle.
+	#[test]
+	fn a_start_the_ledger_cannot_keep_is_refused() {
+		let directory = tempfile::tempdir().expect("temporary directory");
+		let host = CliPaymentHost { ledger: directory.path().join("missing").join("ledger.jsonl") };
+		let product = ProductContext::new_with_execution(
+			"ramp.dot".to_string(),
+			truapi::platform::ProductExecutionKind::Worker,
+		)
+		.expect("valid product");
+
+		let started = futures::executor::block_on(host.top_up(
+			&product,
+			HostPaymentTopUpRequest {
+				into: None,
+				amount: 1,
+				source: truapi::latest::PaymentTopUpSource::ProductAccount {
+					derivation_index: truapi::latest::DerivationIndex::Index(0),
+				},
+				id: [1; 32],
+			},
+		));
+
+		assert!(matches!(started, Err(HostPaymentTopUpError::Unknown { .. })), "{started:?}");
+	}
 
 	// The battery seeds one outcome per request it makes, in order; an
 	// entry this host cannot read is dropped rather than shifting the rest.
