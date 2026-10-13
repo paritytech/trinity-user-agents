@@ -1,4 +1,5 @@
 import Foundation
+import Individuality
 import os
 import SDKLogger
 import StructuredConcurrency
@@ -13,7 +14,7 @@ public protocol DotNsTldReading: Sendable {
     func readTld() async throws -> String
 }
 
-public protocol DotNsTldProviding: Sendable {
+public protocol DotNsTldProviding: NetworkSuffixProviding {
     /// Cached TLD label without the leading dot, or nil until a chain read has succeeded.
     /// Kicks a background refresh when nil and the backoff window has elapsed.
     func currentTld() -> String?
@@ -28,6 +29,12 @@ public protocol DotNsTldProviding: Sendable {
     /// Forgets the cached and persisted-at-launch TLD, so the next access reads the chain again.
     /// A read in flight when this is called neither caches nor persists its result.
     func reset()
+}
+
+public extension DotNsTldProviding {
+    func networkSuffix() async throws -> Data {
+        try await Data(resolveTld().utf8)
+    }
 }
 
 public enum DotNsTldProviderError: Error {
