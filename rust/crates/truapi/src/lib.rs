@@ -67,7 +67,8 @@ uniffi::custom_type!(Bytes32, Vec<u8>, {
 });
 
 /// A 64-byte value, such as an sr25519 secret key, passed as plain bytes on
-/// FFI surfaces.
+/// FFI surfaces. Named only because `uniffi::custom_type!` takes an ident, not
+/// an array type.
 pub type Bytes64 = [u8; 64];
 
 #[cfg(all(feature = "runtime", not(target_arch = "wasm32")))]
