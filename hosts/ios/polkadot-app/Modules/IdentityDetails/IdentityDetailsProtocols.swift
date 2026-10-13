@@ -7,7 +7,6 @@ protocol IdentityDetailsViewProtocol: ControllerBackedProtocol {
     var viewModel: IdentityDetailsViewModel { get }
     func didReceive(username: Username, claimed: Bool)
     func didReceive(qrCode: UIImage)
-    func didReceive(isPerson: Bool)
 }
 
 @MainActor

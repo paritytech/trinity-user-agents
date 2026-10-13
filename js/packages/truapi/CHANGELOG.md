@@ -1,5 +1,29 @@
 # @parity/truapi
 
+## 0.25.0
+
+### Minor Changes
+
+- c75de1b: `chat.postMessage` takes an optional `alt`, one line describing the message that a host shows where it lists
+  the message without drawing it, such as the chat list preview of a custom card.
+- fd7926a: Add `chat.setRoomFooter`, which sets what a room the product created shows below its messages: the text
+  input, or nothing for a room the product drives through actions alone. A host keeps the footer until the product sets
+  another. A room the product did not create answers `UnknownRoom`, and a host that predates the method answers
+  `Unsupported`. A host serving chat now implements `setChatRoomFooter`, and native hosts implement
+  `ChatHostBridge.setRoomFooter`. Neither needs to check the room, because the core answers `UnknownRoom` before asking
+  the host.
+- 9fece5c: Native signing hosts follow presigned transactions to a verdict in the core. The core database gains a
+  `durable_tx` ledger: a domain registers presigned mortal extrinsics, the core broadcasts them once committed, watches
+  them, and decides every one it no longer watches from the chain, including those a previous process left live.
+  `HostCallbacks` gains the required `durable_work_changed(pending)`, which the Swift and Kotlin `HostBridge` default to
+  a no-op; while it reports `true` the host keeps a background task running that awaits `runDurableRecovery()`. No
+  domain registers transactions yet.
+- 1c4a63e: Adds the `expandedCard` service. `setFaceShown` lets a Pocket card's widget move the face above it out of the
+  way and back. Only a Widget execution may call it, and a host without expanded cards answers `Unsupported`.
+- 84282d0: Serve `scanner.scan`. A host supplies the optional `scanner` callbacks to draw its viewfinder, and the core
+  checks each request and each answer. The mock test host serves a scanner when created with a `scanner` answer, and
+  `setScanAnswer` changes the next one. `contacts.pick` now stops waiting when the product cancels.
+
 ## 0.24.0
 
 ### Minor Changes

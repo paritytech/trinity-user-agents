@@ -8,8 +8,10 @@ enum RPCMethod {
     static let bitswapGet = "bitswap_v1_get"
 }
 
-enum HOPErrorCode {
-    static let notFound = 1_004
+public enum HOPErrorCode {
+    public static let notFound = 1_004
+    public static let poolFull = 1_002
+    public static let rateLimited = 1_020
 }
 
 enum BitswapErrorCode {
