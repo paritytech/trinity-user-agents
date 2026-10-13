@@ -7,6 +7,8 @@ final class MainTabBarWireframe: MainTabBarWireframeProtocol {
     private let serviceCoordinator: ServiceCoordinatorProtocol
     private let scanResultHandler: WalletQRScanDelegate
     private let moduleNavigator: ModuleNavigating
+    private var paymentsSetupNotice: TopNoticeWindow?
+    private var isPaymentsSetupNoticeDismissed = false
 
     init(
         serviceCoordinator: ServiceCoordinatorProtocol,
@@ -29,6 +31,24 @@ final class MainTabBarWireframe: MainTabBarWireframeProtocol {
             return
         }
         view?.controller.present(signInView.controller, animated: true)
+    }
+
+    func showPaymentsSetupNotice(isVisible: Bool, from view: MainTabBarViewProtocol?) {
+        guard isVisible else {
+            paymentsSetupNotice?.hide()
+            isPaymentsSetupNoticeDismissed = false
+            return
+        }
+        guard !isPaymentsSetupNoticeDismissed, let windowScene = view?.controller.view.window?.windowScene else {
+            return
+        }
+
+        let notice = paymentsSetupNotice ?? TopNoticeWindow(windowScene: windowScene)
+        paymentsSetupNotice = notice
+        notice.show(PaymentsSetupNoticeView { [weak self] in
+            self?.isPaymentsSetupNoticeDismissed = true
+            self?.paymentsSetupNotice?.hide()
+        })
     }
 
     func openProduct(productId: ProductId) {
