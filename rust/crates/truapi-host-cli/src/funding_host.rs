@@ -328,6 +328,14 @@ impl FundingPlatform for CliFundingHost {
 		Ok(outcome)
 	}
 
+	/// The country `TRUAPI_FUNDING_COUNTRY` names, as a scripted device
+	/// would detect it.
+	async fn detected_country(&self) -> Option<String> {
+		std::env::var("TRUAPI_FUNDING_COUNTRY")
+			.ok()
+			.filter(|country| !country.is_empty())
+	}
+
 	fn funding_session_changed(&self, intent: String, status: HostFundingStatusSubscribeItem) {
 		let (tag, amount) = match status {
 			HostFundingStatusSubscribeItem::InProgress { .. } => ("InProgress", None),

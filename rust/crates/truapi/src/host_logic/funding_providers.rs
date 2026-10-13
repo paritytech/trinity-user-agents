@@ -228,6 +228,101 @@ fn confirm(routes: &mut Vec<FundingRoute>, support: &LearnedSupport) {
 	}
 }
 
+/// What the core knows about funding from one country, for the host's
+/// country picker.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+pub struct FundingCountry {
+	/// ISO 3166-1 alpha-2 code.
+	pub country: String,
+	/// Whether a provider serves it.
+	pub support: FundingCountrySupport,
+}
+
+/// Whether a provider serves a country.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
+pub enum FundingCountrySupport {
+	/// A provider serves it, by its manifest or a recent quote answer.
+	Supported {
+		/// The smallest amount a provider serving it showed it takes there,
+		/// in the user's balance units, when one did.
+		min: Option<u128>,
+	},
+	/// Every provider whose recent answers named it refused it, and no
+	/// manifest declares it.
+	Unsupported,
+}
+
+/// What `providers`' manifests and recent quote answers say about each
+/// country for `direction`, `rail` and `asset`, by country code. A country
+/// nothing names is left out, as the core knows nothing about it.
+pub fn country_support(
+	providers: &[(String, Option<WorkerManifest>)],
+	learned: &[LearnedSupport],
+	direction: FundingDirection,
+	rail: FundingRail,
+	asset: &str,
+	now_ms: u64,
+) -> Vec<FundingCountry> {
+	let mut countries: Vec<FundingCountry> = Vec::new();
+	let mut note = |country: &str, supported: bool, min: Option<u128>| {
+		let index = match countries.iter().position(|known| known.country == country) {
+			Some(index) => index,
+			None => {
+				countries.push(FundingCountry {
+					country: country.to_string(),
+					support: FundingCountrySupport::Unsupported,
+				});
+				countries.len() - 1
+			},
+		};
+		let support = &mut countries[index].support;
+		*support = match (support.clone(), supported) {
+			(FundingCountrySupport::Supported { min: known }, true) => {
+				FundingCountrySupport::Supported { min: lowest(known, min) }
+			},
+			(FundingCountrySupport::Unsupported, true) => FundingCountrySupport::Supported { min },
+			(kept, false) => kept,
+		};
+	};
+	for (provider_id, manifest) in providers {
+		let routes = manifest
+			.as_ref()
+			.and_then(|manifest| manifest.funding.as_ref())
+			.and_then(|funding| funding.routes.as_ref());
+		for route in routes.into_iter().flatten().filter(|route| {
+			route.rail == rail &&
+				route.directions.contains(&direction) &&
+				route.assets.iter().any(|known| known == asset)
+		}) {
+			for country in route.countries.iter().flatten() {
+				note(country, true, None);
+			}
+		}
+		for support in learned.iter().filter(|support| {
+			&support.provider_id == provider_id &&
+				support.direction == direction &&
+				support.rail == rail &&
+				support.asset == asset &&
+				support.is_fresh(now_ms)
+		}) {
+			if let Some(country) = &support.country {
+				note(country, support.supported, support.min);
+			}
+		}
+	}
+	countries.sort_by(|a, b| a.country.cmp(&b.country));
+	countries
+}
+
+fn lowest(a: Option<u128>, b: Option<u128>) -> Option<u128> {
+	match (a, b) {
+		(Some(a), Some(b)) => Some(a.min(b)),
+		(a, b) => a.or(b),
+	}
+}
+
 #[cfg(test)]
 mod tests {
 	use super::*;
@@ -374,6 +469,61 @@ mod tests {
 					max: None,
 				}],
 			)
+		);
+	}
+
+	// The country picker shows what the core knows: a country a manifest or
+	// an answer serves, with the lowest minimum shown there, and one that
+	// every answer naming it refused. A country nothing names is left out.
+	#[test]
+	fn countries_show_what_manifests_and_answers_say() {
+		let declared = manifest(
+			r#"{"routes":[{"mode":"CARD","directions":["In"],"assets":["EUR"],"countries":["PT","DE"]}]}"#,
+		);
+		let in_country = |country: &str, supported, min| LearnedSupport {
+			rail: FundingRail::Card,
+			country: Some(country.to_string()),
+			supported,
+			min,
+			..learned(true, NOW)
+		};
+		let providers = [
+			("ramp.dot".to_string(), Some(declared)),
+			("other.dot".to_string(), Some(manifest("{}"))),
+		];
+		let learned = [
+			in_country("DE", true, Some(2_000)),
+			LearnedSupport {
+				provider_id: "other.dot".to_string(),
+				..in_country("DE", true, Some(1_500))
+			},
+			in_country("UY", false, None),
+			LearnedSupport { rail: FundingRail::Bank, ..in_country("FR", true, None) },
+		];
+
+		assert_eq!(
+			country_support(
+				&providers,
+				&learned,
+				FundingDirection::In,
+				FundingRail::Card,
+				"EUR",
+				NOW
+			),
+			vec![
+				FundingCountry {
+					country: "DE".to_string(),
+					support: FundingCountrySupport::Supported { min: Some(1_500) },
+				},
+				FundingCountry {
+					country: "PT".to_string(),
+					support: FundingCountrySupport::Supported { min: None },
+				},
+				FundingCountry {
+					country: "UY".to_string(),
+					support: FundingCountrySupport::Unsupported
+				},
+			]
 		);
 	}
 

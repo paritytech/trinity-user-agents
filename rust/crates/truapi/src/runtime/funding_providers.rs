@@ -18,7 +18,7 @@ use std::{
 	},
 };
 
-use truapi::latest::FundingDirection;
+use truapi::latest::{FundingDirection, FundingRail};
 
 use futures::lock::Mutex as AsyncMutex;
 use parity_scale_codec::{Decode, Encode};
@@ -31,7 +31,8 @@ use crate::{
 	host_logic::{
 		funding::FundingSessionError,
 		funding_providers::{
-			FundingCandidate, FundingProviderEntry, FundingProviderOrigin, LearnedSupport,
+			FundingCandidate, FundingCountry, FundingProviderEntry, FundingProviderOrigin,
+			LearnedSupport, country_support,
 		},
 		worker_manifest::WorkerManifest,
 	},
@@ -156,6 +157,18 @@ impl FundingProviders {
 		}
 		learned.retain(|known| known.is_fresh(now_ms) && !known.same_ask(&support));
 		learned.push(support);
+	}
+
+	/// What the providers' manifests and recent quote answers say about each
+	/// country for `direction`, `rail` and `asset`.
+	pub fn countries(
+		&self,
+		direction: FundingDirection,
+		rail: FundingRail,
+		asset: &str,
+	) -> Vec<FundingCountry> {
+		let learned = lock(&self.learned).clone();
+		country_support(&self.providers(), &learned, direction, rail, asset, current_unix_millis())
 	}
 
 	/// Whether `provider_id` serves `direction`.

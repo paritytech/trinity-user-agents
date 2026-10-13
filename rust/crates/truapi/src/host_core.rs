@@ -888,6 +888,30 @@ impl SigningHostRuntime {
 			.unwrap_or_default()
 	}
 
+	/// What the core knows about each country for funding session `intent`
+	/// on `rail` and `asset`, for the host's country picker. Empty for a
+	/// session the core does not know.
+	pub fn funding_countries(
+		&self,
+		intent: &str,
+		rail: v01::FundingRail,
+		asset: &str,
+	) -> Vec<crate::host_logic::funding_providers::FundingCountry> {
+		self.services
+			.funding()
+			.get(intent)
+			.map(|session| {
+				self.services.funding_providers().countries(session.direction, rail, asset)
+			})
+			.unwrap_or_default()
+	}
+
+	/// The country the host detected for the user, which quotes go by until
+	/// the user picks one.
+	pub async fn detected_funding_country(&self) -> Option<String> {
+		self.services.detected_funding_country().await
+	}
+
 	/// Live quotes for funding session `intent`: one row per candidate
 	/// serving `ask`'s rail and asset, `Pending` and then `Quoted` or
 	/// `Unavailable` as each provider answers or runs out of time.

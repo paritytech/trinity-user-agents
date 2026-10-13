@@ -392,6 +392,25 @@ impl NativeTrUApiHostRuntime {
 		self.runtime.funding_candidates(&intent)
 	}
 
+	/// What the core knows about each country for funding session `intent`
+	/// on `rail` and `asset`: supported, with the lowest minimum a provider
+	/// showed there, or unsupported. A country the core knows nothing about
+	/// is left out.
+	pub fn funding_countries(
+		&self,
+		intent: String,
+		rail: v01::FundingRail,
+		asset: String,
+	) -> Vec<crate::host_logic::funding_providers::FundingCountry> {
+		self.runtime.funding_countries(&intent, rail, &asset)
+	}
+
+	/// The country quotes go by until the user picks one, as the host's
+	/// `detected_country` last answered.
+	pub async fn detected_funding_country(&self) -> Option<String> {
+		self.runtime.detected_funding_country().await
+	}
+
 	/// Ask every funding provider to price `ask` for session `intent`. The
 	/// list arrives through `funding_quotes_changed`, and is asked for again
 	/// every minute until the session is handed to a provider or ends, the

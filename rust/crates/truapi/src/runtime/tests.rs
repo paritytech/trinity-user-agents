@@ -2706,6 +2706,7 @@ struct RecordingFundingPlatform {
 	presented: Mutex<Vec<(Option<String>, crate::platform::FundingPresentation)>>,
 	announced: Mutex<Vec<String>>,
 	framed: Mutex<Vec<truapi::latest::FundingFrameTarget>>,
+	country: Option<String>,
 }
 
 impl RecordingFundingPlatform {
@@ -2715,6 +2716,15 @@ impl RecordingFundingPlatform {
 			presented: Mutex::new(Vec::new()),
 			announced: Mutex::new(Vec::new()),
 			framed: Mutex::new(Vec::new()),
+			country: None,
+		})
+	}
+
+	fn in_country(country: &str) -> Arc<Self> {
+		Arc::new(Self {
+			country: Some(country.to_string()),
+			..Arc::into_inner(Self::answering(crate::platform::FundingPresentOutcome::Started))
+				.expect("only reference")
 		})
 	}
 }
@@ -2741,6 +2751,10 @@ impl crate::platform::FundingPlatform for RecordingFundingPlatform {
 	) -> Result<truapi::latest::FundingFrameOutcome, truapi::latest::GenericError> {
 		self.framed.lock().expect("framed mutex poisoned").push(target);
 		Ok(truapi::latest::FundingFrameOutcome::Closed)
+	}
+
+	async fn detected_country(&self) -> Option<String> {
+		self.country.clone()
 	}
 
 	fn funding_session_changed(
@@ -8593,6 +8607,66 @@ fn quotes_resolve_row_by_row_and_a_silent_provider_times_out() {
 			}),
 			None,
 		)
+	);
+}
+
+// Quotes go by the country the host detected until the user picks one, so
+// the first list already fits where the user is.
+#[test]
+fn an_ask_without_a_country_takes_the_detected_one() {
+	let services = funding_services();
+	assert!(services.funding().install_platform(RecordingFundingPlatform::in_country("pt")));
+	services
+		.set_funding_providers(vec![crate::host_logic::funding_providers::FundingProviderEntry {
+			product_id: "ramp.dot".to_string(),
+			worker_manifest: Some(RAMP_MANIFEST.to_string()),
+			origin: crate::host_logic::funding_providers::FundingProviderOrigin::Published,
+		}])
+		.expect("providers offered");
+	let intent = futures::executor::block_on(services.open_funding(
+		None,
+		v01::FundingDirection::In,
+		Some(1_000),
+	))
+	.expect("opened")
+	.intent;
+	let registry = services.funding().clone();
+	let mut served = registry.serve("ramp.dot");
+	let asked = std::thread::spawn(move || {
+		let mut countries = Vec::new();
+		futures::executor::block_on(async {
+			while let Some(item) = served.next().await {
+				if let v01::HostFundingServeSubscribeItem::Quote { ask_id, ask } = item {
+					countries.push(ask.country);
+					registry.answer_quote(
+						"ramp.dot",
+						&ask_id,
+						v01::FundingQuoteAnswer::Quoted { quote: card_quote(&ask_id) },
+					);
+					if countries.len() == 2 {
+						break;
+					}
+				}
+			}
+		});
+		countries
+	});
+	let quote = |country: Option<&str>| {
+		futures::executor::block_on(
+			services
+				.get_funding_quote_within(&intent, card_ask(country), Duration::from_secs(5))
+				.collect::<Vec<_>>(),
+		)
+	};
+	quote(None);
+	quote(Some("DE"));
+
+	assert_eq!(
+		(
+			asked.join().expect("provider thread"),
+			futures::executor::block_on(services.detected_funding_country()),
+		),
+		(vec![Some("PT".to_string()), Some("DE".to_string())], Some("PT".to_string()))
 	);
 }
 

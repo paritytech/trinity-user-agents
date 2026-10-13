@@ -3304,6 +3304,15 @@ pub trait FundingPlatform: Send + Sync {
 		target: truapi::latest::FundingFrameTarget,
 	) -> Result<truapi::latest::FundingFrameOutcome, GenericError>;
 
+	/// The country the user is likely in, as an ISO 3166-1 alpha-2 code, for
+	/// the quotes the core asks before the user picks one. Best effort,
+	/// without asking for any permission: the device's coarse location when
+	/// already permitted, then its SIM or network country, then its locale's
+	/// region. `None` when nothing says.
+	async fn detected_country(&self) -> Option<String> {
+		None
+	}
+
 	/// Observe a session's status change, for host UI such as the in-flight
 	/// pill.
 	fn funding_session_changed(&self, intent: String, status: HostFundingStatusSubscribeItem) {

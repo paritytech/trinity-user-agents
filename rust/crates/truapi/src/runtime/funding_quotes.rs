@@ -42,6 +42,8 @@ const QUOTE_DEADLINE: Duration = Duration::from_secs(10);
 const ANSWER_REUSE_MS: u64 = 30_000;
 /// How long a quote list stands before the core asks every provider again.
 const QUOTE_REFRESH: Duration = Duration::from_secs(60);
+/// How long the country the host detected is reused before asking again.
+const DETECTED_COUNTRY_REUSE_MS: u64 = 60 * 60 * 1_000;
 
 /// A provider's answer and when it came.
 #[derive(Clone)]
@@ -63,6 +65,8 @@ pub struct FundingQuotes {
 	watching: Mutex<HashMap<String, u64>>,
 	/// The number the next watched list takes.
 	next_watch: Mutex<u64>,
+	/// The country the host last detected, and when.
+	detected: Mutex<Option<(u64, Option<String>)>>,
 }
 
 impl FundingQuotes {
@@ -167,8 +171,9 @@ impl FundingQuotes {
 impl RuntimeServices {
 	/// Ask every funding provider to price `ask` for session `intent`. Each
 	/// provider's row is first `Pending`, then `Quoted` or `Unavailable`. The
-	/// ask's direction is the session's. Empty for a session the core does
-	/// not know or that ended.
+	/// ask's direction is the session's, and an ask naming no country takes
+	/// the one the host detected. Empty for a session the core does not know
+	/// or that ended.
 	pub fn get_funding_quote(
 		self: &Arc<Self>,
 		intent: &str,
@@ -188,7 +193,42 @@ impl RuntimeServices {
 		else {
 			return stream::empty().boxed();
 		};
-		let ask = FundingQuoteAsk { direction: session.direction, ..ask };
+		let services = self.clone();
+		let intent = intent.to_string();
+		stream::once(async move {
+			let country = match ask.country {
+				Some(country) => Some(country),
+				None => services.detected_funding_country().await,
+			};
+			let ask = FundingQuoteAsk { direction: session.direction, country, ..ask };
+			services.quote_every_provider(&intent, ask, deadline)
+		})
+		.flatten()
+		.boxed()
+	}
+
+	/// The country the host detected for the user, reused for an hour.
+	pub async fn detected_funding_country(&self) -> Option<String> {
+		let now_ms = current_unix_millis();
+		let cached = lock(&self.funding_quotes().detected).clone();
+		if let Some((at_ms, country)) = cached &&
+			now_ms.saturating_sub(at_ms) < DETECTED_COUNTRY_REUSE_MS
+		{
+			return country;
+		}
+		let platform = self.funding().platform()?;
+		let country = platform.detected_country().await.map(|country| country.to_uppercase());
+		*lock(&self.funding_quotes().detected) = Some((now_ms, country.clone()));
+		country
+	}
+
+	/// One row stream per funding provider for `ask`, merged.
+	fn quote_every_provider(
+		self: &Arc<Self>,
+		intent: &str,
+		ask: FundingQuoteAsk,
+		deadline: Duration,
+	) -> BoxStream<'static, FundingQuoteRow> {
 		self.refresh_funding_providers();
 		let rows: Vec<_> = self
 			.funding_providers()

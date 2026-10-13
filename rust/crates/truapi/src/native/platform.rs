@@ -700,6 +700,10 @@ impl crate::platform::FundingPlatform for FundingCallbackPlatform {
 			.map_err(v01::GenericError::from)
 	}
 
+	async fn detected_country(&self) -> Option<String> {
+		self.funding.detected_country().await
+	}
+
 	fn funding_session_changed(&self, intent: String, status: v01::HostFundingStatusSubscribeItem) {
 		self.funding.funding_session_changed(intent, status);
 	}
