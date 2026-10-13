@@ -4,8 +4,8 @@
 //! overlay that opened it, so dismissing the overlay after starting is not
 //! cancelling: the session keeps running, persists across app death through
 //! [`CoreStorageKey::FundingSessions`], and is re-attached by
-//! `Funding::status_subscribe`. A session always terminates, because the core
-//! expires it on its own clock.
+//! `Funding::status_subscribe`. A session still open 24 hours after it was
+//! opened expires on the core's own clock, whether or not anyone watches it.
 
 use parity_scale_codec::{Decode, Encode};
 use tracing::warn;
