@@ -44,10 +44,34 @@ pub struct RemotePreimageReadTorrentResponse {
     pub name: Option<String>,    // the path of the file in the torrent
     pub file: u32,
     pub report: PreimageReadReport,
+    pub progress: Option<TorrentReadProgress>, // while the provider still downloads the file
 }
 ```
 
 Wire id 2 stays free for `Preimage.retain`. Errors use `PreimageReadError`.
+
+## Progress
+
+A torrent can take minutes, and a TrUAPI request times out much sooner. So a provider downloads the file in the
+background (`POST /prefetch` of the cache node), and `readTorrent` answers at once:
+
+- while the provider downloads, with no value and a `progress`: the provider, the step (`Starting`, `Metadata`,
+  `Downloading`, `Importing`), the size of the file, the bytes so far, the peers and the time since the start;
+- once the provider has the file, with the file and its key.
+
+The product calls `readTorrent` again until the file comes, and shows the progress. The host remembers which provider
+started the download, so each call asks the same provider.
+
+```rust
+pub struct TorrentReadProgress {
+    pub provider: [u8; 32],
+    pub state: TorrentReadState, // Starting, Metadata, Downloading, Importing
+    pub size: Option<u64>,
+    pub downloaded: u64,
+    pub peers: u32,
+    pub elapsed_ms: u64,
+}
+```
 
 ## Trust
 

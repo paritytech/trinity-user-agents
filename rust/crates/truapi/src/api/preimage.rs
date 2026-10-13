@@ -105,8 +105,9 @@ pub trait Preimage: Send + Sync {
 	/// against the piece hashes of the torrent, and the answer has the file,
 	/// its preimage key and a report as for `read`. The cache providers then
 	/// also keep the file under its preimage key, so the product can read it
-	/// again with `read` and that key. A host without this capability answers
-	/// `Unsupported`.
+	/// again with `read` and that key. While a provider still downloads the file, the answer
+	/// has no value and a `progress`: the product calls again, for the file or a newer progress.
+	/// A host without this capability answers `Unsupported`.
 	///
 	/// ```ts
 	/// const read = await truapi.preimage.readTorrent({

@@ -4563,6 +4563,7 @@ impl crate::platform::PreimageReadHost for FixedPreimageRead {
 			name: Some("file.bin".to_string()),
 			file: 0,
 			report: self.0.report.clone(),
+			progress: None,
 		})
 	}
 }
@@ -4606,6 +4607,7 @@ fn preimage_read_torrent_sets_the_key_and_primes_the_host_cache() {
 			name: Some("file.bin".to_string()),
 			file: 0,
 			report,
+			progress: None,
 		})
 	);
 	// The file is now in the read-after-write cache under its key.

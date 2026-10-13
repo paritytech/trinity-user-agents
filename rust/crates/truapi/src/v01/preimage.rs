@@ -214,6 +214,39 @@ pub struct RemotePreimageReadTorrentResponse {
 	pub file: u32,
 	/// How the host got the file, or why it did not.
 	pub report: PreimageReadReport,
+	/// While a cache provider still downloads the file: what it did so far. `value` is then
+	/// `None`, and the product calls `readTorrent` again, for the file or a newer progress.
+	pub progress: Option<TorrentReadProgress>,
+}
+
+/// What a cache provider did so far for a torrent file that it still downloads.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+pub struct TorrentReadProgress {
+	/// Endpoint id of the cache provider that downloads the file.
+	pub provider: [u8; 32],
+	/// The step of the download.
+	pub state: TorrentReadState,
+	/// The size of the file, once the provider has the metadata of the torrent.
+	pub size: Option<u64>,
+	/// The bytes of the file that the provider has.
+	pub downloaded: u64,
+	/// The peers that the provider is connected to.
+	pub peers: u32,
+	/// Time since the download started, in milliseconds.
+	pub elapsed_ms: u64,
+}
+
+/// The step of a torrent download at a cache provider.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
+pub enum TorrentReadState {
+	/// The provider starts: it looks in its store and asks other providers.
+	Starting,
+	/// The provider asks peers for the metadata of the torrent.
+	Metadata,
+	/// The provider downloads the pieces of the file.
+	Downloading,
+	/// The pieces are complete, and the provider stores the file.
+	Importing,
 }
 
 /// Why a host could not read a preimage.
