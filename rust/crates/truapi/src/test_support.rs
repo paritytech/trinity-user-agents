@@ -2017,152 +2017,99 @@ impl UserConfirmation for StubPlatform {
             }))
     }
 
-    async fn confirm_user_action(
-        &self,
-        review: UserConfirmationReview,
-    ) -> Result<bool, v01::GenericError> {
-        let (error, confirmed) = match review {
-            UserConfirmationReview::SignPayload(review) => {
-                self.sign_payload_reviews
-                    .lock()
-                    .expect("sign payload review list mutex poisoned")
-                    .push(review);
-                (self.sign_payload_error, self.sign_payload_confirmed)
-            }
-            UserConfirmationReview::SignRaw(review) => {
-                self.sign_raw_reviews
-                    .lock()
-                    .expect("raw signing review list mutex poisoned")
-                    .push(review);
-                (self.sign_raw_error, self.sign_raw_confirmed)
-            }
-            UserConfirmationReview::SignVrf(review) => {
-                self.sign_vrf_reviews
-                    .lock()
-                    .expect("VRF signing review list mutex poisoned")
-                    .push(review);
-                (self.sign_vrf_error, self.sign_vrf_confirmed)
-            }
-            UserConfirmationReview::StatementStoreProductSign(review) => {
-                self.statement_store_product_sign_reviews
-                    .lock()
-                    .expect("statement store product sign review list mutex poisoned")
-                    .push(review);
-                (self.sign_raw_error, self.sign_raw_confirmed)
-            }
-            UserConfirmationReview::CreateTransaction(review) => {
-                self.create_transaction_reviews
-                    .lock()
-                    .expect("create transaction review list mutex poisoned")
-                    .push(review);
-                let gate = self
-                    .create_transaction_confirmation_gate
-                    .lock()
-                    .expect("transaction confirmation gate mutex poisoned")
-                    .take();
-                if let Some(gate) = gate {
-                    gate.await
-                        .expect("transaction confirmation gate was released");
-                }
-                (
-                    self.create_transaction_error,
-                    self.create_transaction_confirmed,
-                )
-            }
-            UserConfirmationReview::AccountAlias(_) => {
-                (self.account_alias_error, self.account_alias_confirmed)
-            }
-            UserConfirmationReview::CreateProof(_) => {
-                (self.create_proof_error, self.create_proof_confirmed)
-            }
-            UserConfirmationReview::AccountAccess(review) => {
-                self.account_access_reviews
-                    .lock()
-                    .expect("account access review list mutex poisoned")
-                    .push(review);
-                (self.account_access_error, self.account_access_confirmed)
-            }
-            UserConfirmationReview::IdentityDisclosure(_) => {
-                self.identity_disclosure_calls
-                    .fetch_add(1, Ordering::SeqCst);
-                let gate = self.identity_disclosure_confirmation_gate.lock().take();
-                if let Some(gate) = gate {
-                    gate.await.expect("identity disclosure gate was released");
-                }
-                (
-                    self.identity_disclosure_error,
-                    self.identity_disclosure_confirmed,
-                )
-            }
-            UserConfirmationReview::ChatAuthority(review) => {
-                self.chat_authority_reviews.lock().push(review);
-                (self.chat_authority_error, self.chat_authority_confirmed)
-            }
-            UserConfirmationReview::MainPurseChatPayment(review) => {
-                self.main_purse_chat_payment_reviews
-                    .lock()
-                    .expect("main purse payment review list mutex poisoned")
-                    .push(review);
-                (
-                    self.main_purse_chat_payment_error,
-                    self.main_purse_chat_payment_confirmed,
-                )
-            }
-            UserConfirmationReview::Calling(review) => {
-                self.calling_reviews
-                    .lock()
-                    .expect("calling review list mutex poisoned")
-                    .push(review);
-                (self.calling_error, self.calling_confirmed)
-            }
-            UserConfirmationReview::ResourceAllocation(review) => {
-                self.resource_allocation_reviews
-                    .lock()
-                    .expect("resource allocation review list mutex poisoned")
-                    .push(review);
-                let gate = self
-                    .resource_allocation_confirmation_gate
-                    .lock()
-                    .expect("resource confirmation gate mutex poisoned")
-                    .take();
-                if let Some(gate) = gate {
-                    gate.await.expect("resource confirmation gate was released");
-                }
-                (
-                    self.resource_allocation_error,
-                    self.resource_allocation_confirmed,
-                )
-            }
-            UserConfirmationReview::PreimageSubmit(review) => {
-                self.preimage_reviews.lock().push(review);
-                let gate = self.preimage_confirmation_gate.lock().take();
-                if let Some(gate) = gate {
-                    let _ = gate.await;
-                }
-                (None, true)
-            }
-            UserConfirmationReview::ProductSubtree(review) => {
-                self.product_subtree_reviews
-                    .lock()
-                    .expect("product subtree review list mutex poisoned")
-                    .push(review);
-                (None, !self.product_subtree_denied)
-            }
-            UserConfirmationReview::ProfileDisclosure(review) => {
-                self.profile_disclosure_reviews
-                    .lock()
-                    .expect("profile disclosure review list mutex poisoned")
-                    .push(review);
-                (self.profile_disclosure_error, self.profile_disclosure_confirmed)
-            }
-        };
-        if let Some(reason) = error {
-            return Err(v01::GenericError {
-                reason: reason.to_string(),
-            });
-        }
-        Ok(confirmed)
-    }
+	async fn confirm_user_action(
+		&self,
+		review: UserConfirmationReview,
+	) -> Result<bool, v01::GenericError> {
+		let (error, confirmed) = match review {
+			UserConfirmationReview::SignPayload(review) => {
+				self.sign_payload_reviews
+					.lock()
+					.expect("sign payload review list mutex poisoned")
+					.push(review);
+				(self.sign_payload_error, self.sign_payload_confirmed)
+			},
+			UserConfirmationReview::SignRaw(review) => {
+				self.sign_raw_reviews
+					.lock()
+					.expect("raw signing review list mutex poisoned")
+					.push(review);
+				(self.sign_raw_error, self.sign_raw_confirmed)
+			},
+			UserConfirmationReview::SignVrf(review) => {
+				self.sign_vrf_reviews
+					.lock()
+					.expect("VRF signing review list mutex poisoned")
+					.push(review);
+				(self.sign_vrf_error, self.sign_vrf_confirmed)
+			},
+			UserConfirmationReview::StatementStoreProductSign(review) => {
+				self.statement_store_product_sign_reviews
+					.lock()
+					.expect("statement store product sign review list mutex poisoned")
+					.push(review);
+				(self.sign_raw_error, self.sign_raw_confirmed)
+			},
+			UserConfirmationReview::CreateTransaction(review) => {
+				self.create_transaction_reviews
+					.lock()
+					.expect("create transaction review list mutex poisoned")
+					.push(review);
+				let gate = self
+					.create_transaction_confirmation_gate
+					.lock()
+					.expect("transaction confirmation gate mutex poisoned")
+					.take();
+				if let Some(gate) = gate {
+					gate.await.expect("transaction confirmation gate was released");
+				}
+				(self.create_transaction_error, self.create_transaction_confirmed)
+			},
+			UserConfirmationReview::AccountAlias(_) => {
+				(self.account_alias_error, self.account_alias_confirmed)
+			},
+			UserConfirmationReview::CreateProof(_) => {
+				(self.create_proof_error, self.create_proof_confirmed)
+			},
+			UserConfirmationReview::AccountAccess(review) => {
+				self.account_access_reviews
+					.lock()
+					.expect("account access review list mutex poisoned")
+					.push(review);
+				(self.account_access_error, self.account_access_confirmed)
+			},
+			UserConfirmationReview::IdentityDisclosure(_) => {
+				self.identity_disclosure_calls.fetch_add(1, Ordering::SeqCst);
+				(self.identity_disclosure_error, self.identity_disclosure_confirmed)
+			},
+			UserConfirmationReview::ResourceAllocation(review) => {
+				self.resource_allocation_reviews
+					.lock()
+					.expect("resource allocation review list mutex poisoned")
+					.push(review);
+				let gate = self
+					.resource_allocation_confirmation_gate
+					.lock()
+					.expect("resource confirmation gate mutex poisoned")
+					.take();
+				if let Some(gate) = gate {
+					gate.await.expect("resource confirmation gate was released");
+				}
+				(self.resource_allocation_error, self.resource_allocation_confirmed)
+			},
+			UserConfirmationReview::ProductSubtree(review) => {
+				self.product_subtree_reviews
+					.lock()
+					.expect("product subtree review list mutex poisoned")
+					.push(review);
+				(None, !self.product_subtree_denied)
+			},
+		};
+		if let Some(reason) = error {
+			return Err(v01::GenericError { reason: reason.to_string() });
+		}
+		Ok(confirmed)
+	}
 }
 
 impl ThemeHost for StubPlatform {

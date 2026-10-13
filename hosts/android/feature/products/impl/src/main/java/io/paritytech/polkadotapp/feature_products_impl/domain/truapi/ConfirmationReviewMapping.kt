@@ -76,28 +76,6 @@ fun UserConfirmationReview.toConfirmation(callingProductId: String): TrUAPIConfi
             resources = v1.resources.map { it.describe() },
         )
 
-    is UserConfirmationReview.PreimageSubmit ->
-        TrUAPIConfirmation.PreimageSubmit(
-            requesterProductId = v1.productId,
-            sizeBytes = v1.size,
-            rootPublicKey = v1.rootPublicKey.hex(),
-            genesisHash = v1.genesisHash.hex(),
-            automaticMaxBytes = v1.automaticMaxBytes,
-            automaticMaxUploads = v1.automaticMaxUploads,
-            automaticWindowSeconds = v1.automaticWindowSeconds,
-        )
-
-    is UserConfirmationReview.MainPurseChatPayment ->
-        TrUAPIConfirmation.MainPurseChatPayment(
-            requesterProductId = v1.callingProductId,
-            recipient = v1.recipientUsername ?: v1.recipientIdentity.hex(),
-            amountCents = v1.amountCents,
-            maxDebitCents = v1.maxDebitCents,
-            genesisHash = v1.genesisHash.hex(),
-            coinageInstanceId = v1.coinageInstanceId,
-            operationId = v1.operationId.hex(),
-        )
-
     is UserConfirmationReview.AccountAccess ->
         TrUAPIConfirmation.AccountAccess(
             requesterProductId = v1.requestingProductId,

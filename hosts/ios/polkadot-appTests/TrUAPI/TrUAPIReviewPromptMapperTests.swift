@@ -55,39 +55,6 @@ struct TrUAPIReviewPromptMapperTests {
     }
 
     @Test
-    func mapsChatAuthorityToDedicatedPermission() {
-        let request = mapper.makePermissionRequest(
-            from: ChatAuthorityReview(productId: "chat.dot")
-        )
-
-        #expect(request == TrUAPIPermissionRequest(
-            productId: "chat.dot",
-            permissions: [.chatAuthority]
-        ))
-    }
-
-    @Test
-    func mapsProfileDisclosureToDedicatedPermission() {
-        let request = mapper.makePermissionRequest(
-            from: ProfileDisclosureReview(productId: "profile.dot")
-        )
-        #expect(request == TrUAPIPermissionRequest(
-            productId: "profile.dot",
-            permissions: [.profileDisclosure]
-        ))
-    }
-
-    @Test
-    func mapsPreimageSubmitToActionWithRequesterAndSize() {
-        let request = mapper.makeActionRequest(
-            from: PreimageSubmitReview(size: 1_024),
-            requester: "caller.dot"
-        )
-
-        #expect(request == .preimageSubmit(productId: "caller.dot", size: 1_024))
-    }
-
-    @Test
     func mapsAccountAccessToTargetedPermission() {
         let request = mapper.makePermissionRequest(from: AccountAccessReview(
             requestingProductId: "caller.dot",

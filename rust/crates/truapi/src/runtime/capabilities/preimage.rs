@@ -24,12 +24,8 @@ use crate::{
 		AuthoritySession, BulletinAllowanceKey, PERMISSION_DENIED_REASON,
 		PREIMAGE_BULLETIN_AUTHORIZATION_WAIT, PREIMAGE_REMOTE_AUTHORITY_RESPONSE_TIMEOUT,
 		PREIMAGE_SUBMIT_TIMEOUT, ProductRuntimeHost, bulletin_allowance_error_reason,
-		bulletin_rpc::BulletinSubmitError,
-		preimage_submit_error, remote_authority_call, remote_authority_context_until,
-		statement_allowance::{
-			fetch_bulletin_allowance, rpc::RpcClient, wait_bulletin_authorization,
-		},
-		versioning::version,
+		bulletin_rpc::BulletinSubmitError, preimage_submit_error, remote_authority_call,
+		remote_authority_context_until,
 	},
 };
 use subxt::tx::Signer;
@@ -158,21 +154,43 @@ impl Preimage for ProductRuntimeHost {
 		cx: &CallContext,
 		request: RemotePreimageSubmitRequest,
 	) -> Result<RemotePreimageSubmitResponse, CallError<RemotePreimageSubmitError>> {
-		version(request)
-			.exec(|value| async move {
-				let Some(session) = self.accounts.current_session() else {
-					return Err(preimage_submit_error("No active session".to_string()));
-				};
-				let bulletin = &self.connection.services.bulletin;
-				self.connection
-					.require_remote_permission(
-						latest::RemotePermission::PreimageSubmit,
-						latest::PreimageSubmitError::Unknown {
-							reason: PERMISSION_DENIED_REASON.to_string(),
-						},
-					)
-					.await?;
-				let submission_deadline = Instant::now() + PREIMAGE_SUBMIT_TIMEOUT;
+		let RemotePreimageSubmitRequest::V1(value) = request;
+		let Some(session) = self.authority.current_session() else {
+			return Err(preimage_submit_error("No active session".to_string()));
+		};
+		let bulletin = &self.services.bulletin;
+		self.require_remote_permission(
+			v01::RemotePermission::PreimageSubmit,
+			RemotePreimageSubmitError::V1(v01::PreimageSubmitError::Unknown {
+				reason: PERMISSION_DENIED_REASON.to_string(),
+			}),
+		)
+		.await?;
+		let submission_deadline = Instant::now() + PREIMAGE_SUBMIT_TIMEOUT;
+		let authority_cx = remote_authority_context_until(
+			cx,
+			PREIMAGE_REMOTE_AUTHORITY_RESPONSE_TIMEOUT,
+			submission_deadline,
+		);
+		let allowance = remote_authority_call(
+			&authority_cx,
+			self.authority
+				.bulletin_allowance_key(&authority_cx, &session, self.product_id()),
+		)
+		.await
+		.map_err(|err| preimage_submit_error(bulletin_allowance_error_reason(err)))?;
+
+		#[cfg(feature = "test-host")]
+		if self.authority.submits_preimages_locally() {
+			let key = preimage_key(&value);
+			self.services.keep_local_preimage(key, value);
+			return Ok(RemotePreimageSubmitResponse::V1(key.to_vec()));
+		}
+
+		let key = match bulletin.submit_preimage(cx, submission_deadline, &allowance, &value).await
+		{
+			Ok(key) => key,
+			Err(BulletinSubmitError::AllowanceRejected { .. }) => {
 				let authority_cx = remote_authority_context_until(
 					cx,
 					PREIMAGE_REMOTE_AUTHORITY_RESPONSE_TIMEOUT,

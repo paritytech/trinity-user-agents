@@ -42,25 +42,24 @@ struct ProductsRouterTests {
 
     @Test
     func actionReviewsOfferOnlyConfirmationAndRejection() async throws {
-        for request in [
-            TrUAPIActionConfirmationRequest.productSubtree(productId: "test.product")
-        ] {
-            for approved in [true, false] {
-                let context = TrUAPIActionConfirmationContext(request: request)
-                let model = TrUAPIActionPromptViewFactory.makeViewModel(for: context)
-                let confirm = try #require(model.mainAction)
-                let reject = try #require(model.secondaryAction)
-                #expect([
-                    confirm.title.value(for: .current),
-                    reject.title.value(for: .current),
-                    model.tertiaryAction?.title.value(for: .current)
-                ] == [String(localized: .Common.confirm), String(localized: .Common.reject), nil])
-                let body = switch model.message.value(for: .current) {
+        let request = TrUAPIActionConfirmationRequest.productSubtree(productId: "test.product")
+        for approved in [true, false] {
+            let context = TrUAPIActionConfirmationContext(request: request)
+            let model = TrUAPIActionPromptViewFactory.makeViewModel(for: context)
+            let confirm = try #require(model.mainAction)
+            let reject = try #require(model.secondaryAction)
+            #expect([
+                confirm.title.value(for: .current),
+                reject.title.value(for: .current),
+                model.tertiaryAction?.title.value(for: .current)
+            ] == [String(localized: .Common.confirm), String(localized: .Common.reject), nil])
+            let body =
+                switch model.message.value(for: .current) {
                 case let .normal(text): text
                 case let .attributed(text): text.string
                 }
-                #expect(body.contains("test.product"))
-                #expect(!body.contains(String(localized: .Products.permissionBodyManageInSettingsHint)))
+            #expect(body.contains("test.product"))
+            #expect(!body.contains(String(localized: .Products.permissionBodyManageInSettingsHint)))
 
             let decision = await withCheckedContinuation { continuation in
                 context.setContinuation(continuation)

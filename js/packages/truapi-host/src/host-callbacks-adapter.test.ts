@@ -474,6 +474,236 @@ describe("createWasmRawCallbacks", () => {
     expect(cancelled).toEqual([9]);
   });
 
+  it("bridges lifecycle, confirmations, and preimage callbacks", async () => {
+    const calls: unknown[][] = [];
+    async function* preimages() {
+      yield ok(undefined);
+      yield ok(new Uint8Array([4, 5, 6]));
+    }
+
+    const raw = createWasmRawCallbacks(
+      makeHostCallbacks({
+        auth: {
+          authStateChanged: (state) => {
+            calls.push(["authStateChanged", state]);
+          },
+        },
+        coreStorage: {
+          readCoreStorage: async (key) =>
+            key.tag === "AuthSession" ? new Uint8Array([1, 2, 3]) : undefined,
+          writeCoreStorage: async (key, value) => {
+            calls.push(["writeCoreStorage", key, [...value]]);
+          },
+          clearCoreStorage: async (key) => {
+            calls.push(["clearCoreStorage", key]);
+          },
+        },
+        userConfirmation: {
+          confirmUserAction: async (review) => {
+            switch (review.tag) {
+              case "SignPayload":
+                return (
+                  review.value.tag === "Product" &&
+                  review.value.value.callingProductId === "playground.dot" &&
+                  review.value.value.request.account.dotNsIdentifier ===
+                    "playground.dot" &&
+                  review.value.value.request.payload.method === "0x0102"
+                );
+              case "SignRaw":
+                return (
+                  review.value.tag === "Product" &&
+                  review.value.value.callingProductId === "playground.dot" &&
+                  review.value.value.watermarked === false &&
+                  review.value.value.request.payload.tag === "Bytes" &&
+                  review.value.value.request.payload.value.bytes === "0x0304"
+                );
+              case "CreateTransaction":
+                return (
+                  review.value.tag === "Product" &&
+                  review.value.value.callingProductId === "playground.dot" &&
+                  review.value.value.payload.signer.derivationIndex.tag ===
+                    "Index" &&
+                  review.value.value.payload.callData === "0x0506"
+                );
+              case "AccountAlias":
+                return (
+                  review.value.callingProductId === "playground.dot" &&
+                  review.value.context.productId === "playground.dot" &&
+                  review.value.ringLocation.junctions[0]?.tag ===
+                    "PalletInstance"
+                );
+              case "CreateProof":
+                return (
+                  review.value.callingProductId === "playground.dot" &&
+                  review.value.context.suffix.tag === "Index" &&
+                  review.value.message[0] === 7
+                );
+              case "AccountAccess":
+                return (
+                  review.value.requestingProductId === "playground.dot" &&
+                  review.value.targetProductId === "wallet.dot"
+                );
+              case "ResourceAllocation":
+                return (
+                  review.value.resources[0]?.tag === "StatementStoreAllowance"
+                );
+              default:
+                return false;
+            }
+          },
+        },
+        preimage: {
+          lookupPreimage: (key) => {
+            calls.push(["lookupPreimage", [...key]]);
+            return preimages();
+          },
+        },
+      }),
+    );
+
+    const preimageEvents: (number[] | null)[] = [];
+    const preimageErrors: string[] = [];
+    const disposePreimages = raw.lookupPreimage!(
+      new Uint8Array([9]),
+      (value) => preimageEvents.push(value ? [...value] : null),
+      (error) => preimageErrors.push(error.reason),
+    );
+
+    raw.authStateChanged?.(
+      AuthState.enc({
+        tag: "Pairing",
+        value: { deeplink: "polkadotapp://example" },
+      }),
+    );
+    const authSessionKey = CoreStorageKey.enc({ tag: "AuthSession" });
+    expect(await raw.readCoreStorage!(authSessionKey)).toEqual(
+      new Uint8Array([1, 2, 3]),
+    );
+    await raw.writeCoreStorage!(authSessionKey, new Uint8Array([3, 2, 1]));
+    await raw.clearCoreStorage!(authSessionKey);
+    expect(
+      await raw.confirmUserAction?.(
+        UserConfirmationReview.enc({
+          tag: "SignPayload",
+          value: {
+            tag: "Product",
+            value: {
+              callingProductId: "playground.dot",
+              request: {
+                account: PRODUCT_ACCOUNT,
+                payload: SIGN_PAYLOAD,
+              },
+            },
+          },
+        }),
+      ),
+    ).toBe(true);
+    expect(
+      await raw.confirmUserAction?.(
+        UserConfirmationReview.enc({
+          tag: "SignRaw",
+          value: {
+            tag: "Product",
+            value: {
+              callingProductId: "playground.dot",
+              request: {
+                account: PRODUCT_ACCOUNT,
+                payload: {
+                  tag: "Bytes",
+                  value: { bytes: "0x0304" },
+                },
+              },
+              watermarked: false,
+            },
+          },
+        }),
+      ),
+    ).toBe(true);
+    expect(
+      await raw.confirmUserAction?.(
+        UserConfirmationReview.enc({
+          tag: "CreateTransaction",
+          value: {
+            tag: "Product",
+            value: {
+              callingProductId: "playground.dot",
+              payload: {
+                signer: PRODUCT_ACCOUNT,
+                genesisHash: GENESIS,
+                callData: "0x0506",
+                extensions: [],
+                txExtVersion: 0,
+                contacts: [],
+              },
+            },
+          },
+        }),
+      ),
+    ).toBe(true);
+    expect(
+      await raw.confirmUserAction?.(
+        UserConfirmationReview.enc({
+          tag: "AccountAlias",
+          value: {
+            callingProductId: "playground.dot",
+            context: PROOF_CONTEXT,
+            ringLocation: RING_LOCATION,
+          },
+        }),
+      ),
+    ).toBe(true);
+    expect(
+      await raw.confirmUserAction?.(
+        UserConfirmationReview.enc({
+          tag: "CreateProof",
+          value: {
+            callingProductId: "playground.dot",
+            context: PROOF_CONTEXT,
+            ringLocation: RING_LOCATION,
+            message: new Uint8Array([7, 8]),
+          },
+        }),
+      ),
+    ).toBe(true);
+    expect(
+      await raw.confirmUserAction?.(
+        UserConfirmationReview.enc({
+          tag: "AccountAccess",
+          value: {
+            requestingProductId: "playground.dot",
+            targetProductId: "wallet.dot",
+          },
+        }),
+      ),
+    ).toBe(true);
+    expect(
+      await raw.confirmUserAction?.(
+        UserConfirmationReview.enc({
+          tag: "ResourceAllocation",
+          value: {
+            callingProductId: "playground.dot",
+            resources: [{ tag: "StatementStoreAllowance" }],
+          },
+        }),
+      ),
+    ).toBe(true);
+
+    await settle();
+
+    expect(preimageEvents).toEqual([null, [4, 5, 6]]);
+    expect(calls).toEqual([
+      ["lookupPreimage", [9]],
+      [
+        "authStateChanged",
+        { tag: "Pairing", value: { deeplink: "polkadotapp://example" } },
+      ],
+      ["writeCoreStorage", { tag: "AuthSession", value: undefined }, [3, 2, 1]],
+      ["clearCoreStorage", { tag: "AuthSession", value: undefined }],
+    ]);
+
+    disposePreimages?.();
+  });
+
   it("omits the chat callbacks when the host does not serve chat", () => {
     const raw = createWasmRawCallbacks(makeHostCallbacks());
 

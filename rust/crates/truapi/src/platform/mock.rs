@@ -73,60 +73,48 @@ impl PermissionPolicy {
 /// (e.g. that a sign-payload review fired) even when the chain parks afterward.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ConfirmKind {
-    /// [`UserConfirmationReview::SignPayload`].
-    SignPayload,
-    /// [`UserConfirmationReview::SignRaw`].
-    SignRaw,
-    /// [`UserConfirmationReview::CreateTransaction`].
-    CreateTransaction,
-    /// [`UserConfirmationReview::AccountAlias`].
-    AccountAlias,
-    /// [`UserConfirmationReview::CreateProof`].
-    CreateProof,
-    /// [`UserConfirmationReview::ResourceAllocation`].
-    ResourceAllocation,
-    /// [`UserConfirmationReview::PreimageSubmit`].
-    PreimageSubmit,
-    /// [`UserConfirmationReview::IdentityDisclosure`].
-    IdentityDisclosure,
-    /// [`UserConfirmationReview::AccountAccess`].
-    AccountAccess,
-    /// [`UserConfirmationReview::StatementStoreProductSign`].
-    StatementStoreProductSign,
-    /// [`UserConfirmationReview::SignVrf`].
-    SignVrf,
-    /// [`UserConfirmationReview::ProductSubtree`].
-    ProductSubtree,
-    /// [`UserConfirmationReview::ChatAuthority`].
-    ChatAuthority,
-    /// [`UserConfirmationReview::MainPurseChatPayment`].
-    MainPurseChatPayment,
-    /// [`UserConfirmationReview::Calling`].
-    Calling,
+	/// [`UserConfirmationReview::SignPayload`].
+	SignPayload,
+	/// [`UserConfirmationReview::SignRaw`].
+	SignRaw,
+	/// [`UserConfirmationReview::CreateTransaction`].
+	CreateTransaction,
+	/// [`UserConfirmationReview::AccountAlias`].
+	AccountAlias,
+	/// [`UserConfirmationReview::CreateProof`].
+	CreateProof,
+	/// [`UserConfirmationReview::ResourceAllocation`].
+	ResourceAllocation,
+	/// [`UserConfirmationReview::IdentityDisclosure`].
+	IdentityDisclosure,
+	/// [`UserConfirmationReview::AccountAccess`].
+	AccountAccess,
+	/// [`UserConfirmationReview::StatementStoreProductSign`].
+	StatementStoreProductSign,
+	/// [`UserConfirmationReview::SignVrf`].
+	SignVrf,
+	/// [`UserConfirmationReview::ProductSubtree`].
+	ProductSubtree,
 }
 
 impl ConfirmKind {
-    fn of(review: &UserConfirmationReview) -> Self {
-        match review {
-            UserConfirmationReview::SignPayload(_) => ConfirmKind::SignPayload,
-            UserConfirmationReview::SignRaw(_) => ConfirmKind::SignRaw,
-            UserConfirmationReview::CreateTransaction(_) => ConfirmKind::CreateTransaction,
-            UserConfirmationReview::AccountAlias(_) => ConfirmKind::AccountAlias,
-            UserConfirmationReview::CreateProof(_) => ConfirmKind::CreateProof,
-            UserConfirmationReview::ResourceAllocation(_) => ConfirmKind::ResourceAllocation,
-            UserConfirmationReview::PreimageSubmit(_) => ConfirmKind::PreimageSubmit,
-            UserConfirmationReview::IdentityDisclosure(_) => ConfirmKind::IdentityDisclosure,
-            UserConfirmationReview::AccountAccess(_) => ConfirmKind::AccountAccess,
-            UserConfirmationReview::StatementStoreProductSign(_) => {
-                ConfirmKind::StatementStoreProductSign
-            }
-            UserConfirmationReview::SignVrf(_) => ConfirmKind::SignVrf,
-            UserConfirmationReview::ProductSubtree(_) => ConfirmKind::ProductSubtree,
-            UserConfirmationReview::ChatAuthority(_) => ConfirmKind::ChatAuthority,
-            UserConfirmationReview::MainPurseChatPayment(_) => ConfirmKind::MainPurseChatPayment,
-            UserConfirmationReview::Calling(_) => ConfirmKind::Calling,
-        }
-    }
+	fn of(review: &UserConfirmationReview) -> Self {
+		match review {
+			UserConfirmationReview::SignPayload(_) => ConfirmKind::SignPayload,
+			UserConfirmationReview::SignRaw(_) => ConfirmKind::SignRaw,
+			UserConfirmationReview::CreateTransaction(_) => ConfirmKind::CreateTransaction,
+			UserConfirmationReview::AccountAlias(_) => ConfirmKind::AccountAlias,
+			UserConfirmationReview::CreateProof(_) => ConfirmKind::CreateProof,
+			UserConfirmationReview::ResourceAllocation(_) => ConfirmKind::ResourceAllocation,
+			UserConfirmationReview::IdentityDisclosure(_) => ConfirmKind::IdentityDisclosure,
+			UserConfirmationReview::AccountAccess(_) => ConfirmKind::AccountAccess,
+			UserConfirmationReview::StatementStoreProductSign(_) => {
+				ConfirmKind::StatementStoreProductSign
+			},
+			UserConfirmationReview::SignVrf(_) => ConfirmKind::SignVrf,
+			UserConfirmationReview::ProductSubtree(_) => ConfirmKind::ProductSubtree,
+		}
+	}
 }
 
 /// Which prompt surface a permission decision came from.

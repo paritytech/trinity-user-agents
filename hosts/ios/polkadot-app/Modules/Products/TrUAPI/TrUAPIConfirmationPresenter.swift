@@ -100,9 +100,6 @@ private extension TrUAPIConfirmationPresenter {
             await confirmStatementSign(
                 promptMapper.makeStatementSignRequest(from: statementReview)
             )
-        case .preimageSubmit:
-            // A boolean caller cannot express durable upload consent.
-            false
         case let .productSubtree(subtreeReview):
             await confirmAction(promptMapper.makeActionRequest(from: subtreeReview))
         // Unsupported permission reviews throw; `confirm` still fails closed for single actions.

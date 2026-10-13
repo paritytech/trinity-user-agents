@@ -68,28 +68,6 @@ sealed interface TrUAPIConfirmation {
         val resources: List<String>,
     ) : TrUAPIConfirmation.Prompt
 
-    /** Submit a preimage to the host-selected backend. */
-    class PreimageSubmit(
-        override val requesterProductId: String,
-        val sizeBytes: ULong,
-        val rootPublicKey: String,
-        val genesisHash: String,
-        val automaticMaxBytes: ULong,
-        val automaticMaxUploads: UInt,
-        val automaticWindowSeconds: UInt,
-    ) : TrUAPIConfirmation.Prompt
-
-    /** Approve one exact payment from the user's main purse. */
-    class MainPurseChatPayment(
-        override val requesterProductId: String,
-        val recipient: String,
-        val amountCents: ULong,
-        val maxDebitCents: ULong,
-        val genesisHash: String,
-        val coinageInstanceId: UInt?,
-        val operationId: String,
-    ) : TrUAPIConfirmation.Prompt
-
     /** Let one product act on another product's account. */
     class AccountAccess(
         override val requesterProductId: String,

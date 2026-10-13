@@ -1469,51 +1469,52 @@ fn emit_local_codec(type_def: &TypeDef) -> Result<String> {
 }
 
 fn local_codec_expr_for_type(type_def: &TypeDef) -> Result<String> {
-    match &type_def.kind {
-        TypeDefKind::Alias(type_ref) => local_codec_expr(type_ref),
-        TypeDefKind::Struct(fields) => local_struct_codec_expr(fields, &type_def.name),
-        TypeDefKind::TupleStruct(fields) => local_tuple_codec_expr(fields),
-        TypeDefKind::Enum(variants) => {
-            if variants
-                .iter()
-                .all(|variant| matches!(variant.fields, VariantFields::Unit))
-            {
-                return Ok(format!(
-                    "S.Status({})",
-                    variants
-                        .iter()
-                        .map(|variant| ts_string_literal(&variant.name))
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                ));
-            }
-            let indexed = variants.iter().enumerate().any(|(position, variant)| {
-                variant
-                    .codec_index
-                    .is_some_and(|index| index as usize != position)
-            });
-            let entries = variants
-                .iter()
-                .enumerate()
-                .map(|(position, variant)| {
-                    let codec = local_variant_codec_expr(&variant.fields)?;
-                    if indexed {
-                        let index = variant.codec_index.map_or(position, |index| index as usize);
-                        Ok(format!("{}: [{index}, {codec}] as const", variant.name))
-                    } else {
-                        Ok(format!("{}: {codec}", variant.name))
-                    }
-                })
-                .collect::<Result<Vec<_>>>()?
-                .join(", ");
-            let constructor = if indexed {
-                "indexedTaggedUnion"
-            } else {
-                "TaggedUnion"
-            };
-            Ok(format!("S.{constructor}({{{entries}}})"))
-        }
-    }
+	match &type_def.kind {
+		TypeDefKind::Alias(type_ref) => local_codec_expr(type_ref),
+		TypeDefKind::Struct(fields) => local_struct_codec_expr(fields, &type_def.name),
+		TypeDefKind::TupleStruct(fields) => local_tuple_codec_expr(fields),
+		TypeDefKind::Enum(variants) => {
+			// SCALE gives a variant without `#[codec(index = N)]` its position.
+			let discriminant = |position: usize, variant: &VariantDef| {
+				variant.codec_index.map_or(position, usize::from)
+			};
+			let has_explicit_discriminants = variants
+				.iter()
+				.enumerate()
+				.any(|(position, variant)| discriminant(position, variant) != position);
+			if !has_explicit_discriminants &&
+				variants.iter().all(|variant| matches!(variant.fields, VariantFields::Unit))
+			{
+				return Ok(format!(
+					"S.Status({})",
+					variants
+						.iter()
+						.map(|variant| ts_string_literal(&variant.name))
+						.collect::<Vec<_>>()
+						.join(", ")
+				));
+			}
+			let entries = variants
+				.iter()
+				.enumerate()
+				.map(|(position, variant)| {
+					let codec = local_variant_codec_expr(&variant.fields)?;
+					Ok(if has_explicit_discriminants {
+						let index = discriminant(position, variant);
+						format!("{}: [{index}, {codec}] as const", variant.name)
+					} else {
+						format!("{}: {codec}", variant.name)
+					})
+				})
+				.collect::<Result<Vec<_>>>()?
+				.join(", ");
+			if has_explicit_discriminants {
+				Ok(format!("S.indexedTaggedUnion({{{entries}}})"))
+			} else {
+				Ok(format!("S.TaggedUnion({{{entries}}})"))
+			}
+		},
+	}
 }
 
 fn local_variant_codec_expr(fields: &VariantFields) -> Result<String> {

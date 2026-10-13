@@ -1229,17 +1229,6 @@ fn approval_summary(review: &UserConfirmationReview) -> (&'static str, String) {
             "allocate resources",
             "A product requested host-managed resources.".to_string(),
         ),
-        UserConfirmationReview::PreimageSubmit(review) => (
-            "submit preimage",
-            format!(
-                "Product {} requested a {}-byte upload for root 0x{} on Bulletin 0x{}. \
-                 Allow once, or explicitly allow automatic uploads of at most {} bytes, \
-                 {} times per rolling {} seconds. Revoke with --revoke-automatic-uploads {}.",
-                review.product_id, review.size, hex::encode(review.root_public_key),
-                hex::encode(review.genesis_hash), review.automatic_max_bytes,
-                review.automatic_max_uploads, review.automatic_window_seconds, review.product_id
-            ),
-        ),
         UserConfirmationReview::AccountAccess(review) => (
             "access another product account",
             format!(
