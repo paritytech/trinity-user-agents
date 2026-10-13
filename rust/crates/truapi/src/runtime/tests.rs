@@ -8554,6 +8554,10 @@ fn quotes_resolve_row_by_row_and_a_silent_provider_times_out() {
 	};
 	let unknown = select("q-never");
 	let chosen = select("q1");
+	let offered_after_assign =
+		services
+			.funding_quotes
+			.offered(&intent, "ramp.dot", "q1", crate::current_unix_millis());
 
 	use crate::platform::{FundingQuoteState, FundingQuoteUnavailable};
 	let final_state = |provider: &str| {
@@ -8570,6 +8574,7 @@ fn quotes_resolve_row_by_row_and_a_silent_provider_times_out() {
 			unknown.is_err(),
 			chosen,
 			services.funding().get(&intent).and_then(|session| session.choice),
+			offered_after_assign,
 		),
 		(
 			2,
@@ -8582,7 +8587,45 @@ fn quotes_resolve_row_by_row_and_a_silent_provider_times_out() {
 				rail: v01::FundingRail::Card,
 				asset: "EUR".into(),
 			}),
+			None,
 		)
+	);
+}
+
+// A host that closes the quote list while a provider is still pricing drops
+// the stream mid-ask. The worker must not stay held for it, and a worker that
+// starts later must not be handed an ask nobody waits for.
+#[test]
+fn dropping_a_quote_stream_mid_ask_releases_the_worker_and_the_ask() {
+	let services = funding_services();
+	assert!(services.funding().install_platform(RecordingFundingPlatform::answering(
+		crate::platform::FundingPresentOutcome::Started,
+	)));
+	offer_provider(&services, "ramp.dot", RAMP_MANIFEST);
+	let intent = futures::executor::block_on(services.open_funding(
+		None,
+		v01::FundingDirection::In,
+		Some(1_000),
+	))
+	.expect("opened")
+	.intent;
+	let replayed_ask = || {
+		matches!(
+			futures::FutureExt::now_or_never(services.funding().serve("ramp.dot").next()),
+			Some(Some(v01::HostFundingServeSubscribeItem::Quote { .. }))
+		)
+	};
+
+	let mut rows =
+		services.get_funding_quote_within(&intent, card_ask(None), Duration::from_secs(60));
+	let pending = futures::executor::block_on(rows.next()).map(|row| row.state);
+	assert!(futures::FutureExt::now_or_never(rows.next()).is_none(), "unanswered");
+	let mid_ask = (services.worker_ledger.count("ramp.dot"), replayed_ask());
+	drop(rows);
+
+	assert_eq!(
+		(pending, mid_ask, (services.worker_ledger.count("ramp.dot"), replayed_ask())),
+		(Some(crate::platform::FundingQuoteState::Pending), (1, true), (0, false))
 	);
 }
 

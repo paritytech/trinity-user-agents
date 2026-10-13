@@ -70,11 +70,27 @@ impl FundingQuotes {
 			.cloned()
 	}
 
-	fn offer(&self, intent: &str, provider_id: &str, quote: FundingQuote, ask: &FundingQuoteAsk) {
+	/// Keep `quote` as offered for session `intent`, dropping the session's
+	/// quotes from `provider_id` that expired by `now_ms`.
+	fn offer(
+		&self,
+		intent: &str,
+		provider_id: &str,
+		quote: FundingQuote,
+		ask: &FundingQuoteAsk,
+		now_ms: u64,
+	) {
 		let mut offered = lock(&self.offered);
 		let choices = offered.entry((intent.to_string(), provider_id.to_string())).or_default();
-		choices.retain(|kept| kept.quote.quote_id != quote.quote_id);
+		choices
+			.retain(|kept| kept.quote.quote_id != quote.quote_id && !expired(&kept.quote, now_ms));
 		choices.push(FundingChoice { quote, rail: ask.rail, asset: ask.asset.clone() });
+	}
+
+	/// Drop the quotes offered for every session `quotable` rejects: one that
+	/// was assigned or ended can no longer be handed a quote.
+	pub fn retain_sessions(&self, quotable: impl Fn(&str) -> bool) {
+		lock(&self.offered).retain(|(intent, _), _| quotable(intent));
 	}
 
 	/// `provider_id`'s answer to the same ask, when it came recently and, if
@@ -171,18 +187,13 @@ impl RuntimeServices {
 		let answer = match quotes.reusable(provider_id, &ask, current_unix_millis()) {
 			Some(answer) => Some(answer),
 			None => {
-				let registry = self.funding();
-				self.worker_ledger.acquire(provider_id);
-				let (ask_id, answered) = registry.ask_quote(provider_id, ask.clone());
+				let pending = PendingQuote::ask(self, provider_id, ask.clone());
 				let timeout = futures_timer::Delay::new(deadline);
-				let answer = match future::select(answered, timeout).await {
+				let answer = match future::select(pending.answered, timeout).await {
 					Either::Left((Ok(answer), _)) => Some(answer),
-					_ => {
-						registry.withdraw_ask(&ask_id);
-						None
-					},
+					_ => None,
 				};
-				self.worker_ledger.release(provider_id);
+				drop(pending.release);
 				if let Some(answer) = &answer {
 					let now_ms = current_unix_millis();
 					quotes.remember(provider_id, &ask, now_ms, answer.clone());
@@ -207,11 +218,42 @@ impl RuntimeServices {
 				reason: FundingQuoteUnavailable::Refused { reason },
 			},
 			Some(FundingQuoteAnswer::Quoted { quote }) => {
-				quotes.offer(intent, provider_id, quote.clone(), &ask);
+				quotes.offer(intent, provider_id, quote.clone(), &ask, current_unix_millis());
 				FundingQuoteState::Quoted { quote }
 			},
 		};
 		FundingQuoteRow { provider_id: provider_id.to_string(), state }
+	}
+}
+
+/// An ask sent to a provider: the receiver of its answer, and the hold on
+/// the provider's worker.
+struct PendingQuote<'a> {
+	answered: futures::channel::oneshot::Receiver<FundingQuoteAnswer>,
+	release: AskRelease<'a>,
+}
+
+/// Withdraws an ask and releases the provider's worker when dropped, so a
+/// quote stream dropped while it waits leaves neither behind.
+struct AskRelease<'a> {
+	services: &'a RuntimeServices,
+	provider_id: &'a str,
+	ask_id: String,
+}
+
+impl<'a> PendingQuote<'a> {
+	/// Hold `provider_id`'s worker and send it `ask`.
+	fn ask(services: &'a RuntimeServices, provider_id: &'a str, ask: FundingQuoteAsk) -> Self {
+		services.worker_ledger.acquire(provider_id);
+		let (ask_id, answered) = services.funding().ask_quote(provider_id, ask);
+		Self { answered, release: AskRelease { services, provider_id, ask_id } }
+	}
+}
+
+impl Drop for AskRelease<'_> {
+	fn drop(&mut self) {
+		self.services.funding().withdraw_ask(&self.ask_id);
+		self.services.worker_ledger.release(self.provider_id);
 	}
 }
 
@@ -237,4 +279,49 @@ fn expired(quote: &FundingQuote, now_ms: u64) -> bool {
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 	mutex.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+#[cfg(test)]
+mod tests {
+	use truapi::latest::{FundingDirection, FundingRail};
+
+	use super::*;
+
+	const NOW: u64 = 1_700_000_000_000;
+
+	fn quote(quote_id: &str, expires_at: Option<u64>) -> FundingQuote {
+		FundingQuote {
+			quote_id: quote_id.to_string(),
+			send_amount: 1_020,
+			receive_amount: 1_000,
+			provider_fee: 20,
+			network_fee: 0,
+			eta_secs: None,
+			expires_at,
+		}
+	}
+
+	// A host asks again each time the user edits the amount, so a session's
+	// expired quotes are dropped rather than piling up while its overlay is
+	// open.
+	#[test]
+	fn offering_a_quote_drops_the_expired_ones() {
+		let quotes = FundingQuotes::default();
+		let ask = FundingQuoteAsk {
+			direction: FundingDirection::In,
+			rail: FundingRail::Card,
+			asset: "EUR".to_string(),
+			amount: 1_000,
+			country: None,
+		};
+		quotes.offer("fs_1", "ramp.dot", quote("expired", Some(NOW)), &ask, NOW - 1);
+		quotes.offer("fs_1", "ramp.dot", quote("live", None), &ask, NOW);
+
+		let kept: Vec<String> = lock(&quotes.offered)
+			.values()
+			.flatten()
+			.map(|choice| choice.quote.quote_id.clone())
+			.collect();
+		assert_eq!(kept, vec!["live".to_string()]);
+	}
 }

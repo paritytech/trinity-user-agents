@@ -205,14 +205,17 @@ impl FundingRegistry {
 	) -> (String, futures::channel::oneshot::Receiver<FundingQuoteAnswer>) {
 		let ask_id = format!("qa_{}", nanoid::nanoid!(10));
 		let (answer, answered) = futures::channel::oneshot::channel();
+		// Held across both steps so a stream `serve` opens in between neither
+		// misses the ask nor receives it twice, from its replay and here.
+		let mut servers = self.lock_servers();
 		self.lock_asks().insert(
 			ask_id.clone(),
 			PendingAsk { provider_id: provider_id.to_string(), ask: ask.clone(), answer },
 		);
-		self.serve_item(
-			provider_id,
-			HostFundingServeSubscribeItem::Quote { ask_id: ask_id.clone(), ask },
-		);
+		if let Some(senders) = servers.get_mut(provider_id) {
+			let item = HostFundingServeSubscribeItem::Quote { ask_id: ask_id.clone(), ask };
+			senders.retain(|sender| sender.unbounded_send(item.clone()).is_ok());
+		}
 		(ask_id, answered)
 	}
 
@@ -622,6 +625,11 @@ impl FundingRegistry {
 		for provider in &release {
 			services.worker_ledger.release(provider);
 		}
+		services.funding_quotes.retain_sessions(|intent| {
+			sessions
+				.get(intent)
+				.is_some_and(|session| !session.is_terminal() && session.provider_id.is_none())
+		});
 		for session in sessions.values() {
 			let (Some(settlement), Some(provider)) =
 				(session.settlement_due(), session.provider_id.clone())
