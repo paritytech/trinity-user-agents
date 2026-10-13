@@ -1,5 +1,0 @@
-package io.paritytech.polkadotapp.feature_upgrade_username_api.domain.bot
-
-import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.ChatBotMessageProcessor
-
-interface UsernameUpgradedMessageProcessor : ChatBotMessageProcessor

@@ -95,24 +95,26 @@ pub mod latest {
 		AllocatableResource, AllocationOutcome, Arrangement, Background, BlendingMode, BorderStyle,
 		BoxProps, ButtonProps, ButtonVariant, ChainIdentifier, ChatAction, ChatActionLayout,
 		ChatActions, ChatBotRegistrationStatus, ChatCustomMessage, ChatFile, ChatMedia,
-		ChatMessageContent, ChatReaction, ChatRichText, ChatRoom, ChatRoomParticipation,
-		ChatRoomRegistrationStatus, CodeFormat, ColorToken, ColumnProps, ContactHandle,
-		ContactPickOutcome, ContentAlignment, ContextualAlias, DerivationIndex, Dimensions, Effect,
-		EffectProps, FundingAssignment, FundingDirection, FundingFailure, FundingFrameOutcome,
-		FundingFrameTarget, FundingUpdate, GenericError, HorizontalAlignment,
-		HostAccountCreateProofRequest, HostAccountGetAliasRequest,
+		ChatMessageContent, ChatReaction, ChatRichText, ChatRoom, ChatRoomFooter,
+		ChatRoomParticipation, ChatRoomRegistrationStatus, CodeFormat, ColorToken, ColumnProps,
+		ContactHandle, ContactPickOutcome, ContentAlignment, ContextualAlias, DerivationIndex,
+		Dimensions, Effect, EffectProps, FundingAssignment, FundingDirection, FundingFailure,
+		FundingFrameOutcome, FundingFrameTarget, FundingUpdate, GenericError, HorizontalAlignment,
+		HostAccountCreateProofRequest, HostAccountGetAliasRequest, HostAccountGetError,
 		HostAccountListRingVrfKeysRequest, HostAccountRegisterRingVrfKeyRequest,
 		HostAccountRingVrfSignRequest, HostAccountSignVrfError, HostAccountSignVrfRequest,
-		HostPlatform, HostSignPayloadData, HostWorkerOperationError, ImageFit, ImageProps,
-		ImageSource, Modifier, OperationStartedResult, PaymentTopUpSource, PocketCard,
-		ProductAccountId, ProductProofContext, RawPayload, RegisteredRingVrfKey, RemotePermission,
-		RemoteStatementStoreCreateProofError, RemoteStatementStoreCreateProofRequest,
-		RemoteStatementStoreCreateProofResponse, RemoteStatementStoreSubscribeItem,
-		RemoteStatementStoreSubscribeRequest, RenderContext, RendererNode, RingLocation,
-		RingLocationJunction, RingVrfKeyDisclosure, RowProps, RuntimeApi, RuntimeSpec, RuntimeType,
-		ScanOutcome, Shape, SignedStatement, Size, Statement, StatementProof, StorageQueryItem,
-		StorageQueryType, StorageResultItem, TextFieldProps, TextProps, ThemeName, ThemeVariant,
-		TxPayloadExtension, TypographyStyle, VerticalAlignment, VrfSignature,
+		HostPlatform, HostSignPayloadData, HostWorkerBeginOperationRequest,
+		HostWorkerOperationError, ImageFit, ImageProps, ImageSource, Modifier,
+		OperationStartedResult, PaymentTopUpSource, PocketCard, ProductAccountId,
+		ProductProofContext, RawPayload, RegisteredRingVrfKey, RemoteChainTransactionStopRequest,
+		RemotePermission, RemoteStatementStoreCreateProofError,
+		RemoteStatementStoreCreateProofRequest, RemoteStatementStoreCreateProofResponse,
+		RemoteStatementStoreSubscribeItem, RemoteStatementStoreSubscribeRequest, RenderContext,
+		RendererNode, ResourceAllocationError, RingLocation, RingLocationJunction,
+		RingVrfKeyDisclosure, RowProps, RuntimeApi, RuntimeSpec, RuntimeType, ScanOutcome, Shape,
+		SignedStatement, Size, Statement, StatementProof, StorageQueryItem, StorageQueryType,
+		StorageResultItem, TextFieldProps, TextProps, ThemeName, ThemeVariant, TxPayloadExtension,
+		TypographyStyle, VerticalAlignment, VrfSignature,
 	};
 
 	/// Latest payload type of a versioned envelope.
@@ -135,6 +137,10 @@ pub mod latest {
 	pub type HostChatRegisterBotResponse = LatestOf<versioned::chat::HostChatRegisterBotResponse>;
 	/// Native chat bot registration failure.
 	pub type HostChatRegisterBotError = LatestOf<versioned::chat::HostChatRegisterBotError>;
+	/// Request to set what a native chat room shows below its messages.
+	pub type HostChatSetRoomFooterRequest = LatestOf<versioned::chat::HostChatSetRoomFooterRequest>;
+	/// Failure to set what a native chat room shows below its messages.
+	pub type HostChatSetRoomFooterError = LatestOf<versioned::chat::HostChatSetRoomFooterError>;
 	/// Current native room list for a product.
 	pub type HostChatListSubscribeItem = LatestOf<versioned::chat::HostChatListSubscribeItem>;
 	/// Native chat message posting request.
@@ -279,12 +285,23 @@ pub mod latest {
 	pub type HostPocketRemoveCardRequest = LatestOf<versioned::pocket::HostPocketRemoveCardRequest>;
 	/// Pocket card removal failure.
 	pub type HostPocketRemoveCardError = LatestOf<versioned::pocket::HostPocketRemoveCardError>;
+	/// Request to show or hide the face above the calling Widget.
+	pub type HostExpandedCardSetFaceShownRequest =
+		LatestOf<versioned::expanded_card::HostExpandedCardSetFaceShownRequest>;
+	/// Face visibility change failure.
+	pub type HostExpandedCardSetFaceShownError =
+		LatestOf<versioned::expanded_card::HostExpandedCardSetFaceShownError>;
 	/// Push notification scheduling request.
 	pub type HostPushNotificationRequest =
 		LatestOf<versioned::notifications::HostPushNotificationRequest>;
 	/// Push notification scheduling result.
 	pub type HostPushNotificationResponse =
 		LatestOf<versioned::notifications::HostPushNotificationResponse>;
+	/// Login request.
+	pub type HostRequestLoginRequest = LatestOf<versioned::account::HostRequestLoginRequest>;
+	/// Connection state reported to account subscribers.
+	pub type HostAccountConnectionStatusSubscribeItem =
+		LatestOf<versioned::account::HostAccountConnectionStatusSubscribeItem>;
 	/// Login request error.
 	pub type HostRequestLoginError = LatestOf<versioned::account::HostRequestLoginError>;
 	/// Login request result.
@@ -608,95 +625,137 @@ impl<Item, Interrupt> Subscription<Item, Interrupt> {
 	}
 }
 
-/// Applies `#[cfg(feature = "runtime")]` to every item it wraps.
-macro_rules! runtime_items {
-    ($($item:item)*) => { $( #[cfg(feature = "runtime")] $item )* };
-}
+#[cfg(feature = "runtime")]
+pub mod bootstrap;
+#[cfg(feature = "runtime")]
+pub mod chain;
+#[cfg(feature = "runtime")]
+mod chain_runtime;
+#[cfg(feature = "runtime")]
+mod dispatcher;
+#[cfg(feature = "runtime")]
+mod dotns_views;
+#[cfg(feature = "runtime")]
+mod dynamic_vrf;
+#[cfg(feature = "runtime")]
+pub mod frame;
+#[cfg(feature = "runtime")]
+mod host_core;
+#[cfg(feature = "runtime")]
+mod host_internal;
+#[cfg(feature = "runtime")]
+pub mod host_logic;
+#[cfg(feature = "runtime")]
+mod host_rpc_client;
+#[cfg(feature = "runtime")]
+mod interrupt;
+#[cfg(feature = "runtime")]
+pub mod logging;
+#[cfg(feature = "runtime")]
+pub mod platform;
+#[cfg(feature = "runtime")]
+mod protocol_error;
+#[cfg(feature = "runtime")]
+mod runtime;
+#[cfg(feature = "runtime")]
+mod session_usernames;
+#[cfg(feature = "runtime")]
+pub mod subscription;
+#[cfg(feature = "runtime")]
+pub mod transport;
+#[cfg(feature = "runtime")]
+mod truapi_core;
 
-runtime_items! {
-	pub mod bootstrap;
-	pub mod chain;
-	mod chain_runtime;
-	mod truapi_core;
-	mod dispatcher;
-	mod dotns_views;
-	mod dynamic_vrf;
-	pub mod frame;
-	mod host_core;
-	mod host_internal;
-	pub mod host_logic;
-	mod host_rpc_client;
-	mod interrupt;
-	pub mod logging;
-	pub mod platform;
-	mod protocol_error;
-	mod runtime;
-	mod session_usernames;
-	pub mod subscription;
-	pub mod transport;
+#[cfg(feature = "runtime")]
+#[cfg(test)]
+mod test_support;
+#[cfg(feature = "runtime")]
+mod unix_time;
 
-	#[cfg(test)]
-	mod test_support;
-	mod unix_time;
+// Dispatch must keep serving deprecated APIs while clients migrate.
+#[cfg(feature = "runtime")]
+#[allow(deprecated)]
+pub mod generated;
 
-	// Dispatch must keep serving deprecated APIs while clients migrate.
-	#[allow(deprecated)]
-	pub mod generated;
+#[cfg(feature = "runtime")]
+#[cfg(not(target_arch = "wasm32"))]
+pub mod native;
 
-	#[cfg(not(target_arch = "wasm32"))]
-	pub mod native;
+#[cfg(feature = "runtime")]
+#[cfg(target_arch = "wasm32")]
+pub mod wasm;
 
-	#[cfg(target_arch = "wasm32")]
-	pub mod wasm;
+#[cfg(feature = "runtime")]
+#[cfg(not(target_arch = "wasm32"))]
+pub mod native_debug;
 
-	#[cfg(not(target_arch = "wasm32"))]
-	pub mod native_debug;
+#[cfg(feature = "runtime")]
+#[cfg(not(target_arch = "wasm32"))]
+pub mod store;
 
-	#[cfg(not(target_arch = "wasm32"))]
-	pub mod store;
+#[cfg(feature = "runtime")]
+#[cfg(not(target_arch = "wasm32"))]
+pub mod durable;
 
-	pub use truapi_core::TrUApiCore;
-	pub use host_core::{
-		ChannelId, DebugEvent, DebugSink, FrameDirection, FrameSink, HostAdmin, PairingHostRuntime,
-		ProductRuntime, ProductRuntimeControl, ProductRuntimeError, SigningHostRuntime,
-	};
-	pub use host_internal::bulletin::{preimage_cid, preimage_key};
-	pub use host_logic::session::{
-		ExternalPairedSession, SsoSessionInfo, decode_persisted_session, encode_external_paired_session,
-	};
-	pub use host_logic::worker::{WorkerLedger, WorkerTransition};
-	#[cfg(not(target_arch = "wasm32"))]
-	pub use native_debug::{DebugSinkError, WsDebugSink};
-	pub use platform::{
-		CoreStorageKeyDescription, CoreStorageKeyDescriptionError, HostIdentity, PairingHostConfig,
-		PermissionAuthorizationRequest, PermissionAuthorizationStatus, Platform, ProductContext,
-		SigningHostConfig, describe_core_storage_key,
-	};
-	pub use runtime::StatementRenewalTarget;
-	pub use runtime::contacts::contact_handle;
-	pub use runtime::login_failure::reports_exhausted_period;
-	pub use runtime::product_manifest::{encode_cached_root_manifest, manifest_cache_key};
-	pub use runtime::statement_allowance;
-	pub use runtime::{
-		AnnouncedPairing, DevicePairingObserver, MAX_PAIRING_METADATA_CHARS, PairedSsoPeer,
-		PairingProposal, PairingProposalMetadata, ResponderExit,
-	};
+#[cfg(feature = "runtime")]
+pub use truapi_core::TrUApiCore;
 
-	#[cfg(not(target_arch = "wasm32"))]
-	pub use native::{
-		NativeRendererObserver, NativeRendererSubscription, WsBridgeEndpoint, WsBridgeStartError,
-	};
+#[cfg(feature = "runtime")]
+pub use host_core::{
+	ChannelId, DebugEvent, DebugSink, FrameDirection, FrameSink, HostAdmin, PairingHostRuntime,
+	ProductRuntime, ProductRuntimeControl, ProductRuntimeError, SigningHostRuntime,
+};
+#[cfg(feature = "runtime")]
+pub use host_internal::bulletin::{preimage_cid, preimage_key};
+#[cfg(feature = "runtime")]
+pub use host_logic::session::{
+	ExternalPairedSession, SsoSessionInfo, decode_persisted_session, encode_external_paired_session,
+};
+#[cfg(feature = "runtime")]
+pub use host_logic::worker::{WorkerLedger, WorkerTransition};
+#[cfg(feature = "runtime")]
+#[cfg(not(target_arch = "wasm32"))]
+pub use native::{
+	NativeRendererObserver, NativeRendererSubscription, WsBridgeEndpoint, WsBridgeStartError,
+};
+#[cfg(feature = "runtime")]
+#[cfg(not(target_arch = "wasm32"))]
+pub use native_debug::{DebugSinkError, WsDebugSink};
+#[cfg(feature = "runtime")]
+pub use platform::{
+	CoreStorageKeyDescription, CoreStorageKeyDescriptionError, HostIdentity, PairingHostConfig,
+	PermissionAuthorizationRequest, PermissionAuthorizationStatus, Platform, ProductContext,
+	SigningHostConfig, describe_core_storage_key,
+};
+#[cfg(feature = "runtime")]
+pub use runtime::StatementRenewalTarget;
+#[cfg(feature = "runtime")]
+pub use runtime::contacts::contact_handle;
+#[cfg(feature = "runtime")]
+pub use runtime::login_failure::reports_exhausted_period;
+#[cfg(feature = "runtime")]
+pub use runtime::product_manifest::{encode_cached_root_manifest, manifest_cache_key};
+#[cfg(feature = "runtime")]
+pub use runtime::statement_allowance;
+#[cfg(feature = "runtime")]
+pub use runtime::{
+	AnnouncedPairing, DevicePairingObserver, MAX_PAIRING_METADATA_CHARS, PairedSsoPeer,
+	PairingProposal, PairingProposalMetadata, ResponderExit,
+};
+#[cfg(feature = "runtime")]
+pub use unix_time::current_unix_millis;
 
-	#[cfg(all(target_arch = "wasm32", feature = "wasm-signing-host"))]
-	pub use wasm::WasmSigningHostRuntime;
-	#[cfg(target_arch = "wasm32")]
-	pub use wasm::{
-		WasmPairingHostRuntime, WasmProductRuntime, WasmRendererSubscription,
-		derive_product_account_public_key, describe_core_storage_key_for_wasm,
-		has_trusted_remote_permissions_for_wasm, product_account_address, set_log_level,
-		wire_schema_hash,
-	};
-}
+#[cfg(feature = "runtime")]
+#[cfg(all(target_arch = "wasm32", feature = "wasm-signing-host"))]
+pub use wasm::WasmSigningHostRuntime;
+#[cfg(feature = "runtime")]
+#[cfg(target_arch = "wasm32")]
+pub use wasm::{
+	WasmPairingHostRuntime, WasmProductRuntime, WasmRendererSubscription,
+	derive_product_account_public_key, describe_core_storage_key_for_wasm,
+	has_trusted_remote_permissions_for_wasm, product_account_address, set_log_level,
+	wire_schema_hash,
+};
 
 #[cfg(test)]
 mod tests {

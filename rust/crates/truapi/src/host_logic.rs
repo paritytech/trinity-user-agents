@@ -16,6 +16,7 @@ pub mod features;
 pub mod funding;
 pub mod product_account;
 pub mod raw_signing;
+pub mod scanner;
 pub mod session;
 pub mod session_store;
 pub mod sso;

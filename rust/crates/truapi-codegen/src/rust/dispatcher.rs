@@ -228,28 +228,34 @@ impl MethodEmission {
 	) -> Result<Self> {
 		let versioned_wrappers = versioned_wrapper_names(api);
 		let request_payload = match method.params.as_slice() {
-			[] => bail!(
-				"Method `{}`: expected exactly one request parameter, so an empty request needs a \
+			[] => {
+				bail!(
+					"Method `{}`: expected exactly one request parameter, so an empty request needs a \
                  payload-less versioned wrapper",
-				method.name
-			),
+					method.name
+				)
+			},
 			[param] => match &param.type_ref {
 				TypeRef::Named { name, args }
 					if args.is_empty() && versioned_wrappers.contains(name) =>
 				{
 					name.clone()
 				},
-				_ => bail!(
-					"Method `{}`: its request parameter is not a versioned wrapper, so it has no \
+				_ => {
+					bail!(
+						"Method `{}`: its request parameter is not a versioned wrapper, so it has no \
                      representable wire payload",
-					method.name
-				),
+						method.name
+					)
+				},
 			},
-			_ => bail!(
-				"Method `{}`: expected at most one request parameter (got {})",
-				method.name,
-				method.params.len()
-			),
+			_ => {
+				bail!(
+					"Method `{}`: expected at most one request parameter (got {})",
+					method.name,
+					method.params.len()
+				)
+			},
 		};
 		let error_payload = match &method.return_type {
 			ReturnType::Result { err, .. } => {

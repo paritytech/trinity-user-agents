@@ -16,12 +16,10 @@ import io.paritytech.polkadotapp.feature_coinage_api.domain.debug.CoinageDebugSe
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsResolver
 import io.paritytech.polkadotapp.feature_products_api.domain.runtime.ProductRuntimeSettings
 import io.paritytech.polkadotapp.feature_products_api.presentation.SpaBrowserPayload
-import io.paritytech.polkadotapp.feature_videogame_impl.data.gameResults.GameResultsWebViewPreloader
-import io.paritytech.polkadotapp.feature_videogame_impl.domain.gameResults.GameResultsMock
-import io.paritytech.polkadotapp.feature_videogame_impl.presentation.gameResults.GameResultsPayload
 import io.paritytech.polkadotapp.tools_jwt_auth_impl.data.store.JWTTokenStore
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.update
+import uniffi.truapi.truapiHostVersion
 import javax.inject.Inject
 
 @HiltViewModel
@@ -35,22 +33,16 @@ class DebugMenuViewModel @Inject constructor(
     private val randomizeAccountUseCase: RandomizeAccountUseCase,
     private val dotNsResolver: DotNsResolver,
     private val jwtTokenStore: JWTTokenStore,
-    private val gameResultsPreloader: GameResultsWebViewPreloader,
     private val coinageDebugSettings: CoinageDebugSettings,
     private val productRuntimeSettings: ProductRuntimeSettings,
     private val restartAppUseCase: RestartAppUseCase,
 ) : BaseViewModel(), DebugMenuContract {
-    override val state = MutableStateFlow(DebugMenuState())
+    override val state = MutableStateFlow(DebugMenuState(truapiHostVersion = truapiHostVersion()))
 
     init {
         refreshJWTTokenState()
         refreshCoinageDebugWidgetsState()
         refreshTruapiRuntimeState()
-
-        // No game state drives this screen, so the game-state initializer
-        // never preloads the results WebView. Warm it directly so the
-        // simulate button isn't sitting on a cold load.
-        gameResultsPreloader.startWithRetry()
     }
 
     override fun onBackClick() {
@@ -79,16 +71,8 @@ class DebugMenuViewModel @Inject constructor(
         clipboardService.setPrimaryClip(getAddressUseCase.wallet())
     }
 
-    override fun onCopyCandidateAccountClick() = launchUnit {
-        clipboardService.setPrimaryClip(getAddressUseCase.candidate())
-    }
-
     override fun onCopyWalletMnemonicClick() = launchUnit {
         clipboardService.setPrimaryClip(getWalletMnemonicUseCase().words)
-    }
-
-    override fun onOpenVideoGameClick() {
-        router.openVideoGame()
     }
 
     override fun onProductBotsClick() {
@@ -124,11 +108,6 @@ class DebugMenuViewModel @Inject constructor(
     override fun onClearJWTTokenClick() {
         jwtTokenStore.deleteToken()
         refreshJWTTokenState()
-    }
-
-    override fun onSimulateGameResultsClick() {
-        val payload = GameResultsPayload.from(GameResultsMock.happyPath(), showTopBar = true)
-        router.openSimulatedGameResults(payload)
     }
 
     override fun onCoinageDebugWidgetsToggled(enabled: Boolean) = launchUnit {

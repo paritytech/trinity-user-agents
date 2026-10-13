@@ -1,6 +1,7 @@
 import UIKit
 import Coinage
 import ChainRegistry
+import Products
 
 @MainActor
 final class SearchAccountWireframe: SearchAccountWireframeProtocol {
@@ -40,5 +41,13 @@ final class SearchAccountWireframe: SearchAccountWireframeProtocol {
 
     func showChat(_ model: ChatOpenModel) {
         moduleNavigator.openChat(model)
+    }
+
+    func showProduct(page: ProductPage) {
+        moduleNavigator.openProduct(page: page)
+    }
+
+    func close(from view: SearchAccountViewProtocol?) {
+        view?.controller.navigationController?.popViewController(animated: false)
     }
 }
