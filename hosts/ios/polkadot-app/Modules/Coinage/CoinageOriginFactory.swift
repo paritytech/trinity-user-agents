@@ -9,7 +9,7 @@ import ChainRegistry
 import StructuredConcurrency
 
 /// App-side factory implementing OriginCreating.
-/// Checks DetermineStatePersonDataStore to decide between People and LitePeople paths.
+/// Provides origin definitions for extrinsics with optional ring membership proofs for both full and lite people paths.
 final class CoinageOriginFactory: ExtrinsicOriginFactory, OriginCreating {
     let chain: ChainProtocol
     private let connection: JSONRPCEngine

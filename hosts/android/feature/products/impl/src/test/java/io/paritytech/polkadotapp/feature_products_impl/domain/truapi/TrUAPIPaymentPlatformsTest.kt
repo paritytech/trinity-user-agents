@@ -179,7 +179,7 @@ class TrUAPIPaymentPlatformsTest {
         assertEquals(
             listOf(
                 HostPaymentStatusSubscribeItem.Processing,
-                HostPaymentStatusSubscribeItem.PartiallyClaimed(actualClaimed = "9"),
+                HostPaymentStatusSubscribeItem.ClaimedPartially(actualClaimed = "9"),
             ),
             pushedPayments.awaitSize(2),
         )

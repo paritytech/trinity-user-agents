@@ -296,7 +296,7 @@ private fun TopUpStatus.toNative(): HostPaymentTopUpStatusSubscribeItem = when (
 private fun PaymentStatus.toNative(): HostPaymentStatusSubscribeItem = when (this) {
     PaymentStatus.Processing -> HostPaymentStatusSubscribeItem.Processing
     PaymentStatus.Completed -> HostPaymentStatusSubscribeItem.Completed
-    is PaymentStatus.PartiallyClaimed -> HostPaymentStatusSubscribeItem.PartiallyClaimed(actualClaimed = claimed.value.toString())
+    is PaymentStatus.PartiallyClaimed -> HostPaymentStatusSubscribeItem.ClaimedPartially(actualClaimed = claimed.value.toString())
     is PaymentStatus.Failed -> HostPaymentStatusSubscribeItem.Failed(reason = reason)
 }
 
