@@ -14,17 +14,17 @@ import androidx.compose.ui.unit.dp
 import io.paritytech.polkadotapp.design.components.icon.NovaIcon
 import io.paritytech.polkadotapp.design.components.icon.NovaIcons
 import io.paritytech.polkadotapp.design.components.icon.vectors.ArrowRight
-import io.paritytech.polkadotapp.design.components.icon.vectors.ArrowUpRight
+import io.paritytech.polkadotapp.design.components.icon.vectors.CardSent
 import io.paritytech.polkadotapp.design.components.surface.PolkadotSurface
 import io.paritytech.polkadotapp.design.components.text.NovaText
 import io.paritytech.polkadotapp.design.theme.PolkadotTheme
 import io.paritytech.polkadotapp.common.R as RCommon
 
 private val ICON_SIZE = 40.dp
-private val GLYPH_SIZE = 20.dp
-private val CHEVRON_SIZE = 16.dp
+private val GLYPH_SIZE = 24.dp
+private val CHEVRON_SIZE = 18.dp
 
-/** Sending value out of the pocket, to a bank, a card or a crypto wallet. */
+/** Moving money out of the pocket, to a bank, a card or a crypto wallet. */
 @Composable
 fun OutsidePocketRow(
     onClick: () -> Unit,
@@ -32,7 +32,8 @@ fun OutsidePocketRow(
 ) {
     PolkadotSurface(
         modifier = modifier,
-        color = PolkadotTheme.colors.bg.surface.main,
+        shape = PolkadotTheme.shapes.large,
+        color = PolkadotTheme.colors.bg.surface.container,
         onClick = onClick,
     ) {
         Row(
@@ -45,10 +46,10 @@ fun OutsidePocketRow(
             PolkadotSurface(
                 modifier = Modifier.size(ICON_SIZE),
                 shape = PolkadotTheme.shapes.full,
-                color = PolkadotTheme.colors.bg.surface.nested,
+                color = PolkadotTheme.colors.bg.action.tertiary,
                 contentAlignment = Alignment.Center,
             ) {
-                NovaIcon(modifier = Modifier.size(GLYPH_SIZE), imageVector = NovaIcons.ArrowUpRight, tint = PolkadotTheme.colors.fg.primary)
+                NovaIcon(modifier = Modifier.size(GLYPH_SIZE), imageVector = NovaIcons.CardSent, tint = PolkadotTheme.colors.fg.primary)
             }
 
             Column(modifier = Modifier.weight(1f)) {

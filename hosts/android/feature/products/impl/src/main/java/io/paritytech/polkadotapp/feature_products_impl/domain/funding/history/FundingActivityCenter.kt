@@ -4,11 +4,9 @@ import io.paritytech.polkadotapp.common.utils.logFailure
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingActivity
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingActivityItem
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingActivityStatus
-import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingActivityStep
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingRailType
 import io.paritytech.polkadotapp.feature_products_impl.data.repository.FundingHistoryRepository
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingRuntime
-import io.paritytech.polkadotapp.feature_products_impl.domain.funding.isOpen
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.toBalance
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.toDomain
 import kotlinx.coroutines.delay
@@ -23,7 +21,7 @@ import uniffi.truapi.FundingDirection
 import uniffi.truapi.FundingProgress
 import uniffi.truapi.FundingRail
 import uniffi.truapi.FundingSession
-import uniffi.truapi.FundingStep
+import uniffi.truapi.FundingStage
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlin.time.Clock
@@ -34,8 +32,8 @@ import kotlin.time.Instant
  * The CASH card's funding lists: sessions still in the core, then the ended ones the host keeps.
  *
  * An ended session is written to the host's store, then acknowledged, after which the core drops it. Outbound
- * value waits for its payout outcome, or a day, before it is acknowledged, and its row is rewritten if the
- * payout arrives in that time.
+ * value waits for its payout outcome, or a day, before it is acknowledged; while it waits it stays in progress, and
+ * its row is rewritten once the payout arrives.
  */
 @Singleton
 class FundingActivityCenter @Inject constructor(
@@ -65,15 +63,16 @@ class FundingActivityCenter @Inject constructor(
         val entries = runtime.sessions().map { it to runtime.progress(it.intent) }
 
         val inFlight = entries
-            .filter { (session, _) -> session.stage.isOpen }
+            .filter { (session, progress) -> FundingSessionStatus.isInFlight(session, progress) }
             .map { (session, progress) -> inFlightItem(session, progress, now) }
+        val inFlightIds = inFlight.mapTo(mutableSetOf()) { it.id }
 
         val ended = entries.mapNotNull { (session, progress) -> FundingRecord.of(session, progress) }
         settle(ended, now)
 
         val stored = history.records().logFailure("Funding history read failed").getOrDefault(emptyList())
         val storedIds = stored.mapTo(mutableSetOf()) { it.intent }
-        val records = stored + ended.filter { it.intent !in storedIds }
+        val records = (stored + ended.filter { it.intent !in storedIds }).filter { it.intent !in inFlightIds }
 
         return FundingActivity(
             inFlight = inFlight,
@@ -92,51 +91,19 @@ class FundingActivityCenter @Inject constructor(
     }
 
     private fun inFlightItem(session: FundingSession, progress: FundingProgress?, now: Instant): FundingActivityItem {
-        val step = step(session, progress)
         val choice = session.choice
+        val inbound = session.direction == FundingDirection.IN
+        val debited = (session.stage as? FundingStage.Released)?.debited
+        val quoted = choice?.quote?.let { if (inbound) it.receiveAmount else it.sendAmount }
 
         return FundingActivityItem(
             id = session.intent,
             direction = session.direction.toDomain(),
             rail = choice?.rail?.toType(),
-            amount = (session.amount ?: choice?.quote?.let { if (session.direction == FundingDirection.IN) it.receiveAmount else it.sendAmount })
-                ?.toBalance(),
+            amount = (debited ?: session.amount ?: quoted)?.toBalance(),
             date = Instant.fromEpochMilliseconds(session.openedAtMs.toLong()),
-            status = FundingActivityStatus.InProgress(
-                step = step,
-                delayed = step != FundingActivityStep.Retrying && isDelayed(session, progress, now),
-            ),
+            status = FundingSessionStatus.of(session, progress, now),
         )
-    }
-
-    private fun step(session: FundingSession, progress: FundingProgress?): FundingActivityStep {
-        if (progress?.retrying == true) return FundingActivityStep.Retrying
-
-        val reached = progress?.steps.orEmpty().filter { it.reachedAtMs != null }.map { it.step }.toSet()
-        val choice = session.choice
-
-        return when (session.direction) {
-            FundingDirection.IN -> when {
-                FundingStep.CONVERSION in reached -> FundingActivityStep.Converting
-                choice != null && choice.rail != FundingRail.CARD && FundingStep.PAYMENT !in reached ->
-                    FundingActivityStep.WaitingForTransfer
-
-                else -> FundingActivityStep.Upcoming
-            }
-
-            FundingDirection.OUT -> if (FundingStep.CONVERSION in reached && choice != null) {
-                FundingActivityStep.ConvertingOut(choice.asset)
-            } else {
-                FundingActivityStep.TransactionInitiated
-            }
-        }
-    }
-
-    /** Slower than the provider said: the latest step is older than the time the chosen quote gave. */
-    private fun isDelayed(session: FundingSession, progress: FundingProgress?, now: Instant): Boolean {
-        val eta = session.choice?.quote?.etaSecs ?: return false
-        val latestMs = progress?.steps.orEmpty().mapNotNull { it.reachedAtMs }.maxOrNull() ?: session.openedAtMs
-        return now - Instant.fromEpochMilliseconds(latestMs.toLong()) > eta.toLong().seconds
     }
 
     private fun FundingRecord.toItem() = FundingActivityItem(

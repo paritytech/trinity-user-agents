@@ -5,6 +5,7 @@ import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
 import io.paritytech.polkadotapp.common.data.network.TestnetEnvironment
+import io.paritytech.polkadotapp.common.presentation.paymentAsset.PaymentAssetBrand
 import io.paritytech.polkadotapp.common.presentation.screens.BaseViewModelEvent
 import io.paritytech.polkadotapp.feature_coinage_api.domain.model.BackupProgress
 import io.paritytech.polkadotapp.feature_coinage_api.domain.service.CoinageBackupService
@@ -15,6 +16,7 @@ import io.paritytech.polkadotapp.feature_wallet_impl.domain.interactor.DigitalDo
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOf
@@ -128,6 +130,7 @@ class DigitalDollarCardDetailsViewModelTest {
     private fun createViewModel() = DigitalDollarCardDetailsViewModel(
         interactor = interactor,
         router = mockk(),
-        tokenAmountMapper = mockk()
+        tokenAmountMapper = mockk(),
+        paymentAssetBrandProvider = mockk { every { brand } returns MutableStateFlow(PaymentAssetBrand.mocked) }
     )
 }

@@ -22,10 +22,10 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.chatRequest.ChatReques
 import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.ChatBotStateController
 import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.ChatOverlay
 import io.paritytech.polkadotapp.feature_chats_impl.domain.ChatEngine
+import io.paritytech.polkadotapp.feature_coinage_api.domain.deposit.AutoConvertDepositService
 import io.paritytech.polkadotapp.feature_coinage_api.domain.externalPayment.ExternalPaymentWorkerStarter
 import io.paritytech.polkadotapp.feature_coinage_api.domain.service.CoinageServiceStarter
 import io.paritytech.polkadotapp.feature_connection_status_api.presentation.mixin.ChainHealthMixin
-import io.paritytech.polkadotapp.feature_coinage_api.domain.deposit.AutoConvertDepositService
 import io.paritytech.polkadotapp.feature_products_impl.domain.exploreProducts.ExploreProductsService
 import io.paritytech.polkadotapp.feature_settings_impl.domain.interactors.SyncPriceCurrencyChange
 import io.paritytech.polkadotapp.feature_splash_api.presentation.SplashPassedObserver

@@ -21,7 +21,10 @@ import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.Fund
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.compose.components.FundingHeader
 import io.paritytech.polkadotapp.common.R as RCommon
 
-/** Where the user pays from. Countries every provider on this rail refuses are listed apart and cannot be picked. */
+/**
+ * Where the user pays from. Countries every provider on this rail refuses, or whose minimum is above the amount,
+ * are listed apart and cannot be picked.
+ */
 @Composable
 fun FundingCountryScreen(
     state: FundingCountryUiState,
@@ -53,6 +56,11 @@ fun FundingCountryScreen(
 
             items(state.supported, key = { it.code }) { CountryRow(country = it, onClick = onCountry) }
 
+            if (state.belowMinimum.isNotEmpty()) {
+                sectionTitle(RCommon.string.funding_country_minimum_section)
+                items(state.belowMinimum, key = { "minimum-${it.code}" }) { CountryRow(country = it, onClick = onCountry) }
+            }
+
             if (state.unsupported.isNotEmpty()) {
                 sectionTitle(RCommon.string.funding_country_unsupported)
                 items(state.unsupported, key = { "unsupported-${it.code}" }) { CountryRow(country = it, onClick = onCountry) }
@@ -78,7 +86,7 @@ private fun CountryRow(country: FundingCountryUi, onClick: (String) -> Unit) {
         modifier = Modifier.fillMaxWidth(),
         shape = PolkadotTheme.shapes.large,
         color = if (country.selected) PolkadotTheme.colors.bg.surface.nested else PolkadotTheme.colors.bg.surface.main,
-        enabled = !country.refused,
+        enabled = country.enabled,
         onClick = { onClick(country.code) },
     ) {
         Row(
@@ -91,14 +99,18 @@ private fun CountryRow(country: FundingCountryUi, onClick: (String) -> Unit) {
                 NovaText(
                     text = country.name,
                     style = PolkadotTheme.typography.body.mediumEmphasized,
-                    color = if (country.refused) PolkadotTheme.colors.fg.tertiary else PolkadotTheme.colors.fg.primary,
+                    color = if (country.enabled) PolkadotTheme.colors.fg.primary else PolkadotTheme.colors.fg.tertiary,
                 )
-                val subtitle = if (country.refused) stringResource(RCommon.string.funding_country_refused) else country.currencyName
+                val subtitle = when {
+                    country.refused -> stringResource(RCommon.string.funding_country_refused)
+                    country.minimum != null -> stringResource(RCommon.string.funding_country_minimum, country.minimum)
+                    else -> country.currencyName
+                }
                 if (subtitle != null) {
                     NovaText(
                         text = subtitle,
                         style = PolkadotTheme.typography.body.small,
-                        color = if (country.refused) PolkadotTheme.colors.fg.tertiary else PolkadotTheme.colors.fg.secondary,
+                        color = if (country.enabled) PolkadotTheme.colors.fg.secondary else PolkadotTheme.colors.fg.tertiary,
                     )
                 }
             }

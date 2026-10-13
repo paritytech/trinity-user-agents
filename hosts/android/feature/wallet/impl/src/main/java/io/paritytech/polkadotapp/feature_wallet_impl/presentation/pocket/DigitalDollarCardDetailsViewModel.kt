@@ -5,6 +5,7 @@ import io.paritytech.polkadotapp.chains.multiNetwork.chain.model.Chain
 import io.paritytech.polkadotapp.chains.multiNetwork.chain.model.withAmount
 import io.paritytech.polkadotapp.common.BuildConfig
 import io.paritytech.polkadotapp.common.presentation.loading.LoadingState
+import io.paritytech.polkadotapp.common.presentation.paymentAsset.PaymentAssetBrandProvider
 import io.paritytech.polkadotapp.common.presentation.screens.BaseViewModel
 import io.paritytech.polkadotapp.common.presentation.ui.errors.PresentationThrowable
 import io.paritytech.polkadotapp.common.utils.disable
@@ -41,7 +42,8 @@ import kotlin.time.Clock
 class DigitalDollarCardDetailsViewModel @Inject constructor(
     private val interactor: DigitalDollarCardDetailsInteractor,
     private val router: PocketRouter,
-    private val tokenAmountMapper: TokenAmountMapper
+    private val tokenAmountMapper: TokenAmountMapper,
+    private val paymentAssetBrandProvider: PaymentAssetBrandProvider
 ) : BaseViewModel() {
     private companion object {
         const val FUNDING_ACTIVITY_STOP_TIMEOUT = 5_000L
@@ -94,8 +96,10 @@ class DigitalDollarCardDetailsViewModel @Inject constructor(
             )
         )
 
-    val fundingActivity: StateFlow<FundingActivityUiState> = interactor.observeFundingActivity()
-        .map { activity -> FundingActivityMapper(interactor.asset(), tokenAmountMapper, Clock.System.now()).map(activity) }
+    val fundingActivity: StateFlow<FundingActivityUiState> = combine(
+        interactor.observeFundingActivity(),
+        paymentAssetBrandProvider.brand
+    ) { activity, brand -> FundingActivityMapper(interactor.asset(), brand.symbol, Clock.System.now()).map(activity) }
         .stateIn(
             scope = this,
             started = SharingStarted.WhileSubscribed(FUNDING_ACTIVITY_STOP_TIMEOUT),

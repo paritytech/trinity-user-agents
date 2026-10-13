@@ -26,9 +26,9 @@ import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.Fund
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.FundingSummaryUiState
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.compose.components.FundingCard
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.compose.components.FundingHeader
-import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.compose.components.fundingProblemText
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.compose.components.FundingInfoRow
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.compose.components.FundingProviderLogo
+import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.compose.components.fundingProblemText
 import uniffi.truapi.FundingRail
 import io.paritytech.polkadotapp.common.R as RCommon
 

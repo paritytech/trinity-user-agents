@@ -137,6 +137,15 @@ private fun Price(price: FundingProviderPrice?) {
                 Shimmer(modifier = Modifier.width(CAPTION_SKELETON_WIDTH).height(SKELETON_HEIGHT))
             }
 
+            is FundingProviderPrice.Updating -> {
+                Shimmer(modifier = Modifier.width(PRICE_SKELETON_WIDTH).height(SKELETON_HEIGHT))
+                NovaText(
+                    text = stringResource(RCommon.string.funding_providers_for, price.forAmount),
+                    style = PolkadotTheme.typography.caption.medium,
+                    color = PolkadotTheme.colors.fg.secondary,
+                )
+            }
+
             is FundingProviderPrice.Quoted -> {
                 NovaText(
                     text = "≈ ${price.price}",

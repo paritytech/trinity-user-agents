@@ -3,7 +3,6 @@ package io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingActivityStep
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingFailureReason
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingRailType
-import io.paritytech.polkadotapp.feature_tokens_api.presentation.model.TokenAmountModel
 import kotlinx.collections.immutable.ImmutableList
 
 /** The CASH card's funding lists: what is in progress, then the history by day. */
@@ -30,8 +29,8 @@ data class FundingActivityRowUi(
     val title: FundingRowTitle,
     val subtitle: FundingRowSubtitle,
     val icon: FundingRowIcon,
-    val amount: TokenAmountModel?,
-    val amountSign: String,
+    /** "+$50 CASH" while moving or once moved, "$50 CASH" when nothing moved. */
+    val amount: String?,
     val amountTone: FundingAmountTone,
 )
 
@@ -42,8 +41,7 @@ enum class FundingRowTitle {
     SENT,
     REFUNDED,
     PAYOUT_FAILED,
-    TOP_UP_FAILED,
-    WITHDRAW_FAILED,
+    FAILED,
 }
 
 sealed interface FundingRowSubtitle {
@@ -53,7 +51,7 @@ sealed interface FundingRowSubtitle {
 
     data class Ended(val rail: FundingRailType?, val moment: FundingMoment) : FundingRowSubtitle
 
-    /** "Failed · " and why. */
+    /** Why the session failed. */
     data class Failed(val reason: FundingFailureReason) : FundingRowSubtitle
 }
 

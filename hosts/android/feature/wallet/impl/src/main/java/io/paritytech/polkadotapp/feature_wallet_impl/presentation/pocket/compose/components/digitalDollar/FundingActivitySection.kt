@@ -6,25 +6,24 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
-import androidx.compose.ui.draw.scale
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import io.paritytech.polkadotapp.common.presentation.paymentAsset.LocalPaymentAssetBrand
 import io.paritytech.polkadotapp.design.components.icon.NovaIcon
 import io.paritytech.polkadotapp.design.components.icon.NovaIcons
-import io.paritytech.polkadotapp.design.components.icon.vectors.ArrowDownward
-import io.paritytech.polkadotapp.design.components.icon.vectors.ArrowUpward
+import io.paritytech.polkadotapp.design.components.icon.vectors.ArrowDropdown
+import io.paritytech.polkadotapp.design.components.icon.vectors.CardReceived
+import io.paritytech.polkadotapp.design.components.icon.vectors.CardSent
 import io.paritytech.polkadotapp.design.components.icon.vectors.Close
 import io.paritytech.polkadotapp.design.components.progress.NovaCircularProgressIndicator
 import io.paritytech.polkadotapp.design.components.spacer.VerticalSpacer
@@ -33,32 +32,31 @@ import io.paritytech.polkadotapp.design.components.text.NovaText
 import io.paritytech.polkadotapp.design.theme.PolkadotTheme
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingActivityStep
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingRailType
-import io.paritytech.polkadotapp.feature_products_api.presentation.funding.failedText
-import io.paritytech.polkadotapp.feature_tokens_api.presentation.formatter.LocalTokenAmountFormatter
-import io.paritytech.polkadotapp.feature_tokens_api.presentation.model.RoundPrecision
+import io.paritytech.polkadotapp.feature_products_api.domain.funding.reasonText
+import io.paritytech.polkadotapp.feature_products_api.presentation.funding.text
+import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.FundingActivityDayUi
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.FundingActivityRowUi
-import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.FundingActivityUiState
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.FundingAmountTone
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.FundingDayTitle
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.FundingMoment
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.FundingRowIcon
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.FundingRowSubtitle
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.FundingRowTitle
+import kotlinx.collections.immutable.ImmutableList
 import io.paritytech.polkadotapp.common.R as RCommon
 
 private val ICON_SIZE = 48.dp
-private val GLYPH_SIZE = 20.dp
-private val SPINNER_SIZE = 20.dp
+private val GLYPH_SIZE = 24.dp
+private val SPINNER_SIZE = 24.dp
+private val COUNT_SPINNER_SIZE = 32.dp
 private val SPINNER_STROKE = 2.dp
-private val STACK_STEP = 10.dp
-private const val STACK_DEPTH = 3
-private const val STACK_SCALE_STEP = 0.04f
-private const val STACK_BEHIND_ALPHA = 0.6f
+private val DIVIDER_HEIGHT = 1.dp
+private val CHEVRON_SIZE = 24.dp
 
-/** What is in progress, stacked when there is more than one, then the history by day. */
+/** The ended sessions by day, newest first. */
 @Composable
-fun FundingActivitySection(
-    state: FundingActivityUiState,
+fun FundingHistorySection(
+    days: ImmutableList<FundingActivityDayUi>,
     onRowClick: (id: String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -66,11 +64,7 @@ fun FundingActivitySection(
         modifier = modifier,
         verticalArrangement = Arrangement.spacedBy(PolkadotTheme.spacings.medium),
     ) {
-        if (state.inFlight.isNotEmpty()) {
-            InProgress(rows = state.inFlight, onRowClick = onRowClick)
-        }
-
-        state.days.forEach { day ->
+        days.forEach { day ->
             Column {
                 NovaText(
                     modifier = Modifier.padding(bottom = PolkadotTheme.spacings.small),
@@ -78,7 +72,76 @@ fun FundingActivitySection(
                     style = PolkadotTheme.typography.title.small,
                     color = PolkadotTheme.colors.fg.primary,
                 )
-                day.rows.forEach { row ->
+                day.rows.forEachIndexed { index, row ->
+                    if (index > 0) RowDivider()
+                    FundingActivityRow(modifier = Modifier.clickable { onRowClick(row.id) }, row = row)
+                }
+            }
+        }
+    }
+}
+
+/**
+ * The newest session in flight, under the balance. With more than one the spinner counts them and a tap lists
+ * them all; with one a tap opens it.
+ */
+@Composable
+fun FundingInProgressDock(
+    rows: ImmutableList<FundingActivityRowUi>,
+    onExpand: () -> Unit,
+    onRowClick: (id: String) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val top = rows.firstOrNull() ?: return
+    val several = rows.size > 1
+
+    PolkadotSurface(
+        modifier = modifier.fillMaxWidth(),
+        shape = PolkadotTheme.shapes.large,
+        color = PolkadotTheme.colors.bg.surface.container,
+        onClick = { if (several) onExpand() else onRowClick(top.id) },
+    ) {
+        FundingActivityRow(
+            modifier = Modifier.padding(horizontal = PolkadotTheme.spacings.medium),
+            row = top,
+            count = rows.size.takeIf { several },
+        )
+    }
+}
+
+/** Every session in flight, laid over the card until collapsed. */
+@Composable
+fun FundingInProgressPanel(
+    rows: ImmutableList<FundingActivityRowUi>,
+    onCollapse: () -> Unit,
+    onRowClick: (id: String) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    PolkadotSurface(
+        modifier = modifier.fillMaxWidth(),
+        shape = PolkadotTheme.shapes.large,
+        color = PolkadotTheme.colors.bg.surface.container,
+    ) {
+        Column(modifier = Modifier.padding(horizontal = PolkadotTheme.spacings.medium)) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable(onClick = onCollapse)
+                    .padding(vertical = PolkadotTheme.spacings.medium),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                NovaText(
+                    modifier = Modifier.weight(1f),
+                    text = stringResource(RCommon.string.funding_activity_in_progress),
+                    style = PolkadotTheme.typography.title.small,
+                    color = PolkadotTheme.colors.fg.primary,
+                )
+                NovaIcon(modifier = Modifier.size(CHEVRON_SIZE), imageVector = NovaIcons.ArrowDropdown, tint = PolkadotTheme.colors.fg.primary)
+            }
+
+            LazyColumn {
+                itemsIndexed(rows, key = { _, row -> row.id }) { index, row ->
+                    if (index > 0) RowDivider()
                     FundingActivityRow(modifier = Modifier.clickable { onRowClick(row.id) }, row = row)
                 }
             }
@@ -87,59 +150,18 @@ fun FundingActivitySection(
 }
 
 @Composable
-private fun InProgress(rows: List<FundingActivityRowUi>, onRowClick: (id: String) -> Unit) {
-    var expanded by remember { mutableStateOf(false) }
-
-    Column(verticalArrangement = Arrangement.spacedBy(PolkadotTheme.spacings.small)) {
-        NovaText(
-            text = stringResource(RCommon.string.funding_activity_in_progress, rows.size),
-            style = PolkadotTheme.typography.title.small,
-            color = PolkadotTheme.colors.fg.primary,
-        )
-
-        if (rows.size > 1 && !expanded) {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(bottom = STACK_STEP * (minOf(rows.size, STACK_DEPTH) - 1))
-                    .clickable { expanded = true },
-            ) {
-                rows.take(STACK_DEPTH).withIndex().reversed().forEach { (index, row) ->
-                    InProgressCard(
-                        modifier = Modifier
-                            .offset(y = STACK_STEP * index)
-                            .scale(1f - STACK_SCALE_STEP * index)
-                            .alpha(if (index == 0) 1f else STACK_BEHIND_ALPHA),
-                        row = row,
-                        onClick = null,
-                    )
-                }
-            }
-        } else {
-            rows.forEach { row -> InProgressCard(row = row, onClick = { onRowClick(row.id) }) }
-        }
-    }
-}
-
-@Composable
-private fun InProgressCard(row: FundingActivityRowUi, onClick: (() -> Unit)?, modifier: Modifier = Modifier) {
+private fun RowDivider() {
     PolkadotSurface(
-        modifier = modifier.fillMaxWidth(),
-        shape = PolkadotTheme.shapes.large,
-        color = PolkadotTheme.colors.bg.surface.container,
-        enabled = onClick != null,
-        onClick = onClick,
-    ) {
-        FundingActivityRow(
-            modifier = Modifier.padding(horizontal = PolkadotTheme.spacings.medium),
-            row = row,
-        )
-    }
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(start = ICON_SIZE + PolkadotTheme.spacings.medium)
+            .height(DIVIDER_HEIGHT),
+        color = PolkadotTheme.colors.bg.surface.nested,
+    ) {}
 }
 
 @Composable
-private fun FundingActivityRow(row: FundingActivityRowUi, modifier: Modifier = Modifier) {
-    val formatter = LocalTokenAmountFormatter.current
+private fun FundingActivityRow(row: FundingActivityRowUi, modifier: Modifier = Modifier, count: Int? = null) {
     val warning = row.icon == FundingRowIcon.IN_PROGRESS_WARNING
 
     Row(
@@ -147,9 +169,9 @@ private fun FundingActivityRow(row: FundingActivityRowUi, modifier: Modifier = M
             .fillMaxWidth()
             .padding(vertical = PolkadotTheme.spacings.smallIncreased),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(PolkadotTheme.spacings.smallIncreased),
+        horizontalArrangement = Arrangement.spacedBy(PolkadotTheme.spacings.medium),
     ) {
-        RowIcon(row.icon)
+        RowIcon(row.icon, count)
 
         Column(modifier = Modifier.weight(1f)) {
             NovaText(
@@ -167,7 +189,7 @@ private fun FundingActivityRow(row: FundingActivityRowUi, modifier: Modifier = M
 
         if (row.amount != null) {
             NovaText(
-                text = row.amountSign + formatter.formatTokenAmount(row.amount, RoundPrecision.DEFAULT, withSymbol = true),
+                text = row.amount,
                 style = PolkadotTheme.typography.body.mediumEmphasized,
                 color = when (row.amountTone) {
                     FundingAmountTone.SUCCESS -> PolkadotTheme.colors.fg.success
@@ -180,12 +202,12 @@ private fun FundingActivityRow(row: FundingActivityRowUi, modifier: Modifier = M
 }
 
 @Composable
-private fun RowIcon(icon: FundingRowIcon) {
+private fun RowIcon(icon: FundingRowIcon, count: Int?) {
     val (background, tint) = when (icon) {
         FundingRowIcon.IN_PROGRESS -> PolkadotTheme.colors.bg.surface.nested to PolkadotTheme.colors.fg.primary
         FundingRowIcon.IN_PROGRESS_WARNING -> PolkadotTheme.colors.bg.status.warning to PolkadotTheme.colors.fg.warning
-        FundingRowIcon.MOVED_IN -> PolkadotTheme.colors.bg.surface.containerInverted to PolkadotTheme.colors.fg.primaryInverted
-        FundingRowIcon.MOVED_OUT -> PolkadotTheme.colors.bg.surface.nested to PolkadotTheme.colors.fg.primary
+        FundingRowIcon.MOVED_IN -> PolkadotTheme.colors.bg.illustration.dark to PolkadotTheme.colors.fg.primaryInverted
+        FundingRowIcon.MOVED_OUT -> PolkadotTheme.colors.bg.action.tertiary to PolkadotTheme.colors.fg.primary
         FundingRowIcon.FAILED -> PolkadotTheme.colors.bg.status.error to PolkadotTheme.colors.fg.error
     }
 
@@ -196,32 +218,47 @@ private fun RowIcon(icon: FundingRowIcon) {
         contentAlignment = Alignment.Center,
     ) {
         when (icon) {
-            FundingRowIcon.IN_PROGRESS, FundingRowIcon.IN_PROGRESS_WARNING -> NovaCircularProgressIndicator(
-                modifier = Modifier.size(SPINNER_SIZE),
-                color = tint,
-                strokeWidth = SPINNER_STROKE,
-            )
+            FundingRowIcon.IN_PROGRESS, FundingRowIcon.IN_PROGRESS_WARNING -> if (count != null) {
+                Box(contentAlignment = Alignment.Center) {
+                    Spinner(size = COUNT_SPINNER_SIZE, tint = tint)
+                    NovaText(text = count.toString(), style = PolkadotTheme.typography.body.mediumEmphasized, color = tint)
+                }
+            } else {
+                Spinner(size = SPINNER_SIZE, tint = tint)
+            }
 
-            FundingRowIcon.MOVED_IN -> NovaIcon(modifier = Modifier.size(GLYPH_SIZE), imageVector = NovaIcons.ArrowDownward, tint = tint)
-            FundingRowIcon.MOVED_OUT -> NovaIcon(modifier = Modifier.size(GLYPH_SIZE), imageVector = NovaIcons.ArrowUpward, tint = tint)
+            FundingRowIcon.MOVED_IN -> NovaIcon(modifier = Modifier.size(GLYPH_SIZE), imageVector = NovaIcons.CardReceived, tint = tint)
+            FundingRowIcon.MOVED_OUT -> NovaIcon(modifier = Modifier.size(GLYPH_SIZE), imageVector = NovaIcons.CardSent, tint = tint)
             FundingRowIcon.FAILED -> NovaIcon(modifier = Modifier.size(GLYPH_SIZE), imageVector = NovaIcons.Close, tint = tint)
         }
     }
 }
 
 @Composable
+private fun Spinner(size: Dp, tint: Color) {
+    NovaCircularProgressIndicator(
+        modifier = Modifier.size(size),
+        color = tint,
+        strokeWidth = SPINNER_STROKE,
+    )
+}
+
+@Composable
 private fun subtitle(subtitle: FundingRowSubtitle): String = when (subtitle) {
     FundingRowSubtitle.Delayed -> stringResource(RCommon.string.funding_activity_delayed)
     is FundingRowSubtitle.Step -> when (val step = subtitle.step) {
-        FundingActivityStep.Upcoming -> stringResource(RCommon.string.funding_activity_upcoming)
+        FundingActivityStep.WaitingForPayment -> stringResource(RCommon.string.funding_activity_waiting_payment)
         FundingActivityStep.WaitingForTransfer -> stringResource(RCommon.string.funding_activity_waiting_transfer)
+        FundingActivityStep.WaitingForDeposit -> stringResource(RCommon.string.funding_activity_waiting_deposit)
         FundingActivityStep.Converting -> stringResource(RCommon.string.funding_activity_converting, LocalPaymentAssetBrand.current.symbol)
         FundingActivityStep.Retrying -> stringResource(RCommon.string.funding_activity_retrying)
         FundingActivityStep.TransactionInitiated -> stringResource(RCommon.string.funding_activity_initiated)
+        FundingActivityStep.PreparingPayout -> stringResource(RCommon.string.funding_activity_preparing_payout)
         is FundingActivityStep.ConvertingOut -> stringResource(RCommon.string.funding_activity_converting_out, step.asset)
+        FundingActivityStep.RetryingPayout -> stringResource(RCommon.string.funding_activity_retrying_payout)
     }
 
-    is FundingRowSubtitle.Failed -> subtitle.reason.failedText()
+    is FundingRowSubtitle.Failed -> subtitle.reason.reasonText.text()
 
     is FundingRowSubtitle.Ended -> {
         val moment = moment(subtitle.moment)
@@ -251,8 +288,7 @@ private fun FundingRowTitle.textRes(): Int = when (this) {
     FundingRowTitle.SENT -> RCommon.string.funding_activity_sent
     FundingRowTitle.REFUNDED -> RCommon.string.funding_activity_refunded
     FundingRowTitle.PAYOUT_FAILED -> RCommon.string.funding_activity_payout_failed
-    FundingRowTitle.TOP_UP_FAILED -> RCommon.string.funding_activity_top_up_failed
-    FundingRowTitle.WITHDRAW_FAILED -> RCommon.string.funding_activity_withdraw_failed
+    FundingRowTitle.FAILED -> RCommon.string.funding_activity_failed
 }
 
 private fun FundingRailType.textRes(): Int = when (this) {

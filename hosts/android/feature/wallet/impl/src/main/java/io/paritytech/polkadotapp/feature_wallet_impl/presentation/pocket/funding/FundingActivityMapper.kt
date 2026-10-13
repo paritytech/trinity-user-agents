@@ -1,13 +1,13 @@
 package io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.funding
 
 import io.paritytech.polkadotapp.chains.multiNetwork.chain.model.Chain
-import io.paritytech.polkadotapp.chains.multiNetwork.chain.model.withAmount
+import io.paritytech.polkadotapp.chains.util.amountFromPlanks
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingActivity
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingActivityItem
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingActivityStatus
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingActivityStep
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingDirection
-import io.paritytech.polkadotapp.feature_tokens_api.presentation.mapper.TokenAmountMapper
+import io.paritytech.polkadotapp.feature_products_api.presentation.funding.FundingMoney
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.FundingActivityDayUi
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.FundingActivityRowUi
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.FundingActivityUiState
@@ -26,10 +26,10 @@ import java.util.Locale
 import kotlin.time.Instant
 import kotlin.time.toJavaInstant
 
-/** Builds the card's funding lists, dated against [now] in [zone]. */
+/** Builds the card's funding lists, dated against [now] in [zone], amounts in [asset] under its [symbol]. */
 class FundingActivityMapper(
     private val asset: Chain.Asset,
-    private val tokenAmountMapper: TokenAmountMapper,
+    private val symbol: String,
     private val now: Instant,
     private val zone: ZoneId = ZoneId.systemDefault(),
     private val locale: Locale = Locale.getDefault(),
@@ -37,10 +37,12 @@ class FundingActivityMapper(
     private val timeFormat = DateTimeFormatter.ofLocalizedTime(FormatStyle.SHORT).withLocale(locale)
     private val dayFormat = DateTimeFormatter.ofPattern("d MMM", locale)
     private val dateFormat = DateTimeFormatter.ofPattern("d MMM yyyy", locale)
+    private val dayTitleFormat = DateTimeFormatter.ofPattern("EEEE d MMMM", locale)
+    private val dateTitleFormat = DateTimeFormatter.ofPattern("EEEE d MMMM yyyy", locale)
     private val today = localDate(now)
 
     fun map(activity: FundingActivity): FundingActivityUiState = FundingActivityUiState(
-        inFlight = activity.inFlight.map(::row).toImmutableList(),
+        inFlight = activity.inFlight.sortedByDescending { it.date }.map(::row).toImmutableList(),
         days = activity.history
             .groupBy { dayTitle(it.date) }
             .map { (title, items) -> FundingActivityDayUi(title, items.map(::row).toImmutableList()) }
@@ -64,13 +66,15 @@ class FundingActivityMapper(
             },
             icon = when (status) {
                 is FundingActivityStatus.InProgress ->
-                    if (status.delayed || status.step == FundingActivityStep.Retrying) FundingRowIcon.IN_PROGRESS_WARNING else FundingRowIcon.IN_PROGRESS
+                    if (status.delayed || status.step.isRetry) FundingRowIcon.IN_PROGRESS_WARNING else FundingRowIcon.IN_PROGRESS
 
                 FundingActivityStatus.ToppedUp, FundingActivityStatus.Sent -> if (inbound) FundingRowIcon.MOVED_IN else FundingRowIcon.MOVED_OUT
                 FundingActivityStatus.Refunded, FundingActivityStatus.PayoutFailed, is FundingActivityStatus.Failed -> FundingRowIcon.FAILED
             },
-            amount = item.amount?.let { tokenAmountMapper.mapFrom(asset.withAmount(it)) },
-            amountSign = if (!moved) "" else if (inbound) "+" else "-",
+            amount = item.amount?.let { balance ->
+                val sign = if (!moved) "" else if (inbound) "+" else "-"
+                sign + FundingMoney.label(asset.amountFromPlanks(balance), symbol)
+            },
             amountTone = when (status) {
                 FundingActivityStatus.ToppedUp -> FundingAmountTone.SUCCESS
                 FundingActivityStatus.Sent -> FundingAmountTone.PRIMARY
@@ -85,7 +89,7 @@ class FundingActivityMapper(
         FundingActivityStatus.Sent -> FundingRowTitle.SENT
         FundingActivityStatus.Refunded -> FundingRowTitle.REFUNDED
         FundingActivityStatus.PayoutFailed -> FundingRowTitle.PAYOUT_FAILED
-        is FundingActivityStatus.Failed -> if (inbound) FundingRowTitle.TOP_UP_FAILED else FundingRowTitle.WITHDRAW_FAILED
+        is FundingActivityStatus.Failed -> FundingRowTitle.FAILED
     }
 
     private fun dayTitle(date: Instant): FundingDayTitle {
@@ -93,8 +97,8 @@ class FundingActivityMapper(
         return when {
             day == today -> FundingDayTitle.Today
             day == today.minusDays(1) -> FundingDayTitle.Yesterday
-            day.year == today.year -> FundingDayTitle.Date(day.format(dayFormat))
-            else -> FundingDayTitle.Date(day.format(dateFormat))
+            day.year == today.year -> FundingDayTitle.Date(day.format(dayTitleFormat))
+            else -> FundingDayTitle.Date(day.format(dateTitleFormat))
         }
     }
 
@@ -109,6 +113,9 @@ class FundingActivityMapper(
             else -> FundingMoment.Date(day.format(dateFormat))
         }
     }
+
+    private val FundingActivityStep.isRetry: Boolean
+        get() = this == FundingActivityStep.Retrying || this == FundingActivityStep.RetryingPayout
 
     private fun localDate(instant: Instant): LocalDate = instant.toJavaInstant().atZone(zone).toLocalDate()
 }

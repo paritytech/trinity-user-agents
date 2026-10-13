@@ -143,13 +143,19 @@ data class FundingCountryUi(
     val name: String,
     val currencyName: String?,
     val refused: Boolean,
+    /** "$50 CASH" when the country takes no less than that and the amount is below it. */
+    val minimum: String?,
     val selected: Boolean,
-)
+) {
+    val enabled: Boolean
+        get() = !refused && minimum == null
+}
 
 data class FundingCountryUiState(
     val query: String,
     val detected: FundingCountryUi?,
     val supported: ImmutableList<FundingCountryUi>,
+    val belowMinimum: ImmutableList<FundingCountryUi>,
     val unsupported: ImmutableList<FundingCountryUi>,
 )
 
@@ -187,6 +193,9 @@ sealed interface FundingProviderBadge {
 
 sealed interface FundingProviderPrice {
     data object Pending : FundingProviderPrice
+
+    /** Asked again: what the last price was for stays, the price loads. */
+    data class Updating(val forAmount: String) : FundingProviderPrice
 
     data class Quoted(val price: String, val forAmount: String) : FundingProviderPrice
 }

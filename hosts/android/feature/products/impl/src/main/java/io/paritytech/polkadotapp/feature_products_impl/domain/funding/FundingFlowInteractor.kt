@@ -28,6 +28,7 @@ class FundingFlowInteractor @Inject constructor(
     suspend fun spendable(cash: FundingCash): BigDecimal? =
         balance.spendable()?.let { cash.decimal(it.value.toString()) }
 
+    /** The device's region. The core is to detect the country itself, from location, SIM and locale; this goes once it does. */
     fun detectedCountry(): FundingCountry? = FundingCountries.detected()
 
     fun countries(): List<FundingCountry> = FundingCountries.all()

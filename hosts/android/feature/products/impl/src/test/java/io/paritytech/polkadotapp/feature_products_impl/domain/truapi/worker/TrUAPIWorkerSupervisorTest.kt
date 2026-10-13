@@ -1,7 +1,5 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.truapi.worker
 
-import io.paritytech.polkadotapp.feature_products_impl.domain.bundled.BundledProducts
-import io.paritytech.polkadotapp.feature_products_impl.domain.bundled.InMemoryBundledProductFiles
 import android.net.Uri
 import io.mockk.coEvery
 import io.mockk.every
@@ -11,6 +9,8 @@ import io.mockk.unmockkStatic
 import io.parity.truapi.TrUAPIProductExecution
 import io.paritytech.polkadotapp.feature_products_api.model.ProductExecutable
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
+import io.paritytech.polkadotapp.feature_products_impl.domain.bundled.BundledProducts
+import io.paritytech.polkadotapp.feature_products_impl.domain.bundled.InMemoryBundledProductFiles
 import io.paritytech.polkadotapp.feature_products_impl.domain.product.ProductScriptResolver
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.ProductTrUAPIHostBridge
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.TrUAPIHostRuntimeProvider

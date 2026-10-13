@@ -2,7 +2,6 @@ package io.paritytech.polkadotapp.feature_products_impl.domain.truapi
 
 import android.net.Uri
 import androidx.core.net.toUri
-import uniffi.truapi.ProductExecutionKind
 import io.paritytech.polkadotapp.common.utils.logFailure
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
@@ -11,6 +10,7 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.webView.BrowserWeb
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 import timber.log.Timber
+import uniffi.truapi.ProductExecutionKind
 import javax.inject.Inject
 
 /**

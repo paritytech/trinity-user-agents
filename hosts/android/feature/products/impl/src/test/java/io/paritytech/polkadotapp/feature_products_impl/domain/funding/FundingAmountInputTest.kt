@@ -19,7 +19,7 @@ class FundingAmountInputTest {
     @Test
     fun `a leading zero is replaced and the whole part is capped`() {
         assertEquals("7", "0".applying(FundingKey.Digit('7')))
-        assertEquals("1234567", "1234567".applying(FundingKey.Digit('8')))
+        assertEquals("123456", "123456".applying(FundingKey.Digit('7')))
         assertEquals("12.", "12.".applying(FundingKey.Point))
         assertEquals("12", "12.".applying(FundingKey.Delete))
     }

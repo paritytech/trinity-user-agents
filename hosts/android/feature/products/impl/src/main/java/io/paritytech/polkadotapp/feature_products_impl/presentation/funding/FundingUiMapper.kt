@@ -75,7 +75,7 @@ fun FundingFlowState.toSummaryUiState(
         headline = quote?.let { quoteUnit.format(if (inbound) it.sendAmount else it.receiveAmount) },
         isQuoting = isQuoting,
         showCountry = rail != FundingRail.CRYPTO,
-        country = country?.toUi(refused = false, selected = true),
+        country = country?.toUi(refused = false, minimum = null, selected = true),
         provider = selectedProviderId?.let { brands.brandOf(it) },
         payout = quote?.let { cash.label(cash.decimal(if (inbound) it.receiveAmount else it.sendAmount)) },
         eta = quote?.etaSecs?.let(::etaOf),
@@ -175,42 +175,48 @@ fun FundingFlowState.toCountryUiState(
                 country.currencyCode?.contains(query, ignoreCase = true) == true
         }
     }
+    val minimums = countryMinimums.filterValues { it > amount }
     val showDetected = query.isBlank() && detected != null
-    val toUi = { entry: FundingCountry -> entry.toUi(refused = entry.code in refused, selected = entry == country) }
+    val toUi = { entry: FundingCountry ->
+        entry.toUi(refused = entry.code in refused, minimum = minimums[entry.code]?.let(cash::label), selected = entry == country)
+    }
+    val listed = matching.filter { !(showDetected && it == detected) }
 
     return FundingCountryUiState(
         query = query,
         detected = detected?.takeIf { showDetected }?.let(toUi),
-        supported = matching
-            .filter { it.code !in refused && !(showDetected && it == detected) }
-            .map(toUi)
-            .toImmutableList(),
-        unsupported = matching.filter { it.code in refused }.map(toUi).toImmutableList(),
+        supported = listed.filter { it.code !in refused && it.code !in minimums }.map(toUi).toImmutableList(),
+        belowMinimum = listed.filter { it.code !in refused && it.code in minimums }.map(toUi).toImmutableList(),
+        unsupported = listed.filter { it.code in refused }.map(toUi).toImmutableList(),
     )
 }
 
-private fun FundingCountry.toUi(refused: Boolean, selected: Boolean) = FundingCountryUi(
+private fun FundingCountry.toUi(refused: Boolean, minimum: String?, selected: Boolean) = FundingCountryUi(
     code = code,
     flag = flag,
     name = name,
     currencyName = currencyName,
     refused = refused,
+    minimum = minimum,
     selected = selected,
 )
 
+/** [refreshAt] is when the prices on screen are asked for again; while they are, the countdown holds at zero. */
 fun FundingFlowState.toProvidersUiState(
     brands: Map<String, FundingProviderBrand>,
     now: Instant,
+    refreshAt: Instant?,
 ): FundingProvidersUiState {
     val best = bestProviderId
     val selected = selectedProviderId
     val severalQuoted = quotedProviders.size > 1
-    val expiry = quoteExpiry
+    val pending = rows.values.any { it.isPending }
 
     return FundingProvidersUiState(
         countdown = when {
-            rows.values.any { it.isPending } -> FundingCountdown.Pending
-            expiry != null -> FundingCountdown.Remaining(max(0L, (expiry - now).inWholeSeconds))
+            pending && staleQuotes.isNotEmpty() -> FundingCountdown.Remaining(0)
+            pending -> FundingCountdown.Pending
+            refreshAt != null -> FundingCountdown.Remaining(max(0L, (refreshAt - now).inWholeSeconds))
             else -> null
         },
         rows = servingCandidates.map { candidate ->
@@ -222,7 +228,7 @@ fun FundingFlowState.toProvidersUiState(
                 enabled = state.quote != null,
                 dimmed = state.quote == null && !state.isPending,
                 badge = providerBadge(state, isBest = id == best && severalQuoted),
-                price = providerPrice(state),
+                price = providerPrice(state, staleQuotes[id]),
             )
         }.toImmutableList(),
     )
@@ -242,19 +248,23 @@ private fun FundingFlowState.providerBadge(state: FundingQuoteState, isBest: Boo
     }
 }
 
-private fun FundingFlowState.providerPrice(state: FundingQuoteState): FundingProviderPrice? = when (state) {
-    FundingQuoteState.Pending -> FundingProviderPrice.Pending
+/** A provider asked again keeps what its last price was for, with the price itself loading. */
+private fun FundingFlowState.providerPrice(state: FundingQuoteState, stale: FundingQuote?): FundingProviderPrice? = when (state) {
+    FundingQuoteState.Pending -> stale?.let { FundingProviderPrice.Updating(forAmount = forAmount(it)) } ?: FundingProviderPrice.Pending
     is FundingQuoteState.Quoted -> {
         val inbound = direction == FundingDirection.IN
         val quote = state.quote
         FundingProviderPrice.Quoted(
             price = quoteUnit.formatWithCode(if (inbound) quote.sendAmount else quote.receiveAmount),
-            forAmount = cash.label(cash.decimal(if (inbound) quote.receiveAmount else quote.sendAmount)),
+            forAmount = forAmount(quote),
         )
     }
 
     is FundingQuoteState.Unavailable -> null
 }
+
+private fun FundingFlowState.forAmount(quote: FundingQuote): String =
+    cash.label(cash.decimal(if (direction == FundingDirection.IN) quote.receiveAmount else quote.sendAmount))
 
 private fun Map<String, FundingProviderBrand>.brandOf(providerId: String) =
     get(providerId) ?: FundingProviderBrand(providerId = providerId, name = providerId, iconUrl = null)

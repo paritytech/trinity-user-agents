@@ -15,11 +15,11 @@ import io.paritytech.polkadotapp.common.utils.logFailure
 import io.paritytech.polkadotapp.feature_account_api.data.repository.AccountRepository
 import io.paritytech.polkadotapp.feature_account_api.data.repository.getDepositAccount
 import io.paritytech.polkadotapp.feature_balances_api.domain.model.TokenBalance
-import io.paritytech.polkadotapp.feature_coinage_api.domain.usecase.OnboardingUseCase
 import io.paritytech.polkadotapp.feature_coinage_api.domain.deposit.AutoConvertDepositService
 import io.paritytech.polkadotapp.feature_coinage_api.domain.deposit.model.AutoConvertDeposit
 import io.paritytech.polkadotapp.feature_coinage_api.domain.deposit.model.DepositTerms
 import io.paritytech.polkadotapp.feature_coinage_api.domain.deposit.model.DepositTerms.ConversionRate
+import io.paritytech.polkadotapp.feature_coinage_api.domain.usecase.OnboardingUseCase
 import io.paritytech.polkadotapp.feature_coinage_impl.data.deposit.BalanceChangeTracker
 import io.paritytech.polkadotapp.feature_coinage_impl.data.deposit.FundsConverter
 import io.paritytech.polkadotapp.feature_coinage_impl.data.deposit.model.ConversionProgress

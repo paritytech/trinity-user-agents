@@ -5,8 +5,8 @@ import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingOver
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingOverlayRequest
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.ProviderFrameOutcome
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
-import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.toDomain
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.toBalance
+import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.toDomain
 import io.paritytech.polkadotapp.feature_products_impl.presentation.productBotManagement.ProductsRouter
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.filter

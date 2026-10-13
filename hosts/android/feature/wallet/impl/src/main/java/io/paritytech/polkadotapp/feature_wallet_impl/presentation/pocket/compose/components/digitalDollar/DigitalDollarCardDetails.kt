@@ -17,23 +17,25 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
+import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.paritytech.polkadotapp.common.presentation.loading.LoadingState
 import io.paritytech.polkadotapp.common.presentation.loading.onLoaded
 import io.paritytech.polkadotapp.common.presentation.paymentAsset.LocalPaymentAssetBrand
 import io.paritytech.polkadotapp.common.presentation.paymentAsset.PaymentAssetBrand
-import io.paritytech.polkadotapp.design.components.button.common.PolkadotButtonShape
-import io.paritytech.polkadotapp.design.components.button.common.PolkadotButtonStyle
-import io.paritytech.polkadotapp.design.components.button.icon.PolkadotIconButton
-import io.paritytech.polkadotapp.design.components.button.icon.PolkadotIconButtonSize
+import io.paritytech.polkadotapp.design.components.icon.NovaIcon
 import io.paritytech.polkadotapp.design.components.icon.NovaIcons
-import io.paritytech.polkadotapp.design.components.icon.vectors.Add
+import io.paritytech.polkadotapp.design.components.icon.vectors.ArrowDownward
 import io.paritytech.polkadotapp.design.components.icon.vectors.ArrowUpward
 import io.paritytech.polkadotapp.design.components.navigationbar.LocalAppNavigationBarInsets
 import io.paritytech.polkadotapp.design.components.spacer.VerticalSpacer
+import io.paritytech.polkadotapp.design.components.surface.PolkadotSurface
+import io.paritytech.polkadotapp.design.components.text.NovaText
 import io.paritytech.polkadotapp.design.components.topbar.PolkadotTopBar
 import io.paritytech.polkadotapp.design.components.topbar.TopBarTitleAlignment
 import io.paritytech.polkadotapp.design.components.topbar.rememberTopBarAction
@@ -53,6 +55,7 @@ import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.
 import kotlinx.collections.immutable.persistentListOf
 import io.paritytech.polkadotapp.common.R as RCommon
 
+private val TILE_ICON_SIZE = 20.dp
 
 @Composable
 fun DigitalDollarCardDetails(
@@ -102,123 +105,192 @@ private fun DigitalDollarCardDetailsContent(
     onBackupUpdateClick: () -> Unit,
     onBackupCloseClick: () -> Unit
 ) {
-    Column(
-        modifier = Modifier.fillMaxSize()
-    ) {
-        PolkadotTopBar(
-            title = stringResource(RCommon.string.pocket_digital_dollar_title, LocalPaymentAssetBrand.current.symbol),
-            navigationAction = rememberTopBarAction(onBack),
-            titleAlignment = TopBarTitleAlignment.Center
-        )
+    var inProgressExpanded by remember { mutableStateOf(false) }
+    val showInProgressPanel = inProgressExpanded && fundingActivity.inFlight.size > 1
 
+    Box(modifier = Modifier.fillMaxSize()) {
         Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .verticalScroll(rememberScrollState())
-                .padding(PolkadotTheme.spacings.mediumIncreased)
-                .windowInsetsPadding(LocalAppNavigationBarInsets.current)
+            modifier = Modifier.fillMaxSize()
         ) {
-            DigitalDollarCard(
-                modifier = Modifier.pocketCardSharedElement(cardIndex),
-                card = card,
-                isExpanded = true
+            PolkadotTopBar(
+                title = stringResource(RCommon.string.pocket_digital_dollar_title, LocalPaymentAssetBrand.current.symbol),
+                navigationAction = rememberTopBarAction(onBack),
+                titleAlignment = TopBarTitleAlignment.Center
             )
-
-            VerticalSpacer { mediumIncreased }
 
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .pocketContentSlide()
+                    .verticalScroll(rememberScrollState())
+                    .padding(PolkadotTheme.spacings.mediumIncreased)
+                    .windowInsetsPadding(LocalAppNavigationBarInsets.current)
             ) {
-                AnimatedContent(
-                    targetState = state.balanceRestore,
-                    contentKey = { it::class.simpleName }
-                ) { balanceRestoreState ->
-                    when (balanceRestoreState) {
-                        BalanceRestoreUiState.NotDetermined -> Unit
+                DigitalDollarCard(
+                    modifier = Modifier.pocketCardSharedElement(cardIndex),
+                    card = card,
+                    isExpanded = true
+                )
 
-                        BalanceRestoreUiState.SendCash -> SendCashActions(
-                            modifier = Modifier.fillMaxWidth(),
-                            onSendClick = onSendClick,
-                            onGetCashClick = onGetCashClick
-                        )
+                VerticalSpacer { mediumIncreased }
 
-                        is BalanceRestoreUiState.Restore -> {
-                            var isDoneUpdatingVisible by remember { mutableStateOf(false) }
-                            var isWhyVisible by remember { mutableStateOf(false) }
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .pocketContentSlide()
+                ) {
+                    AnimatedContent(
+                        targetState = state.balanceRestore,
+                        contentKey = { it::class.simpleName }
+                    ) { balanceRestoreState ->
+                        when (balanceRestoreState) {
+                            BalanceRestoreUiState.NotDetermined -> Unit
 
-                            BalanceRestoredWidget(
+                            BalanceRestoreUiState.SendCash -> SendCashActions(
                                 modifier = Modifier.fillMaxWidth(),
-                                isInProgress = balanceRestoreState.inProgress,
-                                onWhyClick = { isWhyVisible = true },
-                                onCloseClick = { isDoneUpdatingVisible = true },
-                                onUpdateClick = onBackupUpdateClick
+                                onSendClick = onSendClick,
+                                onGetCashClick = onGetCashClick
                             )
 
-                            DoneUpdatingBottomSheet(
-                                isVisible = isDoneUpdatingVisible,
-                                onDismissRequest = { isDoneUpdatingVisible = false },
-                                onConfirm = onBackupCloseClick
-                            )
+                            is BalanceRestoreUiState.Restore -> {
+                                var isDoneUpdatingVisible by remember { mutableStateOf(false) }
+                                var isWhyVisible by remember { mutableStateOf(false) }
 
-                            WhyUpdateBottomSheet(
-                                isVisible = isWhyVisible,
-                                onDismissRequest = { isWhyVisible = false }
-                            )
+                                BalanceRestoredWidget(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    isInProgress = balanceRestoreState.inProgress,
+                                    onWhyClick = { isWhyVisible = true },
+                                    onCloseClick = { isDoneUpdatingVisible = true },
+                                    onUpdateClick = onBackupUpdateClick
+                                )
+
+                                DoneUpdatingBottomSheet(
+                                    isVisible = isDoneUpdatingVisible,
+                                    onDismissRequest = { isDoneUpdatingVisible = false },
+                                    onConfirm = onBackupCloseClick
+                                )
+
+                                WhyUpdateBottomSheet(
+                                    isVisible = isWhyVisible,
+                                    onDismissRequest = { isWhyVisible = false }
+                                )
+                            }
                         }
                     }
-                }
 
-                coinageLoadingState.onLoaded { coinageState ->
-                    VerticalSpacer { mediumIncreased }
+                    coinageLoadingState.onLoaded { coinageState ->
+                        VerticalSpacer { mediumIncreased }
 
-                    CoinageCardContent(
-                        state = coinageState,
-                        onAutoFundClick = onAutoFundClick,
-                        onDetailsToggled = onDetailsToggled,
-                        onShareLogsClick = onShareLogsClick
+                        CoinageCardContent(
+                            state = coinageState,
+                            onAutoFundClick = onAutoFundClick,
+                            onDetailsToggled = onDetailsToggled,
+                            onShareLogsClick = onShareLogsClick
+                        )
+                    }
+
+                    if (fundingActivity.inFlight.isNotEmpty()) {
+                        VerticalSpacer { small }
+
+                        FundingInProgressDock(
+                            rows = fundingActivity.inFlight,
+                            onExpand = { inProgressExpanded = true },
+                            onRowClick = onFundingRowClick,
+                        )
+                    }
+
+                    VerticalSpacer { large }
+
+                    FundingHistorySection(
+                        modifier = Modifier.fillMaxWidth(),
+                        days = fundingActivity.days,
+                        onRowClick = onFundingRowClick,
                     )
                 }
-
-                VerticalSpacer { large }
-
-                FundingActivitySection(
-                    modifier = Modifier.fillMaxWidth(),
-                    state = fundingActivity,
-                    onRowClick = onFundingRowClick,
-                )
             }
+        }
+
+        if (showInProgressPanel) {
+            FundingInProgressPanel(
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .windowInsetsPadding(LocalAppNavigationBarInsets.current)
+                    .padding(PolkadotTheme.spacings.mediumIncreased),
+                rows = fundingActivity.inFlight,
+                onCollapse = { inProgressExpanded = false },
+                onRowClick = onFundingRowClick,
+            )
         }
     }
 }
 
-/** Add brings value in through the funding sheet; Send reaches contacts and, outside the pocket, withdrawals. */
+/** Get brings value in through the funding sheet; Send reaches contacts and, from there, moving money out. */
 @Composable
 private fun SendCashActions(
     modifier: Modifier = Modifier,
     onSendClick: () -> Unit,
     onGetCashClick: () -> Unit
 ) {
+    val symbol = LocalPaymentAssetBrand.current.symbol
+
     Row(
-        modifier = modifier,
-        horizontalArrangement = Arrangement.spacedBy(PolkadotTheme.spacings.large, Alignment.CenterHorizontally),
-        verticalAlignment = Alignment.CenterVertically
+        modifier = modifier.height(IntrinsicSize.Min),
+        horizontalArrangement = Arrangement.spacedBy(PolkadotTheme.spacings.small)
     ) {
-        PolkadotIconButton(
-            icon = NovaIcons.Add,
-            onClick = onGetCashClick,
-            style = PolkadotButtonStyle.secondary(),
-            shape = PolkadotButtonShape.pill,
-            size = PolkadotIconButtonSize.extraLarge()
+        CashActionTile(
+            modifier = Modifier.weight(1f).fillMaxHeight(),
+            icon = NovaIcons.ArrowUpward,
+            title = stringResource(RCommon.string.pocket_cash_get),
+            caption = stringResource(RCommon.string.pocket_cash_get_caption, symbol),
+            onClick = onGetCashClick
         )
 
-        PolkadotIconButton(
-            icon = NovaIcons.ArrowUpward,
-            onClick = onSendClick,
-            shape = PolkadotButtonShape.pill,
-            size = PolkadotIconButtonSize.extraLarge()
+        CashActionTile(
+            modifier = Modifier.weight(1f).fillMaxHeight(),
+            icon = NovaIcons.ArrowDownward,
+            title = stringResource(RCommon.string.pocket_cash_send),
+            caption = stringResource(RCommon.string.pocket_cash_send_caption, symbol),
+            onClick = onSendClick
         )
+    }
+}
+
+@Composable
+private fun CashActionTile(
+    icon: ImageVector,
+    title: String,
+    caption: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    PolkadotSurface(
+        modifier = modifier,
+        shape = PolkadotTheme.shapes.large,
+        color = PolkadotTheme.colors.bg.surface.containerInverted,
+        onClick = onClick
+    ) {
+        Column(
+            modifier = Modifier.padding(PolkadotTheme.spacings.medium),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(PolkadotTheme.spacings.extraSmall)
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(PolkadotTheme.spacings.extraSmall)
+            ) {
+                NovaIcon(modifier = Modifier.size(TILE_ICON_SIZE), imageVector = icon, tint = PolkadotTheme.colors.fg.primaryInverted)
+                NovaText(
+                    text = title,
+                    style = PolkadotTheme.typography.title.small,
+                    color = PolkadotTheme.colors.fg.primaryInverted
+                )
+            }
+            NovaText(
+                text = caption,
+                style = PolkadotTheme.typography.caption.medium,
+                color = PolkadotTheme.colors.fg.secondaryInverted,
+                textAlign = TextAlign.Center
+            )
+        }
     }
 }
 

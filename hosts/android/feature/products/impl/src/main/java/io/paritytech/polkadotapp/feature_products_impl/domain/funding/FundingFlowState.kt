@@ -12,7 +12,6 @@ import uniffi.truapi.FundingRoute
 import java.math.BigDecimal
 import java.math.RoundingMode
 import java.util.Locale
-import kotlin.time.Instant
 
 /** Why the typed amount cannot go ahead. */
 sealed interface FundingAmountIssue {
@@ -46,6 +45,8 @@ data class FundingFlowState(
     val chosenProviderId: String?,
     val rows: Map<String, FundingQuoteState>,
     val ask: FundingQuoteAsk?,
+    /** The quotes on screen before the same ask went out again, shown greyed while the new ones arrive. */
+    val staleQuotes: Map<String, FundingQuote> = emptyMap(),
 ) {
     companion object {
         private const val DEFAULT_FIAT = "USD"
@@ -161,7 +162,11 @@ data class FundingFlowState(
     val quotedProviders: List<Pair<String, FundingQuote>>
         get() = rows.mapNotNull { (providerId, state) -> state.quote?.let { providerId to it } }
 
-    /** The cheapest quote: least to pay for value in, most received for value out. */
+    /**
+     * The cheapest quote: least to pay for value in, most received for value out.
+     *
+     * The core is to mark the best quote itself; this goes once it does.
+     */
     val bestProviderId: String?
         get() {
             val unit = quoteUnit
@@ -179,10 +184,6 @@ data class FundingFlowState(
 
     val isQuoting: Boolean
         get() = rows.values.any { it.isPending } && selectedQuote == null
-
-    val quoteExpiry: Instant?
-        get() = quotedProviders.mapNotNull { it.second.expiresAt }.minOrNull()
-            ?.let { Instant.fromEpochMilliseconds(it.toLong()) }
 
     val allAnswered: Boolean
         get() = rows.isNotEmpty() && rows.values.none { it.isPending }
@@ -238,6 +239,18 @@ data class FundingFlowState(
             return refused
         }
 
+    /**
+     * The least a country takes, learned from every provider refusing the asked amount there as too low.
+     *
+     * The core is to report each country's status itself; this goes once it does.
+     */
+    val countryMinimums: Map<String, BigDecimal>
+        get() {
+            val asked = ask?.country?.uppercase(Locale.ROOT) ?: return emptyMap()
+            val minimum = (refusalForCurrentAmount as? FundingAmountIssue.BelowMinimum)?.minimum ?: return emptyMap()
+            return mapOf(asked to minimum)
+        }
+
     fun currentAsk(): FundingQuoteAsk? {
         if (amount.signum() <= 0) return null
 
@@ -272,8 +285,11 @@ data class FundingFlowState(
     fun withCandidates(newCandidates: List<FundingCandidate>): FundingFlowState = copy(candidates = newCandidates)
 
     /** Every serving provider is asked again, so each row reads pending until its answer arrives. */
-    fun asking(newAsk: FundingQuoteAsk): FundingFlowState =
-        copy(ask = newAsk, rows = servingCandidates.associate { it.providerId to FundingQuoteState.Pending })
+    fun asking(newAsk: FundingQuoteAsk): FundingFlowState = copy(
+        ask = newAsk,
+        rows = servingCandidates.associate { it.providerId to FundingQuoteState.Pending },
+        staleQuotes = if (newAsk == ask) quotedProviders.toMap() else emptyMap(),
+    )
 
     fun receiving(row: FundingQuoteRow): FundingFlowState = copy(rows = rows + (row.providerId to row.state))
 }
