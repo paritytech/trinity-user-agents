@@ -331,6 +331,29 @@ export interface FundingPresentation {
 }
 
 /**
+ * The providers' quotes for one ask, as the host draws its provider list.
+ */
+export interface FundingQuoteList {
+  /**
+   * One row per provider asked, in the host's provider order.
+   */
+  rows: Array<FundingQuoteRow>;
+
+  /**
+   * The provider whose quote is best for the user, which the host selects
+   * until the user picks another: the least to pay inbound, the most to
+   * receive outbound. ``undefined`` until one quotes.
+   */
+  best?: string;
+
+  /**
+   * When the core asks every provider again, in Unix milliseconds. The
+   * rows go back to `Pending` then.
+   */
+  refreshAtMs: bigint;
+}
+
+/**
  * One provider's place in the list a quote request fills in.
  */
 export interface FundingQuoteRow {
@@ -975,6 +998,18 @@ export const FundingPresentation: S.Codec<FundingPresentation> = S.lazy(
       direction: FundingDirection,
       amount: S.Option(S.u128),
     }) as S.Codec<FundingPresentation>,
+);
+
+/**
+ * The providers' quotes for one ask, as the host draws its provider list.
+ */
+export const FundingQuoteList: S.Codec<FundingQuoteList> = S.lazy(
+  (): S.Codec<FundingQuoteList> =>
+    S.Struct({
+      rows: S.Vector(FundingQuoteRow),
+      best: S.Option(S.str),
+      refreshAtMs: S.u64,
+    }) as S.Codec<FundingQuoteList>,
 );
 
 /**
@@ -1691,6 +1726,15 @@ export interface FundingPlatform {
   ): Promise<FundingFrameOutcome>;
 
   /**
+   * The country the user is likely in, as an ISO 3166-1 alpha-2 code, for
+   * the quotes the core asks before the user picks one. Best effort,
+   * without asking for any permission: the device's coarse location when
+   * already permitted, then its SIM or network country, then its locale's
+   * region. ``undefined`` when nothing says.
+   */
+  detectedCountry?(): Promise<string | undefined>;
+
+  /**
    * Observe a session's status change, for host UI such as the in-flight
    * pill.
    */
@@ -1700,11 +1744,11 @@ export interface FundingPlatform {
   ): void;
 
   /**
-   * Observe one provider's row of a quote list the host requested, for the
-   * provider list. Each provider's row arrives `Pending`, then once more
-   * with its quote or why it is unavailable.
+   * Observe the quote list the host requested, for the provider list:
+   * again whenever a provider answers, and each time the core asks every
+   * provider again.
    */
-  fundingQuoteChanged?(intent: string, row: FundingQuoteRow): void;
+  fundingQuotesChanged?(intent: string, quotes: FundingQuoteList): void;
 }
 
 /**

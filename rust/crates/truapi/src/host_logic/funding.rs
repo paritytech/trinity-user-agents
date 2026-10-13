@@ -1513,7 +1513,7 @@ mod tests {
 				status(FundingDirection::In, FundingRail::Card, &[FundingUpdate::AwaitingPayment]),
 				status(FundingDirection::In, FundingRail::Crypto, &[]),
 				status(FundingDirection::In, FundingRail::Card, &[received]),
-				status(FundingDirection::Out, FundingRail::Bank, &[collecting.clone()]),
+				status(FundingDirection::Out, FundingRail::Bank, std::slice::from_ref(&collecting)),
 				released(FundingRail::Bank, "EUR"),
 				released(FundingRail::Crypto, "USDT"),
 			],
