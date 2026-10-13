@@ -7,7 +7,7 @@ import SwiftUI
 ///
 /// Every dimension and radius is read off `progress`, so the shape is valid at any point between
 /// collapsed (0) and open (1), including mid-drag, rather than being two states with an animation
-/// between them.
+/// between them. A drag past open adds a resisted `stretch` to the height.
 public struct DSTabBarCenterControl<Content: View>: View {
     @Binding private var progress: CGFloat
     private let contentHeight: CGFloat
@@ -16,6 +16,8 @@ public struct DSTabBarCenterControl<Content: View>: View {
     private let content: Content
 
     @State private var dragStart: CGFloat?
+    /// Extra height in points above the fully open panel while a drag pulls past it.
+    @State private var stretch: CGFloat = 0
     @GestureState private var isDragging = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -86,11 +88,18 @@ private extension DSTabBarCenterControl {
         from + (to - from) * progress
     }
 
+    /// Rubber-band curve from UIScrollView: the further the finger pulls past open, the less each
+    /// point moves the panel, and the stretch approaches `limit` without reaching it.
+    func resisted(_ distance: CGFloat) -> CGFloat {
+        let limit = DSTabBarStyle.centerStretchLimit
+        return limit * (1 - 1 / (distance * DSTabBarStyle.centerStretchCoefficient / limit + 1))
+    }
+
     func frameSize(availableWidth: CGFloat) -> CGSize {
         let expandedWidth = DSTabBarStyle.centerPanelWidth(inRowOfWidth: availableWidth)
         return CGSize(
             width: lerp(DSTabBarStyle.centerButtonSize, expandedWidth),
-            height: lerp(DSTabBarStyle.centerButtonSize, expandedHeight)
+            height: lerp(DSTabBarStyle.centerButtonSize, expandedHeight) + stretch
         )
     }
 
@@ -227,7 +236,9 @@ private extension DSTabBarCenterControl {
     func followDrag(translationHeight: CGFloat) {
         let start = dragStart ?? progress
         dragStart = start
-        progress = min(1, max(0, start - translationHeight / travel))
+        let unclamped = start - translationHeight / travel
+        progress = min(1, max(0, unclamped))
+        stretch = unclamped > 1 ? resisted((unclamped - 1) * travel) : 0
     }
 
     /// A flick decides on its own; otherwise the halfway point does.
@@ -243,6 +254,7 @@ private extension DSTabBarCenterControl {
     func settle(to target: CGFloat) {
         guard !reduceMotion else {
             progress = target
+            stretch = 0
             onSettled(target == 1)
             return
         }
@@ -254,6 +266,7 @@ private extension DSTabBarCenterControl {
             completionCriteria: .logicallyComplete
         ) {
             progress = target
+            stretch = 0
         } completion: {
             guard progress == target else {
                 return

@@ -88,6 +88,10 @@ public enum DSTabBarStyle {
     static let centerPanelCornerRadius: CGFloat = 24
     /// Concave blend where the lobe meets the panel's bottom edge.
     static let centerPanelFillet: CGFloat = 18
+    /// How far a drag can stretch the open panel past its full height before the resistance holds it.
+    static let centerStretchLimit: CGFloat = 32
+    /// How quickly the stretch builds. A larger value stretches the panel further for the same pull.
+    static let centerStretchCoefficient: CGFloat = 0.55
 
     /// Width the open centre panel takes in a bar row of `width`: the full width of the bar.
     public static func centerPanelWidth(inRowOfWidth width: CGFloat) -> CGFloat {
