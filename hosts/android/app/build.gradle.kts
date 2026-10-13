@@ -155,6 +155,7 @@ dependencies {
     implementation(project(":feature:sso:impl"))
     implementation(project(":feature:scan:impl"))
     implementation(project(":feature:products:impl"))
+    implementation(project(":bindings:truapi-host"))
     implementation(project(":feature:calls:api"))
     implementation(project(":feature:calls:impl"))
     implementation(project(":feature:coinage:impl"))
@@ -195,7 +196,6 @@ dependencies {
     androidTestImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.test.runner)
-    androidTestImplementation(project(":bindings:truapi-host"))
     androidTestImplementation(libs.androidx.work.testing)
     androidTestImplementation(libs.hilt.android.testing)
     androidTestImplementation(libs.mockk.android) {

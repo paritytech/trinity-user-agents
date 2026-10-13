@@ -33,7 +33,6 @@ enum BenchmarkFixtures {
             chatRequest: nil,
             ownKeyId: .init(signKeyId: "sign-\(index)", encryptionKeyId: "encrypt-\(index)"),
             imageData: nil,
-            source: .chat,
             isBlocked: false,
             devices: [],
             pendingDevicesFanOut: false

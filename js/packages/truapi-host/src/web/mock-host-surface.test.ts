@@ -104,7 +104,7 @@ function rustControlSurface(): string[] {
   expect(end).toBeGreaterThan(start);
   const block = source.slice(start, end);
 
-  return [...block.matchAll(/\n    pub (?:async )?fn ([a-z0-9_]+)/g)]
+  return [...block.matchAll(/\n[\t ]+pub (?:async )?fn ([a-z0-9_]+)/g)]
     .map((match) => match[1]!)
     .filter((name) => name !== "new" && name !== "with_config");
 }

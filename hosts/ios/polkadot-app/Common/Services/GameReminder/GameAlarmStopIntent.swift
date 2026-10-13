@@ -1,6 +1,6 @@
+import Foundation
 import AlarmKit
 import AppIntents
-import UIKit
 
 @available(iOS 26.1, *)
 struct GameAlarmPlayIntent: LiveActivityIntent {
@@ -10,9 +10,6 @@ struct GameAlarmPlayIntent: LiveActivityIntent {
     @Parameter(title: "Alarm ID")
     var alarmID: String?
 
-    @Parameter(title: "Game Index")
-    var gameIndex: Int?
-
     @Parameter(title: "Product ID")
     var productId: String?
 
@@ -20,8 +17,6 @@ struct GameAlarmPlayIntent: LiveActivityIntent {
     func perform() async throws -> some IntentResult {
         if let productId {
             ProductOpener().open(productId: productId)
-        } else {
-            await UIApplication.shared.open(AppConfig.DeepLink.game(intendedGameIndex: gameIndex))
         }
 
         if let alarmIDString = alarmID,
