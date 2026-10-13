@@ -37,9 +37,6 @@ class PocketNavigator @Inject constructor(
     override fun openScanAddressQr() =
         performNavigation(R.id.action_sendPaymentFragment_to_scanAddressQrFragment)
 
-    override fun openCollectibles() =
-        performNavigation(R.id.action_global_to_collectiblesFragment)
-
     override fun openSpaSheet(url: String) {
         if (isCurrentDestination(R.id.spaSheetBottomSheet)) return
         performNavigation(
