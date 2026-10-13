@@ -16,7 +16,5 @@ extension AppConfig {
 
             return URL(string: DeepLink.scheme + "://chat?\(idPart)&\(forcePart)")!
         }
-
-        }
     }
 }
