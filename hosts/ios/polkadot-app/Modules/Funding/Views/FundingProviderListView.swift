@@ -37,8 +37,8 @@ private extension FundingProviderListView {
                 Spacer()
                 FundingSkeleton(width: 32)
             }
-        } else if let expiry = model.quoteExpiry {
-            let remaining = max(0, Int(expiry.timeIntervalSince(now).rounded(.down)))
+        } else if let refreshAt = model.quotesRefreshAt {
+            let remaining = max(0, Int(refreshAt.timeIntervalSince(now).rounded(.up)))
             HStack {
                 Text(.Funding.providersRateUpdatedIn)
                     .typography(.bodySmall)

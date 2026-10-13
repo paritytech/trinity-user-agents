@@ -67,6 +67,9 @@ final class FundingFlowModel {
 
     let runtime: FundingRuntime
     let branding: FundingProviderBranding
+    /// When the prices on screen are asked for again: a minute after every
+    /// provider answered, until the core sends a refresh deadline of its own.
+    private(set) var quotesRefreshAt: Date?
     private var startsWhenQuoted = false
     private var quoteTask: Task<Void, Never>?
 
@@ -306,6 +309,9 @@ extension FundingFlowModel {
 
     func receive(row: FundingQuoteRow) {
         rows[row.providerId] = row.state
+        if !rows.values.contains(where: \.isPending) {
+            quotesRefreshAt = Date().addingTimeInterval(Self.quoteLifetime)
+        }
 
         guard startsWhenQuoted, !isStarting, !hasStarted, !rows.values.contains(where: \.isPending) else { return }
 
@@ -321,8 +327,10 @@ private extension FundingFlowModel {
         let served = FundingRail.displayOrder.filter { rail in
             candidates.contains { $0.serves(rail: rail, direction: direction) }
         }
-        return served.contains(.card) ? .card : served.first ?? .card
+        return served.first ?? .crypto
     }
+
+    static let quoteLifetime: TimeInterval = 60
 
     static func text(for value: Decimal) -> String {
         NSDecimalNumber(decimal: value.fundingRounded(scale: 2, mode: .down)).stringValue
@@ -376,13 +384,14 @@ extension FundingFlowModel {
         guard let newAsk = currentAsk() else { return }
 
         ask = newAsk
+        quotesRefreshAt = nil
         rows = Dictionary(uniqueKeysWithValues: servingCandidates.map { ($0.providerId, .pending) })
         runtime.getFundingQuote(intent: intent, ask: newAsk)
     }
 
-    /// Asks again once the quote on screen expires.
+    /// Asks again once the prices on screen are due for a refresh.
     func refreshIfExpired(now: Date = Date()) {
-        guard let expiry = quoteExpiry, expiry <= now, !rows.values.contains(where: \.isPending) else { return }
+        guard let quotesRefreshAt, quotesRefreshAt <= now, !rows.values.contains(where: \.isPending) else { return }
 
         requestQuote()
     }

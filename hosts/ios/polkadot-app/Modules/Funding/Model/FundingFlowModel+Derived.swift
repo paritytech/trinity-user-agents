@@ -27,10 +27,14 @@ extension FundingFlowModel {
         amount > 0 && amountIssue == nil && availableRails.contains(rail)
     }
 
+    /// The smallest amount the funding screens take on any rail.
+    static let minimumAmount: Decimal = 10
+
     /// The lowest minimum and highest maximum any provider has refused with
-    /// for this rail, which the core learns and keeps on the candidates. No
-    /// provider refusing yet means no limit to show.
-    var learnedLimits: (min: Decimal?, max: Decimal?) {
+    /// for this rail, which the core learns and keeps on the candidates. The
+    /// minimum is never below ``minimumAmount``; no provider refusing yet
+    /// means no maximum to show.
+    var learnedLimits: (min: Decimal, max: Decimal?) {
         let limits = servingCandidates
             .flatMap(\.limits)
             .filter { limit in
@@ -39,9 +43,9 @@ extension FundingFlowModel {
                     && (network == nil || limit.network == nil || limit.network == network)
             }
 
-        let minimum = limits.compactMap { cash.decimal($0.min) }.min()
+        let refusedMinimum = limits.compactMap { cash.decimal($0.min) }.min() ?? Self.minimumAmount
         let maximum = limits.compactMap { cash.decimal($0.max) }.max()
-        return (minimum, maximum)
+        return (max(refusedMinimum, Self.minimumAmount), maximum)
     }
 
     var amountIssue: FundingAmountIssue? {
@@ -54,8 +58,8 @@ extension FundingFlowModel {
         }
 
         let limits = learnedLimits
-        if amount > 0, let minimum = limits.min, amount < minimum {
-            return .belowMinimum(minimum)
+        if amount > 0, amount < limits.min {
+            return .belowMinimum(limits.min)
         }
         if let maximum = limits.max, amount > maximum {
             return .aboveMaximum(maximum)
@@ -109,7 +113,7 @@ extension FundingFlowModel {
     }
 
     /// The cheapest quote: least to pay for value in, most received for value
-    /// out.
+    /// out. Ranked here only until the core marks the best quote itself.
     var bestProviderId: String? {
         let quoted = quotedProviders
         switch direction {
@@ -133,13 +137,6 @@ extension FundingFlowModel {
 
     var isQuoting: Bool {
         rows.values.contains(where: \.isPending) && selectedQuote == nil
-    }
-
-    var quoteExpiry: Date? {
-        quotedProviders
-            .compactMap(\.quote.expiresAt)
-            .min()
-            .map { Date(timeIntervalSince1970: TimeInterval($0) / 1_000) }
     }
 
     /// What every provider said when none would quote, for the summary screen.

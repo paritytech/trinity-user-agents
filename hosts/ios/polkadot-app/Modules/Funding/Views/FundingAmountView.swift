@@ -72,13 +72,10 @@ private extension FundingAmountView {
             Text(message(for: issue))
                 .typography(.captionMedium)
                 .foregroundStyle(.fgError)
-        } else if let minimum = model.learnedLimits.min {
-            Text(minimumCaption(minimum))
+        } else {
+            Text(minimumCaption(model.learnedLimits.min))
                 .typography(.captionMedium)
                 .foregroundStyle(.fgSecondary)
-        } else {
-            Text(verbatim: " ")
-                .typography(.captionMedium)
         }
     }
 
