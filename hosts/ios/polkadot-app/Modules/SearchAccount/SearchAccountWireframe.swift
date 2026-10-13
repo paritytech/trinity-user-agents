@@ -41,4 +41,8 @@ final class SearchAccountWireframe: SearchAccountWireframeProtocol {
     func showChat(_ model: ChatOpenModel) {
         moduleNavigator.openChat(model)
     }
+
+    func close(from view: SearchAccountViewProtocol?) {
+        view?.controller.navigationController?.popViewController(animated: false)
+    }
 }

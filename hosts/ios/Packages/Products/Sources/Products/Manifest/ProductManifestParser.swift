@@ -49,8 +49,8 @@ struct ProductManifestParser: ProductManifestParsing {
             return reject("root: missing displayName")
         }
 
-        // Unused here, but required by the manifest format: a stricter Host must not see a
-        // different product than this one does.
+        // Required by the manifest format: a stricter Host must not see a different product than
+        // this one does.
         guard let description = dto.description else {
             return reject("root: missing description")
         }

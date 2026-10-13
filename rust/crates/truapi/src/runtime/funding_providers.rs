@@ -10,438 +10,557 @@
 //! provider whose publisher changed, withdrew or unpublished it is corrected
 //! within the cache lifetime.
 
-use std::collections::{HashMap, HashSet};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::{
+	collections::{HashMap, HashSet},
+	sync::{
+		Arc, Mutex,
+		atomic::{AtomicBool, Ordering},
+	},
+};
 
-use truapi::latest::FundingDirection;
+use truapi::latest::{FundingDirection, FundingRail};
 
 use futures::lock::Mutex as AsyncMutex;
 use parity_scale_codec::{Decode, Encode};
 
-use super::browse::published_products;
-use super::product_manifest::worker_manifest;
-use super::services::RuntimeServices;
-use crate::host_logic::worker_manifest::WorkerManifest;
-use crate::host_logic::funding::FundingSessionError;
-use crate::host_logic::funding_providers::{FundingCandidate, FundingProviderEntry, LearnedSupport};
-use crate::platform::{CoreStorageKey, ProductContext, ProductExecutionKind};
-use crate::unix_time::current_unix_millis;
+use super::{
+	browse::published_products, funding::lock, product_manifest::worker_manifest,
+	services::RuntimeServices,
+};
+use crate::{
+	host_logic::{
+		funding::FundingSessionError,
+		funding_providers::{
+			FundingCandidate, FundingCountry, FundingProviderEntry, FundingProviderOrigin,
+			LearnedSupport, country_support,
+		},
+		worker_manifest::WorkerManifest,
+	},
+	platform::{CoreStorageKey, ProductContext, ProductExecutionKind},
+	unix_time::current_unix_millis,
+};
+
+/// A provider the host offers, with its product id normalized and the
+/// Worker manifest it shipped already read.
+#[derive(Clone)]
+struct OfferedProvider {
+	product_id: String,
+	snapshot: Option<WorkerManifest>,
+	origin: FundingProviderOrigin,
+}
 
 /// The host's funding providers and what each one serves.
 #[derive(Default)]
 pub struct FundingProviders {
-    /// The providers, in the host's order, with normalized product ids.
-    entries: Mutex<Vec<FundingProviderEntry>>,
-    /// What dotNS last said each provider publishes: its Worker manifest, or
-    /// `None` for nothing usable.
-    live: Mutex<HashMap<String, Option<WorkerManifest>>>,
-    /// Products published to browse, in the Publishers' order.
-    discovered: Mutex<Vec<String>>,
-    /// Providers whose manifest is being read.
-    refreshing: Mutex<HashSet<String>>,
-    /// Whether the browse list is being read.
-    discovering: AtomicBool,
-    /// What providers' quote answers showed about what they serve, newest
-    /// per ask, persisted under [`CoreStorageKey::FundingSupport`].
-    learned: Mutex<Vec<LearnedSupport>>,
-    /// Whether the persisted records were loaded.
-    learned_loaded: AtomicBool,
-    /// Held while the records are written, so writes land in order.
-    learned_writes: AsyncMutex<()>,
+	/// The providers, in the host's order, with normalized product ids.
+	entries: Mutex<Vec<OfferedProvider>>,
+	/// What dotNS last said each provider publishes: its Worker manifest, or
+	/// `None` for nothing usable.
+	live: Mutex<HashMap<String, Option<WorkerManifest>>>,
+	/// Products published to browse, in the Publishers' order.
+	discovered: Mutex<Vec<String>>,
+	/// Providers whose manifest is being read.
+	refreshing: Mutex<HashSet<String>>,
+	/// Whether the browse list is being read.
+	discovering: AtomicBool,
+	/// What providers' quote answers showed about what they serve, newest
+	/// per ask, persisted under [`CoreStorageKey::FundingSupport`].
+	learned: Mutex<Vec<LearnedSupport>>,
+	/// Whether the persisted records were loaded.
+	learned_loaded: AtomicBool,
+	/// Held while the records are written, so writes land in order.
+	learned_writes: AsyncMutex<()>,
 }
 
 impl FundingProviders {
-    /// Every provider serving `direction`: the host's in its order, then
-    /// those published to browse that the host does not list. What their
-    /// recent quote answers showed is folded into what their manifests say.
-    pub fn candidates(&self, direction: FundingDirection) -> Vec<FundingCandidate> {
-        let learned = lock(&self.learned).clone();
-        let now_ms = current_unix_millis();
-        self.providers()
-            .into_iter()
-            .filter_map(|(provider_id, manifest)| {
-                FundingCandidate::for_direction(&provider_id, manifest.as_ref(), &learned, direction, now_ms)
-            })
-            .collect()
-    }
+	/// Every provider serving `direction`: the host's in its order, then
+	/// those published to browse that the host does not list. What their
+	/// recent quote answers showed is folded into what their manifests say.
+	pub fn candidates(&self, direction: FundingDirection) -> Vec<FundingCandidate> {
+		let learned = lock(&self.learned).clone();
+		let now_ms = current_unix_millis();
+		self.providers()
+			.into_iter()
+			.filter_map(|(provider_id, manifest)| {
+				FundingCandidate::for_direction(
+					&provider_id,
+					manifest.as_ref(),
+					&learned,
+					direction,
+					now_ms,
+				)
+			})
+			.collect()
+	}
 
-    /// Every provider a quote is asked of, whatever its manifest says it
-    /// serves, since a provider can serve more or less than it last
-    /// published: the host's, and those published to browse whose manifest
-    /// serves Funding.
-    pub fn quote_targets(&self) -> Vec<String> {
-        let entries = lock(&self.entries).len();
-        self.providers()
-            .into_iter()
-            .enumerate()
-            .filter(|(index, (_, manifest))| {
-                *index < entries || manifest.as_ref().is_some_and(|manifest| manifest.funding.is_some())
-            })
-            .map(|(_, (provider_id, _))| provider_id)
-            .collect()
-    }
+	/// Every provider a quote is asked of, whatever its manifest says it
+	/// serves, since a provider can serve more or less than it last
+	/// published: the host's, and those published to browse whose manifest
+	/// serves Funding.
+	pub fn quote_targets(&self) -> Vec<String> {
+		let entries = lock(&self.entries).len();
+		self.providers()
+			.into_iter()
+			.enumerate()
+			.filter(|(index, (_, manifest))| {
+				*index < entries ||
+					manifest.as_ref().is_some_and(|manifest| manifest.funding.is_some())
+			})
+			.map(|(_, (provider_id, _))| provider_id)
+			.collect()
+	}
 
-    /// The host's providers in its order, then the browse ones it does not
-    /// list, each with the manifest the core goes by.
-    fn providers(&self) -> Vec<(String, Option<WorkerManifest>)> {
-        let entries = lock(&self.entries).clone();
-        let discovered = lock(&self.discovered).clone();
-        let offered = entries
-            .iter()
-            .map(|entry| (entry.product_id.clone(), self.manifest(entry)));
-        let published = discovered
-            .into_iter()
-            .filter(|product_id| entries.iter().all(|entry| &entry.product_id != product_id))
-            .map(|product_id| {
-                let manifest = lock(&self.live).get(&product_id).cloned().flatten();
-                (product_id, manifest)
-            });
-        offered.chain(published).collect()
-    }
+	/// The host's providers in its order, then the browse ones it does not
+	/// list, each with the manifest the core goes by.
+	fn providers(&self) -> Vec<(String, Option<WorkerManifest>)> {
+		let entries = lock(&self.entries).clone();
+		let discovered = lock(&self.discovered).clone();
+		let offered = entries.iter().map(|entry| (entry.product_id.clone(), self.manifest(entry)));
+		let published = discovered
+			.into_iter()
+			.filter(|product_id| entries.iter().all(|entry| &entry.product_id != product_id))
+			.map(|product_id| {
+				let manifest = lock(&self.live).get(&product_id).cloned().flatten();
+				(product_id, manifest)
+			});
+		offered.chain(published).collect()
+	}
 
-    /// Record what an answer showed, replacing what was known for the same
-    /// ask and dropping what is no longer trusted.
-    fn learn(&self, mut support: LearnedSupport) {
-        let mut learned = lock(&self.learned);
-        let now_ms = support.learned_at_ms;
-        // A quote says nothing about the limits, so the ones an earlier
-        // refusal of the same ask showed still stand.
-        if let Some(known) = learned
-            .iter()
-            .find(|known| known.is_fresh(now_ms) && known.same_ask(&support))
-        {
-            support.min = support.min.or(known.min);
-            support.max = support.max.or(known.max);
-        }
-        learned.retain(|known| known.is_fresh(now_ms) && !known.same_ask(&support));
-        learned.push(support);
-    }
+	/// Keep `published` as the browse list, normalized like the host's
+	/// entries so a product on both is one provider, and return it. An id that
+	/// does not normalize is left out.
+	fn set_discovered(&self, published: Vec<String>) -> Vec<String> {
+		let mut normalized: Vec<String> = Vec::with_capacity(published.len());
+		for product_id in published {
+			match normalized_product_id(product_id) {
+				Ok(product_id) if !normalized.contains(&product_id) => normalized.push(product_id),
+				Ok(_) => {},
+				Err(reason) => tracing::debug!(%reason, "skipping a browse product id"),
+			}
+		}
+		*lock(&self.discovered) = normalized.clone();
+		normalized
+	}
 
-    /// Whether `provider_id` serves `direction`.
-    pub fn is_candidate(&self, provider_id: &str, direction: FundingDirection) -> bool {
-        self.candidates(direction)
-            .iter()
-            .any(|candidate| candidate.provider_id == provider_id)
-    }
+	/// Record what an answer showed, replacing what was known for the same
+	/// ask and dropping what is no longer trusted.
+	fn learn(&self, mut support: LearnedSupport) {
+		let mut learned = lock(&self.learned);
+		let now_ms = support.learned_at_ms;
+		// A quote says nothing about the limits, so the ones an earlier
+		// refusal of the same ask showed still stand.
+		if let Some(known) =
+			learned.iter().find(|known| known.is_fresh(now_ms) && known.same_ask(&support))
+		{
+			support.min = support.min.or(known.min);
+			support.max = support.max.or(known.max);
+		}
+		learned.retain(|known| known.is_fresh(now_ms) && !known.same_ask(&support));
+		learned.push(support);
+	}
 
-    /// The manifest the core goes by for `entry`: the host's for a bundled
-    /// provider; otherwise dotNS's answer once it has one, the host's
-    /// snapshot until then.
-    fn manifest(&self, entry: &FundingProviderEntry) -> Option<WorkerManifest> {
-        if !entry.bundled
-            && let Some(live) = lock(&self.live).get(&entry.product_id)
-        {
-            return live.clone();
-        }
-        WorkerManifest::parse(entry.worker_manifest.as_deref()?)
-            .inspect_err(|reason| {
-                tracing::warn!(provider = %entry.product_id, %reason, "the host's funding provider snapshot is unusable");
-            })
-            .ok()
-    }
+	/// What the providers' manifests and recent quote answers say about each
+	/// country for `direction`, `rail` and `asset`.
+	pub fn countries(
+		&self,
+		direction: FundingDirection,
+		rail: FundingRail,
+		asset: &str,
+	) -> Vec<FundingCountry> {
+		let learned = lock(&self.learned).clone();
+		country_support(&self.providers(), &learned, direction, rail, asset, current_unix_millis())
+	}
+
+	/// Whether `provider_id` serves `direction`.
+	pub fn is_candidate(&self, provider_id: &str, direction: FundingDirection) -> bool {
+		self.candidates(direction)
+			.iter()
+			.any(|candidate| candidate.provider_id == provider_id)
+	}
+
+	/// The manifest the core goes by for `entry`: the host's for a bundled
+	/// provider; otherwise dotNS's answer once it has one, the host's
+	/// snapshot until then.
+	fn manifest(&self, entry: &OfferedProvider) -> Option<WorkerManifest> {
+		if entry.origin == FundingProviderOrigin::Bundled {
+			return entry.snapshot.clone();
+		}
+		match lock(&self.live).get(&entry.product_id) {
+			Some(live) => live.clone(),
+			None => entry.snapshot.clone(),
+		}
+	}
 }
 
 impl RuntimeServices {
-    /// Replace the funding providers the host offers, and start reading their
-    /// manifests. A product id that does not normalize is refused, and nothing
-    /// changes.
-    pub fn set_funding_providers(
-        self: &Arc<Self>,
-        entries: Vec<FundingProviderEntry>,
-    ) -> Result<(), FundingSessionError> {
-        let mut normalized: Vec<FundingProviderEntry> = Vec::with_capacity(entries.len());
-        for entry in entries {
-            let product_id =
-                ProductContext::new_with_execution(entry.product_id, ProductExecutionKind::Worker)
-                    .map_err(|error| FundingSessionError::InvalidProvider {
-                        reason: error.to_string(),
-                    })?
-                    .product_id;
-            if normalized.iter().all(|kept| kept.product_id != product_id) {
-                normalized.push(FundingProviderEntry {
-                    product_id,
-                    worker_manifest: entry.worker_manifest,
-                    bundled: entry.bundled,
-                });
-            }
-        }
-        let providers = &self.funding_providers;
-        let discovered = lock(&providers.discovered).clone();
-        lock(&providers.live).retain(|product_id, _| {
-            normalized.iter().any(|entry| &entry.product_id == product_id)
-                || discovered.contains(product_id)
-        });
-        *lock(&providers.entries) = normalized;
-        self.refresh_funding_providers();
-        Ok(())
-    }
+	/// Replace the funding providers the host offers, and start reading their
+	/// manifests. A product id that does not normalize, or a shipped manifest
+	/// that does not parse, is refused, and nothing changes.
+	pub fn set_funding_providers(
+		self: &Arc<Self>,
+		entries: Vec<FundingProviderEntry>,
+	) -> Result<(), FundingSessionError> {
+		let normalized = offered_providers(entries)?;
+		let providers = &self.funding_providers();
+		let discovered = lock(&providers.discovered).clone();
+		lock(&providers.live).retain(|product_id, _| {
+			normalized.iter().any(|entry| &entry.product_id == product_id) ||
+				discovered.contains(product_id)
+		});
+		*lock(&providers.entries) = normalized;
+		self.refresh_funding_providers();
+		Ok(())
+	}
 
-    /// The providers a session in `direction` can be handed to.
-    pub fn funding_candidates(self: &Arc<Self>, direction: FundingDirection) -> Vec<FundingCandidate> {
-        self.refresh_funding_providers();
-        self.funding_providers.candidates(direction)
-    }
+	/// The providers a session in `direction` can be handed to.
+	pub fn funding_candidates(
+		self: &Arc<Self>,
+		direction: FundingDirection,
+	) -> Vec<FundingCandidate> {
+		self.refresh_funding_providers();
+		self.funding_providers().candidates(direction)
+	}
 
-    /// Read every host provider's manifest that is not already being read,
-    /// and the browse list with the manifests of what it lists. A read that
-    /// fails keeps what the core had, since it says nothing about the
-    /// provider.
-    pub fn refresh_funding_providers(self: &Arc<Self>) {
-        if !self.funding_providers.learned_loaded.swap(true, Ordering::AcqRel) {
-            let services = self.clone();
-            (self.spawner)(Box::pin(async move {
-                services.load_learned_support().await;
-            }));
-        }
-        let entries = lock(&self.funding_providers.entries).clone();
-        for entry in entries.into_iter().filter(|entry| !entry.bundled) {
-            if !lock(&self.funding_providers.refreshing).insert(entry.product_id.clone()) {
-                continue;
-            }
-            let services = self.clone();
-            (self.spawner)(Box::pin(async move {
-                services.read_provider_manifest(&entry.product_id).await;
-            }));
-        }
-        if self.funding_providers.discovering.swap(true, Ordering::AcqRel) {
-            return;
-        }
-        let services = self.clone();
-        (self.spawner)(Box::pin(async move {
-            services.discover_funding_providers().await;
-            services
-                .funding_providers
-                .discovering
-                .store(false, Ordering::Release);
-        }));
-    }
+	/// Read every host provider's manifest that is not already being read,
+	/// and the browse list with the manifests of what it lists. A read that
+	/// fails keeps what the core had, since it says nothing about the
+	/// provider.
+	pub fn refresh_funding_providers(self: &Arc<Self>) {
+		if !self.funding_providers().learned_loaded.swap(true, Ordering::AcqRel) {
+			let services = self.clone();
+			(self.spawner)(Box::pin(async move {
+				services.load_learned_support().await;
+			}));
+		}
+		let entries = lock(&self.funding_providers().entries).clone();
+		for entry in entries
+			.into_iter()
+			.filter(|entry| entry.origin == FundingProviderOrigin::Published)
+		{
+			if !lock(&self.funding_providers().refreshing).insert(entry.product_id.clone()) {
+				continue;
+			}
+			let services = self.clone();
+			(self.spawner)(Box::pin(async move {
+				services.read_provider_manifest(&entry.product_id).await;
+			}));
+		}
+		if self.funding_providers().discovering.swap(true, Ordering::AcqRel) {
+			return;
+		}
+		let services = self.clone();
+		(self.spawner)(Box::pin(async move {
+			services.discover_funding_providers().await;
+			services.funding_providers().discovering.store(false, Ordering::Release);
+		}));
+	}
 
-    /// Read the browse list, then the manifest of each product on it, one at
-    /// a time so a long list does not open a burst of chain reads.
-    async fn discover_funding_providers(&self) {
-        let published = match published_products(self, self.platform.as_ref()).await {
-            Ok(published) => published,
-            Err(reason) => {
-                tracing::warn!(%reason, "reading the browse list failed");
-                return;
-            }
-        };
-        tracing::debug!(count = published.len(), "products published to browse");
-        let providers = &self.funding_providers;
-        *lock(&providers.discovered) = published.clone();
-        for product_id in published {
-            if lock(&providers.refreshing).insert(product_id.clone()) {
-                self.read_provider_manifest(&product_id).await;
-            }
-        }
-    }
+	/// Read the browse list, then the manifest of each product on it, one at
+	/// a time so a long list does not open a burst of chain reads.
+	async fn discover_funding_providers(&self) {
+		let published = match published_products(self, self.platform.as_ref()).await {
+			Ok(published) => published,
+			Err(reason) => {
+				tracing::warn!(%reason, "reading the browse list failed");
+				return;
+			},
+		};
+		tracing::debug!(count = published.len(), "products published to browse");
+		let providers = &self.funding_providers();
+		let published = providers.set_discovered(published);
+		for product_id in published {
+			if lock(&providers.refreshing).insert(product_id.clone()) {
+				self.read_provider_manifest(&product_id).await;
+			}
+		}
+	}
 
-    /// Record what a provider's answer showed about what it serves, and
-    /// persist the records.
-    pub fn learn_funding_support(self: &Arc<Self>, support: LearnedSupport) {
-        self.funding_providers.learn(support);
-        let services = self.clone();
-        (self.spawner)(Box::pin(async move {
-            // Each write takes the records as they are once it holds the
-            // lock, so the last one to land is the newest.
-            let _write = services.funding_providers.learned_writes.lock().await;
-            let records = lock(&services.funding_providers.learned).clone();
-            if let Err(error) = services
-                .platform
-                .write_core_storage(CoreStorageKey::FundingSupport, records.encode())
-                .await
-            {
-                tracing::warn!(reason = %error.reason, "storing what funding providers serve failed");
-            }
-        }));
-    }
+	/// Record what a provider's answer showed about what it serves, and
+	/// persist the records.
+	pub fn learn_funding_support(self: &Arc<Self>, support: LearnedSupport) {
+		self.funding_providers().learn(support);
+		let services = self.clone();
+		(self.spawner)(Box::pin(async move {
+			// Each write takes the records as they are once it holds the
+			// lock, so the last one to land is the newest.
+			let _write = services.funding_providers().learned_writes.lock().await;
+			let records = lock(&services.funding_providers().learned).clone();
+			if let Err(error) = services
+				.platform
+				.write_core_storage(CoreStorageKey::FundingSupport, records.encode())
+				.await
+			{
+				tracing::warn!(reason = %error.reason, "storing what funding providers serve failed");
+			}
+		}));
+	}
 
-    /// Load what earlier answers showed, keeping what is still trusted and
-    /// anything learned since the load began.
-    async fn load_learned_support(&self) {
-        let stored = match self.platform.read_core_storage(CoreStorageKey::FundingSupport).await {
-            Ok(Some(bytes)) => Vec::<LearnedSupport>::decode(&mut bytes.as_slice()).unwrap_or_default(),
-            Ok(None) => Vec::new(),
-            Err(error) => {
-                tracing::warn!(reason = %error.reason, "reading what funding providers serve failed");
-                return;
-            }
-        };
-        let now_ms = current_unix_millis();
-        let mut learned = lock(&self.funding_providers.learned);
-        for support in stored.into_iter().filter(|support| support.is_fresh(now_ms)) {
-            if learned.iter().all(|known| !known.same_ask(&support)) {
-                learned.push(support);
-            }
-        }
-    }
+	/// Load what earlier answers showed, keeping what is still trusted and
+	/// anything learned since the load began.
+	async fn load_learned_support(&self) {
+		let stored = match self.platform.read_core_storage(CoreStorageKey::FundingSupport).await {
+			Ok(Some(bytes)) => {
+				Vec::<LearnedSupport>::decode(&mut bytes.as_slice()).unwrap_or_default()
+			},
+			Ok(None) => Vec::new(),
+			Err(error) => {
+				tracing::warn!(reason = %error.reason, "reading what funding providers serve failed");
+				return;
+			},
+		};
+		let now_ms = current_unix_millis();
+		let mut learned = lock(&self.funding_providers().learned);
+		for support in stored.into_iter().filter(|support| support.is_fresh(now_ms)) {
+			if learned.iter().all(|known| !known.same_ask(&support)) {
+				learned.push(support);
+			}
+		}
+	}
 
-    /// Read `product_id`'s Worker manifest into what the core goes by.
-    async fn read_provider_manifest(&self, product_id: &str) {
-        let read = worker_manifest(self, self.platform.as_ref(), product_id).await;
-        let providers = &self.funding_providers;
-        if let Ok(manifest) = read {
-            lock(&providers.live).insert(product_id.to_string(), manifest);
-        }
-        lock(&providers.refreshing).remove(product_id);
-    }
+	/// Read `product_id`'s Worker manifest into what the core goes by.
+	async fn read_provider_manifest(&self, product_id: &str) {
+		let read = worker_manifest(self, self.platform.as_ref(), product_id).await;
+		let providers = &self.funding_providers();
+		if let Ok(manifest) = read {
+			lock(&providers.live).insert(product_id.to_string(), manifest);
+		}
+		lock(&providers.refreshing).remove(product_id);
+	}
 }
 
-fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
-    mutex.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+/// The host's `entries` normalized and with their shipped manifests read, in
+/// its order, each product once.
+fn offered_providers(
+	entries: Vec<FundingProviderEntry>,
+) -> Result<Vec<OfferedProvider>, FundingSessionError> {
+	let mut offered: Vec<OfferedProvider> = Vec::with_capacity(entries.len());
+	for entry in entries {
+		let product_id = normalized_product_id(entry.product_id)
+			.map_err(|reason| FundingSessionError::InvalidProvider { reason })?;
+		let snapshot = entry
+			.worker_manifest
+			.as_deref()
+			.map(WorkerManifest::parse)
+			.transpose()
+			.map_err(|reason| FundingSessionError::InvalidProvider {
+				reason: format!("{product_id}: {reason}"),
+			})?;
+		if offered.iter().all(|kept| kept.product_id != product_id) {
+			offered.push(OfferedProvider { product_id, snapshot, origin: entry.origin });
+		}
+	}
+	Ok(offered)
+}
+
+/// `product_id` as the core names a provider's worker, so ids from the host
+/// and from browse compare equal.
+fn normalized_product_id(product_id: String) -> Result<String, String> {
+	ProductContext::new_with_execution(product_id, ProductExecutionKind::Worker)
+		.map(|product| product.product_id)
+		.map_err(|error| error.to_string())
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+	use super::*;
 
-    use crate::host_logic::worker_manifest::{FundingMode, FundingRoute, RouteDirection};
+	use truapi::latest::FundingRail;
 
-    fn manifest(routes: &str) -> String {
-        format!(
-            r#"{{"$v":1,"appVersion":[1,0,0],"kind":"worker","entrypoint":"index.js","includes":{{"funding":{{"routes":[{routes}]}}}}}}"#
-        )
-    }
+	use crate::host_logic::worker_manifest::FundingRoute;
 
-    const CARD_IN: &str = r#"{"mode":"CARD","directions":["In"],"assets":["EUR"]}"#;
-    const CRYPTO_OUT: &str = r#"{"mode":"CRYPTO","directions":["Out"],"assets":["USDT"]}"#;
+	fn manifest(routes: &str) -> String {
+		format!(
+			r#"{{"$v":1,"appVersion":[1,0,0],"kind":"worker","entrypoint":"index.js","includes":{{"funding":{{"routes":[{routes}]}}}}}}"#
+		)
+	}
 
-    fn providers(entries: &[(&str, Option<String>)]) -> FundingProviders {
-        let providers = FundingProviders::default();
-        *lock(&providers.entries) = entries
-            .iter()
-            .map(|(product_id, worker_manifest)| FundingProviderEntry {
-                product_id: product_id.to_string(),
-                worker_manifest: worker_manifest.clone(),
-                bundled: false,
-            })
-            .collect();
-        providers
-    }
+	const CARD_IN: &str = r#"{"mode":"CARD","directions":["In"],"assets":["EUR"]}"#;
+	const CRYPTO_OUT: &str = r#"{"mode":"CRYPTO","directions":["Out"],"assets":["USDT"]}"#;
 
-    fn ids(candidates: Vec<FundingCandidate>) -> Vec<String> {
-        candidates.into_iter().map(|candidate| candidate.provider_id).collect()
-    }
+	fn providers(entries: &[(&str, Option<String>)]) -> FundingProviders {
+		let providers = FundingProviders::default();
+		*lock(&providers.entries) = offered_providers(
+			entries
+				.iter()
+				.map(|(product_id, worker_manifest)| FundingProviderEntry {
+					product_id: product_id.to_string(),
+					worker_manifest: worker_manifest.clone(),
+					origin: FundingProviderOrigin::Published,
+				})
+				.collect(),
+		)
+		.expect("offered");
+		providers
+	}
 
-    // The list renders from what the host shipped before any chain read, in
-    // the host's order, with only the routes that serve the direction.
-    #[test]
-    fn candidates_come_from_the_snapshot_until_dotns_answers() {
-        let providers = providers(&[
-            ("card.dot", Some(manifest(CARD_IN))),
-            ("both.dot", Some(manifest(&format!("{CARD_IN},{CRYPTO_OUT}")))),
-            ("unshipped.dot", None),
-            ("broken.dot", Some("{".to_string())),
-        ]);
+	fn ids(candidates: Vec<FundingCandidate>) -> Vec<String> {
+		candidates.into_iter().map(|candidate| candidate.provider_id).collect()
+	}
 
-        let outbound = providers.candidates(FundingDirection::Out);
+	// The list renders from what the host shipped before any chain read, in
+	// the host's order, with only the routes that serve the direction.
+	#[test]
+	fn candidates_come_from_the_snapshot_until_dotns_answers() {
+		let providers = providers(&[
+			("card.dot", Some(manifest(CARD_IN))),
+			("both.dot", Some(manifest(&format!("{CARD_IN},{CRYPTO_OUT}")))),
+			("unshipped.dot", None),
+		]);
 
-        assert_eq!(
-            (
-                ids(providers.candidates(FundingDirection::In)),
-                outbound.iter().map(|candidate| candidate.routes.clone()).collect::<Vec<_>>(),
-            ),
-            (
-                vec!["card.dot".to_string(), "both.dot".to_string()],
-                vec![vec![FundingRoute {
-                    mode: FundingMode::Crypto,
-                    directions: vec![RouteDirection::Out],
-                    assets: vec!["USDT".to_string()],
-                    networks: None,
-                    countries: None,
-                }]],
-            )
-        );
-    }
+		let outbound = providers.candidates(FundingDirection::Out);
 
-    // A provider the host ships in the app is never published, so dotNS
-    // answering "nothing" must not drop it the way it drops a listed one.
-    #[test]
-    fn a_bundled_provider_keeps_the_hosts_manifest() {
-        let providers = providers(&[("listed.dot", Some(manifest(CARD_IN)))]);
-        lock(&providers.entries).push(FundingProviderEntry {
-            product_id: "bundled.dot".to_string(),
-            worker_manifest: Some(manifest(CARD_IN)),
-            bundled: true,
-        });
-        lock(&providers.live).extend([("listed.dot".to_string(), None), ("bundled.dot".to_string(), None)]);
+		assert_eq!(
+			(
+				ids(providers.candidates(FundingDirection::In)),
+				outbound.iter().map(|candidate| candidate.routes.clone()).collect::<Vec<_>>(),
+			),
+			(
+				vec!["card.dot".to_string(), "both.dot".to_string()],
+				vec![vec![FundingRoute {
+					rail: FundingRail::Crypto,
+					directions: vec![FundingDirection::Out],
+					assets: vec!["USDT".to_string()],
+					networks: None,
+					countries: None,
+				}]],
+			)
+		);
+	}
 
-        assert_eq!(
-            ids(providers.candidates(FundingDirection::In)),
-            vec!["bundled.dot".to_string()]
-        );
-    }
+	// A provider the host ships in the app is never published, so dotNS
+	// answering "nothing" must not drop it the way it drops a listed one.
+	#[test]
+	fn a_bundled_provider_keeps_the_hosts_manifest() {
+		let providers = providers(&[("listed.dot", Some(manifest(CARD_IN)))]);
+		lock(&providers.entries).extend(
+			offered_providers(vec![FundingProviderEntry {
+				product_id: "bundled.dot".to_string(),
+				worker_manifest: Some(manifest(CARD_IN)),
+				origin: FundingProviderOrigin::Bundled,
+			}])
+			.expect("offered"),
+		);
+		lock(&providers.live)
+			.extend([("listed.dot".to_string(), None), ("bundled.dot".to_string(), None)]);
 
-    // Published providers join after the host's own, once dotNS has said what
-    // they serve; one the host also lists appears once, in the host's place.
-    #[test]
-    fn published_providers_follow_the_hosts_own() {
-        let providers = providers(&[("card.dot", Some(manifest(CARD_IN)))]);
-        let live = |routes: &str| WorkerManifest::parse(&manifest(routes)).ok();
-        *lock(&providers.discovered) = ["unread.dot", "found.dot", "card.dot", "nothing.dot"]
-            .map(str::to_string)
-            .to_vec();
-        lock(&providers.live).extend([
-            ("found.dot".to_string(), live(CARD_IN)),
-            ("card.dot".to_string(), live(CARD_IN)),
-            ("nothing.dot".to_string(), None),
-        ]);
+		assert_eq!(
+			ids(providers.candidates(FundingDirection::In)),
+			vec!["bundled.dot".to_string()]
+		);
+	}
 
-        assert_eq!(
-            ids(providers.candidates(FundingDirection::In)),
-            vec!["card.dot".to_string(), "found.dot".to_string()]
-        );
-    }
+	// A snapshot the core cannot read is the host's mistake, so it is refused
+	// when offered rather than leaving the provider silently missing.
+	#[test]
+	fn an_unreadable_snapshot_is_refused_when_offered() {
+		let offered = |worker_manifest: &str| {
+			offered_providers(vec![FundingProviderEntry {
+				product_id: "card.dot".to_string(),
+				worker_manifest: Some(worker_manifest.to_string()),
+				origin: FundingProviderOrigin::Published,
+			}])
+			.map(|offered| offered.len())
+			.map_err(|error| matches!(error, FundingSessionError::InvalidProvider { .. }))
+		};
 
-    // A stale snapshot is corrected by what the provider publishes now,
-    // including when it stopped serving Funding.
-    #[test]
-    fn dotns_answer_wins_over_the_snapshot() {
-        let providers = providers(&[
-            ("withdrawn.dot", Some(manifest(CARD_IN))),
-            ("changed.dot", Some(manifest(CARD_IN))),
-            ("unshipped.dot", None),
-        ]);
-        let live = |routes: &str| WorkerManifest::parse(&manifest(routes)).ok();
-        lock(&providers.live).extend([
-            ("withdrawn.dot".to_string(), None),
-            ("changed.dot".to_string(), live(CRYPTO_OUT)),
-            ("unshipped.dot".to_string(), live(CARD_IN)),
-        ]);
+		assert_eq!((offered(&manifest(CARD_IN)), offered("{")), (Ok(1), Err(true)));
+	}
 
-        assert_eq!(
-            (
-                ids(providers.candidates(FundingDirection::In)),
-                ids(providers.candidates(FundingDirection::Out)),
-            ),
-            (vec!["unshipped.dot".to_string()], vec!["changed.dot".to_string()])
-        );
-    }
+	// Published providers join after the host's own, once dotNS has said what
+	// they serve; one the host also lists appears once, in the host's place.
+	#[test]
+	fn published_providers_follow_the_hosts_own() {
+		let providers = providers(&[("card.dot", Some(manifest(CARD_IN)))]);
+		let live = |routes: &str| WorkerManifest::parse(&manifest(routes)).ok();
+		*lock(&providers.discovered) = ["unread.dot", "found.dot", "card.dot", "nothing.dot"]
+			.map(str::to_string)
+			.to_vec();
+		lock(&providers.live).extend([
+			("found.dot".to_string(), live(CARD_IN)),
+			("card.dot".to_string(), live(CARD_IN)),
+			("nothing.dot".to_string(), None),
+		]);
 
-    // A quote says nothing about the limits, so a minimum an earlier refusal
-    // of the same ask showed survives the provider quoting it later.
-    #[test]
-    fn a_later_quote_keeps_the_limit_a_refusal_showed() {
-        let providers = FundingProviders::default();
-        let ask = LearnedSupport {
-            provider_id: "ramp.dot".to_string(),
-            direction: FundingDirection::In,
-            rail: truapi::latest::FundingRail::Card,
-            asset: "EUR".to_string(),
-            network: None,
-            country: None,
-            supported: true,
-            min: Some(10),
-            max: None,
-            learned_at_ms: 1_000,
-        };
-        providers.learn(ask.clone());
-        providers.learn(LearnedSupport { min: None, learned_at_ms: 2_000, ..ask });
+		assert_eq!(
+			ids(providers.candidates(FundingDirection::In)),
+			vec!["card.dot".to_string(), "found.dot".to_string()]
+		);
+	}
 
-        assert_eq!(
-            lock(&providers.learned).iter().map(|known| (known.min, known.learned_at_ms)).collect::<Vec<_>>(),
-            vec![(Some(10), 2_000)]
-        );
-    }
+	// Browse may name a product the way the host does not, so its ids are
+	// normalized like the host's: a product on both lists is one provider,
+	// and a selection by the normalized id finds it.
+	#[test]
+	fn browse_ids_are_normalized_like_the_hosts() {
+		let providers = providers(&[("card.dot", Some(manifest(CARD_IN)))]);
+		let live = |routes: &str| WorkerManifest::parse(&manifest(routes)).ok();
+		let discovered = providers.set_discovered(
+			["CARD.dot", "Found.dot", "found.dot", "not a product id"]
+				.map(str::to_string)
+				.to_vec(),
+		);
+		lock(&providers.live).insert("found.dot".to_string(), live(CARD_IN));
+
+		assert_eq!(
+			(discovered, ids(providers.candidates(FundingDirection::In))),
+			(
+				vec!["card.dot".to_string(), "found.dot".to_string()],
+				vec!["card.dot".to_string(), "found.dot".to_string()],
+			)
+		);
+	}
+
+	// A stale snapshot is corrected by what the provider publishes now,
+	// including when it stopped serving Funding.
+	#[test]
+	fn dotns_answer_wins_over_the_snapshot() {
+		let providers = providers(&[
+			("withdrawn.dot", Some(manifest(CARD_IN))),
+			("changed.dot", Some(manifest(CARD_IN))),
+			("unshipped.dot", None),
+		]);
+		let live = |routes: &str| WorkerManifest::parse(&manifest(routes)).ok();
+		lock(&providers.live).extend([
+			("withdrawn.dot".to_string(), None),
+			("changed.dot".to_string(), live(CRYPTO_OUT)),
+			("unshipped.dot".to_string(), live(CARD_IN)),
+		]);
+
+		assert_eq!(
+			(
+				ids(providers.candidates(FundingDirection::In)),
+				ids(providers.candidates(FundingDirection::Out)),
+			),
+			(vec!["unshipped.dot".to_string()], vec!["changed.dot".to_string()])
+		);
+	}
+
+	// A quote says nothing about the limits, so a minimum an earlier refusal
+	// of the same ask showed survives the provider quoting it later.
+	#[test]
+	fn a_later_quote_keeps_the_limit_a_refusal_showed() {
+		let providers = FundingProviders::default();
+		let ask = LearnedSupport {
+			provider_id: "ramp.dot".to_string(),
+			direction: FundingDirection::In,
+			rail: truapi::latest::FundingRail::Card,
+			asset: "EUR".to_string(),
+			network: None,
+			country: None,
+			supported: true,
+			min: Some(10),
+			max: None,
+			learned_at_ms: 1_000,
+		};
+		providers.learn(ask.clone());
+		providers.learn(LearnedSupport { min: None, learned_at_ms: 2_000, ..ask });
+
+		assert_eq!(
+			lock(&providers.learned)
+				.iter()
+				.map(|known| (known.min, known.learned_at_ms))
+				.collect::<Vec<_>>(),
+			vec![(Some(10), 2_000)]
+		);
+	}
 }

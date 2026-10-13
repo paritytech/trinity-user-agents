@@ -21,6 +21,7 @@
         <attribute name="chatType" optional="YES" attributeType="Integer 16" defaultValueString="0" usesScalarValueType="YES"/>
         <attribute name="chatTypeContext" optional="YES" attributeType="String"/>
         <attribute name="createdAt" optional="YES" attributeType="Date" usesScalarValueType="NO"/>
+        <attribute name="footer" optional="YES" attributeType="String"/>
         <attribute name="identifier" optional="YES" attributeType="String"/>
         <relationship name="contact" optional="YES" maxCount="1" deletionRule="Nullify" destinationEntity="CDChatContact" inverseName="chat" inverseEntity="CDChatContact"/>
         <relationship name="lastDisplayMessage" optional="YES" maxCount="1" deletionRule="Cascade" destinationEntity="CDChatMessage" inverseName="lastDisplayMessageChat" inverseEntity="CDChatMessage"/>
@@ -145,11 +146,15 @@
         <attribute name="identifier" attributeType="String"/>
         <attribute name="openedAt" attributeType="Date" usesScalarValueType="NO"/>
         <attribute name="outcome" attributeType="String"/>
+        <attribute name="paidAmount" optional="YES" attributeType="String"/>
+        <attribute name="paidAsset" optional="YES" attributeType="String"/>
+        <attribute name="paidNetwork" optional="YES" attributeType="String"/>
         <attribute name="payout" optional="YES" attributeType="String"/>
         <attribute name="payoutReason" optional="YES" attributeType="String"/>
         <attribute name="providerId" optional="YES" attributeType="String"/>
         <attribute name="rail" optional="YES" attributeType="String"/>
         <attribute name="reference" optional="YES" attributeType="String"/>
+        <attribute name="refundedAmount" optional="YES" attributeType="String"/>
         <attribute name="requestedAmount" optional="YES" attributeType="String"/>
         <attribute name="settledAmount" optional="YES" attributeType="String"/>
         <attribute name="settledAt" attributeType="Date" usesScalarValueType="NO"/>

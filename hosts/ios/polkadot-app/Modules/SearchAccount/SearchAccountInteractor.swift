@@ -19,6 +19,7 @@ final class SearchAccountInteractor {
     private let searchRunner = SearchRunner()
     private let logger: LoggerProtocol
     private let chainAsset: ChainAsset
+    private let fundingOpener: FundingOpening
     private let stateLock: OSAllocatedUnfairLock<State>
 
     private static let maximumPrefixCount = 32
@@ -32,18 +33,21 @@ final class SearchAccountInteractor {
         >,
         chatOpenResolver: ChatOpenModelResolving,
         chainAsset: ChainAsset,
-        logger: LoggerProtocol
+        logger: LoggerProtocol,
+        fundingOpener: FundingOpening
     ) {
         self.accountSearching = accountSearching
         self.chatOpenResolver = chatOpenResolver
         self.chainAsset = chainAsset
         self.logger = logger
+        self.fundingOpener = fundingOpener
         stateLock = OSAllocatedUnfairLock(initialState: State())
     }
 
     deinit {
         replaceSearchTask(with: nil)
         replaceSetupTask(with: nil)
+        replaceWithdrawTask(with: nil)
     }
 }
 
@@ -93,6 +97,19 @@ extension SearchAccountInteractor: SearchAccountInteractorInputProtocol {
             }
         }
     }
+
+    func openWithdrawal() {
+        let task = Task { [weak presenter, fundingOpener] in
+            do {
+                let session = try await fundingOpener.openFunding(direction: .out)
+                await presenter?.didOpenWithdrawal(.success(session))
+            } catch {
+                await presenter?.didOpenWithdrawal(.failure(error))
+            }
+        }
+
+        replaceWithdrawTask(with: task)
+    }
 }
 
 // MARK: - Private
@@ -103,6 +120,7 @@ private extension SearchAccountInteractor {
         var globalContacts: [AccountId: Chat.RemoteContact] = [:]
         var searchTask: Task<Void, Never>?
         var setupTask: Task<Void, Never>?
+        var withdrawTask: Task<Void, Never>?
     }
 
     func isSearchable(_ query: String) -> Bool {
@@ -242,6 +260,16 @@ private extension SearchAccountInteractor {
         let previous = stateLock.withLock { state in
             let previous = state.setupTask
             state.setupTask = task
+            return previous
+        }
+
+        previous?.cancel()
+    }
+
+    func replaceWithdrawTask(with task: Task<Void, Never>?) {
+        let previous = stateLock.withLock { state in
+            let previous = state.withdrawTask
+            state.withdrawTask = task
             return previous
         }
 

@@ -22,6 +22,7 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.ChatActiveTracker
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageId
 import io.paritytech.polkadotapp.feature_products_api.model.JsUiEvent
 import io.paritytech.polkadotapp.feature_products_api.model.JsWidget
+import io.paritytech.polkadotapp.feature_products_api.model.ProductChatIdParameter
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_api.model.toChatExtensionId
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.ProductsBotApi
@@ -122,7 +123,7 @@ class HostApiProductsScriptExecutor @AssistedInject constructor(
         }
     }
 
-    override suspend fun onUserMessage(text: String): Result<Unit> = runCatching {
+    override suspend fun onUserMessage(roomId: ProductChatIdParameter?, text: String): Result<Unit> = runCatching {
         awaitInitialized()
         val textLiteral = text.toJsStringLiteral()
         session!!.evaluateScript("dispatchUserMessage('', $textLiteral)")
@@ -130,6 +131,7 @@ class HostApiProductsScriptExecutor @AssistedInject constructor(
     }
 
     override fun renderMessage(
+        roomId: ProductChatIdParameter?,
         messageId: ChatMessageId,
         messageType: String,
         messageData: DataByteArray,

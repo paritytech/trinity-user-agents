@@ -21,6 +21,7 @@
         <attribute name="chatType" optional="YES" attributeType="Integer 16" defaultValueString="0" usesScalarValueType="YES"/>
         <attribute name="chatTypeContext" optional="YES" attributeType="String"/>
         <attribute name="createdAt" optional="YES" attributeType="Date" usesScalarValueType="NO"/>
+        <attribute name="footer" optional="YES" attributeType="String"/>
         <attribute name="identifier" optional="YES" attributeType="String"/>
         <relationship name="contact" optional="YES" maxCount="1" deletionRule="Nullify" destinationEntity="CDChatContact" inverseName="chat" inverseEntity="CDChatContact"/>
         <relationship name="lastDisplayMessage" optional="YES" maxCount="1" deletionRule="Cascade" destinationEntity="CDChatMessage" inverseName="lastDisplayMessageChat" inverseEntity="CDChatMessage"/>
@@ -136,28 +137,6 @@
         <attribute name="gameDate" optional="YES" attributeType="Date" usesScalarValueType="NO"/>
         <attribute name="gameIndex" optional="YES" attributeType="Integer 32" defaultValueString="0" usesScalarValueType="YES"/>
         <relationship name="contacts" optional="YES" toMany="YES" deletionRule="Nullify" destinationEntity="CDChatContact" inverseName="game" inverseEntity="CDChatContact"/>
-    </entity>
-    <entity name="CDFundingRecord" representedClassName="CDFundingRecord" syncable="YES" codeGenerationType="class">
-        <attribute name="asset" optional="YES" attributeType="String"/>
-        <attribute name="direction" attributeType="String"/>
-        <attribute name="failureCode" optional="YES" attributeType="String"/>
-        <attribute name="identifier" attributeType="String"/>
-        <attribute name="openedAt" attributeType="Date" usesScalarValueType="NO"/>
-        <attribute name="outcome" attributeType="String"/>
-        <attribute name="payout" optional="YES" attributeType="String"/>
-        <attribute name="payoutReason" optional="YES" attributeType="String"/>
-        <attribute name="providerId" optional="YES" attributeType="String"/>
-        <attribute name="rail" optional="YES" attributeType="String"/>
-        <attribute name="reference" optional="YES" attributeType="String"/>
-        <attribute name="requestedAmount" optional="YES" attributeType="String"/>
-        <attribute name="settledAmount" optional="YES" attributeType="String"/>
-        <attribute name="settledAt" attributeType="Date" usesScalarValueType="NO"/>
-        <attribute name="transactionId" optional="YES" attributeType="String"/>
-        <uniquenessConstraints>
-            <uniquenessConstraint>
-                <constraint value="identifier"/>
-            </uniquenessConstraint>
-        </uniquenessConstraints>
     </entity>
     <entity name="CDIncomingPayment" representedClassName="CDIncomingPayment" syncable="YES" codeGenerationType="class">
         <attribute name="actualClaimed" optional="YES" attributeType="String"/>

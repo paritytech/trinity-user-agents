@@ -14,6 +14,8 @@ final class SearchAccountPresenter {
     private var addressInputViewModel = InputViewModel.createAccountInputViewModel(for: "")
     private let recipientViewModelFactory: RecipientViewModelFactoryProtocol
     private var currentSearch = CurrentSearch(query: "", latestResult: nil, didReceiveWaiting: false)
+    private var showsSelfTransfer = true
+    private var lastContent: SearchAccountViewModel.Content = .empty
 
     init(
         interactor: SearchAccountInteractorInputProtocol,
@@ -28,6 +30,11 @@ final class SearchAccountPresenter {
     }
 
     private func provideAddressInputViewModel(_ accountType: SearchAccountViewModel.AccountType? = nil) {
+        if accountType != nil {
+            showsSelfTransfer = false
+            refreshSelfTransferVisibility()
+        }
+
         guard let view else { return }
 
         view.didReceive(
@@ -47,6 +54,7 @@ final class SearchAccountPresenter {
     }
 
     private func updateViewModel(content: SearchAccountViewModel.Content) {
+        lastContent = content
         let viewModel = SearchAccountViewModel(
             inputViewModel: SearchAccountViewModel.InputModel(
                 inputViewModel: addressInputViewModel
@@ -81,6 +89,8 @@ extension SearchAccountPresenter: SearchAccountPresenterProtocol {
     func searchAccount(_ account: String?) {
         let query = account?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         currentSearch = CurrentSearch(query: query, latestResult: nil, didReceiveWaiting: false)
+        showsSelfTransfer = query.isEmpty
+        refreshSelfTransferVisibility()
         interactor.searchAccount(for: account)
     }
 
@@ -88,12 +98,22 @@ extension SearchAccountPresenter: SearchAccountPresenterProtocol {
         switch cellType {
         case let .globalContact(accountType):
             interactor.resolveChat(for: accountType.accountAddress)
+        case .selfTransfer:
+            // Selection is handled by selectSelfTransfer(), never the transfer path.
+            break
         case .account,
              .recentContact:
-            handleAccountSelection(cellType.accountType)
-            guard let recipient = try? RecipientModel(accountType: cellType.accountType) else { return }
+            guard let accountType = cellType.accountType else { return }
+            handleAccountSelection(accountType)
+            guard let recipient = try? RecipientModel(accountType: accountType) else { return }
             wireframe.showTransfer(from: view, recipient: recipient, chainAsset: chainAsset)
         }
+    }
+
+    func selectSelfTransfer() {
+        view?.didReceive(selfTransferLoading: true)
+
+        interactor.openWithdrawal()
     }
 
     func didEndEditingInput(_ input: String?) {
@@ -130,7 +150,8 @@ extension SearchAccountPresenter: SearchAccountInteractorOutputProtocol {
                 content: SearchAccountViewModel.Content(
                     recent: recipientViewModelFactory.createRecentContacts(from: result.recent),
                     contacts: result.contacts.map(Self.mapToAccountType),
-                    global: result.global.rows.map(Self.mapToAccountType)
+                    global: result.global.rows.map(Self.mapToAccountType),
+                    showsSelfTransfer: showsSelfTransfer
                 )
             )
             provideStatus()
@@ -149,6 +170,21 @@ extension SearchAccountPresenter: SearchAccountInteractorOutputProtocol {
             from: view
         )
     }
+
+    func didOpenWithdrawal(_ result: Result<String?, Error>) {
+        view?.didReceive(selfTransferLoading: false)
+
+        switch result {
+        case .success(.some):
+            wireframe.close(from: view)
+        case .success(.none):
+            break
+        case let .failure(error):
+            guard !(error is CancellationError) else { return }
+
+            wireframe.present(error: error, from: view)
+        }
+    }
 }
 
 // MARK: - Private
@@ -165,6 +201,15 @@ private extension SearchAccountPresenter {
 
     /// Shown instead of the rows once the search settles. A failed global lookup stays silent
     /// while recent or contact rows are on screen, since those are still usable.
+    func refreshSelfTransferVisibility() {
+        guard lastContent.showsSelfTransfer != showsSelfTransfer else { return }
+
+        var content = lastContent
+        content.showsSelfTransfer = showsSelfTransfer
+
+        updateViewModel(content: content)
+    }
+
     func makeStatusMessage() -> String? {
         guard !currentSearch.isSearching, currentSearch.isEmpty else {
             return nil

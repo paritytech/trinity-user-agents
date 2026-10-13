@@ -282,9 +282,8 @@ export async function startTestHost(
     };
     await glue.default();
     if (options.logLevel) glue.setLogLevel?.(options.logLevel);
-    const { createWasmRawCallbacks } = await import(
-      "../generated/host-callbacks-adapter.js"
-    );
+    const { createWasmRawCallbacks } =
+      await import("../generated/host-callbacks-adapter.js");
     directRuntime = new glue.WasmSigningHostRuntime(
       {
         // A raw bridge callback rather than a generated host callback, so it
@@ -319,7 +318,9 @@ export async function startTestHost(
     };
   }
 
-  let roster: DevAccount[] = (options.accounts ?? ["alice"]).map(resolveAccount);
+  let roster: DevAccount[] = (options.accounts ?? ["alice"]).map(
+    resolveAccount,
+  );
   let active: DevAccount | undefined;
 
   const activate = async (account: DevAccount) => {
@@ -353,7 +354,9 @@ export async function startTestHost(
     onPort(port) {
       void (async () => {
         if (workerRuntime) {
-          const provider = await workerRuntime.createProvider({ productId: hostProduct });
+          const provider = await workerRuntime.createProvider({
+            productId: hostProduct,
+          });
           const unsubscribe = provider.subscribe((frame) => {
             port.postMessage(frame);
           });
@@ -386,9 +389,8 @@ export async function startTestHost(
           // than inside the provider.
           publishChatAction = core.publishChatAction
             ? async (action) => {
-                const { HostChatActionSubscribeItem } = await import(
-                  "@parity/truapi"
-                );
+                const { HostChatActionSubscribeItem } =
+                  await import("@parity/truapi");
                 core.publishChatAction!(
                   HostChatActionSubscribeItem.enc(action as never),
                 );
@@ -508,7 +510,10 @@ interface DirectSigningRuntime {
 
 /** The worker-backed signing runtime: hands back a wire provider. */
 interface WorkerSigningRuntime {
-  activateLocalSession(secret: Uint8Array, liteUsername?: string): Promise<void>;
+  activateLocalSession(
+    secret: Uint8Array,
+    liteUsername?: string,
+  ): Promise<void>;
   disconnectSession(): Promise<void>;
   setLogLevel?(level: string): void;
   setGrantAllowancesUnchecked?(granted: boolean): Promise<void>;
