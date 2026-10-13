@@ -97,6 +97,17 @@ pub struct FundingChoice {
 	pub asset: String,
 }
 
+impl FundingChoice {
+	/// The balance amount the quote moves in `direction`: what it credits
+	/// inbound, what it debits outbound.
+	pub fn balance_amount(&self, direction: FundingDirection) -> u128 {
+		match direction {
+			FundingDirection::In => self.quote.receive_amount,
+			FundingDirection::Out => self.quote.send_amount,
+		}
+	}
+}
+
 /// A session's progress as a host draws it: the steps for its direction and
 /// rail, each with when it was reached.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -260,7 +271,8 @@ impl FundingSession {
 	}
 
 	/// Assign the session to the provider the user chose, on the quote they
-	/// chose it by. Returns whether it was open and not yet assigned.
+	/// chose it by. A session without an amount takes the amount the quote
+	/// prices. Returns whether it was open and not yet assigned.
 	pub fn assign(
 		&mut self,
 		provider_id: &str,
@@ -272,6 +284,9 @@ impl FundingSession {
 		}
 		self.provider_id = Some(provider_id.to_string());
 		self.assigned_at_ms = Some(now_ms);
+		if self.amount.is_none() {
+			self.amount = choice.as_ref().map(|choice| choice.balance_amount(self.direction));
+		}
 		self.choice = choice;
 		true
 	}
@@ -709,6 +724,17 @@ pub enum FundingSessionError {
 	UnknownQuote {
 		/// The quote id the host named.
 		quote_id: String,
+	},
+	/// The chosen quote prices a different amount than the session asks to
+	/// move.
+	#[display("funding quote {quote_id} prices {priced}, the session asks for {amount}")]
+	QuoteAmountMismatch {
+		/// The quote id the host named.
+		quote_id: String,
+		/// The balance amount the quote prices.
+		priced: u128,
+		/// The session's amount.
+		amount: u128,
 	},
 }
 

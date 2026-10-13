@@ -113,6 +113,22 @@ impl FundingProviders {
 		offered.chain(published).collect()
 	}
 
+	/// Keep `published` as the browse list, normalized like the host's
+	/// entries so a product on both is one provider, and return it. An id that
+	/// does not normalize is left out.
+	fn set_discovered(&self, published: Vec<String>) -> Vec<String> {
+		let mut normalized: Vec<String> = Vec::with_capacity(published.len());
+		for product_id in published {
+			match normalized_product_id(product_id) {
+				Ok(product_id) if !normalized.contains(&product_id) => normalized.push(product_id),
+				Ok(_) => {},
+				Err(reason) => tracing::debug!(%reason, "skipping a browse product id"),
+			}
+		}
+		*lock(&self.discovered) = normalized.clone();
+		normalized
+	}
+
 	/// Record what an answer showed, replacing what was known for the same
 	/// ask and dropping what is no longer trusted.
 	fn learn(&self, support: LearnedSupport) {
@@ -153,12 +169,8 @@ impl RuntimeServices {
 	) -> Result<(), FundingSessionError> {
 		let mut normalized: Vec<FundingProviderEntry> = Vec::with_capacity(entries.len());
 		for entry in entries {
-			let product_id =
-				ProductContext::new_with_execution(entry.product_id, ProductExecutionKind::Worker)
-					.map_err(|error| FundingSessionError::InvalidProvider {
-						reason: error.to_string(),
-					})?
-					.product_id;
+			let product_id = normalized_product_id(entry.product_id)
+				.map_err(|reason| FundingSessionError::InvalidProvider { reason })?;
 			if normalized.iter().all(|kept| kept.product_id != product_id) {
 				normalized.push(FundingProviderEntry {
 					product_id,
@@ -229,7 +241,7 @@ impl RuntimeServices {
 		};
 		tracing::debug!(count = published.len(), "products published to browse");
 		let providers = &self.funding_providers;
-		*lock(&providers.discovered) = published.clone();
+		let published = providers.set_discovered(published);
 		for product_id in published {
 			if lock(&providers.refreshing).insert(product_id.clone()) {
 				self.read_provider_manifest(&product_id).await;
@@ -288,6 +300,14 @@ impl RuntimeServices {
 		}
 		lock(&providers.refreshing).remove(product_id);
 	}
+}
+
+/// `product_id` as the core names a provider's worker, so ids from the host
+/// and from browse compare equal.
+fn normalized_product_id(product_id: String) -> Result<String, String> {
+	ProductContext::new_with_execution(product_id, ProductExecutionKind::Worker)
+		.map(|product| product.product_id)
+		.map_err(|error| error.to_string())
 }
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -376,6 +396,29 @@ mod tests {
 		assert_eq!(
 			ids(providers.candidates(FundingDirection::In)),
 			vec!["card.dot".to_string(), "found.dot".to_string()]
+		);
+	}
+
+	// Browse may name a product the way the host does not, so its ids are
+	// normalized like the host's: a product on both lists is one provider,
+	// and a selection by the normalized id finds it.
+	#[test]
+	fn browse_ids_are_normalized_like_the_hosts() {
+		let providers = providers(&[("card.dot", Some(manifest(CARD_IN)))]);
+		let live = |routes: &str| WorkerManifest::parse(&manifest(routes)).ok();
+		let discovered = providers.set_discovered(
+			["CARD.dot", "Found.dot", "found.dot", "not a product id"]
+				.map(str::to_string)
+				.to_vec(),
+		);
+		lock(&providers.live).insert("found.dot".to_string(), live(CARD_IN));
+
+		assert_eq!(
+			(discovered, ids(providers.candidates(FundingDirection::In))),
+			(
+				vec!["card.dot".to_string(), "found.dot".to_string()],
+				vec!["card.dot".to_string(), "found.dot".to_string()],
+			)
 		);
 	}
 

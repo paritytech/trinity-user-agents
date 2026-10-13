@@ -449,15 +449,20 @@ AutoSigning without approval. Legacy-account signing still asks the user.
   provider that does not answer within 10 seconds is unavailable. A provider's
   answer is reused for the same ask for 30 seconds. What an answer shows (a
   quote or an out-of-range amount: served; a refused country: not served
-  there) is stored under `FundingSupport` and folded into `funding_candidates`
-  for 12 hours, as routes the manifest did not declare and as `unsupported`
-  entries the host can filter by the user's country. Natively the rows arrive
+  there, only for an ask that named the country) is stored under
+  `FundingSupport` and folded into `funding_candidates` for 12 hours, as
+  routes the manifest did not declare and as `unsupported` entries the host
+  can filter by the user's country, while the provider's current manifest
+  serves Funding. Natively the rows arrive
   through `funding_quote_changed`.
   `select_funding_provider` hands a session to the provider the user chose,
   which must be one of those candidates, on the quote it was chosen by, which
-  must be one core offered for the session and not yet expired; the provider
-  receives it in `Assigned`, and the session keeps it with the rail and asset
-  it priced.
+  must be one core offered for the session, not yet expired and, when the
+  session has an amount, pricing that amount in balance units (what it
+  credits inbound, what it debits outbound); a session opened without an
+  amount takes the quote's. The provider receives it in `Assigned`, and the
+  session keeps it with the rail and asset it priced. A session's offered
+  quotes are dropped once it is assigned or ends.
   `funding_progress(intent)` gives the steps the host draws for a session's
   direction and rail, each with when it was reached: in, `Started`,
   `Payment`, `Approved` (bank and crypto, once the payment can no longer be

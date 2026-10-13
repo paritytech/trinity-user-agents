@@ -137,7 +137,13 @@ struct FundingQuote {
 ```
 
 An ask unanswered after 10 seconds shows as timed out. An answer is reused for 30 seconds. What answers show about a
-provider, served or refused for a country, is kept for 12 hours and folded into its manifest's routes.
+provider, served or refused for a country the ask named, is kept for 12 hours and folded into its manifest's routes
+while that manifest serves Funding. A provider whose manifest is withdrawn or stops serving Funding is no longer a
+candidate.
+
+The user picks a provider by one of its quotes for the session. When the session has an amount, the quote must price
+it: `receive_amount` inbound, `send_amount` outbound, both in balance units. A session opened without an amount takes
+the quote's.
 
 ### `report`
 

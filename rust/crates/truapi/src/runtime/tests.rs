@@ -8592,6 +8592,54 @@ fn quotes_resolve_row_by_row_and_a_silent_provider_times_out() {
 	);
 }
 
+// The provider is handed the session's amount and the quote together, so a
+// quote priced for another amount would leave it two answers to what the
+// user pays. A session opened without an amount takes the one the user chose.
+#[test]
+fn a_quote_must_price_the_sessions_amount() {
+	let services = funding_services();
+	assert!(services.funding().install_platform(RecordingFundingPlatform::answering(
+		crate::platform::FundingPresentOutcome::Started,
+	)));
+	offer_provider(&services, "ramp.dot", RAMP_MANIFEST);
+	answer_quotes(&services, "ramp.dot", card_quote("q1"));
+	let quoted_session = |amount| {
+		let intent = futures::executor::block_on(services.open_funding(
+			None,
+			v01::FundingDirection::In,
+			amount,
+		))
+		.expect("opened")
+		.intent;
+		futures::executor::block_on(
+			services
+				.get_funding_quote_within(&intent, card_ask(None), Duration::from_secs(5))
+				.collect::<Vec<_>>(),
+		);
+		let selected = futures::executor::block_on(services.select_funding_provider(
+			&intent,
+			"ramp.dot",
+			Some("q1"),
+		));
+		(selected, services.funding().get(&intent).and_then(|session| session.amount))
+	};
+
+	assert_eq!(
+		(quoted_session(Some(900)), quoted_session(None)),
+		(
+			(
+				Err(crate::host_logic::funding::FundingSessionError::QuoteAmountMismatch {
+					quote_id: "q1".to_string(),
+					priced: 1_000,
+					amount: 900,
+				}),
+				Some(900),
+			),
+			(Ok(true), Some(1_000)),
+		)
+	);
+}
+
 // A host that closes the quote list while a provider is still pricing drops
 // the stream mid-ask. The worker must not stay held for it, and a worker that
 // starts later must not be handed an ask nobody waits for.

@@ -197,7 +197,7 @@ impl RuntimeServices {
 				if let Some(answer) = &answer {
 					let now_ms = current_unix_millis();
 					quotes.remember(provider_id, &ask, now_ms, answer.clone());
-					if let Some(supported) = shows_support(answer) {
+					if let Some(supported) = shows_support(answer, ask.country.is_some()) {
 						self.learn_funding_support(LearnedSupport {
 							provider_id: provider_id.to_string(),
 							direction: ask.direction,
@@ -258,16 +258,18 @@ impl Drop for AskRelease<'_> {
 }
 
 /// What an answer shows about whether the provider serves the ask: a quote,
-/// or a refusal of only the amount, means it does; refusing the country means
-/// it does not there; anything else may pass and shows nothing.
-fn shows_support(answer: &FundingQuoteAnswer) -> Option<bool> {
+/// or a refusal of only the amount, means it does; refusing the country of
+/// an ask that named one means it does not there; anything else may pass and
+/// shows nothing. A country refusal for an ask without a country only says
+/// the provider needs one, not that it serves nowhere.
+fn shows_support(answer: &FundingQuoteAnswer, names_country: bool) -> Option<bool> {
 	match answer {
 		FundingQuoteAnswer::Quoted { .. } => Some(true),
 		FundingQuoteAnswer::Refused { reason } => match reason {
 			FundingQuoteRefusal::BelowMinimum { .. } | FundingQuoteRefusal::AboveMaximum { .. } => {
 				Some(true)
 			},
-			FundingQuoteRefusal::CountryUnsupported => Some(false),
+			FundingQuoteRefusal::CountryUnsupported => names_country.then_some(false),
 			FundingQuoteRefusal::Unavailable | FundingQuoteRefusal::Other { .. } => None,
 		},
 	}
@@ -299,6 +301,20 @@ mod tests {
 			eta_secs: None,
 			expires_at,
 		}
+	}
+
+	// Refusing the country of an ask that named none says nothing about
+	// where the provider serves, so it must not be learned as a refusal
+	// everywhere, which would hide the provider from every user.
+	#[test]
+	fn only_an_ask_naming_a_country_learns_a_country_refusal() {
+		let refused =
+			FundingQuoteAnswer::Refused { reason: FundingQuoteRefusal::CountryUnsupported };
+
+		assert_eq!(
+			(shows_support(&refused, true), shows_support(&refused, false)),
+			(Some(false), None)
+		);
 	}
 
 	// A host asks again each time the user edits the amount, so a session's

@@ -96,8 +96,10 @@ pub struct FundingCandidate {
 impl FundingCandidate {
 	/// `provider_id` as a candidate for `direction`: the routes its manifest
 	/// declares for it, with what its answers learned in the last
-	/// [`LEARNED_SUPPORT_TTL_MS`] folded in. A provider whose answers showed
-	/// it serves the direction is a candidate even if its manifest does not
+	/// [`LEARNED_SUPPORT_TTL_MS`] folded in. Only a manifest that serves
+	/// Funding makes a candidate: one withdrawn or no longer serving it is not
+	/// brought back by what earlier answers showed. A provider whose answers
+	/// showed it serves the direction is a candidate even if its routes do not
 	/// say so, and one that serves Funding without declaring routes is a
 	/// candidate for either direction.
 	pub fn for_direction(
@@ -107,8 +109,8 @@ impl FundingCandidate {
 		direction: FundingDirection,
 		now_ms: u64,
 	) -> Option<Self> {
-		let funding = manifest.and_then(|manifest| manifest.funding.as_ref());
-		let declared = funding.and_then(|funding| funding.routes.as_ref());
+		let funding = manifest?.funding.as_ref()?;
+		let declared = funding.routes.as_ref();
 		let mut routes: Vec<FundingRoute> = declared
 			.map(|routes| {
 				routes
@@ -135,8 +137,7 @@ impl FundingCandidate {
 				});
 			}
 		}
-		let undeclared = funding.is_some() && declared.is_none();
-		(undeclared || !routes.is_empty()).then(|| Self {
+		(declared.is_none() || !routes.is_empty()).then(|| Self {
 			provider_id: provider_id.to_string(),
 			routes,
 			unsupported,
@@ -144,7 +145,10 @@ impl FundingCandidate {
 	}
 }
 
-/// Fold a confirmed rail, asset and country into `routes`.
+/// Fold a confirmed rail, asset and country into `routes`. A country only
+/// widens a route that lists its countries: one that lists none serves any,
+/// and a route learned from an answer lists none, as the answer does not say
+/// where else it is served.
 fn confirm(routes: &mut Vec<FundingRoute>, support: &LearnedSupport) {
 	let Some(route) = routes.iter_mut().find(|route| route.rail == support.rail) else {
 		routes.push(FundingRoute {
@@ -152,7 +156,7 @@ fn confirm(routes: &mut Vec<FundingRoute>, support: &LearnedSupport) {
 			directions: vec![support.direction],
 			assets: vec![support.asset.clone()],
 			networks: None,
-			countries: support.country.clone().map(|country| vec![country]),
+			countries: None,
 		});
 		return;
 	};
@@ -184,20 +188,25 @@ mod tests {
 		}
 	}
 
+	fn manifest(funding: &str) -> WorkerManifest {
+		WorkerManifest::parse(&format!(
+			r#"{{"$v":1,"appVersion":[1,0,0],"kind":"worker","entrypoint":"index.js","includes":{{"funding":{funding}}}}}"#
+		))
+		.expect("parses")
+	}
+
+	/// Declares card in only, so bank in comes from what answers showed.
+	fn card_in() -> WorkerManifest {
+		manifest(r#"{"routes":[{"mode":"CARD","directions":["In"],"assets":["EUR"]}]}"#)
+	}
+
 	// Routes only narrow which providers are asked, so a provider that
 	// declares none is a candidate either way and its quotes decide, while
 	// declared routes still leave out a direction they do not serve.
 	#[test]
 	fn a_provider_without_routes_is_a_candidate_for_either_direction() {
-		let manifest = |funding: &str| {
-			WorkerManifest::parse(&format!(
-                r#"{{"$v":1,"appVersion":[1,0,0],"kind":"worker","entrypoint":"index.js","includes":{{"funding":{funding}}}}}"#
-            ))
-            .expect("parses")
-		};
 		let undeclared = manifest("{}");
-		let card_in =
-			manifest(r#"{"routes":[{"mode":"CARD","directions":["In"],"assets":["EUR"]}]}"#);
+		let card_in = card_in();
 		let candidate = |manifest: &WorkerManifest, direction| {
 			FundingCandidate::for_direction("ramp.dot", Some(manifest), &[], direction, NOW)
 				.map(|candidate| candidate.routes)
@@ -213,33 +222,73 @@ mod tests {
 		);
 	}
 
-	// What an answer showed stands in for the manifest only while it is
-	// trusted; after that the manifest applies again.
+	// What an answer showed widens the manifest only while it is trusted;
+	// after that the manifest applies again. A rail learned this way lists no
+	// countries, as one answer does not say where else it is served.
 	#[test]
 	fn learned_support_applies_for_twelve_hours() {
+		let card_in = card_in();
 		let candidate = |at_ms| {
 			FundingCandidate::for_direction(
 				"ramp.dot",
-				None,
+				Some(&card_in),
 				&[learned(true, at_ms)],
 				FundingDirection::In,
 				NOW,
 			)
-			.map(|candidate| candidate.routes)
+			.map(|candidate| {
+				candidate.routes.into_iter().map(|route| route.rail).collect::<Vec<_>>()
+			})
 		};
+		let bank = FundingCandidate::for_direction(
+			"ramp.dot",
+			Some(&card_in),
+			&[learned(true, NOW)],
+			FundingDirection::In,
+			NOW,
+		)
+		.and_then(|candidate| {
+			candidate.routes.into_iter().find(|route| route.rail == FundingRail::Bank)
+		});
 
 		assert_eq!(
-			(candidate(NOW - LEARNED_SUPPORT_TTL_MS + 1), candidate(NOW - LEARNED_SUPPORT_TTL_MS)),
 			(
-				Some(vec![FundingRoute {
+				candidate(NOW - LEARNED_SUPPORT_TTL_MS + 1),
+				candidate(NOW - LEARNED_SUPPORT_TTL_MS),
+				bank
+			),
+			(
+				Some(vec![FundingRail::Card, FundingRail::Bank]),
+				Some(vec![FundingRail::Card]),
+				Some(FundingRoute {
 					rail: FundingRail::Bank,
 					directions: vec![FundingDirection::In],
 					assets: vec!["EUR".to_string()],
 					networks: None,
-					countries: Some(vec!["DE".to_string()]),
-				}]),
-				None,
+					countries: None,
+				}),
 			)
 		);
+	}
+
+	// A provider that withdrew its manifest, or no longer serves Funding,
+	// stops being offered at once, whatever its earlier answers showed.
+	#[test]
+	fn learned_support_needs_a_manifest_serving_funding() {
+		let without_funding = WorkerManifest::parse(
+			r#"{"$v":1,"appVersion":[1,0,0],"kind":"worker","entrypoint":"index.js","includes":{"chat":true}}"#,
+		)
+		.expect("parses");
+		let candidate = |manifest: Option<&WorkerManifest>| {
+			FundingCandidate::for_direction(
+				"ramp.dot",
+				manifest,
+				&[learned(true, NOW)],
+				FundingDirection::In,
+				NOW,
+			)
+		};
+
+		assert_eq!((candidate(None), candidate(Some(&without_funding))), (None, None));
 	}
 }

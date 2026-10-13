@@ -894,8 +894,9 @@ impl RuntimeServices {
 
 	/// Hand open session `intent` to the provider the user chose, which must
 	/// be one of the host's providers serving its direction, on the quote the
-	/// user chose it by, which must be one the core offered for this session
-	/// and not yet expired. Returns whether it was open and not yet assigned.
+	/// user chose it by, which must be one the core offered for this session,
+	/// not yet expired and, when the session has an amount, pricing that
+	/// amount. Returns whether it was open and not yet assigned.
 	pub async fn select_funding_provider(
 		self: &Arc<Self>,
 		intent: &str,
@@ -928,6 +929,18 @@ impl RuntimeServices {
 					})?,
 			),
 		};
+		if let (Some(choice), Some(session)) = (&choice, self.funding().get(intent)) &&
+			let Some(amount) = session.amount
+		{
+			let priced = choice.balance_amount(session.direction);
+			if priced != amount {
+				return Err(FundingSessionError::QuoteAmountMismatch {
+					quote_id: choice.quote.quote_id.clone(),
+					priced,
+					amount,
+				});
+			}
+		}
 		registry
 			.select_provider(
 				self.platform.as_ref(),
