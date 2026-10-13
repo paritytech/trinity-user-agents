@@ -112,12 +112,83 @@ private struct TabBarSlotView: View {
 /// drag and is released when the control removes its content.
 private struct TabBarScanPanelContent: UIViewControllerRepresentable {
     let makeController: () -> UIViewController?
+    @Environment(\.centerPanelDrag) private var drag
 
-    func makeUIViewController(context _: Context) -> UIViewController {
-        makeController() ?? UIViewController()
+    func makeCoordinator() -> Coordinator {
+        Coordinator()
     }
 
-    func updateUIViewController(_: UIViewController, context _: Context) {}
+    func makeUIViewController(context: Context) -> UIViewController {
+        let controller = makeController() ?? UIViewController()
+        context.coordinator.drag = drag
+        context.coordinator.install(on: controller.view)
+        return controller
+    }
+
+    func updateUIViewController(_: UIViewController, context: Context) {
+        context.coordinator.drag = drag
+    }
+
+    static func dismantleUIViewController(_: UIViewController, coordinator: Coordinator) {
+        coordinator.uninstall()
+    }
+}
+
+// MARK: - Drag
+
+private extension TabBarScanPanelContent {
+    /// Recognises a mostly vertical pan over the panel's content and forwards it to the centre control. Only
+    /// mostly vertical motion begins the pan, so taps and horizontal drags reach the content. Once begun, the
+    /// pan cancels the content's touches, so a dragged result cell is never selected.
+    final class Coordinator: NSObject, UIGestureRecognizerDelegate {
+        var drag: DSTabBarCenterDrag?
+        private var recognizer: UIPanGestureRecognizer?
+
+        func install(on view: UIView) {
+            let recognizer = UIPanGestureRecognizer(target: self, action: #selector(handlePan(_:)))
+            recognizer.delegate = self
+            view.addGestureRecognizer(recognizer)
+            self.recognizer = recognizer
+        }
+
+        func uninstall() {
+            guard let recognizer else { return }
+            recognizer.view?.removeGestureRecognizer(recognizer)
+            self.recognizer = nil
+        }
+
+        func gestureRecognizerShouldBegin(_ recognizer: UIGestureRecognizer) -> Bool {
+            let velocity = (recognizer as? UIPanGestureRecognizer)?.velocity(in: nil) ?? .zero
+            return abs(velocity.y) > abs(velocity.x)
+        }
+
+        /// Window coordinates, because the panel moves under the finger and a view-local translation would
+        /// shrink as the panel follows it.
+        @objc private func handlePan(_ recognizer: UIPanGestureRecognizer) {
+            switch recognizer.state {
+            case .began:
+                recognizer.setTranslation(.zero, in: nil)
+                drag?.changed(translationHeight: 0)
+            case .changed:
+                drag?.changed(translationHeight: recognizer.translation(in: nil).y)
+            case .ended:
+                let translationHeight = recognizer.translation(in: nil).y
+                let velocityHeight = recognizer.velocity(in: nil).y
+                drag?.ended(predictedEndTranslationHeight: translationHeight + projectedDistance(velocityHeight))
+            case .cancelled,
+                 .failed:
+                drag?.cancelled()
+            default:
+                break
+            }
+        }
+
+        /// Distance a release at this velocity coasts under `UIScrollView`'s normal deceleration.
+        private func projectedDistance(_ velocity: CGFloat) -> CGFloat {
+            let rate = UIScrollView.DecelerationRate.normal.rawValue
+            return velocity / 1_000 * rate / (1 - rate)
+        }
+    }
 }
 
 /// Renders the open-apps count glyph from the bar's UIKit component.

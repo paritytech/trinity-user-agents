@@ -52,8 +52,7 @@ public struct DSTabBarCenterControl<Content: View>: View {
             guard !dragging, dragStart != nil else {
                 return
             }
-            dragStart = nil
-            settle(to: progress > 0.5 ? 1 : 0)
+            cancelDrag()
         }
     }
 }
@@ -128,6 +127,7 @@ private extension DSTabBarCenterControl {
                 // Fixed at the open size so it is laid out once; clipShape crops it as the panel morphs.
                 content
                     .frame(width: openWidth, height: contentHeight)
+                    .environment(\.centerPanelDrag, centerPanelDrag)
                     .modifier(
                         CenterRevealModifier(progress: progress, revealStart: revealStart, crossFades: reduceMotion)
                     )
@@ -223,11 +223,17 @@ private extension DSTabBarCenterControl {
                 followDrag(translationHeight: value.translation.height)
             }
             .onEnded { value in
-                let start = dragStart ?? progress
-                dragStart = nil
-
-                settleProjecting(from: start, predictedTranslationHeight: value.predictedEndTranslation.height)
+                endDrag(predictedTranslationHeight: value.predictedEndTranslation.height)
             }
+    }
+
+    /// The panel's content drags it like the grabber does, so the same settle applies to both.
+    var centerPanelDrag: DSTabBarCenterDrag {
+        DSTabBarCenterDrag(
+            onChanged: { followDrag(translationHeight: $0) },
+            onEnded: { endDrag(predictedTranslationHeight: $0) },
+            onCancelled: { cancelDrag() }
+        )
     }
 
     /// Moves the panel with the finger from the progress at which the drag began. Both grips measure in the
@@ -239,6 +245,18 @@ private extension DSTabBarCenterControl {
         let unclamped = start - translationHeight / travel
         progress = min(1, max(0, unclamped))
         stretch = unclamped > 1 ? resisted((unclamped - 1) * travel) : 0
+    }
+
+    func endDrag(predictedTranslationHeight: CGFloat) {
+        let start = dragStart ?? progress
+        dragStart = nil
+        settleProjecting(from: start, predictedTranslationHeight: predictedTranslationHeight)
+    }
+
+    /// A cancelled drag never reaches `endDrag`, so it settles to the nearer end.
+    func cancelDrag() {
+        dragStart = nil
+        settle(to: progress > 0.5 ? 1 : 0)
     }
 
     /// A flick decides on its own; otherwise the halfway point does.
