@@ -119,7 +119,7 @@ private extension DSTabBarCenterControl {
         // the content, which can be shorter than the panel.
         .overlay(alignment: .bottom) { glyph }
         .overlay(alignment: .top) { grabber }
-        .background(material)
+        .background(DSTabBarMaterial())
         .overlay(rim)
         .clipShape(shape)
         .shadow(color: Color.shadowSoft, radius: DSTabBarStyle.centerShadowRadius, y: DSTabBarStyle.centerShadowY)
@@ -227,27 +227,6 @@ private extension DSTabBarCenterControl {
 // MARK: - Volume
 
 private extension DSTabBarCenterControl {
-    /// The bar's material, with a frost wash so the control reads lighter than the bar.
-    var material: some View {
-        DSTabBarMaterial()
-            .overlay(Color.fgPrimary.opacity(DSTabBarStyle.centerFrostOpacity))
-            .overlay(sheen)
-    }
-
-    /// Top-lit gradient inside the shape: bright at the crown, clear by the
-    /// middle, faintly dark at the foot. Reads as a dome rather than a disc.
-    var sheen: some View {
-        LinearGradient(
-            stops: [
-                .init(color: Color.fgPrimary.opacity(DSTabBarStyle.centerSheenStrength * 0.5), location: 0),
-                .init(color: .clear, location: 0.5),
-                .init(color: .black.opacity(DSTabBarStyle.centerSheenStrength * 0.18), location: 1)
-            ],
-            startPoint: .top,
-            endPoint: .bottom
-        )
-    }
-
     /// Hairline that catches the light along the top edge and fades by the
     /// bottom, so the control sits above the bar instead of in it. A border
     /// stroke, so the clip leaves its full width.

@@ -123,10 +123,6 @@ public enum DSTabBarStyle {
         }
     }
 
-    /// Strength of the top-lit sheen, which makes the centre control read as a dome.
-    static let centerSheenStrength: Double = 0.35
-    /// Opacity of the frost wash that separates the centre control from the bar.
-    static let centerFrostOpacity: Double = 0.18
     /// Opacity of the centre control's rim at its top edge.
     static let centerRimTopOpacity: Double = 0.252
     /// Opacity of the centre control's rim at its foot, where it has faded out.
