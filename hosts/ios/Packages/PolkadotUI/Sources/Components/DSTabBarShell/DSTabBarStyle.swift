@@ -33,8 +33,10 @@ public enum DSTabBarStyle {
     static let selectionSpringDamping: Double = 0.8
     static let strokeWidth: CGFloat = 1
 
-    /// Radius of the hole cut from the bar. The centre control sits inside it with a ring gap.
-    static let notchRadius: CGFloat = 34
+    /// Gap between the hole's edge and the centre control sitting in it.
+    static let notchRingGap: CGFloat = 3
+    /// Radius of the hole cut from the bar: the centre control plus the ring gap around it.
+    static var notchRadius: CGFloat { centerButtonSize / 2 + notchRingGap }
     /// Hole centre, measured down from the top of the bar row.
     static let notchCenterY: CGFloat = 22
     /// How far the hole reaches above the bar row, into the shelf.

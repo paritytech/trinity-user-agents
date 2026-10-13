@@ -42,9 +42,6 @@ public struct DSTabBarCenterControl<Content: View>: View {
 // MARK: - Geometry
 
 private extension DSTabBarCenterControl {
-    /// Gap between the cutout edge and the control sitting in it.
-    var ring: CGFloat { DSTabBarStyle.notchRadius - DSTabBarStyle.centerButtonSize / 2 }
-
     /// The lobe is the button itself, so it keeps its size through the morph.
     var lobeRadius: CGFloat { DSTabBarStyle.centerButtonSize / 2 }
 
@@ -53,7 +50,7 @@ private extension DSTabBarCenterControl {
 
     /// How far the control's foot sits above the bar row's bottom edge, so the lobe rests in the
     /// notch with an even ring around it.
-    var seatInset: CGFloat { DSTabBarStyle.height - bottomFromRowTop + ring }
+    var seatInset: CGFloat { DSTabBarStyle.height - bottomFromRowTop + DSTabBarStyle.notchRingGap }
 
     /// Progress at which content, the grabber and its hit area appear.
     var revealStart: CGFloat { 0.45 }
