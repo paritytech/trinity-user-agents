@@ -1,5 +1,6 @@
 import BigInt
 import Clocks
+import IssueMonitoring
 import Foundation
 import SubstrateSdk
 import Testing
@@ -23,6 +24,7 @@ struct PGASAccountProvisionerTests {
         provisioner = PGASAccountProvisioner(
             allowanceManager: allowance,
             balanceProvider: balances,
+            issueDiagnostics: .make(flow: "pgas-allowance", reporter: NoopIssueReporter()),
             claimTimeout: Self.claimTimeout,
             clock: clock
         )

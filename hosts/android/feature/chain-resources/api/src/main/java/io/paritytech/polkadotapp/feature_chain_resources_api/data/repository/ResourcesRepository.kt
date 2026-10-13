@@ -15,11 +15,6 @@ interface ResourcesRepository {
         accountId: AccountId,
     ): Result<ConsumerInfo?>
 
-    suspend fun consumerInfoLocal(
-        chainId: ChainId,
-        accountId: AccountId,
-    ): Result<ConsumerInfo?>
-
     fun consumerInfoFlow(
         chainId: ChainId,
         accountId: AccountId,
