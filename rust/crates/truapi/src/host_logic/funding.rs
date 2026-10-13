@@ -437,10 +437,11 @@ impl FundingSession {
 
 	/// When the open session expires if nothing changes: 24 hours after it
 	/// opened while no provider has taken it, then 7 days after its
-	/// provider's last update while no funds move. `None` once it ended or
-	/// funds move, as only their outcome ends it then.
+	/// provider's last update until the user's payment reaches the provider.
+	/// `None` once it ended, the provider holds the user's payment or funds
+	/// move: expiring it then would write off money the provider holds.
 	pub fn expires_at(&self) -> Option<u64> {
-		if self.is_terminal() || self.funds_moving() {
+		if self.is_terminal() || self.holds_payment() {
 			return None;
 		}
 		let Some(assigned_at_ms) = self.assigned_at_ms else {
@@ -702,6 +703,23 @@ mod tests {
 					moved: 0
 				},
 			)
+		);
+	}
+
+	// Once the provider holds the user's payment, expiring the session would
+	// write off money still owed to the user, so only its outcome ends it.
+	#[test]
+	fn a_session_whose_provider_holds_the_payment_never_expires() {
+		let mut session = served(FundingDirection::In);
+		session
+			.report(PROVIDER, FundingUpdate::PaymentReceived { finalized: true }, |id| *id, NOW)
+			.expect("reported");
+
+		let expired = session.expire_if_due(NOW + 10 * PROVIDER_SILENCE_MS);
+
+		assert_eq!(
+			(expired, session.wire_item()),
+			(false, HostFundingStatusSubscribeItem::InProgress { expires_at: None })
 		);
 	}
 
