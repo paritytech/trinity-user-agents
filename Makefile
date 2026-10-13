@@ -3,7 +3,7 @@
 # Run `make help` for the list of targets.
 
 .DEFAULT_GOAL := help
-.PHONY: help setup build codegen test check fmt fmt-check check-generated clean playground wasm wasm-crypto-test uniffi uniffi-kotlin android-check provider-android-check ios-build ios-run ios-chat-run ios-chat-host-playground-run ios-chat-all android-jni android-publish-local dotli-link dev dev-cli dev-bootstrap debugger dev-link-check e2e-dotli e2e-cli-diagnosis e2e-signing-cli e2e-pairing-cli e2e-chat-cli e2e-pocket-cli e2e-cross-product-storage e2e-cross-product-ringvrf e2e-cross-product-signing e2e-cli-update headless install cli-runner cli-dist matrix explorer xcframework android-chat-playground-run
+.PHONY: help setup build codegen test check fmt fmt-check check-generated clean playground wasm wasm-crypto-test uniffi uniffi-kotlin android-check provider-android-check ios-build ios-run ios-chat-run ios-chat-host-playground-run ios-chat-all android-jni android-publish-local dotli-link dev dev-cli dev-bootstrap debugger dev-link-check e2e-dotli e2e-cli-diagnosis e2e-signing-cli e2e-pairing-cli e2e-chat-cli e2e-pocket-cli e2e-cross-product-storage e2e-cross-product-ringvrf e2e-cross-product-signing e2e-cross-product-ringvrf-context e2e-cli-update headless install cli-runner cli-dist matrix explorer xcframework android-chat-playground-run
 
 CARGO ?= cargo
 # The dated nightly CI runs; see nightly-toolchain.
@@ -488,6 +488,9 @@ e2e-cross-product-ringvrf: ## One product signs with another's ring-VRF key on t
 
 e2e-cross-product-signing: ## One product signs with another's account on the signing-host CLI, granted by a local product config.
 	scripts/cross-product-signing-e2e.sh
+
+e2e-cross-product-ringvrf-context: ## One product proves with another's ring-VRF key in a third product's context on the signing-host CLI, granted by local product configs.
+	scripts/cross-product-ringvrf-context-e2e.sh
 
 e2e-cli-update: cli-dist ## Install the packaged truapi-host from a fake release and self-update it, with no network.
 	node scripts/e2e-cli-update.mjs

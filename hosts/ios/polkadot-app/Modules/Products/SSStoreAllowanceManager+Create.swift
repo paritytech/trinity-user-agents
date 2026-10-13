@@ -42,7 +42,7 @@ extension SSStoreAllowanceManager {
             wallet: wallet,
             keyResolver: keyResolver,
             chainRegistry: chainRegistry,
-            storageRequestFactory: storageRequestFactory
+            networkSuffixProvider: tldProvider
         )
 
         let extrinsicFacade = ExtrinsicSubmissionMonitorFacade(
@@ -81,6 +81,7 @@ extension SSStoreAllowanceManager {
             chainId: chatChain.chainId,
             chainRegistry: chainRegistry,
             storageRequestFactory: storageRequestFactory,
+            networkSuffixProvider: tldProvider,
             resourcesParameters: ResourcesParametersFacade.shared,
             chainTimeProvider: timeProvider,
             originPersonProvider: originPersonProvider,
@@ -106,6 +107,7 @@ extension SSStoreAllowanceManager {
             originFactory: originFactory,
             chainTimeProvider: timeProvider,
             serialQueue: serialQueue,
+            issueDiagnostics: .make(reporter: IssueReportingFacade.shared),
             logger: logger
         )
 
@@ -114,7 +116,8 @@ extension SSStoreAllowanceManager {
             allocator: allocator,
             slotInfoProvider: slotInfoProvider,
             renewer: renewer,
-            backgroundExecutor: ConnectionRetainingExecutor(provider: chainRegistry)
+            backgroundExecutor: ConnectionRetainingExecutor(provider: chainRegistry),
+            issueDiagnostics: .make(flow: "statement-store-allowance", reporter: IssueReportingFacade.shared)
         )
 
         return manager
