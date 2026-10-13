@@ -37,7 +37,7 @@ Classic signed extrinsics + a growing family of custom origins (People-Lite, AsP
 11. **`blocking`** — `canRetry` distinguishes `DurableFailureKind`: an `EXPIRED` attempt may be rebuilt indefinitely, but a `DISPATCH_FAILED` or `REJECTED` one would repeat on the same effects and must be bounded (coinage: only while the window is open). Nothing else ends that loop.
 12. **`major`** — A `TxCompletionOracle`'s `LedgerView` never contains `PENDING_SUBMISSION` rows: they have no attempt in flight and cannot have produced an effect.
 13. **`major`** — Work common to one policy's transactions of one group (pinned blocks, proofs, per-extrinsic tokens) is done once per `prepareSubmission` call, not per transaction.
-14. **`major`** — When a new identity-proof origin is added, extend `AsPersonTransactionExtension` and expose via the matching `*Origins` factory (e.g. `PeopleOrigins`, `CoinageTransactionOrigins`). Composition, not inheritance from scratch.
+14. **`major`** — When a new identity-proof origin is added, wrap its extension in `SetTransactionExtensionOrigin` and expose it via the matching `*Origins` factory (e.g. `CoinageTransactionOrigins`). Composition, not inheritance from scratch.
 
 ## Seams
 
@@ -45,7 +45,6 @@ Classic signed extrinsics + a growing family of custom origins (People-Lite, AsP
 |---|---|---|
 | `SetTransactionExtensionOrigin(signerSource, extension)` | Wraps a custom extension into a `TransactionOrigin` | New origin family |
 | `TransactionExtension` (sdk interface) | Carries the explicit/implicit fields the runtime needs | New on-chain origin's proof-bearing data |
-| `AsPersonTransactionExtension` (open base) | People-identity proof extensions | New identity-proof origin variant |
 | Per-feature `*Origins` factory | Constructs origins for callers; injected via interface | New origin in a feature |
 | `ExtrinsicService.submitExtrinsic { runtime, builder -> ... }` | Build + sign + submit + reconcile | All new submission flows go through this |
 | `ExtrinsicBuilderSequence` | Auto-nonce iterator | Multi-extrinsic batches |
@@ -63,7 +62,7 @@ Classic signed extrinsics + a growing family of custom origins (People-Lite, AsP
 | Manual binary encoding when `BinaryScale` works | major | `BinaryScale` + `autoEncodedArgs` |
 | Origin's `paysFees` second-guessed at caller | major | trust the flag |
 | Multi-extrinsic submission without `ExtrinsicBuilderSequence` | major | use the sequence |
-| Inheritance from `AsPersonTransactionExtension` when composition via `SetTransactionExtensionOrigin` suffices | major | composition first |
+| Inheriting from another origin's extension when composition via `SetTransactionExtensionOrigin` suffices | major | composition first |
 | `getOrThrow()` on a chain `Result` | major | see `code/results-and-errors.md § getOrThrow` |
 | `withSessionEnabled { awaitCancellation() }` for long-lived connections | major | use `requestConnectionEnabled` + `release()` |
 | Marking on-chain state changes locally without a rollback path | major | architect plan must include rollback (this is a recurring risk, not a recipe) |

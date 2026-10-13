@@ -64,9 +64,7 @@ private extension ChatViewModelFactory {
         case .pending:
             ChatRequestInProgressBannerView.ViewModel(
                 username: metadata.peerMetadata.name,
-                inputConfig: .chat(
-                    canPay: false,
-                    canAttachFile: false,
+                inputConfig: .chatRequest(
                     inputAccessibilityId: AccessibilityID.Chats.inviteMessageInput,
                     sendAccessibilityId: AccessibilityID.Chats.inviteSendButton
                 )

@@ -10,8 +10,6 @@ import io.paritytech.polkadotapp.chains.network.binding.BlockHash
 import io.paritytech.polkadotapp.chains.network.rpc.requests.GetChildStateRequest
 import io.paritytech.polkadotapp.chains.storage.source.query.RemoteStorageQueryContextFactory
 import io.paritytech.polkadotapp.chains.storage.source.query.StorageQueryContext
-import io.paritytech.polkadotapp.chains.storage.source.query.intercept.InterceptingStorageQueryContext
-import io.paritytech.polkadotapp.chains.storage.source.query.intercept.StorageInterceptorRegistry
 import io.paritytech.polkadotapp.common.utils.CoroutineDispatchers
 
 internal class RemoteStorageSource(
@@ -19,7 +17,6 @@ internal class RemoteStorageSource(
     sharedRequestsBuilderFactory: StorageSharedRequestsBuilderFactory,
     private val remoteStorageQueryContextFactory: RemoteStorageQueryContextFactory,
     coroutineDispatchers: CoroutineDispatchers,
-    private val interceptorRegistry: StorageInterceptorRegistry,
 ) : BaseStorageSource(chainRegistry, sharedRequestsBuilderFactory, coroutineDispatchers) {
     override suspend fun queryChildState(
         storageKey: String,
@@ -37,13 +34,10 @@ internal class RemoteStorageSource(
         runtime: RuntimeSnapshot,
         subscriptionBuilder: SubstrateSubscriptionBuilder?,
     ): StorageQueryContext {
-        return InterceptingStorageQueryContext(
-            delegate = remoteStorageQueryContextFactory.create(
-                chainId = chainId,
-                subscriptionBuilder = subscriptionBuilder,
-                at = at
-            ),
-            registry = interceptorRegistry,
+        return remoteStorageQueryContextFactory.create(
+            chainId = chainId,
+            subscriptionBuilder = subscriptionBuilder,
+            at = at
         )
     }
 
