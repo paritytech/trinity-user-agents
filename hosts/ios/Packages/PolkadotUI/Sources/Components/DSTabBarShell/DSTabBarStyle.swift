@@ -104,10 +104,10 @@ public enum DSTabBarStyle {
         centerPanelHeight(contentHeight: contentHeight) - centerButtonFootFromRowTop
     }
 
-    /// The tallest content a centre panel can host without the panel exceeding `panelHeight`.
-    /// The inverse of `centerPanelHeight(contentHeight:)`, for a host that has to cap the panel.
-    public static func centerContentHeight(fittingPanelHeight panelHeight: CGFloat) -> CGFloat {
-        max(0, panelHeight - centerButtonSize / 2)
+    /// The tallest content a centre panel can host without standing more than `rise` above the bar row.
+    /// The inverse of `centerPanelRise(contentHeight:)`, for a host that has to cap the panel.
+    public static func centerContentHeight(fittingRise rise: CGFloat) -> CGFloat {
+        max(0, rise + centerButtonFootFromRowTop - centerButtonSize / 2)
     }
 
     /// Runs `changes` on the centre control's spring and lays out `view` inside the same animation, so UIKit
