@@ -4271,6 +4271,69 @@ fn preimage_submit_requires_remote_permission_before_backend_call() {
 	assert!(platform.sent_rpc.lock().expect("rpc list mutex poisoned").is_empty());
 }
 
+/// A product that backs up in the background must not ask again once the user
+/// allows `PreimageSubmit` always, or the user either approves a task they did
+/// not start or dismisses it and the backups stop. `AllowOnce` covers a single
+/// upload.
+#[test]
+fn a_preimage_grant_covers_uploads_without_a_per_upload_prompt() {
+	use crate::platform::PermissionDecision::{AllowAlways, AllowOnce};
+
+	#[derive(Debug, PartialEq)]
+	struct Outcome {
+		permission_prompts: usize,
+		uploads_authorized: usize,
+	}
+
+	// The stub has no signing host, so an authorized upload fails at the
+	// allowance step. Getting that error means nothing between the permission
+	// check and the allowance refused the upload.
+	let allowance_error = bulletin_allowance_error_reason(AuthorityError::Disconnected);
+
+	let outcomes = [(vec![AllowAlways], 3), (vec![AllowOnce, AllowOnce], 2)].map(
+		|(remote_permission_decisions, uploads)| {
+			let platform = Arc::new(StubPlatform {
+				remote_permission_decisions: Mutex::new(remote_permission_decisions.into()),
+				..Default::default()
+			});
+			let host = ProductRuntimeHost::new(
+				platform.clone(),
+				runtime_config("t3ams.dot"),
+				test_spawner(),
+			);
+			install_pairing_session(&host, session_info());
+			let mut uploads_authorized = 0;
+			for _ in 0..uploads {
+				let result = futures::executor::block_on(Preimage::submit(
+					&host,
+					&CallContext::default(),
+					RemotePreimageSubmitRequest::V1(vec![1, 2, 3]),
+				));
+				if matches!(
+					result,
+					Err(CallError::Domain(RemotePreimageSubmitError::V1(
+						v01::PreimageSubmitError::Unknown { reason },
+					))) if reason == allowance_error
+				) {
+					uploads_authorized += 1;
+				}
+			}
+			Outcome {
+				permission_prompts: platform.remote_permission_requests.lock().unwrap().len(),
+				uploads_authorized,
+			}
+		},
+	);
+
+	assert_eq!(
+		outcomes,
+		[
+			Outcome { permission_prompts: 1, uploads_authorized: 3 },
+			Outcome { permission_prompts: 2, uploads_authorized: 2 },
+		]
+	);
+}
+
 fn broadcast_request() -> RemoteChainTransactionBroadcastRequest {
 	RemoteChainTransactionBroadcastRequest::V1(v01::RemoteChainTransactionBroadcastRequest {
 		genesis_hash: vec![0; 32],

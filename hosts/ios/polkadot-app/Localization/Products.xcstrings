@@ -1,28 +1,6 @@
 {
   "sourceLanguage": "en",
   "strings": {
-    "action.preimage.body": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "%1$(productId)@ wants to submit %2$(size)@ bytes of data to the Bulletin chain."
-          }
-        }
-      }
-    },
-    "action.preimage.title": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Submit Data"
-          }
-        }
-      }
-    },
     "action.productSubtree.body": {
       "extractionState": "manual",
       "localizations": {
