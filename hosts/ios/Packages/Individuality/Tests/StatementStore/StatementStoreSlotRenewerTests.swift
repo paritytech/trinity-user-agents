@@ -1,6 +1,7 @@
 import Foundation
 import SubstrateSdk
 import StructuredConcurrency
+import IssueMonitoring
 import Testing
 @testable import Individuality
 
@@ -31,6 +32,7 @@ struct StatementStoreSlotRenewerTests {
             originFactory: originFactory,
             chainTimeProvider: periodProvider,
             serialQueue: queue,
+            issueDiagnostics: .make(reporter: NoopIssueReporter()),
             logger: logger
         )
     }

@@ -11,9 +11,19 @@ import Individuality
 
 protocol AttachmentUploadingServicing: AttachmentLoadProgressProvidable, ApplicationServiceProtocol {}
 
+struct UploadRetryPolicy: Sendable {
+    let maxAttempts: Int
+    let initialDelay: Duration
+
+    /// Attempts are deliberately few: a retried chunk is re-encrypted with a fresh nonce, so the
+    /// HOP node stores it as a new entry rather than deduplicating it. An entry nothing ever acks
+    /// is promoted to permanent on-chain storage ~22h later at the sender's expense.
+    static let `default` = UploadRetryPolicy(maxAttempts: 5, initialDelay: .seconds(2))
+}
+
 final class MixnetUploadService: @unchecked Sendable {
-    static let retryMaxAttempts = 5
-    static let retryInitialDelay: Duration = .seconds(2)
+    static let streamRetryMaxAttempts = 5
+    static let streamRetryInitialDelay: Duration = .seconds(2)
 
     let loaderFactory: HOPFileLoaderMaking
     let messageProviderFactory: ChatMessageDataProviderMaking
@@ -23,6 +33,7 @@ final class MixnetUploadService: @unchecked Sendable {
     let context: MixnetUploadContext
     let senderProvider: AttachmentsSenderProviding
     let allowanceManager: AllowanceManaging
+    let retryPolicy: UploadRetryPolicy
 
     private var uploadTask: Task<Void, Never>?
 
@@ -32,12 +43,14 @@ final class MixnetUploadService: @unchecked Sendable {
         uploadContextFactory: UploadFileContextFactory,
         senderProvider: AttachmentsSenderProviding,
         allowanceManager: AllowanceManaging,
+        retryPolicy: UploadRetryPolicy = .default,
         operationQueue: OperationQueue = OperationManagerFacade.sharedDefaultQueue,
         logger: LoggerProtocol = Logger.shared
     ) {
         self.loaderFactory = loaderFactory
         self.senderProvider = senderProvider
         self.allowanceManager = allowanceManager
+        self.retryPolicy = retryPolicy
         self.uploadContextFactory = uploadContextFactory
 
         let repositoryFactory = ChatMessageRepositoryFactory(storageFacade: storageFacade)
@@ -83,51 +96,77 @@ private extension MixnetUploadService {
         }
     }
 
+    func runUploadAttempt(for uploadData: MixnetUploadData) async throws {
+        guard let store = uploadContextFactory.createContext(
+            attachmentId: uploadData.attachmentId
+        ) else {
+            logger.error("Failed to create upload context for \(uploadData.attachmentId.fileId)")
+            return
+        }
+
+        let credentials = try await store.ensureUploadCredentials()
+
+        let fileLoader = try loaderFactory.makeLoader(for: credentials.node)
+        let recipients = try FileRecipients(ticket: credentials.ticket)
+
+        let proofWallet = try await senderProvider.getWallet(for: uploadData.chatId)
+
+        let accountId = try proofWallet.getRawPublicKey()
+        try await allowanceManager.ensureCanSubmit(accountId: accountId, priority: .normal)
+
+        let sender = try proofWallet.getMultiSigner()
+        let proofProvider = SenderProofProvider(sender: sender) { data in
+            try proofWallet.sign(data: data)
+        }
+
+        let uploadingStream = fileLoader.uploadFile(
+            store: store,
+            sender: proofProvider,
+            recipients: recipients
+        )
+
+        try await markStallRegion("Uploading file") {
+            for try await event in uploadingStream {
+                try await self.handleUploadingEvent(
+                    event,
+                    uploadData: uploadData,
+                    ticket: credentials.ticket,
+                    node: credentials.node
+                )
+            }
+        }
+    }
+
+    /// `retry_after_secs` from a `RateLimited` response is only rendered into the error message
+    /// string — the node sends no structured `data` — so these retry on our own backoff rather
+    /// than the delay the node suggests.
+    static func isRetryableUploadError(_ error: Error) -> Bool {
+        switch error {
+        case JSONRPCEngineError.remoteCancelled,
+             is URLError:
+            true
+        case let rpcError as JSONRPCError:
+            rpcError.code == HOPErrorCode.poolFull || rpcError.code == HOPErrorCode.rateLimited
+        default:
+            false
+        }
+    }
+
     func performUploadingIfNeeded(for uploadData: MixnetUploadData) async {
         await context.processUploadData(
             for: uploadData
-        ) { [logger, loaderFactory, uploadContextFactory, senderProvider, allowanceManager, weak self] in
+        ) { [logger, retryPolicy, weak self] in
             Task {
                 do {
                     try await markStallActivity("Sending attachment") {
-                        guard let store = uploadContextFactory.createContext(
-                            attachmentId: uploadData.attachmentId
-                        ) else {
-                            logger.error("Failed to create upload context for \(uploadData.attachmentId.fileId)")
-                            return
-                        }
-
-                        let credentials = try await store.ensureUploadCredentials()
-
-                        let fileLoader = try loaderFactory.makeLoader(for: credentials.node)
-                        let recipients = try FileRecipients(ticket: credentials.ticket)
-
-                        let proofWallet = try await senderProvider.getWallet(for: uploadData.chatId)
-
-                        let accountId = try proofWallet.getRawPublicKey()
-                        try await allowanceManager.ensureCanSubmit(accountId: accountId, priority: .normal)
-
-                        let sender = try proofWallet.getMultiSigner()
-                        let proofProvider = SenderProofProvider(sender: sender) { data in
-                            try proofWallet.sign(data: data)
-                        }
-
-                        let uploadingStream = fileLoader.uploadFile(
-                            store: store,
-                            sender: proofProvider,
-                            recipients: recipients
-                        )
-
-                        try await markStallRegion("Uploading file") {
-                            for try await event in uploadingStream {
-                                try await self?.handleUploadingEvent(
-                                    event,
-                                    uploadData: uploadData,
-                                    ticket: credentials.ticket,
-                                    node: credentials.node
-                                )
+                        try await withRetry(
+                            maxAttempts: retryPolicy.maxAttempts,
+                            initialDelay: retryPolicy.initialDelay,
+                            shouldRetry: { MixnetUploadService.isRetryableUploadError($0) },
+                            operation: { [weak self] in
+                                try await self?.runUploadAttempt(for: uploadData)
                             }
-                        }
+                        )
                     }
 
                     logger.debug("Task completed successfully")
@@ -187,10 +226,6 @@ private extension MixnetUploadService {
             )
         case let .onError(error):
             logger.error("Uploading failed: \(error)")
-            await context.handle(
-                uploadEvent: .onFailure(error),
-                attachmentId: uploadData.attachmentId
-            )
 
             throw error
         }
@@ -200,8 +235,8 @@ private extension MixnetUploadService {
         uploadTask = Task { [messageProviderFactory, logger] in
             do {
                 try await withRetry(
-                    maxAttempts: MixnetUploadService.retryMaxAttempts,
-                    initialDelay: MixnetUploadService.retryInitialDelay
+                    maxAttempts: MixnetUploadService.streamRetryMaxAttempts,
+                    initialDelay: MixnetUploadService.streamRetryInitialDelay
                 ) { [weak self] in
                     let stream = messageProviderFactory.subscribeMessages(
                         with: .newLocalDeviceOutgoingRemoteRichTextMessages()

@@ -1,4 +1,5 @@
 import Foundation
+import FoundationExt
 import UIKit
 import Keystore_iOS
 import PolkadotUI
@@ -41,6 +42,7 @@ final class ProductBotFactory {
         guard servesChat(resolved) else { return nil }
 
         let product = resolved.product
+        let description = resolved.description?.nilIfEmpty
         let images = productImages.resolver(contentId: { resolved.contentId(for: .worker) })
         let resolveImage = WidgetImageResolver.cached { await images.resolve($0) }
 
@@ -50,11 +52,23 @@ final class ProductBotFactory {
                 workers: workers,
                 logger: logger
             )
-            return ProductBot(product: product, runtime: runtime, resolveImage: resolveImage, logger: logger)
+            return ProductBot(
+                product: product,
+                description: description,
+                runtime: runtime,
+                resolveImage: resolveImage,
+                logger: logger
+            )
         }
 
         let runtime = ManagedChatRuntime(productId: product.identifier, manager: workerManager)
-        return ProductBot(product: product, runtime: runtime, resolveImage: resolveImage, logger: logger)
+        return ProductBot(
+            product: product,
+            description: description,
+            runtime: runtime,
+            resolveImage: resolveImage,
+            logger: logger
+        )
     }
 }
 

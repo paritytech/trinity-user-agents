@@ -61,6 +61,7 @@ import uniffi.truapi.HostCallbacks
 import uniffi.truapi.ChatBotRegistrationStatus
 import uniffi.truapi.NativeChatCallbacks
 import uniffi.truapi.NativeCoreDatabaseException
+import uniffi.truapi.RecoveryException
 import uniffi.truapi.ChatRoomRegistrationStatus
 import uniffi.truapi.NativeGameCallbacks
 import uniffi.truapi.NativePocketCallbacks
@@ -352,6 +353,16 @@ interface HostBridge {
      */
     fun devicePaired(device: PairedSsoPeer) {}
 
+    /**
+     * Whether the core has durable transactions still awaiting a verdict.
+     * While [pending] is true, keep a background task running that awaits
+     * [TrUAPIHostRuntime.runDurableRecovery]; false means nothing needs it.
+     * Reported on change, starting with the state the runtime finds at
+     * launch. Runtime-wide, like [workerDemandChanged], and arrives on a core
+     * thread: marshal the work off rather than blocking.
+     */
+    fun durableWorkChanged(pending: Boolean) {}
+
     /** Product-scoped key-value storage for the Rust core. */
     val storage: HostStorage
 
@@ -397,9 +408,12 @@ interface ChatHostBridge {
      * must name this message for as long as the host stores it. An id arriving
      * in a `Reaction` or `ReactionRemoved` is product-chosen and untrusted: it
      * may name a message in another room, or none at all.
+     *
+     * `alt` is the product's one-line description of the message, already
+     * trimmed and screened, for places that list it without drawing it.
      */
     @Throws(HostRejection::class)
-    suspend fun postMessage(roomId: String, content: ChatMessageContent): String
+    suspend fun postMessage(roomId: String, content: ChatMessageContent, alt: String?): String
 
     /**
      * Set what a product's native Chat room shows below its messages, and keep
@@ -489,6 +503,11 @@ private class HostCallbackAdapter(private val bridge: HostBridge) : HostCallback
     // Infallible across the FFI for the same reason `onCoreLog` is.
     override fun devicePaired(device: PairedSsoPeer) {
         runCatching { bridge.devicePaired(device) }
+    }
+
+    // Infallible across the FFI for the same reason `onCoreLog` is.
+    override fun durableWorkChanged(pending: Boolean) {
+        runCatching { bridge.durableWorkChanged(pending) }
     }
 
     override suspend fun navigateTo(url: String) =
@@ -652,8 +671,8 @@ private class ChatCallbackAdapter(private val bridge: ChatHostBridge) : NativeCh
         icon: String,
     ): ChatBotRegistrationStatus = withHostRejection { bridge.registerBot(botId, name, icon) }
 
-    override suspend fun postMessage(roomId: String, content: ChatMessageContent): String =
-        withHostRejection { bridge.postMessage(roomId, content) }
+    override suspend fun postMessage(roomId: String, content: ChatMessageContent, alt: String?): String =
+        withHostRejection { bridge.postMessage(roomId, content, alt) }
 
     override suspend fun setRoomFooter(roomId: String, footer: ChatRoomFooter) =
         withHostRejection { bridge.setRoomFooter(roomId, footer) }
@@ -935,6 +954,15 @@ class TrUAPIHostRuntime @Throws(NativeRuntimeConfigException::class) constructor
     /** Report the core database's SQLite version, schema version and file path. */
     @Throws(NativeCoreDatabaseException::class)
     suspend fun coreDatabaseStatus(): DbStatus = inner.coreDatabaseStatus()
+
+    /**
+     * Decide durable transactions from the chain until none is live, then
+     * return. Await it from the background task [HostBridge.durableWorkChanged]
+     * asks for; a throw means recovery stopped early and the task should be
+     * retried. Cancelling the coroutine stops it.
+     */
+    @Throws(RecoveryException::class)
+    suspend fun runDurableRecovery() = inner.runDurableRecovery()
 
     /** Activate or replace the process-wide local signing session. */
     @Throws(HostRejection::class)

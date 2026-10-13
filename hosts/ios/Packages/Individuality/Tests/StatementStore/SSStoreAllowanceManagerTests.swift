@@ -1,5 +1,6 @@
 import Foundation
 import SubstrateSdk
+import IssueMonitoring
 import Testing
 import Operation_iOS
 import BackgroundExecution
@@ -25,7 +26,8 @@ struct SSStoreAllowanceManagerTests {
             allocator: allocator,
             slotInfoProvider: slotInfoProvider,
             renewer: renewer,
-            backgroundExecutor: InlineBackgroundExecutor()
+            backgroundExecutor: InlineBackgroundExecutor(),
+            issueDiagnostics: .make(flow: "statement-store-allowance", reporter: NoopIssueReporter())
         )
     }
 

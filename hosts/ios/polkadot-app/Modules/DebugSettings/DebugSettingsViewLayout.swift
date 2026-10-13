@@ -3,6 +3,7 @@ import UIKit_iOS
 import SnapKit
 import PolkadotUI
 import DesignSystem
+import TrUAPIHost
 
 final class DebugSettingsViewLayout: UIView {
     let clearBackupButton: RoundedButton = .create { button in
@@ -98,7 +99,7 @@ final class DebugSettingsViewLayout: UIView {
     private let truApiRuntimeLabel: Label = .create { (view: Label) in
         view.typography = .bodyMedium
         view.textColor = .fgPrimary
-        view.text = "TrUAPI Runtime"
+        view.text = "TrUAPI Runtime (\(truapiHostVersion()))"
     }
 
     private let truApiRuntimeRow: UIStackView = .create { stack in

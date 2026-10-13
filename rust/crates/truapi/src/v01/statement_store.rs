@@ -5,102 +5,102 @@ use super::ProductAccountId;
 /// Cryptographic proof for a statement.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 pub enum StatementProof {
-    /// Sr25519 signature proof.
-    Sr25519 {
-        /// Signature over the statement.
-        signature: [u8; 64],
-        /// Signer public key.
-        signer: [u8; 32],
-    },
-    /// Ed25519 signature proof.
-    Ed25519 {
-        /// Signature over the statement.
-        signature: [u8; 64],
-        /// Signer public key.
-        signer: [u8; 32],
-    },
-    /// ECDSA signature proof.
-    Ecdsa {
-        /// Signature over the statement.
-        signature: [u8; 65],
-        /// Compressed signer public key.
-        signer: [u8; 33],
-    },
-    /// On-chain event proof.
-    OnChain {
-        /// Account the event attributes the statement to.
-        who: [u8; 32],
-        /// Hash of the block containing the event.
-        block_hash: [u8; 32],
-        /// Index of the event within the block.
-        event: u64,
-    },
+	/// Sr25519 signature proof.
+	Sr25519 {
+		/// Signature over the statement.
+		signature: [u8; 64],
+		/// Signer public key.
+		signer: [u8; 32],
+	},
+	/// Ed25519 signature proof.
+	Ed25519 {
+		/// Signature over the statement.
+		signature: [u8; 64],
+		/// Signer public key.
+		signer: [u8; 32],
+	},
+	/// ECDSA signature proof.
+	Ecdsa {
+		/// Signature over the statement.
+		signature: [u8; 65],
+		/// Compressed signer public key.
+		signer: [u8; 33],
+	},
+	/// On-chain event proof.
+	OnChain {
+		/// Account the event attributes the statement to.
+		who: [u8; 32],
+		/// Hash of the block containing the event.
+		block_hash: [u8; 32],
+		/// Index of the event within the block.
+		event: u64,
+	},
 }
 
 /// A statement with optional proof and metadata.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 pub struct Statement {
-    /// Optional cryptographic proof.
-    pub proof: Option<StatementProof>,
-    /// Optional decryption key.
-    pub decryption_key: Option<[u8; 32]>,
-    /// Optional Unix timestamp expiry.
-    pub expiry: Option<u64>,
-    /// Optional channel.
-    pub channel: Option<[u8; 32]>,
-    /// [u8; 32] tags.
-    pub topics: Vec<[u8; 32]>,
-    /// Optional data payload.
-    pub data: Option<Vec<u8>>,
+	/// Optional cryptographic proof.
+	pub proof: Option<StatementProof>,
+	/// Optional decryption key.
+	pub decryption_key: Option<[u8; 32]>,
+	/// Optional Unix timestamp expiry.
+	pub expiry: Option<u64>,
+	/// Optional channel.
+	pub channel: Option<[u8; 32]>,
+	/// [u8; 32] tags.
+	pub topics: Vec<[u8; 32]>,
+	/// Optional data payload.
+	pub data: Option<Vec<u8>>,
 }
 
 /// A statement with a required (not optional) proof.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 pub struct SignedStatement {
-    /// Required cryptographic proof.
-    pub proof: StatementProof,
-    /// Optional decryption key.
-    pub decryption_key: Option<[u8; 32]>,
-    /// Optional Unix timestamp expiry.
-    pub expiry: Option<u64>,
-    /// Optional channel.
-    pub channel: Option<[u8; 32]>,
-    /// [u8; 32] tags.
-    pub topics: Vec<[u8; 32]>,
-    /// Optional data payload.
-    pub data: Option<Vec<u8>>,
+	/// Required cryptographic proof.
+	pub proof: StatementProof,
+	/// Optional decryption key.
+	pub decryption_key: Option<[u8; 32]>,
+	/// Optional Unix timestamp expiry.
+	pub expiry: Option<u64>,
+	/// Optional channel.
+	pub channel: Option<[u8; 32]>,
+	/// [u8; 32] tags.
+	pub topics: Vec<[u8; 32]>,
+	/// Optional data payload.
+	pub data: Option<Vec<u8>>,
 }
 
 /// Request to create a cryptographic proof for a statement.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 pub struct RemoteStatementStoreCreateProofRequest {
-    /// Product account that should create the proof.
-    pub product_account_id: ProductAccountId,
-    /// Statement to prove.
-    pub statement: Statement,
+	/// Product account that should create the proof.
+	pub product_account_id: ProductAccountId,
+	/// Statement to prove.
+	pub statement: Statement,
 }
 
 /// Statement proof creation error.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 pub enum RemoteStatementStoreCreateProofError {
-    /// Signing operation failed.
-    UnableToSign,
-    /// Account not recognized.
-    UnknownAccount,
-    /// Catch-all.
-    Unknown {
-        /// Human-readable failure reason.
-        reason: String,
-    },
+	/// Signing operation failed.
+	UnableToSign,
+	/// Account not recognized.
+	UnknownAccount,
+	/// Catch-all.
+	Unknown {
+		/// Human-readable failure reason.
+		reason: String,
+	},
 }
 
 /// Request to subscribe to statements via a topic filter (RFC 0008).
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 pub enum RemoteStatementStoreSubscribeRequest {
-    /// AND: statement must contain every listed topic.
-    MatchAll(Vec<[u8; 32]>),
-    /// OR: statement must contain at least one listed topic.
-    MatchAny(Vec<[u8; 32]>),
+	/// AND: statement must contain every listed topic.
+	MatchAll(Vec<[u8; 32]>),
+	/// OR: statement must contain at least one listed topic.
+	MatchAny(Vec<[u8; 32]>),
 }
 
 /// Page of signed statements delivered by the statement store subscription
@@ -108,17 +108,17 @@ pub enum RemoteStatementStoreSubscribeRequest {
 /// (`false`) from the live-update phase (`true`).
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 pub struct RemoteStatementStoreSubscribeItem {
-    /// Signed statements matching the subscription.
-    pub statements: Vec<SignedStatement>,
-    /// `false` while the host is still streaming the historical dump (more
-    /// pages to follow). `true` once the dump is complete; all subsequent
-    /// pages are also `true` and carry only newly-arrived statements.
-    pub is_complete: bool,
+	/// Signed statements matching the subscription.
+	pub statements: Vec<SignedStatement>,
+	/// `false` while the host is still streaming the historical dump (more
+	/// pages to follow). `true` once the dump is complete; all subsequent
+	/// pages are also `true` and carry only newly-arrived statements.
+	pub is_complete: bool,
 }
 
 /// Response containing a statement proof.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 pub struct RemoteStatementStoreCreateProofResponse {
-    /// Created statement proof.
-    pub proof: StatementProof,
+	/// Created statement proof.
+	pub proof: StatementProof,
 }
