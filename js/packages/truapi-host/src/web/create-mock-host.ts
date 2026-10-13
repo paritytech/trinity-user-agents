@@ -642,9 +642,16 @@ export interface MockHost {
    * Seed a preimage so a later `preimage.lookupPreimage` resolves it, and
    * return the deterministic lookup key. The core (not the host) owns Bulletin
    * submission on current core; this is the host-side content store the mock's
-   * `lookupPreimage` reads from.
+   * `lookupPreimage` reads from. Lookups already open for the key receive it.
    */
   seedPreimage(value: Uint8Array): Uint8Array;
+  /**
+   * Store `value` under `storedKey`, the key the core reads product storage
+   * by, as an entry persisted from an earlier session would be. Subscribers to
+   * that key are notified, and it does not count as a host call. The host page
+   * builds `storedKey` from the product's own key with `seedProductStorage`.
+   */
+  writeProductStorage(storedKey: string, value: Uint8Array): void;
 }
 
 /** Lowercase hex without `0x`, so a hash compares equal however it was written. */
@@ -1038,6 +1045,11 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
     const item = { value: value && scale.bytesToHex(value) };
     for (const push of storageSubscribers.get(key) ?? []) push(item);
   };
+  // Per key as well, so a seed reaches only the lookups waiting on it.
+  const preimageSubscribers = new Map<
+    string,
+    Set<(value: Uint8Array | undefined) => void>
+  >();
 
   let hostCallCount = 0;
 
@@ -1382,12 +1394,23 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
     },
 
     preimage: {
-      async *lookupPreimage(
-        key,
-      ): AsyncGenerator<Result<Uint8Array | undefined, GenericError>> {
-        yield ok(preimages.get(hex(key)));
-        // Stay open for future updates (none, in the mock).
-        await new Promise<never>(() => {});
+      lookupPreimage(key) {
+        const id = hex(key);
+        return liveSubscription<Uint8Array | undefined>(
+          preimages.get(id),
+          subscriptionClosers,
+          (push) => {
+            const subscribers =
+              preimageSubscribers.get(id) ??
+              new Set<(value: Uint8Array | undefined) => void>();
+            preimageSubscribers.set(id, subscribers);
+            subscribers.add(push);
+            return () => {
+              subscribers.delete(push);
+              if (subscribers.size === 0) preimageSubscribers.delete(id);
+            };
+          },
+        );
       },
     },
   };
@@ -1541,8 +1564,17 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
     getChatMessageLog: () => [...chatMessages],
     seedPreimage(value) {
       const key = preimageKey(value);
-      preimages.set(hex(key), value);
+      const id = hex(key);
+      // A key names its content, so a value already held is already what
+      // every open lookup was given; pushing it again would deliver it twice.
+      if (preimages.has(id)) return key;
+      preimages.set(id, value);
+      for (const push of preimageSubscribers.get(id) ?? []) push(value);
       return key;
+    },
+    writeProductStorage(storedKey, value) {
+      storage.set(productKey(storedKey), value);
+      publishStorage(storedKey, value);
     },
     getProductStorage: () => {
       const prefix = productKey("");

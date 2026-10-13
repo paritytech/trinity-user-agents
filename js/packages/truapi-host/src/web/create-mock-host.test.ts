@@ -212,6 +212,56 @@ describe("createMockHost callbacks", () => {
     expect(miss.value).toEqual(ok(undefined));
   });
 
+  it("a preimage lookup receives a value seeded after it opened", async () => {
+    // A product subscribes and waits for content to land, as it does under a
+    // real host, so a seed made after the lookup opened has to reach it.
+    const value = new Uint8Array([1, 2, 3]);
+    const key = createMockHost().seedPreimage(value);
+    const host = createMockHost();
+    const waiting = host.callbacks.preimage
+      .lookupPreimage(key)
+      [Symbol.asyncIterator]();
+    const other = host.callbacks.preimage
+      .lookupPreimage(new Uint8Array(32).fill(9))
+      [Symbol.asyncIterator]();
+    expect(await drain(waiting, 1)).toEqual([ok(undefined)]);
+    expect(await drain(other, 1)).toEqual([ok(undefined)]);
+
+    host.seedPreimage(value);
+
+    expect(await drain(waiting, 1)).toEqual([ok(value)]);
+    // A seed reaches only the lookups waiting on its own key.
+    await expect(drain(other, 1)).rejects.toThrow("delivered 0 of 1");
+  });
+
+  it("seeding a preimage already held does not deliver it again", async () => {
+    const value = new Uint8Array([1, 2, 3]);
+    const host = createMockHost();
+    const key = host.seedPreimage(value);
+    const lookup = host.callbacks.preimage
+      .lookupPreimage(key)
+      [Symbol.asyncIterator]();
+    expect(await drain(lookup, 1)).toEqual([ok(value)]);
+
+    host.seedPreimage(value);
+
+    await expect(drain(lookup, 1)).rejects.toThrow("delivered 0 of 1");
+  });
+
+  it("writeProductStorage seeds an entry without counting as a host call", async () => {
+    const host = createMockHost();
+    const stored = host.callbacks.productStorage.subscribeStorage("k");
+    const updates = stored[Symbol.asyncIterator]();
+    await updates.next();
+    const calls = host.getHostCallCount();
+    host.writeProductStorage("k", new Uint8Array([7]));
+    expect(host.getHostCallCount()).toBe(calls);
+    expect(await host.callbacks.productStorage.read("k")).toEqual(
+      new Uint8Array([7]),
+    );
+    expect(await drain(updates, 1)).toEqual([ok({ value: "0x07" })]);
+  });
+
   it("permission policy can deny device and allow remote", async () => {
     const { callbacks } = createMockHost({
       devicePermissions: "deny-all",
