@@ -12,7 +12,7 @@
 use std::{
 	collections::{HashMap, HashSet},
 	sync::{
-		Arc, Mutex, OnceLock, Weak,
+		Arc, Mutex, MutexGuard, OnceLock, PoisonError, Weak,
 		atomic::{AtomicBool, Ordering},
 	},
 };
@@ -278,16 +278,16 @@ impl FundingRegistry {
 		}
 	}
 
-	fn lock_presenting(&self) -> std::sync::MutexGuard<'_, HashSet<String>> {
-		self.presenting.lock().expect("funding presenting mutex poisoned")
+	fn lock_presenting(&self) -> MutexGuard<'_, HashSet<String>> {
+		self.presenting.lock().unwrap_or_else(PoisonError::into_inner)
 	}
 
-	fn lock_sessions(&self) -> std::sync::MutexGuard<'_, HashMap<String, FundingSession>> {
-		self.sessions.lock().expect("funding sessions mutex poisoned")
+	fn lock_sessions(&self) -> MutexGuard<'_, HashMap<String, FundingSession>> {
+		self.sessions.lock().unwrap_or_else(PoisonError::into_inner)
 	}
 
-	fn lock_subscribers(&self) -> std::sync::MutexGuard<'_, Subscribers> {
-		self.subscribers.lock().expect("funding subscribers mutex poisoned")
+	fn lock_subscribers(&self) -> MutexGuard<'_, Subscribers> {
+		self.subscribers.lock().unwrap_or_else(PoisonError::into_inner)
 	}
 }
 
