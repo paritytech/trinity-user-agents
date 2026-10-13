@@ -139,10 +139,17 @@ private struct TabBarScanPanelContent: UIViewControllerRepresentable {
 private extension TabBarScanPanelContent {
     /// Recognises a mostly vertical pan over the panel's content and forwards it to the centre control. Only
     /// mostly vertical motion begins the pan, so taps and horizontal drags reach the content. Once begun, the
-    /// pan cancels the content's touches, so a dragged result cell is never selected.
+    /// pan cancels the content's touches, so a dragged result cell is never selected. Translations are in
+    /// window coordinates, because the panel moves under the finger and a view-local translation would shrink
+    /// as the panel follows it.
     final class Coordinator: NSObject, UIGestureRecognizerDelegate {
         var drag: DSTabBarCenterDrag?
         private var recognizer: UIPanGestureRecognizer?
+        private weak var trackedScrollView: UIScrollView?
+        private var panelOwnsDrag = false
+        private var panelStartTranslation: CGFloat = 0
+        private var lastTranslation: CGFloat = 0
+        private var panelReceivedInput = false
 
         func install(on view: UIView) {
             let recognizer = UIPanGestureRecognizer(target: self, action: #selector(handlePan(_:)))
@@ -162,25 +169,126 @@ private extension TabBarScanPanelContent {
             return abs(velocity.y) > abs(velocity.x)
         }
 
-        /// Window coordinates, because the panel moves under the finger and a view-local translation would
-        /// shrink as the panel follows it.
+        /// Lets the list's own pan run with this one, so the list scrolls under the drag until its top.
+        func gestureRecognizer(
+            _ recognizer: UIGestureRecognizer,
+            shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer
+        ) -> Bool {
+            guard let scrollView = other.view as? UIScrollView,
+                  other === scrollView.panGestureRecognizer,
+                  let contentView = recognizer.view,
+                  scrollView.isDescendant(of: contentView)
+            else {
+                return false
+            }
+            return true
+        }
+
         @objc private func handlePan(_ recognizer: UIPanGestureRecognizer) {
             switch recognizer.state {
             case .began:
-                recognizer.setTranslation(.zero, in: nil)
-                drag?.changed(translationHeight: 0)
+                beginGesture(recognizer)
             case .changed:
-                drag?.changed(translationHeight: recognizer.translation(in: nil).y)
+                changeGesture(recognizer)
             case .ended:
-                let translationHeight = recognizer.translation(in: nil).y
-                let velocityHeight = recognizer.velocity(in: nil).y
-                drag?.ended(predictedEndTranslationHeight: translationHeight + projectedDistance(velocityHeight))
+                finishGesture(recognizer)
             case .cancelled,
                  .failed:
-                drag?.cancelled()
+                cancelGesture()
             default:
                 break
             }
+        }
+
+        private func beginGesture(_ recognizer: UIPanGestureRecognizer) {
+            recognizer.setTranslation(.zero, in: nil)
+            trackedScrollView = scrollView(under: recognizer)
+            panelOwnsDrag = !canScroll(trackedScrollView)
+            if panelOwnsDrag {
+                forwardToPanel(0)
+            }
+        }
+
+        /// The nearest scroll view at the pan's location, searching from the hit view up to the content view.
+        private func scrollView(under recognizer: UIPanGestureRecognizer) -> UIScrollView? {
+            guard let contentView = recognizer.view,
+                  let hitView = contentView.hitTest(recognizer.location(in: contentView), with: nil)
+            else {
+                return nil
+            }
+            return sequence(first: hitView) { $0 === contentView ? nil : $0.superview }
+                .compactMap { $0 as? UIScrollView }
+                .first
+        }
+
+        private func changeGesture(_ recognizer: UIPanGestureRecognizer) {
+            let translation = recognizer.translation(in: nil).y
+            let delta = translation - lastTranslation
+            lastTranslation = translation
+            updateOwnership(translation: translation, delta: delta)
+            if panelOwnsDrag {
+                movePanel(translation: translation)
+            }
+        }
+
+        /// The list keeps the drag until it is at its top and the finger moves down, then the panel takes it as a
+        /// system sheet does. An upward drag at the fully open panel hands the drag back to the list.
+        private func updateOwnership(translation: CGFloat, delta: CGFloat) {
+            if panelOwnsDrag {
+                guard canScroll(trackedScrollView), translation - panelStartTranslation <= 0, delta < 0 else { return }
+                forwardToPanel(0)
+                panelOwnsDrag = false
+            } else {
+                guard let scrollView = trackedScrollView, isAtTop(scrollView), delta > 0 else { return }
+                panelOwnsDrag = true
+                panelStartTranslation = translation
+            }
+        }
+
+        private func movePanel(translation: CGFloat) {
+            forwardToPanel(translation - panelStartTranslation)
+            guard let scrollView = trackedScrollView else { return }
+            scrollView.contentOffset.y = -scrollView.adjustedContentInset.top
+        }
+
+        private func finishGesture(_ recognizer: UIPanGestureRecognizer) {
+            if panelReceivedInput {
+                let panelTranslation = recognizer.translation(in: nil).y - panelStartTranslation
+                let velocityHeight = recognizer.velocity(in: nil).y
+                let predictedEnd = panelOwnsDrag ? panelTranslation + projectedDistance(velocityHeight) : 0
+                drag?.ended(predictedEndTranslationHeight: predictedEnd)
+            }
+            resetGesture()
+        }
+
+        private func cancelGesture() {
+            if panelReceivedInput {
+                drag?.cancelled()
+            }
+            resetGesture()
+        }
+
+        private func forwardToPanel(_ translationHeight: CGFloat) {
+            panelReceivedInput = true
+            drag?.changed(translationHeight: translationHeight)
+        }
+
+        private func resetGesture() {
+            trackedScrollView = nil
+            panelOwnsDrag = false
+            panelStartTranslation = 0
+            lastTranslation = 0
+            panelReceivedInput = false
+        }
+
+        private func canScroll(_ scrollView: UIScrollView?) -> Bool {
+            guard let scrollView else { return false }
+            let insets = scrollView.adjustedContentInset
+            return scrollView.contentSize.height + insets.top + insets.bottom > scrollView.bounds.height
+        }
+
+        private func isAtTop(_ scrollView: UIScrollView) -> Bool {
+            scrollView.contentOffset.y <= -scrollView.adjustedContentInset.top
         }
 
         /// Distance a release at this velocity coasts under `UIScrollView`'s normal deceleration.
