@@ -93,99 +93,65 @@ struct AssetDetailsView: View {
     }
 
     private func actions() -> some View {
-        HStack(spacing: DSSpacings.extraLarge) {
-            circleButton(
-                .add24,
-                title: String(localized: .Funding.cardAdd),
-                style: .add,
+        HStack(spacing: DSSpacings.small) {
+            actionCard(
+                title: String(localized: .Funding.cardGet),
+                subtitle: String(localized: .Funding.cardGetSubtitle(symbol: FundingCash.current.symbol)),
+                arrowRotation: .zero,
                 isLoading: viewModel.isTopUpInProgress
             ) {
                 viewModel.onTopUp?()
             }
             .accessibilityId(AccessibilityID.Wallet.addFundsButton)
 
-            circleButton(
-                systemImage: "arrow.up",
-                title: String(localized: .actionSendCash),
-                style: .send,
+            actionCard(
+                title: String(localized: .Funding.cardSend),
+                subtitle: String(localized: .Funding.cardSendSubtitle(symbol: FundingCash.current.symbol)),
+                arrowRotation: .degrees(180),
                 isLoading: false
             ) {
                 viewModel.onSendMoney?()
             }
             .accessibilityId(AccessibilityID.Wallet.sendPaymentButton)
         }
-        .frame(maxWidth: .infinity)
     }
 
-    private enum CircleStyle {
-        case add
-        case send
-    }
-
-    private func circleButton(
-        _ icon: ImageResource,
+    private func actionCard(
         title: String,
-        style: CircleStyle,
+        subtitle: String,
+        arrowRotation: Angle,
         isLoading: Bool,
         action: @escaping () -> Void
     ) -> some View {
-        circleButton(
-            image: Image(icon).renderingMode(.template),
-            title: title,
-            style: style,
-            isLoading: isLoading,
-            action: action
-        )
-    }
-
-    private func circleButton(
-        systemImage: String,
-        title: String,
-        style: CircleStyle,
-        isLoading: Bool,
-        action: @escaping () -> Void
-    ) -> some View {
-        circleButton(
-            image: Image(systemName: systemImage),
-            title: title,
-            style: style,
-            isLoading: isLoading,
-            action: action
-        )
-    }
-
-    private func circleButton(
-        image: Image,
-        title: String,
-        style: CircleStyle,
-        isLoading: Bool,
-        action: @escaping () -> Void
-    ) -> some View {
-        let foreground: Color = style == .add ? .fgPrimaryInverted : .fgPrimary
-        return Button(action: action) {
+        Button(action: action) {
             VStack(spacing: DSSpacings.small) {
-                Group {
+                HStack(spacing: DSSpacings.small) {
                     if isLoading {
                         ProgressView()
                             .progressViewStyle(.circular)
-                            .tint(foreground)
+                            .tint(.fgPrimaryInverted)
                     } else {
-                        image
+                        Image(.iconArrowUp16)
+                            .renderingMode(.template)
+                            .resizable()
+                            .frame(width: 18, height: 18)
+                            .rotationEffect(arrowRotation)
                     }
+                    Text(title)
+                        .typography(.titleLarge)
                 }
-                .frame(width: 56, height: 56)
-                .foregroundStyle(foreground)
-                .background(style == .add ? Color.bgActionPrimary : Color.bgSurfaceContainer, in: Circle())
-                .overlay {
-                    if style == .send {
-                        Circle().strokeBorder(Color.fgPrimary.opacity(0.12))
-                    }
-                }
+                .foregroundStyle(Color.fgPrimaryInverted)
 
-                Text(title)
-                    .typography(.labelMedium)
-                    .foregroundStyle(Color.fgPrimary)
+                Text(subtitle)
+                    .typography(.bodySmall)
+                    .foregroundStyle(Color.fgSecondaryInverted)
+                    .multilineTextAlignment(.center)
             }
+            .padding(.horizontal, DSSpacings.medium)
+            .padding(.vertical, DSSpacings.smallIncreased)
+            .frame(maxWidth: .infinity)
+            .frame(height: 96)
+            .background(Color.bgActionPrimary, in: RoundedRectangle(cornerRadius: DSRadii.mediumIncreased))
         }
         .buttonStyle(.plain)
         .disabled(isLoading)

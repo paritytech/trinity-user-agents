@@ -1,17 +1,6 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
-    "card.add" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Add"
-          }
-        }
-      }
-    },
     "activity.converting" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -155,17 +144,6 @@
         }
       }
     },
-    "activity.upcoming" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Upcoming receiving"
-          }
-        }
-      }
-    },
     "activity.waitingTransfer" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -238,7 +216,7 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Withdraw funds"
+            "value" : "Move money out"
           }
         }
       }
@@ -799,7 +777,7 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Outside pocket"
+            "value" : "Move money out"
           }
         }
       }
@@ -1834,6 +1812,94 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Failed"
+          }
+        }
+      }
+    },
+    "activity.waitingPayment" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Waiting for payment"
+          }
+        }
+      }
+    },
+    "activity.waitingDeposit" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Waiting for deposit"
+          }
+        }
+      }
+    },
+    "activity.preparingPayout" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Preparing payout"
+          }
+        }
+      }
+    },
+    "activity.retryingPayout" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Retrying the payout…"
+          }
+        }
+      }
+    },
+    "card.get" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Get"
+          }
+        }
+      }
+    },
+    "card.getSubtitle" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Add %1$(symbol)@ via bank, crypto or credit card"
+          }
+        }
+      }
+    },
+    "card.send" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Send"
+          }
+        }
+      }
+    },
+    "card.sendSubtitle" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Move %1$(symbol)@ to your bank, crypto wallet or contacts"
           }
         }
       }

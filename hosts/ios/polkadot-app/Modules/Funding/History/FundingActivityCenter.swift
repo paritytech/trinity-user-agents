@@ -92,14 +92,23 @@ private extension FundingActivityCenter {
         }
 
         inFlight = sessions
-            .filter(\.session.stage.isOpen)
+            .filter { Self.isInFlight($0.session, progress: $0.progress) }
             .map { FundingActivityItem(session: $0.session, progress: $0.progress) }
+            .sorted { $0.date > $1.date }
 
         let ended = sessions.compactMap { entry in
             FundingRecord(session: entry.session, progress: entry.progress)
         }
         await settle(ended, runtime: runtime)
         await loadStored(coreSessions: ended)
+    }
+
+    /// Open, or a withdrawal released to its provider that has not paid it
+    /// out yet.
+    static func isInFlight(_ session: FundingSession, progress: FundingProgress?) -> Bool {
+        if session.stage.isOpen { return true }
+        guard case .released = session.stage else { return false }
+        return progress?.payout == nil
     }
 
     func settle(_ ended: [FundingRecord], runtime: FundingRuntime) async {
@@ -122,7 +131,9 @@ private extension FundingActivityCenter {
         let records = stored + coreSessions.filter { !storedIds.contains($0.intent) }
 
         self.records = Dictionary(records.map { ($0.intent, $0) }) { _, latest in latest }
+        let inFlightIds = Set(inFlight.map(\.id))
         history = records
+            .filter { !inFlightIds.contains($0.intent) }
             .sorted { $0.settledAt > $1.settledAt }
             .map(FundingActivityItem.init(record:))
     }

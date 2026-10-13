@@ -3,7 +3,7 @@ import PolkadotUI
 import SwiftUI
 import TrUAPIHost
 
-/// The CASH card's funding lists: what is in progress, stacked when there is
+/// The CASH card's funding lists: what is in progress, on one card when there is
 /// more than one, then the history by day.
 struct FundingActivityView: View {
     let cash: FundingCash
@@ -58,71 +58,69 @@ private extension FundingActivityView {
         center.inFlight.count > 1
     }
 
+    /// The newest session on one card, with how many are in flight on its
+    /// icon; with more than one, a tap opens them all in a panel.
+    @ViewBuilder
     var inProgress: some View {
-        VStack(alignment: .leading, spacing: DSSpacings.small) {
-            inProgressHeader
-
-            if isStacked, !isStackExpanded {
-                stacked
-            } else {
-                ForEach(center.inFlight) { item in
-                    card(item)
-                        .contentShape(RoundedRectangle(cornerRadius: DSRadii.large))
-                        .onTapGesture { center.open(intent: item.id) }
-                }
-            }
-        }
-    }
-
-    /// "In Progress (N)"; with a stack, tapping it folds the stack open or
-    /// shut.
-    var inProgressHeader: some View {
-        Button {
-            guard isStacked else { return }
-            withAnimation(.spring) { isStackExpanded.toggle() }
-        } label: {
-            HStack(spacing: DSSpacings.small) {
-                Text(.Funding.activityInProgress)
-                    .typography(.titleSmall)
-                    .foregroundStyle(.fgPrimary)
-                Text(verbatim: "\(center.inFlight.count)")
-                    .typography(.labelSmallEmphasized)
-                    .foregroundStyle(.fgPrimary)
-                    .padding(.horizontal, 7)
-                    .frame(height: 20)
-                    .background(.bgSurfaceNested, in: Capsule())
-                if isStacked {
-                    Image(systemName: "chevron.down")
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(.fgSecondary)
-                        .rotationEffect(.degrees(isStackExpanded ? 180 : 0))
-                }
-                Spacer(minLength: 0)
-            }
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-    }
-
-    /// The first session on top of the edges of the ones behind it.
-    var stacked: some View {
-        ZStack(alignment: .top) {
-            ForEach(Array(center.inFlight.prefix(3).enumerated().reversed()), id: \.element.id) { index, item in
-                card(item)
-                    .scaleEffect(1 - CGFloat(index) * 0.04, anchor: .bottom)
-                    .offset(y: CGFloat(index) * 10)
-                    .opacity(index == 0 ? 1 : 0.6)
-            }
-        }
-        .padding(.bottom, CGFloat(min(center.inFlight.count, 3) - 1) * 10)
-        .onTapGesture { withAnimation(.spring) { isStackExpanded = true } }
-    }
-
-    func card(_ item: FundingActivityItem) -> some View {
-        FundingActivityRow(item: item, cash: cash, showsDivider: false)
+        if isStacked, isStackExpanded {
+            expandedPanel
+        } else if let newest = center.inFlight.first {
+            FundingActivityRow(
+                item: newest,
+                cash: cash,
+                showsDivider: false,
+                stackCount: isStacked ? center.inFlight.count : nil
+            )
             .padding(.horizontal, DSSpacings.medium)
             .background(.bgSurfaceContainer, in: RoundedRectangle(cornerRadius: DSRadii.large))
+            .contentShape(RoundedRectangle(cornerRadius: DSRadii.large))
+            .onTapGesture {
+                if isStacked {
+                    withAnimation(.spring) { isStackExpanded = true }
+                } else {
+                    center.open(intent: newest.id)
+                }
+            }
+        }
     }
+
+    var expandedPanel: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Button {
+                withAnimation(.spring) { isStackExpanded = false }
+            } label: {
+                HStack {
+                    Text(.Funding.activityInProgress)
+                        .typography(.titleSmall)
+                        .foregroundStyle(.fgPrimary)
+                    Spacer(minLength: 0)
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(.fgPrimary)
+                }
+                .padding(.vertical, DSSpacings.smallIncreased)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+
+            ScrollView {
+                VStack(spacing: 0) {
+                    ForEach(center.inFlight) { item in
+                        FundingActivityRow(item: item, cash: cash, showsDivider: item.id != center.inFlight.last?.id)
+                            .contentShape(Rectangle())
+                            .onTapGesture { center.open(intent: item.id) }
+                    }
+                }
+            }
+            .scrollBounceBehavior(.basedOnSize)
+            .frame(maxHeight: Self.panelRowsHeight)
+        }
+        .padding(.horizontal, DSSpacings.medium)
+        .background(.bgSurfaceContainer, in: RoundedRectangle(cornerRadius: DSRadii.large))
+    }
+
+    /// Room for about seven sessions before the panel scrolls.
+    static let panelRowsHeight: CGFloat = 588
 
     /// Refreshes while the card is open, so a step reached without a status
     /// change still shows.
@@ -138,6 +136,8 @@ struct FundingActivityRow: View {
     let item: FundingActivityItem
     let cash: FundingCash
     var showsDivider = true
+    /// How many sessions are in flight, drawn in the icon of the one on top.
+    var stackCount: Int?
 
     var body: some View {
         HStack(spacing: DSSpacings.smallIncreased) {
@@ -174,10 +174,16 @@ private extension FundingActivityRow {
     var icon: some View {
         switch item.status {
         case .inProgress:
-            ProgressView()
-                .tint(isAmber ? Color.fgWarning : Color.fgPrimary)
-                .frame(width: 48, height: 48)
-                .background(isAmber ? Color.bgStatusWarning.opacity(0.3) : Color.bgSurfaceNested, in: Circle())
+            Group {
+                if let stackCount {
+                    FundingCountRing(count: stackCount)
+                } else {
+                    ProgressView()
+                        .tint(isAmber ? Color.fgWarning : Color.fgPrimary)
+                }
+            }
+            .frame(width: 48, height: 48)
+            .background(isAmber ? Color.bgStatusWarning.opacity(0.3) : Color.bgSurfaceNested, in: Circle())
         case .toppedUp,
              .sent:
             Image(systemName: item.direction == .in ? "arrow.down.left" : "arrow.up.right")
@@ -228,11 +234,17 @@ private extension FundingActivityRow {
         if isDelayed { return String(localized: .Funding.activityDelayed) }
 
         switch step {
-        case .upcoming: return String(localized: .Funding.activityUpcoming)
+        case .waitingForPayment: return String(localized: .Funding.activityWaitingPayment)
         case .waitingForTransfer: return String(localized: .Funding.activityWaitingTransfer)
+        case .waitingForDeposit: return String(localized: .Funding.activityWaitingDeposit)
         case .converting: return String(localized: .Funding.activityConverting(symbol: cash.symbol))
-        case .retrying: return String(localized: .Funding.activityRetrying)
+        case .retrying:
+            if item.direction == .in {
+                return String(localized: .Funding.activityRetrying)
+            }
+            return String(localized: .Funding.activityRetryingPayout)
         case .transactionInitiated: return String(localized: .Funding.activityInitiated)
+        case .preparingPayout: return String(localized: .Funding.activityPreparingPayout)
         case let .convertingOut(asset): return String(localized: .Funding.activityConvertingOut(asset: asset))
         }
     }
@@ -261,6 +273,31 @@ private extension FundingActivityRow {
              .refunded,
              .payoutFailed,
              .failed: .fgSecondary
+        }
+    }
+}
+
+/// How many sessions are in flight, inside a turning ring.
+private struct FundingCountRing: View {
+    let count: Int
+
+    @State private var isTurning = false
+
+    var body: some View {
+        ZStack {
+            Circle()
+                .stroke(Color.fgTertiary, lineWidth: 2)
+            Circle()
+                .trim(from: 0, to: 0.25)
+                .stroke(Color.fgPrimary, style: StrokeStyle(lineWidth: 2, lineCap: .round))
+                .rotationEffect(.degrees(isTurning ? 360 : 0))
+            Text(verbatim: "\(count)")
+                .typography(.titleSmall)
+                .foregroundStyle(.fgPrimary)
+        }
+        .padding(DSSpacings.small)
+        .onAppear {
+            withAnimation(.linear(duration: 1).repeatForever(autoreverses: false)) { isTurning = true }
         }
     }
 }

@@ -22,12 +22,17 @@ struct FundingActivityItem: Identifiable, Equatable {
 }
 
 /// Where a session in flight stands, as its subtitle says it.
+///
+/// Read from the session's progress in ``FundingActivityItem/step(session:progress:)``
+/// until the core reports a typed status of its own.
 enum FundingActivityStep: Equatable {
-    case upcoming
+    case waitingForPayment
     case waitingForTransfer
+    case waitingForDeposit
     case converting
     case retrying
     case transactionInitiated
+    case preparingPayout
     case convertingOut(asset: String)
 }
 
@@ -83,17 +88,22 @@ private extension FundingActivityItem {
         if progress?.retrying == true { return .retrying }
 
         let reached = reached(progress)
+        let rail = session.choice?.rail
         switch session.direction {
         case .in:
-            if reached.contains(.conversion) { return .converting }
-            let awaitsTransfer = session.choice.map { $0.rail != .card } ?? false
-            if awaitsTransfer, !reached.contains(.payment) { return .waitingForTransfer }
-            return .upcoming
+            if reached.contains(.payment) || reached.contains(.conversion) { return .converting }
+            switch rail {
+            case .bank: return .waitingForTransfer
+            case .crypto: return .waitingForDeposit
+            case .card,
+                 nil: return .waitingForPayment
+            }
         case .out:
-            if reached.contains(.conversion), let asset = session.choice?.asset {
+            guard reached.contains(.sent) else { return .transactionInitiated }
+            if rail == .crypto, let asset = session.choice?.asset {
                 return .convertingOut(asset: asset)
             }
-            return .transactionInitiated
+            return .preparingPayout
         }
     }
 
