@@ -35,4 +35,10 @@ interface HostFunding {
      * the host's store and lets the core drop it.
      */
     fun observeActivity(): Flow<FundingActivity>
+
+    /**
+     * Shows session [intent] again: one in flight where it stands, with the provider's screen over it while the
+     * provider still waits on one, and an ended one on its detail screen.
+     */
+    suspend fun showSession(intent: String)
 }

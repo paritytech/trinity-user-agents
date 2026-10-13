@@ -7,9 +7,19 @@ import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
 import javax.inject.Singleton
 
+/** How the funding sheet was opened. */
+sealed interface FundingOverlayMode {
+    /** For a session the core has just opened and is waiting on. */
+    data object New : FundingOverlayMode
+
+    /** For a session the core still holds, opened again from the CASH card. Nothing waits on its answer. */
+    data object Resumed : FundingOverlayMode
+}
+
 /** One overlay the core is waiting on. The first answer wins; later ones are the overlay closing after it. */
 class FundingOverlayContext(
     val request: FundingOverlayRequest,
+    val mode: FundingOverlayMode,
 ) {
     private val outcome = CompletableDeferred<FundingOverlayOutcome>()
     private val closed = CompletableDeferred<Unit>()

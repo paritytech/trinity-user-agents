@@ -38,7 +38,7 @@ sealed interface FundingActivityStatus {
 
     data object PayoutFailed : FundingActivityStatus
 
-    data object Failed : FundingActivityStatus
+    data class Failed(val reason: FundingFailureReason) : FundingActivityStatus
 }
 
 /** Where a session in flight stands. */

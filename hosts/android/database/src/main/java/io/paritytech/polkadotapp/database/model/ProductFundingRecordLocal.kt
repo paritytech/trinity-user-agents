@@ -16,6 +16,7 @@ class ProductFundingRecordLocal(
     val settledPlanks: BigInteger?,
     val outcome: Outcome,
     val failureCode: String?,
+    val failureMessage: String?,
     val payout: Payout?,
     val payoutFailureReason: String?,
     val transactionId: String?,

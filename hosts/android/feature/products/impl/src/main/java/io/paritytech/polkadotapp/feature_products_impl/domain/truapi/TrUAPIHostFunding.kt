@@ -7,6 +7,7 @@ import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingDire
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.HostFunding
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.HostFundingSession
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
+import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingSessionPresenter
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.history.FundingActivityCenter
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emitAll
@@ -21,6 +22,7 @@ class TrUAPIHostFunding @Inject constructor(
     private val runtimeProvider: TrUAPIHostRuntimeProvider,
     private val bridge: AppFundingHostBridge,
     private val activityCenter: FundingActivityCenter,
+    private val sessionPresenter: FundingSessionPresenter,
 ) : HostFunding {
     override suspend fun openFunding(direction: FundingDirection, amount: Balance?): Result<String?> =
         runtimeProvider.runtime().mapCatching { runtime ->
@@ -41,6 +43,8 @@ class TrUAPIHostFunding @Inject constructor(
     }
 
     override fun observeActivity(): Flow<FundingActivity> = activityCenter.observe()
+
+    override suspend fun showSession(intent: String) = sessionPresenter.show(intent)
 
     private fun FundingSession.toDomain() = HostFundingSession(
         intent = intent,

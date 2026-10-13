@@ -2,6 +2,7 @@ package io.paritytech.polkadotapp.feature_products_impl.data.repository
 
 import io.paritytech.polkadotapp.chains.network.binding.intoBalance
 import io.paritytech.polkadotapp.database.model.ProductFundingRecordLocal
+import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingFailureReason
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.history.FundingRecord
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.history.FundingRecordOutcome
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.history.FundingRecordPayout
@@ -32,7 +33,8 @@ internal fun FundingRecord.toLocal() = ProductFundingRecordLocal(
         FundingRecordOutcome.Refunded -> ProductFundingRecordLocal.Outcome.REFUNDED
         is FundingRecordOutcome.Failed -> ProductFundingRecordLocal.Outcome.FAILED
     },
-    failureCode = (outcome as? FundingRecordOutcome.Failed)?.code,
+    failureCode = (outcome as? FundingRecordOutcome.Failed)?.reason?.code,
+    failureMessage = ((outcome as? FundingRecordOutcome.Failed)?.reason as? FundingFailureReason.Other)?.message,
     payout = when (payout) {
         FundingRecordPayout.PaidOut -> ProductFundingRecordLocal.Payout.PAID_OUT
         is FundingRecordPayout.Failed -> ProductFundingRecordLocal.Payout.FAILED
@@ -66,7 +68,7 @@ internal fun ProductFundingRecordLocal.toRecord() = FundingRecord(
         ProductFundingRecordLocal.Outcome.DELIVERED -> FundingRecordOutcome.Delivered
         ProductFundingRecordLocal.Outcome.RELEASED -> FundingRecordOutcome.Released
         ProductFundingRecordLocal.Outcome.REFUNDED -> FundingRecordOutcome.Refunded
-        ProductFundingRecordLocal.Outcome.FAILED -> FundingRecordOutcome.Failed(failureCode.orEmpty())
+        ProductFundingRecordLocal.Outcome.FAILED -> FundingRecordOutcome.Failed(FundingFailureReason.of(failureCode.orEmpty(), failureMessage))
     },
     payout = when (payout) {
         ProductFundingRecordLocal.Payout.PAID_OUT -> FundingRecordPayout.PaidOut

@@ -12,6 +12,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import io.paritytech.polkadotapp.design.components.button.common.PolkadotButtonStyle
@@ -25,6 +26,10 @@ import io.paritytech.polkadotapp.design.components.spacer.HorizontalSpacer
 import io.paritytech.polkadotapp.design.components.surface.PolkadotSurface
 import io.paritytech.polkadotapp.design.components.text.NovaText
 import io.paritytech.polkadotapp.design.theme.PolkadotTheme
+import io.paritytech.polkadotapp.feature_products_api.presentation.funding.failedText
+import io.paritytech.polkadotapp.feature_products_api.presentation.funding.text
+import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.FundingSummaryProblem
+import io.paritytech.polkadotapp.common.R as RCommon
 
 /** A screen title with an optional back button on the left and actions on the right. */
 @Composable
@@ -157,3 +162,14 @@ private val CIRCLE_BUTTON_SIZE = 40.dp
 private val CHEVRON_SIZE = 16.dp
 private val CARD_DIVIDER = 2.dp
 private val MONOGRAM_SIZE = 40.dp
+
+/** What stands in the way, in the user's words. */
+@Composable
+fun fundingProblemText(problem: FundingSummaryProblem): String = when (problem) {
+    FundingSummaryProblem.StartFailed -> stringResource(RCommon.string.funding_error_start_failed)
+    FundingSummaryProblem.NoProvider -> stringResource(RCommon.string.funding_error_no_provider)
+    is FundingSummaryProblem.QuoteRefused -> problem.text.text()
+    is FundingSummaryProblem.Failed -> problem.reason.failedText()
+    is FundingSummaryProblem.Minimum -> stringResource(RCommon.string.funding_error_minimum, problem.amount)
+    is FundingSummaryProblem.Maximum -> stringResource(RCommon.string.funding_error_maximum, problem.amount)
+}

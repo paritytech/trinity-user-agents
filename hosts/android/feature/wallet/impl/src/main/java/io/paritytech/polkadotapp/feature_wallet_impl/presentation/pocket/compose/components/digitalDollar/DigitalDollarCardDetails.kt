@@ -75,6 +75,7 @@ fun DigitalDollarCardDetails(
         state = state,
         fundingActivity = fundingActivity,
         onSendClick = viewModel::onSendClick,
+        onFundingRowClick = viewModel::onFundingRowClick,
         onGetCashClick = viewModel::onGetCashClick,
         onAutoFundClick = viewModel::onAutoFundClick,
         onDetailsToggled = viewModel::onDetailsToggled,
@@ -93,6 +94,7 @@ private fun DigitalDollarCardDetailsContent(
     state: DigitalDollarCardDetailsUiState,
     fundingActivity: FundingActivityUiState,
     onSendClick: () -> Unit,
+    onFundingRowClick: (id: String) -> Unit,
     onGetCashClick: () -> Unit,
     onAutoFundClick: () -> Unit,
     onDetailsToggled: () -> Unit,
@@ -184,6 +186,7 @@ private fun DigitalDollarCardDetailsContent(
                 FundingActivitySection(
                     modifier = Modifier.fillMaxWidth(),
                     state = fundingActivity,
+                    onRowClick = onFundingRowClick,
                 )
             }
         }
@@ -263,6 +266,7 @@ private fun DigitalDollarCardDetailsPreview() {
                 ),
                 fundingActivity = FundingActivityUiState(inFlight = persistentListOf(), days = persistentListOf()),
                 onSendClick = {},
+                onFundingRowClick = {},
                 onGetCashClick = {},
                 onAutoFundClick = {},
                 onDetailsToggled = {},

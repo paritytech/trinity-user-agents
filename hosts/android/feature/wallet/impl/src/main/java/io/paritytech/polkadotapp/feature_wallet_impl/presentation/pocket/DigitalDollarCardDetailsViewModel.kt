@@ -108,6 +108,11 @@ class DigitalDollarCardDetailsViewModel @Inject constructor(
         router.openSendPayment()
     }
 
+    /** A session in flight opens where it stands; an ended one opens its detail. */
+    fun onFundingRowClick(id: String) = launchUnit {
+        interactor.showFundingSession(id)
+    }
+
     fun onAutoFundClick() = launchUnit {
         if (fundInProgress.value) return@launchUnit
         fundInProgress.enable()

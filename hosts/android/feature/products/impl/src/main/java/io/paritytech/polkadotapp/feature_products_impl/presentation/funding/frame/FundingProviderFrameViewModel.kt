@@ -7,17 +7,12 @@ import io.paritytech.polkadotapp.common.utils.launchUnit
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsLoadProgress
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.ProviderFrameOutcome
 import io.paritytech.polkadotapp.feature_products_api.presentation.spaHost.SpaHost
-import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingFlowInteractor
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingFrameContext
-import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingFrameContexts
 import io.paritytech.polkadotapp.feature_products_impl.presentation.productBotManagement.ProductsRouter
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.map
-import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.flow.scan
 import kotlinx.coroutines.flow.stateIn
-import kotlinx.coroutines.launch
 import javax.inject.Inject
 
 data class FundingProviderFrameUiState(
@@ -27,15 +22,13 @@ data class FundingProviderFrameUiState(
 )
 
 /**
- * A provider's own screen, for as long as the provider needs it. Back out of it is `Dismissed`; it closes
- * itself as `Closed` once the payment is seen or the session is over, or, for a bank transfer, when the user
- * says they have sent the funds.
+ * A provider's own screen, for as long as the provider needs it. The session is already running, so back out
+ * of it only hides it and leaves the provider waiting, which the CASH card can show again. Saying a bank
+ * transfer was sent answers `Closed`; the overlay answers it too once the payment is seen or the session is over.
  */
 @HiltViewModel
 class FundingProviderFrameViewModel @Inject constructor(
     private val context: FundingFrameContext,
-    private val frames: FundingFrameContexts,
-    private val interactor: FundingFlowInteractor,
     private val router: ProductsRouter,
     spaHost: SpaHost,
 ) : BaseViewModel() {
@@ -53,17 +46,12 @@ class FundingProviderFrameViewModel @Inject constructor(
         .stateIn(this, SharingStarted.Eagerly, initialState())
 
     init {
-        launch {
-            interactor.sessionChanges(context.intent)
-                .onStart { emit(Unit) }
-                .map { interactor.paymentMoved(context.intent) }
-                .collect { moved -> if (moved) finish(ProviderFrameOutcome.CLOSED) }
-        }
+        context.isShown = true
     }
 
     fun onBack() {
         val current = webView.value
-        if (current != null && current.canGoBack()) current.goBack() else finish(ProviderFrameOutcome.DISMISSED)
+        if (current != null && current.canGoBack()) current.goBack() else hide()
     }
 
     fun onSentFunds() = finish(ProviderFrameOutcome.CLOSED)
@@ -74,9 +62,10 @@ class FundingProviderFrameViewModel @Inject constructor(
 
     override fun onCleared() {
         super.onCleared()
-        context.answer(ProviderFrameOutcome.DISMISSED)
-        frames.remove(context.intent)
+        context.isShown = false
     }
+
+    private fun hide() = launchUnit { router.closeFundingProviderFrame(context.intent) }
 
     private fun finish(outcome: ProviderFrameOutcome) = launchUnit {
         context.answer(outcome)

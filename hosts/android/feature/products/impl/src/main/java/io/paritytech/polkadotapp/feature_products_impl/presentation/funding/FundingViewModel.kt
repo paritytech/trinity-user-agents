@@ -7,17 +7,21 @@ import io.paritytech.polkadotapp.common.presentation.loading.asLoaded
 import io.paritytech.polkadotapp.common.presentation.screens.BaseViewModel
 import io.paritytech.polkadotapp.common.utils.launchUnit
 import io.paritytech.polkadotapp.common.utils.logFailure
+import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingFailureReason
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingOverlayOutcome
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingFlowInteractor
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingFlowState
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingKey
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingOverlayContext
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingOverlayContexts
+import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingOverlayMode
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingProviderBrand
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.applying
+import io.paritytech.polkadotapp.feature_products_impl.domain.funding.failure
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.isOpen
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.isPending
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.quote
+import io.paritytech.polkadotapp.feature_products_impl.domain.funding.toReason
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.toCore
 import io.paritytech.polkadotapp.feature_products_impl.presentation.productBotManagement.ProductsRouter
 import kotlinx.coroutines.Job
@@ -44,11 +48,13 @@ import kotlin.time.Duration.Companion.seconds
 import io.paritytech.polkadotapp.common.R as RCommon
 import uniffi.truapi.FundingDirection as CoreFundingDirection
 
-/** Whether the session has been handed to a provider. */
+/** Whether the session has been handed to a provider, and why it failed once it has. */
 data class FundingStartState(
     val isStarting: Boolean,
     val failed: Boolean,
     val started: Boolean,
+    val failure: FundingFailureReason? = null,
+    val isCancelling: Boolean = false,
 )
 
 @HiltViewModel
@@ -107,6 +113,7 @@ class FundingViewModel @Inject constructor(
             val initial = initialState()
             flow.value = initial
             loadBrands(initial)
+            if (context.mode == FundingOverlayMode.Resumed) resume()
         }
         launch { path.map { it.lastOrNull() in QUOTED_SCREENS }.distinctUntilChanged().collectLatest { if (it) tickWhileQuoted() } }
         launch { path.map { it.lastOrNull() == FundingScreen.DEPOSIT }.distinctUntilChanged().collectLatest { if (it) followDeposit() } }
@@ -138,9 +145,17 @@ class FundingViewModel @Inject constructor(
 
     fun onCancelTopUp() = push(FundingScreen.CANCEL_CONFIRM)
 
+    /** Ends a started session. A refusal means the payment is already on its way, so the deposit stays up. */
     fun onConfirmCancel() = launchUnit {
-        interactor.cancel(intent).logFailure("Funding cancel failed")
-        onClose()
+        if (start.value.isCancelling) return@launchUnit
+        start.update { it.copy(isCancelling = true) }
+
+        interactor.cancel(intent)
+            .logFailure("Funding cancel failed")
+            .onSuccess { cancelled -> if (cancelled) onClose() else leaveCancelConfirm(RCommon.string.funding_error_cancel_refused) }
+            .onFailure { leaveCancelConfirm(RCommon.string.funding_error_cancel_failed) }
+
+        start.update { it.copy(isCancelling = false) }
     }
 
     fun onRailSelected(rail: FundingRail) {
@@ -211,7 +226,7 @@ class FundingViewModel @Inject constructor(
                 .getOrDefault(false)
 
             start.value = FundingStartState(isStarting = false, failed = !selected, started = selected)
-            if (selected) didStart(current.rail)
+            if (selected) didStart(current.rail) else refreshSession()
         }
     }
 
@@ -268,11 +283,34 @@ class FundingViewModel @Inject constructor(
         }
     }
 
-    /** The core's view of the session moved on: read it again, and leave once it is over. */
+    /** The core's view of the session moved on: read it again, and leave once it is over. A failed one stays up with its reason. */
     private suspend fun refreshSession() {
         progress.value = interactor.progress(intent)
-        val ended = interactor.session(intent)?.stage?.isOpen == false
-        if (start.value.started && ended) closeSheet()
+        val stage = interactor.session(intent)?.stage
+        val failure = stage?.failure?.toReason()
+        if (failure != start.value.failure) start.update { it.copy(failure = failure) }
+
+        val ended = stage?.isOpen == false
+        if (start.value.started && ended && failure == null) closeSheet()
+    }
+
+    /** A session the user left running, shown on its deposit screen as the sheet had it once it started. */
+    private suspend fun resume() {
+        val session = interactor.session(intent) ?: return
+        val choice = session.choice
+
+        flow.update { state ->
+            state?.let { if (choice != null) it.withRail(choice.rail).withAsset(choice.asset) else it }
+                ?.let { updated -> session.providerId?.let(updated::withChosenProvider) ?: updated }
+        }
+        start.value = FundingStartState(isStarting = false, failed = false, started = true)
+        path.value = listOf(FundingScreen.DEPOSIT)
+        refreshSession()
+    }
+
+    private fun leaveCancelConfirm(message: Int) {
+        if (path.value.lastOrNull() == FundingScreen.CANCEL_CONFIRM) pop()
+        showMessage(message)
     }
 
     private suspend fun followDeposit() {

@@ -2,6 +2,8 @@ package io.paritytech.polkadotapp.feature_products_impl.domain.funding.history
 
 import io.paritytech.polkadotapp.chains.network.binding.Balance
 import io.paritytech.polkadotapp.chains.network.binding.intoBalance
+import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingFailureReason
+import io.paritytech.polkadotapp.feature_products_impl.domain.funding.toReason
 import uniffi.truapi.FundingDirection
 import uniffi.truapi.FundingFailure
 import uniffi.truapi.FundingPayout
@@ -73,8 +75,8 @@ sealed interface FundingRecordOutcome {
 
     data object Refunded : FundingRecordOutcome
 
-    /** [code] is a stable name for the failure, so a stored one reads back the same. */
-    data class Failed(val code: String) : FundingRecordOutcome
+    /** Kept with an `Other` failure's message, so a stored one reads back the same. */
+    data class Failed(val reason: FundingFailureReason) : FundingRecordOutcome
 }
 
 sealed interface FundingRecordPayout {
@@ -92,15 +94,5 @@ private fun FundingPayout.toRecordPayout(): FundingRecordPayout = when (this) {
 
 private fun FundingFailure.toOutcome(): FundingRecordOutcome = when (this) {
     FundingFailure.Refunded -> FundingRecordOutcome.Refunded
-    FundingFailure.RegionUnavailable -> FundingRecordOutcome.Failed("regionUnavailable")
-    FundingFailure.VerificationRequired -> FundingRecordOutcome.Failed("verificationRequired")
-    FundingFailure.VerificationRefused -> FundingRecordOutcome.Failed("verificationRefused")
-    FundingFailure.BelowMinimum -> FundingRecordOutcome.Failed("belowMinimum")
-    FundingFailure.AboveMaximum -> FundingRecordOutcome.Failed("aboveMaximum")
-    FundingFailure.InsufficientBalance -> FundingRecordOutcome.Failed("insufficientBalance")
-    FundingFailure.Expired -> FundingRecordOutcome.Failed("expired")
-    FundingFailure.WrongAssetOrChain -> FundingRecordOutcome.Failed("wrongAssetOrChain")
-    FundingFailure.ProviderTimeout -> FundingRecordOutcome.Failed("providerTimeout")
-    FundingFailure.Cancelled -> FundingRecordOutcome.Failed("cancelled")
-    is FundingFailure.Other -> FundingRecordOutcome.Failed(code)
+    else -> FundingRecordOutcome.Failed(toReason())
 }

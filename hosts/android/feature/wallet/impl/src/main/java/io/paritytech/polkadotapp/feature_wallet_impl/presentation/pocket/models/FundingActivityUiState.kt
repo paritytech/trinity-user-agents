@@ -1,6 +1,7 @@
 package io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models
 
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingActivityStep
+import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingFailureReason
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingRailType
 import io.paritytech.polkadotapp.feature_tokens_api.presentation.model.TokenAmountModel
 import kotlinx.collections.immutable.ImmutableList
@@ -51,6 +52,9 @@ sealed interface FundingRowSubtitle {
     data object Delayed : FundingRowSubtitle
 
     data class Ended(val rail: FundingRailType?, val moment: FundingMoment) : FundingRowSubtitle
+
+    /** "Failed · " and why. */
+    data class Failed(val reason: FundingFailureReason) : FundingRowSubtitle
 }
 
 /** "Today at 08:25", "Yesterday at 18:40", "4 Oct at 16:20", "4 Oct 2025". */

@@ -26,6 +26,8 @@ import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.Fund
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.FundingDepositUiState
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.compose.components.FundingCircleButton
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.compose.components.FundingHeader
+import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.compose.components.fundingProblemText
+import uniffi.truapi.FundingRail
 import io.paritytech.polkadotapp.common.R as RCommon
 
 private val QR_SIZE = 220.dp
@@ -41,6 +43,7 @@ fun FundingDepositScreen(
     onBack: () -> Unit,
     onCopy: (String) -> Unit,
     onCancel: () -> Unit,
+    onClose: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Column(
@@ -48,18 +51,24 @@ fun FundingDepositScreen(
         verticalArrangement = Arrangement.spacedBy(PolkadotTheme.spacings.mediumIncreased),
     ) {
         FundingHeader(
-            title = stringResource(if (state.isBank) RCommon.string.funding_summary_bank_title else RCommon.string.funding_summary_crypto_title),
+            title = stringResource(
+                when (state.rail) {
+                    FundingRail.CARD -> RCommon.string.funding_summary_card_title
+                    FundingRail.BANK -> RCommon.string.funding_summary_bank_title
+                    FundingRail.CRYPTO -> RCommon.string.funding_summary_crypto_title
+                },
+            ),
             onBack = onBack,
         )
 
         when (val content = state.content) {
             is FundingDepositContent.Crypto -> CryptoDeposit(content = content, onCopy = onCopy)
             is FundingDepositContent.Bank -> BankDeposit(content = content, onCopy = onCopy)
-            FundingDepositContent.NoProvider -> NovaText(
+            is FundingDepositContent.Problem -> NovaText(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(top = PolkadotTheme.spacings.large),
-                text = stringResource(RCommon.string.funding_error_no_provider),
+                text = fundingProblemText(content.problem),
                 style = PolkadotTheme.typography.body.medium,
                 color = PolkadotTheme.colors.fg.error,
                 textAlign = TextAlign.Center,
@@ -75,7 +84,11 @@ fun FundingDepositScreen(
                 NovaCircularProgressIndicator(modifier = Modifier.size(INDICATOR_SIZE))
                 NovaText(
                     text = stringResource(
-                        if (content.preparing) RCommon.string.funding_deposit_preparing else RCommon.string.funding_deposit_finding_provider,
+                        when {
+                            !content.preparing -> RCommon.string.funding_deposit_finding_provider
+                            content.card -> RCommon.string.funding_deposit_card_in_progress
+                            else -> RCommon.string.funding_deposit_preparing
+                        },
                     ),
                     style = PolkadotTheme.typography.body.medium,
                     color = PolkadotTheme.colors.fg.secondary,
@@ -83,7 +96,13 @@ fun FundingDepositScreen(
             }
         }
 
-        if (state.started) {
+        if (state.failed) {
+            PolkadotTextButton(
+                modifier = Modifier.fillMaxWidth(),
+                text = stringResource(RCommon.string.funding_failure_close),
+                onClick = onClose,
+            )
+        } else if (state.started) {
             Row(horizontalArrangement = Arrangement.spacedBy(PolkadotTheme.spacings.small)) {
                 PolkadotTextButton(
                     modifier = Modifier.weight(1f),
@@ -193,6 +212,7 @@ private fun WaitingPill(modifier: Modifier = Modifier) {
 /** Asks before giving up on a deposit the user may already have paid. */
 @Composable
 fun FundingCancelConfirmScreen(
+    isCancelling: Boolean,
     onBack: () -> Unit,
     onConfirm: () -> Unit,
     modifier: Modifier = Modifier,
@@ -218,6 +238,7 @@ fun FundingCancelConfirmScreen(
             modifier = Modifier.fillMaxWidth(),
             text = stringResource(RCommon.string.common_cancel),
             style = PolkadotButtonStyle.destructive(),
+            loading = isCancelling,
             onClick = onConfirm,
         )
         PolkadotTextButton(

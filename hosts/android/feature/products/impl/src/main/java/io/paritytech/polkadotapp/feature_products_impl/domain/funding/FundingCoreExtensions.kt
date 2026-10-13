@@ -1,7 +1,9 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.funding
 
+import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingFailureReason
 import uniffi.truapi.FundingCandidate
 import uniffi.truapi.FundingDirection
+import uniffi.truapi.FundingFailure
 import uniffi.truapi.FundingMode
 import uniffi.truapi.FundingQuote
 import uniffi.truapi.FundingQuoteRefusal
@@ -45,3 +47,22 @@ val FundingQuoteState.isPending: Boolean
 
 val FundingStage.isOpen: Boolean
     get() = this is FundingStage.Open
+
+/** Why the session ended, once it has failed. */
+val FundingStage.failure: FundingFailure?
+    get() = (this as? FundingStage.Failed)?.reason
+
+fun FundingFailure.toReason(): FundingFailureReason = when (this) {
+    FundingFailure.RegionUnavailable -> FundingFailureReason.RegionUnavailable
+    FundingFailure.VerificationRequired -> FundingFailureReason.VerificationRequired
+    FundingFailure.VerificationRefused -> FundingFailureReason.VerificationRefused
+    FundingFailure.BelowMinimum -> FundingFailureReason.BelowMinimum
+    FundingFailure.AboveMaximum -> FundingFailureReason.AboveMaximum
+    FundingFailure.InsufficientBalance -> FundingFailureReason.InsufficientBalance
+    FundingFailure.Expired -> FundingFailureReason.Expired
+    FundingFailure.WrongAssetOrChain -> FundingFailureReason.WrongAssetOrChain
+    FundingFailure.ProviderTimeout -> FundingFailureReason.ProviderTimeout
+    FundingFailure.Cancelled -> FundingFailureReason.Cancelled
+    FundingFailure.Refunded -> FundingFailureReason.Refunded
+    is FundingFailure.Other -> FundingFailureReason.Other(code, message)
+}

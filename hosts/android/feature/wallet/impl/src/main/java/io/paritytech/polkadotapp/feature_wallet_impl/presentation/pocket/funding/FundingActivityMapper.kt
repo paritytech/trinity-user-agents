@@ -59,6 +59,7 @@ class FundingActivityMapper(
                 is FundingActivityStatus.InProgress ->
                     if (status.delayed) FundingRowSubtitle.Delayed else FundingRowSubtitle.Step(status.step)
 
+                is FundingActivityStatus.Failed -> FundingRowSubtitle.Failed(status.reason)
                 else -> FundingRowSubtitle.Ended(item.rail, moment(item.date))
             },
             icon = when (status) {
@@ -66,7 +67,7 @@ class FundingActivityMapper(
                     if (status.delayed || status.step == FundingActivityStep.Retrying) FundingRowIcon.IN_PROGRESS_WARNING else FundingRowIcon.IN_PROGRESS
 
                 FundingActivityStatus.ToppedUp, FundingActivityStatus.Sent -> if (inbound) FundingRowIcon.MOVED_IN else FundingRowIcon.MOVED_OUT
-                FundingActivityStatus.Refunded, FundingActivityStatus.PayoutFailed, FundingActivityStatus.Failed -> FundingRowIcon.FAILED
+                FundingActivityStatus.Refunded, FundingActivityStatus.PayoutFailed, is FundingActivityStatus.Failed -> FundingRowIcon.FAILED
             },
             amount = item.amount?.let { tokenAmountMapper.mapFrom(asset.withAmount(it)) },
             amountSign = if (!moved) "" else if (inbound) "+" else "-",
@@ -84,7 +85,7 @@ class FundingActivityMapper(
         FundingActivityStatus.Sent -> FundingRowTitle.SENT
         FundingActivityStatus.Refunded -> FundingRowTitle.REFUNDED
         FundingActivityStatus.PayoutFailed -> FundingRowTitle.PAYOUT_FAILED
-        FundingActivityStatus.Failed -> if (inbound) FundingRowTitle.TOP_UP_FAILED else FundingRowTitle.WITHDRAW_FAILED
+        is FundingActivityStatus.Failed -> if (inbound) FundingRowTitle.TOP_UP_FAILED else FundingRowTitle.WITHDRAW_FAILED
     }
 
     private fun dayTitle(date: Instant): FundingDayTitle {

@@ -1,5 +1,7 @@
 package io.paritytech.polkadotapp.feature_products_impl.presentation.funding
 
+import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingFailureReason
+import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingReasonText
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingProviderBrand
 import kotlinx.collections.immutable.ImmutableList
 import uniffi.truapi.FundingRail
@@ -104,6 +106,12 @@ sealed interface FundingSummaryProblem {
 
     data object NoProvider : FundingSummaryProblem
 
+    /** Every provider gave the same reason for not quoting. */
+    data class QuoteRefused(val text: FundingReasonText) : FundingSummaryProblem
+
+    /** The session ended without moving value. */
+    data class Failed(val reason: FundingFailureReason) : FundingSummaryProblem
+
     data class Minimum(val amount: String) : FundingSummaryProblem
 
     data class Maximum(val amount: String) : FundingSummaryProblem
@@ -202,8 +210,10 @@ data class FundingTokensUiState(
 )
 
 data class FundingDepositUiState(
-    val isBank: Boolean,
+    val rail: FundingRail,
     val started: Boolean,
+    val failed: Boolean,
+    val isCancelling: Boolean,
     val content: FundingDepositContent,
 )
 
@@ -225,8 +235,9 @@ sealed interface FundingDepositContent {
         val reference: String,
     ) : FundingDepositContent
 
-    data object NoProvider : FundingDepositContent
+    /** Why there is no deposit: no provider, a failed start, or the session failed. */
+    data class Problem(val problem: FundingSummaryProblem) : FundingDepositContent
 
     /** No deposit yet: a provider is being found, or the chosen one is preparing it. */
-    data class Waiting(val preparing: Boolean) : FundingDepositContent
+    data class Waiting(val preparing: Boolean, val card: Boolean) : FundingDepositContent
 }

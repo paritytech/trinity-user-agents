@@ -43,6 +43,8 @@ class DigitalDollarCardDetailsInteractor @Inject constructor(
 
     fun observeFundingActivity(): Flow<FundingActivity> = hostFunding.observeActivity()
 
+    suspend fun showFundingSession(intent: String) = hostFunding.showSession(intent)
+
     /**
      * The four figures and the rows beneath them, off one classification.
      *

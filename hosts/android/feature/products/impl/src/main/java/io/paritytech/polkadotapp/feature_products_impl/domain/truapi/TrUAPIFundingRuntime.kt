@@ -7,6 +7,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.map
 import uniffi.truapi.FundingCandidate
+import uniffi.truapi.FundingDirection
 import uniffi.truapi.FundingProgress
 import uniffi.truapi.FundingQuoteAsk
 import uniffi.truapi.FundingQuoteRow
@@ -17,6 +18,9 @@ class TrUAPIFundingRuntime @Inject constructor(
     private val runtimeProvider: TrUAPIHostRuntimeProvider,
     private val bridge: AppFundingHostBridge,
 ) : FundingRuntime {
+    override suspend fun openFunding(direction: FundingDirection): Result<String?> =
+        runtimeProvider.runtime().mapCatching { it.openFunding(direction, null) }
+
     override suspend fun session(intent: String): FundingSession? = read { it.fundingSession(intent) }
 
     override suspend fun progress(intent: String): FundingProgress? = read { it.fundingProgress(intent) }

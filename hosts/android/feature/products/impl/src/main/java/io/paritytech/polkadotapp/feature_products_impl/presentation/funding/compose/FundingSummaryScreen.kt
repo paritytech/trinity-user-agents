@@ -23,10 +23,10 @@ import io.paritytech.polkadotapp.design.components.spacer.HorizontalSpacer
 import io.paritytech.polkadotapp.design.components.text.NovaText
 import io.paritytech.polkadotapp.design.theme.PolkadotTheme
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.FundingEta
-import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.FundingSummaryProblem
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.FundingSummaryUiState
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.compose.components.FundingCard
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.compose.components.FundingHeader
+import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.compose.components.fundingProblemText
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.compose.components.FundingInfoRow
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.compose.components.FundingProviderLogo
 import uniffi.truapi.FundingRail
@@ -109,7 +109,7 @@ fun FundingSummaryScreen(
         if (state.problem != null) {
             NovaText(
                 modifier = Modifier.fillMaxWidth(),
-                text = problemText(state.problem),
+                text = fundingProblemText(state.problem),
                 style = PolkadotTheme.typography.body.small,
                 color = PolkadotTheme.colors.fg.error,
                 textAlign = TextAlign.Center,
@@ -194,14 +194,6 @@ private fun etaText(eta: FundingEta): String = when (eta) {
     is FundingEta.Minutes -> stringResource(RCommon.string.funding_eta_minutes, eta.count)
     is FundingEta.Hours -> stringResource(RCommon.string.funding_eta_hours, eta.count)
     is FundingEta.Days -> stringResource(RCommon.string.funding_eta_days, eta.count)
-}
-
-@Composable
-private fun problemText(problem: FundingSummaryProblem): String = when (problem) {
-    FundingSummaryProblem.StartFailed -> stringResource(RCommon.string.funding_error_start_failed)
-    FundingSummaryProblem.NoProvider -> stringResource(RCommon.string.funding_error_no_provider)
-    is FundingSummaryProblem.Minimum -> stringResource(RCommon.string.funding_error_minimum, problem.amount)
-    is FundingSummaryProblem.Maximum -> stringResource(RCommon.string.funding_error_maximum, problem.amount)
 }
 
 private fun FundingSummaryUiState.titleRes(): Int = when (rail) {

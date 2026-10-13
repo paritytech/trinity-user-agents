@@ -8,7 +8,7 @@ import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
 import javax.inject.Singleton
 
-/** A provider's own screen the core is waiting on. The first answer wins. */
+/** A provider's own screen the core is waiting on. The first answer wins; hiding the screen is not one. */
 class FundingFrameContext(
     val providerId: ProductId,
     val intent: String,
@@ -16,6 +16,10 @@ class FundingFrameContext(
     val showsSentFunds: Boolean,
 ) {
     private val outcome = CompletableDeferred<ProviderFrameOutcome>()
+
+    /** Whether the screen is up, so the CASH card does not open it a second time. */
+    @Volatile
+    var isShown: Boolean = false
 
     val url: String
         get() {

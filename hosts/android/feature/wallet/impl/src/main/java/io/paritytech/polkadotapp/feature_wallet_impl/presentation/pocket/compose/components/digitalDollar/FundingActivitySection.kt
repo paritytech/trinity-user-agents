@@ -33,6 +33,7 @@ import io.paritytech.polkadotapp.design.components.text.NovaText
 import io.paritytech.polkadotapp.design.theme.PolkadotTheme
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingActivityStep
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingRailType
+import io.paritytech.polkadotapp.feature_products_api.presentation.funding.failedText
 import io.paritytech.polkadotapp.feature_tokens_api.presentation.formatter.LocalTokenAmountFormatter
 import io.paritytech.polkadotapp.feature_tokens_api.presentation.model.RoundPrecision
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.FundingActivityRowUi
@@ -58,6 +59,7 @@ private const val STACK_BEHIND_ALPHA = 0.6f
 @Composable
 fun FundingActivitySection(
     state: FundingActivityUiState,
+    onRowClick: (id: String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Column(
@@ -65,7 +67,7 @@ fun FundingActivitySection(
         verticalArrangement = Arrangement.spacedBy(PolkadotTheme.spacings.medium),
     ) {
         if (state.inFlight.isNotEmpty()) {
-            InProgress(rows = state.inFlight)
+            InProgress(rows = state.inFlight, onRowClick = onRowClick)
         }
 
         state.days.forEach { day ->
@@ -76,14 +78,16 @@ fun FundingActivitySection(
                     style = PolkadotTheme.typography.title.small,
                     color = PolkadotTheme.colors.fg.primary,
                 )
-                day.rows.forEach { FundingActivityRow(row = it) }
+                day.rows.forEach { row ->
+                    FundingActivityRow(modifier = Modifier.clickable { onRowClick(row.id) }, row = row)
+                }
             }
         }
     }
 }
 
 @Composable
-private fun InProgress(rows: List<FundingActivityRowUi>) {
+private fun InProgress(rows: List<FundingActivityRowUi>, onRowClick: (id: String) -> Unit) {
     var expanded by remember { mutableStateOf(false) }
 
     Column(verticalArrangement = Arrangement.spacedBy(PolkadotTheme.spacings.small)) {
@@ -107,21 +111,24 @@ private fun InProgress(rows: List<FundingActivityRowUi>) {
                             .scale(1f - STACK_SCALE_STEP * index)
                             .alpha(if (index == 0) 1f else STACK_BEHIND_ALPHA),
                         row = row,
+                        onClick = null,
                     )
                 }
             }
         } else {
-            rows.forEach { InProgressCard(row = it) }
+            rows.forEach { row -> InProgressCard(row = row, onClick = { onRowClick(row.id) }) }
         }
     }
 }
 
 @Composable
-private fun InProgressCard(row: FundingActivityRowUi, modifier: Modifier = Modifier) {
+private fun InProgressCard(row: FundingActivityRowUi, onClick: (() -> Unit)?, modifier: Modifier = Modifier) {
     PolkadotSurface(
         modifier = modifier.fillMaxWidth(),
         shape = PolkadotTheme.shapes.large,
         color = PolkadotTheme.colors.bg.surface.container,
+        enabled = onClick != null,
+        onClick = onClick,
     ) {
         FundingActivityRow(
             modifier = Modifier.padding(horizontal = PolkadotTheme.spacings.medium),
@@ -213,6 +220,8 @@ private fun subtitle(subtitle: FundingRowSubtitle): String = when (subtitle) {
         FundingActivityStep.TransactionInitiated -> stringResource(RCommon.string.funding_activity_initiated)
         is FundingActivityStep.ConvertingOut -> stringResource(RCommon.string.funding_activity_converting_out, step.asset)
     }
+
+    is FundingRowSubtitle.Failed -> subtitle.reason.failedText()
 
     is FundingRowSubtitle.Ended -> {
         val moment = moment(subtitle.moment)

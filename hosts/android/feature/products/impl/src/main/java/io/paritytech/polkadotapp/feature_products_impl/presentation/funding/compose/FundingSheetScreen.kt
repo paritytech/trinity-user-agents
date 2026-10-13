@@ -95,10 +95,12 @@ private fun FundingSheetContent(
             onBack = viewModel::onBack,
             onCopy = viewModel::onCopy,
             onCancel = viewModel::onCancelTopUp,
+            onClose = viewModel::onClose,
         )
 
         FundingScreen.CANCEL_CONFIRM -> FundingCancelConfirmScreen(
             modifier = modifier,
+            isCancelling = state.deposit.isCancelling,
             onBack = viewModel::onBack,
             onConfirm = viewModel::onConfirmCancel,
         )

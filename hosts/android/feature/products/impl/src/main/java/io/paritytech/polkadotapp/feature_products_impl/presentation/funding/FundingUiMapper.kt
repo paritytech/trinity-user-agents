@@ -1,5 +1,6 @@
 package io.paritytech.polkadotapp.feature_products_impl.presentation.funding
 
+import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingReasonText
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FUNDING_RAIL_ORDER
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingAmountIssue
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingAssetUnit
@@ -26,6 +27,7 @@ import java.math.RoundingMode
 import kotlin.math.ceil
 import kotlin.math.max
 import kotlin.time.Instant
+import io.paritytech.polkadotapp.common.R as RCommon
 
 private val PRESETS = listOf(BigDecimal("10"), BigDecimal("50"), BigDecimal("100"))
 
@@ -85,13 +87,35 @@ fun FundingFlowState.toSummaryUiState(
 }
 
 private fun FundingFlowState.summaryProblem(start: FundingStartState): FundingSummaryProblem? = when {
+    start.failure != null -> FundingSummaryProblem.Failed(start.failure)
     start.failed -> FundingSummaryProblem.StartFailed
     !noProviderQuoted -> null
     else -> when (val issue = unavailableIssue) {
         is FundingAmountIssue.BelowMinimum -> FundingSummaryProblem.Minimum(cash.label(issue.minimum))
         is FundingAmountIssue.AboveMaximum -> FundingSummaryProblem.Maximum(cash.label(issue.maximum))
-        FundingAmountIssue.NotEnoughBalance, null -> FundingSummaryProblem.NoProvider
+        FundingAmountIssue.NotEnoughBalance, null -> noProviderProblem()
     }
+}
+
+private fun FundingFlowState.noProviderProblem(): FundingSummaryProblem =
+    quoteRefusedText()?.let(FundingSummaryProblem::QuoteRefused) ?: FundingSummaryProblem.NoProvider
+
+/** Why no provider quoted, when they all said the same thing: no answer in time, the country, or a reason of their own. */
+private fun FundingFlowState.quoteRefusedText(): FundingReasonText? {
+    val reasons = rows.values.map { state ->
+        when (val reason = (state as? FundingQuoteState.Unavailable)?.reason) {
+            FundingQuoteUnavailable.Timeout -> FundingReasonText.Res(RCommon.string.funding_error_quote_timeout)
+            is FundingQuoteUnavailable.Refused -> when (val refusal = reason.reason) {
+                FundingQuoteRefusal.CountryUnsupported -> FundingReasonText.Res(RCommon.string.funding_providers_country_unsupported)
+                is FundingQuoteRefusal.Other -> refusal.message.takeIf { it.isNotBlank() }?.let(FundingReasonText::Verbatim)
+                else -> null
+            }
+
+            null -> null
+        }
+    }
+    val first = reasons.firstOrNull() ?: return null
+    return first.takeIf { reasons.all { it == first } }
 }
 
 fun etaOf(seconds: ULong): FundingEta {
@@ -278,12 +302,19 @@ fun FundingFlowState.toDepositUiState(progress: FundingProgress?, start: Funding
         )
 
         null -> when {
-            start.failed || (noProviderQuoted && !start.started) -> FundingDepositContent.NoProvider
-            else -> FundingDepositContent.Waiting(preparing = start.started)
+            start.failed -> FundingDepositContent.Problem(FundingSummaryProblem.StartFailed)
+            noProviderQuoted && !start.started -> FundingDepositContent.Problem(noProviderProblem())
+            else -> FundingDepositContent.Waiting(preparing = start.started, card = rail == FundingRail.CARD)
         }
     }
 
-    return FundingDepositUiState(isBank = rail == FundingRail.BANK, started = start.started, content = content)
+    return FundingDepositUiState(
+        rail = rail,
+        started = start.started,
+        failed = start.failure != null,
+        isCancelling = start.isCancelling,
+        content = start.failure?.let { FundingDepositContent.Problem(FundingSummaryProblem.Failed(it)) } ?: content,
+    )
 }
 
 private fun shortened(address: String): String =

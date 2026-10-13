@@ -1742,4 +1742,24 @@ I’m attaching PDF with more information and details regarding the Tattoo Stenc
     <string name="funding_summary_withdraw_crypto_title">Withdraw to crypto</string>
     <string name="funding_token_network_selected">Network selected %1$s</string>
     <string name="funding_token_title">Select token</string>
+    <string name="funding_deposit_card_in_progress">Your card payment is in progress</string>
+    <string name="funding_error_cancel_failed">Couldn\'t cancel. Try again.</string>
+    <string name="funding_error_cancel_refused">Too late to cancel, your payment is on its way</string>
+    <string name="funding_error_open_message">Something went wrong. Try again.</string>
+    <string name="funding_error_open_title">Couldn\'t open</string>
+    <string name="funding_error_quote_timeout">No provider answered in time</string>
+    <string name="funding_failure_above_maximum">Above the maximum</string>
+    <string name="funding_failure_below_minimum">Below the minimum</string>
+    <string name="funding_failure_cancelled">Cancelled</string>
+    <string name="funding_failure_close">Close</string>
+    <string name="funding_failure_expired">Expired</string>
+    <string name="funding_failure_failed">Failed · %1$s</string>
+    <string name="funding_failure_insufficient_balance">Not enough balance</string>
+    <string name="funding_failure_provider_timeout">Provider didn\'t respond</string>
+    <string name="funding_failure_refunded">Refunded</string>
+    <string name="funding_failure_region_unavailable">Not available in your region</string>
+    <string name="funding_failure_unknown">Something went wrong</string>
+    <string name="funding_failure_verification_refused">Verification declined</string>
+    <string name="funding_failure_verification_required">Verification needed</string>
+    <string name="funding_failure_wrong_asset_or_chain">Wrong asset or network</string>
 </resources>
