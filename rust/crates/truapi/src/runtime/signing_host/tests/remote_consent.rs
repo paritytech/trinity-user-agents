@@ -2,77 +2,93 @@ use super::*;
 use crate::{
 	host_internal::{
 		permissions::set_account_access_status,
-		sso_messages::{RemoteMessage, RemoteMessageData, v1},
+		sso_messages::{ProductRequest, RemoteMessage, RemoteMessageData, SignRequest, v1},
 	},
 	platform::{PermissionAuthorizationStatus, PermissionDecision, SignRawReview},
-	runtime::{SsoAccountHolderService, sso_service::Dispatch},
+	runtime::sso_service::Dispatch,
 };
 use truapi::latest::{HostAccountListRingVrfKeysRequest, RingVrfKeyDisclosure};
 
+/// A paired host's request never rides on the product's AutoSigning grant: the phone
+/// confirms it like any other.
 #[test]
-fn wallet_signing_requires_the_callers_authorization() {
-	for remote in [false, true] {
-		let platform = Arc::new(StubPlatform {
-			resource_allocation_confirmed: true,
-			..StubPlatform::default()
-		});
-		let (services, authority) = signing_runtime_with_platform(platform.clone());
-		futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec())).unwrap();
-		let session = authority.wallet_for_tests().current_session().unwrap();
-		auto_signing::grant_auto_signing(&product_runtime(services, authority.clone()));
-		let product = ProductContext::new("myapp.dot".to_string()).unwrap();
-		let call = CallContext::default();
-		let invocation = || AccountInvocation {
-			call: &call,
-			session: &session,
-			caller: if remote {
-				AccountCaller::Remote { product_id: Some(&product.product_id) }
-			} else {
-				AccountCaller::Local { product: &product }
-			},
-		};
-		let request = truapi::latest::HostSignRawRequest {
-			account: product_account(0),
-			payload: truapi::latest::RawPayload::Bytes { bytes: b"approval".to_vec() },
-		};
-		let signed = futures::executor::block_on(authority.wallet_for_tests().sign_raw(
-			invocation(),
-			SignRawAuthorityRequest::Product(request.clone()),
-			true,
-		));
-		assert_eq!(
-			(signed, platform.sign_raw_reviews.lock().unwrap().clone()),
-			(
-				Err(AuthorityError::Rejected),
-				vec![SignRawReview::Product {
-					calling_product_id: Some(product.product_id.clone()),
-					request,
-					watermarked: true,
-				}]
-			),
-			"remote: {remote}",
-		);
-		if remote {
-			let statement = futures::executor::block_on(
-				authority.wallet_for_tests().sign_statement_store_product_payload(
-					invocation(),
-					product_account(0),
-					b"statement".to_vec(),
+fn a_relayed_signature_is_confirmed_despite_an_auto_signing_grant() {
+	let platform =
+		Arc::new(StubPlatform { resource_allocation_confirmed: true, ..StubPlatform::default() });
+	let (services, authority) = signing_runtime_with_platform(platform.clone());
+	futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec())).unwrap();
+	auto_signing::grant_auto_signing(&product_runtime(services, authority.clone()));
+	let request = truapi::latest::HostSignRawRequest {
+		account: product_account(0),
+		payload: truapi::latest::RawPayload::Bytes { bytes: b"approval".to_vec() },
+	};
+
+	let Ok(Dispatch::Response(answer)) =
+		futures::executor::block_on(authority.sso_responder().service_for_tests().answer(
+			RemoteMessage::request("relayed-raw".to_string(), SignRequest::Raw(request.clone())),
+		))
+	else {
+		panic!("expected a signing response");
+	};
+
+	let RemoteMessageData::V1(v1::RemoteMessage::SignResponse(response)) = answer.message.data
+	else {
+		panic!("expected a raw signing response");
+	};
+	assert_eq!(
+		(
+			response.payload.map(|signed| signed.signature),
+			platform.sign_raw_reviews.lock().unwrap().clone()
+		),
+		(
+			Err(AuthorityError::Rejected.to_string()),
+			vec![SignRawReview::Product { calling_product_id: None, request, watermarked: true }]
+		),
+	);
+}
+
+/// A relayed VRF request the wallet would refuse anyway is refused before the user is asked.
+#[test]
+fn a_relayed_oversized_vrf_transcript_is_refused_without_a_prompt() {
+	let platform = Arc::new(StubPlatform { sign_vrf_confirmed: true, ..StubPlatform::default() });
+	let (_, authority) = signing_runtime_with_platform(platform.clone());
+	futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec())).unwrap();
+	let items = vec![
+		v01::VrfTranscriptItem { label: b"item".to_vec(), value: Vec::new() };
+		crate::runtime::MAX_VRF_TRANSCRIPT_ITEMS + 1
+	];
+	let request = truapi::latest::HostAccountSignVrfRequest {
+		account: product_account(0),
+		transcript_label: b"ctx".to_vec(),
+		items,
+	};
+
+	let Ok(Dispatch::Response(answer)) = futures::executor::block_on(
+		authority.sso_responder().service_for_tests().answer(RemoteMessage::request(
+			"relayed-oversized-vrf".to_string(),
+			ProductRequest { calling_product_id: "myapp.dot".to_string(), payload: request },
+		)),
+	) else {
+		panic!("expected a VRF response");
+	};
+
+	let RemoteMessageData::V1(v1::RemoteMessage::SignVrfResponse(response)) = answer.message.data
+	else {
+		panic!("expected a VRF signing response");
+	};
+	let limit = crate::runtime::MAX_VRF_TRANSCRIPT_ITEMS;
+	assert_eq!(
+		(response.payload, platform.sign_vrf_reviews.lock().unwrap().len()),
+		(
+			Err(v01::HostAccountSignVrfError::Unknown {
+				reason: format!(
+					"VRF transcript has {} items, at most {limit} are allowed",
+					limit + 1
 				),
-			);
-			assert_eq!(
-				(statement, platform.statement_store_product_sign_reviews.lock().unwrap().clone()),
-				(
-					Err(AuthorityError::Rejected),
-					vec![crate::platform::StatementStoreProductSignReview {
-						calling_product_id: Some(product.product_id),
-						account: product_account(0),
-						payload: b"statement".to_vec(),
-					}]
-				),
-			);
-		}
-	}
+			}),
+			0
+		)
+	);
 }
 
 #[test]
@@ -83,11 +99,7 @@ fn remote_vrf_cannot_reuse_a_native_auto_signing_grant() {
 	futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec())).unwrap();
 	auto_signing::grant_auto_signing(&product_runtime(services, authority.clone()));
 	let Ok(Dispatch::Response(answer)) = futures::executor::block_on(
-		SsoAccountHolderService::new(
-			authority.wallet_for_tests().clone(),
-			authority.wallet_for_tests().current_session().unwrap(),
-		)
-		.answer(RemoteMessage::request(
+		authority.sso_responder().service_for_tests().answer(RemoteMessage::request(
 			"remote-vrf".to_string(),
 			ProductRequest {
 				calling_product_id: "myapp.dot".to_string(),
@@ -150,10 +162,7 @@ fn remote_account_access_reuses_shared_decisions_and_preserves_their_lifetime() 
 				))
 				.unwrap();
 			}
-			let service = SsoAccountHolderService::new(
-				authority.wallet_for_tests().clone(),
-				authority.wallet_for_tests().current_session().unwrap(),
-			);
+			let service = authority.sso_responder().service_for_tests();
 			let mut outcomes = Vec::new();
 			for request_id in ["first", "second"] {
 				let request = if operation == "alias" {
@@ -253,11 +262,10 @@ fn shared_denials_override_published_access_for_local_and_remote_callers() {
 			request.payload.clone(),
 		));
 		let Ok(Dispatch::Response(answer)) = futures::executor::block_on(
-			SsoAccountHolderService::new(
-				authority.wallet_for_tests().clone(),
-				authority.wallet_for_tests().current_session().unwrap(),
-			)
-			.answer(RemoteMessage::request("remote-published-access".to_string(), request)),
+			authority
+				.sso_responder()
+				.service_for_tests()
+				.answer(RemoteMessage::request("remote-published-access".to_string(), request)),
 		) else {
 			panic!("expected a ring-VRF response")
 		};

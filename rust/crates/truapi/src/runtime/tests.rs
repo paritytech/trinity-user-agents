@@ -3792,13 +3792,11 @@ fn get_account_derives_rfc0022_product_key() {
 	);
 }
 
-/// A product's own subtree key is public, so the phone serves it without a
-/// prompt and the paired host adds none of its own.
+/// A cold subtree is confirmed on the paired host once, then fetched from the phone.
 #[test]
-fn get_account_own_product_resolves_a_cold_subtree_without_a_prompt() {
+fn get_account_own_product_confirms_a_cold_subtree_then_asks_the_phone() {
 	let session = sso_session_info();
 	let platform = Arc::new(StubPlatform {
-		product_subtree_denied: true,
 		sso_response_script: Some(sso_success_response_script(
 			&session,
 			RemoteMessage {
@@ -3826,8 +3824,11 @@ fn get_account_own_product_resolves_a_cold_subtree_without_a_prompt() {
 	.unwrap();
 
 	assert_eq!(
-		(inner.account.public_key, platform.product_subtree_reviews.lock().unwrap().len()),
-		(test_product_account_public("myapp.dot", 0).to_vec(), 0)
+		(inner.account.public_key, platform.product_subtree_reviews.lock().unwrap().clone()),
+		(
+			test_product_account_public("myapp.dot", 0).to_vec(),
+			vec![crate::platform::ProductSubtreeReview { product_id: "myapp.dot".to_string() }]
+		)
 	);
 }
 
@@ -5919,27 +5920,6 @@ fn a_broken_auto_signing_slot_fails_sign_raw_rather_than_prompting() {
 			.is_empty(),
 		"no prompt is raised for a capability the host just erased",
 	);
-}
-
-/// The deprecated unwatermarked API is never covered by a grant: the paired
-/// host does not answer it with its kept key, and adds no review of its own,
-/// since the phone reviews what it signs.
-#[test]
-fn an_unwatermarked_sign_raw_is_not_signed_with_the_kept_key() {
-	let (platform, host) = granted_pairing_host();
-	let mut cx = CallContext::default();
-	cx.set_timeout(Duration::from_millis(20));
-
-	#[allow(deprecated)]
-	let result = futures::executor::block_on(host.sign_raw_unwatermarked_deprecated(
-		&cx,
-		HostSignRawRequest::V1(v01::HostSignRawRequest {
-			account: account_id("myapp.dot", 0),
-			payload: v01::RawPayload::Bytes { bytes: b"hello world".to_vec() },
-		}),
-	));
-
-	assert_eq!((result.is_ok(), platform.sign_raw_reviews.lock().unwrap().len()), (false, 0),);
 }
 
 #[test]

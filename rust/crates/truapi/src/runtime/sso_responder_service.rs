@@ -1554,10 +1554,7 @@ mod tests {
 		.secret
 		.to_bytes();
 		let expected_domain = derive_ring_vrf_domain_entropy(&ENTROPY, "myapp.dot").unwrap();
-		let service = SsoAccountHolderService::new(
-			signing_host.wallet_for_tests().clone(),
-			signing_host.wallet_for_tests().current_session().unwrap(),
-		);
+		let service = signing_host.sso_responder().service_for_tests();
 		let answer = service.answer(allocation_request("remote-reset"));
 		futures::pin_mut!(answer);
 		assert!(answer.as_mut().now_or_never().is_none());
@@ -1641,10 +1638,7 @@ mod tests {
 				..StubPlatform::default()
 			});
 			let (_, signing_host) = signing_fixture(platform.clone());
-			let service = SsoAccountHolderService::new(
-				signing_host.wallet_for_tests().clone(),
-				signing_host.wallet_for_tests().current_session().unwrap(),
-			);
+			let service = signing_host.sso_responder().service_for_tests();
 			futures::executor::block_on(signing_host.activate_local_session(entropy)).unwrap();
 			let Ok(Dispatch::Response(answer)) =
 				futures::executor::block_on(service.answer(allocation_request("stale-service")))

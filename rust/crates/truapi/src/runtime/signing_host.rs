@@ -330,7 +330,7 @@ mod tests {
 		},
 		v01,
 		versioned::{
-			account::{HostAccountGetError, HostAccountGetRequest},
+			account::{HostAccountGetError, HostAccountGetRequest, HostAccountGetResponse},
 			entropy::HostDeriveEntropyRequest,
 			resource_allocation::{
 				HostRequestResourceAllocationRequest, HostRequestResourceAllocationResponse,
@@ -2322,6 +2322,31 @@ mod tests {
 			err,
 			CallError::Domain(HostAccountGetError::V1(v01::HostAccountGetError::NotConnected))
 		));
+	}
+
+	/// The wallet derives a product's own subtree on the device, so the user is not asked.
+	#[test]
+	fn get_account_resolves_the_own_subtree_without_a_prompt() {
+		let platform =
+			Arc::new(StubPlatform { product_subtree_denied: true, ..StubPlatform::default() });
+		let (services, authority) = signing_runtime_with_platform(platform.clone());
+		futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
+			.expect("activation succeeds");
+		let runtime = product_runtime(services, authority);
+		let request = HostAccountGetRequest::V1(v01::HostAccountGetRequest {
+			product_account_id: product_account(0),
+		});
+
+		let HostAccountGetResponse::V1(inner) =
+			futures::executor::block_on(runtime.get_account(&CallContext::default(), request))
+				.expect("the own account resolves");
+
+		let root = derive_root_keypair_from_entropy(&ENTROPY).unwrap();
+		let expected = derive_product_keypair(&root, "myapp.dot", index_bytes(0)).unwrap();
+		assert_eq!(
+			(inner.account.public_key, platform.product_subtree_reviews.lock().unwrap().len()),
+			(expected.public.to_bytes().to_vec(), 0)
+		);
 	}
 
 	#[test]

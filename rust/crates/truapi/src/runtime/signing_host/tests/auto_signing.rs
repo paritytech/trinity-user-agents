@@ -232,7 +232,7 @@ fn a_blessed_product_still_confirms_legacy_account_signing() {
 }
 
 #[test]
-fn direct_allocation_cannot_authorize_signing_without_wallet_approval() {
+fn a_declined_allocation_keeps_no_auto_signing_key() {
 	let platform = Arc::new(StubPlatform::default());
 	let (_, authority) = signing_runtime_with_platform(platform.clone());
 	futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec())).unwrap();

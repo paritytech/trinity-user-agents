@@ -45,6 +45,26 @@ fn submit(
 	))
 }
 
+/// The host obtains a product's Bulletin allowance on its own; only the submission is the
+/// user's to confirm.
+#[test]
+fn a_first_submit_obtains_its_allowance_without_an_allocation_prompt() {
+	let platform = Arc::new(StubPlatform::default());
+	let (services, activation) = signing_runtime_with_platform(platform.clone());
+	futures::executor::block_on(activation.activate_local_session(ENTROPY.to_vec()))
+		.expect("activation succeeds");
+	activation.set_grant_allowances_unchecked(true);
+	let runtime = product_runtime(services, activation);
+	let value = b"first preimage".to_vec();
+
+	let response = submit(&runtime, &value);
+
+	assert_eq!(
+		(response, platform.resource_allocation_reviews.lock().unwrap().len()),
+		(Ok(RemotePreimageSubmitResponse::V1(preimage_key(&value).to_vec())), 0)
+	);
+}
+
 #[test]
 fn an_unchecked_test_host_answers_a_submit_with_the_content_key_and_serves_it_back() {
 	let (runtime, _) = activated(true, &[]);

@@ -154,6 +154,22 @@ fn a_second_proof_in_the_same_session_sends_nothing_to_the_chain() {
 	);
 }
 
+/// The host obtains a product's sponsorship on its own; the user is not asked.
+#[test]
+fn a_first_authorized_proof_obtains_its_allowance_without_a_prompt() {
+	let platform = chain_with_allocated_slot();
+	let signing_host = active_signing_host(platform.clone());
+
+	let signer = proof_signer(&signing_host);
+
+	let allowance =
+		derive_sr25519_hard_path(&ENTROPY, &["allowance", "statement-store", PRODUCT_ID]).unwrap();
+	assert_eq!(
+		(signer, platform.resource_allocation_reviews.lock().unwrap().len()),
+		(allowance.public.to_bytes(), 0)
+	);
+}
+
 #[test]
 fn a_new_period_keeps_the_sponsorship_key_until_submission() {
 	let platform = chain_with_allocated_slot();
@@ -495,8 +511,7 @@ fn native_bulletin_submission_uses_the_retained_key() {
 
 #[test]
 fn only_a_retained_sponsorship_renews_without_another_approval() {
-	let mut platform = chain_with_allocated_slot();
-	Arc::get_mut(&mut platform).unwrap().resource_allocation_confirmed = false;
+	let platform = chain_with_allocated_slot();
 	let host = active_signing_host(platform.clone());
 	let key =
 		derive_sr25519_hard_path(&ENTROPY, &["allowance", "statement-store", PRODUCT_ID]).unwrap();
@@ -543,9 +558,13 @@ fn only_a_retained_sponsorship_renews_without_another_approval() {
 }
 
 #[test]
-fn a_declined_bulletin_extension_keeps_the_retained_key() {
+fn a_failed_bulletin_extension_keeps_the_retained_key_without_a_prompt() {
 	let platform = Arc::new(StubPlatform {
-		rpc_method_responses: vec![("state_getStorage", "null".to_string())],
+		rpc_method_responses: vec![
+			("state_getStorage", "null".to_string()),
+			("state_getStorage", "null".to_string()),
+		],
+		unreachable_genesis: Some([0; 32]),
 		..Default::default()
 	});
 	let host = active_signing_host(platform.clone());
@@ -591,7 +610,7 @@ fn a_declined_bulletin_extension_keeps_the_retained_key() {
 			matches!(
 				submission,
 				Err(crate::runtime::bulletin_rpc::BulletinSubmitError::Authority(
-					AuthorityError::Rejected
+					AuthorityError::Unavailable { .. }
 				))
 			),
 			retained.and_then(|grant| match grant {
@@ -602,7 +621,7 @@ fn a_declined_bulletin_extension_keeps_the_retained_key() {
 	});
 	assert_eq!(
 		(outcome, platform.resource_allocation_reviews.lock().unwrap().len()),
-		((true, Some(key.secret.to_bytes())), 1)
+		((true, Some(key.secret.to_bytes())), 0)
 	);
 }
 

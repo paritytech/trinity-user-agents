@@ -6,7 +6,7 @@ use crate::{
 		OnExistingAllowancePolicy, RemoteMessage, RemoteMessageData, ResourceAllocationRequest,
 		SsoAllocationOutcome, v1,
 	},
-	runtime::{SsoAccountHolderService, sso_service::Dispatch},
+	runtime::sso_service::Dispatch,
 	test_support::statement,
 };
 use truapi::{
@@ -69,11 +69,7 @@ fn a_paired_request_is_refused_a_withheld_resource() {
 		.expect("activation succeeds");
 	activation.set_withheld_resources(vec!["AutoSigning".to_string()]);
 	let Ok(Dispatch::Response(answer)) = futures::executor::block_on(
-		SsoAccountHolderService::new(
-			activation.wallet_for_tests().clone(),
-			activation.wallet_for_tests().current_session().unwrap(),
-		)
-		.answer(RemoteMessage::request(
+		activation.sso_responder().service_for_tests().answer(RemoteMessage::request(
 			"remote-allocation".to_string(),
 			ResourceAllocationRequest {
 				calling_product_id: "myapp.dot".to_string(),
