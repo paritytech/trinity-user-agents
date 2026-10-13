@@ -41,10 +41,8 @@ final class MainTabBarViewController: UIViewController {
     var spaChipViewModels: [SPATabChipViewModel] = []
     var productGamePill: ProductGamePillViewModel?
 
-    #if FEATURE_INPUT
-        /// The live scan panel, read for its declared height. Nil while the centre control has no content.
-        private weak var scanPanel: ScanPanelViewController?
-    #endif
+    /// The live scan panel, read for its declared height. Nil while the centre control has no content.
+    private weak var scanPanel: ScanPanelViewController?
 
     private weak var scanPanelController: (UIViewController & ScanPanelScannerControlling)?
 
@@ -78,27 +76,11 @@ final class MainTabBarViewController: UIViewController {
 
         chromeController.statusStripAnchorProvider = { [weak self] in self?.chainStatusAnchorGuide }
         chromeController.makeCenterContent = { [weak self] in self?.makeScanPanel() }
-        #if FEATURE_INPUT
-            chromeController.contentHeightForCenterPanel = { [weak self] width in
-                self?.scanPanel?.declaredContentHeight(forPanelWidth: width)
-                    ?? .fits(
-                        ScanPanelContentHeight.height(
-                            forPanelWidth: width,
-                            searchRowHeight: ScanPanelContentHeight.embeddedSearchRowHeight
-                        )
-                    )
-            }
-            chromeController.onCenterPanelWillClose = { [weak self] in self?.scanPanel?.cancelSearch() }
-        #else
-            chromeController.contentHeightForCenterPanel = { width in
-                .fits(
-                    ScanPanelContentHeight.height(
-                        forPanelWidth: width,
-                        searchRowHeight: ScanPanelContentHeight.plainSearchRowHeight
-                    )
-                )
-            }
-        #endif
+        chromeController.contentHeightForCenterPanel = { [weak self] width in
+            self?.scanPanel?.declaredContentHeight(forPanelWidth: width)
+                ?? .fits(ScanPanelContentHeight.height(forPanelWidth: width))
+        }
+        chromeController.onCenterPanelWillClose = { [weak self] in self?.scanPanel?.cancelSearch() }
 
         // Close does not stop capture: the panel's teardown releases the camera, and an explicit stop
         // here can race the preview layer's session attach.
@@ -406,22 +388,15 @@ extension MainTabBarViewController {
         scanPanelController = controller
         controller?.setCaptureActive(false)
 
-        #if FEATURE_INPUT
-            // Opening the chat selects its tab, and tab selection already closes the panel, so this
-            // path does not close it again.
-            scanPanel = controller
-            controller?.onChatFound = { [weak self] model in
-                self?.presenter.didFindChat(model)
-            }
-            controller?.onContentHeightChanged = { [weak self] in
-                self?.chromeController.refreshCenterContentHeight()
-            }
-        #else
-            controller?.onSearchTap = { [weak self] in
-                self?.chromeController.setPanel(nil)
-                self?.presenter.didRequestContactSearch()
-            }
-        #endif
+        // Opening the chat selects its tab, and tab selection already closes the panel, so this
+        // path does not close it again.
+        scanPanel = controller
+        controller?.onChatFound = { [weak self] model in
+            self?.presenter.didFindChat(model)
+        }
+        controller?.onContentHeightChanged = { [weak self] in
+            self?.chromeController.refreshCenterContentHeight()
+        }
         return controller
     }
 }

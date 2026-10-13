@@ -36,25 +36,9 @@ final class MainTabBarWireframe: MainTabBarWireframeProtocol {
         ProductOpener(navigator: moduleNavigator).open(productId: productId)
     }
 
-    #if FEATURE_INPUT
-        func openChat(_ model: ChatOpenModel) {
-            moduleNavigator.openChat(model)
-        }
-    #else
-        func showSearchContact(from view: MainTabBarViewProtocol?) {
-            guard let search = SearchContactViewFactory.createView(
-                onChatFound: { [moduleNavigator] model in
-                    moduleNavigator.openChat(model)
-                }
-            ) else {
-                return
-            }
-
-            search.controller.modalPresentationStyle = .fullScreen
-            search.controller.modalTransitionStyle = .crossDissolve
-            view?.controller.present(search.controller, animated: true)
-        }
-    #endif
+    func openChat(_ model: ChatOpenModel) {
+        moduleNavigator.openChat(model)
+    }
 
     func showConnectionStatus(_ viewModel: ConnectionStatusSheetViewModel, from view: MainTabBarViewProtocol?) {
         let sheet = ConnectionStatusSheetViewFactory.createView(viewModel: viewModel)

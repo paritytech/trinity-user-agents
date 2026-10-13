@@ -54,10 +54,7 @@ final class ScanPanelViewController: UIViewController, ViewHolder {
         guard !isSearchFocused else {
             return .fill
         }
-        let height = ScanPanelContentHeight.height(
-            forPanelWidth: width,
-            searchRowHeight: ScanPanelContentHeight.embeddedSearchRowHeight
-        )
+        let height = ScanPanelContentHeight.height(forPanelWidth: width)
         return .fits(height)
     }
 }

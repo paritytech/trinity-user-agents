@@ -1,10 +1,6 @@
 // Feature-availability flags. Each one is independent and gates a single feature; a configuration
 // sets whichever combination it ships.
 //
-// FEATURE_INPUT      — the scan panel's in-panel search field, its
-//                      results and keyboard-tracking panel; without it the
-//                      panel shows a search button that opens full-screen
-//                      search                                   (Debug, DevCI, Nightly).
 // FEATURE_PRIZES     — prize branding and the game reveal webview   (none).
 // FEATURE_SIGN_IN    — sign in with Polkadot: the `pair` deeplink
 //                      and the linked-devices settings row       (Debug, DevCI, Nightly).

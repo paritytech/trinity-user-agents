@@ -53,7 +53,7 @@ MainTabBarViewController            container, status strip, widget and inset la
 | Slot-to-tab index mapping | `polkadot-app/Modules/MainTabBar/Chrome/TabBarSlotMap.swift` |
 | Tab items | `TabBarItem` in `polkadot-app/Modules/MainTabBar/MainTabBarProtocols.swift` |
 | Center panel content height | `polkadot-app/Modules/MainTabBar/ScanPanelContentHeight.swift` |
-| Center panel content (scanner) | `polkadot-app/Modules/MainTabBar/ScanPanelViewController.swift`, `ScanPanelPlainViewController.swift` (chosen by `FEATURE_INPUT`) |
+| Center panel content (scanner) | `polkadot-app/Modules/MainTabBar/ScanPanelViewController.swift` |
 | Onboarding tips | `polkadot-app/Modules/MainTabBar/Chrome/TabBarTipController.swift`, `polkadot-app/Modules/MainTabBar/Tips/` |
 | Floating widgets | `polkadot-app/Modules/MainTabBar/TabBarWidgetController.swift`, `MainTabBarFloatingWidgetStackView.swift` |
 | Bar, center control, shelf container | `Packages/PolkadotUI/Sources/Components/DSTabBarShell/DSTabBarContainer.swift`, `DSTabBarCenterControl.swift` |
