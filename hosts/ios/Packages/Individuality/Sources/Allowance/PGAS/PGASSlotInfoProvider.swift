@@ -16,6 +16,7 @@ public final class PGASSlotInfoProvider: PGASSlotInfoProviding {
     private let peopleChainId: ChainId
     private let chainRegistry: ChainResourceProtocol
     private let storageRequestFactory: StorageRequestFactoryProtocol
+    private let networkSuffixProvider: NetworkSuffixProviding
     private let keyResolver: BandersnatchKeyResolving
     private let chainTimeProvider: ChainTimeProviding
 
@@ -24,6 +25,7 @@ public final class PGASSlotInfoProvider: PGASSlotInfoProviding {
         peopleChainId: ChainId,
         chainRegistry: ChainResourceProtocol,
         storageRequestFactory: StorageRequestFactoryProtocol,
+        networkSuffixProvider: NetworkSuffixProviding,
         keyResolver: BandersnatchKeyResolving,
         chainTimeProvider: ChainTimeProviding
     ) {
@@ -31,6 +33,7 @@ public final class PGASSlotInfoProvider: PGASSlotInfoProviding {
         self.peopleChainId = peopleChainId
         self.chainRegistry = chainRegistry
         self.storageRequestFactory = storageRequestFactory
+        self.networkSuffixProvider = networkSuffixProvider
         self.keyResolver = keyResolver
         self.chainTimeProvider = chainTimeProvider
     }
@@ -82,10 +85,7 @@ private extension PGASSlotInfoProvider {
         let maxClaims = try await fetchMaxClaims(origin: personOrigin, codingFactory: codingFactory)
         guard maxClaims > 0 else { throw AllowanceSlotAssignmentError.noSlotsAvailable }
 
-        let networkSuffix = try await storageRequestFactory.readNetworkSuffix(
-            connection: connection,
-            codingFactory: codingFactory
-        )
+        let networkSuffix = try await networkSuffixProvider.networkSuffix()
 
         let activeVrfManager = personOrigin.keyManager
         let aliases = try (0 ..< maxClaims).map { [networkSuffix] slotIndex in
