@@ -392,18 +392,20 @@ extension ServiceCoordinator {
         // would let any chat service failing take every live card face with it,
         // silently.
         var pocket: ProductPocketService?
-        if let service = ProductPocketService.make() {
-            RootDependencyLocator.setDependency(service)
-            service.start(
-                runtimeProvider: truapiRuntimeProvider,
-                flowState: spaFlowState,
-                productFileProvider: productFileProvider,
-                chainRegistry: ChainRegistryFacade.sharedRegistry,
-                gameReminders: gameReminders,
-                themeManager: MainActor.assumeIsolated { ThemeManager.shared }
-            )
-            pocket = service
-        }
+        #if FEATURE_PRODUCTS
+            if let service = ProductPocketService.make() {
+                RootDependencyLocator.setDependency(service)
+                service.start(
+                    runtimeProvider: truapiRuntimeProvider,
+                    flowState: spaFlowState,
+                    productFileProvider: productFileProvider,
+                    chainRegistry: ChainRegistryFacade.sharedRegistry,
+                    gameReminders: gameReminders,
+                    themeManager: MainActor.assumeIsolated { ThemeManager.shared }
+                )
+                pocket = service
+            }
+        #endif
 
         guard
             let signInHostCoordinator = createSignInHostCoordinator(

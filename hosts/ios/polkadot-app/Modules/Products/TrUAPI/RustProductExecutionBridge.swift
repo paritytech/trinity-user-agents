@@ -6,7 +6,6 @@ import Products
 import ChainRegistry
 import SubstrateSdk
 import DesignSystem
-import UIKit
 
 /// Production `HostBridge` for one product execution: wires the rust core's
 /// platform callbacks to app services and, once attached, notifies the
@@ -45,8 +44,9 @@ class RustProductExecutionBridge: HostBridge, @unchecked Sendable {
     private let dependencies: Dependencies
     private let cardFace: (any ExpandedCardFaceShowing)?
     private weak var execution: TrUAPIProductExecutionProtocol?
-    private let themeLock = NSLock()
-    private var theme: HostThemeSubscribeItem
+    private let cachedTheme = OSAllocatedUnfairLock(
+        uncheckedState: HostThemeSubscribeItem(name: .default, variant: .dark)
+    )
     private var themeObservation: Task<Void, Never>?
 
     @MainActor
@@ -83,43 +83,6 @@ class RustProductExecutionBridge: HostBridge, @unchecked Sendable {
 
     deinit {
         themeObservation?.cancel()
-    }
-
-    /// Stop forwarding before the runtime closes the execution. MainActor
-    /// serialization fences both buffered themes and a notification in flight.
-    @MainActor
-    func detach() {
-        themeObservation?.cancel()
-        themeObservation = nil
-        execution = nil
-        dependencies.chainConnections.eventHandler = nil
-    }
-
-    @MainActor
-    private static func makeTheme(_ theme: Theme) -> HostThemeSubscribeItem {
-        HostThemeSubscribeItem(
-            name: .custom(theme.id),
-            variant: theme.colors.bgSurfaceMain.isLight ? .light : .dark
-        )
-    }
-
-    @MainActor
-    private func themeDidChange(_ next: Theme) {
-        let next = Self.makeTheme(next)
-        let changed = themeLock.withLock {
-            guard theme != next else { return false }
-            theme = next
-            return true
-        }
-        if changed {
-            execution?.notifyThemeChanged(theme: next)
-        }
-    }
-
-    func permissionAuthorizationsChanged(productId: String) {
-        NotificationCenter.default.post(
-            name: .productPermissionAuthorizationsChanged, object: productId
-        )
     }
 
     func onCoreLog(marker: String, detail: String) {
@@ -263,7 +226,7 @@ class RustProductExecutionBridge: HostBridge, @unchecked Sendable {
     }
 
     func currentTheme() throws -> HostThemeSubscribeItem {
-        themeLock.withLock { theme }
+        cachedTheme.withLock { $0 }
     }
 
     func featureSupported(request: HostFeatureSupportedRequest) async throws -> Bool {

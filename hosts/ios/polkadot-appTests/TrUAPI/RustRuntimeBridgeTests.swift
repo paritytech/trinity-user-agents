@@ -137,8 +137,7 @@ private func makeBridge(
     preimageCache: TrUAPIPreimageCache = TrUAPIPreimageCache { _ in nil },
     productStorageFails: Bool = false,
     hostProvider: ProductHostProviding = StubHostProvider(),
-    themeManager: ThemeManagerProtocol? = nil,
-    chainConnections: TrUAPIChainConnecting? = nil
+    themeManager: MockThemeManager = MockThemeManager()
 ) -> RustProductExecutionBridge {
     let router = router ?? MockNavigationRouter()
     let pool = makeRegistryPool(chainRegistry: chainRegistry)
@@ -164,9 +163,16 @@ private func makeBridge(
         chatFiles: UnavailableNativeChatFiles(),
         preimageCache: preimageCache,
         hostProvider: hostProvider,
-        themeManager: themeManager ?? MockThemeManager(),
+        themeManager: themeManager,
         logger: Logger.shared
     ), cardFace: cardFace)
+}
+
+@MainActor
+private func waitUntil(_ condition: () -> Bool) async {
+    for _ in 0 ..< 200 where !condition() {
+        try? await Task.sleep(for: .milliseconds(5))
+    }
 }
 
 // MARK: - Tests
@@ -673,100 +679,6 @@ struct RustRuntimeBridgeTests {
         }
     }
 
-    // MARK: setExpandedCardFaceShown
-
-    @Test(arguments: [ThemeSelection.berlinDay, .berlinNight, .lisbon])
-    func currentThemeReadsSelectedThemeSynchronously(selection: ThemeSelection) throws {
-        let manager = MockThemeManager(selection: selection)
-        let bridge = makeBridge(themeManager: manager)
-        defer { bridge.detach() }
-
-        // No task suspension or execution attachment is needed for the core's
-        // first synchronous read. Lisbon is light despite its light status bar.
-        let theme = try bridge.currentTheme()
-        #expect(theme.name == .custom(selection.rawValue))
-        #expect(theme.variant == (selection == .berlinNight ? .dark : .light))
-    }
-
-    @Test(.timeLimit(.minutes(1)))
-    func themeTransitionsPreserveOrderIncludingNameOnlyChanges() async throws {
-        let manager = MockThemeManager()
-        let bridge = makeBridge(themeManager: manager)
-        let execution = MockProductExecution()
-        bridge.attach(execution)
-        defer { bridge.detach() }
-
-        let expected = [
-            HostThemeSubscribeItem(name: .custom("berlinDay"), variant: .light),
-            HostThemeSubscribeItem(name: .custom("lisbon"), variant: .light),
-            HostThemeSubscribeItem(name: .custom("berlinNight"), variant: .dark)
-        ]
-        await withCheckedContinuation { continuation in
-            execution.onThemeChanged = { _ in
-                if execution.themeChanges.count == expected.count {
-                    continuation.resume()
-                }
-            }
-            // Queue all changes before the observation task runs.
-            manager.select(.app(.berlinDay))
-            manager.select(.app(.lisbon))
-            manager.select(.app(.berlinNight))
-        }
-        execution.onThemeChanged = nil
-
-        #expect(execution.themeChanges == expected)
-        #expect(try bridge.currentTheme() == expected.last)
-    }
-
-    @Test(.timeLimit(.minutes(1)))
-    func closingExecutionDetachesBeforeCloseAndDiscardsBufferedThemes() async throws {
-        let manager = MockThemeManager()
-        let pool = MockChainConnections()
-        let bridge = makeBridge(themeManager: manager, chainConnections: pool)
-        let execution = MockProductExecution()
-        bridge.attach(execution)
-        let model = RustRuntimeEnvironment.ExecutionModel(
-            execution: execution,
-            chainConnections: pool,
-            osPermissionAsker: MockOSPermissionAsker(),
-            bridge: bridge
-        )
-
-        await withCheckedContinuation { continuation in
-            execution.onThemeChanged = { _ in continuation.resume() }
-            manager.select(.app(.berlinDay))
-        }
-        execution.onThemeChanged = nil
-        let delivered = execution.themeChanges
-        let cached = try bridge.currentTheme()
-
-        execution.onClose = {
-            #expect(pool.eventHandler == nil)
-            manager.select(.app(.berlinNight))
-        }
-        manager.select(.app(.lisbon))
-        model.close()
-        manager.select(.app(.berlinDay))
-        await manager.waitForObservationToEnd()
-
-        #expect(execution.themeChanges == delivered)
-        #expect(try bridge.currentTheme() == cached)
-        #expect(execution.stopWsBridgeCallCount == 1)
-        #expect(execution.closeCallCount == 1)
-    }
-
-    @Test(.timeLimit(.minutes(1)))
-    func releasingUnattachedBridgeCancelsThemeObservation() async {
-        let manager = MockThemeManager()
-        var bridge: RustProductExecutionBridge? = makeBridge(themeManager: manager)
-        weak var releasedBridge = bridge
-
-        bridge = nil
-        await manager.waitForObservationToEnd()
-
-        #expect(releasedBridge == nil)
-    }
-
     // MARK: attach
 
     /// Not attached: event forwarding is a no-op and must not crash.
@@ -847,7 +759,7 @@ struct RustRuntimeBridgeTests {
         let execution = MockProductExecution()
         bridge.attach(execution)
 
-        try await withTimeout(.hangGuard) { await execution.awaitThemeChange() }
+        await waitUntil { !execution.themeChanges.isEmpty }
 
         let expected = HostThemeSubscribeItem(
             name: ThemeName.custom(themeManager.theme.id),
@@ -863,10 +775,10 @@ struct RustRuntimeBridgeTests {
         let bridge = makeBridge(themeManager: themeManager)
         let execution = MockProductExecution()
         bridge.attach(execution)
-        try await withTimeout(.hangGuard) { await execution.awaitThemeChange() }
+        await waitUntil { execution.themeChanges.count == 1 }
 
         themeManager.select(.app(.berlinDay))
-        try await withTimeout(.hangGuard) { await execution.awaitThemeChange() }
+        await waitUntil { execution.themeChanges.count == 2 }
 
         let current = try bridge.currentTheme()
         #expect(execution.themeChanges.map(\.variant) == [ThemeVariant.dark, ThemeVariant.light])
