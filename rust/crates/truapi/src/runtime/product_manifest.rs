@@ -382,45 +382,20 @@ async fn with_ceiling<T>(ceiling: Duration, future: impl Future<Output = T>) -> 
 	}
 }
 
-/// A granted caller may act in its own proof context, the granting product's,
-/// or that of a product whose manifest grants the caller `context`, and in no
-/// one else's.
+/// Which proof contexts a caller granted another product's ring-VRF key may use.
 ///
-/// The contextual alias is a function of (owner key, context), so an
-/// unconstrained context lets a grantee produce the alias the owner presents to
-/// a product that is not a party to the grant. The owner's grant covers the
-/// key; it says nothing about which pseudonym the grantee may mint with it. So
-/// the product a context names consents for itself, through its own manifest,
-/// the same way the owner consents for the key.
+/// The owner's grant covers the key, not whose pseudonym the caller mints with
+/// it, so a context must be the caller's own, the owner's, or one whose product
+/// grants the caller `context` (or `all`) in its manifest. Checked after the key
+/// grant, never instead of it; the owner's own calls are unaffected.
 ///
-/// The owner's own context is admitted without that consent because refusing
-/// it left the scope unusable: `PeopleLite.set_alias_account` verifies against
-/// `Score.score_context`, which names the personhood product for every prover
-/// on the chain, so a grantee held to its own context alone can produce no
-/// proof such a chain accepts.
+/// With `peopl.paseo` granting `dim2next` its key:
+/// - `dim2next.paseo` may prove in `dim2.paseo`'s context when `dim2.paseo` grants `dim2next`
+///   `context`.
+/// - It may not prove in `stash.paseo`'s, which grants nothing, nor in a `raw:` context or a
+///   namesake's on another network.
 ///
-/// That admits more than it sounds. On a chain whose contexts are
-/// personhood-owned, the owner's context is the pseudonym the owner presents to
-/// every product in the score system. What stays refused is a context naming a
-/// product that granted the caller nothing, a grant read from a namesake on
-/// another network, and the `raw:` development context, which names no product
-/// and whose bytes the caller chooses outright.
-///
-/// The context product's grant is the `context` scope (or `all`), read through
-/// [`scope_grant`], so a refusal the user stored for that pair still overrides
-/// it. It is checked after the key grant, never instead of it: a product
-/// granting the caller its context does not open the owner's key.
-///
-/// The owner's own calls are unaffected: minting your own aliases in any
-/// context is what the parameter is for.
-///
-/// Both identities come from the gate, already normalized. Re-deriving the
-/// caller from the request instead would compare a peer's spelling against a
-/// normalized owner and refuse an owner naming itself in another case.
-///
-/// This binds every call that returns the alias, not only the ones that return
-/// a proof: the alias and the proof come out of one VRF evaluation, so guarding
-/// the proof alone leaves the same bytes reachable through the read.
+/// Guards the alias read as well as the proof: both come from one VRF evaluation.
 pub async fn require_context_access(
 	services: &RuntimeServices,
 	access: &AuthorizedAccess,
