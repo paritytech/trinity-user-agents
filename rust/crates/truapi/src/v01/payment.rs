@@ -143,6 +143,9 @@ pub enum HostPaymentTopUpError {
 	/// Another top-up from the same source is still running.
 	#[display("another top-up from this source is running")]
 	SourceBusy,
+	/// The amount is zero.
+	#[display("the top-up amount is zero")]
+	InvalidAmount,
 	/// Catch-all.
 	#[display("{reason}")]
 	Unknown {
@@ -168,6 +171,9 @@ pub enum HostPaymentError {
 	/// User's available balance is not sufficient for the requested amount.
 	#[display("the balance does not cover the payment")]
 	InsufficientBalance,
+	/// The amount is zero.
+	#[display("the payment amount is zero")]
+	InvalidAmount,
 	/// Catch-all.
 	#[display("{reason}")]
 	Unknown {

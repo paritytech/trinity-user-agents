@@ -176,6 +176,9 @@ impl Payment for ProductRuntimeHost {
 		if self.authority.current_session().is_none() {
 			return Err(CallError::Denied);
 		}
+		if request.amount == 0 {
+			return Err(CallError::Domain(HostPaymentError::V1(v01::HostPaymentError::InvalidAmount)));
+		}
 		request.id = host_payment_id(&self.product, request.id);
 		match platform.request_payment(&self.product, request).await {
 			Ok(()) => Ok(HostPaymentResponse::V1),
@@ -227,9 +230,7 @@ impl Payment for ProductRuntimeHost {
 		}
 		let domain = |error| CallError::Domain(HostPaymentTopUpError::V1(error));
 		if request.amount == 0 {
-			return Err(domain(v01::HostPaymentTopUpError::Unknown {
-				reason: "amount must be positive".to_string(),
-			}));
+			return Err(domain(v01::HostPaymentTopUpError::InvalidAmount));
 		}
 		if !source_keys_are_valid(&request.source) {
 			return Err(domain(v01::HostPaymentTopUpError::InvalidSource));

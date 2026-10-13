@@ -8163,9 +8163,35 @@ fn a_top_up_of_nothing_is_refused_before_the_host_sees_it() {
 		(refused, engine.started.lock().expect("started mutex poisoned").len()),
 		(
 			Err(CallError::Domain(truapi::versioned::payment::HostPaymentTopUpError::V1(
-				v01::HostPaymentTopUpError::Unknown {
-					reason: "amount must be positive".to_string()
-				},
+				v01::HostPaymentTopUpError::InvalidAmount,
+			))),
+			0,
+		)
+	);
+}
+
+// Paying nothing is not a payment: the user is never asked to approve it.
+#[test]
+fn a_payment_of_nothing_is_refused_before_the_host_sees_it() {
+	let services = payment_services();
+	let engine = Arc::new(RecordingPaymentPlatform::default());
+	assert!(services.install_payment_platform(engine.clone()));
+	let host = payment_host(&services, "wallet.dot", true);
+
+	let refused = futures::executor::block_on(truapi::api::Payment::request(
+		&host,
+		&CallContext::default(),
+		truapi::versioned::payment::HostPaymentRequest::V1(v01::HostPaymentRequest {
+			amount: 0,
+			..payment_request()
+		}),
+	));
+
+	assert_eq!(
+		(refused, engine.requested.lock().expect("requested mutex poisoned").len()),
+		(
+			Err(CallError::Domain(truapi::versioned::payment::HostPaymentError::V1(
+				v01::HostPaymentError::InvalidAmount,
 			))),
 			0,
 		)

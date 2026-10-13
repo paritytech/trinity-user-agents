@@ -94,6 +94,8 @@ enum PaymentTopUpErr {
     AlreadyExists,
     /// Another top-up from the same source is still running
     SourceBusy,
+    /// The amount is zero
+    InvalidAmount,
     Unknown(GenericErr)
 }
 
@@ -141,6 +143,8 @@ enum PaymentRequestErr {
     /// Only a product holding balance access receives it; to any other a
     /// short balance reads as `Rejected`
     InsufficientBalance,
+    /// The amount is zero
+    InvalidAmount,
     Unknown(GenericErr)
 }
 ```
