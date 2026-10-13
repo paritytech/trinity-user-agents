@@ -7633,7 +7633,7 @@ impl crate::platform::TopUpPlatform for RecordingTopUpPlatform {
 	fn subscribe_top_up_status(
 		&self,
 		product: &ProductContext,
-		id: [u8; 32],
+		id: crate::Bytes32,
 	) -> futures::stream::BoxStream<
 		'static,
 		Result<
@@ -7819,7 +7819,7 @@ impl crate::platform::PaymentPlatform for RecordingPaymentPlatform {
 	fn subscribe_payment_status(
 		&self,
 		product: &ProductContext,
-		id: [u8; 32],
+		id: crate::Bytes32,
 	) -> futures::stream::BoxStream<
 		'static,
 		Result<
@@ -8088,7 +8088,7 @@ impl crate::platform::PaymentPlatform for ShortPaymentPlatform {
 	fn subscribe_payment_status(
 		&self,
 		_product: &ProductContext,
-		_id: [u8; 32],
+		_id: crate::Bytes32,
 	) -> futures::stream::BoxStream<
 		'static,
 		Result<
