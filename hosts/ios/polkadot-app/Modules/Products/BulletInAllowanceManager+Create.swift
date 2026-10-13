@@ -56,7 +56,7 @@ extension BulletInAllowanceManager {
         }
 
         let chainTimeProvider = ChainTimeProvider(
-            chainId: AppConfig.Chains.peopleChain,
+            chainId: AppConfig.Chains.usernameChain,
             chainRegistry: chainRegistry,
             storageRequestFactory: storageRequestFactory
         )
