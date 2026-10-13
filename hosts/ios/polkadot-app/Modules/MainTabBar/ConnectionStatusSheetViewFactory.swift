@@ -9,7 +9,7 @@ enum ConnectionStatusSheetViewFactory {
         let controller = UIHostingController(rootView: ConnectionStatusSheetView(viewModel: viewModel))
         controller.view.backgroundColor = .bgSurfaceMain
         controller.modalPresentationStyle = .pageSheet
-        controller.sheetPresentationController?.detents = [.medium(), .large()]
+        controller.sheetPresentationController?.detents = [.medium()]
         controller.sheetPresentationController?.prefersGrabberVisible = true
         return controller
     }

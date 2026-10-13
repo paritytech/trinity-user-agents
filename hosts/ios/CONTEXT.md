@@ -14,7 +14,9 @@ The domain vocabulary of the iOS app. Use these terms in issues, commits and cod
 - *Folded*: the bar slides to the screen edge and leaves a grab area that brings it back.
 - *Hidden*: the bar is gone entirely, and tab navigation is not allowed on that screen.
 
-**Pocket.** The user-facing name of the wallet tab. The code identifier is `wallet`. No user-facing string says "wallet".
+**Pocket.** The name of the wallet tab. The tab is titled Pocket; `wallet` is its code name (`TabBarItem.wallet`).
+
+**Pocket (product cards).** The product card collection in code, separate from the tab. `ProductPocketService` holds the store the cards are read from, and `pocketCards` on a product worker lists the cards it offers.
 
 ## Removed vocabulary
 
@@ -32,7 +34,7 @@ with the layers built over them.
 and submitted it as evidence toward a personhood claim.
 
 **DIM2.** A weekly video gesture game. Players joined a scheduled call and performed
-gestures together. It was the only mechanism that ever proved personhood.
+gestures together. It was the only mechanism that proved personhood.
 
 **Mob Rule.** The dispute and voting layer over Proof-of-Ink evidence, the way a
 tattoo claim could be challenged and judged by other users.
@@ -41,7 +43,7 @@ tattoo claim could be challenged and judged by other users.
 
 **Personhood.** Proof that a user is a unique human, which raised that user's
 transaction allowance above the device uniqueness base allowance. DIM2 was its only
-proving mechanism, so it did not outlive the game.
+proving mechanism, and the app has no other.
 
 **Proof-of-Ink.** The evidence model behind a DIM1 tattoo claim.
 
@@ -50,20 +52,19 @@ wallet main screen. With no game there are no rewards and no game account to hol
 them.
 
 **Full username registration.** A username claim signed through the personhood
-origin factory. The lite claim is now the only way to register a username. It is not
-a replacement, it always existed alongside the full claim and depends on nothing that
-was removed.
+origin factory. The app registers usernames through the lite claim
+(`ClaimLiteUsernameWireframe`).
 
 ### Notes
 
-The Release configuration never compiled any of this. No shipped build has ever
-contained these features, so no production user was affected by their removal and
-no production install holds data from them.
+This code is not compiled in the Release configuration. No shipped build has contained
+these features, so no production install holds data from them.
 
-`BuiltInProduct` still carries its `dim2` and `personhood` cases. The enum is a
-record of governance reserved names rather than ordinary code, and deleting a Swift
-constant does not unclaim a name on chain. Anything re-added later has to reuse the
-exact strings to recover the on-chain identity.
+`BuiltInProduct` declares `dim2(for:)` and `personhood(for:)` as static functions on a
+caseless enum, not as cases. The enum is a record of governance reserved names rather
+than ordinary code, and removing a Swift symbol does not unclaim a name on chain. Any
+feature that returns has to reuse the exact strings (`dim2.<tld>`, `peopl.<tld>`) to
+recover the on-chain identity.
 
 The personhood *product handlers* are live and unrelated to the removed pipeline.
 `APPersonhoodHandlerFactory` and the handlers it builds serve ring-VRF operations for
