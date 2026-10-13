@@ -23,7 +23,9 @@ const glueUrl = new URL(
 );
 // The gate lives in `require-wasm.ts` so rewriting any one suite cannot
 // quietly disable it for the others.
-const suite = wasmIsBuilt("web/truapi_server_bg.wasm") ? describe : describe.skip;
+const suite = wasmIsBuilt("web/truapi_server_bg.wasm")
+  ? describe
+  : describe.skip;
 
 suite("real WASM core ↔ createMockHost bridge", () => {
   it("the core invokes createMockHost callbacks across the JS↔SCALE↔WASM boundary", async () => {
@@ -72,9 +74,8 @@ suite("real WASM core ↔ createMockHost bridge", () => {
     // Test isolation is the property a product suite actually depends on: a
     // recording made while one core ran must not leak into the next case.
     const { initSync, WasmPairingHostRuntime } = await import(glueUrl.href);
-    const { createWasmRawCallbacks } = await import(
-      "../generated/host-callbacks-adapter.js"
-    );
+    const { createWasmRawCallbacks } =
+      await import("../generated/host-callbacks-adapter.js");
     initSync({ module: readFileSync(wasmUrl) });
 
     const mock = createMockHost();

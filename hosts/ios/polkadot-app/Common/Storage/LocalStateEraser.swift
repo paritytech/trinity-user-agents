@@ -12,13 +12,12 @@ protocol LocalStateErasing {
 final class LocalStateEraser: LocalStateErasing {
     /// Identity the launch gates and claims read: the username gate would otherwise pass a new wallet
     /// under the old name.
-    static let identityKeys: [SettingsKey] = [.username, .usernameClaimed, .isPerson]
+    static let identityKeys: [SettingsKey] = [.username, .usernameClaimed]
 
     /// Progress bound to the old wallet that would misreport for a new one.
     static let walletProgressKeys: [SettingsKey] = [
         .backendSessionId,
-        .nextSyncUpdateId,
-        .voucherInUseDismissed
+        .nextSyncUpdateId
     ]
 
     private let settingsManager: SettingsManagerProtocol
