@@ -145,7 +145,6 @@ use crate::{
 		sso_messages::RingVrfError,
 	},
 	host_logic::{
-		funding::ReportRefusal,
 		product_account::{
 			derivation_index_bytes, derive_product_public_key, public_key_from_address,
 		},
@@ -1484,9 +1483,8 @@ impl FundingProvider for ProductRuntimeHost {
 			return Subscription::interrupted(error);
 		}
 		let registry = self.services.funding();
-		registry.bind(&self.services);
 		if let Err(error) = registry.load(&self.services).await {
-			return Subscription::interrupted(CallError::HostFailure { reason: error.to_string() });
+			return Subscription::interrupted(error.into());
 		}
 		Subscription::new(Box::pin(
 			registry
@@ -1503,27 +1501,18 @@ impl FundingProvider for ProductRuntimeHost {
 	) -> Result<HostFundingReportResponse, CallError<HostFundingReportError>> {
 		let HostFundingReportRequest::V1(request) = request;
 		self.funding_provider_access()?;
-		let registry = self.services.funding();
-		registry.bind(&self.services);
-		let reported = registry
+		self.services
+			.funding()
 			.report(
 				self.platform.as_ref(),
 				crate::current_unix_millis(),
-				&self.product.product_id,
+				&self.product,
 				&request.intent,
 				request.update,
 			)
-			.await
-			.map_err(|error| CallError::HostFailure { reason: error.to_string() })?;
-		let domain = |error| CallError::Domain(HostFundingReportError::V1(error));
-		match reported {
-			Ok(()) => Ok(HostFundingReportResponse::V1),
-			Err(ReportRefusal::NotFound) => Err(domain(v01::HostFundingReportError::NotFound)),
-			Err(ReportRefusal::OutOfOrder) => Err(domain(v01::HostFundingReportError::OutOfOrder)),
-			Err(ReportRefusal::DuplicateId) => {
-				Err(domain(v01::HostFundingReportError::DuplicateId))
-			},
-		}
+			.await?
+			.map(|()| HostFundingReportResponse::V1)
+			.map_err(|error| CallError::Domain(HostFundingReportError::V1(error)))
 	}
 
 	#[instrument(skip_all, fields(runtime.method = "funding_provider.present_frame"))]

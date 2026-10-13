@@ -435,14 +435,24 @@ AutoSigning without approval. Legacy-account signing still asks the user.
   and cancel requests, `report` stores each update on the session (only from
   the assigned provider, only forward), and `presentFrame` asks the host to
   show one of its screens through `present_provider_frame`. The core holds the
-  provider's worker while a session is assigned and open. It ends a session as
-  `Delivered` or `Released` itself, from the claims of the top-ups the
-  provider named (`Crediting`, then `Delivered`) or the completion of the
-  payment request it named (`Collecting`); once funds move, the provider can
-  no longer fail the session. Only a session with no provider expires: once
-  assigned, it waits for its provider or a cancel. A cancel ends
-  an unassigned session, asks the provider of an assigned one, and is refused
-  once the provider has seen the user's payment.
+  provider's worker while a session is assigned and open, and stores an
+  assigned session from then on, even while its overlay is up. It records each
+  top-up (inbound) or payment request (outbound) the worker starts while
+  serving a session, and a `Crediting` or `Collecting` report must name one of
+  those records at its amount, once. It ends a session as `Delivered` or
+  `Released` itself, from the recorded amounts of the named top-ups once their
+  claims are final (`Crediting`, then `Delivered`) or of the named payment once
+  it completes (`Collecting`); a partial claim counts what the host claimed.
+  Statuses are read again with backoff until the host decides, and a top-up
+  or payment the host still does not know an hour after it was named counts
+  as nothing moved. Once funds move, the provider can no longer fail the
+  session and nothing expires it. Before that, an unassigned session expires
+  24 hours after it opened and an assigned one 7 days after its provider last
+  reported. A cancel ends an unassigned session, asks the provider of an
+  assigned one, ends it when asked again before the provider answered, and is
+  refused once the provider has seen the user's payment. An overlay closed
+  after the user chose a provider keeps the session as started and asks the
+  provider to stop.
 - `BalancePlatform`: stream what a payment request can spend right now, the
   current value first and then each change. Installed with
   `set_balance_platform`; native hosts use `set_balance_callbacks` with

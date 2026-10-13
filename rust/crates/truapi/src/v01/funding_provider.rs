@@ -12,9 +12,11 @@ pub struct FundingAssignment {
 	/// Amount sought, in the user's payment balance units. `None` when the
 	/// user left it to the provider's screens.
 	pub amount: Option<u128>,
-	/// When the session expires unless funds are already moving, in Unix
-	/// milliseconds.
-	pub expires_at: u64,
+	/// When the session ends as `Expired` if nothing changes, in Unix
+	/// milliseconds: 7 days after the provider's last update while no funds
+	/// move. `None` once a top-up or payment request is moving funds, as only
+	/// its outcome ends the session then.
+	pub expires_at: Option<u64>,
 	/// The last update the provider reported, so a restarted worker resumes
 	/// where it stopped.
 	pub last_update: Option<FundingUpdate>,
@@ -109,9 +111,10 @@ pub enum HostFundingReportError {
 	/// The update does not follow the session's last one, or does not fit
 	/// its direction.
 	OutOfOrder,
-	/// The top-up or payment request it names is already named by another of
-	/// the caller's sessions.
-	DuplicateId,
+	/// The top-up or payment request it names was not started by the
+	/// caller with `payment.topUp` or `payment.request` for this session since
+	/// it was assigned, asks a different amount, or was already named.
+	NotStarted,
 	/// Catch-all.
 	Unknown {
 		/// Human-readable failure reason.
