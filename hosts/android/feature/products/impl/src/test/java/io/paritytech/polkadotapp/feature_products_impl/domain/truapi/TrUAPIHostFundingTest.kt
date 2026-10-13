@@ -23,6 +23,7 @@ class TrUAPIHostFundingTest {
         runtimeProvider = mockk { coEvery { runtime() } returns Result.success(runtime) },
         bridge = AppFundingHostBridge(mockk()),
         activityCenter = mockk(),
+        sessionPresenter = mockk(),
     )
 
     @Test

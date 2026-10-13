@@ -2,6 +2,7 @@ package io.paritytech.polkadotapp.feature_products_impl.domain.funding
 
 import io.mockk.coEvery
 import io.mockk.coVerify
+import io.mockk.every
 import io.mockk.mockk
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingBalance
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingDirection
@@ -11,6 +12,7 @@ import io.paritytech.polkadotapp.feature_products_api.domain.funding.ProviderFra
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_impl.presentation.productBotManagement.ProductsRouter
 import kotlinx.coroutines.async
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
@@ -30,21 +32,19 @@ import uniffi.truapi.FundingDirection as CoreFundingDirection
 class AppFundingOverlayTest {
     private val contexts = FundingOverlayContexts()
     private val frames = FundingFrameContexts()
-    private val runtime = mockk<FundingRuntime>()
+    private val runtime = mockk<FundingRuntime> {
+        every { sessionChanges() } returns MutableSharedFlow()
+        coEvery { progress(any()) } returns null
+    }
     private val router = mockk<ProductsRouter>(relaxed = true)
     private val overlay = AppFundingOverlay(contexts, frames, runtime, router)
 
     @Test
-    fun `a card's provider screen opens once its sheet has closed`() = runTest {
+    fun `a card's provider screen opens over its sheet`() = runTest {
         coEvery { runtime.session("intent") } returns session(FundingRail.CARD, FundingStage.Open)
-        val sheet = FundingOverlayContext(FundingOverlayRequest(null, "intent", FundingDirection.IN, null))
-        contexts.put(sheet)
+        contexts.put(FundingOverlayContext(FundingOverlayRequest(null, "intent", FundingDirection.IN, null), FundingOverlayMode.New))
 
         val outcome = async { overlay.presentProviderFrame(ProductId.fromStoredValue("ramp.dot"), "intent", "/pay") }
-        runCurrent()
-        coVerify(exactly = 0) { router.openFundingProviderFrame(any()) }
-
-        sheet.markClosed()
         runCurrent()
         coVerify { router.openFundingProviderFrame("intent") }
 

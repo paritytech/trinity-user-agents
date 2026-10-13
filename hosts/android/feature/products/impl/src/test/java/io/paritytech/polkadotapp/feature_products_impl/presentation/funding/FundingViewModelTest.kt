@@ -13,10 +13,12 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingFlo
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingKey
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingOverlayContext
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingOverlayContexts
+import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingOverlayMode
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingProviderBrand
 import io.paritytech.polkadotapp.feature_products_impl.presentation.productBotManagement.ProductsRouter
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
+import kotlinx.coroutines.cancelChildren
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.test.StandardTestDispatcher
@@ -47,7 +49,7 @@ import uniffi.truapi.FundingDirection as CoreFundingDirection
 class FundingViewModelTest {
     private val testDispatcher = StandardTestDispatcher()
     private val request = FundingOverlayRequest(productId = null, intent = "intent", direction = FundingDirection.IN, amount = null)
-    private val context = FundingOverlayContext(request)
+    private val context = FundingOverlayContext(request, FundingOverlayMode.New)
     private val contexts = FundingOverlayContexts().apply { put(context) }
     private val router = mockk<ProductsRouter>(relaxed = true)
     private val quoteRows = MutableSharedFlow<FundingQuoteRow>()
@@ -56,6 +58,7 @@ class FundingViewModelTest {
         coEvery { spendable(any()) } returns null
         coEvery { candidates("intent") } returns listOf(cardCandidate())
         every { detectedCountry() } returns FundingCountry("DE", "Germany", "EUR", "Euro")
+        every { countries() } returns emptyList()
         every { quoteRows("intent") } returns quoteRows
         every { sessionChanges("intent") } returns emptyFlow()
         coEvery { requestQuote("intent", any()) } returns Result.success(Unit)
@@ -149,6 +152,7 @@ class FundingViewModelTest {
 
         assertEquals(FundingOverlayOutcome.STARTED, answer.await())
         coVerify(exactly = 0) { router.closeFundingOverlay(any()) }
+        stopFollowingDeposit(model)
     }
 
     private fun cryptoCandidate(providerId: String) = FundingCandidate(
@@ -167,6 +171,11 @@ class FundingViewModelTest {
         limits = emptyList(),
         backend = null,
     )
+
+    /** The deposit screen keeps reading the session until the sheet goes, which in a test it never does. */
+    private fun stopFollowingDeposit(model: FundingViewModel) {
+        model.coroutineContext.cancelChildren()
+    }
 
     private fun TestScope.cancelTicker(model: FundingViewModel) {
         model.onBack()
