@@ -9,6 +9,7 @@ import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingDire
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingOverlayOutcome
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingOverlayRequest
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.ProviderFrameOutcome
+import io.paritytech.polkadotapp.feature_products_api.domain.funding.ProviderFrameTarget
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_impl.presentation.productBotManagement.ProductsRouter
 import kotlinx.coroutines.async
@@ -26,6 +27,7 @@ import uniffi.truapi.FundingQuote
 import uniffi.truapi.FundingRail
 import uniffi.truapi.FundingSession
 import uniffi.truapi.FundingStage
+import uniffi.truapi.FundingStatus
 import uniffi.truapi.FundingStep
 import uniffi.truapi.FundingDirection as CoreFundingDirection
 
@@ -44,27 +46,27 @@ class AppFundingOverlayTest {
         coEvery { runtime.session("intent") } returns session(FundingRail.CARD, FundingStage.Open)
         contexts.put(FundingOverlayContext(FundingOverlayRequest(null, "intent", FundingDirection.IN, null), FundingOverlayMode.New))
 
-        val outcome = async { overlay.presentProviderFrame(ProductId.fromStoredValue("ramp.dot"), "intent", "/pay") }
+        val outcome = async { overlay.presentProviderFrame(ProductId.fromStoredValue("ramp.dot"), "intent", ProviderFrameTarget.App("/pay")) }
         runCurrent()
         coVerify { router.openFundingProviderFrame("intent") }
 
         val frame = requireNotNull(frames.get("intent"))
         assertFalse(frame.showsSentFunds)
-        frame.answer(ProviderFrameOutcome.CLOSED)
-        assertEquals(ProviderFrameOutcome.CLOSED, outcome.await())
+        frame.answer(ProviderFrameOutcome.Closed)
+        assertEquals(ProviderFrameOutcome.Closed, outcome.await())
     }
 
     @Test
     fun `a bank transfer's provider screen offers to say the funds were sent`() = runTest {
         coEvery { runtime.session("intent") } returns session(FundingRail.BANK, FundingStage.Open)
 
-        val outcome = async { overlay.presentProviderFrame(ProductId.fromStoredValue("ramp.dot"), "intent", "pay") }
+        val outcome = async { overlay.presentProviderFrame(ProductId.fromStoredValue("ramp.dot"), "intent", ProviderFrameTarget.App("pay")) }
         runCurrent()
 
         val frame = requireNotNull(frames.get("intent"))
         assertTrue(frame.showsSentFunds)
-        frame.answer(ProviderFrameOutcome.DISMISSED)
-        assertEquals(ProviderFrameOutcome.DISMISSED, outcome.await())
+        frame.answer(ProviderFrameOutcome.Dismissed)
+        assertEquals(ProviderFrameOutcome.Dismissed, outcome.await())
     }
 
     @Test
@@ -98,6 +100,9 @@ class AppFundingOverlayTest {
         mismatch = null,
         retrying = false,
         payout = null,
+        refunded = null,
+        status = FundingStatus.WaitingForPayment,
+        longerAtMs = null,
     )
 
     private fun session(rail: FundingRail, stage: FundingStage) = FundingSession(
@@ -110,14 +115,17 @@ class AppFundingOverlayTest {
         deadlineMs = 0uL,
         acknowledged = false,
         providerId = "ramp.dot",
+        assignedAtMs = 0uL,
         cancelRequested = false,
         updates = emptyList(),
+        started = emptyList(),
         choice = FundingChoice(
             quote = FundingQuote("q", "5100", "50000000", "90", "10", null, null),
             rail = rail,
             asset = "EUR",
-            amount = "50000000",
+            network = null,
         ),
         saved = null,
+        refund = null,
     )
 }

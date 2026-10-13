@@ -6,6 +6,7 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import uniffi.truapi.FundingProviderEntry
+import uniffi.truapi.FundingProviderOrigin
 import java.io.ByteArrayInputStream
 import java.io.InputStream
 
@@ -53,7 +54,7 @@ class BundledProductsTest {
     @Test
     fun `lists only the products that serve funding as bundled providers`() {
         assertEquals(
-            listOf(FundingProviderEntry(productId = "provider.dot", workerManifest = manifest, bundled = true)),
+            listOf(FundingProviderEntry(productId = "provider.dot", workerManifest = manifest, origin = FundingProviderOrigin.BUNDLED)),
             products.fundingProviders(),
         )
     }

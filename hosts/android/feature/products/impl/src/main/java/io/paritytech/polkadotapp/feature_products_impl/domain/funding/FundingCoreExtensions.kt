@@ -4,7 +4,6 @@ import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingFail
 import uniffi.truapi.FundingCandidate
 import uniffi.truapi.FundingDirection
 import uniffi.truapi.FundingFailure
-import uniffi.truapi.FundingMode
 import uniffi.truapi.FundingQuote
 import uniffi.truapi.FundingQuoteRefusal
 import uniffi.truapi.FundingQuoteState
@@ -12,26 +11,12 @@ import uniffi.truapi.FundingQuoteUnavailable
 import uniffi.truapi.FundingRail
 import uniffi.truapi.FundingRoute
 import uniffi.truapi.FundingStage
-import uniffi.truapi.RouteDirection
 
 /** The order the rail tabs are drawn in. */
 val FUNDING_RAIL_ORDER: List<FundingRail> = listOf(FundingRail.CRYPTO, FundingRail.CARD, FundingRail.BANK)
 
-val FundingRail.mode: FundingMode
-    get() = when (this) {
-        FundingRail.CARD -> FundingMode.CARD
-        FundingRail.BANK -> FundingMode.BANK
-        FundingRail.CRYPTO -> FundingMode.CRYPTO
-    }
-
-val FundingDirection.routeDirection: RouteDirection
-    get() = when (this) {
-        FundingDirection.IN -> RouteDirection.IN
-        FundingDirection.OUT -> RouteDirection.OUT
-    }
-
 fun FundingCandidate.routes(rail: FundingRail, direction: FundingDirection): List<FundingRoute> =
-    routes.filter { it.mode == rail.mode && direction.routeDirection in it.directions }
+    routes.filter { it.rail == rail && direction in it.directions }
 
 fun FundingCandidate.serves(rail: FundingRail, direction: FundingDirection): Boolean =
     routes(rail, direction).isNotEmpty()
@@ -64,5 +49,6 @@ fun FundingFailure.toReason(): FundingFailureReason = when (this) {
     FundingFailure.ProviderTimeout -> FundingFailureReason.ProviderTimeout
     FundingFailure.Cancelled -> FundingFailureReason.Cancelled
     FundingFailure.Refunded -> FundingFailureReason.Refunded
+    FundingFailure.Declined -> FundingFailureReason.Declined
     is FundingFailure.Other -> FundingFailureReason.Other(code, message)
 }

@@ -93,7 +93,6 @@ class BrowserWebViewProvider @AssistedInject constructor(
         BundledProductContent.app(it, bundledProducts, frameEmbeddingResponseHeaders(allowIframes))
     }
 
-
     // No dotNS load reports progress for a bundled page or one served from a loopback url, so its own load does.
     private val servedPageProgress = MutableStateFlow<DotNsLoadProgress>(DotNsLoadProgress.Idle)
 

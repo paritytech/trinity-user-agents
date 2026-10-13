@@ -16,9 +16,24 @@ enum class FundingOverlayOutcome {
     DISMISSED,
 }
 
-enum class ProviderFrameOutcome {
-    CLOSED,
-    DISMISSED,
+/** What a provider asks the host to show in its frame. */
+sealed interface ProviderFrameTarget {
+    /** A route of the provider's own App. */
+    data class App(val route: String) : ProviderFrameTarget
+
+    /** An external https page, such as an onramp's widget, finished once it reaches [returnUrl]. */
+    data class Page(val url: String, val returnUrl: String?) : ProviderFrameTarget
+}
+
+sealed interface ProviderFrameOutcome {
+    /** The screen finished and closed itself. */
+    data object Closed : ProviderFrameOutcome
+
+    /** The user closed it. */
+    data object Dismissed : ProviderFrameOutcome
+
+    /** The page reached its return URL; [url] is the full URL, query included. */
+    data class Returned(val url: String) : ProviderFrameOutcome
 }
 
 /** The host UI the core's funding sessions are shown in. */
@@ -29,6 +44,6 @@ interface FundingOverlay {
      */
     suspend fun present(request: FundingOverlayRequest): FundingOverlayOutcome
 
-    /** Shows provider [providerId]'s screen at [route] for session [intent] and answers how it closed. */
-    suspend fun presentProviderFrame(providerId: ProductId, intent: String, route: String): ProviderFrameOutcome
+    /** Shows [target] for provider [providerId]'s session [intent] and answers how it closed. */
+    suspend fun presentProviderFrame(providerId: ProductId, intent: String, target: ProviderFrameTarget): ProviderFrameOutcome
 }

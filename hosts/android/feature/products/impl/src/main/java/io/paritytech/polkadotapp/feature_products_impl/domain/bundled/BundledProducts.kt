@@ -8,6 +8,7 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonObject
 import uniffi.truapi.FundingProviderEntry
+import uniffi.truapi.FundingProviderOrigin
 import java.io.InputStream
 import java.net.URI
 import java.util.Locale
@@ -118,9 +119,12 @@ class BundledProducts internal constructor(
 
     /** The bundled products that serve Funding, as the core takes them: the manifest shipped is the one it goes by. */
     fun fundingProviders(): List<FundingProviderEntry> = all.mapNotNull { product ->
-        val manifest = workerManifest(product)?.takeIf { hasWorker(product) && servesFunding(it) } ?: return@mapNotNull null
-        FundingProviderEntry(productId = product.id.value, workerManifest = manifest, bundled = true)
+        val manifest = workerManifest(product)?.takeIf { hasWorker(product) && includes(it, "funding") } ?: return@mapNotNull null
+        FundingProviderEntry(productId = product.id.value, workerManifest = manifest, origin = FundingProviderOrigin.BUNDLED)
     }
+
+    /** Whether the worker [product] ships declares the Chat modality. */
+    fun includesChat(product: BundledProduct): Boolean = workerManifest(product)?.let { includes(it, "chat") } ?: false
 
     /**
      * The file under [root] that a request for [requestPath] is served, the way a published archive is:
@@ -149,8 +153,8 @@ class BundledProducts internal constructor(
 
     private fun exists(path: String): Boolean = files.open(path)?.use { true } ?: false
 
-    private fun servesFunding(manifest: String): Boolean = runCatching {
+    private fun includes(manifest: String, modality: String): Boolean = runCatching {
         val includes = json.parseToJsonElement(manifest).jsonObject["includes"] as? JsonObject
-        includes?.get("funding") != null
+        includes?.get(modality) != null
     }.getOrDefault(false)
 }

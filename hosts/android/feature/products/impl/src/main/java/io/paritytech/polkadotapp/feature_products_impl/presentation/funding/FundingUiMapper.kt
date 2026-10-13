@@ -201,13 +201,11 @@ private fun FundingCountry.toUi(refused: Boolean, minimum: String?, selected: Bo
     selected = selected,
 )
 
-/** [refreshAt] is when the prices on screen are asked for again; while they are, the countdown holds at zero. */
+/** Counts down to the core's next refresh of the prices on screen; while it runs, the countdown holds at zero. */
 fun FundingFlowState.toProvidersUiState(
     brands: Map<String, FundingProviderBrand>,
     now: Instant,
-    refreshAt: Instant?,
 ): FundingProvidersUiState {
-    val best = bestProviderId
     val selected = selectedProviderId
     val severalQuoted = quotedProviders.size > 1
     val pending = rows.values.any { it.isPending }

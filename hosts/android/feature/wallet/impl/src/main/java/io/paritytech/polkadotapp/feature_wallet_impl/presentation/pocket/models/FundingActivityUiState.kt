@@ -41,18 +41,20 @@ enum class FundingRowTitle {
     SENT,
     REFUNDED,
     PAYOUT_FAILED,
-    FAILED,
+    TOP_UP_FAILED,
+    WITHDRAWAL_FAILED,
 }
 
 sealed interface FundingRowSubtitle {
     data class Step(val step: FundingActivityStep) : FundingRowSubtitle
 
-    data object Delayed : FundingRowSubtitle
-
     data class Ended(val rail: FundingRailType?, val moment: FundingMoment) : FundingRowSubtitle
 
     /** Why the session failed. */
     data class Failed(val reason: FundingFailureReason) : FundingRowSubtitle
+
+    /** What the provider's refund of a failed payout returned, as "$50 CASH". */
+    data class Refunded(val amount: String) : FundingRowSubtitle
 }
 
 /** "Today at 08:25", "Yesterday at 18:40", "4 Oct at 16:20", "4 Oct 2025". */

@@ -3,6 +3,8 @@ package io.paritytech.polkadotapp.feature_products_impl.domain.truapi.worker
 import dagger.Lazy
 import io.paritytech.polkadotapp.feature_products_api.model.ProductExecutable
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
+import io.paritytech.polkadotapp.feature_products_impl.domain.bundled.BundledProducts
+import io.paritytech.polkadotapp.feature_products_impl.domain.bundled.InMemoryBundledProductFiles
 import io.paritytech.polkadotapp.feature_products_impl.domain.product.ProductScriptResolver
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.ProductTrUAPIHostBridge
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.TrUAPIBootstrapInstaller
@@ -59,6 +61,7 @@ class TrUAPIWorkerSupervisorFailureTest {
         scriptResolver = scriptResolver,
         webViewProviderFactory = webViewProviderFactory,
         bootstrapInstaller = bootstrapInstaller,
+        bundledProducts = BundledProducts(InMemoryBundledProductFiles(emptyMap()), enabled = true),
         refCounter = Lazy { refCounter },
         dispatchers = testDispatchers(),
     )

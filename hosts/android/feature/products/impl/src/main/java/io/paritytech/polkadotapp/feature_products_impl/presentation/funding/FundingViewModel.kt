@@ -9,6 +9,7 @@ import io.paritytech.polkadotapp.common.utils.launchUnit
 import io.paritytech.polkadotapp.common.utils.logFailure
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingFailureReason
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingOverlayOutcome
+import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingCountry
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingFlowInteractor
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingFlowState
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingKey
@@ -19,7 +20,6 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingPro
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.applying
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.failure
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.isOpen
-import io.paritytech.polkadotapp.feature_products_impl.domain.funding.isPending
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.quote
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.toReason
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.toCore
@@ -38,14 +38,13 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import uniffi.truapi.FundingProgress
-import uniffi.truapi.FundingQuoteRow
+import uniffi.truapi.FundingQuoteList
 import uniffi.truapi.FundingRail
 import java.math.BigDecimal
 import javax.inject.Inject
 import kotlin.time.Clock
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
-import kotlin.time.Instant
 import io.paritytech.polkadotapp.common.R as RCommon
 import uniffi.truapi.FundingDirection as CoreFundingDirection
 
@@ -71,9 +70,6 @@ class FundingViewModel @Inject constructor(
         val TICK = 1.seconds
         val QUOTED_SCREENS = setOf(FundingScreen.SUMMARY, FundingScreen.PROVIDERS)
         val DEPOSIT_POLL = 3.seconds
-
-        /** How long prices hold before every provider is asked again. The core is to set this deadline; this goes once it does. */
-        val QUOTE_REFRESH = 60.seconds
     }
 
     private val intent = context.request.intent
@@ -87,24 +83,23 @@ class FundingViewModel @Inject constructor(
     private val brands = MutableStateFlow<Map<String, FundingProviderBrand>>(emptyMap())
     private val countryQuery = MutableStateFlow("")
     private val now = MutableStateFlow(Clock.System.now())
-    private val quotesRefreshAt = MutableStateFlow<Instant?>(null)
     private val countries by lazy { interactor.countries() }
-    private val detectedCountry by lazy { interactor.detectedCountry() }
+    private val detectedCountry = MutableStateFlow<FundingCountry?>(null)
 
     val state: StateFlow<LoadingState<FundingSheetUiState>> = combine(
         flow.filterNotNull(),
         path,
         combine(start, progress) { start, progress -> start to progress },
         brands,
-        combine(countryQuery, now, quotesRefreshAt) { query, now, refreshAt -> Triple(query, now, refreshAt) },
-    ) { flow, path, (start, progress), brands, (query, now, refreshAt) ->
+        combine(countryQuery, now, detectedCountry) { query, now, detected -> Triple(query, now, detected) },
+    ) { flow, path, (start, progress), brands, (query, now, detected) ->
         FundingSheetUiState(
             screen = path.lastOrNull() ?: FundingScreen.AMOUNT,
             amount = flow.toAmountUiState(),
             summary = flow.toSummaryUiState(brands, start),
             fees = flow.toFeesUiState(),
-            country = flow.toCountryUiState(countries, detectedCountry, query),
-            providers = flow.toProvidersUiState(brands, now, refreshAt),
+            country = flow.toCountryUiState(countries, detected, query),
+            providers = flow.toProvidersUiState(brands, now),
             networks = flow.toNetworkRows(),
             tokens = flow.toTokensUiState(),
             deposit = flow.toDepositUiState(progress, start),
@@ -112,7 +107,7 @@ class FundingViewModel @Inject constructor(
     }.stateIn(this, SharingStarted.Eagerly, LoadingState.Loading)
 
     init {
-        launch { interactor.quoteRows(intent).collect { onQuoteRow(it) } }
+        launch { interactor.quoteLists(intent).collect { onQuoteList(it) } }
         launch { interactor.sessionChanges(intent).collect { refreshSession() } }
         launchUnit {
             val initial = initialState()
@@ -197,6 +192,7 @@ class FundingViewModel @Inject constructor(
     fun onOpenCountry() {
         countryQuery.value = ""
         push(FundingScreen.COUNTRY)
+        launchUnit { refreshCountrySupport() }
     }
 
     fun onOpenProviders() = push(FundingScreen.PROVIDERS)
@@ -243,6 +239,7 @@ class FundingViewModel @Inject constructor(
     /** Before `Started` leaving is the answer the core discards the session on; after it the session runs on. */
     fun onClose() {
         quoteJob?.cancel()
+        stopQuotes()
         context.answer(FundingOverlayOutcome.DISMISSED)
         closeSheet()
     }
@@ -256,9 +253,15 @@ class FundingViewModel @Inject constructor(
 
     private fun closeSheet() = launchUnit { router.closeFundingOverlay(intent) }
 
+    // The core asks every provider again each minute until told to stop. It stops on its own once a provider is
+    // chosen or the session ends, so only leaving the sheet with the session still open needs this.
+    private fun stopQuotes() = launchUnit { interactor.stopQuotes(intent) }
+
     private suspend fun initialState(): FundingFlowState {
         val cash = interactor.cash()
         val request = context.request
+        val detected = interactor.detectedCountry()
+        detectedCountry.value = detected
 
         return FundingFlowState.initial(
             direction = request.direction.toCore(),
@@ -266,7 +269,7 @@ class FundingViewModel @Inject constructor(
             spendable = interactor.spendable(cash),
             candidates = interactor.candidates(intent),
             amount = request.amount?.let { cash.decimal(it.value.toString()) },
-            country = interactor.detectedCountry(),
+            country = detected,
         )
     }
 
@@ -278,10 +281,10 @@ class FundingViewModel @Inject constructor(
         path.update { it.dropLast(1) }
     }
 
-    private fun onQuoteRow(row: FundingQuoteRow) {
-        val updated = flow.value?.receiving(row) ?: return
+    private fun onQuoteList(list: FundingQuoteList) {
+        val updated = flow.value?.receiving(list) ?: return
         flow.value = updated
-        if (updated.allAnswered && quotesRefreshAt.value == null) quotesRefreshAt.value = Clock.System.now() + QUOTE_REFRESH
+        if (updated.allAnswered) launchUnit { refreshCountrySupport() }
 
         if (startsWhenQuoted && updated.allAnswered) {
             startsWhenQuoted = false
@@ -345,19 +348,20 @@ class FundingViewModel @Inject constructor(
         }
     }
 
-    /** Drives the countdown and asks again once the prices on screen are due a refresh. */
+    /** Drives the countdown to the core's next refresh. */
     private suspend fun tickWhileQuoted() {
         while (true) {
             now.value = Clock.System.now()
-            refreshIfExpired()
             delay(TICK)
         }
     }
 
-    private fun refreshIfExpired() {
+    /** What the core now knows about each country for the rail and asset on screen. */
+    private suspend fun refreshCountrySupport() {
         val current = flow.value ?: return
-        val refreshAt = quotesRefreshAt.value ?: return
-        if (refreshAt <= now.value && current.rows.values.none { it.isPending }) requestQuote()
+        val asset = current.ask?.asset ?: current.asset ?: current.fiatAsset
+        val support = interactor.countrySupport(intent, current.rail, asset)
+        flow.update { it?.withCountrySupport(support) }
     }
 
     /** Quotes the new amount once the user pauses, so a provider's limit shows before Continue. */
@@ -375,7 +379,6 @@ class FundingViewModel @Inject constructor(
     private fun requestQuote() {
         val ask = flow.value?.currentAsk() ?: return
         flow.update { it?.asking(ask) }
-        quotesRefreshAt.value = null
 
         launchUnit {
             interactor.requestQuote(intent, ask).logFailure("Funding quote request failed")

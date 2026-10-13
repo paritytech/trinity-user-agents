@@ -128,8 +128,12 @@ class TrUAPIWorkerSupervisor @Inject constructor(
 
     private suspend fun boot(productId: ProductId, worker: RunningWorker): Result<TrUAPIProductExecution> {
         val bundled = bundledProducts.product(productId)?.takeIf(bundledProducts::hasWorker)
-        val scriptUrl = bundled?.workerScriptUrl
-            ?: scriptResolver.resolveWorker(productId).getOrElse { return Result.failure(it) }.scriptUrl
+        val (scriptUrl, includesChat) = if (bundled != null) {
+            bundled.workerScriptUrl to bundledProducts.includesChat(bundled)
+        } else {
+            val resolved = scriptResolver.resolveWorker(productId).getOrElse { return Result.failure(it) }
+            resolved.scriptUrl to resolved.includesChat
+        }
         val runtime = runtimeProvider.get().runtime().getOrElse { return Result.failure(it) }
         val workerScript = WorkerScript.of(scriptUrl)
         val bundledContent = bundled?.let { BundledProductContent.worker(it, bundledProducts) }
@@ -150,7 +154,7 @@ class TrUAPIWorkerSupervisor @Inject constructor(
                 chainDirectory.resolve(),
                 ignoredNavigation(),
                 ProductExecutionKind.WORKER,
-                chat = if (script.includesChat) {
+                chat = if (includesChat) {
                     ProductChatHostBridge(productId, refCounter.get().chatMessaging(productId))
                 } else {
                     null

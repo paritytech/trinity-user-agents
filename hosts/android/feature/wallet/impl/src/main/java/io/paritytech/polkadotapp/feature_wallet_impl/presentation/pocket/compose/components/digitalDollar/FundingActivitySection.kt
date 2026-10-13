@@ -245,7 +245,6 @@ private fun Spinner(size: Dp, tint: Color) {
 
 @Composable
 private fun subtitle(subtitle: FundingRowSubtitle): String = when (subtitle) {
-    FundingRowSubtitle.Delayed -> stringResource(RCommon.string.funding_activity_delayed)
     is FundingRowSubtitle.Step -> when (val step = subtitle.step) {
         FundingActivityStep.WaitingForPayment -> stringResource(RCommon.string.funding_activity_waiting_payment)
         FundingActivityStep.WaitingForTransfer -> stringResource(RCommon.string.funding_activity_waiting_transfer)
@@ -256,7 +255,10 @@ private fun subtitle(subtitle: FundingRowSubtitle): String = when (subtitle) {
         FundingActivityStep.PreparingPayout -> stringResource(RCommon.string.funding_activity_preparing_payout)
         is FundingActivityStep.ConvertingOut -> stringResource(RCommon.string.funding_activity_converting_out, step.asset)
         FundingActivityStep.RetryingPayout -> stringResource(RCommon.string.funding_activity_retrying_payout)
+        FundingActivityStep.TakingLonger -> stringResource(RCommon.string.funding_activity_delayed)
     }
+
+    is FundingRowSubtitle.Refunded -> stringResource(RCommon.string.funding_activity_refunded_amount, subtitle.amount)
 
     is FundingRowSubtitle.Failed -> subtitle.reason.reasonText.text()
 
@@ -288,7 +290,8 @@ private fun FundingRowTitle.textRes(): Int = when (this) {
     FundingRowTitle.SENT -> RCommon.string.funding_activity_sent
     FundingRowTitle.REFUNDED -> RCommon.string.funding_activity_refunded
     FundingRowTitle.PAYOUT_FAILED -> RCommon.string.funding_activity_payout_failed
-    FundingRowTitle.FAILED -> RCommon.string.funding_activity_failed
+    FundingRowTitle.TOP_UP_FAILED -> RCommon.string.funding_activity_top_up_failed
+    FundingRowTitle.WITHDRAWAL_FAILED -> RCommon.string.funding_activity_withdrawal_failed
 }
 
 private fun FundingRailType.textRes(): Int = when (this) {

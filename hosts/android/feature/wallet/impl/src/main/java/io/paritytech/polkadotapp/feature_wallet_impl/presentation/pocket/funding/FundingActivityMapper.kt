@@ -53,23 +53,24 @@ class FundingActivityMapper(
         val status = item.status
         val inbound = item.direction == FundingDirection.IN
         val moved = status is FundingActivityStatus.InProgress || status == FundingActivityStatus.ToppedUp || status == FundingActivityStatus.Sent
+        val refunded = (status as? FundingActivityStatus.PayoutFailed)?.refunded
 
         return FundingActivityRowUi(
             id = item.id,
             title = title(status, inbound),
-            subtitle = when (status) {
-                is FundingActivityStatus.InProgress ->
-                    if (status.delayed) FundingRowSubtitle.Delayed else FundingRowSubtitle.Step(status.step)
+            subtitle = when {
+                status is FundingActivityStatus.InProgress -> FundingRowSubtitle.Step(status.step)
+                status is FundingActivityStatus.Failed -> FundingRowSubtitle.Failed(status.reason)
+                refunded != null -> FundingRowSubtitle.Refunded(FundingMoney.label(asset.amountFromPlanks(refunded), symbol))
 
-                is FundingActivityStatus.Failed -> FundingRowSubtitle.Failed(status.reason)
                 else -> FundingRowSubtitle.Ended(item.rail, moment(item.date))
             },
             icon = when (status) {
                 is FundingActivityStatus.InProgress ->
-                    if (status.delayed || status.step.isRetry) FundingRowIcon.IN_PROGRESS_WARNING else FundingRowIcon.IN_PROGRESS
+                    if (status.step.isSlow) FundingRowIcon.IN_PROGRESS_WARNING else FundingRowIcon.IN_PROGRESS
 
                 FundingActivityStatus.ToppedUp, FundingActivityStatus.Sent -> if (inbound) FundingRowIcon.MOVED_IN else FundingRowIcon.MOVED_OUT
-                FundingActivityStatus.Refunded, FundingActivityStatus.PayoutFailed, is FundingActivityStatus.Failed -> FundingRowIcon.FAILED
+                FundingActivityStatus.Refunded, is FundingActivityStatus.PayoutFailed, is FundingActivityStatus.Failed -> FundingRowIcon.FAILED
             },
             amount = item.amount?.let { balance ->
                 val sign = if (!moved) "" else if (inbound) "+" else "-"
@@ -88,8 +89,8 @@ class FundingActivityMapper(
         FundingActivityStatus.ToppedUp -> FundingRowTitle.TOPPED_UP
         FundingActivityStatus.Sent -> FundingRowTitle.SENT
         FundingActivityStatus.Refunded -> FundingRowTitle.REFUNDED
-        FundingActivityStatus.PayoutFailed -> FundingRowTitle.PAYOUT_FAILED
-        is FundingActivityStatus.Failed -> FundingRowTitle.FAILED
+        is FundingActivityStatus.PayoutFailed -> FundingRowTitle.PAYOUT_FAILED
+        is FundingActivityStatus.Failed -> if (inbound) FundingRowTitle.TOP_UP_FAILED else FundingRowTitle.WITHDRAWAL_FAILED
     }
 
     private fun dayTitle(date: Instant): FundingDayTitle {
@@ -114,8 +115,10 @@ class FundingActivityMapper(
         }
     }
 
-    private val FundingActivityStep.isRetry: Boolean
-        get() = this == FundingActivityStep.Retrying || this == FundingActivityStep.RetryingPayout
+    private val FundingActivityStep.isSlow: Boolean
+        get() = this == FundingActivityStep.Retrying ||
+            this == FundingActivityStep.RetryingPayout ||
+            this == FundingActivityStep.TakingLonger
 
     private fun localDate(instant: Instant): LocalDate = instant.toJavaInstant().atZone(zone).toLocalDate()
 }

@@ -27,6 +27,8 @@ sealed class FundingFailureReason(val code: String) {
 
     data object Refunded : FundingFailureReason("refunded")
 
+    data object Declined : FundingFailureReason("declined")
+
     /** A provider's own failure, with what it said. */
     data class Other(val otherCode: String, val message: String) : FundingFailureReason(otherCode)
 
@@ -34,7 +36,7 @@ sealed class FundingFailureReason(val code: String) {
         private val NAMED by lazy {
             listOf(
                 RegionUnavailable, VerificationRequired, VerificationRefused, BelowMinimum, AboveMaximum,
-                InsufficientBalance, Expired, WrongAssetOrChain, ProviderTimeout, Cancelled, Refunded,
+                InsufficientBalance, Expired, WrongAssetOrChain, ProviderTimeout, Cancelled, Refunded, Declined,
             )
         }
 
@@ -58,6 +60,7 @@ val FundingFailureReason.reasonText: FundingReasonText
         FundingFailureReason.ProviderTimeout -> FundingReasonText.Res(RCommon.string.funding_failure_provider_timeout)
         FundingFailureReason.Cancelled -> FundingReasonText.Res(RCommon.string.funding_failure_cancelled)
         FundingFailureReason.Refunded -> FundingReasonText.Res(RCommon.string.funding_failure_refunded)
+        FundingFailureReason.Declined -> FundingReasonText.Res(RCommon.string.funding_failure_declined)
         is FundingFailureReason.Other ->
             if (message.isBlank()) FundingReasonText.Res(RCommon.string.funding_failure_unknown) else FundingReasonText.Verbatim(message)
     }

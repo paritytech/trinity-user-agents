@@ -9,10 +9,12 @@ import kotlinx.coroutines.flow.map
 import uniffi.truapi.FundingCandidate
 import uniffi.truapi.FundingProgress
 import uniffi.truapi.FundingQuoteAsk
-import uniffi.truapi.FundingQuoteRow
+import uniffi.truapi.FundingQuoteList
+import uniffi.truapi.FundingRail
 import uniffi.truapi.FundingSession
 import java.math.BigDecimal
 import javax.inject.Inject
+import uniffi.truapi.FundingCountry as CoreFundingCountry
 
 class FundingFlowInteractor @Inject constructor(
     @param:DigitalDollarChainAssetProvider private val chainAssetProvider: ChainAssetProvider,
@@ -28,8 +30,8 @@ class FundingFlowInteractor @Inject constructor(
     suspend fun spendable(cash: FundingCash): BigDecimal? =
         balance.spendable()?.let { cash.decimal(it.value.toString()) }
 
-    /** The device's region. The core is to detect the country itself, from location, SIM and locale; this goes once it does. */
-    fun detectedCountry(): FundingCountry? = FundingCountries.detected()
+    /** The country the core detected, which quotes go by until the user picks one. */
+    suspend fun detectedCountry(): FundingCountry? = runtime.detectedCountry()?.let { FundingCountries.country(it) }
 
     fun countries(): List<FundingCountry> = FundingCountries.all()
 
@@ -43,6 +45,11 @@ class FundingFlowInteractor @Inject constructor(
 
     suspend fun requestQuote(intent: String, ask: FundingQuoteAsk): Result<Unit> = runtime.requestQuote(intent, ask)
 
+    suspend fun stopQuotes(intent: String) = runtime.stopQuotes(intent)
+
+    suspend fun countrySupport(intent: String, rail: FundingRail, asset: String): List<CoreFundingCountry> =
+        runtime.countries(intent, rail, asset)
+
     suspend fun selectProvider(intent: String, providerId: String, quoteId: String?): Result<Boolean> =
         runtime.selectProvider(intent, providerId, quoteId)
 
@@ -51,7 +58,7 @@ class FundingFlowInteractor @Inject constructor(
     /** The provider's screen has done its part once the payment is seen or the session is over. */
     suspend fun paymentMoved(intent: String): Boolean = runtime.paymentMoved(intent)
 
-    fun quoteRows(intent: String): Flow<FundingQuoteRow> = runtime.quoteRows(intent)
+    fun quoteLists(intent: String): Flow<FundingQuoteList> = runtime.quoteLists(intent)
 
     fun sessionChanges(intent: String): Flow<Unit> = runtime.sessionChanges().filter { it == intent }.map { }
 }

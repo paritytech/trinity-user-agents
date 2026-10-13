@@ -1,6 +1,7 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.funding
 
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.ProviderFrameOutcome
+import io.paritytech.polkadotapp.feature_products_api.domain.funding.ProviderFrameTarget
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_api.model.toUrl
 import kotlinx.coroutines.CompletableDeferred
@@ -12,7 +13,7 @@ import javax.inject.Singleton
 class FundingFrameContext(
     val providerId: ProductId,
     val intent: String,
-    val route: String,
+    val target: ProviderFrameTarget,
     val showsSentFunds: Boolean,
 ) {
     private val outcome = CompletableDeferred<ProviderFrameOutcome>()
@@ -22,9 +23,13 @@ class FundingFrameContext(
     var isShown: Boolean = false
 
     val url: String
-        get() {
-            val base = providerId.toUrl().trimEnd('/')
-            return if (route.startsWith("/") || route.startsWith("#")) base + route else "$base/$route"
+        get() = when (target) {
+            is ProviderFrameTarget.Page -> target.url
+            is ProviderFrameTarget.App -> {
+                val base = providerId.toUrl().trimEnd('/')
+                val route = target.route
+                if (route.startsWith("/") || route.startsWith("#")) base + route else "$base/$route"
+            }
         }
 
     fun answer(answer: ProviderFrameOutcome) {

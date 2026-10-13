@@ -35,14 +35,13 @@ import org.junit.Assert.assertFalse
 import org.junit.Before
 import org.junit.Test
 import uniffi.truapi.FundingCandidate
-import uniffi.truapi.FundingMode
 import uniffi.truapi.FundingQuote
 import uniffi.truapi.FundingQuoteAsk
+import uniffi.truapi.FundingQuoteList
 import uniffi.truapi.FundingQuoteRow
 import uniffi.truapi.FundingQuoteState
 import uniffi.truapi.FundingRail
 import uniffi.truapi.FundingRoute
-import uniffi.truapi.RouteDirection
 import java.math.BigDecimal
 import uniffi.truapi.FundingDirection as CoreFundingDirection
 
@@ -52,14 +51,16 @@ class FundingViewModelTest {
     private val context = FundingOverlayContext(request, FundingOverlayMode.New)
     private val contexts = FundingOverlayContexts().apply { put(context) }
     private val router = mockk<ProductsRouter>(relaxed = true)
-    private val quoteRows = MutableSharedFlow<FundingQuoteRow>()
+    private val quoteLists = MutableSharedFlow<FundingQuoteList>()
     private val interactor = mockk<FundingFlowInteractor> {
         coEvery { cash() } returns FundingCash(symbol = "CASH", precision = 6)
         coEvery { spendable(any()) } returns null
         coEvery { candidates("intent") } returns listOf(cardCandidate())
-        every { detectedCountry() } returns FundingCountry("DE", "Germany", "EUR", "Euro")
+        coEvery { detectedCountry() } returns FundingCountry("DE", "Germany", "EUR", "Euro")
         every { countries() } returns emptyList()
-        every { quoteRows("intent") } returns quoteRows
+        every { quoteLists("intent") } returns quoteLists
+        coEvery { countrySupport("intent", any(), any()) } returns emptyList()
+        coEvery { stopQuotes("intent") } returns Unit
         every { sessionChanges("intent") } returns emptyFlow()
         coEvery { requestQuote("intent", any()) } returns Result.success(Unit)
         coEvery { brand(any()) } answers { FundingProviderBrand(firstArg(), firstArg(), null) }
@@ -106,6 +107,8 @@ class FundingViewModelTest {
         advanceUntilIdle()
 
         assertEquals(FundingOverlayOutcome.DISMISSED, answer.await())
+        // The core asks every provider again each minute until told otherwise.
+        coVerify { interactor.stopQuotes("intent") }
     }
 
     @Test
@@ -117,7 +120,7 @@ class FundingViewModelTest {
         model.onPreset(BigDecimal("50"))
         advanceTimeBy(601)
         runCurrent()
-        quoteRows.emit(FundingQuoteRow("ramp.dot", FundingQuoteState.Quoted(quote())))
+        quoteLists.emit(list(FundingQuoteRow("ramp.dot", FundingQuoteState.Quoted(quote())), best = "ramp.dot"))
         model.onContinueFromAmount()
         runCurrent()
         assertFalse(answer.isCompleted)
@@ -143,11 +146,12 @@ class FundingViewModelTest {
         model.onNetworkChosen("ethereum")
         model.onTokenChosen("USDT")
         runCurrent()
-        quoteRows.emit(FundingQuoteRow("a", FundingQuoteState.Quoted(quote().copy(quoteId = "q-a", sendAmount = "52000000"))))
+        val quotedA = FundingQuoteRow("a", FundingQuoteState.Quoted(quote().copy(quoteId = "q-a", sendAmount = "52000000")))
+        quoteLists.emit(list(quotedA, FundingQuoteRow("b", FundingQuoteState.Pending), best = "a"))
         runCurrent()
         assertFalse(answer.isCompleted)
 
-        quoteRows.emit(FundingQuoteRow("b", FundingQuoteState.Quoted(quote().copy(quoteId = "q-b", sendAmount = "51800000"))))
+        quoteLists.emit(list(quotedA, FundingQuoteRow("b", FundingQuoteState.Quoted(quote().copy(quoteId = "q-b", sendAmount = "51800000"))), best = "b"))
         runCurrent()
 
         assertEquals(FundingOverlayOutcome.STARTED, answer.await())
@@ -159,17 +163,15 @@ class FundingViewModelTest {
         providerId = providerId,
         routes = listOf(
             FundingRoute(
-                mode = FundingMode.CRYPTO,
-                directions = listOf(RouteDirection.IN),
+                rail = FundingRail.CRYPTO,
+                directions = listOf(CoreFundingDirection.IN),
                 assets = listOf("USDT"),
                 networks = listOf("ethereum"),
                 countries = null,
-                requiresAccount = false,
             ),
         ),
         unsupported = emptyList(),
         limits = emptyList(),
-        backend = null,
     )
 
     /** The deposit screen keeps reading the session until the sheet goes, which in a test it never does. */
@@ -192,22 +194,23 @@ class FundingViewModelTest {
         expiresAt = null,
     )
 
+    private fun list(vararg rows: FundingQuoteRow, best: String?) =
+        FundingQuoteList(rows = rows.toList(), best = best, refreshAtMs = 60_000uL)
+
     private fun viewModel() = FundingViewModel(context, contexts, interactor, router, mockk(relaxed = true))
 
     private fun cardCandidate() = FundingCandidate(
         providerId = "ramp.dot",
         routes = listOf(
             FundingRoute(
-                mode = FundingMode.CARD,
-                directions = listOf(RouteDirection.IN),
+                rail = FundingRail.CARD,
+                directions = listOf(CoreFundingDirection.IN),
                 assets = listOf("EUR"),
                 networks = null,
                 countries = null,
-                requiresAccount = false,
             ),
         ),
         unsupported = emptyList(),
         limits = emptyList(),
-        backend = null,
     )
 }

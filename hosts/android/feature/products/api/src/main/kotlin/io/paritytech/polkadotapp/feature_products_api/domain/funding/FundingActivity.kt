@@ -27,8 +27,8 @@ data class FundingActivityItem(
 )
 
 sealed interface FundingActivityStatus {
-    /** In flight, with where it has got to; [delayed] when slower than the provider said. */
-    data class InProgress(val step: FundingActivityStep, val delayed: Boolean) : FundingActivityStatus
+    /** In flight, with where it has got to. */
+    data class InProgress(val step: FundingActivityStep) : FundingActivityStatus
 
     data object ToppedUp : FundingActivityStatus
 
@@ -36,7 +36,8 @@ sealed interface FundingActivityStatus {
 
     data object Refunded : FundingActivityStatus
 
-    data object PayoutFailed : FundingActivityStatus
+    /** The provider could not pay out; [refunded] is what its refund returned to the balance, once it has. */
+    data class PayoutFailed(val refunded: Balance?) : FundingActivityStatus
 
     data class Failed(val reason: FundingFailureReason) : FundingActivityStatus
 }
@@ -69,4 +70,7 @@ sealed interface FundingActivityStep {
 
     /** Value out, the provider retrying the payout. */
     data object RetryingPayout : FundingActivityStep
+
+    /** Slower than the time the chosen quote gave. */
+    data object TakingLonger : FundingActivityStep
 }

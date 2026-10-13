@@ -4,6 +4,7 @@ import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingOver
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingOverlayOutcome
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingOverlayRequest
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.ProviderFrameOutcome
+import io.paritytech.polkadotapp.feature_products_api.domain.funding.ProviderFrameTarget
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.toBalance
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.toDomain
@@ -26,7 +27,8 @@ import javax.inject.Inject
  * A started session runs on without its screens, so leaving one only hides it. A provider takes a frame that
  * answers before the user acted on it as the user giving up, so a hidden frame stays unanswered and the CASH
  * card can show it again. It answers `Closed` when the user says they sent a bank transfer, or once the host
- * sees the provider's part done: the payment seen or the session over.
+ * sees the provider's part done: the payment seen or the session over. An external page answers `Returned`
+ * once it reaches its return URL.
  */
 class AppFundingOverlay @Inject constructor(
     private val contexts: FundingOverlayContexts,
@@ -41,14 +43,18 @@ class AppFundingOverlay @Inject constructor(
         return context.awaitOutcome()
     }
 
-    override suspend fun presentProviderFrame(providerId: ProductId, intent: String, route: String): ProviderFrameOutcome {
+    override suspend fun presentProviderFrame(
+        providerId: ProductId,
+        intent: String,
+        target: ProviderFrameTarget,
+    ): ProviderFrameOutcome {
         val session = runtime.session(intent)
         val rail = session?.choice?.rail ?: FundingRail.CARD
 
         val frame = FundingFrameContext(
             providerId = providerId,
             intent = intent,
-            route = route,
+            target = target,
             showsSentFunds = rail == FundingRail.BANK && session?.direction == FundingDirection.IN,
         )
         frames.put(frame)
@@ -62,7 +68,7 @@ class AppFundingOverlay @Inject constructor(
                     .map { }
                     .onStart { emit(Unit) }
                     .first { runtime.paymentMoved(intent) }
-                frame.answer(ProviderFrameOutcome.CLOSED)
+                frame.answer(ProviderFrameOutcome.Closed)
             }
             frame.awaitOutcome().also { watcher.cancel() }
         }

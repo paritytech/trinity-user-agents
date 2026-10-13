@@ -9,8 +9,12 @@ import io.paritytech.polkadotapp.feature_products_impl.data.repository.FundingHi
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingRuntime
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.toBalance
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.toDomain
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.emptyFlow
+import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.merge
@@ -25,50 +29,56 @@ import uniffi.truapi.FundingStage
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlin.time.Clock
-import kotlin.time.Duration.Companion.seconds
 import kotlin.time.Instant
 
 /**
  * The CASH card's funding lists: sessions still in the core, then the ended ones the host keeps.
  *
- * An ended session is written to the host's store, then acknowledged, after which the core drops it. Outbound
- * value waits for its payout outcome, or a day, before it is acknowledged; while it waits it stays in progress, and
- * its row is rewritten once the payout arrives.
+ * An ended session is written to the host's store, then acknowledged. The core still keeps a released withdrawal
+ * until its payout is reported, and a failed payout until its refund settles; such a session comes back
+ * unacknowledged when the provider reports, and its row is rewritten by intent.
  */
 @Singleton
 class FundingActivityCenter @Inject constructor(
     private val runtime: FundingRuntime,
     private val history: FundingHistoryRepository,
 ) {
-    private companion object {
-        val REFRESH_INTERVAL = 10.seconds
-    }
-
     private val reloadMutex = Mutex()
 
-    /** Re-read on every session change, and on a timer so a step reached without a status change still shows. */
-    fun observe(): Flow<FundingActivity> =
-        merge(runtime.sessionChanges().map { }, ticker())
-            .onStart { emit(Unit) }
-            .map { reloadMutex.withLock { reload(Clock.System.now()) } }
+    /** The earliest time a session in flight turns "taking longer", which no status change announces. */
+    private val nextLonger = MutableStateFlow<Instant?>(null)
 
-    private fun ticker(): Flow<Unit> = flow {
-        while (true) {
-            delay(REFRESH_INTERVAL)
-            emit(Unit)
+    /** Re-read on every session change, and when a session in flight turns "taking longer". */
+    fun observe(): Flow<FundingActivity> =
+        merge(runtime.sessionChanges().map { }, longerWakes())
+            .onStart { emit(Unit) }
+            .map { reloadMutex.withLock { reload() } }
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    private fun longerWakes(): Flow<Unit> = nextLonger.flatMapLatest { at ->
+        if (at == null) {
+            emptyFlow()
+        } else {
+            flow {
+                delay(at - Clock.System.now())
+                emit(Unit)
+            }
         }
     }
 
-    private suspend fun reload(now: Instant): FundingActivity {
+    private suspend fun reload(): FundingActivity {
         val entries = runtime.sessions().map { it to runtime.progress(it.intent) }
 
-        val inFlight = entries
-            .filter { (session, progress) -> FundingSessionStatus.isInFlight(session, progress) }
-            .map { (session, progress) -> inFlightItem(session, progress, now) }
+        val inFlight = entries.mapNotNull { (session, progress) -> inFlightItem(session, progress) }
         val inFlightIds = inFlight.mapTo(mutableSetOf()) { it.id }
+        nextLonger.value = entries
+            .filter { (session, _) -> session.intent in inFlightIds }
+            .mapNotNull { (_, progress) -> progress?.longerAtMs?.let { Instant.fromEpochMilliseconds(it.toLong()) } }
+            .filter { it > Clock.System.now() }
+            .minOrNull()
 
+        settle(entries)
         val ended = entries.mapNotNull { (session, progress) -> FundingRecord.of(session, progress) }
-        settle(ended, now)
 
         val stored = history.records().logFailure("Funding history read failed").getOrDefault(emptyList())
         val storedIds = stored.mapTo(mutableSetOf()) { it.intent }
@@ -80,17 +90,20 @@ class FundingActivityCenter @Inject constructor(
         )
     }
 
-    /** One row per ended session, then the core may drop it; a failed write leaves it in the core for next time. */
-    private suspend fun settle(ended: List<FundingRecord>, now: Instant) {
-        ended.forEach { record ->
-            val saved = history.save(record).logFailure("Funding history write failed").isSuccess
-            if (saved && record.isFinal(now)) {
-                runtime.acknowledge(record.intent).logFailure("Funding acknowledgement failed")
+    /** One row per ended session the host has not acknowledged yet; a failed write leaves it unacknowledged for next time. */
+    private suspend fun settle(entries: List<Pair<FundingSession, FundingProgress?>>) {
+        entries
+            .filter { (session, _) -> !session.acknowledged }
+            .forEach { (session, progress) ->
+                val record = FundingRecord.of(session, progress) ?: return@forEach
+                val saved = history.save(record).logFailure("Funding history write failed").isSuccess
+                if (saved) runtime.acknowledge(record.intent).logFailure("Funding acknowledgement failed")
             }
-        }
     }
 
-    private fun inFlightItem(session: FundingSession, progress: FundingProgress?, now: Instant): FundingActivityItem {
+    /** The row of a session the core still has in progress, or `null` once its status is final. */
+    private fun inFlightItem(session: FundingSession, progress: FundingProgress?): FundingActivityItem? {
+        val status = progress?.status?.toActivityStatus(session.direction) as? FundingActivityStatus.InProgress ?: return null
         val choice = session.choice
         val inbound = session.direction == FundingDirection.IN
         val debited = (session.stage as? FundingStage.Released)?.debited
@@ -102,7 +115,7 @@ class FundingActivityCenter @Inject constructor(
             rail = choice?.rail?.toType(),
             amount = (debited ?: session.amount ?: quoted)?.toBalance(),
             date = Instant.fromEpochMilliseconds(session.openedAtMs.toLong()),
-            status = FundingSessionStatus.of(session, progress, now),
+            status = status,
         )
     }
 
@@ -115,7 +128,7 @@ class FundingActivityCenter @Inject constructor(
         status = when (outcome) {
             FundingRecordOutcome.Delivered -> FundingActivityStatus.ToppedUp
             FundingRecordOutcome.Released ->
-                if (payout is FundingRecordPayout.Failed) FundingActivityStatus.PayoutFailed else FundingActivityStatus.Sent
+                if (payout is FundingRecordPayout.Failed) FundingActivityStatus.PayoutFailed(refunded) else FundingActivityStatus.Sent
 
             FundingRecordOutcome.Refunded -> FundingActivityStatus.Refunded
             is FundingRecordOutcome.Failed -> FundingActivityStatus.Failed(outcome.reason)

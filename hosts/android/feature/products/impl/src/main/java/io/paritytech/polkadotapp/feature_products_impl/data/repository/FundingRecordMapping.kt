@@ -41,6 +41,7 @@ internal fun FundingRecord.toLocal() = ProductFundingRecordLocal(
         null -> null
     },
     payoutFailureReason = (payout as? FundingRecordPayout.Failed)?.reason,
+    refundedPlanks = refunded?.value,
     transactionId = transactionId,
     reference = reference,
     openedAtMillis = openedAt.toEpochMilliseconds(),
@@ -75,6 +76,7 @@ internal fun ProductFundingRecordLocal.toRecord() = FundingRecord(
         ProductFundingRecordLocal.Payout.FAILED -> FundingRecordPayout.Failed(payoutFailureReason.orEmpty())
         null -> null
     },
+    refunded = refundedPlanks?.intoBalance(),
     transactionId = transactionId,
     reference = reference,
     openedAt = Instant.fromEpochMilliseconds(openedAtMillis),

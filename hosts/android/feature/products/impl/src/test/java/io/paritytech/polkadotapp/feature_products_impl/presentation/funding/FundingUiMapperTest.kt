@@ -7,12 +7,12 @@ import org.junit.Assert.assertEquals
 import org.junit.Test
 import uniffi.truapi.FundingCandidate
 import uniffi.truapi.FundingDirection
-import uniffi.truapi.FundingMode
 import uniffi.truapi.FundingQuote
+import uniffi.truapi.FundingQuoteList
 import uniffi.truapi.FundingQuoteRow
 import uniffi.truapi.FundingQuoteState
+import uniffi.truapi.FundingRail
 import uniffi.truapi.FundingRoute
-import uniffi.truapi.RouteDirection
 import kotlin.time.Instant
 
 class FundingUiMapperTest {
@@ -25,17 +25,12 @@ class FundingUiMapperTest {
     }
 
     @Test
-    fun `the cheapest of several quotes is marked and the countdown runs to the refresh`() {
+    fun `the core's best of several quotes is marked and the countdown runs to its refresh`() {
         val state = flow()
             .let { it.asking(requireNotNull(it.currentAsk())) }
-            .receiving(quoted("a", send = "5200", expiresAt = 90_000uL))
-            .receiving(quoted("b", send = "5100", expiresAt = 60_000uL))
+            .receiving(bothQuoted())
 
-        val providers = state.toProvidersUiState(
-            emptyMap(),
-            now = Instant.fromEpochMilliseconds(30_000),
-            refreshAt = Instant.fromEpochMilliseconds(60_000),
-        )
+        val providers = state.toProvidersUiState(emptyMap(), now = Instant.fromEpochMilliseconds(30_000))
 
         assertEquals(FundingCountdown.Remaining(30), providers.countdown)
         assertEquals(listOf(null, FundingProviderBadge.LowestPrice), providers.rows.map { it.badge })
@@ -49,11 +44,10 @@ class FundingUiMapperTest {
     fun `asking the same again keeps what each price was for while the new one loads`() {
         val quotedOnce = flow()
             .let { it.asking(requireNotNull(it.currentAsk())) }
-            .receiving(quoted("a", send = "5200", expiresAt = 90_000uL))
-            .receiving(quoted("b", send = "5100", expiresAt = 60_000uL))
+            .receiving(bothQuoted())
 
         val providers = quotedOnce.asking(requireNotNull(quotedOnce.currentAsk()))
-            .toProvidersUiState(emptyMap(), now = Instant.fromEpochMilliseconds(60_000), refreshAt = null)
+            .toProvidersUiState(emptyMap(), now = Instant.fromEpochMilliseconds(60_000))
 
         assertEquals(FundingCountdown.Remaining(0), providers.countdown)
         assertEquals(FundingProviderPrice.Updating(forAmount = "$50 CASH"), providers.rows[0].price)
@@ -72,17 +66,21 @@ class FundingUiMapperTest {
         providerId = providerId,
         routes = listOf(
             FundingRoute(
-                mode = FundingMode.CARD,
-                directions = listOf(RouteDirection.IN),
+                rail = FundingRail.CARD,
+                directions = listOf(FundingDirection.IN),
                 assets = listOf("EUR"),
                 networks = null,
                 countries = null,
-                requiresAccount = false,
             ),
         ),
         unsupported = emptyList(),
         limits = emptyList(),
-        backend = null,
+    )
+
+    private fun bothQuoted() = FundingQuoteList(
+        rows = listOf(quoted("a", send = "5200", expiresAt = 90_000uL), quoted("b", send = "5100", expiresAt = 60_000uL)),
+        best = "b",
+        refreshAtMs = 60_000uL,
     )
 
     private fun quoted(providerId: String, send: String, expiresAt: ULong) = FundingQuoteRow(

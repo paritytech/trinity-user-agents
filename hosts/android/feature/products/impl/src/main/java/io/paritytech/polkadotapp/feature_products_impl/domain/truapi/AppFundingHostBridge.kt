@@ -8,15 +8,18 @@ import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingOver
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingOverlayOutcome
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingOverlayRequest
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.ProviderFrameOutcome
+import io.paritytech.polkadotapp.feature_products_api.domain.funding.ProviderFrameTarget
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
+import io.paritytech.polkadotapp.feature_products_impl.domain.funding.DeviceCountryDetector
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import timber.log.Timber
 import uniffi.truapi.FundingFrameOutcome
+import uniffi.truapi.FundingFrameTarget
 import uniffi.truapi.FundingPresentOutcome
-import uniffi.truapi.FundingQuoteRow
+import uniffi.truapi.FundingQuoteList
 import uniffi.truapi.HostFundingStatusSubscribeItem
 import uniffi.truapi.U128
 import javax.inject.Inject
@@ -27,29 +30,22 @@ import uniffi.truapi.FundingDirection as CoreFundingDirection
 @Singleton
 class AppFundingHostBridge @Inject constructor(
     private val overlay: FundingOverlay,
+    private val countryDetector: DeviceCountryDetector,
 ) : FundingHostBridge {
-    private val sessionChanges = MutableSharedFlow<Unit>(
-        extraBufferCapacity = 1,
-        onBufferOverflow = BufferOverflow.DROP_OLDEST,
-    )
-
     private val changedSessions = MutableSharedFlow<String>(
         extraBufferCapacity = EVENT_BUFFER,
         onBufferOverflow = BufferOverflow.DROP_OLDEST,
     )
-    private val quoteRows = MutableSharedFlow<FundingQuoteUpdate>(
+    private val quoteLists = MutableSharedFlow<FundingQuoteListUpdate>(
         extraBufferCapacity = EVENT_BUFFER,
         onBufferOverflow = BufferOverflow.DROP_OLDEST,
     )
 
-    /** Emits whenever a session's status changes. */
-    fun sessionChanges(): SharedFlow<Unit> = sessionChanges.asSharedFlow()
-
     /** Emits the intent of every session whose status changed. */
     fun changedSessions(): SharedFlow<String> = changedSessions.asSharedFlow()
 
-    /** Emits every quote row the providers answer with, pending first. */
-    fun quoteRows(): SharedFlow<FundingQuoteUpdate> = quoteRows.asSharedFlow()
+    /** Emits every quote list the core sends: again as each provider answers, and at every refresh. */
+    fun quoteLists(): SharedFlow<FundingQuoteListUpdate> = quoteLists.asSharedFlow()
 
     override suspend fun presentFunding(
         productId: String?,
@@ -70,20 +66,28 @@ class AppFundingHostBridge @Inject constructor(
         }
     }
 
-    override suspend fun presentProviderFrame(providerId: String, intent: String, route: String): FundingFrameOutcome =
-        when (overlay.presentProviderFrame(ProductId.fromStoredValue(providerId), intent, route)) {
-            ProviderFrameOutcome.CLOSED -> FundingFrameOutcome.CLOSED
-            ProviderFrameOutcome.DISMISSED -> FundingFrameOutcome.DISMISSED
+    override suspend fun presentProviderFrame(providerId: String, intent: String, target: FundingFrameTarget): FundingFrameOutcome {
+        val frameTarget = when (target) {
+            is FundingFrameTarget.App -> ProviderFrameTarget.App(target.route)
+            is FundingFrameTarget.Page -> ProviderFrameTarget.Page(target.url, target.returnUrl)
         }
 
+        return when (val outcome = overlay.presentProviderFrame(ProductId.fromStoredValue(providerId), intent, frameTarget)) {
+            ProviderFrameOutcome.Closed -> FundingFrameOutcome.Closed
+            ProviderFrameOutcome.Dismissed -> FundingFrameOutcome.Dismissed
+            is ProviderFrameOutcome.Returned -> FundingFrameOutcome.Returned(outcome.url)
+        }
+    }
+
+    override suspend fun detectedCountry(): String? = countryDetector.detect()
+
     override fun fundingSessionChanged(intent: String, status: HostFundingStatusSubscribeItem) {
-        sessionChanges.tryEmit(Unit)
         changedSessions.tryEmit(intent)
     }
 
-    override fun fundingQuoteChanged(intent: String, row: FundingQuoteRow) {
-        Timber.tag("truapi.funding").d("quote %s: %s %s", intent, row.providerId, row.state)
-        quoteRows.tryEmit(FundingQuoteUpdate(intent, row))
+    override fun fundingQuotesChanged(intent: String, quotes: FundingQuoteList) {
+        Timber.tag("truapi.funding").d("quotes %s: best %s, %d rows", intent, quotes.best, quotes.rows.size)
+        quoteLists.tryEmit(FundingQuoteListUpdate(intent, quotes))
     }
 
     private companion object {
@@ -91,9 +95,9 @@ class AppFundingHostBridge @Inject constructor(
     }
 }
 
-data class FundingQuoteUpdate(
+data class FundingQuoteListUpdate(
     val intent: String,
-    val row: FundingQuoteRow,
+    val quotes: FundingQuoteList,
 )
 
 internal fun CoreFundingDirection.toDomain(): FundingDirection = when (this) {

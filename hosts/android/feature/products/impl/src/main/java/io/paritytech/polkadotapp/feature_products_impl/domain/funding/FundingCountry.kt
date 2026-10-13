@@ -30,10 +30,6 @@ object FundingCountries {
             .sortedWith { left, right -> collator.compare(left.name, right.name) }
     }
 
-    /** The region the device is set to, which the payment country starts at. */
-    fun detected(locale: Locale = Locale.getDefault()): FundingCountry? =
-        locale.country.takeIf(::isAlpha2)?.let { country(it, locale) }
-
     fun country(code: String, locale: Locale = Locale.getDefault()): FundingCountry? {
         val upper = code.uppercase(Locale.ROOT)
         if (!isAlpha2(upper)) return null

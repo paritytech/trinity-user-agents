@@ -10,8 +10,8 @@ class Migration70To71 : Migration(70, 71) {
             "CREATE TABLE IF NOT EXISTS `product_funding_records` (" +
                 "`intent` TEXT NOT NULL, `direction` TEXT NOT NULL, `rail` TEXT, `asset` TEXT, `providerId` TEXT, " +
                 "`requestedPlanks` TEXT, `settledPlanks` TEXT, `outcome` TEXT NOT NULL, `failureCode` TEXT, " +
-                "`failureMessage` TEXT, `payout` TEXT, `payoutFailureReason` TEXT, `transactionId` TEXT, " +
-                "`reference` TEXT, `openedAtMillis` INTEGER NOT NULL, `settledAtMillis` INTEGER NOT NULL, " +
+                "`failureMessage` TEXT, `payout` TEXT, `payoutFailureReason` TEXT, `refundedPlanks` TEXT, " +
+                "`transactionId` TEXT, `reference` TEXT, `openedAtMillis` INTEGER NOT NULL, `settledAtMillis` INTEGER NOT NULL, " +
                 "PRIMARY KEY(`intent`))"
         )
     }

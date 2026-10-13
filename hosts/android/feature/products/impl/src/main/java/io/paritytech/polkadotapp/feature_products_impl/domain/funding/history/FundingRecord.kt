@@ -11,7 +11,6 @@ import uniffi.truapi.FundingProgress
 import uniffi.truapi.FundingRail
 import uniffi.truapi.FundingSession
 import uniffi.truapi.FundingStage
-import kotlin.time.Duration.Companion.hours
 import kotlin.time.Instant
 
 /** One ended funding session as the host keeps it, once the core has handed it over and dropped it. */
@@ -25,15 +24,14 @@ data class FundingRecord(
     val settledAmount: Balance?,
     val outcome: FundingRecordOutcome,
     val payout: FundingRecordPayout?,
+    /** What the provider's refund of a failed payout returned to the balance, once its claim is final. */
+    val refunded: Balance?,
     val transactionId: String?,
     val reference: String?,
     val openedAt: Instant,
     val settledAt: Instant,
 ) {
     companion object {
-        /** Outbound value waits this long for the provider's payout outcome before the core may drop it. */
-        val PAYOUT_WAIT = 24.hours
-
         /** The record for a session that has ended, or `null` while it is open. */
         fun of(session: FundingSession, progress: FundingProgress?): FundingRecord? {
             val (outcome, amount, settledAtMs) = when (val stage = session.stage) {
@@ -53,18 +51,13 @@ data class FundingRecord(
                 settledAmount = amount?.toBalanceOrNull(),
                 outcome = outcome,
                 payout = progress?.payout?.toRecordPayout(),
+                refunded = (session.refund?.refunded ?: progress?.refunded)?.toBalanceOrNull(),
                 transactionId = progress?.transactionId,
                 reference = progress?.reference,
                 openedAt = Instant.fromEpochMilliseconds(session.openedAtMs.toLong()),
                 settledAt = Instant.fromEpochMilliseconds(settledAtMs.toLong()),
             )
         }
-    }
-
-    /** Outbound value is done once the provider says it paid out; until then, or for a day, the core keeps it. */
-    fun isFinal(now: Instant): Boolean {
-        val awaitsPayout = direction == FundingDirection.OUT && outcome == FundingRecordOutcome.Released && payout == null
-        return !awaitsPayout || now - settledAt >= PAYOUT_WAIT
     }
 }
 

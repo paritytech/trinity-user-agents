@@ -147,8 +147,9 @@ data class FundingCountryUi(
     val minimum: String?,
     val selected: Boolean,
 ) {
+    /** A country below its minimum can still be picked; the amount sheet then asks for at least that. */
     val enabled: Boolean
-        get() = !refused && minimum == null
+        get() = !refused
 }
 
 data class FundingCountryUiState(

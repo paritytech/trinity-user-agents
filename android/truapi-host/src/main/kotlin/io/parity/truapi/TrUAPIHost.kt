@@ -93,13 +93,16 @@ import uniffi.truapi.HostContactMatches
 import uniffi.truapi.HostContactPick
 import uniffi.truapi.NativeContactsCallbacks
 import uniffi.truapi.FundingCandidate
+import uniffi.truapi.FundingCountry
 import uniffi.truapi.FundingDirection
 import uniffi.truapi.FundingFrameOutcome
+import uniffi.truapi.FundingFrameTarget
 import uniffi.truapi.FundingPresentOutcome
 import uniffi.truapi.FundingProgress
 import uniffi.truapi.FundingProviderEntry
 import uniffi.truapi.FundingQuoteAsk
-import uniffi.truapi.FundingQuoteRow
+import uniffi.truapi.FundingQuoteList
+import uniffi.truapi.FundingRail
 import uniffi.truapi.FundingSession
 import uniffi.truapi.HostFundingStatusSubscribeItem
 import uniffi.truapi.NativeFundingCallbacks
@@ -778,19 +781,29 @@ interface FundingHostBridge {
         amount: U128?,
     ): FundingPresentOutcome
 
-    /** Show provider [providerId]'s screen at [route] for session [intent] and report how it closed. */
+    /**
+     * Show [target] for provider [providerId]'s session [intent] in a frame the host owns, and report how it
+     * closed. A page is a checked https URL: show its origin, and answer [FundingFrameOutcome.Returned] when it
+     * reaches its return URL.
+     */
     @Throws(HostRejection::class)
-    suspend fun presentProviderFrame(providerId: String, intent: String, route: String): FundingFrameOutcome
+    suspend fun presentProviderFrame(providerId: String, intent: String, target: FundingFrameTarget): FundingFrameOutcome
+
+    /**
+     * The country the user is likely in, as an ISO 3166-1 alpha-2 code: the device's coarse location when
+     * already permitted, then its SIM or network country, then its locale's region. Never asks for a
+     * permission. `null` when nothing says.
+     */
+    suspend fun detectedCountry(): String?
 
     /** A session's status changed. Runs inline on the core's thread, so return promptly. */
     fun fundingSessionChanged(intent: String, status: HostFundingStatusSubscribeItem) {}
 
     /**
-     * One provider's row of a quote list requested with
-     * [TrUAPIHostRuntime.getFundingQuote]: pending first, then its quote or
-     * why it is unavailable. Runs inline on the core's thread.
+     * The quote list requested with [TrUAPIHostRuntime.getFundingQuote]: again whenever a provider answers,
+     * and each time the core asks every provider again at its `refreshAtMs`. Runs inline on the core's thread.
      */
-    fun fundingQuoteChanged(intent: String, row: FundingQuoteRow) {}
+    fun fundingQuotesChanged(intent: String, quotes: FundingQuoteList) {}
 }
 
 private class FundingCallbackAdapter(private val bridge: FundingHostBridge) : NativeFundingCallbacks {
@@ -804,8 +817,11 @@ private class FundingCallbackAdapter(private val bridge: FundingHostBridge) : Na
     override suspend fun presentProviderFrame(
         providerId: String,
         intent: String,
-        route: String,
-    ): FundingFrameOutcome = withHostRejection { bridge.presentProviderFrame(providerId, intent, route) }
+        target: FundingFrameTarget,
+    ): FundingFrameOutcome = withHostRejection { bridge.presentProviderFrame(providerId, intent, target) }
+
+    // Infallible across the FFI: a host that cannot tell answers no country.
+    override suspend fun detectedCountry(): String? = runCatching { bridge.detectedCountry() }.getOrNull()
 
     // Infallible across the FFI, as `onCoreLog` is.
     override fun fundingSessionChanged(intent: String, status: HostFundingStatusSubscribeItem) {
@@ -813,8 +829,8 @@ private class FundingCallbackAdapter(private val bridge: FundingHostBridge) : Na
     }
 
     // Infallible across the FFI, as `onCoreLog` is.
-    override fun fundingQuoteChanged(intent: String, row: FundingQuoteRow) {
-        runCatching { bridge.fundingQuoteChanged(intent, row) }
+    override fun fundingQuotesChanged(intent: String, quotes: FundingQuoteList) {
+        runCatching { bridge.fundingQuotesChanged(intent, quotes) }
     }
 }
 
@@ -948,11 +964,27 @@ class TrUAPIHostRuntime @Throws(NativeRuntimeConfigException::class) constructor
     fun fundingCandidates(intent: String): List<FundingCandidate> = inner.fundingCandidates(intent)
 
     /**
-     * Ask the candidates for session [intent] to price [ask]. Each provider's
-     * row arrives through [FundingHostBridge.fundingQuoteChanged].
+     * What the core knows about each country for session [intent] on [rail] and [asset]: supported, with the
+     * lowest minimum a provider showed there, or unsupported. A country the core knows nothing about is left out.
+     */
+    fun fundingCountries(intent: String, rail: FundingRail, asset: String): List<FundingCountry> =
+        inner.fundingCountries(intent, rail, asset)
+
+    /** The country quotes go by until the user picks one, as [FundingHostBridge.detectedCountry] last answered. */
+    suspend fun detectedFundingCountry(): String? = inner.detectedFundingCountry()
+
+    /**
+     * Ask every funding provider to price [ask] for session [intent]. The list arrives through
+     * [FundingHostBridge.fundingQuotesChanged], and is asked for again every minute until the session is handed
+     * to a provider or ends, the host asks for another [ask], or calls [stopFundingQuotes].
      */
     fun getFundingQuote(intent: String, ask: FundingQuoteAsk) {
         inner.getFundingQuote(intent, ask)
+    }
+
+    /** Stop asking again for session [intent]'s quotes, as when the user leaves the provider list. */
+    fun stopFundingQuotes(intent: String) {
+        inner.stopFundingQuotes(intent)
     }
 
     /** Hand session [intent] to provider [providerId], on [quoteId] when the user chose a quote. */

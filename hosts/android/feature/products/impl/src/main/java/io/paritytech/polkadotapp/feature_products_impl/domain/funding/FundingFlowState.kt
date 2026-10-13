@@ -1,17 +1,20 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.funding
 
 import uniffi.truapi.FundingCandidate
+import uniffi.truapi.FundingCountrySupport
 import uniffi.truapi.FundingDirection
 import uniffi.truapi.FundingQuote
 import uniffi.truapi.FundingQuoteAsk
+import uniffi.truapi.FundingQuoteList
 import uniffi.truapi.FundingQuoteRefusal
-import uniffi.truapi.FundingQuoteRow
 import uniffi.truapi.FundingQuoteState
 import uniffi.truapi.FundingRail
 import uniffi.truapi.FundingRoute
 import java.math.BigDecimal
 import java.math.RoundingMode
 import java.util.Locale
+import kotlin.time.Instant
+import uniffi.truapi.FundingCountry as CoreFundingCountry
 
 /** Why the typed amount cannot go ahead. */
 sealed interface FundingAmountIssue {
@@ -47,6 +50,12 @@ data class FundingFlowState(
     val ask: FundingQuoteAsk?,
     /** The quotes on screen before the same ask went out again, shown greyed while the new ones arrive. */
     val staleQuotes: Map<String, FundingQuote> = emptyMap(),
+    /** The provider the core marks best among the quotes. */
+    val best: String? = null,
+    /** When the core asks every provider again. */
+    val refreshAt: Instant? = null,
+    /** What the core knows about each country on this rail and asset, by ISO code. */
+    val countrySupport: Map<String, FundingCountrySupport> = emptyMap(),
 ) {
     companion object {
         private const val DEFAULT_FIAT = "USD"
@@ -119,9 +128,9 @@ data class FundingFlowState(
             refusalForCurrentAmount?.let { return it }
 
             val limits = learnedLimits
+            val minimum = countryMinimum ?: limits.minimum
             return when {
-                amount.signum() > 0 && limits.minimum != null && amount < limits.minimum ->
-                    FundingAmountIssue.BelowMinimum(limits.minimum)
+                amount.signum() > 0 && minimum != null && amount < minimum -> FundingAmountIssue.BelowMinimum(minimum)
 
                 limits.maximum != null && amount > limits.maximum -> FundingAmountIssue.AboveMaximum(limits.maximum)
 
@@ -162,22 +171,9 @@ data class FundingFlowState(
     val quotedProviders: List<Pair<String, FundingQuote>>
         get() = rows.mapNotNull { (providerId, state) -> state.quote?.let { providerId to it } }
 
-    /**
-     * The cheapest quote: least to pay for value in, most received for value out.
-     *
-     * The core is to mark the best quote itself; this goes once it does.
-     */
-    val bestProviderId: String?
-        get() {
-            val unit = quoteUnit
-            return when (direction) {
-                FundingDirection.IN -> quotedProviders.minByOrNull { unit.decimal(it.second.sendAmount) }?.first
-                FundingDirection.OUT -> quotedProviders.maxByOrNull { unit.decimal(it.second.receiveAmount) }?.first
-            }
-        }
-
+    /** The user's choice while its quote stands, otherwise the one the core marks best. */
     val selectedProviderId: String?
-        get() = chosenProviderId?.takeIf { rows[it]?.quote != null } ?: bestProviderId
+        get() = chosenProviderId?.takeIf { rows[it]?.quote != null } ?: best?.takeIf { rows[it]?.quote != null }
 
     val selectedQuote: FundingQuote?
         get() = selectedProviderId?.let { rows[it]?.quote }
@@ -215,41 +211,19 @@ data class FundingFlowState(
             .distinct()
             .map(::FundingToken)
 
-    /** Countries no provider serving this rail takes payment from: one provider refusing is not enough. */
+    /** Countries the core says no provider on this rail and asset takes payment from. */
     val unsupportedCountries: Set<String>
-        get() {
-            val serving = servingCandidates
-            if (serving.isEmpty()) return emptySet()
+        get() = countrySupport.filterValues { it is FundingCountrySupport.Unsupported }.keys
 
-            val refused = serving
-                .map { candidate ->
-                    candidate.unsupported
-                        .filter { it.rail == rail }
-                        .mapNotNull { it.country?.uppercase(Locale.ROOT) }
-                        .toSet()
-                }
-                .reduce { all, next -> all intersect next }
-                .toMutableSet()
-
-            val askedCountry = ask?.country
-            val everyRowRefusedCountry = rows.isNotEmpty() &&
-                rows.values.all { it.refusal == FundingQuoteRefusal.CountryUnsupported }
-            if (everyRowRefusedCountry && askedCountry != null) refused += askedCountry.uppercase(Locale.ROOT)
-
-            return refused
-        }
-
-    /**
-     * The least a country takes, learned from every provider refusing the asked amount there as too low.
-     *
-     * The core is to report each country's status itself; this goes once it does.
-     */
+    /** The least each supported country takes, where a provider showed one. */
     val countryMinimums: Map<String, BigDecimal>
-        get() {
-            val asked = ask?.country?.uppercase(Locale.ROOT) ?: return emptyMap()
-            val minimum = (refusalForCurrentAmount as? FundingAmountIssue.BelowMinimum)?.minimum ?: return emptyMap()
-            return mapOf(asked to minimum)
-        }
+        get() = countrySupport.mapNotNull { (code, support) ->
+            (support as? FundingCountrySupport.Supported)?.min?.let { code to cash.decimal(it) }
+        }.toMap()
+
+    /** The least the payment country takes, which the amount must reach. */
+    val countryMinimum: BigDecimal?
+        get() = country?.code?.uppercase(Locale.ROOT)?.let(countryMinimums::get)
 
     fun currentAsk(): FundingQuoteAsk? {
         if (amount.signum() <= 0) return null
@@ -289,7 +263,26 @@ data class FundingFlowState(
         ask = newAsk,
         rows = servingCandidates.associate { it.providerId to FundingQuoteState.Pending },
         staleQuotes = if (newAsk == ask) quotedProviders.toMap() else emptyMap(),
+        best = null,
+        refreshAt = null,
     )
 
-    fun receiving(row: FundingQuoteRow): FundingFlowState = copy(rows = rows + (row.providerId to row.state))
+    /** The core's latest list. A row back to pending at a refresh keeps its last quote greyed until it answers. */
+    fun receiving(list: FundingQuoteList): FundingFlowState {
+        val newRows = list.rows.associate { it.providerId to it.state }
+        val stale = newRows
+            .filterValues { it.isPending }
+            .mapNotNull { (providerId, _) -> (rows[providerId]?.quote ?: staleQuotes[providerId])?.let { providerId to it } }
+            .toMap()
+
+        return copy(
+            rows = newRows,
+            staleQuotes = stale,
+            best = list.best,
+            refreshAt = Instant.fromEpochMilliseconds(list.refreshAtMs.toLong()),
+        )
+    }
+
+    fun withCountrySupport(countries: List<CoreFundingCountry>): FundingFlowState =
+        copy(countrySupport = countries.associate { it.country.uppercase(Locale.ROOT) to it.support })
 }
