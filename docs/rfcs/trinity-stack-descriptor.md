@@ -215,6 +215,11 @@ type Asset = {
 The types and the format rules below are normative. A JSON Schema and conformance vectors that follow them will be
 published with the first reader implementation. Where they differ from this RFC, this RFC is authoritative.
 
+The format rules apply to the fields and service kinds this RFC defines. A reader first ignores fields it does not know
+and drops service entries of kinds it does not know, then validates what remains, so an extension can never make a
+reader refuse a descriptor. The JSON Schema allows additional properties, and a new service kind defines its own URL
+schemes.
+
 - A descriptor MUST be I-JSON (RFC 7493): valid UTF-8, with no duplicate member names. Readers MUST refuse one that is
   not.
 - Each chain `role`, each service `kind` and each `Asset.role` MUST appear at most once. A descriptor MUST have exactly
@@ -404,10 +409,10 @@ type Envelope = {
 
 ### Validation
 
-A reader MUST refuse a descriptor that breaks a format rule, as a whole. For each chain it uses, it MUST check that the
-genesis hash the chain reports equals `genesisHash`, and that each spec it loads matches its `sha256` and its chain's
-`genesisHash`, and MUST NOT use a chain that fails. A chain that cannot be reached is unavailable, not wrong. The
-follow-up RFCs add host checks, such as how far a host trusts what a chain answers.
+A reader MUST refuse a descriptor that is not I-JSON, or whose known fields break a format rule, as a whole. For each
+chain it uses, it MUST check that the genesis hash the chain reports equals `genesisHash`, and that each spec it loads
+matches its `sha256` and its chain's `genesisHash`, and MUST NOT use a chain that fails. A chain that cannot be reached
+is unavailable, not wrong. The follow-up RFCs add host checks, such as how far a host trusts what a chain answers.
 
 ### Publishing
 
