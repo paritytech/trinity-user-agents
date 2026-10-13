@@ -27,7 +27,6 @@ class TrUAPIProductTabSessionFactory @Inject constructor(
             NavigationPolicy.InlineNavigation(onDeeplinkNavigation = onDeeplink),
             allowIframes = true,
             scope,
-            bundledProduct = null,
         )
 
         val hostApiNavigation = NavigationPolicy.HostApiNavigation(
@@ -36,7 +35,7 @@ class TrUAPIProductTabSessionFactory @Inject constructor(
             dotNsTldProvider = dotNsTldProvider,
         )
 
-        sessionStarter.start(provider, url, scope, hostApiNavigation, bundledProductId = null)
+        sessionStarter.start(provider, url, scope, hostApiNavigation)
         return provider
     }
 }

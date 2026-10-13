@@ -49,7 +49,7 @@ class NativeSpaHost @Inject constructor(
     @param:ApplicationContext private val context: Context,
 ) : SpaHost {
     context(scope: ComputationalScope, messageDisplay: MessageDisplay)
-    override fun createSession(initialUrl: String): SpaHostSession {
+    override fun createSession(initialUrl: String, underCard: Boolean): SpaHostSession {
         lateinit var webViewProvider: BrowserWebViewProvider
 
         val webViewNavigation = NavigationPolicy.InlineNavigation(
@@ -65,8 +65,7 @@ class NativeSpaHost @Inject constructor(
             initialUrl = initialUrl,
             navigationPolicy = webViewNavigation,
             allowIframes = true,
-            scope = scope,
-            bundledProduct = null,
+            scope = scope
         )
 
         val callingProductIdProvider = webViewProvider.callingProductIdProvider

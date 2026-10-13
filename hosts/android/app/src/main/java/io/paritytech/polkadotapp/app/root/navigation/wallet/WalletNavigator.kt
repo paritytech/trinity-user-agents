@@ -36,6 +36,4 @@ class PocketNavigator @Inject constructor(
     override fun openScanAddressQr() =
         performNavigation(R.id.action_sendPaymentFragment_to_scanAddressQrFragment)
 
-    override fun openCollectibles() =
-        performNavigation(R.id.action_global_to_collectiblesFragment)
 }

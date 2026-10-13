@@ -40,7 +40,6 @@ class NativeProductTabSessionFactory @Inject constructor(
             NavigationPolicy.InlineNavigation(onDeeplinkNavigation = onDeeplink),
             allowIframes = true,
             scope,
-            bundledProduct = null,
         )
 
         // Keep the product's worker alive for as long as its full-page screen is open. A product

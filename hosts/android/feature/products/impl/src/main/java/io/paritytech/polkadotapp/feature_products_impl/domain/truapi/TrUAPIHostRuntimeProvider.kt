@@ -21,6 +21,7 @@ import io.paritytech.polkadotapp.feature_dotns_api.domain.getTldRetrying
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_impl.di.TrUAPIChainHttpClient
 import io.paritytech.polkadotapp.feature_products_impl.domain.bundled.BundledProducts
+import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.worker.CoreDurableRecoveryWorker
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.worker.TrUAPIWorkerSupervisor
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.worker.WorkerDemand
 import kotlinx.coroutines.CoroutineScope
@@ -76,6 +77,7 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
     private val contactsBridge: AppContactsHostBridge,
     private val fundingBridge: AppFundingHostBridge,
     private val bundledProducts: BundledProducts,
+    private val scannerBridge: TrUAPIProductScans,
     // Lazy: the supervisor boots workers on this runtime, and reports back through this bridge.
     private val workerSupervisor: Lazy<TrUAPIWorkerSupervisor>,
     dispatchers: CoroutineDispatchers,
@@ -130,6 +132,7 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
             .takeIf { it.isNotEmpty() }
             ?.let { providers -> runCatching { runtime.setFundingProviders(providers) } }
             ?.logFailure("TrUAPI refused the bundled funding providers")
+        runtime.setScanner(scannerBridge)
         observeContactRemovals(runtime)
         chainProvider.attach(
             onResponse = runtime::notifyChainResponse,
@@ -232,6 +235,11 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
                 WorkerTransition.STOP -> WorkerDemand.STOP
             }
             workerSupervisor.get().onDemandChanged(ProductId.fromStoredValue(productId), demand)
+        }
+
+        // A run returns by itself once nothing is live, so `false` needs no action.
+        override fun durableWorkChanged(pending: Boolean) {
+            if (pending) CoreDurableRecoveryWorker.enqueue(context)
         }
 
         override suspend fun navigateTo(url: String) {

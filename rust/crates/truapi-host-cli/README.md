@@ -783,7 +783,8 @@ Scripts under `js/scripts/` include:
   complete in full and record in `TRUAPI_FUNDING_LEDGER`, and the core settles
   the session from them. `provide-cancel` also cancels it. The phase runs the
   host twice on the same storage, so the provider resumes an inbound session
-  after a restart with the state it saved. Every overlay request and session change is recorded in
+  after a restart with the state it saved. The scripted device detects the
+  country `TRUAPI_FUNDING_COUNTRY` names, if any. Every overlay request and session change is recorded in
   `TRUAPI_FUNDING_LOG`, which the cases read. CI runs this phase on every
   change to the core, the CLI or the client, with a fixed development signer
   in `HOST_CLI_SIGNER_MNEMONIC` so the host needs no account provisioned on
@@ -801,6 +802,11 @@ Scripts under `js/scripts/` include:
   which is what answers `NoContacts`. `TRUAPI_CONTACT_PICK` names which contact
   the picker offers; the approval surface asks about it like any other action,
   so a headless run approves it and an interactive one does not.
+
+  The CLI has no camera, so `scanner.scan` answers with `TRUAPI_SCAN_TEXT` as a
+  QR code, or as a dismissal when it is unset. The core still checks the code
+  against the product's request, so a text that misses the prefix answers
+  `Unknown`.
 
   The paired phase gives its pairing host a throwaway `--base-path` under
   `target/battery/pairing-host-state`, so it performs a real handshake on every

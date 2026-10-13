@@ -19,10 +19,10 @@ class RuntimeSelectingSpaHost @Inject constructor(
     private val bundledProducts: BundledProducts,
 ) : SpaHost {
     context(scope: ComputationalScope, messageDisplay: MessageDisplay)
-    override fun createSession(initialUrl: String): SpaHostSession =
+    override fun createSession(initialUrl: String, underCard: Boolean): SpaHostSession =
         // Only the TrUAPI runtime serves a product the app ships.
         if (runtimeSettings.isTrUAPIRuntimeEnabled() || bundledProducts.appFor(initialUrl) != null) {
-            truapi.createSession(initialUrl)
+            truapi.createSession(initialUrl, underCard)
         } else {
             native.createSession(initialUrl)
         }

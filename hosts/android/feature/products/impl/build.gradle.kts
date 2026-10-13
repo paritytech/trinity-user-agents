@@ -72,11 +72,17 @@ dependencies {
     implementation(libs.hilt.lifecycle.viewmodel.compose)
     implementation(libs.androidx.fragment.ktx)
     implementation(libs.androidx.webkit)
+    implementation(libs.androidx.work.runtime)
+    implementation(libs.hilt.androidx.work)
+    ksp(libs.hilt.androidx.compiler)
 
     implementation(libs.kotlinx.serialization.json)
     implementation(libs.nova.substrate.serialization)
 
     implementation(project(":bindings:truapi-host"))
+    // The app supplies ML Kit per flavor, as for :common.
+    compileOnly(libs.google.play.services.mlkit)
+    testImplementation(libs.google.play.services.mlkit)
     implementation(project(":bindings:sr25519-vrf"))
 
     implementation(project(":common"))

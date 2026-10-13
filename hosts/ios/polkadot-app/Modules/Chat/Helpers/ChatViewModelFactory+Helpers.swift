@@ -4,7 +4,7 @@ import SubstrateSdk
 import UIKit.UIImage
 
 extension ChatMetadata {
-    var chatContactInfo: ChatHeaderConfiguration {
+    func chatContactInfo(iconViewModelFactory: ProductIconViewModelMaking) -> ChatHeaderConfiguration {
         let avatarViewModel: AvatarViewModel = {
             if let image = peerMetadata.icon.image {
                 return .image(image)
@@ -14,18 +14,11 @@ extension ChatMetadata {
             return .colored(text: prefix, colorSeed: chatId.colorSeed)
         }()
 
-        let info: String? =
-            switch peerMetadata.contactSource {
-            case .chat:
-                nil
-            case .game(_, nil):
-                String(localized: .contactSourceDescriptionGameGeneric)
-            case let .game(_, date):
-                date?.formatted(.gameConnectionInfo)
-            }
+        let info: String? = nil
 
         return ChatHeaderConfiguration(
             avatarViewModel: avatarViewModel,
+            icon: peerMetadata.icon.imageViewModel(using: iconViewModelFactory),
             username: peerMetadata.name,
             additionalInfo: info
         )
