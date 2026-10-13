@@ -3,6 +3,7 @@ import os
 import AsyncExtensions
 import BulletinChain
 import ChainRegistry
+import DesignSystem
 import Products
 import TrUAPIHost
 
@@ -124,7 +125,8 @@ final class ProductPocketService: @unchecked Sendable {
         flowState: SPAFlowState,
         productFileProvider: any ChatProductFileProviding,
         chainRegistry: ChainRegistryProtocol,
-        gameReminders: any ProductGameReminderScheduling
+        gameReminders: any ProductGameReminderScheduling,
+        themeManager: any ThemeManagerProtocol
     ) {
         let manager = TrUAPIWorkerManager(
             builder: TrUAPIWorkerBuilder(
@@ -138,6 +140,7 @@ final class ProductPocketService: @unchecked Sendable {
                         gameReminders: gameReminders,
                         ipfsFetcher: IpfsFetcher(ipfsBaseURL: AppConfig.KnownIPFS.main),
                         hostProvider: flowState.hostProvider,
+                        themeManager: themeManager,
                         logger: logger
                     )
                 },
