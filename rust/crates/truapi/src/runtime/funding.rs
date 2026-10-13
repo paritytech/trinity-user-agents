@@ -556,7 +556,7 @@ impl FundingRegistry {
 			if session.expire_if_due(now_ms) {
 				changed.push(session.intent.clone());
 			}
-			if session.is_terminal() {
+			if !session.serves_provider() {
 				session.saved = None;
 			}
 		}

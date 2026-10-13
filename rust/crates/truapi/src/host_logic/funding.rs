@@ -449,6 +449,9 @@ impl FundingSession {
 			(matches!(update, FundingUpdate::Converting) &&
 				self.direction == FundingDirection::Out)
 		{
+			if !self.is_terminal() {
+				return Err(HostFundingReportError::OutOfOrder);
+			}
 			return self.report_after_release(update, now_ms);
 		}
 		if self.is_terminal() {
@@ -479,7 +482,7 @@ impl FundingSession {
 
 	/// Keep `state` from `provider_id` in place of what it saved before.
 	pub fn save(&mut self, provider_id: &str, state: Vec<u8>) -> Result<(), SaveRefusal> {
-		if self.is_terminal() || self.provider_id.as_deref() != Some(provider_id) {
+		if !self.serves_provider() || self.provider_id.as_deref() != Some(provider_id) {
 			return Err(SaveRefusal::NotFound);
 		}
 		if state.len() > MAX_SAVED_BYTES as usize {
@@ -490,15 +493,15 @@ impl FundingSession {
 	}
 
 	/// Store what the provider reports about paying the user out of a
-	/// released outbound session the host has not recorded yet: that it is
-	/// converting, then the payout outcome, each once.
+	/// released outbound session: that it is converting, then the payout
+	/// outcome, each once. The host is handed the session again, as what it
+	/// recorded no longer holds.
 	fn report_after_release(
 		&mut self,
 		update: FundingUpdate,
 		now_ms: u64,
 	) -> Result<(), HostFundingReportError> {
-		let released = matches!(self.stage, FundingStage::Released { .. });
-		if !released || self.acknowledged {
+		if !matches!(self.stage, FundingStage::Released { .. }) {
 			return Err(HostFundingReportError::NotFound);
 		}
 		let converting = self
@@ -509,17 +512,21 @@ impl FundingSession {
 			return Err(HostFundingReportError::OutOfOrder);
 		}
 		self.updates.push(FundingUpdateRecord { update, at_ms: now_ms });
+		self.acknowledged = false;
 		Ok(())
 	}
 
 	/// Whether the session's provider still has work on it: it is in flight,
-	/// or it is a released outbound session whose payout the provider has
-	/// not reported and the host has not recorded.
+	/// or it ended and the provider still owes the user something.
 	pub fn serves_provider(&self) -> bool {
-		!self.is_terminal() ||
-			(matches!(self.stage, FundingStage::Released { .. }) &&
-				!self.acknowledged &&
-				self.payout().is_none())
+		!self.is_terminal() || self.awaits_provider()
+	}
+
+	/// Whether the session ended but its provider still owes the user: a
+	/// released withdrawal whose payout outcome it has not reported. Whether
+	/// the host recorded the session does not matter.
+	pub fn awaits_provider(&self) -> bool {
+		matches!(self.stage, FundingStage::Released { .. }) && self.payout().is_none()
 	}
 
 	/// The provider's payout outcome, once it reported one.
@@ -650,11 +657,10 @@ impl FundingSession {
 		true
 	}
 
-	/// Whether the host still has to hear of the session when funding
-	/// resumes: it is in flight, or it ended and the host has not recorded
-	/// the outcome.
+	/// Whether the session is kept: it is in flight, the host has not
+	/// recorded its outcome, or its provider still owes the user.
 	pub fn needs_handoff(&self) -> bool {
-		!self.is_terminal() || !self.acknowledged
+		!self.is_terminal() || !self.acknowledged || self.awaits_provider()
 	}
 
 	/// Cancel at the user's request: end the session if no provider serves
@@ -842,14 +848,15 @@ impl<D> From<FundingSessionError> for crate::CallError<D> {
 	}
 }
 
-/// The sessions worth keeping: every open one, then the ended ones the host
-/// has not recorded yet, newest first up to a fixed bound. The host owns the
+/// The sessions worth keeping: every one its provider still has work on,
+/// then the ended ones the host has not recorded yet, newest first up to a
+/// fixed bound. The host owns the
 /// history; a session it has recorded is no longer kept.
 pub fn retained(sessions: impl IntoIterator<Item = FundingSession>) -> Vec<FundingSession> {
 	let (mut open, mut unrecorded): (Vec<_>, Vec<_>) = sessions
 		.into_iter()
 		.filter(FundingSession::needs_handoff)
-		.partition(|session| !session.is_terminal());
+		.partition(FundingSession::serves_provider);
 	unrecorded.sort_by_key(|session| core::cmp::Reverse(session.settled_at_ms()));
 	unrecorded.truncate(UNACKNOWLEDGED_LIMIT);
 	open.append(&mut unrecorded);
@@ -1493,54 +1500,93 @@ mod tests {
 	}
 
 	// The user's CASH has already left when a payout fails, so the session
-	// stays Released and the provider's payout outcome is kept beside it, once,
-	// and only until the host records the session.
+	// stays Released and the provider's payout outcome is kept beside it,
+	// once. A payout reported before the release is out of order, and one
+	// reported after the host recorded the session hands it to the host
+	// again.
 	#[test]
-	fn a_released_session_takes_one_payout_outcome_until_recorded() {
+	fn a_released_session_takes_one_payout_outcome() {
 		let mut released = served(FundingDirection::Out);
 		reported(&mut released, &[FundingUpdate::Collecting { payment_id: [3; 32], amount: 100 }]);
 		assert!(released.settle(100, NOW + 1));
 		let failed = FundingPayout::Failed { reason: "bank rejected the transfer".to_string() };
+		let paid_out = || FundingUpdate::Payout { outcome: FundingPayout::PaidOut };
+		let mut recorded = released.clone();
+		recorded.acknowledged = true;
 		let first = released.report(
 			PROVIDER,
 			FundingUpdate::Payout { outcome: failed.clone() },
 			|id| *id,
 			NOW + 2,
 		);
-		let second = released.report(
-			PROVIDER,
-			FundingUpdate::Payout { outcome: FundingPayout::PaidOut },
-			|id| *id,
-			NOW + 3,
-		);
+		let second = released.report(PROVIDER, paid_out(), |id| *id, NOW + 3);
 		let mut in_flight = served(FundingDirection::Out);
-		let too_early = in_flight.report(
-			PROVIDER,
-			FundingUpdate::Payout { outcome: FundingPayout::PaidOut },
-			|id| *id,
-			NOW,
-		);
-		let mut recorded = released.clone();
-		recorded.acknowledged = true;
-		recorded
-			.updates
-			.retain(|record| !matches!(record.update, FundingUpdate::Payout { .. }));
-		let after_recording = recorded.report(
-			PROVIDER,
-			FundingUpdate::Payout { outcome: FundingPayout::PaidOut },
-			|id| *id,
-			NOW + 4,
-		);
+		let too_early = in_flight.report(PROVIDER, paid_out(), |id| *id, NOW);
+		let after_recording = recorded.report(PROVIDER, paid_out(), |id| *id, NOW + 4);
 
 		assert_eq!(
-			(first, second, too_early, after_recording, released.progress().payout),
+			(
+				first,
+				second,
+				too_early,
+				after_recording,
+				recorded.acknowledged,
+				released.progress().payout,
+			),
 			(
 				Ok(()),
 				Err(HostFundingReportError::OutOfOrder),
-				Err(HostFundingReportError::NotFound),
-				Err(HostFundingReportError::NotFound),
+				Err(HostFundingReportError::OutOfOrder),
+				Ok(()),
+				false,
 				Some(failed),
 			)
+		);
+	}
+
+	// The host may record a withdrawal as soon as it is released, but the
+	// provider has yet to pay the user out, so the session is kept and
+	// served until it reports how that went.
+	#[test]
+	fn a_recorded_withdrawal_is_kept_until_its_payout_is_reported() {
+		let mut released = served(FundingDirection::Out);
+		reported(&mut released, &[FundingUpdate::Collecting { payment_id: [3; 32], amount: 100 }]);
+		assert!(released.settle(100, NOW + 1));
+		released.acknowledged = true;
+		let kept_before = retained([released.clone()]).len();
+		released
+			.report(
+				PROVIDER,
+				FundingUpdate::Payout { outcome: FundingPayout::PaidOut },
+				|id| *id,
+				NOW + 2,
+			)
+			.expect("reported");
+		released.acknowledged = true;
+
+		assert_eq!((kept_before, retained([released]).len()), (1, 0));
+	}
+
+	// A provider keeps what it saved until it has reported the payout, as a
+	// restarted worker still needs its order to pay the user out.
+	#[test]
+	fn a_released_withdrawal_keeps_its_saved_state_until_the_payout() {
+		let mut released = served(FundingDirection::Out);
+		reported(&mut released, &[FundingUpdate::Collecting { payment_id: [3; 32], amount: 100 }]);
+		assert!(released.settle(100, NOW + 1));
+		let saved_while_releasing = released.save(PROVIDER, b"order-7".to_vec());
+		released
+			.report(
+				PROVIDER,
+				FundingUpdate::Payout { outcome: FundingPayout::PaidOut },
+				|id| *id,
+				NOW + 2,
+			)
+			.expect("reported");
+
+		assert_eq!(
+			(saved_while_releasing, released.save(PROVIDER, b"order-8".to_vec())),
+			(Ok(()), Err(SaveRefusal::NotFound))
 		);
 	}
 
