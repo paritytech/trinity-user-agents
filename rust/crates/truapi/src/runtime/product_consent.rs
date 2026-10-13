@@ -154,7 +154,8 @@ fn skips_review(caller: AccountCaller<'_>, review: &UserConfirmationReview) -> b
 		UserConfirmationReview::SignPayload(SignPayloadReview::Product { .. }) |
 		UserConfirmationReview::SignRaw(SignRawReview::Product { .. }) |
 		UserConfirmationReview::CreateTransaction(CreateTransactionReview::Product { .. }) |
-		UserConfirmationReview::ResourceAllocation(_) => first_party,
+		UserConfirmationReview::ResourceAllocation(_) |
+		UserConfirmationReview::ProductSubtree(_) => first_party,
 		UserConfirmationReview::StatementStoreProductSign(review) => {
 			first_party || review.account.dot_ns_identifier == product.product_id
 		},

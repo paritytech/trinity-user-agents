@@ -6,7 +6,7 @@ use super::{
 		AccountCaller, AccountGrant, AccountGrantOutcome, AccountHolder, AccountInvocation,
 		AuthorityError, AuthoritySession, AutoSigningKey, BulletinAllowanceKey,
 		CreateTransactionAuthorityRequest, SignPayloadAuthorityRequest, SignRawAuthorityRequest,
-		StatementStoreAllowanceKey,
+		StatementStoreAllowanceKey, SubtreeResolution,
 	},
 	host_grants::{GrantBarrier, HostGrantGuard, HostGrantStore},
 	product_consent::ProductConsent,
@@ -33,7 +33,11 @@ use crate::{
 		raw_signing::raw_payload_bytes,
 		session::{SessionInfo, SessionState},
 	},
-	platform::{PermissionAuthorizationStatus, ProductContext, normalize_product_identifier},
+	platform::{
+		PermissionAuthorizationStatus, ProductContext, ProductSubtreeReview,
+		ResourceAllocationReview, SignVrfReview, StatementStoreProductSignReview,
+		UserConfirmationReview, normalize_product_identifier,
+	},
 };
 use futures::StreamExt;
 use std::sync::Arc;
@@ -264,9 +268,21 @@ impl<H: AccountHolder> HostAccounts<H> {
 				},
 			}
 		}
-		self.product_account_public_key(cx, &authority_session, product, &account)
-			.await
-			.map_err(super::account_get_authority_error)
+		let subtree_review = (account.dot_ns_identifier == product.product_id).then(|| {
+			UserConfirmationReview::ProductSubtree(ProductSubtreeReview {
+				product_id: product.product_id.clone(),
+			})
+		});
+		self.resolve_product_subtree(
+			&authority_session,
+			cx,
+			product,
+			account.dot_ns_identifier.clone(),
+			subtree_review,
+		)
+		.await
+		.and_then(|subtree| Self::derive_account(subtree, &account))
+		.map_err(super::account_get_authority_error)
 	}
 
 	/// Derive an account beneath a subtree selected by an already authorized operation.
@@ -285,6 +301,13 @@ impl<H: AccountHolder> HostAccounts<H> {
 				product_account_id.dot_ns_identifier.clone(),
 			)
 			.await?;
+		Self::derive_account(subtree, product_account_id)
+	}
+
+	fn derive_account(
+		subtree: [u8; 32],
+		product_account_id: &api::ProductAccountId,
+	) -> Result<[u8; 32], AuthorityError> {
 		derive_product_public_key(
 			subtree,
 			derivation_index_bytes(&product_account_id.derivation_index),
@@ -292,13 +315,26 @@ impl<H: AccountHolder> HostAccounts<H> {
 		.map_err(|err| AuthorityError::Unknown { reason: err.to_string() })
 	}
 
-	/// Resolve a retained subtree before asking the holder to review and resolve it.
+	/// Resolve a retained subtree before asking the holder to resolve it.
 	pub async fn product_subtree_public_key(
 		&self,
 		authority_session: &AuthoritySession,
 		cx: &CallContext,
 		product: &ProductContext,
 		product_id: String,
+	) -> Result<[u8; 32], AuthorityError> {
+		self.resolve_product_subtree(authority_session, cx, product, product_id, None)
+			.await
+	}
+
+	/// Confirm `review` only when the subtree must be asked of the account holder.
+	async fn resolve_product_subtree(
+		&self,
+		authority_session: &AuthoritySession,
+		cx: &CallContext,
+		product: &ProductContext,
+		product_id: String,
+		review: Option<UserConfirmationReview>,
 	) -> Result<[u8; 32], AuthorityError> {
 		let invocation = AccountInvocation {
 			call: cx,
@@ -316,9 +352,14 @@ impl<H: AccountHolder> HostAccounts<H> {
 			return Ok(key);
 		}
 		let resolution = self.holder.product_subtree_public_key(invocation, product_id).await?;
+		if let Some(review) = review &&
+			matches!(resolution, SubtreeResolution::Ask(_))
+		{
+			self.confirm(invocation, review).await?;
+		}
 		let cx = super::remote_authority_context(invocation.call);
 		super::remote_authority_call(&cx, async {
-			let key = resolution.await?;
+			let key = resolution.resolve().await?;
 			self.holder.require_current_session(authority_session)?;
 			if !self
 				.grants
@@ -350,19 +391,22 @@ impl<H: AccountHolder> HostAccounts<H> {
 		#[cfg(feature = "test-host")]
 		let resources = request.resources.clone();
 		let count = request.resources.len();
-		let mut grants = match self
-			.holder
-			.allocate_grants(
-				AccountInvocation {
-					call: cx,
-					session: authority_session,
-					caller: AccountCaller::Local { product },
-				},
-				request,
-				OnExistingAllowancePolicy::Increase,
-			)
-			.await
-		{
+		let invocation = AccountInvocation {
+			call: cx,
+			session: authority_session,
+			caller: AccountCaller::Local { product },
+		};
+		let review = UserConfirmationReview::ResourceAllocation(ResourceAllocationReview {
+			calling_product_id: product.product_id.clone(),
+			resources: request.resources.clone(),
+		});
+		let grants = async {
+			self.confirm(invocation, review).await?;
+			self.holder
+				.allocate_grants(invocation, request, OnExistingAllowancePolicy::Increase)
+				.await
+		};
+		let mut grants = match grants.await {
 			Ok(grants) => grants,
 			Err(AuthorityError::Rejected) => {
 				return Ok(api::HostRequestResourceAllocationResponse {
@@ -699,7 +743,7 @@ impl<H: AccountHolder> HostAccounts<H> {
 		.map_err(|error| AuthorityError::Unknown { reason: error.to_string() })
 	}
 
-	/// Sign with a retained product key or obtain the holder's independent consent.
+	/// Sign with a retained product key, or confirm with the user and ask the holder.
 	pub async fn sign_payload(
 		&self,
 		authority_session: &AuthoritySession,
@@ -725,7 +769,18 @@ impl<H: AccountHolder> HostAccounts<H> {
 			})
 			.await;
 		}
+		self.confirm(invocation, request.review(invocation.caller)).await?;
 		self.holder.sign_payload(invocation, request).await
+	}
+
+	/// Confirm with the user before the selected holder is asked to act.
+	async fn confirm(
+		&self,
+		invocation: AccountInvocation<'_>,
+		review: UserConfirmationReview,
+	) -> Result<(), AuthorityError> {
+		self.holder.require_current_session(invocation.session)?;
+		self.consent.review(invocation.call, invocation.caller, review).await
 	}
 
 	/// Preserve legacy review even when a retained product key can sign locally.
@@ -749,21 +804,14 @@ impl<H: AccountHolder> HostAccounts<H> {
 			SignRawAuthorityRequest::IdentityAccount { .. } => None,
 		};
 		let grant = if watermarked && let Some(account) = account {
-			self.product_signing_grant(authority_session, product, account).await
+			self.product_signing_grant(authority_session, product, account).await?
 		} else {
-			Ok(None)
+			None
 		};
-		if !matches!(request, SignRawAuthorityRequest::Product(_)) && !matches!(&grant, Ok(None)) {
-			self.holder.require_current_session(authority_session)?;
-			self.consent
-				.review(
-					invocation.call,
-					invocation.caller,
-					request.review(invocation.caller, watermarked),
-				)
-				.await?;
+		if grant.is_none() || !matches!(request, SignRawAuthorityRequest::Product(_)) {
+			self.confirm(invocation, request.review(invocation.caller, watermarked)).await?;
 		}
-		if let (Some(grant), Some(account)) = (grant?, account) {
+		if let (Some(grant), Some(account)) = (grant, account) {
 			let payload = match &request {
 				SignRawAuthorityRequest::Product(request) => &request.payload,
 				SignRawAuthorityRequest::LegacyAccount { request, .. } |
@@ -807,9 +855,7 @@ impl<H: AccountHolder> HostAccounts<H> {
 				self.product_signing_grant(authority_session, product, &payload.signer).await?
 		{
 			if !payload.contacts.is_empty() {
-				self.consent
-					.review(invocation.call, invocation.caller, request.review(invocation.caller))
-					.await?;
+				self.confirm(invocation, request.review(invocation.caller)).await?;
 			}
 			let cx = super::remote_authority_context(invocation.call);
 			return super::remote_authority_call(&cx, async {
@@ -830,6 +876,7 @@ impl<H: AccountHolder> HostAccounts<H> {
 			})
 			.await;
 		}
+		self.confirm(invocation, request.review(invocation.caller)).await?;
 		self.holder.create_transaction(invocation, request).await
 	}
 
@@ -859,6 +906,11 @@ impl<H: AccountHolder> HostAccounts<H> {
 			);
 			return Ok(api::VrfSignature { pre_output, proof });
 		}
+		let review = UserConfirmationReview::SignVrf(SignVrfReview {
+			calling_product_id: product.product_id.clone(),
+			request: request.clone(),
+		});
+		self.confirm(invocation, review).await?;
 		self.holder.sign_vrf(invocation, request).await
 	}
 
@@ -888,6 +940,13 @@ impl<H: AccountHolder> HostAccounts<H> {
 				.sign_simple(SR25519_SIGNING_CONTEXT, &payload, &keypair.public)
 				.to_bytes());
 		}
+		let review =
+			UserConfirmationReview::StatementStoreProductSign(StatementStoreProductSignReview {
+				calling_product_id: Some(product.product_id.clone()),
+				account: account.clone(),
+				payload: payload.clone(),
+			});
+		self.confirm(invocation, review).await?;
 		self.holder
 			.sign_statement_store_product_payload(invocation, account, payload)
 			.await

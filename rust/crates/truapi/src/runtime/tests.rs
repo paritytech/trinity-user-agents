@@ -3832,6 +3832,27 @@ fn get_account_own_product_resolves_a_cold_subtree_without_a_prompt() {
 }
 
 #[test]
+fn get_account_own_product_prompts_and_rejects_on_a_cold_subtree() {
+	let host = ProductRuntimeHost::new(
+		Arc::new(StubPlatform { product_subtree_denied: true, ..Default::default() }),
+		runtime_config("myapp.dot"),
+		test_spawner(),
+	);
+	host.test_session_state().set_session(sso_session_info());
+	let request = HostAccountGetRequest::V1(v01::HostAccountGetRequest {
+		product_account_id: account_id("myapp.dot", 0),
+	});
+
+	let err = futures::executor::block_on(host.get_account(&CallContext::default(), request))
+		.unwrap_err();
+
+	assert!(matches!(
+		err,
+		CallError::Domain(HostAccountGetError::V1(v01::HostAccountGetError::Rejected))
+	));
+}
+
+#[test]
 fn get_account_own_product_skips_the_prompt_when_the_subtree_is_cached() {
 	// denied would reject if the prompt fired; a warm cache must not prompt.
 	let host = ProductRuntimeHost::new(
@@ -5234,6 +5255,45 @@ fn resource_allocation_rejects_without_session() {
 }
 
 #[test]
+fn resource_allocation_rejects_when_user_declines() {
+	let host = ProductRuntimeHost::new_compat(stub_platform(), test_spawner());
+	install_pairing_session(&host, session_info());
+	let cx = CallContext::default();
+	let response = futures::executor::block_on(ResourceAllocation::request(
+		&host,
+		&cx,
+		resource_allocation_request(),
+	))
+	.unwrap();
+	assert_eq!(
+		response,
+		HostRequestResourceAllocationResponse::V1(v01::HostRequestResourceAllocationResponse {
+			outcomes: vec![v01::AllocationOutcome::Rejected; 2],
+		})
+	);
+}
+
+#[test]
+fn resource_allocation_maps_confirmation_failure_to_host_failure() {
+	let host = ProductRuntimeHost::new_compat(
+		Arc::new(StubPlatform {
+			resource_allocation_error: Some("modal failed"),
+			..Default::default()
+		}),
+		test_spawner(),
+	);
+	install_pairing_session(&host, session_info());
+	let cx = CallContext::default();
+	let err = futures::executor::block_on(ResourceAllocation::request(
+		&host,
+		&cx,
+		resource_allocation_request(),
+	))
+	.unwrap_err();
+	assert!(matches!(err, CallError::HostFailure { reason } if reason.contains("modal failed")));
+}
+
+#[test]
 fn resource_allocation_respects_a_shorter_call_context_timeout() {
 	let session = sso_session_info();
 	let message_id = "allocation-timeout";
@@ -5288,6 +5348,40 @@ fn resource_allocation_respects_a_shorter_call_context_timeout() {
 	);
 }
 
+#[test]
+fn resource_allocation_withdrawn_at_the_prompt_is_never_requested() {
+	let (_release, gate) = futures::channel::oneshot::channel();
+	let platform = Arc::new(StubPlatform {
+		resource_allocation_confirmed: true,
+		resource_allocation_confirmation_gate: Mutex::new(Some(gate)),
+		..Default::default()
+	});
+	let host = ProductRuntimeHost::new_compat(platform.clone(), test_spawner());
+	install_pairing_session(&host, sso_session_info());
+	let cancel = truapi::CancellationToken::default();
+	let cx = CallContext::with_parts("alloc-withdrawn".to_string(), cancel.clone());
+	let mut call = Box::pin(ResourceAllocation::request(&host, &cx, resource_allocation_request()));
+	assert!(call.as_mut().now_or_never().is_none());
+	assert_eq!(platform.resource_allocation_reviews.lock().unwrap().len(), 1);
+
+	cancel.cancel();
+
+	let err = call
+		.as_mut()
+		.now_or_never()
+		.expect("a withdrawn call stops waiting on the prompt")
+		.unwrap_err();
+	assert_eq!(
+		err,
+		CallError::Domain(HostRequestResourceAllocationError::V1(
+			v01::ResourceAllocationError::Unknown {
+				reason: "Account authority request cancelled for alloc-withdrawn".to_string(),
+			}
+		))
+	);
+	assert_eq!(recorded_rpc_method_count(&platform.sent_rpc, "statement_subscribeStatement"), 0);
+}
+
 /// The unwind grace exists for a call that already started. One whose token
 /// fired before it got here must not be started just to be unwound.
 #[test]
@@ -5318,7 +5412,7 @@ fn an_authority_call_withdrawn_before_it_starts_is_never_polled() {
 }
 
 #[test]
-fn resource_allocation_forwards_to_the_phone_and_returns_its_outcomes() {
+fn resource_allocation_accepts_confirmation_then_returns_sso_response() {
 	let session = sso_session_info();
 	let slot_account_key = {
 		let mini_secret = schnorrkel::MiniSecretKey::from_bytes(&[12; 32]).unwrap();
@@ -5634,6 +5728,35 @@ fn a_grant_still_asks_the_user_when_a_call_names_a_contact() {
 	);
 }
 
+#[test]
+fn the_confirmation_shows_the_account_not_the_handle() {
+	const ALICE: [u8; 32] = [0xA1; 32];
+	let platform =
+		Arc::new(StubPlatform { create_transaction_confirmed: true, ..StubPlatform::default() });
+	let host = contacts_host(
+		"myapp.dot",
+		platform.clone(),
+		Some(StubContactsPlatform::picking(ALICE)),
+		true,
+	);
+	let handle = picked_contact(&host);
+
+	let _ = futures::executor::block_on(
+		host.create_transaction(&CallContext::default(), transaction_naming(handle, vec![handle])),
+	);
+
+	let reviews = platform
+		.create_transaction_reviews
+		.lock()
+		.expect("create transaction review list mutex poisoned");
+	let [crate::platform::CreateTransactionReview::Product { payload: reviewed, .. }] =
+		reviews.as_slice()
+	else {
+		panic!("one product transaction was reviewed, got {reviews:?}");
+	};
+	assert_eq!(reviewed.call_data, transfer_naming(&ALICE), "the review names the account",);
+}
+
 /// A handle the host can no longer resolve refuses the whole transaction. A
 /// removed contact and a forged handle look the same here, which is the only
 /// revocation this API has.
@@ -5817,6 +5940,35 @@ fn an_unwatermarked_sign_raw_is_not_signed_with_the_kept_key() {
 	));
 
 	assert_eq!((result.is_ok(), platform.sign_raw_reviews.lock().unwrap().len()), (false, 0),);
+}
+
+#[test]
+fn an_unwatermarked_sign_raw_still_prompts_under_a_grant() {
+	let (platform, host) = granted_pairing_host();
+
+	#[allow(deprecated)]
+	let error = futures::executor::block_on(host.sign_raw_unwatermarked_deprecated(
+		&CallContext::default(),
+		HostSignRawRequest::V1(v01::HostSignRawRequest {
+			account: account_id("myapp.dot", 0),
+			payload: v01::RawPayload::Bytes { bytes: b"hello world".to_vec() },
+		}),
+	))
+	.expect_err("the stub declines the confirmation");
+
+	assert!(matches!(
+		error,
+		CallError::Domain(HostSignRawError::V1(v01::HostSignPayloadError::Rejected))
+	));
+	assert_eq!(
+		platform
+			.sign_raw_reviews
+			.lock()
+			.expect("raw signing review list mutex poisoned")
+			.len(),
+		1,
+		"the deprecated API prompts whatever the capability says",
+	);
 }
 
 #[test]

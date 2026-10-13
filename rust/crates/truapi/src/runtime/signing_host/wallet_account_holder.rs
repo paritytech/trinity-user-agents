@@ -194,7 +194,8 @@ impl WalletAccountHolder {
 		wallet
 	}
 
-	/// Start locked, with no wallet secrets, asking `consent` before wallet work.
+	/// Start locked, with no wallet secrets, asking `consent` before a product uses another
+	/// product's ring-VRF keys.
 	pub fn new(
 		services: Arc<crate::runtime::RuntimeServices>,
 		network_suffix: String,

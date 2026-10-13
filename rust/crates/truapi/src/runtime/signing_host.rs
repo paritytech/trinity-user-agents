@@ -85,14 +85,14 @@ impl SigningHost {
 			wallet.clone(),
 			wallet.session_state(),
 			registry,
-			consent,
+			consent.clone(),
 			#[cfg(feature = "test-host")]
 			wallet.resource_controls().clone(),
 		));
 		Arc::new(Self {
 			#[cfg(any(not(target_arch = "wasm32"), test))]
 			services: services.clone(),
-			sso_responder: SsoResponderService::new(services, wallet.clone()),
+			sso_responder: SsoResponderService::new(services, wallet.clone(), consent),
 			wallet,
 			auth_state: AuthStateMachine::new(platform),
 			accounts,
@@ -2060,10 +2060,7 @@ mod tests {
 
 	#[test]
 	fn sign_payload_product_and_legacy_use_the_substrate_preimage() {
-		let (_services, authority) = signing_runtime_with_platform(Arc::new(StubPlatform {
-			sign_payload_confirmed: true,
-			..StubPlatform::default()
-		}));
+		let (_services, authority) = signing_runtime();
 		futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
 			.expect("activation succeeds");
 		let session = active_session(&authority);
@@ -2221,7 +2218,6 @@ mod tests {
 	#[test]
 	fn create_transaction_reaches_chain_metadata_resolution() {
 		let platform: Arc<dyn crate::platform::Platform> = Arc::new(StubPlatform {
-			create_transaction_confirmed: true,
 			chain_connect_error: Some("fixture has no live chain"),
 			..StubPlatform::default()
 		});
@@ -2244,10 +2240,7 @@ mod tests {
 
 	#[test]
 	fn create_transaction_legacy_signer_mismatch_errors() {
-		let (_services, activation) = signing_runtime_with_platform(Arc::new(StubPlatform {
-			create_transaction_confirmed: true,
-			..StubPlatform::default()
-		}));
+		let (_services, activation) = signing_runtime();
 		futures::executor::block_on(activation.activate_local_session(ENTROPY.to_vec()))
 			.expect("activation succeeds");
 		let session = activation.wallet_for_tests().current_session().expect("active session");
