@@ -38,7 +38,6 @@ fn chain_with_allocated_slot() -> Arc<StubPlatform> {
 		&[Some(format!(r#""0x{}""#, hex::encode(&slot_entry)))],
 	);
 	Arc::new(StubPlatform {
-		resource_allocation_confirmed: true,
 		rpc_method_responses: vec![
 			(
 				"state_getRuntimeVersion",

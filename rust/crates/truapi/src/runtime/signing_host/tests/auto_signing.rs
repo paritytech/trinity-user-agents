@@ -4,7 +4,7 @@
 use super::*;
 use crate::{
 	host_internal::sso_messages::{RemoteMessage, RemoteMessageData, v1},
-	runtime::{SsoAccountHolderService, sso_service::Dispatch},
+	runtime::sso_service::Dispatch,
 };
 use truapi::versioned::{
 	account::HostAccountSignVrfRequest, signing::HostSignRawWithLegacyAccountRequest,
@@ -184,11 +184,7 @@ fn a_blessed_vrf_signature_skips_the_prompt_only_locally_for_its_own_account() {
 	let own_signed = sign_locally(request.clone());
 	let foreign_signed = sign_locally(vrf_request("other.paseo"));
 	let Ok(Dispatch::Response(answer)) = futures::executor::block_on(
-		SsoAccountHolderService::new(
-			activation.wallet_for_tests().clone(),
-			activation.wallet_for_tests().current_session().unwrap(),
-		)
-		.answer(RemoteMessage::request(
+		activation.sso_responder().service_for_tests().answer(RemoteMessage::request(
 			"relayed-vrf".to_string(),
 			ProductRequest { calling_product_id: "dim2.paseo".to_string(), payload: request },
 		)),

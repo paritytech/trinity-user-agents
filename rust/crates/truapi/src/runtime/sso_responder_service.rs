@@ -15,7 +15,7 @@ mod replay;
 
 use crate::runtime::{
 	AccountHolder, SsoAccountHolderService, authority::AuthoritySession,
-	signing_host::WalletAccountHolder,
+	product_consent::ProductConsent, signing_host::WalletAccountHolder,
 };
 use std::{
 	collections::{HashSet, VecDeque},
@@ -231,14 +231,30 @@ fn sanitize_pairing_metadata(value: String) -> Option<String> {
 pub struct SsoResponderService {
 	services: Arc<RuntimeServices>,
 	wallet: Arc<WalletAccountHolder>,
+	consent: Arc<ProductConsent>,
 	/// Serializes replay-ledger updates within each wallet and peer scope.
 	replay_locks: SsoReplayLocks,
 }
 
 impl SsoResponderService {
-	/// Answer peers of `wallet` over the runtime's statement store.
-	pub fn new(services: Arc<RuntimeServices>, wallet: Arc<WalletAccountHolder>) -> Arc<Self> {
-		Arc::new(Self { services, wallet, replay_locks: SsoReplayLocks::default() })
+	/// Answer peers of `wallet` over the runtime's statement store, confirming their
+	/// requests through `consent`.
+	pub fn new(
+		services: Arc<RuntimeServices>,
+		wallet: Arc<WalletAccountHolder>,
+		consent: Arc<ProductConsent>,
+	) -> Arc<Self> {
+		Arc::new(Self { services, wallet, consent, replay_locks: SsoReplayLocks::default() })
+	}
+
+	fn account_holder_service(&self, session: AuthoritySession) -> SsoAccountHolderService {
+		SsoAccountHolderService::new(self.wallet.clone(), self.consent.clone(), session)
+	}
+
+	/// Serve the active wallet's requests as a paired host's peer.
+	#[cfg(test)]
+	pub fn service_for_tests(&self) -> SsoAccountHolderService {
+		self.account_holder_service(self.wallet.current_session().expect("an active wallet"))
 	}
 
 	/// Answer `deeplink` and serve the resulting SSO session until it ends.
@@ -413,7 +429,7 @@ impl SsoResponderService {
 			own_statement_account_id,
 			own_encryption_public_key,
 		)?;
-		Ok(SsoAccountHolderService::new(self.wallet.clone(), session))
+		Ok(self.account_holder_service(session))
 	}
 }
 
@@ -432,7 +448,7 @@ async fn serve_session(
 	replay_scope: SsoReplayScope,
 	wallet_session: AuthoritySession,
 ) -> Result<ResponderExit, String> {
-	let service = SsoAccountHolderService::new(responder.wallet.clone(), wallet_session);
+	let service = responder.account_holder_service(wallet_session);
 	service.require_current_session().map_err(|error| error.to_string())?;
 	let services = &responder.services;
 	let rpc_client = services
@@ -1331,10 +1347,7 @@ mod tests {
 		message_id: &str,
 		request: v1::RemoteMessage,
 	) -> v1::RemoteMessage {
-		let service = SsoAccountHolderService::new(
-			signing_host.wallet_for_tests().clone(),
-			signing_host.wallet_for_tests().current_session().unwrap(),
-		);
+		let service = signing_host.sso_responder().service_for_tests();
 		let message = RemoteMessage {
 			message_id: message_id.to_string(),
 			data: RemoteMessageData::V1(request),
@@ -1383,10 +1396,7 @@ mod tests {
 			chain_connect_error: Some("allocation node unavailable"),
 			..StubPlatform::default()
 		}));
-		let service = SsoAccountHolderService::new(
-			signing_host.wallet_for_tests().clone(),
-			signing_host.wallet_for_tests().current_session().unwrap(),
-		);
+		let service = signing_host.sso_responder().service_for_tests();
 		let request = RemoteMessage::request(
 			"allocation-1".to_string(),
 			sso_messages::ResourceAllocationRequest {
@@ -1502,10 +1512,7 @@ mod tests {
 			..StubPlatform::default()
 		});
 		let (_, signing_host) = signing_fixture(platform.clone());
-		let service = SsoAccountHolderService::new(
-			signing_host.wallet_for_tests().clone(),
-			signing_host.wallet_for_tests().current_session().unwrap(),
-		);
+		let service = signing_host.sso_responder().service_for_tests();
 		let message = RemoteMessage::request(
 			"alloc-stale".to_string(),
 			sso_messages::ResourceAllocationRequest {
@@ -1572,10 +1579,7 @@ mod tests {
 			..StubPlatform::default()
 		});
 		let (_, signing_host) = signing_fixture(platform.clone());
-		let service = SsoAccountHolderService::new(
-			signing_host.wallet_for_tests().clone(),
-			signing_host.wallet_for_tests().current_session().unwrap(),
-		);
+		let service = signing_host.sso_responder().service_for_tests();
 		let allocation = service.answer(allocation_request("alloc-1"));
 		futures::pin_mut!(allocation);
 		assert!(allocation.as_mut().now_or_never().is_none());
@@ -1604,10 +1608,7 @@ mod tests {
 			..StubPlatform::default()
 		});
 		let (_, signing_host) = signing_fixture(platform.clone());
-		let service = SsoAccountHolderService::new(
-			signing_host.wallet_for_tests().clone(),
-			signing_host.wallet_for_tests().current_session().unwrap(),
-		);
+		let service = signing_host.sso_responder().service_for_tests();
 
 		futures::executor::block_on(service.answer(cancel("cancel-1", "alloc-1"))).unwrap();
 		let allocation = futures::executor::block_on(service.answer(allocation_request("alloc-1")));

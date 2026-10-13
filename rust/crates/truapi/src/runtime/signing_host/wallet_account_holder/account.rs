@@ -1,4 +1,4 @@
-//! Wallet account execution and consent.
+//! Wallet account execution and access to other products' keys.
 
 use super::{AllowanceAllocationError, WalletAccountHolder, product_authority_error};
 use crate::{
@@ -12,22 +12,19 @@ use crate::{
 		product_account::{SR25519_SIGNING_CONTEXT, personhood_product_id},
 		raw_signing::raw_payload_bytes,
 	},
-	platform::{
-		PermissionAuthorizationStatus, ResourceAllocationReview, SignVrfReview,
-		StatementStoreProductSignReview, UserConfirmationReview, normalize_product_identifier,
-	},
+	platform::{PermissionAuthorizationStatus, normalize_product_identifier},
 	runtime::{
 		allowances::AllowanceResource,
 		authority::{
 			AccountCaller, AccountGrant, AccountGrantOutcome, AccountHolder, AccountInvocation,
 			AuthorityError, AuthoritySession, AutoSigningKey, BulletinAllowanceKey,
 			CreateTransactionAuthorityRequest, GrantKeeping, SignPayloadAuthorityRequest,
-			SignRawAuthorityRequest, StatementStoreAllowanceKey,
+			SignRawAuthorityRequest, StatementStoreAllowanceKey, SubtreeResolution,
 		},
 		remote_authority_call, remote_authority_context,
 		signing_host::ring_vrf::{MemberCandidate, create_proof, development_context_bytes},
 		statement_allowance::collection::PersonhoodCollection,
-		until_cancelled, validate_vrf_transcript,
+		until_cancelled,
 		vrf::{self, Vrf},
 	},
 };
@@ -296,16 +293,6 @@ impl AccountHolder for WalletAccountHolder {
 		policy: OnExistingAllowancePolicy,
 	) -> Result<BoxStream<'a, Result<AccountGrantOutcome, AuthorityError>>, AuthorityError> {
 		let caller = invocation.caller.product_id().ok_or(AuthorityError::Rejected)?;
-		self.consent
-			.review(
-				invocation.call,
-				invocation.caller,
-				UserConfirmationReview::ResourceAllocation(ResourceAllocationReview {
-					calling_product_id: caller.to_string(),
-					resources: request.resources.clone(),
-				}),
-			)
-			.await?;
 		self.require_current_session(invocation.session)?;
 		let product_id = caller.to_string();
 		Ok(stream::unfold(
@@ -452,13 +439,12 @@ impl AccountHolder for WalletAccountHolder {
 		&'a self,
 		invocation: AccountInvocation<'a>,
 		product_id: String,
-	) -> Result<futures::future::BoxFuture<'a, Result<[u8; 32], AuthorityError>>, AuthorityError> {
+	) -> Result<SubtreeResolution<'a>, AuthorityError> {
 		self.require_current_session(invocation.session)?;
 		let product_id = normalize_product_identifier(&product_id)
 			.map_err(|err| AuthorityError::Unavailable { reason: err.to_string() })?;
-		Ok(Box::pin(async move {
-			self.with_keys(invocation.session, |keys| keys.product_subtree_public_key(&product_id))
-		}))
+		self.with_keys(invocation.session, |keys| keys.product_subtree_public_key(&product_id))
+			.map(SubtreeResolution::Known)
 	}
 
 	async fn sign_vrf(
@@ -466,28 +452,7 @@ impl AccountHolder for WalletAccountHolder {
 		invocation: AccountInvocation<'_>,
 		request: api::HostAccountSignVrfRequest,
 	) -> Result<api::VrfSignature, AuthorityError> {
-		let session = invocation.session;
-		let calling_product_id = invocation.caller.product_id().ok_or(AuthorityError::Rejected)?;
-		self.require_current_session(session)?;
-		validate_vrf_transcript(&request).map_err(|reason| AuthorityError::Unknown { reason })?;
-		self.with_keys(session, |keys| keys.product_keypair(&request.account).map(|_| ()))?;
-		self.consent
-			.review(
-				invocation.call,
-				invocation.caller,
-				UserConfirmationReview::SignVrf(SignVrfReview {
-					calling_product_id: calling_product_id.to_string(),
-					request: request.clone(),
-				}),
-			)
-			.await
-			.map_err(|error| match error {
-				AuthorityError::ConfirmationFailed(err) => AuthorityError::Unknown {
-					reason: format!("VRF signing confirmation failed: {err:?}"),
-				},
-				error => error,
-			})?;
-		self.with_keys(session, |keys| {
+		self.with_keys(invocation.session, |keys| {
 			let keypair = keys.product_keypair(&request.account)?;
 			let (pre_output, proof) = crate::dynamic_vrf::sign_dynamic_vrf(
 				&keypair,
@@ -504,9 +469,6 @@ impl AccountHolder for WalletAccountHolder {
 		request: SignPayloadAuthorityRequest,
 	) -> Result<api::HostSignPayloadResponse, AuthorityError> {
 		self.require_current_session(invocation.session)?;
-		self.consent
-			.review(invocation.call, invocation.caller, request.review(invocation.caller))
-			.await?;
 		let cx = remote_authority_context(invocation.call);
 		remote_authority_call(&cx, async {
 			self.with_keys(invocation.session, |keys| {
@@ -531,13 +493,6 @@ impl AccountHolder for WalletAccountHolder {
 		watermarked: bool,
 	) -> Result<api::HostSignPayloadResponse, AuthorityError> {
 		self.require_current_session(invocation.session)?;
-		self.consent
-			.review(
-				invocation.call,
-				invocation.caller,
-				request.review(invocation.caller, watermarked),
-			)
-			.await?;
 		let cx = remote_authority_context(invocation.call);
 		remote_authority_call(&cx, async {
             self.with_keys(invocation.session, |keys| {
@@ -565,9 +520,6 @@ impl AccountHolder for WalletAccountHolder {
 		request: CreateTransactionAuthorityRequest,
 	) -> Result<api::HostCreateTransactionResponse, AuthorityError> {
 		self.require_current_session(invocation.session)?;
-		self.consent
-			.review(invocation.call, invocation.caller, request.review(invocation.caller))
-			.await?;
 		let cx = remote_authority_context(invocation.call);
 		remote_authority_call(&cx, async {
 			self.with_keys(invocation.session, |keys| {
@@ -777,19 +729,6 @@ impl AccountHolder for WalletAccountHolder {
 		account: api::ProductAccountId,
 		payload: Vec<u8>,
 	) -> Result<[u8; 64], AuthorityError> {
-		self.consent
-			.review(
-				invocation.call,
-				invocation.caller,
-				UserConfirmationReview::StatementStoreProductSign(
-					StatementStoreProductSignReview {
-						calling_product_id: invocation.caller.product_id().map(str::to_string),
-						account: account.clone(),
-						payload: payload.clone(),
-					},
-				),
-			)
-			.await?;
 		let cx = remote_authority_context(invocation.call);
 		remote_authority_call(&cx, async {
 			self.with_keys(invocation.session, |keys| {

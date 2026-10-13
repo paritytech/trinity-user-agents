@@ -7,8 +7,10 @@ use tracing::warn;
 use truapi::latest as api;
 
 use super::{
-	authority::{AccountGrant, AccountGrantOutcome},
+	authority::{AccountGrant, AccountGrantOutcome, AccountInvocation},
+	product_consent::ProductConsent,
 	signing_host::WalletAccountHolder,
+	validate_vrf_transcript,
 };
 use crate::{
 	host_internal::{
@@ -25,6 +27,10 @@ use crate::{
 		sso_wire::ResponseOutcome,
 	},
 	host_logic::product_account::product_public_key_to_address,
+	platform::{
+		ResourceAllocationReview, SignVrfReview, UserConfirmationReview,
+		normalize_product_identifier,
+	},
 	runtime::{
 		authority::{
 			AccountHolder, AuthorityError, AuthoritySession, CreateTransactionAuthorityRequest,
@@ -37,14 +43,31 @@ use crate::{
 /// Incoming requests for one authenticated wallet activation and peer.
 pub struct SsoAccountHolderService {
 	wallet: Arc<WalletAccountHolder>,
+	consent: Arc<ProductConsent>,
 	session: AuthoritySession,
 	withdrawals: SsoWithdrawals,
 }
 
 impl SsoAccountHolderService {
-	/// Bind one peer to the activation that authenticated its transport.
-	pub fn new(wallet: Arc<WalletAccountHolder>, session: AuthoritySession) -> Self {
-		Self { wallet, session, withdrawals: SsoWithdrawals::default() }
+	/// Bind one peer to the activation that authenticated its transport, confirming
+	/// each of its requests through `consent`.
+	pub fn new(
+		wallet: Arc<WalletAccountHolder>,
+		consent: Arc<ProductConsent>,
+		session: AuthoritySession,
+	) -> Self {
+		Self { wallet, consent, session, withdrawals: SsoWithdrawals::default() }
+	}
+
+	/// Run the wallet's `operation` only once the user confirms the paired host's request.
+	async fn confirmed<T>(
+		&self,
+		invocation: AccountInvocation<'_>,
+		review: UserConfirmationReview,
+		operation: impl Future<Output = Result<T, AuthorityError>>,
+	) -> Result<T, AuthorityError> {
+		self.consent.review(invocation.call, invocation.caller, review).await?;
+		operation.await
 	}
 
 	/// Require the activation that authenticated this peer.
@@ -95,20 +118,14 @@ impl SsoAccountHolderService {
 		let watermarked = matches!(request, SignRequest::Raw(_));
 		match request {
 			SignRequest::Payload(request) => {
-				self.wallet
-					.sign_payload(
-						cx.account_invocation(None),
-						SignPayloadAuthorityRequest::Product(*request),
-					)
+				let invocation = cx.account_invocation(None);
+				let request = SignPayloadAuthorityRequest::Product(*request);
+				let review = request.review(invocation.caller);
+				self.confirmed(invocation, review, self.wallet.sign_payload(invocation, request))
 					.await
 			},
 			SignRequest::Raw(raw) | SignRequest::RawUnwatermarkedDeprecated(raw) => {
-				self.wallet
-					.sign_raw(
-						cx.account_invocation(None),
-						SignRawAuthorityRequest::Product(raw),
-						watermarked,
-					)
+				self.serve_sign_raw(cx, SignRawAuthorityRequest::Product(raw), watermarked)
 					.await
 			},
 			SignRequest::RawWithLegacyAccountUnwatermarkedDeprecated(request) => {
@@ -116,6 +133,18 @@ impl SsoAccountHolderService {
 			},
 		}
 		.map_err(|error| error.to_string())
+	}
+
+	async fn serve_sign_raw(
+		&self,
+		cx: &SsoRequestContext,
+		request: SignRawAuthorityRequest,
+		watermarked: bool,
+	) -> Result<api::HostSignPayloadResponse, AuthorityError> {
+		let invocation = cx.account_invocation(None);
+		let review = request.review(invocation.caller, watermarked);
+		self.confirmed(invocation, review, self.wallet.sign_raw(invocation, request, watermarked))
+			.await
 	}
 
 	async fn serve_sign_raw_with_legacy_account(
@@ -128,16 +157,28 @@ impl SsoAccountHolderService {
 			signer: product_public_key_to_address(request.account),
 			payload: request.data,
 		};
-		self.wallet
-			.sign_raw(
-				cx.account_invocation(None),
-				SignRawAuthorityRequest::IdentityAccount {
-					account: request.account,
-					request: public_request,
-				},
-				watermarked,
-			)
+		self.serve_sign_raw(
+			cx,
+			SignRawAuthorityRequest::IdentityAccount {
+				account: request.account,
+				request: public_request,
+			},
+			watermarked,
+		)
+		.await
+	}
+
+	async fn serve_create_transaction(
+		&self,
+		cx: &SsoRequestContext,
+		request: CreateTransactionAuthorityRequest,
+	) -> CreateTransactionResponse {
+		let invocation = cx.account_invocation(None);
+		let review = request.review(invocation.caller);
+		self.confirmed(invocation, review, self.wallet.create_transaction(invocation, request))
 			.await
+			.map(|response| response.transaction)
+			.map_err(|error| error.to_string())
 	}
 }
 
@@ -241,15 +282,17 @@ impl SsoAccountHolderService {
 		let mut failures = Vec::new();
 		let payload = async {
 			let count = request.resources.len();
-			let mut grants = match self
-				.wallet
-				.allocate_grants(
-					cx.account_invocation(Some(&request.calling_product_id)),
-					api::HostRequestResourceAllocationRequest { resources: request.resources },
-					request.on_existing,
-				)
-				.await
-			{
+			let invocation = cx.account_invocation(Some(&request.calling_product_id));
+			let review = UserConfirmationReview::ResourceAllocation(ResourceAllocationReview {
+				calling_product_id: request.calling_product_id.clone(),
+				resources: request.resources.clone(),
+			});
+			let allocation = self.wallet.allocate_grants(
+				invocation,
+				api::HostRequestResourceAllocationRequest { resources: request.resources },
+				request.on_existing,
+			);
+			let mut grants = match self.confirmed(invocation, review, allocation).await {
 				Ok(grants) => grants,
 				Err(AuthorityError::Rejected) => {
 					return Ok(vec![SsoAllocationOutcome::Rejected; count]);
@@ -310,14 +353,8 @@ impl SsoAccountHolderService {
 	) -> CreateTransactionResponse {
 		let CreateTransactionPayload::V1(payload) = request.payload;
 		let payload = payload.into_product_payload();
-		self.wallet
-			.create_transaction(
-				cx.account_invocation(None),
-				CreateTransactionAuthorityRequest::Product(payload),
-			)
+		self.serve_create_transaction(cx, CreateTransactionAuthorityRequest::Product(payload))
 			.await
-			.map(|response| response.transaction)
-			.map_err(|error| error.to_string())
 	}
 
 	async fn create_transaction_with_legacy_account(
@@ -326,14 +363,11 @@ impl SsoAccountHolderService {
 		request: CreateTransactionWithLegacyAccountRequest,
 	) -> CreateTransactionResponse {
 		let CreateTransactionLegacyPayload::V1(payload) = request.payload;
-		self.wallet
-			.create_transaction(
-				cx.account_invocation(None),
-				CreateTransactionAuthorityRequest::IdentityAccount(payload),
-			)
-			.await
-			.map(|response| response.transaction)
-			.map_err(|error| error.to_string())
+		self.serve_create_transaction(
+			cx,
+			CreateTransactionAuthorityRequest::IdentityAccount(payload),
+		)
+		.await
 	}
 
 	async fn sign_raw_with_legacy_account(
@@ -362,10 +396,21 @@ impl SsoAccountHolderService {
 		cx: &SsoRequestContext,
 		request: ProductRequest<api::HostAccountSignVrfRequest>,
 	) -> SignVrfResponse {
-		self.wallet
-			.sign_vrf(cx.account_invocation(Some(&request.calling_product_id)), request.payload)
-			.await
-			.map_err(api::HostAccountSignVrfError::from)
+		let invocation = cx.account_invocation(Some(&request.calling_product_id));
+		async {
+			validate_vrf_transcript(&request.payload)
+				.map_err(|reason| AuthorityError::Unknown { reason })?;
+			normalize_product_identifier(&request.payload.account.dot_ns_identifier)
+				.map_err(|error| AuthorityError::Unavailable { reason: error.to_string() })?;
+			let review = UserConfirmationReview::SignVrf(SignVrfReview {
+				calling_product_id: request.calling_product_id.clone(),
+				request: request.payload.clone(),
+			});
+			self.confirmed(invocation, review, self.wallet.sign_vrf(invocation, request.payload))
+				.await
+		}
+		.await
+		.map_err(api::HostAccountSignVrfError::from)
 	}
 
 	/// Consent-free product hard-subtree public key.
@@ -378,6 +423,7 @@ impl SsoAccountHolderService {
 			.product_subtree_public_key(cx.account_invocation(None), request.product_id)
 			.await
 			.map_err(|err| err.to_string())?
+			.resolve()
 			.await
 			.map_err(|err| err.to_string())
 	}
