@@ -64,6 +64,14 @@ final class WalletMainViewController: UIHostingController<WalletView>, RootScree
         rootView.viewModel.onViewCollectibles = { [weak presenter] in
             presenter?.showCollectibles()
         }
+
+        rootView.viewModel.onOpenPocketCard = { [weak presenter] card in
+            presenter?.showPocketCard(card)
+        }
+
+        rootView.viewModel.onRemovePocketCard = { [weak presenter] card in
+            presenter?.removePocketCard(card)
+        }
     }
 
     private func setShareButton() {
@@ -99,6 +107,10 @@ final class WalletMainViewController: UIHostingController<WalletView>, RootScree
 extension WalletMainViewController: WalletMainViewProtocol {
     func didReceive(isCollectiblesAvailable: Bool) {
         rootView.viewModel.isCollectiblesAvailable = isCollectiblesAvailable
+    }
+
+    func didReceive(pocketCards: [PocketCardViewModel]) {
+        rootView.viewModel.pocketCards = pocketCards
     }
 
     @objc

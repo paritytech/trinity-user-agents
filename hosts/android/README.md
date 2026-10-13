@@ -1,5 +1,5 @@
 > [!WARNING]
-> This is an experimental proof-of-concept: a prototype and reference implementation developed and published by Parity. This open source code is provided for research, experimentation, and developer education only. It has not been audited, is actively experimental, and may contain bugs, vulnerabilities, or incomplete features. The app is a self-custodial wallet that can hold real assets — use at your own risk.
+> This is an experimental proof-of-concept: a prototype and reference implementation developed and published by Parity. This open source code is provided for research, experimentation, and developer education only. It has not been audited, is actively experimental, and may contain bugs, vulnerabilities, or incomplete features. The app is a self-custodial wallet that can hold real assets — use at your own risk and obtain legal advice as appropriate — DYOR.
 >
 > Parity does not deploy or operate this code and does not run any service behind it; it may update the code based on community feedback. If you experience problems with an app that was built from or distributed using this code, contact the party who built and distributed it, not Parity.
 
@@ -78,6 +78,7 @@ sdk.dir=/path/to/android-sdk
 
 # Build identity (public values, compiled into the APK)
 APPLICATION_ID=com.example.polkadot
+IOS_BUNDLE_ID=com.example.polkadot
 APPLICATION_NAME=Polkadot
 PRIVACY_POLICY_URL=https://example.com/privacy
 TERMS_OF_USE_URL=https://example.com/terms
@@ -121,6 +122,55 @@ The full variable reference, including the optional overrides, is in
 [docs/DEPLOYMENT.md §5](./docs/DEPLOYMENT.md#5-environment-variables--secrets-reference).
 
 Open the project in Android Studio, select the **gp** flavor with a debug build type and an Android 10+ device or emulator, then build and run.
+
+The `android-instrumented-tests` PR label runs the app and JNI-backed binding
+tests on a KVM-accelerated **API 30, Google APIs, x86_64** emulator. CI assembles
+both test APKs before booting the emulator, with two Gradle workers and a single
+4 GiB compiler JVM, so the cold native/app build does not compete with the running
+device. The OS API level is deliberately independent of the WebView version.
+
+The API 30 image's preinstalled Google WebView 83 lacks AndroidX WebKit's
+`DOCUMENT_START_SCRIPT`. TrUAPI requires this capability to install the host
+bootstrap and frame protections **before page JavaScript**; an unsupported
+provider must fail closed, not fall back to late injection. The six container
+connection, HTTP-authorization, and script-bundle tests exercise this real
+WebView boundary and are not skipped on older OS images.
+
+CI runs [`developer-tools/install-ci-webview.sh`](./developer-tools/install-ci-webview.sh)
+before both connected test suites. It installs the official
+[AOSP WebView 128.0.6613.88 x86_64 prebuilt](https://android.googlesource.com/platform/external/chromium-webview/+/27ac2bdb9a1a4e55dc65bb6cdc752dbfdea3b9f4/128.0.6613.88/x86_64/webview.apk)
+from immutable revision `27ac2bdb9a1a4e55dc65bb6cdc752dbfdea3b9f4`,
+checks the signed APK's SHA-256
+`deb1987501d40c4c326697be8fdd7733abdf2e0ab7fb6e028205b0ff786876e5`,
+and checks that Android actually selected `com.android.webview` at that version.
+This is a frozen **test fixture**, not a recommended production WebView version
+or a Google Play-signed release. Its APK has minSdk 26 / targetSdk 35; the latter
+does not change the emulator OS. Google APIs userdebug images permit the AOSP
+provider [alongside the stock Google provider](https://chromium.googlesource.com/chromium/src/+/HEAD/android_webview/docs/build-instructions.md#changing-package-name),
+without root, removing system apps, or bypassing package verification.
+
+For a disposable, owned API 30 x86_64 userdebug emulator, with `ANDROID_HOME` set:
+
+```bash
+bash developer-tools/install-ci-webview.sh emulator-5554 # use your emulator's serial
+./gradlew :bindings:truapi-host:connectedDebugAndroidTest :app:connectedGpDebugAndroidTest --no-daemon --max-workers=2 -Dorg.gradle.jvmargs=-Xmx4g -Pkotlin.compiler.execution.strategy=in-process
+```
+
+Device qualification on 2026-10-09 installed and selected this exact APK on a
+KVM API 30 emulator and, using the repository's AndroidX WebKit 1.14.0, observed
+`DOCUMENT_START_SCRIPT=true` and document-start JavaScript running before the
+page's first script. That isolated capability probe does **not** replace the
+full connected CI suites, which must still qualify the app and matching JNI
+artifacts. Normal devices should keep their supported WebView provider updated;
+the app's Android 10+ minimum and production capability check are unchanged.
+
+App instrumentation uses `AndroidJUnitRunner` with the real `App`, including its
+process-lived Hilt graph and WorkManager configuration. These integration tests
+do not replace Hilt bindings. Do not swap in `HiltTestApplication` or add per-test
+`HiltAndroidRule`s: Firebase can create `PushNotificationService` before a rule
+starts or after it tears down its component. Tests needing app dependencies use
+the debug-only `IntegrationTestEntryPoint`; production service injection remains
+unchanged.
 
 The app talks to Polkadot system chains (People Chain, Asset Hub, Bulletin Chain). Which chains
 and RPC nodes it uses is not hard-coded: the `chains` / `chains_v2` Remote Config keys of your
@@ -166,6 +216,21 @@ Polkadot Android is a self-custodial superapp: your keys are created on your pho
 ### Under the hood
 
 A modular **Kotlin** / **Jetpack Compose** codebase: features are split into `api` and `impl` modules wired with Hilt, performance-critical crypto is compiled from **Rust** via the NDK ([`bindings/`](./bindings)), and chain access goes through [substrate-sdk-android](https://github.com/novasamatech/substrate-sdk-android) (JSON-RPC, storage subscriptions, extrinsics).
+
+Product permission settings also expose canonical Chat identity authority and
+Statement Store allowance grants. Allowance entries distinguish the legacy
+allowance account, numbered product accounts, and full raw account selectors;
+allowance authority is separate from statement submission. Settings changes and
+revocations write to the shared Rust authorization store, not an Android-only
+grant. These operations obtain consent through the canonical runtime confirmation
+flow; the legacy permission guard only observes their stored authorization.
+
+Profile sharing is a separate canonical permission, displayed and revocable per
+product in settings. Neither Chat identity access nor trusted remote defaults
+grant profile-disclosure authority. The native confirmation identifies the
+requesting product and asks before sharing a profile reference with all Chat
+contacts. Permission and single-action callbacks both await user review; prompt
+failures propagate rather than becoming a persisted permission decision.
 
 GitHub Actions validate pull requests. The remaining workflows are the maintainers'
 own build and distribution flows; a fork does not need them. Build-time

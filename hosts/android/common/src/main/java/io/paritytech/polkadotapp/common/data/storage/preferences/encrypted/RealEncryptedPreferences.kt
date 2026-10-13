@@ -11,6 +11,8 @@ internal class RealEncryptedPreferences @Inject constructor(
     private val preferences: Preferences,
     private val encryptionUtil: EncryptionUtil
 ) : EncryptedPreferences {
+    override fun keys(): Set<String> = preferences.keys()
+
     override fun putEncryptedString(
         field: String,
         value: String,

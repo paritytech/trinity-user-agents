@@ -1163,12 +1163,11 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
         const entry = pushedNotifications.find((n) => n.id === id);
         if (entry) entry.cancelled = true;
       },
-      async activationEvents() {
-        throw new Error("notification activation is unsupported");
-      },
-      async acknowledgeActivation() {
-        throw new Error("notification activation is unsupported");
-      },
+    },
+
+    game: {
+      async scheduleGameReminder() {},
+      async cancelGameReminder() {},
     },
 
     permissions: {

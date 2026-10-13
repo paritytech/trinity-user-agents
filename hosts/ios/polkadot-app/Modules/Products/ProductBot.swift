@@ -51,7 +51,7 @@ final class ProductBot: ChatExtensionBot {
     ) async -> ChatExtension.ProcessingResult {
         do {
             try await runtime.onUserMessage(text: text, roomId: message.chatId.roomId)
-        } catch ChatRustRuntime.ChatSeamError.notStarted {
+        } catch TrUAPIChatHandler.ChatSeamError.notStarted {
             // Driven before `start` opened the execution — an ordering issue, not
             // a product failure.
             logger.debug("User message not forwarded: the runtime has not started")

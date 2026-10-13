@@ -4,6 +4,7 @@ import androidx.lifecycle.SavedStateHandle
 import dagger.hilt.android.lifecycle.HiltViewModel
 import io.paritytech.polkadotapp.common.presentation.loading.LoadingState
 import io.paritytech.polkadotapp.common.presentation.screens.BaseViewModel
+import io.paritytech.polkadotapp.common.presentation.ui.errors.UnexpectedPresentationError
 import io.paritytech.polkadotapp.common.utils.flowOf
 import io.paritytech.polkadotapp.common.utils.launchUnit
 import io.paritytech.polkadotapp.common.utils.withLoading
@@ -13,6 +14,7 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.models
 import io.paritytech.polkadotapp.feature_products_impl.domain.productPermissions.ProductPermissionsInteractor
 import io.paritytech.polkadotapp.feature_products_impl.presentation.productBotManagement.ProductsRouter
 import io.paritytech.polkadotapp.feature_products_impl.presentation.productPermissions.models.ProductPermissionsUiModel
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
@@ -47,6 +49,10 @@ class ProductPermissionsViewModel @Inject constructor(
     }
 
     fun onPermissionToggle(permissionStatus: ProductPermissionStatus) = launchUnit {
-        interactor.togglePermission(productId, permissionStatus)
+        runCatching { interactor.togglePermission(productId, permissionStatus) }
+            .onFailure {
+                if (it is CancellationException) throw it
+                showPresentationError(UnexpectedPresentationError(it))
+            }
     }
 }

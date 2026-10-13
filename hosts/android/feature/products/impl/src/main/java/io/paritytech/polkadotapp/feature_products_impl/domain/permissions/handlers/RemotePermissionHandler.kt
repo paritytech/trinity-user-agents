@@ -15,6 +15,7 @@ class RemotePermissionHandler @Inject constructor(
     override suspend fun isGranted(productId: ProductId, permission: RemotePermission): Boolean {
         return when (permission) {
             is RemotePermission.NetworkAccess -> networkAccessHandler.isGranted(productId, permission)
+            is RemotePermission.NetworkAccessSet,
             is RemotePermission.WebRtcAccess,
             is RemotePermission.ChainSubmitAccess,
             is RemotePermission.StatementSubmitAccess,
@@ -25,6 +26,7 @@ class RemotePermissionHandler @Inject constructor(
     override suspend fun request(productId: ProductId, permission: RemotePermission): Boolean {
         return when (permission) {
             is RemotePermission.NetworkAccess -> networkAccessHandler.request(productId, permission)
+            is RemotePermission.NetworkAccessSet,
             is RemotePermission.WebRtcAccess,
             is RemotePermission.ChainSubmitAccess,
             is RemotePermission.StatementSubmitAccess,
@@ -35,6 +37,7 @@ class RemotePermissionHandler @Inject constructor(
     override suspend fun revoke(productId: ProductId, permission: RemotePermission) {
         when (permission) {
             is RemotePermission.NetworkAccess -> networkAccessHandler.revoke(productId, permission)
+            is RemotePermission.NetworkAccessSet,
             is RemotePermission.WebRtcAccess,
             is RemotePermission.ChainSubmitAccess,
             is RemotePermission.StatementSubmitAccess,

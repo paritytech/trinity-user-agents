@@ -16,17 +16,9 @@ extension RendererNode {
              .textField:
             return leafWidgetNode(resolver: resolver)
 
-        // Only a root effect reaches this case — `widgetNodes` splices nested ones
-        // into their parent. It has one slot to fill, and a box would overlay
-        // several children, since it renders as a `ZStack`.
-        //
-        // The effect itself is dropped: `Rainbow` has no counterpart on
-        // `CustomMessageWidgetNode`, so the children draw untinted.
-        case let .effect(_, children):
-            let mapped = children.widgetNodes(resolver: resolver)
-            guard mapped.count > 1 else { return mapped.first }
+        case let .effect(props, children):
             return CustomMessageWidgetNode(
-                content: .column(.init(alignment: .leading, arrangement: .start), children: mapped),
+                content: .effect(props.nodeProps, children: children.widgetNodes(resolver: resolver)),
                 modifiers: .empty
             )
 
@@ -66,15 +58,13 @@ private extension RendererNode {
     /// Nodes that draw themselves, with no children to lay out.
     func leafWidgetNode(resolver: any WidgetDesignTokenResolving) -> CustomMessageWidgetNode? {
         switch self {
-        case .nil, .string:
+        case .nil,
+             .string:
             return nil
 
-        // `ImageProps` carries a source, but `CustomMessageWidgetNode` has no image
-        // case to draw it with. An empty box keeps the space its modifiers reserved,
-        // rather than collapsing the layout around it.
-        case let .image(modifiers, _):
+        case let .image(modifiers, props):
             return CustomMessageWidgetNode(
-                content: .box(.init(alignment: .center), children: []),
+                content: .image(props.nodeProps),
                 modifiers: modifiers.toNodeModifiers(resolver: resolver)
             )
 
@@ -131,16 +121,10 @@ private extension RendererNode {
 }
 
 private extension RendererNode {
-    /// The nodes this one contributes to its parent's children: at most one,
-    /// except an `Effect`, which contributes its own. It decorates them without
-    /// laying them out, so a container here would impose a layout the product
-    /// never asked for. The effect itself is dropped here too.
+    /// The nodes this one contributes to its parent's children: its own, or
+    /// none when it does not draw.
     func widgetNodesInPlace(resolver: any WidgetDesignTokenResolving) -> [CustomMessageWidgetNode] {
-        if case let .effect(_, children) = self {
-            return children.widgetNodes(resolver: resolver)
-        }
-
-        return toWidgetNode(resolver: resolver).map { [$0] } ?? []
+        toWidgetNode(resolver: resolver).map { [$0] } ?? []
     }
 }
 
@@ -164,6 +148,7 @@ private extension [Modifier] {
         var fillWidth = false
         var fillHeight = false
         var opacity: CGFloat?
+        var blendingMode: BlendMode?
 
         for modifier in self {
             switch modifier {
@@ -183,13 +168,13 @@ private extension [Modifier] {
                     shape: style.shape.map { resolver.shape(for: $0.toScale()) }
                 )
             case let .width(value):
-                width = CGFloat(value)
+                width = value.drawableLength
             case let .height(value):
-                height = CGFloat(value)
+                height = value.drawableLength
             case let .minWidth(value):
-                minWidth = CGFloat(value)
+                minWidth = value.drawableLength
             case let .minHeight(value):
-                minHeight = CGFloat(value)
+                minHeight = value.drawableLength
             case let .fillWidth(enabled):
                 fillWidth = enabled
             case let .fillHeight(enabled):
@@ -197,10 +182,8 @@ private extension [Modifier] {
             case let .opacity(value):
                 // The core sends 0-255, SwiftUI takes 0-1.
                 opacity = CGFloat(value) / 255
-            // No slot on `CustomMessageWidgetNode.Modifiers`, and no compositing
-            // to apply it to: the node draws normally against what is behind it.
-            case .blendingMode:
-                continue
+            case let .blendingMode(mode):
+                blendingMode = mode.blendMode
             }
         }
 
@@ -215,9 +198,20 @@ private extension [Modifier] {
             minHeight: minHeight,
             fillWidth: fillWidth,
             fillHeight: fillHeight,
-            opacity: opacity
+            opacity: opacity,
+            blendingMode: blendingMode
         )
     }
+}
+
+private extension Size {
+    /// Two orders of magnitude past the longest edge of any device. The decoder
+    /// already refuses a size the protocol forbids, so anything still this large
+    /// is within the protocol and simply undrawable, and a length SwiftUI cannot
+    /// lay out would take the whole face down with it.
+    static let maxDrawable: Size = 100_000
+
+    var drawableLength: CGFloat { CGFloat(Swift.min(self, Self.maxDrawable)) }
 }
 
 private extension Dimensions {
@@ -225,10 +219,10 @@ private extension Dimensions {
     /// `start` to `end`.
     var edgeInsets: EdgeInsets {
         EdgeInsets(
-            top: CGFloat(top),
-            leading: CGFloat(start ?? end),
-            bottom: CGFloat(bottom ?? top),
-            trailing: CGFloat(end)
+            top: top.drawableLength,
+            leading: (start ?? end).drawableLength,
+            bottom: (bottom ?? top).drawableLength,
+            trailing: end.drawableLength
         )
     }
 }
@@ -332,6 +326,65 @@ private extension Arrangement {
         case .spaceBetween: .spaceBetween
         case .spaceAround: .spaceAround
         case .spaceEvenly: .spaceEvenly
+        }
+    }
+}
+
+private extension ImageProps {
+    var nodeProps: CustomMessageWidgetNode.ImageProps {
+        let nodeSource: CustomMessageWidgetNode.ImageSource =
+            switch source {
+            case let .bulletin(cid): .bulletin(cid: cid)
+            case let .archive(path): .archive(path: path)
+            }
+        // Unwrapped first on purpose: in a switch over an optional fit, `.none`
+        // binds to `Optional.none` and the fit of that same name is never
+        // matched, which the compiler reports as a non-exhaustive switch.
+        let nodeFit: CustomMessageWidgetNode.ImageFit =
+            if let fit {
+                switch fit {
+                case .none: .none
+                case .fill: .fill
+                case .cover: .cover
+                case .contain: .contain
+                case .scaleDown: .scaleDown
+                }
+            } else {
+                .fill
+            }
+        return .init(source: nodeSource, fit: nodeFit)
+    }
+}
+
+private extension EffectProps {
+    var nodeProps: CustomMessageWidgetNode.EffectProps {
+        let nodeEffect: CustomMessageWidgetNode.Effect =
+            switch effect {
+            case .rainbow: .rainbow
+            }
+        return .init(effect: nodeEffect)
+    }
+}
+
+private extension BlendingMode {
+    var blendMode: BlendMode {
+        switch self {
+        case .normal: .normal
+        case .multiply: .multiply
+        case .screen: .screen
+        case .overlay: .overlay
+        case .darken: .darken
+        case .lighten: .lighten
+        case .colorDodge: .colorDodge
+        case .colorBurn: .colorBurn
+        case .hardLight: .hardLight
+        case .softLight: .softLight
+        case .difference: .difference
+        case .exclusion: .exclusion
+        case .hue: .hue
+        case .saturation: .saturation
+        case .color: .color
+        case .luminosity: .luminosity
         }
     }
 }

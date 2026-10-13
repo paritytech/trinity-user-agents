@@ -54,6 +54,7 @@ class MigrationTest {
 }
 
 private class NoOpPreferences : Preferences {
+    override fun keys(): Set<String> = emptySet()
     override fun contains(field: String) = false
     override fun putString(field: String, value: String?) = Unit
     override fun getString(field: String, defaultValue: String) = defaultValue

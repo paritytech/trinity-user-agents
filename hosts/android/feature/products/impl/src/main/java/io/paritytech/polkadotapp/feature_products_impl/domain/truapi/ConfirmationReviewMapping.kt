@@ -102,9 +102,8 @@ fun UserConfirmationReview.toConfirmation(callingProductId: String): TrUAPIConfi
     is UserConfirmationReview.ProductSubtree ->
         TrUAPIConfirmation.ProductSubtree(requesterProductId = v1.productId)
 
-    // No prompt exists for profile disclosure yet; refusing it is the caller's fallback.
     is UserConfirmationReview.ProfileDisclosure ->
-        throw UnsupportedReviewException("profile disclosure has no prompt on this host")
+        TrUAPIConfirmation.ProfileDisclosure(requesterProductId = v1.productId)
 }
 
 @OptIn(ExperimentalStdlibApi::class)

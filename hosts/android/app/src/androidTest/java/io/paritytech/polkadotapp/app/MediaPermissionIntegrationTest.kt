@@ -27,6 +27,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -71,6 +72,14 @@ class MediaPermissionIntegrationTest {
             databaseDirectory = createTempDirectory("truapi").toString(),
         )
         TrUAPIHostRuntime(bridge, config).use { runtime ->
+            runBlocking {
+                for (capability in listOf(HostDevicePermissionRequest.CAMERA, HostDevicePermissionRequest.MICROPHONE)) {
+                    runtime.setPermissionAuthorizationStatus(
+                        "media.paseo", PermissionAuthorizationRequest.Device(capability),
+                        PermissionAuthorizationStatus.NOT_DETERMINED,
+                    )
+                }
+            }
             runtime.openProductExecution(bridge, ProductExecutionConfig("media.paseo", ProductExecutionKind.APP)).use { execution ->
                 val endpoint = execution.startWsBridge()
                 lateinit var webView: WebView
@@ -109,13 +118,6 @@ class MediaPermissionIntegrationTest {
                     )) {
                         bridge.events.clear()
                         val name = if (capability == HostDevicePermissionRequest.CAMERA) "Camera" else "Microphone"
-                        bridge.decisions.add(PermissionDecision.DENY)
-                        call("capture('$name')", "NotAllowedError")
-                        assertEquals(listOf("prompt:$capability"), bridge.events.toList())
-
-                        execution.setPermissionAuthorizationStatus(
-                            PermissionAuthorizationRequest.Device(capability), PermissionAuthorizationStatus.NOT_DETERMINED,
-                        )
                         bridge.decisions.add(PermissionDecision.ALLOW_ONCE)
                         call(
                             "window.__HOST_API_CLIENT__.client.permissions.requestDevicePermission('$name')" +
@@ -124,13 +126,13 @@ class MediaPermissionIntegrationTest {
                         )
                         call("capture('$name')", "captured")
                         assertEquals(
-                            listOf("prompt:$capability", "prompt:$capability", "native:$manifest"),
+                            listOf("prompt:$capability", "native:$manifest"),
                             bridge.events.toList(),
                         )
                         bridge.decisions.add(PermissionDecision.DENY)
                         call("capture('$name')", "NotAllowedError")
                         assertEquals(
-                            listOf("prompt:$capability", "prompt:$capability", "native:$manifest", "prompt:$capability"),
+                            listOf("prompt:$capability", "native:$manifest", "prompt:$capability"),
                             bridge.events.toList(),
                         )
                     }
@@ -143,11 +145,13 @@ class MediaPermissionIntegrationTest {
     }
 
     private class PermissionBridge : HostBridge {
+        override fun permissionAuthorizationsChanged(productId: String) = Unit
         val decisions = LinkedBlockingQueue<PermissionDecision>()
         val events = LinkedBlockingQueue<String>()
         override val storage: HostStorage = unused()
         override val coreStorage = object : HostCoreStorage {
             private val values = ConcurrentHashMap<List<Byte>, ByteArray>()
+            override suspend fun keys(): List<ByteArray> = values.keys.map { it.toByteArray() }
             override suspend fun read(key: ByteArray): ByteArray? = values[key.toList()]
             override suspend fun write(key: ByteArray, value: ByteArray) { values[key.toList()] = value }
             override suspend fun clear(key: ByteArray) { values.remove(key.toList()) }

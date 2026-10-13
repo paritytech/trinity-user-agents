@@ -62,7 +62,7 @@ extension GameNotificationService: GameNotificationServicing {
         }
         gameStartReminder.scheduleReminder(
             gameDate: gameDate,
-            gameIndex: gameIndex,
+            target: .game(gameIndex),
             timingSeconds: settingsManager.gameAlarmTimingSeconds
         )
     }

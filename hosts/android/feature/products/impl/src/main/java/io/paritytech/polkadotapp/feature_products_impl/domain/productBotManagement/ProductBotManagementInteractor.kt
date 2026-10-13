@@ -11,6 +11,7 @@ import io.paritytech.polkadotapp.feature_products_impl.data.repository.ProductIn
 import io.paritytech.polkadotapp.feature_products_impl.data.repository.ProductRepository
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.DebugPocketCard
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.DebugPocketCards
+import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.isDebugServableUrl
 import io.paritytech.polkadotapp.feature_products_impl.domain.product.IntegrationType
 import io.paritytech.polkadotapp.feature_products_impl.domain.product.UninstallProductUseCase
 import io.paritytech.polkadotapp.feature_products_impl.domain.usecase.ResolveProductUseCase
@@ -28,11 +29,14 @@ interface ProductBotManagementInteractor {
 
     suspend fun getDebugCard(productId: ProductId): DebugPocketCard?
 
+    suspend fun getAppUrl(productId: ProductId): String?
+
     suspend fun upsertProduct(
         productId: ProductId,
         workerUrl: String,
         name: String,
         card: DebugPocketCard?,
+        appUrl: String?,
     ): Result<ProductId>
 
     suspend fun updateProduct(
@@ -40,6 +44,7 @@ interface ProductBotManagementInteractor {
         workerUrl: String,
         name: String,
         card: DebugPocketCard?,
+        appUrl: String?,
     ): Result<Unit>
 
     suspend fun deleteProduct(productId: ProductId): Result<Unit>
@@ -78,15 +83,22 @@ class RealProductBotManagementInteractor @Inject constructor(
         debugPocketCards.get(productId)
     }
 
+    override suspend fun getAppUrl(productId: ProductId): String? = withContext(dispatchers.io) {
+        debugPocketCards.appUrl(productId)
+    }
+
     override suspend fun upsertProduct(
         productId: ProductId,
         workerUrl: String,
         name: String,
         card: DebugPocketCard?,
+        appUrl: String?,
     ): Result<ProductId> {
         return runCatching {
+            requireServableAppUrl(appUrl)
             productRepository.upsertManualProduct(productId, name, workerUrl)
             debugPocketCards.set(productId, card)
+            debugPocketCards.setAppUrl(productId, appUrl)
             resolveProductUseCase.invalidate(productId) // force next resolve to read the new URL
             integrationRepository.install(productId, IntegrationType.Chat)
             botStateController.setActive(productId.toChatExtensionId())
@@ -99,10 +111,13 @@ class RealProductBotManagementInteractor @Inject constructor(
         workerUrl: String,
         name: String,
         card: DebugPocketCard?,
+        appUrl: String?,
     ): Result<Unit> {
         return runCatching {
+            requireServableAppUrl(appUrl)
             productRepository.upsertManualProduct(productId, name, workerUrl)
             debugPocketCards.set(productId, card)
+            debugPocketCards.setAppUrl(productId, appUrl)
             // The card rides on the resolved worker, so a changed one is only seen after this.
             resolveProductUseCase.invalidate(productId)
         }
@@ -110,6 +125,7 @@ class RealProductBotManagementInteractor @Inject constructor(
 
     override suspend fun deleteProduct(productId: ProductId): Result<Unit> {
         return uninstallProductUseCase(productId)
+            .onSuccess { debugPocketCards.setAppUrl(productId, null) }
     }
 
     override suspend fun installChatIntegration(productId: ProductId): Result<Unit> {
@@ -120,5 +136,9 @@ class RealProductBotManagementInteractor @Inject constructor(
 
     override fun currentTld(): DotNsTld? {
         return dotNsTldProvider.currentTldOrNull()
+    }
+
+    private fun requireServableAppUrl(appUrl: String?) {
+        require(appUrl == null || isDebugServableUrl(appUrl)) { "The app url must be http://127.0.0.1:<port>/…" }
     }
 }

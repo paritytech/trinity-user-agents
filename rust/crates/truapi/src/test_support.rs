@@ -148,8 +148,6 @@ pub struct StubPlatform {
     /// URLs handed to `navigate_to`. Empty means the gate blocked before the
     /// platform was ever reached.
     pub navigations: Arc<Mutex<Vec<String>>>,
-    /// Optional activation batch used to exercise the runtime's batch bound.
-    pub notification_activations: Option<v01::NotificationActivations>,
     pub account_alias_confirmed: bool,
     pub account_alias_error: Option<&'static str>,
     pub create_proof_confirmed: bool,
@@ -163,6 +161,7 @@ pub struct StubPlatform {
     /// Inverted so the derived default (`false`) approves, matching the
     /// pre-consent behavior where a cold own-account resolve was not gated.
     pub profile_disclosure_confirmed: bool,
+    pub profile_disclosure_error: Option<&'static str>,
     pub profile_disclosure_reviews: Arc<Mutex<Vec<ProfileDisclosureReview>>>,
     pub product_subtree_denied: bool,
     pub product_subtree_reviews: Arc<Mutex<Vec<ProductSubtreeReview>>>,
@@ -273,6 +272,10 @@ pub struct StubPlatform {
     /// Hold every core-storage read pending forever, standing in for a host
     /// callback that is never answered.
     pub core_storage_pending: bool,
+    /// Pause the next matching core read until its test releases it.
+    pub core_storage_read_gate: parking_lot::Mutex<
+        Option<(String, futures::channel::oneshot::Receiver<()>)>,
+    >,
     pub chain_connect_pending: bool,
     /// Set when a `chain_connect_pending` connect future is dropped.
     pub pending_connect_dropped: Arc<AtomicBool>,
@@ -1150,6 +1153,17 @@ impl PlatformCoreStorage for StubPlatform {
         if self.core_storage_pending {
             futures::future::pending::<()>().await;
         }
+        let gate = {
+            let mut pending = self.core_storage_read_gate.lock();
+            if pending.as_ref().is_some_and(|(slot, _)| *slot == core_storage_test_key(key.clone())) {
+                pending.take().map(|(_, gate)| gate)
+            } else {
+                None
+            }
+        };
+        if let Some(gate) = gate {
+            let _ = gate.await;
+        }
         if let CoreStorageKey::AuthSession = key {
             if let Some(reason) = self.session_error {
                 return Err(v01::GenericError {
@@ -1279,12 +1293,6 @@ impl PlatformNotifications for StubPlatform {
             .expect("notification cancellation list mutex poisoned")
             .push(id);
         Ok(())
-    }
-
-    async fn activation_events(&self) -> Result<v01::NotificationActivations, v01::GenericError> {
-        self.notification_activations.clone().ok_or_else(|| v01::GenericError {
-            reason: "notification activation is unsupported".to_string(),
-        })
     }
 }
 
@@ -2189,7 +2197,7 @@ impl UserConfirmation for StubPlatform {
                     .lock()
                     .expect("profile disclosure review list mutex poisoned")
                     .push(review);
-                (None, self.profile_disclosure_confirmed)
+                (self.profile_disclosure_error, self.profile_disclosure_confirmed)
             }
         };
         if let Some(reason) = error {

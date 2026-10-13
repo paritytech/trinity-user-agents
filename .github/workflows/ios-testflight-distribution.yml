@@ -21,23 +21,22 @@ env:
 jobs:
   distribute_testflight:
     runs-on: macos-26
-    # This workflow calls the distribute action directly rather than through
-    # ios-build-distribute.yml, so it does not inherit that workflow's
-    # github-actions[bot] check. The allowlist is the only thing standing
-    # between a hand-started run and a TestFlight build on the production
-    # record.
-    # This workflow calls the distribute action directly, so it inherits no
-    # github-actions[bot] check and this list is the only thing between a
-    # dispatch and a TestFlight build on the production record.
-    #
-    # fromJSON, so this is array membership. Against a plain string `contains`
-    # matches a substring, and any actor whose name appears anywhere inside the
-    # list, down to a single letter, would pass.
-    if: contains(fromJSON('["sergkononenko","ERussel","stepanLav","kogeler","TarikGul","pgherveou","filvecchiato","valentinfernandez1"]'), github.actor)
     name: Distribute TestFlight Build
     steps:
       - name: Checkout repository
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+      # This workflow calls the distribute action directly rather than through
+      # ios-build-distribute.yml, so it inherits no github-actions[bot] check,
+      # and this is the only thing between a dispatch and a TestFlight build on
+      # the production record.
+      # Narrower than write access: see the action for why, and
+      # IOS_SIGNING_ACTORS for who.
+      - name: Require an iOS signing actor
+        uses: ./.github/actions/require-ios-signing-actor
+        with:
+          allowed: ${{ vars.IOS_SIGNING_ACTORS }}
+          actor: ${{ github.triggering_actor }}
 
       - name: Setup iOS Environment
         uses: ./hosts/ios/.github/actions/install

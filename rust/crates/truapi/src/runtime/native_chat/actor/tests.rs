@@ -1812,6 +1812,14 @@ fn a_disclosed_profile_reference_is_sealed_once_per_peer_and_withdrawn_on_retrac
         assert_eq!(view.prepared[0].peer_identity, identity.account);
         assert!(view.prepared[0].requires_ack);
         let first_request = view.prepared[0].request_id.clone();
+        let predicted = actor.store.read(|state| {
+            let watermark = &state.profile_shared[0];
+            hash(&(identity.account, "seity.dot", Some(PROFILE_REFERENCE), watermark.timestamp).encode())
+        }).await.unwrap();
+        assert_ne!(
+            first_request, format!("profile-{}", hex::encode(&predicted[..8])),
+            "the public request id must not be an offline reference oracle"
+        );
         assert!(
             !contains(
                 &view.prepared[0].statement.encode(),
@@ -1960,6 +1968,60 @@ fn a_disclosed_profile_reference_is_sealed_once_per_peer_and_withdrawn_on_retrac
                 .unwrap(),
             "and is sent once"
         );
+    });
+}
+
+#[test]
+fn profile_delivery_tracks_the_contacts_current_device_roster() {
+    block_on(async {
+        for acknowledged in [false, true] {
+            let fixture = Fixture::new();
+            set_product_grants(&fixture.platform, PRODUCT,
+                crate::platform::PermissionAuthorizationStatus::Authorized).await;
+            let actor = fixture.actor().await;
+            let identity = IdentityFixture::new();
+            let old = DeviceFixture::new(1);
+            let new = DeviceFixture::new(2);
+            seed_peer(&actor, &identity, &[&old]).await;
+            crate::runtime::profile::write_disclosure(
+                fixture.platform.as_ref(), profile::profile_owner(&fixture.context),
+                &crate::runtime::profile::Disclosure {
+                    product_id: "seity.dot".into(), reference: PROFILE_REFERENCE.into(), revision: 1,
+                    all_chat_apps: true, app_products: Vec::new(), contacts: Vec::new(),
+                },
+            ).await.unwrap();
+            assert!(actor.publish_profile_reference(&fixture.context).await.unwrap());
+            let previous = actor.public_view(&fixture.context, vec![]).await.unwrap().prepared[0]
+                .request_id.clone();
+            let account = identity.account;
+            let replacement = DeviceRecord {
+                account: new.account(), key: Some(new.public_key()), active: true,
+                timestamp: fixture.timestamp, message_id: "device-handover".into(),
+            };
+            actor.store.update(move |state| {
+                if acknowledged {
+                    state.outbox.retain(|entry| entry.kind.profile_scope().is_none());
+                }
+                let peer = state.peer_mut(&account)?;
+                peer.revocation_acks = vec![replacement.account];
+                peer.devices = vec![replacement];
+                peer.revision += 1;
+                Ok(())
+            }).await.unwrap();
+            assert!(actor.public_view(&fixture.context, vec![]).await.unwrap().prepared.is_empty(),
+                "no statement sealed to the revoked device can still reach the product");
+            assert!(actor.publish_profile_reference(&fixture.context).await.unwrap());
+            let prepared = actor.public_view(&fixture.context, vec![]).await.unwrap().prepared;
+            assert_eq!(prepared.len(), 1);
+            assert_ne!(prepared[0].request_id, previous);
+            let wire::V2StatementTransportData::MultiRequest(sealed) =
+                open_output(&actor, &identity, &prepared[0].statement, false, false)
+            else { panic!("profile must use authenticated multi-device transport") };
+            assert_eq!(sealed.devices_info.iter().map(|device| device.statement_account_id)
+                .collect::<Vec<_>>(), vec![new.account()]);
+            let opened = open_body(&actor, &new, &sealed.encrypted_request, &sealed.devices_info);
+            assert!(contains(&opened, PROFILE_REFERENCE.as_bytes()));
+        }
     });
 }
 
@@ -2348,6 +2410,48 @@ fn a_full_outbox_neither_blocks_profile_references_nor_is_blocked_by_them() {
 }
 
 #[test]
+fn obsolete_roster_profile_references_release_outbox_room() {
+    block_on(async {
+        let fixture = Fixture::new();
+        set_product_grants(
+            &fixture.platform,
+            PRODUCT,
+            crate::platform::PermissionAuthorizationStatus::Authorized,
+        )
+        .await;
+        let actor = fixture.actor().await;
+        let identity = IdentityFixture::new();
+        seed_peer(&actor, &identity, &[&DeviceFixture::new(1)]).await;
+        disclose_for(&fixture).await;
+        actor
+            .store
+            .update(|state| {
+                for index in 0..MAX_PROFILE_OUTBOX {
+                    state.queue(filler(
+                        [index as u8; 32],
+                        format!("obsolete-{index}"),
+                        OutgoingKind::ProfileReference([0; 32]),
+                    ))?;
+                }
+                Ok(())
+            })
+            .await
+            .unwrap();
+        assert!(actor.publish_profile_reference(&fixture.context).await.unwrap());
+        actor
+            .store
+            .read(move |state| {
+                assert_eq!(state.outbox_used(true), 1);
+                assert!(state.outbox.iter().all(|entry| entry.peer == identity.account));
+                assert_eq!(state.profile_shared.len(), 1);
+                assert_eq!(state.profile_shared[0].peer, identity.account);
+            })
+            .await
+            .unwrap();
+    });
+}
+
+#[test]
 fn a_reference_with_no_outbox_room_waits_for_a_later_reconcile() {
     block_on(async {
         let fixture = Fixture::new();
@@ -2362,17 +2466,53 @@ fn a_reference_with_no_outbox_room_waits_for_a_later_reconcile() {
         seed_peer(&actor, &identity, &[&DeviceFixture::new(1)]).await;
         disclose_for(&fixture).await;
         let peer = identity.account;
-        // Stale entries for other identities hold every profile slot.
+        let (revision, disclosure) = crate::runtime::profile::read_disclosure_state(
+            fixture.platform.as_ref(),
+            profile::profile_owner(&fixture.context),
+        )
+        .await
+        .unwrap();
+        let disclosure = disclosure.unwrap();
+        let digest = profile::disclosure_digest(&disclosure);
+        // Current App shares and Personal withdrawals fill the independent
+        // profile budget. Absent peers or old rosters are retired before queueing
+        // and therefore cannot exercise backpressure.
         actor
             .store
             .update(move |state| {
-                state.outbox.extend((0..MAX_PROFILE_OUTBOX).map(|index| {
-                    filler(
-                        [index as u8; 32],
-                        format!("stale-{index}"),
-                        OutgoingKind::ProfileReference([0; 32]),
-                    )
-                }));
+                let template = state.peer(&peer)?.clone();
+                for index in 0..MAX_PROFILE_OUTBOX / 2 {
+                    let mut recipient = template.clone();
+                    recipient.identity = [index as u8; 32];
+                    for scope in [
+                        crate::runtime::profile::ProfileScope::App,
+                        crate::runtime::profile::ProfileScope::Personal,
+                    ] {
+                        let personal = scope == crate::runtime::profile::ProfileScope::Personal;
+                        state.queue(filler(
+                            recipient.identity,
+                            format!("current-{index}-{scope:?}"),
+                            if personal {
+                                OutgoingKind::PersonalProfileReference([0; 32])
+                            } else {
+                                OutgoingKind::ProfileReference([0; 32])
+                            },
+                        ))?;
+                        state.profile_shared.push(profile::ProfileWatermark {
+                            peer: recipient.identity,
+                            scope,
+                            revision: if personal { revision } else { 0 },
+                            digest: if personal { None } else { Some(digest) },
+                            discloser_product_id: disclosure.product_id.clone(),
+                            timestamp: 1,
+                            attempts: 1,
+                            lapsed: false,
+                            roster_revision: recipient.revision,
+                        });
+                    }
+                    state.peers.push(recipient);
+                }
+                assert_eq!(state.outbox_used(true), MAX_PROFILE_OUTBOX);
                 Ok(())
             })
             .await

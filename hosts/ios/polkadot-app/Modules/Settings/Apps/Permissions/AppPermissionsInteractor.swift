@@ -45,28 +45,30 @@ extension AppPermissionsInteractor: AppPermissionsInteractorInputProtocol {
                 }
             } catch {
                 logger.error("App permissions subscription error: \(error)")
+                await self?.presenter?.didReceive(error: error)
             }
         }
     }
 
-    func revokeOnDisappear(permissions: [ProductPermission]) {
+    func revoke(permissions: [ProductPermission]) {
         guard !permissions.isEmpty else { return }
-
-        // currently revoke is called once, when scene closed
-        // stop subscription to not update UI during disappear
-        subscriptionTask?.cancel()
-
         let revokesNotifications = permissions.contains(.deviceCapability(.notifications))
 
-        Task { [repository, notificationScheduler, productId, logger] in
+        Task { [self] in
             do {
-                try await repository.revoke(productId: productId, permissions: permissions)
-
+                // Complete native cleanup before publishing the revoked snapshot.
+                // A cancellation failure leaves the row available to retry.
                 if revokesNotifications {
                     try await notificationScheduler.cancelAll(forProductId: productId)
                 }
+                try await repository.revoke(productId: productId, permissions: permissions)
+                let grants = try await repository.getAllByProduct(productId: productId)
+                await presenter?.didReceive(grants: grants.filter(\.granted))
+                await presenter?.didFinishRevoking()
             } catch {
                 logger.error("Failed to revoke product permissions: \(error)")
+                await presenter?.didFinishRevoking()
+                await presenter?.didReceive(error: error)
             }
         }
     }

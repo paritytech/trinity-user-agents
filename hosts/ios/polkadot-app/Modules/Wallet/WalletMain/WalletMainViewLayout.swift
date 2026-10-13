@@ -8,6 +8,9 @@ struct WalletView: View {
     @State private var scrollAtTop: Bool = true
     @Namespace private var cardNamespace
     private let peekHeight: CGFloat = 64
+    /// Every card in the Pocket sits one peek below the one before it, host-placed
+    /// and product-backed alike, so the collection reads as a single stack.
+    private var cardOverlap: CGFloat { PocketCardSize.height - peekHeight }
     private let scrollTopAnchor = "walletScrollTop"
     @State private var overscroll: CGFloat = 0
 
@@ -15,9 +18,16 @@ struct WalletView: View {
         ZStack(alignment: .top) {
             ScrollViewReader { scrollProxy in
                 ScrollView {
-                    ZStack(alignment: .top) {
-                        assetCard
-                        identityCard
+                    VStack(spacing: -cardOverlap) {
+                        ZStack(alignment: .top) {
+                            assetCard
+                            identityCard
+                        }
+                        // The identity card is drawn offset down by the peek, which
+                        // the stack's own height does not account for, so without
+                        // this the product cards would start a peek too high.
+                        .padding(.bottom, viewModel.expandedSection == .none ? peekHeight : 0)
+                        pocketCards
                     }
                     .padding(.horizontal, 24)
                     .padding(.top, 16)
@@ -49,6 +59,34 @@ struct WalletView: View {
             )
         )
         .animation(.spring(duration: 0.45, bounce: 0.15), value: viewModel.expandedSection)
+    }
+
+    /// Product-backed cards follow the host's own, and are hidden while a
+    /// native card is expanded so they do not sit under it. The Pocket is a
+    /// product surface, so it ships with the rest of them.
+    @ViewBuilder
+    private var pocketCards: some View {
+        #if FEATURE_PRODUCTS
+            if viewModel.expandedSection == .none {
+                ForEach(viewModel.pocketCards) { card in
+                    // A press takes the user into the product the card belongs
+                    // to, at the page the card names. The shape is named so the
+                    // peek a card shows is all of it that takes a press, the
+                    // rest is under the card above.
+                    PocketCollectionCardView(card: card)
+                        .contentShape(RoundedRectangle(cornerRadius: PocketCardSize.cornerRadius))
+                        .onTapGesture { viewModel.onOpenPocketCard?(card) }
+                        // A host-placed card is removable by nobody, so a long
+                        // press offers it nothing rather than a prompt that
+                        // refuses.
+                        .onLongPressGesture {
+                            guard !card.privileged else { return }
+
+                            viewModel.onRemovePocketCard?(card)
+                        }
+                }
+            }
+        #endif
     }
 
     @ViewBuilder

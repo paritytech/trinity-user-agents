@@ -4,12 +4,10 @@ import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
 import io.paritytech.polkadotapp.common.presentation.clipboard.ClipboardService
 import io.paritytech.polkadotapp.common.presentation.screens.BaseViewModel
-import io.paritytech.polkadotapp.common.presentation.search.mapSearchResults
 import io.paritytech.polkadotapp.common.utils.OneShotEventChannel
 import io.paritytech.polkadotapp.common.utils.flowOf
 import io.paritytech.polkadotapp.common.utils.launchUnit
 import io.paritytech.polkadotapp.common.utils.shareInBackground
-import io.paritytech.polkadotapp.common.utils.toSizedList
 import io.paritytech.polkadotapp.feature_account_api.presentation.address.converter.ParseAddressConverterFactory
 import io.paritytech.polkadotapp.feature_account_api.presentation.address.mixin.AddressInputMixin
 import io.paritytech.polkadotapp.feature_account_api.presentation.address.model.toParcel
@@ -60,31 +58,36 @@ class SendPaymentViewModel @Inject constructor(
 
     private val addressInputMixin = addressInputMixinFactory.create(
         coroutineScope = viewModelScope,
-        converters = listOf(
+        localConverters = listOf(
             previousPaymentsAddressConverterFactory.create(interactor.chainId()),
             contactsAddressConverterFactory.create(),
+        ),
+        remoteConverters = listOf(
             parserAddressUsernameConverterFactory.create(
                 parseAddressConverterFactory.create(interactor.chainId())
             ),
             usernameAddressConverterFactory.create(),
-        )
+        ),
     )
 
-    private val addressCandidates = addressInputMixin.addressCandidates
-        .mapSearchResults { candidates -> candidates.toSearchSections().toSizedList() }
+    private val searchResults = combine(addressInputMixin.addressCandidates, contacts) { candidates, contacts ->
+        val blockedAccountIds = contacts.filter { it.isBlocked }.map { it.accountId }.toSet()
+
+        candidates.toSearchResults(hiddenAccountIds = blockedAccountIds)
+    }
 
     override val state: StateFlow<SendPaymentUiState> = combine(
         addressInputMixin.input,
-        addressCandidates
-    ) { inputValue, searchState ->
+        searchResults
+    ) { inputValue, results ->
         SendPaymentUiState(
             input = inputValue,
-            searchState = searchState,
+            results = results,
         )
     }.stateIn(
         scope = this,
         started = SharingStarted.Eagerly,
-        initialValue = SendPaymentUiState()
+        initialValue = SendPaymentUiState(input = "", results = PaymentSearchResults.Loading)
     )
 
     fun onQrResult(payload: ScanAddressQrResultPayload) {

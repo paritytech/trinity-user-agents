@@ -11,13 +11,13 @@ import io.paritytech.polkadotapp.common.utils.CoroutineDispatchers
 import io.paritytech.polkadotapp.common.utils.flatMap
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsUtils
+import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardId
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardKey
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCollection
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_api.presentation.PocketAddCardPayload
 import io.paritytech.polkadotapp.feature_products_api.presentation.deeplink.ProductDeepLinkGate
 import io.paritytech.polkadotapp.feature_products_api.presentation.deeplink.isPocketTarget
-import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.PocketCardIdentifier
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.PocketPublishError
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.PublishedPocketCards
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.PocketDeeplink
@@ -74,8 +74,7 @@ internal class PocketDeepLinkHandler @Inject constructor(
     }
 
     private suspend fun dispatch(productId: ProductId, deeplink: PocketDeeplink): Result<DeeplinkProcessingOutcome> {
-        val key = runCatching { PocketCardKey(productId, PocketCardIdentifier.screen(deeplink.cardId)) }
-            .getOrElse { return Result.failure(it) }
+        val key = PocketCardKey(productId, PocketCardId(deeplink.cardId))
         val present = collection.observeCards().first().any { it.key == key }
 
         // A card already held is opened, whichever action asked for it. One that is not held has to

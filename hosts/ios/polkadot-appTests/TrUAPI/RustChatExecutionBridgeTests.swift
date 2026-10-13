@@ -5,7 +5,6 @@ import Testing
 import TrUAPIHost
 @testable import polkadot_app
 
-@Suite
 struct RustChatExecutionBridgeTests {
     private func makeBridge(api: any ProductChatMessaging) async -> RustChatExecutionBridge {
         await RustChatExecutionBridge(

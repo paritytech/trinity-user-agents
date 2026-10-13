@@ -161,6 +161,11 @@ jobs:
   # same output for each of them, so it is built once here and carried across.
   # Built on the larger runner because it is Rust compilation and CPU bound:
   # the same work measured 11m13s on macos-26 and 5m44s on macos-26-xlarge.
+  # The `release/` test on this job and the three below it is deliberately every
+  # release branch, app and package alike, behind the label check that already
+  # gates them. A release branch is a version bump on top of main, which app PR CI
+  # has already covered. It is not the narrower app-only prefix the distribution
+  # and lifecycle workflows use.
   core:
     name: Build the in-tree core
     needs: check-skip-label

@@ -23,6 +23,7 @@ import io.paritytech.polkadotapp.feature_products_api.domain.accountsProtocol.Ac
 import io.paritytech.polkadotapp.feature_products_api.domain.accountsProtocol.MembersRingLocator
 import io.paritytech.polkadotapp.feature_products_api.domain.browser.ProductSessionController
 import io.paritytech.polkadotapp.feature_products_api.domain.deriveEntropy.DeriveEntropyUseCase
+import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardFaceOnOpen
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCollection
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketFaceSource
 import io.paritytech.polkadotapp.feature_products_api.domain.product.ProductContentWarmUp
@@ -30,6 +31,7 @@ import io.paritytech.polkadotapp.feature_products_api.domain.runtime.ProductRunt
 import io.paritytech.polkadotapp.feature_products_api.domain.sponsoring.PreimageSubmitSponsoring
 import io.paritytech.polkadotapp.feature_products_api.domain.sponsoring.StatementStoreSubmissionSponsoring
 import io.paritytech.polkadotapp.feature_products_api.domain.sponsoring.TransactionSponsoring
+import io.paritytech.polkadotapp.feature_products_api.presentation.SpaBrowserFragmentClass
 import io.paritytech.polkadotapp.feature_products_api.presentation.deeplink.ProductDeepLinkGate
 import io.paritytech.polkadotapp.feature_products_api.presentation.spaHost.SpaHost
 import io.paritytech.polkadotapp.feature_products_impl.data.config.RemoteConfigFundingDomainProvider
@@ -109,6 +111,7 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.PocketCardS
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.PocketFaceStreams
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.PocketImageResolver
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.PrefsDebugPocketCards
+import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.RealPocketCardFaceOnOpen
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.RealPocketCollection
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.RealPocketFaceSource
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.RealPocketImageResolver
@@ -143,6 +146,7 @@ import io.paritytech.polkadotapp.feature_products_impl.presentation.deeplink.Poc
 import io.paritytech.polkadotapp.feature_products_impl.presentation.initialization.ProductWorkerInitializer
 import io.paritytech.polkadotapp.feature_products_impl.presentation.initialization.TopUpResumeInitializer
 import io.paritytech.polkadotapp.feature_products_impl.presentation.productBotManagement.ProductsRouter
+import io.paritytech.polkadotapp.feature_products_impl.presentation.spaBrowser.SpaBrowserFragment
 import io.paritytech.polkadotapp.feature_products_impl.presentation.spaHost.RuntimeSelectingSpaHost
 import io.paritytech.polkadotapp.feature_scan_api.domain.ScanContentParser
 import okhttp3.Call
@@ -202,6 +206,9 @@ internal interface ProductsModule {
 
     @Binds
     fun bindPocketFaceSource(impl: RealPocketFaceSource): PocketFaceSource
+
+    @Binds
+    fun bindPocketCardFaceOnOpen(impl: RealPocketCardFaceOnOpen): PocketCardFaceOnOpen
 
     @Binds
     fun bindPocketFaceStreams(impl: TrUAPIPocketFaceStreams): PocketFaceStreams
@@ -401,6 +408,10 @@ internal interface ProductsModule {
                 .build()
 
         private const val CHAIN_SOCKET_PING_SECONDS = 30L
+
+        @Provides
+        @SpaBrowserFragmentClass
+        fun provideSpaBrowserFragmentClass(): String = SpaBrowserFragment::class.java.name
 
         /** `OkHttpClient` is a `Call.Factory`; naming the interface keeps the face source testable. */
         @Provides

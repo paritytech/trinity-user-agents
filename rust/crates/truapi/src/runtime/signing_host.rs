@@ -195,6 +195,10 @@ pub struct SigningHost {
     /// shipping host has no way to set it.
     #[cfg(feature = "test-host")]
     grant_allowances_unchecked: std::sync::atomic::AtomicBool,
+    /// Keep preimage submissions in the core instead of the Bulletin chain,
+    /// also implied by `grant_allowances_unchecked`.
+    #[cfg(feature = "test-host")]
+    submit_preimages_locally: core::sync::atomic::AtomicBool,
     /// Resource tags answered as refused, whatever the rest of the host would
     /// say. A suite proving that its product handles a refusal needs one
     /// resource withheld while the others stay granted, which neither the
@@ -243,6 +247,8 @@ impl SigningHost {
             #[cfg(feature = "test-host")]
             grant_allowances_unchecked: std::sync::atomic::AtomicBool::new(false),
             #[cfg(feature = "test-host")]
+            submit_preimages_locally: core::sync::atomic::AtomicBool::new(false),
+            #[cfg(feature = "test-host")]
             withheld_resources: Mutex::new(HashSet::new()),
             session_state: SessionState::new(),
             auth_state: AuthStateMachine::new(platform.clone()),
@@ -262,6 +268,15 @@ impl SigningHost {
     pub fn grants_allowances_unchecked(&self) -> bool {
         self.grant_allowances_unchecked
             .load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Keep preimage submissions in the core instead of the Bulletin chain.
+    ///
+    /// For test hosts only, with the `test-host` feature enabled.
+    #[cfg(feature = "test-host")]
+    pub fn set_submit_preimages_locally(&self, local: bool) {
+        self.submit_preimages_locally
+            .store(local, core::sync::atomic::Ordering::Relaxed);
     }
 
     /// Answer resource allocation as granted without performing it.
@@ -355,6 +370,8 @@ impl SigningHost {
             coinage_instance_id: None,
             #[cfg(feature = "test-host")]
             grant_allowances_unchecked: std::sync::atomic::AtomicBool::new(false),
+            #[cfg(feature = "test-host")]
+            submit_preimages_locally: core::sync::atomic::AtomicBool::new(false),
             #[cfg(feature = "test-host")]
             withheld_resources: Mutex::new(HashSet::new()),
             session_state: SessionState::new(),
@@ -1355,6 +1372,7 @@ impl ProductAuthority for SigningHost {
                         .map_err(|_| RingVrfError::NotAllowlisted)?;
                 match super::account_access_authorization(
                     self.services.platform.as_ref(),
+                    &self.services.permissions,
                     &requester,
                     &owner,
                 )
@@ -1500,6 +1518,7 @@ impl ProductAuthority for SigningHost {
         if caller != owner {
             match super::account_access_authorization(
                 self.services.platform.as_ref(),
+                &self.services.permissions,
                 &caller,
                 &owner,
             )
@@ -1763,6 +1782,15 @@ impl ProductAuthority for SigningHost {
         .map_err(sso_responder::AllowanceAllocationError::into_authority_error)
     }
 
+    #[cfg(feature = "test-host")]
+    fn submits_preimages_locally(&self) -> bool {
+        self.grant_allowances_unchecked
+            .load(std::sync::atomic::Ordering::Relaxed)
+            || self
+                .submit_preimages_locally
+                .load(core::sync::atomic::Ordering::Relaxed)
+    }
+
     fn forget_statement_store_allowance_key(&self, product_id: &str, public_key: [u8; 32]) {
         self.local_grants
             .lock()
@@ -1874,6 +1902,8 @@ mod tests {
     mod auto_signing;
     mod cross_product_account;
     mod raw_signing;
+    #[cfg(feature = "test-host")]
+    mod local_preimages;
     #[cfg(feature = "test-host")]
     mod withheld_resources;
 
@@ -2145,6 +2175,49 @@ mod tests {
                 Err(PaymentTopUpAuthorityError::Authority(
                     AuthorityError::Disconnected
                 ))
+            );
+        });
+    }
+
+    #[test]
+    fn concurrent_implicit_allowance_approval_reuses_the_new_grant() {
+        use futures::FutureExt;
+        let (release, gate) = futures::channel::oneshot::channel();
+        let platform = Arc::new(StubPlatform {
+            resource_allocation_confirmed: true,
+            ..Default::default()
+        });
+        *platform
+            .resource_allocation_confirmation_gate
+            .lock()
+            .expect("gate") = Some(gate);
+        let (services, authority) = signing_runtime_with_platform(platform.clone());
+        futures::executor::block_on(async {
+            authority
+                .activate_local_session(ENTROPY.to_vec())
+                .await
+                .unwrap();
+            let runtime = product_runtime(services, authority.clone());
+            let session = authority.current_session().unwrap();
+            let first = runtime.require_statement_store_allowance(&session, None);
+            futures::pin_mut!(first);
+            assert!(first.as_mut().now_or_never().is_none());
+            runtime
+                .require_statement_store_allowance(&session, None)
+                .await
+                .unwrap();
+            release.send(()).unwrap();
+            first.await.unwrap();
+            assert_eq!(
+                runtime
+                    .permission_authorization_status(
+                        PermissionAuthorizationRequest::StatementStoreAllowance {
+                            derivation_index: None,
+                        },
+                    )
+                    .await
+                    .unwrap(),
+                PermissionAuthorizationStatus::Authorized,
             );
         });
     }
@@ -3134,6 +3207,7 @@ mod tests {
         cache_grant(&platform, "peopl.dot", r#"{"ordinary":["context"]}"#);
         futures::executor::block_on(crate::runtime::account_access_authorization(
             platform.as_ref(),
+            &Default::default(),
             "ordinary.dot",
             "peopl.dot",
         ))
@@ -4956,6 +5030,44 @@ mod tests {
                     truapi::latest::HostProductDeviceChatError::AccessNotGranted
                 )))
             ));
+        });
+    }
+
+    #[test]
+    fn product_chat_allow_once_does_not_survive_wallet_reactivation() {
+        futures::executor::block_on(async {
+            let platform = Arc::new(StubPlatform::default());
+            platform
+                .permission_confirmation_decisions
+                .lock()
+                .expect("permission confirmation mutex poisoned")
+                .push_back(crate::platform::PermissionDecision::AllowOnce);
+            let (services, activation) = signing_runtime_with_platform(platform.clone());
+            activation
+                .activate_local_session(ENTROPY.to_vec())
+                .await
+                .unwrap();
+            let runtime = product_runtime(services, activation.clone());
+            let cx = CallContext::default();
+            let initialize = HostProductDeviceChatRequest::V2(
+                truapi::latest::HostProductDeviceChatRequest::Initialize,
+            );
+            runtime
+                .product_device_chat(&cx, initialize.clone())
+                .await
+                .unwrap();
+            activation.disconnect().await;
+            activation
+                .activate_local_session(ENTROPY.to_vec())
+                .await
+                .unwrap();
+            assert!(matches!(
+                runtime.product_device_chat(&cx, initialize).await,
+                Err(CallError::Domain(HostProductDeviceChatError::V1(
+                    truapi::latest::HostProductDeviceChatError::AccessNotGranted
+                )))
+            ));
+            assert_eq!(platform.chat_authority_reviews.lock().len(), 2);
         });
     }
 

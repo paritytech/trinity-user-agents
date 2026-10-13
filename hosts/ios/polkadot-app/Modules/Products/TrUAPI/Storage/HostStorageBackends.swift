@@ -49,6 +49,12 @@ final class CoreStorageBackend: HostCoreStorageBackend, @unchecked Sendable {
         try withHostRejection { try storage.write(key: key.toHex(), value: value) }
     }
 
+    func keys() throws -> [Data] {
+        try withHostRejection {
+            try storage.keys().map { try Data(hexString: $0) }
+        }
+    }
+
     func clear(key: Data) throws {
         if TrUAPIWalletStorage.owns(key) {
             return try withHostRejection { try TrUAPIWalletStorage.shared.clear(key: key) }

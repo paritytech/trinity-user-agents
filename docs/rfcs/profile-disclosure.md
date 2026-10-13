@@ -143,10 +143,17 @@ A wallet/network profile-state gate serializes disclosure replacement, publicati
 Without a new disclosure and with nothing lapsed, publication reads the disclosure and checks watermarks.
 Narrowing an audience removes obsolete unsent frames, even for peers that are no longer ready, and retains withdrawal
 watermarks for later delivery. Already returned signed frames cannot be recalled.
+A device-roster change also supersedes pending profile statements before they are returned to the product. Watermarks
+retain the roster revision, so a ready replacement device receives a freshly sealed frame even when the disclosure
+itself did not change. Legacy watermarks inherit the pending statement's roster, or the snapshot's current peer roster
+when already delivered. Public profile request ids are salted with the actor's private secret, not a guessable reference
+digest.
 
 App frames retain timestamp ordering. Personal frames use the durable disclosure revision across actors: independent
 app clocks must not allow an old share to undo a newer withdrawal. Received withdrawals remain tombstones, so replaying
 an older share cannot restore it after the newer withdrawal has been received.
+Live profile frames accompanying a compacted-history import are recorded before the history delivery receipt is
+committed. A failed profile write therefore remains retryable instead of permanently skipping a grant or withdrawal.
 
 Delivery is best effort. References share the existing bounded profile outbox budget, with separate entries per peer
 and scope, and never take slots reserved for payments or rich files. A frame that finds no room waits for a later
@@ -194,6 +201,8 @@ presenting it.
 
 `own_status` reports only whether the signed-in wallet has a current disclosure. `present_own` resolves that disclosure
 and hands it to the same host presenter. Neither method returns the reference or profile contents to the product.
+Both reads retain the authority session selected before storage access and recheck it before answering or presenting,
+so a wallet switch during a delayed read cannot report or open the preceding wallet's profile.
 
 ### Placed avatars
 
@@ -208,6 +217,9 @@ for the same reference means the host should drop cached profile contents. The h
 they have one, on a layer over the product that lets pointer input through; a tap still reaches the product, which
 opens the profile with `present_contact`. The default callback draws nothing, so a host draws avatars only once it
 implements it.
+Every placement, including raw-peer and own-avatar slots, retains its authority session. The core rechecks that session
+after asynchronous profile reads and before drawing. Session changes clear and forget stationary placements; a queued
+clear from an older session cannot erase a placement submitted by the new session.
 
 The core remembers the last placement per product connection, in memory. When a reference for that product arrives, is
 re-shared in a newer frame or is withdrawn it filters the same geometry again and calls the host again, so avatars appear and disappear without the
@@ -240,8 +252,8 @@ read it.
   overlapping grants remain effective. It cannot invalidate copies of the bearer reference.
 - A retraction cannot make a contact's host forget a reference it already resolved.
 - The watermark advances when the message is queued. A message that never arrives is sent again only when it lapses
-  unacknowledged, three frames at most per disclosure, so a contact whose host misses all three is not sent it again
-  until the disclosure changes.
+  unacknowledged, three frames at most per disclosure and recipient roster revision. A changed roster restarts delivery
+  to the current devices; without a disclosure or roster change, a contact that misses all three is not sent it again.
 - The chat product must run to submit what the host prepares. A disclosure changed while no chat product runs is relayed
   when one next initializes.
 - The host layer covers the product's own drawing, so a product that animates or scrolls between placements shows the

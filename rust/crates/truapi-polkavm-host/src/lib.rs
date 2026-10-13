@@ -11,6 +11,6 @@ pub use truapi;
 /// Version of this optional composition crate.
 pub const TRUAPI_POLKAVM_HOST_VERSION: &str = env!("CARGO_PKG_VERSION");
 /// Version of the pinned PolkaVM host runtime.
-pub const POLKAVM_HOST_RUNTIME_VERSION: &str = "0.3.0";
+pub const POLKAVM_HOST_RUNTIME_VERSION: &str = "0.3.2-rc.9";
 /// Immutable source revision of the pinned PolkaVM host runtime.
-pub const POLKAVM_HOST_RUNTIME_SOURCE_REVISION: &str = "e60a6135be6e00c72c90ca4abe23d2002f4eb962";
+pub const POLKAVM_HOST_RUNTIME_SOURCE_REVISION: &str = "959ad63f7312a2f4598b9f718ccc2516927cbbff";

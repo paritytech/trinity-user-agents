@@ -621,6 +621,8 @@ class RealOnboardingUseCaseTest {
             override fun breakdown(amount: BigDecimal) = denominations
 
             override fun roundDownAmount(amount: BigDecimal) = amount
+
+            override fun remainderAfterBreakdown(amount: BigDecimal) = Balance.ZERO
         }
 
         coEvery { breakdownUseCase.createCoinAmountBreakdown() } returns Result.success(breakdown)

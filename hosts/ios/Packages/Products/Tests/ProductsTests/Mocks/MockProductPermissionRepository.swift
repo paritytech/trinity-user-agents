@@ -45,6 +45,30 @@ final class MockProductPermissionRepository: ProductPermissionRepositoryProtocol
 
     // MARK: - Protocol
 
+    func promptPermissions(
+        productId: String,
+        permissions: [ProductPermission],
+        requester: ProductPermissionRequesting
+    ) async throws -> Bool {
+        let decision: PermissionDecision
+        if permissions.count == 1, let permission = permissions.first {
+            decision = await requester.prompt(productId: productId, permission: permission)
+        } else {
+            decision = await requester.promptBatched(productId: productId, permissions: permissions)
+        }
+        switch decision {
+        case .allowAlways:
+            for permission in permissions { try await grant(productId: productId, permission: permission) }
+            return true
+        case .allowOnce:
+            for permission in permissions { grantOneTime(productId: productId, permission: permission) }
+            return true
+        case .deny:
+            for permission in permissions { try await deny(productId: productId, permission: permission) }
+            return false
+        }
+    }
+
     func getPermissionState(
         productId: String,
         permission: ProductPermission

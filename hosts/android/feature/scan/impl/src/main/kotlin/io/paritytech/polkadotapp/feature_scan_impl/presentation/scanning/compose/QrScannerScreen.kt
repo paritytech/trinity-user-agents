@@ -48,6 +48,7 @@ internal fun QrScannerScreen(
             surfaceRequestFlow = surfaceRequestFlow,
             invalidCodeEvent = invalidCodeEvent,
             cameraPermissionDeniedFlow = cameraPermissionDeniedFlow,
+            cameraActive = true,
             bindToCamera = bindToCamera,
             onInvalidCodeAlertClosed = onInvalidCodeAlertClosed,
             onPermissionAlertClosed = onPermissionAlertClosed,

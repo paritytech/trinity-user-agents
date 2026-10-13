@@ -1,6 +1,6 @@
 {
   "name": "@parity/truapi-host",
-  "version": "0.23.0",
+  "version": "0.24.0",
   "description": "WASM-backed TrUAPI host runtime: embeds the Rust core, with web iframe and Web Worker entry points",
   "license": "MIT AND AGPL-3.0-only",
   "author": "Parity Technologies <admin@parity.io>",
@@ -88,7 +88,7 @@
   },
   "dependencies": {
     "@noble/hashes": "^2.2.0",
-    "@parity/truapi": "^0.23.0",
+    "@parity/truapi": "^0.24.0",
     "neverthrow": "^8.2.0"
   },
   "devDependencies": {

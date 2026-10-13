@@ -7,7 +7,7 @@ use std::time::Duration;
 
 use futures::stream::StreamExt;
 use jsonrpsee::core::SubscriptionResult;
-use jsonrpsee::server::{RpcModule, Server, ServerHandle, SubscriptionMessage};
+use jsonrpsee::server::{RpcModule, Server, ServerHandle};
 use serde_json::Value;
 use truapi_provider::platform::ChainProvider;
 use truapi_provider::{ChainSource, EmbeddedChainProvider};
@@ -35,7 +35,7 @@ async fn spawn_server() -> (SocketAddr, ServerHandle) {
             |_params, pending, _context, _extensions| async move {
                 let sink = pending.accept().await?;
                 for tick in 0..3u32 {
-                    sink.send(SubscriptionMessage::from_json(&tick)?).await?;
+                    sink.send(serde_json::value::to_raw_value(&tick)?).await?;
                 }
                 SubscriptionResult::Ok(())
             },

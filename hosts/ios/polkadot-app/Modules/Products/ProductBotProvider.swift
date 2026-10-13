@@ -156,7 +156,7 @@ private extension ProductBotProvider {
     /// turn a manifest product into a legacy one and serve the base archive as its worker.
     func warmWorkerArchive(of resolved: ResolvedProduct) async {
         // Chat is the only surface iOS runs a worker on, so anything else is a download nothing reads.
-        guard let worker = resolved.executables.worker, worker.includesChat else { return }
+        guard let worker = resolved.executables.worker, worker.serves(.chat) else { return }
 
         do {
             _ = try await dotNsResolver.resolveToLocalURL(dotNsName: worker.identifier)

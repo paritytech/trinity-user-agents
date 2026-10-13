@@ -512,3 +512,56 @@ fn nested_history_pages_survive_reopen_until_product_prepares_native_ack() {
         );
     });
 }
+
+#[test]
+fn profile_withdrawal_is_retried_before_history_delivery_is_committed() {
+    block_on(async {
+        let pool = Pool::default();
+        let platform = Arc::new(StubPlatform {
+            chain_connect_error: Some("history fixture has no Coinage or Chat RPC"),
+            hop_provider: Some(Arc::new(pool.clone())),
+            ..Default::default()
+        });
+        let fixture = Fixture::on_platform(platform.clone());
+        set_product_grants(&platform, PRODUCT, PermissionAuthorizationStatus::Authorized).await;
+        let actor = fixture.actor().await;
+        let identity = IdentityFixture::new();
+        let peer = DeviceFixture::new(1);
+        seed_peer(&actor, &identity, &[&peer]).await;
+        let owner = profile::profile_owner(&fixture.context);
+        crate::runtime::profile::record_received_reference(
+            platform.as_ref(), owner, PRODUCT, identity.account, "seity.dot".into(),
+            fixture.timestamp, Some(PROFILE_REFERENCE.into()),
+        ).await.unwrap();
+        let compacted = pool.compact(
+            "history", fixture.timestamp, &FileTicket::from_bytes(&[0xab; 32]).unwrap(),
+            &[wire::encode_text_message("old-message", fixture.timestamp, "Hello").unwrap()],
+        ).await;
+        let withdrawal = wire::encode_profile_reference_message(
+            "withdrawal", fixture.timestamp + 1, "seity.dot", None,
+        ).unwrap();
+        let packet = request(&actor, &identity, &peer, "history-and-withdrawal", &[compacted, withdrawal]);
+        let key = crate::test_support::core_storage_test_key(
+            crate::platform::CoreStorageKey::ProfileReferencesReceived {
+                root_public_key: owner.root_public_key, genesis_hash: owner.genesis_hash,
+                product_id: PRODUCT.into(),
+            },
+        );
+        platform.core_write_failures.lock().insert(key.clone());
+        let registry = NativeChatRegistry::default();
+        assert!(matches!(
+            actor.open_statement(&fixture.context, &registry, packet.clone()).await,
+            Err(Error::StorageUnavailable)
+        ));
+        assert!(actor.store.read(|state| state.boundary.history.is_empty()).await.unwrap());
+        platform.core_write_failures.lock().remove(&key);
+        actor.open_statement(&fixture.context, &registry, packet).await.unwrap();
+        assert_eq!(
+            crate::runtime::profile::received_reference(
+                platform.as_ref(), owner, PRODUCT, &identity.account,
+            ).await.unwrap().and_then(|received| received.reference),
+            None,
+            "retry must apply the withdrawal, not skip it through the history receipt"
+        );
+    });
+}

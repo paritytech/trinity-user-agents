@@ -73,12 +73,15 @@ public final class ProductPermissionGuard: ProductPermissionGuarding, @unchecked
         case let .deviceCapability(capability):
             try await deviceHandler.request(productId: productId, capability: capability)
         case .balanceAccess,
+             .networkAccessBundle,
              .webRtcAccess,
              .chainSubmitAccess,
              .preimageSubmitAccess,
              .statementSubmitAccess,
              .userIdentityAccess,
-             .chatAuthority:
+             .chatAuthority,
+             .profileDisclosure,
+             .statementStoreAllowance:
             try await remoteHandler.request(productId: productId, permission: permission)
         }
     }
@@ -100,25 +103,9 @@ public final class ProductPermissionGuard: ProductPermissionGuarding, @unchecked
         let unique = notYetGranted.removingDuplicates()
         guard !unique.isEmpty else { return true }
 
-        let decision = await requester.promptBatched(
-            productId: productId,
-            permissions: unique
+        return try await repository.promptPermissions(
+            productId: productId, permissions: unique, requester: requester
         )
-
-        switch decision {
-        case .allowAlways:
-            for permission in unique {
-                try await repository.grant(productId: productId, permission: permission)
-            }
-            return true
-        case .allowOnce:
-            for permission in unique {
-                repository.grantOneTime(productId: productId, permission: permission)
-            }
-            return true
-        case .deny:
-            return false
-        }
     }
 
     public func requestDevicePermissionDecision(
@@ -178,12 +165,15 @@ public final class ProductPermissionGuard: ProductPermissionGuarding, @unchecked
         case let .deviceCapability(capability):
             try await deviceHandler.isGranted(productId: productId, capability: capability)
         case .balanceAccess,
+             .networkAccessBundle,
              .webRtcAccess,
              .chainSubmitAccess,
              .preimageSubmitAccess,
              .statementSubmitAccess,
              .userIdentityAccess,
-             .chatAuthority:
+             .chatAuthority,
+             .profileDisclosure,
+             .statementStoreAllowance:
             try await remoteHandler.isGranted(productId: productId, permission: permission)
         }
     }

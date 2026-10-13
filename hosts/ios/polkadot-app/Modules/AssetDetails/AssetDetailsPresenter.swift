@@ -150,7 +150,8 @@ extension AssetDetailsPresenter: AssetDetailsInteractorOutputProtocol {
         case let .success(page):
             wireframe.showProduct(page: page)
         case let .failure(error):
-            wireframe.present(error: error, from: view)
+            guard !(error is CancellationError) else { return }
+            wireframe.present(error: action.errorContent(for: error), from: view)
         }
     }
 

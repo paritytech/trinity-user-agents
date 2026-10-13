@@ -5,6 +5,7 @@ protocol BottomSheetErrorPresentable: BottomSheetMessagePresentable, ErrorPresen
 
 @MainActor
 extension BottomSheetErrorPresentable {
+    @discardableResult
     func present(error: ErrorContent, from view: ControllerBackedProtocol?) -> Bool {
         guard let view else {
             return false

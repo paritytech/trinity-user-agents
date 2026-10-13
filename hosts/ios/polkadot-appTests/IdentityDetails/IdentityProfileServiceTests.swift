@@ -5,9 +5,10 @@ import KeyDerivation
 import SubstrateSdk
 import StructuredConcurrency
 import EventCenter
+import AsyncExtensions
 @testable import polkadot_app
 
-@Suite("IdentityProfileService")
+@Suite("IdentityProfileService", .timeLimit(.minutes(1)))
 struct IdentityProfileServiceTests {
     private let storage: MockUsernameStorage
     private let identityService: MockIdentityService
@@ -69,20 +70,18 @@ struct IdentityProfileServiceTests {
         storage.username = Username(value: "alice.22")
         storage.usernameClaimed = false
         let sut = createSut()
-        async let profiles = try withTimeout(.seconds(5)) {
-            try await sut.observe()
-                .prefix(2)
-                .reduce([]) { $0 + [$1] }
-        }
+        var profiles = try await observeAfterFirstProfile(of: sut)
 
-        try await Task.sleep(for: .seconds(1))
         identityService.subject.send(Username(value: "aliceclaimed"))
 
-        let collected = try await profiles
-        let claimed = try #require(collected.last)
+        var claimed: IdentityProfile?
+        repeat {
+            claimed = try await profiles.next()
+        } while claimed?.isClaimed == false
 
-        #expect(claimed.isClaimed)
-        #expect(claimed.username == Username(value: "aliceclaimed"))
+        let claimedProfile = try #require(claimed)
+
+        #expect(claimedProfile.username == Username(value: "aliceclaimed"))
         #expect(storage.username == Username(value: "aliceclaimed"))
         #expect(storage.usernameClaimed)
     }
@@ -92,11 +91,9 @@ struct IdentityProfileServiceTests {
         storage.username = Username(value: "alice")
         storage.usernameClaimed = true
         let sut = createSut()
-        async let profile = try sut.observe()
-            .first(where: { _ in true })
+        var profiles = try await observeAfterFirstProfile(of: sut)
 
-        _ = try await profile
-        try await Task.sleep(for: .seconds(0.1))
+        try await awaitInitialStateProcessed(by: sut, profiles: &profiles)
 
         #expect(identityService.subscribeCallCount == 0)
     }
@@ -104,12 +101,9 @@ struct IdentityProfileServiceTests {
     @Test("On-chain subscription skipped when no username")
     func onChainSubscriptionSkippedWhenNoUsername() async throws {
         let sut = createSut()
-        async let profile = try sut.observe()
-            .first(where: { _ in true })
+        var profiles = try await observeAfterFirstProfile(of: sut)
 
-        _ = try await profile
-
-        try await Task.sleep(for: .seconds(0.1))
+        try await awaitInitialStateProcessed(by: sut, profiles: &profiles)
 
         #expect(identityService.subscribeCallCount == 0)
     }
@@ -117,18 +111,36 @@ struct IdentityProfileServiceTests {
     @Test("SelectedUsernameChanged event emits refreshed profile")
     func processSelectedUsernameChangedEmitsRefreshedProfile() async throws {
         let sut = createSut()
-        async let profiles = try withTimeout(.seconds(5)) {
-            try await sut.observe()
-                .prefix(2)
-                .reduce([]) { $0 + [$1] }
-        }
+        var profiles = try await observeAfterFirstProfile(of: sut)
 
-        try await Task.sleep(for: .seconds(0.1))
         storage.username = Username(value: "bob")
         sut.processSelectedUsernameChanged(event: SelectedUsernameChanged(username: storage.username))
 
-        let collected = try await profiles
-        #expect(collected.last?.username == Username(value: "bob"))
+        #expect(try await profiles.next()?.username == Username(value: "bob"))
+    }
+}
+
+private extension IdentityProfileServiceTests {
+    /// Receiving the first profile proves the consumer is registered, so later changes are not missed.
+    func observeAfterFirstProfile(
+        of sut: IdentityProfileServiceProtocol
+    ) async throws -> AnyAsyncIterator<IdentityProfile> {
+        var profiles = sut.observe().makeAsyncIterator()
+        _ = try await profiles.next()
+
+        return profiles
+    }
+
+    /// States are handled in order; a claimed username never subscribes and, unlike `isPerson`, isn't debounced.
+    func awaitInitialStateProcessed(
+        by sut: IdentityProfileServiceProtocol & AppEventVisiting,
+        profiles: inout AnyAsyncIterator<IdentityProfile>
+    ) async throws {
+        storage.username = Username(value: "barrier")
+        storage.usernameClaimed = true
+        sut.processSelectedUsernameChanged(event: SelectedUsernameChanged(username: storage.username))
+
+        _ = try await profiles.next()
     }
 }
 

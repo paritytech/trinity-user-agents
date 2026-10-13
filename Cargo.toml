@@ -38,9 +38,9 @@ hkdf = "0.12"
 image = { version = "0.25", default-features = false }
 indoc = "2"
 js-sys = "0.3"
-jsonrpsee = "0.24"
-jsonrpsee-client-transport = "0.24"
-jsonrpsee-core = "0.24"
+jsonrpsee = "0.26"
+jsonrpsee-client-transport = "0.26"
+jsonrpsee-core = "0.26"
 libc = "0.2"
 libsecp256k1 = { version = "0.7", default-features = false, features = ["lazy-static-context"] }
 log = "0.4"
@@ -49,7 +49,7 @@ nanoid = "0.4"
 parking_lot = "0.12"
 parity-scale-codec = { version = "3", default-features = false }
 pin-project = "1"
-polkavm-host-runtime = { git = "https://github.com/paritytech/polkavm-host-runtime.git", rev = "e60a6135be6e00c72c90ca4abe23d2002f4eb962", version = "=0.3.0" }
+polkavm-host-runtime = { git = "https://github.com/paritytech/polkavm-host-runtime.git", rev = "959ad63f7312a2f4598b9f718ccc2516927cbbff", version = "=0.3.2-rc.9" }
 proc-macro2 = "1"
 qrcode = { version = "0.14.1", default-features = false }
 quote = "1"
@@ -74,8 +74,8 @@ smoldot-light = { version = "2.1", default-features = false }
 socket2 = "0.6"
 sp-crypto-hashing = { version = "0.1", default-features = false }
 substrate-bip39 = { version = "0.6", default-features = false }
-subxt = { version = "0.50.3", default-features = false }
-subxt-rpcs = { version = "0.50.3", default-features = false }
+subxt = { version = "0.51.1", default-features = false }
+subxt-rpcs = { version = "0.51.1", default-features = false }
 syn = "2"
 tar = "0.4"
 tempfile = "3"
