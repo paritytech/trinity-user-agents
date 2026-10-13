@@ -22,6 +22,7 @@ import io.paritytech.polkadotapp.feature_videogame_impl.presentation.gameResults
 import io.paritytech.polkadotapp.tools_jwt_auth_impl.data.store.JWTTokenStore
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.update
+import uniffi.truapi.truapiHostVersion
 import javax.inject.Inject
 
 @HiltViewModel
@@ -40,7 +41,7 @@ class DebugMenuViewModel @Inject constructor(
     private val productRuntimeSettings: ProductRuntimeSettings,
     private val restartAppUseCase: RestartAppUseCase,
 ) : BaseViewModel(), DebugMenuContract {
-    override val state = MutableStateFlow(DebugMenuState())
+    override val state = MutableStateFlow(DebugMenuState(truapiHostVersion = truapiHostVersion()))
 
     init {
         refreshJWTTokenState()

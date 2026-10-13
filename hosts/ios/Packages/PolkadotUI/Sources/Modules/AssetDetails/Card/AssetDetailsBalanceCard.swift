@@ -91,7 +91,7 @@ public struct AssetDetailsBalanceCard: View {
                         VStack(alignment: .leading, spacing: 0) {
                             Text(.walletCardReady)
                                 .typography(.bodyMedium)
-                                .foregroundStyle(Color.fgSecondary)
+                                .foregroundStyle(Color.fgStaticWhite)
                             Text(readyBalance)
                                 .typography(.bodyMedium)
                         }
@@ -99,7 +99,7 @@ public struct AssetDetailsBalanceCard: View {
                         VStack(alignment: .leading, spacing: 0) {
                             Text(.walletCardTotalBalance)
                                 .typography(.bodyMedium)
-                                .foregroundStyle(Color.fgSecondary)
+                                .foregroundStyle(Color.fgStaticWhite)
                             total(balance)
                         }
                     }

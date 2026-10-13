@@ -36,8 +36,13 @@ dependencies {
     implementation(project(":feature:videogame:api"))
     implementation(project(":feature:dotns:api"))
     implementation(project(":feature:products:api"))
-    implementation(project(":tools:remoteconfig:api"))
 
     testImplementation(project(":test-shared"))
     testImplementation(libs.mockk)
+
+    androidTestImplementation(platform(libs.androidx.compose.bom))
+    androidTestImplementation(libs.androidx.compose.ui.test.junit4)
+    androidTestImplementation(libs.androidx.compose.ui.test.manifest)
+    androidTestImplementation(libs.androidx.junit)
+    androidTestImplementation(libs.androidx.test.runner)
 }

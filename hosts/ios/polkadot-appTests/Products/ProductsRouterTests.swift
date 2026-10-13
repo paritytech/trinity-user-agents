@@ -54,10 +54,11 @@ struct ProductsRouterTests {
                     reject.title.value(for: .current),
                     model.tertiaryAction?.title.value(for: .current)
                 ] == [String(localized: .Common.confirm), String(localized: .Common.reject), nil])
-                let body = switch model.message.value(for: .current) {
-                case let .normal(text): text
-                case let .attributed(text): text.string
-                }
+                let body =
+                    switch model.message.value(for: .current) {
+                    case let .normal(text): text
+                    case let .attributed(text): text.string
+                    }
                 #expect(body.contains("test.product"))
                 #expect(!body.contains(String(localized: .Products.permissionBodyManageInSettingsHint)))
                 if case let .preimageSubmit(_, size) = request {

@@ -6,6 +6,7 @@ concurrency:
 
 env:
   APPLICATION_ID: ${{ vars.APPLICATION_ID }}
+  IOS_BUNDLE_ID: ${{ vars.IOS_BUNDLE_ID }}
   APPLICATION_NAME: ${{ vars.APPLICATION_NAME }}
   CONTACT_EMAIL: ${{ vars.CONTACT_EMAIL }}
   CURRENCY_SYMBOL: ${{ vars.CURRENCY_SYMBOL }}

@@ -4,21 +4,15 @@ import Keystore_iOS
 enum SettingsKey: String {
     case username = "username.v3"
     case usernameClaimed = "usernameClaimed.v3"
-    case isPerson = "isPerson.v3"
     case waitingRoomNotificationDate
-    case gameStartNotificationDate
     case registrationStartNotificationDates
     case gameAboutToStartNotificationDate
     case registrationOpenNotificationDates
-    case voucherInUseDismissed = "voucherInUseDismissed.v3"
     case playerTooltipShown
     case swipeTooltipShown
     case selectedCurrencyCode
     case fiatOnrampSessionIds
     case fiatOnrampTrackedTransactionIds
-    case gameAlarmId
-    case gameAlarmFireDate
-    case gameAlarmTimingSeconds
     case productGameReminders
     // Balance restored notification
     case deviceEncryptId = "deviceEncryptId.v3"
@@ -35,6 +29,7 @@ enum SettingsKey: String {
     case hostPlacementEnabled
     case coinageRecyclingStrategy
     case tabBarLabelsEnabled
+    case debugPocketCards
     #if TESTNET_FEATURE
         case tipsResetPending
     #endif

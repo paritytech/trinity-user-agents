@@ -73,33 +73,6 @@ public extension ChatInfoMessageConfiguration {
             showDividers: true
         )
     }
-
-    static func availableJudgeCasesMessages(count: Int) -> ChatInfoMessageConfiguration {
-        let textAttributes = LabelStyle.body14SemiBold().attributes(
-            for: .center,
-            textColor: UIColor.fgPrimary
-        )
-
-        let attributedText = makeIconTextAttributedString(
-            image: UIImage(resource: .arrowDownward),
-            position: .end,
-            text: String(localized: .mobRuleAvailableCasesTitle(count: count)),
-            boldText: "",
-            textAttributes: textAttributes,
-            boldTextAttributes: [:],
-            imageToTextSpacing: 8
-        )
-        let background = BackgroundConfiguration(
-            color: UIColor.bgSurfaceContainer,
-            cornerRadius: .zero,
-            insets: .init(vertical: 8)
-        )
-        return ChatInfoMessageConfiguration(
-            attributedText: attributedText,
-            textBackgroundConfiguration: background,
-            contentInsets: .zero
-        )
-    }
 }
 
 private extension ChatInfoMessageConfiguration {

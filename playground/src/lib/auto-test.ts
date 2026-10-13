@@ -34,6 +34,7 @@ const SKIPPED_SERVICES = new Map<string, string>([
     "Game",
     "dot.li serves no Game surface; the truapi runtime tests cover it",
   ],
+  ["Scanner", "dot.li has no camera viewfinder; it answers Unsupported"],
 ]);
 // Methods that trigger a host permission/signing prompt, so they need the
 // longer signing-class timeout to allow for the user to respond.

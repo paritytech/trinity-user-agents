@@ -10,6 +10,8 @@ rust/crates/
                          (canonical), plus the runtime hosts implement (default `runtime`
                          feature); ships as WASM (browser/node); its `platform` module
                          holds the host syscall traits (storage, navigation, consent, ...)
+                         and, on native targets, its `durable` module follows presigned
+                         transactions to a verdict over the core database
   truapi-codegen/        rustdoc JSON → TypeScript client + Rust dispatcher
   truapi-macros/         #[wire_trait(id = N)] and #[wire(id = N)] proc-macros;
                          #[sso_service] for truapi's inter-host SSO protocol
@@ -31,7 +33,7 @@ js/packages/
                           via `make wasm`: `web/` is the production browser host
                           and `testing/` adds the `wasm-signing-host` and
                           `test-host` Cargo features the test host needs
-  truapi-debugger/        @parity/truapi-debugger (published to npm): the debugger.
+  truapi-debugger/        @parity/truapi-debugger (private, never published): the debugger.
                           Owns all decoding of the wire frames the Rust host tap
                           (truapi's DebugSink) streams out, and decodes
                           every frame by default (no denylist, no reveal toggle).
@@ -334,8 +336,7 @@ belongs to an existing type rather than adding another free-standing export.
 Preserve the local style. Do not add semicolons to `return`, `break` or
 `continue` where the file omits them, do not add braces to match arms or
 `if`/`else` written without them, and do not move operators between the end of
-one line and the start of the next. Format with `cargo +$(cat nightly-toolchain) fmt`, and keep
-it to the lines you touched.
+one line and the start of the next, except where the repository formatter requires it. Format with `make fmt`; it uses the pinned nightly and includes the runtime module tree. Keep formatting limited to files you changed.
 
 ## Rust style
 
@@ -416,7 +417,7 @@ Move the date in that one file, and in `truapi.rustNightly` in
 
 ```bash
 cargo build --workspace
-cargo +$(cat nightly-toolchain) fmt --check
+make fmt-check
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test --workspace
 ```

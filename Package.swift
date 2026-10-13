@@ -34,8 +34,8 @@ let stagedBinaryPath = URL(fileURLWithPath: #filePath)
 let useLocalBinary = ProcessInfo.processInfo.environment["TRUAPI_USE_LOCAL_BINARY"] == "1"
     || FileManager.default.fileExists(atPath: stagedBinaryPath)
 
-let publishedBinaryURL = "https://github.com/paritytech/trinity-user-agents/releases/download/%40parity%2Fios-host%400.23.0/truapi_server.xcframework.zip"
-let publishedBinaryChecksum = "54ffc874297b10cc3f1876021cfe47b490c723acffd9601b073a237adf392aa4"
+let publishedBinaryURL = "https://github.com/paritytech/trinity-user-agents/releases/download/%40parity%2Fios-host%400.24.0/truapi_server.xcframework.zip"
+let publishedBinaryChecksum = "e28bcc8130a775556b74672b3a39da181d0334eed31af8d8a114d2cce88cef76"
 
 let binaryTarget: Target = useLocalBinary
     ? .binaryTarget(

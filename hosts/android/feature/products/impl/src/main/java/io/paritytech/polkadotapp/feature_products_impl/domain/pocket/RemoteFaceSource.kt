@@ -2,10 +2,10 @@ package io.paritytech.polkadotapp.feature_products_impl.domain.pocket
 
 import io.paritytech.polkadotapp.common.utils.CoroutineDispatchers
 import io.paritytech.polkadotapp.common.utils.readNBytesCompat
-import io.paritytech.polkadotapp.feature_products_api.model.JsWidget
 import kotlinx.coroutines.withContext
 import okhttp3.Call
 import okhttp3.Request
+import uniffi.truapi.RendererNode
 import java.io.InputStream
 import javax.inject.Inject
 
@@ -25,7 +25,7 @@ internal fun InputStream.readFaceWithinBound(): String {
 
 /** A face tree served over HTTP, for faces that do not live in a product's worker archive. */
 interface RemoteFaceSource {
-    suspend fun fetch(url: String): Result<JsWidget>
+    suspend fun fetch(url: String): Result<RendererNode>
 }
 
 /**
@@ -34,12 +34,11 @@ interface RemoteFaceSource {
  */
 class OkHttpRemoteFaceSource @Inject constructor(
     private val calls: Call.Factory,
-    private val faceDecoder: PocketFaceJsonDecoder,
     private val dispatchers: CoroutineDispatchers,
 ) : RemoteFaceSource {
     // `execute` blocks, and both callers collect on the main thread. Left there, Android answers with
     // a `NetworkOnMainThreadException`, which carries no message and so tells the screen nothing.
-    override suspend fun fetch(url: String): Result<JsWidget> = withContext(dispatchers.io) {
+    override suspend fun fetch(url: String): Result<RendererNode> = withContext(dispatchers.io) {
         runCatching {
             val request = Request.Builder().url(url).build()
 
@@ -50,6 +49,6 @@ class OkHttpRemoteFaceSource @Inject constructor(
                 body.byteStream().readFaceWithinBound()
             }
         }
-            .fold(onSuccess = faceDecoder::decode, onFailure = Result.Companion::failure)
+            .fold(onSuccess = ::readPocketFace, onFailure = Result.Companion::failure)
     }
 }

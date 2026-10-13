@@ -7,6 +7,8 @@ import Products
 
 extension MainTabBarViewController: SPAHosting {
     func openProduct(page: ProductPage) {
+        // A card is a modal over the container, so what it links to mounts unseen.
+        presentedViewController?.dismiss(animated: true)
         #if FEATURE_PRODUCTS
             let tab = browserCoordinator.findOrCreateTab(for: page)
             mountSPA(for: tab)
