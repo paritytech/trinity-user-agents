@@ -306,7 +306,7 @@ class RealIncomingChatRequestProcessor @Inject constructor(
     ): IncomingRequestProcessingResult {
         val peerAccountId = data.request.peerIdentityAccountId()
         val consumerInfo = resourcesRepository
-            .requireConsumerInfo(chainRegistry.getChain(knownChains.people), peerAccountId)
+            .requireConsumerInfo(chainRegistry.getChain(knownChains.assetHub), peerAccountId)
             .getOrThrow()
 
         return createNewIncomingRequestChat(data, consumerInfo.username, (consumerInfo.identifierKey.x25519OrNull() ?: error("Peer account uses an unsupported chat encryption key type")))
