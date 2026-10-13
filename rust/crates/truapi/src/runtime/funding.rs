@@ -240,8 +240,8 @@ impl FundingRegistry {
 	}
 
 	/// Store `update` from `provider` on session `intent`. Funds a
-	/// `Crediting` or `Collecting` update names are used up: no other session
-	/// of the provider can name them after.
+	/// `Crediting`, `Collecting` or `Refunding` update names are used up: no
+	/// other session of the provider can name them after.
 	pub async fn report(
 		&self,
 		storage: &(impl CoreStorage + ?Sized),
@@ -275,9 +275,11 @@ impl FundingRegistry {
 	}
 
 	/// Record funds `provider_id` started under `host_id`, so a report can
-	/// name them: on the one open session it serves in `direction` whose
-	/// amount is `amount`, when exactly one is, and otherwise on every such
-	/// session, since a top-up does not say which session it is for. Returns
+	/// name them: on the one session it serves in `direction` whose amount
+	/// is `amount`, when exactly one is, and otherwise on every such
+	/// session, since a top-up does not say which session it is for. A
+	/// withdrawal whose payout failed takes top-ups too, as its refund, and
+	/// asks for what it debited. Returns
 	/// whether any session recorded them.
 	pub async fn record_start(
 		&self,
@@ -290,13 +292,17 @@ impl FundingRegistry {
 	) -> Result<bool, FundingSessionError> {
 		self.commit(storage, now_ms, |sessions| {
 			let served = |session: &FundingSession| {
-				!session.is_terminal() &&
-					session.direction == direction &&
-					session.provider_id.as_deref() == Some(provider_id)
+				session.provider_id.as_deref() == Some(provider_id) &&
+					((!session.is_terminal() && session.direction == direction) ||
+						(direction == FundingDirection::In && session.awaits_refund()))
+			};
+			let asks = |session: &FundingSession| match session.stage {
+				crate::host_logic::funding::FundingStage::Released { debited, .. } => debited,
+				_ => session.amount.unwrap_or_default(),
 			};
 			let matching: Vec<String> = sessions
 				.values()
-				.filter(|session| served(session) && session.amount == Some(amount))
+				.filter(|session| served(session) && asks(session) == amount)
 				.map(|session| session.intent.clone())
 				.collect();
 			let mut recorded = false;
@@ -961,8 +967,8 @@ impl RuntimeServices {
 			.await
 	}
 
-	/// Follow a session's top-ups or payment to the end, then settle it with
-	/// what moved, from the amounts the provider started them with.
+	/// Follow a session's top-ups, payment or refund to the end, then settle
+	/// it with what moved, from the amounts the provider started them with.
 	fn follow_settlement(
 		self: Arc<Self>,
 		intent: String,
@@ -982,6 +988,7 @@ impl RuntimeServices {
 						return;
 					},
 				};
+			let refund = matches!(settlement, Settlement::Refund(_));
 			let moved = match settlement {
 				Settlement::TopUps(top_ups) => {
 					let mut credited: Option<u128> = Some(0);
@@ -1000,15 +1007,22 @@ impl RuntimeServices {
 				Settlement::Payment(funds) => {
 					self.follow_funds(&provider, &intent, FundingDirection::Out, &funds).await
 				},
+				Settlement::Refund(funds) => {
+					self.follow_funds(&provider, &intent, FundingDirection::In, &funds).await
+				},
 			};
 			if let Some(moved) = moved {
 				let settling = intent.clone();
 				let settled = registry
 					.commit(self.platform.as_ref(), current_unix_millis(), move |sessions| {
 						let now_ms = current_unix_millis();
-						let settled = sessions
-							.get_mut(&settling)
-							.is_some_and(|session| session.settle(moved, now_ms));
+						let settled = sessions.get_mut(&settling).is_some_and(|session| {
+							if refund {
+								session.settle_refund(moved)
+							} else {
+								session.settle(moved, now_ms)
+							}
+						});
 						((), if settled { vec![settling] } else { Vec::new() })
 					})
 					.await;
@@ -1021,8 +1035,8 @@ impl RuntimeServices {
 	}
 
 	/// What `funds` moved, read again after a growing wait until the host
-	/// reports an outcome. `None` once session `intent` is no longer open or
-	/// the host has no engine to ask.
+	/// reports an outcome. `None` once session `intent` has nothing left to
+	/// settle or the host has no engine to ask.
 	async fn follow_funds(
 		&self,
 		provider: &ProductContext,
@@ -1055,7 +1069,11 @@ impl RuntimeServices {
 			}
 			futures_timer::Delay::new(retry_in).await;
 			retry_in = (retry_in * 2).min(FOLLOW_RETRY_LONGEST);
-			if self.funding().get(intent).is_none_or(|session| session.is_terminal()) {
+			if self
+				.funding()
+				.get(intent)
+				.is_none_or(|session| session.settlement_due().is_none())
+			{
 				return None;
 			}
 		}
@@ -1416,6 +1434,55 @@ mod tests {
 		};
 
 		assert_eq!((started("fs_fifty"), started("fs_thirty")), (vec![1, 2], vec![2]));
+	}
+
+	// A withdrawal whose payout failed is refunded with a top-up, so it takes
+	// top-ups like an inbound session does, and its amount picks it.
+	#[test]
+	fn a_refund_top_up_goes_to_the_withdrawal_whose_payout_failed() {
+		let storage = stub_platform();
+		let registry = FundingRegistry::default();
+		let mut inbound = session("fs_in", NOW);
+		assert!(inbound.assign("ramp.dot", None, NOW));
+		insert(&registry, storage.as_ref(), inbound);
+		let mut withdrawal =
+			FundingSession { direction: FundingDirection::Out, ..session("fs_out", NOW) };
+		assert!(withdrawal.assign("ramp.dot", None, NOW));
+		withdrawal.record_start([4; 32], 80);
+		withdrawal
+			.report(
+				"ramp.dot",
+				FundingUpdate::Collecting { payment_id: [4; 32], amount: 80 },
+				|id| *id,
+				NOW,
+			)
+			.expect("collecting");
+		assert!(withdrawal.settle(80, NOW));
+		let failed = truapi::latest::FundingPayout::Failed { reason: "card closed".to_string() };
+		withdrawal
+			.report("ramp.dot", FundingUpdate::Payout { outcome: failed }, |id| *id, NOW)
+			.expect("payout");
+		insert(&registry, storage.as_ref(), withdrawal);
+
+		let recorded = block_on(registry.record_start(
+			storage.as_ref(),
+			NOW,
+			"ramp.dot",
+			FundingDirection::In,
+			[7; 32],
+			80,
+		))
+		.expect("recorded");
+		let started = |intent: &str| {
+			registry
+				.get(intent)
+				.expect("kept")
+				.started
+				.iter()
+				.any(|record| record.host_id == [7; 32])
+		};
+
+		assert_eq!((recorded, started("fs_out"), started("fs_in")), (true, true, false));
 	}
 
 	// A top-up settles one session once, from the amount it was started with:

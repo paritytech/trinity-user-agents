@@ -187,11 +187,19 @@ pub enum FundingUpdate {
 		reference: Option<String>,
 	},
 	/// Outbound: how the provider's payout went after the session was
-	/// released. Allowed once, after `Released`, while the host has not
-	/// recorded the session.
+	/// released. Allowed once, after `Released`.
 	Payout {
 		/// The payout's outcome.
 		outcome: FundingPayout,
+	},
+	/// Outbound: after a failed payout, the provider started a top-up with
+	/// `payment.topUp` to give the user back what it holds. Allowed once.
+	/// The session records what the top-up claimed as refunded.
+	Refunding {
+		/// Id the top-up was started with.
+		top_up_id: [u8; 32],
+		/// Amount the top-up asks to credit.
+		amount: u128,
 	},
 }
 
@@ -202,7 +210,8 @@ pub enum FundingUpdate {
 pub enum FundingPayout {
 	/// The funds reached the user's bank, card or wallet.
 	PaidOut,
-	/// The payout failed; the provider holds the funds.
+	/// The payout failed; the provider holds the funds until it refunds
+	/// them, reported with `Refunding`.
 	Failed {
 		/// Human-readable reason.
 		reason: String,

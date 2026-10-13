@@ -77,8 +77,23 @@ pub struct FundingSession {
 	/// asset it priced. `None` until chosen, or when chosen unquoted.
 	pub choice: Option<FundingChoice>,
 	/// The provider's own state for the session, opaque to the host. Kept
-	/// only while the session is open.
+	/// while the provider has work on the session.
 	pub saved: Option<Vec<u8>>,
+	/// The refund of a failed payout, once the provider reported starting
+	/// it.
+	pub refund: Option<FundingRefund>,
+}
+
+/// The top-up a provider gives a failed payout back with, and what it
+/// returned.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+pub struct FundingRefund {
+	/// The top-up.
+	pub top_up: StartedFunds,
+	/// What its claims returned to the user's balance once they were final.
+	/// `None` while the core follows them.
+	pub refunded: Option<u128>,
 }
 
 /// The most bytes of provider state a session keeps.
@@ -135,6 +150,9 @@ pub struct FundingProgress {
 	/// How the payout went, once the provider reported it on a released
 	/// outbound session.
 	pub payout: Option<FundingPayout>,
+	/// What a failed payout's refund returned to the user's balance, once
+	/// its claims are final.
+	pub refunded: Option<u128>,
 }
 
 /// One step of a session's progress.
@@ -221,6 +239,8 @@ pub enum Settlement {
 	TopUps(Vec<StartedFunds>),
 	/// The payment an outbound session collects through.
 	Payment(StartedFunds),
+	/// The top-up a released withdrawal's failed payout is refunded with.
+	Refund(StartedFunds),
 }
 
 /// Stage of a session, as the core persists it.
@@ -278,6 +298,7 @@ impl FundingSession {
 			started: Vec::new(),
 			choice: None,
 			saved: None,
+			refund: None,
 		}
 	}
 
@@ -420,6 +441,7 @@ impl FundingSession {
 				.flatten(),
 			retrying: !self.is_terminal() && self.top_up_ids().len() > 1,
 			payout: self.payout().cloned(),
+			refunded: self.refund.as_ref().and_then(|refund| refund.refunded),
 		}
 	}
 
@@ -445,14 +467,14 @@ impl FundingSession {
 		if self.provider_id.as_deref() != Some(provider_id) {
 			return Err(HostFundingReportError::NotFound);
 		}
-		if matches!(update, FundingUpdate::Payout { .. }) ||
+		if matches!(update, FundingUpdate::Payout { .. } | FundingUpdate::Refunding { .. }) ||
 			(matches!(update, FundingUpdate::Converting) &&
 				self.direction == FundingDirection::Out)
 		{
 			if !self.is_terminal() {
 				return Err(HostFundingReportError::OutOfOrder);
 			}
-			return self.report_after_release(update, now_ms);
+			return self.report_after_release(update, host_id, now_ms);
 		}
 		if self.is_terminal() {
 			return Err(HostFundingReportError::NotFound);
@@ -494,22 +516,41 @@ impl FundingSession {
 
 	/// Store what the provider reports about paying the user out of a
 	/// released outbound session: that it is converting, then the payout
-	/// outcome, each once. The host is handed the session again, as what it
-	/// recorded no longer holds.
+	/// outcome, each once, and after a failed payout the top-up refunding
+	/// it, once. The host is handed the session again, as what it recorded
+	/// no longer holds.
 	fn report_after_release(
 		&mut self,
 		update: FundingUpdate,
+		host_id: impl Fn(&[u8; 32]) -> [u8; 32],
 		now_ms: u64,
 	) -> Result<(), HostFundingReportError> {
 		if !matches!(self.stage, FundingStage::Released { .. }) {
 			return Err(HostFundingReportError::NotFound);
 		}
-		let converting = self
-			.updates
-			.iter()
-			.any(|record| matches!(record.update, FundingUpdate::Converting));
-		if self.payout().is_some() || (matches!(update, FundingUpdate::Converting) && converting) {
-			return Err(HostFundingReportError::OutOfOrder);
+		if let FundingUpdate::Refunding { top_up_id, amount } = &update {
+			if !self.awaits_refund() {
+				return Err(HostFundingReportError::OutOfOrder);
+			}
+			let named = host_id(top_up_id);
+			let record = self
+				.started
+				.iter_mut()
+				.find(|record| record.host_id == named && record.named_at_ms.is_none())
+				.filter(|record| record.amount == *amount)
+				.ok_or(HostFundingReportError::NotStarted)?;
+			record.named_at_ms = Some(now_ms);
+			self.refund = Some(FundingRefund { top_up: record.clone(), refunded: None });
+		} else {
+			let converting = self
+				.updates
+				.iter()
+				.any(|record| matches!(record.update, FundingUpdate::Converting));
+			if self.payout().is_some() ||
+				(matches!(update, FundingUpdate::Converting) && converting)
+			{
+				return Err(HostFundingReportError::OutOfOrder);
+			}
 		}
 		self.updates.push(FundingUpdateRecord { update, at_ms: now_ms });
 		self.acknowledged = false;
@@ -523,10 +564,26 @@ impl FundingSession {
 	}
 
 	/// Whether the session ended but its provider still owes the user: a
-	/// released withdrawal whose payout outcome it has not reported. Whether
-	/// the host recorded the session does not matter.
+	/// released withdrawal whose payout outcome it has not reported, or
+	/// whose failed payout is not refunded yet. Whether the host recorded the
+	/// session does not matter.
 	pub fn awaits_provider(&self) -> bool {
-		matches!(self.stage, FundingStage::Released { .. }) && self.payout().is_none()
+		matches!(self.stage, FundingStage::Released { .. }) &&
+			match self.payout() {
+				None => true,
+				Some(FundingPayout::PaidOut) => false,
+				Some(FundingPayout::Failed { .. }) => {
+					self.refund.as_ref().is_none_or(|refund| refund.refunded.is_none())
+				},
+			}
+	}
+
+	/// Whether a released withdrawal's payout failed and the provider has
+	/// not reported refunding it.
+	pub fn awaits_refund(&self) -> bool {
+		matches!(self.stage, FundingStage::Released { .. }) &&
+			matches!(self.payout(), Some(FundingPayout::Failed { .. })) &&
+			self.refund.is_none()
 	}
 
 	/// The provider's payout outcome, once it reported one.
@@ -578,7 +635,7 @@ impl FundingSession {
 	/// Record funds the serving provider started under `host_id`, unless
 	/// they are recorded already. Returns whether this recorded them.
 	pub fn record_start(&mut self, host_id: [u8; 32], amount: u128) -> bool {
-		if self.is_terminal() ||
+		if (self.is_terminal() && !self.awaits_refund()) ||
 			self.provider_id.is_none() ||
 			self.started.iter().any(|record| record.host_id == host_id)
 		{
@@ -614,6 +671,11 @@ impl FundingSession {
 	/// What the core must follow to end the session, once the provider has
 	/// handed the outcome over.
 	pub fn settlement_due(&self) -> Option<Settlement> {
+		if let Some(refund) = &self.refund &&
+			refund.refunded.is_none()
+		{
+			return Some(Settlement::Refund(refund.top_up.clone()));
+		}
 		if self.is_terminal() {
 			return None;
 		}
@@ -655,6 +717,20 @@ impl FundingSession {
 		};
 		self.cancel_requested = false;
 		true
+	}
+
+	/// Record what a failed payout's refund returned once its claims are
+	/// final, and hand the session to the host again. Returns whether it
+	/// changed.
+	pub fn settle_refund(&mut self, refunded: u128) -> bool {
+		match &mut self.refund {
+			Some(refund) if refund.refunded.is_none() => {
+				refund.refunded = Some(refunded);
+				self.acknowledged = false;
+				true
+			},
+			_ => false,
+		}
 	}
 
 	/// Whether the session is kept: it is in flight, the host has not
@@ -754,6 +830,7 @@ pub fn named_funds(update: &FundingUpdate) -> Option<(&[u8; 32], u128)> {
 	match update {
 		FundingUpdate::Crediting { top_up_id, amount } => Some((top_up_id, *amount)),
 		FundingUpdate::Collecting { payment_id, amount } => Some((payment_id, *amount)),
+		FundingUpdate::Refunding { top_up_id, amount } => Some((top_up_id, *amount)),
 		_ => None,
 	}
 }
@@ -772,7 +849,8 @@ fn update_rank(update: &FundingUpdate) -> Option<u8> {
 		FundingUpdate::Failed { .. } => 6,
 		FundingUpdate::Deposit { .. } |
 		FundingUpdate::Details { .. } |
-		FundingUpdate::Payout { .. } => return None,
+		FundingUpdate::Payout { .. } |
+		FundingUpdate::Refunding { .. } => return None,
 	})
 }
 
@@ -1565,6 +1643,76 @@ mod tests {
 		released.acknowledged = true;
 
 		assert_eq!((kept_before, retained([released]).len()), (1, 0));
+	}
+
+	// A failed payout leaves the user's CASH with the provider, so the
+	// provider gives it back with a top-up it names in `Refunding`, once and
+	// only after the failure. The session is followed until that top-up's
+	// claims are final, then handed to the host again with what came back.
+	#[test]
+	fn a_failed_payout_is_refunded_through_a_named_top_up() {
+		let mut released = served(FundingDirection::Out);
+		reported(&mut released, &[FundingUpdate::Collecting { payment_id: [3; 32], amount: 100 }]);
+		assert!(released.settle(100, NOW + 1));
+		let refunding = |amount| FundingUpdate::Refunding { top_up_id: [5; 32], amount };
+		let early = released.clone().report(PROVIDER, refunding(95), |id| *id, NOW + 2);
+		let failed = FundingPayout::Failed { reason: "card closed".to_string() };
+		released
+			.report(PROVIDER, FundingUpdate::Payout { outcome: failed }, |id| *id, NOW + 2)
+			.expect("reported");
+		let unrecorded = released.clone().report(PROVIDER, refunding(95), |id| *id, NOW + 3);
+		assert!(released.record_start([5; 32], 95));
+		let other_amount = released.clone().report(PROVIDER, refunding(90), |id| *id, NOW + 3);
+		let named = released.report(PROVIDER, refunding(95), |id| *id, NOW + 3);
+		let again = released.clone().report(PROVIDER, refunding(95), |id| *id, NOW + 4);
+		let due = released.settlement_due();
+		released.acknowledged = true;
+		let settled = released.settle_refund(95);
+
+		assert_eq!(
+			(early, unrecorded, other_amount, named, again, due),
+			(
+				Err(HostFundingReportError::OutOfOrder),
+				Err(HostFundingReportError::NotStarted),
+				Err(HostFundingReportError::NotStarted),
+				Ok(()),
+				Err(HostFundingReportError::OutOfOrder),
+				Some(Settlement::Refund(StartedFunds {
+					host_id: [5; 32],
+					amount: 95,
+					named_at_ms: Some(NOW + 3),
+				})),
+			)
+		);
+		assert_eq!(
+			(
+				settled,
+				released.progress().refunded,
+				released.acknowledged,
+				released.awaits_provider(),
+				released.settlement_due(),
+			),
+			(true, Some(95), false, false, None)
+		);
+	}
+
+	// Until the provider refunds a failed payout it still owes the user, so
+	// the session stays served and never expires.
+	#[test]
+	fn a_failed_payout_is_served_until_refunded() {
+		let mut released = served(FundingDirection::Out);
+		reported(&mut released, &[FundingUpdate::Collecting { payment_id: [3; 32], amount: 100 }]);
+		assert!(released.settle(100, NOW + 1));
+		let failed = FundingPayout::Failed { reason: "card closed".to_string() };
+		released
+			.report(PROVIDER, FundingUpdate::Payout { outcome: failed }, |id| *id, NOW + 2)
+			.expect("reported");
+		released.acknowledged = true;
+
+		assert_eq!(
+			(released.serves_provider(), retained([released.clone()]).len(), released.expires_at()),
+			(true, 1, None)
+		);
 	}
 
 	// A provider keeps what it saved until it has reported the payout, as a
