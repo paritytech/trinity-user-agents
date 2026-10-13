@@ -392,7 +392,11 @@ export interface MockHostConfig {
   devicePermissions?: PermissionPolicy;
   /** Answer for `remotePermission`. Default `"allow-all"`. */
   remotePermissions?: PermissionPolicy;
-  /** Whether `featureSupported` reports support. Default `true`. */
+  /**
+   * Whether `featureSupported` reports support for the chains in
+   * `supportedChains`. A chain outside that set is unsupported either way, as
+   * on a host that does not serve it. Default `true`.
+   */
   featureSupported?: boolean;
   /** Theme emitted by `subscribeTheme`. Default `"Dark"`. */
   theme?: ThemeVariant;
@@ -1207,9 +1211,14 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
     },
 
     features: {
-      async featureSupported() {
+      async featureSupported(request) {
         if (faults.featureError) throw new Error(faults.featureError);
-        return { supported: featureSupported };
+        const served = supportedChains.chains.some(
+          (entry) =>
+            normalizeHash(entry.genesisHash) ===
+            normalizeHash(request.value.genesisHash),
+        );
+        return { supported: featureSupported && served };
       },
       async supportedChains() {
         if (faults.featureError) throw new Error(faults.featureError);
