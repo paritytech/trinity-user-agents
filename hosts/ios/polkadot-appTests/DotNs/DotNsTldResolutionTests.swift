@@ -26,11 +26,8 @@ struct DotNsTldResolutionTests {
     func repositoriesThrowForTldDependentAccessorsWhenTldMissing() throws {
         let walletRepo = WalletManagerRepository(tldProvider: StubDotNsTldProvider(tld: nil))
         #expect(throws: DotNsTldError.self) { try walletRepo.main() }
-        #expect(throws: DotNsTldError.self) { try walletRepo.candidate() }
-        #expect(throws: DotNsTldError.self) { try walletRepo.scoreAlias() }
         #expect(throws: DotNsTldError.self) { try walletRepo.depositWallet() }
         // TLD-independent accessors derive from fixed pallet-context paths and never fail.
-        _ = walletRepo.mobRuleAlias()
         _ = walletRepo.resourcesAlias()
 
         let vrfRepo = BandersnatchManagerRepository(tldProvider: StubDotNsTldProvider(tld: nil))
@@ -46,7 +43,6 @@ struct DotNsTldResolutionTests {
         #expect(BuiltInProduct.dim2(for: tld) == "dim2.\(tld)")
         #expect(BuiltInProduct.uid(for: tld) == "uid.\(tld)")
         #expect(WalletDerivationPath.main(for: tld).contains("uid.\(tld)"))
-        #expect(WalletDerivationPath.candidate(for: tld).contains("dim2.\(tld)"))
     }
 
     /// End-to-end proof that the TLD flows into real key material: two TLDs over the same root

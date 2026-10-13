@@ -42,7 +42,7 @@ pub enum WireKind {
 /// `TRUAPI_WIRE_SCHEMA_HASH`. A host stamps it on each debug envelope so
 /// the debugger refuses to decode a frame whose contract differs from
 /// its own, even when the coarse handshake codec version is unchanged.
-pub const TRUAPI_WIRE_SCHEMA_HASH: &str = "2615502e6f4c5a26";
+pub const TRUAPI_WIRE_SCHEMA_HASH: &str = "18372abae8ed198e";
 
 /// Wire discriminants for `system_handshake`.
 pub const SYSTEM_HANDSHAKE: MethodIds = MethodIds {
@@ -252,6 +252,12 @@ pub const CHAT_POST_MESSAGE: MethodIds = MethodIds {
 pub const CHAT_ACTION_SUBSCRIBE: MethodIds = MethodIds {
     trait_id: 4,
     method_id: 4,
+};
+
+/// Wire discriminants for `chat_set_room_footer`.
+pub const CHAT_SET_ROOM_FOOTER: MethodIds = MethodIds {
+    trait_id: 4,
+    method_id: 6,
 };
 
 /// Wire discriminants for `coin_payment_create_purse`.
@@ -572,6 +578,12 @@ pub const FUNDING_STATUS_SUBSCRIBE: MethodIds = MethodIds {
     method_id: 1,
 };
 
+/// Wire discriminants for `expanded_card_set_face_shown`.
+pub const EXPANDED_CARD_SET_FACE_SHOWN: MethodIds = MethodIds {
+    trait_id: 23,
+    method_id: 0,
+};
+
 /// Wire discriminants for `funding_provider_serve_subscribe`.
 pub const FUNDING_PROVIDER_SERVE_SUBSCRIBE: MethodIds = MethodIds {
     trait_id: 24,
@@ -769,6 +781,10 @@ pub const WIRE_TABLE: &[WireEntry] = &[
     WireEntry {
         method: "chat_action_subscribe",
         kind: WireKind::Subscription(CHAT_ACTION_SUBSCRIBE),
+    },
+    WireEntry {
+        method: "chat_set_room_footer",
+        kind: WireKind::Request(CHAT_SET_ROOM_FOOTER),
     },
     WireEntry {
         method: "coin_payment_create_purse",
@@ -981,6 +997,10 @@ pub const WIRE_TABLE: &[WireEntry] = &[
     WireEntry {
         method: "funding_status_subscribe",
         kind: WireKind::Subscription(FUNDING_STATUS_SUBSCRIBE),
+    },
+    WireEntry {
+        method: "expanded_card_set_face_shown",
+        kind: WireKind::Request(EXPANDED_CARD_SET_FACE_SHOWN),
     },
     WireEntry {
         method: "funding_provider_serve_subscribe",

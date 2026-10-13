@@ -3,6 +3,7 @@
 mod account;
 mod auth_tokens;
 mod chain;
+mod expanded_card;
 mod game;
 mod payment;
 mod platform;

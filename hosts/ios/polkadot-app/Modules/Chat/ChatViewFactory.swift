@@ -104,9 +104,7 @@ enum ChatViewFactory {
             moduleNavigator: ModuleNavigator()
         )
 
-        let view: ChatViewController = PolkadotPrizesChatPredicate.isPolkadotPrizes(chatId)
-            ? GameViewController(presenter: presenter)
-            : ChatViewController(presenter: presenter)
+        let view = ChatViewController(presenter: presenter)
 
         documentAdapter.use(presenter: view)
         presenter.view = view
