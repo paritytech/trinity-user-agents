@@ -24,6 +24,8 @@ public enum DSTabBarStyle {
     static let notchRadius: CGFloat = 34
     /// Hole centre, measured down from the top of the bar row.
     static let notchCenterY: CGFloat = 16
+    /// How far the hole reaches above the bar row, into the shelf.
+    static var notchOverhang: CGFloat { notchRadius - notchCenterY }
 
     /// Whether a point in the bar row's coordinate space falls on the centre button, which the
     /// fold gesture must not claim.

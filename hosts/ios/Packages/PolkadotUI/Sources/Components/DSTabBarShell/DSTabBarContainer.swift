@@ -103,6 +103,8 @@ private extension DSTabBarContainer {
     var shelfPanel: some View {
         ScrollView(.vertical) {
             shelf
+                // Clears the hole, which reaches up into the shelf's bottom edge.
+                .padding(.bottom, DSTabBarStyle.notchOverhang)
                 .background(
                     GeometryReader { proxy in
                         Color.clear.preference(key: DSTabBarShelfHeightKey.self, value: proxy.size.height)
