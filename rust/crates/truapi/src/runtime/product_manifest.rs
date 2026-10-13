@@ -381,8 +381,8 @@ async fn with_ceiling<T>(ceiling: Duration, future: impl Future<Output = T>) -> 
 /// With `peopl.paseo` granting `dim2next` its key:
 /// - `dim2next.paseo` may prove in `dim2.paseo`'s context when `dim2.paseo` grants `dim2next`
 ///   `context`.
-/// - It may not prove in `stash.paseo`'s, which grants nothing, nor in a namesake's on another
-///   network.
+/// - It may not prove in `stash.paseo`'s, which grants nothing, nor in a `raw:` context or a
+///   namesake's on another network.
 ///
 /// Guards the alias read as well as the proof: both come from one VRF evaluation.
 pub async fn require_context_access(
@@ -402,17 +402,17 @@ pub async fn require_context_access(
 	// one that arrives straight off the request payload, so leaving it raw would
 	// refuse a grantee for spelling its own context `DIM2.paseo`, the hazard
 	// the gate exists to remove, one layer down. A context that names no
-	// product has no manifest to consent with, so it fails closed.
-	let context_id = context
-		.product_id
-		.parse::<ProductId>()
-		.map_err(|_| RingVrfError::NotAllowlisted)?;
+	// product, `raw:` among them, has no manifest to consent with, so it fails
+	// closed.
+	let Ok(context_id) = normalize_product_identifier(&context.product_id) else {
+		return Err(RingVrfError::NotAllowlisted);
+	};
 	// A product is all its executables, so `app.dim2.dot` is `dim2.dot`'s context
 	// and `app.peopl.dot` is the owner's. The network is not part of that: a
 	// grant published on `.dot` must not reach the pseudonym a namesake presents
 	// on `.paseo`.
-	if context_id.same_product_on_one_network(&access.caller) ||
-		context_id.same_product_on_one_network(&access.owner)
+	if same_product_on_one_network(&context_id, &access.caller) ||
+		same_product_on_one_network(&context_id, &access.owner)
 	{
 		return Ok(());
 	}
@@ -422,7 +422,7 @@ pub async fn require_context_access(
 	// named under another. This is the owner's TLD as the handle spells it, not
 	// the host's: an owner id from another network reads this host's manifests,
 	// as `ring_vrf_key_access_granted` already does for the key grant.
-	if !context_id.on_one_network(&access.owner) {
+	if !on_one_network(&context_id, &access.owner) {
 		return Err(RingVrfError::NotAllowlisted);
 	}
 	let decision = scope_grant(
@@ -446,8 +446,31 @@ pub async fn require_context_access(
 	decision.map_err(|_| RingVrfError::NotAllowlisted)
 }
 
-/// The identities the gate decided about, returned together because every
-/// consumer needs both.
+/// Whether two normalized product identifiers name one product on one network.
+///
+/// `bare_product_label` alone answers "same product" across networks, which is
+/// right where a grant is read and wrong where a proof context is: the alias is
+/// what a product shows on the chain it is on, so a `.paseo` namesake's context
+/// is not the `.dot` grantor's.
+fn same_product_on_one_network(left: &str, right: &str) -> bool {
+	bare_product_label(left) == bare_product_label(right) && on_one_network(left, right)
+}
+
+/// Whether two normalized product identifiers carry the same TLD.
+fn on_one_network(left: &str, right: &str) -> bool {
+	fn tld(product_id: &str) -> Option<&str> {
+		product_id.rsplit_once('.').map(|(_, tld)| tld)
+	}
+	tld(left) == tld(right)
+}
+
+/// The identities the gate decided about, both normalized.
+///
+/// Returned together because every consumer needs both and deriving either one
+/// again from the request re-introduces the raw-vs-normalized skew the gate
+/// exists to remove: `sso_responder` hands `calling_product_id` through
+/// untouched, so a caller that re-derives it compares a peer's spelling against
+/// a normalized owner.
 pub struct AuthorizedAccess {
 	/// The caller the gate authorized.
 	pub caller: ProductId,

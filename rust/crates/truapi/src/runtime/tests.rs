@@ -10193,13 +10193,8 @@ fn the_pairing_authority_admits_a_context_only_its_product_granted() {
 		);
 		let pairing_host = PairingHost::new(services.clone(), host_config);
 		let adapters = crate::host_core::ConnectionAdapters::from_services(&services);
-		let host = ProductRuntimeHost::from_services(
-			services,
-			adapters,
-			pairing_host.clone(),
-			pairing_host.session().clone(),
-			product,
-		);
+		let host =
+			ProductRuntimeHost::from_services(services, adapters, pairing_host.clone(), product);
 		install_pairing_session(&host, session_info());
 		let session =
 			pairing_host.current_session().expect("the pairing host has an active session");
@@ -10210,10 +10205,10 @@ fn the_pairing_authority_admits_a_context_only_its_product_granted() {
 			&cx,
 			&session,
 			crate::host_internal::sso_messages::ProductRequest {
-				calling_product_id: ProductId::for_test("dim2next.dot"),
+				calling_product_id: "dim2next.dot".to_string(),
 				payload: v01::HostAccountCreateProofRequest {
 					key_handle: v01::ProductAccountId {
-						dot_ns_identifier: ProductId::for_test("peopl.dot"),
+						dot_ns_identifier: "peopl.dot".to_string(),
 						derivation_index: v01::DerivationIndex::Index(0),
 					},
 					context: v01::ProductProofContext {

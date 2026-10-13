@@ -1357,156 +1357,122 @@ impl ProductAuthority for SigningHost {
         response
     }
 
-    async fn account_alias(
-        &self,
-        _cx: &CallContext,
-        session: &AuthoritySession,
-        request: ProductRequest<HostAccountGetAliasRequest>,
-    ) -> Result<v01::ContextualAlias, RingVrfError> {
-        self.require_current_product_session(session, &request.calling_product_id)?;
-        // A `context` grant covers this. RFC-0024 defines the scope as "acting
-        // as the granting product's account: reading it and the identity that
-        // follows from it", and the contextual alias is that identity: it and
-        // the proof come out of one VRF evaluation, so a grantee that may
-        // `create_proof` already holds the alias the proof attests. Prompting
-        // here would ask the user to approve what the publisher's grant has
-        // already authorized, and would leave the two calls disagreeing about
-        // what `context` means.
-        //
-        // The gate is the same one `create_proof` uses, including stored refusals
-        // for ordinary products. Ungranted calls take the account-access path.
-        let granted = match self
-            .require_ring_vrf_key_access(&request.calling_product_id, &request.payload.key_handle)
-            .await
-        {
-            Ok(granted) => Some(granted),
-            Err(RingVrfError::NotAllowlisted) => None,
-            Err(err) => return Err(err),
-        };
-        // The grant admits the caller's own context and the granting product's,
-        // and no one else's, exactly as on `create_proof`. The alias this returns
-        // and the alias a proof attests are one VRF evaluation, so guarding only
-        // the proof would leave the same bytes reachable through this read.
-        let key_handle = match granted {
-            Some((key_handle, access)) => {
-                crate::runtime::product_manifest::require_own_context(
-                    &access,
-                    &request.payload.context,
-                )?;
-                key_handle
-            }
-            None => {
-                // No grant: the prompt path, as before. Both arguments are
-                // normalized first so the decision is filed under, and read
-                // back from, the identity the gate would have decided about.
-                let requester = normalize_product_identifier(&request.calling_product_id)
-                    .map_err(|_| RingVrfError::NotAllowlisted)?;
-                let owner =
-                    normalize_product_identifier(&request.payload.key_handle.dot_ns_identifier)
-                        .map_err(|_| RingVrfError::NotAllowlisted)?;
-                match super::account_access_authorization(
-                    self.services.platform.as_ref(),
-                    &self.services.permissions,
-                    &requester,
-                    &owner,
-                )
-                .await
-                {
-                    Ok(PermissionAuthorizationStatus::Authorized) => {}
-                    Ok(
-                        PermissionAuthorizationStatus::Denied
-                        | PermissionAuthorizationStatus::NotDetermined,
-                    ) => return Err(RingVrfError::Rejected),
-                    Err(err) => {
-                        return Err(RingVrfError::Unknown {
-                            reason: err.to_string(),
-                        });
-                    }
-                }
-                v01::ProductAccountId {
-                    dot_ns_identifier: owner,
-                    derivation_index: request.payload.key_handle.derivation_index.clone(),
-                }
-            }
-        };
-        let vrf = vrf::load().await?;
-        let entropy = self
-            .resolve_ring_vrf_key_for_ring(
-                &vrf,
-                session,
-                &key_handle,
-                &request.payload.ring_location,
-            )
-            .await?;
-        self.ring_resolver
-            .validate(&request.payload.ring_location)
-            .await?;
-        self.require_current_product_session(session, &request.calling_product_id)?;
-        self.require_current_product_session(session, &key_handle.dot_ns_identifier)?;
-        let context = development_context_bytes(&request.payload.context);
-        let alias = vrf.alias(&entropy, &context)?;
-        Ok(v01::ContextualAlias {
-            context,
-            alias: alias.to_vec(),
-        })
-    }
+	async fn account_alias(
+		&self,
+		_cx: &CallContext,
+		session: &AuthoritySession,
+		request: ProductRequest<HostAccountGetAliasRequest>,
+	) -> Result<v01::ContextualAlias, RingVrfError> {
+		self.require_current_session(session)?;
+		// Aliases expose the same identity as `create_proof`, so both must enforce
+		// the same RFC-0024 grant and context restrictions.
+		let granted = match self
+			.require_ring_vrf_key_access(&request.calling_product_id, &request.payload.key_handle)
+			.await
+		{
+			Ok(granted) => Some(granted),
+			Err(RingVrfError::NotAllowlisted) => None,
+			Err(err) => return Err(err),
+		};
+		// The context is held to the same rule as on `create_proof`: the alias and
+		// the proof come from one VRF evaluation.
+		let key_handle = match granted {
+			Some((key_handle, access)) => {
+				crate::runtime::product_manifest::require_context_access(
+					&self.services,
+					&access,
+					&request.payload.context,
+				)
+				.await?;
+				key_handle
+			},
+			None => {
+				// Permission lookups and prompts must use the same canonical identifiers.
+				let requester = normalize_product_identifier(&request.calling_product_id)
+					.map_err(|_| RingVrfError::NotAllowlisted)?;
+				let owner =
+					normalize_product_identifier(&request.payload.key_handle.dot_ns_identifier)
+						.map_err(|_| RingVrfError::NotAllowlisted)?;
+				match super::account_access_authorization(
+					self.services.platform.as_ref(),
+					&requester,
+					&owner,
+				)
+				.await
+				{
+					Ok(PermissionAuthorizationStatus::Authorized) => {},
+					Ok(
+						PermissionAuthorizationStatus::Denied |
+						PermissionAuthorizationStatus::NotDetermined,
+					) => return Err(RingVrfError::Rejected),
+					Err(err) => {
+						return Err(RingVrfError::Unknown { reason: err.to_string() });
+					},
+				}
+				v01::ProductAccountId {
+					dot_ns_identifier: owner,
+					derivation_index: request.payload.key_handle.derivation_index.clone(),
+				}
+			},
+		};
+		let vrf = vrf::load().await?;
+		let entropy = self
+			.resolve_ring_vrf_key_for_ring(
+				&vrf,
+				session,
+				&key_handle,
+				&request.payload.ring_location,
+			)
+			.await?;
+		self.ring_resolver.validate(&request.payload.ring_location).await?;
+		let context = development_context_bytes(&request.payload.context);
+		let alias = vrf.alias(&entropy, &context)?;
+		Ok(v01::ContextualAlias { context, alias: alias.to_vec() })
+	}
 
-    async fn create_proof(
-        &self,
-        _cx: &CallContext,
-        session: &AuthoritySession,
-        request: ProductRequest<HostAccountCreateProofRequest>,
-    ) -> Result<v01::HostAccountCreateProofResponse, RingVrfError> {
-        self.require_current_product_session(session, &request.calling_product_id)?;
-        let (key_handle, access) = self
-            .require_ring_vrf_key_access(&request.calling_product_id, &request.payload.key_handle)
-            .await?;
-        // A grant lets the caller act with the owner's key in the caller's own
-        // context. It does not let it choose whose pseudonym to mint: the
-        // contextual alias is a function of (owner key, context), so an
-        // unconstrained context would let a grantee produce the alias the owner
-        // presents to a third product that granted nothing. That third party
-        // cannot consent here and is not a party to the grant.
-        //
-        // The owner's own calls are unaffected; a cross-product caller is held to
-        // its own context or the granting product's.
-        crate::runtime::product_manifest::require_own_context(&access, &request.payload.context)?;
-        let vrf = vrf::load().await?;
-        let entropy = self
-            .resolve_ring_vrf_key_for_ring(
-                &vrf,
-                session,
-                &key_handle,
-                &request.payload.ring_location,
-            )
-            .await?;
-        let candidate = self.ring_vrf_member_candidate(&vrf, &entropy)?;
-        let resolved = self
-            .ring_resolver
-            .resolve(&request.payload.ring_location, &[candidate])
-            .await?;
-        // Reject a stale request if the local session disconnected or changed
-        // while its chain snapshot was being resolved.
-        self.require_current_product_session(session, &request.calling_product_id)?;
-        self.require_current_product_session(session, &key_handle.dot_ns_identifier)?;
-        let context = development_context_bytes(&request.payload.context);
-        let (proof, alias) = create_proof(
-            &vrf,
-            &entropy,
-            &resolved,
-            &context,
-            &request.payload.message,
-        )?;
-        Ok(v01::HostAccountCreateProofResponse {
-            proof,
-            contextual_alias: v01::ContextualAlias {
-                context,
-                alias: alias.to_vec(),
-            },
-            ring_index: resolved.ring_index,
-            ring_revision: resolved.ring_revision,
-        })
-    }
+	async fn create_proof(
+		&self,
+		_cx: &CallContext,
+		session: &AuthoritySession,
+		request: ProductRequest<HostAccountCreateProofRequest>,
+	) -> Result<v01::HostAccountCreateProofResponse, RingVrfError> {
+		self.require_current_session(session)?;
+		let (key_handle, access) = self
+			.require_ring_vrf_key_access(&request.calling_product_id, &request.payload.key_handle)
+			.await?;
+		// A grant cannot expose the owner's alias in a third product's context unless
+		// that product's manifest grants the caller `context`.
+		crate::runtime::product_manifest::require_context_access(
+			&self.services,
+			&access,
+			&request.payload.context,
+		)
+		.await?;
+		let vrf = vrf::load().await?;
+		let entropy = self
+			.resolve_ring_vrf_key_for_ring(
+				&vrf,
+				session,
+				&key_handle,
+				&request.payload.ring_location,
+			)
+			.await?;
+		let candidate = self.ring_vrf_member_candidate(&vrf, &entropy)?;
+		let resolved =
+			self.ring_resolver.resolve(&request.payload.ring_location, &[candidate]).await?;
+		// Reject a stale request if the local session disconnected or changed
+		// while its chain snapshot was being resolved.
+		self.require_current_session(session)?;
+		let context = development_context_bytes(&request.payload.context);
+		let (proof, alias) =
+			create_proof(&vrf, &entropy, &resolved, &context, &request.payload.message)?;
+		Ok(v01::HostAccountCreateProofResponse {
+			proof,
+			contextual_alias: v01::ContextualAlias { context, alias: alias.to_vec() },
+			ring_index: resolved.ring_index,
+			ring_revision: resolved.ring_revision,
+		})
+	}
 
     async fn register_ring_vrf_key(
         &self,
@@ -2706,7 +2672,7 @@ mod tests {
 			None => futures::executor::block_on(
 				<StubPlatform as crate::platform::CoreStorage>::write_core_storage(
 					&platform,
-					CoreStorageKey::product_manifest(&ProductId::for_test("dim2.dot")),
+					crate::runtime::product_manifest::manifest_cache_key("dim2.dot"),
 					crate::runtime::product_manifest::encode_cached_root_manifest(
 						None,
 						crate::unix_time::current_unix_secs(),
@@ -2728,7 +2694,7 @@ mod tests {
 			&CallContext::default(),
 			&session,
 			ProductRequest {
-				calling_product_id: ProductId::for_test("dim2next.dot"),
+				calling_product_id: "dim2next.dot".to_string(),
 				payload: v01::HostAccountCreateProofRequest {
 					key_handle: full_person_key_handle(),
 					context: context.clone(),
@@ -2741,7 +2707,7 @@ mod tests {
 			&CallContext::default(),
 			&session,
 			ProductRequest {
-				calling_product_id: ProductId::for_test("dim2next.dot"),
+				calling_product_id: "dim2next.dot".to_string(),
 				payload: v01::HostAccountGetAliasRequest {
 					key_handle: full_person_key_handle(),
 					context,
@@ -2829,6 +2795,26 @@ mod tests {
 			assert_eq!(proof.err(), Some(RingVrfError::NotAllowlisted), "proof: {why}");
 			assert_eq!(alias.err(), Some(RingVrfError::NotAllowlisted), "read: {why}");
 		}
+	}
+
+	/// A context grant does not reach the development context.
+	///
+	/// `raw:` names no product, so there is no manifest to consent with, and its
+	/// bytes are whatever the caller chose, which could be any product's
+	/// context.
+	#[test]
+	fn a_context_grant_does_not_reach_the_raw_context() {
+		let (proof, alias) = third_product_context(
+			OWNER_GRANTS_DIM2NEXT,
+			Some(r#"{"dim2next":["all"]}"#),
+			v01::ProductProofContext {
+				product_id: "raw:".to_string(),
+				suffix: v01::DerivationIndex::Raw([0x11; 32]),
+			},
+			|_| {},
+		);
+		assert_eq!(proof.err(), Some(RingVrfError::NotAllowlisted));
+		assert_eq!(alias.err(), Some(RingVrfError::NotAllowlisted));
 	}
 
 	/// A context grant does not open the owner's key.
