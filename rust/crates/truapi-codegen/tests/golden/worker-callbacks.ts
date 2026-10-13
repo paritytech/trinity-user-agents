@@ -33,6 +33,7 @@ export const CALLBACK_NAMES = [
   "remotePermission",
   "removePocketCard",
   "readPreimage",
+  "readTorrent",
   "beginOperation",
   "endOperation",
   "read",
@@ -295,7 +296,7 @@ function pocketRawCallbacks(
 
 function preimageReadRawCallbacks(
   bridge: WorkerCallbackBridge,
-): Required<Pick<RawCallbacks, "readPreimage">> {
+): Required<Pick<RawCallbacks, "readPreimage" | "readTorrent">> {
   return {
     readPreimage: (key, route, skipHostCaches) =>
       bridge.callbackRequest("readPreimage", [
@@ -303,6 +304,10 @@ function preimageReadRawCallbacks(
         route,
         skipHostCaches,
       ]) as ReturnType<Required<RawCallbacks>["readPreimage"]>,
+    readTorrent: (request) =>
+      bridge.callbackRequest("readTorrent", [request]) as ReturnType<
+        Required<RawCallbacks>["readTorrent"]
+      >,
   };
 }
 

@@ -125,6 +125,10 @@ export function makeHostCallbacks(
       ? {
           preimageRead: {
             readPreimage: async () => ({ report: { attempts: [], hostMs: 0 } }),
+            readTorrent: async () => ({
+              file: 0,
+              report: { attempts: [], hostMs: 0 },
+            }),
             ...overrides.preimageRead,
           },
         }

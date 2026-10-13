@@ -51,6 +51,7 @@ use truapi::{
 		preimage::{
 			RemotePreimageLookupSubscribeItem, RemotePreimageLookupSubscribeRequest,
 			RemotePreimageReadError, RemotePreimageReadRequest, RemotePreimageReadResponse,
+			RemotePreimageReadTorrentRequest, RemotePreimageReadTorrentResponse,
 			RemotePreimageSubmitRequest,
 		},
 		resource_allocation::{
@@ -4550,6 +4551,70 @@ impl crate::platform::PreimageReadHost for FixedPreimageRead {
 	) -> Result<v01::RemotePreimageReadResponse, v01::PreimageReadError> {
 		Ok(self.0.clone())
 	}
+
+	/// A torrent read answers the value and the report of the fixed response, as file 0.
+	async fn read_torrent(
+		&self,
+		_request: v01::RemotePreimageReadTorrentRequest,
+	) -> Result<v01::RemotePreimageReadTorrentResponse, v01::PreimageReadError> {
+		Ok(v01::RemotePreimageReadTorrentResponse {
+			value: self.0.value.clone(),
+			key: None,
+			name: Some("file.bin".to_string()),
+			file: 0,
+			report: self.0.report.clone(),
+		})
+	}
+}
+
+fn torrent_read(
+	host: &ProductRuntimeHost,
+	route: v01::PreimageReadRoute,
+) -> Result<v01::RemotePreimageReadTorrentResponse, CallError<RemotePreimageReadError>> {
+	let request = RemotePreimageReadTorrentRequest::V1(v01::RemotePreimageReadTorrentRequest {
+		magnet: "magnet:?xt=urn:btih:2befcb908a1be306ba26451f75d51e83a5f43d36".to_string(),
+		file: None,
+		route,
+	});
+	futures::executor::block_on(Preimage::read_torrent(host, &CallContext::default(), request)).map(
+		|response| {
+			let RemotePreimageReadTorrentResponse::V1(mut response) = response;
+			response.report.host_ms = 0;
+			response
+		},
+	)
+}
+
+#[test]
+fn preimage_read_torrent_sets_the_key_and_primes_the_host_cache() {
+	use crate::host_internal::bulletin::preimage_key;
+
+	let value = vec![2, 7, 1, 8, 2, 8];
+	let key = preimage_key(&value);
+	let report = v01::PreimageReadReport { served_by: None, attempts: Vec::new(), host_ms: 0 };
+	let host = ProductRuntimeHost::new_compat(stub_platform(), test_spawner());
+	// Without a read host, a torrent read is not available.
+	assert_eq!(torrent_read(&host, v01::PreimageReadRoute::Cache), Err(CallError::Unsupported));
+	host.services.install_preimage_read_host(Arc::new(FixedPreimageRead(
+		v01::RemotePreimageReadResponse { value: Some(value.clone()), report: report.clone() },
+	)));
+	assert_eq!(
+		torrent_read(&host, v01::PreimageReadRoute::Cache),
+		Ok(v01::RemotePreimageReadTorrentResponse {
+			value: Some(value.clone()),
+			key: Some(key),
+			name: Some("file.bin".to_string()),
+			file: 0,
+			report,
+		})
+	);
+	// The file is now in the read-after-write cache under its key.
+	assert_eq!(preimage_read(&host, &key, false).map(|read| read.value), Ok(Some(value)));
+	// A torrent is not on Bulletin.
+	assert!(matches!(
+		torrent_read(&host, v01::PreimageReadRoute::Bulletin),
+		Err(CallError::Domain(_))
+	));
 }
 
 fn preimage_read(

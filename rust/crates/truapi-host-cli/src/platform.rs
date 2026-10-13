@@ -977,6 +977,17 @@ impl PreimageReadHost for CliPlatform {
 	) -> Result<api::RemotePreimageReadResponse, api::PreimageReadError> {
 		self.bulletin.source().read_routed(&key, route).await
 	}
+
+	/// The CLI host does not read torrents: `ctest get` with a magnet link reads them through
+	/// cache nodes directly.
+	async fn read_torrent(
+		&self,
+		_request: api::RemotePreimageReadTorrentRequest,
+	) -> Result<api::RemotePreimageReadTorrentResponse, api::PreimageReadError> {
+		Err(api::PreimageReadError::Unknown {
+			reason: "this host does not read torrents".to_string(),
+		})
+	}
 }
 
 #[derive(Serialize, Deserialize)]

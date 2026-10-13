@@ -5,7 +5,8 @@ use crate::{
 	versioned::preimage::{
 		RemotePreimageLookupSubscribeError, RemotePreimageLookupSubscribeItem,
 		RemotePreimageLookupSubscribeRequest, RemotePreimageReadError, RemotePreimageReadRequest,
-		RemotePreimageReadResponse, RemotePreimageSubmitError, RemotePreimageSubmitRequest,
+		RemotePreimageReadResponse, RemotePreimageReadTorrentRequest,
+		RemotePreimageReadTorrentResponse, RemotePreimageSubmitError, RemotePreimageSubmitRequest,
 		RemotePreimageSubmitResponse,
 	},
 	wire, wire_trait,
@@ -95,6 +96,36 @@ pub trait Preimage: Send + Sync {
 		_cx: &CallContext,
 		_request: RemotePreimageReadRequest,
 	) -> Result<RemotePreimageReadResponse, CallError<RemotePreimageReadError>> {
+		Err(CallError::unavailable())
+	}
+
+	/// Read one file of a BitTorrent torrent once, through cache providers.
+	/// A cache provider gets the file from the swarm, or from its own store or
+	/// another provider when it has the file already. The host checks the file
+	/// against the piece hashes of the torrent, and the answer has the file,
+	/// its preimage key and a report as for `read`. The cache providers then
+	/// also keep the file under its preimage key, so the product can read it
+	/// again with `read` and that key. A host without this capability answers
+	/// `Unsupported`.
+	///
+	/// ```ts
+	/// const read = await truapi.preimage.readTorrent({
+	///   magnet: "magnet:?xt=urn:btih:2befcb908a1be306ba26451f75d51e83a5f43d36",
+	///   file: undefined,
+	///   route: { tag: "Cache" },
+	/// });
+	/// if (read.isErr()) {
+	///   console.log("this host cannot read torrents:", read.error);
+	/// } else {
+	///   console.log("torrent read report:", read.value.report, "key:", read.value.key);
+	/// }
+	/// ```
+	#[wire(id = 4)]
+	async fn read_torrent(
+		&self,
+		_cx: &CallContext,
+		_request: RemotePreimageReadTorrentRequest,
+	) -> Result<RemotePreimageReadTorrentResponse, CallError<RemotePreimageReadError>> {
 		Err(CallError::unavailable())
 	}
 }

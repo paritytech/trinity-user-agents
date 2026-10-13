@@ -186,6 +186,36 @@ pub enum PreimageReadOutcome {
 	},
 }
 
+/// Request to read one file of a BitTorrent torrent through cache providers.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+pub struct RemotePreimageReadTorrentRequest {
+	/// A BitTorrent v1 magnet link: `magnet:?xt=urn:btih:…`. It can select a
+	/// file with `so=` and give peers with `x.pe`.
+	pub magnet: String,
+	/// The index of the file in the torrent. `None` uses `so=` of the magnet
+	/// link, or file 0, the file of a single-file torrent.
+	pub file: Option<u32>,
+	/// Where the host reads. `Bulletin` is not a route for a torrent.
+	pub route: PreimageReadRoute,
+}
+
+/// The file of a torrent read, and how the host got it.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+pub struct RemotePreimageReadTorrentResponse {
+	/// The file, checked against the piece hashes of the torrent. `None` when
+	/// no source on the route had it.
+	pub value: Option<Vec<u8>>,
+	/// The preimage key of the file: the blake2b-256 of the value. The core
+	/// sets it, so a product can read the file again with `Preimage.read`.
+	pub key: Option<[u8; 32]>,
+	/// The name of the file in the torrent, when the host knows it.
+	pub name: Option<String>,
+	/// The index of the file in the torrent.
+	pub file: u32,
+	/// How the host got the file, or why it did not.
+	pub report: PreimageReadReport,
+}
+
 /// Why a host could not read a preimage.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 pub enum PreimageReadError {

@@ -44,7 +44,7 @@ use truapi::{
 		HostWorkerBeginOperationResponse, HostWorkerOperationError, LegacyAccountTxPayload,
 		PreimageReadError, PreimageReadRoute, ProductAccountId, ProductAccountTxPayload,
 		ProductProofContext, RemotePermission, RemotePermissionRequest, RemotePreimageReadResponse,
-		RingLocation,
+		RemotePreimageReadTorrentRequest, RemotePreimageReadTorrentResponse, RingLocation,
 	},
 	v01::HostAccountSignVrfRequest,
 };
@@ -3065,6 +3065,15 @@ pub trait PreimageReadHost: Send + Sync {
 		route: PreimageReadRoute,
 		skip_host_caches: bool,
 	) -> Result<RemotePreimageReadResponse, PreimageReadError>;
+
+	/// Read one file of a torrent once, through the cache providers of
+	/// `request.route`, and report every provider asked. The host checks the
+	/// file against the piece hashes of the torrent before it pays. It leaves
+	/// `key` empty: the core sets it from the value.
+	async fn read_torrent(
+		&self,
+		request: RemotePreimageReadTorrentRequest,
+	) -> Result<RemotePreimageReadTorrentResponse, PreimageReadError>;
 }
 
 /// Host-implemented adapter through which product Chat calls reach host

@@ -48,6 +48,8 @@ import type {
   HostWorkerBeginOperationResponse,
   PreimageReadRoute,
   RemotePreimageReadResponse,
+  RemotePreimageReadTorrentRequest,
+  RemotePreimageReadTorrentResponse,
   Result,
 } from "@parity/truapi";
 
@@ -1676,6 +1678,16 @@ export interface PreimageReadHost {
     route: PreimageReadRoute,
     skipHostCaches: boolean,
   ): Promise<RemotePreimageReadResponse>;
+
+  /**
+   * Read one file of a torrent once, through the cache providers of
+   * `request.route`, and report every provider asked. The host checks the
+   * file against the piece hashes of the torrent before it pays. It leaves
+   * `key` empty: the core sets it from the value.
+   */
+  readTorrent(
+    request: RemotePreimageReadTorrentRequest,
+  ): Promise<RemotePreimageReadTorrentResponse>;
 }
 
 /**

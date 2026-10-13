@@ -12,7 +12,8 @@ use truapi::{
 	versioned::preimage::{
 		RemotePreimageLookupSubscribeError, RemotePreimageLookupSubscribeItem,
 		RemotePreimageLookupSubscribeRequest, RemotePreimageReadError, RemotePreimageReadRequest,
-		RemotePreimageReadResponse, RemotePreimageSubmitError, RemotePreimageSubmitRequest,
+		RemotePreimageReadResponse, RemotePreimageReadTorrentRequest,
+		RemotePreimageReadTorrentResponse, RemotePreimageSubmitError, RemotePreimageSubmitRequest,
 		RemotePreimageSubmitResponse,
 	},
 };
@@ -213,6 +214,40 @@ impl Preimage for ProductRuntimeHost {
 		}
 		response.report.host_ms = elapsed_ms(started);
 		Ok(RemotePreimageReadResponse::V1(response))
+	}
+
+	#[instrument(skip_all, fields(runtime.method = "preimage.read_torrent"))]
+	async fn read_torrent(
+		&self,
+		_cx: &CallContext,
+		request: RemotePreimageReadTorrentRequest,
+	) -> Result<RemotePreimageReadTorrentResponse, CallError<RemotePreimageReadError>> {
+		let RemotePreimageReadTorrentRequest::V1(request) = request;
+		if request.route == v01::PreimageReadRoute::Bulletin {
+			return Err(CallError::Domain(RemotePreimageReadError::V1(
+                v01::PreimageReadError::Unknown {
+                    reason: "a torrent is not on Bulletin: use the route Auto, Cache or a cache provider"
+                        .to_string(),
+                },
+            )));
+		}
+		let started = Instant::now();
+		let Some(host) = self.services.preimage_read_host() else {
+			return Err(CallError::Unsupported);
+		};
+		let mut response = host
+			.read_torrent(request)
+			.await
+			.map_err(|error| CallError::Domain(RemotePreimageReadError::V1(error)))?;
+		// The host checked the file against the piece hashes of the torrent. The
+		// core derives the preimage key from the bytes itself, and keeps the file
+		// in its read-after-write cache, as after a submit.
+		response.key = response.value.as_ref().map(|value| preimage_key(value));
+		if let (Some(key), Some(value)) = (response.key, response.value.clone()) {
+			self.prime_preimage_cache(&key, value);
+		}
+		response.report.host_ms = elapsed_ms(started);
+		Ok(RemotePreimageReadTorrentResponse::V1(response))
 	}
 }
 

@@ -221,6 +221,12 @@ pub mod latest {
 		LatestOf<versioned::account::HostAccountConnectionStatusSubscribeItem>;
 	/// Preimage read result: the value and the read report.
 	pub type RemotePreimageReadResponse = LatestOf<versioned::preimage::RemotePreimageReadResponse>;
+	/// Torrent read request: the magnet link, the file and the route.
+	pub type RemotePreimageReadTorrentRequest =
+		LatestOf<versioned::preimage::RemotePreimageReadTorrentRequest>;
+	/// Torrent read result: the file, its preimage key and the read report.
+	pub type RemotePreimageReadTorrentResponse =
+		LatestOf<versioned::preimage::RemotePreimageReadTorrentResponse>;
 	/// Preimage read failure.
 	pub type PreimageReadError = LatestOf<versioned::preimage::RemotePreimageReadError>;
 	/// Login request error.

@@ -53,6 +53,7 @@ pub struct JsBridge {
     pub remove_pocket_card: Function,
     pub lookup_preimage: Function,
     pub read_preimage: Function,
+    pub read_torrent: Function,
     pub begin_operation: Function,
     pub end_operation: Function,
     pub read: Function,
@@ -115,6 +116,8 @@ impl JsBridge {
             lookup_preimage: get_function(callbacks, "lookupPreimage")?,
             read_preimage: get_optional_function(callbacks, "readPreimage")?
                 .unwrap_or_else(|| missing_callback("readPreimage")),
+            read_torrent: get_optional_function(callbacks, "readTorrent")?
+                .unwrap_or_else(|| missing_callback("readTorrent")),
             begin_operation: get_function(callbacks, "beginOperation")?,
             end_operation: get_function(callbacks, "endOperation")?,
             read: get_function(callbacks, "read")?,
@@ -139,7 +142,8 @@ impl JsBridge {
                 .is_some(),
             pocket_present: get_optional_function(callbacks, "subscribePocketCards")?.is_some()
                 && get_optional_function(callbacks, "removePocketCard")?.is_some(),
-            preimage_read_present: get_optional_function(callbacks, "readPreimage")?.is_some(),
+            preimage_read_present: get_optional_function(callbacks, "readPreimage")?.is_some()
+                && get_optional_function(callbacks, "readTorrent")?.is_some(),
             scanner_present: get_optional_function(callbacks, "scanCode")?.is_some(),
         })
     }
@@ -608,6 +612,23 @@ impl crate::platform::PreimageReadHost for WasmPlatform {
         decode_bytes::<latest::RemotePreimageReadResponse>(
             bytes,
             "readPreimage response did not decode",
+        )
+        .map_err(|reason| latest::PreimageReadError::Unknown { reason })
+    }
+
+    async fn read_torrent(
+        &self,
+        request: latest::RemotePreimageReadTorrentRequest,
+    ) -> Result<latest::RemotePreimageReadTorrentResponse, latest::PreimageReadError> {
+        let bytes = invoke_bytes_return(
+            &self.bridge.read_torrent,
+            vec![Uint8Array::from(request.encode().as_slice()).into()],
+        )
+        .await
+        .map_err(|reason| latest::PreimageReadError::Unknown { reason })?;
+        decode_bytes::<latest::RemotePreimageReadTorrentResponse>(
+            bytes,
+            "readTorrent response did not decode",
         )
         .map_err(|reason| latest::PreimageReadError::Unknown { reason })
     }

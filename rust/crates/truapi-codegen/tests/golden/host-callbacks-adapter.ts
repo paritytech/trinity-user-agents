@@ -29,6 +29,8 @@ import {
   PreimageReadRoute,
   RemotePermissionRequest,
   RemotePreimageReadResponse,
+  RemotePreimageReadTorrentRequest,
+  RemotePreimageReadTorrentResponse,
 } from "@parity/truapi";
 import type { GenericError } from "@parity/truapi";
 import {
@@ -116,6 +118,7 @@ export interface RawCallbacks {
     route: Uint8Array,
     skipHostCaches: boolean,
   ): Promise<Uint8Array>;
+  readTorrent?(request: Uint8Array): Promise<Uint8Array>;
   beginOperation(product: Uint8Array, label: string): Promise<Uint8Array>;
   endOperation(product: Uint8Array, id: number): Promise<void>;
   read(key: string): Promise<Uint8Array | null | undefined>;
@@ -294,6 +297,12 @@ export function createWasmRawCallbacks(
                 key,
                 PreimageReadRoute.dec(route),
                 skipHostCaches,
+              ),
+            ),
+          readTorrent: async (request) =>
+            RemotePreimageReadTorrentResponse.enc(
+              await preimageRead.readTorrent(
+                RemotePreimageReadTorrentRequest.dec(request),
               ),
             ),
         }

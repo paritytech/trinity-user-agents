@@ -12,4 +12,6 @@ truapi_macros::versioned_type! {
 	pub enum RemotePreimageReadRequest { V1 => v01::RemotePreimageReadRequest }
 	pub enum RemotePreimageReadResponse { V1 => v01::RemotePreimageReadResponse }
 	pub enum RemotePreimageReadError { V1 => v01::PreimageReadError }
+	pub enum RemotePreimageReadTorrentRequest { V1 => v01::RemotePreimageReadTorrentRequest }
+	pub enum RemotePreimageReadTorrentResponse { V1 => v01::RemotePreimageReadTorrentResponse }
 }
