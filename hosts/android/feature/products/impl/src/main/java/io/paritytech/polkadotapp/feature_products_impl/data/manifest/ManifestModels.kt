@@ -1,5 +1,6 @@
 package io.paritytech.polkadotapp.feature_products_impl.data.manifest
 
+import com.google.gson.JsonElement
 import com.google.gson.annotations.JsonAdapter
 import com.google.gson.annotations.SerializedName
 import io.paritytech.polkadotapp.feature_products_api.model.ProductIcon
@@ -49,6 +50,8 @@ internal class PocketCardRemote(
     val id: String? = null,
     val title: String? = null,
     val preview: String? = null,
+    // Kept raw: Gson's boolean adapter reads the string "no" as false instead of refusing it.
+    val faceShown: JsonElement? = null,
 )
 
 internal class DimensionsRemote(

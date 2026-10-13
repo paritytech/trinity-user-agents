@@ -379,10 +379,12 @@ impl SessionCatalog {
 			},
 			[] => Ok(name.to_string()),
 			[candidate] => Ok(candidate.clone()),
-			_ => bail!(
-				"sessions {} have the same creation time; select an exact session name",
-				latest.join(", ")
-			),
+			_ => {
+				bail!(
+					"sessions {} have the same creation time; select an exact session name",
+					latest.join(", ")
+				)
+			},
 		}
 	}
 

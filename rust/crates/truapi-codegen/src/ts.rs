@@ -1726,11 +1726,13 @@ fn emit_error_response(
 fn leg_codec_expr(ty: &TypeRef, wrappers: &BTreeMap<String, VersionedWrapper>) -> Result<String> {
 	match versioned_wrapper_for(ty, wrappers) {
 		Some((wrapper_name, _)) => Ok(format!("T.{}", versioned_wrapper_ts_name(wrapper_name))),
-		None => bail!(
-			"type `{}` is not a recognized versioned wrapper, \
+		None => {
+			bail!(
+				"type `{}` is not a recognized versioned wrapper, \
              so no wire codec can be derived for it",
-			ts_type_name_hint(ty)
-		),
+				ts_type_name_hint(ty)
+			)
+		},
 	}
 }
 
@@ -2092,11 +2094,13 @@ fn emit_subscribe_method(
 	};
 
 	let start_payload = match request_name {
-		Some(name) => format!(
-			"T.{}.enc({{ tag: \"V{version}\", value: {} }})",
-			versioned_wrapper_ts_name(name),
-			payload.value_expr
-		),
+		Some(name) => {
+			format!(
+				"T.{}.enc({{ tag: \"V{version}\", value: {} }})",
+				versioned_wrapper_ts_name(name),
+				payload.value_expr
+			)
+		},
 		None => "new Uint8Array()".to_string(),
 	};
 
@@ -2442,11 +2446,13 @@ fn enum_variant_ts_type(variant: &VariantDef) -> Result<String> {
 fn enum_variant_ts_type_mode(variant: &VariantDef, mode: NameMode<'_>) -> Result<String> {
 	Ok(match &variant.fields {
 		VariantFields::Unit => format!("{{ tag: \"{}\"; value?: undefined }}", variant.name),
-		fields => format!(
-			"{{ tag: \"{}\"; value: {} }}",
-			variant.name,
-			variant_value_type_mode(fields, mode)?
-		),
+		fields => {
+			format!(
+				"{{ tag: \"{}\"; value: {} }}",
+				variant.name,
+				variant_value_type_mode(fields, mode)?
+			)
+		},
 	})
 }
 

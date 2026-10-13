@@ -12,12 +12,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
+import io.paritytech.polkadotapp.common.presentation.camera.compose.PermissionMissingHint
+import io.paritytech.polkadotapp.common.presentation.camera.compose.QrViewfinder
 import io.paritytech.polkadotapp.design.components.text.NovaText
 import io.paritytech.polkadotapp.design.theme.PolkadotTheme
 import io.paritytech.polkadotapp.design.utils.collectAsEffect
 import io.paritytech.polkadotapp.feature_scan_impl.presentation.scanPanel.ScanPanelViewModel
-import io.paritytech.polkadotapp.feature_scan_impl.presentation.scanning.compose.PermissionMissingHint
-import io.paritytech.polkadotapp.feature_scan_impl.presentation.scanning.compose.QrViewfinder
 import io.paritytech.polkadotapp.common.R as RCommon
 
 @Composable

@@ -2647,27 +2647,32 @@ fn feed_item_lines(item: &FeedItem, width: usize, height: usize) -> Vec<Line<'st
 			Some(PermissionDecision::Deny) => {
 				status_lines(NoticeTone::Warning, &format!("Rejected {action}"), None)
 			},
-			None => vec![
-				Line::default(),
-				Line::from(vec![
-					Span::styled("! ", semantic_style(Color::Yellow).add_modifier(Modifier::BOLD)),
-					Span::styled(
-						"Approval required",
-						Style::default().add_modifier(Modifier::BOLD),
-					),
-				]),
-				Line::default(),
-				Line::from(format!("  {action}")),
-				Line::from(Span::styled(
-					format!("  {detail}"),
-					Style::default().add_modifier(Modifier::DIM),
-				)),
-				Line::default(),
-				Line::from(Span::styled(
-					format!("  {}   Esc deny", kind.choices()),
-					semantic_style(Color::Cyan),
-				)),
-			],
+			None => {
+				vec![
+					Line::default(),
+					Line::from(vec![
+						Span::styled(
+							"! ",
+							semantic_style(Color::Yellow).add_modifier(Modifier::BOLD),
+						),
+						Span::styled(
+							"Approval required",
+							Style::default().add_modifier(Modifier::BOLD),
+						),
+					]),
+					Line::default(),
+					Line::from(format!("  {action}")),
+					Line::from(Span::styled(
+						format!("  {detail}"),
+						Style::default().add_modifier(Modifier::DIM),
+					)),
+					Line::default(),
+					Line::from(Span::styled(
+						format!("  {}   Esc deny", kind.choices()),
+						semantic_style(Color::Cyan),
+					)),
+				]
+			},
 		},
 		FeedItem::Request { name, state, metadata, elapsed_ms, reason, .. } => {
 			let label =
@@ -3337,10 +3342,9 @@ mod tests {
 
 		assert!(app.transcript_text().contains("× Setting up signer"));
 		assert!(app.transcript_text().contains("Stopped after an error"));
-		assert!(!app.entries.iter().any(|entry| matches!(
-			entry,
-			FeedItem::Activity { state: ActivityState::Running, .. }
-		)));
+		assert!(!app.entries.iter().any(|entry| {
+			matches!(entry, FeedItem::Activity { state: ActivityState::Running, .. })
+		}));
 	}
 
 	#[test]
@@ -3392,9 +3396,11 @@ mod tests {
 
 		assert!(app.retained_lines <= TRANSCRIPT_LINE_LIMIT);
 		assert!(app.retained_bytes <= TRANSCRIPT_BYTE_LIMIT);
-		assert!(app.entries.iter().all(|entry| match entry {
-			FeedItem::Stream { lines, .. } => lines.len() <= STREAM_CHUNK_LINE_LIMIT,
-			_ => true,
+		assert!(app.entries.iter().all(|entry| {
+			match entry {
+				FeedItem::Stream { lines, .. } => lines.len() <= STREAM_CHUNK_LINE_LIMIT,
+				_ => true,
+			}
 		}));
 		assert!(app.transcript_text().contains("line 10499"));
 		assert!(!app.transcript_text().contains("line 0\n"));
@@ -3741,9 +3747,9 @@ mod tests {
 				.chars()
 				.any(|character| ('\u{2800}'..='\u{28ff}').contains(&character))
 		}));
-		assert!(qr_rows.windows(2).all(
-			|rows| text_display_width(&rows[0].content) == text_display_width(&rows[1].content)
-		));
+		assert!(qr_rows.windows(2).all(|rows| {
+			text_display_width(&rows[0].content) == text_display_width(&rows[1].content)
+		}));
 		assert_eq!(
 			app.transcript_text(),
 			"◌ Pairing link ready\n  Open the dedicated link shown by the pairing host.\n• Pairing link\n  <pairing link>"
