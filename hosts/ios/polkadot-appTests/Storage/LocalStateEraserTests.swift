@@ -11,10 +11,8 @@ struct LocalStateEraserTests {
     func erasesWalletStateOnly() {
         settings.set(value: "alice", for: SettingsKey.username.rawValue)
         settings.set(value: true, for: SettingsKey.usernameClaimed.rawValue)
-        settings.set(value: true, for: SettingsKey.isPerson.rawValue)
         settings.set(value: "session", for: SettingsKey.backendSessionId.rawValue)
         settings.set(value: 7, for: SettingsKey.nextSyncUpdateId.rawValue)
-        settings.set(value: true, for: SettingsKey.voucherInUseDismissed.rawValue)
         settings.set(value: "dark", for: SettingsKey.themeSelected.rawValue)
         settings.set(value: "USD", for: SettingsKey.selectedCurrencyCode.rawValue)
         settings.set(value: true, for: SettingsKey.playerTooltipShown.rawValue)

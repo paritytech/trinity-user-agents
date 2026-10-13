@@ -31,7 +31,7 @@ final class AssetDetailsInteractor: AnyProviderAutoCleaning {
     private var accountBackupStatusTask: Task<Void, Error>?
 
     private let fundingDomainProvider: FundingDomainProviding
-    private var rampProductTasks: [RampAction: Task<Void, Never>] = [:]
+    private var topUpProductTask: Task<Void, Never>?
 
     #if TESTNET_FEATURE
         var backgroundExecutor: BackgroundExecuting?
@@ -59,7 +59,7 @@ final class AssetDetailsInteractor: AnyProviderAutoCleaning {
         recoveredBalanceTask?.cancel()
         accountBackupStatusTask?.cancel()
         priceSubscriptionTask?.cancel()
-        rampProductTasks.values.forEach { $0.cancel() }
+        topUpProductTask?.cancel()
     }
 }
 
@@ -80,14 +80,14 @@ extension AssetDetailsInteractor: AssetDetailsInteractorInputProtocol {
         coinageBackupSyncService.acknowledgeRecovery()
     }
 
-    func openRampProduct(_ action: RampAction) {
-        rampProductTasks[action]?.cancel()
-        rampProductTasks[action] = Task { [weak presenter, fundingDomainProvider] in
+    func openTopUpProduct() {
+        topUpProductTask?.cancel()
+        topUpProductTask = Task { [weak presenter, fundingDomainProvider] in
             do {
-                let page = try await action.resolvePage(using: fundingDomainProvider)
-                await presenter?.didResolveRampProduct(action, result: .success(page))
+                let page = try await RampAction.topUp.resolvePage(using: fundingDomainProvider)
+                await presenter?.didResolveTopUpProduct(.success(page))
             } catch {
-                await presenter?.didResolveRampProduct(action, result: .failure(error))
+                await presenter?.didResolveTopUpProduct(.failure(error))
             }
         }
     }

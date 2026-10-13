@@ -93,61 +93,73 @@ struct AssetDetailsView: View {
 
     private func actions() -> some View {
         HStack(spacing: DSSpacings.small) {
-            DSButton(.actionSendCash, expands: true) {
-                viewModel.onSendMoney?()
-            }
-            .accessibilityId(AccessibilityID.Wallet.sendPaymentButton)
-
-            circleButton(.add24, isLoading: viewModel.isTopUpInProgress) {
-                viewModel.onTopUp?()
-            }
-            .accessibilityId(AccessibilityID.Wallet.addFundsButton)
-
-            withdrawButton()
+            getButton()
+            sendButton()
         }
     }
 
-    private func withdrawButton() -> some View {
+    private func getButton() -> some View {
         Button {
-            viewModel.onWithdraw?()
+            viewModel.onTopUp?()
         } label: {
             Group {
-                if viewModel.isWithdrawInProgress {
+                if viewModel.isTopUpInProgress {
                     ProgressView()
                         .progressViewStyle(.circular)
                         .tint(.fgPrimaryInverted)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
-                    Text(String(localized: .actionWithdraw))
+                    actionLabel(
+                        icon: .iconArrowUp24,
+                        rotation: .zero,
+                        title: .actionGet,
+                        subtitle: .actionGetSubtitle
+                    )
                 }
             }
-            .frame(maxWidth: .infinity)
         }
-        .buttonStyle(.ds(style: .primary, shape: .pill, size: .large))
-        .disabled(viewModel.isWithdrawInProgress)
-        .accessibilityId(AccessibilityID.Wallet.withdrawButton)
+        .buttonStyle(.ds(style: .primary, shape: .rounded, size: .large))
+        .disabled(viewModel.isTopUpInProgress)
+        .accessibilityId(AccessibilityID.Wallet.addFundsButton)
     }
 
-    private func circleButton(
-        _ icon: ImageResource,
-        isLoading: Bool,
-        action: @escaping () -> Void
-    ) -> some View {
-        Button(action: action) {
-            Group {
-                if isLoading {
-                    ProgressView()
-                        .progressViewStyle(.circular)
-                        .tint(.fgPrimaryInverted)
-                } else {
-                    Image(icon)
-                        .renderingMode(.template)
-                }
-            }
-            .frame(width: 56, height: 56)
-            .foregroundStyle(Color.fgPrimaryInverted)
-            .background(.bgActionPrimary, in: Circle())
+    private func sendButton() -> some View {
+        Button {
+            viewModel.onSendMoney?()
+        } label: {
+            actionLabel(
+                icon: .iconArrowUp24,
+                rotation: .degrees(180),
+                title: .actionSendCash,
+                subtitle: .actionSendSubtitle
+            )
         }
-        .disabled(isLoading)
+        .buttonStyle(.ds(style: .primary, shape: .rounded, size: .large))
+        .accessibilityId(AccessibilityID.Wallet.sendPaymentButton)
+    }
+
+    /// Two rows: icon + title, then subtitle. `maxHeight: .infinity` lets the shorter
+    /// button match the taller one so the pair reads as one row.
+    private func actionLabel(
+        icon: ImageResource,
+        rotation: Angle,
+        title: LocalizedStringResource,
+        subtitle: LocalizedStringResource
+    ) -> some View {
+        VStack(spacing: DSSpacings.tiny) {
+            HStack(spacing: DSSpacings.extraSmall) {
+                Image(icon)
+                    .renderingMode(.template)
+                    .rotationEffect(rotation)
+                Text(title)
+                    .typography(.titleLarge)
+            }
+            Text(subtitle)
+                .typography(.bodySmall)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }
 
     #if TESTNET_FEATURE

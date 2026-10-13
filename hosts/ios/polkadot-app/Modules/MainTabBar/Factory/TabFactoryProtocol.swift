@@ -105,7 +105,6 @@ private extension TabFactory {
             depositService: serviceCoordinator.depositService,
             coinageService: serviceCoordinator.coinageService,
             coinageBackupSyncService: serviceCoordinator.coinageBackupSyncService,
-            personDataStore: serviceCoordinator.personDataStore,
             networkStatusService: serviceCoordinator.networkStatusService,
             flowState: spaFlowState
         )
@@ -119,8 +118,6 @@ private extension TabFactory {
 
         let navigation = AppNavigationController(rootViewController: view.controller)
 
-        navigation.barSettings = .shadowSettings
-        navigation.scrollEdgeBarSettings = .defaultSettings
         return navigation
     }
 

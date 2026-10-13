@@ -14,7 +14,7 @@ Polkadot iOS — a production-grade iOS wallet and social app for the Polkadot b
 - **substrate-sdk-ios** — Substrate/Polkadot blockchain interaction
 - **Operation-iOS** (3.0.0) — Core Data service (writer/observer/reader modes), repositories, operations
 - **CoreData** — Local persistence (SubstrateDataModel + UserDataModel)
-- **WebRTC** — Peer-to-peer voice/video calls and DIM2 game
+- **WebRTC** — Peer-to-peer voice/video calls
 - **Firebase** — Remote Config
 - **Fastlane + GitHub Actions** — CI/CD pipeline
 

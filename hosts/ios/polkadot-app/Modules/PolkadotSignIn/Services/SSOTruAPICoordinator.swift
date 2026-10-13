@@ -105,8 +105,7 @@ extension SSOTruAPICoordinator: MessageExchangeSignInHostCoordinating {
             return
         }
 
-        let runtime = try runtimeProvider.sharedRuntime()
-        let disconnectBytes = runtime.prepareDisconnectRequest()
+        let disconnectBytes = try runtimeProvider.sharedRuntime().prepareDisconnectRequest()
 
         logger.debug("Posting disconnect request to host \(host.name)")
         try await rawSender.postMessage(SSORawHostMessage(rawBytes: disconnectBytes), to: host)

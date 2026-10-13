@@ -221,6 +221,20 @@ it on iOS and Android, `SigningHostRuntime::set_core_db` on any other embedder,
 and `core_database_status()` reports the SQLite version, schema version and
 path. Web hosts do not compile the store.
 
+### Durable transactions
+
+The `durable` module runs over the core database. A domain registers presigned
+mortal extrinsics (`DurableRequest::presigned`, then `execute` or
+`execute_with`, whose hook writes the domain's own rows in the same
+transaction); the engine broadcasts them once committed and follows each with
+a submission watch. Whatever no watch owns, including everything a previous
+process left live, is decided by recovery passes: the completion ladder over
+the shared chain capabilities and the domain's `CompletionOracle`. Every
+verdict is a compare-and-set against the status and attempt it was derived
+from, and rows are never deleted. The engine reports whether work is pending
+to `HostCallbacks::durable_work_changed`; the host then runs a background task
+awaiting `run_durable_recovery()`, which returns once nothing is live.
+
 ### The two roles
 
 Both implement the role-neutral **`ProductAuthority`** trait; each owns its
@@ -428,21 +442,27 @@ AutoSigning without approval. Legacy-account signing still asks the user.
   country) with every funding provider, whatever its manifest says it serves,
   since a provider can serve more or less than it last published: core sends
   each provider's worker a `Quote` item on `serveSubscribe`, holding the worker
-  while it waits, and the worker answers with `answerQuote`, from its own API
-  directly or through the onramp adapter when that needs the provider's key.
+  while it waits, and the worker answers with `answerQuote`, priced from its
+  own API. The manifest names no backend: a provider signs in to its own API
+  itself and keeps its tokens with the host.
   Each provider's row is `Pending`, then `Quoted` or `Unavailable`, and a
   provider that does not answer within 10 seconds is unavailable. A provider's
   answer is reused for the same ask for 30 seconds. What an answer shows (a
   quote or an out-of-range amount: served; a refused country: not served
-  there) is stored under `FundingSupport` and folded into `funding_candidates`
-  for 12 hours, as routes the manifest did not declare and as `unsupported`
-  entries the host can filter by the user's country. Natively the rows arrive
+  there, only for an ask that named the country) is stored under
+  `FundingSupport` and folded into `funding_candidates` for 12 hours, as
+  routes the manifest did not declare and as `unsupported` entries the host
+  can filter by the user's country, while the provider's current manifest
+  serves Funding. Natively the rows arrive
   through `funding_quote_changed`.
   `select_funding_provider` hands a session to the provider the user chose,
   which must be one of those candidates, on the quote it was chosen by, which
-  must be one core offered for the session and not yet expired; the provider
-  receives it in `Assigned`, and the session keeps it with the rail and asset
-  it priced.
+  must be one core offered for the session, not yet expired and, when the
+  session has an amount, pricing that amount in balance units (what it
+  credits inbound, what it debits outbound); a session opened without an
+  amount takes the quote's. The provider receives it in `Assigned`, and the
+  session keeps it with the rail and asset it priced. A session's offered
+  quotes are dropped once it is assigned or ends.
   `funding_progress(intent)` gives the steps the host draws for a session's
   direction and rail, each with when it was reached: in, `Started`,
   `Payment`, `Approved` (bank and crypto, once the payment can no longer be
@@ -463,14 +483,24 @@ AutoSigning without approval. Legacy-account signing still asks the user.
   with the session, handed back in `Assigned` and dropped once the session
   ends, and `presentFrame` asks the host to
   show one of its screens through `present_provider_frame`. The core holds the
-  provider's worker while a session is assigned and open. It ends a session as
-  `Delivered` or `Released` itself, from the claims of the top-ups the
-  provider named (`Crediting`, then `Delivered`) or the completion of the
-  payment request it named (`Collecting`); once funds move, the provider can
-  no longer fail the session. Only a session with no provider expires: once
-  assigned, it waits for its provider or a cancel. A cancel ends
-  an unassigned session, asks the provider of an assigned one, and is refused
-  once the provider has seen the user's payment.
+  provider's worker while a session is assigned and open, and stores an
+  assigned session from then on, even while its overlay is up. It records each
+  top-up (inbound) or payment request (outbound) the worker starts while
+  serving a session, and a `Crediting` or `Collecting` report must name one of
+  those records at its amount, once. It ends a session as `Delivered` or
+  `Released` itself, from the recorded amounts of the named top-ups once their
+  claims are final (`Crediting`, then `Delivered`) or of the named payment once
+  it completes (`Collecting`); a partial claim counts what the host claimed.
+  Statuses are read again with backoff until the host decides, and a top-up
+  or payment the host still does not know an hour after it was named counts
+  as nothing moved. Once funds move, the provider can no longer fail the
+  session and nothing expires it. Before that, an unassigned session expires
+  24 hours after it opened and an assigned one 7 days after its provider last
+  reported, until the provider has seen the user's payment. A cancel ends an unassigned session, asks the provider of an
+  assigned one, ends it when asked again before the provider answered, and is
+  refused once the provider has seen the user's payment. An overlay closed
+  after the user chose a provider keeps the session as started and asks the
+  provider to stop.
 - `BalancePlatform`: stream what a payment request can spend right now, the
   current value first and then each change. Installed with
   `set_balance_platform`; native hosts use `set_balance_callbacks` with
@@ -484,15 +514,20 @@ AutoSigning without approval. Legacy-account signing still asks the user.
   approves, and stream each payment's status by its caller-chosen id.
   Installed with `set_payment_platform`; native hosts use
   `set_payment_callbacks` with `notify_payment_status`. The core requires a
-  session. Without it, `request` and
+  session and hands the host each id hashed with the product. Without it,
+  `request` and
   `statusSubscribe` answer `Unsupported`.
 - `TopUpPlatform`: claim a top-up source's funds into the user's balance and
   stream each top-up's status. Installed with `set_top_up_platform`; native
   hosts use `set_top_up_callbacks` with `notify_top_up_status`. The core
   requires a session and checks the source keys; a `ProductAccount` source is
-  passed through for the host to derive. The host owns claiming, retries,
-  partial claims, persistence and scoping ids to the product. Without it,
+  passed through for the host to derive, and hands the host each id hashed
+  with the product. The host owns claiming, retries, partial claims and
+  persistence. Without it,
   `topUp` and `topUpStatusSubscribe` answer `Unsupported`.
+- `ExpandedCardHost`: show or hide the card face drawn above an opened card's
+  Widget. It is carried per product connection on `ConnectionAdapters`, so only
+  the Widget under a card reaches that card.
 - `ContactsPlatform`: resolve the handles a transaction names to contacts, and
   render the picker that selects one. `contacts` is the only required method; `pick_contact`
   defaults to `Unsupported`, so a host serving no picker says so rather than
@@ -509,17 +544,25 @@ AutoSigning without approval. Legacy-account signing still asks the user.
   one and delivers a notification otherwise, may add a calendar event, and
   keeps the reminder across app kill and reboot. A schedule the host cannot
   hold fails as a host failure carrying its reason.
+- `ScannerPlatform`: open the host's QR and barcode viewfinder. Before calling
+  it the core refuses an invalid request, a Worker the user has not tapped in
+  the last 5 seconds, and a second open scan. After, it refuses a code the
+  request does not accept and any pairing request. The trait's docs list what
+  the host must do.
 
 `Platform` is a blanket-implemented supertrait that combines the capability
 traits above except `ChatPlatform`, `ContactsPlatform`, `PermissionStatusHost`,
-`PocketPlatform` and `GamePlatform`, which `OptionalPlatform` lists instead: a
-host supplies each only when it can serve it. Codegen reads `OptionalPlatform`
-to emit each listed capability as an optional group on the host-callback
-surface.
+`PocketPlatform`, `GamePlatform` and `ScannerPlatform`, which `OptionalPlatform`
+lists instead: a host supplies each only when it can serve it. `ExpandedCardHost`
+is in neither, because it travels per connection rather than with the platform.
+Codegen reads `OptionalPlatform` to emit each listed capability as an optional
+group on the host-callback surface.
 
 Omitting `ChatPlatform` makes the core answer Chat calls `Unsupported`, and
-omitting `ContactsPlatform`, `PocketPlatform` or `GamePlatform` does the same
-for Contacts, Pocket or Game calls.
+omitting `ContactsPlatform`, `PocketPlatform`, `GamePlatform` or
+`ScannerPlatform` does the same for Contacts, Pocket, Game or Scanner calls. A
+connection without an `ExpandedCardHost` answers a Widget's `ExpandedCard` calls
+`Unsupported`.
 Omitting `PermissionStatusHost` leaves device grants resolving from stored
 state alone, which is what a host with no OS permission model does anyway.
 Serving it gates both halves of the surface: a device permission request and a
