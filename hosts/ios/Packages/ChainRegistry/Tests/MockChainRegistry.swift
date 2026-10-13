@@ -51,6 +51,10 @@ final class MockChainRegistry: ChainRegistryProtocol {
         nil
     }
 
+    func makeChainSocket(for _: ChainModel.Id) -> ChainSocketProtocol? {
+        nil
+    }
+
     func getRuntimeProvider(for _: ChainModel.Id) -> RuntimeProviderProtocol? {
         nil
     }

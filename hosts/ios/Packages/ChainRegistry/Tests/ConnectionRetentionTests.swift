@@ -149,16 +149,81 @@ struct ConnectionRetentionTests {
         chainToken.release()
         #expect(connection.disconnectCallCount == 2)
     }
+
+    // MARK: - Chain sockets
+
+    @Test func backgroundWithoutRetainClosesChainSockets() throws {
+        let pool = makePool()
+        let (socket, delegate) = try openChainSocket(in: pool, chainId: "chain-1")
+
+        pool.enterBackground()
+
+        withExtendedLifetime(socket) {
+            #expect(delegate.closeReasons.count == 1)
+            #expect(delegate.closeReasons.first?.isSleep == true)
+        }
+    }
+
+    @Test func allRetainDefersChainSocketCloseUntilRelease() throws {
+        let pool = makePool()
+        let (socket, delegate) = try openChainSocket(in: pool, chainId: "chain-1")
+
+        let token = pool.retainConnections(.all)
+        pool.enterBackground()
+        #expect(delegate.closeReasons.isEmpty)
+
+        token.release()
+
+        withExtendedLifetime(socket) {
+            #expect(delegate.closeReasons.count == 1)
+            #expect(delegate.closeReasons.first?.isSleep == true)
+        }
+    }
+
+    @Test func perChainRetainDoesNotKeepChainSockets() throws {
+        let pool = makePool()
+        _ = try register(in: pool, id: "chain-1")
+        let (socket, delegate) = try openChainSocket(in: pool, chainId: "chain-1")
+
+        let token = pool.retainConnections(.chains(["chain-1"]))
+        pool.enterBackground()
+
+        withExtendedLifetime((socket, token)) {
+            #expect(delegate.closeReasons.count == 1)
+        }
+    }
+
+    @Test func chainSocketsRotateNodesPerChain() throws {
+        let factory = StubConnectionFactory()
+        let pool = makePool(factory: factory)
+
+        _ = try pool.makeChainSocket(for: makeChain(id: "chain-1"))
+        _ = try pool.makeChainSocket(for: makeChain(id: "chain-1"))
+        _ = try pool.makeChainSocket(for: makeChain(id: "chain-2"))
+
+        #expect(factory.socketAttempts == ["chain-1": [0, 1], "chain-2": [0]])
+    }
 }
 
 // MARK: - Helpers
 
 private extension ConnectionRetentionTests {
-    func makePool() -> ConnectionPool {
+    func makePool(factory: StubConnectionFactory = StubConnectionFactory()) -> ConnectionPool {
         ConnectionPool(
-            connectionFactory: StubConnectionFactory(),
+            connectionFactory: factory,
             applicationHandler: StubApplicationHandler()
         )
+    }
+
+    func openChainSocket(
+        in pool: ConnectionPool,
+        chainId: ChainModel.Id
+    ) throws -> (ChainSocket, RecordingChainSocketDelegate) {
+        let socket = try pool.makeChainSocket(for: makeChain(id: chainId))
+        let delegate = RecordingChainSocketDelegate()
+        socket.delegate = delegate
+        socket.open()
+        return (socket, delegate)
     }
 
     func register(in pool: ConnectionPool, id: ChainModel.Id) throws -> RecordingChainConnection {
@@ -237,6 +302,8 @@ private final class RecordingChainConnection: ChainConnection {
 }
 
 private final class StubConnectionFactory: ConnectionFactoryProtocol {
+    private(set) var socketAttempts: [ChainModel.Id: [Int]] = [:]
+
     func createConnection(
         for _: ChainNodeConnectable,
         delegate _: WebSocketEngineDelegate?
@@ -257,6 +324,16 @@ private final class StubConnectionFactory: ConnectionFactoryProtocol {
 
     func createOneShotConnection(for _: ChainNodeConnectable) throws -> OneShotConnection {
         throw NSError(domain: "ConnectionRetentionTests", code: 0)
+    }
+
+    func createChainSocket(for chain: ChainNodeConnectable, attempt: Int) throws -> ChainSocket {
+        guard let url = URL(string: "wss://\(chain.chainId).example") else {
+            throw NSError(domain: "ConnectionRetentionTests", code: 1)
+        }
+
+        socketAttempts[chain.chainId, default: []].append(attempt)
+
+        return ChainSocket(url: url, transportFactory: RecordingTransportFactory(), logger: SilentLogger())
     }
 }
 

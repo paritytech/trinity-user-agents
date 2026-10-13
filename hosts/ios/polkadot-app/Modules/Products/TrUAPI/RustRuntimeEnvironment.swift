@@ -77,12 +77,8 @@ private extension RustRuntimeEnvironment {
         chatMessaging: (any ProductChatMessaging)? = nil,
         pocket: (any PocketHostBridge)? = nil
     ) throws -> ExecutionModel {
-        let chainConnections = TrUAPIChainConnectionPool(
-            engineResolver: { [chainRegistry] genesisHash in
-                chainRegistry.getChainByGenesis(for: genesisHash.toHex()).flatMap { chain in
-                    chainRegistry.getConnection(for: chain.chainId)
-                }
-            },
+        let chainConnections = TrUAPIV2SpecConnectionPool.makeChainConnections(
+            chainRegistry: chainRegistry,
             logger: logger
         )
 

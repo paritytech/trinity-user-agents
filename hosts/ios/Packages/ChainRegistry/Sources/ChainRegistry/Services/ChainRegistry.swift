@@ -13,6 +13,9 @@ public protocol ChainRegistryProtocol: ChainResourceProtocol, ConnectionRetentio
     func getConnection(for chainId: ChainModel.Id) -> ChainConnection?
     func getOneShotConnection(for chainId: ChainModel.Id) -> JSONRPCEngine?
 
+    /// Returns an unopened socket, or nil unless the chain is activated.
+    func makeChainSocket(for chainId: ChainModel.Id) -> ChainSocketProtocol?
+
     func getRuntimeProvider(for chainId: ChainModel.Id) -> RuntimeProviderProtocol?
     func switchSync(mode: ChainSyncMode, chainId: ChainModel.Id) throws
 
@@ -315,6 +318,27 @@ extension ChainRegistry: ChainRegistryProtocol {
         }
 
         return connectionPool.getOneShotConnection(for: chain)
+    }
+
+    public func makeChainSocket(for chainId: ChainModel.Id) -> ChainSocketProtocol? {
+        mutex.lock()
+
+        defer {
+            mutex.unlock()
+        }
+
+        guard
+            let chain = availableChains[chainId],
+            connectionPool.getConnection(for: chainId) != nil else {
+            return nil
+        }
+
+        do {
+            return try connectionPool.makeChainSocket(for: chain)
+        } catch {
+            logger?.error("Chain socket unavailable for \(chainId): \(error)")
+            return nil
+        }
     }
 
     public func getRuntimeProvider(for chainId: ChainModel.Id) -> RuntimeProviderProtocol? {

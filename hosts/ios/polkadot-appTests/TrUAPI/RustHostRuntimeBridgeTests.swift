@@ -17,12 +17,8 @@ private func makeHostBridge(
     chainRegistry: ChainRegistryProtocol = MockChainRegistry(),
     confirmationPresenter: MockConfirmationPresenter = MockConfirmationPresenter()
 ) -> RustHostRuntimeBridge {
-    let chainConnections = TrUAPIChainConnectionPool(
-        engineResolver: { genesisHash in
-            chainRegistry.getChainByGenesis(for: genesisHash.toHex()).flatMap { chain in
-                chainRegistry.getConnection(for: chain.chainId)
-            }
-        },
+    let chainConnections = TrUAPIV2SpecConnectionPool.makeChainConnections(
+        chainRegistry: chainRegistry,
         logger: Logger.shared
     )
     return RustHostRuntimeBridge(

@@ -58,6 +58,12 @@ For background operations, prefer wrapping the whole operation in `ConnectionRet
 **What to retain — and what not to.** Retain only long, non-idempotent work.
 **Plain RPC reads are not retained** — `JSONRPCOptions` defaults to `resendOnReconnect: true`, so an in-flight read is requeued on the forced disconnect and resent when the app foregrounds. The awaiting call just suspends across the fold and resumes. Only `resendOnReconnect: false` requests fail (with `clientCancelled`) on background.
 
+**Chain sockets** (`ChainSocket`, from `makeChainSocket(for:)`, used by the TrUAPI rust core) are raw,
+single-use sockets outside the `ChainConnection` machinery. When the pool sleeps it closes every live
+chain socket with reason `.sleep`; only a held `.all` retain defers that (to the release of the last
+`.all` token while still backgrounded) — `.chains([...])` retains do not cover them. They never
+reopen on foreground: the owner gets `didCloseWith` and asks for a new socket.
+
 ## Storage Queries
 
 ### Canonical Pattern

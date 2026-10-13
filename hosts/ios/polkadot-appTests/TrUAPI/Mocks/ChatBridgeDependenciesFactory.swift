@@ -19,8 +19,8 @@ func makeChatBridgeDependencies(
         reminderPermissionAsker: MockReminderPermissionAsker(),
         navigationRouter: MockNavigationRouter(),
         chainRegistry: MockChainRegistry(),
-        chainConnections: TrUAPIChainConnectionPool(
-            engineResolver: { _ in nil },
+        chainConnections: TrUAPIV2SpecConnectionPool(
+            socketResolver: { _ in nil },
             logger: Logger.shared
         ),
         productStorage: TrUAPILocalStorage.createProductLocalStorage(
