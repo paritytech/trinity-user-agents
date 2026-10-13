@@ -8,11 +8,11 @@ import io.paritytech.polkadotapp.chains.storage.source.query.metadata
 import io.paritytech.polkadotapp.chains.storage.source.queryCatching
 import io.paritytech.polkadotapp.common.domain.model.AccountId
 import io.paritytech.polkadotapp.common.utils.scale.toDomain
-import io.paritytech.polkadotapp.feature_chain_resources_api.data.api.consumers
-import io.paritytech.polkadotapp.feature_chain_resources_api.data.api.resources
-import io.paritytech.polkadotapp.feature_chain_resources_api.data.model.OnChainConsumerInfo
 import io.paritytech.polkadotapp.feature_chain_resources_api.data.repository.ResourcesRepository
 import io.paritytech.polkadotapp.feature_chain_resources_api.domain.model.ConsumerInfo
+import io.paritytech.polkadotapp.feature_dotns_gateway_api.data.api.accountNames
+import io.paritytech.polkadotapp.feature_dotns_gateway_api.data.api.dotNsGateway
+import io.paritytech.polkadotapp.feature_dotns_gateway_api.data.model.DotNsOnChainConsumerInfo
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import javax.inject.Inject
@@ -26,33 +26,23 @@ class RealResourcesRepository @Inject constructor(
         accountId: AccountId,
     ): Result<ConsumerInfo?> {
         return remoteStorageSource.queryCatching(chainId) {
-            val onChainInfo = metadata.resources.consumers.query(accountId)
-            onChainInfo?.toDomain(accountId)
-        }
-    }
-
-    override suspend fun consumerInfoLocal(
-        chainId: ChainId,
-        accountId: AccountId,
-    ): Result<ConsumerInfo?> {
-        return localStorageSource.queryCatching(chainId) {
-            val onChainInfo = metadata.resources.consumers.query(accountId)
+            val onChainInfo = metadata.dotNsGateway.accountNames.query(accountId)
             onChainInfo?.toDomain(accountId)
         }
     }
 
     override fun consumerInfoFlow(chainId: ChainId, accountId: AccountId) =
-        remoteStorageSource.consumerInfoLocalFlow(chainId, accountId)
+        remoteStorageSource.consumerInfoFlow(chainId, accountId)
 
     override fun consumerInfoLocalFlow(chainId: ChainId, accountId: AccountId) =
-        localStorageSource.consumerInfoLocalFlow(chainId, accountId)
+        localStorageSource.consumerInfoFlow(chainId, accountId)
 
-    private fun StorageDataSource.consumerInfoLocalFlow(
+    private fun StorageDataSource.consumerInfoFlow(
         chainId: ChainId,
         accountId: AccountId,
     ): Flow<ConsumerInfo?> {
         return subscribe(chainId) {
-            metadata.resources.consumers.observe(accountId)
+            metadata.dotNsGateway.accountNames.observe(accountId)
                 .map { it?.toDomain(accountId) }
         }
     }
@@ -62,17 +52,21 @@ class RealResourcesRepository @Inject constructor(
         accountIds: Collection<AccountId>,
     ): Result<Map<AccountId, ConsumerInfo>> {
         return remoteStorageSource.queryCatching(chainId) {
-            metadata.resources.consumers.entries(accountIds)
-                .mapValues {
-                    it.value.toDomain(it.key)
-                }
+            metadata.dotNsGateway.accountNames.entries(accountIds)
+                .mapNotNull { (accountId, onChainInfo) -> onChainInfo.toDomain(accountId)?.let { accountId to it } }
+                .toMap()
         }
     }
 
-    private fun OnChainConsumerInfo.toDomain(accountId: AccountId) = ConsumerInfo(
-        accountId = accountId,
-        identifierKey = identifierKey.toDomain().getOrThrow(),
-        liteUsername = liteUsername,
-        fullUsername = fullUsername
-    )
+    private fun DotNsOnChainConsumerInfo.toDomain(accountId: AccountId): ConsumerInfo? {
+        val liteUsername = lite ?: return null
+        val chat = full?.chat ?: liteUsername.chat ?: return null
+
+        return ConsumerInfo(
+            accountId = accountId,
+            identifierKey = chat.toDomain().getOrThrow(),
+            liteUsername = liteUsername.label,
+            fullUsername = full?.label
+        )
+    }
 }
