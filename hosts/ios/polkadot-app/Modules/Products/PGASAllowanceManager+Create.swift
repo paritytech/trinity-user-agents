@@ -36,7 +36,8 @@ extension PGASAllowanceManager {
         let pgasOriginFactory = PGasOriginFactory(
             keyResolver: keyResolver,
             chainRegistry: chainRegistry,
-            storageRequestFactory: storageRequestFactory
+            storageRequestFactory: storageRequestFactory,
+            networkSuffixProvider: tldProvider
         )
 
         let extrinsicFacade = ExtrinsicSubmissionMonitorFacade(
@@ -72,6 +73,7 @@ extension PGASAllowanceManager {
             peopleChainId: AppConfig.Chains.usernameChain,
             chainRegistry: chainRegistry,
             storageRequestFactory: storageRequestFactory,
+            networkSuffixProvider: tldProvider,
             keyResolver: keyResolver,
             chainTimeProvider: chainTimeProvider
         )
