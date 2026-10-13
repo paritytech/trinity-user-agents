@@ -13,7 +13,6 @@ use std::time::{Duration, Instant};
 use web_time::{Duration, Instant};
 
 use crate::{
-	chain::HashAndNumber,
 	chain_runtime::{ChainRuntime, RuntimeFailure},
 	host_internal::{
 		bulletin::{
@@ -26,7 +25,7 @@ use crate::{
 use futures::{FutureExt, pin_mut};
 use subxt::{
 	OnlineClient,
-	client::{Block, Blocks, OnlineClientAtBlockImpl},
+	client::{Block, Blocks, OnlineClientAtBlock, OnlineClientAtBlockImpl},
 	config::{HashFor, substrate::SubstrateConfig},
 	error::{
 		DispatchError, TransactionEventsError, TransactionProgressError, TransactionStatusError,
@@ -345,8 +344,6 @@ impl BulletinRpc {
 			.at_current_block()
 			.await
 			.map_err(|error| BulletinSubmitError::Subxt(Box::new(error.into())))?;
-		let era_birth =
-			HashAndNumber { hash: finalized.block_hash(), number: finalized.block_number() };
 		let mut best_blocks = client
 			.stream_best_blocks()
 			.await
@@ -357,7 +354,7 @@ impl BulletinRpc {
 		let signer =
 			allowance_signer(allowance).map_err(BulletinSubmitError::InvalidAllowanceKey)?;
 		let signed = self
-			.build_signed_and_dry_run(&mut best_blocks, head, era_birth, &signer, value)
+			.build_signed_and_dry_run(&mut best_blocks, head, &finalized, &signer, value)
 			.await?;
 		drop(best_blocks);
 
@@ -417,7 +414,7 @@ impl BulletinRpc {
 		&self,
 		best_blocks: &mut Blocks<SubstrateConfig>,
 		head: Block<SubstrateConfig>,
-		era_birth: HashAndNumber,
+		finalized: &OnlineClientAtBlock<SubstrateConfig>,
 		signer: &Sr25519Signer,
 		value: &[u8],
 	) -> Result<SignedStore, BulletinSubmitError> {
@@ -430,7 +427,7 @@ impl BulletinRpc {
 				.at()
 				.await
 				.map_err(|error| BulletinSubmitError::Subxt(Box::new(error.into())))?;
-			let signed = build_signed_store_transaction(&at_block, era_birth, signer, value)
+			let signed = build_signed_store_transaction(&at_block, finalized, signer, value)
 				.await
 				.map_err(|error| BulletinSubmitError::Subxt(Box::new(error.into())))?;
 
