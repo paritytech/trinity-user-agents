@@ -91,13 +91,14 @@ impl FundingRegistry {
 	/// progress and history views: those in flight first, then the ended
 	/// ones, each newest first.
 	pub fn sessions(&self) -> Vec<FundingSession> {
-		let presenting = self.lock_presenting().clone();
-		let mut sessions: Vec<_> = self
-			.lock_sessions()
-			.values()
-			.filter(|session| !presenting.contains(&session.intent))
-			.cloned()
-			.collect();
+		let mut sessions: Vec<_> = {
+			let presenting = self.lock_presenting();
+			self.lock_sessions()
+				.values()
+				.filter(|session| !presenting.contains(&session.intent))
+				.cloned()
+				.collect()
+		};
 		sessions.sort_by_key(|session| {
 			(
 				session.is_terminal(),
@@ -254,12 +255,13 @@ impl FundingRegistry {
 		}
 		if !*loaded || announces || working != before {
 			let kept = retained(working.into_values());
-			let presenting = self.lock_presenting().clone();
-			let started: Vec<_> = kept
-				.iter()
-				.filter(|session| !presenting.contains(&session.intent))
-				.cloned()
-				.collect();
+			let started: Vec<_> = {
+				let presenting = self.lock_presenting();
+				kept.iter()
+					.filter(|session| !presenting.contains(&session.intent))
+					.cloned()
+					.collect()
+			};
 			store_sessions(storage, &started).await?;
 			*self.lock_sessions() =
 				kept.into_iter().map(|session| (session.intent.clone(), session)).collect();
