@@ -2,7 +2,7 @@
 //!
 //! Payment returns typed domain errors; CoinPayment returns Unsupported.
 
-use futures::StreamExt;
+use futures::{StreamExt, stream::BoxStream};
 use tracing::instrument;
 use truapi::{
 	CallContext, CallError, Subscription,
@@ -143,8 +143,8 @@ impl Payment for ProductRuntimeHost {
 		let Some(platform) = self.services.balance_platform() else {
 			return Subscription::interrupted(CallError::Unsupported);
 		};
-		if self.authority.current_session().is_none() {
-			return Subscription::interrupted(CallError::Denied);
+		if let Err(error) = self.require_session() {
+			return Subscription::interrupted(error);
 		}
 		if let Err(error) = self
 			.require_remote_permission(
@@ -157,12 +157,11 @@ impl Payment for ProductRuntimeHost {
 		{
 			return Subscription::interrupted(error);
 		}
-		Subscription::new(Box::pin(platform.subscribe_balance(&self.product, request.purse).map(
-			|item| {
-				item.map(HostPaymentBalanceSubscribeItem::V1)
-					.map_err(|error| CallError::Domain(HostPaymentBalanceSubscribeError::V1(error)))
-			},
-		)))
+		domain_subscription(
+			platform.subscribe_balance(&self.product, request.purse),
+			HostPaymentBalanceSubscribeItem::V1,
+			HostPaymentBalanceSubscribeError::V1,
+		)
 	}
 
 	#[instrument(skip_all, fields(runtime.method = "payment.request"))]
@@ -173,11 +172,11 @@ impl Payment for ProductRuntimeHost {
 	) -> Result<HostPaymentResponse, CallError<HostPaymentError>> {
 		let HostPaymentRequest::V1(mut request) = request;
 		let platform = self.services.payment_platform().ok_or(CallError::Unsupported)?;
-		if self.authority.current_session().is_none() {
-			return Err(CallError::Denied);
-		}
+		self.require_session()?;
 		if request.amount == 0 {
-			return Err(CallError::Domain(HostPaymentError::V1(v01::HostPaymentError::InvalidAmount)));
+			return Err(CallError::Domain(HostPaymentError::V1(
+				v01::HostPaymentError::InvalidAmount,
+			)));
 		}
 		request.id = host_payment_id(&self.product, request.id);
 		match platform.request_payment(&self.product, request).await {
@@ -203,18 +202,17 @@ impl Payment for ProductRuntimeHost {
 		let Some(platform) = self.services.payment_platform() else {
 			return Subscription::interrupted(CallError::Unsupported);
 		};
-		if self.authority.current_session().is_none() {
-			return Subscription::interrupted(CallError::Denied);
+		if let Err(error) = self.require_session() {
+			return Subscription::interrupted(error);
 		}
-		Subscription::new(Box::pin(
-			platform
-				.subscribe_payment_status(&self.product, host_payment_id(&self.product, request.id))
-				.map(|item| {
-					item.map(HostPaymentStatusSubscribeItem::V1).map_err(|error| {
-						CallError::Domain(HostPaymentStatusSubscribeError::V1(error))
-					})
-				}),
-		))
+		domain_subscription(
+			platform.subscribe_payment_status(
+				&self.product,
+				host_payment_id(&self.product, request.id),
+			),
+			HostPaymentStatusSubscribeItem::V1,
+			HostPaymentStatusSubscribeError::V1,
+		)
 	}
 
 	#[instrument(skip_all, fields(runtime.method = "payment.top_up"))]
@@ -225,9 +223,7 @@ impl Payment for ProductRuntimeHost {
 	) -> Result<HostPaymentTopUpResponse, CallError<HostPaymentTopUpError>> {
 		let HostPaymentTopUpRequest::V1(mut request) = request;
 		let platform = self.services.top_up_platform().ok_or(CallError::Unsupported)?;
-		if self.authority.current_session().is_none() {
-			return Err(CallError::Denied);
-		}
+		self.require_session()?;
 		let domain = |error| CallError::Domain(HostPaymentTopUpError::V1(error));
 		if request.amount == 0 {
 			return Err(domain(v01::HostPaymentTopUpError::InvalidAmount));
@@ -256,22 +252,27 @@ impl Payment for ProductRuntimeHost {
 		let Some(platform) = self.services.top_up_platform() else {
 			return Subscription::interrupted(CallError::Unsupported);
 		};
-		if self.authority.current_session().is_none() {
-			return Subscription::interrupted(CallError::Denied);
+		if let Err(error) = self.require_session() {
+			return Subscription::interrupted(error);
 		}
-		Subscription::new(Box::pin(
+		domain_subscription(
 			platform
-				.subscribe_top_up_status(&self.product, host_payment_id(&self.product, request.id))
-				.map(|item| {
-					item.map(HostPaymentTopUpStatusSubscribeItem::V1).map_err(|error| {
-						CallError::Domain(HostPaymentTopUpStatusSubscribeError::V1(error))
-					})
-				}),
-		))
+				.subscribe_top_up_status(&self.product, host_payment_id(&self.product, request.id)),
+			HostPaymentTopUpStatusSubscribeItem::V1,
+			HostPaymentTopUpStatusSubscribeError::V1,
+		)
 	}
 }
 
 impl ProductRuntimeHost {
+	/// `Denied` unless a pairing session is connected.
+	fn require_session<E>(&self) -> Result<(), CallError<E>> {
+		match self.authority.current_session() {
+			Some(_) => Ok(()),
+			None => Err(CallError::Denied),
+		}
+	}
+
 	/// Whether the product already holds balance access, without asking.
 	async fn holds_balance_access(&self) -> bool {
 		matches!(
@@ -283,6 +284,24 @@ impl ProductRuntimeHost {
 			Ok(crate::platform::PermissionAuthorizationStatus::Authorized)
 		)
 	}
+}
+
+/// A subscription over a host stream, with its items and errors wrapped in
+/// their versioned envelopes.
+fn domain_subscription<T, E, Item, Error>(
+	stream: BoxStream<'static, Result<T, E>>,
+	item: fn(T) -> Item,
+	error: fn(E) -> Error,
+) -> Subscription<Item, CallError<Error>>
+where
+	T: 'static,
+	E: 'static,
+	Item: 'static,
+	Error: 'static,
+{
+	Subscription::new(
+		stream.map(move |next| next.map(item).map_err(|failure| CallError::Domain(error(failure)))),
+	)
 }
 
 /// Whether the secret keys a source carries are usable sr25519 keys. A product
