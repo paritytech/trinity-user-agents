@@ -59,8 +59,7 @@ private extension ChatViewModelFactory {
         switch metadata.state {
         case .created:
             ChatRequestedBannerView.ViewModel(
-                username: metadata.peerMetadata.name,
-                isFromGame: metadata.peerMetadata.contactSource.isFromGame
+                username: metadata.peerMetadata.name
             )
         case .pending:
             ChatRequestInProgressBannerView.ViewModel(
@@ -73,11 +72,5 @@ private extension ChatViewModelFactory {
                 )
             )
         }
-    }
-}
-
-private extension Chat.Contact.Source {
-    var isFromGame: Bool {
-        self != .chat
     }
 }

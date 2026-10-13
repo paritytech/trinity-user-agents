@@ -188,30 +188,32 @@ async fn writer_pump<S: TransportSenderT>(
 /// every [`KEEPALIVE_INTERVAL`], so a live peer produces at least a `Pong` well
 /// inside this window and only a dead one falls silent for the whole of it.
 fn response_stream<R: TransportReceiverT + Send>(receiver: R) -> impl Stream<Item = String> + Send {
-	stream::unfold(receiver, |mut receiver| async move {
-		loop {
-			let received = match tokio::time::timeout(READ_TIMEOUT, receiver.receive()).await {
-				Ok(received) => received,
-				Err(_elapsed) => {
-					tracing::warn!(
-						"no WebSocket traffic for {}s; treating the connection as dead",
-						READ_TIMEOUT.as_secs()
-					);
-					return None;
-				},
-			};
-			match received {
-				Ok(ReceivedMessage::Text(text)) => return Some((text, receiver)),
-				Ok(ReceivedMessage::Bytes(bytes)) => match String::from_utf8(bytes) {
-					Ok(text) => return Some((text, receiver)),
-					Err(_) => tracing::warn!("dropping non-UTF-8 binary WebSocket frame"),
-				},
-				// Answers our keepalive: proof of life, nothing to forward.
-				Ok(ReceivedMessage::Pong) => {},
-				Err(err) => {
-					tracing::debug!("WebSocket receive ended: {err}");
-					return None;
-				},
+	stream::unfold(receiver, |mut receiver| {
+		async move {
+			loop {
+				let received = match tokio::time::timeout(READ_TIMEOUT, receiver.receive()).await {
+					Ok(received) => received,
+					Err(_elapsed) => {
+						tracing::warn!(
+							"no WebSocket traffic for {}s; treating the connection as dead",
+							READ_TIMEOUT.as_secs()
+						);
+						return None;
+					},
+				};
+				match received {
+					Ok(ReceivedMessage::Text(text)) => return Some((text, receiver)),
+					Ok(ReceivedMessage::Bytes(bytes)) => match String::from_utf8(bytes) {
+						Ok(text) => return Some((text, receiver)),
+						Err(_) => tracing::warn!("dropping non-UTF-8 binary WebSocket frame"),
+					},
+					// Answers our keepalive: proof of life, nothing to forward.
+					Ok(ReceivedMessage::Pong) => {},
+					Err(err) => {
+						tracing::debug!("WebSocket receive ended: {err}");
+						return None;
+					},
+				}
 			}
 		}
 	})
@@ -243,7 +245,6 @@ mod tests {
 		closed: std::sync::Arc<Mutex<bool>>,
 	}
 
-	#[async_trait::async_trait]
 	impl TransportSenderT for FakeSender {
 		type Error = FakeError;
 
@@ -260,7 +261,6 @@ mod tests {
 	/// Sender whose `send` always fails, modelling a dead socket.
 	struct FailingSender;
 
-	#[async_trait::async_trait]
 	impl TransportSenderT for FailingSender {
 		type Error = FakeError;
 
@@ -277,7 +277,6 @@ mod tests {
 	/// request and the bounded buffer fills.
 	struct StalledSender;
 
-	#[async_trait::async_trait]
 	impl TransportSenderT for StalledSender {
 		type Error = FakeError;
 
@@ -294,7 +293,6 @@ mod tests {
 		frames: mpsc::UnboundedReceiver<Result<ReceivedMessage, FakeError>>,
 	}
 
-	#[async_trait::async_trait]
 	impl TransportReceiverT for FakeReceiver {
 		type Error = FakeError;
 
@@ -384,7 +382,6 @@ mod tests {
 	/// the connection and `receive()` neither returns nor errors, ever.
 	struct SilentReceiver;
 
-	#[async_trait::async_trait]
 	impl TransportReceiverT for SilentReceiver {
 		type Error = FakeError;
 

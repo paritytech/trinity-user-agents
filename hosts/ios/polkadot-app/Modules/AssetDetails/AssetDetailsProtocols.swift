@@ -17,7 +17,7 @@ protocol AssetDetailsViewProtocol: ControllerBackedProtocol {
     func didShowBackupNotification()
     func didHideBackupNotification()
 
-    func didReceive(rampLoading action: RampAction, isLoading: Bool)
+    func didReceive(topUpLoading: Bool)
 
     func didReceive(coinageBreakdown: CoinageBalanceBreakdownViewModel)
     #if TESTNET_FEATURE
@@ -36,7 +36,6 @@ protocol AssetDetailsPresenterProtocol: AnyObject {
     func onBackupCancel()
     func onBackupWhyUpdate()
     func onTopUp()
-    func onWithdraw()
 
     #if TESTNET_FEATURE
         func onTestnetTopUp()
@@ -50,7 +49,7 @@ protocol AssetDetailsInteractorInputProtocol: AnyObject {
     func triggerSync()
     func cancelBackupNotification()
 
-    func openRampProduct(_ action: RampAction)
+    func openTopUpProduct()
 
     #if TESTNET_FEATURE
         func topUp()
@@ -67,7 +66,7 @@ protocol AssetDetailsInteractorOutputProtocol: AnyObject {
     func didReceive(isAccountBackupPending: Bool)
     func didReceive(showsRecoveredBalance: Bool)
 
-    func didResolveRampProduct(_ action: RampAction, result: Result<ProductPage, Error>)
+    func didResolveTopUpProduct(_ result: Result<ProductPage, Error>)
 
     /// One call, because the presenter rebuilds the whole breakdown on receipt: delivering the
     /// figures and the holdings separately would render the new totals beside the previous

@@ -29,11 +29,13 @@ mod pocket;
 mod product_config;
 mod qr_scanner;
 mod register_name;
+mod scanner;
 mod script_project;
 mod script_runner;
 mod sessions;
 mod signing_shell;
 mod terminal_ui;
+mod transcript;
 mod update;
 
 use std::{
@@ -917,9 +919,11 @@ async fn run_alloc_check(
 				seq,
 				ring_index,
 				collection,
-			}) => println!(
-				"REGISTERED in {collection} seq={seq} ring_index={ring_index} block={block_hash}"
-			),
+			}) => {
+				println!(
+					"REGISTERED in {collection} seq={seq} ring_index={ring_index} block={block_hash}"
+				)
+			},
 			Ok(alloc::RegistrationOutcome::AlreadyAllocated { seq, collection }) => {
 				println!("already allocated in {collection} at seq={seq}")
 			},
@@ -1202,6 +1206,7 @@ async fn run_pairing_host(
 		pairing_runtime.set_pocket_platform(pocket);
 	}
 	pairing_runtime.set_game_platform(Arc::new(game::CliGameHost));
+	pairing_runtime.set_scanner_platform(Arc::new(scanner::CliScannerHost));
 	pairing_runtime
 		.set_contacts_platform(contacts::CliContactsHost::from_env(storage_platform.clone()));
 
@@ -1730,6 +1735,7 @@ fn build_signing_runtime(
 	#[cfg(feature = "test-host")]
 	funding_host::CliFundingHost::install_from_env(&runtime);
 	runtime.set_game_platform(Arc::new(game::CliGameHost));
+	runtime.set_scanner_platform(Arc::new(scanner::CliScannerHost));
 	runtime.set_core_db(core_db);
 	runtime.start_statement_allowance_renewal();
 	Ok((runtime, platform))
@@ -3498,29 +3504,31 @@ async fn signing_interactive_loop(
 				};
 				run_interactive_pairing_image(session, input, &mut ui).await?;
 			},
-			ShellCommand::Script(command) => match select_interactive_script(
-				&command,
-				&session.script_projects,
-				session.profile.as_ref().map(|profile| profile.path.as_path()),
-				&mut session.last_script,
-				&mut ui,
-			)
-			.await
-			{
-				Ok(Some(script)) => {
-					let product_id = product.current();
-					run_interactive_operation(
-						session,
-						&frame_url,
-						&product_id,
-						ShellCommand::Script(ScriptCommand::Run(Some(script))),
-						input,
-						&mut ui,
-					)
-					.await?;
-				},
-				Ok(None) => {},
-				Err(error) => ui.error(error.to_string()),
+			ShellCommand::Script(command) => {
+				match select_interactive_script(
+					&command,
+					&session.script_projects,
+					session.profile.as_ref().map(|profile| profile.path.as_path()),
+					&mut session.last_script,
+					&mut ui,
+				)
+				.await
+				{
+					Ok(Some(script)) => {
+						let product_id = product.current();
+						run_interactive_operation(
+							session,
+							&frame_url,
+							&product_id,
+							ShellCommand::Script(ScriptCommand::Run(Some(script))),
+							input,
+							&mut ui,
+						)
+						.await?;
+					},
+					Ok(None) => {},
+					Err(error) => ui.error(error.to_string()),
+				}
 			},
 			command => {
 				let product_id = product.current();
@@ -3679,9 +3687,11 @@ async fn execute_non_interactive_command(
 				.context("join QR image decoder")??;
 			respond_to_deeplink(session, deeplink).await?
 		},
-		ShellCommand::Pair(PairCommand::Scan) => bail!(
-			"clipboard image paste needs an interactive signing host; use /pair <image-path> or /pair <polkadotapp://pair?...>"
-		),
+		ShellCommand::Pair(PairCommand::Scan) => {
+			bail!(
+				"clipboard image paste needs an interactive signing host; use /pair <image-path> or /pair <polkadotapp://pair?...>"
+			)
+		},
 		ShellCommand::Script(command) => {
 			if command.edits() && !terminal_ui::is_interactive_terminal() {
 				bail!(
@@ -4118,12 +4128,16 @@ mod cli_tests {
 		session.catalog.ensure_profile("workbench.99")?;
 		for name in ["foo", "carol", "workbench.99", "another"] {
 			let expected_error = match name {
-				"foo" | "carol" => format!(
-					"session name {name:?} must contain at least 6 lowercase ASCII letters to create an account; digits and separators do not count"
-				),
-				"workbench.99" => format!(
-					"session {name:?} has no saved account; choose a username base to create one"
-				),
+				"foo" | "carol" => {
+					format!(
+						"session name {name:?} must contain at least 6 lowercase ASCII letters to create an account; digits and separators do not count"
+					)
+				},
+				"workbench.99" => {
+					format!(
+						"session {name:?} has no saved account; choose a username base to create one"
+					)
+				},
 				_ => format!("check lite username {name:?} availability"),
 			};
 			let error = switch_session(&mut session, name.to_string())

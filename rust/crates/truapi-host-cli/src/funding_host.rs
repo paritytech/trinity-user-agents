@@ -25,13 +25,13 @@ use std::{
 	fs::OpenOptions,
 	io::Write,
 	path::PathBuf,
-	sync::{Arc, Mutex, OnceLock, Weak},
+	sync::{Arc, Mutex, Weak},
 	time::Duration,
 };
 
 use futures::stream::{self, BoxStream, StreamExt};
 use truapi::{
-	SigningHostRuntime,
+	SigningHostRuntime, current_unix_millis,
 	host_logic::{funding::FundingStage, funding_providers::FundingProviderEntry},
 	latest::{
 		FundingDirection, FundingFailure, FundingFrameOutcome, FundingFrameTarget, FundingQuoteAsk,
@@ -45,6 +45,8 @@ use truapi::{
 		FundingQuoteState, PaymentPlatform, ProductContext, TopUpPlatform, async_trait,
 	},
 };
+
+use crate::transcript::Transcript;
 
 /// Worker manifest every scripted provider publishes: card in, and crypto in
 /// and out, quoted by its worker.
@@ -139,8 +141,8 @@ fn parse_outcomes(spec: &str) -> VecDeque<Outcome> {
 /// A funding overlay and provider that follow a script.
 pub struct CliFundingHost {
 	outcomes: Mutex<VecDeque<Outcome>>,
-	transcript: Option<PathBuf>,
-	runtime: OnceLock<Weak<SigningHostRuntime>>,
+	transcript: Transcript,
+	runtime: Weak<SigningHostRuntime>,
 }
 
 impl CliFundingHost {
@@ -150,20 +152,11 @@ impl CliFundingHost {
 		let Ok(spec) = std::env::var("TRUAPI_FUNDING_OUTCOMES") else {
 			return;
 		};
-		let transcript = std::env::var_os("TRUAPI_FUNDING_LOG").map(PathBuf::from);
-		// Truncated at startup, so a run never reads an earlier run's lines.
-		if let Some(path) = transcript.as_ref() &&
-			let Err(error) = std::fs::write(path, b"")
-		{
-			tracing::warn!(?path, %error, "funding transcript could not be truncated");
-		}
-		let host = Arc::new(Self {
+		runtime.set_funding_platform(Arc::new(Self {
 			outcomes: Mutex::new(parse_outcomes(&spec)),
-			transcript,
-			runtime: OnceLock::new(),
-		});
-		let _ = host.runtime.set(Arc::downgrade(runtime));
-		runtime.set_funding_platform(host);
+			transcript: Transcript::from_env("TRUAPI_FUNDING_LOG", "funding"),
+			runtime: Arc::downgrade(runtime),
+		}));
 		if let Some(ledger) = std::env::var_os("TRUAPI_FUNDING_LEDGER").map(PathBuf::from) {
 			let payments = Arc::new(CliPaymentHost { ledger });
 			runtime.set_top_up_platform(payments.clone());
@@ -171,35 +164,17 @@ impl CliFundingHost {
 		}
 	}
 
-	/// Append one line to the transcript, in a single write so concurrent
-	/// lines never interleave.
-	fn record(&self, line: serde_json::Value) {
-		let Some(path) = self.transcript.as_ref() else {
-			return;
-		};
-		let appended = OpenOptions::new()
-			.create(true)
-			.append(true)
-			.open(path)
-			.and_then(|mut file| file.write_all(format!("{line}\n").as_bytes()));
-		if let Err(error) = appended {
-			tracing::warn!(?path, %error, "funding transcript could not be appended to");
-		}
-	}
-
 	/// Hand session `intent` to the product that asked for it, and cancel it
 	/// shortly after when `cancel` is set.
 	async fn provide(
 		&self,
-		runtime: Option<Weak<SigningHostRuntime>>,
+		runtime: Weak<SigningHostRuntime>,
 		product: Option<&ProductContext>,
 		intent: String,
 		ask: FundingQuoteAsk,
 		cancel: bool,
 	) -> Result<FundingPresentOutcome, GenericError> {
-		let (Some(runtime), Some(product)) =
-			(runtime.and_then(|runtime| runtime.upgrade()), product)
-		else {
+		let (Some(runtime), Some(product)) = (runtime.upgrade(), product) else {
 			return Ok(FundingPresentOutcome::Dismissed);
 		};
 		let candidates: Vec<String> = runtime
@@ -207,7 +182,7 @@ impl CliFundingHost {
 			.into_iter()
 			.map(|candidate| candidate.provider_id)
 			.collect();
-		self.record(serde_json::json!({
+		self.transcript.record(serde_json::json!({
 			"kind": "candidates",
 			"intent": intent,
 			"providers": candidates,
@@ -219,7 +194,7 @@ impl CliFundingHost {
 			},
 			_ => None,
 		});
-		self.record(serde_json::json!({
+		self.transcript.record(serde_json::json!({
 			"kind": "quotes",
 			"intent": intent,
 			"rows": rows.iter().map(|row| serde_json::json!({
@@ -260,9 +235,7 @@ impl CliFundingHost {
 
 /// The stage `outcome` ends a started session in.
 fn settled_stage(outcome: Outcome) -> Option<FundingStage> {
-	let settled_at_ms = std::time::SystemTime::now()
-		.duration_since(std::time::UNIX_EPOCH)
-		.map_or(0, |elapsed| u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX));
+	let settled_at_ms = current_unix_millis();
 	match outcome {
 		Outcome::Deliver(credited) => Some(FundingStage::Delivered { credited, settled_at_ms }),
 		Outcome::Release(debited) => Some(FundingStage::Released { debited, settled_at_ms }),
@@ -285,7 +258,7 @@ impl FundingPlatform for CliFundingHost {
 		session: FundingPresentation,
 	) -> Result<FundingPresentOutcome, GenericError> {
 		let outcome = self.next_outcome();
-		self.record(serde_json::json!({
+		self.transcript.record(serde_json::json!({
 			"kind": "presented",
 			"intent": session.intent,
 			"direction": match session.direction {
@@ -296,7 +269,7 @@ impl FundingPlatform for CliFundingHost {
 			"product": product.map(|product| product.product_id.clone()),
 			"outcome": format!("{outcome:?}"),
 		}));
-		let runtime = self.runtime.get().cloned();
+		let runtime = self.runtime.clone();
 		let intent = session.intent;
 		if matches!(outcome, Outcome::Provide | Outcome::ProvideThenCancel) {
 			let ask = scripted_ask(session.direction, session.amount);
@@ -309,7 +282,7 @@ impl FundingPlatform for CliFundingHost {
 		};
 		tokio::spawn(async move {
 			tokio::time::sleep(SETTLE_AFTER).await;
-			let Some(runtime) = runtime.and_then(|runtime| runtime.upgrade()) else {
+			let Some(runtime) = runtime.upgrade() else {
 				return;
 			};
 			match runtime.settle_funding_for_test(&intent, stage).await {
@@ -341,7 +314,7 @@ impl FundingPlatform for CliFundingHost {
 				(url, outcome)
 			},
 		};
-		self.record(serde_json::json!({
+		self.transcript.record(serde_json::json!({
 			"kind": "frame",
 			"intent": intent,
 			"provider": provider.product_id,
@@ -357,7 +330,7 @@ impl FundingPlatform for CliFundingHost {
 			HostFundingStatusSubscribeItem::Released { debited } => ("Released", Some(debited)),
 			HostFundingStatusSubscribeItem::Failed { .. } => ("Failed", None),
 		};
-		self.record(serde_json::json!({
+		self.transcript.record(serde_json::json!({
 			"kind": "status",
 			"intent": intent,
 			"tag": tag,
@@ -388,10 +361,18 @@ impl CliPaymentHost {
 			})
 	}
 
-	/// Record a start; `false` when the id was already used.
-	fn start(&self, kind: &str, product: &ProductContext, id: &[u8; 32], amount: u128) -> bool {
+	/// Record a start: `Ok(false)` when the id was already used, an error
+	/// when the ledger could not be written, as a start it does not keep would
+	/// read as unknown after a restart.
+	fn start(
+		&self,
+		kind: &str,
+		product: &ProductContext,
+		id: &[u8; 32],
+		amount: u128,
+	) -> Result<bool, String> {
 		if self.started(kind, product, id) {
-			return false;
+			return Ok(false);
 		}
 		let line = serde_json::json!({
 			"kind": kind,
@@ -404,10 +385,9 @@ impl CliPaymentHost {
 			.append(true)
 			.open(&self.ledger)
 			.and_then(|mut file| file.write_all(format!("{line}\n").as_bytes()));
-		if let Err(error) = appended {
-			tracing::warn!(path = ?self.ledger, %error, "funding ledger could not be appended to");
-		}
-		true
+		appended
+			.map(|()| true)
+			.map_err(|error| format!("funding ledger could not be appended to: {error}"))
 	}
 }
 
@@ -418,10 +398,10 @@ impl TopUpPlatform for CliPaymentHost {
 		product: &ProductContext,
 		request: HostPaymentTopUpRequest,
 	) -> Result<(), HostPaymentTopUpError> {
-		if self.start("top_up", product, &request.id, request.amount) {
-			Ok(())
-		} else {
-			Err(HostPaymentTopUpError::AlreadyExists)
+		match self.start("top_up", product, &request.id, request.amount) {
+			Ok(true) => Ok(()),
+			Ok(false) => Err(HostPaymentTopUpError::AlreadyExists),
+			Err(reason) => Err(HostPaymentTopUpError::Unknown { reason }),
 		}
 	}
 
@@ -434,7 +414,8 @@ impl TopUpPlatform for CliPaymentHost {
 		Result<HostPaymentTopUpStatusSubscribeItem, HostPaymentTopUpStatusSubscribeError>,
 	> {
 		if !self.started("top_up", product, &id) {
-			return stream::iter([Err(HostPaymentTopUpStatusSubscribeError::NotFound)]).boxed();
+			return stream::iter([Err(HostPaymentTopUpStatusSubscribeError::TopUpNotFound)])
+				.boxed();
 		}
 		stream::iter([
 			Ok(HostPaymentTopUpStatusSubscribeItem::Detecting),
@@ -452,10 +433,10 @@ impl PaymentPlatform for CliPaymentHost {
 		product: &ProductContext,
 		request: HostPaymentRequest,
 	) -> Result<(), HostPaymentError> {
-		if self.start("payment", product, &request.id, request.amount) {
-			Ok(())
-		} else {
-			Err(HostPaymentError::AlreadyExists)
+		match self.start("payment", product, &request.id, request.amount) {
+			Ok(true) => Ok(()),
+			Ok(false) => Err(HostPaymentError::AlreadyExists),
+			Err(reason) => Err(HostPaymentError::Unknown { reason }),
 		}
 	}
 
@@ -479,6 +460,34 @@ impl PaymentPlatform for CliPaymentHost {
 #[cfg(test)]
 mod tests {
 	use super::*;
+
+	// The worker is told a top-up started only once the ledger holds it, as a
+	// start this host forgets would read as unknown after a restart and never
+	// settle.
+	#[test]
+	fn a_start_the_ledger_cannot_keep_is_refused() {
+		let directory = tempfile::tempdir().expect("temporary directory");
+		let host = CliPaymentHost { ledger: directory.path().join("missing").join("ledger.jsonl") };
+		let product = ProductContext::new_with_execution(
+			"ramp.dot".to_string(),
+			truapi::platform::ProductExecutionKind::Worker,
+		)
+		.expect("valid product");
+
+		let started = futures::executor::block_on(host.top_up(
+			&product,
+			HostPaymentTopUpRequest {
+				into: None,
+				amount: 1,
+				source: truapi::latest::PaymentTopUpSource::ProductAccount {
+					derivation_index: truapi::latest::DerivationIndex::Index(0),
+				},
+				id: [1; 32],
+			},
+		));
+
+		assert!(matches!(started, Err(HostPaymentTopUpError::Unknown { .. })), "{started:?}");
+	}
 
 	// The battery seeds one outcome per request it makes, in order; an
 	// entry this host cannot read is dropped rather than shifting the rest.

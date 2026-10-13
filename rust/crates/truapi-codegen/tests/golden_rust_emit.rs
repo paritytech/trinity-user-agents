@@ -240,8 +240,8 @@ fn golden_dispatcher_and_wire_table() {
 	// Compare the emitted files against the goldens. We assert on
 	// wire_table.rs first because it's small and the diff is easy to
 	// read when the wire ids drift. mod.rs is covered because the
-	// runtime declares `pub mod generated;` unconditionally, so dropping
-	// it stops the crate parsing at all.
+	// the runtime feature includes `generated`, so dropping it breaks
+	// runtime builds.
 	let golden_dir = manifest_dir.join("tests/golden");
 	let cases = [
 		("wire_table.rs", "wire_table.rs"),

@@ -34,7 +34,10 @@ const accounts = params
     const name = entry.slice(0, separator);
     const hex = entry.slice(separator + 1);
     const bytes = hex.match(/../g) ?? [];
-    return { name, entropy: Uint8Array.from(bytes.map((b) => parseInt(b, 16))) };
+    return {
+      name,
+      entropy: Uint8Array.from(bytes.map((b) => parseInt(b, 16))),
+    };
   });
 const login = params.get("login");
 const productId = params.get("productId") ?? undefined;

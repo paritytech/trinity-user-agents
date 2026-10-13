@@ -144,7 +144,6 @@ Reviewer severity:
 ## Canonical examples to imitate
 
 - Clean feature split: `feature/transfers/` (clear api/impl, mappers, interactor, mixin via `PreviousPaymentsAddressConverterFactory`).
-- Lean api/impl with shared bot: `feature/videogame/` (sealed messages, value-class IDs, multi-module wiring).
 - Tool example: `tools/auth/` (api binds `AuthService`, impl wraps OAuth provider).
 
 ---
@@ -218,5 +217,5 @@ interface WalletModule {
 
 ### Existing examples in the codebase
 
-- `Set<@JvmSuppressWildcards ChatExtension>` — chat extensions contributed by `feature/videogame`, `feature/mobrules`, `feature/coinage`, etc. (`feature/chats/impl/.../domain/middleware/ChatExtensionRegistry.kt`).
+- `Set<@JvmSuppressWildcards ChatExtension>` — chat extensions such as `CoinagePaymentProcessingExtension` and `SampleBot` (`feature/chats/impl/.../domain/middleware/ChatExtensionRegistry.kt`).
 - `Set<@JvmSuppressWildcards AppInitializer>` — startup work contributed by features (`common/.../presentation/AppInitializerPipeline.kt`).
