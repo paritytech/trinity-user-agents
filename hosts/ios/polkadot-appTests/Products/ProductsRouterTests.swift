@@ -39,6 +39,33 @@ struct ProductsRouterTests {
     }
 
     @Test
+    func hostLinkGoesToTheAppLinkHandlerWhenAnchored() async throws {
+        let anchor = StubView()
+        let linkHandler = MockDeferredLinkHandler()
+        let router = ProductsNavigationRouter(linkHandler: linkHandler)
+        router.setPresentationView(anchor)
+        let link = try #require(URL(string: "polkadot://game.dot/-/pocket/add?card=loyalty"))
+
+        try await router.openHostLink(link)
+
+        #expect(linkHandler.handledURLs == [link])
+    }
+
+    @Test
+    func hostLinkIsForbiddenWithoutPresentationView() async throws {
+        let linkHandler = MockDeferredLinkHandler()
+        let router = ProductsNavigationRouter(linkHandler: linkHandler)
+        let link = try #require(URL(string: "polkadot://game.dot/-/pocket/add?card=loyalty"))
+
+        await #expect {
+            try await router.openHostLink(link)
+        } throws: { error in
+            if case ProductNativeApiError.navigationForbidden = error { true } else { false }
+        }
+        #expect(linkHandler.handledURLs.isEmpty)
+    }
+
+    @Test
     func actionReviewsOfferOnlyConfirmationAndRejection() async throws {
         for request in [
             TrUAPIActionConfirmationRequest.preimageSubmit(productId: "test.product", size: 1_024),

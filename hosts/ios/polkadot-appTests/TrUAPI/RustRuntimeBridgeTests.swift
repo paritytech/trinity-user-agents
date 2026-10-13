@@ -85,9 +85,10 @@ private func makeBridge(
     confirmationPresenter: MockConfirmationPresenter = MockConfirmationPresenter(),
     preimageCache: TrUAPIPreimageCache = TrUAPIPreimageCache { _ in nil },
     productStorageFails: Bool = false,
-    hostProvider: ProductHostProviding = StubHostProvider()
+    hostProvider: ProductHostProviding = StubHostProvider(),
+    router: MockNavigationRouter? = nil
 ) -> RustProductExecutionBridge {
-    let router = MockNavigationRouter()
+    let router = router ?? MockNavigationRouter()
     let pool = makeRegistryPool(chainRegistry: chainRegistry)
     let productStorage: TrUAPILocalStoring = productStorageFails
         ? FailingProductStorage()
@@ -120,6 +121,37 @@ private func makeBridge(
 /// does not run tests on the main thread by default.
 @MainActor
 struct RustRuntimeBridgeTests {
+    // MARK: navigateTo
+
+    /// A product's link to one of its Pocket cards, or to the Pocket, goes to the
+    /// host's link handling, which shows the add sheet. Opened as a page it would
+    /// only reload the product.
+    @Test(arguments: [
+        "polkadot://game.dot/-/pocket/add?card=loyalty",
+        "polkadot://game.dot/-/pocket/open?card=loyalty",
+        "polkadot://game.dot/-/pocket"
+    ])
+    func navigateToHandsAPocketLinkToTheHost(url: String) async throws {
+        let router = MockNavigationRouter()
+        let bridge = makeBridge(router: router)
+
+        try await bridge.navigateTo(url: url)
+
+        #expect(router.openedHostLink == URL(string: url))
+        #expect(router.navigatedPage == nil)
+        #expect(router.openedURL == nil)
+    }
+
+    @Test func navigateToOpensAnExternalLinkOutsideTheHost() async throws {
+        let router = MockNavigationRouter()
+        let bridge = makeBridge(router: router)
+
+        try await bridge.navigateTo(url: "https://example.com")
+
+        #expect(router.openedURL == URL(string: "https://example.com"))
+        #expect(router.openedHostLink == nil)
+    }
+
     // MARK: devicePermission
 
     /// `devicePermission(.camera)` routes to

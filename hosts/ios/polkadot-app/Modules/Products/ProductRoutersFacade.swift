@@ -42,7 +42,7 @@ extension ProductRoutersFacade {
     /// Worker context: navigation opens the target product page in the main tab
     /// bar (or an external URL), mirroring the SPA context.
     static func worker() -> ProductRoutersFacade {
-        make(navigationRouter: ProductsNavigationRouter())
+        make(navigationRouter: ProductsNavigationRouter(linkHandler: DeferredLinkHandler.shared))
     }
 
     /// SSO context: prompts anchor to the view the sign-in host receives via
@@ -55,7 +55,7 @@ extension ProductRoutersFacade {
     /// SPA context: navigation opens further product pages within the flow.
     @MainActor
     static func spa() -> ProductRoutersFacade {
-        make(navigationRouter: ProductsNavigationRouter())
+        make(navigationRouter: ProductsNavigationRouter(linkHandler: DeferredLinkHandler.shared))
     }
 }
 

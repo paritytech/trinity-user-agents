@@ -5,8 +5,11 @@ import UIKitExt
 @MainActor
 final class ProductsNavigationRouter: ProductsNavigationRouting, WebPresentable {
     private let anchor = ProductsRouter()
+    private let linkHandler: DeferredLinkHandling
 
-    nonisolated init() {}
+    nonisolated init(linkHandler: DeferredLinkHandling) {
+        self.linkHandler = linkHandler
+    }
 
     func setPresentationView(_ view: ControllerBackedProtocol) {
         anchor.setPresentationView(view)
@@ -42,6 +45,14 @@ final class ProductsNavigationRouter: ProductsNavigationRouting, WebPresentable 
             _ = await UIApplication.shared.open(url)
         }
     }
+
+    func openHostLink(_ url: URL) async throws {
+        guard isReady else {
+            throw ProductNativeApiError.navigationForbidden
+        }
+
+        linkHandler.handle(with: url)
+    }
 }
 
 @MainActor
@@ -62,6 +73,10 @@ final class ForbiddenNavigationRouter: ProductsNavigationRouting {
     }
 
     func openExternalURL(_: URL) async throws {
+        throw ProductNativeApiError.navigationForbidden
+    }
+
+    func openHostLink(_: URL) async throws {
         throw ProductNativeApiError.navigationForbidden
     }
 }
