@@ -378,7 +378,7 @@ private extension TrUAPIHostPaymentTopUpError {
         case .alreadyExists: self = .AlreadyExists
         case .invalidSource: self = .InvalidSource
         case .sourceBusy: self = .SourceBusy
-        case .invalidAmount: self = .Unknown(reason: "amount must be positive")
+        case .invalidAmount: self = .InvalidAmount
         case .notFound,
              .unknown,
              .none: self = .Unknown(reason: unknownReason)
@@ -403,7 +403,7 @@ private extension ExternalPaymentStatus {
         switch self {
         case .processing: .processing
         case .completed: .completed
-        case let .partiallyCompleted(settled): .partiallyClaimed(actualClaimed: String(settled))
+        case let .partiallyCompleted(settled): .claimedPartially(actualClaimed: String(settled))
         case let .failed(reason): .failed(reason: reason)
         }
     }

@@ -60,6 +60,7 @@ class ProductBotManagementViewModel @Inject constructor(
         launch {
             val workerUrl = interactor.getUserWorkerUrl(product.id).orEmpty()
             val card = interactor.getDebugCard(product.id)
+            val appUrl = interactor.getAppUrl(product.id).orEmpty()
             state.update {
                 it.copy(
                     dialogState = ProductDialogState.Form(
@@ -69,6 +70,8 @@ class ProductBotManagementViewModel @Inject constructor(
                         cardId = card?.cardId?.value.orEmpty(),
                         cardTitle = card?.title.orEmpty(),
                         previewUrl = card?.previewUrl.orEmpty(),
+                        appUrl = appUrl,
+                        openWithFaceAway = card?.faceShown == false,
                     )
                 )
             }
@@ -119,6 +122,20 @@ class ProductBotManagementViewModel @Inject constructor(
         }
     }
 
+    override fun onAppUrlChanged(url: String) {
+        state.update {
+            val form = it.dialogState as? ProductDialogState.Form ?: return@update it
+            it.copy(dialogState = form.copy(appUrl = url))
+        }
+    }
+
+    override fun onOpenWithFaceAwayChanged(faceAway: Boolean) {
+        state.update {
+            val form = it.dialogState as? ProductDialogState.Form ?: return@update it
+            it.copy(dialogState = form.copy(openWithFaceAway = faceAway))
+        }
+    }
+
     override fun onDialogConfirm() = launchUnit {
         val form = state.value.dialogState as? ProductDialogState.Form ?: return@launchUnit
         if (form.workerUrl.isBlank() || form.dotNsName.isBlank()) return@launchUnit
@@ -128,9 +145,10 @@ class ProductBotManagementViewModel @Inject constructor(
         }
 
         val card = form.toDebugCard()
+        val appUrl = form.appUrl.trim().ifEmpty { null }
 
         val result = if (form.productId != null) {
-            interactor.updateProduct(ProductId.fromStoredValue(form.productId), form.workerUrl, form.dotNsName, card)
+            interactor.updateProduct(ProductId.fromStoredValue(form.productId), form.workerUrl, form.dotNsName, card, appUrl)
         } else {
             runCatching { requireNotNull(interactor.currentTld()) { "Network TLD is not known yet" } }
                 .flatMap { tld ->
@@ -140,7 +158,7 @@ class ProductBotManagementViewModel @Inject constructor(
                     ProductId.fromString(dotNs, tld)
                 }
                 .flatMap { productId ->
-                    interactor.upsertProduct(productId, form.workerUrl, form.dotNsName, card)
+                    interactor.upsertProduct(productId, form.workerUrl, form.dotNsName, card, appUrl)
                 }
         }
 
@@ -169,6 +187,7 @@ class ProductBotManagementViewModel @Inject constructor(
             cardId = PocketCardId(cardId.trim()),
             title = cardTitle.ifBlank { cardId }.trim(),
             previewUrl = previewUrl.trim(),
+            faceShown = !openWithFaceAway,
         )
     }
 }
