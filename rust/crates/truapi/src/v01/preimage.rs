@@ -217,6 +217,20 @@ pub struct RemotePreimageReadTorrentResponse {
 	/// While a cache provider still downloads the file: what it did so far. `value` is then
 	/// `None`, and the product calls `readTorrent` again, for the file or a newer progress.
 	pub progress: Option<TorrentReadProgress>,
+	/// The files of the torrent, once the host has its metadata. The product can read each one
+	/// with its index. Padding files (BEP 47) are not in the list.
+	pub files: Vec<TorrentReadFile>,
+}
+
+/// One file of a torrent.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+pub struct TorrentReadFile {
+	/// The index of the file in the torrent, for the `file` of a read.
+	pub index: u32,
+	/// The path of the file in the torrent, with `/` between its parts.
+	pub path: String,
+	/// The size of the file in bytes.
+	pub size: u64,
 }
 
 /// What a cache provider did so far for a torrent file that it still downloads.

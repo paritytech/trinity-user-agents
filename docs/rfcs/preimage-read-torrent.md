@@ -45,6 +45,7 @@ pub struct RemotePreimageReadTorrentResponse {
     pub file: u32,
     pub report: PreimageReadReport,
     pub progress: Option<TorrentReadProgress>, // while the provider still downloads the file
+    pub files: Vec<TorrentReadFile>,           // index, path and size of each file, once the host has the metadata
 }
 ```
 

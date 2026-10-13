@@ -4564,6 +4564,7 @@ impl crate::platform::PreimageReadHost for FixedPreimageRead {
 			file: 0,
 			report: self.0.report.clone(),
 			progress: None,
+			files: Vec::new(),
 		})
 	}
 }
@@ -4608,6 +4609,7 @@ fn preimage_read_torrent_sets_the_key_and_primes_the_host_cache() {
 			file: 0,
 			report,
 			progress: None,
+			files: Vec::new(),
 		})
 	);
 	// The file is now in the read-after-write cache under its key.
