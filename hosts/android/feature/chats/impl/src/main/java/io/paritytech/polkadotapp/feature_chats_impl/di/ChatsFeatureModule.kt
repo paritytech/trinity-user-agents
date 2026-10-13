@@ -5,7 +5,9 @@ import dagger.Module
 import dagger.hilt.InstallIn
 import dagger.hilt.components.SingletonComponent
 import dagger.multibindings.IntoSet
-import io.paritytech.polkadotapp.feature_chats_api.domain.interactors.ChatFaqInteractor
+import dagger.multibindings.Multibinds
+import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.CustomChatHeaderRenderer
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatOriginCustomConfiguration
 import io.paritytech.polkadotapp.feature_chats_api.presentation.ChatStarter
 import io.paritytech.polkadotapp.feature_chats_impl.RealChatStarter
 import io.paritytech.polkadotapp.feature_chats_impl.domain.chatSearch.ChatSearchInteractor
@@ -13,7 +15,6 @@ import io.paritytech.polkadotapp.feature_chats_impl.domain.chatSearch.RealChatSe
 import io.paritytech.polkadotapp.feature_chats_impl.domain.interactors.AddContactInteractor
 import io.paritytech.polkadotapp.feature_chats_impl.domain.interactors.ChatListInteractor
 import io.paritytech.polkadotapp.feature_chats_impl.domain.interactors.RealAddContactInteractor
-import io.paritytech.polkadotapp.feature_chats_impl.domain.interactors.RealChatFaqInteractor
 import io.paritytech.polkadotapp.feature_chats_impl.domain.interactors.RealChatListInteractor
 import io.paritytech.polkadotapp.feature_chats_impl.domain.usecase.RealWaitForChatExistsUseCase
 import io.paritytech.polkadotapp.feature_chats_impl.domain.usecase.WaitForChatExistsUseCase
@@ -36,12 +37,15 @@ interface ChatsFeatureModule {
     fun bindWaitForChatExistsUseCase(impl: RealWaitForChatExistsUseCase): WaitForChatExistsUseCase
 
     @Binds
-    fun bindChatFaqInteractor(impl: RealChatFaqInteractor): ChatFaqInteractor
-
-    @Binds
     @IntoSet
     fun bindContactAddressScanContentParser(impl: ContactAddressScanContentParser): ScanContentParser
 
     @Binds
     fun bindChatStarter(real: RealChatStarter): ChatStarter
+
+    @Multibinds
+    fun customChatHeaderRenderers(): Map<String, CustomChatHeaderRenderer>
+
+    @Multibinds
+    fun chatOriginCustomConfigurations(): Map<String, ChatOriginCustomConfiguration>
 }

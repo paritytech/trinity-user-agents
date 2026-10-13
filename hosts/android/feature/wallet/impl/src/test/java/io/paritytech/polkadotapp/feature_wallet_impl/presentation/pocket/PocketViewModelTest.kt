@@ -18,7 +18,6 @@ import io.paritytech.polkadotapp.feature_products_api.presentation.spaHost.SpaHo
 import io.paritytech.polkadotapp.feature_products_api.presentation.spaHost.SpaHostSession
 import io.paritytech.polkadotapp.feature_tokens_api.presentation.formatter.TokenAmountFormatter
 import io.paritytech.polkadotapp.feature_tokens_api.presentation.mapper.TokenAmountMapper
-import io.paritytech.polkadotapp.feature_videogame_api.domain.collectibles.CollectiblesUrlResolver
 import io.paritytech.polkadotapp.feature_wallet_impl.PocketRouter
 import io.paritytech.polkadotapp.feature_wallet_impl.domain.interactor.PocketInteractor
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.PocketCardUiModel
@@ -99,7 +98,6 @@ class PocketViewModelTest {
         tokenAmountMapper = mock(TokenAmountMapper::class.java),
         tokenAmountFormatter = mock(TokenAmountFormatter::class.java),
         router = mock(PocketRouter::class.java),
-        collectiblesUrlResolver = mock(CollectiblesUrlResolver::class.java),
         dispatchers = dispatchers,
         cardOpenRequests = cardOpenRequests,
         spaHost = spaHost,
@@ -340,7 +338,6 @@ class PocketViewModelTest {
         val viewModel = createViewModel()
         val heldCard = settledCards(viewModel).filterIsInstance<PocketCardUiModel.ProductCard>().first()
         viewModel.requestRemoval(heldCard)
-        viewModel.showCollectiblesSketchbook()
         advanceUntilIdle()
 
         cardOpenRequests.request(linked.key)
