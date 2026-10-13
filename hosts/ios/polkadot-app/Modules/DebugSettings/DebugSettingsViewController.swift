@@ -189,9 +189,11 @@ final class DebugSettingsViewController: UIViewController, ViewHolder {
         presenter.toggleHostPlacement()
     }
 
-    @objc func actionOpenDevServer() {
-        presenter.openDevServer()
-    }
+    #if DEBUG
+        @objc func actionOpenDevServer() {
+            presenter.openDevServer()
+        }
+    #endif
 
     @objc func actionOpenTrUAPIPlayground() {
         presenter.openTrUAPIPlayground()

@@ -9,8 +9,8 @@ import javax.inject.Inject
 /**
  * Builds the live runtime for a single browser tab on the host runtime
  * selected via [ProductRuntimeSettings], read per tab at [create].
- * A development server always runs on TrUAPI: the core is what runs its
- * `localhost` product, whichever runtime the toggle selects.
+ * A development server always runs on TrUAPI: the core is what gives it
+ * its product id, whichever runtime the toggle selects.
  * [RealProductSessionController] just attaches its listeners to the returned
  * provider.
  */

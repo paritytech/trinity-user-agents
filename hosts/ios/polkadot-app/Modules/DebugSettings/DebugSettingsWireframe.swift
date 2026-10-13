@@ -2,7 +2,6 @@ import DesignSystem
 import Operation_iOS
 import Products
 import SwiftUI
-import TrUAPIHost
 import UIKit
 import UIKitExt
 
@@ -67,11 +66,14 @@ final class DebugSettingsWireframe: DebugSettingsWireframeProtocol {
         #endif
     }
 
-    func showDevServer(from view: ControllerBackedProtocol?) {
-        #if DEBUG
+    #if DEBUG
+        func showDevServer(from view: ControllerBackedProtocol?) {
             let alert = UIAlertController(
                 title: "Open dev server",
-                message: "localhost:3000 on the simulator, the Mac's address (192.168.x.x:3000) on a device",
+                message: """
+                localhost:3000 on the simulator, the Mac's address (192.168.x.x:3000) on a device. \
+                Add ?product_id=name.dot to run it as that product.
+                """,
                 preferredStyle: .alert
             )
 
@@ -88,33 +90,32 @@ final class DebugSettingsWireframe: DebugSettingsWireframeProtocol {
                     return
                 }
 
-                let input = alert.textFields?.first?.text ?? ""
+                let address = alert.textFields?.first?.text ?? ""
 
-                guard let product = parseDevServer(input: input) else {
-                    present(
-                        message: "Not a development server address: \(input)",
-                        title: "Cannot open",
-                        closeAction: "Close",
-                        from: view
-                    )
-                    return
-                }
+                Task { @MainActor in
+                    do {
+                        guard let spaView = try await DevServerViewFactory.createView(
+                            address: address,
+                            flowStateProvider: self.flowStateProvider
+                        ) else {
+                            return
+                        }
 
-                Task { @MainActor [flowStateProvider] in
-                    guard let spaView = await DevServerViewFactory.createView(
-                        product: product,
-                        flowStateProvider: flowStateProvider
-                    ) else {
-                        return
+                        view?.controller.navigationController?.pushViewController(spaView.controller, animated: true)
+                    } catch {
+                        self.present(
+                            message: DevServerViewFactory.message(for: error),
+                            title: "Cannot open",
+                            closeAction: "Close",
+                            from: view
+                        )
                     }
-
-                    view?.controller.navigationController?.pushViewController(spaView.controller, animated: true)
                 }
             })
 
             view?.controller.present(alert, animated: true)
-        #endif
-    }
+        }
+    #endif
 
     func showDotNsBrowser(from view: ControllerBackedProtocol?) {
         let alert = UIAlertController(

@@ -304,8 +304,7 @@
     <string name="debug_spa_browser_open">Open</string>
     <string name="debug_menu_open_dev_server">Open dev server</string>
     <string name="debug_dev_server_title">Open dev server</string>
-    <string name="debug_dev_server_address_hint">localhost:3000 or 192.168.x.x:3000</string>
-    <string name="debug_dev_server_not_a_dev_server">Not a development server address. Use localhost, 10.0.2.2 or the Mac\'s LAN address over http.</string>
+    <string name="debug_dev_server_address_hint">192.168.x.x:3000, add ?product_id=name.dot to run as that product</string>
 
     <string name="settings_mnemonic_reveal_title">Recovery phrase</string>
     <string name="settings_mnemonic_reveal_description">Never share the recovery phrase. Anyone with the recovery phrase has full access to your account, cash and collectables.</string>

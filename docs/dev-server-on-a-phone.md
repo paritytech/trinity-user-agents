@@ -32,14 +32,30 @@ and choose **Open dev server**. It is there in the debug build type.
 | Android phone on the same Wi-Fi | `192.168.x.x:3000` |
 
 The app accepts `localhost` and loopback or private IPv4 addresses over `http`,
-and refuses anything else.
+and refuses anything else. A path and query are kept, so `localhost:3000/settings`
+opens that page.
+
+## Run it as a published product
+
+Add `?product_id=<name>` to the address, for example
+`192.168.x.x:3000?product_id=humanity.dot`, and the page runs as that product:
+its accounts, and the storage and permissions that product has on the TrUAPI
+runtime on this device. A product the native runtime runs, the default in the
+iOS DevCI build, keeps storage the page does not see. A product that signs
+without asking, such as `peopl.dot`, does so from the development server too.
+The name must be one the app accepts as a product id, a dotNS name such as
+`humanity.dot` or `localhost[:port]`.
+
+On Android a tab keeps the address it was opened with, so it runs as the same
+product when it wakes from sleep or the app restores it after a restart, even
+when the page's own navigation drops the query.
 
 ## What the product sees
 
-- It runs under `localhost:<port>`, the identifier dotli gives a local product,
-  whichever address the phone reached the server by. Storage, permissions and
-  account derivation key off that identifier, so two servers on the same port
-  are the same product to the app.
+- Without `product_id` it runs under `localhost:<port>`, the identifier dotli
+  gives a local product, whichever address the phone reached the server by.
+  Storage, permissions and account derivation key off that identifier, so two
+  servers on the same port are the same product to the app.
 - It always runs on the TrUAPI runtime, whichever runtime the debug toggle
   selects for dotNS products.
 - A `localhost` product can sign as any other product's account without asking.

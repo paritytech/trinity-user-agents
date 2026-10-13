@@ -24,7 +24,6 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.update
 import uniffi.truapi.truapiHostVersion
 import javax.inject.Inject
-import io.paritytech.polkadotapp.common.R as RCommon
 
 @HiltViewModel
 class DebugMenuViewModel @Inject constructor(
@@ -117,12 +116,9 @@ class DebugMenuViewModel @Inject constructor(
     override fun onDevServerAddressEntered(address: String) {
         state.update { it.copy(showDevServerDialog = false) }
 
-        val origin = devServerAddresses.originOf(address)
-        if (origin == null) {
-            showMessage(RCommon.string.debug_dev_server_not_a_dev_server)
-        } else {
-            router.openSpaBrowser(SpaBrowserPayload.ByUrl(origin))
-        }
+        devServerAddresses.urlOf(address)
+            .onSuccess { url -> router.openSpaBrowser(SpaBrowserPayload.ByUrl(url)) }
+            .onFailure { error -> showMessage(error.message.orEmpty()) }
     }
 
     override fun onDevServerDialogDismissed() {

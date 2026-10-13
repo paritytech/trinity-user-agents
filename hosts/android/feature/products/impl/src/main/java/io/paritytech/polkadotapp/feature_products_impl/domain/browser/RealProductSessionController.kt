@@ -245,7 +245,10 @@ class RealProductSessionController @Inject constructor(
                 onDeeplink = { launchDeeplink(it, scope) },
             )
 
-            provider.addOnPageStartedListener { url.value = it }
+            // A dev server tab keeps the address it was opened with, since the page's own navigation can drop
+            // the `product_id` it runs as, and a woken or restored tab is rebuilt from this address.
+            val keepsOpeningAddress = devServers.productAt(url.value) != null
+            provider.addOnPageStartedListener { if (!keepsOpeningAddress) url.value = it }
             provider.addOnPageFinishedListener {
                 title.value = webView.value?.title.orEmpty()
                 persist(this)

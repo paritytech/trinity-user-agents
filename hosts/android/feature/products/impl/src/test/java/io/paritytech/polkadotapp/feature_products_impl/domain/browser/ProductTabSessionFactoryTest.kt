@@ -12,7 +12,11 @@ import org.junit.Test
 import uniffi.truapi.DevServerProduct
 
 class ProductTabSessionFactoryTest {
-    private val devServer = DevServerProduct(productId = "localhost:3000", origin = "http://192.168.1.59:3000")
+    private val devServer = DevServerProduct(
+        productId = "humanity.dot",
+        origin = "http://192.168.1.59:3000",
+        url = "http://192.168.1.59:3000/app?product_id=humanity.dot",
+    )
     private val provider = mockk<BrowserWebViewProvider>()
     private val webViewProviders = mockk<BrowserWebViewProvider.Factory> {
         every { create(any(), any(), any(), any(), any(), any(), any()) } returns provider
@@ -33,17 +37,17 @@ class ProductTabSessionFactoryTest {
     )
 
     @Test
-    fun `a dev server runs on TrUAPI under its localhost id, with the address it loads from as first party`() {
-        // The core runs a localhost product whichever runtime the toggle selects, and a phone reaches the
+    fun `a dev server runs on TrUAPI under the core's id, with the server's origin as first party`() {
+        // The core runs a dev server product whichever runtime the toggle selects, and a phone reaches the
         // server by an address that is not that id, so neither can be derived from the other.
-        every { devServers.productAt(devServer.origin) } returns devServer
+        every { devServers.productAt(devServer.url) } returns devServer
 
-        factory.create(devServer.origin, scope) {}
+        factory.create(devServer.url, scope) {}
 
-        val productId = ProductId.fromStoredValue("localhost:3000")
+        val productId = ProductId.fromStoredValue("humanity.dot")
         verify {
-            webViewProviders.create(devServer.origin, any(), true, scope, productId, devServer.origin, any())
-            sessionStarter.start(provider, devServer.origin, scope, any(), null, productId)
+            webViewProviders.create(devServer.url, any(), true, scope, productId, devServer.origin, any())
+            sessionStarter.start(provider, devServer.url, scope, any(), null, productId)
         }
         verify(exactly = 0) { native.create(any(), any(), any()) }
     }

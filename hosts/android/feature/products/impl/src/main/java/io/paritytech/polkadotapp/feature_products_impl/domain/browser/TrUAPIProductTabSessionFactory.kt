@@ -30,7 +30,7 @@ class TrUAPIProductTabSessionFactory @Inject constructor(
         devServer: DevServerProduct?,
     ): BrowserWebViewProvider {
         // A dev server page loads from the address that reaches the developer's machine but runs under
-        // the core's `localhost` id, so neither can be read off the other.
+        // the id the core gave it, so neither can be read off the other.
         val devServerProductId = devServer?.let { ProductId.fromStoredValue(it.productId) }
         val provider = browserWebViewProviderFactory.create(
             url,
