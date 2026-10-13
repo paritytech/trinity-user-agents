@@ -14,15 +14,15 @@ import io.paritytech.polkadotapp.feature_products_api.model.signing.SigningReque
 import io.paritytech.polkadotapp.feature_products_api.model.signing.createTransaction.TxPayload
 import io.paritytech.polkadotapp.feature_transactions.api.data.extensions.EncodedTransactionExtensionValue
 import uniffi.truapi.AllocatableResource
+import uniffi.truapi.CreateTransactionReview
 import uniffi.truapi.DerivationIndex
 import uniffi.truapi.HostSignPayloadData
 import uniffi.truapi.RawPayload
 import uniffi.truapi.RingLocation
-import uniffi.truapi.TxPayloadExtension
-import uniffi.truapi.CreateTransactionReview
 import uniffi.truapi.SignPayloadReview
 import uniffi.truapi.SignRawReview
 import uniffi.truapi.SignVrfReview
+import uniffi.truapi.TxPayloadExtension
 import uniffi.truapi.UserConfirmationReview
 import uniffi.truapi.ProductAccountId as NativeProductAccountId
 

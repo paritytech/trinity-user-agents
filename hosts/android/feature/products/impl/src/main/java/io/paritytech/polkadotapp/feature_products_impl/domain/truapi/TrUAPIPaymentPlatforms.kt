@@ -119,18 +119,22 @@ class TrUAPIPaymentPlatforms @Inject constructor(
     }
 
     override suspend fun topUp(productId: String, request: HostPaymentTopUpRequest) {
-        if (request.into != null) throw HostPaymentTopUpException.Unknown(NO_PURSES)
-
         val product = ProductId.fromStoredValue(productId)
-        val id = PaymentTopUpId.fromBytes(request.id.toDataByteArray())
-            .getOrElse { throw HostPaymentTopUpException.Unknown(it.message ?: "invalid top-up id") }
-        val source = request.source.toDomain()
-            .getOrElse { throw HostPaymentTopUpException.InvalidSource() }
-
-        topUpService.start(product, id, request.amount.toBalance(), source)
-            .getOrElse { throw it.asTopUpException() }
+        val id = startTopUp(product, request).getOrElse { throw it }
 
         topUps.forward(productId, request.id) { topUpService.status(product, id) }
+    }
+
+    private suspend fun startTopUp(product: ProductId, request: HostPaymentTopUpRequest): Result<PaymentTopUpId> {
+        if (request.into != null) return Result.failure(HostPaymentTopUpException.Unknown(NO_PURSES))
+
+        val id = PaymentTopUpId.fromBytes(request.id.toDataByteArray())
+            .getOrElse { return Result.failure(HostPaymentTopUpException.Unknown(it.message ?: "invalid top-up id")) }
+        val source = request.source.toDomain()
+            .getOrElse { return Result.failure(HostPaymentTopUpException.InvalidSource()) }
+
+        return topUpService.start(product, id, request.amount.toBalance(), source)
+            .fold(onSuccess = { Result.success(id) }, onFailure = { Result.failure(it.asTopUpException()) })
     }
 
     override fun topUpStatus(productId: String, id: ByteArray): HostPaymentTopUpStatusSubscribeItem? {
@@ -142,21 +146,25 @@ class TrUAPIPaymentPlatforms @Inject constructor(
     }
 
     override suspend fun requestPayment(productId: String, request: HostPaymentRequest) {
-        if (request.from != null) throw HostPaymentException.Unknown(NO_PURSES)
-
         val product = ProductId.fromStoredValue(productId)
-        val id = ProductPaymentRequestId.fromBytes(request.id.toDataByteArray())
-            .getOrElse { throw HostPaymentException.Unknown(it.message ?: "invalid payment id") }
+        val id = startPayment(product, request).getOrElse { throw it }
 
-        requestPaymentUseCase.requestPayment(
+        payments.forward(productId, request.id) { requestPaymentUseCase.subscribeStatus(product, id) }
+    }
+
+    private suspend fun startPayment(product: ProductId, request: HostPaymentRequest): Result<ProductPaymentRequestId> {
+        if (request.from != null) return Result.failure(HostPaymentException.Unknown(NO_PURSES))
+
+        val id = ProductPaymentRequestId.fromBytes(request.id.toDataByteArray())
+            .getOrElse { return Result.failure(HostPaymentException.Unknown(it.message ?: "invalid payment id")) }
+
+        return requestPaymentUseCase.requestPayment(
             productId = product,
             id = id,
             amount = request.amount.toBalance(),
             destination = request.destination.intoAccountId(),
             shortfallDisclosure = ShortfallDisclosure.CALLER,
-        ).getOrElse { throw it.asPaymentException() }
-
-        payments.forward(productId, request.id) { requestPaymentUseCase.subscribeStatus(product, id) }
+        ).fold(onSuccess = { Result.success(id) }, onFailure = { Result.failure(it.asPaymentException()) })
     }
 
     override fun paymentStatus(productId: String, id: ByteArray): HostPaymentStatusSubscribeItem? {
