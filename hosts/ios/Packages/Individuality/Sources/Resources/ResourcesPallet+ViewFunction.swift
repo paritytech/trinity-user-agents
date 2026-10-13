@@ -7,6 +7,10 @@ public extension ResourcesPallet {
         case liteStmtStoreSlotsPerPeriod
         case stmtStoreReplacementCooldown
         case longTermStorageClaimsPerPeriod
+        /// Highest claimable notification seq of a full person; seqs `0...value` are valid.
+        case notificationSlotsPerPeriod
+        /// Highest claimable notification seq of a lite person; seqs `0...value` are valid.
+        case liteNotificationSlotsPerPeriod
     }
 }
 
@@ -21,6 +25,10 @@ extension ResourcesPallet.ViewFunction: ViewFunctionCallConvertible {
             "get_stmt_store_replacement_cooldown"
         case .longTermStorageClaimsPerPeriod:
             "get_long_term_storage_claims_per_period"
+        case .notificationSlotsPerPeriod:
+            "get_notification_slots_per_period"
+        case .liteNotificationSlotsPerPeriod:
+            "get_lite_notification_slots_per_period"
         }
     }
 

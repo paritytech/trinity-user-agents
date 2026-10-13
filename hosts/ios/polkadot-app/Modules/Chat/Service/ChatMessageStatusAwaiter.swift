@@ -44,6 +44,7 @@ private extension ChatMessageStatusAwaiter {
             case .new: [.new, .sent, .delivered]
             case .sent: [.sent, .delivered]
             case .delivered: [.delivered]
+            case .failed: [.failed]
             }
 
         let subpredicates = accepted.map { NSPredicate.byStatus(.outgoing($0)) }
