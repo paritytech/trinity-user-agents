@@ -17,6 +17,7 @@ import FoundationExt
 import Individuality
 import UniqueDevice
 import ChainRegistry
+import DesignSystem
 
 protocol ServiceCoordinatorProtocol: ApplicationServiceProtocol {
     var depositService: DepositServiceProtocol { get }
@@ -333,7 +334,8 @@ extension ServiceCoordinator {
                     flowState: spaFlowState,
                     productFileProvider: productFileProvider,
                     chainRegistry: ChainRegistryFacade.sharedRegistry,
-                    gameReminders: gameReminders
+                    gameReminders: gameReminders,
+                    themeManager: MainActor.assumeIsolated { ThemeManager.shared }
                 )
                 pocket = service
             }
