@@ -144,7 +144,6 @@ use crate::{
 		session::SessionInfo,
 		sso::pairing::x25519_public_key,
 	},
-	unix_time::current_unix_millis,
 };
 
 /// Error reason surfaced to products when a permission is not granted.
@@ -1499,13 +1498,9 @@ impl Funding for ProductRuntimeHost {
 		if registry.platform().is_none() {
 			return Subscription::interrupted(CallError::Unsupported);
 		}
-		let loaded = registry
-			.commit(self.platform.as_ref(), current_unix_millis(), |_| ((), Vec::new()))
-			.await;
-		if let Err(error) = loaded {
+		if let Err(error) = registry.load(&self.services).await {
 			return Subscription::interrupted(CallError::HostFailure { reason: error.to_string() });
 		}
-		registry.keep_expiring(&self.services);
 		// Another product's session reads as absent, so ids reveal nothing.
 		let owned = registry.get(&request.intent).is_some_and(|session| {
 			session.owner_product_id.as_deref() == Some(self.product.product_id.as_str())

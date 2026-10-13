@@ -9,7 +9,9 @@
 
 use parity_scale_codec::{Decode, Encode};
 use tracing::warn;
-use truapi::latest::{FundingDirection, FundingFailure, HostFundingStatusSubscribeItem};
+use truapi::latest::{
+	FundingDirection, FundingFailure, GenericError, HostFundingStatusSubscribeItem,
+};
 
 use crate::platform::{CoreStorage, CoreStorageKey};
 
@@ -166,6 +168,12 @@ pub enum FundingSessionError {
 		/// Failure detail.
 		reason: String,
 	},
+}
+
+impl From<FundingSessionError> for GenericError {
+	fn from(error: FundingSessionError) -> Self {
+		Self { reason: error.to_string() }
+	}
 }
 
 /// The sessions worth keeping: every open one, then the ended ones the host

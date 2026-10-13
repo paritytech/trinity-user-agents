@@ -655,10 +655,7 @@ impl SigningHostRuntime {
 		intent: &str,
 		stage: crate::host_logic::funding::FundingStage,
 	) -> Result<bool, v01::GenericError> {
-		self.services
-			.settle_funding_for_test(intent, stage)
-			.await
-			.map_err(|err| v01::GenericError { reason: err.to_string() })
+		Ok(self.services.settle_funding_for_test(intent, stage).await?)
 	}
 
 	/// Answer these resource tags as refused, replacing any earlier set.
@@ -785,20 +782,14 @@ impl SigningHostRuntime {
 		&self,
 		intent: &str,
 	) -> Result<bool, v01::GenericError> {
-		self.services
-			.acknowledge_funding_session(intent)
-			.await
-			.map_err(|err| v01::GenericError { reason: err.to_string() })
+		Ok(self.services.acknowledge_funding_session(intent).await?)
 	}
 
 	/// Cancel open funding session `intent`. Returns whether it was still
 	/// open.
 	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.cancel_funding"))]
 	pub async fn cancel_funding(&self, intent: &str) -> Result<bool, v01::GenericError> {
-		self.services
-			.cancel_funding(intent)
-			.await
-			.map_err(|err| v01::GenericError { reason: err.to_string() })
+		Ok(self.services.cancel_funding(intent).await?)
 	}
 
 	/// One funding session as the core holds it, for the host's own status

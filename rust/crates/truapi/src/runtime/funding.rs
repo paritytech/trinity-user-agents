@@ -138,7 +138,7 @@ impl FundingRegistry {
 		let intent = intent.to_string();
 		self.commit(storage, now_ms, move |sessions| {
 			let cancelled = sessions.get_mut(&intent).is_some_and(|session| session.cancel(now_ms));
-			(cancelled, if cancelled { vec![intent] } else { Vec::new() })
+			(cancelled, Vec::from_iter(cancelled.then_some(intent)))
 		})
 		.await
 	}
@@ -278,6 +278,27 @@ impl FundingRegistry {
 		Ok(result)
 	}
 
+	/// Load persisted sessions if they are not loaded yet and expire the
+	/// overdue ones, then keep expiring the rest on time.
+	pub async fn load(
+		self: &Arc<Self>,
+		services: &RuntimeServices,
+	) -> Result<(), FundingSessionError> {
+		self.sweep(services.platform.as_ref(), current_unix_millis()).await?;
+		self.keep_expiring(services);
+		Ok(())
+	}
+
+	/// Commit no edit, which loads persisted sessions on first use and
+	/// expires the overdue ones.
+	async fn sweep(
+		&self,
+		storage: &(impl CoreStorage + ?Sized),
+		now_ms: u64,
+	) -> Result<(), FundingSessionError> {
+		self.commit(storage, now_ms, |_| ((), Vec::new())).await
+	}
+
 	/// Keep one task waiting on the earliest open deadline while any session
 	/// is open, so a session expires on time whether or not anyone asks. The
 	/// task ends once no session is open or the registry is dropped.
@@ -293,10 +314,7 @@ impl FundingRegistry {
 				let Some(live) = registry.upgrade() else {
 					return;
 				};
-				let swept = live
-					.commit(storage.as_ref(), current_unix_millis(), |_| ((), Vec::new()))
-					.await;
-				if let Err(error) = swept {
+				if let Err(error) = live.sweep(storage.as_ref(), current_unix_millis()).await {
 					tracing::warn!(%error, "funding expiry sweep failed");
 					futures_timer::Delay::new(SWEEP_RETRY).await;
 				}
@@ -464,7 +482,7 @@ impl RuntimeServices {
 					.filter(|session| !session.is_terminal())
 					.map(|session| session.stage = stage)
 					.is_some();
-				(settled, if settled { vec![intent] } else { Vec::new() })
+				(settled, Vec::from_iter(settled.then_some(intent)))
 			})
 			.await
 	}
@@ -577,7 +595,7 @@ mod tests {
 		let storage = stub_platform();
 		let registry = FundingRegistry::default();
 		insert(&registry, storage.as_ref(), session("fs_old", NOW - DAY_MS));
-		block_on(registry.commit(storage.as_ref(), NOW, |_| ((), Vec::new()))).expect("swept");
+		block_on(registry.sweep(storage.as_ref(), NOW)).expect("swept");
 
 		insert(&registry, storage.as_ref(), session("fs_new", NOW));
 
@@ -596,8 +614,7 @@ mod tests {
 		insert(&registry, storage.as_ref(), session("fs_1", NOW));
 		let stream = registry.subscribe("fs_1").expect("session exists");
 
-		block_on(registry.commit(storage.as_ref(), NOW + DAY_MS, |_| ((), Vec::new())))
-			.expect("swept");
+		block_on(registry.sweep(storage.as_ref(), NOW + DAY_MS)).expect("swept");
 
 		assert_eq!(
 			block_on(stream.collect::<Vec<_>>()),
@@ -632,7 +649,7 @@ mod tests {
 		insert(&before, storage.as_ref(), session("fs_overdue", NOW - DAY_MS));
 
 		let after = FundingRegistry::default();
-		block_on(after.commit(storage.as_ref(), NOW, |_| ((), Vec::new()))).expect("loaded");
+		block_on(after.sweep(storage.as_ref(), NOW)).expect("loaded");
 
 		assert_eq!(after.get("fs_live"), Some(session("fs_live", NOW)));
 		assert_eq!(
