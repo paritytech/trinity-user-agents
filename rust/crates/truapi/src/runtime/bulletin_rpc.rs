@@ -1062,6 +1062,20 @@ mod tests {
 					.collect()
 			}
 
+			fn runtime_call_blocks(&self, runtime_method: &str) -> Vec<H256> {
+				self.sent
+					.lock()
+					.unwrap()
+					.iter()
+					.filter_map(|request| {
+						let request: JsonValue = serde_json::from_str(request).unwrap();
+						(request["method"] == "chainHead_v1_call" &&
+							request["params"][2] == runtime_method)
+							.then(|| request["params"][1].as_str().unwrap().parse().unwrap())
+					})
+					.collect()
+			}
+
 			fn runtime_call_count(&self, runtime_method: &str) -> usize {
 				self.sent
 					.lock()
@@ -1409,12 +1423,53 @@ mod tests {
 			.with_allowance_block_wait_timeout(Duration::from_millis(25))
 		}
 
+		fn store_signature_verifies_at(transaction: &[u8], value: &[u8], block_hash: H256) -> bool {
+			let (account, signature, tail) = split_v4(transaction);
+			let mut extra = &tail[..];
+			let Era::Mortal { period, phase } = Era::decode(&mut extra).unwrap() else {
+				panic!("store transaction must expire")
+			};
+			let nonce = Compact::<u64>::decode(&mut extra).unwrap().0;
+			let state = OfflineChainState {
+				genesis_hash: [0x42; 32],
+				spec_version: 1,
+				..bulletin_chain_state()
+			};
+			let client = state.client_at(phase).unwrap();
+			let payload = subxt::dynamic::tx(
+				"TransactionStorage",
+				"store",
+				vec![subxt::dynamic::Value::from_bytes(value)],
+			);
+			let params = DefaultExtrinsicParamsBuilder::<SubstrateConfig>::new()
+				.nonce(nonce)
+				.mortal_from_unchecked(period, phase, block_hash)
+				.build();
+			let signer_payload = client
+				.tx()
+				.create_v4_signable_offline(&payload, params)
+				.unwrap()
+				.signer_payload()
+				.unwrap();
+			PublicKey::from_bytes(&account)
+				.unwrap()
+				.verify_simple(
+					SR25519_SIGNING_CONTEXT,
+					&signer_payload,
+					&Signature::from_bytes(&signature).unwrap(),
+				)
+				.is_ok()
+		}
+
 		#[test]
 		fn submit_preimage_anchors_mortality_at_finalized_but_uses_best_state() {
 			let provider = Arc::new(
 				BulletinScriptedProvider::new([TransactionOutcome::Included]).with_best_blocks(5),
 			);
+			let finalized_hash = BLOCK_HASH.parse().unwrap();
+			let best_hash = scripted_block_hash(5).parse().unwrap();
 			let value = b"fork mortality reproduction";
+
 			futures::executor::block_on(rpc(provider.clone()).submit_preimage(
 				&CallContext::default(),
 				Instant::now() + Duration::from_secs(2),
@@ -1422,84 +1477,25 @@ mod tests {
 				value,
 			))
 			.unwrap();
+
 			let transactions = provider.submitted_transactions();
-			let bytes = hex::decode(transactions[0].trim_start_matches("0x")).unwrap();
-			let (account, signature, tail) = split_v4(&bytes);
+			let transaction = hex::decode(transactions[0].trim_start_matches("0x")).unwrap();
+			let (_, _, tail) = split_v4(&transaction);
 			let mut extra = &tail[..];
 			let era = Era::decode(&mut extra).unwrap();
 			let nonce = Compact::<u64>::decode(&mut extra).unwrap().0;
-			let Era::Mortal { period, phase } = era else {
-				panic!("store transaction must expire")
-			};
-			let state = OfflineChainState {
-				genesis_hash: [0x42; 32],
-				spec_version: 1,
-				..bulletin_chain_state()
-			};
-			let client = state.client_at(6).unwrap();
-			let payload = subxt::dynamic::tx(
-				"TransactionStorage",
-				"store",
-				vec![subxt::dynamic::Value::from_bytes(value)],
-			);
-			let verifies = |hash: H256| {
-				let params = DefaultExtrinsicParamsBuilder::<SubstrateConfig>::new()
-					.nonce(nonce)
-					.mortal_from_unchecked(period, phase, hash)
-					.build();
-				let signer_payload = client
-					.tx()
-					.create_v4_signable_offline(&payload, params)
-					.unwrap()
-					.signer_payload()
-					.unwrap();
-				PublicKey::from_bytes(&account)
-					.unwrap()
-					.verify_simple(
-						SR25519_SIGNING_CONTEXT,
-						&signer_payload,
-						&Signature::from_bytes(&signature).unwrap(),
-					)
-					.is_ok()
-			};
-			let state_calls: Vec<_> = provider
-				.sent
-				.lock()
-				.unwrap()
-				.iter()
-				.filter_map(|request| {
-					let request: JsonValue = serde_json::from_str(request).unwrap();
-					let method = request["params"][2].as_str()?;
-					(request["method"] == "chainHead_v1_call" &&
-						matches!(
-							method,
-							"AccountNonceApi_account_nonce" |
-								"TaggedTransactionQueue_validate_transaction"
-						))
-					.then(|| {
-						(method.to_string(), request["params"][1].as_str().unwrap().to_string())
-					})
-				})
-				.collect();
+
+			assert_eq!(era, Era::mortal(64, 1));
+			assert_eq!(nonce, 7);
+			assert!(store_signature_verifies_at(&transaction, value, finalized_hash));
+			assert!(!store_signature_verifies_at(&transaction, value, best_hash));
 			assert_eq!(
-				(
-					era,
-					nonce,
-					[verifies(BLOCK_HASH.parse().unwrap()), verifies(H256([0xcc; 32]))],
-					state_calls
-				),
-				(
-					Era::mortal(64, 1),
-					7,
-					[true, false],
-					vec![
-						("AccountNonceApi_account_nonce".to_string(), scripted_block_hash(5)),
-						(
-							"TaggedTransactionQueue_validate_transaction".to_string(),
-							scripted_block_hash(5)
-						),
-					]
-				)
+				provider.runtime_call_blocks("AccountNonceApi_account_nonce"),
+				vec![best_hash]
+			);
+			assert_eq!(
+				provider.runtime_call_blocks("TaggedTransactionQueue_validate_transaction"),
+				vec![best_hash]
 			);
 		}
 
