@@ -219,8 +219,7 @@ private extension TabBarFoldController {
         return distance > 0 ? distance : nil
     }
 
-    /// The whole chrome surface is translated because the bar and both panels are siblings
-    /// of the panel container, so translating the container alone would leave them behind.
+    /// The whole chrome surface is translated, so the bar and any open panel move together.
     func applyFoldOffset(_ offset: CGFloat) {
         foldOffset = offset
         updateFoldTransform()

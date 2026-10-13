@@ -3,7 +3,6 @@ import PolkadotUI
 import SnapKit
 
 final class TabBarChromeSurfaceView: UIView {
-    private let panelContainer = TabBarPanelContainerView()
     private let barContainer = TabBarBarHostView()
 
     private var barHeightConstraint: Constraint?
@@ -27,8 +26,6 @@ final class TabBarChromeSurfaceView: UIView {
 
     override init(frame: CGRect) {
         super.init(frame: frame)
-
-        installPanelContainer()
     }
 
     @available(*, unavailable)
@@ -55,9 +52,11 @@ final class TabBarChromeSurfaceView: UIView {
             make.edges.equalToSuperview()
         }
         barContainer.snp.makeConstraints { make in
-            make.leading.trailing.equalTo(panelContainer)
+            make.centerX.equalToSuperview()
+            make.width.lessThanOrEqualTo(DSTabBarStyle.maxWidth)
+            make.width.equalToSuperview().offset(-DSTabBarStyle.horizontalMargin * 2).priority(.high)
+            make.bottom.equalToSuperview().offset(Self.restingBottomOffset)
             barHeightConstraint = make.height.equalTo(barHostHeight).constraint
-            pinBottom(make)
         }
     }
 
@@ -70,11 +69,6 @@ final class TabBarChromeSurfaceView: UIView {
 // MARK: - Layout
 
 private extension TabBarChromeSurfaceView {
-    /// Pins a view to the chrome's resting bottom.
-    func pinBottom(_ make: ConstraintMaker) {
-        make.bottom.equalToSuperview().offset(Self.restingBottomOffset)
-    }
-
     /// Only a change in the resting room reaches the constraint. A panel opening or the keyboard lifting leaves it
     /// alone: resizing the host mid-animation lays its SwiftUI content out at the final size at once, so the bar
     /// would snap ahead of the transform that lifts it.
@@ -85,25 +79,5 @@ private extension TabBarChromeSurfaceView {
         }
         barHostHeight = height
         barHeightConstraint?.update(offset: height)
-    }
-
-    func installPanelContainer() {
-        insertSubview(panelContainer, at: 0)
-        panelContainer.snp.makeConstraints { make in
-            make.centerX.equalToSuperview()
-            make.width.lessThanOrEqualTo(DSTabBarStyle.maxWidth)
-            make.width.equalToSuperview().offset(-DSTabBarStyle.horizontalMargin * 2).priority(.high)
-            pinBottom(make)
-            make.height.equalTo(DSTabBarStyle.height)
-        }
-    }
-}
-
-/// Holds the panels above the bar row. It passes touches through wherever no panel is, so the
-/// content behind the chrome stays reachable.
-private final class TabBarPanelContainerView: UIView {
-    override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
-        let hitView = super.hitTest(point, with: event)
-        return hitView === self ? nil : hitView
     }
 }

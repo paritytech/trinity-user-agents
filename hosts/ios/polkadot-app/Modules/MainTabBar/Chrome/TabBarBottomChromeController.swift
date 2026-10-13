@@ -5,8 +5,8 @@ import PolkadotUI
 import SnapKit
 
 final class TabBarBottomChromeController: UIViewController {
-    /// Space kept between the keyboard and the open centre panel's button.
-    private static let keyboardButtonGap: CGFloat = -4
+    /// How far the keyboard covers the foot of the open centre panel's button.
+    private static let keyboardButtonOverlap: CGFloat = 4
 
     private let chromeSurface = TabBarChromeSurfaceView()
     private let barModel = TabBarBarViewModel()
@@ -204,12 +204,6 @@ final class TabBarBottomChromeController: UIViewController {
         }
     }
 
-    /// Selecting a different action closes the open panel before opening the new one, so the
-    /// change reads as a close followed by an open instead of a silent content swap.
-    private func togglePanel(_ kind: TabBarPanelKind) {
-        panelController.togglePanel(kind)
-    }
-
     func apply(_ context: TabBarChromeContext) {
         foldController.update(context: context)
         foldController.refresh()
@@ -342,9 +336,9 @@ private extension TabBarBottomChromeController {
         case .connectionStatus:
             onConnectionStatusTapped?()
         case .spaTabs:
-            togglePanel(.shelf)
+            panelController.togglePanel(.shelf)
         case .scan:
-            togglePanel(.content(.scan))
+            panelController.togglePanel(.content(.scan))
         }
     }
 }
@@ -383,8 +377,8 @@ private extension TabBarBottomChromeController {
         )
     }
 
-    /// While the scan panel is open, the chrome moves up until the keyboard's top sits `keyboardButtonGap` below
-    /// the centre button, keeping the panel above it clear. Any other keyboard, or a closed panel, returns the
+    /// While the scan panel is open, the chrome moves up until the keyboard covers the centre button's foot by
+    /// `keyboardButtonOverlap`, keeping the panel above it clear. Any other keyboard, or a closed panel, returns the
     /// chrome to rest.
     @objc func handleKeyboardFrameChange(_ notification: Notification) {
         guard let keyboardFrame = notification.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect else {
@@ -394,7 +388,7 @@ private extension TabBarBottomChromeController {
         let isScanPanelOpen = panelController.open == .content(.scan)
         let keyboardOverlap = max(0, view.bounds.maxY - keyboardTop)
         let buttonFootOffset = DSTabBarStyle.restingHeight - DSTabBarStyle.centerButtonFootFromRowTop
-        let allowedOverlap = buttonFootOffset - Self.keyboardButtonGap
+        let allowedOverlap = buttonFootOffset + Self.keyboardButtonOverlap
         let lift = isScanPanelOpen ? max(0, keyboardOverlap - allowedOverlap) : 0
         DSTabBarStyle.animateCenterChange(in: view) {
             self.foldController.setKeyboardLift(lift)
@@ -428,10 +422,13 @@ private extension TabBarBottomChromeController {
             self?.handleSlotTap(itemIndex: itemIndex)
         }
         barModel.makeCenterContent = { [weak self] in
-            if self?.centerPanelContent == nil {
-                self?.centerPanelContent = self?.makeCenterContent?()
+            guard let self else {
+                return nil
             }
-            return self?.centerPanelContent
+            if centerPanelContent == nil {
+                centerPanelContent = makeCenterContent?()
+            }
+            return centerPanelContent
         }
         barModel.onCenterPanelOpenChanged = { [weak self] isOpen in
             self?.centerPanelOpenChanged(isOpen)

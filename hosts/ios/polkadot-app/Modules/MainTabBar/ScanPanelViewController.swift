@@ -119,7 +119,7 @@ extension ScanPanelViewController: SearchContactViewProtocol {
     }
 }
 
-extension ScanPanelViewController: ScanPanelScannerControlling {
+extension ScanPanelViewController {
     func setCaptureActive(_ active: Bool) {
         scannerController.setCaptureActive(active)
     }

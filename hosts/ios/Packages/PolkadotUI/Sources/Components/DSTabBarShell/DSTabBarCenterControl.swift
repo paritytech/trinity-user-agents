@@ -171,9 +171,7 @@ private extension DSTabBarCenterControl {
                     return
                 }
 
-                // A flick decides on its own; otherwise the halfway point does.
-                let projected = start - value.predictedEndTranslation.height / travel
-                settle(to: projected > 0.5 ? 1 : 0)
+                settleProjecting(from: start, predictedTranslationHeight: value.predictedEndTranslation.height)
             }
     }
 
@@ -188,8 +186,7 @@ private extension DSTabBarCenterControl {
                 let start = dragStart ?? progress
                 dragStart = nil
 
-                let projected = start - value.predictedEndTranslation.height / travel
-                settle(to: projected > 0.5 ? 1 : 0)
+                settleProjecting(from: start, predictedTranslationHeight: value.predictedEndTranslation.height)
             }
     }
 
@@ -200,6 +197,12 @@ private extension DSTabBarCenterControl {
         let start = dragStart ?? progress
         dragStart = start
         progress = min(1, max(0, start - translationHeight / travel))
+    }
+
+    /// A flick decides on its own; otherwise the halfway point does.
+    func settleProjecting(from start: CGFloat, predictedTranslationHeight: CGFloat) {
+        let projected = start - predictedTranslationHeight / travel
+        settle(to: projected > 0.5 ? 1 : 0)
     }
 
     /// Under Reduce Motion the geometry snaps and only the content cross-fades, so the morph
