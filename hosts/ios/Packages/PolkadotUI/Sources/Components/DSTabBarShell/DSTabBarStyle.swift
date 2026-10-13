@@ -51,13 +51,13 @@ public enum DSTabBarStyle {
     /// Response of the spring that grows and collapses the shelf. Damping sits just under critical,
     /// so the bar settles with at most a slight overshoot. Public because a host driving the shelf
     /// from UIKit has to match its settle.
-    public static let shelfSpringResponse: Double = 0.38
-    public static let shelfSpringDamping: Double = 0.85
+    public static let shelfSpringResponse: Double = 0.18
+    public static let shelfSpringDamping: Double = 0.9
 
     /// Response of the spring that settles the centre control open or closed. Public because a host
     /// driving the control from UIKit has to match the control's own settle.
-    public static let centerSpringResponse: Double = 0.42
-    public static let centerSpringDamping: Double = 0.82
+    public static let centerSpringResponse: Double = 0.26
+    public static let centerSpringDamping: Double = 0.88
 
     /// Length of the eased shelf reveal under Reduce Motion, growth and fade together. Matches
     /// the centre control's.
@@ -65,15 +65,13 @@ public enum DSTabBarStyle {
 
     /// Diameter of the centre control at rest. It sits in the hole with a ring gap.
     static let centerButtonSize: CGFloat = 60
-    /// Gap between the open centre panel and the bar's side edges.
-    static let centerPanelMargin: CGFloat = 10
     static let centerPanelCornerRadius: CGFloat = 24
     /// Concave blend where the lobe meets the panel's bottom edge.
     static let centerPanelFillet: CGFloat = 18
 
-    /// Width the open centre panel takes in a bar row of `width`, inset from both sides.
+    /// Width the open centre panel takes in a bar row of `width`: the full width of the bar.
     public static func centerPanelWidth(inRowOfWidth width: CGFloat) -> CGFloat {
-        max(centerButtonSize, width - 2 * centerPanelMargin)
+        max(centerButtonSize, width)
     }
 
     /// Height the open centre panel takes for content of `contentHeight`, lobe included. The grabber
