@@ -65,23 +65,6 @@ fun Modifier.pocketCardSharedElement(index: Int): Modifier {
 }
 
 @Composable
-fun Modifier.pocketCollectiblesImageSharedElement(): Modifier {
-    val sharedScope = LocalSharedTransitionScope.current
-    val visibilityScope = LocalNavAnimatedVisibilityScope.current
-    return if (sharedScope == null || visibilityScope == null) {
-        this
-    } else {
-        with(sharedScope) {
-            this@pocketCollectiblesImageSharedElement.sharedElement(
-                sharedContentState = rememberSharedContentState("pocket_collectibles_image"),
-                animatedVisibilityScope = visibilityScope,
-                boundsTransform = PocketBoundsTransform
-            )
-        }
-    }
-}
-
-@Composable
 fun Modifier.pocketBalanceSharedElement(cardId: String): Modifier {
     val sharedScope = LocalSharedTransitionScope.current
     val visibilityScope = LocalNavAnimatedVisibilityScope.current

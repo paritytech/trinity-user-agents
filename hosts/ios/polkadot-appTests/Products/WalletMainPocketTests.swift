@@ -79,7 +79,6 @@ private func makeInteractor(
     warmDelay: Duration = .zero
 ) -> WalletMainInteractor {
     let interactor = WalletMainInteractor(
-        collectiblesURLProvider: StubCollectiblesURLProvider(),
         networkStatusObserver: StubNetworkStatusObserver(),
         pocketPrewarmer: PocketPrewarmer(
             products: StubProductResolver(),
@@ -95,16 +94,11 @@ private func makeInteractor(
 private final class RecordingPresenter: WalletMainInteractorOutputProtocol {
     private(set) var pocketCards: [[PocketCardViewModel]] = []
 
-    func didReceiveCollectibles(url _: URL?) {}
     func didReceive(networkStatus _: NetworkStatus) {}
 
     func didReceive(pocketCards: [PocketCardViewModel]) {
         self.pocketCards.append(pocketCards)
     }
-}
-
-private struct StubCollectiblesURLProvider: CollectiblesURLProviding {
-    func resolveURL() async -> URL? { nil }
 }
 
 private final class StubNetworkStatusObserver: NetworkStatusObserving {

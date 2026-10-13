@@ -12,6 +12,16 @@
         }
       }
     },
+    "%@: %@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$@: %2$@"
+          }
+        }
+      }
+    },
     "≈ %@" : {
       "comment" : "A label displaying the fee amount."
     },
@@ -136,6 +146,28 @@
         }
       }
     },
+    "action.get" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Get"
+          }
+        }
+      }
+    },
+    "action.get.subtitle" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Add CASH via bank, crypto or credit card"
+          }
+        }
+      }
+    },
     "action.send.cash" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -147,13 +179,13 @@
         }
       }
     },
-    "action.withdraw" : {
+    "action.send.subtitle" : {
       "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Withdraw"
+            "value" : "Move CASH to your bank, crypto wallet or contacts"
           }
         }
       }
@@ -444,6 +476,28 @@
         }
       }
     },
+    "chat.call.camera.access.message" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Allow camera access in Settings to turn on video during calls."
+          }
+        }
+      }
+    },
+    "chat.call.camera.access.title" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Camera Access Required"
+          }
+        }
+      }
+    },
     "chat.call.mic.access.message" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -462,6 +516,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Microphone Access Required"
+          }
+        }
+      }
+    },
+    "chat.call.video.unavailable.message" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Video could not be started. The call continues with audio only."
+          }
+        }
+      }
+    },
+    "chat.call.video.unavailable.title" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Camera Unavailable"
           }
         }
       }
@@ -877,6 +953,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "You left the chat"
+          }
+        }
+      }
+    },
+    "chatCallRemoteMicOff" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@'s microphone is off"
+          }
+        }
+      }
+    },
+    "chatCallSelfMicOff" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Your microphone is off"
           }
         }
       }
@@ -1339,28 +1437,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Total"
-          }
-        }
-      }
-    },
-    "contact.source.description.game" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "You both played %1$(ordinalDay)@ %2$(month)@ Game"
-          }
-        }
-      }
-    },
-    "contact.source.description.game.generic" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "You both played the same game"
           }
         }
       }
@@ -2215,6 +2291,16 @@
         }
       }
     },
+    "polkadot://%@/-/pocket/add?card=%@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "polkadot://%1$@/-/pocket/add?card=%2$@"
+          }
+        }
+      }
+    },
     "polkadot.host.message.too.big.error" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -2662,6 +2748,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "This is taking longer than usual"
+          }
+        }
+      }
+    },
+    "searchAccount.selfTransfer.subtitle" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bank account or crypto wallet"
+          }
+        }
+      }
+    },
+    "searchAccount.selfTransfer.title" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Send to yourself"
           }
         }
       }
