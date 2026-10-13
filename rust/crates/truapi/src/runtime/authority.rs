@@ -235,8 +235,8 @@ impl From<AuthorityError> for HostAccountSignVrfError {
 		match err {
 			AuthorityError::Disconnected => Self::NotConnected,
 			AuthorityError::Rejected => Self::Rejected,
-			error @ AuthorityError::ConfirmationFailed(_) => {
-				Self::Unknown { reason: error.to_string() }
+			AuthorityError::ConfirmationFailed(error) => {
+				Self::Unknown { reason: format!("VRF signing confirmation failed: {error:?}") }
 			},
 			AuthorityError::Cancelled(err) => Self::Unknown { reason: err.to_string() },
 			AuthorityError::Unavailable { reason } |
@@ -428,6 +428,24 @@ pub enum AccountGrantOutcome {
 	},
 }
 
+/// Where a product's public subtree comes from.
+pub enum SubtreeResolution<'a> {
+	/// The holder derived it without asking anyone.
+	Known([u8; 32]),
+	/// A request to the account holder, sent only when awaited.
+	Ask(futures::future::BoxFuture<'a, Result<[u8; 32], AuthorityError>>),
+}
+
+impl SubtreeResolution<'_> {
+	/// The subtree, asking the account holder when it is not known.
+	pub async fn resolve(self) -> Result<[u8; 32], AuthorityError> {
+		match self {
+			Self::Known(public_key) => Ok(public_key),
+			Self::Ask(request) => request.await,
+		}
+	}
+}
+
 /// How a host keeps the grants its account holder issues.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum GrantKeeping {
@@ -449,7 +467,7 @@ pub trait AccountHolder: Send + Sync + 'static {
 	/// Reject replacement of the originally selected wallet or paired channel.
 	fn require_current_session(&self, session: &AuthoritySession) -> Result<(), AuthorityError>;
 
-	/// Review an explicit request before lazily issuing its ordered grants.
+	/// Lazily issue the ordered grants of an explicit request the caller confirmed.
 	async fn allocate_grants<'a>(
 		&'a self,
 		invocation: AccountInvocation<'a>,
@@ -460,7 +478,7 @@ pub trait AccountHolder: Send + Sync + 'static {
 		AuthorityError,
 	>;
 
-	/// Obtain one allowance with wallet approval when the host has no usable grant.
+	/// Obtain one allowance when the host has no usable grant.
 	async fn ensure_allowance(
 		&self,
 		invocation: AccountInvocation<'_>,
@@ -480,7 +498,7 @@ pub trait AccountHolder: Send + Sync + 'static {
 		&'a self,
 		invocation: AccountInvocation<'a>,
 		product_id: String,
-	) -> Result<futures::future::BoxFuture<'a, Result<[u8; 32], AuthorityError>>, AuthorityError>;
+	) -> Result<SubtreeResolution<'a>, AuthorityError>;
 
 	/// Sign an RFC-0023 Merlin transcript with a product account.
 	async fn sign_vrf(
@@ -491,8 +509,7 @@ pub trait AccountHolder: Send + Sync + 'static {
 
 	/// Sign a SCALE transaction payload for a product account.
 	///
-	/// The wallet validates local authorization or reviews the request; remote calls require
-	/// review.
+	/// The caller confirms the request with the user first.
 	async fn sign_payload(
 		&self,
 		invocation: AccountInvocation<'_>,
@@ -501,7 +518,7 @@ pub trait AccountHolder: Send + Sync + 'static {
 
 	/// Sign arbitrary bytes for a product account.
 	///
-	/// Uses the same caller and consent boundary as [`AccountHolder::sign_payload`].
+	/// Confirmed by the caller like [`AccountHolder::sign_payload`].
 	async fn sign_raw(
 		&self,
 		invocation: AccountInvocation<'_>,
@@ -511,7 +528,7 @@ pub trait AccountHolder: Send + Sync + 'static {
 
 	/// Build a transaction for a product account, signed unless the request
 	/// supplies its own V5 `VerifyMultiSignature` extension.
-	/// Uses the same caller and consent boundary as [`AccountHolder::sign_payload`].
+	/// Confirmed by the caller like [`AccountHolder::sign_payload`].
 	async fn create_transaction(
 		&self,
 		invocation: AccountInvocation<'_>,

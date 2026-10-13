@@ -7,7 +7,8 @@ use super::{
 		AccountGrant, AccountGrantOutcome, AccountHolder, AccountInvocation, AuthorityCancelError,
 		AuthorityError, AuthoritySession, AutoSigningKey, BulletinAllowanceKey,
 		CreateTransactionAuthorityRequest, GrantKeeping, SignPayloadAuthorityRequest,
-		SignRawAuthorityRequest, StatementStoreAllowanceKey, require_current_session,
+		SignRawAuthorityRequest, StatementStoreAllowanceKey, SubtreeResolution,
+		require_current_session,
 	},
 	ring_vrf_registry::{RingVrfRegistryStore, apply_ring_vrf_disclosure, validate_owner_listing},
 	sso_remote::{SSO_LOCAL_DISCONNECT_REASON, SSO_PEER_DISCONNECT_REASON, SsoRemoteResponseError},
@@ -163,15 +164,15 @@ impl AccountHolder for RemoteAccountHolder {
 		&'a self,
 		invocation: AccountInvocation<'a>,
 		product_id: String,
-	) -> Result<futures::future::BoxFuture<'a, Result<[u8; 32], AuthorityError>>, AuthorityError> {
+	) -> Result<SubtreeResolution<'a>, AuthorityError> {
 		let session = require_current_session(&self.service.session_state(), invocation.session)?;
-		Ok(Box::pin(async move {
+		Ok(SubtreeResolution::Ask(Box::pin(async move {
 			self.service
 				.call(invocation.call, &session, ProductSubtreeRequest { product_id })
 				.await
 				.map_err(remote_authority_error)?
 				.map_err(remote_authority_error)
-		}))
+		})))
 	}
 
 	async fn sign_vrf(
@@ -454,24 +455,13 @@ impl AccountHolder for RemoteAccountHolder {
 		.boxed())
 	}
 
+	/// The phone keeps renewing the statement allowances it issued, so a paired host sends nothing.
 	async fn renew_statement_sponsorship(
 		&self,
-		invocation: AccountInvocation<'_>,
-		account_id: [u8; 32],
+		_invocation: AccountInvocation<'_>,
+		_account_id: [u8; 32],
 	) -> Result<(), AuthorityError> {
-		match self
-			.ensure_allowance(
-				invocation,
-				AllowanceResource::StatementStore,
-				OnExistingAllowancePolicy::Ignore,
-			)
-			.await?
-		{
-			AccountGrant::StatementStore { key, .. } if key.public_key == account_id => Ok(()),
-			_ => Err(AuthorityError::Unavailable {
-				reason: "Sponsorship signer changed".to_string(),
-			}),
-		}
+		Ok(())
 	}
 
 	async fn ensure_allowance(
