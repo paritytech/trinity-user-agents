@@ -38,8 +38,8 @@ impl ProductRuntimeHost {
 
 /// The host's reason for a failure, as the product's catch-all for a get or
 /// remove.
-fn lookup_failure(error: latest::GenericError) -> latest::HostAuthTokensGetError {
-	latest::HostAuthTokensGetError::Unknown { reason: error.reason }
+fn lookup_failure(error: latest::GenericError) -> latest::HostAuthTokensLookupError {
+	latest::HostAuthTokensLookupError::Unknown { reason: error.reason }
 }
 
 #[truapi::async_trait]
@@ -73,7 +73,7 @@ impl AuthTokens for ProductRuntimeHost {
 		let latest::HostAuthTokensGetRequest { service } = request.into_latest();
 		let domain = |error| CallError::Domain(HostAuthTokensGetError::V1(error));
 		if !is_valid_service(&service) {
-			return Err(domain(latest::HostAuthTokensGetError::InvalidService));
+			return Err(domain(latest::HostAuthTokensLookupError::InvalidService));
 		}
 		platform
 			.auth_token(&self.product, service)
@@ -92,7 +92,7 @@ impl AuthTokens for ProductRuntimeHost {
 		let latest::HostAuthTokensRemoveRequest { service } = request.into_latest();
 		let domain = |error| CallError::Domain(HostAuthTokensRemoveError::V1(error));
 		if !is_valid_service(&service) {
-			return Err(domain(latest::HostAuthTokensGetError::InvalidService));
+			return Err(domain(latest::HostAuthTokensLookupError::InvalidService));
 		}
 		platform
 			.remove_auth_token(&self.product, service)

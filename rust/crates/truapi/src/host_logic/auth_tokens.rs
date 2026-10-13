@@ -27,9 +27,7 @@ pub fn check_store(service: &str, token: &AuthToken) -> Result<(), HostAuthToken
 		return Err(HostAuthTokensStoreError::InvalidService);
 	}
 	if token.token.is_empty() {
-		return Err(HostAuthTokensStoreError::Unknown {
-			reason: "token must not be empty".to_string(),
-		});
+		return Err(HostAuthTokensStoreError::EmptyToken);
 	}
 	let size = token.token.len() + token.refresh_token.as_ref().map_or(0, String::len);
 	if size > MAX_TOKEN_BYTES as usize {
@@ -87,12 +85,7 @@ mod tests {
 			(token(&half, Some(&half)), Ok(())),
 			(token(&half, Some(&format!("{half}r"))), too_large.clone()),
 			(token(&"t".repeat(limit + 1), None), too_large),
-			(
-				token("", Some("refresh")),
-				Err(HostAuthTokensStoreError::Unknown {
-					reason: "token must not be empty".to_string(),
-				}),
-			),
+			(token("", Some("refresh")), Err(HostAuthTokensStoreError::EmptyToken)),
 		];
 
 		let verdicts: Vec<_> =

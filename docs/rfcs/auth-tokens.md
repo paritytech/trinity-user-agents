@@ -17,11 +17,13 @@ after a restart. The host does not authenticate anything and never refreshes a t
 
 Trait `AuthTokens`, wire id 26. Any execution of the product may call it.
 
-| Id | Method   | Request                         | Response                       | Errors                                                     |
-| -- | -------- | ------------------------------- | ------------------------------ | ---------------------------------------------------------- |
-| 0  | `store`  | `{ service, token: AuthToken }` | empty                          | `InvalidService`, `TooLarge { max }`, `Unknown { reason }` |
-| 1  | `get`    | `{ service }`                   | `{ token: Option<AuthToken> }` | `InvalidService`, `Unknown { reason }`                     |
-| 2  | `remove` | `{ service }`                   | empty                          | `InvalidService`, `Unknown { reason }`                     |
+| Id | Method   | Request                         | Response                       | Errors                                                                   |
+| -- | -------- | ------------------------------- | ------------------------------ | ------------------------------------------------------------------------ |
+| 0  | `store`  | `{ service, token: AuthToken }` | empty                          | `InvalidService`, `EmptyToken`, `TooLarge { max }`, `Unknown { reason }` |
+| 1  | `get`    | `{ service }`                   | `{ token: Option<AuthToken> }` | `InvalidService`, `Unknown { reason }`                                   |
+| 2  | `remove` | `{ service }`                   | empty                          | `InvalidService`, `Unknown { reason }`                                   |
+
+`get` and `remove` share one error type, `HostAuthTokensLookupError`.
 
 ```rust
 struct AuthToken {

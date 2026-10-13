@@ -9897,9 +9897,10 @@ fn a_bad_service_or_oversized_token_is_refused_before_the_host_sees_it() {
 	let keeper = Arc::new(MemoryAuthTokens::default());
 	assert!(services.install_auth_token_platform(keeper.clone()));
 	let wallet = payment_host(&services, "wallet.dot", true);
+	let limit = crate::host_logic::auth_tokens::MAX_TOKEN_BYTES;
 	let oversized = v01::AuthToken {
-		token: "t".repeat(8_000),
-		refresh_token: Some("r".repeat(193)),
+		token: "t".repeat(limit as usize),
+		refresh_token: Some("r".to_string()),
 		expires_at: None,
 	};
 
@@ -9918,13 +9919,13 @@ fn a_bad_service_or_oversized_token_is_refused_before_the_host_sees_it() {
 				v01::HostAuthTokensStoreError::InvalidService
 			))),
 			Err(CallError::Domain(truapi::versioned::auth_tokens::HostAuthTokensStoreError::V1(
-				v01::HostAuthTokensStoreError::TooLarge { max: 8192 }
+				v01::HostAuthTokensStoreError::TooLarge { max: limit }
 			))),
 			Err(CallError::Domain(truapi::versioned::auth_tokens::HostAuthTokensGetError::V1(
-				v01::HostAuthTokensGetError::InvalidService
+				v01::HostAuthTokensLookupError::InvalidService
 			))),
 			Err(CallError::Domain(truapi::versioned::auth_tokens::HostAuthTokensRemoveError::V1(
-				v01::HostAuthTokensGetError::InvalidService
+				v01::HostAuthTokensLookupError::InvalidService
 			))),
 			0,
 		)

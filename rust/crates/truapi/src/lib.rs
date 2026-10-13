@@ -181,14 +181,11 @@ pub mod latest {
 	/// A product's kept auth token.
 	pub type HostAuthTokensGetResponse =
 		LatestOf<versioned::auth_tokens::HostAuthTokensGetResponse>;
-	/// Failure reading a product's auth token.
-	pub type HostAuthTokensGetError = LatestOf<versioned::auth_tokens::HostAuthTokensGetError>;
+	/// Failure reading or dropping a product's auth token.
+	pub type HostAuthTokensLookupError = LatestOf<versioned::auth_tokens::HostAuthTokensGetError>;
 	/// Request to drop a product's auth token.
 	pub type HostAuthTokensRemoveRequest =
 		LatestOf<versioned::auth_tokens::HostAuthTokensRemoveRequest>;
-	/// Failure dropping a product's auth token.
-	pub type HostAuthTokensRemoveError =
-		LatestOf<versioned::auth_tokens::HostAuthTokensRemoveError>;
 	/// Contextual alias derivation result.
 	pub type HostAccountGetAliasResponse =
 		LatestOf<versioned::account::HostAccountGetAliasResponse>;

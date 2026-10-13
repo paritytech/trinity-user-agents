@@ -17,6 +17,11 @@ pub struct CliAuthTokens {
 }
 
 impl CliAuthTokens {
+	/// Drop every product's tokens, as a host does on sign-out.
+	pub fn clear(&self) {
+		self.tokens().clear();
+	}
+
 	fn tokens(&self) -> std::sync::MutexGuard<'_, HashMap<(String, String), AuthToken>> {
 		self.tokens.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
 	}
@@ -49,5 +54,32 @@ impl AuthTokenPlatform for CliAuthTokens {
 	) -> Result<(), GenericError> {
 		self.tokens().remove(&(product.product_id.clone(), service));
 		Ok(())
+	}
+}
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+
+	// Tokens belong to the signed-in user, so `/logout` leaves no product able
+	// to read one back.
+	#[tokio::test]
+	async fn clearing_drops_every_products_tokens() {
+		let tokens = CliAuthTokens::default();
+		let wallet = ProductContext::new("wallet.dot".to_string()).expect("valid product id");
+		let other = ProductContext::new("other.dot".to_string()).expect("valid product id");
+		let token = AuthToken { token: "jwt".to_string(), refresh_token: None, expires_at: None };
+		for product in [&wallet, &other] {
+			tokens
+				.store_auth_token(product, "onramp".to_string(), token.clone())
+				.await
+				.unwrap();
+		}
+
+		tokens.clear();
+
+		for product in [&wallet, &other] {
+			assert_eq!(tokens.auth_token(product, "onramp".to_string()).await.unwrap(), None);
+		}
 	}
 }

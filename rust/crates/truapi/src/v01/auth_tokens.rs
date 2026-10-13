@@ -38,6 +38,8 @@ pub struct HostAuthTokensStoreRequest {
 pub enum HostAuthTokensStoreError {
 	/// `service` is not 1 to 64 characters of `a-z`, `0-9`, `.`, `_` and `-`.
 	InvalidService,
+	/// `token` is empty.
+	EmptyToken,
 	/// `token` and `refresh_token` together exceed `max` bytes.
 	TooLarge {
 		/// The limit, in bytes of UTF-8.
@@ -77,7 +79,7 @@ pub struct HostAuthTokensRemoveRequest {
 /// keep tokens `Unsupported`, at the framework level rather than through this
 /// enum.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
-pub enum HostAuthTokensGetError {
+pub enum HostAuthTokensLookupError {
 	/// `service` is not 1 to 64 characters of `a-z`, `0-9`, `.`, `_` and `-`.
 	InvalidService,
 	/// Catch-all.
