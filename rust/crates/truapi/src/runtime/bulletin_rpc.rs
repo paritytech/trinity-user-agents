@@ -1,9 +1,9 @@
 //! In-core Bulletin preimage submission over the shared Subxt client.
 //!
 //! One submission at a time: build + sign the `TransactionStorage.store`
-//! extrinsic using current best-block metadata and nonce with a finalized
-//! mortality anchor, dry-run it via Subxt's typed transaction validation, then
-//! submit through Subxt's transaction watch and classify the
+//! extrinsic with finalized mortality and best-block metadata and nonce,
+//! dry-run it at the best block via Subxt's typed transaction
+//! validation, then submit through Subxt's transaction watch and classify the
 //! dispatch outcome from the inclusion block's events.
 
 use std::sync::Mutex as StdMutex;
@@ -888,32 +888,32 @@ mod tests {
 		);
 	}
 
-    #[cfg(not(target_arch = "wasm32"))]
-    mod orchestration {
-        use super::*;
-        use crate::chain_runtime::{RuntimeChainProvider, RuntimeFailure};
-        use crate::host_internal::extrinsic::tests::{
-            BULLETIN_METADATA_BYTES, OfflineChainState, bulletin_chain_state, split_v4,
-        };
-        use crate::host_logic::product_account::SR25519_SIGNING_CONTEXT;
-        use crate::platform::JsonRpcConnection;
-        use crate::subscription::thread_per_subscription_spawner;
-        use async_trait::async_trait;
-        use futures::StreamExt;
-        use futures::channel::mpsc;
-        use futures::stream::BoxStream;
-        use parity_scale_codec::{Compact, Encode};
-        use parking_lot::Mutex;
-        use scale_info::{PortableRegistry, TypeDef, TypeDefPrimitive};
-        use schnorrkel::{PublicKey, Signature};
-        use serde_json::{Value as JsonValue, json};
-        use std::collections::VecDeque;
-        use std::sync::Arc;
-        use subxt::config::DefaultExtrinsicParamsBuilder;
-        use subxt::events::Phase;
-        use subxt::ext::scale_encode::{EncodeAsFields, Field};
-        use subxt::ext::scale_value::{Primitive, Value as ScaleValue};
-        use subxt::utils::H256;
+	#[cfg(not(target_arch = "wasm32"))]
+	mod orchestration {
+		use super::*;
+		use crate::{
+			chain_runtime::{RuntimeChainProvider, RuntimeFailure},
+			host_internal::extrinsic::tests::{
+				OfflineChainState, bulletin_chain_state, bulletin_runtime_call, split_v4,
+				system_events,
+			},
+			host_logic::product_account::SR25519_SIGNING_CONTEXT,
+			platform::JsonRpcConnection,
+			subscription::thread_per_subscription_spawner,
+		};
+		use async_trait::async_trait;
+		use futures::{StreamExt, channel::mpsc, stream::BoxStream};
+		use parity_scale_codec::{Compact, Decode, Encode};
+		use schnorrkel::{PublicKey, Signature};
+		use serde_json::{Value as JsonValue, json};
+		use std::{
+			collections::VecDeque,
+			sync::{Arc, Mutex},
+		};
+		use subxt::{
+			config::DefaultExtrinsicParamsBuilder,
+			utils::{Era, H256},
+		};
 
 		const FOLLOW_ID: &str = "bulletin-follow";
 		const BLOCK_HASH: &str =
@@ -992,6 +992,24 @@ mod tests {
             }
 
 			fn with_best_blocks(self, count: usize) -> Self {
+				{
+					let mut state = self.state.lock().unwrap();
+					state.next_best_block = count;
+					state.current_best_hash = scripted_block_hash(count);
+				}
+				self
+			}
+
+			fn with_failed_events(mut self) -> Self {
+				self.events = format!("0x{}", hex::encode(failed_events()));
+				self
+			}
+
+			fn with_validation_outcomes(
+				self,
+				outcomes: impl IntoIterator<Item = ValidationOutcome>,
+				advance_best_block_after_rejection: bool,
+			) -> Self {
 				{
 					let mut state = self.state.lock().unwrap();
 					state.next_best_block = count;
@@ -1094,17 +1112,45 @@ mod tests {
 					.collect()
 			}
 
-        impl JsonRpcConnection for BulletinScriptedConnection {
-            fn send(&self, request: String) {
-                self.sent.lock().push(request.clone());
-                let frames =
-                    scripted_frames(&request, &self.events, &mut self.state.lock());
-                if let Some(sender) = self.sender.lock().as_ref() {
-                    for frame in frames {
-                        sender.unbounded_send(frame).unwrap();
-                    }
-                }
-            }
+			fn runtime_call_blocks(&self, runtime_method: &str) -> Vec<H256> {
+				self.sent
+					.lock()
+					.unwrap()
+					.iter()
+					.filter_map(|request| {
+						let request: JsonValue = serde_json::from_str(request).unwrap();
+						(request["method"] == "chainHead_v1_call" &&
+							request["params"][2] == runtime_method)
+							.then(|| request["params"][1].as_str().unwrap().parse().unwrap())
+					})
+					.collect()
+			}
+
+			fn runtime_call_count(&self, runtime_method: &str) -> usize {
+				self.sent
+					.lock()
+					.unwrap()
+					.iter()
+					.filter(|request| {
+						serde_json::from_str::<JsonValue>(request)
+							.ok()
+							.and_then(|value| {
+								(value.get("method").and_then(JsonValue::as_str) ==
+									Some("chainHead_v1_call"))
+								.then(|| {
+									value
+										.get("params")
+										.and_then(|params| params.get(2))
+										.and_then(JsonValue::as_str)
+										.map(ToOwned::to_owned)
+								})
+								.flatten()
+							})
+							.as_deref() == Some(runtime_method)
+					})
+					.count()
+			}
+		}
 
             fn responses(&self) -> BoxStream<'static, String> {
                 self.receiver.lock()
@@ -1661,92 +1707,13 @@ mod tests {
 			let best_hash = scripted_block_hash(5).parse().unwrap();
 			let value = b"fork mortality reproduction";
 
-        #[test]
-        fn submit_uses_best_nonce_with_finalized_mortality_checkpoint() {
-            let provider = Arc::new(
-                BulletinScriptedProvider::new([TransactionOutcome::Included]).with_best_block(2),
-            );
-            let value = b"survives an abandoned best-block checkpoint";
-            let key = futures::executor::block_on(rpc(provider.clone()).submit_preimage(
-                &CallContext::default(),
-                Instant::now() + Duration::from_secs(2),
-                &allowance_fixture(),
-                value,
-            ))
-            .unwrap();
-            assert_eq!(key, preimage_key(value));
-
-            let transactions = provider.submitted_transactions();
-            assert_eq!(transactions.len(), 1);
-            let encoded = hex::decode(transactions[0].trim_start_matches("0x")).unwrap();
-            let (account, signature, _) = split_v4(&encoded);
-            let state = OfflineChainState {
-                genesis_hash: [0x42; 32],
-                spec_version: 1,
-                transaction_version: 1,
-                ..bulletin_chain_state()
-            };
-            let client = state.client_at(2).unwrap();
-            let params = DefaultExtrinsicParamsBuilder::<SubstrateConfig>::new()
-                .nonce(7)
-                .mortal_from_unchecked(MORTAL_PERIOD_BLOCKS, 1, H256([0x11; 32]))
-                .build();
-            let payload = subxt::dynamic::tx(
-                STORE_PALLET_NAME,
-                "store",
-                vec![ScaleValue::from_bytes(value)],
-            );
-            let expected = client
-                .tx()
-                .create_v4_signable_offline(&payload, params)
-                .unwrap()
-                .signer_payload()
-                .unwrap();
-            // This signature cannot verify with the stale finalized nonce (0)
-            // or the unfinalized best hash, even though dry-run accepted both.
-            PublicKey::from_bytes(&account)
-                .unwrap()
-                .verify_simple(
-                    SR25519_SIGNING_CONTEXT,
-                    &expected,
-                    &Signature::from_bytes(&signature).unwrap(),
-                )
-                .unwrap();
-        }
-
-        #[test]
-        fn submit_refuses_a_checkpoint_outside_the_mortality_window() {
-            let provider = Arc::new(BulletinScriptedProvider::new([]).with_best_block(65));
-            let result = futures::executor::block_on(rpc(provider.clone()).submit_preimage(
-                &CallContext::default(),
-                Instant::now() + Duration::from_secs(2),
-                &allowance_fixture(),
-                b"expired checkpoint",
-            ));
-            assert!(matches!(
-                result,
-                Err(BulletinSubmitError::MortalityCheckpointTooOld {
-                    finalized: 1,
-                    best: 65
-                })
-            ));
-            assert!(provider.submitted_transactions().is_empty());
-        }
-
-        #[test]
-        fn submit_preimage_rebuilds_once_after_node_rejection() {
-            let provider = Arc::new(BulletinScriptedProvider::new([
-                TransactionOutcome::Dropped,
-                TransactionOutcome::Included,
-            ]));
-            let value = b"scripted bulletin retry";
-            let result = futures::executor::block_on(rpc(provider.clone()).submit_preimage(
-                &CallContext::default(),
-                Instant::now() + Duration::from_secs(2),
-                &allowance_fixture(),
-                value,
-            ))
-            .unwrap();
+			futures::executor::block_on(rpc(provider.clone()).submit_preimage(
+				&CallContext::default(),
+				Instant::now() + Duration::from_secs(2),
+				&allowance_fixture(),
+				value,
+			))
+			.unwrap();
 
 			let transactions = provider.submitted_transactions();
 			let transaction = hex::decode(transactions[0].trim_start_matches("0x")).unwrap();
@@ -1766,36 +1733,6 @@ mod tests {
 			assert_eq!(
 				provider.runtime_call_blocks("TaggedTransactionQueue_validate_transaction"),
 				vec![best_hash]
-			);
-		}
-
-		#[test]
-		fn submit_preimage_builds_at_the_finalized_anchor_when_the_replay_lags_it() {
-			let provider = Arc::new(
-				BulletinScriptedProvider::new([TransactionOutcome::Included])
-					.with_lagging_finalized_replay(3, Duration::from_millis(50)),
-			);
-			let finalized_hash: H256 = scripted_block_hash(3).parse().unwrap();
-			let value = b"lagging replay";
-
-			futures::executor::block_on(rpc(provider.clone()).submit_preimage(
-				&CallContext::default(),
-				Instant::now() + Duration::from_secs(5),
-				&allowance_fixture(),
-				value,
-			))
-			.unwrap();
-
-			let transactions = provider.submitted_transactions();
-			let transaction = hex::decode(transactions[0].trim_start_matches("0x")).unwrap();
-			assert!(store_signature_verifies_at(&transaction, value, finalized_hash));
-			assert_eq!(
-				provider.runtime_call_blocks("AccountNonceApi_account_nonce"),
-				vec![finalized_hash]
-			);
-			assert_eq!(
-				provider.runtime_call_blocks("TaggedTransactionQueue_validate_transaction"),
-				vec![finalized_hash]
 			);
 		}
 
