@@ -779,8 +779,7 @@ impl SigningHostRuntime {
 	/// Record that the host wrote ended session `intent` into its own
 	/// history. Until it does, the session is handed over again through
 	/// `funding_session_changed` each time funding resumes; the host reads
-	/// the full record with `funding_session`. Call it outside that
-	/// callback, which runs while the core holds its session lock.
+	/// the full record with `funding_session`.
 	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.acknowledge_funding_session"))]
 	pub async fn acknowledge_funding_session(
 		&self,

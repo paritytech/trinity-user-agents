@@ -7,10 +7,11 @@
 //!
 //! Every change goes through [`FundingRegistry::commit`], which serialises
 //! writes so persisted snapshots land in order, persists before anyone hears of
-//! the change, and then notifies subscribers and the host.
+//! the change, and then notifies subscribers and, once the write lock is
+//! released, the host.
 
 use std::{
-	collections::{HashMap, HashSet},
+	collections::{HashMap, HashSet, VecDeque},
 	sync::{
 		Arc, Mutex, MutexGuard, OnceLock, PoisonError, Weak,
 		atomic::{AtomicBool, Ordering},
@@ -43,6 +44,14 @@ const SWEEP_RETRY: Duration = Duration::from_secs(30);
 
 type Subscribers = HashMap<String, Vec<mpsc::UnboundedSender<HostFundingStatusSubscribeItem>>>;
 
+/// Session changes the host has not been told of yet, in commit order.
+#[derive(Default)]
+struct Announcements {
+	pending: VecDeque<(String, HostFundingStatusSubscribeItem)>,
+	/// Whether a caller is delivering them.
+	delivering: bool,
+}
+
 /// Host-global funding sessions, their subscribers and the host surface.
 #[derive(Default)]
 pub struct FundingRegistry {
@@ -52,6 +61,7 @@ pub struct FundingRegistry {
 	/// starts them.
 	presenting: Mutex<HashSet<String>>,
 	subscribers: Mutex<Subscribers>,
+	announcements: Mutex<Announcements>,
 	/// Held across every load and write; the flag records whether persisted
 	/// sessions have been loaded.
 	writes: AsyncMutex<bool>,
@@ -251,8 +261,7 @@ impl FundingRegistry {
 				kept.into_iter().map(|session| (session.intent.clone(), session)).collect();
 		}
 		*loaded = true;
-		// Still under the write lock, so notifications arrive in commit order,
-		// each session once even when an edit and its expiry both name it.
+		// Each session once, even when an edit and its expiry both name it.
 		let mut announced = HashSet::new();
 		changed.retain(|intent| announced.insert(intent.clone()));
 		for intent in changed {
@@ -260,6 +269,8 @@ impl FundingRegistry {
 				self.fan_out(&session);
 			}
 		}
+		drop(loaded);
+		self.announce();
 		Ok(result)
 	}
 
@@ -314,8 +325,8 @@ impl FundingRegistry {
 			.min()
 	}
 
-	/// Tell subscribers and the host about a session's current stage. A
-	/// terminal stage ends the subscriber streams.
+	/// Tell subscribers about a session's current stage and queue it for the
+	/// host. A terminal stage ends the subscriber streams.
 	fn fan_out(&self, session: &FundingSession) {
 		let item = session.wire_item();
 		{
@@ -327,9 +338,38 @@ impl FundingRegistry {
 				subscribers.remove(&session.intent);
 			}
 		}
-		if let Some(platform) = self.platform() {
-			platform.funding_session_changed(session.intent.clone(), item);
+		if self.platform.get().is_some() {
+			self.lock_announcements().pending.push_back((session.intent.clone(), item));
 		}
+	}
+
+	/// Hand queued changes to the host in commit order, outside the write
+	/// lock so the host may call back into the registry. One caller delivers
+	/// at a time, and a change committed from inside the callback is
+	/// delivered by that caller once the callback returns.
+	fn announce(&self) {
+		let Some(platform) = self.platform() else {
+			return;
+		};
+		if core::mem::replace(&mut self.lock_announcements().delivering, true) {
+			return;
+		}
+		loop {
+			let next = {
+				let mut announcements = self.lock_announcements();
+				let next = announcements.pending.pop_front();
+				announcements.delivering = next.is_some();
+				next
+			};
+			let Some((intent, item)) = next else {
+				return;
+			};
+			platform.funding_session_changed(intent, item);
+		}
+	}
+
+	fn lock_announcements(&self) -> MutexGuard<'_, Announcements> {
+		self.announcements.lock().unwrap_or_else(PoisonError::into_inner)
 	}
 
 	fn lock_presenting(&self) -> MutexGuard<'_, HashSet<String>> {
@@ -611,6 +651,70 @@ mod tests {
 				.map(|session| session.intent)
 				.collect::<Vec<_>>(),
 			["fs_live_new", "fs_live_old", "fs_new", "fs_old"]
+		);
+	}
+
+	/// A host that, told of a change, cancels the next session in
+	/// `cancels` from inside the callback, as a host recording its history
+	/// there would acknowledge from there.
+	struct ReentrantHost {
+		registry: OnceLock<Weak<FundingRegistry>>,
+		storage: Arc<crate::test_support::StubPlatform>,
+		cancels: Mutex<VecDeque<&'static str>>,
+		/// Each session the host heard of, and whether the write lock was
+		/// free at the time.
+		heard: Mutex<Vec<(String, bool)>>,
+	}
+
+	#[async_trait::async_trait]
+	impl FundingPlatform for ReentrantHost {
+		async fn present_funding(
+			&self,
+			_product: Option<&ProductContext>,
+			_session: FundingPresentation,
+		) -> Result<FundingPresentOutcome, GenericError> {
+			Ok(FundingPresentOutcome::Dismissed)
+		}
+
+		fn funding_session_changed(&self, intent: String, _status: HostFundingStatusSubscribeItem) {
+			let registry = self.registry.get().and_then(Weak::upgrade).expect("registry alive");
+			// Calling back while the lock is held would hang, so that is
+			// recorded instead of attempted.
+			let writes_free = registry.writes.try_lock().is_some();
+			self.heard.lock().expect("heard mutex poisoned").push((intent, writes_free));
+			let next = self.cancels.lock().expect("cancels mutex poisoned").pop_front();
+			if let (true, Some(next)) = (writes_free, next) {
+				let storage = self.storage.clone();
+				std::thread::spawn(move || block_on(registry.cancel(storage.as_ref(), NOW, next)))
+					.join()
+					.expect("cancel thread")
+					.expect("cancelled");
+			}
+		}
+	}
+
+	// A host told of a change may act on it straight away, and must still
+	// hear of every change in the order it was made.
+	#[test]
+	fn the_host_hears_of_changes_in_order_and_may_call_back() {
+		let storage = stub_platform();
+		let registry = Arc::new(FundingRegistry::default());
+		insert(&registry, storage.as_ref(), session("fs_a", NOW));
+		insert(&registry, storage.as_ref(), session("fs_b", NOW));
+		let host = Arc::new(ReentrantHost {
+			registry: OnceLock::new(),
+			storage: storage.clone(),
+			cancels: Mutex::new(VecDeque::from(["fs_b"])),
+			heard: Mutex::new(Vec::new()),
+		});
+		assert!(host.registry.set(Arc::downgrade(&registry)).is_ok());
+		assert!(registry.install_platform(host.clone()));
+
+		assert!(block_on(registry.cancel(storage.as_ref(), NOW, "fs_a")).expect("cancelled"));
+
+		assert_eq!(
+			*host.heard.lock().expect("heard mutex poisoned"),
+			[("fs_a".to_string(), true), ("fs_b".to_string(), true)]
 		);
 	}
 
