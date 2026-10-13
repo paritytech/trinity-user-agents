@@ -1869,7 +1869,6 @@ impl UserConfirmation for StubPlatform {
 				}
 				(self.resource_allocation_error, self.resource_allocation_confirmed)
 			},
-			UserConfirmationReview::PreimageSubmit(_) => (None, true),
 			UserConfirmationReview::ProductSubtree(review) => {
 				self.product_subtree_reviews
 					.lock()

@@ -595,6 +595,7 @@ extension Chat.LocalMessage {
             case new
             case sent
             case delivered
+            case failed
         }
 
         enum IncomingStatus: String, Equatable {
@@ -643,6 +644,7 @@ extension Chat.LocalMessage.Status: RawRepresentable {
         case 2: self = .outgoing(.sent)
         case 3: self = .outgoing(.delivered)
         case 4: self = .incoming(.seen)
+        case 5: self = .outgoing(.failed)
         default: return nil
         }
     }
@@ -654,6 +656,7 @@ extension Chat.LocalMessage.Status: RawRepresentable {
         case .outgoing(.sent): 2
         case .outgoing(.delivered): 3
         case .incoming(.seen): 4
+        case .outgoing(.failed): 5
         }
     }
 }
@@ -681,6 +684,7 @@ extension Chat.LocalMessage.Status.OutgoingStatus: Comparable {
         case .new: 0
         case .sent: 1
         case .delivered: 2
+        case .failed: 3
         }
     }
 }

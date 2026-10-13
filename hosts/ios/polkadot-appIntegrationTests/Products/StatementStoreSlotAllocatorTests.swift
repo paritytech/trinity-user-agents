@@ -44,7 +44,11 @@ final class StatementStoreSlotAllocatorTests: XCTestCase {
             wallet: setupResult.wallet,
             keyResolver: keyResolver,
             chainRegistry: chainRegistry,
-            storageRequestFactory: storageRequestFactory
+            networkSuffixProvider: ChainNetworkSuffixProvider(
+                chainId: KnownChainId.previewNetPeople,
+                chainRegistry: chainRegistry,
+                storageRequestFactory: storageRequestFactory
+            )
         )
 
         let facade = ExtrinsicSubmissionMonitorFacade(
@@ -76,6 +80,11 @@ final class StatementStoreSlotAllocatorTests: XCTestCase {
             chainId: KnownChainId.previewNetPeople,
             chainRegistry: chainRegistry,
             storageRequestFactory: storageRequestFactory,
+            networkSuffixProvider: ChainNetworkSuffixProvider(
+                chainId: KnownChainId.previewNetPeople,
+                chainRegistry: chainRegistry,
+                storageRequestFactory: storageRequestFactory
+            ),
             resourcesParameters: CachedResourcesParametersProvider(
                 viewFunctionExecutor: ViewFunctionExecutor(
                     chainRegistry: chainRegistry,
