@@ -4552,19 +4552,21 @@ impl crate::platform::PreimageReadHost for FixedPreimageRead {
 		Ok(self.0.clone())
 	}
 
-	/// A torrent read answers the value and the report of the fixed response, as file 0.
+	/// A torrent read answers the value and the report of the fixed response, as file 0, with
+	/// the key [9; 32] of the host.
 	async fn read_torrent(
 		&self,
 		_request: v01::RemotePreimageReadTorrentRequest,
 	) -> Result<v01::RemotePreimageReadTorrentResponse, v01::PreimageReadError> {
 		Ok(v01::RemotePreimageReadTorrentResponse {
 			value: self.0.value.clone(),
-			key: None,
+			key: Some([9; 32]),
 			name: Some("file.bin".to_string()),
 			file: 0,
 			report: self.0.report.clone(),
 			progress: None,
 			files: Vec::new(),
+			size: None,
 		})
 	}
 }
@@ -4572,11 +4574,13 @@ impl crate::platform::PreimageReadHost for FixedPreimageRead {
 fn torrent_read(
 	host: &ProductRuntimeHost,
 	route: v01::PreimageReadRoute,
+	range: Option<v01::TorrentReadRange>,
 ) -> Result<v01::RemotePreimageReadTorrentResponse, CallError<RemotePreimageReadError>> {
 	let request = RemotePreimageReadTorrentRequest::V1(v01::RemotePreimageReadTorrentRequest {
 		magnet: "magnet:?xt=urn:btih:2befcb908a1be306ba26451f75d51e83a5f43d36".to_string(),
 		file: None,
 		route,
+		range,
 	});
 	futures::executor::block_on(Preimage::read_torrent(host, &CallContext::default(), request)).map(
 		|response| {
@@ -4596,12 +4600,24 @@ fn preimage_read_torrent_sets_the_key_and_primes_the_host_cache() {
 	let report = v01::PreimageReadReport { served_by: None, attempts: Vec::new(), host_ms: 0 };
 	let host = ProductRuntimeHost::new_compat(stub_platform(), test_spawner());
 	// Without a read host, a torrent read is not available.
-	assert_eq!(torrent_read(&host, v01::PreimageReadRoute::Cache), Err(CallError::Unsupported));
+	assert_eq!(
+		torrent_read(&host, v01::PreimageReadRoute::Cache, None),
+		Err(CallError::Unsupported)
+	);
 	host.services.install_preimage_read_host(Arc::new(FixedPreimageRead(
 		v01::RemotePreimageReadResponse { value: Some(value.clone()), report: report.clone() },
 	)));
+	// A part is not the whole file: the key of the host stays.
+	let part = torrent_read(
+		&host,
+		v01::PreimageReadRoute::Cache,
+		Some(v01::TorrentReadRange { offset: 0, length: 6 }),
+	)
+	.unwrap();
+	assert_eq!((part.key, part.size), (Some([9; 32]), None));
+	// For the whole file, the core derives the key from the value.
 	assert_eq!(
-		torrent_read(&host, v01::PreimageReadRoute::Cache),
+		torrent_read(&host, v01::PreimageReadRoute::Cache, None),
 		Ok(v01::RemotePreimageReadTorrentResponse {
 			value: Some(value.clone()),
 			key: Some(key),
@@ -4610,13 +4626,14 @@ fn preimage_read_torrent_sets_the_key_and_primes_the_host_cache() {
 			report,
 			progress: None,
 			files: Vec::new(),
+			size: Some(6),
 		})
 	);
 	// The file is now in the read-after-write cache under its key.
 	assert_eq!(preimage_read(&host, &key, false).map(|read| read.value), Ok(Some(value)));
 	// A torrent is not on Bulletin.
 	assert!(matches!(
-		torrent_read(&host, v01::PreimageReadRoute::Bulletin),
+		torrent_read(&host, v01::PreimageReadRoute::Bulletin, None),
 		Err(CallError::Domain(_))
 	));
 }

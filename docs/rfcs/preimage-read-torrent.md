@@ -74,6 +74,20 @@ pub struct TorrentReadProgress {
 }
 ```
 
+## Large files
+
+TrUAPI carries a value as one hex string, and a JavaScript string has at most about 512 M characters. So a host answers
+a large file in parts. The request has an optional `range` (`offset`, `length`). Without a range, the host answers a
+small file whole. For a large file it answers no value, but the `key` and the `size` of the file: the product then reads
+the file with ranges, part by part. The host keeps the checked file in memory between the parts.
+
+The core derives the key from a whole value. A part is not the whole file, so for a part, or for a large file without a
+value, the key is the one of the host: the host checked each piece of the file against the torrent, and it derived the
+key from the whole file.
+
+Before the parts, the host receives the file from the provider and checks it. That can take some time for a large file,
+so the host does it in the background, and answers a progress in the step `Receiving` until it has the file.
+
 ## Trust
 
 The core cannot check a torrent file against a key that the product gives, because the product has no key. The check is

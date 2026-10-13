@@ -232,6 +232,7 @@ impl Preimage for ProductRuntimeHost {
             )));
 		}
 		let started = Instant::now();
+		let whole = request.range.is_none();
 		let Some(host) = self.services.preimage_read_host() else {
 			return Err(CallError::Unsupported);
 		};
@@ -239,12 +240,15 @@ impl Preimage for ProductRuntimeHost {
 			.read_torrent(request)
 			.await
 			.map_err(|error| CallError::Domain(RemotePreimageReadError::V1(error)))?;
-		// The host checked the file against the piece hashes of the torrent. The
-		// core derives the preimage key from the bytes itself, and keeps the file
-		// in its read-after-write cache, as after a submit.
-		response.key = response.value.as_ref().map(|value| preimage_key(value));
-		if let (Some(key), Some(value)) = (response.key, response.value.clone()) {
-			self.prime_preimage_cache(&key, value);
+		// The host checked the file against the piece hashes of the torrent. For a
+		// whole value, the core derives the preimage key from the bytes itself, and
+		// keeps the file in its read-after-write cache, as after a submit. A part is
+		// not the whole file, so the key of the host stays.
+		if whole && let Some(value) = &response.value {
+			let key = preimage_key(value);
+			response.key = Some(key);
+			response.size = Some(value.len() as u64);
+			self.prime_preimage_cache(&key, value.clone());
 		}
 		response.report.host_ms = elapsed_ms(started);
 		Ok(RemotePreimageReadTorrentResponse::V1(response))

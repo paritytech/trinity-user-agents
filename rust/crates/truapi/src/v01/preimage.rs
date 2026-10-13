@@ -197,17 +197,36 @@ pub struct RemotePreimageReadTorrentRequest {
 	pub file: Option<u32>,
 	/// Where the host reads. `Bulletin` is not a route for a torrent.
 	pub route: PreimageReadRoute,
+	/// A part of the file. `None` asks for the whole file. The host answers a large file in
+	/// parts only: then it gives no value, and the product reads each part with a range.
+	pub range: Option<TorrentReadRange>,
+}
+
+/// A part of the file of a torrent read: `length` bytes from `offset`. The host can give
+/// fewer bytes, at the end of the file or above its own limit for one answer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
+pub struct TorrentReadRange {
+	/// The first byte of the part in the file.
+	pub offset: u64,
+	/// The number of bytes of the part.
+	pub length: u32,
 }
 
 /// The file of a torrent read, and how the host got it.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 pub struct RemotePreimageReadTorrentResponse {
-	/// The file, checked against the piece hashes of the torrent. `None` when
-	/// no source on the route had it.
+	/// The file, or the part of the request, checked against the piece hashes of
+	/// the torrent. `None` when no source on the route had it, while a provider
+	/// downloads it (`progress`), or for a large file that the product reads in
+	/// parts (`size` is then set).
 	pub value: Option<Vec<u8>>,
-	/// The preimage key of the file: the blake2b-256 of the value. The core
-	/// sets it, so a product can read the file again with `Preimage.read`.
+	/// The preimage key of the file: the blake2b-256 of the whole file, so a
+	/// product can read the file again with `Preimage.read`. For a whole value
+	/// the core derives it from the value. For a part, or a large file without a
+	/// value, the host derives it from the file that it checked.
 	pub key: Option<[u8; 32]>,
+	/// The size of the whole file, when the host has the file.
+	pub size: Option<u64>,
 	/// The name of the file in the torrent, when the host knows it.
 	pub name: Option<String>,
 	/// The index of the file in the torrent.
@@ -261,6 +280,8 @@ pub enum TorrentReadState {
 	Downloading,
 	/// The pieces are complete, and the provider stores the file.
 	Importing,
+	/// The host receives the file from the provider and checks it against the torrent.
+	Receiving,
 }
 
 /// Why a host could not read a preimage.
