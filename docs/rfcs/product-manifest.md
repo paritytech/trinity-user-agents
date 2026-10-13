@@ -200,12 +200,11 @@ Publishers MUST set `kind` to match the subname label the manifest is written un
 
 #### Funding configuration
 
-`includes.funding` is the one surface that carries a configuration object rather than a flag. Its presence means the worker serves Funding. The provider's worker answers quotes, calling its own API directly or, when that needs the provider's key, through the onramp adapter `backend` names. What the provider moves comes from those quotes; `routes` can declare it up front so a Host skips asking a provider that cannot serve a request.
+`includes.funding` is the one surface that carries a configuration object rather than a flag. Its presence means the worker serves Funding. The provider's worker answers quotes, and a Host asks every funding provider for every quote. What the provider moves comes from those quotes; `routes` can declare it up front so a Host can show what the provider serves before quotes arrive.
 
 ```typescript
 type FundingConfig = {
   routes?: FundingRoute[];       // What the provider moves, and how. Omitted means not declared.
-  backend?: string;              // Onramp adapter id for the worker's calls that need the provider's key.
 };
 
 type FundingRoute = {
@@ -217,12 +216,11 @@ type FundingRoute = {
 };
 ```
 
-- **Routes are optional and only narrow the quotes a Host asks for.** A provider's routes change more often than it publishes a release, and a Host reads a manifest again only when its `contenthash` changes, so declared routes can lag. A worker without `routes` is asked for every quote, and its answers say what it serves.
+- **Routes are optional and informational.** They let a Host show what a provider serves before quotes arrive, such as listing it under a mode and direction. They do not decide which providers a Host asks: every funding provider is asked for every quote. A provider's routes change more often than it publishes a release, and a Host reads a manifest again only when its `contenthash` changes, so declared routes can lag. A worker without `routes` still serves Funding, and its quotes say what it serves.
 - **One mode per route.** A provider serving card and bank publishes two routes.
 - **Unrecognised values are ignored, not fatal**, so later revisions can add modes and directions without a new `$v`. A route is ignored when its `mode` is unrecognised or it has no recognised direction or no assets; an unrecognised direction is dropped from a route that has others. A worker left with no usable route is treated as declaring none.
 - **Networks are lowercase ids**, and a Host asks for a quote on one of them. Unrecognised ids are ignored like other unknown values, and `networks` on a CARD or BANK route is ignored.
-- **The quote is authoritative.** A Host MAY leave out a route whose `countries` omit the user's country without quoting it; a declared country can still be refused, and a route without `countries` is checked by its quote. Limits, fees and timing come only from the quote, which the Funding runtime contract defines.
-- **`backend` is an onramp adapter id, never a key.** The adapter holds the provider's key, attaches it to the worker's call and returns the provider's answer to the worker.
+- **The quote is authoritative.** A Host MAY use a route's `countries` to pre-filter what it shows, such as not listing a route whose `countries` omit the user's country; a declared country can still be refused, and a route without `countries` is checked by its quote. Limits, fees and timing come only from the quote, which the Funding runtime contract defines.
 
 The smallest declaration is `"funding": {}`, a provider whose quotes say everything it serves. A provider serving inbound card payments in EUR and USD in three countries, and crypto deposits and withdrawals of USDT and DOT on Polkadot and Ethereum:
 
@@ -549,8 +547,7 @@ A conforming Host implementation should produce well-defined behaviour for each 
 - Executable subname owned by a different account than the base name (when strict provenance is enabled) → skip that executable.
 - Unrecognised key in `includes` → ignored; the other surfaces still serve.
 - Funding route with an unrecognised `mode`, no recognised direction, or no assets → route ignored; other routes still apply. An unrecognised direction alongside recognised ones is dropped.
-- No `routes`, or no usable funding route → the worker still serves Funding; the Host asks it for every quote.
-- `backend` naming an onramp adapter the Host does not know → the Host does not offer the provider.
+- No `routes`, or no usable funding route → the worker still serves Funding; the Host asks it for every quote, like every other funding provider.
 
 ## Drawbacks
 
@@ -572,7 +569,7 @@ A conforming Host implementation should produce well-defined behaviour for each 
 - **Trust grants are publisher-declared, not user-declared.** A grant is authenticated by nothing stronger than dotNS ownership, so a compromised or transferred name widens access with one `setText`. Two constraints follow. A grant MUST NOT override a denial the user already gave — it waives the publisher's prompt, never the user's. And revocation is a record edit with no signal attached, so a Host that honours a cached grant indefinitely cannot be revoked from (see [Cache invalidation](#resolving-a-product)).
 - **Size cap at publishing.** The publisher MUST validate every manifest against the v1 schema and reject payloads exceeding the dotNS text-record budget before submitting. dotNS enforces a wire-level cap on writes.
 - **Subname squatting is structurally prevented.** `setSubnodeOwner` is gated by parent-ownership: only the owner of `<product_id>.<tld>` can create the modality subnames.
-- **No provider keys in manifests.** A manifest is public, so `backend` names an onramp adapter the Host trusts and that adapter holds the key. Hosts MUST NOT read key material from a manifest.
+- **No provider keys in manifests.** A manifest is public and never carries keys.
 - **No user data.** The manifest carries no user data; privacy exposure is limited to whatever dotNS RPC traffic reveals about which products a client is resolving.
 
 ## Unresolved Questions
