@@ -159,7 +159,11 @@ impl FundingRegistry {
 			return Some(current.boxed());
 		}
 		let (sender, receiver) = mpsc::unbounded();
-		subscribers.entry(intent.to_string()).or_default().push(sender);
+		let senders = subscribers.entry(intent.to_string()).or_default();
+		// A product that reloads subscribes again without the session
+		// changing, so watchers it left are dropped here too.
+		senders.retain(|sender| !sender.is_closed());
+		senders.push(sender);
 		Some(current.chain(receiver).boxed())
 	}
 
@@ -605,6 +609,19 @@ mod tests {
 				},
 			]
 		);
+	}
+
+	#[test]
+	fn subscribing_drops_watchers_that_went_away() {
+		let storage = stub_platform();
+		let registry = FundingRegistry::default();
+		insert(&registry, storage.as_ref(), session("fs_1", NOW));
+		for _ in 0..3 {
+			drop(registry.subscribe("fs_1").expect("session exists"));
+		}
+		let _live = registry.subscribe("fs_1").expect("session exists");
+
+		assert_eq!(registry.lock_subscribers()["fs_1"].len(), 1);
 	}
 
 	#[test]
