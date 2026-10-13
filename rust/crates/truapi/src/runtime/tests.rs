@@ -2741,14 +2741,21 @@ impl crate::platform::FundingPlatform for RecordingFundingPlatform {
 }
 
 fn funding_services() -> Arc<RuntimeServices> {
+	funding_services_on(stub_platform(), test_spawner())
+}
+
+fn funding_services_on(
+	storage: Arc<crate::test_support::StubPlatform>,
+	spawner: crate::subscription::Spawner,
+) -> Arc<RuntimeServices> {
 	let (host_config, _) = runtime_config("funding.dot");
 	RuntimeServices::new(
-		stub_platform(),
+		storage,
 		host_config.host.host_info.clone(),
 		host_config.people_chain_genesis_hash,
 		host_config.bulletin_chain_genesis_hash,
 		host_config.asset_hub_chain_genesis_hash,
-		test_spawner(),
+		spawner,
 	)
 }
 
@@ -2815,15 +2822,7 @@ impl crate::platform::FundingPlatform for ObservingFundingPlatform {
 #[test]
 fn a_session_is_stored_only_once_the_user_starts_it() {
 	let storage = Arc::new(crate::test_support::StubPlatform::default());
-	let (host_config, _) = runtime_config("funding.dot");
-	let services = RuntimeServices::new(
-		storage.clone(),
-		host_config.host.host_info.clone(),
-		host_config.people_chain_genesis_hash,
-		host_config.bulletin_chain_genesis_hash,
-		host_config.asset_hub_chain_genesis_hash,
-		test_spawner(),
-	);
+	let services = funding_services_on(storage.clone(), test_spawner());
 	let platform = Arc::new(ObservingFundingPlatform {
 		storage: storage.clone(),
 		stored_while_shown: Mutex::new(None),
@@ -2845,6 +2844,55 @@ fn a_session_is_stored_only_once_the_user_starts_it() {
 		(*platform.stored_while_shown.lock().expect("stored mutex poisoned"), stored_after),
 		(Some(0), 1)
 	);
+}
+
+/// A funding overlay whose storage starts failing writes while it is up.
+struct StorageFailingFundingPlatform {
+	storage: Arc<crate::test_support::StubPlatform>,
+	outcome: crate::platform::FundingPresentOutcome,
+}
+
+#[truapi::async_trait]
+impl crate::platform::FundingPlatform for StorageFailingFundingPlatform {
+	async fn present_funding(
+		&self,
+		_product: Option<&ProductContext>,
+		_session: crate::platform::FundingPresentation,
+	) -> Result<crate::platform::FundingPresentOutcome, truapi::latest::GenericError> {
+		*self
+			.storage
+			.core_storage_write_error
+			.lock()
+			.expect("write error mutex poisoned") = Some("disk full");
+		Ok(self.outcome)
+	}
+}
+
+// A session the user left the overlay without, or that could not be stored
+// once started, must not linger in memory where the host's views and the
+// next save would pick it up.
+#[test]
+fn a_session_that_does_not_start_is_gone_even_when_storage_fails() {
+	for outcome in [
+		crate::platform::FundingPresentOutcome::Started,
+		crate::platform::FundingPresentOutcome::Dismissed,
+	] {
+		let storage = Arc::new(crate::test_support::StubPlatform::default());
+		let services = funding_services_on(storage.clone(), test_spawner());
+		assert!(services.funding().install_platform(Arc::new(StorageFailingFundingPlatform {
+			storage: storage.clone(),
+			outcome,
+		})));
+
+		let opened = futures::executor::block_on(services.open_funding(
+			None,
+			v01::FundingDirection::In,
+			None,
+		));
+
+		assert!(opened.is_err(), "{outcome:?} opened a session");
+		assert_eq!(services.funding().sessions(), Vec::new(), "{outcome:?} left a session");
+	}
 }
 
 // The host writes one history row per announcement, so a session an edit

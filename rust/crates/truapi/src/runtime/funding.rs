@@ -153,6 +153,60 @@ impl FundingRegistry {
 		Some(current.chain(receiver).boxed())
 	}
 
+	/// Hold `session` in memory while its overlay is up, so the overlay can
+	/// work with it, but keep it out of storage until [`Self::start`].
+	async fn present(
+		&self,
+		storage: &(impl CoreStorage + ?Sized),
+		now_ms: u64,
+		session: FundingSession,
+	) -> Result<(), FundingSessionError> {
+		let intent = session.intent.clone();
+		let presented = self
+			.commit(storage, now_ms, |sessions| {
+				self.lock_presenting().insert(session.intent.clone());
+				sessions.insert(session.intent.clone(), session);
+				((), Vec::new())
+			})
+			.await;
+		if presented.is_err() {
+			self.discard(&intent).await;
+		}
+		presented
+	}
+
+	/// The user started presented session `intent`: store it and announce
+	/// it. A session that cannot be stored is discarded, as the caller is
+	/// told it failed.
+	async fn start(
+		&self,
+		storage: &(impl CoreStorage + ?Sized),
+		now_ms: u64,
+		intent: &str,
+	) -> Result<(), FundingSessionError> {
+		// Leaving the overlay inside the commit, so no other commit stores
+		// the session before this one announces it.
+		let started = self
+			.commit(storage, now_ms, |_| {
+				self.lock_presenting().remove(intent);
+				((), vec![intent.to_string()])
+			})
+			.await;
+		if started.is_err() {
+			self.discard(intent).await;
+		}
+		started
+	}
+
+	/// Drop presented session `intent`. It was never stored, so this cannot
+	/// fail; holding the write lock keeps any commit from storing it on the
+	/// way out.
+	async fn discard(&self, intent: &str) {
+		let _writes = self.writes.lock().await;
+		self.lock_presenting().remove(intent);
+		self.lock_sessions().remove(intent);
+	}
+
 	/// Apply `edit` to a copy of the sessions, persist the result, then make it
 	/// current and notify every session `edit` names.
 	///
@@ -414,47 +468,27 @@ impl RuntimeServices {
 		// provider, but stored only once the user starts it: an overlay the
 		// app is killed under leaves no session behind.
 		let storage = self.platform.as_ref();
-		registry.lock_presenting().insert(session.intent.clone());
-		let shown = session.clone();
-		if let Err(error) = registry
-			.commit(storage, now_ms, move |sessions| {
-				sessions.insert(shown.intent.clone(), shown);
-				((), Vec::new())
-			})
+		registry
+			.present(storage, now_ms, session.clone())
 			.await
-		{
-			registry.lock_presenting().remove(&session.intent);
-			return Err(OpenFundingError::Session(error));
-		}
+			.map_err(OpenFundingError::Session)?;
 		let presented = platform
 			.present_funding(
 				product,
 				FundingPresentation { intent: session.intent.clone(), direction, amount },
 			)
 			.await;
-		registry.lock_presenting().remove(&session.intent);
-		let intent = session.intent.clone();
 		match presented {
 			Ok(FundingPresentOutcome::Started) => {
-				// The host hears of a session only once the user has started
-				// it, and that commit is what stores it.
 				registry
-					.commit(storage, current_unix_millis(), move |_| ((), vec![intent]))
+					.start(storage, current_unix_millis(), &session.intent)
 					.await
 					.map_err(OpenFundingError::Session)?;
 				registry.keep_expiring(self);
 				Ok(registry.get(&session.intent).unwrap_or(session))
 			},
 			outcome => {
-				let discarded = registry
-					.commit(storage, current_unix_millis(), move |sessions| {
-						sessions.remove(&intent);
-						((), Vec::new())
-					})
-					.await;
-				if let Err(error) = discarded {
-					tracing::warn!(%error, "discarding an unstarted funding session failed");
-				}
+				registry.discard(&session.intent).await;
 				Err(match outcome {
 					Ok(_) => OpenFundingError::Dismissed,
 					Err(error) => OpenFundingError::Present(error),
