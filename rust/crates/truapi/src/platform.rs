@@ -3212,6 +3212,21 @@ pub struct FundingPresentation {
 	pub amount: Option<u128>,
 }
 
+/// The providers' quotes for one ask, as the host draws its provider list.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+pub struct FundingQuoteList {
+	/// One row per provider asked, in the host's provider order.
+	pub rows: Vec<FundingQuoteRow>,
+	/// The provider whose quote is best for the user, which the host selects
+	/// until the user picks another: the least to pay inbound, the most to
+	/// receive outbound. `None` until one quotes.
+	pub best: Option<String>,
+	/// When the core asks every provider again, in Unix milliseconds. The
+	/// rows go back to `Pending` then.
+	pub refresh_at_ms: u64,
+}
+
 /// One provider's place in the list a quote request fills in.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
@@ -3295,11 +3310,11 @@ pub trait FundingPlatform: Send + Sync {
 		let _ = (intent, status);
 	}
 
-	/// Observe one provider's row of a quote list the host requested, for the
-	/// provider list. Each provider's row arrives `Pending`, then once more
-	/// with its quote or why it is unavailable.
-	fn funding_quote_changed(&self, intent: String, row: FundingQuoteRow) {
-		let _ = (intent, row);
+	/// Observe the quote list the host requested, for the provider list:
+	/// again whenever a provider answers, and each time the core asks every
+	/// provider again.
+	fn funding_quotes_changed(&self, intent: String, quotes: FundingQuoteList) {
+		let _ = (intent, quotes);
 	}
 }
 

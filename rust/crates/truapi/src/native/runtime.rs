@@ -392,10 +392,18 @@ impl NativeTrUApiHostRuntime {
 		self.runtime.funding_candidates(&intent)
 	}
 
-	/// Ask the candidates for funding session `intent` to price `ask`. Each
-	/// provider's row arrives through `funding_quote_changed`.
+	/// Ask every funding provider to price `ask` for session `intent`. The
+	/// list arrives through `funding_quotes_changed`, and is asked for again
+	/// every minute until the session is handed to a provider or ends, the
+	/// host asks for another `ask`, or calls [`Self::stop_funding_quotes`].
 	pub fn get_funding_quote(&self, intent: String, ask: v01::FundingQuoteAsk) {
 		self.runtime.request_funding_quotes(&intent, ask);
+	}
+
+	/// Stop asking again for session `intent`'s quotes, as when the user
+	/// leaves the provider list.
+	pub fn stop_funding_quotes(&self, intent: String) {
+		self.runtime.stop_funding_quotes(&intent);
 	}
 
 	/// Hand open funding session `intent` to the provider the user chose, by

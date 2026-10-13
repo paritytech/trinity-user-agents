@@ -8596,6 +8596,77 @@ fn quotes_resolve_row_by_row_and_a_silent_provider_times_out() {
 	);
 }
 
+// The host's list marks the best quote and is asked for again each round
+// while the user has not chosen; once they have, it stops.
+#[test]
+fn the_quote_list_marks_the_best_and_refreshes_until_a_provider_is_chosen() {
+	let services = funding_services();
+	assert!(services.funding().install_platform(RecordingFundingPlatform::answering(
+		crate::platform::FundingPresentOutcome::Started,
+	)));
+	services
+		.set_funding_providers(
+			["ramp.dot", "cheap.dot"]
+				.map(|product_id| crate::host_logic::funding_providers::FundingProviderEntry {
+					product_id: product_id.to_string(),
+					worker_manifest: Some(RAMP_MANIFEST.to_string()),
+					origin: crate::host_logic::funding_providers::FundingProviderOrigin::Published,
+				})
+				.to_vec(),
+		)
+		.expect("providers offered");
+	let intent = futures::executor::block_on(services.open_funding(
+		None,
+		v01::FundingDirection::In,
+		Some(1_000),
+	))
+	.expect("opened")
+	.intent;
+	answer_quotes(&services, "ramp.dot", card_quote("q1"));
+	answer_quotes(
+		&services,
+		"cheap.dot",
+		v01::FundingQuote { send_amount: 1_010, ..card_quote("q2") },
+	);
+	use crate::platform::FundingQuoteState;
+	let mut lists = services.watch_funding_quotes_within(
+		&intent,
+		card_ask(None),
+		Duration::from_secs(5),
+		Duration::from_millis(300),
+	);
+	let mut next = || futures::executor::block_on(lists.next());
+	let resolved = |list: &crate::platform::FundingQuoteList| {
+		list.rows.iter().all(|row| row.state != FundingQuoteState::Pending)
+	};
+	let first_shown = next().expect("first list");
+	let mut first = first_shown.clone();
+	while !resolved(&first) {
+		first = next().expect("first round");
+	}
+	let mut second = next().expect("second round");
+	while !resolved(&second) {
+		second = next().expect("second round");
+	}
+	futures::executor::block_on(services.select_funding_provider(&intent, "cheap.dot", Some("q2")))
+		.expect("chosen");
+	let mut after_choice = 0;
+	while next().is_some() {
+		after_choice += 1;
+	}
+
+	assert_eq!(
+		(
+			first_shown.rows.iter().map(|row| row.provider_id.as_str()).collect::<Vec<_>>(),
+			first.best.as_deref(),
+			second.best.as_deref(),
+			second.refresh_at_ms > first.refresh_at_ms,
+			after_choice,
+		),
+		(vec!["ramp.dot", "cheap.dot"], Some("cheap.dot"), Some("cheap.dot"), true, 0)
+	);
+}
+
 // The provider is handed the session's amount and the quote together, so a
 // quote priced for another amount would leave it two answers to what the
 // user pays. A session opened without an amount takes the one the user chose.

@@ -704,8 +704,8 @@ impl crate::platform::FundingPlatform for FundingCallbackPlatform {
 		self.funding.funding_session_changed(intent, status);
 	}
 
-	fn funding_quote_changed(&self, intent: String, row: crate::platform::FundingQuoteRow) {
-		self.funding.funding_quote_changed(intent, row);
+	fn funding_quotes_changed(&self, intent: String, quotes: crate::platform::FundingQuoteList) {
+		self.funding.funding_quotes_changed(intent, quotes);
 	}
 }
 

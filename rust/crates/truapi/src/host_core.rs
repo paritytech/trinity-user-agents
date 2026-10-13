@@ -899,21 +899,29 @@ impl SigningHostRuntime {
 		self.services.get_funding_quote(intent, ask)
 	}
 
-	/// [`Self::get_funding_quote`] for hosts that take each row through
-	/// [`FundingPlatform::funding_quote_changed`] instead of a stream.
+	/// Quotes for funding session `intent`, for hosts that take the list
+	/// through [`FundingPlatform::funding_quotes_changed`]: every provider is
+	/// asked again at the list's `refresh_at_ms` until the session is handed
+	/// to a provider or ends, the host asks for another `ask`, or calls
+	/// [`Self::stop_funding_quotes`].
 	pub fn request_funding_quotes(&self, intent: &str, ask: v01::FundingQuoteAsk) {
-		let rows = self.services.get_funding_quote(intent, ask);
+		let lists = self.services.watch_funding_quotes(intent, ask);
 		let platform = self.services.funding().platform();
 		let intent = intent.to_string();
 		(self.services.spawner)(Box::pin(async move {
 			let Some(platform) = platform else {
 				return;
 			};
-			futures::pin_mut!(rows);
-			while let Some(row) = futures::StreamExt::next(&mut rows).await {
-				platform.funding_quote_changed(intent.clone(), row);
+			futures::pin_mut!(lists);
+			while let Some(list) = futures::StreamExt::next(&mut lists).await {
+				platform.funding_quotes_changed(intent.clone(), list);
 			}
 		}));
+	}
+
+	/// Stop asking again for funding session `intent`'s quotes.
+	pub fn stop_funding_quotes(&self, intent: &str) {
+		self.services.funding_quotes().stop_watching(intent);
 	}
 
 	/// Hand open funding session `intent` to the provider the user chose,
