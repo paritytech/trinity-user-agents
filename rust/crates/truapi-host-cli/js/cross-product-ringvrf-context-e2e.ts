@@ -12,7 +12,7 @@
 //   stash.paseo   grants nothing.
 //
 // The runner serves one product per host process, so
-// `scripts/third-product-context-e2e.sh` invokes this once per phase with
+// `scripts/cross-product-ringvrf-context-e2e.sh` invokes this once per phase with
 // `E2E_PHASE` set, pointing every run at the same `--base-path` so the key
 // registered in one is there for the next.
 //
@@ -24,7 +24,7 @@
 //             (refused).
 //
 // Reading the result: an admitted proof still comes back `NotMember`. The
-// context is checked first, and the CLI account is not a person, so the proof
+// context is checked first, and the test signer is not a person, so the proof
 // fails one check later. The refusal is `NotAllowlisted` for a proof and
 // `Rejected` for an alias. Before the fix both contexts were refused.
 
@@ -125,7 +125,7 @@ function expectAdmitted(call: string, productId: string, result: string): void {
     );
   }
   const note =
-    result === ADMITTED_NOT_MEMBER ? " (the CLI account is not a person)" : "";
+    result === ADMITTED_NOT_MEMBER ? " (the test signer is not a person)" : "";
   console.log(`admitted ${call} in ${productId}: ${result}${note}`);
 }
 
