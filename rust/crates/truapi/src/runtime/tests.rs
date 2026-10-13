@@ -2759,12 +2759,29 @@ fn funding_services_on(
 	)
 }
 
+/// Spawner that holds every task until the test runs it, so the test knows
+/// when spawned work has finished.
+#[derive(Clone, Default)]
+struct HeldTasks(Arc<Mutex<Vec<futures::future::BoxFuture<'static, ()>>>>);
+
+impl HeldTasks {
+	fn spawner(&self) -> crate::subscription::Spawner {
+		let tasks = self.0.clone();
+		Arc::new(move |task| tasks.lock().expect("tasks mutex poisoned").push(task))
+	}
+
+	fn take(&self) -> Vec<futures::future::BoxFuture<'static, ()>> {
+		core::mem::take(&mut *self.0.lock().expect("tasks mutex poisoned"))
+	}
+}
+
 // A host's history writes one row per outcome, so an ended session it has
 // not recorded is announced again each time funding resumes, until the host
 // acknowledges it.
 #[test]
 fn funding_resumes_by_announcing_what_the_host_has_not_recorded() {
-	let services = funding_services();
+	let tasks = HeldTasks::default();
+	let services = funding_services_on(stub_platform(), tasks.spawner());
 	let platform =
 		RecordingFundingPlatform::answering(crate::platform::FundingPresentOutcome::Started);
 	assert!(services.funding().install_platform(platform.clone()));
@@ -2773,17 +2790,15 @@ fn funding_resumes_by_announcing_what_the_host_has_not_recorded() {
 			.expect("opened")
 			.intent;
 	assert!(futures::executor::block_on(services.cancel_funding(&intent)).expect("cancelled"));
+	// The expiry sweep the open armed would wait out the session's deadline.
+	drop(tasks.take());
 	let announced_on_resume = || {
 		platform.announced.lock().expect("announced mutex poisoned").clear();
 		services.resume_funding();
-		for _ in 0..200 {
-			let announced = platform.announced.lock().expect("announced mutex poisoned").clone();
-			if !announced.is_empty() {
-				return announced;
-			}
-			std::thread::sleep(Duration::from_millis(10));
+		for task in tasks.take() {
+			futures::executor::block_on(task);
 		}
-		Vec::new()
+		platform.announced.lock().expect("announced mutex poisoned").clone()
 	};
 
 	let before = announced_on_resume();
