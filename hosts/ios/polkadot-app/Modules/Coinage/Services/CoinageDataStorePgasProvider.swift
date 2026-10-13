@@ -63,7 +63,8 @@ extension PGASAccountProvisioner {
                     chainResource: chainRegistry,
                     operationQueue: OperationManagerFacade.sharedDefaultQueue
                 )
-            )
+            ),
+            issueDiagnostics: .make(flow: "pgas-allowance", reporter: IssueReportingFacade.shared)
         )
     }
 }
