@@ -24,6 +24,10 @@ public extension ResourcesPallet {
         StorageCodingPath(moduleName: name, itemName: "StatementStoreAllowances")
     }
 
+    static var notificationRegistrationByAlias: StorageCodingPath {
+        StorageCodingPath(moduleName: name, itemName: "NotificationRegistrationByAlias")
+    }
+
     static var spentLongTermStorageAliases: StorageCodingPath {
         StorageCodingPath(moduleName: name, itemName: "SpentLongTermStorageAliases")
     }

@@ -6,11 +6,25 @@ import Operation_iOS
 import SDKLogger
 
 protocol OutgoingChatRequestServicing {
+    /// Only the outer statement is signed by `signer`; the inner proof and the session stay on `ownKeyId`.
     func send(
         message: Chat.RequestMessage,
         to peer: MessageExchange.Peer,
-        ownKeyId: MessageExchange.Own
+        ownKeyId: MessageExchange.Own,
+        signer: StatementStoreSigning
     ) async throws
+
+    func encodedSize(
+        of message: Chat.RequestMessage,
+        to peer: MessageExchange.Peer,
+        ownKeyId: MessageExchange.Own
+    ) throws -> Int
+
+    func isStored(
+        to peer: MessageExchange.Peer,
+        ownKeyId: MessageExchange.Own,
+        signedBy accountId: AccountId
+    ) async throws -> Bool
 }
 
 enum OutgoingChatRequestServiceError: Error {
@@ -18,23 +32,22 @@ enum OutgoingChatRequestServiceError: Error {
 }
 
 final class OutgoingChatRequestService {
-    private let statementStoreSubmitter: StatementStoreSubmitting
-    private let statementSignManager: StatementStoreSignerManaging
+    private static let topicCount = 3
+
+    private let statementStoreConnection: StatementStoreConnecting
     private let priorityFactory: StatementPriorityMaking
     private let requestFactory: ChatRequestFactoryProtocol
     private let channelFactory: ChatRequestChannelFactoryProtocol
     private let logger: SDKLoggerProtocol
 
     init(
-        statementStoreSubmitter: StatementStoreSubmitting,
-        statementSignManager: StatementStoreSignerManaging,
+        statementStoreConnection: StatementStoreConnecting,
         requestFactory: ChatRequestFactoryProtocol,
         priorityFactory: StatementPriorityMaking,
         channelFactory: ChatRequestChannelFactoryProtocol,
         logger: SDKLoggerProtocol
     ) {
-        self.statementStoreSubmitter = statementStoreSubmitter
-        self.statementSignManager = statementSignManager
+        self.statementStoreConnection = statementStoreConnection
         self.priorityFactory = priorityFactory
         self.channelFactory = channelFactory
         self.requestFactory = requestFactory
@@ -46,7 +59,8 @@ extension OutgoingChatRequestService: OutgoingChatRequestServicing {
     func send(
         message: Chat.RequestMessage,
         to peer: MessageExchange.Peer,
-        ownKeyId: MessageExchange.Own
+        ownKeyId: MessageExchange.Own,
+        signer: StatementStoreSigning
     ) async throws {
         guard let pagination = ChatRequest.paginationDay(from: Date()) else {
             throw OutgoingChatRequestServiceError.unexpected("Invalid pagination day")
@@ -56,20 +70,10 @@ extension OutgoingChatRequestService: OutgoingChatRequestServicing {
         let topic2 = try ChatRequest.paginationTopic(from: peer.accountId, day: pagination.day)
         let channel = try channelFactory.outgoingChannel(with: peer, ownKeyId: ownKeyId)
 
-        let remoteRequest = try requestFactory.createRemoteRequest(
-            from: message,
-            peerEncryptionPubKey: peer.publicKey,
-            peerAccountId: peer.accountId,
-            ownKeyId: ownKeyId
-        )
-
-        let statementSigner = try statementSignManager.makeSigner(for: ownKeyId.signKeyId)
-
-        let payload = try remoteRequest.scaleEncoded()
-        let scaleEncodedPayload = try payload.scaleEncoded()
+        let scaleEncodedPayload = try makePayload(message: message, to: peer, ownKeyId: ownKeyId)
 
         let builder = StatementSubmitParametersBuilder(
-            signer: statementSigner,
+            signer: signer,
             logger: logger
         )
         .addTopic1(topic1)
@@ -79,6 +83,49 @@ extension OutgoingChatRequestService: OutgoingChatRequestServicing {
         .addExpiry(priorityFactory.makeTimestampPriority())
         .addScaleEncodedPayload(scaleEncodedPayload)
 
-        try await statementStoreSubmitter.submitStatement(with: builder)
+        try await statementStoreConnection.submitStatement(with: builder)
+    }
+
+    func encodedSize(
+        of message: Chat.RequestMessage,
+        to peer: MessageExchange.Peer,
+        ownKeyId: MessageExchange.Own
+    ) throws -> Int {
+        try makePayload(message: message, to: peer, ownKeyId: ownKeyId).count
+            + StatementSize.overhead(topicCount: Self.topicCount)
+    }
+
+    func isStored(
+        to peer: MessageExchange.Peer,
+        ownKeyId: MessageExchange.Own,
+        signedBy accountId: AccountId
+    ) async throws -> Bool {
+        let channel = try channelFactory.outgoingChannel(with: peer, ownKeyId: ownKeyId).fixedStatementFieldData()
+        let statements = try await statementStoreConnection.fetchStatements(with: .matchAll([channel]))
+
+        return try statements.contains { data in
+            let statement = try Statement(scaleDecoder: ScaleDecoder(data: data))
+
+            guard case let .sr25519(_, signer) = statement.getProof() else { return false }
+
+            return signer == accountId
+        }
+    }
+}
+
+private extension OutgoingChatRequestService {
+    func makePayload(
+        message: Chat.RequestMessage,
+        to peer: MessageExchange.Peer,
+        ownKeyId: MessageExchange.Own
+    ) throws -> Data {
+        let remoteRequest = try requestFactory.createRemoteRequest(
+            from: message,
+            peerEncryptionPubKey: peer.publicKey,
+            peerAccountId: peer.accountId,
+            ownKeyId: ownKeyId
+        )
+
+        return try remoteRequest.scaleEncoded().scaleEncoded()
     }
 }
