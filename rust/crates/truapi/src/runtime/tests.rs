@@ -8261,7 +8261,7 @@ fn a_session_settles_from_the_top_up_the_provider_started() {
 	);
 	let worker = provider_worker(&services, "ramp.dot");
 	first_served(&worker);
-	top_up(&worker, product_account_source()).expect("top-up accepted");
+	top_up(&worker, 1_000, product_account_source()).expect("top-up accepted");
 	report_funding(
 		&worker,
 		&intent,
@@ -8395,7 +8395,7 @@ impl crate::platform::TopUpPlatform for RecordingTopUpPlatform {
 	fn subscribe_top_up_status(
 		&self,
 		product: &ProductContext,
-		id: [u8; 32],
+		id: crate::Bytes32,
 	) -> futures::stream::BoxStream<
 		'static,
 		Result<
@@ -8416,6 +8416,7 @@ impl crate::platform::TopUpPlatform for RecordingTopUpPlatform {
 
 fn top_up(
 	host: &ProductRuntimeHost,
+	amount: u128,
 	source: v01::PaymentTopUpSource,
 ) -> Result<
 	truapi::versioned::payment::HostPaymentTopUpResponse,
@@ -8426,7 +8427,7 @@ fn top_up(
 		&CallContext::default(),
 		truapi::versioned::payment::HostPaymentTopUpRequest::V1(v01::HostPaymentTopUpRequest {
 			into: None,
-			amount: 1_000,
+			amount,
 			source,
 			id: [7; 32],
 		}),
@@ -8443,7 +8444,7 @@ fn a_top_up_reaches_the_host_engine_scoped_to_its_product() {
 	let engine = Arc::new(RecordingTopUpPlatform::default());
 	assert!(services.install_top_up_platform(engine.clone()));
 
-	top_up(&payment_host(&services, "wallet.dot", true), product_account_source())
+	top_up(&payment_host(&services, "wallet.dot", true), 1_000, product_account_source())
 		.expect("top-up accepted");
 
 	let started = engine.started.lock().expect("started mutex poisoned").clone();
@@ -8463,27 +8464,31 @@ fn a_top_up_reaches_the_host_engine_scoped_to_its_product() {
 	);
 }
 
-// A coin source with no coins can never claim anything, so it is refused in
-// the core rather than handed to the host.
+// A source the host cannot spend is refused in the core rather than handed to
+// the host: a coin source with no coins can never claim anything, and a key
+// that is not a usable sr25519 secret cannot be spent.
 #[test]
-fn a_top_up_without_coins_is_refused_before_the_host_sees_it() {
+fn a_top_up_from_an_unusable_source_is_refused_before_the_host_sees_it() {
 	let services = payment_services();
 	let engine = Arc::new(RecordingTopUpPlatform::default());
 	assert!(services.install_top_up_platform(engine.clone()));
-
-	let refused = top_up(
-		&payment_host(&services, "wallet.dot", true),
+	let host = payment_host(&services, "wallet.dot", true);
+	let sources = [
 		v01::PaymentTopUpSource::Coins { sr25519_secret_keys: Vec::new() },
-	);
+		v01::PaymentTopUpSource::PrivateKey { sr25519_secret_key: [0xff; 64] },
+		v01::PaymentTopUpSource::Coins { sr25519_secret_keys: vec![[0xff; 64]] },
+	];
 
+	let refused = sources.map(|source| top_up(&host, 1_000, source));
+
+	let invalid = || {
+		Err(CallError::Domain(truapi::versioned::payment::HostPaymentTopUpError::V1(
+			v01::HostPaymentTopUpError::InvalidSource,
+		)))
+	};
 	assert_eq!(
 		(refused, engine.started.lock().expect("started mutex poisoned").len()),
-		(
-			Err(CallError::Domain(truapi::versioned::payment::HostPaymentTopUpError::V1(
-				v01::HostPaymentTopUpError::InvalidSource
-			))),
-			0
-		)
+		([invalid(), invalid(), invalid()], 0)
 	);
 }
 
@@ -8493,7 +8498,7 @@ fn top_up_status_is_forwarded_from_the_host_engine() {
 	let engine = Arc::new(RecordingTopUpPlatform::default());
 	assert!(services.install_top_up_platform(engine.clone()));
 	let host = payment_host(&services, "wallet.dot", true);
-	top_up(&host, product_account_source()).expect("top-up accepted");
+	top_up(&host, 1_000, product_account_source()).expect("top-up accepted");
 	let host_id = engine.started.lock().expect("started mutex poisoned")[0].1.id;
 
 	let statuses = futures::executor::block_on(
@@ -8523,37 +8528,13 @@ fn top_up_status_is_forwarded_from_the_host_engine() {
 	);
 }
 
-// The source key is spent by the host, so a key that is not a usable sr25519
-// secret is refused before any claim starts.
-#[test]
-fn a_top_up_with_a_malformed_key_is_refused_before_the_host_sees_it() {
-	let services = payment_services();
-	let engine = Arc::new(RecordingTopUpPlatform::default());
-	assert!(services.install_top_up_platform(engine.clone()));
-
-	let refused = top_up(
-		&payment_host(&services, "wallet.dot", true),
-		v01::PaymentTopUpSource::PrivateKey { sr25519_secret_key: [0xff; 64] },
-	);
-
-	assert_eq!(
-		(refused, engine.started.lock().expect("started mutex poisoned").len()),
-		(
-			Err(CallError::Domain(truapi::versioned::payment::HostPaymentTopUpError::V1(
-				v01::HostPaymentTopUpError::InvalidSource
-			))),
-			0
-		)
-	);
-}
-
 #[test]
 fn a_top_up_needs_a_session() {
 	let services = payment_services();
 	assert!(services.install_top_up_platform(Arc::new(RecordingTopUpPlatform::default())));
 
 	assert_eq!(
-		top_up(&payment_host(&services, "wallet.dot", false), product_account_source()),
+		top_up(&payment_host(&services, "wallet.dot", false), 1_000, product_account_source()),
 		Err(CallError::Denied)
 	);
 }
@@ -8581,7 +8562,7 @@ impl crate::platform::PaymentPlatform for RecordingPaymentPlatform {
 	fn subscribe_payment_status(
 		&self,
 		product: &ProductContext,
-		id: [u8; 32],
+		id: crate::Bytes32,
 	) -> futures::stream::BoxStream<
 		'static,
 		Result<
@@ -8595,7 +8576,7 @@ impl crate::platform::PaymentPlatform for RecordingPaymentPlatform {
 			.push((product.product_id.clone(), id));
 		Box::pin(futures::stream::iter([
 			Ok(v01::HostPaymentStatusSubscribeItem::Processing),
-			Ok(v01::HostPaymentStatusSubscribeItem::PartiallyClaimed { actual_claimed: 600 }),
+			Ok(v01::HostPaymentStatusSubscribeItem::ClaimedPartially { actual_claimed: 600 }),
 		]))
 	}
 }
@@ -8666,7 +8647,7 @@ fn a_payment_reaches_the_host_engine_and_its_status_is_relayed() {
 					v01::HostPaymentStatusSubscribeItem::Processing
 				)),
 				Ok(truapi::versioned::payment::HostPaymentStatusSubscribeItem::V1(
-					v01::HostPaymentStatusSubscribeItem::PartiallyClaimed { actual_claimed: 600 }
+					v01::HostPaymentStatusSubscribeItem::ClaimedPartially { actual_claimed: 600 }
 				)),
 			],
 			vec![(
@@ -8850,7 +8831,7 @@ impl crate::platform::PaymentPlatform for ShortPaymentPlatform {
 	fn subscribe_payment_status(
 		&self,
 		_product: &ProductContext,
-		_id: [u8; 32],
+		_id: crate::Bytes32,
 	) -> futures::stream::BoxStream<
 		'static,
 		Result<
@@ -8908,26 +8889,42 @@ fn a_top_up_of_nothing_is_refused_before_the_host_sees_it() {
 	let services = payment_services();
 	let engine = Arc::new(RecordingTopUpPlatform::default());
 	assert!(services.install_top_up_platform(engine.clone()));
-	let host = payment_host(&services, "wallet.dot", true);
 
-	let refused = futures::executor::block_on(truapi::api::Payment::top_up(
-		&host,
-		&CallContext::default(),
-		truapi::versioned::payment::HostPaymentTopUpRequest::V1(v01::HostPaymentTopUpRequest {
-			into: None,
-			amount: 0,
-			source: product_account_source(),
-			id: [7; 32],
-		}),
-	));
+	let refused = top_up(&payment_host(&services, "wallet.dot", true), 0, product_account_source());
 
 	assert_eq!(
 		(refused, engine.started.lock().expect("started mutex poisoned").len()),
 		(
 			Err(CallError::Domain(truapi::versioned::payment::HostPaymentTopUpError::V1(
-				v01::HostPaymentTopUpError::Unknown {
-					reason: "amount must be positive".to_string()
-				},
+				v01::HostPaymentTopUpError::InvalidAmount,
+			))),
+			0,
+		)
+	);
+}
+
+// Paying nothing is not a payment: the user is never asked to approve it.
+#[test]
+fn a_payment_of_nothing_is_refused_before_the_host_sees_it() {
+	let services = payment_services();
+	let engine = Arc::new(RecordingPaymentPlatform::default());
+	assert!(services.install_payment_platform(engine.clone()));
+	let host = payment_host(&services, "wallet.dot", true);
+
+	let refused = futures::executor::block_on(truapi::api::Payment::request(
+		&host,
+		&CallContext::default(),
+		truapi::versioned::payment::HostPaymentRequest::V1(v01::HostPaymentRequest {
+			amount: 0,
+			..payment_request()
+		}),
+	));
+
+	assert_eq!(
+		(refused, engine.requested.lock().expect("requested mutex poisoned").len()),
+		(
+			Err(CallError::Domain(truapi::versioned::payment::HostPaymentError::V1(
+				v01::HostPaymentError::InvalidAmount,
 			))),
 			0,
 		)

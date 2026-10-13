@@ -456,14 +456,16 @@ AutoSigning without approval. Legacy-account signing still asks the user.
   approves, and stream each payment's status by its caller-chosen id.
   Installed with `set_payment_platform`; native hosts use
   `set_payment_callbacks` with `notify_payment_status`. The core requires a
-  session. Without it, `request` and
+  session and hands the host each id hashed with the product. Without it,
+  `request` and
   `statusSubscribe` answer `Unsupported`.
 - `TopUpPlatform`: claim a top-up source's funds into the user's balance and
   stream each top-up's status. Installed with `set_top_up_platform`; native
   hosts use `set_top_up_callbacks` with `notify_top_up_status`. The core
   requires a session and checks the source keys; a `ProductAccount` source is
-  passed through for the host to derive. The host owns claiming, retries,
-  partial claims, persistence and scoping ids to the product. Without it,
+  passed through for the host to derive, and hands the host each id hashed
+  with the product. The host owns claiming, retries, partial claims and
+  persistence. Without it,
   `topUp` and `topUpStatusSubscribe` answer `Unsupported`.
 - `ExpandedCardHost`: show or hide the card face drawn above an opened card's
   Widget. It is carried per product connection on `ConnectionAdapters`, so only

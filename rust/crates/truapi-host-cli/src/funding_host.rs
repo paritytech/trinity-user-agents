@@ -320,7 +320,8 @@ impl TopUpPlatform for CliPaymentHost {
 		Result<HostPaymentTopUpStatusSubscribeItem, HostPaymentTopUpStatusSubscribeError>,
 	> {
 		if !self.started("top_up", product, &id) {
-			return stream::iter([Err(HostPaymentTopUpStatusSubscribeError::NotFound)]).boxed();
+			return stream::iter([Err(HostPaymentTopUpStatusSubscribeError::TopUpNotFound)])
+				.boxed();
 		}
 		stream::iter([
 			Ok(HostPaymentTopUpStatusSubscribeItem::Detecting),

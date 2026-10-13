@@ -3141,7 +3141,7 @@ pub trait TopUpPlatform: Send + Sync {
 	fn subscribe_top_up_status(
 		&self,
 		product: &ProductContext,
-		id: [u8; 32],
+		id: Bytes32,
 	) -> BoxStream<
 		'static,
 		Result<HostPaymentTopUpStatusSubscribeItem, HostPaymentTopUpStatusSubscribeError>,
@@ -3171,7 +3171,7 @@ pub trait PaymentPlatform: Send + Sync {
 	fn subscribe_payment_status(
 		&self,
 		product: &ProductContext,
-		id: [u8; 32],
+		id: Bytes32,
 	) -> BoxStream<'static, Result<HostPaymentStatusSubscribeItem, HostPaymentStatusSubscribeError>>;
 }
 

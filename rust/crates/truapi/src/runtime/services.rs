@@ -53,7 +53,6 @@ pub struct RuntimeServices {
 	pocket_platform: OnceLock<Arc<dyn crate::platform::PocketPlatform>>,
 	/// Funding sessions shared by every product runtime of this host.
 	funding: Arc<crate::runtime::funding::FundingRegistry>,
-
 	/// Host top-up engine, installed once at startup by a host that claims
 	/// funds into the balance. Unset leaves every top-up `Unsupported`.
 	top_up_platform: OnceLock<Arc<dyn crate::platform::TopUpPlatform>>,
@@ -154,7 +153,6 @@ impl RuntimeServices {
 			permission_status: OnceLock::new(),
 			pocket_platform: OnceLock::new(),
 			funding: Default::default(),
-
 			top_up_platform: OnceLock::new(),
 			payment_platform: OnceLock::new(),
 			balance_platform: OnceLock::new(),

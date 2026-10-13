@@ -82,7 +82,7 @@ pub struct HostPaymentRequest {
 
 /// Payment lifecycle status pushed to subscribers.
 ///
-/// `Completed`, `Failed` and `PartiallyClaimed` are terminal, and stay
+/// `Completed`, `Failed` and `ClaimedPartially` are terminal, and stay
 /// readable after the payment ends.
 ///
 /// See [RFC 0006].
@@ -101,7 +101,7 @@ pub enum HostPaymentStatusSubscribeItem {
 		reason: String,
 	},
 	/// Less than the requested amount reached the destination.
-	PartiallyClaimed {
+	ClaimedPartially {
 		/// Amount that did.
 		actual_claimed: u128,
 	},
@@ -143,6 +143,9 @@ pub enum HostPaymentTopUpError {
 	/// Another top-up from the same source is still running.
 	#[display("another top-up from this source is running")]
 	SourceBusy,
+	/// The amount is zero.
+	#[display("the top-up amount is zero")]
+	InvalidAmount,
 	/// Catch-all.
 	#[display("{reason}")]
 	Unknown {
@@ -168,6 +171,9 @@ pub enum HostPaymentError {
 	/// User's available balance is not sufficient for the requested amount.
 	#[display("the balance does not cover the payment")]
 	InsufficientBalance,
+	/// The amount is zero.
+	#[display("the payment amount is zero")]
+	InvalidAmount,
 	/// Catch-all.
 	#[display("{reason}")]
 	Unknown {
@@ -234,7 +240,7 @@ pub enum HostPaymentTopUpStatusSubscribeItem {
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 pub enum HostPaymentTopUpStatusSubscribeError {
 	/// No top-up with this id for the calling product.
-	NotFound,
+	TopUpNotFound,
 	/// Catch-all.
 	Unknown {
 		/// Human-readable failure reason.

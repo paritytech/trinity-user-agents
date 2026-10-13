@@ -814,7 +814,7 @@ impl RuntimeServices {
 						break;
 					},
 					Ok(HostPaymentTopUpStatusSubscribeItem::NotClaimed) |
-					Err(HostPaymentTopUpStatusSubscribeError::NotFound) => {
+					Err(HostPaymentTopUpStatusSubscribeError::TopUpNotFound) => {
 						claimed = Some(0);
 						break;
 					},
@@ -843,7 +843,7 @@ impl RuntimeServices {
 		while let Some(status) = statuses.next().await {
 			match status {
 				Ok(HostPaymentStatusSubscribeItem::Completed) => return Some(amount),
-				Ok(HostPaymentStatusSubscribeItem::PartiallyClaimed { actual_claimed }) => {
+				Ok(HostPaymentStatusSubscribeItem::ClaimedPartially { actual_claimed }) => {
 					return Some(actual_claimed);
 				},
 				Ok(HostPaymentStatusSubscribeItem::Failed { .. }) |
