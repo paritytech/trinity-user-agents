@@ -1642,7 +1642,7 @@ export interface PaymentPlatform {
    */
   subscribePaymentStatus(
     product: ProductContext,
-    id: Uint8Array,
+    id: Bytes32,
   ): AsyncIterable<
     Result<HostPaymentStatusSubscribeItem, HostPaymentStatusSubscribeError>
   >;
@@ -1868,7 +1868,7 @@ export interface TopUpPlatform {
    */
   subscribeTopUpStatus(
     product: ProductContext,
-    id: Uint8Array,
+    id: Bytes32,
   ): AsyncIterable<
     Result<
       HostPaymentTopUpStatusSubscribeItem,
