@@ -37,15 +37,15 @@ public final class DSTabBarTabsGlyphView: UIView {
         addSubview(countLabel)
 
         applyColor()
+
+        registerForTraitChanges([DSThemeTrait.self]) { (view: DSTabBarTabsGlyphView, _) in
+            view.applyColor()
+        }
     }
 
     @available(*, unavailable)
     required init?(coder _: NSCoder) {
         fatalError("init(coder:) has not been implemented")
-    }
-
-    func refreshColorsForTraitChange() {
-        applyColor()
     }
 
     override public func layoutSubviews() {
@@ -109,8 +109,9 @@ private extension DSTabBarTabsGlyphView {
     }
 
     func applyColor() {
-        backLayer.strokeColor = glyphColor.cgColor
-        frontLayer.strokeColor = glyphColor.cgColor
+        let resolvedColor = glyphColor.resolvedColor(with: traitCollection).cgColor
+        backLayer.strokeColor = resolvedColor
+        frontLayer.strokeColor = resolvedColor
         countLabel.textColor = glyphColor
     }
 }
