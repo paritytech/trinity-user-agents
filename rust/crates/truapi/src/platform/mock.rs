@@ -1051,12 +1051,23 @@ impl Features for MockPlatform {
 
 	async fn feature_supported(
 		&self,
-		_request: latest::HostFeatureSupportedRequest,
+		request: latest::HostFeatureSupportedRequest,
 	) -> Result<latest::HostFeatureSupportedResponse, latest::GenericError> {
 		if let Some(reason) = &self.config.faults.feature_error {
 			return Err(latest::GenericError { reason: reason.clone() });
 		}
-		Ok(latest::HostFeatureSupportedResponse { supported: self.config.feature_supported })
+		let latest::HostFeatureSupportedRequest::Chain { genesis_hash } = request;
+		// A chain outside the set the host reports serving is unsupported, as on
+		// a host that does not serve it, matching the JS mock.
+		let served = self
+			.config
+			.supported_chains
+			.chains
+			.iter()
+			.any(|entry| entry.genesis_hash.as_slice() == genesis_hash.as_slice());
+		Ok(latest::HostFeatureSupportedResponse {
+			supported: self.config.feature_supported && served,
+		})
 	}
 }
 
@@ -1647,6 +1658,21 @@ mod tests {
 		}))
 		.unwrap();
 		assert!(!response.supported);
+	}
+
+	#[test]
+	fn feature_supported_follows_the_chains_the_host_serves() {
+		let p = MockPlatform::new();
+		let supported = |genesis_hash: Vec<u8>| {
+			block_on(
+				p.feature_supported(latest::HostFeatureSupportedRequest::Chain { genesis_hash }),
+			)
+			.unwrap()
+			.supported
+		};
+		let served = p.config.supported_chains.chains[0].genesis_hash.to_vec();
+		assert!(supported(served));
+		assert!(!supported(vec![0xab; 32]));
 	}
 
 	#[test]

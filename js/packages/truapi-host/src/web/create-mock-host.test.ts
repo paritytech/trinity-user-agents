@@ -248,6 +248,23 @@ describe("createMockHost callbacks", () => {
     await expect(drain(lookup, 1)).rejects.toThrow("delivered 0 of 1");
   });
 
+  it("feature support follows the chains the host serves", async () => {
+    const supported = async (genesisHash: string, featureSupported = true) =>
+      (
+        await createMockHost({
+          featureSupported,
+        }).callbacks.features.featureSupported({
+          tag: "Chain",
+          value: { genesisHash },
+        })
+      ).supported;
+    expect(await supported(MOCK_GENESIS.assetHub)).toBe(true);
+    // A chain the host does not serve is refused, not accepted and then left
+    // silent, so a product's "network unavailable" path is reachable.
+    expect(await supported(`0x${"ab".repeat(32)}`)).toBe(false);
+    expect(await supported(MOCK_GENESIS.assetHub, false)).toBe(false);
+  });
+
   it("writeProductStorage seeds an entry without counting as a host call", async () => {
     const host = createMockHost();
     const stored = host.callbacks.productStorage.subscribeStorage("k");
