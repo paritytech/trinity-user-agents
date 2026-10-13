@@ -8,5 +8,4 @@ object ChatTestTags {
     const val CHAT_SEND_BUTTON = "chat_send_button"
     const val CHAT_ACCEPT_BUTTON = "chat_accept_button"
     const val CHAT_DECLINE_BUTTON = "chat_decline_button"
-    const val CHAT_WEEKLY_GAME_OPEN_BUTTON = "weekly_game_open_button"
 }

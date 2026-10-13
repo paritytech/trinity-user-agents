@@ -575,7 +575,12 @@ impl AccountHolder for WalletAccountHolder {
 			};
 		let key_handle = match granted {
 			Some((key_handle, access)) => {
-				crate::runtime::product_manifest::require_own_context(&access, &request.context)?;
+				crate::runtime::product_manifest::require_context_access(
+					&self.services,
+					&access,
+					&request.context,
+				)
+				.await?;
 				key_handle
 			},
 			None => {
@@ -616,8 +621,14 @@ impl AccountHolder for WalletAccountHolder {
 		self.require_current_session(session)?;
 		let (key_handle, access) =
 			self.require_ring_vrf_key_access(invocation.caller, &request.key_handle).await?;
-		// A grant must not expose the owner's alias in an unrelated product's context.
-		crate::runtime::product_manifest::require_own_context(&access, &request.context)?;
+		// A grant cannot expose the owner's alias in a third product's context unless
+		// that product's manifest grants the caller `context`.
+		crate::runtime::product_manifest::require_context_access(
+			&self.services,
+			&access,
+			&request.context,
+		)
+		.await?;
 		let vrf = vrf::load().await?;
 		let entry = self
 			.registered_ring_vrf_entry_for_ring(session, &key_handle, &request.ring_location)

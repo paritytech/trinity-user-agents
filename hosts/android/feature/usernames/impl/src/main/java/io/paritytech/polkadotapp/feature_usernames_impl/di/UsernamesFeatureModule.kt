@@ -5,18 +5,10 @@ import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
 import dagger.hilt.components.SingletonComponent
-import io.paritytech.polkadotapp.chains.multiNetwork.ChainRegistry
-import io.paritytech.polkadotapp.chains.multiNetwork.KnownChains
-import io.paritytech.polkadotapp.chains.network.updaters.Updater
-import io.paritytech.polkadotapp.chains.network.updaters.system.UpdateSystemFactory
-import io.paritytech.polkadotapp.chains.storage.StorageCache
 import io.paritytech.polkadotapp.common.data.network.NetworkApiCreator
 import io.paritytech.polkadotapp.common.data.storage.SingleValueStorageFactory
-import io.paritytech.polkadotapp.feature_account_api.data.WalletAccount
-import io.paritytech.polkadotapp.feature_account_api.domain.model.MetaAccount
 import io.paritytech.polkadotapp.feature_usernames_api.data.LocalFullUsernameStorage
 import io.paritytech.polkadotapp.feature_usernames_api.data.LocalUsernameStorage
-import io.paritytech.polkadotapp.feature_usernames_api.data.UsernameUpdateSystem
 import io.paritytech.polkadotapp.feature_usernames_api.domain.usecase.ObserveAccountOnboardingStatusUseCase
 import io.paritytech.polkadotapp.feature_usernames_api.domain.usecase.RecoverUsernameUseCase
 import io.paritytech.polkadotapp.feature_usernames_api.domain.usecase.ResolveUsernamesUseCase
@@ -31,7 +23,6 @@ import io.paritytech.polkadotapp.feature_usernames_impl.data.storage.QueuedClaim
 import io.paritytech.polkadotapp.feature_usernames_impl.data.storage.fullUsernameStorage
 import io.paritytech.polkadotapp.feature_usernames_impl.data.storage.queuedClaimStorage
 import io.paritytech.polkadotapp.feature_usernames_impl.data.storage.usernameStorage
-import io.paritytech.polkadotapp.feature_usernames_impl.data.updater.UsernameOnChainUpdater
 import io.paritytech.polkadotapp.feature_usernames_impl.domain.RealUsernamesChainProvider
 import io.paritytech.polkadotapp.feature_usernames_impl.domain.UsernamesChainProvider
 import io.paritytech.polkadotapp.feature_usernames_impl.domain.usecase.RealObserveAccountOnboardingStatusUseCase
@@ -77,32 +68,6 @@ interface UsernamesFeatureApiModule {
             return networkApiCreator
                 .createRetrofit(customOkHttpClient = clientBuilder.build())
                 .create(UsernameApi::class.java)
-        }
-
-        @Provides
-        fun provideUsernameOnChainUpdater(
-            @WalletAccount accountUpdateScope: Updater.NoChainScope<MetaAccount>,
-            chainRegistry: ChainRegistry,
-            storageCache: StorageCache
-        ): UsernameOnChainUpdater {
-            return UsernameOnChainUpdater(
-                chainRegistry,
-                storageCache,
-                accountUpdateScope
-            )
-        }
-
-        @Provides
-        fun provideUsernameUpdateSystem(
-            knownChains: KnownChains,
-            updateSystemFactory: UpdateSystemFactory,
-            usernameOnChainUpdater: UsernameOnChainUpdater
-        ): UsernameUpdateSystem {
-            val updateSystem = updateSystemFactory.createConstantSingleChain(
-                listOf(usernameOnChainUpdater),
-                knownChains.people
-            )
-            return UsernameUpdateSystem(updateSystem)
         }
 
         @Provides

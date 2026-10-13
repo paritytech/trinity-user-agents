@@ -33,6 +33,8 @@ extension Chat {
         let timestamp: UInt64
         let status: RequestStatus
         let message: Chat.LocalMessage?
+        /// Period of the notification-funded account that last delivered it; nil for incoming and legacy requests.
+        var anonymousDeliveryPeriod: UInt32?
 
         var isOutgoing: Bool {
             switch status {

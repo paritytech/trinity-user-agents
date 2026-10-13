@@ -1,8 +1,8 @@
 import Foundation
+import BackgroundExecution
 import Keystore_iOS
 import Operation_iOS
 import AssetExchange
-import BackgroundExecution
 import NovaCrypto
 import CommonService
 import ExtrinsicService
@@ -17,6 +17,7 @@ import FoundationExt
 import Individuality
 import UniqueDevice
 import ChainRegistry
+import DesignSystem
 
 protocol ServiceCoordinatorProtocol: ApplicationServiceProtocol {
     var depositService: DepositServiceProtocol { get }
@@ -278,7 +279,7 @@ extension ServiceCoordinator {
         )
 
         let sponsorVrfRepo: BandersnatchManagerRepositoryProtocol = .shared
-        guard let sponsorKeyResolver = try? sponsorVrfRepo.keyResolver() else {
+        guard let personKeyResolver = try? sponsorVrfRepo.keyResolver() else {
             return nil
         }
 
@@ -286,7 +287,7 @@ extension ServiceCoordinator {
             accountManager: accountManager,
             resourceKeyManager: resourceKeyManager,
             chainRegistry: ChainRegistryFacade.sharedRegistry,
-            keyResolver: sponsorKeyResolver,
+            keyResolver: personKeyResolver,
             logger: logger
         )
 
@@ -333,7 +334,8 @@ extension ServiceCoordinator {
                     flowState: spaFlowState,
                     productFileProvider: productFileProvider,
                     chainRegistry: ChainRegistryFacade.sharedRegistry,
-                    gameReminders: gameReminders
+                    gameReminders: gameReminders,
+                    themeManager: MainActor.assumeIsolated { ThemeManager.shared }
                 )
                 pocket = service
             }
@@ -366,12 +368,16 @@ extension ServiceCoordinator {
                 bulletInManager: allowanceManagerFacade.bulletInManager
             ),
             let attachmentDownloadService = createAttachmentDownloadService(),
-            let deviceSyncService = try? createDeviceSyncService(turnService: turnService, logger: logger)
+            let deviceSyncService = try? createDeviceSyncService(turnService: turnService, logger: logger),
+            let notificationAllocator = try? createNotificationAllocator(
+                durable: coinageServices.durableTransactionEngine,
+                keyResolver: personKeyResolver
+            )
         else {
             return nil
         }
 
-        let chatRequestCoordinator = createChatRequestCoordinator()
+        let chatRequestCoordinator = createChatRequestCoordinator(notificationAllocator: notificationAllocator)
         let audioSessionManager = AudioSessionManager()
 
         let paymentsSupport = PaymentsSupport(coinageService: coinageServices.coinageService)
@@ -535,10 +541,13 @@ private extension ServiceCoordinator {
 }
 
 private extension ServiceCoordinator {
-    static func createChatRequestCoordinator() -> ChatRequestCoordinatorServicing {
+    static func createChatRequestCoordinator(
+        notificationAllocator: NotificationStatementAccountAllocating
+    ) -> ChatRequestCoordinatorServicing {
         let storageFacade = UserDataStorageFacade.shared
         let operationQueue = OperationManagerFacade.sharedDefaultQueue
         let logger = Logger.shared
+        let backgroundExecutor = ConnectionRetainingExecutor(provider: ChainRegistryFacade.sharedRegistry)
 
         return ChatRequestCoordinatorService(
             contactsProviderFactory: ChatContactDataProviderFactory(
@@ -557,8 +566,12 @@ private extension ServiceCoordinator {
                         remoteAccountOperation(chatChainId: AppConfig.Chains.usernameChain)
                     ],
                     logger: Logger.shared
-                )
+                ),
+                notificationAllocator: notificationAllocator,
+                backgroundExecutor: backgroundExecutor,
+                issueReporter: IssueReportingFacade.shared
             ),
+            backgroundExecutor: backgroundExecutor,
             logger: Logger.shared
         )
     }

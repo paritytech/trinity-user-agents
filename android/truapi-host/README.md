@@ -383,7 +383,7 @@ class MyBridge(private val webView: WebView) : HostBridge {
     }
 
     // Switch on the action review variant (SignPayload / SignRaw / CreateTransaction /
-    // ResourceAllocation / PreimageSubmit / ...) to render the prompt with its
+    // ResourceAllocation / AccountAccess / ...) to render the prompt with its
     // typed fields.
     override suspend fun confirmUserAction(review: UserConfirmationReview): Boolean {
         return withContext(Dispatchers.Main) { /* show prompt; */ false }

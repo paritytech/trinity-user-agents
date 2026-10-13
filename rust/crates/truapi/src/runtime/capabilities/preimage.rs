@@ -3,7 +3,6 @@
 #[cfg(not(target_arch = "wasm32"))]
 use std::time::Instant;
 
-use crate::platform::{PreimageSubmitReview, UserConfirmationReview};
 use futures::StreamExt;
 use tracing::{instrument, warn};
 use truapi::{
@@ -24,7 +23,7 @@ use crate::{
 	runtime::{
 		PERMISSION_DENIED_REASON, PREIMAGE_REMOTE_AUTHORITY_RESPONSE_TIMEOUT,
 		PREIMAGE_SUBMIT_TIMEOUT, ProductRuntimeHost, preimage_submit_error, remote_authority_call,
-		remote_authority_context_until, until_cancelled,
+		remote_authority_context_until,
 	},
 };
 
@@ -109,18 +108,6 @@ impl<H: crate::runtime::AccountHolder> Preimage for ProductRuntimeHost<H> {
 				}),
 			)
 			.await?;
-		let confirmed = until_cancelled(
-			cx,
-			self.connection.confirm_product_action(UserConfirmationReview::PreimageSubmit(
-				PreimageSubmitReview { size: value.len() as u64 },
-			)),
-		)
-		.await
-		.map_err(|err| preimage_submit_error(err.to_string()))?
-		.map_err(|err| preimage_submit_error(err.reason))?;
-		if !confirmed {
-			return Err(preimage_submit_error("User rejected preimage submission".to_string()));
-		}
 		let submission_deadline = Instant::now() + PREIMAGE_SUBMIT_TIMEOUT;
 		let authority_cx = remote_authority_context_until(
 			cx,

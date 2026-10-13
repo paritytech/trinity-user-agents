@@ -29,7 +29,7 @@ pub trait PersonhoodSigner: Send + Sync {
 	) -> Result<Vec<u8>, StatementAllowanceError>;
 }
 
-/// Personhood keys selected explicitly by standalone CLI operations.
+/// Personhood keys the caller holds directly, with no wallet session to check.
 pub struct FixedPersonhoodSigner<'a> {
 	candidates: &'a [CollectionCandidate],
 	vrf: Vrf,
