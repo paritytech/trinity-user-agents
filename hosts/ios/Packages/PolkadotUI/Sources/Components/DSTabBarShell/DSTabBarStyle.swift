@@ -13,6 +13,11 @@ public enum DSTabBarStyle {
     /// Widest the bar row grows. Wider screens leave the extra width to either side.
     public static let maxWidth: CGFloat = 500
 
+    /// Width of the bar row in a host `availableWidth` wide: inset by the margins and capped at `maxWidth`.
+    public static func rowWidth(inAvailableWidth availableWidth: CGFloat) -> CGFloat {
+        min(max(0, availableWidth - horizontalMargin * 2), maxWidth)
+    }
+
     /// Height the bar occupies once it has settled, which is what a host publishes as bottom
     /// clearance for its content.
     public static var restingHeight: CGFloat { height + bottomGap }

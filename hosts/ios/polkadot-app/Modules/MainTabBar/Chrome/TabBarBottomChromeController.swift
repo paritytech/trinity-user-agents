@@ -180,7 +180,8 @@ final class TabBarBottomChromeController: UIViewController {
         guard let contentHeightForCenterPanel else {
             return
         }
-        let width = DSTabBarStyle.centerPanelWidth(inRowOfWidth: barHost.view.bounds.width)
+        let rowWidth = DSTabBarStyle.rowWidth(inAvailableWidth: view.bounds.width)
+        let width = DSTabBarStyle.centerPanelWidth(inRowOfWidth: rowWidth)
         let cap = DSTabBarStyle.centerContentHeight(fittingRise: barModel.availablePanelHeight)
         let contentHeight: CGFloat =
             switch contentHeightForCenterPanel(width) {

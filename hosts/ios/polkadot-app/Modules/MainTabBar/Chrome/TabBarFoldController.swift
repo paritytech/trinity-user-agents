@@ -260,7 +260,7 @@ private extension TabBarFoldController {
 
     /// Trailing edge of the bar, which is centred and capped at `DSTabBarStyle.maxWidth`.
     static func barMaxX(availableWidth: CGFloat) -> CGFloat {
-        let width = min(max(0, availableWidth - DSTabBarStyle.horizontalMargin * 2), DSTabBarStyle.maxWidth)
+        let width = DSTabBarStyle.rowWidth(inAvailableWidth: availableWidth)
         return ((availableWidth - width) / 2).rounded() + width
     }
 }
