@@ -8556,7 +8556,7 @@ fn quotes_resolve_row_by_row_and_a_silent_provider_times_out() {
 	let chosen = select("q1");
 	let offered_after_assign =
 		services
-			.funding_quotes
+			.funding_quotes()
 			.offered(&intent, "ramp.dot", "q1", crate::current_unix_millis());
 
 	use crate::platform::{FundingQuoteState, FundingQuoteUnavailable};

@@ -377,9 +377,6 @@ impl FundingSession {
 				times[index] = times[index + 1];
 			}
 		}
-		let latest = |field: fn(&FundingUpdate) -> Option<&String>| {
-			self.updates.iter().rev().find_map(|record| field(&record.update)).cloned()
-		};
 		FundingProgress {
 			steps: steps
 				.iter()
@@ -390,28 +387,31 @@ impl FundingSession {
 				FundingStage::Failed { settled_at_ms, .. } => Some(settled_at_ms),
 				_ => None,
 			},
-			transaction_id: latest(|update| match update {
+			transaction_id: self.latest(|update| match update {
 				FundingUpdate::Details { transaction_id, .. } => transaction_id.as_ref(),
 				_ => None,
 			}),
-			reference: latest(|update| match update {
+			reference: self.latest(|update| match update {
 				FundingUpdate::Details { reference, .. } => reference.as_ref(),
 				_ => None,
 			}),
-			deposit: self.updates.iter().rev().find_map(|record| match &record.update {
-				FundingUpdate::Deposit { deposit } => Some(deposit.clone()),
+			deposit: self.latest(|update| match update {
+				FundingUpdate::Deposit { deposit } => Some(deposit),
 				_ => None,
 			}),
 			mismatch: self
-				.updates
-				.iter()
-				.rev()
-				.find_map(|record| match &record.update {
-					FundingUpdate::PaymentReceived { mismatch, .. } => Some(mismatch.clone()),
+				.latest(|update| match update {
+					FundingUpdate::PaymentReceived { mismatch, .. } => Some(mismatch),
 					_ => None,
 				})
 				.flatten(),
 		}
+	}
+
+	/// What `field` reads from the provider's most recent update it reads
+	/// anything from.
+	fn latest<T: Clone>(&self, field: impl Fn(&FundingUpdate) -> Option<&T>) -> Option<T> {
+		self.updates.iter().rev().find_map(|record| field(&record.update)).cloned()
 	}
 
 	/// Store `update` from `provider_id`. A `Failed` update ends the session.

@@ -625,7 +625,7 @@ impl FundingRegistry {
 		for provider in &release {
 			services.worker_ledger.release(provider);
 		}
-		services.funding_quotes.retain_sessions(|intent| {
+		services.funding_quotes().retain_sessions(|intent| {
 			sessions
 				.get(intent)
 				.is_some_and(|session| !session.is_terminal() && session.provider_id.is_none())
@@ -758,36 +758,42 @@ impl FundingRegistry {
 	}
 
 	fn lock_announcements(&self) -> MutexGuard<'_, Announcements> {
-		self.announcements.lock().unwrap_or_else(PoisonError::into_inner)
+		lock(&self.announcements)
 	}
 
 	fn lock_presenting(&self) -> MutexGuard<'_, HashSet<String>> {
-		self.presenting.lock().unwrap_or_else(PoisonError::into_inner)
+		lock(&self.presenting)
 	}
 
 	fn lock_sessions(&self) -> MutexGuard<'_, HashMap<String, FundingSession>> {
-		self.sessions.lock().unwrap_or_else(PoisonError::into_inner)
+		lock(&self.sessions)
 	}
 
 	fn lock_asks(&self) -> MutexGuard<'_, HashMap<String, PendingAsk>> {
-		self.asks.lock().unwrap_or_else(PoisonError::into_inner)
+		lock(&self.asks)
 	}
 
 	fn lock_subscribers(&self) -> MutexGuard<'_, Subscribers> {
-		self.subscribers.lock().unwrap_or_else(PoisonError::into_inner)
+		lock(&self.subscribers)
 	}
 
 	fn lock_servers(&self) -> MutexGuard<'_, Servers> {
-		self.servers.lock().unwrap_or_else(PoisonError::into_inner)
+		lock(&self.servers)
 	}
 
 	fn lock_holding(&self) -> MutexGuard<'_, HashMap<String, String>> {
-		self.holding.lock().unwrap_or_else(PoisonError::into_inner)
+		lock(&self.holding)
 	}
 
 	fn lock_following(&self) -> MutexGuard<'_, HashSet<String>> {
-		self.following.lock().unwrap_or_else(PoisonError::into_inner)
+		lock(&self.following)
 	}
+}
+
+/// Lock `mutex`, recovering its value if a holder panicked: every value the
+/// funding modules guard stays valid between statements.
+pub fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
+	mutex.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
 /// Why a session could not be opened.
@@ -910,7 +916,7 @@ impl RuntimeServices {
 		.map_err(|error| FundingSessionError::InvalidProvider { reason: error.to_string() })?;
 		let registry = self.funding();
 		if let Some(session) = registry.get(intent) &&
-			!self.funding_providers.is_candidate(&provider.product_id, session.direction)
+			!self.funding_providers().is_candidate(&provider.product_id, session.direction)
 		{
 			return Err(FundingSessionError::InvalidProvider {
 				reason: format!(
@@ -922,7 +928,7 @@ impl RuntimeServices {
 		let choice = match quote_id {
 			None => None,
 			Some(quote_id) => Some(
-				self.funding_quotes
+				self.funding_quotes()
 					.offered(intent, &provider.product_id, quote_id, current_unix_millis())
 					.ok_or_else(|| FundingSessionError::UnknownQuote {
 						quote_id: quote_id.to_string(),

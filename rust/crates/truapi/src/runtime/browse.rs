@@ -27,16 +27,26 @@ use crate::{
 
 /// Every `Publisher` deployment on each network, keyed by the Asset Hub
 /// genesis and newest first, as browse-sdk lists them.
-const PUBLISHERS: &[(&str, &[&str])] = &[(
-	// Paseo Next v2.
-	"4349b00e54897e21196fd331015fc5be0f14e118beb0375ed2bb1793737bb57a",
-	&[
-		// 3.1.0
-		"aa189b1d4f65cf6e5d0bad734f6c876f2e12f984",
-		// 3.0.0
-		"01167f228a729f8e50f18aa7189f59b659155d09",
-	],
-)];
+const PUBLISHERS: &[([u8; 32], &[[u8; 20]])] =
+	&[(PASEO_NEXT_V2, &[PUBLISHER_3_1_0, PUBLISHER_3_0_0])];
+
+/// Asset Hub genesis of Paseo Next v2.
+const PASEO_NEXT_V2: [u8; 32] = [
+	0x43, 0x49, 0xb0, 0x0e, 0x54, 0x89, 0x7e, 0x21, 0x19, 0x6f, 0xd3, 0x31, 0x01, 0x5f, 0xc5, 0xbe,
+	0x0f, 0x14, 0xe1, 0x18, 0xbe, 0xb0, 0x37, 0x5e, 0xd2, 0xbb, 0x17, 0x93, 0x73, 0x7b, 0xb5, 0x7a,
+];
+
+/// The 3.1.0 `Publisher` on Paseo Next v2.
+const PUBLISHER_3_1_0: [u8; 20] = [
+	0xaa, 0x18, 0x9b, 0x1d, 0x4f, 0x65, 0xcf, 0x6e, 0x5d, 0x0b, 0xad, 0x73, 0x4f, 0x6c, 0x87, 0x6f,
+	0x2e, 0x12, 0xf9, 0x84,
+];
+
+/// The 3.0.0 `Publisher` on Paseo Next v2.
+const PUBLISHER_3_0_0: [u8; 20] = [
+	0x01, 0x16, 0x7f, 0x22, 0x8a, 0x72, 0x9f, 0x8e, 0x50, 0xf1, 0x8a, 0xa7, 0x18, 0x9f, 0x59, 0xb6,
+	0x59, 0x15, 0x5d, 0x09,
+];
 
 /// Label hashes read per `getPublished` call.
 const PAGE_LIMIT: u64 = 1000;
@@ -54,23 +64,18 @@ pub async fn published_products(
 		return Ok(Vec::new());
 	};
 	let json = cached_dotns_json(platform, CoreStorageKey::PublishedProducts, || {
-		fetch_published_products(&services.chain, genesis_hash, &publishers)
+		fetch_published_products(&services.chain, genesis_hash, publishers)
 	})
 	.await?;
 	Ok(json.and_then(|json| serde_json::from_str(&json).ok()).unwrap_or_default())
 }
 
 /// The Publisher addresses on the network whose Asset Hub has `genesis_hash`.
-fn publishers_on(genesis_hash: [u8; 32]) -> Option<Vec<[u8; 20]>> {
-	let (_, publishers) = PUBLISHERS
+fn publishers_on(genesis_hash: [u8; 32]) -> Option<&'static [[u8; 20]]> {
+	PUBLISHERS
 		.iter()
-		.find(|(network, _)| hex::decode(network).is_ok_and(|network| network == genesis_hash))?;
-	Some(
-		publishers
-			.iter()
-			.filter_map(|address| hex::decode(address).ok()?.try_into().ok())
-			.collect(),
-	)
+		.find(|(network, _)| *network == genesis_hash)
+		.map(|(_, publishers)| *publishers)
 }
 
 /// Every label published to `publishers`, as product ids under the network's
@@ -139,14 +144,8 @@ mod tests {
 
 	#[test]
 	fn paseo_next_v2_lists_both_publisher_deployments() {
-		let genesis: [u8; 32] =
-			hex::decode("4349b00e54897e21196fd331015fc5be0f14e118beb0375ed2bb1793737bb57a")
-				.unwrap()
-				.try_into()
-				.unwrap();
-
 		assert_eq!(
-			(publishers_on(genesis).map(|found| found.len()), publishers_on([0; 32])),
+			(publishers_on(PASEO_NEXT_V2).map(<[[u8; 20]]>::len), publishers_on([0; 32])),
 			(Some(2), None)
 		);
 	}

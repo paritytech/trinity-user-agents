@@ -11,7 +11,7 @@
 
 use std::{
 	collections::HashMap,
-	sync::{Arc, Mutex, MutexGuard},
+	sync::{Arc, Mutex},
 };
 
 use core::time::Duration;
@@ -23,7 +23,7 @@ use futures::{
 use parity_scale_codec::Encode;
 use truapi::latest::{FundingQuote, FundingQuoteAnswer, FundingQuoteAsk, FundingQuoteRefusal};
 
-use super::services::RuntimeServices;
+use super::{funding::lock, services::RuntimeServices};
 use crate::{
 	host_logic::{funding::FundingChoice, funding_providers::LearnedSupport},
 	platform::{FundingQuoteRow, FundingQuoteState, FundingQuoteUnavailable},
@@ -154,7 +154,7 @@ impl RuntimeServices {
 		let ask = FundingQuoteAsk { direction: session.direction, ..ask };
 		self.refresh_funding_providers();
 		let rows: Vec<_> = self
-			.funding_providers
+			.funding_providers()
 			.quote_targets()
 			.into_iter()
 			.map(|provider_id| {
@@ -183,7 +183,7 @@ impl RuntimeServices {
 		ask: FundingQuoteAsk,
 		deadline: Duration,
 	) -> FundingQuoteRow {
-		let quotes = &self.funding_quotes;
+		let quotes = &self.funding_quotes();
 		let answer = match quotes.reusable(provider_id, &ask, current_unix_millis()) {
 			Some(answer) => Some(answer),
 			None => {
@@ -277,10 +277,6 @@ fn shows_support(answer: &FundingQuoteAnswer, names_country: bool) -> Option<boo
 
 fn expired(quote: &FundingQuote, now_ms: u64) -> bool {
 	quote.expires_at.is_some_and(|expires_at| now_ms >= expires_at)
-}
-
-fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
-	mutex.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 #[cfg(test)]
