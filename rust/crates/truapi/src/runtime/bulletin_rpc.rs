@@ -1,8 +1,8 @@
 //! In-core Bulletin preimage submission over the shared Subxt client.
 //!
 //! One submission at a time: build + sign the `TransactionStorage.store`
-//! extrinsic against the current best block (Subxt resolves metadata, nonce,
-//! and the mortality anchor), dry-run it via Subxt's typed transaction
+//! extrinsic with finalized mortality and best-block metadata and nonce,
+//! dry-run it at the best block via Subxt's typed transaction
 //! validation, then submit through Subxt's transaction watch and classify the
 //! dispatch outcome from the inclusion block's events.
 
@@ -22,7 +22,7 @@ use crate::{
 use futures::{FutureExt, pin_mut};
 use subxt::{
 	OnlineClient,
-	client::{Block, Blocks, OnlineClientAtBlockImpl},
+	client::{Block, Blocks, OnlineClientAtBlock, OnlineClientAtBlockImpl},
 	config::{HashFor, substrate::SubstrateConfig},
 	error::{
 		DispatchError, TransactionEventsError, TransactionProgressError, TransactionStatusError,
@@ -323,6 +323,10 @@ impl BulletinRpc {
 			.online_client(&self.genesis_hash)
 			.await
 			.map_err(BulletinSubmitError::Host)?;
+		let finalized = client
+			.at_current_block()
+			.await
+			.map_err(|error| BulletinSubmitError::Subxt(Box::new(error.into())))?;
 		let mut best_blocks = client
 			.stream_best_blocks()
 			.await
@@ -330,7 +334,8 @@ impl BulletinRpc {
 		let head = initial_best_block(&mut best_blocks).await?;
 
 		self.enter_phase(SubmissionPhase::Build);
-		let signed = self.build_signed_and_dry_run(head, account_id, sign, value).await?;
+		let signed =
+			self.build_signed_and_dry_run(head, &finalized, account_id, sign, value).await?;
 		drop(best_blocks);
 
 		self.enter_phase(SubmissionPhase::Watch);
@@ -385,6 +390,7 @@ impl BulletinRpc {
 	async fn build_signed_and_dry_run(
 		&self,
 		head: Block<SubstrateConfig>,
+		finalized: &OnlineClientAtBlock<SubstrateConfig>,
 		account_id: &subxt::utils::AccountId32,
 		sign: &(
 		     dyn Fn(&[u8]) -> Result<subxt::utils::MultiSignature, BulletinSubmitError>
@@ -400,7 +406,11 @@ impl BulletinRpc {
 			.map_err(|error| BulletinSubmitError::Subxt(Box::new(error.into())))?;
 		let payload = store_transaction_payload(value);
 		let params = subxt::config::DefaultExtrinsicParamsBuilder::<SubstrateConfig>::new()
-			.mortal(MORTAL_PERIOD_BLOCKS)
+			.mortal_from_unchecked(
+				MORTAL_PERIOD_BLOCKS,
+				finalized.block_number(),
+				finalized.block_hash(),
+			)
 			.build();
 		let mut prepared = at_block
 			.tx()
@@ -843,7 +853,8 @@ mod tests {
 			host_internal::{
 				bulletin::{MORTAL_PERIOD_BLOCKS, store_transaction_payload},
 				extrinsic::tests::{
-					OfflineChainState, bulletin_runtime_call, split_v4, system_events,
+					OfflineChainState, bulletin_chain_state, bulletin_runtime_call, split_v4,
+					system_events,
 				},
 			},
 			host_logic::product_account::SR25519_SIGNING_CONTEXT,
@@ -857,12 +868,16 @@ mod tests {
 			channel::{mpsc, oneshot},
 			stream::BoxStream,
 		};
-		use parity_scale_codec::{Compact, Encode};
-		use schnorrkel::{SecretKey, Signature};
+		use parity_scale_codec::{Compact, Decode, Encode};
+		use schnorrkel::{PublicKey, SecretKey, Signature};
 		use serde_json::{Value as JsonValue, json};
 		use std::{
 			collections::VecDeque,
 			sync::{Arc, Mutex},
+		};
+		use subxt::{
+			config::DefaultExtrinsicParamsBuilder,
+			utils::{Era, H256},
 		};
 
 		const FOLLOW_ID: &str = "bulletin-follow";
@@ -941,6 +956,15 @@ mod tests {
 				}
 			}
 
+			fn with_best_blocks(self, count: usize) -> Self {
+				{
+					let mut state = self.state.lock().unwrap();
+					state.next_best_block = count;
+					state.current_best_hash = scripted_block_hash(count);
+				}
+				self
+			}
+
 			fn with_failed_events(mut self) -> Self {
 				self.events = format!("0x{}", hex::encode(failed_events()));
 				self
@@ -995,6 +1019,20 @@ mod tests {
 							Some("transactionWatch_v1_submitAndWatch"))
 						.then(|| value["params"][0].as_str().map(ToOwned::to_owned))
 						.flatten()
+					})
+					.collect()
+			}
+
+			fn runtime_call_blocks(&self, runtime_method: &str) -> Vec<H256> {
+				self.sent
+					.lock()
+					.unwrap()
+					.iter()
+					.filter_map(|request| {
+						let request: JsonValue = serde_json::from_str(request).unwrap();
+						(request["method"] == "chainHead_v1_call" &&
+							request["params"][2] == runtime_method)
+							.then(|| request["params"][1].as_str().unwrap().parse().unwrap())
 					})
 					.collect()
 			}
@@ -1088,17 +1126,38 @@ mod tests {
 
 			match method {
 				"chainHead_v1_follow" => {
-					vec![
+					let mut frames = vec![
 						response(json!(FOLLOW_ID)),
 						follow_event(json!({
 							"event": "initialized",
 							"finalizedBlockHashes": [BLOCK_HASH],
 							"finalizedBlockRuntime": null
 						})),
-					]
+					];
+					let mut parent_hash = BLOCK_HASH.to_string();
+					for index in 1..=state.next_best_block {
+						let block_hash = scripted_block_hash(index);
+						frames.push(follow_event(json!({
+							"event": "newBlock", "blockHash": block_hash,
+							"parentBlockHash": parent_hash, "newRuntime": null
+						})));
+						parent_hash = block_hash;
+					}
+					frames.push(follow_event(json!({
+						"event": "bestBlockChanged", "bestBlockHash": state.current_best_hash
+					})));
+					frames
 				},
 				"chainHead_v1_header" if state.stall_headers => Vec::new(),
-				"chainHead_v1_header" => vec![response(json!(encoded_header()))],
+				"chainHead_v1_header" => {
+					let hash = request["params"][1].as_str().unwrap();
+					let number = if hash == BLOCK_HASH || hash == INCLUDED_HASH {
+						1
+					} else {
+						u32::from_str_radix(hash.trim_start_matches("0x"), 16).unwrap() + 1
+					};
+					vec![response(json!(encoded_header(number)))]
+				},
 				"chainHead_v1_call" => {
 					state.next_operation += 1;
 					let operation_id = format!("call-{}", state.next_operation);
@@ -1110,7 +1169,13 @@ mod tests {
 					} else {
 						ValidationOutcome::Valid
 					};
-					let output = runtime_call_output(runtime_method, validation_outcome);
+					let output = if runtime_method == "AccountNonceApi_account_nonce" &&
+						request["params"][1] != BLOCK_HASH
+					{
+						7u32.encode()
+					} else {
+						runtime_call_output(runtime_method, validation_outcome)
+					};
 					let mut frames = vec![
 						response(json!({"result": "started", "operationId": operation_id})),
 						follow_event(json!({
@@ -1253,10 +1318,15 @@ mod tests {
 			}
 		}
 
-		fn encoded_header() -> String {
+		fn encoded_header(number: u32) -> String {
+			let parent: H256 = match number {
+				1 => H256::zero(),
+				2 => BLOCK_HASH.parse().unwrap(),
+				_ => scripted_block_hash((number - 2) as usize).parse().unwrap(),
+			};
 			let mut bytes = Vec::new();
-			[0u8; 32].encode_to(&mut bytes);
-			Compact(1u32).encode_to(&mut bytes);
+			parent.encode_to(&mut bytes);
+			Compact(number).encode_to(&mut bytes);
 			[0u8; 32].encode_to(&mut bytes);
 			[0u8; 32].encode_to(&mut bytes);
 			Vec::<u8>::new().encode_to(&mut bytes);
@@ -1351,6 +1421,79 @@ mod tests {
 					[0x42; 32],
 				),
 			}
+		}
+
+		fn store_signature_verifies_at(transaction: &[u8], value: &[u8], block_hash: H256) -> bool {
+			let (account, signature, tail) = split_v4(transaction);
+			let mut extra = &tail[..];
+			let Era::Mortal { period, phase } = Era::decode(&mut extra).unwrap() else {
+				panic!("store transaction must expire")
+			};
+			let nonce = Compact::<u64>::decode(&mut extra).unwrap().0;
+			let state = OfflineChainState {
+				genesis_hash: [0x42; 32],
+				spec_version: 1,
+				..bulletin_chain_state()
+			};
+			let client = state.client_at(phase).unwrap();
+			let payload = subxt::dynamic::tx(
+				"TransactionStorage",
+				"store",
+				vec![subxt::dynamic::Value::from_bytes(value)],
+			);
+			let params = DefaultExtrinsicParamsBuilder::<SubstrateConfig>::new()
+				.nonce(nonce)
+				.mortal_from_unchecked(period, phase, block_hash)
+				.build();
+			let signer_payload = client
+				.tx()
+				.create_v4_signable_offline(&payload, params)
+				.unwrap()
+				.signer_payload()
+				.unwrap();
+			PublicKey::from_bytes(&account)
+				.unwrap()
+				.verify_simple(
+					SR25519_SIGNING_CONTEXT,
+					&signer_payload,
+					&Signature::from_bytes(&signature).unwrap(),
+				)
+				.is_ok()
+		}
+
+		#[test]
+		fn submit_preimage_anchors_mortality_at_finalized_but_uses_best_state() {
+			let provider = Arc::new(
+				BulletinScriptedProvider::new([TransactionOutcome::Included]).with_best_blocks(5),
+			);
+			let finalized_hash = BLOCK_HASH.parse().unwrap();
+			let best_hash = scripted_block_hash(5).parse().unwrap();
+			let value = b"fork mortality reproduction";
+
+			futures::executor::block_on(
+				rpc(provider.clone()).submit(value, Duration::from_secs(2)),
+			)
+			.unwrap();
+
+			let transactions = provider.submitted_transactions();
+			let transaction = hex::decode(transactions[0].trim_start_matches("0x")).unwrap();
+			let (_, _, tail) = split_v4(&transaction);
+			let mut extra = &tail[..];
+			let era = Era::decode(&mut extra).unwrap();
+			let nonce = Compact::<u64>::decode(&mut extra).unwrap().0;
+
+			assert_eq!(era, Era::mortal(64, 1));
+			assert_eq!(nonce, 7);
+			assert!(store_signature_verifies_at(&transaction, value, finalized_hash));
+			assert!(!store_signature_verifies_at(&transaction, value, best_hash));
+			assert_eq!(
+				provider.runtime_call_blocks("AccountNonceApi_account_nonce"),
+				vec![best_hash]
+			);
+			assert_eq!(
+				provider.runtime_call_blocks("TaggedTransactionQueue_validate_transaction"),
+				vec![best_hash]
+			);
 		}
 
 		#[test]

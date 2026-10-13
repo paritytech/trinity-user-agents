@@ -1,15 +1,10 @@
 package io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket
 
-import android.content.Context
 import android.net.Uri
 import dagger.hilt.android.lifecycle.HiltViewModel
-import dagger.hilt.android.qualifiers.ApplicationContext
 import io.paritytech.polkadotapp.common.presentation.loading.dataOrNull
 import io.paritytech.polkadotapp.common.presentation.screens.BaseViewModel
-import io.paritytech.polkadotapp.common.presentation.sharing.SharingManager
-import io.paritytech.polkadotapp.common.utils.ContentSharing
 import io.paritytech.polkadotapp.common.utils.CoroutineDispatchers
-import io.paritytech.polkadotapp.common.utils.flowOf
 import io.paritytech.polkadotapp.common.utils.launchUnit
 import io.paritytech.polkadotapp.common.utils.logFailure
 import io.paritytech.polkadotapp.common.utils.withLoading
@@ -24,7 +19,6 @@ import io.paritytech.polkadotapp.feature_products_api.presentation.widget.JsImag
 import io.paritytech.polkadotapp.feature_tokens_api.presentation.formatter.TokenAmountFormatter
 import io.paritytech.polkadotapp.feature_tokens_api.presentation.mapper.TokenAmountMapper
 import io.paritytech.polkadotapp.feature_tokens_api.presentation.model.RoundPrecision
-import io.paritytech.polkadotapp.feature_videogame_api.domain.collectibles.CollectiblesUrlResolver
 import io.paritytech.polkadotapp.feature_wallet_impl.PocketRouter
 import io.paritytech.polkadotapp.feature_wallet_impl.domain.interactor.PocketInteractor
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.PocketCardUiModel
@@ -53,7 +47,6 @@ import kotlinx.coroutines.launch
 import timber.log.Timber
 import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
-import io.paritytech.polkadotapp.common.R as RCommon
 
 @HiltViewModel
 class PocketViewModel @Inject constructor(
@@ -61,17 +54,12 @@ class PocketViewModel @Inject constructor(
     private val tokenAmountMapper: TokenAmountMapper,
     private val tokenAmountFormatter: TokenAmountFormatter,
     private val router: PocketRouter,
-    private val collectiblesUrlResolver: CollectiblesUrlResolver,
-    private val idShareImageRenderer: IdShareImageRenderer,
-    private val sharingManager: SharingManager,
     private val dispatchers: CoroutineDispatchers,
     private val cardOpenRequests: PocketCardOpenRequests,
     spaHost: SpaHost,
-    @param:ApplicationContext private val context: Context
 ) : BaseViewModel() {
     private val selectedCardId = MutableStateFlow<String?>(null)
     private val expandedProduct = ExpandedProductPage(this) { scope, url -> with(scope) { spaHost.createSession(url, underCard = true) } }
-    private val collectiblesShown = MutableStateFlow(false)
     private val _openingFaceShown = MutableStateFlow<Boolean?>(null)
     private var openingFaceLookup: Job? = null
     private val removalCandidate = MutableStateFlow<PocketCardUiModel.ProductCard?>(null)
@@ -99,19 +87,11 @@ class PocketViewModel @Inject constructor(
         )
     }
 
-    private val addressCard = combine<_, _, _, PocketCardUiModel.IdCard?>(
-        interactor.observeUsername(),
-        interactor.observeRank(),
-        interactor.observeAddress()
-    ) { username, rank, address ->
-        PocketCardUiModel.IdCard(username = username, address = address, rank = rank)
-    }.onStart { emit(null) }
-
     private val warmedPrivilegedProducts = ConcurrentHashMap.newKeySet<ProductId>()
 
-    // Native cards keep their place; the product-backed collection follows, pinned cards first.
-    // A collection the host cannot read costs the user their product cards, never the balance and
-    // identity cards standing beside them.
+    // The balance card keeps its place; the product-backed collection follows, pinned cards first.
+    // A collection the host cannot read costs the user their product cards, never the balance card
+    // standing beside them.
     private val productCards = interactor.observeProductCards()
         .map { cards -> cards.map { it.toUiModel() } }
         .onEach(::warmUpPrivilegedProducts)
@@ -121,8 +101,8 @@ class PocketViewModel @Inject constructor(
         }
         .onStart { emit(emptyList()) }
 
-    val cards = combine(balanceCard, addressCard, productCards) { balance, address, products ->
-        (listOfNotNull(balance, address) + products).toImmutableList()
+    val cards = combine(balanceCard, productCards) { balance, products ->
+        (listOf(balance) + products).toImmutableList()
     }
         .distinctUntilChangedBy { cards -> cards.map(::cardDisplayKey) }
         .onEach(::forgetCardsNoLongerHeld)
@@ -133,33 +113,22 @@ class PocketViewModel @Inject constructor(
             initialValue = persistentListOf()
         )
 
-    val collectiblesAvailable = flowOf {
-        collectiblesUrlResolver.resolveUrl() != null
-    }
-        .flowOn(dispatchers.computation)
-        .stateIn(scope = this, started = SharingStarted.Eagerly, initialValue = false)
-
     val state: StateFlow<PocketScreenState> = combine(
         cards,
         selectedCardId,
-        collectiblesShown,
-        collectiblesAvailable,
         removalCandidate
-    ) { cards, selectedId, collectiblesShown, collectiblesAvailable, candidate ->
+    ) { cards, selectedId, candidate ->
         val selectedCard = cards.firstOrNull { it.id == selectedId }
-        when {
-            selectedCard != null -> PocketScreenState.CardDetails(selectedCard = selectedCard)
-            collectiblesShown -> PocketScreenState.Collectibles
-            else -> PocketScreenState.List(
-                collectiblesAvailable = collectiblesAvailable,
-                removalCandidate = candidate
-            )
+        if (selectedCard != null) {
+            PocketScreenState.CardDetails(selectedCard = selectedCard)
+        } else {
+            PocketScreenState.List(removalCandidate = candidate)
         }
     }
         .stateIn(
             scope = this,
             started = SharingStarted.Eagerly,
-            initialValue = PocketScreenState.List(collectiblesAvailable = false, removalCandidate = null)
+            initialValue = PocketScreenState.List(removalCandidate = null)
         )
 
     private class CardBinding(val scope: CoroutineScope, val bindings: ProductFaceBindings)
@@ -213,8 +182,6 @@ class PocketViewModel @Inject constructor(
             ).joinToString("|")
         }
 
-        is PocketCardUiModel.IdCard -> listOf(card.username, card.address, card.rank).joinToString("|")
-
         is PocketCardUiModel.ProductCard -> listOf(card.id, card.title, card.pinned).joinToString("|")
     }
 
@@ -250,7 +217,6 @@ class PocketViewModel @Inject constructor(
         if (selectedCardId.value == card.id) return
 
         if (selectedCardId.value != null) dismissCard()
-        collectiblesShown.value = false
         removalCandidate.value = null
         selectCard(card)
     }
@@ -297,18 +263,6 @@ class PocketViewModel @Inject constructor(
         expandedProduct.close()
         forgetOpeningFace()
         selectedCardId.value = null
-    }
-
-    fun showCollectiblesSketchbook() {
-        collectiblesShown.value = true
-    }
-
-    fun hideCollectiblesSketchbook() {
-        collectiblesShown.value = false
-    }
-
-    fun openCollectibles() {
-        router.openCollectibles()
     }
 
     /**
@@ -378,31 +332,6 @@ class PocketViewModel @Inject constructor(
         expandedProduct.release()
         forgetOpeningFace()
         selectedCardId.value = null
-    }
-
-    fun onShareId() = launchUnit {
-        val idCard = cards.value.filterIsInstance<PocketCardUiModel.IdCard>().firstOrNull() ?: return@launchUnit
-
-        interactor.getAppSharingUrl()
-            .onSuccess { url -> shareId(idCard, url) }
-            .onFailure { showPresentationError(ShareIdFailedPresentationError(it)) }
-    }
-
-    private suspend fun shareId(idCard: PocketCardUiModel.IdCard, appSharingUrl: String) {
-        val text = context.getString(RCommon.string.pocket_id_share_message, appSharingUrl, idCard.username)
-
-        idShareImageRenderer.render(idCard.address)
-            .logFailure("PocketViewModel: failed to render ID share image")
-            .onSuccess { uri ->
-                sharingManager.shareContent(
-                    ContentSharing.file(
-                        text = text,
-                        uri = uri,
-                        mimeType = "image/jpeg"
-                    )
-                )
-            }
-            .onFailure { sharingManager.shareText(text) }
     }
 
     private companion object {

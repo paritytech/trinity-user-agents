@@ -1121,7 +1121,12 @@ impl<H: AccountHolder + 'static> HostAccounts<H> {
 		let (handle, access) =
 			self.require_ring_vrf_key_access(cx, product, &request.key_handle).await?;
 		super::remote_authority_call(cx, async {
-			super::product_manifest::require_own_context(&access, &request.context)?;
+			super::product_manifest::require_context_access(
+				&self.services,
+				&access,
+				&request.context,
+			)
+			.await?;
 			if let Some((entropy, vrf)) = self
 				.local_ring_vrf_entropy(authority_session, &handle, Some(&request.ring_location))
 				.await?

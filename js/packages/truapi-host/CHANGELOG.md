@@ -1,5 +1,65 @@
 # @parity/truapi-host
 
+## 0.25.0
+
+### Major Changes
+
+- fd7926a: Add `chat.setRoomFooter`, which sets what a room the product created shows below its messages: the text
+  input, or nothing for a room the product drives through actions alone. A host keeps the footer until the product sets
+  another. A room the product did not create answers `UnknownRoom`, and a host that predates the method answers
+  `Unsupported`. A host serving chat now implements `setChatRoomFooter`, and native hosts implement
+  `ChatHostBridge.setRoomFooter`. Neither needs to check the room, because the core answers `UnknownRoom` before asking
+  the host.
+
+### Minor Changes
+
+- 9fece5c: Native signing hosts follow presigned transactions to a verdict in the core. The core database gains a
+  `durable_tx` ledger: a domain registers presigned mortal extrinsics, the core broadcasts them once committed, watches
+  them, and decides every one it no longer watches from the chain, including those a previous process left live.
+  `HostCallbacks` gains the required `durable_work_changed(pending)`, which the Swift and Kotlin `HostBridge` default to
+  a no-op; while it reports `true` the host keeps a background task running that awaits `runDurableRecovery()`. No
+  domain registers transactions yet.
+- 84282d0: Serve `scanner.scan`. A host supplies the optional `scanner` callbacks to draw its viewfinder, and the core
+  checks each request and each answer. The mock test host serves a scanner when created with a `scanner` answer, and
+  `setScanAnswer` changes the next one. `contacts.pick` now stops waiting when the product cancels.
+- 34ba9f8: `parse_navigate` classifies `polkadot://<product>.<tld>/-/pocket`, with no action, as
+  `NavigateDecision::PocketCollection`: a product's link to the Pocket itself rather than to one card. Like a card link
+  it resolves into the host's own surface, so `navigate_to` passes it without an `OpenUrl` grant. A host that matches
+  `NavigateDecision` exhaustively needs an arm for the new variant.
+- 7944c68: Native hosts read the `@parity/truapi-host` release their core was built from with `truapi_host_version`. The
+  iOS and Android debug menus show it beside the TrUAPI Runtime switch.
+
+### Patch Changes
+
+- 14ef0cb: Answer a Widget's `expandedCard.setFaceShown` with `Unsupported`, since a browser host has no expanded cards.
+  The generated host-callback types include `ExpandedCardHost`, the hook native hosts implement; a browser host supplies
+  nothing for it. `HostCallbacks` gains a required `setExpandedCardFaceShown`, so a native embedder that implements it
+  directly, rather than through `HostBridge`, has to add it; `HostBridge` defaults it to `Unsupported`.
+- 10a48ea: A Web Worker host booted with `role: 'signing'` serves the same host surface as a pairing host:
+  - `getPermissionAuthorizationStatus`, `getPermissionAuthorizationStatuses` and `setPermissionAuthorizationStatus`
+    answer, so a signing host can read stored device permissions when it mounts a product. `WasmSigningHostRuntime`
+    exposes `permissionAuthorizationStatus`, `permissionAuthorizationStatuses`, `setPermissionAuthorizationStatus` and
+    `notifyContactsChanged` with the same signatures as `WasmPairingHostRuntime`.
+  - The optional `chat`, `contacts` and `permissionStatus` callback groups reach the core. A device capability the
+    browser blocks reads as `Denied` whatever is stored, and on the test host a Worker product's chat calls reach the
+    mock, so the Playwright fixture's `getChatRooms`, `getChatBots` and `getChatMessageLog` record them.
+  - A request only a pairing host can answer, such as `getSessionChatIdentityKey` or `activateStoredSession`, rejects
+    with an error naming the request. `cancelPairing` and `notifySessionStoreChanged` do nothing, since a signing host
+    has no pairing and no stored session.
+
+- 59ea7aa: Zeroize SSO session and pairing secrets on drop and redact responder and handshake secrets from debug output.
+- 92f7032: An SSO request waiting on the paired signing host skips a peer message that does not decode, with a debug
+  log, instead of failing. A stale reply left on the session channel, such as an AutoSigning allocation without
+  `ring_vrf_domain_entropy`, is skipped, so later backups, identity publishing and `getProductAccount` calls complete,
+  and the idle peer-disconnect monitor keeps watching past it.
+- d512037: The core uses subxt 0.51.1 and jsonrpsee 0.26.
+- Updated dependencies [c75de1b]
+- Updated dependencies [fd7926a]
+- Updated dependencies [9fece5c]
+- Updated dependencies [1c4a63e]
+- Updated dependencies [84282d0]
+  - @parity/truapi@0.25.0
+
 ## 0.24.0
 
 ### Minor Changes
