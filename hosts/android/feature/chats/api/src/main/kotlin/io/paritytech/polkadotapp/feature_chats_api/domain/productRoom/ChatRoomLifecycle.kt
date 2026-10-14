@@ -14,7 +14,7 @@ interface ChatRoomLifecycle {
     suspend fun close(chatId: ChatId)
 }
 
-/** The lifecycle of a room whose extension has none: a person chat, or a product on the native runtime. */
+/** The lifecycle of a room whose extension has none, such as a person chat. */
 object NoChatRoomLifecycle : ChatRoomLifecycle {
     override suspend fun open(chatId: ChatId): Result<Unit> = Result.success(Unit)
 
