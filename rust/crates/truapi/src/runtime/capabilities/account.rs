@@ -33,10 +33,9 @@ use truapi::versioned::{FromLatest, IntoLatest, Versioned};
 use crate::{
 	host_internal::product_manifest::Granted,
 	runtime::{
-		ProductRuntimeHost, account_access_authorization, account_get_authority_error,
-		remote_authority_call, remote_authority_context, ring_vrf_alias_error, ring_vrf_list_error,
-		ring_vrf_proof_error, ring_vrf_register_error, ring_vrf_sign_error, until_cancelled,
-		validate_vrf_transcript, vrf_call_error,
+		ProductRuntimeHost, account_get_authority_error, remote_authority_call,
+		remote_authority_context, ring_vrf_alias_error, ring_vrf_list_error, ring_vrf_proof_error,
+		ring_vrf_register_error, ring_vrf_sign_error, validate_vrf_transcript, vrf_call_error,
 	},
 };
 
@@ -59,12 +58,11 @@ impl Account for ProductRuntimeHost {
 
 			let product_id = self.connection.product_id();
 			if product_account_id.dot_ns_identifier != product_id {
-				match account_access_authorization(
-					self.connection.platform.as_ref(),
-					&product_id,
-					&product_account_id.dot_ns_identifier,
-				)
-				.await
+				match self
+					.accounts
+					.consent()
+					.account_access(&product_id, &product_account_id.dot_ns_identifier)
+					.await
 				{
 					Ok(PermissionAuthorizationStatus::Authorized) => {},
 					Ok(
@@ -85,20 +83,10 @@ impl Account for ProductRuntimeHost {
 				)
 				.await
 			{
-				let approved = until_cancelled(
-					cx,
-					self.connection.confirm_product_action(UserConfirmationReview::ProductSubtree(
-						ProductSubtreeReview {
-							product_id: product_account_id.dot_ns_identifier.clone(),
-						},
-					)),
-				)
-				.await
-				.map_err(account_get_authority_error)?
-				.map_err(|err| CallError::HostFailure { reason: err.reason })?;
-				if !approved {
-					return Err(CallError::Domain(latest::HostAccountGetError::Rejected));
-				}
+				let review = UserConfirmationReview::ProductSubtree(ProductSubtreeReview {
+					product_id: product_account_id.dot_ns_identifier.clone(),
+				});
+				self.confirm(cx, review).await.map_err(account_get_authority_error)?;
 			}
 
 			let public_key = self
