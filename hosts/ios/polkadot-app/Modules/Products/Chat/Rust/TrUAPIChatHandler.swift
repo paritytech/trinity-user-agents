@@ -40,9 +40,6 @@ actor TrUAPIChatHandler: ChatRuntimeProtocol, ProductChatQuerying, ChatRoomLifec
     private let activityStore: ChatRoomActivityStoring
     private let logger: LoggerProtocol
 
-    /// The `peer` of every event of the host user, until a room has more than one user (02-DESIGN §8.4).
-    private static let userPeer = "native"
-
     /// How often a cell asks again while the product is still coming up. The
     /// worker's own refusals are waited out by ``renderWhenConnected``; this
     /// one covers the window before there is a worker to ask at all.
@@ -182,7 +179,7 @@ actor TrUAPIChatHandler: ChatRuntimeProtocol, ProductChatQuerying, ChatRoomLifec
         guard let roomId else { throw ChatSeamError.roomlessChat }
         try requireExecution().publishChatAction(HostChatActionSubscribeItem(
             roomId: roomId,
-            peer: Self.userPeer,
+            peer: Self.hostUserPeer,
             payload: .messagePosted(.text(text: text))
         ))
     }
@@ -190,7 +187,7 @@ actor TrUAPIChatHandler: ChatRuntimeProtocol, ProductChatQuerying, ChatRoomLifec
     func publishUserEvent(_ event: ProductChatUserEvent, roomId: String?) async throws {
         try checkNotDisposed()
         guard let roomId else { throw ChatSeamError.roomlessChat }
-        try requireExecution().publishChatEvent(roomId: roomId, peer: Self.userPeer, event: event.chatEvent)
+        try requireExecution().publishChatEvent(roomId: roomId, peer: Self.hostUserPeer, event: event.chatEvent)
     }
 
     func renderMessage(
@@ -270,7 +267,7 @@ actor TrUAPIChatHandler: ChatRuntimeProtocol, ProductChatQuerying, ChatRoomLifec
             )
             try requireExecution().publishChatEvent(
                 roomId: roomId,
-                peer: Self.userPeer,
+                peer: Self.hostUserPeer,
                 event: .actionTriggered(trigger)
             )
         } catch is CancellationError {
@@ -285,7 +282,11 @@ actor TrUAPIChatHandler: ChatRuntimeProtocol, ProductChatQuerying, ChatRoomLifec
             try checkNotDisposed()
             guard let roomId else { throw ChatSeamError.roomlessChat }
             let chatCommand = ChatCommand(command: command.name, payload: command.arguments)
-            try requireExecution().publishChatEvent(roomId: roomId, peer: Self.userPeer, event: .command(chatCommand))
+            try requireExecution().publishChatEvent(
+                roomId: roomId,
+                peer: Self.hostUserPeer,
+                event: .command(chatCommand)
+            )
             return true
         } catch {
             logger.error("Rust chat runtime failed to send a command: \(error)")
@@ -350,7 +351,7 @@ private extension TrUAPIChatHandler {
     /// The room screen does not wait for the product to take the event, and a lost event is logged.
     func publishRoomEvent(_ event: ChatEvent, roomId: String) {
         do {
-            try requireExecution().publishChatEvent(roomId: roomId, peer: Self.userPeer, event: event)
+            try requireExecution().publishChatEvent(roomId: roomId, peer: Self.hostUserPeer, event: event)
         } catch {
             logger.error("Rust chat runtime failed to send a room event to \(roomId): \(error)")
         }

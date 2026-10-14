@@ -17,6 +17,8 @@ final class ChatPresenter {
     private var metadata: MessageListMetadata?
     private var footer: (any HashableContentConfiguration)?
     private var paymentAssetViewModel: PaymentAssetViewModelProtocol?
+    /// The parts of a product room that its product declares (P6). Nil for a person chat.
+    var productRoom: ChatProductRoomPresenter?
 
     init(
         interactor: ChatInteractorInputProtocol,
@@ -47,6 +49,7 @@ extension ChatPresenter: ChatPresenterProtocol {
     func setup() {
         interactor.setup()
         subscribeToPaymentAsset()
+        productRoom?.onChange = { [weak self] in self?.provideViewModel() }
     }
 
     func viewWillAppear() {

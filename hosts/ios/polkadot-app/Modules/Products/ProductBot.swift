@@ -188,7 +188,37 @@ extension ProductBot: ChatRoomLifecycle {
     }
 }
 
+extension ProductBot: ProductRoomInteracting {
+    func messageMenu(
+        _ request: ProductChatMessageActionsQueryRequest
+    ) async throws -> ProductChatMessageActionsQueryItem {
+        try await roomInteracting.messageMenu(request)
+    }
+
+    func participants(_ request: ProductChatParticipantsQueryRequest) async throws -> ProductChatParticipantsQueryItem {
+        try await roomInteracting.participants(request)
+    }
+
+    func participantMenu(
+        _ request: ProductChatParticipantActionsQueryRequest
+    ) async throws -> ProductChatParticipantActionsQueryItem {
+        try await roomInteracting.participantMenu(request)
+    }
+
+    func reactions(_ request: ProductChatReactionsQueryRequest) async throws -> ProductChatReactionsQueryItem {
+        try await roomInteracting.reactions(request)
+    }
+
+    func publish(_ event: ChatEvent, roomId: String) async throws {
+        try await roomInteracting.publish(event, roomId: roomId)
+    }
+}
+
 private extension ProductBot {
+    var roomInteracting: ProductRoomInteracting {
+        (runtime as? ProductRoomInteracting) ?? UnservedProductRoom()
+    }
+
     /// The native runtime serves no product-source room, so its rooms show "unavailable".
     struct UnservedProductQuery: Error {}
 

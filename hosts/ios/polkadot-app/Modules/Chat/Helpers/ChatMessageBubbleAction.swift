@@ -10,6 +10,8 @@ enum ChatMessageBubbleAction: Equatable {
     case retry
     /// Deletes the message after the user confirms. It is the last entry of the menu.
     case delete
+    /// An entry that the product of the room defines (`ChatProductAction`).
+    case product(Chat.ProductMenuAction)
 }
 
 extension ChatMessageBubbleAction {

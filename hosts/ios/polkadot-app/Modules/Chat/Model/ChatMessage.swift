@@ -25,6 +25,8 @@ extension Chat {
         let compactionId: MessageId?
         let relatedMessages: [Chat.RelatedLocalMessage]
         let order: UInt64
+        /// The participant of a product room that wrote the message, when it is not the user or the product.
+        var authorParticipantId: String?
 
         init?(
             remote: Chat.RemoteMessage,

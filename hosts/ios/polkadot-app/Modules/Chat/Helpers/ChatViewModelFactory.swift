@@ -42,6 +42,8 @@ final class ChatViewModelFactory {
     let productMediaLoader: ChatImageLoader
     let flowState: SPAFlowState
     let logger: LoggerProtocol
+    /// The parts of a product room that its product declares. Nil for a person chat.
+    weak var productRoom: ChatProductRoomPresenter?
 
     init(
         timeFormatter: TimestampFormatting = MessageTimestampFormatter(),
@@ -79,6 +81,10 @@ extension ChatViewModelFactory: ChatViewModelMaking {
         actions: ChatViewModelActions,
         footerConfiguration: (any HashableContentConfiguration)?
     ) -> ChatViewLayout.ViewModel {
+        MainActor.assumeIsolated {
+            productRoom?.update(listModel: model, metadata: metadata)
+        }
+
         let headerConfiguration = metadata.chatMetadata.chatContactInfo(
             iconViewModelFactory: flowState.iconViewModelFactory
         )
@@ -757,19 +763,11 @@ private extension ChatViewModelFactory {
         messageActions: [ChatMessageBubbleAction],
         actions: ChatViewModelActions
     ) -> () -> [UIMenuElement] {
-        { [text, messageId, actions] in
-            messageActions.compactMap { action in
-                switch action {
-                case .reply: UIAction.chatReply { actions.reply(messageId) }
-                case .edit: UIAction.chatEdit { actions.edit(messageId) }
-                case .copy: UIAction.chatCopy { actions.copy(text) }
-                case .reaction: nil
-                case .edited: UIAction.chatEditHistory { actions.showEditHistory(messageId) }
-                case .retry: UIAction.chatRetry { actions.retry(messageId) }
-                case .delete: UIAction.chatDelete { actions.delete(messageId) }
-                }
-            }
-        }
+        makeMessageMenu(
+            messageId: messageId,
+            hostActions: messageActions,
+            content: ChatMessageMenuContent(text: text, actions: actions)
+        )
     }
 
     // swiftlint:disable:next function_parameter_count

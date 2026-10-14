@@ -159,36 +159,34 @@ private extension ChatViewModelFactory {
     }
 
     /// Reply when the room has an input, Copy for a body with text, then Delete when the room offers it.
-    /// Delete is the last entry.
+    /// Delete is the last host entry. A room that asks its product adds the product entries (P6.1).
     func setProductMenu(
         on configuration: inout ChatMessageContainerConfiguration,
         text: String?,
         context: ProductBodyRenderContext
     ) {
-        guard let actions = context.actions, context.canReply || text != nil || context.offersDelete else {
+        let asksProduct = MainActor.assumeIsolated { productRoom?.asksMessageMenus == true }
+        guard
+            let actions = context.actions,
+            context.canReply || text != nil || context.offersDelete || asksProduct else {
             return
         }
 
-        let messageId = context.messageId
-        let canReply = context.canReply
-        let offersDelete = context.offersDelete
-
-        configuration.setActions { [actions] in
-            var elements: [UIMenuElement] = []
-
-            if canReply {
-                elements.append(UIAction.chatReply { actions.reply(messageId) })
-            }
-
-            if let text {
-                elements.append(UIAction.chatCopy { actions.copy(text) })
-            }
-
-            if offersDelete {
-                elements.append(UIAction.chatDelete { actions.delete(messageId) })
-            }
-
-            return elements
+        var hostActions: [ChatMessageBubbleAction] = []
+        if context.canReply {
+            hostActions.append(.reply)
         }
+        if text != nil {
+            hostActions.append(.copy)
+        }
+        if context.offersDelete {
+            hostActions.append(.delete)
+        }
+
+        configuration.setActions(makeMessageMenu(
+            messageId: context.messageId,
+            hostActions: hostActions,
+            content: ChatMessageMenuContent(text: text ?? "", actions: actions)
+        ))
     }
 }

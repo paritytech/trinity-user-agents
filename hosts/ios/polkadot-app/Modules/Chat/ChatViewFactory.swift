@@ -110,6 +110,17 @@ enum ChatViewFactory {
         presenter.view = view
         interactor.presenter = presenter
 
+        if case let .chatExtension(extensionId, _) = chatId {
+            let productRoom = ChatProductRoomPresenter(
+                chatId: chatId,
+                room: RegistryProductRoom(extensionId: extensionId, registry: flowState.extensionsRegistry),
+                wireframe: wireframe
+            )
+            productRoom?.view = view
+            presenter.productRoom = productRoom
+            viewModelFactory.productRoom = productRoom
+        }
+
         flowState.extensionsRegistry.getExtensions(for: chatId).forEach { chatExtension in
             chatExtension.attach(presentationView: view)
         }

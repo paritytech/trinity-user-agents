@@ -113,6 +113,16 @@ extension Chat {
         case callback
     }
 
+    /// A menu entry that a product defines (`ChatProductAction`).
+    struct ProductMenuAction: Equatable, Sendable {
+        let actionId: String
+        let label: String
+        let icon: ProductResource?
+        /// The menu draws the entry in red, after the other entries.
+        let destructive: Bool
+        let handler: ProductActionHandler
+    }
+
     /// A button of the room toolbar (`ChatToolbarAction`).
     struct RoomToolbarAction: Equatable {
         let actionId: String
