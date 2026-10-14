@@ -11,6 +11,7 @@ import io.paritytech.polkadotapp.feature_chats_api.presentation.model.ChatFeedPa
 import io.paritytech.polkadotapp.feature_chats_api.presentation.model.ChatMessageUiModel
 import io.paritytech.polkadotapp.feature_chats_api.presentation.model.MessageAction
 import io.paritytech.polkadotapp.feature_chats_impl.domain.interactors.ChatFeedInteractor
+import io.paritytech.polkadotapp.feature_chats_impl.domain.messageSource.ChatSourceActionOutcome
 import io.paritytech.polkadotapp.feature_chats_impl.domain.roomPolicy.ChatRoomPolicy
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.draft.ChatDraftController
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.ChatMenuType
@@ -38,8 +39,8 @@ class ChatFeedViewModelTest {
     private val interactor = mockk<ChatFeedInteractor>(relaxed = true) {
         every { observeRoomPolicy(roomId) } returns flowOf(policy)
         coEvery { triggerMessageAction(any(), any(), any()) } returns Result.success(Unit)
-        coEvery { deleteProductRoomMessage(any(), any(), any()) } returns Result.success(Unit)
-        coEvery { retryProductRoomMessage(any(), any()) } returns Result.success(Unit)
+        coEvery { deleteProductRoomMessage(any(), any(), any()) } returns Result.success(ChatSourceActionOutcome.Done)
+        coEvery { retryProductRoomMessage(any(), any()) } returns Result.success(ChatSourceActionOutcome.Done)
         coEvery { getLastRevealedTimestamp(any()) } returns null
     }
     private val draftControllerFactory = mockk<ChatDraftController.Factory> {
