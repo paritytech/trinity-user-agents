@@ -18,7 +18,6 @@
     <string name="common_submit_report">Submit Report</string>
 
     <string name="common_send">Send</string>
-    <string name="common_withdraw">Withdraw</string>
     <string name="common_edit">Edit</string>
     <string name="common_reply">Reply</string>
 
@@ -336,6 +335,8 @@
     <string name="send_payment_search_placeholder">Type username or wallet address</string>
     <string name="send_payment_to">To:</string>
     <string name="send_payment_open_chat_message">You need to first establish a chat before sending a payment</string>
+    <string name="send_payment_send_to_yourself">Send to yourself</string>
+    <string name="send_payment_send_to_yourself_description">Bank account or crypto wallet</string>
 
     <string name="send_enter_amount_placeholder">Enter Amount</string>
     <string name="send_enter_amount_ready_to_send">Ready</string>
@@ -656,6 +657,7 @@
 
     <string name="chat_details_pay_button_text">Pay</string>
     <string name="chat_details_input_field_placeholder">Write a message…</string>
+    <string name="chat_input_character_counter" translatable="false">%1$d/%2$d</string>
     <string name="chat_details_message_status_pending">Pending</string>
     <string name="chat_details_message_status_sent">Message sent</string>
     <string name="chat_details_message_status_read">Message read</string>
@@ -902,9 +904,11 @@
     <string name="splash_waiting_for_network_title">Waiting for network connection…</string>
     <string name="splash_waiting_for_network_message">Turn off Airplane Mode or check your internet</string>
 
-    <string name="pocket_digital_dollar_title">%1$s Card</string>
-    <string name="pocket_digital_dollar_card_title">%1$s</string>
+    <string name="pocket_digital_dollar_title">%1$s</string>
     <string name="pocket_digital_dollar_faucet_top_up">Faucet Top Up</string>
+    <string name="pocket_action_get">Get</string>
+    <string name="pocket_action_get_description">Add %1$s via bank, crypto or credit card</string>
+    <string name="pocket_action_send_description">Move %1$s to your bank, crypto wallet or contacts</string>
     <string name="pocket_error_get_cash_unavailable">Get %1$s isn\'t available right now. Try again later.</string>
     <string name="pocket_error_withdraw_unavailable">Withdrawing %1$s isn\'t available right now. Try again later.</string>
     <string name="pocket_error_auto_fund_failed">Couldn\'t add test funds to this account. Try again.</string>
@@ -933,9 +937,21 @@
     <string name="pocket_debug_breakdown_gaining_privacy">Gaining privacy</string>
     <string name="pocket_debug_breakdown_pending">Pending</string>
     <string name="pocket_debug_breakdown_can_spend_gaining">Can spend gaining privacy</string>
-    <string name="pocket_coinage_show_details">Show Details</string>
+    <string name="pocket_debug_coinage_test_live">Live</string>
+    <string name="pocket_debug_coinage_test_values">All values</string>
+    <string name="pocket_debug_coinage_test_states">All states</string>
+    <string name="pocket_debug_coinage_test_fifty">50</string>
+    <string name="pocket_debug_coinage_test_five_hundred">500</string>
+    <string name="pocket_coinage_trace_hops">Hops since last clearing: %d</string>
+    <string name="pocket_coinage_trace_quality">Clearing quality: %s</string>
+    <string name="pocket_coinage_trace_quality_unknown">Unknown</string>
+    <string name="pocket_coinage_trace_quality_very_low">Very low</string>
+    <string name="pocket_coinage_trace_quality_low">Low</string>
+    <string name="pocket_coinage_trace_quality_fair">Fair</string>
+    <string name="pocket_coinage_trace_quality_good">Good</string>
+    <string name="pocket_coinage_trace_quality_high">High</string>
 
-    <string name="payment_privacy_mode_title">Payments Privacy Mode</string>
+    <string name="payment_privacy_mode_title">%1$s Privacy Mode</string>
     <string name="payment_privacy_mode_fastest_label">Fastest</string>
     <string name="payment_privacy_mode_fastest_description">Fastest payments, lower privacy</string>
     <string name="payment_privacy_mode_fastest_accessibility">Fastest. Fastest payments, lower privacy.</string>
