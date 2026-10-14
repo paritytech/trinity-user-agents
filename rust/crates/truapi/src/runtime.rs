@@ -89,10 +89,9 @@ use tracing::{instrument, warn};
 use truapi::{
 	CallContext, CallError, CancellationReason, Subscription,
 	api::{Chat, Contacts, Pocket, Renderer},
-	v01,
+	latest, v01,
 	versioned::{
 		IntoLatest,
-		account::{HostAccountGetError, HostAccountSignVrfError},
 		chat::{
 			HostChatActionSubscribeError, HostChatActionSubscribeItem,
 			HostChatActionSubscribeRequest, HostChatCreateRoomError, HostChatCreateRoomRequest,
@@ -108,7 +107,6 @@ use truapi::{
 			HostPocketListSubscribeRequest, HostPocketRemoveCardError, HostPocketRemoveCardRequest,
 			HostPocketRemoveCardResponse,
 		},
-		preimage::RemotePreimageSubmitError,
 		renderer::{
 			HostRendererActionSubscribeError, HostRendererActionSubscribeItem,
 			HostRendererActionSubscribeRequest,
@@ -190,8 +188,8 @@ impl LegacySignerError {
 		}
 	}
 
-	fn into_host_error(self, unavailable_reason: &'static str) -> v01::HostSignPayloadError {
-		v01::HostSignPayloadError::Unknown { reason: self.into_reason(unavailable_reason) }
+	fn into_host_error(self, unavailable_reason: &'static str) -> latest::HostSignPayloadError {
+		latest::HostSignPayloadError::Unknown { reason: self.into_reason(unavailable_reason) }
 	}
 }
 
@@ -570,9 +568,9 @@ impl ProductRuntimeHost {
 	}
 
 	fn normalize_product_account_id(
-		product_account_id: v01::ProductAccountId,
-	) -> Result<v01::ProductAccountId, ()> {
-		Ok(v01::ProductAccountId {
+		product_account_id: latest::ProductAccountId,
+	) -> Result<latest::ProductAccountId, ()> {
+		Ok(latest::ProductAccountId {
 			dot_ns_identifier: normalize_product_identifier(&product_account_id.dot_ns_identifier)
 				.map_err(|_| ())?,
 			derivation_index: product_account_id.derivation_index,
@@ -587,7 +585,7 @@ impl ProductRuntimeHost {
 		&self,
 		cx: &CallContext,
 		session: &AuthoritySession,
-		product_account_id: &v01::ProductAccountId,
+		product_account_id: &latest::ProductAccountId,
 	) -> Result<[u8; 32], AuthorityError> {
 		let cx = remote_authority_context(cx);
 		let subtree = remote_authority_call(
@@ -857,7 +855,7 @@ fn connected_session_ui_info(session: &SessionInfo) -> SessionUiInfo {
 const MAX_VRF_TRANSCRIPT_ITEMS: usize = 32;
 const MAX_VRF_TRANSCRIPT_BYTES: usize = 8 * 1024;
 
-fn validate_vrf_transcript(request: &v01::HostAccountSignVrfRequest) -> Result<(), String> {
+fn validate_vrf_transcript(request: &latest::HostAccountSignVrfRequest) -> Result<(), String> {
 	if request.items.len() > MAX_VRF_TRANSCRIPT_ITEMS {
 		return Err(format!(
 			"VRF transcript has {} items, at most {MAX_VRF_TRANSCRIPT_ITEMS} are allowed",
@@ -876,126 +874,120 @@ fn validate_vrf_transcript(request: &v01::HostAccountSignVrfRequest) -> Result<(
 	Ok(())
 }
 
-fn vrf_call_error(err: AuthorityError) -> CallError<HostAccountSignVrfError> {
-	CallError::Domain(HostAccountSignVrfError::V1(err.into()))
+fn vrf_call_error(err: AuthorityError) -> CallError<latest::HostAccountSignVrfError> {
+	CallError::Domain(err.into())
 }
-fn account_get_authority_error(err: AuthorityError) -> CallError<HostAccountGetError> {
+fn account_get_authority_error(err: AuthorityError) -> CallError<latest::HostAccountGetError> {
 	let error = match err {
-		AuthorityError::Disconnected => v01::HostAccountGetError::NotConnected,
-		AuthorityError::Rejected => v01::HostAccountGetError::Rejected,
+		AuthorityError::Disconnected => latest::HostAccountGetError::NotConnected,
+		AuthorityError::Rejected => latest::HostAccountGetError::Rejected,
 		AuthorityError::Cancelled(err) => {
-			v01::HostAccountGetError::Unknown { reason: err.to_string() }
+			latest::HostAccountGetError::Unknown { reason: err.to_string() }
 		},
 		AuthorityError::Unavailable { reason } |
 		AuthorityError::NotSupported { reason } |
-		AuthorityError::Unknown { reason } => v01::HostAccountGetError::Unknown { reason },
+		AuthorityError::Unknown { reason } => latest::HostAccountGetError::Unknown { reason },
 	};
-	CallError::Domain(HostAccountGetError::V1(error))
+	CallError::Domain(error)
 }
 
-fn ring_vrf_alias_error(err: RingVrfError) -> v01::HostAccountGetAliasError {
+fn ring_vrf_alias_error(err: RingVrfError) -> latest::HostAccountGetAliasError {
 	match err {
-		RingVrfError::RingNotFound => v01::HostAccountGetAliasError::RingNotFound,
-		RingVrfError::NotMember => v01::HostAccountGetAliasError::NotMember,
-		RingVrfError::KeyNotRegistered => v01::HostAccountGetAliasError::KeyNotRegistered,
-		RingVrfError::KeyNotInRing => v01::HostAccountGetAliasError::KeyNotInRing,
-		RingVrfError::NotAllowlisted => v01::HostAccountGetAliasError::Rejected,
-		RingVrfError::Rejected => v01::HostAccountGetAliasError::Rejected,
-		RingVrfError::Unknown { reason } => v01::HostAccountGetAliasError::Unknown { reason },
+		RingVrfError::RingNotFound => latest::HostAccountGetAliasError::RingNotFound,
+		RingVrfError::NotMember => latest::HostAccountGetAliasError::NotMember,
+		RingVrfError::KeyNotRegistered => latest::HostAccountGetAliasError::KeyNotRegistered,
+		RingVrfError::KeyNotInRing => latest::HostAccountGetAliasError::KeyNotInRing,
+		RingVrfError::NotAllowlisted => latest::HostAccountGetAliasError::Rejected,
+		RingVrfError::Rejected => latest::HostAccountGetAliasError::Rejected,
+		RingVrfError::Unknown { reason } => latest::HostAccountGetAliasError::Unknown { reason },
 	}
 }
 
-fn ring_vrf_proof_error(err: RingVrfError) -> v01::HostAccountCreateProofError {
+fn ring_vrf_proof_error(err: RingVrfError) -> latest::HostAccountCreateProofError {
 	match err {
-		RingVrfError::RingNotFound => v01::HostAccountCreateProofError::RingNotFound,
-		RingVrfError::NotMember => v01::HostAccountCreateProofError::NotMember,
-		RingVrfError::KeyNotRegistered => v01::HostAccountCreateProofError::KeyNotRegistered,
-		RingVrfError::KeyNotInRing => v01::HostAccountCreateProofError::KeyNotInRing,
-		RingVrfError::NotAllowlisted => v01::HostAccountCreateProofError::NotAllowlisted,
-		RingVrfError::Rejected => v01::HostAccountCreateProofError::Rejected,
-		RingVrfError::Unknown { reason } => v01::HostAccountCreateProofError::Unknown { reason },
+		RingVrfError::RingNotFound => latest::HostAccountCreateProofError::RingNotFound,
+		RingVrfError::NotMember => latest::HostAccountCreateProofError::NotMember,
+		RingVrfError::KeyNotRegistered => latest::HostAccountCreateProofError::KeyNotRegistered,
+		RingVrfError::KeyNotInRing => latest::HostAccountCreateProofError::KeyNotInRing,
+		RingVrfError::NotAllowlisted => latest::HostAccountCreateProofError::NotAllowlisted,
+		RingVrfError::Rejected => latest::HostAccountCreateProofError::Rejected,
+		RingVrfError::Unknown { reason } => latest::HostAccountCreateProofError::Unknown { reason },
 	}
 }
 
-fn ring_vrf_register_error(err: RingVrfError) -> v01::HostAccountRegisterRingVrfKeyError {
+fn ring_vrf_register_error(err: RingVrfError) -> latest::HostAccountRegisterRingVrfKeyError {
 	match err {
-		RingVrfError::RingNotFound => v01::HostAccountRegisterRingVrfKeyError::RingNotFound,
-		RingVrfError::Rejected => v01::HostAccountRegisterRingVrfKeyError::Rejected,
+		RingVrfError::RingNotFound => latest::HostAccountRegisterRingVrfKeyError::RingNotFound,
+		RingVrfError::Rejected => latest::HostAccountRegisterRingVrfKeyError::Rejected,
 		RingVrfError::NotMember |
 		RingVrfError::KeyNotRegistered |
 		RingVrfError::KeyNotInRing |
 		RingVrfError::NotAllowlisted => {
-			v01::HostAccountRegisterRingVrfKeyError::Unknown { reason: format!("{err:?}") }
+			latest::HostAccountRegisterRingVrfKeyError::Unknown { reason: format!("{err:?}") }
 		},
 		RingVrfError::Unknown { reason } => {
-			v01::HostAccountRegisterRingVrfKeyError::Unknown { reason }
+			latest::HostAccountRegisterRingVrfKeyError::Unknown { reason }
 		},
 	}
 }
 
-fn ring_vrf_list_error(err: RingVrfError) -> v01::HostAccountListRingVrfKeysError {
+fn ring_vrf_list_error(err: RingVrfError) -> latest::HostAccountListRingVrfKeysError {
 	match err {
-		RingVrfError::Rejected => v01::HostAccountListRingVrfKeysError::Rejected,
+		RingVrfError::Rejected => latest::HostAccountListRingVrfKeysError::Rejected,
 		RingVrfError::RingNotFound |
 		RingVrfError::NotMember |
 		RingVrfError::KeyNotRegistered |
 		RingVrfError::KeyNotInRing |
 		RingVrfError::NotAllowlisted => {
-			v01::HostAccountListRingVrfKeysError::Unknown { reason: format!("{err:?}") }
+			latest::HostAccountListRingVrfKeysError::Unknown { reason: format!("{err:?}") }
 		},
 		RingVrfError::Unknown { reason } => {
-			v01::HostAccountListRingVrfKeysError::Unknown { reason }
+			latest::HostAccountListRingVrfKeysError::Unknown { reason }
 		},
 	}
 }
 
-fn ring_vrf_sign_error(err: RingVrfError) -> v01::HostAccountRingVrfSignError {
+fn ring_vrf_sign_error(err: RingVrfError) -> latest::HostAccountRingVrfSignError {
 	match err {
-		RingVrfError::KeyNotRegistered => v01::HostAccountRingVrfSignError::KeyNotRegistered,
-		RingVrfError::NotAllowlisted => v01::HostAccountRingVrfSignError::NotAllowlisted,
-		RingVrfError::Rejected => v01::HostAccountRingVrfSignError::Rejected,
+		RingVrfError::KeyNotRegistered => latest::HostAccountRingVrfSignError::KeyNotRegistered,
+		RingVrfError::NotAllowlisted => latest::HostAccountRingVrfSignError::NotAllowlisted,
+		RingVrfError::Rejected => latest::HostAccountRingVrfSignError::Rejected,
 		RingVrfError::RingNotFound | RingVrfError::NotMember | RingVrfError::KeyNotInRing => {
-			v01::HostAccountRingVrfSignError::Unknown { reason: format!("{err:?}") }
+			latest::HostAccountRingVrfSignError::Unknown { reason: format!("{err:?}") }
 		},
-		RingVrfError::Unknown { reason } => v01::HostAccountRingVrfSignError::Unknown { reason },
+		RingVrfError::Unknown { reason } => latest::HostAccountRingVrfSignError::Unknown { reason },
 	}
 }
 
-fn signing_call_error<E>(
-	wrap: fn(v01::HostSignPayloadError) -> E,
-	err: AuthorityError,
-) -> CallError<E> {
-	CallError::Domain(wrap(match err {
+fn signing_call_error(err: AuthorityError) -> CallError<latest::HostSignPayloadError> {
+	CallError::Domain(match err {
 		AuthorityError::Rejected | AuthorityError::Disconnected => {
-			v01::HostSignPayloadError::Rejected
+			latest::HostSignPayloadError::Rejected
 		},
 		AuthorityError::Cancelled(err) => {
-			v01::HostSignPayloadError::Unknown { reason: err.to_string() }
+			latest::HostSignPayloadError::Unknown { reason: err.to_string() }
 		},
 		AuthorityError::Unavailable { reason } |
 		AuthorityError::NotSupported { reason } |
-		AuthorityError::Unknown { reason } => v01::HostSignPayloadError::Unknown { reason },
-	}))
+		AuthorityError::Unknown { reason } => latest::HostSignPayloadError::Unknown { reason },
+	})
 }
 
-fn transaction_call_error<E>(
-	wrap: fn(v01::HostCreateTransactionError) -> E,
-	err: AuthorityError,
-) -> CallError<E> {
-	CallError::Domain(wrap(match err {
+fn transaction_call_error(err: AuthorityError) -> CallError<latest::HostCreateTransactionError> {
+	CallError::Domain(match err {
 		AuthorityError::Rejected | AuthorityError::Disconnected => {
-			v01::HostCreateTransactionError::Rejected
+			latest::HostCreateTransactionError::Rejected
 		},
 		AuthorityError::Cancelled(err) => {
-			v01::HostCreateTransactionError::Unknown { reason: err.to_string() }
+			latest::HostCreateTransactionError::Unknown { reason: err.to_string() }
 		},
 		AuthorityError::NotSupported { reason } => {
-			v01::HostCreateTransactionError::NotSupported { reason }
+			latest::HostCreateTransactionError::NotSupported { reason }
 		},
 		AuthorityError::Unavailable { reason } | AuthorityError::Unknown { reason } => {
-			v01::HostCreateTransactionError::Unknown { reason }
+			latest::HostCreateTransactionError::Unknown { reason }
 		},
-	}))
+	})
 }
 
 const PAYMENTS_NOT_IMPLEMENTED: &str = "Payments are not supported in dot.li";
@@ -1546,8 +1538,8 @@ impl ProductRuntimeHost {
 }
 
 /// Build the product-facing `Unknown` wire error carrying `reason`.
-fn preimage_submit_error(reason: String) -> CallError<RemotePreimageSubmitError> {
-	CallError::Domain(RemotePreimageSubmitError::V1(v01::PreimageSubmitError::Unknown { reason }))
+fn preimage_submit_error(reason: String) -> CallError<latest::PreimageSubmitError> {
+	CallError::Domain(latest::PreimageSubmitError::Unknown { reason })
 }
 
 fn bulletin_allowance_error_reason(err: AuthorityError) -> String {

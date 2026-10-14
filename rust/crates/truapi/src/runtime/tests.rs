@@ -20,9 +20,10 @@ use truapi::{
 		account::{
 			HostAccountConnectionStatusSubscribeItem, HostAccountCreateProofError,
 			HostAccountCreateProofResponse, HostAccountGetAliasError, HostAccountGetAliasResponse,
-			HostAccountGetRequest, HostAccountGetResponse, HostAccountRingVrfSignError,
-			HostAccountRingVrfSignRequest, HostAccountRingVrfSignResponse,
-			HostAccountSignVrfRequest, HostAccountSignVrfResponse, HostGetLegacyAccountsRequest,
+			HostAccountGetError, HostAccountGetRequest, HostAccountGetResponse,
+			HostAccountRingVrfSignError, HostAccountRingVrfSignRequest,
+			HostAccountRingVrfSignResponse, HostAccountSignVrfError, HostAccountSignVrfRequest,
+			HostAccountSignVrfResponse, HostGetLegacyAccountsRequest,
 			HostGetLegacyAccountsResponse, HostGetUserIdError, HostGetUserIdRequest,
 			HostGetUserIdResponse,
 		},
@@ -50,7 +51,7 @@ use truapi::{
 		permissions::{HostDevicePermissionRequest, HostDevicePermissionResponse},
 		preimage::{
 			RemotePreimageLookupSubscribeItem, RemotePreimageLookupSubscribeRequest,
-			RemotePreimageSubmitRequest,
+			RemotePreimageSubmitError, RemotePreimageSubmitRequest,
 		},
 		resource_allocation::{
 			HostRequestResourceAllocationError, HostRequestResourceAllocationRequest,
@@ -202,6 +203,79 @@ fn get_chain_info_round_trips_through_runtime() {
 	assert_eq!(inner.network, "paseo");
 	assert_eq!(inner.chain, v01::ChainIdentifier::AssetHub);
 	assert_eq!(inner.genesis_hash, [0xaa; 32]);
+}
+
+#[test]
+fn local_storage_read_success_preserves_the_request_version() {
+	let platform = stub_platform();
+	let host = ProductRuntimeHost::new_compat(platform.clone(), test_spawner());
+	platform
+		.local_storage
+		.lock()
+		.expect("mutex")
+		.insert(host.product_storage_key(&host.product_id(), "k".to_string()), b"value".to_vec());
+	let response = v01::HostLocalStorageReadResponse { value: Some(b"value".to_vec()) };
+	for (request, expected) in [
+		(
+			HostLocalStorageReadRequest::V1(v01::HostLocalStorageReadRequest {
+				key: "k".to_string(),
+			}),
+			HostLocalStorageReadResponse::V1(response.clone()),
+		),
+		(
+			HostLocalStorageReadRequest::V2(v02::HostLocalStorageReadRequest {
+				product: None,
+				key: "k".to_string(),
+			}),
+			HostLocalStorageReadResponse::V2(response),
+		),
+	] {
+		assert_eq!(
+			futures::executor::block_on(LocalStorage::read(
+				&host,
+				&CallContext::default(),
+				request
+			)),
+			Ok(expected),
+		);
+	}
+}
+
+#[test]
+fn local_storage_read_platform_error_preserves_the_request_version() {
+	let platform = Arc::new(StubPlatform {
+		local_storage_error: Some("store unavailable"),
+		..Default::default()
+	});
+	let host = ProductRuntimeHost::new_compat(platform, test_spawner());
+	for (request, expected) in [
+		(
+			HostLocalStorageReadRequest::V1(v01::HostLocalStorageReadRequest {
+				key: "k".to_string(),
+			}),
+			HostLocalStorageReadError::V1(v01::HostLocalStorageReadError::Unknown {
+				reason: "store unavailable".to_string(),
+			}),
+		),
+		(
+			HostLocalStorageReadRequest::V2(v02::HostLocalStorageReadRequest {
+				product: None,
+				key: "k".to_string(),
+			}),
+			HostLocalStorageReadError::V2(v02::HostLocalStorageReadError::Unknown {
+				reason: "store unavailable".to_string(),
+			}),
+		),
+	] {
+		assert_eq!(
+			futures::executor::block_on(LocalStorage::read(
+				&host,
+				&CallContext::default(),
+				request
+			)),
+			Err(CallError::Domain(expected)),
+		);
+	}
 }
 
 fn read_storage(
@@ -7330,10 +7404,7 @@ fn an_internal_cancellation_never_becomes_the_cancelled_variant() {
 		account_get_authority_error, signing_call_error, transaction_call_error, vrf_call_error,
 	};
 	use crate::runtime::authority::{AuthorityCancelError, AuthorityError};
-	use truapi::{
-		CancellationReason,
-		versioned::signing::{HostCreateTransactionError, HostSignRawError},
-	};
+	use truapi::CancellationReason;
 
 	fn assert_domain<E: core::fmt::Debug>(mapper: &str, reason: &str, err: CallError<E>) {
 		assert!(
@@ -7358,16 +7429,8 @@ fn an_internal_cancellation_never_becomes_the_cancelled_variant() {
 			reason_name,
 			account_get_authority_error(cancelled()),
 		);
-		assert_domain(
-			"signing_call_error",
-			reason_name,
-			signing_call_error(HostSignRawError::V1, cancelled()),
-		);
-		assert_domain(
-			"transaction_call_error",
-			reason_name,
-			transaction_call_error(HostCreateTransactionError::V1, cancelled()),
-		);
+		assert_domain("signing_call_error", reason_name, signing_call_error(cancelled()));
+		assert_domain("transaction_call_error", reason_name, transaction_call_error(cancelled()));
 	}
 }
 
