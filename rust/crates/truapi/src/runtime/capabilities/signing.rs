@@ -56,6 +56,7 @@ impl<H: AccountHolder> Signing for ProductRuntimeHost<H> {
 					&authority_session,
 					cx,
 					&self.connection.product,
+					&self.connection.temporary_permissions,
 					SignPayloadAuthorityRequest::Product(inner),
 				)
 				.await
@@ -144,6 +145,7 @@ impl<H: AccountHolder> Signing for ProductRuntimeHost<H> {
 					&authority_session,
 					cx,
 					&self.connection.product,
+					&self.connection.temporary_permissions,
 					CreateTransactionAuthorityRequest::Product(inner),
 				)
 				.await
@@ -189,6 +191,7 @@ impl<H: AccountHolder> Signing for ProductRuntimeHost<H> {
 					&authority_session,
 					cx,
 					&self.connection.product,
+					&self.connection.temporary_permissions,
 					SignPayloadAuthorityRequest::LegacyAccount {
 						product_account: latest::ProductAccountId {
 							dot_ns_identifier: self.connection.product_id(),
@@ -286,6 +289,7 @@ impl<H: AccountHolder> Signing for ProductRuntimeHost<H> {
 					&authority_session,
 					cx,
 					&self.connection.product,
+					&self.connection.temporary_permissions,
 					authority_request,
 				)
 				.await
@@ -350,6 +354,7 @@ impl<H: AccountHolder> ProductRuntimeHost<H> {
 				&authority_session,
 				cx,
 				&self.connection.product,
+				&self.connection.temporary_permissions,
 				SignRawAuthorityRequest::Product(inner),
 				watermarked,
 			)
@@ -393,6 +398,7 @@ impl<H: AccountHolder> ProductRuntimeHost<H> {
 				&authority_session,
 				cx,
 				&self.connection.product,
+				&self.connection.temporary_permissions,
 				authority_request,
 				watermarked,
 			)

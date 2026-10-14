@@ -5,6 +5,12 @@ All notable changes to the TrUAPI protocol are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 generated from [Conventional Commits](https://www.conventionalcommits.org/).
 
+## [Unreleased]
+
+### Fixed
+
+- Allow `polkadotapp://` links through `system.navigateTo`, subject to `OpenUrl` permission. Reject external `polkadot:` and `dot:` links.
+
 ## [0.25.0] - 2026-10-13
 
 ### Added

@@ -22,7 +22,7 @@ use crate::{
 			SignRawAuthorityRequest, StatementStoreAllowanceKey, SubtreeResolution,
 		},
 		remote_authority_call, remote_authority_context,
-		signing_host::ring_vrf::{MemberCandidate, create_proof, development_context_bytes},
+		signing_host::ring_vrf::{MemberCandidate, context_bytes, create_proof},
 		statement_allowance::collection::PersonhoodCollection,
 		until_cancelled,
 		vrf::{self, Vrf},
@@ -603,7 +603,7 @@ impl AccountHolder for WalletAccountHolder {
 			.registered_ring_vrf_entry_for_ring(session, &key_handle, &request.ring_location)
 			.await?;
 		self.ring_resolver.validate(&request.ring_location).await?;
-		let context = development_context_bytes(&request.context);
+		let context = context_bytes(&request.context);
 		self.with_keys(session, |keys| {
 			let entropy = keys.ring_vrf_entropy(&key_handle)?;
 			Self::require_matching_registered_public_key(&vrf, &entry, &entropy)?;
@@ -641,7 +641,7 @@ impl AccountHolder for WalletAccountHolder {
 		let resolved = self.ring_resolver.resolve(&request.ring_location, &[candidate]).await?;
 		self.with_keys(session, |keys| {
 			let entropy = keys.ring_vrf_entropy(&key_handle)?;
-			let context = development_context_bytes(&request.context);
+			let context = context_bytes(&request.context);
 			let (proof, alias) =
 				create_proof(&vrf, &entropy, &resolved, &context, &request.message)?;
 			Ok(api::HostAccountCreateProofResponse {

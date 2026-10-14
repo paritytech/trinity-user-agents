@@ -38,4 +38,3 @@ export type { CreateTransportOptions } from "./client.js";
 export * as scale from "./scale.js";
 export type { CallErrorValue, Codec, HexString } from "./scale.js";
 export * from "./generated/index.js";
-export * from "./development.js";
