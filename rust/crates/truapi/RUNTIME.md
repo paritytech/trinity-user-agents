@@ -276,6 +276,7 @@ that can't mean it:
   the `RuntimeServices`-owned per-chain cache rather than re-reading it per
   call.
 - `ProductConsent`: one per runtime. It holds account-access decisions and review rules, and runs account-access prompts one at a time for local product calls and paired requests alike. A paired caller never skips a review. A signature with another product's account is confirmed once per kind and owning product for the rest of the product execution.
+- `HostGrantStore`: holds the keys and public subtrees a host keeps for its products, per wallet on a signing host and per pairing on a paired host. A signing host keeps them in memory for one wallet activation. A product reset revokes that product's grants and fails grant work that began before it, without ending the wallet session or other products' calls.
 
 `host_logic` stays pure: the orchestrators above call into it for codecs,
 session/SSO crypto, key derivation, and permission policy, while all I/O

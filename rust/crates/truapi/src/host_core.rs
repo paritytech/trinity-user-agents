@@ -1043,7 +1043,8 @@ impl SigningHostRuntime {
 	pub async fn clear_product_state(&self, product_id: &str) -> Result<(), v01::GenericError> {
 		self.signing_host
 			.clear_product_state(product_id)
-			.map_err(|error| v01::GenericError { reason: error.to_string() })
+			.await
+			.map_err(|reason| v01::GenericError { reason })
 	}
 
 	/// Read a stored permission authorization status for a product without prompting.
