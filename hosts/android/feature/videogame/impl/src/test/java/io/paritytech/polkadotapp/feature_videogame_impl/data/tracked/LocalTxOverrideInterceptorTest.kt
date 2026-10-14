@@ -1,5 +1,7 @@
 package io.paritytech.polkadotapp.feature_videogame_impl.data.tracked
 
+import io.mockk.coEvery
+import io.mockk.mockk
 import io.paritytech.polkadotapp.chains.storage.source.query.intercept.StorageQueryRequest
 import io.paritytech.polkadotapp.common.domain.model.DataByteArray
 import io.paritytech.polkadotapp.feature_transactions.api.data.tracked.ActiveTrackedExtrinsic
@@ -11,8 +13,6 @@ import io.paritytech.polkadotapp.feature_videogame_impl.data.models.onchain.OnCh
 import io.paritytech.polkadotapp.feature_videogame_impl.domain.tracked.VideoGameExtrinsicTags
 import io.paritytech.polkadotapp.feature_videogame_impl.domain.tracked.VideoGamePlayerOverrideTarget
 import io.paritytech.polkadotapp.feature_videogame_impl.domain.tracked.encodeToAdditional
-import io.paritytech.polkadotapp.test_shared.eq
-import io.paritytech.polkadotapp.test_shared.whenever
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -20,7 +20,6 @@ import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
-import org.mockito.Mockito.mock
 
 class LocalTxOverrideInterceptorTest {
     private val ourKey = "0xOUR_PLAYER_KEY"
@@ -105,9 +104,9 @@ class LocalTxOverrideInterceptorTest {
     }
 
     private suspend fun interceptor(vote: ActiveTrackedExtrinsic?, register: ActiveTrackedExtrinsic?): LocalTxOverrideInterceptor {
-        val service = mock(TrackedExtrinsicService::class.java)
-        whenever(service.getLatestActive(eq(VideoGameExtrinsicTags.VOTE_PREFIX.value))).thenReturn(vote)
-        whenever(service.getLatestActive(eq(VideoGameExtrinsicTags.REGISTER_PREFIX.value))).thenReturn(register)
+        val service = mockk<TrackedExtrinsicService>()
+        coEvery { service.getLatestActive(VideoGameExtrinsicTags.VOTE_PREFIX.value) } returns vote
+        coEvery { service.getLatestActive(VideoGameExtrinsicTags.REGISTER_PREFIX.value) } returns register
 
         return LocalTxOverrideInterceptor(service)
     }

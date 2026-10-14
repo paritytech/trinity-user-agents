@@ -1,5 +1,8 @@
 package io.paritytech.polkadotapp.feature_upgrade_username_impl.domain.usecase
 
+import io.mockk.coEvery
+import io.mockk.every
+import io.mockk.mockk
 import io.paritytech.polkadotapp.chains.multiNetwork.ChainRegistry
 import io.paritytech.polkadotapp.chains.multiNetwork.KnownChains
 import io.paritytech.polkadotapp.chains.multiNetwork.chain.model.Chain
@@ -10,19 +13,15 @@ import io.paritytech.polkadotapp.feature_account_api.domain.model.MetaAccount
 import io.paritytech.polkadotapp.feature_dotns_gateway_api.data.repository.DotNsGatewayRepository
 import io.paritytech.polkadotapp.feature_dotns_gateway_api.domain.model.DotNsBaseNameAvailability
 import io.paritytech.polkadotapp.feature_upgrade_username_api.domain.model.UpgradeUsernameAvailabilityState
-import io.paritytech.polkadotapp.test_shared.any
-import io.paritytech.polkadotapp.test_shared.eq
-import io.paritytech.polkadotapp.test_shared.whenever
 import junit.framework.TestCase.assertEquals
 import kotlinx.coroutines.runBlocking
 import org.junit.Test
-import org.mockito.Mockito.mock
 
 class RealCheckUsernameAvailabilityUseCaseTest {
     private val knownChains = KnownChains(people = "", assetHub = CHAIN_ID, bulletIn = "", hydration = null)
-    private val chainRegistry: ChainRegistry = mock()
-    private val accountRepository: AccountRepository = mock()
-    private val dotNsGatewayRepository: DotNsGatewayRepository = mock()
+    private val chainRegistry: ChainRegistry = mockk()
+    private val accountRepository: AccountRepository = mockk()
+    private val dotNsGatewayRepository: DotNsGatewayRepository = mockk()
 
     private val useCase = RealCheckUsernameAvailabilityUseCase(
         knownChains = knownChains,
@@ -56,15 +55,14 @@ class RealCheckUsernameAvailabilityUseCaseTest {
     }
 
     private fun stubAvailability(availability: DotNsBaseNameAvailability) = runBlocking {
-        whenever(dotNsGatewayRepository.getBaseNameAvailability(eq(NAME), eq(OUR_ACCOUNT_ID)))
-            .thenReturn(Result.success(availability))
+        coEvery { dotNsGatewayRepository.getBaseNameAvailability(NAME, OUR_ACCOUNT_ID) } returns Result.success(availability)
     }
 
     private fun stubOurAccount() = runBlocking {
-        val chain = mock<Chain>()
-        whenever(chainRegistry.getChain(eq(CHAIN_ID))).thenReturn(chain)
-        val account = mock<MetaAccount>().also { whenever(it.accountIdIn(any())).thenReturn(OUR_ACCOUNT_ID) }
-        whenever(accountRepository.getWalletAccount()).thenReturn(account)
+        val chain = mockk<Chain>()
+        coEvery { chainRegistry.getChain(CHAIN_ID) } returns chain
+        val account = mockk<MetaAccount>().also { every { it.accountIdIn(any()) } returns OUR_ACCOUNT_ID }
+        coEvery { accountRepository.getWalletAccount() } returns account
     }
 
     private companion object {

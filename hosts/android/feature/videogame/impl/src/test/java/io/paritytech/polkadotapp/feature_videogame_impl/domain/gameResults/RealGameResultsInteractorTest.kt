@@ -1,6 +1,14 @@
 package io.paritytech.polkadotapp.feature_videogame_impl.domain.gameResults
 
+import io.mockk.coEvery
+import io.mockk.every
+import io.mockk.mockk
+import io.mockk.mockkStatic
+import io.mockk.unmockkStatic
 import io.paritytech.polkadotapp.bandersnatch_crypto.BandersnatchAlias
+import io.paritytech.polkadotapp.bandersnatch_crypto.BandersnatchContext
+import io.paritytech.polkadotapp.bandersnatch_crypto.BandersnatchEntropy
+import io.paritytech.polkadotapp.bandersnatch_crypto.aliasInContext
 import io.paritytech.polkadotapp.chains.multiNetwork.ChainRegistry
 import io.paritytech.polkadotapp.chains.multiNetwork.chain.model.Chain
 import io.paritytech.polkadotapp.chains.network.binding.Balance
@@ -36,11 +44,6 @@ import io.paritytech.polkadotapp.feature_videogame_impl.data.models.onchain.OnCh
 import io.paritytech.polkadotapp.feature_videogame_impl.data.repositories.ScoreRepository
 import io.paritytech.polkadotapp.feature_videogame_impl.data.repositories.VideoGameRepositoryInternal
 import io.paritytech.polkadotapp.feature_videogame_impl.domain.usecase.PlayingAccountUseCase
-import io.paritytech.polkadotapp.test_shared.any
-import io.paritytech.polkadotapp.test_shared.anyInt
-import io.paritytech.polkadotapp.test_shared.anyLong
-import io.paritytech.polkadotapp.test_shared.eq
-import io.paritytech.polkadotapp.test_shared.whenever
 import junit.framework.TestCase.assertEquals
 import junit.framework.TestCase.assertFalse
 import junit.framework.TestCase.assertNull
@@ -50,10 +53,6 @@ import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.runBlocking
 import org.junit.Test
-import org.mockito.Mockito
-import org.mockito.Mockito.mock
-import org.mockito.invocation.InvocationOnMock
-import org.mockito.stubbing.Answer
 
 /**
  * Unit tests for [RealGameResultsInteractor].
@@ -62,27 +61,27 @@ import org.mockito.stubbing.Answer
  * `BandersnatchSecretsStorage.getAliasInContext`, which derives a bandersnatch alias via the
  * JNI `BandersnatchCrypto.alias_in_context`. That native lib is Android-only (no host build), so
  * a plain JVM unit test cannot run it. We intercept the *Kotlin extension* (compiled into the
- * file-class `BandersnatchEntropyKt`) with `Mockito.mockStatic` + a default [Answer] that returns
- * a fake alias for `aliasInContext*` and delegates everything else — this never references
- * `BandersnatchCrypto`, so the native lib is never loaded. [withFakeAlias] wraps every test that
+ * file-class `BandersnatchEntropyKt`) with `mockkStatic`, stubbing `aliasInContext` to return a
+ * fake alias while everything else runs for real — this never references `BandersnatchCrypto`,
+ * so the native lib is never loaded. [withFakeAlias] wraps every test that
  * needs the CHAIN context to resolve.
  */
 class RealGameResultsInteractorTest {
-    private val playingAccountUseCase: PlayingAccountUseCase = mock()
-    private val accountRepository: AccountRepository = mock()
-    private val chainRegistry: ChainRegistry = mock()
-    private val resourcesRepository: ResourcesRepository = mock()
-    private val videoGameRepository: VideoGameRepositoryInternal = mock()
-    private val gameGroupRosterService: GameGroupRosterService = mock()
-    private val gameNftsSubscriptionService: GameNftsSubscriptionService = mock()
-    private val airdropPrizeService: AirdropPrizeService = mock()
-    private val bandersnatchSecretsStorage: BandersnatchSecretsStorage = mock()
-    private val reportSnapshot: GameReportSnapshot = mock()
-    private val usernameOfAccountUseCase: UsernameOfAccountUseCase = mock()
-    private val checkUsernameAvailabilityUseCase: CheckUsernameAvailabilityUseCase = mock()
+    private val playingAccountUseCase: PlayingAccountUseCase = mockk()
+    private val accountRepository: AccountRepository = mockk()
+    private val chainRegistry: ChainRegistry = mockk()
+    private val resourcesRepository: ResourcesRepository = mockk()
+    private val videoGameRepository: VideoGameRepositoryInternal = mockk()
+    private val gameGroupRosterService: GameGroupRosterService = mockk()
+    private val gameNftsSubscriptionService: GameNftsSubscriptionService = mockk()
+    private val airdropPrizeService: AirdropPrizeService = mockk()
+    private val bandersnatchSecretsStorage: BandersnatchSecretsStorage = mockk()
+    private val reportSnapshot: GameReportSnapshot = mockk()
+    private val usernameOfAccountUseCase: UsernameOfAccountUseCase = mockk()
+    private val checkUsernameAvailabilityUseCase: CheckUsernameAvailabilityUseCase = mockk()
 
-    private val scoreRepository: ScoreRepository = mock()
-    private val scoreContextProvider: ScoreContextProvider = mock()
+    private val scoreRepository: ScoreRepository = mockk()
+    private val scoreContextProvider: ScoreContextProvider = mockk()
 
     // Real collaborators wired around the same mocks — keeps every assertion driving the actual
     // context-resolve and live-update paths end-to-end, rather than stubbing the extracted seams.
@@ -254,10 +253,8 @@ class RealGameResultsInteractorTest {
     fun `live results upgrade to passed when the count reaches the threshold`() = withFakeAlias {
         val candidates = (1..6).map { byteArrayOf(it.toByte()).toDataByteArray() }
         stubChainContext(rounds = 6, expectedPeerRounds = 6, earlyAttendance = null, candidateHashes = candidates)
-        stub {
-            whenever(gameNftsSubscriptionService.newlyMintedHashes(any(), any(), any()))
-                .thenReturn(flowOf(*candidates.toTypedArray()))
-        }
+        every { gameNftsSubscriptionService.newlyMintedHashes(any(), any(), any()) } returns
+            flowOf(*candidates.toTypedArray())
         val initial = build()
 
         val events = collectLiveResults(initial)
@@ -273,10 +270,8 @@ class RealGameResultsInteractorTest {
     fun `live results only stream mints while the count stays below the threshold`() = withFakeAlias {
         val candidates = (1..3).map { byteArrayOf(it.toByte()).toDataByteArray() }
         stubChainContext(rounds = 3, expectedPeerRounds = 3, earlyAttendance = null, candidateHashes = candidates)
-        stub {
-            whenever(gameNftsSubscriptionService.newlyMintedHashes(any(), any(), any()))
-                .thenReturn(flowOf(candidates.first(), candidates[1]))
-        }
+        every { gameNftsSubscriptionService.newlyMintedHashes(any(), any(), any()) } returns
+            flowOf(candidates.first(), candidates[1])
         val initial = build()
 
         val events = collectLiveResults(initial)
@@ -323,11 +318,9 @@ class RealGameResultsInteractorTest {
     @Test
     fun `roster computeCandidates failure yields the empty not-passed result`() = withFakeAlias {
         stubChainContext(rounds = 10, expectedPeerRounds = 8, earlyAttendance = true)
-        stub {
-            whenever(
-                gameGroupRosterService.computeCandidates(any(), any(), anyGameIndex(), any(), anyInt(), anyInt())
-            ).thenReturn(Result.failure(RuntimeException("roster boom")))
-        }
+        coEvery {
+            gameGroupRosterService.computeCandidates(any(), any(), any(), any(), any(), any())
+        } returns Result.failure(RuntimeException("roster boom"))
 
         assertEquals(Attestations(score = 0, total = 10, passed = false), build().attestations)
     }
@@ -391,10 +384,7 @@ class RealGameResultsInteractorTest {
             nextDrawAt = "2026-06-08T00:00:00Z",
             won = true,
         )
-        stub {
-            whenever(airdropPrizeService.fetchPrizeDraw(any(), anyGameIndex(), any()))
-                .thenReturn(Result.success(fetched))
-        }
+        coEvery { airdropPrizeService.fetchPrizeDraw(any(), any(), any()) } returns Result.success(fetched)
 
         assertEquals(fetched, build().prizeDraw)
     }
@@ -416,8 +406,8 @@ class RealGameResultsInteractorTest {
         stubChainContext(rounds = 10, expectedPeerRounds = 8, earlyAttendance = true)
         stubConsumer(fullUsername = "byteboro", liteUsername = "byteboro.42")
         stubMember()
-        whenever(reportSnapshot.current())
-            .thenReturn(GameReportSnapshot.ReportContext(wasRegistered = false, playerCount = 12))
+        every { reportSnapshot.current() } returns
+            GameReportSnapshot.ReportContext(wasRegistered = false, playerCount = 12)
 
         assertTrue(build().member.justBecameMember)
     }
@@ -426,7 +416,7 @@ class RealGameResultsInteractorTest {
     fun `justBecameMember is false when previously registered or snapshot missing`() = withFakeAlias {
         stubChainContext(rounds = 10, expectedPeerRounds = 8, earlyAttendance = true)
         stubConsumer(fullUsername = "byteboro", liteUsername = "byteboro.42")
-        whenever(reportSnapshot.current()).thenReturn(null)
+        every { reportSnapshot.current() } returns null
 
         assertFalse(build().member.justBecameMember)
     }
@@ -518,32 +508,31 @@ class RealGameResultsInteractorTest {
 
     @Test
     fun `availability maps Free to AVAILABLE`() = runBlocking<Unit> {
-        whenever(checkUsernameAvailabilityUseCase("byteboro"))
-            .thenReturn(Result.success(UpgradeUsernameAvailabilityState.Free))
+        coEvery { checkUsernameAvailabilityUseCase("byteboro") } returns
+            Result.success(UpgradeUsernameAvailabilityState.Free)
 
         assertEquals(UsernameAvailability.AVAILABLE, resolveAvailability("byteboro"))
     }
 
     @Test
     fun `availability maps ReservedByUs to AVAILABLE`() = runBlocking<Unit> {
-        whenever(checkUsernameAvailabilityUseCase("a"))
-            .thenReturn(Result.success(UpgradeUsernameAvailabilityState.ReservedByUs))
+        coEvery { checkUsernameAvailabilityUseCase("a") } returns
+            Result.success(UpgradeUsernameAvailabilityState.ReservedByUs)
 
         assertEquals(UsernameAvailability.AVAILABLE, resolveAvailability("a"))
     }
 
     @Test
     fun `availability maps NotAvailable to TAKEN`() = runBlocking<Unit> {
-        whenever(checkUsernameAvailabilityUseCase("byteboro"))
-            .thenReturn(Result.success(UpgradeUsernameAvailabilityState.NotAvailable))
+        coEvery { checkUsernameAvailabilityUseCase("byteboro") } returns
+            Result.success(UpgradeUsernameAvailabilityState.NotAvailable)
 
         assertEquals(UsernameAvailability.TAKEN, resolveAvailability("byteboro"))
     }
 
     @Test
     fun `availability is UNKNOWN when the use-case fails`() = runBlocking<Unit> {
-        whenever(checkUsernameAvailabilityUseCase("byteboro"))
-            .thenReturn(Result.failure(RuntimeException("rpc down")))
+        coEvery { checkUsernameAvailabilityUseCase("byteboro") } returns Result.failure(RuntimeException("rpc down"))
 
         assertEquals(UsernameAvailability.UNKNOWN, resolveAvailability("byteboro"))
     }
@@ -592,83 +581,70 @@ class RealGameResultsInteractorTest {
             else -> gameInfo
         }
 
-        runBlocking {
-            whenever(chainRegistry.peopleChain()).thenReturn(peopleChain)
-            // getEntropy returns the value class BandersnatchEntropy; from a suspend fun the caller
-            // expects the UNBOXED representation (ByteArray), so a plain thenReturn of the boxed
-            // value class triggers a ClassCastException. Answer with the raw bytes instead.
-            whenever(bandersnatchSecretsStorage.getEntropy(anyLong())).thenAnswer { ByteArray(32) }
+        coEvery { chainRegistry.peopleChain() } returns peopleChain
+        coEvery { bandersnatchSecretsStorage.getEntropy(any()) } returns BandersnatchEntropy(ByteArray(32))
+        coEvery { scoreContextProvider.context() } returns BandersnatchContext(ByteArray(0))
 
-            // subscribeOurPlayer -> subscribeAccountPlayer/subscribePersonPlayer -> subscribePlayer
-            whenever(videoGameRepository.subscribePlayer(any(), any())).thenReturn(flowOf(null))
-            whenever(
-                videoGameRepository.subscribePlayer(any(), eq(OnChainAccountOrPerson.Account(OUR_ACCOUNT_ID)))
-            ).thenReturn(flowOf(playerInfo))
-            // The fresh remote row mirrors the cached one by default; staleness tests override.
-            whenever(videoGameRepository.getPlayer(any(), any())).thenReturn(Result.success(playerInfo))
+        // subscribeOurPlayer -> subscribeAccountPlayer/subscribePersonPlayer -> subscribePlayer
+        every { videoGameRepository.subscribePlayer(any(), any()) } returns flowOf(null)
+        every {
+            videoGameRepository.subscribePlayer(any(), OnChainAccountOrPerson.Account(OUR_ACCOUNT_ID))
+        } returns flowOf(playerInfo)
+        // The fresh remote row mirrors the cached one by default; staleness tests override.
+        coEvery { videoGameRepository.getPlayer(any(), any()) } returns Result.success(playerInfo)
 
-            // These collaborators carry a context(ComputationalScope) receiver, which the compiler
-            // lowers to a leading parameter — so the receiver must itself be matched with any().
-            with(any<ComputationalScope>()) {
-                whenever(playingAccountUseCase.getPlayingAccount()).thenReturn(playingAccount)
-            }
-            with(any<ComputationalScope>()) {
-                whenever(playingAccountUseCase.getOurPlayerAccountId()).thenReturn(OUR_ACCOUNT_ID)
-            }
-            with(any<ComputationalScope>()) {
-                // subscribeGameInfo -> subscribeGameInfoAtBlock
-                whenever(videoGameRepository.subscribeGameInfoAtBlock(any()))
-                    .thenReturn(gameInfoFlow(resolvedGameInfo))
-            }
+        // These collaborators carry a context(ComputationalScope) receiver, which the compiler
+        // lowers to a leading parameter — so the receiver must itself be matched with any().
+        coEvery { with(any<ComputationalScope>()) { playingAccountUseCase.getPlayingAccount() } } returns playingAccount
+        coEvery { with(any<ComputationalScope>()) { playingAccountUseCase.getOurPlayerAccountId() } } returns
+            OUR_ACCOUNT_ID
+        // subscribeGameInfo -> subscribeGameInfoAtBlock
+        every {
+            with(any<ComputationalScope>()) { videoGameRepository.subscribeGameInfoAtBlock(any()) }
+        } returns gameInfoFlow(resolvedGameInfo)
 
-            whenever(reportSnapshot.current()).thenReturn(reportContext)
+        every { reportSnapshot.current() } returns reportContext
 
-            whenever(
-                gameGroupRosterService.computeCandidates(any(), any(), anyGameIndex(), any(), anyInt(), anyInt())
-            ).thenReturn(
-                Result.success(
-                    GameAttestationCandidates(hashes = candidateHashes, expectedPeerRounds = expectedPeerRounds)
-                )
-            )
+        coEvery {
+            gameGroupRosterService.computeCandidates(any(), any(), any(), any(), any(), any())
+        } returns Result.success(
+            GameAttestationCandidates(hashes = candidateHashes, expectedPeerRounds = expectedPeerRounds)
+        )
 
-            whenever(
-                videoGameRepository.getMintedNftHashes(any(), any(), any(), any())
-            ).thenReturn(Result.success(mintedHashes))
+        coEvery {
+            videoGameRepository.getMintedNftHashes(any(), any(), any(), any())
+        } returns Result.success(mintedHashes)
 
-            whenever(
-                videoGameRepository.getPendingNftHashes(any(), any(), any())
-            ).thenReturn(Result.success(pendingHashes))
+        coEvery {
+            videoGameRepository.getPendingNftHashes(any(), any(), any())
+        } returns Result.success(pendingHashes)
 
-            // Default: not a member, no stored username (tests override as needed).
-            whenever(resourcesRepository.consumerInfo(any(), any())).thenReturn(Result.success(null))
-            whenever(usernameOfAccountUseCase.getUsername()).thenReturn(Result.success(null))
-            whenever(scoreRepository.getParticipantFresh(any(), any())).thenReturn(Result.success(null))
-        }
+        // Default: not a member, no stored username (tests override as needed).
+        coEvery { resourcesRepository.consumerInfo(any(), any()) } returns Result.success(null)
+        coEvery { usernameOfAccountUseCase.getUsername() } returns Result.success(null)
+        coEvery { scoreRepository.getParticipantFresh(any(), any()) } returns Result.success(null)
     }
 
-    private fun stubMember() = stub {
-        whenever(scoreRepository.getParticipantFresh(any(), any()))
-            .thenReturn(Result.success(recognizedParticipant()))
+    private fun stubMember() {
+        coEvery { scoreRepository.getParticipantFresh(any(), any()) } returns Result.success(recognizedParticipant())
     }
 
-    private fun stubNoConsumer() = stub {
-        whenever(resourcesRepository.consumerInfo(any(), any())).thenReturn(Result.success(null))
+    private fun stubNoConsumer() {
+        coEvery { resourcesRepository.consumerInfo(any(), any()) } returns Result.success(null)
     }
 
-    private fun stubLocalUsername(username: Username?) = stub {
+    private fun stubLocalUsername(username: Username?) {
         val stored = username?.let { StoredUsername(fullUsername = null, liteUsername = it, isOnChain = false) }
-        whenever(usernameOfAccountUseCase.getUsername()).thenReturn(Result.success(stored))
+        coEvery { usernameOfAccountUseCase.getUsername() } returns Result.success(stored)
     }
 
-    private fun stubConsumer(fullUsername: String?, liteUsername: String) = runBlocking {
-        whenever(resourcesRepository.consumerInfo(any(), any())).thenReturn(
-            Result.success(
-                ConsumerInfo(
-                    accountId = OUR_ACCOUNT_ID,
-                    identifierKey = AccountEcdhKey.Unknown(byteArrayOf(7).toDataByteArray()),
-                    fullUsername = fullUsername,
-                    liteUsername = liteUsername,
-                )
+    private fun stubConsumer(fullUsername: String?, liteUsername: String) {
+        coEvery { resourcesRepository.consumerInfo(any(), any()) } returns Result.success(
+            ConsumerInfo(
+                accountId = OUR_ACCOUNT_ID,
+                identifierKey = AccountEcdhKey.Unknown(byteArrayOf(7).toDataByteArray()),
+                fullUsername = fullUsername,
+                liteUsername = liteUsername,
             )
         )
     }
@@ -715,45 +691,32 @@ class RealGameResultsInteractorTest {
     private fun gameInfoFlow(gameInfo: OnChainVideoGameInfo?): Flow<AtBlock<OnChainVideoGameInfo?>> =
         flowOf(AtBlock(value = gameInfo, at = "0xblock"))
 
-    /** Stubs a suspend collaborator from within a coroutine, as Mockito requires. */
-    private fun stub(block: suspend () -> Unit) = runBlocking { block() }
-
-    // GameIndex is a value class; a bare any() yields null and NPEs on unbox. Register a single
-    // permissive matcher and hand back a concrete instance (mirrors test-shared's anyUInt()).
-    private fun anyGameIndex(): GameIndex {
-        Mockito.argThat<Any?> { true }
-        return GameIndex(0)
-    }
-
     /**
      * Runs [block] with the bandersnatch alias extension faked out, so the CHAIN path can resolve
      * without the Android-only JNI lib. See class KDoc.
      */
     private fun withFakeAlias(block: () -> Unit) {
-        val answer = Answer { invocation: InvocationOnMock ->
-            if (invocation.method.name.startsWith("aliasInContext")) {
-                BandersnatchAlias(ByteArray(32))
-            } else {
-                invocation.callRealMethod()
-            }
+        mockkStatic(BANDERSNATCH_ENTROPY_KT)
+        try {
+            every { any<BandersnatchEntropy>().aliasInContext(any()) } returns BandersnatchAlias(ByteArray(32))
+            block()
+        } finally {
+            unmockkStatic(BANDERSNATCH_ENTROPY_KT)
         }
-        Mockito.mockStatic(
-            Class.forName("io.paritytech.polkadotapp.bandersnatch_crypto.BandersnatchEntropyKt"),
-            answer
-        ).use { block() }
     }
 
-    private val peopleChain: Chain = mock<Chain>().also {
-        whenever(it.id).thenReturn(CHAIN_ID)
+    private val peopleChain: Chain = mockk<Chain>().also {
+        every { it.id } returns CHAIN_ID
     }
 
-    private val playingAccount: MetaAccount = mock<MetaAccount>().also {
-        whenever(it.id).thenReturn(META_ID)
+    private val playingAccount: MetaAccount = mockk<MetaAccount>().also {
+        every { it.id } returns META_ID
     }
 
     private companion object {
         const val CHAIN_ID = "people-chain-id"
         const val META_ID = 42L
+        const val BANDERSNATCH_ENTROPY_KT = "io.paritytech.polkadotapp.bandersnatch_crypto.BandersnatchEntropyKt"
         val OUR_ACCOUNT_ID: AccountId = ByteArray(32) { 1 }.toDataByteArray()
     }
     // endregion

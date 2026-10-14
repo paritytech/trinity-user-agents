@@ -1,7 +1,8 @@
 package io.paritytech.polkadotapp.common.utils
 
-import io.paritytech.polkadotapp.test_shared.any
-import io.paritytech.polkadotapp.test_shared.whenever
+import io.mockk.every
+import io.mockk.mockk
+import io.mockk.verify
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancelAndJoin
@@ -17,23 +18,17 @@ import okhttp3.ResponseBody
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
-import org.mockito.Mockito.doAnswer
-import org.mockito.Mockito.mock
-import org.mockito.Mockito.verify
 import java.io.InterruptedIOException
 
 class HttpTest {
     private lateinit var callback: Callback
-    private val call = mock(Call::class.java).apply {
-        doAnswer {
-            callback = it.getArgument(0)
-            null
-        }.`when`(this).enqueue(any())
+    private val call = mockk<Call>(relaxed = true).apply {
+        every { enqueue(any()) } answers { callback = firstArg() }
     }
 
     @Test
     fun `closes response when cancellation wins before the caller resumes`() = runBlocking<Unit> {
-        val body = mock(ResponseBody::class.java)
+        val body = mockk<ResponseBody>(relaxed = true)
         val response = Response.Builder()
             .request(Request.Builder().url("https://example.com").build())
             .protocol(Protocol.HTTP_1_1).code(200).message("OK").body(body).build()
@@ -42,12 +37,12 @@ class HttpTest {
         callback.onResponse(call, response)
         request.cancelAndJoin()
 
-        verify(body).close()
+        verify(exactly = 1) { body.close() }
     }
 
     @Test
     fun `propagates timeout when the call is canceled but the caller is active`() = runBlocking<Unit> {
-        whenever(call.isCanceled()).thenReturn(true)
+        every { call.isCanceled() } returns true
         val timeout = InterruptedIOException("timeout")
         val request = async(start = CoroutineStart.UNDISPATCHED) { runCatching { call.await() } }
         try {

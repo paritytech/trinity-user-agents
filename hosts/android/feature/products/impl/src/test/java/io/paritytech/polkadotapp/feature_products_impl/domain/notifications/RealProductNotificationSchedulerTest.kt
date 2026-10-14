@@ -4,23 +4,22 @@ package io.paritytech.polkadotapp.feature_products_impl.domain.notifications
 
 import android.app.AlarmManager
 import android.content.Context
+import io.mockk.coEvery
+import io.mockk.every
+import io.mockk.mockk
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_impl.data.scheduledNotification.ScheduledProductNotificationRepository
-import io.paritytech.polkadotapp.test_shared.any
-import io.paritytech.polkadotapp.test_shared.eq
-import io.paritytech.polkadotapp.test_shared.whenever
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
-import org.mockito.Mockito.mock
 import kotlin.time.ExperimentalTime
 import kotlin.time.Instant
 
 class RealProductNotificationSchedulerTest {
-    private val context: Context = mock()
-    private val alarmManager: AlarmManager = mock()
-    private val repository: ScheduledProductNotificationRepository = mock()
+    private val context: Context = mockk()
+    private val alarmManager: AlarmManager = mockk()
+    private val repository: ScheduledProductNotificationRepository = mockk()
 
     private val productId = ProductId.fromStoredValue("acme.dot")
     private val scheduledAt = Instant.fromEpochMilliseconds(2_000_000_000_000L)
@@ -29,7 +28,7 @@ class RealProductNotificationSchedulerTest {
 
     @Before
     fun setUp() {
-        whenever(context.getSystemService(AlarmManager::class.java)).thenReturn(alarmManager)
+        every { context.getSystemService(AlarmManager::class.java) } returns alarmManager
         scheduler = RealProductNotificationScheduler(context, repository)
     }
 
@@ -64,11 +63,11 @@ class RealProductNotificationSchedulerTest {
     }
 
     private suspend fun withPendingNotificationsCount(count: Int) {
-        whenever(repository.countAll()).thenReturn(count)
+        coEvery { repository.countAll() } returns count
     }
 
     private suspend fun withCollisionForProduct(productId: ProductId) {
-        whenever(repository.exists(eq(productId), any())).thenReturn(true)
+        coEvery { repository.exists(productId, any()) } returns true
     }
 
     private suspend fun scheduleNotification(): Result<NotificationId> {

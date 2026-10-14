@@ -2,6 +2,8 @@
 
 package io.paritytech.polkadotapp.feature_dotns_gateway_impl.data.repository
 
+import io.mockk.coEvery
+import io.mockk.mockk
 import io.novasama.substrate_sdk_android.extensions.fromHex
 import io.paritytech.polkadotapp.chains.multiNetwork.ChainRegistry
 import io.paritytech.polkadotapp.chains.multiNetwork.KnownChains
@@ -18,14 +20,9 @@ import io.paritytech.polkadotapp.feature_dotns_gateway_impl.data.signer.origins.
 import io.paritytech.polkadotapp.feature_revive_api.ReviveContractApi
 import io.paritytech.polkadotapp.feature_revive_api.toEvmAccountId
 import io.paritytech.polkadotapp.feature_transactions.api.data.ExtrinsicService
-import io.paritytech.polkadotapp.test_shared.any
-import io.paritytech.polkadotapp.test_shared.eq
-import io.paritytech.polkadotapp.test_shared.whenever
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Test
-import org.mockito.ArgumentMatchers.isNull
-import org.mockito.Mockito.mock
 import org.web3j.abi.FunctionEncoder
 import org.web3j.abi.TypeReference
 import org.web3j.abi.datatypes.Address
@@ -36,13 +33,13 @@ import org.web3j.abi.datatypes.Type
 
 class RealDotNsGatewayRepositoryTest {
     private val knownChains = KnownChains(people = "", assetHub = CHAIN_ID, bulletIn = "", hydration = null)
-    private val localStorageSource: StorageDataSource = mock()
-    private val reviveContractApi: ReviveContractApi = mock()
-    private val configProvider: DotNsGatewayConfigProvider = mock()
-    private val tldProvider: DotNsTldProvider = mock()
-    private val extrinsicService: ExtrinsicService = mock()
-    private val dotNsGatewayOrigins: DotNsGatewayOrigins = mock()
-    private val chainRegistry: ChainRegistry = mock()
+    private val localStorageSource: StorageDataSource = mockk()
+    private val reviveContractApi: ReviveContractApi = mockk()
+    private val configProvider: DotNsGatewayConfigProvider = mockk()
+    private val tldProvider: DotNsTldProvider = mockk()
+    private val extrinsicService: ExtrinsicService = mockk()
+    private val dotNsGatewayOrigins: DotNsGatewayOrigins = mockk()
+    private val chainRegistry: ChainRegistry = mockk()
 
     private val repository = RealDotNsGatewayRepository(
         localStorageSource = localStorageSource,
@@ -91,10 +88,9 @@ class RealDotNsGatewayRepositoryTest {
     }
 
     private fun stubConfig() = runBlocking {
-        whenever(configProvider.getConfig()).thenReturn(
+        coEvery { configProvider.getConfig() } returns
             Result.success(DotNsGatewayConfig(popControllerAddress = CONTROLLER, popResolverAddress = RESOLVER))
-        )
-        whenever(tldProvider.getTld()).thenReturn(Result.success(requireNotNull(DotNsTld.parse("dot"))))
+        coEvery { tldProvider.getTld() } returns Result.success(requireNotNull(DotNsTld.parse("dot")))
     }
 
     private fun stubChatKey(key: ByteArray) = runBlocking {
@@ -102,8 +98,7 @@ class RealDotNsGatewayRepositoryTest {
             listOf(DynamicBytes(key)),
             listOf(object : TypeReference<DynamicBytes>() {})
         )
-        whenever(reviveContractApi.callReadOnly(eq(CHAIN_ID), eq(RESOLVER), any(), isNull()))
-            .thenReturn(Result.success(output.toDataByteArray()))
+        coEvery { reviveContractApi.callReadOnly(CHAIN_ID, RESOLVER, any(), isNull()) } returns Result.success(output.toDataByteArray())
     }
 
     private fun stubReservation(reserved: Boolean, holder: ByteArray) = runBlocking {
@@ -111,8 +106,7 @@ class RealDotNsGatewayRepositoryTest {
             listOf(Bool(reserved), Address("0x" + holder.toHexString())),
             listOf(object : TypeReference<Bool>() {}, object : TypeReference<Address>() {})
         )
-        whenever(reviveContractApi.callReadOnly(eq(CHAIN_ID), eq(CONTROLLER), any(), isNull()))
-            .thenReturn(Result.success(output.toDataByteArray()))
+        coEvery { reviveContractApi.callReadOnly(CHAIN_ID, CONTROLLER, any(), isNull()) } returns Result.success(output.toDataByteArray())
     }
 
     @Suppress("UNCHECKED_CAST")

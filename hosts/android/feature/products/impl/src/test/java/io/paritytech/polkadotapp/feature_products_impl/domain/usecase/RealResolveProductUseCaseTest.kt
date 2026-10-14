@@ -1,6 +1,9 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.usecase
 
 import com.google.gson.Gson
+import io.mockk.coEvery
+import io.mockk.coVerify
+import io.mockk.mockk
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsResolver
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTld
 import io.paritytech.polkadotapp.feature_products_api.domain.error.ProductResolutionError
@@ -12,20 +15,18 @@ import io.paritytech.polkadotapp.feature_products_impl.data.manifest.ManifestPar
 import io.paritytech.polkadotapp.feature_products_impl.data.repository.ProductRepository
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.DebugPocketCard
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.DebugPocketCards
-import io.paritytech.polkadotapp.test_shared.whenever
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
-import org.mockito.Mockito.mock
-import org.mockito.Mockito.times
-import org.mockito.Mockito.verify
 
 private const val CID = "QmXoypizjW3WknFiJnKLwHCnL72vedxjQkDDP1mXWo6uco"
 
 class RealResolveProductUseCaseTest {
-    private val dotNsResolver: DotNsResolver = mock()
-    private val productRepository: ProductRepository = mock()
+    private val dotNsResolver: DotNsResolver = mockk()
+    private val productRepository: ProductRepository = mockk(relaxUnitFun = true) {
+        coEvery { getUserWorkerUrl(any()) } returns null
+    }
     private val manifestParser = ManifestParser(Gson())
 
     private val base = "coinflip.dot"
@@ -55,10 +56,10 @@ class RealResolveProductUseCaseTest {
 
     @Test
     fun `resolves manifest product with all executables`() = runBlocking {
-        whenever(dotNsResolver.getMetadataEntry(base, "manifest")).thenReturn(Result.success(rootJson()))
-        whenever(dotNsResolver.getMetadataEntry("app.$base", "executable")).thenReturn(Result.success(appJson()))
-        whenever(dotNsResolver.getMetadataEntry("widget.$base", "executable")).thenReturn(Result.success(widgetJson()))
-        whenever(dotNsResolver.getMetadataEntry("worker.$base", "executable")).thenReturn(Result.success(workerJson()))
+        coEvery { dotNsResolver.getMetadataEntry(base, "manifest") } returns Result.success(rootJson())
+        coEvery { dotNsResolver.getMetadataEntry("app.$base", "executable") } returns Result.success(appJson())
+        coEvery { dotNsResolver.getMetadataEntry("widget.$base", "executable") } returns Result.success(widgetJson())
+        coEvery { dotNsResolver.getMetadataEntry("worker.$base", "executable") } returns Result.success(workerJson())
 
         val resolved = useCase().resolve(productId).getOrThrow()
 
@@ -73,7 +74,7 @@ class RealResolveProductUseCaseTest {
     @Test
     fun `legacy product synthesizes only app`() = runBlocking {
         // No manifest record → legacy product: an APP at the base name, and no worker.
-        whenever(dotNsResolver.getMetadataEntry(base, "manifest")).thenReturn(Result.success(null))
+        coEvery { dotNsResolver.getMetadataEntry(base, "manifest") } returns Result.success(null)
 
         val resolved = useCase().resolve(productId).getOrThrow()
 
@@ -85,8 +86,7 @@ class RealResolveProductUseCaseTest {
 
     @Test
     fun `surfaces failure when manifest read fails`() = runBlocking {
-        whenever(dotNsResolver.getMetadataEntry(base, "manifest"))
-            .thenReturn(Result.failure(RuntimeException("registry down")))
+        coEvery { dotNsResolver.getMetadataEntry(base, "manifest") } returns Result.failure(RuntimeException("registry down"))
 
         val result = useCase().resolve(productId)
 
@@ -95,11 +95,10 @@ class RealResolveProductUseCaseTest {
 
     @Test
     fun `a failed executable read is retryable, not a product without that surface`() = runBlocking {
-        whenever(dotNsResolver.getMetadataEntry(base, "manifest")).thenReturn(Result.success(rootJson()))
-        whenever(dotNsResolver.getMetadataEntry("app.$base", "executable"))
-            .thenReturn(Result.failure(RuntimeException("rpc down")))
-        whenever(dotNsResolver.getMetadataEntry("widget.$base", "executable")).thenReturn(Result.success(null))
-        whenever(dotNsResolver.getMetadataEntry("worker.$base", "executable")).thenReturn(Result.success(null))
+        coEvery { dotNsResolver.getMetadataEntry(base, "manifest") } returns Result.success(rootJson())
+        coEvery { dotNsResolver.getMetadataEntry("app.$base", "executable") } returns Result.failure(RuntimeException("rpc down"))
+        coEvery { dotNsResolver.getMetadataEntry("widget.$base", "executable") } returns Result.success(null)
+        coEvery { dotNsResolver.getMetadataEntry("worker.$base", "executable") } returns Result.success(null)
 
         // Otherwise the miss would cache as "this product has no app" until the process restarts.
         assertTrue(useCase().resolve(productId).isFailure)
@@ -107,8 +106,7 @@ class RealResolveProductUseCaseTest {
 
     @Test
     fun `a failed resolution is not cached`() = runBlocking {
-        whenever(dotNsResolver.getMetadataEntry(base, "manifest"))
-            .thenReturn(Result.failure(RuntimeException("registry down")), Result.success(null))
+        coEvery { dotNsResolver.getMetadataEntry(base, "manifest") } returnsMany listOf(Result.failure(RuntimeException("registry down")), Result.success(null))
         val useCase = useCase()
 
         assertTrue(useCase.resolve(productId).isFailure)
@@ -117,18 +115,18 @@ class RealResolveProductUseCaseTest {
 
     @Test
     fun `a successful resolution is served from cache`() = runBlocking<Unit> {
-        whenever(dotNsResolver.getMetadataEntry(base, "manifest")).thenReturn(Result.success(null))
+        coEvery { dotNsResolver.getMetadataEntry(base, "manifest") } returns Result.success(null)
         val useCase = useCase()
 
         useCase.resolve(productId).getOrThrow()
         useCase.resolve(productId).getOrThrow()
 
-        verify(dotNsResolver, times(1)).getMetadataEntry(base, "manifest")
+        coVerify(exactly = 1) { dotNsResolver.getMetadataEntry(base, "manifest") }
     }
 
     @Test
     fun `an executable subname resolves as its product`() = runBlocking {
-        whenever(dotNsResolver.getMetadataEntry(base, "manifest")).thenReturn(Result.success(null))
+        coEvery { dotNsResolver.getMetadataEntry(base, "manifest") } returns Result.success(null)
 
         val servingHost = ProductId.fromString("APP.$base", DotNsTld.parse("dot")!!).getOrThrow()
         val resolved = useCase().resolve(servingHost).getOrThrow()
@@ -138,7 +136,7 @@ class RealResolveProductUseCaseTest {
 
     @Test
     fun `surfaces failure when manifest record is malformed`() = runBlocking {
-        whenever(dotNsResolver.getMetadataEntry(base, "manifest")).thenReturn(Result.success("not json"))
+        coEvery { dotNsResolver.getMetadataEntry(base, "manifest") } returns Result.success("not json")
 
         val result = useCase().resolve(productId)
 
@@ -152,8 +150,8 @@ class RealResolveProductUseCaseTest {
     @Test
     fun `a debug worker carries the card the debug menu names`() = runBlocking {
         debugCard = DebugPocketCard(PocketCardId("loyalty"), "Loyalty", DEV_FACE, faceShown = true)
-        whenever(dotNsResolver.getMetadataEntry(base, "manifest")).thenReturn(Result.success(null))
-        whenever(productRepository.getUserWorkerUrl(productId)).thenReturn(DEV_WORKER)
+        coEvery { dotNsResolver.getMetadataEntry(base, "manifest") } returns Result.success(null)
+        coEvery { productRepository.getUserWorkerUrl(productId) } returns DEV_WORKER
 
         val worker = useCase().resolve(productId).getOrThrow().executables.worker
 
@@ -166,8 +164,8 @@ class RealResolveProductUseCaseTest {
     @Test
     fun `a debug worker with no card named publishes none`() = runBlocking {
         debugCard = null
-        whenever(dotNsResolver.getMetadataEntry(base, "manifest")).thenReturn(Result.success(null))
-        whenever(productRepository.getUserWorkerUrl(productId)).thenReturn(DEV_WORKER)
+        coEvery { dotNsResolver.getMetadataEntry(base, "manifest") } returns Result.success(null)
+        coEvery { productRepository.getUserWorkerUrl(productId) } returns DEV_WORKER
 
         val worker = useCase().resolve(productId).getOrThrow().executables.worker
 
@@ -179,11 +177,11 @@ class RealResolveProductUseCaseTest {
     @Test
     fun `a published worker still wins over the debug one`() = runBlocking {
         debugCard = DebugPocketCard(PocketCardId("loyalty"), "Loyalty", DEV_FACE, faceShown = true)
-        whenever(dotNsResolver.getMetadataEntry(base, "manifest")).thenReturn(Result.success(rootJson()))
-        whenever(dotNsResolver.getMetadataEntry("app.$base", "executable")).thenReturn(Result.success(appJson()))
-        whenever(dotNsResolver.getMetadataEntry("widget.$base", "executable")).thenReturn(Result.success(null))
-        whenever(dotNsResolver.getMetadataEntry("worker.$base", "executable")).thenReturn(Result.success(workerJson()))
-        whenever(productRepository.getUserWorkerUrl(productId)).thenReturn(DEV_WORKER)
+        coEvery { dotNsResolver.getMetadataEntry(base, "manifest") } returns Result.success(rootJson())
+        coEvery { dotNsResolver.getMetadataEntry("app.$base", "executable") } returns Result.success(appJson())
+        coEvery { dotNsResolver.getMetadataEntry("widget.$base", "executable") } returns Result.success(null)
+        coEvery { dotNsResolver.getMetadataEntry("worker.$base", "executable") } returns Result.success(workerJson())
+        coEvery { productRepository.getUserWorkerUrl(productId) } returns DEV_WORKER
 
         val worker = useCase().resolve(productId).getOrThrow().executables.worker as ProductExecutable.Worker
 

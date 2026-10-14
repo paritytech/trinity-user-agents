@@ -1,5 +1,8 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.topUpRequest
 
+import io.mockk.coEvery
+import io.mockk.every
+import io.mockk.mockk
 import io.paritytech.polkadotapp.chains.multiNetwork.chain.model.Chain
 import io.paritytech.polkadotapp.chains.network.binding.Balance
 import io.paritytech.polkadotapp.chains.network.binding.intoBalance
@@ -17,7 +20,6 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.serializat
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.serialization.toDomain
 import io.paritytech.polkadotapp.feature_tokens_api.domain.ChainAssetProvider
 import io.paritytech.polkadotapp.feature_transactions.api.domain.model.TransactionSignerSource
-import io.paritytech.polkadotapp.test_shared.whenever
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.toList
@@ -26,7 +28,6 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
 import org.junit.Before
 import org.junit.Test
-import org.mockito.Mockito.mock
 import java.math.BigDecimal
 import kotlin.time.Duration.Companion.hours
 import kotlin.time.ExperimentalTime
@@ -43,10 +44,10 @@ import kotlin.time.Instant
 class RealExecuteTopUpUseCaseTest {
     private val claimReceivedCoinsUseCase = FakeClaimReceivedCoinsUseCase()
     private val onboardingUseCase = FakeOnboardingUseCase()
-    private val chainAssetProvider: ChainAssetProvider = mock()
+    private val chainAssetProvider: ChainAssetProvider = mockk()
 
-    private val transactionService: CoinageTransactionService = mock()
-    private val assetValueUseCase: CoinageAssetValueUseCase = mock()
+    private val transactionService: CoinageTransactionService = mockk()
+    private val assetValueUseCase: CoinageAssetValueUseCase = mockk()
 
     private val useCase = RealExecuteTopUpUseCase(
         claimReceivedCoinsUseCase = claimReceivedCoinsUseCase,
@@ -58,9 +59,9 @@ class RealExecuteTopUpUseCaseTest {
 
     @Before
     fun withResolvedAsset() = runTest {
-        val asset = mock<Chain.Asset>()
-        whenever(asset.precision).thenReturn(10)
-        whenever(chainAssetProvider.asset()).thenReturn(asset)
+        val asset = mockk<Chain.Asset>()
+        every { asset.precision } returns 10
+        coEvery { chainAssetProvider.asset() } returns asset
     }
 
     // ---- what the product is told ----
@@ -245,7 +246,7 @@ class RealExecuteTopUpUseCaseTest {
 
     private fun resolved(source: PaymentTopUpSource): TopUpSource = when (source) {
         is PaymentTopUpSource.Coins -> TopUpSource.Coins(emptyList())
-        else -> TopUpSource.Onboard(TransactionSignerSource.FromAccount(mock<MetaAccount>()))
+        else -> TopUpSource.Onboard(TransactionSignerSource.FromAccount(mockk<MetaAccount>()))
     }
 
     private companion object {
@@ -259,7 +260,6 @@ class RealExecuteTopUpUseCaseTest {
     }
 }
 
-/** A fake rather than a mock: both use cases take value classes, which Mockito unwraps. */
 @OptIn(ExperimentalTime::class)
 private class FakeClaimReceivedCoinsUseCase : ClaimReceivedCoinsUseCase {
     private var states: List<CoinageTransferDetection> = emptyList()

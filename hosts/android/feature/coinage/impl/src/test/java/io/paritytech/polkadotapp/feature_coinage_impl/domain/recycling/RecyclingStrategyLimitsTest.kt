@@ -1,5 +1,9 @@
 package io.paritytech.polkadotapp.feature_coinage_impl.domain.recycling
 
+import io.mockk.Called
+import io.mockk.coEvery
+import io.mockk.mockk
+import io.mockk.verify
 import io.paritytech.polkadotapp.chains.network.binding.Balance
 import io.paritytech.polkadotapp.feature_coinage_api.domain.model.Coin
 import io.paritytech.polkadotapp.feature_coinage_api.domain.model.CoinProvenance
@@ -13,18 +17,15 @@ import io.paritytech.polkadotapp.feature_coinage_api.domain.recycling.RecyclingS
 import io.paritytech.polkadotapp.feature_coinage_api.domain.recycling.params
 import io.paritytech.polkadotapp.feature_coinage_impl.common.testConversionContext
 import io.paritytech.polkadotapp.feature_coinage_impl.testKey
-import io.paritytech.polkadotapp.test_shared.whenever
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Test
-import org.mockito.Mockito.mock
-import org.mockito.Mockito.verifyNoInteractions
 
 private const val FORCED_AGE = 14
 
 /** The two limits that wrap every policy: what the chain will still accept, and what allowance is left. */
 class RecyclingStrategyLimitsTest {
-    private val quotaTracker: UnloadQuotaTracker = mock()
+    private val quotaTracker: UnloadQuotaTracker = mockk()
 
     private val forcedRecyclingAgeProvider = forcedAgeOf(FORCED_AGE)
 
@@ -54,7 +55,7 @@ class RecyclingStrategyLimitsTest {
             valueExponent = ValueExponent(1),
             age = Coin.Age.Unknown,
             isOnChain = true,
-            accountId = mock(),
+            accountId = mockk(),
             provenance = CoinProvenance.UNKNOWN,
         )
 
@@ -65,7 +66,7 @@ class RecyclingStrategyLimitsTest {
 
     @Test
     fun `an exhausted allowance leaves only the coins the chain forces`() = runBlocking {
-        whenever(quotaTracker.isQuotaRunningLow()).thenReturn(Result.success(true))
+        coEvery { quotaTracker.isQuotaRunningLow() } returns Result.success(true)
 
         val due = coinOf(age = FORCED_AGE, derivationIndex = 1)
         val discretionary = coinOf(age = 5, derivationIndex = 2)
@@ -79,7 +80,7 @@ class RecyclingStrategyLimitsTest {
     /** A quota we could not read is not evidence of an exhausted one, so the user's choice stands. */
     @Test
     fun `an unreadable allowance does not stop recycling`() = runBlocking {
-        whenever(quotaTracker.isQuotaRunningLow()).thenReturn(Result.failure(RuntimeException("chain down")))
+        coEvery { quotaTracker.isQuotaRunningLow() } returns Result.failure(RuntimeException("chain down"))
 
         val discretionary = coinOf(age = 5)
 
@@ -104,7 +105,7 @@ class RecyclingStrategyLimitsTest {
 
         // The policy would have gated this coin; it stays spendable until the complete pass says otherwise.
         assertEquals(CoinRecyclingState.ALLOW_USE, verdicts.getValue(discretionary.derivationIndex))
-        verifyNoInteractions(quotaTracker)
+        verify { quotaTracker wasNot Called }
     }
 
     @Test
@@ -167,7 +168,7 @@ class RecyclingStrategyLimitsTest {
         valueExponent = ValueExponent(1),
         age = Coin.Age.Known(age),
         isOnChain = true,
-        accountId = mock(),
+        accountId = mockk(),
         provenance = CoinProvenance.UNKNOWN,
     )
 }

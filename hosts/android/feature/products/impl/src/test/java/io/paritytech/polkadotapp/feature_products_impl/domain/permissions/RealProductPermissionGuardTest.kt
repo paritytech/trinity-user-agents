@@ -1,12 +1,14 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.permissions
 
+import io.mockk.coEvery
+import io.mockk.coVerify
+import io.mockk.every
+import io.mockk.mockk
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.handlers.ProductPermissionHandler
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.models.PermissionDecision
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.models.ProductPermission
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.models.ProductPermission.RemotePermission
-import io.paritytech.polkadotapp.test_shared.any
-import io.paritytech.polkadotapp.test_shared.whenever
 import kotlinx.coroutines.CancellableContinuation
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.joinAll
@@ -18,21 +20,18 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
-import org.mockito.Mockito.mock
-import org.mockito.Mockito.never
-import org.mockito.Mockito.verify
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.coroutines.resume
 import kotlin.math.max
 
 class RealProductPermissionGuardTest {
-    private val remoteHandler: ProductPermissionHandler<RemotePermission> = mock()
-    private val accountHandler: ProductPermissionHandler<ProductPermission.AccountAccess> = mock()
-    private val balanceHandler: ProductPermissionHandler<ProductPermission.BalanceAccess> = mock()
-    private val deviceHandler: ProductPermissionHandler<ProductPermission.DeviceCapability> = mock()
-    private val identityHandler: ProductPermissionHandler<ProductPermission.UserIdentityAccess> = mock()
-    private val repository: ProductPermissionRepository = mock()
-    private val requester: ProductPermissionRequester = mock()
+    private val remoteHandler: ProductPermissionHandler<RemotePermission> = mockk(relaxed = true)
+    private val accountHandler: ProductPermissionHandler<ProductPermission.AccountAccess> = mockk()
+    private val balanceHandler: ProductPermissionHandler<ProductPermission.BalanceAccess> = mockk()
+    private val deviceHandler: ProductPermissionHandler<ProductPermission.DeviceCapability> = mockk()
+    private val identityHandler: ProductPermissionHandler<ProductPermission.UserIdentityAccess> = mockk()
+    private val repository: ProductPermissionRepository = mockk(relaxed = true)
+    private val requester: ProductPermissionRequester = mockk(relaxed = true)
 
     private val productId = ProductId.fromStoredValue("acme.dot")
     private val permission = RemotePermission.WebRtcAccess
@@ -161,39 +160,39 @@ class RealProductPermissionGuardTest {
     // region setup helpers
 
     private fun withNoExistingGrant() {
-        whenever(repository.hasOneTimeGrant(any(), any())).thenReturn(false)
+        every { repository.hasOneTimeGrant(any(), any()) } returns false
     }
 
     private fun withAlreadyGranted() {
-        whenever(repository.hasOneTimeGrant(any(), any())).thenReturn(true)
+        every { repository.hasOneTimeGrant(any(), any()) } returns true
     }
 
     private suspend fun withNotGranted() {
         withNoExistingGrant()
-        whenever(remoteHandler.isGranted(any(), any())).thenReturn(false)
+        coEvery { remoteHandler.isGranted(any(), any()) } returns false
     }
 
     private suspend fun withHandlerGranting() {
-        whenever(remoteHandler.request(any(), any())).thenReturn(true)
+        coEvery { remoteHandler.request(any(), any()) } returns true
     }
 
     /** Pre-lock check sees the permission ungranted; the under-lock re-check sees it granted. */
     private suspend fun withGrantedWhileWaitingForLock() {
-        whenever(repository.hasOneTimeGrant(any(), any())).thenReturn(false, true)
-        whenever(remoteHandler.isGranted(any(), any())).thenReturn(false)
+        every { repository.hasOneTimeGrant(any(), any()) } returnsMany listOf(false, true)
+        coEvery { remoteHandler.isGranted(any(), any()) } returns false
     }
 
     private fun withExistingOneTimeGrant() {
-        whenever(repository.consumeOneTimeGrant(any(), any())).thenReturn(true)
+        every { repository.consumeOneTimeGrant(any(), any()) } returns true
     }
 
     /** First consume attempt (pre-lock) finds nothing; the under-lock retry finds a freshly issued grant. */
     private fun withOneTimeGrantIssuedWhileWaiting() {
-        whenever(repository.consumeOneTimeGrant(any(), any())).thenReturn(false, true)
+        every { repository.consumeOneTimeGrant(any(), any()) } returnsMany listOf(false, true)
     }
 
     private suspend fun withBatchedDecision(decision: PermissionDecision) {
-        whenever(requester.promptBatched(any(), any())).thenReturn(decision)
+        coEvery { requester.promptBatched(any(), any()) } returns decision
     }
 
     // endregion
@@ -201,19 +200,19 @@ class RealProductPermissionGuardTest {
     // region verify helpers
 
     private suspend fun verifyHandlerRequested() {
-        verify(remoteHandler).request(any(), any())
+        coVerify(exactly = 1) { remoteHandler.request(any(), any()) }
     }
 
     private suspend fun verifyNoHandlerRequest() {
-        verify(remoteHandler, never()).request(any(), any())
+        coVerify(exactly = 0) { remoteHandler.request(any(), any()) }
     }
 
     private suspend fun verifyNoBatchedPrompt() {
-        verify(requester, never()).promptBatched(any(), any())
+        coVerify(exactly = 0) { requester.promptBatched(any(), any()) }
     }
 
     private suspend fun verifyGrantedPermanently() {
-        verify(repository).grant(any(), any())
+        coVerify(exactly = 1) { repository.grant(any(), any()) }
     }
 
     // endregion
@@ -234,8 +233,7 @@ class RealProductPermissionGuardTest {
     /**
      * A fake handler/requester backing store: it parks every request/prompt on a stored continuation instead of
      * resolving it, so a test can observe how many requests are concurrently inside the lock and release them one at a
-     * time. Mockito can't suspend a stubbed `suspend` call, so a fake is the only way to control the suspension point
-     * deterministically — no sleep-based timing windows.
+     * time. A fake controls the suspension point deterministically — no sleep-based timing windows.
      */
     private class PromptCoordinator {
         private val parked = Channel<CancellableContinuation<PermissionDecision>>(Channel.UNLIMITED)

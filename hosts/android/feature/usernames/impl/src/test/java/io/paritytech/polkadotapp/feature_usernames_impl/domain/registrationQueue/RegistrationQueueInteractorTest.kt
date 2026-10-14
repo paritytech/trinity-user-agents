@@ -1,32 +1,27 @@
 package io.paritytech.polkadotapp.feature_usernames_impl.domain.registrationQueue
 
-import io.paritytech.polkadotapp.common.data.storage.SingleValueStorage
+import io.mockk.coEvery
+import io.mockk.coVerify
+import io.mockk.mockk
 import io.paritytech.polkadotapp.feature_usernames_api.data.LocalUsernameStorage
 import io.paritytech.polkadotapp.feature_usernames_api.domain.model.Username
 import io.paritytech.polkadotapp.feature_usernames_impl.data.claim.QueueRateLimitedException
 import io.paritytech.polkadotapp.feature_usernames_impl.data.claim.UsernameRepository
 import io.paritytech.polkadotapp.feature_usernames_impl.data.storage.QueuedClaimStorage
 import io.paritytech.polkadotapp.feature_usernames_impl.domain.model.RegistrationQueueStatus
-import io.paritytech.polkadotapp.test_shared.any
-import io.paritytech.polkadotapp.test_shared.whenever
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.test.currentTime
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Test
-import org.mockito.Mockito.mock
-import org.mockito.Mockito.never
-import org.mockito.Mockito.verify
 
 class RegistrationQueueInteractorTest {
     private val username = Username.fromFullValue("alice.07")
 
-    private val usernameRepository: UsernameRepository = mock(UsernameRepository::class.java)
+    private val usernameRepository: UsernameRepository = mockk()
 
-    @Suppress("UNCHECKED_CAST")
-    private val localUsernameStorage: LocalUsernameStorage =
-        mock(SingleValueStorage::class.java) as LocalUsernameStorage
-    private val queuedClaimStorage: QueuedClaimStorage = mock(QueuedClaimStorage::class.java)
+    private val localUsernameStorage: LocalUsernameStorage = mockk(relaxUnitFun = true)
+    private val queuedClaimStorage: QueuedClaimStorage = mockk(relaxUnitFun = true)
 
     private val interactor = RegistrationQueueInteractor(
         usernameRepository = usernameRepository,
@@ -64,8 +59,8 @@ class RegistrationQueueInteractorTest {
 
         interactor.observeQueueProgress().toList()
 
-        verify(localUsernameStorage).saveValue(username)
-        verify(queuedClaimStorage).removeValue()
+        coVerify(exactly = 1) { localUsernameStorage.saveValue(username) }
+        coVerify(exactly = 1) { queuedClaimStorage.removeValue() }
     }
 
     @Test
@@ -75,8 +70,8 @@ class RegistrationQueueInteractorTest {
 
         interactor.observeQueueProgress().toList()
 
-        verify(localUsernameStorage, never()).saveValue(any())
-        verify(queuedClaimStorage).removeValue()
+        coVerify(exactly = 0) { localUsernameStorage.saveValue(any()) }
+        coVerify(exactly = 1) { queuedClaimStorage.removeValue() }
     }
 
     @Test
@@ -151,16 +146,15 @@ class RegistrationQueueInteractorTest {
     }
 
     private suspend fun withQueueStatuses(resultsInOrder: List<Result<RegistrationQueueStatus>>) {
-        var stubbing = whenever(usernameRepository.getRegistrationQueueStatus())
-        resultsInOrder.forEach { stubbing = stubbing.thenReturn(it) }
+        coEvery { usernameRepository.getRegistrationQueueStatus() } returnsMany resultsInOrder
     }
 
     private suspend fun withQueuedClaim(username: Username) {
-        whenever(queuedClaimStorage.getValue()).thenReturn(username)
+        coEvery { queuedClaimStorage.getValue() } returns username
     }
 
     private suspend fun withNoQueuedClaim() {
-        whenever(queuedClaimStorage.getValue()).thenReturn(null)
+        coEvery { queuedClaimStorage.getValue() } returns null
     }
 
     private fun inQueue(position: Int): RegistrationQueueStatus.InQueue {

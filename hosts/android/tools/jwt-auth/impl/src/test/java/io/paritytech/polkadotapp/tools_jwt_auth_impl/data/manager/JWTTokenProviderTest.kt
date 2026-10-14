@@ -1,6 +1,9 @@
 package io.paritytech.polkadotapp.tools_jwt_auth_impl.data.manager
 
 import com.google.gson.Gson
+import io.mockk.coEvery
+import io.mockk.coVerify
+import io.mockk.mockk
 import io.paritytech.polkadotapp.tools_integrity_api.domain.error.IntegrityError
 import io.paritytech.polkadotapp.tools_jwt_auth_api.domain.error.AuthError
 import io.paritytech.polkadotapp.tools_jwt_auth_impl.data.DelayableAuthTokenApi
@@ -25,10 +28,6 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
-import org.mockito.Mockito.mock
-import org.mockito.Mockito.never
-import org.mockito.Mockito.verify
-import org.mockito.Mockito.`when`
 import retrofit2.HttpException
 import retrofit2.Response
 import kotlin.time.ExperimentalTime
@@ -44,7 +43,7 @@ class JWTTokenProviderTest {
     @Before
     fun setUp() {
         tokenStore = createFakeTokenStore()
-        authTokenApi = mock(AuthTokenApi::class.java)
+        authTokenApi = mockk()
         timeProvider = FakeTimeProvider()
         jwtParser = JWTParser(Gson())
         manager = JWTTokenProvider(tokenStore, authTokenApi, timeProvider, jwtParser, Gson())
@@ -60,7 +59,7 @@ class JWTTokenProviderTest {
         val token = manager.validToken()
 
         assertEquals(tokenStore.fetchToken(), token)
-        verify(authTokenApi, never()).fetchToken(JwtRequest)
+        coVerify(exactly = 0) { authTokenApi.fetchToken(JwtRequest) }
     }
 
     @Test
@@ -69,7 +68,7 @@ class JWTTokenProviderTest {
         timeProvider.nowSeconds = 2_000L
 
         val freshResponse = JWTTokenResponse("fresh-token", "fresh-refresh")
-        `when`(authTokenApi.fetchToken(JwtRequest)).thenReturn(freshResponse)
+        coEvery { authTokenApi.fetchToken(JwtRequest) } returns freshResponse
 
         val token = manager.validToken()
 
@@ -85,7 +84,7 @@ class JWTTokenProviderTest {
         timeProvider.nowSeconds = exp - JWTTokenProvider.EXPIRY_BUFFER.inWholeSeconds // exactly at buffer edge
 
         val freshResponse = JWTTokenResponse("new-token", "new-refresh")
-        `when`(authTokenApi.fetchToken(JwtRequest)).thenReturn(freshResponse)
+        coEvery { authTokenApi.fetchToken(JwtRequest) } returns freshResponse
 
         val token = manager.validToken()
 
@@ -176,14 +175,13 @@ class JWTTokenProviderTest {
         timeProvider.nowSeconds = 1_000_000_000L
 
         val refreshResponse = JWTTokenResponse("refreshed-token", "new-refresh")
-        `when`(authTokenApi.refreshToken(RefreshTokenRequest("valid-refresh")))
-            .thenReturn(refreshResponse)
+        coEvery { authTokenApi.refreshToken(RefreshTokenRequest("valid-refresh")) } returns refreshResponse
 
         val token = manager.validToken()
 
         assertEquals("refreshed-token", token)
         assertEquals("new-refresh", tokenStore.fetchRefreshToken())
-        verify(authTokenApi, never()).fetchToken(JwtRequest)
+        coVerify(exactly = 0) { authTokenApi.fetchToken(JwtRequest) }
     }
 
     @Test
@@ -191,11 +189,10 @@ class JWTTokenProviderTest {
         tokenStore.saveRefreshToken("bad-refresh")
         timeProvider.nowSeconds = 1_000_000_000L
 
-        `when`(authTokenApi.refreshToken(RefreshTokenRequest("bad-refresh")))
-            .thenThrow(HttpException(Response.error<Any>(401, "".toResponseBody())))
+        coEvery { authTokenApi.refreshToken(RefreshTokenRequest("bad-refresh")) } throws HttpException(Response.error<Any>(401, "".toResponseBody()))
 
         val attestResponse = JWTTokenResponse("attest-token", "attest-refresh")
-        `when`(authTokenApi.fetchToken(JwtRequest)).thenReturn(attestResponse)
+        coEvery { authTokenApi.fetchToken(JwtRequest) } returns attestResponse
 
         val token = manager.validToken()
 
@@ -208,7 +205,7 @@ class JWTTokenProviderTest {
     fun `saves both tokens after successful attestation`() = runTest {
         timeProvider.nowSeconds = 1_000_000_000L
         val response = JWTTokenResponse("new-access", "new-refresh")
-        `when`(authTokenApi.fetchToken(JwtRequest)).thenReturn(response)
+        coEvery { authTokenApi.fetchToken(JwtRequest) } returns response
 
         manager.validToken()
 
@@ -219,8 +216,8 @@ class JWTTokenProviderTest {
     // MARK: - Refresh failure classification (refreshTokenIsUnusable)
     //
     // Each case stubs `refreshToken` to throw a specific failure, then leaves
-    // `fetchToken` unstubbed (Mockito returns null → attestation throws NPE inside
-    // persistTokens), so `validToken()` propagates an exception. We assert the
+    // `fetchToken` unstubbed (the strict mock throws, so attestation fails), so
+    // `validToken()` propagates an exception. We assert the
     // post-state of the refresh token — dropped (null) or kept (original) — to verify
     // the classifier without depending on the attestation result.
 
@@ -232,8 +229,7 @@ class JWTTokenProviderTest {
         tokenStore.saveRefreshToken("rt-400")
         timeProvider.nowSeconds = 1_000_000_000L
 
-        `when`(authTokenApi.refreshToken(RefreshTokenRequest("rt-400")))
-            .thenThrow(HttpException(Response.error<Any>(400, "".toResponseBody())))
+        coEvery { authTokenApi.refreshToken(RefreshTokenRequest("rt-400")) } throws HttpException(Response.error<Any>(400, "".toResponseBody()))
 
         runCatching { manager.validToken() }
 
@@ -245,8 +241,7 @@ class JWTTokenProviderTest {
         tokenStore.saveRefreshToken("rt-408")
         timeProvider.nowSeconds = 1_000_000_000L
 
-        `when`(authTokenApi.refreshToken(RefreshTokenRequest("rt-408")))
-            .thenThrow(HttpException(Response.error<Any>(408, "".toResponseBody())))
+        coEvery { authTokenApi.refreshToken(RefreshTokenRequest("rt-408")) } throws HttpException(Response.error<Any>(408, "".toResponseBody()))
 
         runCatching { manager.validToken() }
 
@@ -258,8 +253,7 @@ class JWTTokenProviderTest {
         tokenStore.saveRefreshToken("rt-429")
         timeProvider.nowSeconds = 1_000_000_000L
 
-        `when`(authTokenApi.refreshToken(RefreshTokenRequest("rt-429")))
-            .thenThrow(HttpException(Response.error<Any>(429, "".toResponseBody())))
+        coEvery { authTokenApi.refreshToken(RefreshTokenRequest("rt-429")) } throws HttpException(Response.error<Any>(429, "".toResponseBody()))
 
         runCatching { manager.validToken() }
 
@@ -271,8 +265,7 @@ class JWTTokenProviderTest {
         tokenStore.saveRefreshToken("rt-500")
         timeProvider.nowSeconds = 1_000_000_000L
 
-        `when`(authTokenApi.refreshToken(RefreshTokenRequest("rt-500")))
-            .thenThrow(HttpException(Response.error<Any>(500, "".toResponseBody())))
+        coEvery { authTokenApi.refreshToken(RefreshTokenRequest("rt-500")) } throws HttpException(Response.error<Any>(500, "".toResponseBody()))
 
         runCatching { manager.validToken() }
 
@@ -281,14 +274,12 @@ class JWTTokenProviderTest {
 
     @Test
     fun `refresh failure with non-HttpException keeps refresh token`() = runTest {
-        // IOException would be the realistic case (network down), but Mockito's `thenThrow`
-        // rejects checked exceptions not declared on the method signature; the classifier's
+        // IOException would be the realistic case (network down); the classifier's
         // `this !is HttpException -> false` short-circuit applies equally to RuntimeException.
         tokenStore.saveRefreshToken("rt-other")
         timeProvider.nowSeconds = 1_000_000_000L
 
-        `when`(authTokenApi.refreshToken(RefreshTokenRequest("rt-other")))
-            .thenThrow(RuntimeException("network down"))
+        coEvery { authTokenApi.refreshToken(RefreshTokenRequest("rt-other")) } throws RuntimeException("network down")
 
         runCatching { manager.validToken() }
 
@@ -300,8 +291,7 @@ class JWTTokenProviderTest {
     @Test
     fun `attestation 403 with INTEGRITY_FAILED code throws AttestationRejected`() = runTest {
         timeProvider.nowSeconds = 1_000_000_000L
-        `when`(authTokenApi.fetchToken(JwtRequest))
-            .thenThrow(httpException(403, """{"error":"INTEGRITY_FAILED","message":"attestation rejected"}"""))
+        coEvery { authTokenApi.fetchToken(JwtRequest) } throws httpException(403, """{"error":"INTEGRITY_FAILED","message":"attestation rejected"}""")
 
         val error = runCatching { manager.validToken() }.exceptionOrNull()
 
@@ -311,8 +301,7 @@ class JWTTokenProviderTest {
     @Test
     fun `attestation 403 without INTEGRITY_FAILED code propagates HttpException`() = runTest {
         timeProvider.nowSeconds = 1_000_000_000L
-        `when`(authTokenApi.fetchToken(JwtRequest))
-            .thenThrow(httpException(403, """{"error":"FORBIDDEN","message":"forbidden"}"""))
+        coEvery { authTokenApi.fetchToken(JwtRequest) } throws httpException(403, """{"error":"FORBIDDEN","message":"forbidden"}""")
 
         val error = runCatching { manager.validToken() }.exceptionOrNull()
 
@@ -322,9 +311,9 @@ class JWTTokenProviderTest {
     @Test
     fun `attestation 503 CRL unavailable retries once and succeeds`() = runTest {
         timeProvider.nowSeconds = 1_000_000_000L
-        `when`(authTokenApi.fetchToken(JwtRequest))
-            .thenThrow(httpException(503, """{"error":"ATTESTATION_CRL_UNAVAILABLE","message":"retry"}"""))
-            .thenReturn(JWTTokenResponse("retried-token", "retried-refresh"))
+        coEvery { authTokenApi.fetchToken(JwtRequest) } throws
+            httpException(503, """{"error":"ATTESTATION_CRL_UNAVAILABLE","message":"retry"}""") andThen
+            JWTTokenResponse("retried-token", "retried-refresh")
 
         val token = manager.validToken()
 
@@ -335,11 +324,10 @@ class JWTTokenProviderTest {
     @Test
     fun `attestation 503 CRL unavailable on retry throws AttestationTransient`() = runTest {
         timeProvider.nowSeconds = 1_000_000_000L
-        `when`(authTokenApi.fetchToken(JwtRequest))
-            .thenThrow(
-                httpException(503, """{"error":"ATTESTATION_CRL_UNAVAILABLE","message":"retry"}"""),
-                httpException(503, """{"error":"ATTESTATION_CRL_UNAVAILABLE","message":"retry"}""")
-            )
+        coEvery { authTokenApi.fetchToken(JwtRequest) } throwsMany listOf(
+            httpException(503, """{"error":"ATTESTATION_CRL_UNAVAILABLE","message":"retry"}"""),
+            httpException(503, """{"error":"ATTESTATION_CRL_UNAVAILABLE","message":"retry"}""")
+        )
 
         val error = runCatching { manager.validToken() }.exceptionOrNull()
 
@@ -360,7 +348,7 @@ class JWTTokenProviderTest {
         timeProvider.nowSeconds = 1_000_000_000L
 
         val response = JWTTokenResponse("valid-token", "valid-refresh")
-        `when`(authTokenApi.fetchToken(JwtRequest)).thenReturn(response)
+        coEvery { authTokenApi.fetchToken(JwtRequest) } returns response
 
         val token = manager.validToken()
 

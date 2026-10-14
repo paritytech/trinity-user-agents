@@ -1,5 +1,7 @@
 package io.paritytech.polkadotapp.feature_coinage_impl.domain.usecase
 
+import io.mockk.coEvery
+import io.mockk.mockk
 import io.paritytech.polkadotapp.chains.network.binding.Balance
 import io.paritytech.polkadotapp.chains.network.binding.intoBalance
 import io.paritytech.polkadotapp.common.data.time.TimeProvider
@@ -30,12 +32,9 @@ import io.paritytech.polkadotapp.feature_coinage_impl.domain.recycling.UnloadQuo
 import io.paritytech.polkadotapp.feature_coinage_impl.domain.recycling.VoucherUsabilityContextFactory
 import io.paritytech.polkadotapp.feature_coinage_impl.testKey
 import io.paritytech.polkadotapp.feature_transactions.api.domain.durable.DurableTxStatus
-import io.paritytech.polkadotapp.test_shared.any
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Test
-import org.mockito.Mockito.mock
-import org.mockito.Mockito.`when`
 import java.math.BigInteger
 import kotlin.time.Instant
 
@@ -48,13 +47,13 @@ private const val FORCED_AGE = 14
  * not judged yet is treated as still arriving rather than as spendable.
  */
 class RealTotalBalanceUseCaseTest {
-    private val coinRepository: CoinRepository = mock()
-    private val coinageAssetsUseCase: CoinageAssetsUseCase = mock()
-    private val coinageBalanceConverterUseCase: CoinageBalanceConverterUseCase = mock()
-    private val ringCapacityProvider: RingCapacityProvider = mock()
-    private val settings: CoinageRecyclingStrategySettings = mock()
-    private val evaluator: CoinRecyclingEvaluator = mock()
-    private val quotaTracker: UnloadQuotaTracker = mock()
+    private val coinRepository: CoinRepository = mockk()
+    private val coinageAssetsUseCase: CoinageAssetsUseCase = mockk()
+    private val coinageBalanceConverterUseCase: CoinageBalanceConverterUseCase = mockk()
+    private val ringCapacityProvider: RingCapacityProvider = mockk()
+    private val settings: CoinageRecyclingStrategySettings = mockk()
+    private val evaluator: CoinRecyclingEvaluator = mockk()
+    private val quotaTracker: UnloadQuotaTracker = mockk()
 
     private val timeProvider = object : TimeProvider {
         override fun now(): Instant = Instant.fromEpochMilliseconds(0)
@@ -65,16 +64,14 @@ class RealTotalBalanceUseCaseTest {
     private val useCase: RealTotalBalanceUseCase
 
     init {
-        runBlocking {
-            `when`(coinageBalanceConverterUseCase.create()).thenReturn(Result.success(testConversionContext))
+        coEvery { coinageBalanceConverterUseCase.create() } returns Result.success(testConversionContext)
 
-            // The balance asks for an IMMEDIATE context so it never waits on the chain, which makes the
-            // cached capacities — not a fetch — what it classifies vouchers against.
-            `when`(ringCapacityProvider.peekCapacitiesFor(any()))
-                .thenReturn(mapOf(ValueExponent(1) to FULL_RING, ValueExponent(2) to FULL_RING))
+        // The balance asks for an IMMEDIATE context so it never waits on the chain, which makes the
+        // cached capacities — not a fetch — what it classifies vouchers against.
+        coEvery { ringCapacityProvider.peekCapacitiesFor(any()) } returns
+            mapOf(ValueExponent(1) to FULL_RING, ValueExponent(2) to FULL_RING)
 
-            `when`(coinRepository.getCoinRecyclingAge()).thenReturn(Result.success(FORCED_AGE))
-        }
+        coEvery { coinRepository.getCoinRecyclingAge() } returns Result.success(FORCED_AGE)
 
         useCase = RealTotalBalanceUseCase(
             coinageAssetsUseCase = coinageAssetsUseCase,
@@ -83,7 +80,7 @@ class RealTotalBalanceUseCaseTest {
             settings = settings,
             evaluator = evaluator,
             usabilityContextFactory = VoucherUsabilityContextFactory(ringCapacityProvider, timeProvider),
-            readinessUpdates = mock(),
+            readinessUpdates = mockk(),
         )
     }
 
@@ -351,13 +348,13 @@ class RealTotalBalanceUseCaseTest {
         valueExponent = ValueExponent(exponent),
         age = age?.let(Coin.Age::Known) ?: Coin.Age.Unknown,
         isOnChain = onChain,
-        accountId = mock(),
+        accountId = mockk(),
         provenance = CoinProvenance.UNKNOWN,
     )
 
     private fun voucherOf(exponent: Int, location: Location) = RecyclerVoucher(
         ringVrfKeyIndex = testKey(0),
-        ringVrfPublicKey = mock(),
+        ringVrfPublicKey = mockk(),
         recyclerValue = ValueExponent(exponent),
         location = location,
         recyclerFungibility = RecyclerFungibility.NONE,

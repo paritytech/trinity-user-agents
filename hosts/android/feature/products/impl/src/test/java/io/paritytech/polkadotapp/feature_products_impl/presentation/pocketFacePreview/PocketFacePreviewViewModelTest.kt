@@ -1,5 +1,6 @@
 package io.paritytech.polkadotapp.feature_products_impl.presentation.pocketFacePreview
 
+import io.mockk.mockk
 import io.paritytech.polkadotapp.common.presentation.loading.LoadingState
 import io.paritytech.polkadotapp.feature_products_api.model.JsWidget
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.RemoteFaceSource
@@ -17,7 +18,6 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
-import org.mockito.Mockito.mock
 import uniffi.truapi.RendererNode
 
 private const val FACE_URL = "http://127.0.0.1:5173/pocket/devicehood.json"
@@ -34,7 +34,7 @@ class PocketFacePreviewViewModelTest {
         }
     }
 
-    private val router: ProductsRouter = mock()
+    private val router: ProductsRouter = mockk()
 
     private fun viewModel() =
         PocketFacePreviewViewModel(PocketFacePreviewInteractor(remoteFaces), router)

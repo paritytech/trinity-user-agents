@@ -1,6 +1,8 @@
 package io.paritytech.polkadotapp.tools_jwt_auth_impl.data.interceptor
 
 import com.google.gson.Gson
+import io.mockk.coEvery
+import io.mockk.mockk
 import io.paritytech.polkadotapp.tools_jwt_auth_api.CallWithBearerToken
 import io.paritytech.polkadotapp.tools_jwt_auth_impl.data.FakeTimeProvider
 import io.paritytech.polkadotapp.tools_jwt_auth_impl.data.api.AuthTokenApi
@@ -9,7 +11,6 @@ import io.paritytech.polkadotapp.tools_jwt_auth_impl.data.makeValidJWT
 import io.paritytech.polkadotapp.tools_jwt_auth_impl.data.manager.JWTTokenProvider
 import io.paritytech.polkadotapp.tools_jwt_auth_impl.data.model.JwtRequest
 import io.paritytech.polkadotapp.tools_jwt_auth_impl.data.parser.JWTParser
-import kotlinx.coroutines.runBlocking
 import okhttp3.Interceptor
 import okhttp3.Protocol
 import okhttp3.Request
@@ -21,8 +22,6 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
-import org.mockito.Mockito.mock
-import org.mockito.Mockito.`when`
 import retrofit2.HttpException
 import retrofit2.Invocation
 import java.io.IOException
@@ -100,7 +99,7 @@ class BearerTokenInterceptorTest {
         tokenStore.saveToken(token)
         return JWTTokenProvider(
             tokenStore = tokenStore,
-            authTokenApi = mock(AuthTokenApi::class.java),
+            authTokenApi = mockk<AuthTokenApi>(),
             timeProvider = FakeTimeProvider(1_000_000_000L),
             jwtParser = JWTParser(Gson()),
             gson = Gson(),
@@ -108,14 +107,8 @@ class BearerTokenInterceptorTest {
     }
 
     private fun providerWithFailingFetch(failure: Throwable): JWTTokenProvider {
-        val authTokenApi = mock(AuthTokenApi::class.java)
-        runBlocking {
-            if (failure is RuntimeException) {
-                `when`(authTokenApi.fetchToken(JwtRequest)).thenThrow(failure)
-            } else {
-                `when`(authTokenApi.fetchToken(JwtRequest)).then { throw failure }
-            }
-        }
+        val authTokenApi = mockk<AuthTokenApi>()
+        coEvery { authTokenApi.fetchToken(JwtRequest) } throws failure
         return JWTTokenProvider(
             tokenStore = createFakeTokenStore(),
             authTokenApi = authTokenApi,

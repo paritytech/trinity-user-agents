@@ -1,6 +1,8 @@
 package io.paritytech.polkadotapp.feature_usernames_impl.domain.interactor
 
-import io.paritytech.polkadotapp.common.data.storage.SingleValueStorage
+import io.mockk.coEvery
+import io.mockk.coVerify
+import io.mockk.mockk
 import io.paritytech.polkadotapp.common.utils.RealCoroutineDispatchers
 import io.paritytech.polkadotapp.feature_account_api.data.repository.AccountRepository
 import io.paritytech.polkadotapp.feature_account_api.data.storage.newaccount.NewAccountStorage
@@ -17,9 +19,6 @@ import io.paritytech.polkadotapp.feature_usernames_impl.domain.model.ClaimUserna
 import io.paritytech.polkadotapp.feature_usernames_impl.domain.model.UsernameAvailabilityState
 import io.paritytech.polkadotapp.feature_usernames_impl.domain.model.UsernameClaimResult
 import io.paritytech.polkadotapp.feature_usernames_impl.domain.usecase.CreateClaimParamsUseCase
-import io.paritytech.polkadotapp.test_shared.any
-import io.paritytech.polkadotapp.test_shared.eq
-import io.paritytech.polkadotapp.test_shared.whenever
 import io.paritytech.polkadotapp.tools_integrity_api.domain.error.IntegrityError
 import io.paritytech.polkadotapp.tools_jwt_auth_api.domain.error.AuthError
 import io.paritytech.polkadotapp.tools_jwt_auth_api.domain.error.BackendRequestError
@@ -27,29 +26,21 @@ import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Before
 import org.junit.Test
-import org.mockito.Mockito.mock
-import org.mockito.Mockito.never
-import org.mockito.Mockito.times
-import org.mockito.Mockito.verify
 
 class UsernamesClaimInteractorTest {
     private val username = Username.fromFullValue("alice.07")
-    private val claimParams: ClaimUsernameParams = mock(ClaimUsernameParams::class.java)
+    private val claimParams: ClaimUsernameParams = mockk()
 
-    private val newAccountStorage: NewAccountStorage = mock(NewAccountStorage::class.java)
-    private val usernameRepository: UsernameRepository = mock(UsernameRepository::class.java)
+    private val newAccountStorage: NewAccountStorage = mockk()
+    private val usernameRepository: UsernameRepository = mockk()
 
-    @Suppress("UNCHECKED_CAST")
-    private val localUsernameStorage: LocalUsernameStorage =
-        mock(SingleValueStorage::class.java) as LocalUsernameStorage
-    private val queuedClaimStorage: QueuedClaimStorage = mock(QueuedClaimStorage::class.java)
-    private val createClaimParamsUseCase: CreateClaimParamsUseCase = mock(CreateClaimParamsUseCase::class.java)
-    private val observeAccountOnboardingStatusUseCase: ObserveAccountOnboardingStatusUseCase =
-        mock(ObserveAccountOnboardingStatusUseCase::class.java)
-    private val tryRecoverFromBackupAndCreateAccountUseCase: TryRecoverFromBackupAndCreateAccountUseCase =
-        mock(TryRecoverFromBackupAndCreateAccountUseCase::class.java)
-    private val accountRepository: AccountRepository = mock(AccountRepository::class.java)
-    private val recoverUsernameUseCase: RecoverUsernameUseCase = mock(RecoverUsernameUseCase::class.java)
+    private val localUsernameStorage: LocalUsernameStorage = mockk(relaxUnitFun = true)
+    private val queuedClaimStorage: QueuedClaimStorage = mockk(relaxUnitFun = true)
+    private val createClaimParamsUseCase: CreateClaimParamsUseCase = mockk()
+    private val observeAccountOnboardingStatusUseCase: ObserveAccountOnboardingStatusUseCase = mockk()
+    private val tryRecoverFromBackupAndCreateAccountUseCase: TryRecoverFromBackupAndCreateAccountUseCase = mockk()
+    private val accountRepository: AccountRepository = mockk()
+    private val recoverUsernameUseCase: RecoverUsernameUseCase = mockk()
 
     private val interactor = RealUsernamesClaimInteractor(
         newAccountStorage = newAccountStorage,
@@ -76,8 +67,8 @@ class UsernamesClaimInteractorTest {
         val outcome = interactor.claimUsername(username, preferredDigits = "07")
 
         assertEquals(ClaimUsernameOutcome.Claimed, outcome)
-        verify(localUsernameStorage).saveValue(username)
-        verify(queuedClaimStorage, never()).saveValue(any())
+        coVerify(exactly = 1) { localUsernameStorage.saveValue(username) }
+        coVerify(exactly = 0) { queuedClaimStorage.saveValue(any()) }
     }
 
     @Test
@@ -87,8 +78,8 @@ class UsernamesClaimInteractorTest {
         val outcome = interactor.claimUsername(username, preferredDigits = "07")
 
         assertEquals(ClaimUsernameOutcome.Queued, outcome)
-        verify(queuedClaimStorage).saveValue(username)
-        verify(localUsernameStorage, never()).saveValue(any())
+        coVerify(exactly = 1) { queuedClaimStorage.saveValue(username) }
+        coVerify(exactly = 0) { localUsernameStorage.saveValue(any()) }
     }
 
     @Test
@@ -98,14 +89,14 @@ class UsernamesClaimInteractorTest {
         val outcome = interactor.claimUsername(username, preferredDigits = "07")
 
         assertEquals(ClaimUsernameOutcome.PaymentRequired, outcome)
-        verify(localUsernameStorage, never()).saveValue(any())
-        verify(queuedClaimStorage, never()).saveValue(any())
+        coVerify(exactly = 0) { localUsernameStorage.saveValue(any()) }
+        coVerify(exactly = 0) { queuedClaimStorage.saveValue(any()) }
     }
 
     @Test
     fun `claim failure reports Failed with a classified error`() = runTest {
-        whenever(usernameRepository.claimUsername(eq(claimParams)))
-            .thenReturn(Result.failure(BackendRequestError.NoConnection))
+        coEvery { usernameRepository.claimUsername(claimParams) } returns
+            Result.failure(BackendRequestError.NoConnection)
 
         val outcome = interactor.claimUsername(username, preferredDigits = "07")
 
@@ -114,8 +105,8 @@ class UsernamesClaimInteractorTest {
 
     @Test
     fun `an unclassifiable claim failure becomes Unknown`() = runTest {
-        whenever(usernameRepository.claimUsername(eq(claimParams)))
-            .thenReturn(Result.failure(RuntimeException("network down")))
+        coEvery { usernameRepository.claimUsername(claimParams) } returns
+            Result.failure(RuntimeException("network down"))
 
         val outcome = interactor.claimUsername(username, preferredDigits = "07")
 
@@ -126,48 +117,48 @@ class UsernamesClaimInteractorTest {
     fun `a transient attestation failure is retried exactly once`() = runTest {
         // Play Integrity blips clear on the next challenge, so one more attempt is spent
         // before the user is told anything.
-        whenever(usernameRepository.checkUsernameAvailable(eq(username)))
-            .thenReturn(Result.failure(integrityFailure(IntegrityError.AttestationTransient)))
-            .thenReturn(Result.success(UsernameAvailabilityState.Available(listOf("07"))))
+        coEvery { usernameRepository.checkUsernameAvailable(username) } returnsMany listOf(
+            Result.failure(integrityFailure(IntegrityError.AttestationTransient)),
+            Result.success(UsernameAvailabilityState.Available(listOf("07")))
+        )
 
         val result = interactor.checkUsernameAvailable(username)
 
         assertEquals(UsernameAvailabilityState.Available(listOf("07")), result.getOrThrow())
-        verify(usernameRepository, times(2)).checkUsernameAvailable(eq(username))
+        coVerify(exactly = 2) { usernameRepository.checkUsernameAvailable(username) }
     }
 
     @Test
     fun `a persistent transient failure surfaces after the single retry`() = runTest {
-        whenever(usernameRepository.checkUsernameAvailable(eq(username)))
-            .thenReturn(Result.failure(integrityFailure(IntegrityError.AttestationTransient)))
+        coEvery { usernameRepository.checkUsernameAvailable(username) } returns
+            Result.failure(integrityFailure(IntegrityError.AttestationTransient))
 
         val result = interactor.checkUsernameAvailable(username)
 
         assertEquals(UsernameFlowError.VerificationBusy, result.exceptionOrNull())
-        verify(usernameRepository, times(2)).checkUsernameAvailable(eq(username))
+        coVerify(exactly = 2) { usernameRepository.checkUsernameAvailable(username) }
     }
 
     @Test
     fun `a non-transient availability failure is not retried`() = runTest {
-        whenever(usernameRepository.checkUsernameAvailable(eq(username)))
-            .thenReturn(Result.failure(integrityFailure(IntegrityError.AttestationRejected)))
+        coEvery { usernameRepository.checkUsernameAvailable(username) } returns
+            Result.failure(integrityFailure(IntegrityError.AttestationRejected))
 
         val result = interactor.checkUsernameAvailable(username)
 
         assertEquals(UsernameFlowError.VerificationRejected, result.exceptionOrNull())
-        verify(usernameRepository, times(1)).checkUsernameAvailable(eq(username))
+        coVerify(exactly = 1) { usernameRepository.checkUsernameAvailable(username) }
     }
 
     private fun integrityFailure(error: IntegrityError): BackendRequestError =
         BackendRequestError.Auth(AuthError.Integrity(error))
 
     private suspend fun withClaimParamsCreated() {
-        whenever(usernameRepository.getVerifier()).thenReturn(Result.success("attester"))
-        whenever(createClaimParamsUseCase(eq(username), eq("attester"), eq("07")))
-            .thenReturn(Result.success(claimParams))
+        coEvery { usernameRepository.getVerifier() } returns Result.success("attester")
+        coEvery { createClaimParamsUseCase(username, "attester", "07") } returns Result.success(claimParams)
     }
 
     private suspend fun withClaimResult(result: UsernameClaimResult) {
-        whenever(usernameRepository.claimUsername(eq(claimParams))).thenReturn(Result.success(result))
+        coEvery { usernameRepository.claimUsername(claimParams) } returns Result.success(result)
     }
 }

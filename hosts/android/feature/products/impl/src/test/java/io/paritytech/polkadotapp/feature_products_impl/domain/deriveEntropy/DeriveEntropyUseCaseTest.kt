@@ -1,21 +1,22 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.deriveEntropy
 
+import io.mockk.coEvery
+import io.mockk.every
+import io.mockk.mockk
 import io.novasama.substrate_sdk_android.extensions.fromHex
 import io.paritytech.polkadotapp.feature_account_api.data.repository.AccountRepository
 import io.paritytech.polkadotapp.feature_account_api.data.storage.accountSecrets.AccountSecretsStorage
 import io.paritytech.polkadotapp.feature_account_api.domain.model.MetaAccount
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
-import io.paritytech.polkadotapp.test_shared.whenever
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
-import org.mockito.Mockito.mock
 
 class DeriveEntropyUseCaseTest {
-    private val accountRepository: AccountRepository = mock()
-    private val accountSecretsStorage: AccountSecretsStorage = mock()
+    private val accountRepository: AccountRepository = mockk()
+    private val accountSecretsStorage: AccountSecretsStorage = mockk()
     private val useCase = RealDeriveEntropyUseCase(accountRepository, accountSecretsStorage)
 
     private val testMetaId = 1L
@@ -24,12 +25,12 @@ class DeriveEntropyUseCaseTest {
     @Before
     fun setUp() {
         runBlocking {
-            val metaAccount: MetaAccount = mock()
-            whenever(metaAccount.id).thenReturn(testMetaId)
-            whenever(accountRepository.getWalletAccount()).thenReturn(metaAccount)
+            val metaAccount: MetaAccount = mockk()
+            every { metaAccount.id } returns testMetaId
+            coEvery { accountRepository.getWalletAccount() } returns metaAccount
 
             val mnemonic = io.novasama.substrate_sdk_android.encrypt.mnemonic.MnemonicCreator.fromEntropy(testRootEntropy)
-            whenever(accountSecretsStorage.getMetaAccountPassphrase(testMetaId)).thenReturn(mnemonic)
+            coEvery { accountSecretsStorage.getMetaAccountPassphrase(testMetaId) } returns mnemonic
         }
     }
 

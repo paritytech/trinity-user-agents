@@ -1,5 +1,8 @@
 package io.paritytech.polkadotapp.feature_coinage_impl.domain.usecase
 
+import io.mockk.coEvery
+import io.mockk.every
+import io.mockk.mockk
 import io.paritytech.polkadotapp.common.domain.model.AccountId
 import io.paritytech.polkadotapp.feature_coinage_api.domain.model.Coin
 import io.paritytech.polkadotapp.feature_coinage_api.domain.model.CoinProvenance
@@ -17,15 +20,12 @@ import io.paritytech.polkadotapp.feature_coinage_impl.data.repository.VoucherRep
 import io.paritytech.polkadotapp.feature_coinage_impl.testKey
 import io.paritytech.polkadotapp.feature_transactions.api.domain.durable.DurableTxStatus.FINALIZED_SUCCESS
 import io.paritytech.polkadotapp.feature_transactions.api.domain.durable.DurableTxStatus.PENDING
-import io.paritytech.polkadotapp.test_shared.any
-import io.paritytech.polkadotapp.test_shared.whenever
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Test
-import org.mockito.Mockito.mock
 
 /**
  * The join between a local asset row and the ledger's claim on it.
@@ -35,9 +35,9 @@ import org.mockito.Mockito.mock
  * the wrong two halves, or stops re-reading one of them, is wrong everywhere at once.
  */
 class RealCoinageAssetsUseCaseTest {
-    private val coinRepository: CoinRepository = mock()
-    private val voucherRepository: VoucherRepository = mock()
-    private val transactionService: CoinageTransactionService = mock()
+    private val coinRepository: CoinRepository = mockk()
+    private val voucherRepository: VoucherRepository = mockk()
+    private val transactionService: CoinageTransactionService = mockk()
 
     private val useCase = RealCoinageAssetsUseCase(coinRepository, voucherRepository, transactionService)
 
@@ -92,8 +92,8 @@ class RealCoinageAssetsUseCaseTest {
         val claimed = CoinageAssetState(handedOff = false, minterStatus = null, consumerStatus = PENDING)
 
         givenCoins(coinOf(derivationIndex = 7, age = 1))
-        whenever(transactionService.subscribeAssetStates())
-            .thenReturn(flowOf(statesOf(), statesOf(OwnAsset.Coin(testKey(7)) to claimed)))
+        every { transactionService.subscribeAssetStates() } returns
+            flowOf(statesOf(), statesOf(OwnAsset.Coin(testKey(7)) to claimed))
 
         val reported = useCase.subscribeCoins().toList().map { tracked -> tracked.map { it.state } }
 
@@ -102,10 +102,10 @@ class RealCoinageAssetsUseCaseTest {
 
     @Test
     fun `only the coins of the addresses asked for are joined`() = runBlocking {
-        val accountId: AccountId = mock()
+        val accountId: AccountId = mockk()
         val coin = coinOf(derivationIndex = 7, age = 1)
 
-        whenever(coinRepository.subscribeCoinsBy(listOf(accountId))).thenReturn(flowOf(listOf(coin)))
+        every { coinRepository.subscribeCoinsBy(listOf(accountId)) } returns flowOf(listOf(coin))
         givenStates()
 
         assertEquals(listOf(coin), useCase.subscribeCoinsBy(listOf(accountId)).first().map { it.coin })
@@ -130,26 +130,25 @@ class RealCoinageAssetsUseCaseTest {
         val state = CoinageAssetState(handedOff = false, minterStatus = FINALIZED_SUCCESS, consumerStatus = null)
 
         // The same rows read three times over, as an unrelated write to either table would produce.
-        whenever(coinRepository.subscribeCoinsBy(any())).thenReturn(flowOf(listOf(coin), listOf(coin), listOf(coin)))
-        whenever(transactionService.subscribeAssetStates())
-            .thenReturn(flowOf(statesOf(OwnAsset.Coin(testKey(7)) to state)))
+        every { coinRepository.subscribeCoinsBy(any()) } returns flowOf(listOf(coin), listOf(coin), listOf(coin))
+        every { transactionService.subscribeAssetStates() } returns flowOf(statesOf(OwnAsset.Coin(testKey(7)) to state))
 
         val emissions = useCase.subscribeCoinsBy(listOf(coin.accountId)).toList()
 
         assertEquals(1, emissions.size)
     }
 
-    private suspend fun givenCoins(vararg coins: Coin) {
-        whenever(coinRepository.subscribeAllCoins()).thenReturn(flowOf(coins.toList()))
-        whenever(coinRepository.getCoinRecyclingAge()).thenReturn(Result.success(RECYCLING_AGE))
+    private fun givenCoins(vararg coins: Coin) {
+        every { coinRepository.subscribeAllCoins() } returns flowOf(coins.toList())
+        coEvery { coinRepository.getCoinRecyclingAge() } returns Result.success(RECYCLING_AGE)
     }
 
     private fun givenVouchers(vararg vouchers: RecyclerVoucher) {
-        whenever(voucherRepository.subscribeAllVouchers()).thenReturn(flowOf(vouchers.toList()))
+        every { voucherRepository.subscribeAllVouchers() } returns flowOf(vouchers.toList())
     }
 
     private fun givenStates(vararg states: Pair<OwnAsset, CoinageAssetState>) {
-        whenever(transactionService.subscribeAssetStates()).thenReturn(flowOf(statesOf(*states)))
+        every { transactionService.subscribeAssetStates() } returns flowOf(statesOf(*states))
     }
 
     private fun statesOf(vararg states: Pair<OwnAsset, CoinageAssetState>) = CoinageAssetStates(states.toMap(), TEST_INSTALLATION)
@@ -159,13 +158,13 @@ class RealCoinageAssetsUseCaseTest {
         valueExponent = ValueExponent(1),
         age = age?.let(Coin.Age::Known) ?: Coin.Age.Unknown,
         isOnChain = age != null,
-        accountId = mock(),
+        accountId = mockk(),
         provenance = CoinProvenance.UNKNOWN,
     )
 
     private fun voucherOf(ringVrfKeyIndex: Int, location: Location) = RecyclerVoucher(
         ringVrfKeyIndex = testKey(ringVrfKeyIndex),
-        ringVrfPublicKey = mock(),
+        ringVrfPublicKey = mockk(),
         recyclerValue = ValueExponent(1),
         location = location,
         recyclerFungibility = RecyclerFungibility.NONE,

@@ -1,5 +1,9 @@
 package io.paritytech.polkadotapp.feature_coinage_impl.domain.transaction.recovery
 
+import io.mockk.coEvery
+import io.mockk.coVerify
+import io.mockk.every
+import io.mockk.mockk
 import io.paritytech.polkadotapp.chains.multiNetwork.runtime.repository.ExtrinsicOutcome
 import io.paritytech.polkadotapp.common.domain.model.DataByteArray
 import io.paritytech.polkadotapp.common.domain.model.toDataByteArray
@@ -16,15 +20,10 @@ import io.paritytech.polkadotapp.feature_transactions.api.domain.durable.PinnedC
 import io.paritytech.polkadotapp.feature_transactions.api.domain.durable.TransactionSearchResult
 import io.paritytech.polkadotapp.feature_transactions_impl.domain.durable.RuleOutcome
 import io.paritytech.polkadotapp.feature_transactions_impl.domain.durable.evaluateLadder
-import io.paritytech.polkadotapp.test_shared.anyLong
-import io.paritytech.polkadotapp.test_shared.whenever
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
-import org.mockito.ArgumentMatchers.anyString
-import org.mockito.Mockito.mock
-import org.mockito.Mockito.verify
 
 private const val CHECKPOINT_NUMBER = 100L
 private const val MORTALITY = 64L
@@ -368,7 +367,7 @@ class CoinageRulesTest {
     private val receivedIn = received(4)
 
     /** The ladder consults the view for one thing only: the body search of its last rule. */
-    private val chainView: PinnedChainView = mock()
+    private val chainView: PinnedChainView = mockk()
 
     private suspend fun evaluate(
         entry: LedgerEntry,
@@ -376,9 +375,9 @@ class CoinageRulesTest {
         dag: CoinageEntryDag = dag(entry),
         search: TransactionSearchResult = TransactionSearchResult.NotFound(wholeRangeRead = false),
     ): RuleOutcome {
-        whenever(chainView.searchForTransaction(anyLong(), anyLong(), anyString())).thenReturn(search)
-        whenever(chainView.finalizedHead).thenReturn(evidence.evidence.finalized)
-        whenever(chainView.bestHead).thenReturn(evidence.evidence.best)
+        coEvery { chainView.searchForTransaction(any(), any(), any()) } returns search
+        every { chainView.finalizedHead } returns evidence.evidence.finalized
+        every { chainView.bestHead } returns evidence.evidence.best
 
         return evaluateLadder(
             tx = entry.entry,
@@ -389,8 +388,8 @@ class CoinageRulesTest {
     }
 
     /** The ladder reached the last rule instead of deciding on state alone. */
-    private suspend fun assertReachedSearch() {
-        verify(chainView).searchForTransaction(anyLong(), anyLong(), anyString())
+    private fun assertReachedSearch() {
+        coVerify(exactly = 1) { chainView.searchForTransaction(any(), any(), any()) }
     }
 
     private fun assertDecided(

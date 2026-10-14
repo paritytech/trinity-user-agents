@@ -1,17 +1,17 @@
 package io.paritytech.polkadotapp.feature_backup_impl.domain
 
+import io.mockk.coEvery
+import io.mockk.mockk
 import io.paritytech.polkadotapp.feature_account_api.domain.usecase.CreateNewAccountUseCase
-import io.paritytech.polkadotapp.test_shared.whenever
 import io.paritytech.polkadotapp.tools_backup_api.domain.model.BackupOutcome
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
-import org.mockito.Mockito.mock
 
 class RealVanillaTryRecoverFromBackupAndCreateAccountUseCaseTest {
 
-    private val createNewAccountUseCase: CreateNewAccountUseCase = mock()
+    private val createNewAccountUseCase: CreateNewAccountUseCase = mockk()
 
     private val useCase = RealVanillaTryRecoverFromBackupAndCreateAccountUseCase(
         createNewAccountUseCase = createNewAccountUseCase,
@@ -19,7 +19,7 @@ class RealVanillaTryRecoverFromBackupAndCreateAccountUseCaseTest {
 
     @Test
     fun `returns NoNeedToBackup when account creation succeeds`() = runBlocking {
-        whenever(createNewAccountUseCase.invoke()).thenReturn(Result.success(Unit))
+        coEvery { createNewAccountUseCase.invoke() } returns Result.success(Unit)
 
         val result = useCase()
 
@@ -30,7 +30,7 @@ class RealVanillaTryRecoverFromBackupAndCreateAccountUseCaseTest {
     @Test
     fun `propagates failure from createNewAccount`() = runBlocking {
         val error = IllegalStateException("account creation failed")
-        whenever(createNewAccountUseCase.invoke()).thenReturn(Result.failure(error))
+        coEvery { createNewAccountUseCase.invoke() } returns Result.failure(error)
 
         val result = useCase()
 
