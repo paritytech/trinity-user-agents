@@ -157,7 +157,7 @@ const AUTHORITY_CANCEL_UNWIND_GRACE: Duration = Duration::from_secs(2);
 /// still bounding an unanswered request.
 const RESOURCE_ALLOCATION_REMOTE_AUTHORITY_RESPONSE_TIMEOUT: Duration = Duration::from_secs(300);
 /// End-to-end timeout for an in-core Bulletin preimage submit, starting after
-/// user confirmation and covering allowance allocation, chain submission, and
+/// the permission check. It covers allowance allocation, chain submission, and
 /// one optional allowance refresh and retry. A first live allocation may need
 /// to fund and register the identity before the submit can start.
 const PREIMAGE_SUBMIT_TIMEOUT: Duration = Duration::from_secs(360);
