@@ -5,7 +5,7 @@ import AsyncExtensions
 import AsyncAlgorithms
 import Products
 
-protocol ChatExtensionDiscoverContextProtocol {
+protocol ChatExtensionDiscoverContextProtocol: ChatProductRoomDeclaring {
     @discardableResult
     func sendNewMessage(
         from chatBot: ChatExtensionBotProtocol,
@@ -109,16 +109,21 @@ actor ChatExtensionDiscoverContext {
     let roomFooterRepository: AnyDataProviderRepository<Chat.RoomFooterUpdate>
     let chatsProviderFactory: ChatContactDataProviderMaking
     let roomRemover: ChatRoomRemoving
+    let activities: ChatRoomActivityStoring
+    let messageOrderAllocator: ChatMessageOrderAllocating
 
     init(
         settings: SettingsManagerProtocol & ChatExtensionBotSettings,
         storageFacade: StorageFacadeProtocol,
         operationQueue: OperationQueue,
         logger: LoggerProtocol,
-        messageOrderAllocator: ChatMessageOrderAllocating = FileChatMessageOrderAllocator.shared
+        messageOrderAllocator: ChatMessageOrderAllocating = FileChatMessageOrderAllocator.shared,
+        activities: ChatRoomActivityStoring = ChatRoomActivityStore.shared
     ) {
         self.settings = settings
         self.storageFacade = storageFacade
+        self.activities = activities
+        self.messageOrderAllocator = messageOrderAllocator
 
         messageRepository = AnyDataProviderRepository(
             storageFacade.createRepository(
@@ -420,6 +425,7 @@ extension ChatExtensionDiscoverContext: ChatExtensionDiscoverContextProtocol {
 
     func deleteRoom(for chatBot: ChatExtensionBotProtocol, roomId: String) async throws {
         let chatId = Chat.Id.chatExtension(chatBot.identifier, roomId: roomId)
+        activities.set(nil, for: chatId)
 
         guard try await roomRemover.removeRoom(chatId) else {
             throw ChatRoomError.unknownRoom(roomId)
@@ -488,7 +494,7 @@ extension ChatExtensionDiscoverContext: ChatExtensionDiscoverContextProtocol {
     }
 }
 
-private extension ChatExtensionDiscoverContext {
+extension ChatExtensionDiscoverContext {
     /// The chat of a room that the product created, or `ChatRoomError.unknownRoom`.
     func requireRoom(of chatBot: ChatExtensionBotProtocol, roomId: String) async throws -> Chat.Id {
         let chatId = Chat.Id.chatExtension(chatBot.identifier, roomId: roomId)

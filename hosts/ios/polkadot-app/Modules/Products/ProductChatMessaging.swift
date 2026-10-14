@@ -6,6 +6,8 @@ import AsyncExtensions
 /// The chat calls a product's bot can make. All the rust chat bridge needs from
 /// the native surface: `ChatHostBridge`'s fourth callback, `registerBot`, is
 /// rejected outright.
+///
+/// A call about a room that the product did not create throws `ChatRoomError.unknownRoom`.
 protocol ProductChatMessaging: Sendable {
     func sendMessage(_ message: ProductBotMessage, roomId: String?) async throws -> String
     func createRoom(_ request: CreateRoomRequest) async throws -> CreateRoomResult
@@ -18,6 +20,20 @@ protocol ProductChatMessaging: Sendable {
     func deleteRoom(roomId: String) async throws
     /// Chat Extension v2 `set_room_metadata`, as Swift domain values.
     func setRoomMetadata(roomId: String, name: String, description: String?, avatar: Chat.RoomImage?) async throws
+    /// What the product declared for a room. The core reads the configuration before each feed update.
+    func roomDeclarations(roomId: String) async throws -> Chat.RoomDeclarations
+    /// Chat Extension v2 `set_room_config`.
+    func setRoomConfig(roomId: String, config: Chat.RoomConfig) async throws
+    /// Chat Extension v2 `set_room_footer`, second version.
+    func setRoomFooterConfig(roomId: String, footer: Chat.RoomFooterConfig) async throws
+    /// Chat Extension v2 `set_room_toolbar`.
+    func setRoomToolbar(roomId: String, actions: [Chat.RoomToolbarAction]) async throws
+    /// Chat Extension v2 `set_room_suggestions`.
+    func setRoomSuggestions(roomId: String, suggestions: [Chat.RoomSuggestion]) async throws
+    /// Chat Extension v2 `set_room_commands`.
+    func setRoomCommands(roomId: String, commands: [Chat.RoomCommand]) async throws
+    /// Chat Extension v2 `set_room_activity`.
+    func setRoomActivity(roomId: String, activity: Chat.RoomActivity?) async throws
 }
 
 /// Serves those calls from a chat binding. Conformers differ only in where the
@@ -100,6 +116,41 @@ extension BoundProductChatMessaging {
             description: description,
             avatar: avatar
         )
+    }
+
+    func roomDeclarations(roomId: String) async throws -> Chat.RoomDeclarations {
+        let (context, bot) = try requireMessaging()
+        return try await context.roomDeclarations(for: bot, roomId: roomId)
+    }
+
+    func setRoomConfig(roomId: String, config: Chat.RoomConfig) async throws {
+        let (context, bot) = try requireMessaging()
+        try await context.setRoomConfig(for: bot, roomId: roomId, config: config)
+    }
+
+    func setRoomFooterConfig(roomId: String, footer: Chat.RoomFooterConfig) async throws {
+        let (context, bot) = try requireMessaging()
+        try await context.setRoomFooterConfig(for: bot, roomId: roomId, footer: footer)
+    }
+
+    func setRoomToolbar(roomId: String, actions: [Chat.RoomToolbarAction]) async throws {
+        let (context, bot) = try requireMessaging()
+        try await context.setRoomToolbar(for: bot, roomId: roomId, actions: actions)
+    }
+
+    func setRoomSuggestions(roomId: String, suggestions: [Chat.RoomSuggestion]) async throws {
+        let (context, bot) = try requireMessaging()
+        try await context.setRoomSuggestions(for: bot, roomId: roomId, suggestions: suggestions)
+    }
+
+    func setRoomCommands(roomId: String, commands: [Chat.RoomCommand]) async throws {
+        let (context, bot) = try requireMessaging()
+        try await context.setRoomCommands(for: bot, roomId: roomId, commands: commands)
+    }
+
+    func setRoomActivity(roomId: String, activity: Chat.RoomActivity?) async throws {
+        let (context, bot) = try requireMessaging()
+        try await context.setRoomActivity(for: bot, roomId: roomId, activity: activity)
     }
 }
 
