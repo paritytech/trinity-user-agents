@@ -84,6 +84,8 @@ const appLogPath = resolve(outDir, "app.log");
 const worker = resolve(productRoot, "out/worker/index.js");
 const room = "host";
 const chatIdentifier = `1:${productHost}:${room}`;
+/** Names the command files in the order they are queued. */
+let commandCounter = 0;
 
 /** How long the app has to start the product and create its room. */
 const START_TIMEOUT_MS = 120_000;
@@ -362,8 +364,6 @@ async function observeScenario(scenario) {
     return skipRow(scenario, `\`${command}\`: ${error.message}`);
   }
 }
-
-let commandCounter = 0;
 
 /** Queue one command for the app's command feed, and wait until it is sent. */
 async function sendCommand(text) {
