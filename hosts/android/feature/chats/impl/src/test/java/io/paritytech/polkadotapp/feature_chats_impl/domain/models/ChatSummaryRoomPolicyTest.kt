@@ -4,7 +4,7 @@ import io.paritytech.polkadotapp.common.domain.model.toDataByteArray
 import io.paritytech.polkadotapp.feature_chats_api.domain.extension.RoomMetadata
 import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.ChatPreview
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatId
-import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatResource
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatResourceModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.Order
 import io.paritytech.polkadotapp.feature_chats_impl.domain.roomPolicy.ChatRoomPolicy
 import org.junit.Assert.assertEquals
@@ -47,7 +47,7 @@ class ChatSummaryRoomPolicyTest {
 
     @Test
     fun `a product image becomes the badge`() {
-        val image = ChatResource.Preimage(ByteArray(32) { 7 }.toDataByteArray())
+        val image = ChatResourceModel.Preimage(ByteArray(32) { 7 }.toDataByteArray())
 
         assertEquals(ChatSummaryBadge.Image(image), summary.withRoomPolicy(policyWithBadge(ChatRoomPolicy.ListBadge.Image(image))).badge)
     }

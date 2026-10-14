@@ -1,12 +1,14 @@
 package io.paritytech.polkadotapp.feature_chats_impl.domain.roomPolicy
 
 import io.paritytech.polkadotapp.common.domain.model.toDataByteArray
-import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatResource
-import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomBadge
-import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomConfig
-import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomFooterConfig
-import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomInputConfig
-import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomOrder
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatResourceModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomBadgeModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomConfigModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomFooterModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatInputConfigModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatInputPaymentModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomDeclarations
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.Order
 import io.paritytech.polkadotapp.feature_chats_impl.domain.roomPolicy.ChatRoomPolicy.BuiltInMessageAction
 import io.paritytech.polkadotapp.feature_chats_impl.domain.roomPolicy.ChatRoomPolicy.ListBadge
 import io.paritytech.polkadotapp.feature_chats_impl.domain.roomPolicy.ChatRoomPolicy.ListPreview
@@ -17,7 +19,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ChatRoomPolicyTest {
-    private val icon = ChatResource.Inline("image/png", byteArrayOf(1, 2, 3).toDataByteArray())
+    private val icon = ChatResourceModel.Inline("image/png", byteArrayOf(1, 2, 3).toDataByteArray())
 
     @Test
     fun `a room without declarations gets every default of the design`() {
@@ -57,11 +59,17 @@ class ChatRoomPolicyTest {
     }
 
     @Test
+    fun `empty declarations give the defaults`() {
+        assertEquals(ChatRoomPolicy.Defaults, ChatRoomPolicy.from(ChatRoomDeclarations.EMPTY))
+        assertEquals(ChatRoomPolicy.Defaults, ChatRoomPolicy.from(declarations(config = null)))
+    }
+
+    @Test
     fun `retry is offered only when the product keeps the messages`() {
         assertFalse(ChatRoomPolicy.Defaults.offersRetry)
         assertTrue(ChatRoomPolicy.Defaults.offersDelete)
 
-        val productSource = ChatRoomPolicy.from(declarations(config = ChatRoomConfig.HostDefault.copy(productSource = true)))
+        val productSource = ChatRoomPolicy.from(declarations(config = ChatRoomConfigModel.HOST_DEFAULT.copy(productSource = true)))
 
         assertEquals(ChatRoomPolicy.MessageStore.PRODUCT, productSource.messageStore)
         assertTrue(productSource.offersRetry)
@@ -70,7 +78,7 @@ class ChatRoomPolicyTest {
 
     @Test
     fun `the configuration flags select the product queries and the reaction details`() {
-        val config = ChatRoomConfig.HostDefault.copy(
+        val config = ChatRoomConfigModel.HOST_DEFAULT.copy(
             reactionDetails = true,
             participants = true,
             messageActions = true,
@@ -97,9 +105,9 @@ class ChatRoomPolicyTest {
         val policy = ChatRoomPolicy.from(
             declarations(
                 preview = preview(
-                    order = ChatRoomOrder.PIN_TO_TOP,
+                    order = Order.PinToTop,
                     timestamp = 5_000L,
-                    badge = ChatRoomBadge.Count(3),
+                    badge = ChatRoomBadgeModel.Count(3),
                     text = "Bot is typing",
                     ongoing = true,
                 )
@@ -123,8 +131,8 @@ class ChatRoomPolicyTest {
 
     @Test
     fun `a hidden badge and an image badge replace the host count`() {
-        val hidden = ChatRoomPolicy.from(declarations(preview = preview(badge = ChatRoomBadge.Hidden)))
-        val image = ChatRoomPolicy.from(declarations(preview = preview(badge = ChatRoomBadge.Image(icon))))
+        val hidden = ChatRoomPolicy.from(declarations(preview = preview(badge = ChatRoomBadgeModel.Hidden)))
+        val image = ChatRoomPolicy.from(declarations(preview = preview(badge = ChatRoomBadgeModel.Image(icon))))
 
         assertEquals(ListBadge.Hidden, hidden.listBadge)
         assertEquals(ListBadge.Image(icon), image.listBadge)
@@ -134,7 +142,7 @@ class ChatRoomPolicyTest {
 
     @Test
     fun `a negative count reads as zero`() {
-        val policy = ChatRoomPolicy.from(declarations(preview = preview(badge = ChatRoomBadge.Count(-4))))
+        val policy = ChatRoomPolicy.from(declarations(preview = preview(badge = ChatRoomBadgeModel.Count(-4))))
 
         assertEquals(ListBadge.Count(0), policy.listBadge)
     }
@@ -149,16 +157,16 @@ class ChatRoomPolicyTest {
 
     @Test
     fun `the declared footer replaces the default footer`() {
-        val input = ChatRoomInputConfig(
+        val input = ChatInputConfigModel(
             placeholder = "Say hi",
             photo = false,
             video = false,
             file = true,
-            paymentDestination = ByteArray(32).toDataByteArray(),
+            payment = ChatInputPaymentModel.Enabled(ByteArray(32).toDataByteArray()),
         )
 
-        val withInput = ChatRoomPolicy.from(declarations(footer = ChatRoomFooterConfig.Input(input)))
-        val empty = ChatRoomPolicy.from(declarations(footer = ChatRoomFooterConfig.Empty))
+        val withInput = ChatRoomPolicy.from(declarations(footer = ChatRoomFooterModel.Input(input)))
+        val empty = ChatRoomPolicy.from(declarations(footer = ChatRoomFooterModel.Empty))
 
         assertEquals(
             ChatRoomPolicy.Footer.TextInput(

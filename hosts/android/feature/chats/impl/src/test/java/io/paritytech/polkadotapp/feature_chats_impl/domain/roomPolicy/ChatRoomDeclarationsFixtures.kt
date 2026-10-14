@@ -1,40 +1,41 @@
 package io.paritytech.polkadotapp.feature_chats_impl.domain.roomPolicy
 
-import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatResource
-import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomBadge
-import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomConfig
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatResourceModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomBadgeModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomConfigModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomDeclarations
-import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomFooterConfig
-import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomMetadataDeclaration
-import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomOrder
-import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomPreview
-import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomPreviewText
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomFooterModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomMetadataModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomPreviewModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomPreviewTextModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.Order
 
 fun declarations(
-    config: ChatRoomConfig = ChatRoomConfig.HostDefault,
+    config: ChatRoomConfigModel? = ChatRoomConfigModel.HOST_DEFAULT,
     description: String? = null,
-    avatar: ChatResource? = null,
-    preview: ChatRoomPreview? = null,
-    footer: ChatRoomFooterConfig? = null,
+    avatar: ChatResourceModel? = null,
+    preview: ChatRoomPreviewModel? = null,
+    footer: ChatRoomFooterModel? = null,
 ) = ChatRoomDeclarations(
     config = config,
-    metadata = ChatRoomMetadataDeclaration(description = description, avatar = avatar),
+    configGeneration = 1,
+    metadata = ChatRoomMetadataModel(description = description, avatar = avatar),
     preview = preview,
-    toolbar = emptyList(),
-    suggestions = emptyList(),
-    commands = emptyList(),
+    toolbar = null,
+    suggestions = null,
+    commands = null,
     footer = footer,
 )
 
 fun preview(
-    order: ChatRoomOrder? = null,
+    order: Order = Order.ByTimestamp,
     timestamp: Long? = null,
-    badge: ChatRoomBadge? = null,
+    badge: ChatRoomBadgeModel? = null,
     text: String? = null,
     ongoing: Boolean = false,
-) = ChatRoomPreview(
+) = ChatRoomPreviewModel(
     order = order,
     timestamp = timestamp,
     badge = badge,
-    text = text?.let { ChatRoomPreviewText(it, ongoing) },
+    text = text?.let { ChatRoomPreviewTextModel(it, ongoing) },
 )

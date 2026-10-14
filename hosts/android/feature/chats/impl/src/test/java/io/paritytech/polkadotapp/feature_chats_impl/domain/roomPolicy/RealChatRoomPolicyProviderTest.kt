@@ -6,7 +6,7 @@ import io.mockk.verify
 import io.paritytech.polkadotapp.common.domain.model.toDataByteArray
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatId
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomDeclarations
-import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomDeclarationsRepository
+import io.paritytech.polkadotapp.feature_chats_api.domain.ChatRoomDeclarationsRepository
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.runBlocking

@@ -1,7 +1,7 @@
 package io.paritytech.polkadotapp.feature_chats_impl.presentation.resources
 
 import io.paritytech.polkadotapp.design.components.avatar.AvatarUiModel
-import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatResource
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatResourceModel
 import io.paritytech.polkadotapp.tools_ipfs_api.IpfsContentLookup
 import io.paritytech.polkadotapp.tools_ipfs_api.getDefaultRawLink
 import java.util.Base64
@@ -31,7 +31,7 @@ fun ResolvedChatImage.toAvatar(): AvatarUiModel = when (this) {
 
 /** Changes the images of a product room into values that the image loader draws (02-DESIGN §6.2). */
 interface ChatResourceResolver {
-    suspend fun resolve(resource: ChatResource): Result<ResolvedChatImage>
+    suspend fun resolve(resource: ChatResourceModel): Result<ResolvedChatImage>
 
     /** Resolves an icon of the first version, which is a `data:` address or an `https` address. */
     fun resolveIcon(icon: String): Result<ResolvedChatImage>
@@ -40,12 +40,14 @@ interface ChatResourceResolver {
 class RealChatResourceResolver @Inject constructor(
     private val ipfsContentLookup: IpfsContentLookup,
 ) : ChatResourceResolver {
-    override suspend fun resolve(resource: ChatResource): Result<ResolvedChatImage> = when (resource) {
-        is ChatResource.Inline -> Result.success(ResolvedChatImage.Inline(resource.bytes.value))
+    override suspend fun resolve(resource: ChatResourceModel): Result<ResolvedChatImage> = when (resource) {
+        is ChatResourceModel.Inline -> Result.success(ResolvedChatImage.Inline(resource.bytes.value))
 
         // This is the lookup of `lookup_preimage` in the host API: the raw block of the key on the IPFS gateway.
-        is ChatResource.Preimage -> ipfsContentLookup.getDefaultRawLink(resource.key.value)
+        is ChatResourceModel.Preimage -> ipfsContentLookup.getDefaultRawLink(resource.key.value)
             .map { ResolvedChatImage.Remote(it) }
+
+        is ChatResourceModel.Url -> resolveIcon(resource.url)
     }
 
     override fun resolveIcon(icon: String): Result<ResolvedChatImage> {

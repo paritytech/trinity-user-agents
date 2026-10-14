@@ -1,13 +1,13 @@
 package io.paritytech.polkadotapp.feature_chats_impl.domain.roomPolicy
 
-import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatResource
-import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomBadge
-import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomConfig
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatResourceModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomBadgeModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomConfigModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomDeclarations
-import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomFooterConfig
-import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomOrder
-import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomPreview
-import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomToolbarAction
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomFooterModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomPreviewModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatToolbarActionModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.Order
 
 /**
  * What a product room offers. Each aspect comes from the declarations of the product or, when the product
@@ -21,11 +21,11 @@ data class ChatRoomPolicy(
     val reportsSeen: Boolean,
     val messageMenu: MessageMenu,
     val offersReactionDetails: Boolean,
-    val toolbar: List<ChatRoomToolbarAction>,
+    val toolbar: List<ChatToolbarActionModel>,
     val footer: Footer,
     val placeholder: String?,
     val description: String?,
-    val avatar: ChatResource?,
+    val avatar: ChatResourceModel?,
     val suggestions: List<String>,
     val slashCommands: Set<String>,
     val productQueries: Set<ProductQuery>,
@@ -53,7 +53,7 @@ data class ChatRoomPolicy(
         /** Zero shows no badge. */
         data class Count(val count: Int) : ListBadge
 
-        data class Image(val resource: ChatResource) : ListBadge
+        data class Image(val resource: ChatResourceModel) : ListBadge
     }
 
     /** [timestamp] is in milliseconds since the Unix epoch. Null uses the last message. */
@@ -128,14 +128,14 @@ data class ChatRoomPolicy(
         fun from(declarations: ChatRoomDeclarations?): ChatRoomPolicy {
             if (declarations == null) return Defaults
 
-            val config = declarations.config
+            val config = declarations.effectiveConfig
 
             return ChatRoomPolicy(
                 messageStore = if (config.productSource) MessageStore.PRODUCT else MessageStore.HOST,
                 listPreview = declarations.preview.toListPreview(),
                 listBadge = declarations.preview?.badge.toListBadge(),
                 listOrder = ListOrder(
-                    isPinned = declarations.preview?.order == ChatRoomOrder.PIN_TO_TOP,
+                    isPinned = declarations.preview?.order == Order.PinToTop,
                     timestamp = declarations.preview?.timestamp?.takeIf { it > 0 },
                 ),
                 reportsSeen = config.reportSeen,
@@ -144,52 +144,52 @@ data class ChatRoomPolicy(
                     allowedReactions = config.allowedReactions,
                 ),
                 offersReactionDetails = config.reactionDetails,
-                toolbar = declarations.toolbar,
+                toolbar = declarations.toolbar.orEmpty(),
                 footer = declarations.footer.toFooter(),
                 placeholder = config.placeholder,
                 description = declarations.metadata.description,
                 avatar = declarations.metadata.avatar,
-                suggestions = declarations.suggestions.map { it.text },
-                slashCommands = declarations.commands.mapTo(mutableSetOf()) { it.name },
+                suggestions = declarations.suggestions.orEmpty().map { it.text },
+                slashCommands = declarations.commands.orEmpty().mapTo(mutableSetOf()) { it.name },
                 productQueries = config.productQueries(),
             )
         }
     }
 }
 
-private fun ChatRoomPreview?.toListPreview(): ChatRoomPolicy.ListPreview {
+private fun ChatRoomPreviewModel?.toListPreview(): ChatRoomPolicy.ListPreview {
     val text = this?.text ?: return ChatRoomPolicy.ListPreview.LastMessage
 
     return ChatRoomPolicy.ListPreview.Text(text = text.text, ongoing = text.ongoing)
 }
 
-private fun ChatRoomBadge?.toListBadge(): ChatRoomPolicy.ListBadge {
+private fun ChatRoomBadgeModel?.toListBadge(): ChatRoomPolicy.ListBadge {
     return when (this) {
         null -> ChatRoomPolicy.ListBadge.HostUnreadCount
-        ChatRoomBadge.Hidden -> ChatRoomPolicy.ListBadge.Hidden
-        is ChatRoomBadge.Count -> ChatRoomPolicy.ListBadge.Count(count.coerceAtLeast(0))
-        is ChatRoomBadge.Image -> ChatRoomPolicy.ListBadge.Image(resource)
+        ChatRoomBadgeModel.Hidden -> ChatRoomPolicy.ListBadge.Hidden
+        is ChatRoomBadgeModel.Count -> ChatRoomPolicy.ListBadge.Count(count.coerceAtLeast(0))
+        is ChatRoomBadgeModel.Image -> ChatRoomPolicy.ListBadge.Image(resource)
     }
 }
 
-private fun ChatRoomFooterConfig?.toFooter(): ChatRoomPolicy.Footer {
+private fun ChatRoomFooterModel?.toFooter(): ChatRoomPolicy.Footer {
     return when (this) {
         null -> ChatRoomPolicy.Defaults.footer
-        ChatRoomFooterConfig.Empty -> ChatRoomPolicy.Footer.Empty
-        ChatRoomFooterConfig.Custom -> ChatRoomPolicy.Footer.Custom
-        is ChatRoomFooterConfig.Input -> ChatRoomPolicy.Footer.TextInput(
+        ChatRoomFooterModel.Empty -> ChatRoomPolicy.Footer.Empty
+        ChatRoomFooterModel.Custom -> ChatRoomPolicy.Footer.Custom
+        is ChatRoomFooterModel.Input -> ChatRoomPolicy.Footer.TextInput(
             ChatRoomPolicy.Input(
                 allowsPhoto = config.photo,
                 allowsVideo = config.video,
                 allowsFile = config.file,
-                allowsPayment = config.paymentDestination != null,
+                allowsPayment = config.payment != null,
                 placeholder = config.placeholder,
             )
         )
     }
 }
 
-private fun ChatRoomConfig.productQueries(): Set<ChatRoomPolicy.ProductQuery> {
+private fun ChatRoomConfigModel.productQueries(): Set<ChatRoomPolicy.ProductQuery> {
     return buildSet {
         if (participants) add(ChatRoomPolicy.ProductQuery.PARTICIPANTS)
         if (messageActions) add(ChatRoomPolicy.ProductQuery.MESSAGE_ACTIONS)

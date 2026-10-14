@@ -3,7 +3,7 @@ package io.paritytech.polkadotapp.feature_chats_impl.presentation.resources
 import io.mockk.coEvery
 import io.mockk.mockk
 import io.paritytech.polkadotapp.common.domain.model.toDataByteArray
-import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatResource
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatResourceModel
 import io.paritytech.polkadotapp.tools_ipfs_api.IpfsContentLookup
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertArrayEquals
@@ -20,7 +20,7 @@ class RealChatResourceResolverTest {
 
     @Test
     fun `inline bytes are drawn as they are`() = runBlocking<Unit> {
-        val result = resolver.resolve(ChatResource.Inline("image/png", bytes.toDataByteArray())).getOrThrow()
+        val result = resolver.resolve(ChatResourceModel.Inline("image/png", bytes.toDataByteArray())).getOrThrow()
 
         assertArrayEquals(bytes, (result as ResolvedChatImage.Inline).bytes)
     }
@@ -29,7 +29,7 @@ class RealChatResourceResolverTest {
     fun `a preimage resolves to the raw block address of its key`() = runBlocking<Unit> {
         withGatewayAddress("https://ipfs.example/ipfs/bafkkey")
 
-        val result = resolver.resolve(ChatResource.Preimage(ByteArray(32) { 3 }.toDataByteArray())).getOrThrow()
+        val result = resolver.resolve(ChatResourceModel.Preimage(ByteArray(32) { 3 }.toDataByteArray())).getOrThrow()
 
         assertEquals(ResolvedChatImage.Remote("https://ipfs.example/ipfs/bafkkey"), result)
     }
@@ -38,7 +38,14 @@ class RealChatResourceResolverTest {
     fun `a preimage that the gateway cannot address fails`() = runBlocking<Unit> {
         coEvery { ipfsContentLookup.getIpfsLinkFor(any(), any()) } returns Result.failure(IllegalStateException("no gateway"))
 
-        assertTrue(resolver.resolve(ChatResource.Preimage(ByteArray(32).toDataByteArray())).isFailure)
+        assertTrue(resolver.resolve(ChatResourceModel.Preimage(ByteArray(32).toDataByteArray())).isFailure)
+    }
+
+    @Test
+    fun `an address of a first version body resolves as an icon`() = runBlocking<Unit> {
+        val result = resolver.resolve(ChatResourceModel.Url("https://example.com/photo.jpg")).getOrThrow()
+
+        assertEquals(ResolvedChatImage.Remote("https://example.com/photo.jpg"), result)
     }
 
     @Test

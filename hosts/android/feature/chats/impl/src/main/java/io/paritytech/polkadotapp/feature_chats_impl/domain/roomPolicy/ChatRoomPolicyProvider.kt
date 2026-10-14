@@ -1,7 +1,7 @@
 package io.paritytech.polkadotapp.feature_chats_impl.domain.roomPolicy
 
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatId
-import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomDeclarationsRepository
+import io.paritytech.polkadotapp.feature_chats_api.domain.ChatRoomDeclarationsRepository
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.isExtensionChat
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine

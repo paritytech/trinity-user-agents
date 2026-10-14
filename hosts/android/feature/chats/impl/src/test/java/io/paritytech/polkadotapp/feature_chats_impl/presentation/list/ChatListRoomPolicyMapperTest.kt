@@ -7,7 +7,7 @@ import io.paritytech.polkadotapp.common.domain.model.toDataByteArray
 import io.paritytech.polkadotapp.design.components.avatar.AvatarUiModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.ChatPreview
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatId
-import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatResource
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatResourceModel
 import io.paritytech.polkadotapp.feature_chats_api.presentation.model.LastMessageUiModel
 import io.paritytech.polkadotapp.feature_chats_impl.domain.models.Chat
 import io.paritytech.polkadotapp.feature_chats_impl.domain.models.ChatAvatar
@@ -28,7 +28,7 @@ class ChatListRoomPolicyMapperTest {
     private val resolver = mockk<ChatResourceResolver>()
     private val mapper = ChatListRoomPolicyMapper(resolver)
 
-    private val image = ChatResource.Preimage(ByteArray(32) { 9 }.toDataByteArray())
+    private val image = ChatResourceModel.Preimage(ByteArray(32) { 9 }.toDataByteArray())
     private val hostIcon = "https://example.com/weather.png"
 
     @Test
