@@ -17,7 +17,14 @@ This RFC covers the worker's side, the `FundingProvider` trait. A product opens 
 the host draws the overlay; those are defined with the `Funding` trait and the host's `FundingPlatform`. The Worker
 manifest's `includes.funding` is defined in the [product manifest RFC](product-manifest.md#funding-configuration).
 
-## Overall schema
+## Motivation
+
+Onramps differ in every step that matters: the rails they take, their KYC, how they convert and pay out, and the
+countries they serve. Hard-coding each one in the core, or in every host, does not scale and has to be redone per
+platform. A provider's own worker can follow its service's steps, while the core keeps what must not depend on a
+provider: who is asked, which session a provider may report on, and whether value actually moved.
+
+## Approach
 
 ```mermaid
 flowchart LR
