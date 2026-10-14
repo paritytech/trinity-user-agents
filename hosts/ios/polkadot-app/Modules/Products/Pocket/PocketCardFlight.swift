@@ -13,7 +13,9 @@ protocol PocketCardOrigin: AnyObject {
 
 /// Moves an opened card between its place in the Pocket and the top of its
 /// screen, while the rest of the screen fades in or out around it, so the user
-/// sees one card move as on Android.
+/// sees one card move as on Android. A card the Pocket cannot place when the
+/// flight starts fades with the rest: the Pocket may no longer be what the
+/// screen opens from or closes to.
 final class PocketCardFlight: NSObject, UIViewControllerAnimatedTransitioning {
     private static let duration: TimeInterval = 0.5
     /// Android's curve, which carries the card slightly past its place.
@@ -26,18 +28,19 @@ final class PocketCardFlight: NSObject, UIViewControllerAnimatedTransitioning {
     private static let landingFade: TimeInterval = 0.12
 
     private let screen: PocketCardScreenViewController
-    /// In window coordinates.
-    private let slot: CGRect
+    private let origin: PocketCardOrigin
+    private let key: PocketCardKey
     private let opening: Bool
 
-    init(screen: PocketCardScreenViewController, slot: CGRect, opening: Bool) {
+    init(screen: PocketCardScreenViewController, origin: PocketCardOrigin, key: PocketCardKey, opening: Bool) {
         self.screen = screen
-        self.slot = slot
+        self.origin = origin
+        self.key = key
         self.opening = opening
     }
 
     func transitionDuration(using _: UIViewControllerContextTransitioning?) -> TimeInterval {
-        Self.duration
+        opening ? Self.duration : Self.duration + Self.landingFade
     }
 
     func animateTransition(using context: UIViewControllerContextTransitioning) {
@@ -47,25 +50,28 @@ final class PocketCardFlight: NSObject, UIViewControllerAnimatedTransitioning {
         screen.beginFlight()
         container.layoutIfNeeded()
 
-        let card = screen.cardFrame(in: container)
-        let landing = container.convert(slot, from: nil)
-        let toSlot = CGPoint(x: landing.minX - card.minX, y: landing.minY - card.minY)
-        let surroundingsAlpha: CGFloat = opening ? 1 : 0
+        let toSlot = origin.frame(of: key).map { slot in
+            let card = screen.cardFrame(in: container)
+            let landing = container.convert(slot, from: nil)
+            return CGPoint(x: landing.minX - card.minX, y: landing.minY - card.minY)
+        }
+        let fading: [UIView] = toSlot == nil ? [presented.view, backdrop] : [backdrop]
+        let alpha: CGFloat = opening ? 1 : 0
 
         if opening {
-            screen.moveCard(by: toSlot)
+            screen.moveCard(by: toSlot ?? .zero)
             screen.setSurroundingsAlpha(0)
-            backdrop.alpha = 0
+            fading.forEach { $0.alpha = 0 }
         }
 
         let animator = UIViewPropertyAnimator(duration: Self.duration, timingParameters: Self.timing)
         animator.addAnimations { [self] in
-            screen.moveCard(by: opening ? .zero : toSlot)
-            screen.setSurroundingsAlpha(surroundingsAlpha)
-            backdrop.alpha = surroundingsAlpha
+            screen.moveCard(by: opening ? .zero : toSlot ?? .zero)
+            screen.setSurroundingsAlpha(alpha)
+            fading.forEach { $0.alpha = alpha }
         }
         animator.addCompletion { [self] _ in
-            if opening {
+            if opening || toSlot == nil {
                 finish(context, removing: backdrop)
             } else {
                 land(context, removing: backdrop)

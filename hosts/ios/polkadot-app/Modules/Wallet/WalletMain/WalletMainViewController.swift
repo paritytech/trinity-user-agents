@@ -102,10 +102,10 @@ extension WalletMainViewController: WalletMainViewProtocol {
     }
 
     /// Nil once the card is gone or the Wallet is not what closing the card
-    /// returns to: an unselected tab is taken off its container.
+    /// returns to.
     func frame(of key: PocketCardKey) -> CGRect? {
         guard
-            navigationController?.parent != nil,
+            UIApplication.shared.mainTabBarController?.container.selectedController === navigationController,
             navigationController?.topViewController === self,
             rootView.viewModel.pocketCards.contains(where: { $0.key == key })
         else { return nil }

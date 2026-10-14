@@ -10,6 +10,27 @@ let loyaltyCard = PocketCardViewModel(
     face: nil
 )
 
+/// Where the Pocket shows the card, in window coordinates.
+let pocketSlot = CGRect(x: 24, y: 420, width: 345, height: PocketCardSize.height)
+
+@MainActor
+final class FakePocketCardOrigin: PocketCardOrigin {
+    private let slot: CGRect?
+    private(set) var openCard: PocketCardKey?
+
+    init(slot: CGRect?) {
+        self.slot = slot
+    }
+
+    func frame(of _: PocketCardKey) -> CGRect? {
+        slot
+    }
+
+    func setOpenCard(_ key: PocketCardKey?) {
+        openCard = key
+    }
+}
+
 /// Puts `root` in a window of the app's scene. Only there does a screen it
 /// presents join the window, as it does in the app.
 @MainActor

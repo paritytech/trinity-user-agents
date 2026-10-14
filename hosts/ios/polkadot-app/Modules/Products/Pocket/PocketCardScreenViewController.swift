@@ -135,12 +135,12 @@ extension PocketCardScreenViewController: UIViewControllerTransitioningDelegate 
     }
 
     private func flight(opening: Bool) -> PocketCardFlight? {
-        guard !UIAccessibility.isReduceMotionEnabled, let slot = origin?.frame(of: card.key) else { return nil }
+        guard let origin, !UIAccessibility.isReduceMotionEnabled else { return nil }
 
         // From here on, not from when the flight starts: a face moved in
         // between would fly in already folded away.
         isInFlight = true
-        return PocketCardFlight(screen: self, slot: slot, opening: opening)
+        return PocketCardFlight(screen: self, origin: origin, key: card.key, opening: opening)
     }
 }
 
