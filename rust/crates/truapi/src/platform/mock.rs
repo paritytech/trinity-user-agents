@@ -1200,6 +1200,7 @@ impl ChatPlatform for MockPlatform {
 		&self,
 		_product: &ProductContext,
 		request: latest::HostChatCreateRoomRequest,
+		_icon_url: String,
 	) -> Result<latest::HostChatCreateRoomResponse, latest::HostChatCreateRoomError> {
 		if let Some(reason) = &self.config.faults.chat_error {
 			return Err(latest::HostChatCreateRoomError::Unknown { reason: reason.clone() });
@@ -1846,14 +1847,24 @@ mod tests {
 		ProductContext::new("mock.dot".to_string()).expect("product context is valid")
 	}
 
+	fn mock_room_request(room_id: &str) -> latest::HostChatCreateRoomRequest {
+		latest::HostChatCreateRoomRequest {
+			room_id: room_id.to_string(),
+			metadata: latest::ChatRoomMetadata {
+				name: format!("{room_id} room"),
+				avatar: None,
+				description: None,
+			},
+			config: latest::ChatRoomConfig::default(),
+			preview: None,
+		}
+	}
+
 	fn create_room(p: &MockPlatform, room_id: &str) -> latest::ChatRoomRegistrationStatus {
 		block_on(p.create_chat_room(
 			&mock_product(),
-			latest::HostChatCreateRoomRequest {
-				room_id: room_id.to_string(),
-				name: format!("{room_id} room"),
-				icon: "https://example.invalid/i.png".to_string(),
-			},
+			mock_room_request(room_id),
+			"https://example.invalid/i.png".to_string(),
 		))
 		.expect("room registration succeeds")
 		.status
@@ -1924,11 +1935,8 @@ mod tests {
 
 		let room = block_on(p.create_chat_room(
 			&product,
-			latest::HostChatCreateRoomRequest {
-				room_id: "lobby".to_string(),
-				name: "lobby room".to_string(),
-				icon: "https://example.invalid/i.png".to_string(),
-			},
+			mock_room_request("lobby"),
+			"https://example.invalid/i.png".to_string(),
 		))
 		.expect_err("room creation carries the injected reason");
 		assert!(

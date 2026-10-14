@@ -164,6 +164,7 @@ impl ChatPlatform for CliChatHost {
 		&self,
 		_product: &ProductContext,
 		request: HostChatCreateRoomRequest,
+		icon_url: String,
 	) -> Result<HostChatCreateRoomResponse, HostChatCreateRoomError> {
 		let mut state = self.lock();
 		let status = if state.rooms.contains_key(&request.room_id) {
@@ -174,7 +175,7 @@ impl ChatPlatform for CliChatHost {
 			ChatRoomRegistrationStatus::New
 		};
 		drop(state);
-		self.record_registration("room", &request.room_id, &request.name, &request.icon);
+		self.record_registration("room", &request.room_id, &request.metadata.name, &icon_url);
 		Ok(HostChatCreateRoomResponse { status })
 	}
 
@@ -239,6 +240,7 @@ impl ChatPlatform for CliChatHost {
 mod tests {
 	use super::*;
 	use std::fs::read_to_string;
+	use truapi::latest::{ChatRoomConfig, ChatRoomMetadata};
 
 	fn product() -> ProductContext {
 		ProductContext::new("chat.dot".to_string()).expect("valid product id")
@@ -251,8 +253,13 @@ mod tests {
 	fn room(room_id: &str) -> HostChatCreateRoomRequest {
 		HostChatCreateRoomRequest {
 			room_id: room_id.to_string(),
-			name: "Support".to_string(),
-			icon: String::new(),
+			metadata: ChatRoomMetadata {
+				name: "Support".to_string(),
+				avatar: None,
+				description: None,
+			},
+			config: ChatRoomConfig::default(),
+			preview: None,
 		}
 	}
 
@@ -280,8 +287,12 @@ mod tests {
 	fn a_stored_message_is_recorded_as_the_host_received_it() {
 		let transcript = tempfile::NamedTempFile::new().expect("a temp transcript");
 		let host = CliChatHost::new(Some(transcript.path().to_path_buf()));
-		futures::executor::block_on(host.create_chat_room(&product(), room("support")))
-			.expect("a new room is created");
+		futures::executor::block_on(host.create_chat_room(
+			&product(),
+			room("support"),
+			String::new(),
+		))
+		.expect("a new room is created");
 
 		let payload = text("line one\nline two");
 		let posted = futures::executor::block_on(host.post_chat_message(
@@ -324,8 +335,12 @@ mod tests {
 			.expect("the snapshot is not an error");
 		assert!(snapshot.rooms.is_empty());
 
-		futures::executor::block_on(host.create_chat_room(&product(), room("support")))
-			.expect("a new room is created");
+		futures::executor::block_on(host.create_chat_room(
+			&product(),
+			room("support"),
+			String::new(),
+		))
+		.expect("a new room is created");
 
 		let replacement = futures::executor::block_on(rooms.next())
 			.expect("creating a room republishes the list")

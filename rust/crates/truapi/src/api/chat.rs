@@ -18,13 +18,23 @@ use crate::{
 #[crate::service(required_execution = Worker)]
 #[crate::async_trait]
 pub trait Chat: Send + Sync {
-	/// Create a chat room.
+	/// Create a chat room, or find it again. The request carries the name,
+	/// avatar and description of the room, the parts of the room the product
+	/// serves itself, and optionally its chat list preview. A new room that
+	/// declares nothing is a room the host stores, with the host defaults.
 	///
 	/// ```ts
 	/// const result = await truapi.chat.createRoom({
 	///   roomId: "test-room",
-	///   name: "Test Room",
-	///   icon: "",
+	///   metadata: { name: "Test Room", description: "A room for tests" },
+	///   config: {
+	///     productSource: false,
+	///     reactionDetails: false,
+	///     participants: false,
+	///     messageActions: false,
+	///     participantActions: false,
+	///     reportSeen: false,
+	///   },
 	/// });
 	/// assert(result.isOk(), "createRoom failed:", result);
 	/// console.log("room created:", result.value);
@@ -108,7 +118,10 @@ pub trait Chat: Send + Sync {
 		Err(CallError::unavailable())
 	}
 
-	/// Subscribe to received chat actions.
+	/// Subscribe to what users do in the rooms of the product: posted
+	/// messages, button presses, commands, edits, deletes, reactions, menu and
+	/// toolbar selections, quick replies, and the room screen as it opens and
+	/// closes. A posted message carries the id the host gave it.
 	///
 	/// ```ts
 	/// import { firstValueFrom, from } from "rxjs";
@@ -129,20 +142,32 @@ pub trait Chat: Send + Sync {
 
 	// Id 5 is spent and must never be reassigned.
 
-	/// Set what a room the product created shows below its messages. A room
+	/// Set what a room the product created shows below its messages: the
+	/// input with its attachment buttons, nothing, or a footer the product
+	/// draws through `Renderer::render` with a `ChatFooter` context. A room
 	/// keeps the footer until the product sets another, and a new room shows
-	/// the text input.
+	/// the input with photo and video on.
 	///
 	/// ```ts
 	/// const created = await truapi.chat.createRoom({
 	///   roomId: "test-room",
-	///   name: "Test Room",
-	///   icon: "",
+	///   metadata: { name: "Test Room" },
+	///   config: {
+	///     productSource: false,
+	///     reactionDetails: false,
+	///     participants: false,
+	///     messageActions: false,
+	///     participantActions: false,
+	///     reportSeen: false,
+	///   },
 	/// });
 	/// assert(created.isOk(), "createRoom failed:", created);
 	/// const result = await truapi.chat.setRoomFooter({
 	///   roomId: "test-room",
-	///   footer: "Empty",
+	///   footer: {
+	///     tag: "Input",
+	///     value: { placeholder: "Ask anything", photo: true, video: false, file: true },
+	///   },
 	/// });
 	/// assert(result.isOk(), "setRoomFooter failed:", result);
 	/// ```

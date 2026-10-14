@@ -88,7 +88,8 @@ use crate::platform::{
 	PermissionAuthorizationRequest, PermissionAuthorizationStatus, PermissionDecision, Platform,
 	ProductContext, ProductStorageKey, SessionUiInfo, UserConfirmationReview,
 	normalize_chat_identifier, normalize_product_identifier, validate_chat_icon,
-	validate_chat_message_content, validate_chat_name,
+	validate_chat_message_content, validate_chat_name, validate_chat_room_config,
+	validate_chat_room_footer, validate_chat_room_metadata, validate_chat_room_preview,
 };
 pub use signing_host::StatementRenewalTarget;
 #[cfg(not(target_arch = "wasm32"))]
@@ -99,7 +100,7 @@ use truapi::{
 	api::{Chat, Contacts, Pocket, Renderer},
 	latest, v01,
 	versioned::{
-		IntoLatest,
+		FromLatest, IntoLatest, Versioned,
 		chat::{
 			HostChatActionSubscribeError, HostChatActionSubscribeItem,
 			HostChatActionSubscribeRequest, HostChatCreateRoomError, HostChatCreateRoomRequest,
@@ -1347,19 +1348,36 @@ impl Chat for ProductRuntimeHost {
 		_cx: &CallContext,
 		request: HostChatCreateRoomRequest,
 	) -> Result<HostChatCreateRoomResponse, CallError<HostChatCreateRoomError>> {
+		let version = request.version();
 		let platform = self.connection.chat_platform()?;
-		let HostChatCreateRoomRequest::V1(mut request) = request;
-		request.room_id = normalize_chat_identifier("roomId", &request.room_id)
-			.map_err(chat_create_room_field_error)?;
-		request.name =
-			validate_chat_name("name", &request.name).map_err(chat_create_room_field_error)?;
-		request.icon =
-			validate_chat_icon("icon", &request.icon).map_err(chat_create_room_field_error)?;
+		let field_error = |error: ChatFieldError| {
+			CallError::Domain(HostChatCreateRoomError::from_latest(
+				latest::HostChatCreateRoomError::Unknown { reason: error.to_string() },
+				version,
+			))
+		};
+		let icon = request.v1_icon().map(|icon| validate_chat_icon("icon", icon)).transpose();
+		let icon_url = icon
+			.map_err(field_error)?
+			.filter(|icon| icon.starts_with("https:"))
+			.unwrap_or_default();
+		let mut request = request.into_latest();
+		request.room_id =
+			normalize_chat_identifier("roomId", &request.room_id).map_err(field_error)?;
+		request.metadata = validate_chat_room_metadata(request.metadata).map_err(field_error)?;
+		request.config = validate_chat_room_config(request.config).map_err(field_error)?;
+		request.preview = request
+			.preview
+			.map(validate_chat_room_preview)
+			.transpose()
+			.map_err(field_error)?;
 		platform
-			.create_chat_room(&self.connection.product, request)
+			.create_chat_room(&self.connection.product, request, icon_url)
 			.await
-			.map(HostChatCreateRoomResponse::V1)
-			.map_err(|error| CallError::Domain(HostChatCreateRoomError::V1(error)))
+			.map(|response| HostChatCreateRoomResponse::from_latest(response, version))
+			.map_err(|error| {
+				CallError::Domain(HostChatCreateRoomError::from_latest(error, version))
+			})
 	}
 
 	#[instrument(skip_all, fields(runtime.method = "chat.register_bot"))]
@@ -1443,14 +1461,18 @@ impl Chat for ProductRuntimeHost {
 		_cx: &CallContext,
 		request: HostChatSetRoomFooterRequest,
 	) -> Result<HostChatSetRoomFooterResponse, CallError<HostChatSetRoomFooterError>> {
+		let version = request.version();
 		let platform = self.connection.chat_platform()?;
-		let HostChatSetRoomFooterRequest::V1(mut request) = request;
+		let mut request = request.into_latest();
 		let failure = |reason: String| {
-			CallError::Domain(HostChatSetRoomFooterError::V1(
-				v01::HostChatSetRoomFooterError::Unknown { reason },
+			CallError::Domain(HostChatSetRoomFooterError::from_latest(
+				latest::HostChatSetRoomFooterError::Unknown { reason },
+				version,
 			))
 		};
 		request.room_id = normalize_chat_identifier("roomId", &request.room_id)
+			.map_err(|error| failure(error.to_string()))?;
+		request.footer = validate_chat_room_footer(request.footer)
 			.map_err(|error| failure(error.to_string()))?;
 
 		// Checked here rather than by each host, so every host answers a room
@@ -1465,15 +1487,16 @@ impl Chat for ProductRuntimeHost {
 				room.participating_as == v01::ChatRoomParticipation::RoomHost
 		});
 		if !created {
-			return Err(CallError::Domain(HostChatSetRoomFooterError::V1(
-				v01::HostChatSetRoomFooterError::UnknownRoom,
+			return Err(CallError::Domain(HostChatSetRoomFooterError::from_latest(
+				latest::HostChatSetRoomFooterError::UnknownRoom,
+				version,
 			)));
 		}
 
 		platform
 			.set_chat_room_footer(&self.connection.product, request)
 			.await
-			.map(|()| HostChatSetRoomFooterResponse::V1)
+			.map(|()| HostChatSetRoomFooterResponse::from_latest((), version))
 			.map_err(|error| failure(error.reason))
 	}
 
@@ -1587,15 +1610,6 @@ fn chat_post_field_error(error: ChatFieldError) -> CallError<HostChatPostMessage
 		error => v01::HostChatPostMessageError::Unknown { reason: error.to_string() },
 	};
 	CallError::Domain(HostChatPostMessageError::V2(payload))
-}
-
-/// Report a rejected chat room field as a room-creation domain error.
-fn chat_create_room_field_error(
-	error: crate::platform::ChatFieldError,
-) -> CallError<HostChatCreateRoomError> {
-	CallError::Domain(HostChatCreateRoomError::V1(v01::HostChatCreateRoomError::Unknown {
-		reason: error.to_string(),
-	}))
 }
 
 impl ProductRuntimeHost {

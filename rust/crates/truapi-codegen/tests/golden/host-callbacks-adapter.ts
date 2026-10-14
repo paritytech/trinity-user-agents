@@ -58,6 +58,7 @@ export interface RawCallbacks {
   createChatRoom?(
     product: Uint8Array,
     request: Uint8Array,
+    iconUrl: string,
   ): Promise<Uint8Array>;
   registerChatBot?(
     product: Uint8Array,
@@ -144,11 +145,12 @@ export function createWasmRawCallbacks(
     chainConnect: chainConnectAdapter(callbacks.chain),
     ...(chat
       ? {
-          createChatRoom: async (product, request) =>
+          createChatRoom: async (product, request, iconUrl) =>
             HostChatCreateRoomResponse.enc(
               await chat.createChatRoom(
                 ProductContext.dec(product),
                 HostChatCreateRoomRequest.dec(request),
+                iconUrl,
               ),
             ),
           registerChatBot: async (product, request) =>
