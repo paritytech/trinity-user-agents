@@ -4,7 +4,7 @@ use tracing::{debug, instrument};
 use truapi::{
 	CallContext, CallError,
 	api::Signing,
-	latest, v01,
+	latest,
 	versioned::signing::{
 		HostCreateTransactionError, HostCreateTransactionRequest, HostCreateTransactionResponse,
 		HostCreateTransactionWithLegacyAccountError, HostCreateTransactionWithLegacyAccountRequest,
@@ -16,6 +16,9 @@ use truapi::{
 		HostSignRawWithLegacyAccountResponse,
 	},
 };
+
+use super::from_latest_error;
+use truapi::versioned::{FromLatest, IntoLatest, Versioned};
 
 use crate::runtime::{
 	AccountHolder, ContactResolutionError, LEGACY_ACCOUNT_UNAVAILABLE_REASON,
@@ -35,27 +38,33 @@ impl<H: AccountHolder> Signing for ProductRuntimeHost<H> {
 		cx: &CallContext,
 		request: HostSignPayloadRequest,
 	) -> Result<HostSignPayloadResponse, CallError<HostSignPayloadError>> {
-		debug!("sign_payload: requesting signing-host signature");
-		let HostSignPayloadRequest::V1(mut inner) = request;
-		let (authority_session, account) = self
-			.product_signer(
-				cx,
-				inner.account,
-				|| HostSignPayloadError::V1(v01::HostSignPayloadError::PermissionDenied),
-				HostSignPayloadError::V1(v01::HostSignPayloadError::Rejected),
-			)
-			.await?;
-		inner.account = account;
-		self.accounts
-			.sign_payload(
-				&authority_session,
-				cx,
-				&self.connection.product,
-				SignPayloadAuthorityRequest::Product(inner),
-			)
-			.await
-			.map(HostSignPayloadResponse::V1)
-			.map_err(|reason| signing_call_error(HostSignPayloadError::V1, reason))
+		let version = request.version();
+		let mut inner = request.into_latest();
+		let result = async {
+			debug!("sign_payload: requesting signing-host signature");
+			let (authority_session, account) = self
+				.product_signer(
+					cx,
+					inner.account,
+					|| latest::HostSignPayloadError::PermissionDenied,
+					latest::HostSignPayloadError::Rejected,
+				)
+				.await?;
+			inner.account = account;
+			self.accounts
+				.sign_payload(
+					&authority_session,
+					cx,
+					&self.connection.product,
+					SignPayloadAuthorityRequest::Product(inner),
+				)
+				.await
+				.map_err(signing_call_error)
+		}
+		.await;
+		result
+			.map(|response| HostSignPayloadResponse::from_latest(response, version))
+			.map_err(|error| from_latest_error::<HostSignPayloadError>(error, version))
 	}
 
 	#[instrument(skip_all, fields(runtime.method = "signing.sign_raw"))]
@@ -64,7 +73,12 @@ impl<H: AccountHolder> Signing for ProductRuntimeHost<H> {
 		cx: &CallContext,
 		request: HostSignRawRequest,
 	) -> Result<HostSignRawResponse, CallError<HostSignRawError>> {
-		self.sign_raw_with_watermark(cx, request, true).await
+		let version = request.version();
+		let request = request.into_latest();
+		let result = self.sign_raw_with_watermark(cx, request, true).await;
+		result
+			.map(|response| HostSignRawResponse::from_latest(response, version))
+			.map_err(|error| from_latest_error::<HostSignRawError>(error, version))
 	}
 
 	#[instrument(skip_all, fields(runtime.method = "signing.sign_raw_unwatermarked_deprecated"))]
@@ -73,10 +87,15 @@ impl<H: AccountHolder> Signing for ProductRuntimeHost<H> {
 		cx: &CallContext,
 		request: HostSignRawRequest,
 	) -> Result<HostSignRawResponse, CallError<HostSignRawError>> {
+		let version = request.version();
+		let request = request.into_latest();
 		tracing::warn!(
 			"Temporary unwatermarked signing API is deprecated and will be removed: https://github.com/paritytech/trinity-user-agents/issues/612"
 		);
-		self.sign_raw_with_watermark(cx, request, false).await
+		let result = self.sign_raw_with_watermark(cx, request, false).await;
+		result
+			.map(|response| HostSignRawResponse::from_latest(response, version))
+			.map_err(|error| from_latest_error::<HostSignRawError>(error, version))
 	}
 
 	#[instrument(skip_all, fields(runtime.method = "signing.create_transaction"))]
@@ -85,53 +104,55 @@ impl<H: AccountHolder> Signing for ProductRuntimeHost<H> {
 		cx: &CallContext,
 		request: HostCreateTransactionRequest,
 	) -> Result<HostCreateTransactionResponse, CallError<HostCreateTransactionError>> {
-		debug!("create_transaction: requesting signing-host signature");
-		let HostCreateTransactionRequest::V1(mut inner) = request;
-		let (authority_session, signer) = self
-			.product_signer(
-				cx,
-				inner.signer,
-				|| {
-					HostCreateTransactionError::V1(
-						v01::HostCreateTransactionError::PermissionDenied,
-					)
-				},
-				HostCreateTransactionError::V1(v01::HostCreateTransactionError::Rejected),
-			)
-			.await?;
-		inner.signer = signer;
-		inner.call_data = self
-			.substitute_declared_contacts(inner.call_data, &inner.contacts)
-			.await
-			.map_err(|error| {
-				let error = match error {
-					ContactResolutionError::Unsupported => {
-						v01::HostCreateTransactionError::NotSupported {
-							reason: "this host resolves no contacts".to_string(),
-						}
-					},
-					ContactResolutionError::NotConnected => {
-						v01::HostCreateTransactionError::PermissionDenied
-					},
-					ContactResolutionError::Host(reason) => {
-						v01::HostCreateTransactionError::Unknown { reason }
-					},
-					ContactResolutionError::UnknownContact => {
-						v01::HostCreateTransactionError::UnknownContact
-					},
-				};
-				CallError::Domain(HostCreateTransactionError::V1(error))
-			})?;
-		self.accounts
-			.create_transaction(
-				&authority_session,
-				cx,
-				&self.connection.product,
-				CreateTransactionAuthorityRequest::Product(inner),
-			)
-			.await
-			.map(HostCreateTransactionResponse::V1)
-			.map_err(|reason| transaction_call_error(HostCreateTransactionError::V1, reason))
+		let version = request.version();
+		let mut inner = request.into_latest();
+		let result = async {
+			debug!("create_transaction: requesting signing-host signature");
+			let (authority_session, signer) = self
+				.product_signer(
+					cx,
+					inner.signer,
+					|| latest::HostCreateTransactionError::PermissionDenied,
+					latest::HostCreateTransactionError::Rejected,
+				)
+				.await?;
+			inner.signer = signer;
+			inner.call_data = self
+				.substitute_declared_contacts(inner.call_data, &inner.contacts)
+				.await
+				.map_err(|error| {
+					let error = match error {
+						ContactResolutionError::Unsupported => {
+							latest::HostCreateTransactionError::NotSupported {
+								reason: "this host resolves no contacts".to_string(),
+							}
+						},
+						ContactResolutionError::NotConnected => {
+							latest::HostCreateTransactionError::PermissionDenied
+						},
+						ContactResolutionError::Host(reason) => {
+							latest::HostCreateTransactionError::Unknown { reason }
+						},
+						ContactResolutionError::UnknownContact => {
+							latest::HostCreateTransactionError::UnknownContact
+						},
+					};
+					CallError::Domain(error)
+				})?;
+			self.accounts
+				.create_transaction(
+					&authority_session,
+					cx,
+					&self.connection.product,
+					CreateTransactionAuthorityRequest::Product(inner),
+				)
+				.await
+				.map_err(transaction_call_error)
+		}
+		.await;
+		result
+			.map(|response| HostCreateTransactionResponse::from_latest(response, version))
+			.map_err(|error| from_latest_error::<HostCreateTransactionError>(error, version))
 	}
 
 	#[instrument(skip_all, fields(runtime.method = "signing.sign_payload_with_legacy_account"))]
@@ -143,48 +164,50 @@ impl<H: AccountHolder> Signing for ProductRuntimeHost<H> {
 		HostSignPayloadWithLegacyAccountResponse,
 		CallError<HostSignPayloadWithLegacyAccountError>,
 	> {
-		let HostSignPayloadWithLegacyAccountRequest::V1(inner) = request;
-		let Some(authority_session) = self.accounts.current_session() else {
-			return Err(CallError::Domain(HostSignPayloadWithLegacyAccountError::V1(
-				v01::HostSignPayloadError::Rejected,
-			)));
-		};
-		let signer = self
-			.classify_legacy_address_signer(cx, &authority_session, &inner.signer)
-			.await
-			.map_err(|err| {
-				CallError::Domain(HostSignPayloadWithLegacyAccountError::V1(
-					err.into_host_error(LEGACY_PRODUCT_ACCOUNT_MISMATCH_REASON),
-				))
-			})?;
-		if !matches!(signer, LegacySigner::Product) {
-			return Err(CallError::Domain(HostSignPayloadWithLegacyAccountError::V1(
-				v01::HostSignPayloadError::Unknown {
+		let version = request.version();
+		let inner = request.into_latest();
+		let result = async {
+			let Some(authority_session) = self.accounts.current_session() else {
+				return Err(CallError::Domain(latest::HostSignPayloadError::Rejected));
+			};
+			let signer = self
+				.classify_legacy_address_signer(cx, &authority_session, &inner.signer)
+				.await
+				.map_err(|err| {
+					CallError::Domain(err.into_host_error(LEGACY_PRODUCT_ACCOUNT_MISMATCH_REASON))
+				})?;
+			if !matches!(signer, LegacySigner::Product) {
+				return Err(CallError::Domain(latest::HostSignPayloadError::Unknown {
 					reason: LEGACY_PRODUCT_ACCOUNT_MISMATCH_REASON.to_string(),
-				},
-			)));
-		}
-		self.connection
-			.require_chain_submit(HostSignPayloadWithLegacyAccountError::V1(
-				v01::HostSignPayloadError::PermissionDenied,
-			))
-			.await?;
-		self.accounts
-			.sign_payload(
-				&authority_session,
-				cx,
-				&self.connection.product,
-				SignPayloadAuthorityRequest::LegacyAccount {
-					product_account: v01::ProductAccountId {
-						dot_ns_identifier: self.connection.product_id(),
-						derivation_index: v01::DerivationIndex::Index(0),
+				}));
+			}
+			self.connection
+				.require_chain_submit(latest::HostSignPayloadError::PermissionDenied)
+				.await?;
+			self.accounts
+				.sign_payload(
+					&authority_session,
+					cx,
+					&self.connection.product,
+					SignPayloadAuthorityRequest::LegacyAccount {
+						product_account: latest::ProductAccountId {
+							dot_ns_identifier: self.connection.product_id(),
+							derivation_index: latest::DerivationIndex::Index(0),
+						},
+						request: inner,
 					},
-					request: inner,
-				},
-			)
-			.await
-			.map(HostSignPayloadWithLegacyAccountResponse::V1)
-			.map_err(|reason| signing_call_error(HostSignPayloadWithLegacyAccountError::V1, reason))
+				)
+				.await
+				.map_err(signing_call_error)
+		}
+		.await;
+		result
+			.map(|response| {
+				HostSignPayloadWithLegacyAccountResponse::from_latest(response, version)
+			})
+			.map_err(|error| {
+				from_latest_error::<HostSignPayloadWithLegacyAccountError>(error, version)
+			})
 	}
 
 	#[instrument(skip_all, fields(runtime.method = "signing.sign_raw_with_legacy_account"))]
@@ -194,7 +217,12 @@ impl<H: AccountHolder> Signing for ProductRuntimeHost<H> {
 		request: HostSignRawWithLegacyAccountRequest,
 	) -> Result<HostSignRawWithLegacyAccountResponse, CallError<HostSignRawWithLegacyAccountError>>
 	{
-		self.sign_raw_with_legacy_account_with_watermark(cx, request, true).await
+		let version = request.version();
+		let request = request.into_latest();
+		let result = self.sign_raw_with_legacy_account_with_watermark(cx, request, true).await;
+		result
+			.map(|response| HostSignRawWithLegacyAccountResponse::from_latest(response, version))
+			.map_err(|error| from_latest_error::<HostSignRawWithLegacyAccountError>(error, version))
 	}
 
 	#[instrument(skip_all, fields(runtime.method = "signing.sign_raw_unwatermarked_deprecated_with_legacy_account"))]
@@ -204,10 +232,15 @@ impl<H: AccountHolder> Signing for ProductRuntimeHost<H> {
 		request: HostSignRawWithLegacyAccountRequest,
 	) -> Result<HostSignRawWithLegacyAccountResponse, CallError<HostSignRawWithLegacyAccountError>>
 	{
+		let version = request.version();
+		let request = request.into_latest();
 		tracing::warn!(
 			"Temporary unwatermarked signing API is deprecated and will be removed: https://github.com/paritytech/trinity-user-agents/issues/612"
 		);
-		self.sign_raw_with_legacy_account_with_watermark(cx, request, false).await
+		let result = self.sign_raw_with_legacy_account_with_watermark(cx, request, false).await;
+		result
+			.map(|response| HostSignRawWithLegacyAccountResponse::from_latest(response, version))
+			.map_err(|error| from_latest_error::<HostSignRawWithLegacyAccountError>(error, version))
 	}
 
 	#[instrument(skip_all, fields(runtime.method = "signing.create_transaction_with_legacy_account"))]
@@ -219,49 +252,55 @@ impl<H: AccountHolder> Signing for ProductRuntimeHost<H> {
 		HostCreateTransactionWithLegacyAccountResponse,
 		CallError<HostCreateTransactionWithLegacyAccountError>,
 	> {
-		let HostCreateTransactionWithLegacyAccountRequest::V1(inner) = request;
-		let Some(authority_session) = self.accounts.current_session() else {
-			return Err(CallError::Domain(HostCreateTransactionWithLegacyAccountError::V1(
-				v01::HostCreateTransactionError::Rejected,
-			)));
-		};
-		let signer = self
-			.classify_legacy_signer(cx, &authority_session, inner.signer)
-			.await
-			.map_err(|err| {
-				CallError::Domain(HostCreateTransactionWithLegacyAccountError::V1(
-					v01::HostCreateTransactionError::Unknown {
+		let version = request.version();
+		let inner = request.into_latest();
+		let result = async {
+			let Some(authority_session) = self.accounts.current_session() else {
+				return Err(CallError::Domain(latest::HostCreateTransactionError::Rejected));
+			};
+			let signer = self
+				.classify_legacy_signer(cx, &authority_session, inner.signer)
+				.await
+				.map_err(|err| {
+					CallError::Domain(latest::HostCreateTransactionError::Unknown {
 						reason: err.into_reason(LEGACY_PRODUCT_ACCOUNT_MISMATCH_REASON),
+					})
+				})?;
+			self.connection
+				.require_chain_submit(latest::HostCreateTransactionError::PermissionDenied)
+				.await?;
+			let authority_request = match signer {
+				LegacySigner::Product => CreateTransactionAuthorityRequest::LegacyAccount {
+					product_account: latest::ProductAccountId {
+						dot_ns_identifier: self.connection.product_id(),
+						derivation_index: latest::DerivationIndex::Index(0),
 					},
-				))
-			})?;
-		self.connection
-			.require_chain_submit(HostCreateTransactionWithLegacyAccountError::V1(
-				v01::HostCreateTransactionError::PermissionDenied,
-			))
-			.await?;
-		let authority_request = match signer {
-			LegacySigner::Product => CreateTransactionAuthorityRequest::LegacyAccount {
-				product_account: v01::ProductAccountId {
-					dot_ns_identifier: self.connection.product_id(),
-					derivation_index: v01::DerivationIndex::Index(0),
+					request: inner,
 				},
-				request: inner,
-			},
-			LegacySigner::Identity(_) => CreateTransactionAuthorityRequest::IdentityAccount(inner),
-		};
-		self.accounts
-			.create_transaction(&authority_session, cx, &self.connection.product, authority_request)
-			.await
-			.map(|response| {
-				HostCreateTransactionWithLegacyAccountResponse::V1(
-					v01::HostCreateTransactionWithLegacyAccountResponse {
-						transaction: response.transaction,
-					},
+				LegacySigner::Identity(_) => {
+					CreateTransactionAuthorityRequest::IdentityAccount(inner)
+				},
+			};
+			self.accounts
+				.create_transaction(
+					&authority_session,
+					cx,
+					&self.connection.product,
+					authority_request,
 				)
+				.await
+				.map(|response| latest::HostCreateTransactionWithLegacyAccountResponse {
+					transaction: response.transaction,
+				})
+				.map_err(transaction_call_error)
+		}
+		.await;
+		result
+			.map(|response| {
+				HostCreateTransactionWithLegacyAccountResponse::from_latest(response, version)
 			})
-			.map_err(|reason| {
-				transaction_call_error(HostCreateTransactionWithLegacyAccountError::V1, reason)
+			.map_err(|error| {
+				from_latest_error::<HostCreateTransactionWithLegacyAccountError>(error, version)
 			})
 	}
 }
@@ -292,17 +331,17 @@ impl<H: AccountHolder> ProductRuntimeHost<H> {
 	async fn sign_raw_with_watermark(
 		&self,
 		cx: &CallContext,
-		request: HostSignRawRequest,
+		request: latest::HostSignRawRequest,
 		watermarked: bool,
-	) -> Result<HostSignRawResponse, CallError<HostSignRawError>> {
+	) -> Result<latest::HostSignPayloadResponse, CallError<latest::HostSignPayloadError>> {
 		debug!("sign_raw: requesting signing-host signature");
-		let HostSignRawRequest::V1(mut inner) = request;
+		let mut inner = request;
 		let (authority_session, account) = self
 			.product_signer(
 				cx,
 				inner.account,
-				|| HostSignRawError::V1(v01::HostSignPayloadError::PermissionDenied),
-				HostSignRawError::V1(v01::HostSignPayloadError::Rejected),
+				|| latest::HostSignPayloadError::PermissionDenied,
+				latest::HostSignPayloadError::Rejected,
 			)
 			.await?;
 		inner.account = account;
@@ -315,41 +354,33 @@ impl<H: AccountHolder> ProductRuntimeHost<H> {
 				watermarked,
 			)
 			.await
-			.map(HostSignRawResponse::V1)
-			.map_err(|reason| raw_signing_call_error(HostSignRawError::V1, reason))
+			.map_err(raw_signing_call_error)
 	}
 
 	async fn sign_raw_with_legacy_account_with_watermark(
 		&self,
 		cx: &CallContext,
-		request: HostSignRawWithLegacyAccountRequest,
+		request: latest::HostSignRawWithLegacyAccountRequest,
 		watermarked: bool,
-	) -> Result<HostSignRawWithLegacyAccountResponse, CallError<HostSignRawWithLegacyAccountError>>
-	{
-		let HostSignRawWithLegacyAccountRequest::V1(inner) = request;
+	) -> Result<latest::HostSignPayloadResponse, CallError<latest::HostSignPayloadError>> {
+		let inner = request;
 		let Some(authority_session) = self.accounts.current_session() else {
-			return Err(CallError::Domain(HostSignRawWithLegacyAccountError::V1(
-				v01::HostSignPayloadError::Rejected,
-			)));
+			return Err(CallError::Domain(latest::HostSignPayloadError::Rejected));
 		};
 		let signer = self
 			.classify_legacy_address_signer(cx, &authority_session, &inner.signer)
 			.await
 			.map_err(|err| {
-				CallError::Domain(HostSignRawWithLegacyAccountError::V1(
-					err.into_host_error(LEGACY_ACCOUNT_UNAVAILABLE_REASON),
-				))
+				CallError::Domain(err.into_host_error(LEGACY_ACCOUNT_UNAVAILABLE_REASON))
 			})?;
 		self.connection
-			.require_chain_submit(HostSignRawWithLegacyAccountError::V1(
-				v01::HostSignPayloadError::PermissionDenied,
-			))
+			.require_chain_submit(latest::HostSignPayloadError::PermissionDenied)
 			.await?;
 		let authority_request = match signer {
 			LegacySigner::Product => SignRawAuthorityRequest::LegacyAccount {
-				product_account: v01::ProductAccountId {
+				product_account: latest::ProductAccountId {
 					dot_ns_identifier: self.connection.product_id(),
-					derivation_index: v01::DerivationIndex::Index(0),
+					derivation_index: latest::DerivationIndex::Index(0),
 				},
 				request: inner,
 			},
@@ -366,19 +397,15 @@ impl<H: AccountHolder> ProductRuntimeHost<H> {
 				watermarked,
 			)
 			.await
-			.map(HostSignRawWithLegacyAccountResponse::V1)
-			.map_err(|reason| raw_signing_call_error(HostSignRawWithLegacyAccountError::V1, reason))
+			.map_err(raw_signing_call_error)
 	}
 }
 
-fn raw_signing_call_error<E>(
-	wrap: fn(v01::HostSignPayloadError) -> E,
-	error: AuthorityError,
-) -> CallError<E> {
+fn raw_signing_call_error(error: AuthorityError) -> CallError<latest::HostSignPayloadError> {
 	match error {
 		AuthorityError::ConfirmationFailed(error) => {
 			CallError::HostFailure { reason: format!("sign raw confirmation failed: {error:?}") }
 		},
-		error => signing_call_error(wrap, error),
+		error => signing_call_error(error),
 	}
 }

@@ -22,7 +22,7 @@ extension SSOTrUAPIMessageHandler {
     func handleMessages(
         _ messages: [SSORawHostMessage],
         from host: PolkadotSignInHost,
-        service: any NativeSsoAccountHolderServiceProtocol
+        service: any SsoAccountHolderServiceProtocol
     ) async {
         let newMessages = await filterAlreadyHandled(messages)
 

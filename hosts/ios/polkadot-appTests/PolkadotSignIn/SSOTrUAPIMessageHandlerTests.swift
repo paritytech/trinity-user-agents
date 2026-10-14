@@ -63,7 +63,7 @@ private actor SpyRequestHandler: SSORequestHandling {
     }
 }
 
-private final class StubAccountHolderService: NativeSsoAccountHolderServiceProtocol, @unchecked Sendable {
+private final class StubAccountHolderService: SsoAccountHolderServiceProtocol, @unchecked Sendable {
     var control: (Data) throws -> SsoRequestOutcome? = { _ in nil }
     var request: (Data) async throws -> SsoRequestOutcome = { _ in .ignored }
 
