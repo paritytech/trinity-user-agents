@@ -73,12 +73,6 @@ fun UserConfirmationReview.toConfirmation(callingProductId: String): TrUAPIConfi
             resources = v1.resources.map { it.describe() },
         )
 
-    is UserConfirmationReview.PreimageSubmit ->
-        TrUAPIConfirmation.PreimageSubmit(
-            requesterProductId = callingProductId,
-            sizeBytes = v1.size.toLong(),
-        )
-
     is UserConfirmationReview.AccountAccess ->
         TrUAPIConfirmation.AccountAccess(
             requesterProductId = v1.requestingProductId,

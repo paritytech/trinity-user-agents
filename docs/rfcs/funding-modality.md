@@ -169,6 +169,7 @@ enum FundingUpdate {
     Details { transaction_id: Option<String>, reference: Option<String> }, // any time, outside the order
     Payout { outcome: FundingPayout },                // Out: once, after release
     Refunding { top_up_id: [u8; 32], amount: u128 }, // Out: once, after a failed payout
+    PayoutRetrying,                                   // Out: after release, before Payout, at each retry
 }
 
 enum FundingDeposit {
@@ -186,7 +187,8 @@ enum FundingDeposit {
   asking for what it debited. `Crediting` and `Refunding` must name a recorded top-up and `Collecting` a recorded
   payment request, at the recorded amount, once across the provider's sessions; anything else fails with
   `NotStarted`. Funds started before the session was assigned were never recorded for it.
-- `Converting`, `Payout` or `Refunding` on a withdrawal that is not released yet fails with `OutOfOrder`.
+- `Converting`, `Payout`, `Refunding` or `PayoutRetrying` on a withdrawal that is not released yet fails with
+  `OutOfOrder`, and so does `PayoutRetrying` once the payout outcome is reported.
 - A report on a session the user chose a provider for while the overlay is still up is stored like any other.
 - `Deposit` and `Details` carry what the host draws: where and what the user pays, and the provider's references. The
   latest of each is shown.
@@ -250,10 +252,29 @@ after the payout and any refund.
 - **Closing the overlay after choosing a provider** keeps the session as started, since the provider may already be
   working on it, and asks the provider to stop unless funds move.
 - **One status per session.** The host words a typed status: waiting for the transfer, payment or deposit by rail,
-  converting, initiated, converting to the asset or preparing the payout, retrying, taking longer once the provider
+  converting, initiated, converting to the asset or preparing the payout, retrying the top-up or the payout, taking
+  longer once the provider
   has been silent past the chosen quote's `eta_secs`, and how it ended.
 - **Ids are scoped.** The core hashes the provider's product into every top-up and payment id it hands the host, and
   follows them under the same id.
+
+## Resuming after a restart
+
+The host app can be closed or crash at any point; a session carries on from its last checkpoint when it starts again.
+
+- **What the core keeps.** Every session, every report (stored before the report is answered), what the provider last
+  `save`d, and the top-ups and payment requests recorded for it, by id. On start the core reloads them, takes the
+  worker of every session a provider still serves, and follows each named top-up and payment again.
+- **What the provider does.** It calls `save` before every external action: a request to its onramp, a faucet, a
+  `payment.topUp` or `payment.request`. It derives the ids of its top-ups, payment requests and onramp orders from
+  the session and the step, so repeating one after a crash finds it (`AlreadyExists`) instead of moving funds twice.
+  On `Assigned` it resumes from `last_update` and `saved`, not from the start.
+- **What the host does.** It starts funding at launch when it has sessions in flight, rather than waiting for a
+  product to need the core, and it keeps its own top-up and payment records across restarts so a claim in progress
+  carries on.
+
+A worker keeps running while the user is elsewhere in the app. Running with the app in the background is out of
+scope for now.
 
 ## Trade-offs
 
