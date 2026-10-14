@@ -24,6 +24,8 @@ final class MockProductExecution: TrUAPIProductExecutionProtocol, @unchecked Sen
     private(set) var pocketCardNotifications: [[PocketCard]] = []
 
     private(set) var publishedChatActions: [HostChatActionSubscribeItem] = []
+    /// The Chat Extension v2 events, in order.
+    private(set) var publishedChatEvents: [PublishedChatEvent] = []
     private(set) var publishedRendererActions: [HostRendererActionSubscribeItem] = []
     /// Requests passed to `render`, in order, including ones that threw, so
     /// `renderRequests.count` is the call count the retry tests assert on.
@@ -103,7 +105,9 @@ final class MockProductExecution: TrUAPIProductExecutionProtocol, @unchecked Sen
         publishedChatActions.append(item)
     }
 
-    func publishChatEvent(roomId _: String, peer _: String, event _: ChatEvent) throws {}
+    func publishChatEvent(roomId: String, peer: String, event: ChatEvent) throws {
+        publishedChatEvents.append(PublishedChatEvent(roomId: roomId, peer: peer, event: event))
+    }
 
     func chatMessagesQuery(
         _: ProductChatMessagesQueryRequest,
@@ -213,4 +217,11 @@ final class MockProductExecution: TrUAPIProductExecutionProtocol, @unchecked Sen
         pocketCardNotifications.append(cards)
         pocketCardSignal.yield(cards)
     }
+}
+
+/// One event that a test execution received through `publishChatEvent`.
+struct PublishedChatEvent: Equatable {
+    let roomId: String
+    let peer: String
+    let event: ChatEvent
 }

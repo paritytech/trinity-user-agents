@@ -169,3 +169,31 @@ private extension ChatRoomDeclarationsStoreTests {
         _ = try await fixture.context.createRoom(for: fixture.bot, roomId: "lobby", name: "Lobby", icon: nil)
     }
 }
+
+/// The bot of a product room reads the declarations and the newest seen message from the store.
+struct ProductRoomReaderTests {
+    private let fixture = ProductRoomFixture()
+
+    @Test func theReaderGivesTheDeclarationsOfAStoredRoomOnly() async throws {
+        let reader = ProductRoomReader(storageFacade: fixture.storageFacade)
+        _ = try await fixture.context.createRoom(for: fixture.bot, roomId: "lobby", name: "Lobby", icon: nil)
+        let commands = [Chat.RoomCommand(name: "roll", description: "Roll", argumentHint: nil)]
+        try await fixture.context.setRoomCommands(for: fixture.bot, roomId: "lobby", commands: commands)
+
+        #expect(await reader.declarations(of: fixture.chatId("lobby"))?.commands == commands)
+        #expect(await reader.declarations(of: fixture.chatId("gone")) == nil)
+    }
+
+    @Test func theNewestMessageFollowsTheOrderOfTheRoom() async throws {
+        let reader = ProductRoomReader(storageFacade: fixture.storageFacade)
+        _ = try await fixture.context.createRoom(for: fixture.bot, roomId: "lobby", name: "Lobby", icon: nil)
+        for id in ["a", "b", "c"] {
+            try await fixture.save(fixture.userMessage(.text(id), roomId: "lobby", id: id))
+        }
+
+        #expect(await reader.newestMessageId(among: ["a", "b"], in: fixture.chatId("lobby")) == "b")
+        #expect(await reader.newestMessageId(among: ["c", "a"], in: fixture.chatId("lobby")) == "c")
+        #expect(await reader.newestMessageId(among: ["x"], in: fixture.chatId("lobby")) == nil)
+        #expect(await reader.newestMessageId(among: [], in: fixture.chatId("lobby")) == nil)
+    }
+}

@@ -12,9 +12,10 @@ import UIKitExt
 /// opening an execution of its own. The same worker also draws the product's
 /// Pocket cards.
 ///
-/// Chat-environment context route through that execution: user messages and
-/// events publish chat actions, widget rendering streams typed renderer nodes,
-/// and the product's chat surface serves the core's chat callbacks.
+/// Chat-environment context route through that execution: what the user does
+/// in a room goes out as a Chat Extension v2 event, widget rendering streams
+/// typed renderer nodes, and the product's chat surface serves the core's chat
+/// callbacks.
 ///
 /// An actor so `start`/`dispose` never race on runtime state. Actors are
 /// reentrant, so `dispose()` can interleave while `start` is suspended:
@@ -37,6 +38,9 @@ actor TrUAPIChatHandler: ChatRuntimeProtocol {
     private let context: ProductWorkerContext
     private let renderStartupWindow: Duration
     private let logger: LoggerProtocol
+
+    /// The `peer` of every event of the host user, until a room has more than one user (02-DESIGN §8.4).
+    private static let userPeer = "native"
 
     /// How often a cell asks again while the product is still coming up. The
     /// worker's own refusals are waited out by ``renderWhenConnected``; this
@@ -91,9 +95,15 @@ actor TrUAPIChatHandler: ChatRuntimeProtocol {
         guard let roomId else { throw ChatSeamError.roomlessChat }
         try requireExecution().publishChatAction(HostChatActionSubscribeItem(
             roomId: roomId,
-            peer: "native",
+            peer: Self.userPeer,
             payload: .messagePosted(.text(text: text))
         ))
+    }
+
+    func publishUserEvent(_ event: ProductChatUserEvent, roomId: String?) async throws {
+        try checkNotDisposed()
+        guard let roomId else { throw ChatSeamError.roomlessChat }
+        try requireExecution().publishChatEvent(roomId: roomId, peer: Self.userPeer, event: event.chatEvent)
     }
 
     func renderMessage(
@@ -107,7 +117,7 @@ actor TrUAPIChatHandler: ChatRuntimeProtocol {
             let nodes = try await renderNodesWhenConnected(
                 deadline: ContinuousClock.now + renderStartupWindow,
                 roomId: roomId,
-                messageId: messageId,
+                messageId: productMessageId(messageId, roomId: roomId),
                 messageType: messageType,
                 messageData: messageData
             )
@@ -149,7 +159,7 @@ actor TrUAPIChatHandler: ChatRuntimeProtocol {
             try requireExecution().publishRendererAction(HostRendererActionSubscribeItem(
                 context: .chatMessage(
                     roomId: roomId,
-                    messageId: messageId,
+                    messageId: productMessageId(messageId, roomId: roomId),
                     messageType: messageType
                 ),
                 actionId: actionId,
@@ -166,11 +176,16 @@ actor TrUAPIChatHandler: ChatRuntimeProtocol {
         do {
             try checkNotDisposed()
             guard let roomId else { throw ChatSeamError.roomlessChat }
-            try requireExecution().publishChatAction(HostChatActionSubscribeItem(
+            let trigger = ActionTrigger(
+                messageId: productMessageId(messageId, roomId: roomId),
+                actionId: actionId,
+                payload: nil
+            )
+            try requireExecution().publishChatEvent(
                 roomId: roomId,
-                peer: "native",
-                payload: .actionTriggered(ActionTrigger(messageId: messageId, actionId: actionId, payload: nil))
-            ))
+                peer: Self.userPeer,
+                event: .actionTriggered(trigger)
+            )
         } catch is CancellationError {
             logger.debug("Rust chat runtime disposed before action \(actionId)")
         } catch {
@@ -182,11 +197,8 @@ actor TrUAPIChatHandler: ChatRuntimeProtocol {
         do {
             try checkNotDisposed()
             guard let roomId else { throw ChatSeamError.roomlessChat }
-            try requireExecution().publishChatAction(HostChatActionSubscribeItem(
-                roomId: roomId,
-                peer: "native",
-                payload: .command(ChatCommand(command: command.name, payload: command.arguments))
-            ))
+            let command = ChatCommand(command: command.name, payload: command.arguments)
+            try requireExecution().publishChatEvent(roomId: roomId, peer: Self.userPeer, event: .command(command))
             return true
         } catch {
             logger.error("Rust chat runtime failed to send a command: \(error)")
@@ -267,6 +279,12 @@ private extension TrUAPIChatHandler {
         guard !disposed else { throw CancellationError() }
     }
 
+    /// The id under which the product knows a stored message. A message that the product pushed with
+    /// `update_feed` has a store id that starts with its room.
+    func productMessageId(_ storedId: Chat.MessageId, roomId: String) -> String {
+        Chat.ProductMessageId.product(storedId, in: .chatExtension(productId, roomId: roomId))
+    }
+
     /// A persisted message can decode before the product attaches. `ProductMessageDecoder`
     /// never evicts, so failing once breaks that cell for the session.
     func renderNodesWhenConnected(
@@ -326,6 +344,23 @@ private extension TrUAPIChatHandler {
                 guard !Task.isCancelled else { return }
                 logger.error("Rust chat runtime rooms forwarding ended: \(error)")
             }
+        }
+    }
+}
+
+private extension ProductChatUserEvent {
+    var chatEvent: ChatEvent {
+        switch self {
+        case let .messagePosted(messageId, text, replyTo):
+            .messagePosted(messageId: messageId, body: .text(text: text), replyTo: replyTo)
+        case let .edited(messageId, text):
+            .userEdited(messageId: messageId, body: .text(text: text))
+        case let .deleted(messageId):
+            .userDeleted(messageId: messageId)
+        case let .reacted(messageId, emoji, placed):
+            .userReacted(messageId: messageId, emoji: emoji, placed: placed)
+        case let .seen(messageId):
+            .seen(messageId: messageId)
         }
     }
 }

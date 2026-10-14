@@ -26,8 +26,8 @@ struct ProductBotUserEventsTests {
         #expect(runtime.triggers == [.init(roomId: "lobby", messageId: "msg-1", actionId: "yes")])
     }
 
-    @Test func aCommandGoesToTheRuntime() async {
-        let bot = makeBot()
+    @Test func aDeclaredCommandGoesToTheRuntime() async {
+        let bot = makeBot(commands: ["help"])
         runtime.takesCommands = true
 
         let taken = await bot.handle(command: Chat.Command(name: "help", arguments: ""), roomId: "lobby")
@@ -36,12 +36,38 @@ struct ProductBotUserEventsTests {
         #expect(runtime.commands == [.init(name: "help", arguments: "")])
     }
 
-    private func makeBot() -> ProductBot {
-        ProductBot(
+    /// 02-DESIGN §13 item 12: any other `/text` is a message, so the host posts the text.
+    @Test func aCommandThatTheRoomDoesNotDeclareIsAMessage() async {
+        let bot = makeBot(commands: ["help"])
+        runtime.takesCommands = true
+
+        #expect(await bot.handle(command: Chat.Command(name: "roll", arguments: "2d6"), roomId: "lobby") == false)
+        #expect(await makeBot(commands: nil).handle(
+            command: Chat.Command(name: "help", arguments: ""),
+            roomId: "lobby"
+        ) == false)
+        #expect(await bot.handle(command: Chat.Command(name: "help", arguments: ""), roomId: nil) == false)
+        #expect(runtime.commands.isEmpty)
+    }
+
+    private func makeBot(commands: [String]? = nil) -> ProductBot {
+        let declarations = Chat.RoomDeclarations(
+            description: nil,
+            avatar: nil,
+            config: nil,
+            configGeneration: 0,
+            preview: .hostDefault,
+            toolbar: nil,
+            suggestions: nil,
+            commands: commands?.map { Chat.RoomCommand(name: $0, description: "", argumentHint: nil) },
+            footerConfig: nil
+        )
+        return ProductBot(
             product: Product(id: "dim2.paseo", name: "Jollity"),
             description: nil,
             runtime: runtime,
-            resolveImage: WidgetImageResolver { _ in nil }
+            resolveImage: WidgetImageResolver { _ in nil },
+            rooms: StubProductRooms(declarations: declarations)
         )
     }
 }
