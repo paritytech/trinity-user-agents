@@ -15,6 +15,7 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.CustomP
 import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.asAnyRenderer
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatId
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessage
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.previewText
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.isIncoming
 import io.paritytech.polkadotapp.feature_chats_api.presentation.model.ChatFeedPayload
 import io.paritytech.polkadotapp.feature_chats_api.presentation.model.ChatPreviewUiModel
@@ -295,12 +296,19 @@ class ChatListViewModel @Inject constructor(
                 )
             }
 
+            is ChatMessage.Content.ProductBody -> Text(
+                timestamp = timestamp,
+                isIncoming = isIncoming,
+                message = content.body.previewText().orEmpty(),
+            )
+
             is ChatMessage.Content.DataChannelAnswer,
             is ChatMessage.Content.DataChannelIceCandidate,
             is ChatMessage.Content.DataChannelClosed,
             is ChatMessage.Content.DeviceAdded,
             is ChatMessage.Content.DeviceRemoved,
-            is ChatMessage.Content.CompactionCommit -> {
+            is ChatMessage.Content.CompactionCommit,
+            is ChatMessage.Content.Deleted -> {
                 Unsupported(
                     timestamp = timestamp,
                     isIncoming = isIncoming
