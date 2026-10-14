@@ -20,7 +20,7 @@ extension ChatViewModelFactory {
         let text = richText.text?.nilIfEmpty
         let view = ChatMediaStackView(
             sources: richText.media,
-            text: text.map { AttributedString($0) },
+            text: text.map { ChatMarkdownText(markdown: $0, onOpenLink: context.actions?.openLink) },
             loader: productMediaLoader
         )
 
@@ -52,7 +52,7 @@ extension ChatViewModelFactory {
         let processAction = context.actions?.processAction
 
         let view = ChatActionsMessageView(
-            text: text.map { AttributedString($0) },
+            text: text.map { ChatMarkdownText(markdown: $0, onOpenLink: context.actions?.openLink) },
             buttons: productActions.buttons.map { .init(id: $0.actionId, title: $0.title) },
             layout: productActions.layout == .grid ? .grid : .column,
             onPress: { actionId in

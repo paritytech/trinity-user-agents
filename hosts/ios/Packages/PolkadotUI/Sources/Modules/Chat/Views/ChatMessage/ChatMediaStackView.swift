@@ -24,10 +24,10 @@ public struct ChatMediaStackView: View, Hashable {
     }
 
     let sources: [String]
-    let text: AttributedString?
+    let text: ChatMarkdownText?
     let loader: ChatImageLoader
 
-    public init(sources: [String], text: AttributedString?, loader: ChatImageLoader) {
+    public init(sources: [String], text: ChatMarkdownText?, loader: ChatImageLoader) {
         self.sources = sources
         self.text = text
         self.loader = loader
@@ -43,10 +43,7 @@ public struct ChatMediaStackView: View, Hashable {
             }
 
             if let text {
-                Text(text)
-                    .typography(.paragraphLarge)
-                    .foregroundStyle(.fgPrimary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                text
                     .padding(.horizontal, DSSpacings.small + DSSpacings.tiny)
                     .padding(.vertical, DSSpacings.extraSmall)
             }

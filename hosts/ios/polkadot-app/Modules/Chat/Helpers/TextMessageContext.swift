@@ -15,6 +15,7 @@ struct TextMessageContext {
     let isEdited: Bool
     let canReply: Bool
     let inboxBubbleStyle: InboxBubbleStyle?
+    let markdown: ChatMessageContainerConfiguration.MarkdownBody?
 
     init(
         text: String,
@@ -28,7 +29,8 @@ struct TextMessageContext {
         messageReaction: ChatMessageContainerConfiguration.MessageReactionViewModel?,
         isEdited: Bool,
         canReply: Bool,
-        inboxBubbleStyle: InboxBubbleStyle? = nil
+        inboxBubbleStyle: InboxBubbleStyle? = nil,
+        markdown: ChatMessageContainerConfiguration.MarkdownBody? = nil
     ) {
         self.text = text
         self.attachments = attachments
@@ -42,6 +44,7 @@ struct TextMessageContext {
         self.isEdited = isEdited
         self.canReply = canReply
         self.inboxBubbleStyle = inboxBubbleStyle
+        self.markdown = markdown
     }
 
     var isAttachmentsOnly: Bool {

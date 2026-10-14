@@ -24,13 +24,13 @@ public struct ChatActionsMessageView: View, Hashable {
         static let gridColumns = 2
     }
 
-    let text: AttributedString?
+    let text: ChatMarkdownText?
     let buttons: [Button]
     let layout: Layout
     let onPress: (String) -> Void
 
     public init(
-        text: AttributedString?,
+        text: ChatMarkdownText?,
         buttons: [Button],
         layout: Layout,
         onPress: @escaping (String) -> Void
@@ -44,10 +44,7 @@ public struct ChatActionsMessageView: View, Hashable {
     public var body: some View {
         VStack(alignment: .leading, spacing: DSSpacings.small) {
             if let text {
-                Text(text)
-                    .typography(.paragraphLarge)
-                    .foregroundStyle(.fgPrimary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                text
             }
 
             switch layout {
@@ -101,7 +98,7 @@ private extension ChatActionsMessageView {
     #Preview(traits: .sizeThatFitsLayout) {
         VStack(spacing: 20) {
             ChatActionsMessageView(
-                text: AttributedString("Pick a side"),
+                text: ChatMarkdownText(markdown: "Pick a **side**", onOpenLink: nil),
                 buttons: [.init(id: "a", title: "Red"), .init(id: "b", title: "Blue")],
                 layout: .column,
                 onPress: { _ in }

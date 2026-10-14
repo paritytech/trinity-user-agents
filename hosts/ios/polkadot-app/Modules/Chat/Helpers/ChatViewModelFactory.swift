@@ -552,7 +552,8 @@ private extension ChatViewModelFactory {
                 deliveryDate: context.deliveryDate,
                 layoutContext: context.layoutContext,
                 reactions: reactions,
-                actions: context.actions
+                actions: context.actions,
+                markdown: .init(openLink: context.actions?.openLink)
             )
         }
     }
@@ -633,7 +634,8 @@ private extension ChatViewModelFactory {
         attachments: [Chat.LocalMessage.Content.Attachment]? = nil,
         reactions: [ReactionViewModel] = [],
         actions: ChatViewModelActions? = nil,
-        inboxBubbleStyle: InboxBubbleStyle? = nil
+        inboxBubbleStyle: InboxBubbleStyle? = nil,
+        markdown: ChatMessageContainerConfiguration.MarkdownBody? = nil
     ) -> IdentifiableAnyContentConfiguration<ChatViewLayout.ItemIdentifierType> {
         let (textAfterStrip, productLinkPreview) = resolveProductLinkPreview(
             text: text,
@@ -706,7 +708,8 @@ private extension ChatViewModelFactory {
             messageReaction: messageReaction,
             isEdited: isEdited,
             canReply: messageActions.contains(.reply),
-            inboxBubbleStyle: inboxBubbleStyle
+            inboxBubbleStyle: inboxBubbleStyle,
+            markdown: markdown
         )
 
         var configuration = makeTextMessageContainerConfiguration(context: context)
