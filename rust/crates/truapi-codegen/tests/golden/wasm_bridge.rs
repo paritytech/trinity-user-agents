@@ -187,12 +187,14 @@ impl crate::platform::ChatPlatform for WasmPlatform {
         &self,
         product: &crate::platform::ProductContext,
         request: latest::HostChatCreateRoomRequest,
+        icon_url: String,
     ) -> Result<latest::HostChatCreateRoomResponse, latest::HostChatCreateRoomError> {
         let bytes = invoke_bytes_return(
             &self.bridge.create_chat_room,
             vec![
                 Uint8Array::from(product.encode().as_slice()).into(),
                 Uint8Array::from(request.encode().as_slice()).into(),
+                JsValue::from_str(&icon_url),
             ],
         )
         .await

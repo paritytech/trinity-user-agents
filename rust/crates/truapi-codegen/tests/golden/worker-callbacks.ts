@@ -201,10 +201,11 @@ function chatRawCallbacks(
   >
 > {
   return {
-    createChatRoom: (product, request) =>
+    createChatRoom: (product, request, iconUrl) =>
       bridge.callbackRequest("createChatRoom", [
         product,
         request,
+        iconUrl,
       ]) as ReturnType<Required<RawCallbacks>["createChatRoom"]>,
     registerChatBot: (product, request) =>
       bridge.callbackRequest("registerChatBot", [

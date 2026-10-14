@@ -525,11 +525,16 @@ impl crate::platform::ChatPlatform for ChatCallbackPlatform {
 	async fn create_chat_room(
 		&self,
 		_product: &ProductContext,
-		request: v01::HostChatCreateRoomRequest,
+		request: truapi::latest::HostChatCreateRoomRequest,
+		icon_url: String,
 	) -> Result<v01::HostChatCreateRoomResponse, v01::HostChatCreateRoomError> {
+		let icon = match request.metadata.avatar.as_ref().and_then(inline_icon_url) {
+			Some(inline) if icon_url.is_empty() => inline,
+			_ => icon_url,
+		};
 		let status: v01::ChatRoomRegistrationStatus = self
 			.chat
-			.create_room(request.room_id, request.name, request.icon)
+			.create_room(request.room_id, request.metadata.name, icon)
 			.await
 			.map_err(|error| v01::HostChatCreateRoomError::Unknown { reason: error.to_string() })?;
 
@@ -579,10 +584,19 @@ impl crate::platform::ChatPlatform for ChatCallbackPlatform {
 	async fn set_chat_room_footer(
 		&self,
 		_product: &ProductContext,
-		request: v01::HostChatSetRoomFooterRequest,
+		request: truapi::latest::HostChatSetRoomFooterRequest,
 	) -> Result<(), v01::GenericError> {
+		let footer = match request.footer {
+			truapi::latest::ChatRoomFooter::Input(_) => v01::ChatRoomFooter::TextInput,
+			truapi::latest::ChatRoomFooter::Empty => v01::ChatRoomFooter::Empty,
+			truapi::latest::ChatRoomFooter::Custom => {
+				return Err(v01::GenericError {
+					reason: "this host draws no custom chat footer".to_string(),
+				});
+			},
+		};
 		self.chat
-			.set_room_footer(request.room_id, request.footer)
+			.set_room_footer(request.room_id, footer)
 			.await
 			.map_err(v01::GenericError::from)
 	}
@@ -601,6 +615,18 @@ impl crate::platform::ChatPlatform for ChatCallbackPlatform {
 		.chain(changes)
 		.map(Ok)
 		.boxed()
+	}
+}
+
+/// The `data:` URL of an inline avatar, the form a native `create_room` icon
+/// takes. A preimage avatar has no such form.
+fn inline_icon_url(avatar: &truapi::latest::ChatResource) -> Option<String> {
+	use base64::{Engine, engine::general_purpose::STANDARD as BASE64};
+	match avatar {
+		truapi::latest::ChatResource::Inline { mime_type, bytes } => {
+			Some(format!("data:{mime_type};base64,{}", BASE64.encode(bytes)))
+		},
+		truapi::latest::ChatResource::Preimage { .. } => None,
 	}
 }
 

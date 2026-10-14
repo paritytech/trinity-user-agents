@@ -1336,7 +1336,7 @@ struct RecordingChatPlatform {
 	posted_rooms: Mutex<Vec<String>>,
 	posted_payloads: Mutex<Vec<v01::ChatMessageContent>>,
 	posted_alts: Mutex<Vec<Option<String>>>,
-	room_footers: Mutex<Vec<(String, v01::ChatRoomFooter)>>,
+	room_footers: Mutex<Vec<(String, truapi::latest::ChatRoomFooter)>>,
 	bot_rooms: Vec<String>,
 }
 
@@ -1346,6 +1346,7 @@ impl crate::platform::ChatPlatform for RecordingChatPlatform {
 		&self,
 		_product: &ProductContext,
 		request: truapi::latest::HostChatCreateRoomRequest,
+		_icon_url: String,
 	) -> Result<truapi::latest::HostChatCreateRoomResponse, truapi::latest::HostChatCreateRoomError>
 	{
 		self.created_rooms
@@ -1912,7 +1913,7 @@ fn a_room_footer_reaches_the_host_for_the_room_the_product_created() {
 	);
 	assert_eq!(
 		*chat_platform.room_footers.lock().expect("room footers mutex poisoned"),
-		[("caf\u{e9}".to_string(), v01::ChatRoomFooter::Empty)]
+		[("caf\u{e9}".to_string(), truapi::latest::ChatRoomFooter::Empty)]
 	);
 }
 

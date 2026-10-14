@@ -94,20 +94,26 @@ pub mod latest {
 
 	pub use crate::v01::{
 		AllocatableResource, AllocationOutcome, Arrangement, Background, BlendingMode, BorderStyle,
-		BoxProps, ButtonProps, ButtonVariant, ChainIdentifier, ChatAction, ChatActionLayout,
-		ChatActions, ChatBotRegistrationStatus, ChatCustomMessage, ChatFile, ChatMedia,
-		ChatMessageContent, ChatReaction, ChatRichText, ChatRoom, ChatRoomFooter,
-		ChatRoomParticipation, ChatRoomRegistrationStatus, CodeFormat, ColorToken, ColumnProps,
-		ContactHandle, ContactPickOutcome, ContentAlignment, ContextualAlias, DerivationIndex,
-		Dimensions, Effect, EffectProps, GenericError, HorizontalAlignment,
-		HostAccountCreateProofRequest, HostAccountGetAliasRequest, HostAccountGetError,
-		HostAccountListRingVrfKeysRequest, HostAccountRegisterRingVrfKeyRequest,
-		HostAccountRingVrfSignRequest, HostAccountSignVrfError, HostAccountSignVrfRequest,
-		HostPlatform, HostSignPayloadData, HostWorkerBeginOperationRequest,
-		HostWorkerOperationError, ImageFit, ImageProps, ImageSource, Modifier,
-		OperationStartedResult, PaymentTopUpSource, PocketCard, ProductAccount, ProductAccountId,
-		ProductProofContext, RawPayload, RegisteredRingVrfKey, RemoteChainTransactionStopRequest,
-		RemotePermission, RemoteStatementStoreCreateProofError,
+		BoxProps, ButtonProps, ButtonVariant, ChainIdentifier, ChatAction, ChatActionHandler,
+		ChatActionLayout, ChatActions, ChatActivity, ChatBotRegistrationStatus,
+		ChatBuiltInMessageAction, ChatCommandSpec, ChatCustomMessage, ChatEvent, ChatFeedUpdate,
+		ChatFile, ChatInputConfig, ChatInputPayment, ChatMedia, ChatMediaItem, ChatMediaMeta,
+		ChatMessage, ChatMessageBody, ChatMessageContent, ChatMessageMenu, ChatMessageOrigin,
+		ChatMessageStatus, ChatPageAnchor, ChatParticipant, ChatParticipantEntry,
+		ChatParticipantMenu, ChatParticipantsQuery, ChatProductAction, ChatReaction,
+		ChatReactionDetail, ChatReactionSummary, ChatResource, ChatRichText, ChatRoom,
+		ChatRoomBadge, ChatRoomConfig, ChatRoomMetadata, ChatRoomOrder, ChatRoomParticipation,
+		ChatRoomPreview, ChatRoomPreviewText, ChatRoomRegistrationStatus, ChatSuggestion,
+		ChatToolbarAction, ChatUserAction, CodeFormat, ColorToken, ColumnProps, ContactHandle,
+		ContactPickOutcome, ContentAlignment, ContextualAlias, DerivationIndex, Dimensions, Effect,
+		EffectProps, GenericError, HorizontalAlignment, HostAccountCreateProofRequest,
+		HostAccountGetAliasRequest, HostAccountGetError, HostAccountListRingVrfKeysRequest,
+		HostAccountRegisterRingVrfKeyRequest, HostAccountRingVrfSignRequest,
+		HostAccountSignVrfError, HostAccountSignVrfRequest, HostPlatform, HostSignPayloadData,
+		HostWorkerBeginOperationRequest, HostWorkerOperationError, ImageFit, ImageProps,
+		ImageSource, Modifier, OperationStartedResult, PaymentTopUpSource, PocketCard,
+		ProductAccount, ProductAccountId, ProductProofContext, RawPayload, RegisteredRingVrfKey,
+		RemoteChainTransactionStopRequest, RemotePermission, RemoteStatementStoreCreateProofError,
 		RemoteStatementStoreCreateProofRequest, RemoteStatementStoreCreateProofResponse,
 		RemoteStatementStoreSubscribeItem, RemoteStatementStoreSubscribeRequest, RenderContext,
 		RendererNode, ResourceAllocationError, RingLocation, RingLocationJunction,
@@ -116,6 +122,8 @@ pub mod latest {
 		StorageResultItem, TextFieldProps, TextProps, ThemeName, ThemeVariant, TxPayloadExtension,
 		TypographyStyle, VerticalAlignment, VrfSignature,
 	};
+
+	pub use crate::v02::ChatRoomFooter;
 
 	/// Latest payload type of a versioned envelope.
 	pub type LatestOf<T> = <T as Versioned>::Latest;
@@ -210,6 +218,71 @@ pub mod latest {
 	pub type HostChatSetRoomFooterRequest = LatestOf<versioned::chat::HostChatSetRoomFooterRequest>;
 	/// Failure to set what a native chat room shows below its messages.
 	pub type HostChatSetRoomFooterError = LatestOf<versioned::chat::HostChatSetRoomFooterError>;
+	/// Failure of a request that changes a native chat room.
+	pub type HostChatRoomError = LatestOf<versioned::chat::HostChatRoomError>;
+	/// Failure of a chat query the host sends to a product.
+	pub type ProductChatQueryError = LatestOf<versioned::chat::ProductChatQueryError>;
+	/// Request to replace the configuration of a native chat room.
+	pub type HostChatSetRoomConfigRequest = LatestOf<versioned::chat::HostChatSetRoomConfigRequest>;
+	/// Request to replace the name, avatar and description of a native chat room.
+	pub type HostChatSetRoomMetadataRequest =
+		LatestOf<versioned::chat::HostChatSetRoomMetadataRequest>;
+	/// Request to replace how a native chat room shows in the chat list.
+	pub type HostChatSetRoomPreviewRequest =
+		LatestOf<versioned::chat::HostChatSetRoomPreviewRequest>;
+	/// Request to delete a native chat room.
+	pub type HostChatDeleteRoomRequest = LatestOf<versioned::chat::HostChatDeleteRoomRequest>;
+	/// Request to push one change to the messages of a native chat room.
+	pub type HostChatUpdateFeedRequest = LatestOf<versioned::chat::HostChatUpdateFeedRequest>;
+	/// Failure to push a change to the messages of a native chat room.
+	pub type HostChatUpdateFeedError = LatestOf<versioned::chat::HostChatUpdateFeedError>;
+	/// Request to replace the toolbar of a native chat room.
+	pub type HostChatSetRoomToolbarRequest =
+		LatestOf<versioned::chat::HostChatSetRoomToolbarRequest>;
+	/// Request to replace the quick replies of a native chat room.
+	pub type HostChatSetRoomSuggestionsRequest =
+		LatestOf<versioned::chat::HostChatSetRoomSuggestionsRequest>;
+	/// Request to replace the slash commands of a native chat room.
+	pub type HostChatSetRoomCommandsRequest =
+		LatestOf<versioned::chat::HostChatSetRoomCommandsRequest>;
+	/// Request to show or remove the activity line of a native chat room.
+	pub type HostChatSetRoomActivityRequest =
+		LatestOf<versioned::chat::HostChatSetRoomActivityRequest>;
+	/// Host-to-product question for one page of chat messages.
+	pub type ProductChatMessagesQueryRequest =
+		LatestOf<versioned::chat::ProductChatMessagesQueryRequest>;
+	/// Product-to-host page of chat messages.
+	pub type ProductChatMessagesQueryItem = LatestOf<versioned::chat::ProductChatMessagesQueryItem>;
+	/// Host-to-product report of what the user did in a chat room.
+	pub type ProductChatUserActionRequest = LatestOf<versioned::chat::ProductChatUserActionRequest>;
+	/// Product-to-host answer to a chat user action.
+	pub type ProductChatUserActionItem = LatestOf<versioned::chat::ProductChatUserActionItem>;
+	/// Failure to apply a chat user action.
+	pub type ProductChatUserActionError = LatestOf<versioned::chat::ProductChatUserActionError>;
+	/// Host-to-product question about who reacted to a chat message.
+	pub type ProductChatReactionsQueryRequest =
+		LatestOf<versioned::chat::ProductChatReactionsQueryRequest>;
+	/// Product-to-host list of who reacted to a chat message.
+	pub type ProductChatReactionsQueryItem =
+		LatestOf<versioned::chat::ProductChatReactionsQueryItem>;
+	/// Host-to-product question about the participants of a chat room.
+	pub type ProductChatParticipantsQueryRequest =
+		LatestOf<versioned::chat::ProductChatParticipantsQueryRequest>;
+	/// Product-to-host answer about the participants of a chat room.
+	pub type ProductChatParticipantsQueryItem =
+		LatestOf<versioned::chat::ProductChatParticipantsQueryItem>;
+	/// Host-to-product question for the menu of a chat message.
+	pub type ProductChatMessageActionsQueryRequest =
+		LatestOf<versioned::chat::ProductChatMessageActionsQueryRequest>;
+	/// Product-to-host menu of a chat message.
+	pub type ProductChatMessageActionsQueryItem =
+		LatestOf<versioned::chat::ProductChatMessageActionsQueryItem>;
+	/// Host-to-product question for the menu of a chat participant.
+	pub type ProductChatParticipantActionsQueryRequest =
+		LatestOf<versioned::chat::ProductChatParticipantActionsQueryRequest>;
+	/// Product-to-host menu of a chat participant.
+	pub type ProductChatParticipantActionsQueryItem =
+		LatestOf<versioned::chat::ProductChatParticipantActionsQueryItem>;
 	/// Current native room list for a product.
 	pub type HostChatListSubscribeItem = LatestOf<versioned::chat::HostChatListSubscribeItem>;
 	/// Native chat message posting request.

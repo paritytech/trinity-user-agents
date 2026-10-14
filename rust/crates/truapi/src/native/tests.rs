@@ -1474,10 +1474,15 @@ fn native_chat_adapter_preserves_room_status_and_message_room() {
 	let product =
 		ProductContext::new_with_execution("chat.dot".to_string(), ProductExecutionKind::Worker)
 			.unwrap();
-	let request = v01::HostChatCreateRoomRequest {
+	let request = truapi::latest::HostChatCreateRoomRequest {
 		room_id: "support".to_string(),
-		name: "Support".to_string(),
-		icon: String::new(),
+		metadata: truapi::latest::ChatRoomMetadata {
+			name: "Support".to_string(),
+			avatar: None,
+			description: None,
+		},
+		config: truapi::latest::ChatRoomConfig::default(),
+		preview: None,
 	};
 	let mut rooms = crate::platform::ChatPlatform::subscribe_chat_rooms(&platform, &product);
 	assert!(ready_rooms(rooms.as_mut(), "initial room list").rooms.is_empty());
@@ -1486,13 +1491,17 @@ fn native_chat_adapter_preserves_room_status_and_message_room() {
 		&platform,
 		&product,
 		request.clone(),
+		String::new(),
 	))
 	.unwrap();
 	let updated_rooms = ready_rooms(rooms.as_mut(), "the created room replacement");
 	*callbacks.chat_room_status.lock().expect("room status mutex poisoned") =
 		v01::ChatRoomRegistrationStatus::Exists;
 	let existing = futures::executor::block_on(crate::platform::ChatPlatform::create_chat_room(
-		&platform, &product, request,
+		&platform,
+		&product,
+		request,
+		String::new(),
 	))
 	.unwrap();
 	let posted = futures::executor::block_on(crate::platform::ChatPlatform::post_chat_message(
@@ -1546,9 +1555,9 @@ fn native_chat_adapter_hands_the_room_footer_to_the_host() {
 	futures::executor::block_on(crate::platform::ChatPlatform::set_chat_room_footer(
 		&platform,
 		&product,
-		v01::HostChatSetRoomFooterRequest {
+		truapi::latest::HostChatSetRoomFooterRequest {
 			room_id: "support".to_string(),
-			footer: v01::ChatRoomFooter::Empty,
+			footer: truapi::latest::ChatRoomFooter::Empty,
 		},
 	))
 	.unwrap();

@@ -1254,11 +1254,16 @@ export interface ChainProvider {
  */
 export interface ChatPlatform {
   /**
-   * Create or resolve a product-scoped native chat room.
+   * Create or resolve a product-scoped native chat room. A room that exists
+   * keeps its stored declarations. `icon_url` is the `https` icon of a
+   * caller at the first protocol version, resolved by
+   * `validate_chat_icon`, or empty. The host draws it when the metadata
+   * has no avatar.
    */
   createChatRoom(
     product: ProductContext,
     request: HostChatCreateRoomRequest,
+    iconUrl: string,
   ): Promise<HostChatCreateRoomResponse>;
 
   /**
