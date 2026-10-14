@@ -14,6 +14,7 @@
 | `Funding/provider_credits_through_top_up` | ✅ |  |
 | `Funding/provider_saves_its_state` | ✅ |  |
 | `Funding/provider_out_released` | ✅ |  |
+| `Funding/provider_payout_retrying` | ✅ |  |
 | `Funding/provider_cancel` | ✅ |  |
 | `Funding/provider_resumes_after_restart` | ✅ |  |
 | `Funding/provider_in_delivered` | ✅ |  |
