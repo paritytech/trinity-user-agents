@@ -130,13 +130,6 @@ truapi-host signing-host
 Requires stable Rust, nightly Rust with rustfmt, Node.js 22 or newer, and Bun. The target installs missing workspace
 build tools and regenerates Rust and TypeScript sources on every run, including after updating an existing checkout.
 
-### Raw proof contexts (development only)
-
-A product can bind a ring-VRF proof to 32 bytes of its choosing instead of a
-product-namespaced context by calling `development_createAccountProof` from
-`@parity/truapi`; the signing host honours it as is. Yet to be removed before a
-production release.
-
 ### Browser products
 
 `truapi-host dev` is one command for "run this product as if it were inside a
