@@ -2,10 +2,10 @@ package io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.handlerGr
 
 import io.paritytech.polkadotapp.common.domain.model.hexToDataByteArray
 import io.paritytech.polkadotapp.common.utils.HexString
+import io.paritytech.polkadotapp.feature_products_api.model.ProductChatIdParameter
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.ProductBotMessage
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.ProductsBotApi
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.model.CreateProductRoomRequest
-import io.paritytech.polkadotapp.feature_products_impl.domain.bot.model.ProductChatIdParameter
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.model.ProductChatRoom
 import io.paritytech.polkadotapp.feature_products_impl.domain.jsEngine.ContainerBridge
 

@@ -443,16 +443,6 @@ export type PermissionAuthorizationStatus =
 export type PermissionDecision = "AllowOnce" | "AllowAlways" | "Deny";
 
 /**
- * Review shown before a preimage is submitted.
- */
-export interface PreimageSubmitReview {
-  /**
-   * Size of the preimage in bytes.
-   */
-  size: bigint;
-}
-
-/**
  * Product identity attached to one product-facing TrUAPI connection.
  *
  * A host may create multiple product runtimes from the same long-lived host
@@ -686,10 +676,6 @@ export type UserConfirmationReview =
    * Allocate resources for the requesting product.
    */
   | { tag: "ResourceAllocation"; value: ResourceAllocationReview }
-  /**
-   * Submit a preimage to the host-selected backend.
-   */
-  | { tag: "PreimageSubmit"; value: PreimageSubmitReview }
   /**
    * Allow a product to access another product account.
    */
@@ -983,14 +969,6 @@ export const PermissionDecision: S.Codec<PermissionDecision> = S.lazy(
 );
 
 /**
- * Review shown before a preimage is submitted.
- */
-export const PreimageSubmitReview: S.Codec<PreimageSubmitReview> = S.lazy(
-  (): S.Codec<PreimageSubmitReview> =>
-    S.Struct({ size: S.u64 }) as S.Codec<PreimageSubmitReview>,
-);
-
-/**
  * Product identity attached to one product-facing TrUAPI connection.
  *
  * A host may create multiple product runtimes from the same long-lived host
@@ -1134,19 +1112,18 @@ export const StatementStoreProductSignReview: S.Codec<StatementStoreProductSignR
  */
 export const UserConfirmationReview: S.Codec<UserConfirmationReview> = S.lazy(
   (): S.Codec<UserConfirmationReview> =>
-    S.TaggedUnion({
-      SignPayload: SignPayloadReview,
-      SignRaw: SignRawReview,
-      StatementStoreProductSign: StatementStoreProductSignReview,
-      CreateTransaction: CreateTransactionReview,
-      AccountAlias: AccountAliasReview,
-      CreateProof: CreateProofReview,
-      IdentityDisclosure: IdentityDisclosureReview,
-      ResourceAllocation: ResourceAllocationReview,
-      PreimageSubmit: PreimageSubmitReview,
-      AccountAccess: AccountAccessReview,
-      SignVrf: SignVrfReview,
-      ProductSubtree: ProductSubtreeReview,
+    S.indexedTaggedUnion({
+      SignPayload: [0, SignPayloadReview] as const,
+      SignRaw: [1, SignRawReview] as const,
+      StatementStoreProductSign: [2, StatementStoreProductSignReview] as const,
+      CreateTransaction: [3, CreateTransactionReview] as const,
+      AccountAlias: [4, AccountAliasReview] as const,
+      CreateProof: [5, CreateProofReview] as const,
+      IdentityDisclosure: [6, IdentityDisclosureReview] as const,
+      ResourceAllocation: [7, ResourceAllocationReview] as const,
+      AccountAccess: [9, AccountAccessReview] as const,
+      SignVrf: [10, SignVrfReview] as const,
+      ProductSubtree: [11, ProductSubtreeReview] as const,
     }),
 );
 
@@ -1188,8 +1165,8 @@ export interface ChainProvider {
  *
  * The core bounds and screens the product-supplied fields it forwards. Ids,
  * names and icons on `create_chat_room`, `register_chat_bot`,
- * `post_chat_message` and `set_chat_room_footer` are NFC-normalized and rejected for control and bidi
- * characters. Message bodies are bounded and screened but pass through
+ * `post_chat_message` and `set_chat_room_footer` are NFC-normalized and rejected for control and
+ * bidi characters. Message bodies are bounded and screened but pass through
  * byte-for-byte, keeping line breaks and tabs, so a product reads back the
  * bytes it sent. Counts and byte budgets are enforced, and any URL a host may
  * fetch or open is restricted to `https` or an inline raster image and
@@ -1755,14 +1732,13 @@ export interface ProductStorage {
  * Host-owned viewfinder for QR codes and barcodes. Optional. The Swift and
  * Kotlin bridges and the JS `scanner` callbacks follow the same rules.
  *
- * - Title the viewfinder with the product id. Show `request.hint` under it as
- *   the product's words.
- * - Pass every code the camera reads to a `ScanFilter` built from `request`,
- *   and never follow a scanned link.
- * - Answer `HostScan::NotVisible` for an App or Widget that is not on
- *   screen. A Worker reaching the host already passed the core's tap check.
- * - Close the viewfinder when the core drops the future, and close any still
- *   open before opening another. A JS host is not told about a drop.
+ * - Title the viewfinder with the product id. Show `request.hint` under it as the product's words.
+ * - Pass every code the camera reads to a `ScanFilter` built from `request`, and never follow a
+ *   scanned link.
+ * - Answer `HostScan::NotVisible` for an App or Widget that is not on screen. A Worker reaching
+ *   the host already passed the core's tap check.
+ * - Close the viewfinder when the core drops the future, and close any still open before opening
+ *   another. A JS host is not told about a drop.
  */
 export interface ScannerPlatform {
   /**

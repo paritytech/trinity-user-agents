@@ -26,16 +26,16 @@ uniform float center;
 half4 main(float2 position) {
     float2 centre = size * 0.5;
 
-    const float2 dir  = float2(${HoloMainAxis.x}, ${HoloMainAxis.y});
-    const float2 perp = float2(${HoloPerpAxis.x}, ${HoloPerpAxis.y});
+    const float2 dir  = float2(${ShineMainAxis.x}, ${ShineMainAxis.y});
+    const float2 perp = float2(${ShinePerpAxis.x}, ${ShinePerpAxis.y});
 
     float halfMain = 0.5 * (abs(dir.x) * size.x + abs(dir.y) * size.y);
     float t = 0.5 + dot(position - centre, dir) / (2.0 * halfMain);
-    t += tilt.x * $HOLO_RAMP_TILT_X - tilt.y * $HOLO_RAMP_TILT_Y;
+    t += tilt.x * $SHINE_MAIN_TILT_X - tilt.y * $SHINE_MAIN_TILT_Y;
 
     float halfPerp = 0.5 * (abs(perp.x) * size.x + abs(perp.y) * size.y);
     float s = 0.5 + dot(position - centre, perp) / (2.0 * halfPerp);
-    s += tilt.y * $HOLO_HIGHLIGHT_TILT_Y - tilt.x * $HOLO_HIGHLIGHT_TILT_X;
+    s += tilt.y * $SHINE_PERP_TILT_Y - tilt.x * $SHINE_PERP_TILT_X;
 
     float dMain = (t - center) / spread.x;
     float dPerp = (s - 0.5) / spread.y;

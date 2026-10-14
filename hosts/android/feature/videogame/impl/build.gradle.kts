@@ -1,5 +1,3 @@
-import com.android.build.gradle.internal.cxx.configure.gradleLocalProperties
-
 plugins {
     id("polkadotapp.android.library")
     id("polkadotapp.android.compose")
@@ -10,23 +8,13 @@ plugins {
 
 android {
     namespace = "io.paritytech.polkadotapp.feature_videogame_impl"
-
-    defaultConfig {
-        val localProperties = gradleLocalProperties(rootDir, providers)
-        buildConfigField(
-            "String",
-            "GAME_RESULTS_FALLBACK_URL",
-            "\"${localProperties.readSecretOrNull("GAME_RESULTS_FALLBACK_URL") ?: "https://example.com/"}\""
-        )
-    }
 }
 
 dependencies {
-    api(project(":feature:videogame:api"))
-
     implementation(libs.hilt.lifecycle.viewmodel.compose)
     implementation(libs.androidx.fragment.ktx)
 
+    implementation(project(":common"))
     implementation(project(":design"))
     implementation(project(":database"))
     implementation(project(":bindings:sr25519-vrf"))
@@ -34,15 +22,12 @@ dependencies {
     implementation(project(":feature:people:api"))
     implementation(project(":feature:tokens:api"))
     implementation(project(":feature:xcm:api"))
-    implementation(project(":feature:vouchers:api"))
     implementation(project(":feature:transactions:api"))
-    implementation(project(":feature:become-citizen:api"))
     implementation(project(":feature:statement-store:api"))
     implementation(project(":feature:chats:api"))
     implementation(project(":tools:media-connection:api"))
     implementation(project(":feature:transfers:api"))
     implementation(project(":tools:push-notifications:api"))
-    implementation(project(":feature:upgrade-username:api"))
     implementation(project(":feature:chain-resources:api"))
     implementation(project(":feature:dotns:api"))
     implementation(project(":feature:products:api"))

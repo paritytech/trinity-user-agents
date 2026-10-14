@@ -28,7 +28,6 @@ import uniffi.truapi.HostRejection
 import uniffi.truapi.ProductExecutionKind
 
 class ProductTrUAPIHostBridgeTest {
-    // The core refuses the open: an unavailable loopback port, or an execution config it rejects.
     private fun refusingCore(): TrUAPIHostRuntime = mockk {
         every { openProductExecution(any(), any(), any(), any(), any()) } throws IllegalStateException("loopback port unavailable")
     }
@@ -48,8 +47,6 @@ class ProductTrUAPIHostBridgeTest {
         scope = CoroutineScope(StandardTestDispatcher(testScheduler)),
     )
 
-    // The callers launch attach into scopes with no handler, so a refusal from the core has to come
-    // back as the Result the signature promises rather than as a crash.
     @Test
     fun `a core that refuses to open the execution fails the attach instead of throwing`() = runTest {
         val outcome = bridge().attach(

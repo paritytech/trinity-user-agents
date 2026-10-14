@@ -3,6 +3,7 @@ import ChainRegistry
 import Foundation_iOS
 import os
 import AsyncExtensions
+import Products
 
 private typealias SearchAccountSections = AccountSearchSections<RecentContactModelWithUsername, ContactSearchPayload>
 
@@ -19,6 +20,7 @@ final class SearchAccountInteractor {
     private let searchRunner = SearchRunner()
     private let logger: LoggerProtocol
     private let chainAsset: ChainAsset
+    private let fundingDomainProvider: FundingDomainProviding
     private let stateLock: OSAllocatedUnfairLock<State>
 
     private static let maximumPrefixCount = 32
@@ -32,18 +34,21 @@ final class SearchAccountInteractor {
         >,
         chatOpenResolver: ChatOpenModelResolving,
         chainAsset: ChainAsset,
-        logger: LoggerProtocol
+        logger: LoggerProtocol,
+        fundingDomainProvider: FundingDomainProviding
     ) {
         self.accountSearching = accountSearching
         self.chatOpenResolver = chatOpenResolver
         self.chainAsset = chainAsset
         self.logger = logger
+        self.fundingDomainProvider = fundingDomainProvider
         stateLock = OSAllocatedUnfairLock(initialState: State())
     }
 
     deinit {
         replaceSearchTask(with: nil)
         replaceSetupTask(with: nil)
+        replaceWithdrawTask(with: nil)
     }
 }
 
@@ -93,6 +98,19 @@ extension SearchAccountInteractor: SearchAccountInteractorInputProtocol {
             }
         }
     }
+
+    func openWithdrawProduct() {
+        let task = Task { [weak presenter, fundingDomainProvider] in
+            do {
+                let page = try await RampAction.withdraw.resolvePage(using: fundingDomainProvider)
+                await presenter?.didResolveWithdrawProduct(.success(page))
+            } catch {
+                await presenter?.didResolveWithdrawProduct(.failure(error))
+            }
+        }
+
+        replaceWithdrawTask(with: task)
+    }
 }
 
 // MARK: - Private
@@ -103,6 +121,7 @@ private extension SearchAccountInteractor {
         var globalContacts: [AccountId: Chat.RemoteContact] = [:]
         var searchTask: Task<Void, Never>?
         var setupTask: Task<Void, Never>?
+        var withdrawTask: Task<Void, Never>?
     }
 
     func isSearchable(_ query: String) -> Bool {
@@ -242,6 +261,16 @@ private extension SearchAccountInteractor {
         let previous = stateLock.withLock { state in
             let previous = state.setupTask
             state.setupTask = task
+            return previous
+        }
+
+        previous?.cancel()
+    }
+
+    func replaceWithdrawTask(with task: Task<Void, Never>?) {
+        let previous = stateLock.withLock { state in
+            let previous = state.withdrawTask
+            state.withdrawTask = task
             return previous
         }
 
