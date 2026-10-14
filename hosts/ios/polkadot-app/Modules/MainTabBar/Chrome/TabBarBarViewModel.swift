@@ -42,15 +42,15 @@ final class TabBarBarViewModel {
         )
     }
 
-    /// The bar slot holding the pill. The shelf draws no pill on a cell yet, so a product cell placement keeps it
-    /// on the Apps item.
+    /// The bar slot holding the pill. Nil while the shelf's product cell holds it, so the pill is drawn once.
     var selectedSlot: Int? {
         switch selectionPlacement {
         case let .tab(itemIndex):
             itemIndex
-        case .appsItem,
-             .productCell:
+        case .appsItem:
             appsItemIndex
+        case .productCell:
+            nil
         }
     }
 

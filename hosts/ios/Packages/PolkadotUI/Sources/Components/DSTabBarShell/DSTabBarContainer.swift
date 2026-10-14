@@ -36,7 +36,8 @@ public struct DSTabBarContainer<
     /// the shelf may take above the bar row; the container does not measure the screen. The shelf content
     /// must have an intrinsic height because the shelf is sized from it. `shelfContentHeight` receives the
     /// shelf content's measured height, so the caller can size its touch region to the shelf. `selectedSlot`
-    /// is the index, 0 to 3 left to right, of the slot the selection pill sits behind; `nil` draws no pill.
+    /// is the index, 0 to 3 left to right, of the slot the selection pill sits behind. `nil` draws no bar pill,
+    /// which is also the case while a shelf view holds the pill through `dsTabBarSelectionPill`.
     /// `isBarHidden` fades the bar out, shelf included, leaving the centre slot.
     public init(
         isShelfOpen: Binding<Bool>,
@@ -80,6 +81,7 @@ public struct DSTabBarContainer<
             .accessibilityAddTraits(.isTabBar)
             .animation(selectionAnimation, value: selectedSlot)
         }
+        .environment(\.dsTabBarSelectionNamespace, selectionNamespace)
         .background(DSTabBarMaterial())
         .clipShape(DSTabBarShape(), style: FillStyle(eoFill: true))
         .overlay(border)
@@ -114,10 +116,9 @@ private extension DSTabBarContainer {
     }
 
     var selectionPill: some View {
-        Capsule(style: .continuous)
-            .fill(Color.bgSurfaceContainerInverted.opacity(DSTabBarStyle.selectionFillOpacity))
+        DSTabBarSelectionPill.fill(Capsule(style: .continuous))
             .padding(.vertical, DSTabBarStyle.selectionInset)
-            .matchedGeometryEffect(id: "selection", in: selectionNamespace)
+            .matchedGeometryEffect(id: DSTabBarSelectionPill.matchedGeometryId, in: selectionNamespace)
     }
 
     /// Eased in every mode: a fade has no travel for Reduce Motion to remove.

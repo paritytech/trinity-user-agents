@@ -34,6 +34,7 @@ struct TabBarBarView: View {
                 TabBarShelfView(
                     chips: model.shelfChips,
                     mountedChipId: model.mountedChipId,
+                    pillProductId: pillProductId,
                     onChipTapped: { model.onShelfChipTapped?($0) },
                     onChipCloseRequested: { model.onShelfChipCloseRequested?($0) },
                     onConnectionStatusTapped: { model.onShelfConnectionStatusTapped?() },
@@ -43,6 +44,11 @@ struct TabBarBarView: View {
         )
         // The bar sits at the bottom of a host sized once to the room above it.
         .frame(maxHeight: .infinity, alignment: .bottom)
+    }
+
+    private var pillProductId: UUID? {
+        guard case let .productCell(id) = model.selectionPlacement else { return nil }
+        return id
     }
 
     @ViewBuilder

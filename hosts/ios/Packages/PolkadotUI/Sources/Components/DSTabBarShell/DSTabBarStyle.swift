@@ -1,4 +1,5 @@
 import CoreGraphics
+import DesignSystem
 import UIKit
 
 /// Geometry and fixed visual values of the tab bar. The bar has one shape, so none of these are configurable.
@@ -31,6 +32,8 @@ public enum DSTabBarStyle {
     /// Response of the spring that carries the selection pill between slots.
     static let selectionSpringResponse: Double = 0.4
     static let selectionSpringDamping: Double = 0.8
+    /// Corner radius of the selection pill drawn behind a shelf view.
+    static let shelfSelectionCornerRadius: CGFloat = DSRadii.mediumIncreased
     static let strokeWidth: CGFloat = 1
 
     /// Gap between the hole's edge and the centre control sitting in it.

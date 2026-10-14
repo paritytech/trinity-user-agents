@@ -9,6 +9,9 @@ import UIKit
 struct TabBarShelfView: View {
     let chips: [TabBarShelfChip]
     let mountedChipId: UUID?
+    /// The product cell holding the selection pill. Set only while the shelf is open, so the pill leaves the cell
+    /// as the shelf closes.
+    let pillProductId: UUID?
     let onChipTapped: (UUID) -> Void
     let onChipCloseRequested: (UUID) -> Void
     let onConnectionStatusTapped: () -> Void
@@ -63,6 +66,7 @@ private extension TabBarShelfView {
                 TabBarShelfCell(
                     chip: chip,
                     isSelected: chip.id == mountedChipId,
+                    hasPill: chip.id == pillProductId,
                     action: { onChipTapped(chip.id) },
                     onClose: { onChipCloseRequested(chip.id) }
                 )
@@ -86,11 +90,12 @@ private extension TabBarShelfView {
     }
 }
 
-/// One open product: its icon with the name beneath, highlighted when it is the mounted product. A long press
-/// opens a context menu holding Close.
+/// One open product: its icon with the name beneath, highlighted when it is the mounted product and enclosed by
+/// the selection pill while it holds it. A long press opens a context menu holding Close.
 private struct TabBarShelfCell: View {
     let chip: TabBarShelfChip
     let isSelected: Bool
+    let hasPill: Bool
     let action: () -> Void
     let onClose: () -> Void
 
@@ -104,7 +109,9 @@ private struct TabBarShelfCell: View {
                     .multilineTextAlignment(.center)
                     .lineLimit(2)
             }
+            .padding(DSSpacings.extraSmall)
             .frame(maxWidth: .infinity)
+            .dsTabBarSelectionPill(isSelected: hasPill)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
