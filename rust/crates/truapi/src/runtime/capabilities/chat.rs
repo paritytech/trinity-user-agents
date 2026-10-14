@@ -451,6 +451,22 @@ fn post_field_error(error: ChatFieldError) -> CallError<latest::HostChatPostMess
 }
 
 impl ProductRuntimeHost {
+	/// Whether the configuration the host keeps for `room_id` declares the
+	/// handler `declared` reads. The core asks a product a query only when
+	/// it does.
+	pub async fn chat_handler_declared(
+		&self,
+		room_id: String,
+		declared: fn(&latest::ChatRoomConfig) -> bool,
+	) -> Result<bool, String> {
+		let platform = self.native_chat_platform().map_err(|error| error.to_string())?;
+		platform
+			.read_chat_room_config(&self.product, room_id)
+			.await
+			.map(|config| declared(&config))
+			.map_err(|error| error.reason)
+	}
+
 	/// The normalized id of a room this product hosts, once the room passed
 	/// the call budget `limiter` holds it to.
 	///

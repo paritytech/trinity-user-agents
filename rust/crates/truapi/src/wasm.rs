@@ -1708,6 +1708,166 @@ impl WasmProductRuntime {
 		Ok(WasmRendererSubscription { abort: Some(abort) })
 	}
 
+	/// Ask the product for one page of messages of a room it keeps. `request` is a SCALE-encoded
+	/// `ProductChatMessagesQueryRequest`. Exactly one callback follows: `onAnswer` with the
+	/// SCALE-encoded item, `onError` with the SCALE-encoded `CallError` of the query, or
+	/// `onComplete` when the product ended the query without an answer.
+	#[wasm_bindgen(js_name = chatMessagesQuery)]
+	pub fn chat_messages_query(
+		&self,
+		request: Vec<u8>,
+		on_answer: Function,
+		on_complete: Function,
+		on_error: Function,
+	) -> Result<WasmChatQuery, JsValue> {
+		let request =
+			truapi::latest::ProductChatMessagesQueryRequest::decode(&mut request.as_slice())
+				.map_err(|err| {
+					JsValue::from_str(&format!("chatMessagesQuery request did not decode: {err}"))
+				})?;
+		let query = self
+			.inner
+			.core
+			.control()
+			.chat_messages_query(request)
+			.map_err(|err| JsValue::from_str(&err.to_string()))?;
+		Ok(observe_chat_query(query, on_answer, on_complete, on_error))
+	}
+
+	/// Tell the product what the user did in a room it keeps. `request` is a SCALE-encoded
+	/// `ProductChatUserActionRequest`. Exactly one callback follows: `onAnswer` with the
+	/// SCALE-encoded item, `onError` with the SCALE-encoded `CallError` of the query, or
+	/// `onComplete` when the product ended the query without an answer.
+	#[wasm_bindgen(js_name = chatUserAction)]
+	pub fn chat_user_action(
+		&self,
+		request: Vec<u8>,
+		on_answer: Function,
+		on_complete: Function,
+		on_error: Function,
+	) -> Result<WasmChatQuery, JsValue> {
+		let request = truapi::latest::ProductChatUserActionRequest::decode(&mut request.as_slice())
+			.map_err(|err| {
+				JsValue::from_str(&format!("chatUserAction request did not decode: {err}"))
+			})?;
+		let query = self
+			.inner
+			.core
+			.control()
+			.chat_user_action(request)
+			.map_err(|err| JsValue::from_str(&err.to_string()))?;
+		Ok(observe_chat_query(query, on_answer, on_complete, on_error))
+	}
+
+	/// Ask the product who reacted to one message. `request` is a SCALE-encoded
+	/// `ProductChatReactionsQueryRequest`. Exactly one callback follows: `onAnswer` with the
+	/// SCALE-encoded item, `onError` with the SCALE-encoded `CallError` of the query, or
+	/// `onComplete` when the product ended the query without an answer.
+	#[wasm_bindgen(js_name = chatReactionsQuery)]
+	pub fn chat_reactions_query(
+		&self,
+		request: Vec<u8>,
+		on_answer: Function,
+		on_complete: Function,
+		on_error: Function,
+	) -> Result<WasmChatQuery, JsValue> {
+		let request =
+			truapi::latest::ProductChatReactionsQueryRequest::decode(&mut request.as_slice())
+				.map_err(|err| {
+					JsValue::from_str(&format!("chatReactionsQuery request did not decode: {err}"))
+				})?;
+		let query = self
+			.inner
+			.core
+			.control()
+			.chat_reactions_query(request)
+			.map_err(|err| JsValue::from_str(&err.to_string()))?;
+		Ok(observe_chat_query(query, on_answer, on_complete, on_error))
+	}
+
+	/// Ask the product about the participants of a room. `request` is a SCALE-encoded
+	/// `ProductChatParticipantsQueryRequest`. Exactly one callback follows: `onAnswer` with the
+	/// SCALE-encoded item, `onError` with the SCALE-encoded `CallError` of the query, or
+	/// `onComplete` when the product ended the query without an answer.
+	#[wasm_bindgen(js_name = chatParticipantsQuery)]
+	pub fn chat_participants_query(
+		&self,
+		request: Vec<u8>,
+		on_answer: Function,
+		on_complete: Function,
+		on_error: Function,
+	) -> Result<WasmChatQuery, JsValue> {
+		let request =
+			truapi::latest::ProductChatParticipantsQueryRequest::decode(&mut request.as_slice())
+				.map_err(|err| {
+					JsValue::from_str(&format!(
+						"chatParticipantsQuery request did not decode: {err}"
+					))
+				})?;
+		let query = self
+			.inner
+			.core
+			.control()
+			.chat_participants_query(request)
+			.map_err(|err| JsValue::from_str(&err.to_string()))?;
+		Ok(observe_chat_query(query, on_answer, on_complete, on_error))
+	}
+
+	/// Ask the product for the menu of one message. `request` is a SCALE-encoded
+	/// `ProductChatMessageActionsQueryRequest`. Exactly one callback follows: `onAnswer` with the
+	/// SCALE-encoded item, `onError` with the SCALE-encoded `CallError` of the query, or
+	/// `onComplete` when the product ended the query without an answer.
+	#[wasm_bindgen(js_name = chatMessageActionsQuery)]
+	pub fn chat_message_actions_query(
+		&self,
+		request: Vec<u8>,
+		on_answer: Function,
+		on_complete: Function,
+		on_error: Function,
+	) -> Result<WasmChatQuery, JsValue> {
+		let request =
+			truapi::latest::ProductChatMessageActionsQueryRequest::decode(&mut request.as_slice())
+				.map_err(|err| {
+					JsValue::from_str(&format!(
+						"chatMessageActionsQuery request did not decode: {err}"
+					))
+				})?;
+		let query = self
+			.inner
+			.core
+			.control()
+			.chat_message_actions_query(request)
+			.map_err(|err| JsValue::from_str(&err.to_string()))?;
+		Ok(observe_chat_query(query, on_answer, on_complete, on_error))
+	}
+
+	/// Ask the product for the menu of one participant. `request` is a SCALE-encoded
+	/// `ProductChatParticipantActionsQueryRequest`. Exactly one callback follows: `onAnswer` with
+	/// the SCALE-encoded item, `onError` with the SCALE-encoded `CallError` of the query, or
+	/// `onComplete` when the product ended the query without an answer.
+	#[wasm_bindgen(js_name = chatParticipantActionsQuery)]
+	pub fn chat_participant_actions_query(
+		&self,
+		request: Vec<u8>,
+		on_answer: Function,
+		on_complete: Function,
+		on_error: Function,
+	) -> Result<WasmChatQuery, JsValue> {
+		let request = truapi::latest::ProductChatParticipantActionsQueryRequest::decode(
+			&mut request.as_slice(),
+		)
+		.map_err(|err| {
+			JsValue::from_str(&format!("chatParticipantActionsQuery request did not decode: {err}"))
+		})?;
+		let query = self
+			.inner
+			.core
+			.control()
+			.chat_participant_actions_query(request)
+			.map_err(|err| JsValue::from_str(&err.to_string()))?;
+		Ok(observe_chat_query(query, on_answer, on_complete, on_error))
+	}
+
 	/// Publish one host-authored Chat action into this connection's action
 	/// stream, buffered until the product subscribes. Takes a SCALE-encoded
 	/// `HostChatActionSubscribeItem`.
@@ -1748,6 +1908,59 @@ impl WasmProductRuntime {
 			.control()
 			.publish_renderer_action(item)
 			.map_err(|err| JsValue::from_str(&err.to_string()))
+	}
+}
+
+/// Deliver the one answer of a chat query to its JS callbacks.
+fn observe_chat_query<Item: Encode + 'static, Error: Encode + 'static>(
+	mut query: crate::host_core::ChatQuery<Item, Error>,
+	on_answer: Function,
+	on_complete: Function,
+	on_error: Function,
+) -> WasmChatQuery {
+	let on_answer = SendWrapper::new(on_answer);
+	let on_complete = SendWrapper::new(on_complete);
+	let on_error = SendWrapper::new(on_error);
+	let (abort, registration) = AbortHandle::new_pair();
+	wasm_bindgen_futures::spawn_local(async move {
+		let _ = Abortable::new(
+			async move {
+				match query.next().await {
+					Some(Ok(item)) => {
+						let bytes = Uint8Array::from(item.encode().as_slice());
+						let _ = on_answer.call1(&JsValue::NULL, &bytes);
+					},
+					Some(Err(error)) => {
+						let bytes = Uint8Array::from(error.encode().as_slice());
+						let _ = on_error.call1(&JsValue::NULL, &bytes);
+					},
+					None => {
+						let _ = on_complete.call0(&JsValue::NULL);
+					},
+				}
+			},
+			registration,
+		)
+		.await;
+	});
+	WasmChatQuery { abort: Some(abort) }
+}
+
+/// Cancellable observation of one chat query. Dropping the handle on the JS
+/// side does not stop the query; call `cancel`.
+#[wasm_bindgen]
+pub struct WasmChatQuery {
+	abort: Option<AbortHandle>,
+}
+
+#[wasm_bindgen]
+impl WasmChatQuery {
+	/// Stop waiting for the answer and stop the query in the product.
+	/// Idempotent.
+	pub fn cancel(&mut self) {
+		if let Some(abort) = self.abort.take() {
+			abort.abort();
+		}
 	}
 }
 

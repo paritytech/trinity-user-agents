@@ -48,7 +48,6 @@ pub enum HostChatCreateRoomError {
 
 /// What a room shows below its messages.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
 pub enum ChatRoomFooter {
 	/// The text field the user types messages into.
 	TextInput,

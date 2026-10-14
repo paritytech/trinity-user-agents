@@ -14,6 +14,10 @@ use parity_scale_codec::Encode;
 use truapi::{Bytes32, api::Permissions, v01, versioned::IntoLatest};
 
 use super::{
+	chat_query::{
+		NativeChatQuery, NativeChatQueryAnswer, NativeChatQueryObserver, NativeChatQueryRefusal,
+		observe_chat_query,
+	},
 	reject_undecodable_deeplink,
 	renderer::{NativeRendererObserver, NativeRendererSubscription, observe_renderer},
 	ws_bridge::{BridgeLogger, SharedWsBridge, WsBridgeEndpoint, WsBridgeStartError},
@@ -750,6 +754,16 @@ impl NativeProductExecution {
 		.map(drop)
 	}
 
+	/// The control of the connected product, once Chat is allowed here.
+	fn chat_control(&self) -> Result<crate::ProductRuntimeControl, crate::ProductRuntimeError> {
+		self.require_chat()?;
+		self.product_control
+			.lock()
+			.expect("native product control mutex poisoned")
+			.clone()
+			.ok_or(crate::ProductRuntimeError::NotConnected)
+	}
+
 	fn require_renderer(&self) -> Result<(), crate::ProductRuntimeError> {
 		if self.closed.load(Ordering::Acquire) {
 			return Err(crate::ProductRuntimeError::Closed);
@@ -966,6 +980,114 @@ impl NativeProductExecution {
 		let stream = control.render(request)?;
 		let observer: Arc<dyn NativeRendererObserver> = observer.into();
 		Ok(observe_renderer(stream, observer, self.spawner.clone()))
+	}
+
+	/// Ask the product for one page of messages of a room it keeps, and
+	/// deliver its answer to `observer`. The core answers `NotAvailable`
+	/// itself for a room that does not set `product_source`.
+	pub fn chat_messages_query(
+		&self,
+		request: v01::ProductChatMessagesQueryRequest,
+		observer: Box<dyn NativeChatQueryObserver>,
+	) -> Result<Arc<NativeChatQuery>, crate::ProductRuntimeError> {
+		let query = self.chat_control()?.chat_messages_query(request)?;
+		Ok(observe_chat_query(
+			query,
+			observer.into(),
+			self.spawner.clone(),
+			|page| NativeChatQueryAnswer::Messages { page },
+			|error| NativeChatQueryRefusal::Query { error },
+		))
+	}
+
+	/// Tell the product what the user did in a room it keeps, and deliver its
+	/// answer to `observer`. The core refuses an action in a room the host
+	/// stores without asking the product.
+	pub fn chat_user_action(
+		&self,
+		request: v01::ProductChatUserActionRequest,
+		observer: Box<dyn NativeChatQueryObserver>,
+	) -> Result<Arc<NativeChatQuery>, crate::ProductRuntimeError> {
+		let query = self.chat_control()?.chat_user_action(request)?;
+		Ok(observe_chat_query(
+			query,
+			observer.into(),
+			self.spawner.clone(),
+			|answer| NativeChatQueryAnswer::UserAction { answer },
+			|error| NativeChatQueryRefusal::UserAction { error },
+		))
+	}
+
+	/// Ask the product who reacted to one message, and deliver its answer to
+	/// `observer`. The core answers `NotAvailable` itself for a room that does
+	/// not set `reaction_details`.
+	pub fn chat_reactions_query(
+		&self,
+		request: v01::ProductChatReactionsQueryRequest,
+		observer: Box<dyn NativeChatQueryObserver>,
+	) -> Result<Arc<NativeChatQuery>, crate::ProductRuntimeError> {
+		let query = self.chat_control()?.chat_reactions_query(request)?;
+		Ok(observe_chat_query(
+			query,
+			observer.into(),
+			self.spawner.clone(),
+			|reactions| NativeChatQueryAnswer::Reactions { reactions },
+			|error| NativeChatQueryRefusal::Query { error },
+		))
+	}
+
+	/// Ask the product about the participants of a room, and deliver its
+	/// answer to `observer`. The core answers `NotAvailable` itself for a room
+	/// that does not set `participants`.
+	pub fn chat_participants_query(
+		&self,
+		request: v01::ProductChatParticipantsQueryRequest,
+		observer: Box<dyn NativeChatQueryObserver>,
+	) -> Result<Arc<NativeChatQuery>, crate::ProductRuntimeError> {
+		let query = self.chat_control()?.chat_participants_query(request)?;
+		Ok(observe_chat_query(
+			query,
+			observer.into(),
+			self.spawner.clone(),
+			|answer| NativeChatQueryAnswer::Participants { answer },
+			|error| NativeChatQueryRefusal::Query { error },
+		))
+	}
+
+	/// Ask the product for the menu of one message, and deliver its answer to
+	/// `observer`. The core answers `NotAvailable` itself for a room that does
+	/// not set `message_actions`.
+	pub fn chat_message_actions_query(
+		&self,
+		request: v01::ProductChatMessageActionsQueryRequest,
+		observer: Box<dyn NativeChatQueryObserver>,
+	) -> Result<Arc<NativeChatQuery>, crate::ProductRuntimeError> {
+		let query = self.chat_control()?.chat_message_actions_query(request)?;
+		Ok(observe_chat_query(
+			query,
+			observer.into(),
+			self.spawner.clone(),
+			|menu| NativeChatQueryAnswer::MessageMenu { menu },
+			|error| NativeChatQueryRefusal::Query { error },
+		))
+	}
+
+	/// Ask the product for the menu of one participant, and deliver its answer
+	/// to `observer`. The core answers `NotAvailable` itself for a room that
+	/// does not set `participant_actions`.
+	pub fn chat_participant_actions_query(
+		&self,
+		request: v01::ProductChatParticipantActionsQueryRequest,
+		observer: Box<dyn NativeChatQueryObserver>,
+	) -> Result<Arc<NativeChatQuery>, crate::ProductRuntimeError> {
+		let query = self.chat_control()?.chat_participant_actions_query(request)?;
+		Ok(observe_chat_query(
+			query,
+			observer.into(),
+			self.spawner.clone(),
+			|menu| NativeChatQueryAnswer::ParticipantMenu { menu },
+			|error| NativeChatQueryRefusal::Query { error },
+		))
 	}
 
 	/// Publish one action triggered inside a product-rendered body, buffering

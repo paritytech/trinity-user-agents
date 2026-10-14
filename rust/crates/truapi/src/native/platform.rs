@@ -534,14 +534,27 @@ impl crate::platform::ChatPlatform for ChatCallbackPlatform {
 		};
 		let status: v01::ChatRoomRegistrationStatus = self
 			.chat
-			.create_room(request.room_id, request.metadata.name, icon)
+			.create_room(request.room_id.clone(), request.metadata.name.clone(), icon)
 			.await
 			.map_err(|error| v01::HostChatCreateRoomError::Unknown { reason: error.to_string() })?;
 
-		if status == v01::ChatRoomRegistrationStatus::New &&
-			let Ok(rooms) = self.chat.list_rooms().await
-		{
-			self.events.notify_chat_rooms_changed(rooms);
+		// A room that exists keeps what the product declared for it; a new one
+		// takes the declarations the request carries.
+		if status == v01::ChatRoomRegistrationStatus::New {
+			let declared = async {
+				self.chat.set_room_metadata(request.room_id.clone(), request.metadata).await?;
+				self.chat.set_room_config(request.room_id.clone(), request.config).await?;
+				if let Some(preview) = request.preview {
+					self.chat.set_room_preview(request.room_id, preview).await?;
+				}
+				Ok::<_, HostRejection>(())
+			};
+			declared.await.map_err(|error| v01::HostChatCreateRoomError::Unknown {
+				reason: error.to_string(),
+			})?;
+			if let Ok(rooms) = self.chat.list_rooms().await {
+				self.events.notify_chat_rooms_changed(rooms);
+			}
 		}
 
 		Ok(v01::HostChatCreateRoomResponse { status })
@@ -586,17 +599,8 @@ impl crate::platform::ChatPlatform for ChatCallbackPlatform {
 		_product: &ProductContext,
 		request: truapi::latest::HostChatSetRoomFooterRequest,
 	) -> Result<(), v01::GenericError> {
-		let footer = match request.footer {
-			truapi::latest::ChatRoomFooter::Input(_) => v01::ChatRoomFooter::TextInput,
-			truapi::latest::ChatRoomFooter::Empty => v01::ChatRoomFooter::Empty,
-			truapi::latest::ChatRoomFooter::Custom => {
-				return Err(v01::GenericError {
-					reason: "this host draws no custom chat footer".to_string(),
-				});
-			},
-		};
 		self.chat
-			.set_room_footer(request.room_id, footer)
+			.set_room_footer(request.room_id, request.footer)
 			.await
 			.map_err(v01::GenericError::from)
 	}
@@ -615,6 +619,115 @@ impl crate::platform::ChatPlatform for ChatCallbackPlatform {
 		.chain(changes)
 		.map(Ok)
 		.boxed()
+	}
+
+	async fn read_chat_room_config(
+		&self,
+		_product: &ProductContext,
+		room_id: String,
+	) -> Result<truapi::latest::ChatRoomConfig, v01::GenericError> {
+		self.chat.room_config(room_id).await.map_err(v01::GenericError::from)
+	}
+
+	async fn set_chat_room_config(
+		&self,
+		_product: &ProductContext,
+		request: truapi::latest::HostChatSetRoomConfigRequest,
+	) -> Result<(), v01::GenericError> {
+		self.chat
+			.set_room_config(request.room_id, request.config)
+			.await
+			.map_err(v01::GenericError::from)
+	}
+
+	async fn set_chat_room_metadata(
+		&self,
+		_product: &ProductContext,
+		request: truapi::latest::HostChatSetRoomMetadataRequest,
+	) -> Result<(), v01::GenericError> {
+		self.chat
+			.set_room_metadata(request.room_id, request.metadata)
+			.await
+			.map_err(v01::GenericError::from)
+	}
+
+	async fn set_chat_room_preview(
+		&self,
+		_product: &ProductContext,
+		request: truapi::latest::HostChatSetRoomPreviewRequest,
+	) -> Result<(), v01::GenericError> {
+		self.chat
+			.set_room_preview(request.room_id, request.preview)
+			.await
+			.map_err(v01::GenericError::from)
+	}
+
+	async fn delete_chat_room(
+		&self,
+		_product: &ProductContext,
+		request: truapi::latest::HostChatDeleteRoomRequest,
+	) -> Result<(), v01::GenericError> {
+		self.chat.delete_room(request.room_id).await.map_err(v01::GenericError::from)?;
+		if let Ok(rooms) = self.chat.list_rooms().await {
+			self.events.notify_chat_rooms_changed(rooms);
+		}
+		Ok(())
+	}
+
+	async fn update_chat_feed(
+		&self,
+		_product: &ProductContext,
+		request: truapi::latest::HostChatUpdateFeedRequest,
+		persist: bool,
+	) -> Result<(), truapi::latest::HostChatUpdateFeedError> {
+		self.chat
+			.update_feed(request.room_id, request.update, persist)
+			.await
+			.map_err(Into::into)
+	}
+
+	async fn set_chat_room_toolbar(
+		&self,
+		_product: &ProductContext,
+		request: truapi::latest::HostChatSetRoomToolbarRequest,
+	) -> Result<(), v01::GenericError> {
+		self.chat
+			.set_room_toolbar(request.room_id, request.actions)
+			.await
+			.map_err(v01::GenericError::from)
+	}
+
+	async fn set_chat_room_suggestions(
+		&self,
+		_product: &ProductContext,
+		request: truapi::latest::HostChatSetRoomSuggestionsRequest,
+	) -> Result<(), v01::GenericError> {
+		self.chat
+			.set_room_suggestions(request.room_id, request.suggestions)
+			.await
+			.map_err(v01::GenericError::from)
+	}
+
+	async fn set_chat_room_commands(
+		&self,
+		_product: &ProductContext,
+		request: truapi::latest::HostChatSetRoomCommandsRequest,
+	) -> Result<(), v01::GenericError> {
+		self.chat
+			.set_room_commands(request.room_id, request.commands)
+			.await
+			.map_err(v01::GenericError::from)
+	}
+
+	async fn set_chat_room_activity(
+		&self,
+		_product: &ProductContext,
+		request: truapi::latest::HostChatSetRoomActivityRequest,
+	) -> Result<(), v01::GenericError> {
+		self.chat
+			.set_room_activity(request.room_id, request.activity)
+			.await
+			.map_err(v01::GenericError::from)
 	}
 }
 

@@ -34,13 +34,13 @@ use truapi::{
 		ChatInputConfig, ChatMedia, ChatMediaItem, ChatMediaMeta, ChatMessage, ChatMessageBody,
 		ChatMessageContent, ChatMessageMenu, ChatMessageOrigin, ChatPageAnchor, ChatParticipant,
 		ChatParticipantEntry, ChatParticipantMenu, ChatParticipantsQuery, ChatProductAction,
-		ChatReaction, ChatReactionSummary, ChatResource, ChatRichText, ChatRoomBadge,
-		ChatRoomConfig, ChatRoomFooter, ChatRoomMetadata, ChatRoomPreview, ChatRoomPreviewText,
-		ChatSuggestion, ChatToolbarAction, CodeFormat, GenericError, HostChatCreateRoomError,
-		HostChatCreateRoomRequest, HostChatCreateRoomResponse, HostChatDeleteRoomRequest,
-		HostChatListSubscribeItem, HostChatPostMessageError, HostChatPostMessageRequest,
-		HostChatPostMessageResponse, HostChatRegisterBotError, HostChatRegisterBotRequest,
-		HostChatRegisterBotResponse, HostChatSetRoomActivityRequest,
+		ChatReaction, ChatReactionDetail, ChatReactionSummary, ChatResource, ChatRichText,
+		ChatRoomBadge, ChatRoomConfig, ChatRoomFooter, ChatRoomMetadata, ChatRoomPreview,
+		ChatRoomPreviewText, ChatSuggestion, ChatToolbarAction, CodeFormat, GenericError,
+		HostChatCreateRoomError, HostChatCreateRoomRequest, HostChatCreateRoomResponse,
+		HostChatDeleteRoomRequest, HostChatListSubscribeItem, HostChatPostMessageError,
+		HostChatPostMessageRequest, HostChatPostMessageResponse, HostChatRegisterBotError,
+		HostChatRegisterBotRequest, HostChatRegisterBotResponse, HostChatSetRoomActivityRequest,
 		HostChatSetRoomCommandsRequest, HostChatSetRoomConfigRequest, HostChatSetRoomFooterRequest,
 		HostChatSetRoomMetadataRequest, HostChatSetRoomPreviewRequest,
 		HostChatSetRoomSuggestionsRequest, HostChatSetRoomToolbarRequest, HostChatUpdateFeedError,
@@ -57,8 +57,8 @@ use truapi::{
 		HostWorkerBeginOperationResponse, HostWorkerOperationError, LegacyAccountTxPayload,
 		ProductAccountId, ProductAccountTxPayload, ProductChatMessagesQueryItem,
 		ProductChatMessagesQueryRequest, ProductChatParticipantsQueryItem,
-		ProductChatParticipantsQueryRequest, ProductProofContext, RemotePermission,
-		RemotePermissionRequest, RingLocation,
+		ProductChatParticipantsQueryRequest, ProductChatReactionsQueryItem, ProductProofContext,
+		RemotePermission, RemotePermissionRequest, RingLocation,
 	},
 	v01::HostAccountSignVrfRequest,
 };
@@ -1417,6 +1417,27 @@ pub fn validate_chat_messages_page(
 	Ok(ProductChatMessagesQueryItem {
 		messages: page.messages.into_iter().map(validate_chat_message).collect::<Result<_, _>>()?,
 		next: page.next.map(|next| validate_chat_cursor("next", next)).transpose()?,
+	})
+}
+
+/// Validate who reacted to a message, as a product answers it.
+pub fn validate_chat_reactions_answer(
+	answer: ProductChatReactionsQueryItem,
+) -> Result<ProductChatReactionsQueryItem, ChatFieldError> {
+	Ok(ProductChatReactionsQueryItem {
+		reactions: answer
+			.reactions
+			.into_iter()
+			.map(|reaction| {
+				Ok(ChatReactionDetail {
+					participant_id: normalize_chat_identifier(
+						"participantId",
+						&reaction.participant_id,
+					)?,
+					emoji: validate_chat_emoji("emoji", &reaction.emoji)?,
+				})
+			})
+			.collect::<Result<_, ChatFieldError>>()?,
 	})
 }
 

@@ -7,7 +7,10 @@ use crate::{PairedSsoPeer, host_logic::worker::WorkerTransition};
 
 #[cfg(doc)]
 use super::NativeTrUApiHostRuntime;
-use super::{config::ProductExecutionConfig, errors::HostRejection};
+use super::{
+	config::ProductExecutionConfig,
+	errors::{HostRejection, NativeChatFeedRejection},
+};
 #[cfg(doc)]
 use crate::platform::CoreStorageKey;
 
@@ -267,15 +270,88 @@ pub trait NativeChatCallbacks: Send + Sync {
 	/// Set what a product's native Chat room shows below its messages, and keep
 	/// it until the product sets another. The core has already checked the
 	/// product created the room. A room the product never set a footer on shows
-	/// the text input.
+	/// the input with photo and video on.
 	async fn set_room_footer(
 		&self,
 		room_id: String,
-		footer: v01::ChatRoomFooter,
+		footer: truapi::latest::ChatRoomFooter,
 	) -> Result<(), HostRejection>;
 
 	/// Return the current product-scoped native Chat room list.
 	async fn list_rooms(&self) -> Result<Vec<v01::ChatRoom>, HostRejection>;
+
+	/// Return the configuration the product last declared for a room, or the
+	/// default configuration when it declared none. The core reads it before
+	/// each feed update, posted message and query of the room.
+	async fn room_config(
+		&self,
+		room_id: String,
+	) -> Result<truapi::latest::ChatRoomConfig, HostRejection>;
+
+	/// Replace the configuration of a room whole, and keep it across
+	/// restarts. A change of `product_source` discards the stored messages or
+	/// cached pages of the room.
+	async fn set_room_config(
+		&self,
+		room_id: String,
+		config: truapi::latest::ChatRoomConfig,
+	) -> Result<(), HostRejection>;
+
+	/// Replace the name, avatar and description of a room.
+	async fn set_room_metadata(
+		&self,
+		room_id: String,
+		metadata: truapi::latest::ChatRoomMetadata,
+	) -> Result<(), HostRejection>;
+
+	/// Replace how a room shows in the chat list.
+	async fn set_room_preview(
+		&self,
+		room_id: String,
+		preview: truapi::latest::ChatRoomPreview,
+	) -> Result<(), HostRejection>;
+
+	/// Delete a room with its messages, cache and declarations, and close its
+	/// screen.
+	async fn delete_room(&self, room_id: String) -> Result<(), HostRejection>;
+
+	/// Apply one change to the messages of a room. With `persist` the host
+	/// stores the change; without it the host applies it only to an open room
+	/// screen and the chat list preview.
+	async fn update_feed(
+		&self,
+		room_id: String,
+		update: truapi::latest::ChatFeedUpdate,
+		persist: bool,
+	) -> Result<(), NativeChatFeedRejection>;
+
+	/// Replace the toolbar buttons of a room.
+	async fn set_room_toolbar(
+		&self,
+		room_id: String,
+		actions: Vec<truapi::latest::ChatToolbarAction>,
+	) -> Result<(), HostRejection>;
+
+	/// Replace the quick replies of a room.
+	async fn set_room_suggestions(
+		&self,
+		room_id: String,
+		suggestions: Vec<truapi::latest::ChatSuggestion>,
+	) -> Result<(), HostRejection>;
+
+	/// Replace the slash commands of a room.
+	async fn set_room_commands(
+		&self,
+		room_id: String,
+		commands: Vec<truapi::latest::ChatCommandSpec>,
+	) -> Result<(), HostRejection>;
+
+	/// Show the activity line of a room, or remove it with `None`.
+	async fn set_room_activity(
+		&self,
+		room_id: String,
+		activity: Option<truapi::latest::ChatActivity>,
+	) -> Result<(), HostRejection>;
 }
 
 /// Native Pocket collection adapter. Hosts with a Pocket surface pass an

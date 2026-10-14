@@ -40,6 +40,7 @@ pub struct HostChatCreateRoomRequest {
 ///
 /// v0.2 lets the product configure the input, and draw the footer itself.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
 pub enum ChatRoomFooter {
 	/// The input the user types messages into.
 	Input(ChatInputConfig),
