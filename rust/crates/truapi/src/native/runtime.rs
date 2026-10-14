@@ -11,7 +11,7 @@ use crate::platform::{
 	ProductExecutionKind,
 };
 use parity_scale_codec::Encode;
-use truapi::{Bytes32, v01};
+use truapi::{Bytes32, api::Permissions, v01, versioned::IntoLatest};
 
 use super::{
 	reject_undecodable_deeplink,
@@ -703,8 +703,6 @@ impl NativeProductExecution {
 		&self,
 		request: truapi::latest::RemotePermissionRequest,
 	) -> Result<bool, HostRejection> {
-		use truapi::{api::Permissions, versioned::IntoLatest};
-
 		if self.closed.load(Ordering::Acquire) {
 			return Err(HostRejection::Rejected {
 				reason: "product execution is closed".to_string(),
@@ -713,10 +711,7 @@ impl NativeProductExecution {
 		let response = self
 			.admin()
 			.product_runtime()
-			.authorize_remote_permission(
-				&truapi::CallContext::default(),
-				truapi::versioned::permissions::RemotePermissionRequest::V1(request),
-			)
+			.authorize_remote_permission(&truapi::CallContext::default(), request.into())
 			.await
 			.map_err(|error| HostRejection::Rejected { reason: format!("{error:?}") })?;
 		if self.closed.load(Ordering::Acquire) {
@@ -734,8 +729,6 @@ impl NativeProductExecution {
 		&self,
 		request: truapi::latest::HostDevicePermissionRequest,
 	) -> Result<bool, HostRejection> {
-		use truapi::{api::Permissions, versioned::IntoLatest};
-
 		if self.closed.load(Ordering::Acquire) {
 			return Err(HostRejection::Rejected {
 				reason: "product execution is closed".to_string(),
@@ -744,10 +737,7 @@ impl NativeProductExecution {
 		let response = self
 			.admin()
 			.product_runtime()
-			.authorize_device_permission(
-				&truapi::CallContext::default(),
-				truapi::versioned::permissions::HostDevicePermissionRequest::V1(request),
-			)
+			.authorize_device_permission(&truapi::CallContext::default(), request.into())
 			.await
 			.map_err(|error| HostRejection::Rejected { reason: format!("{error:?}") })?;
 		if self.closed.load(Ordering::Acquire) {
@@ -856,8 +846,7 @@ impl NativeProductExecution {
 		action: v01::HostChatActionSubscribeItem,
 	) -> Result<(), crate::ProductRuntimeError> {
 		self.require_chat()?;
-		self.chat_connection
-			.publish(truapi::versioned::chat::HostChatActionSubscribeItem::V1(action))
+		self.chat_connection.publish(action.into())
 	}
 
 	/// Ask the product to draw one body, delivering each replacement tree to
@@ -886,8 +875,7 @@ impl NativeProductExecution {
 		item: v01::HostRendererActionSubscribeItem,
 	) -> Result<(), crate::ProductRuntimeError> {
 		self.require_renderer()?;
-		self.renderer_connection
-			.publish(truapi::versioned::renderer::HostRendererActionSubscribeItem::V1(item))
+		self.renderer_connection.publish(item.into())
 	}
 
 	/// Push a complete native Pocket card-list replacement to this execution.
@@ -1176,11 +1164,7 @@ mod tests {
 			core::task::Poll::Ready(Some(item)) => item,
 			other => panic!("a published renderer action must be ready, got {other:?}"),
 		};
-		let Ok(truapi::versioned::renderer::HostRendererActionSubscribeItem::V1(delivered)) =
-			delivered
-		else {
-			panic!("expected a renderer action item")
-		};
+		let delivered = delivered.expect("expected a renderer action item").into_latest();
 		assert_eq!(delivered, published);
 		// The scanner checks taps on a connection, while hosts publish them here.
 		assert!(admin.product_runtime().recently_tapped());
@@ -1213,9 +1197,7 @@ mod tests {
 		let reply = futures::executor::block_on(truapi::api::ExpandedCard::set_face_shown(
 			admin.product_runtime().as_ref(),
 			&truapi::CallContext::default(),
-			truapi::versioned::expanded_card::HostExpandedCardSetFaceShownRequest::V1(
-				v01::HostExpandedCardSetFaceShownRequest { shown: false },
-			),
+			v01::HostExpandedCardSetFaceShownRequest { shown: false }.into(),
 		));
 
 		assert!(reply.is_ok(), "the card's own host applied the request: {reply:?}");
@@ -1297,8 +1279,6 @@ mod tests {
 
 	#[test]
 	fn native_execution_shares_one_use_permissions_across_connections_only() {
-		use truapi::api::Permissions;
-
 		let callbacks = Arc::new(EventCallbacks {
 			remote_permission_result: Ok(PermissionDecision::AllowOnce),
 			..EventCallbacks::new()
@@ -1329,12 +1309,11 @@ mod tests {
 			};
 			let context = truapi::CallContext::default();
 			let sdk_request = || {
-				admin.product_runtime().request_remote_permission(
-					&context,
-					truapi::versioned::permissions::RemotePermissionRequest::V1(request.clone()),
-				)
+				admin
+					.product_runtime()
+					.request_remote_permission(&context, request.clone().into())
 			};
-			let granted = sdk_request().await.unwrap();
+			let granted = sdk_request().await.unwrap().into_latest();
 			let permission = PermissionAuthorizationRequest::Remote(request.clone());
 			let other_status =
 				other.permission_authorization_status(permission.clone()).await.unwrap();
@@ -1362,9 +1341,7 @@ mod tests {
 					after_shutdown
 				),
 				(
-					truapi::versioned::permissions::RemotePermissionResponse::V1(
-						truapi::latest::RemotePermissionResponse { granted: true },
-					),
+					truapi::latest::RemotePermissionResponse { granted: true },
 					PermissionAuthorizationStatus::NotDetermined,
 					true,
 					PermissionAuthorizationStatus::NotDetermined,
