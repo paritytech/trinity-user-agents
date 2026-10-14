@@ -465,7 +465,9 @@ export class SampleProduct {
       if (this.#state.slowMs > 0) await delay(this.#state.slowMs);
       if (done) return;
       if (request.roomId !== "source") return answer({ error: { tag: "UnknownRoom" } });
-      const fail = this.#state.fail;
+      // The flags wait for the user's next send, so the host's automatic
+      // `Seen` of the product's own reply does not use them up.
+      const fail = action.tag === "NewMessage" ? this.#state.fail : { crash: false, timeout: false, reject: false };
       if (fail.crash) {
         fail.crash = false;
         await this.#save();
