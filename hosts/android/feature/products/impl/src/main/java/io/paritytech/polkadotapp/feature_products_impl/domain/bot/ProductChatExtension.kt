@@ -9,6 +9,7 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.extension.ExternalExte
 import io.paritytech.polkadotapp.feature_chats_api.domain.extension.NewMessagesRoomFilter
 import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.CustomChatMenuRenderer
 import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.CustomChatMessageRenderer
+import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.CustomChatPreviewDelegate
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatId
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessage
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageId
@@ -54,11 +55,16 @@ import timber.log.Timber
  * the driving lease on dispose.
  *
  * Each instance is created by [ProductBotFactory] for a specific [Product].
+ *
+ * A host-placed product's [placedRoom] is drawn by the host before the worker has downloaded and
+ * booted. Placement is per product: every room it registers is pinned above the rest and offers
+ * no removal.
  */
 class ProductChatExtension(
     appContext: Context,
     val product: Product,
     private val workerRefCounter: ProductWorkerRefCounter,
+    val placedRoom: ProductChatIdParameter? = null,
 ) : ExternalExtension() {
     override val id = product.id.toChatExtensionId()
 
@@ -88,7 +94,11 @@ class ProductChatExtension(
         return listOf(messageRenderer)
     }
 
-    override fun customMenuRenderer(chatId: ChatId): CustomChatMenuRenderer = ProductChatMenuRenderer(product, chatId)
+    override fun customMenuRenderer(chatId: ChatId): CustomChatMenuRenderer =
+        ProductChatMenuRenderer(product, chatId, removable = placedRoom == null)
+
+    override fun customChatPreviewDelegate(chatId: ChatId): CustomChatPreviewDelegate<*>? =
+        placedRoom?.let { PinnedChatPreviewDelegate }
 
     context(chatExtensionContext: ChatExtensionContext)
     override fun startGlobalWork() {
@@ -100,6 +110,8 @@ class ProductChatExtension(
 
         scope.launch {
             Timber.d("Starting a bot ${product.name}...")
+
+            placeRoom()
 
             chatExtensionContext.subscribeNewMessages(NewMessagesRoomFilter.AnyFromExtension(id))
                 .filter { it.origin !is ChatMessageOrigin.Extension }
@@ -133,10 +145,23 @@ class ProductChatExtension(
     override fun equals(other: Any?): Boolean {
         if (this === other) return true
         if (other !is ProductChatExtension) return false
-        return product == other.product
+        return product == other.product && placedRoom == other.placedRoom
     }
 
-    override fun hashCode(): Int = product.hashCode()
+    override fun hashCode(): Int = 31 * product.hashCode() + placedRoom.hashCode()
+
+    // No metadata: the list falls back to the product's name until the product's own createRoom
+    // finds the row, answers exists and supplies name and icon. A failure costs the placeholder,
+    // not the room, so it must not cost the worker.
+    context(chatExtensionContext: ChatExtensionContext)
+    private suspend fun placeRoom() {
+        val room = placedRoom ?: return
+        runCatching { chatExtensionContext.createRoom(CreateRoomRequest(room.toChatId(id), name = null, icon = null)) }
+            .onFailure { error ->
+                if (error is CancellationException) throw error
+                Timber.e(error, "Failed to place the room ${room.value} of ${product.id.value}")
+            }
+    }
 
     override suspend fun dispose() {
         // Cancelling the scope runs the finally in startGlobalWork, which releases the worker lease.

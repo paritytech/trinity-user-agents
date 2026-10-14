@@ -6,8 +6,8 @@ import io.paritytech.polkadotapp.feature_products_impl.data.repository.ProductIn
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.ProductBotFactory
 import io.paritytech.polkadotapp.feature_products_impl.domain.product.IntegrationType
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.distinctUntilChangedBy
-import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -15,12 +15,22 @@ import javax.inject.Singleton
 class ProductExternalExtensionProvider @Inject constructor(
     private val integrationRepository: ProductIntegrationRepository,
     private val productBotFactory: ProductBotFactory,
+    private val hostPlacedProducts: HostPlacedProducts,
 ) : ExternalExtensionProvider {
+    /**
+     * Host-placed products first, then the installed ones. A placed product the user also
+     * installed is listed once, as the placed one: unioned rather than written to the product
+     * tables, as Pocket does with its pinned card, so nothing can uninstall it, and kept the same
+     * so the registry never stops and restarts its worker over a resolved name.
+     */
     override fun observeExtensions(): Flow<List<ExternalExtension>> {
-        return integrationRepository.observeProductsByType(IntegrationType.Chat)
-            .distinctUntilChangedBy { it.toSet() }
-            .map { products ->
-                products.map { product -> productBotFactory.create(product) }
-            }
+        return combine(
+            hostPlacedProducts.observe(),
+            integrationRepository.observeProductsByType(IntegrationType.Chat),
+        ) { placed, installed ->
+            val placedIds = placed.map { it.product.id }.toSet()
+            placed.map { productBotFactory.create(it.product, placedRoom = it.roomId) } +
+                installed.filterNot { it.id in placedIds }.map { productBotFactory.create(it) }
+        }.distinctUntilChanged()
     }
 }
