@@ -946,6 +946,9 @@ class TrUAPIHostRuntime @Throws(NativeRuntimeConfigException::class) constructor
     /** Every funding session the core keeps, in flight first, then ended, each newest first. */
     fun fundingSessions(): List<FundingSession> = inner.fundingSessions()
 
+    /** Whether a provider still works on any funding session; a host that remembers it starts funding at its next launch. */
+    fun fundingInProgress(): Boolean = inner.fundingInProgress()
+
     /** Cancel session [intent] at the user's request; its provider, if any, is asked to stop. */
     @Throws(HostRejection::class)
     suspend fun cancelFunding(intent: String): Boolean = inner.cancelFunding(intent)

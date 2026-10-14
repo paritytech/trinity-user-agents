@@ -149,6 +149,7 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.worker.WorkerBootF
 import io.paritytech.polkadotapp.feature_products_impl.presentation.deeplink.PocketDeepLinkHandler
 import io.paritytech.polkadotapp.feature_products_impl.presentation.deeplink.PocketScanContentParser
 import io.paritytech.polkadotapp.feature_products_impl.presentation.deeplink.PocketTabDeepLinkHandler
+import io.paritytech.polkadotapp.feature_products_impl.presentation.initialization.FundingResumeInitializer
 import io.paritytech.polkadotapp.feature_products_impl.presentation.initialization.ProductWorkerInitializer
 import io.paritytech.polkadotapp.feature_products_impl.presentation.initialization.TopUpResumeInitializer
 import io.paritytech.polkadotapp.feature_products_impl.presentation.productBotManagement.ProductsRouter
@@ -284,6 +285,10 @@ internal interface ProductsModule {
     @Binds
     @IntoSet
     fun bindTopUpResumeInitializer(impl: TopUpResumeInitializer): AppInitializer
+
+    @Binds
+    @IntoSet
+    fun bindFundingResumeInitializer(impl: FundingResumeInitializer): AppInitializer
 
     @Binds
     fun bindProductAccountOrigins(impl: RealProductAccountOrigins): ProductAccountOrigins
