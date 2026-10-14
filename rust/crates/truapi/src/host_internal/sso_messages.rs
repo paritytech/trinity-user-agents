@@ -1183,6 +1183,23 @@ mod tests {
 		);
 	}
 
+	/// A phone that answers AutoSigning with the 64-byte key alone sends a reply the core
+	/// cannot decode; the same reply with the ring-VRF domain entropy decodes.
+	#[test]
+	fn auto_signing_reply_without_domain_entropy_does_not_decode() {
+		let key_only =
+			hex::decode(format!("046d0006047200040003{}", hex::encode(sequential_bytes::<64>(0))))
+				.unwrap();
+		let with_entropy = [key_only.as_slice(), &sequential_bytes::<32>(64)].concat();
+
+		let error = decode_remote_message(&key_only).unwrap_err();
+		assert!(
+			error.contains("SsoAllocatedResource::AutoSigning::ring_vrf_domain_entropy"),
+			"{error}"
+		);
+		assert!(decode_remote_message(&with_entropy).is_ok());
+	}
+
 	#[test]
 	fn remote_message_decoder_rejects_trailing_bytes() {
 		let mut encoded = RemoteMessage {
