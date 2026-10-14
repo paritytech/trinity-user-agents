@@ -22,7 +22,10 @@
 //! `S.Result(okCodec, S.CallError(errCodec))` composition the generated
 //! client decodes a `Response` frame's payload through.
 
-use std::sync::Arc;
+use std::{
+	sync::{Arc, Condvar, Mutex},
+	time::{Duration, Instant},
+};
 
 use parity_scale_codec::{Decode, Encode};
 
@@ -38,7 +41,48 @@ use truapi::{
 };
 
 mod common;
-use common::{RecordingTransport, WireShapePlatform, test_runtime_config, test_spawner};
+use common::{WireShapePlatform, test_runtime_config, test_spawner};
+use truapi::transport::Transport;
+
+/// Transport stub that records every frame sent through it, for asserting
+/// what the core emits during a dispatch.
+#[derive(Default)]
+struct RecordingTransport {
+	/// Frames captured in send order.
+	sent: Mutex<Vec<ProtocolMessage>>,
+	recorded: Condvar,
+}
+
+impl RecordingTransport {
+	/// Wait until at least `count` frames have been recorded, or `timeout`
+	/// elapses. A subscription's frames are produced by the spawner, so a
+	/// dispatch that starts one returns before they are sent.
+	fn wait_for(&self, count: usize, timeout: Duration) {
+		let deadline = Instant::now() + timeout;
+		let mut sent = self.sent.lock().unwrap();
+		while sent.len() < count {
+			let now = Instant::now();
+			if now >= deadline {
+				break;
+			}
+			let (guard, _) = self.recorded.wait_timeout(sent, deadline - now).unwrap();
+			sent = guard;
+		}
+	}
+}
+
+impl Transport for RecordingTransport {
+	fn send(&self, message: ProtocolMessage) {
+		self.sent.lock().unwrap().push(message);
+		self.recorded.notify_all();
+	}
+	fn on_message(
+		&self,
+		_handler: Box<dyn Fn(ProtocolMessage) + Send + Sync>,
+	) -> Box<dyn FnOnce()> {
+		Box::new(|| {})
+	}
+}
 
 const PAYMENTS_NOT_IMPLEMENTED: &str = "Payments are not supported in dot.li";
 
@@ -304,7 +348,7 @@ fn foreign_account_proof_encodes_a_domain_refusal() {
 	// assertion would race the dispatch. That the grant is what refuses a
 	// foreign handle is asserted in
 	// `runtime::signing_host::tests::a_foreign_proof_is_refused_when_the_owner_granted_nothing`
-	// and end to end by `make e2e-cross-product-ringvrf`.
+	// and end to end by `make e2e-cross-product SCENARIO=ringvrf`.
 	let expected =
 		versioned_result_err_payload(truapi::versioned::account::HostAccountCreateProofError::V1(
 			v01::HostAccountCreateProofError::Rejected,
