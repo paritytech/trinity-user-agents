@@ -2969,6 +2969,7 @@ fn navigate_to_external_denies_without_open_url_permission() {
 		"sms:+15551234567",
 		"maps:?q=Berlin",
 		"polkadot://1exampleaddress",
+		"polkadotapp://pay?address=1xXvM8o8N7hGp4cCdHAFSC3g9N2rfQdbH8H6d9SjsUd2rck&amount=1000000&lockAmount=true",
 		"dot:transfer",
 	];
 	let mut responses = Vec::new();
@@ -3077,6 +3078,7 @@ fn navigate_to_consumes_open_url_allow_once_at_handoff() {
 			"sms:+15551234567",
 			"maps:?q=Berlin",
 			"polkadot://1exampleaddress",
+			"polkadotapp://pay?address=1xXvM8o8N7hGp4cCdHAFSC3g9N2rfQdbH8H6d9SjsUd2rck&amount=1000000&lockAmount=true",
 			"dot:transfer",
 		] {
 			for request_upfront in [false, true] {

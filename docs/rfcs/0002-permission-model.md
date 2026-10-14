@@ -240,8 +240,8 @@ The following business methods gate on a specific permission and MUST internally
 
 `host_navigate_to` consumes `OpenUrl` for external HTTP(S) destinations and
 allowed application schemes (`mailto:`, `tel:`, `sms:`, `maps:`, `polkadot:`,
-`dot:`). Internal dotNS, localhost and host-handled Pocket navigation consume
-no grant. Denial is reported as `HostNavigateToError::PermissionDenied`.
+`polkadotapp:`, `dot:`). Internal dotNS, localhost and host-handled Pocket
+navigation consume no grant. Denial is reported as `HostNavigateToError::PermissionDenied`.
 
 The following business methods relate to signing and require the user's active consent via their own approval flow (e.g. a signing confirmation dialog). They return `PermissionDenied` when the user cancels or denies that confirmation — this is distinct from the remote permission system but is documented here for completeness:
 

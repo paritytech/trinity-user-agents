@@ -244,7 +244,7 @@ fn classify_localhost(input: &str) -> Option<NavigateDecision> {
 /// a [`NavigateDecision::Reject`] so dangerous schemes (`javascript:`,
 /// `data:`, `file:`, `vbscript:`, ...) cannot reach `Platform::navigate_to`.
 const ALLOWED_EXTERNAL_SCHEMES: &[&str] =
-	&["http", "https", "mailto", "tel", "sms", "maps", "polkadot", "dot"];
+	&["http", "https", "mailto", "tel", "sms", "maps", "polkadot", "polkadotapp", "dot"];
 
 /// Mirrors `normalizeUrl`: prepend `https://` if missing, otherwise pass the
 /// URL through as its canonical string form. Returns `Err(reason)` for an
@@ -634,6 +634,28 @@ mod tests {
 				name: "external maps handoff",
 				input: "maps:?q=Berlin",
 				expected: external("maps:?q=Berlin"),
+			},
+			TestCase {
+				name: "external polkadot mobile payment",
+				input: "polkadotapp://pay",
+				expected: external("polkadotapp://pay"),
+			},
+			TestCase {
+				name: "external polkadot mobile payment parameters",
+				input: "polkadotapp://pay?address=1xXvM8o8N7hGp4cCdHAFSC3g9N2rfQdbH8H6d9SjsUd2rck&amount=1000000&lockAmount=true",
+				expected: external(
+					"polkadotapp://pay?address=1xXvM8o8N7hGp4cCdHAFSC3g9N2rfQdbH8H6d9SjsUd2rck&amount=1000000&lockAmount=true",
+				),
+			},
+			TestCase {
+				name: "external polkadot mobile preserves encoded query and fragment",
+				input: "polkadotapp://pay?label=Coffee%20%26%20cake#receipt",
+				expected: external("polkadotapp://pay?label=Coffee%20%26%20cake#receipt"),
+			},
+			TestCase {
+				name: "external polkadot mobile normalizes scheme case",
+				input: "POLKADOTAPP://pay?amount=1000000&lockAmount=true",
+				expected: external("polkadotapp://pay?amount=1000000&lockAmount=true"),
 			},
 			TestCase { name: "reject empty", input: "", expected: Expected::Reject },
 			TestCase { name: "reject whitespace", input: "   ", expected: Expected::Reject },
