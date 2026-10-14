@@ -5,7 +5,7 @@ public final class DSTabBarTabsGlyphView: UIView {
     public var count: Int = 0 {
         didSet {
             guard count != oldValue else { return }
-            countLabel.text = "\(count)"
+            countLabel.text = count > 0 ? "\(count)" : nil
         }
     }
 
