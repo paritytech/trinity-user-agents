@@ -1,7 +1,10 @@
 package io.paritytech.polkadotapp.feature_chats_impl.presentation.resources
 
+import io.paritytech.polkadotapp.common.utils.logFailure
 import io.paritytech.polkadotapp.design.components.avatar.AvatarUiModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatResourceModel
+import io.paritytech.polkadotapp.feature_chats_impl.domain.models.ChatAvatar
+import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.toUi
 import io.paritytech.polkadotapp.tools_ipfs_api.IpfsContentLookup
 import io.paritytech.polkadotapp.tools_ipfs_api.getDefaultRawLink
 import java.util.Base64
@@ -27,6 +30,26 @@ sealed interface ResolvedChatImage {
 fun ResolvedChatImage.toAvatar(): AvatarUiModel = when (this) {
     is ResolvedChatImage.Inline -> AvatarUiModel.Inline(bytes)
     is ResolvedChatImage.Remote -> AvatarUiModel.Image(url)
+}
+
+/**
+ * The avatar of a room. The avatar that the product set has priority over the icon of the room. The image
+ * loader cannot read a `data:` icon of the first version, so the resolver decodes it.
+ */
+suspend fun ChatResourceResolver.roomAvatar(roomIcon: ChatAvatar, productAvatar: ChatResourceModel?): AvatarUiModel {
+    val hostAvatar = if (roomIcon is ChatAvatar.Url) {
+        resolveIcon(roomIcon.url)
+            .logFailure("Failed to resolve the icon of a room")
+            .fold(onSuccess = { it.toAvatar() }, onFailure = { roomIcon.toUi() })
+    } else {
+        roomIcon.toUi()
+    }
+
+    if (productAvatar == null) return hostAvatar
+
+    return resolve(productAvatar)
+        .logFailure("Failed to resolve the avatar of a product room")
+        .fold(onSuccess = { it.toAvatar() }, onFailure = { hostAvatar })
 }
 
 /** Changes the images of a product room into values that the image loader draws (02-DESIGN §6.2). */

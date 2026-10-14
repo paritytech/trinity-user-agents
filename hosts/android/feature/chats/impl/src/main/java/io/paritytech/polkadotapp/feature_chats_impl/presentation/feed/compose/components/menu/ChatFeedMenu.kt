@@ -7,6 +7,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.runtime.Composable
 import io.paritytech.polkadotapp.design.components.bottomsheet.NovaBottomSheetDefaults
 import io.paritytech.polkadotapp.design.components.bottomsheet.NovaModalBottomSheet
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageId
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.ChatMenuState
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.ChatMenuType
 
@@ -18,7 +19,8 @@ fun ChatFeedMenu(
     onLeaveChatRequest: () -> Unit,
     onLeaveChatConfirm: () -> Unit,
     onBlockUserRequest: () -> Unit,
-    onBlockUserConfirm: () -> Unit
+    onBlockUserConfirm: () -> Unit,
+    onDeleteMessageConfirm: (ChatMessageId) -> Unit,
 ) {
     NovaModalBottomSheet(
         isVisible = state.isVisible,
@@ -64,6 +66,13 @@ fun ChatFeedMenu(
 
                     is ChatMenuType.Custom -> {
                         it.renderer.DrawMenu(onDismiss = onDismiss)
+                    }
+
+                    is ChatMenuType.DeleteMessageConfirmation -> {
+                        DeleteMessageConfirmationContent(
+                            onConfirm = { onDeleteMessageConfirm(it.messageId) },
+                            onCancel = onDismiss
+                        )
                     }
                 }
             }

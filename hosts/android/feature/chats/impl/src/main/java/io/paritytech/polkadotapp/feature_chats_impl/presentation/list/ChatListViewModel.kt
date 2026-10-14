@@ -15,8 +15,8 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.CustomP
 import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.asAnyRenderer
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatId
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessage
-import io.paritytech.polkadotapp.feature_chats_api.domain.model.previewText
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.isIncoming
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.previewText
 import io.paritytech.polkadotapp.feature_chats_api.presentation.model.ChatFeedPayload
 import io.paritytech.polkadotapp.feature_chats_api.presentation.model.ChatPreviewUiModel
 import io.paritytech.polkadotapp.feature_chats_api.presentation.model.CustomChatPreviewUiModel

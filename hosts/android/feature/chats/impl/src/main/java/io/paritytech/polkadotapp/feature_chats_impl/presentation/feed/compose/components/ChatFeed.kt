@@ -51,6 +51,7 @@ import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.compose.co
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.compose.components.separators.GroupDateSeparator
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.compose.components.separators.NewMessagesSeparator
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.ChatMessagesState
+import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.EmptyRoomPlaceholder
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.utils.LocalChatFooterHeight
 import kotlinx.coroutines.flow.Flow
 import kotlin.math.abs
@@ -80,6 +81,7 @@ internal fun ChatFeed(
     slideInNewMessages: Boolean = false,
     showNewMessagesSeparator: Boolean = true,
     dateSeparatorStyle: ChatDateSeparatorStyle? = null,
+    emptyPlaceholder: EmptyRoomPlaceholder? = null,
 ) {
     val footerHeight = LocalChatFooterHeight.current
     var initialMessageIds by remember { mutableStateOf<Set<ChatMessageId>?>(null) }
@@ -267,6 +269,30 @@ internal fun ChatFeed(
                             customBubbleStyle = customBubbleStyle,
                         )
 
+                        is ChatMessageUiModel.Actions -> ActionsMessage(
+                            modifier = messageModifier,
+                            message = message,
+                            showTimestamp = showTimestamps,
+                            grouping = grouping,
+                            isHighlighted = isHighlighted,
+                            canBeReplied = isInputEnabled,
+                            onMessageAction = onMessageAction,
+                            onLongPress = { layoutInfo -> onMessageLongPress(message, layoutInfo) },
+                            customBubbleStyle = customBubbleStyle,
+                        )
+
+                        is ChatMessageUiModel.ProductMedia -> ProductMediaMessage(
+                            modifier = messageModifier,
+                            message = message,
+                            showTimestamp = showTimestamps,
+                            grouping = grouping,
+                            isHighlighted = isHighlighted,
+                            canBeReplied = isInputEnabled,
+                            onMessageAction = onMessageAction,
+                            onLongPress = { layoutInfo -> onMessageLongPress(message, layoutInfo) },
+                            customBubbleStyle = customBubbleStyle,
+                        )
+
                         is ChatMessageUiModel.Custom<*> -> {
                             val drawingContext = MessageDrawingContext(
                                 grouping = grouping,
@@ -299,6 +325,16 @@ internal fun ChatFeed(
             }
 
             showHeaderIfNeeded(headerRenderer = headerRenderer)
+        }
+
+        if (emptyPlaceholder != null && chatMessagesState.messages.isEmpty()) {
+            EmptyRoomPlaceholderText(
+                modifier = Modifier
+                    .align(Alignment.Center)
+                    .padding(horizontal = PolkadotTheme.spacings.large)
+                    .padding(bottom = footerHeight),
+                placeholder = emptyPlaceholder,
+            )
         }
 
         FloatingDateLabelOverlay(

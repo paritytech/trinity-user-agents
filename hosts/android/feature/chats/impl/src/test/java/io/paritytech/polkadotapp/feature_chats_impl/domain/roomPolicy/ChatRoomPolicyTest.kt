@@ -1,13 +1,13 @@
 package io.paritytech.polkadotapp.feature_chats_impl.domain.roomPolicy
 
 import io.paritytech.polkadotapp.common.domain.model.toDataByteArray
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatInputConfigModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatInputPaymentModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatResourceModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomBadgeModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomConfigModel
-import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomFooterModel
-import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatInputConfigModel
-import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatInputPaymentModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomDeclarations
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomFooterModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.Order
 import io.paritytech.polkadotapp.feature_chats_impl.domain.roomPolicy.ChatRoomPolicy.BuiltInMessageAction
 import io.paritytech.polkadotapp.feature_chats_impl.domain.roomPolicy.ChatRoomPolicy.ListBadge
