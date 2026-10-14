@@ -9,4 +9,6 @@ struct ChatMetadata: Equatable {
     let chatId: Chat.Id
     let peerMetadata: Chat.PeerMetadata
     let state: State
+    /// The line under the name in the header, for example the description of a product room.
+    var subtitle: String?
 }

@@ -9,6 +9,9 @@ protocol ProductIconViewModelMaking {
 
     /// An icon that a product gives as a chat resource source, or nil when the source is not a resource.
     func createViewModel(forResource source: String) -> (any ImageViewModelProtocol)?
+
+    /// An image that a product gives as a chat resource, for example the avatar of a room.
+    func createViewModel(forChatResource resource: ChatResource) -> any ImageViewModelProtocol
 }
 
 final class ProductIconViewModelFactory {
@@ -43,6 +46,10 @@ extension ProductIconViewModelFactory: ProductIconViewModelMaking {
     }
 
     func createViewModel(forResource source: String) -> (any ImageViewModelProtocol)? {
-        ChatResource(source: source).map { ChatResourceImageViewModel(resource: $0, resolver: resources) }
+        ChatResource(source: source).map(createViewModel(forChatResource:))
+    }
+
+    func createViewModel(forChatResource resource: ChatResource) -> any ImageViewModelProtocol {
+        ChatResourceImageViewModel(resource: resource, resolver: resources)
     }
 }

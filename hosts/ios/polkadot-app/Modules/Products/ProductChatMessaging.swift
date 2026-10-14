@@ -14,6 +14,8 @@ protocol ProductChatMessaging: Sendable {
     /// Chat Extension v2 `set_room_preview`, as Swift domain values. The rust bridge calls it once the
     /// bindings of P2.10 give it the request.
     func setRoomPreview(roomId: String, preview: Chat.RoomPreview) async throws
+    /// Chat Extension v2 `set_room_metadata`, as Swift domain values.
+    func setRoomMetadata(roomId: String, name: String, description: String?, avatar: Chat.RoomImage?) async throws
 }
 
 /// Serves those calls from a chat binding. Conformers differ only in where the
@@ -80,6 +82,17 @@ extension BoundProductChatMessaging {
     func setRoomPreview(roomId: String, preview: Chat.RoomPreview) async throws {
         let (context, bot) = try requireMessaging()
         try await context.setRoomPreview(for: bot, roomId: roomId, preview: preview)
+    }
+
+    func setRoomMetadata(roomId: String, name: String, description: String?, avatar: Chat.RoomImage?) async throws {
+        let (context, bot) = try requireMessaging()
+        try await context.setRoomMetadata(
+            for: bot,
+            roomId: roomId,
+            name: name,
+            description: description,
+            avatar: avatar
+        )
     }
 }
 

@@ -70,6 +70,12 @@ extension Chat {
         let avatar: RoomImage?
     }
 
+    /// Replaces the name of a room and keeps its v1 icon.
+    struct RoomNameUpdate {
+        let chatId: Chat.Id
+        let name: String
+    }
+
     struct RoomConfigUpdate {
         let chatId: Chat.Id
         let config: Data

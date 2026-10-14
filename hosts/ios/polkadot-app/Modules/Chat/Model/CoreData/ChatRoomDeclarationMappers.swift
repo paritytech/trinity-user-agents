@@ -62,6 +62,12 @@ extension Chat.RoomDescriptionUpdate: ChatRoomDeclarationUpdating {
     }
 }
 
+extension Chat.RoomNameUpdate: ChatRoomDeclarationUpdating {
+    func apply(to entity: CDChatRoomMetadata) {
+        entity.name = name
+    }
+}
+
 extension Chat.RoomConfigUpdate: ChatRoomDeclarationUpdating {
     func apply(to entity: CDChatRoomMetadata) {
         entity.config = config

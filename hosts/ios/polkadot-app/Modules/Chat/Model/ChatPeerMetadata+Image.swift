@@ -9,7 +9,8 @@ extension Chat.PeerMetadata.Icon {
         case .bot:
             .iconBot
         case .product,
-             .resource:
+             .resource,
+             .roomImage:
             nil
         }
     }
@@ -21,6 +22,8 @@ extension Chat.PeerMetadata.Icon {
             factory.createViewModel(for: domain)
         case let .resource(source):
             factory.createViewModel(forResource: source)
+        case let .roomImage(image):
+            factory.createViewModel(forChatResource: image.resource)
         case .image,
              .bot:
             nil

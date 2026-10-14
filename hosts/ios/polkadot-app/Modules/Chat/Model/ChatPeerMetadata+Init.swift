@@ -11,7 +11,7 @@ extension Chat.LocalModel {
 
             return Chat.PeerMetadata(
                 name: roomMetadata?.name ?? extMetadata.name,
-                icon: roomMetadata?.roomIcon ?? extMetadata.icon,
+                icon: roomDeclarations?.avatar.map { .roomImage($0) } ?? roomMetadata?.roomIcon ?? extMetadata.icon,
                 input: policy.footer == .empty ? .empty : extMetadata.input,
                 moreActions: extMetadata.moreActions
             )
@@ -27,7 +27,12 @@ extension Chat.LocalModel {
     func chatMetadata(using registry: ChatExtensionsRegistering) -> ChatMetadata {
         let peerMetadata = peerMetadata(using: registry)
 
-        return ChatMetadata(chatId: chatId, peerMetadata: peerMetadata, state: .created)
+        return ChatMetadata(
+            chatId: chatId,
+            peerMetadata: peerMetadata,
+            state: .created,
+            subtitle: roomDeclarations?.description
+        )
     }
 }
 

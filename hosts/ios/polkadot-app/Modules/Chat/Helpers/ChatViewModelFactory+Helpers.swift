@@ -14,13 +14,12 @@ extension ChatMetadata {
             return .colored(text: prefix, colorSeed: chatId.colorSeed)
         }()
 
-        let info: String? = nil
-
+        // The count of participants replaces the description in P6.3.
         return ChatHeaderConfiguration(
             avatarViewModel: avatarViewModel,
             icon: peerMetadata.icon.imageViewModel(using: iconViewModelFactory),
             username: peerMetadata.name,
-            additionalInfo: info
+            additionalInfo: subtitle
         )
     }
 }

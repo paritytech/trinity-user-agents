@@ -41,6 +41,15 @@ protocol ChatExtensionDiscoverContextProtocol {
         footer: Chat.RoomFooter
     ) async throws
 
+    /// Replaces the name, the description and the avatar of a room.
+    func setRoomMetadata(
+        for chatBot: ChatExtensionBotProtocol,
+        roomId: String,
+        name: String,
+        description: String?,
+        avatar: Chat.RoomImage?
+    ) async throws
+
     /// Replaces the chat-list preview of a room and leaves the rest of the room alone.
     func setRoomPreview(
         for chatBot: ChatExtensionBotProtocol,
@@ -398,6 +407,18 @@ extension ChatExtensionDiscoverContext: ChatExtensionDiscoverContextProtocol {
 
         let update = Chat.RoomFooterUpdate(chatId: chatId, footer: footer)
         try await roomFooterRepository.saveOperation({ [update] }, { [] }).asyncExecute()
+    }
+
+    func setRoomMetadata(
+        for chatBot: ChatExtensionBotProtocol,
+        roomId: String,
+        name: String,
+        description: String?,
+        avatar: Chat.RoomImage?
+    ) async throws {
+        let chatId = try await requireRoom(of: chatBot, roomId: roomId)
+        try await saveDeclaration(Chat.RoomNameUpdate(chatId: chatId, name: name))
+        try await saveDeclaration(Chat.RoomDescriptionUpdate(chatId: chatId, description: description, avatar: avatar))
     }
 
     func setRoomPreview(
