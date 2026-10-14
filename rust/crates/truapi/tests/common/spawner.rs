@@ -1,6 +1,3 @@
-#[cfg(target_arch = "wasm32")]
-use std::sync::Arc;
-
 /// Test spawner that matches the current target.
 pub fn test_spawner() -> truapi::subscription::Spawner {
 	#[cfg(not(target_arch = "wasm32"))]
@@ -9,6 +6,6 @@ pub fn test_spawner() -> truapi::subscription::Spawner {
 	}
 	#[cfg(target_arch = "wasm32")]
 	{
-		Arc::new(futures::executor::block_on)
+		std::sync::Arc::new(futures::executor::block_on)
 	}
 }
