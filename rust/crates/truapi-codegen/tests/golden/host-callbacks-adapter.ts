@@ -6,14 +6,24 @@
 // primitives and byte blobs pass through unchanged.
 
 import {
+  ChatRoomConfig,
   HostChatCreateRoomRequest,
   HostChatCreateRoomResponse,
+  HostChatDeleteRoomRequest,
   HostChatListSubscribeItem,
   HostChatPostMessageRequest,
   HostChatPostMessageResponse,
   HostChatRegisterBotRequest,
   HostChatRegisterBotResponse,
+  HostChatSetRoomActivityRequest,
+  HostChatSetRoomCommandsRequest,
+  HostChatSetRoomConfigRequest,
   HostChatSetRoomFooterRequest,
+  HostChatSetRoomMetadataRequest,
+  HostChatSetRoomPreviewRequest,
+  HostChatSetRoomSuggestionsRequest,
+  HostChatSetRoomToolbarRequest,
+  HostChatUpdateFeedRequest,
   HostDevicePermissionRequest,
   HostFeatureSupportedRequest,
   HostFeatureSupportedResponse,
@@ -74,6 +84,23 @@ export interface RawCallbacks {
     sendItem: (item?: Uint8Array) => void,
     sendError: (error: GenericError) => void,
   ): (() => void) | void;
+  readChatRoomConfig?(product: Uint8Array, roomId: string): Promise<Uint8Array>;
+  setChatRoomConfig?(product: Uint8Array, request: Uint8Array): Promise<void>;
+  setChatRoomMetadata?(product: Uint8Array, request: Uint8Array): Promise<void>;
+  setChatRoomPreview?(product: Uint8Array, request: Uint8Array): Promise<void>;
+  deleteChatRoom?(product: Uint8Array, request: Uint8Array): Promise<void>;
+  updateChatFeed?(
+    product: Uint8Array,
+    request: Uint8Array,
+    persist: boolean,
+  ): Promise<void>;
+  setChatRoomToolbar?(product: Uint8Array, request: Uint8Array): Promise<void>;
+  setChatRoomSuggestions?(
+    product: Uint8Array,
+    request: Uint8Array,
+  ): Promise<void>;
+  setChatRoomCommands?(product: Uint8Array, request: Uint8Array): Promise<void>;
+  setChatRoomActivity?(product: Uint8Array, request: Uint8Array): Promise<void>;
   contacts?(lookup: Uint8Array): Promise<Uint8Array>;
   pickContact?(product: Uint8Array): Promise<Uint8Array>;
   readCoreStorage(key: Uint8Array): Promise<Uint8Array | null | undefined>;
@@ -177,6 +204,59 @@ export function createWasmRawCallbacks(
               chat.subscribeChatRooms(ProductContext.dec(product)),
               (item) => sendItem(HostChatListSubscribeItem.enc(item)),
               sendError,
+            ),
+          readChatRoomConfig: async (product, roomId) =>
+            ChatRoomConfig.enc(
+              await chat.readChatRoomConfig(
+                ProductContext.dec(product),
+                roomId,
+              ),
+            ),
+          setChatRoomConfig: async (product, request) =>
+            await chat.setChatRoomConfig(
+              ProductContext.dec(product),
+              HostChatSetRoomConfigRequest.dec(request),
+            ),
+          setChatRoomMetadata: async (product, request) =>
+            await chat.setChatRoomMetadata(
+              ProductContext.dec(product),
+              HostChatSetRoomMetadataRequest.dec(request),
+            ),
+          setChatRoomPreview: async (product, request) =>
+            await chat.setChatRoomPreview(
+              ProductContext.dec(product),
+              HostChatSetRoomPreviewRequest.dec(request),
+            ),
+          deleteChatRoom: async (product, request) =>
+            await chat.deleteChatRoom(
+              ProductContext.dec(product),
+              HostChatDeleteRoomRequest.dec(request),
+            ),
+          updateChatFeed: async (product, request, persist) =>
+            await chat.updateChatFeed(
+              ProductContext.dec(product),
+              HostChatUpdateFeedRequest.dec(request),
+              persist,
+            ),
+          setChatRoomToolbar: async (product, request) =>
+            await chat.setChatRoomToolbar(
+              ProductContext.dec(product),
+              HostChatSetRoomToolbarRequest.dec(request),
+            ),
+          setChatRoomSuggestions: async (product, request) =>
+            await chat.setChatRoomSuggestions(
+              ProductContext.dec(product),
+              HostChatSetRoomSuggestionsRequest.dec(request),
+            ),
+          setChatRoomCommands: async (product, request) =>
+            await chat.setChatRoomCommands(
+              ProductContext.dec(product),
+              HostChatSetRoomCommandsRequest.dec(request),
+            ),
+          setChatRoomActivity: async (product, request) =>
+            await chat.setChatRoomActivity(
+              ProductContext.dec(product),
+              HostChatSetRoomActivityRequest.dec(request),
             ),
         }
       : {}),

@@ -2,6 +2,7 @@
 
 mod account;
 mod chain;
+mod chat;
 mod expanded_card;
 mod game;
 mod payment;

@@ -16,6 +16,16 @@ export const CALLBACK_NAMES = [
   "registerChatBot",
   "postChatMessage",
   "setChatRoomFooter",
+  "readChatRoomConfig",
+  "setChatRoomConfig",
+  "setChatRoomMetadata",
+  "setChatRoomPreview",
+  "deleteChatRoom",
+  "updateChatFeed",
+  "setChatRoomToolbar",
+  "setChatRoomSuggestions",
+  "setChatRoomCommands",
+  "setChatRoomActivity",
   "contacts",
   "pickContact",
   "readCoreStorage",
@@ -198,6 +208,16 @@ function chatRawCallbacks(
     | "postChatMessage"
     | "setChatRoomFooter"
     | "subscribeChatRooms"
+    | "readChatRoomConfig"
+    | "setChatRoomConfig"
+    | "setChatRoomMetadata"
+    | "setChatRoomPreview"
+    | "deleteChatRoom"
+    | "updateChatFeed"
+    | "setChatRoomToolbar"
+    | "setChatRoomSuggestions"
+    | "setChatRoomCommands"
+    | "setChatRoomActivity"
   >
 > {
   return {
@@ -229,6 +249,57 @@ function chatRawCallbacks(
         sendItem,
         sendError,
       ),
+    readChatRoomConfig: (product, roomId) =>
+      bridge.callbackRequest("readChatRoomConfig", [
+        product,
+        roomId,
+      ]) as ReturnType<Required<RawCallbacks>["readChatRoomConfig"]>,
+    setChatRoomConfig: (product, request) =>
+      bridge.callbackRequest("setChatRoomConfig", [
+        product,
+        request,
+      ]) as ReturnType<Required<RawCallbacks>["setChatRoomConfig"]>,
+    setChatRoomMetadata: (product, request) =>
+      bridge.callbackRequest("setChatRoomMetadata", [
+        product,
+        request,
+      ]) as ReturnType<Required<RawCallbacks>["setChatRoomMetadata"]>,
+    setChatRoomPreview: (product, request) =>
+      bridge.callbackRequest("setChatRoomPreview", [
+        product,
+        request,
+      ]) as ReturnType<Required<RawCallbacks>["setChatRoomPreview"]>,
+    deleteChatRoom: (product, request) =>
+      bridge.callbackRequest("deleteChatRoom", [
+        product,
+        request,
+      ]) as ReturnType<Required<RawCallbacks>["deleteChatRoom"]>,
+    updateChatFeed: (product, request, persist) =>
+      bridge.callbackRequest("updateChatFeed", [
+        product,
+        request,
+        persist,
+      ]) as ReturnType<Required<RawCallbacks>["updateChatFeed"]>,
+    setChatRoomToolbar: (product, request) =>
+      bridge.callbackRequest("setChatRoomToolbar", [
+        product,
+        request,
+      ]) as ReturnType<Required<RawCallbacks>["setChatRoomToolbar"]>,
+    setChatRoomSuggestions: (product, request) =>
+      bridge.callbackRequest("setChatRoomSuggestions", [
+        product,
+        request,
+      ]) as ReturnType<Required<RawCallbacks>["setChatRoomSuggestions"]>,
+    setChatRoomCommands: (product, request) =>
+      bridge.callbackRequest("setChatRoomCommands", [
+        product,
+        request,
+      ]) as ReturnType<Required<RawCallbacks>["setChatRoomCommands"]>,
+    setChatRoomActivity: (product, request) =>
+      bridge.callbackRequest("setChatRoomActivity", [
+        product,
+        request,
+      ]) as ReturnType<Required<RawCallbacks>["setChatRoomActivity"]>,
   };
 }
 

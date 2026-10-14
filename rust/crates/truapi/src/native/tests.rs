@@ -1273,7 +1273,7 @@ fn a_posted_action_set_round_trips_to_the_product_that_posted_it() {
 	let product =
 		ProductContext::new_with_execution("chat.dot".to_string(), ProductExecutionKind::Worker)
 			.unwrap();
-	let connection = crate::runtime::ActionChannel::chat();
+	let connection = crate::runtime::ChatEventChannel::default();
 
 	let posted = futures::executor::block_on(crate::platform::ChatPlatform::post_chat_message(
 		&platform,
@@ -1295,17 +1295,18 @@ fn a_posted_action_set_round_trips_to_the_product_that_posted_it() {
 
 	let mut actions = connection.subscribe::<truapi::latest::GenericError>();
 	connection
-		.publish(truapi::versioned::chat::HostChatActionSubscribeItem::V1(
-			v01::HostChatActionSubscribeItem {
+		.publish(
+			truapi::latest::HostChatActionSubscribeItem {
 				room_id: "support".to_string(),
 				peer: "alice".to_string(),
-				payload: v01::ChatActionPayload::ActionTriggered(v01::ActionTrigger {
+				event: v01::ChatEvent::ActionTriggered(v01::ActionTrigger {
 					message_id: posted.message_id.clone(),
 					action_id: "approve".to_string(),
 					payload: None,
 				}),
 			},
-		))
+			&crate::subscription::thread_per_subscription_spawner(),
+		)
 		.expect("a trigger on a live subscription must be delivered");
 
 	let mut cx = core::task::Context::from_waker(futures::task::noop_waker_ref());
@@ -1313,11 +1314,9 @@ fn a_posted_action_set_round_trips_to_the_product_that_posted_it() {
 		core::task::Poll::Ready(Some(item)) => item,
 		other => panic!("a published trigger must be ready, got {other:?}"),
 	};
-	let Ok(truapi::versioned::chat::HostChatActionSubscribeItem::V1(delivered)) = delivered else {
-		panic!("expected a chat action item")
-	};
-	let v01::ChatActionPayload::ActionTriggered(trigger) = delivered.payload else {
-		panic!("expected an ActionTriggered payload, got {:?}", delivered.payload);
+	let Ok(delivered) = delivered else { panic!("expected a chat action item") };
+	let v01::ChatEvent::ActionTriggered(trigger) = delivered.event else {
+		panic!("expected an ActionTriggered event, got {:?}", delivered.event);
 	};
 
 	// The action set really reached the host, in the room it named.

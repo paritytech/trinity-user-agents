@@ -172,6 +172,27 @@ pub struct ChatMessageRecord {
 	pub alt: Option<String>,
 }
 
+/// What the product declared for one chat room through the mock.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ChatRoomDeclarations {
+	/// The last configuration, or `None` before the product declared one.
+	pub config: Option<latest::ChatRoomConfig>,
+	/// The last metadata from `set_chat_room_metadata`.
+	pub metadata: Option<latest::ChatRoomMetadata>,
+	/// The last chat list preview.
+	pub preview: Option<latest::ChatRoomPreview>,
+	/// The last toolbar buttons.
+	pub toolbar: Vec<latest::ChatToolbarAction>,
+	/// The last quick replies.
+	pub suggestions: Vec<latest::ChatSuggestion>,
+	/// The last slash commands.
+	pub commands: Vec<latest::ChatCommandSpec>,
+	/// The activity line shown now.
+	pub activity: Option<latest::ChatActivity>,
+	/// Every feed update, in order, with whether the host had to store it.
+	pub feed: Vec<(latest::ChatFeedUpdate, bool)>,
+}
+
 /// How the mock's chain connection behaves.
 #[derive(Debug, Clone, Default)]
 pub enum ChainBehavior {
@@ -286,6 +307,7 @@ pub struct MockPlatform {
 	chat_rooms: Arc<Mutex<BTreeMap<String, latest::ChatRoom>>>,
 	chat_bots: Arc<Mutex<BTreeMap<String, latest::HostChatRegisterBotRequest>>>,
 	chat_messages: Arc<Mutex<Vec<ChatMessageRecord>>>,
+	chat_declarations: Arc<Mutex<BTreeMap<String, ChatRoomDeclarations>>>,
 	/// Live `subscribe_chat_rooms` streams, fed a fresh list on every change.
 	chat_room_subscribers:
 		Arc<Mutex<Vec<mpsc::UnboundedSender<latest::HostChatListSubscribeItem>>>>,
@@ -337,6 +359,7 @@ impl MockPlatform {
 			chat_rooms: Arc::new(Mutex::new(BTreeMap::new())),
 			chat_bots: Arc::new(Mutex::new(BTreeMap::new())),
 			chat_messages: Arc::new(Mutex::new(Vec::new())),
+			chat_declarations: Arc::new(Mutex::new(BTreeMap::new())),
 			chat_room_subscribers: Arc::new(Mutex::new(Vec::new())),
 			next_chat_message_id: Arc::new(AtomicU32::new(0)),
 			next_operation_id: Arc::new(AtomicU32::new(0)),
@@ -630,6 +653,31 @@ impl MockPlatform {
 		self.chat_messages.lock().expect("chat messages poisoned").clone()
 	}
 
+	/// What the product declared for `room_id`, or `None` for a room it
+	/// declared nothing for or deleted.
+	pub fn chat_room_declarations(&self, room_id: &str) -> Option<ChatRoomDeclarations> {
+		self.chat_declarations
+			.lock()
+			.expect("chat declarations poisoned")
+			.get(room_id)
+			.cloned()
+	}
+
+	/// Apply `change` to the declarations of `room_id`, or fail with the
+	/// injected chat fault.
+	fn declare_chat_room(
+		&self,
+		room_id: String,
+		change: impl FnOnce(&mut ChatRoomDeclarations),
+	) -> Result<(), latest::GenericError> {
+		if let Some(reason) = &self.config.faults.chat_error {
+			return Err(latest::GenericError { reason: reason.clone() });
+		}
+		let mut declarations = self.chat_declarations.lock().expect("chat declarations poisoned");
+		change(declarations.entry(room_id).or_default());
+		Ok(())
+	}
+
 	/// Drop the registered rooms and bots and the posted-message log.
 	///
 	/// Live `subscribe_chat_rooms` streams stay open and see the emptied list,
@@ -638,6 +686,7 @@ impl MockPlatform {
 		self.chat_rooms.lock().expect("chat rooms poisoned").clear();
 		self.chat_bots.lock().expect("chat bots poisoned").clear();
 		self.chat_messages.lock().expect("chat messages poisoned").clear();
+		self.chat_declarations.lock().expect("chat declarations poisoned").clear();
 		self.publish_chat_rooms();
 	}
 
@@ -1312,6 +1361,117 @@ impl ChatPlatform for MockPlatform {
 			.expect("chat subscribers poisoned")
 			.push(sender);
 		Box::pin(receiver.map(Ok))
+	}
+
+	async fn read_chat_room_config(
+		&self,
+		_product: &ProductContext,
+		room_id: String,
+	) -> Result<latest::ChatRoomConfig, latest::GenericError> {
+		if let Some(reason) = &self.config.faults.chat_error {
+			return Err(latest::GenericError { reason: reason.clone() });
+		}
+		Ok(self
+			.chat_room_declarations(&room_id)
+			.and_then(|declarations| declarations.config)
+			.unwrap_or_default())
+	}
+
+	async fn set_chat_room_config(
+		&self,
+		_product: &ProductContext,
+		request: latest::HostChatSetRoomConfigRequest,
+	) -> Result<(), latest::GenericError> {
+		self.declare_chat_room(request.room_id, |room| {
+			// A room that changes who keeps its messages starts with none.
+			let source_changed = room.config.as_ref().map(|config| config.product_source) !=
+				Some(request.config.product_source);
+			if source_changed {
+				room.feed.clear();
+			}
+			room.config = Some(request.config);
+		})
+	}
+
+	async fn set_chat_room_metadata(
+		&self,
+		_product: &ProductContext,
+		request: latest::HostChatSetRoomMetadataRequest,
+	) -> Result<(), latest::GenericError> {
+		self.declare_chat_room(request.room_id, |room| room.metadata = Some(request.metadata))
+	}
+
+	async fn set_chat_room_preview(
+		&self,
+		_product: &ProductContext,
+		request: latest::HostChatSetRoomPreviewRequest,
+	) -> Result<(), latest::GenericError> {
+		self.declare_chat_room(request.room_id, |room| room.preview = Some(request.preview))
+	}
+
+	async fn delete_chat_room(
+		&self,
+		_product: &ProductContext,
+		request: latest::HostChatDeleteRoomRequest,
+	) -> Result<(), latest::GenericError> {
+		if let Some(reason) = &self.config.faults.chat_error {
+			return Err(latest::GenericError { reason: reason.clone() });
+		}
+		self.chat_declarations
+			.lock()
+			.expect("chat declarations poisoned")
+			.remove(&request.room_id);
+		self.chat_messages
+			.lock()
+			.expect("chat messages poisoned")
+			.retain(|message| message.room_id != request.room_id);
+		let removed = self.chat_rooms.lock().expect("chat rooms poisoned").remove(&request.room_id);
+		if removed.is_some() {
+			self.publish_chat_rooms();
+		}
+		Ok(())
+	}
+
+	async fn update_chat_feed(
+		&self,
+		_product: &ProductContext,
+		request: latest::HostChatUpdateFeedRequest,
+		persist: bool,
+	) -> Result<(), latest::HostChatUpdateFeedError> {
+		self.declare_chat_room(request.room_id, |room| room.feed.push((request.update, persist)))
+			.map_err(|error| latest::HostChatUpdateFeedError::Unknown { reason: error.reason })
+	}
+
+	async fn set_chat_room_toolbar(
+		&self,
+		_product: &ProductContext,
+		request: latest::HostChatSetRoomToolbarRequest,
+	) -> Result<(), latest::GenericError> {
+		self.declare_chat_room(request.room_id, |room| room.toolbar = request.actions)
+	}
+
+	async fn set_chat_room_suggestions(
+		&self,
+		_product: &ProductContext,
+		request: latest::HostChatSetRoomSuggestionsRequest,
+	) -> Result<(), latest::GenericError> {
+		self.declare_chat_room(request.room_id, |room| room.suggestions = request.suggestions)
+	}
+
+	async fn set_chat_room_commands(
+		&self,
+		_product: &ProductContext,
+		request: latest::HostChatSetRoomCommandsRequest,
+	) -> Result<(), latest::GenericError> {
+		self.declare_chat_room(request.room_id, |room| room.commands = request.commands)
+	}
+
+	async fn set_chat_room_activity(
+		&self,
+		_product: &ProductContext,
+		request: latest::HostChatSetRoomActivityRequest,
+	) -> Result<(), latest::GenericError> {
+		self.declare_chat_room(request.room_id, |room| room.activity = request.activity)
 	}
 }
 
@@ -2222,5 +2382,152 @@ mod tests {
 		// Enforcement and the explicit denial are both gone, so the allow-all
 		// policy answers again.
 		assert!(device_request(&p, latest::HostDevicePermissionRequest::Camera));
+	}
+
+	// Every declaration a product makes through the core lands where a test
+	// reads it back, and deleting the room takes all of it away.
+	#[test]
+	fn chat_room_declarations_are_recorded_until_the_room_is_deleted() {
+		let p = MockPlatform::new();
+		let product = mock_product();
+		create_room(&p, "lobby");
+		let room = || "lobby".to_string();
+		let config = latest::ChatRoomConfig { reaction_details: true, ..Default::default() };
+		let metadata = latest::ChatRoomMetadata {
+			name: "Lobby".to_string(),
+			avatar: None,
+			description: Some("Say hello".to_string()),
+		};
+		let preview = latest::ChatRoomPreview {
+			order: latest::ChatRoomOrder::PinToTop,
+			timestamp: Some(7),
+			badge: Some(latest::ChatRoomBadge::UnreadCount { count: 2 }),
+			text: None,
+		};
+		let toolbar = vec![latest::ChatToolbarAction {
+			action_id: "settings".to_string(),
+			label: "Settings".to_string(),
+			icon: latest::ChatResource::Preimage { key: vec![1; 32] },
+			handler: latest::ChatActionHandler::Callback,
+		}];
+		let suggestions = vec![latest::ChatSuggestion {
+			suggestion_id: "yes".to_string(),
+			text: "Yes".to_string(),
+			sends_text: true,
+		}];
+		let commands = vec![latest::ChatCommandSpec {
+			name: "help".to_string(),
+			description: "Show help".to_string(),
+			argument_hint: None,
+		}];
+		let activity =
+			latest::ChatActivity { text: "Bot is typing".to_string(), participant_id: None };
+		let update = latest::ChatFeedUpdate::Deleted { message_id: "m1".to_string() };
+
+		assert_eq!(
+			block_on(p.read_chat_room_config(&product, room())),
+			Ok(latest::ChatRoomConfig::default())
+		);
+		block_on(p.set_chat_room_config(
+			&product,
+			latest::HostChatSetRoomConfigRequest { room_id: room(), config: config.clone() },
+		))
+		.unwrap();
+		block_on(p.set_chat_room_metadata(
+			&product,
+			latest::HostChatSetRoomMetadataRequest { room_id: room(), metadata: metadata.clone() },
+		))
+		.unwrap();
+		block_on(p.set_chat_room_preview(
+			&product,
+			latest::HostChatSetRoomPreviewRequest { room_id: room(), preview: preview.clone() },
+		))
+		.unwrap();
+		block_on(p.set_chat_room_toolbar(
+			&product,
+			latest::HostChatSetRoomToolbarRequest { room_id: room(), actions: toolbar.clone() },
+		))
+		.unwrap();
+		block_on(p.set_chat_room_suggestions(
+			&product,
+			latest::HostChatSetRoomSuggestionsRequest {
+				room_id: room(),
+				suggestions: suggestions.clone(),
+			},
+		))
+		.unwrap();
+		block_on(p.set_chat_room_commands(
+			&product,
+			latest::HostChatSetRoomCommandsRequest { room_id: room(), commands: commands.clone() },
+		))
+		.unwrap();
+		block_on(p.set_chat_room_activity(
+			&product,
+			latest::HostChatSetRoomActivityRequest {
+				room_id: room(),
+				activity: Some(activity.clone()),
+			},
+		))
+		.unwrap();
+		block_on(p.update_chat_feed(
+			&product,
+			latest::HostChatUpdateFeedRequest { room_id: room(), update: update.clone() },
+			true,
+		))
+		.unwrap();
+
+		assert_eq!(block_on(p.read_chat_room_config(&product, room())), Ok(config.clone()));
+		assert_eq!(
+			p.chat_room_declarations("lobby"),
+			Some(ChatRoomDeclarations {
+				config: Some(config),
+				metadata: Some(metadata),
+				preview: Some(preview),
+				toolbar,
+				suggestions,
+				commands,
+				activity: Some(activity),
+				feed: vec![(update, true)],
+			})
+		);
+
+		block_on(
+			p.delete_chat_room(&product, latest::HostChatDeleteRoomRequest { room_id: room() }),
+		)
+		.unwrap();
+		assert_eq!(p.chat_room_declarations("lobby"), None);
+		assert!(p.chat_rooms().is_empty());
+	}
+
+	// A room that changes who keeps its messages starts with none.
+	#[test]
+	fn a_change_of_message_store_drops_the_feed() {
+		let p = MockPlatform::new();
+		let product = mock_product();
+		let configure = |product_source| {
+			block_on(p.set_chat_room_config(
+				&product,
+				latest::HostChatSetRoomConfigRequest {
+					room_id: "lobby".to_string(),
+					config: latest::ChatRoomConfig { product_source, ..Default::default() },
+				},
+			))
+			.unwrap()
+		};
+		configure(false);
+		block_on(p.update_chat_feed(
+			&product,
+			latest::HostChatUpdateFeedRequest {
+				room_id: "lobby".to_string(),
+				update: latest::ChatFeedUpdate::Deleted { message_id: "m1".to_string() },
+			},
+			true,
+		))
+		.unwrap();
+
+		configure(false);
+		assert_eq!(p.chat_room_declarations("lobby").unwrap().feed.len(), 1);
+		configure(true);
+		assert!(p.chat_room_declarations("lobby").unwrap().feed.is_empty());
 	}
 }

@@ -37,10 +37,14 @@ use truapi::{
 		ChatReaction, ChatReactionSummary, ChatResource, ChatRichText, ChatRoomBadge,
 		ChatRoomConfig, ChatRoomFooter, ChatRoomMetadata, ChatRoomPreview, ChatRoomPreviewText,
 		ChatSuggestion, ChatToolbarAction, CodeFormat, GenericError, HostChatCreateRoomError,
-		HostChatCreateRoomRequest, HostChatCreateRoomResponse, HostChatListSubscribeItem,
-		HostChatPostMessageError, HostChatPostMessageRequest, HostChatPostMessageResponse,
-		HostChatRegisterBotError, HostChatRegisterBotRequest, HostChatRegisterBotResponse,
-		HostChatSetRoomFooterRequest, HostDevicePermissionRequest, HostFeatureSupportedRequest,
+		HostChatCreateRoomRequest, HostChatCreateRoomResponse, HostChatDeleteRoomRequest,
+		HostChatListSubscribeItem, HostChatPostMessageError, HostChatPostMessageRequest,
+		HostChatPostMessageResponse, HostChatRegisterBotError, HostChatRegisterBotRequest,
+		HostChatRegisterBotResponse, HostChatSetRoomActivityRequest,
+		HostChatSetRoomCommandsRequest, HostChatSetRoomConfigRequest, HostChatSetRoomFooterRequest,
+		HostChatSetRoomMetadataRequest, HostChatSetRoomPreviewRequest,
+		HostChatSetRoomSuggestionsRequest, HostChatSetRoomToolbarRequest, HostChatUpdateFeedError,
+		HostChatUpdateFeedRequest, HostDevicePermissionRequest, HostFeatureSupportedRequest,
 		HostFeatureSupportedResponse, HostLocalStorageChangeItem, HostLocaleSubscribeItem,
 		HostNavigateToError, HostPaymentBalanceSubscribeError, HostPaymentBalanceSubscribeItem,
 		HostPaymentError, HostPaymentRequest, HostPaymentStatusSubscribeError,
@@ -4337,6 +4341,115 @@ pub trait ChatPlatform: Send + Sync {
 		&self,
 		product: &ProductContext,
 	) -> BoxStream<'static, Result<HostChatListSubscribeItem, GenericError>>;
+
+	/// The configuration the product last declared for a room, or the default
+	/// configuration when it declared none. The core reads it to decide
+	/// whether a room keeps its messages in the host and which queries the
+	/// product answers.
+	async fn read_chat_room_config(
+		&self,
+		_product: &ProductContext,
+		_room_id: String,
+	) -> Result<ChatRoomConfig, GenericError> {
+		Ok(ChatRoomConfig::default())
+	}
+
+	/// Replace the configuration of a room whole and keep it across restarts.
+	/// A change of `product_source` discards the stored messages or cached
+	/// pages of the room. The core has already checked the product hosts the
+	/// room, and screened the configuration.
+	async fn set_chat_room_config(
+		&self,
+		_product: &ProductContext,
+		_request: HostChatSetRoomConfigRequest,
+	) -> Result<(), GenericError> {
+		Err(chat_method_not_served("setChatRoomConfig"))
+	}
+
+	/// Replace the name, avatar and description of a room.
+	async fn set_chat_room_metadata(
+		&self,
+		_product: &ProductContext,
+		_request: HostChatSetRoomMetadataRequest,
+	) -> Result<(), GenericError> {
+		Err(chat_method_not_served("setChatRoomMetadata"))
+	}
+
+	/// Replace how a room shows in the chat list.
+	async fn set_chat_room_preview(
+		&self,
+		_product: &ProductContext,
+		_request: HostChatSetRoomPreviewRequest,
+	) -> Result<(), GenericError> {
+		Err(chat_method_not_served("setChatRoomPreview"))
+	}
+
+	/// Delete a room with its messages, cache and declarations, and close its
+	/// screen. The core calls it only for a room the product hosts.
+	async fn delete_chat_room(
+		&self,
+		_product: &ProductContext,
+		_request: HostChatDeleteRoomRequest,
+	) -> Result<(), GenericError> {
+		Err(chat_method_not_served("deleteChatRoom"))
+	}
+
+	/// Apply one change to the messages of a room. With `persist` the host
+	/// stores the change, because it keeps the messages of the room. Without
+	/// it the host applies the change only to an open room screen and the chat
+	/// list preview. The host answers `UnknownMessage`, `DuplicateMessage`
+	/// and, for an edit of a message the product did not write, `NotOwner`.
+	async fn update_chat_feed(
+		&self,
+		_product: &ProductContext,
+		_request: HostChatUpdateFeedRequest,
+		_persist: bool,
+	) -> Result<(), HostChatUpdateFeedError> {
+		Err(HostChatUpdateFeedError::Unknown {
+			reason: chat_method_not_served("updateChatFeed").reason,
+		})
+	}
+
+	/// Replace the toolbar buttons of a room.
+	async fn set_chat_room_toolbar(
+		&self,
+		_product: &ProductContext,
+		_request: HostChatSetRoomToolbarRequest,
+	) -> Result<(), GenericError> {
+		Err(chat_method_not_served("setChatRoomToolbar"))
+	}
+
+	/// Replace the quick replies of a room.
+	async fn set_chat_room_suggestions(
+		&self,
+		_product: &ProductContext,
+		_request: HostChatSetRoomSuggestionsRequest,
+	) -> Result<(), GenericError> {
+		Err(chat_method_not_served("setChatRoomSuggestions"))
+	}
+
+	/// Replace the slash commands of a room.
+	async fn set_chat_room_commands(
+		&self,
+		_product: &ProductContext,
+		_request: HostChatSetRoomCommandsRequest,
+	) -> Result<(), GenericError> {
+		Err(chat_method_not_served("setChatRoomCommands"))
+	}
+
+	/// Show or remove the activity line of a room.
+	async fn set_chat_room_activity(
+		&self,
+		_product: &ProductContext,
+		_request: HostChatSetRoomActivityRequest,
+	) -> Result<(), GenericError> {
+		Err(chat_method_not_served("setChatRoomActivity"))
+	}
+}
+
+/// The failure of a chat platform method a host does not serve yet.
+fn chat_method_not_served(method: &str) -> GenericError {
+	GenericError { reason: format!("this host does not serve {method}") }
 }
 
 /// Host-implemented balance view: what a payment request can spend right now,

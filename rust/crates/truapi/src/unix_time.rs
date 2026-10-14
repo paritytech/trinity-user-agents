@@ -15,3 +15,19 @@ pub fn current_unix_secs() -> u64 {
 pub fn current_unix_secs() -> u64 {
 	(js_sys::Date::now() / 1000.0) as u64
 }
+
+/// Current unix time in milliseconds, used to pace chat calls. Trusts the
+/// local clock on both native and wasm targets.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn current_unix_millis() -> u64 {
+	use std::time::{SystemTime, UNIX_EPOCH};
+
+	let elapsed = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default();
+	u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX)
+}
+
+/// Current unix time in milliseconds on wasm32, sourced from the JS clock.
+#[cfg(target_arch = "wasm32")]
+pub fn current_unix_millis() -> u64 {
+	js_sys::Date::now() as u64
+}

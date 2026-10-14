@@ -1722,6 +1722,20 @@ impl WasmProductRuntime {
 			.map_err(|err| JsValue::from_str(&err.to_string()))
 	}
 
+	/// Publish one host-authored Chat event into this connection's action
+	/// stream, buffered until the product subscribes. Takes a SCALE-encoded
+	/// latest `HostChatActionSubscribeItem`, which carries a `ChatEvent`.
+	#[wasm_bindgen(js_name = publishChatEvent)]
+	pub fn publish_chat_event(&self, event: Vec<u8>) -> Result<(), JsValue> {
+		let event = truapi::latest::HostChatActionSubscribeItem::decode(&mut event.as_slice())
+			.map_err(|err| JsValue::from_str(&format!("chat event did not decode: {err}")))?;
+		self.inner
+			.core
+			.control()
+			.publish_chat_event(event)
+			.map_err(|err| JsValue::from_str(&err.to_string()))
+	}
+
 	/// Publish one action triggered inside a product-rendered body, buffered
 	/// until the product subscribes. Takes a SCALE-encoded
 	/// `HostRendererActionSubscribeItem`.

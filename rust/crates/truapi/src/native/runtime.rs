@@ -189,7 +189,7 @@ impl NativeTrUApiHostRuntime {
 			spawner: self.spawner.clone(),
 			callbacks,
 			closed: AtomicBool::new(false),
-			chat_connection: Arc::new(crate::runtime::ActionChannel::chat()),
+			chat_connection: Arc::default(),
 			renderer_connection: Arc::new(crate::runtime::ActionChannel::renderer()),
 			ws_bridge: self.ws_bridge.clone(),
 			bridge_token: Mutex::new(None),
@@ -707,8 +707,7 @@ pub struct NativeProductExecution {
 	callbacks: Arc<dyn HostCallbacks>,
 	/// Single Chat action buffer shared with every product connection this
 	/// execution opens; survives bridge restarts until [`Self::shutdown`].
-	chat_connection:
-		Arc<crate::runtime::ActionChannel<truapi::versioned::chat::HostChatActionSubscribeItem>>,
+	chat_connection: Arc<crate::runtime::ChatEventChannel>,
 	/// Single renderer action buffer shared with every product connection this
 	/// execution opens; survives bridge restarts until [`Self::shutdown`].
 	renderer_connection: Arc<
@@ -927,7 +926,27 @@ impl NativeProductExecution {
 		action: v01::HostChatActionSubscribeItem,
 	) -> Result<(), crate::ProductRuntimeError> {
 		self.require_chat()?;
-		self.chat_connection.publish(action.into())
+		let event = truapi::versioned::IntoLatest::into_latest(
+			truapi::versioned::chat::HostChatActionSubscribeItem::V1(action),
+		);
+		self.chat_connection.publish(event, &self.spawner)
+	}
+
+	/// Publish one native Chat event, buffering it until the product
+	/// connection subscribes. A subscriber at the first protocol version
+	/// receives only the events its version carries, and a burst of `Seen`
+	/// events reaches the product at most once per room each second.
+	pub fn publish_chat_event(
+		&self,
+		room_id: String,
+		peer: String,
+		event: v01::ChatEvent,
+	) -> Result<(), crate::ProductRuntimeError> {
+		self.require_chat()?;
+		self.chat_connection.publish(
+			truapi::latest::HostChatActionSubscribeItem { room_id, peer, event },
+			&self.spawner,
+		)
 	}
 
 	/// Ask the product to draw one body, delivering each replacement tree to

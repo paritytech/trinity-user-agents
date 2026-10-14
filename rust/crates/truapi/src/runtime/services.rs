@@ -97,6 +97,8 @@ pub struct RuntimeServices {
 	asset_hub_chain_genesis_hash: [u8; 32],
 	/// Reference counts per product worker.
 	pub worker_ledger: WorkerLedger,
+	/// Call budgets of every product chat room.
+	pub chat_rate_limits: crate::runtime::chat::ChatRateLimits,
 	/// Shared chainHead-v1 runtime behind the Chain surface.
 	pub chain: ChainRuntime,
 	/// People-chain statement store RPC client.
@@ -175,6 +177,7 @@ impl RuntimeServices {
 			durable_work_observer: OnceLock::new(),
 			asset_hub_chain_genesis_hash,
 			worker_ledger: WorkerLedger::default(),
+			chat_rate_limits: Default::default(),
 			chain,
 			statement_store,
 			bulletin,

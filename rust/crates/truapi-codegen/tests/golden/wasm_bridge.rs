@@ -33,6 +33,16 @@ pub struct JsBridge {
     pub post_chat_message: Function,
     pub set_chat_room_footer: Function,
     pub subscribe_chat_rooms: Function,
+    pub read_chat_room_config: Function,
+    pub set_chat_room_config: Function,
+    pub set_chat_room_metadata: Function,
+    pub set_chat_room_preview: Function,
+    pub delete_chat_room: Function,
+    pub update_chat_feed: Function,
+    pub set_chat_room_toolbar: Function,
+    pub set_chat_room_suggestions: Function,
+    pub set_chat_room_commands: Function,
+    pub set_chat_room_activity: Function,
     pub contacts: Function,
     pub pick_contact: Function,
     pub read_core_storage: Function,
@@ -85,6 +95,26 @@ impl JsBridge {
                 .unwrap_or_else(|| missing_callback("setChatRoomFooter")),
             subscribe_chat_rooms: get_optional_function(callbacks, "subscribeChatRooms")?
                 .unwrap_or_else(|| missing_callback("subscribeChatRooms")),
+            read_chat_room_config: get_optional_function(callbacks, "readChatRoomConfig")?
+                .unwrap_or_else(|| missing_callback("readChatRoomConfig")),
+            set_chat_room_config: get_optional_function(callbacks, "setChatRoomConfig")?
+                .unwrap_or_else(|| missing_callback("setChatRoomConfig")),
+            set_chat_room_metadata: get_optional_function(callbacks, "setChatRoomMetadata")?
+                .unwrap_or_else(|| missing_callback("setChatRoomMetadata")),
+            set_chat_room_preview: get_optional_function(callbacks, "setChatRoomPreview")?
+                .unwrap_or_else(|| missing_callback("setChatRoomPreview")),
+            delete_chat_room: get_optional_function(callbacks, "deleteChatRoom")?
+                .unwrap_or_else(|| missing_callback("deleteChatRoom")),
+            update_chat_feed: get_optional_function(callbacks, "updateChatFeed")?
+                .unwrap_or_else(|| missing_callback("updateChatFeed")),
+            set_chat_room_toolbar: get_optional_function(callbacks, "setChatRoomToolbar")?
+                .unwrap_or_else(|| missing_callback("setChatRoomToolbar")),
+            set_chat_room_suggestions: get_optional_function(callbacks, "setChatRoomSuggestions")?
+                .unwrap_or_else(|| missing_callback("setChatRoomSuggestions")),
+            set_chat_room_commands: get_optional_function(callbacks, "setChatRoomCommands")?
+                .unwrap_or_else(|| missing_callback("setChatRoomCommands")),
+            set_chat_room_activity: get_optional_function(callbacks, "setChatRoomActivity")?
+                .unwrap_or_else(|| missing_callback("setChatRoomActivity")),
             contacts: get_optional_function(callbacks, "contacts")?
                 .unwrap_or_else(|| missing_callback("contacts")),
             pick_contact: get_optional_function(callbacks, "pickContact")?
@@ -126,7 +156,17 @@ impl JsBridge {
                 && get_optional_function(callbacks, "registerChatBot")?.is_some()
                 && get_optional_function(callbacks, "postChatMessage")?.is_some()
                 && get_optional_function(callbacks, "setChatRoomFooter")?.is_some()
-                && get_optional_function(callbacks, "subscribeChatRooms")?.is_some(),
+                && get_optional_function(callbacks, "subscribeChatRooms")?.is_some()
+                && get_optional_function(callbacks, "readChatRoomConfig")?.is_some()
+                && get_optional_function(callbacks, "setChatRoomConfig")?.is_some()
+                && get_optional_function(callbacks, "setChatRoomMetadata")?.is_some()
+                && get_optional_function(callbacks, "setChatRoomPreview")?.is_some()
+                && get_optional_function(callbacks, "deleteChatRoom")?.is_some()
+                && get_optional_function(callbacks, "updateChatFeed")?.is_some()
+                && get_optional_function(callbacks, "setChatRoomToolbar")?.is_some()
+                && get_optional_function(callbacks, "setChatRoomSuggestions")?.is_some()
+                && get_optional_function(callbacks, "setChatRoomCommands")?.is_some()
+                && get_optional_function(callbacks, "setChatRoomActivity")?.is_some(),
             contacts_present: get_optional_function(callbacks, "contacts")?.is_some()
                 && get_optional_function(callbacks, "pickContact")?.is_some(),
             game_present: get_optional_function(callbacks, "scheduleGameReminder")?.is_some()
@@ -273,6 +313,170 @@ impl crate::platform::ChatPlatform for WasmPlatform {
             Some(Uint8Array::from(product.encode().as_slice()).into()),
             parse_host_chat_list_subscribe_item_item,
         )
+    }
+
+    async fn read_chat_room_config(
+        &self,
+        _product: &crate::platform::ProductContext,
+        _room_id: String,
+    ) -> Result<latest::ChatRoomConfig, latest::GenericError> {
+        let bytes = invoke_bytes_return(
+            &self.bridge.read_chat_room_config,
+            vec![
+                Uint8Array::from(_product.encode().as_slice()).into(),
+                JsValue::from_str(&_room_id),
+            ],
+        )
+        .await
+        .map_err(generic)?;
+        decode_bytes::<latest::ChatRoomConfig>(bytes, "readChatRoomConfig response did not decode")
+            .map_err(generic)
+    }
+
+    async fn set_chat_room_config(
+        &self,
+        _product: &crate::platform::ProductContext,
+        _request: latest::HostChatSetRoomConfigRequest,
+    ) -> Result<(), latest::GenericError> {
+        invoke_unit(
+            &self.bridge.set_chat_room_config,
+            vec![
+                Uint8Array::from(_product.encode().as_slice()).into(),
+                Uint8Array::from(_request.encode().as_slice()).into(),
+            ],
+        )
+        .await
+        .map_err(generic)
+    }
+
+    async fn set_chat_room_metadata(
+        &self,
+        _product: &crate::platform::ProductContext,
+        _request: latest::HostChatSetRoomMetadataRequest,
+    ) -> Result<(), latest::GenericError> {
+        invoke_unit(
+            &self.bridge.set_chat_room_metadata,
+            vec![
+                Uint8Array::from(_product.encode().as_slice()).into(),
+                Uint8Array::from(_request.encode().as_slice()).into(),
+            ],
+        )
+        .await
+        .map_err(generic)
+    }
+
+    async fn set_chat_room_preview(
+        &self,
+        _product: &crate::platform::ProductContext,
+        _request: latest::HostChatSetRoomPreviewRequest,
+    ) -> Result<(), latest::GenericError> {
+        invoke_unit(
+            &self.bridge.set_chat_room_preview,
+            vec![
+                Uint8Array::from(_product.encode().as_slice()).into(),
+                Uint8Array::from(_request.encode().as_slice()).into(),
+            ],
+        )
+        .await
+        .map_err(generic)
+    }
+
+    async fn delete_chat_room(
+        &self,
+        _product: &crate::platform::ProductContext,
+        _request: latest::HostChatDeleteRoomRequest,
+    ) -> Result<(), latest::GenericError> {
+        invoke_unit(
+            &self.bridge.delete_chat_room,
+            vec![
+                Uint8Array::from(_product.encode().as_slice()).into(),
+                Uint8Array::from(_request.encode().as_slice()).into(),
+            ],
+        )
+        .await
+        .map_err(generic)
+    }
+
+    async fn update_chat_feed(
+        &self,
+        _product: &crate::platform::ProductContext,
+        _request: latest::HostChatUpdateFeedRequest,
+        _persist: bool,
+    ) -> Result<(), latest::HostChatUpdateFeedError> {
+        invoke_unit(
+            &self.bridge.update_chat_feed,
+            vec![
+                Uint8Array::from(_product.encode().as_slice()).into(),
+                Uint8Array::from(_request.encode().as_slice()).into(),
+                JsValue::from_bool(_persist),
+            ],
+        )
+        .await
+        .map_err(|reason| latest::HostChatUpdateFeedError::Unknown { reason })
+    }
+
+    async fn set_chat_room_toolbar(
+        &self,
+        _product: &crate::platform::ProductContext,
+        _request: latest::HostChatSetRoomToolbarRequest,
+    ) -> Result<(), latest::GenericError> {
+        invoke_unit(
+            &self.bridge.set_chat_room_toolbar,
+            vec![
+                Uint8Array::from(_product.encode().as_slice()).into(),
+                Uint8Array::from(_request.encode().as_slice()).into(),
+            ],
+        )
+        .await
+        .map_err(generic)
+    }
+
+    async fn set_chat_room_suggestions(
+        &self,
+        _product: &crate::platform::ProductContext,
+        _request: latest::HostChatSetRoomSuggestionsRequest,
+    ) -> Result<(), latest::GenericError> {
+        invoke_unit(
+            &self.bridge.set_chat_room_suggestions,
+            vec![
+                Uint8Array::from(_product.encode().as_slice()).into(),
+                Uint8Array::from(_request.encode().as_slice()).into(),
+            ],
+        )
+        .await
+        .map_err(generic)
+    }
+
+    async fn set_chat_room_commands(
+        &self,
+        _product: &crate::platform::ProductContext,
+        _request: latest::HostChatSetRoomCommandsRequest,
+    ) -> Result<(), latest::GenericError> {
+        invoke_unit(
+            &self.bridge.set_chat_room_commands,
+            vec![
+                Uint8Array::from(_product.encode().as_slice()).into(),
+                Uint8Array::from(_request.encode().as_slice()).into(),
+            ],
+        )
+        .await
+        .map_err(generic)
+    }
+
+    async fn set_chat_room_activity(
+        &self,
+        _product: &crate::platform::ProductContext,
+        _request: latest::HostChatSetRoomActivityRequest,
+    ) -> Result<(), latest::GenericError> {
+        invoke_unit(
+            &self.bridge.set_chat_room_activity,
+            vec![
+                Uint8Array::from(_product.encode().as_slice()).into(),
+                Uint8Array::from(_request.encode().as_slice()).into(),
+            ],
+        )
+        .await
+        .map_err(generic)
     }
 }
 

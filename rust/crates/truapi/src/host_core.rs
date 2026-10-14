@@ -1292,7 +1292,7 @@ pub struct ConnectionAdapters {
 	pub permission_status: Option<Arc<dyn PermissionStatusHost>>,
 	/// SDK and internal network connections must share an execution's one-use grants.
 	pub permission_grants: Arc<crate::host_internal::permissions::TemporaryPermissions>,
-	pub chat: Arc<ActionChannel<truapi::versioned::chat::HostChatActionSubscribeItem>>,
+	pub chat: Arc<crate::runtime::ChatEventChannel>,
 	pub renderer: Arc<ActionChannel<truapi::versioned::renderer::HostRendererActionSubscribeItem>>,
 	pub pocket_platform: Option<Arc<dyn PocketPlatform>>,
 	pub game_platform: Option<Arc<dyn GamePlatform>>,
@@ -1308,7 +1308,7 @@ impl ConnectionAdapters {
 			chat_platform: services.chat_platform.clone(),
 			permission_status: services.permission_status_host(),
 			permission_grants: Arc::default(),
-			chat: Arc::new(ActionChannel::chat()),
+			chat: Arc::default(),
 			renderer: Arc::new(ActionChannel::renderer()),
 			pocket_platform: services.pocket_platform(),
 			expanded_card: None,
@@ -1563,8 +1563,20 @@ impl ProductRuntimeControl {
 		&self,
 		action: v01::HostChatActionSubscribeItem,
 	) -> Result<(), ProductRuntimeError> {
-		self.connection()?
-			.publish_chat_action(truapi::versioned::chat::HostChatActionSubscribeItem::V1(action))
+		let event = truapi::versioned::IntoLatest::into_latest(
+			truapi::versioned::chat::HostChatActionSubscribeItem::V1(action),
+		);
+		self.connection()?.publish_chat_event(event)
+	}
+
+	/// Publish one host-authored Chat event into this connection's action
+	/// stream, buffering it until the product subscribes. A subscriber at the
+	/// first protocol version receives only the events its version carries.
+	pub fn publish_chat_event(
+		&self,
+		event: truapi::latest::HostChatActionSubscribeItem,
+	) -> Result<(), ProductRuntimeError> {
+		self.connection()?.publish_chat_event(event)
 	}
 
 	/// Publish one action triggered inside a product-rendered body into this
