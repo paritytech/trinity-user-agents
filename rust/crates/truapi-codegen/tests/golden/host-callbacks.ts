@@ -249,6 +249,18 @@ export type CreateTransactionReview =
   | { tag: "LegacyAccount"; value: LegacyAccountTxPayload };
 
 /**
+ * A kind of signature a product makes with another product's account.
+ *
+ * The user approves each kind separately: approving one never lets another
+ * through without a prompt.
+ */
+export type CrossProductSignatureKind =
+  | "Payload"
+  | "Transaction"
+  | "Raw"
+  | "StatementProof";
+
+/**
  * What the operating system currently says about a device capability.
  *
  * Distinct from `PermissionAuthorizationStatus`, which is the product-scoped
@@ -424,7 +436,16 @@ export type PermissionAuthorizationRequest =
   /**
    * Product-scoped permission to access another product's account context.
    */
-  | { tag: "AccountAccess"; value: { targetProductId: string } };
+  | { tag: "AccountAccess"; value: { targetProductId: string } }
+  /**
+   * Product-scoped approval to make one kind of signature with another
+   * product's accounts. It is held in memory only and ends when the product
+   * execution closes.
+   */
+  | {
+      tag: "CrossProductSignature";
+      value: { targetProductId: string; kind: CrossProductSignatureKind };
+    };
 
 /**
  * Authorization status for a permission request.
@@ -441,16 +462,6 @@ export type PermissionAuthorizationStatus =
  * User decision including how long an authorization should last.
  */
 export type PermissionDecision = "AllowOnce" | "AllowAlways" | "Deny";
-
-/**
- * Review shown before a preimage is submitted.
- */
-export interface PreimageSubmitReview {
-  /**
-   * Size of the preimage in bytes.
-   */
-  size: bigint;
-}
 
 /**
  * Product identity attached to one product-facing TrUAPI connection.
@@ -687,10 +698,6 @@ export type UserConfirmationReview =
    */
   | { tag: "ResourceAllocation"; value: ResourceAllocationReview }
   /**
-   * Submit a preimage to the host-selected backend.
-   */
-  | { tag: "PreimageSubmit"; value: PreimageSubmitReview }
-  /**
    * Allow a product to access another product account.
    */
   | { tag: "AccountAccess"; value: AccountAccessReview }
@@ -827,6 +834,18 @@ export const CreateTransactionReview: S.Codec<CreateTransactionReview> = S.lazy(
 );
 
 /**
+ * A kind of signature a product makes with another product's account.
+ *
+ * The user approves each kind separately: approving one never lets another
+ * through without a prompt.
+ */
+export const CrossProductSignatureKind: S.Codec<CrossProductSignatureKind> =
+  S.lazy(
+    (): S.Codec<CrossProductSignatureKind> =>
+      S.Status("Payload", "Transaction", "Raw", "StatementProof"),
+  );
+
+/**
  * What the operating system currently says about a device capability.
  *
  * Distinct from `PermissionAuthorizationStatus`, which is the product-scoped
@@ -959,6 +978,13 @@ export const PermissionAuthorizationRequest: S.Codec<PermissionAuthorizationRequ
         AccountAccess: S.Struct({ targetProductId: S.str }) as S.Codec<{
           targetProductId: string;
         }>,
+        CrossProductSignature: S.Struct({
+          targetProductId: S.str,
+          kind: CrossProductSignatureKind,
+        }) as S.Codec<{
+          targetProductId: string;
+          kind: CrossProductSignatureKind;
+        }>,
       }),
   );
 
@@ -980,14 +1006,6 @@ export const PermissionAuthorizationStatus: S.Codec<PermissionAuthorizationStatu
 export const PermissionDecision: S.Codec<PermissionDecision> = S.lazy(
   (): S.Codec<PermissionDecision> =>
     S.Status("AllowOnce", "AllowAlways", "Deny"),
-);
-
-/**
- * Review shown before a preimage is submitted.
- */
-export const PreimageSubmitReview: S.Codec<PreimageSubmitReview> = S.lazy(
-  (): S.Codec<PreimageSubmitReview> =>
-    S.Struct({ size: S.u64 }) as S.Codec<PreimageSubmitReview>,
 );
 
 /**
@@ -1134,19 +1152,18 @@ export const StatementStoreProductSignReview: S.Codec<StatementStoreProductSignR
  */
 export const UserConfirmationReview: S.Codec<UserConfirmationReview> = S.lazy(
   (): S.Codec<UserConfirmationReview> =>
-    S.TaggedUnion({
-      SignPayload: SignPayloadReview,
-      SignRaw: SignRawReview,
-      StatementStoreProductSign: StatementStoreProductSignReview,
-      CreateTransaction: CreateTransactionReview,
-      AccountAlias: AccountAliasReview,
-      CreateProof: CreateProofReview,
-      IdentityDisclosure: IdentityDisclosureReview,
-      ResourceAllocation: ResourceAllocationReview,
-      PreimageSubmit: PreimageSubmitReview,
-      AccountAccess: AccountAccessReview,
-      SignVrf: SignVrfReview,
-      ProductSubtree: ProductSubtreeReview,
+    S.indexedTaggedUnion({
+      SignPayload: [0, SignPayloadReview] as const,
+      SignRaw: [1, SignRawReview] as const,
+      StatementStoreProductSign: [2, StatementStoreProductSignReview] as const,
+      CreateTransaction: [3, CreateTransactionReview] as const,
+      AccountAlias: [4, AccountAliasReview] as const,
+      CreateProof: [5, CreateProofReview] as const,
+      IdentityDisclosure: [6, IdentityDisclosureReview] as const,
+      ResourceAllocation: [7, ResourceAllocationReview] as const,
+      AccountAccess: [9, AccountAccessReview] as const,
+      SignVrf: [10, SignVrfReview] as const,
+      ProductSubtree: [11, ProductSubtreeReview] as const,
     }),
 );
 

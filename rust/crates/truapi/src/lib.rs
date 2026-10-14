@@ -84,8 +84,8 @@ pub mod latest {
 		HostAccountRingVrfSignRequest, HostAccountSignVrfError, HostAccountSignVrfRequest,
 		HostPlatform, HostSignPayloadData, HostWorkerBeginOperationRequest,
 		HostWorkerOperationError, ImageFit, ImageProps, ImageSource, Modifier,
-		OperationStartedResult, PocketCard, ProductAccountId, ProductProofContext, RawPayload,
-		RegisteredRingVrfKey, RemoteChainTransactionStopRequest, RemotePermission,
+		OperationStartedResult, PocketCard, ProductAccount, ProductAccountId, ProductProofContext,
+		RawPayload, RegisteredRingVrfKey, RemoteChainTransactionStopRequest, RemotePermission,
 		RemoteStatementStoreCreateProofError, RemoteStatementStoreCreateProofRequest,
 		RemoteStatementStoreCreateProofResponse, RemoteStatementStoreSubscribeItem,
 		RemoteStatementStoreSubscribeRequest, RenderContext, RendererNode, ResourceAllocationError,
@@ -99,6 +99,85 @@ pub mod latest {
 	/// Latest payload type of a versioned envelope.
 	pub type LatestOf<T> = <T as Versioned>::Latest;
 
+	/// Account proof creation failure.
+	pub type HostAccountCreateProofError =
+		LatestOf<versioned::account::HostAccountCreateProofError>;
+	/// Contextual alias derivation failure.
+	pub type HostAccountGetAliasError = LatestOf<versioned::account::HostAccountGetAliasError>;
+	/// Account lookup request.
+	pub type HostAccountGetRequest = LatestOf<versioned::account::HostAccountGetRequest>;
+	/// Account lookup result.
+	pub type HostAccountGetResponse = LatestOf<versioned::account::HostAccountGetResponse>;
+	/// Ring-VRF registry listing failure.
+	pub type HostAccountListRingVrfKeysError =
+		LatestOf<versioned::account::HostAccountListRingVrfKeysError>;
+	/// Ring-VRF key registration failure.
+	pub type HostAccountRegisterRingVrfKeyError =
+		LatestOf<versioned::account::HostAccountRegisterRingVrfKeyError>;
+	/// Ring-VRF signing failure.
+	pub type HostAccountRingVrfSignError =
+		LatestOf<versioned::account::HostAccountRingVrfSignError>;
+	/// User identifier lookup failure.
+	pub type HostGetUserIdError = LatestOf<versioned::account::HostGetUserIdError>;
+	/// User identifier lookup result.
+	pub type HostGetUserIdResponse = LatestOf<versioned::account::HostGetUserIdResponse>;
+	/// Transaction creation failure.
+	pub type HostCreateTransactionError = LatestOf<versioned::signing::HostCreateTransactionError>;
+	/// Transaction created for a legacy account.
+	pub type HostCreateTransactionWithLegacyAccountResponse =
+		LatestOf<versioned::signing::HostCreateTransactionWithLegacyAccountResponse>;
+	/// Payload signing failure.
+	pub type HostSignPayloadError = LatestOf<versioned::signing::HostSignPayloadError>;
+	/// Product entropy derivation failure.
+	pub type HostDeriveEntropyError = LatestOf<versioned::entropy::HostDeriveEntropyError>;
+	/// Product entropy derivation request.
+	pub type HostDeriveEntropyRequest = LatestOf<versioned::entropy::HostDeriveEntropyRequest>;
+	/// Product entropy derivation result.
+	pub type HostDeriveEntropyResponse = LatestOf<versioned::entropy::HostDeriveEntropyResponse>;
+	/// Host information exposed to a product.
+	pub type HostInfoResponse = LatestOf<versioned::system::HostInfoResponse>;
+	/// Product navigation request.
+	pub type HostNavigateToRequest = LatestOf<versioned::system::HostNavigateToRequest>;
+	/// Storage read request, optionally naming another product.
+	pub type HostLocalStorageReadRequest =
+		LatestOf<versioned::local_storage::HostLocalStorageReadRequest>;
+	/// Value read from product storage.
+	pub type HostLocalStorageReadResponse =
+		LatestOf<versioned::local_storage::HostLocalStorageReadResponse>;
+	/// Product storage write request.
+	pub type HostLocalStorageWriteRequest =
+		LatestOf<versioned::local_storage::HostLocalStorageWriteRequest>;
+	/// Product storage removal request.
+	pub type HostLocalStorageClearRequest =
+		LatestOf<versioned::local_storage::HostLocalStorageClearRequest>;
+	/// Product storage change subscription request.
+	pub type HostLocalStorageSubscribeRequest =
+		LatestOf<versioned::local_storage::HostLocalStorageSubscribeRequest>;
+	/// Worker pending operation completion request.
+	pub type HostWorkerEndOperationRequest =
+		LatestOf<versioned::worker::HostWorkerEndOperationRequest>;
+	/// Push notification scheduling failure.
+	pub type HostPushNotificationError =
+		LatestOf<versioned::notifications::HostPushNotificationError>;
+	/// Push notification cancellation request.
+	pub type HostPushNotificationCancelRequest =
+		LatestOf<versioned::notifications::HostPushNotificationCancelRequest>;
+	/// Content-addressed preimage lookup request.
+	pub type RemotePreimageLookupSubscribeRequest =
+		LatestOf<versioned::preimage::RemotePreimageLookupSubscribeRequest>;
+	/// Current preimage lookup result.
+	pub type RemotePreimageLookupSubscribeItem =
+		LatestOf<versioned::preimage::RemotePreimageLookupSubscribeItem>;
+	/// Payment balance subscription failure.
+	pub type HostPaymentBalanceSubscribeError =
+		LatestOf<versioned::payment::HostPaymentBalanceSubscribeError>;
+	/// Payment request failure.
+	pub type HostPaymentError = LatestOf<versioned::payment::HostPaymentError>;
+	/// Payment status subscription failure.
+	pub type HostPaymentStatusSubscribeError =
+		LatestOf<versioned::payment::HostPaymentStatusSubscribeError>;
+	/// Payment top-up failure.
+	pub type HostPaymentTopUpError = LatestOf<versioned::payment::HostPaymentTopUpError>;
 	/// Ring VRF proof creation result.
 	pub type HostAccountCreateProofResponse =
 		LatestOf<versioned::account::HostAccountCreateProofResponse>;
@@ -312,6 +391,18 @@ pub enum CallError<D> {
 }
 
 impl<D> CallError<D> {
+	/// Transform the domain failure while preserving framework outcomes.
+	pub fn map_domain<T>(self, map: impl FnOnce(D) -> T) -> CallError<T> {
+		match self {
+			Self::Domain(domain) => CallError::Domain(map(domain)),
+			Self::Denied => CallError::Denied,
+			Self::Unsupported => CallError::Unsupported,
+			Self::MalformedFrame { reason } => CallError::MalformedFrame { reason },
+			Self::HostFailure { reason } => CallError::HostFailure { reason },
+			Self::Cancelled => CallError::Cancelled,
+		}
+	}
+
 	/// Convenience for default handlers whose implementation is not wired.
 	pub fn unavailable() -> Self {
 		Self::HostFailure { reason: "unavailable".into() }
@@ -675,6 +766,29 @@ pub use wasm::{
 #[cfg(test)]
 mod tests {
 	use super::*;
+
+	#[test]
+	fn mapping_domain_errors_preserves_framework_outcomes() {
+		let errors = [
+			CallError::Domain(7),
+			CallError::Denied,
+			CallError::Unsupported,
+			CallError::MalformedFrame { reason: "invalid payload".into() },
+			CallError::HostFailure { reason: "host disconnected".into() },
+			CallError::Cancelled,
+		];
+		assert_eq!(
+			errors.map(|error| error.map_domain(|domain| domain.to_string())),
+			[
+				CallError::Domain("7".to_string()),
+				CallError::Denied,
+				CallError::Unsupported,
+				CallError::MalformedFrame { reason: "invalid payload".into() },
+				CallError::HostFailure { reason: "host disconnected".into() },
+				CallError::Cancelled,
+			],
+		);
+	}
 
 	#[test]
 	fn call_context_timeout_can_be_set_and_replaced() {

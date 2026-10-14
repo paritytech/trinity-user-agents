@@ -20,9 +20,10 @@ use truapi::{
 		account::{
 			HostAccountConnectionStatusSubscribeItem, HostAccountCreateProofError,
 			HostAccountCreateProofResponse, HostAccountGetAliasError, HostAccountGetAliasResponse,
-			HostAccountGetRequest, HostAccountGetResponse, HostAccountRingVrfSignError,
-			HostAccountRingVrfSignRequest, HostAccountRingVrfSignResponse,
-			HostAccountSignVrfRequest, HostAccountSignVrfResponse, HostGetLegacyAccountsRequest,
+			HostAccountGetError, HostAccountGetRequest, HostAccountGetResponse,
+			HostAccountRingVrfSignError, HostAccountRingVrfSignRequest,
+			HostAccountRingVrfSignResponse, HostAccountSignVrfError, HostAccountSignVrfRequest,
+			HostAccountSignVrfResponse, HostGetLegacyAccountsRequest,
 			HostGetLegacyAccountsResponse, HostGetUserIdError, HostGetUserIdRequest,
 			HostGetUserIdResponse,
 		},
@@ -50,7 +51,7 @@ use truapi::{
 		permissions::{HostDevicePermissionRequest, HostDevicePermissionResponse},
 		preimage::{
 			RemotePreimageLookupSubscribeItem, RemotePreimageLookupSubscribeRequest,
-			RemotePreimageSubmitRequest,
+			RemotePreimageSubmitError, RemotePreimageSubmitRequest,
 		},
 		resource_allocation::{
 			HostRequestResourceAllocationError, HostRequestResourceAllocationRequest,
@@ -202,6 +203,79 @@ fn get_chain_info_round_trips_through_runtime() {
 	assert_eq!(inner.network, "paseo");
 	assert_eq!(inner.chain, v01::ChainIdentifier::AssetHub);
 	assert_eq!(inner.genesis_hash, [0xaa; 32]);
+}
+
+#[test]
+fn local_storage_read_success_preserves_the_request_version() {
+	let platform = stub_platform();
+	let host = ProductRuntimeHost::new_compat(platform.clone(), test_spawner());
+	platform
+		.local_storage
+		.lock()
+		.expect("mutex")
+		.insert(host.product_storage_key(&host.product_id(), "k".to_string()), b"value".to_vec());
+	let response = v01::HostLocalStorageReadResponse { value: Some(b"value".to_vec()) };
+	for (request, expected) in [
+		(
+			HostLocalStorageReadRequest::V1(v01::HostLocalStorageReadRequest {
+				key: "k".to_string(),
+			}),
+			HostLocalStorageReadResponse::V1(response.clone()),
+		),
+		(
+			HostLocalStorageReadRequest::V2(v02::HostLocalStorageReadRequest {
+				product: None,
+				key: "k".to_string(),
+			}),
+			HostLocalStorageReadResponse::V2(response),
+		),
+	] {
+		assert_eq!(
+			futures::executor::block_on(LocalStorage::read(
+				&host,
+				&CallContext::default(),
+				request
+			)),
+			Ok(expected),
+		);
+	}
+}
+
+#[test]
+fn local_storage_read_platform_error_preserves_the_request_version() {
+	let platform = Arc::new(StubPlatform {
+		local_storage_error: Some("store unavailable"),
+		..Default::default()
+	});
+	let host = ProductRuntimeHost::new_compat(platform, test_spawner());
+	for (request, expected) in [
+		(
+			HostLocalStorageReadRequest::V1(v01::HostLocalStorageReadRequest {
+				key: "k".to_string(),
+			}),
+			HostLocalStorageReadError::V1(v01::HostLocalStorageReadError::Unknown {
+				reason: "store unavailable".to_string(),
+			}),
+		),
+		(
+			HostLocalStorageReadRequest::V2(v02::HostLocalStorageReadRequest {
+				product: None,
+				key: "k".to_string(),
+			}),
+			HostLocalStorageReadError::V2(v02::HostLocalStorageReadError::Unknown {
+				reason: "store unavailable".to_string(),
+			}),
+		),
+	] {
+		assert_eq!(
+			futures::executor::block_on(LocalStorage::read(
+				&host,
+				&CallContext::default(),
+				request
+			)),
+			Err(CallError::Domain(expected)),
+		);
+	}
 }
 
 fn read_storage(
@@ -4271,6 +4345,69 @@ fn preimage_submit_requires_remote_permission_before_backend_call() {
 	assert!(platform.sent_rpc.lock().expect("rpc list mutex poisoned").is_empty());
 }
 
+/// A product that backs up in the background must not ask again once the user
+/// allows `PreimageSubmit` always, or the user either approves a task they did
+/// not start or dismisses it and the backups stop. `AllowOnce` covers a single
+/// upload.
+#[test]
+fn a_preimage_grant_covers_uploads_without_a_per_upload_prompt() {
+	use crate::platform::PermissionDecision::{AllowAlways, AllowOnce};
+
+	#[derive(Debug, PartialEq)]
+	struct Outcome {
+		permission_prompts: usize,
+		uploads_authorized: usize,
+	}
+
+	// The stub has no signing host, so an authorized upload fails at the
+	// allowance step. Getting that error means nothing between the permission
+	// check and the allowance refused the upload.
+	let allowance_error = bulletin_allowance_error_reason(AuthorityError::Disconnected);
+
+	let outcomes = [(vec![AllowAlways], 3), (vec![AllowOnce, AllowOnce], 2)].map(
+		|(remote_permission_decisions, uploads)| {
+			let platform = Arc::new(StubPlatform {
+				remote_permission_decisions: Mutex::new(remote_permission_decisions.into()),
+				..Default::default()
+			});
+			let host = ProductRuntimeHost::new(
+				platform.clone(),
+				runtime_config("t3ams.dot"),
+				test_spawner(),
+			);
+			install_pairing_session(&host, session_info());
+			let mut uploads_authorized = 0;
+			for _ in 0..uploads {
+				let result = futures::executor::block_on(Preimage::submit(
+					&host,
+					&CallContext::default(),
+					RemotePreimageSubmitRequest::V1(vec![1, 2, 3]),
+				));
+				if matches!(
+					result,
+					Err(CallError::Domain(RemotePreimageSubmitError::V1(
+						v01::PreimageSubmitError::Unknown { reason },
+					))) if reason == allowance_error
+				) {
+					uploads_authorized += 1;
+				}
+			}
+			Outcome {
+				permission_prompts: platform.remote_permission_requests.lock().unwrap().len(),
+				uploads_authorized,
+			}
+		},
+	);
+
+	assert_eq!(
+		outcomes,
+		[
+			Outcome { permission_prompts: 1, uploads_authorized: 3 },
+			Outcome { permission_prompts: 2, uploads_authorized: 2 },
+		]
+	);
+}
+
 fn broadcast_request() -> RemoteChainTransactionBroadcastRequest {
 	RemoteChainTransactionBroadcastRequest::V1(v01::RemoteChainTransactionBroadcastRequest {
 		genesis_hash: vec![0; 32],
@@ -7101,6 +7238,73 @@ fn the_pairing_authority_refuses_a_foreign_ring_vrf_key_without_a_grant() {
 	);
 }
 
+/// The pairing authority holds a grantee's proof context to the same rule as
+/// the signing authority: a third product's context needs that product's own
+/// `context` grant.
+///
+/// Driven at the authority, as `sso_responder` would. The admitted case is
+/// asserted as "not refused by the gate", since the stub has no AutoSigning key
+/// or ring to finish the proof with; what it pins is that the context guard
+/// let it through.
+#[test]
+fn the_pairing_authority_admits_a_context_only_its_product_granted() {
+	let prove_in = |context_grants: &str| {
+		let (host_config, product) = runtime_config("dim2next.dot");
+		let platform = stub_platform();
+		cache_manifest(&platform, "peopl.dot", r#"{"dim2next":["context"]}"#, 0);
+		cache_manifest(&platform, "dim2.dot", context_grants, 0);
+		let platform: Arc<dyn Platform> = platform;
+		let services = RuntimeServices::new(
+			platform.clone(),
+			host_config.host.host_info.clone(),
+			host_config.people_chain_genesis_hash,
+			host_config.bulletin_chain_genesis_hash,
+			host_config.asset_hub_chain_genesis_hash,
+			test_spawner(),
+		);
+		let pairing_host = PairingHost::new(services.clone(), host_config);
+		let adapters = crate::host_core::ConnectionAdapters::from_services(&services);
+		let host =
+			ProductRuntimeHost::from_services(services, adapters, pairing_host.clone(), product);
+		install_pairing_session(&host, session_info());
+		let session =
+			pairing_host.current_session().expect("the pairing host has an active session");
+		let mut cx = CallContext::default();
+		cx.set_timeout(Duration::from_millis(200));
+		futures::executor::block_on(ProductAuthority::create_proof(
+			&*pairing_host,
+			&cx,
+			&session,
+			crate::host_internal::sso_messages::ProductRequest {
+				calling_product_id: "dim2next.dot".to_string(),
+				payload: v01::HostAccountCreateProofRequest {
+					key_handle: v01::ProductAccountId {
+						dot_ns_identifier: "peopl.dot".to_string(),
+						derivation_index: v01::DerivationIndex::Index(0),
+					},
+					context: v01::ProductProofContext {
+						product_id: "dim2.dot".to_string(),
+						suffix: v01::DerivationIndex::Index(0),
+					},
+					ring_location: ring_location_fixture(),
+					message: b"prove me".to_vec(),
+				},
+			},
+		))
+	};
+
+	assert_ne!(
+		prove_in(r#"{"dim2next":["context"]}"#).err(),
+		Some(RingVrfError::NotAllowlisted),
+		"the context product's grant admits its context"
+	);
+	assert_eq!(
+		prove_in(r#"{"other":["context"]}"#).err(),
+		Some(RingVrfError::NotAllowlisted),
+		"a grant to another product admits nothing"
+	);
+}
+
 /// The grant lookup obeys the caller's deadline.
 ///
 /// It can reach dotNS on the Asset Hub, which is several sequential chain
@@ -7200,10 +7404,7 @@ fn an_internal_cancellation_never_becomes_the_cancelled_variant() {
 		account_get_authority_error, signing_call_error, transaction_call_error, vrf_call_error,
 	};
 	use crate::runtime::authority::{AuthorityCancelError, AuthorityError};
-	use truapi::{
-		CancellationReason,
-		versioned::signing::{HostCreateTransactionError, HostSignRawError},
-	};
+	use truapi::CancellationReason;
 
 	fn assert_domain<E: core::fmt::Debug>(mapper: &str, reason: &str, err: CallError<E>) {
 		assert!(
@@ -7228,16 +7429,8 @@ fn an_internal_cancellation_never_becomes_the_cancelled_variant() {
 			reason_name,
 			account_get_authority_error(cancelled()),
 		);
-		assert_domain(
-			"signing_call_error",
-			reason_name,
-			signing_call_error(HostSignRawError::V1, cancelled()),
-		);
-		assert_domain(
-			"transaction_call_error",
-			reason_name,
-			transaction_call_error(HostCreateTransactionError::V1, cancelled()),
-		);
+		assert_domain("signing_call_error", reason_name, signing_call_error(cancelled()));
+		assert_domain("transaction_call_error", reason_name, transaction_call_error(cancelled()));
 	}
 }
 
