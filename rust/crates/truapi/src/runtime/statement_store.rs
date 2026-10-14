@@ -22,7 +22,7 @@ use crate::host_logic::statement_store::{
 };
 
 use crate::platform::{
-	CrossProductSignatureKind, ProductId, StatementStoreProductSignReview, UserConfirmationReview,
+	CrossProductSignatureKind, StatementStoreProductSignReview, UserConfirmationReview,
 };
 use serde_json::Value;
 use subxt_rpcs::client::RpcSubscription;
@@ -323,16 +323,19 @@ impl ProductRuntimeHost {
 			.map_err(StatementProofFailure::UnableToSign)?;
 		if &owner != self.connection.product_id() {
 			let confirmed = self
-				.connection
-				.confirm_signature(CrossProductSignatureKind::StatementProof, &owner, || {
-					UserConfirmationReview::StatementStoreProductSign(
-						StatementStoreProductSignReview {
-							calling_product_id: Some(self.connection.product_id().clone()),
-							account: product_account_id.clone(),
-							payload: payload.clone(),
-						},
-					)
-				})
+				.confirm_signature(
+					CrossProductSignatureKind::StatementProof,
+					&product_account_id,
+					|| {
+						UserConfirmationReview::StatementStoreProductSign(
+							StatementStoreProductSignReview {
+								calling_product_id: Some(self.product_id()),
+								account: product_account_id.clone(),
+								payload: payload.clone(),
+							},
+						)
+					},
+				)
 				.await
 				.map_err(|err| StatementProofFailure::UnableToSign(err.reason))?;
 			if !confirmed {

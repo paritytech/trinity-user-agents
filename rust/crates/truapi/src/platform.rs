@@ -1189,40 +1189,43 @@ pub trait Permissions: Send + Sync {
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
 pub enum PermissionAuthorizationRequest {
-    /// Device-level permission such as camera, microphone, or location.
-    Device(HostDevicePermissionRequest),
-    /// Remote/product-scoped permission such as chain submit or HTTP access.
-    Remote(RemotePermissionRequest),
-    /// Product-scoped permission to disclose the user's primary identity.
-    IdentityDisclosure,
-    /// Product-scoped permission to access another product's account context.
-    AccountAccess {
-        /// Product whose account context may be accessed.
-        target_product_id: String,
-    },
-    /// Product-scoped permission to bind and use wallet-held Chat identity authority.
-    #[codec(index = 4)]
-    ChatAuthority,
-    /// Product-scoped permission to ensure Statement Store quota, not increase it.
-    #[codec(index = 5)]
-    StatementStoreAllowance {
-        /// `None` selects the legacy allowance account; `Some` selects a product account.
-        derivation_index: Option<DerivationIndex>,
-    },
-    /// Calling consent for this product's authenticated network and account.
-    ///
-    /// The core resolves both fields from the active authority session, never
-    /// from product-supplied identity claims. Unscoped `Remote(Calling)` grants
-    /// do not authorize this request.
-    #[codec(index = 6)]
-    ProfileDisclosure,
-    /// Bounded automatic Bulletin uploads for the rendered account. The core
-    /// rejects an account that is no longer active; product and network are host-owned.
-    #[codec(index = 8)]
-    AutomaticPreimageSubmit {
-        /// Root account whose automatic-upload decision is being edited.
-        root_public_key: Bytes32,
-    },
+	/// Device-level permission such as camera, microphone, or location.
+	Device(HostDevicePermissionRequest),
+	/// Remote/product-scoped permission such as chain submit or HTTP access.
+	Remote(RemotePermissionRequest),
+	/// Product-scoped permission to disclose the user's primary identity.
+	IdentityDisclosure,
+	/// Product-scoped permission to access another product's account context.
+	AccountAccess {
+		/// Product whose account context may be accessed.
+		target_product_id: String,
+	},
+	/// Product-scoped approval to make one kind of signature with another
+	/// product's accounts. It is held in memory only and ends when the product
+	/// execution closes.
+	CrossProductSignature {
+		/// Product whose accounts sign.
+		target_product_id: String,
+		/// Kind of signature the user approved.
+		kind: CrossProductSignatureKind,
+	},
+}
+
+/// A kind of signature a product makes with another product's account.
+///
+/// The user approves each kind separately: approving one never lets another
+/// through without a prompt.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
+pub enum CrossProductSignatureKind {
+	/// `sign_payload`.
+	Payload,
+	/// `create_transaction` naming no contacts.
+	Transaction,
+	/// Watermarked `sign_raw`.
+	Raw,
+	/// A Statement Store product proof.
+	StatementProof,
 }
 
 /// Authorization status for a permission request.

@@ -68,12 +68,16 @@ impl Signing for ProductRuntimeHost {
 			if grant == AutoSigningGrant::Absent {
 				let confirmed = until_cancelled(
 					cx,
-					self.confirm_product_action(UserConfirmationReview::SignPayload(
-						SignPayloadReview::Product {
-							calling_product_id: Some(self.product_id()),
-							request: inner.clone(),
+					self.confirm_signature(
+						CrossProductSignatureKind::Payload,
+						&inner.account,
+						|| {
+							UserConfirmationReview::SignPayload(SignPayloadReview::Product {
+								calling_product_id: Some(self.product_id()),
+								request: inner.clone(),
+							})
 						},
-					)),
+					),
 				)
 				.await
 				.map_err(signing_call_error)?
@@ -188,15 +192,24 @@ impl Signing for ProductRuntimeHost {
 				.await
 				.map_err(transaction_call_error)?;
 			if grant == AutoSigningGrant::Absent || names_contacts {
-				let confirmed = until_cancelled(
-					cx,
-					self.confirm_product_action(UserConfirmationReview::CreateTransaction(
-						CreateTransactionReview::Product {
-							calling_product_id: Some(self.product_id()),
-							payload: inner.clone(),
-						},
-					)),
-				)
+				let review = || {
+					UserConfirmationReview::CreateTransaction(CreateTransactionReview::Product {
+						calling_product_id: Some(self.product_id()),
+						payload: inner.clone(),
+					})
+				};
+				let confirmed = until_cancelled(cx, async {
+					if names_contacts {
+						self.confirm_product_action(review()).await
+					} else {
+						self.confirm_signature(
+							CrossProductSignatureKind::Transaction,
+							&inner.signer,
+							review,
+						)
+						.await
+					}
+				})
 				.await
 				.map_err(transaction_call_error)?
 				.map_err(|err| CallError::HostFailure {
@@ -444,16 +457,21 @@ impl ProductRuntimeHost {
 			AutoSigningGrant::Absent
 		};
 		if grant == AutoSigningGrant::Absent {
-			let confirmed = until_cancelled(
-				cx,
-				self.confirm_product_action(UserConfirmationReview::SignRaw(
-					SignRawReview::Product {
-						calling_product_id: Some(self.product_id()),
-						request: inner.clone(),
-						watermarked,
-					},
-				)),
-			)
+			let review = || {
+				UserConfirmationReview::SignRaw(SignRawReview::Product {
+					calling_product_id: Some(self.product_id()),
+					request: inner.clone(),
+					watermarked,
+				})
+			};
+			let confirmed = until_cancelled(cx, async {
+				if watermarked {
+					self.confirm_signature(CrossProductSignatureKind::Raw, &inner.account, review)
+						.await
+				} else {
+					self.confirm_product_action(review()).await
+				}
+			})
 			.await
 			.map_err(signing_call_error)?
 			.map_err(|err| CallError::HostFailure {

@@ -93,7 +93,24 @@ use payment_id::host_funding_intent;
 use product_accounts::ProductAccounts;
 pub use renderer::renderer_access_for;
 pub use services::RuntimeServices;
-#[cfg(any(test, not(target_arch = "wasm32")))]
+pub use signing_host::{
+	AnnouncedPairing, DevicePairingObserver, LocalActivation, MAX_PAIRING_METADATA_CHARS,
+	PairedSsoPeer, PairingProposal, PairingProposalMetadata, ResponderExit,
+	SigningHost as SigningHostRole, SigningHostSsoService, disconnect_paired_host,
+	establish_pairing, notify_pairing_allowance_allocation, notify_pairing_failed,
+	respond_to_pairing, resume_pairing,
+};
+#[cfg(all(target_arch = "wasm32", feature = "test-host"))]
+pub use vrf::ring_vrf_member;
+// `TrackedStatementRenewalTarget` is only read back by the native renewal
+// reporting, so re-exporting it on wasm leaves an unused import.
+use crate::platform::{
+	AccountAccessReview, ChatFieldError, CrossProductSignatureKind, IdentityDisclosureReview,
+	PermissionAuthorizationRequest, PermissionAuthorizationStatus, PermissionDecision, Platform,
+	ProductContext, ProductStorageKey, SessionUiInfo, UserConfirmationReview,
+	normalize_chat_identifier, normalize_product_identifier, validate_chat_icon,
+	validate_chat_message_content, validate_chat_name,
+};
 pub use signing_host::StatementRenewalTarget;
 #[cfg(not(target_arch = "wasm32"))]
 pub use signing_host::TrackedStatementRenewalTarget;
@@ -709,6 +726,160 @@ impl ProductRuntimeHost {
 		)
 		.await
 		.map_err(|err| err.to_string())
+	}
+
+	fn product_storage_key(&self, owner: &str, key: String) -> String {
+		ProductStorageKey::new(owner, key)
+			.expect("storage key owner was already normalized")
+			.encode()
+	}
+
+	fn follow_id(&self, id: &str) -> String {
+		format!("c{}:{id}", self.core_instance)
+	}
+}
+
+impl ProductRuntimeHost {
+	/// Read stored authorization without prompting, including the device OS gate.
+	#[instrument(skip_all, fields(runtime.method = "permissions.authorization_status"))]
+	pub async fn permission_authorization_status(
+		&self,
+		request: PermissionAuthorizationRequest,
+	) -> Result<PermissionAuthorizationStatus, v01::GenericError> {
+		let service = self.permissions_service();
+		service.authorization_status(&request).await
+	}
+
+	/// Read stored authorizations without prompting, including device OS gates.
+	#[instrument(skip_all, fields(runtime.method = "permissions.authorization_statuses"))]
+	pub async fn permission_authorization_statuses(
+		&self,
+		requests: Vec<PermissionAuthorizationRequest>,
+	) -> Result<Vec<PermissionAuthorizationStatus>, v01::GenericError> {
+		let service = self.permissions_service();
+		service.authorization_statuses(&requests).await
+	}
+
+	/// Store authorization; `NotDetermined` clears the saved decision.
+	#[instrument(skip_all, fields(runtime.method = "permissions.set_authorization_status"))]
+	pub async fn set_permission_authorization_status(
+		&self,
+		request: PermissionAuthorizationRequest,
+		status: PermissionAuthorizationStatus,
+	) -> Result<(), v01::GenericError> {
+		let service = self.permissions_service();
+		service.set_authorization_status(&request, status).await
+	}
+
+	#[instrument(skip_all, fields(runtime.method = "permissions.remote_authorization"))]
+	async fn remote_permission_authorization(
+		&self,
+		permission: v01::RemotePermission,
+	) -> Result<PermissionAuthorizationStatus, String> {
+		let service = self.permissions_service();
+		service
+			.authorize_remote(v01::RemotePermissionRequest { permission })
+			.await
+			.map_err(|err| format!("permission storage failed: {err:?}"))
+	}
+
+	/// Require remote authorization, prompting only when no decision is stored.
+	pub async fn require_remote_permission<E>(
+		&self,
+		permission: v01::RemotePermission,
+		denied_error: E,
+	) -> Result<(), CallError<E>> {
+		match self.remote_permission_authorization(permission).await {
+			Ok(PermissionAuthorizationStatus::Authorized) => Ok(()),
+			Ok(
+				PermissionAuthorizationStatus::Denied |
+				PermissionAuthorizationStatus::NotDetermined,
+			) => Err(CallError::Domain(denied_error)),
+			Err(reason) => Err(CallError::HostFailure { reason }),
+		}
+	}
+
+	async fn confirm_product_action(
+		&self,
+		review: UserConfirmationReview,
+	) -> Result<bool, v01::GenericError> {
+		if crate::platform::has_trusted_remote_permissions(&self.product_id()) {
+			return Ok(true);
+		}
+		self.platform.confirm_user_action(review).await
+	}
+
+	/// Confirm a signature with `account`. When the account belongs to another
+	/// product, the user is asked once per kind and owning product for the rest
+	/// of this execution. Prompts open one at a time, and a signature the user
+	/// already approved never waits for one.
+	async fn confirm_signature(
+		&self,
+		kind: CrossProductSignatureKind,
+		account: &v01::ProductAccountId,
+		review: impl FnOnce() -> UserConfirmationReview,
+	) -> Result<bool, v01::GenericError> {
+		if account.dot_ns_identifier == self.product_id() {
+			return self.confirm_product_action(review()).await;
+		}
+		let approval =
+			cross_product_signature_key(&self.product_id(), &account.dot_ns_identifier, kind);
+		let permissions = &self.temporary_permissions;
+		if permissions.authorize(&approval, false) {
+			return Ok(true);
+		}
+		let _prompt = permissions.signature_prompt().await;
+		if permissions.authorize(&approval, false) {
+			return Ok(true);
+		}
+		let approved = self.confirm_product_action(review()).await?;
+		if approved {
+			permissions.grant(approval);
+		}
+		Ok(approved)
+	}
+
+	async fn require_chain_submit<E>(&self, denied_error: E) -> Result<(), CallError<E>> {
+		self.require_remote_permission(v01::RemotePermission::ChainSubmit, denied_error)
+			.await
+	}
+
+	#[instrument(skip_all, fields(runtime.method = "permissions.identity_disclosure_authorization"))]
+	async fn identity_disclosure_authorization(
+		&self,
+	) -> Result<PermissionAuthorizationStatus, String> {
+		let product_id = self.product_id();
+		let request = PermissionAuthorizationRequest::IdentityDisclosure;
+		let service = self.permissions_service();
+		let cached = service
+			.authorization_status(&request)
+			.await
+			.map_err(|err| format!("permission storage failed: {err:?}"))?;
+		if cached != PermissionAuthorizationStatus::NotDetermined {
+			return Ok(cached);
+		}
+
+		// A dismissed confirmation must not persist a refusal.
+		let decision = match self
+			.platform
+			.confirm_permission(UserConfirmationReview::IdentityDisclosure(
+				IdentityDisclosureReview { product_id: product_id.clone() },
+			))
+			.await
+		{
+			Ok(decision) => decision,
+			Err(_) => return Ok(PermissionAuthorizationStatus::NotDetermined),
+		};
+		let status = match decision {
+			PermissionDecision::AllowOnce => return Ok(PermissionAuthorizationStatus::Authorized),
+			PermissionDecision::AllowAlways => PermissionAuthorizationStatus::Authorized,
+			PermissionDecision::Deny => PermissionAuthorizationStatus::Denied,
+		};
+		service
+			.set_authorization_status(&request, status)
+			.await
+			.map_err(|err| format!("permission storage failed: {err:?}"))?;
+		Ok(status)
 	}
 
 	async fn classify_legacy_address_signer(

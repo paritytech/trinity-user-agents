@@ -8,8 +8,8 @@
 use super::*;
 
 use crate::{
-	platform::{CoreStorage, CoreStorageKey},
-	runtime::product_manifest::CachedManifest,
+	platform::CoreStorage,
+	runtime::product_manifest::{CachedManifest, manifest_cache_key},
 	test_support::account_id,
 	unix_time::current_unix_secs,
 };

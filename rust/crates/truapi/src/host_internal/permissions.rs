@@ -41,12 +41,15 @@ use std::sync::{Arc, Weak};
 use parity_scale_codec::{Decode, Encode};
 use rand_core::{OsRng, RngCore};
 
-use crate::platform::{
-    BLESSED_REMOTE_DOMAINS, CallingReview, ChatAuthorityReview, CoreStorage, CoreStorageKey,
-    DevicePermissionStatus, IdentityDisclosureReview, PermissionAuthorizationRequest,
-    PermissionAuthorizationStatus, PermissionDecision, PermissionStatusHost, Permissions,
-    ProductContext, UserConfirmation, UserConfirmationReview, has_trusted_remote_permissions,
-    is_valid_remote_domain_pattern, normalize_remote_domain, remote_domain_candidates,
+use crate::{
+	host_internal::product_manifest::bare_product_label,
+	platform::{
+		BLESSED_REMOTE_DOMAINS, CoreStorage, CoreStorageKey, CrossProductSignatureKind,
+		DevicePermissionStatus, PermissionAuthorizationRequest, PermissionAuthorizationStatus,
+		PermissionDecision, PermissionStatusHost, Permissions, ProductContext,
+		has_trusted_remote_permissions, is_valid_remote_domain_pattern, normalize_remote_domain,
+		remote_domain_candidates,
+	},
 };
 use truapi::latest::{
     GenericError, HostDevicePermissionRequest, RemotePermission, RemotePermissionRequest,
@@ -153,159 +156,28 @@ enum BundleResolution {
 /// are reduced to their bare label, as the manifest grant files them, so one
 /// approval covers every account of the owning product.
 pub fn cross_product_signature_key(
-	product_id: &ProductId,
-	target_product_id: &ProductId,
+	product_id: &str,
+	target_product_id: &str,
 	kind: CrossProductSignatureKind,
 ) -> CoreStorageKey {
 	CoreStorageKey::PermissionAuthorization {
-		product_id: product_id.bare_label().to_string(),
+		product_id: bare_product_label(product_id).to_string(),
 		request: PermissionAuthorizationRequest::CrossProductSignature {
-			target_product_id: target_product_id.bare_label().to_string(),
+			target_product_id: bare_product_label(target_product_id).to_string(),
 			kind,
 		},
 	}
 }
 
-/// How a product's Chat authority is granted.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ChatAuthorityConsent {
-    /// A stored user decision authorizes Chat.
-    Persisted,
-    /// The user allowed Chat for this session only; nothing is stored.
-    Session,
-    /// Chat is not authorized, or the prompt was dismissed.
-    Refused,
-}
-
-/// Runtime-owned serialization and cancellation for permission decisions.
-/// Prompts never hold the mutation lock; administration can cancel them while
-/// serializing its check/write with every decision that might otherwise win late.
-#[derive(Default)]
-pub struct PermissionAuthority {
-    scopes: parking_lot::Mutex<HashMap<String, Arc<PermissionScope>>>,
-    mutation: Arc<futures::lock::Mutex<()>>,
-}
-
-impl PermissionAuthority {
-    pub(crate) fn scope(&self, product: &str) -> Arc<PermissionScope> {
-        self.scopes
-            .lock()
-            .entry(product.to_owned())
-            .or_insert_with(|| {
-                Arc::new(PermissionScope {
-                    mutation: self.mutation.clone(),
-                    state: Default::default(),
-                })
-            })
-            .clone()
-    }
-
-    fn invalidate(&self, product: &str, request: &PermissionAuthorizationRequest) {
-        use crate::host_internal::product_manifest::bare_product_label;
-        let account_access = matches!(
-            request,
-            PermissionAuthorizationRequest::AccountAccess { .. }
-        );
-        for (owner, scope) in self.scopes.lock().iter() {
-            if owner == product
-                || (account_access && bare_product_label(owner) == bare_product_label(product))
-            {
-                scope.invalidate();
-            }
-        }
-    }
-}
-
-#[derive(Default)]
-pub(crate) struct PermissionScope {
-    pub(crate) mutation: Arc<futures::lock::Mutex<()>>,
-    state: parking_lot::Mutex<PermissionScopeState>,
-}
-
-#[derive(Default)]
-struct PermissionScopeState {
-    revision: u64,
-    prompts: Vec<Weak<futures::future::AbortHandle>>,
-    temporary: Vec<Weak<TemporaryPermissions>>,
-}
-
-impl PermissionScope {
-    pub(crate) fn revision(&self) -> u64 {
-        self.state.lock().revision
-    }
-
-    pub(crate) fn require_revision(&self, revision: u64) -> Result<(), GenericError> {
-        if self.revision() == revision {
-            Ok(())
-        } else {
-            Err(GenericError {
-                reason: "permission decision was superseded".into(),
-            })
-        }
-    }
-
-    fn register(&self, permissions: &Arc<TemporaryPermissions>) {
-        let mut state = self.state.lock();
-        state.temporary.retain(|entry| entry.strong_count() != 0);
-        if !state
-            .temporary
-            .iter()
-            .any(|entry| entry.as_ptr() == Arc::as_ptr(permissions))
-        {
-            state.temporary.push(Arc::downgrade(permissions));
-        }
-    }
-
-    /// Called under `mutation`, before a host administrative write.
-    pub(crate) fn invalidate(&self) {
-        let mut state = self.state.lock();
-        state.revision = state
-            .revision
-            .checked_add(1)
-            .expect("permission revision exhausted");
-        for prompt in state.prompts.drain(..).filter_map(|entry| entry.upgrade()) {
-            prompt.abort();
-        }
-        state.temporary.retain(|entry| {
-            if let Some(permissions) = entry.upgrade() {
-                permissions.clear();
-                true
-            } else {
-                false
-            }
-        });
-    }
-
-    pub(crate) async fn prompt<T>(
-        &self,
-        revision: u64,
-        future: impl Future<Output = Result<T, GenericError>>,
-    ) -> Result<T, GenericError> {
-        let (handle, registration) = futures::future::AbortHandle::new_pair();
-        let handle = Arc::new(handle);
-        {
-            let mut state = self.state.lock();
-            if state.revision != revision {
-                return Err(GenericError {
-                    reason: "permission decision was superseded".into(),
-                });
-            }
-            state.prompts.retain(|entry| entry.strong_count() != 0);
-            state.prompts.push(Arc::downgrade(&handle));
-        }
-        futures::future::Abortable::new(future, registration)
-            .await
-            .map_err(|_| GenericError {
-                reason: "permission decision was superseded".into(),
-            })?
-    }
-}
-
 /// Permission prompts and one-use grants shared by a product execution's connections.
 #[derive(Default)]
-pub(crate) struct TemporaryPermissions {
-    authorization: futures::lock::Mutex<()>,
-    grants: parking_lot::Mutex<HashSet<Vec<u8>>>,
+pub struct TemporaryPermissions {
+	authorization: futures::lock::Mutex<()>,
+	grants: std::sync::Mutex<HashSet<Vec<u8>>>,
+	/// Held while a signature prompt is open. Separate from `authorization`,
+	/// which every submission check takes, so a signature prompt never holds
+	/// up the product's submissions.
+	signature_prompt: futures::lock::Mutex<()>,
 }
 
 impl TemporaryPermissions {
@@ -313,18 +185,16 @@ impl TemporaryPermissions {
         self.grants.lock().clear();
     }
 
-    fn authorize(&self, key: &CoreStorageKey, generation: Option<&[u8]>, consume: bool) -> bool {
-        let key = key.encode();
-        let mut grants = self.grants.lock().expect("temporary permissions mutex poisoned");
-        if !grants.get(&key).is_some_and(|grant| grant.as_deref() == generation) {
-            grants.remove(&key);
-            return false;
-        }
-        if consume {
-            grants.remove(&key);
-        }
-        true
-    }
+	/// Wait until no signature prompt is open, and keep others from opening
+	/// until the returned guard is dropped.
+	pub async fn signature_prompt(&self) -> futures::lock::MutexGuard<'_, ()> {
+		self.signature_prompt.lock().await
+	}
+
+	/// Whether a grant covers `key`, consuming it when `consume` is set.
+	pub fn authorize(&self, key: &CoreStorageKey, consume: bool) -> bool {
+		self.authorize_all(core::slice::from_ref(key), consume)
+	}
 
     fn authorize_all(&self, keys: &[CoreStorageKey], consume: bool) -> bool {
         let keys: Vec<_> = keys.iter().map(Encode::encode).collect();
@@ -344,9 +214,13 @@ impl TemporaryPermissions {
         self.grants.lock().remove(&key.encode());
     }
 
-    fn grant(&self, key: CoreStorageKey) {
-        self.grants.lock().insert(key.encode());
-    }
+	/// Grant `key` until it is consumed or the product execution closes.
+	pub fn grant(&self, key: CoreStorageKey) {
+		self.grants
+			.lock()
+			.expect("temporary permissions mutex poisoned")
+			.insert(key.encode());
+	}
 }
 
 /// Coordinates saved and one-use permissions with the platform's prompts.
@@ -579,20 +453,67 @@ impl<'a, S: CoreStorage + ?Sized, P: Permissions + ?Sized> PermissionsService<'a
         })
     }
 
-    async fn cached_remote_authorization(
-        &self,
-        key: &CoreStorageKey,
-        consume: bool,
-    ) -> Result<PermissionAuthorizationStatus, GenericError> {
-        let status = self.cached_authorization(key, consume).await?;
-        Ok(
-            if self.trusted_product && status == PermissionAuthorizationStatus::NotDetermined {
-                PermissionAuthorizationStatus::Authorized
-            } else {
-                status
-            },
-        )
-    }
+	async fn cached_remote_authorization(
+		&self,
+		key: &CoreStorageKey,
+		consume: bool,
+	) -> Result<PermissionAuthorizationStatus, GenericError> {
+		if self.trusted_product {
+			return Ok(PermissionAuthorizationStatus::Authorized);
+		}
+		self.cached_authorization(key, consume).await
+	}
+
+	/// Returns the current authorization status for a permission request
+	/// without prompting.
+	pub async fn authorization_status(
+		&self,
+		request: &PermissionAuthorizationRequest,
+	) -> Result<PermissionAuthorizationStatus, GenericError> {
+		if self.trusted_product &&
+			matches!(
+				request,
+				PermissionAuthorizationRequest::IdentityDisclosure |
+					PermissionAuthorizationRequest::AccountAccess { .. }
+			) {
+			return Ok(PermissionAuthorizationStatus::Authorized);
+		}
+		match request {
+			PermissionAuthorizationRequest::Device(permission) => {
+				self.peek_device(permission).await
+			},
+			PermissionAuthorizationRequest::Remote(request) => self.peek_remote(request).await,
+			PermissionAuthorizationRequest::IdentityDisclosure => {
+				authorization_status(
+					self.storage,
+					CoreStorageKey::identity_disclosure_authorization(self.product_id()),
+				)
+				.await
+			},
+			PermissionAuthorizationRequest::AccountAccess { target_product_id } => {
+				authorization_status(
+					self.storage,
+					CoreStorageKey::account_access_authorization(
+						self.product_id(),
+						target_product_id,
+					),
+				)
+				.await
+			},
+			PermissionAuthorizationRequest::CrossProductSignature { target_product_id, kind } => {
+				Ok(
+					if self.temporary_permissions.authorize(
+						&cross_product_signature_key(self.product_id(), target_product_id, *kind),
+						false,
+					) {
+						PermissionAuthorizationStatus::Authorized
+					} else {
+						PermissionAuthorizationStatus::NotDetermined
+					},
+				)
+			},
+		}
+	}
 
 	/// Returns the current authorization statuses for permission requests
 	/// without prompting. Results follow the same order as `requests`.
@@ -607,65 +528,59 @@ impl<'a, S: CoreStorage + ?Sized, P: Permissions + ?Sized> PermissionsService<'a
 		Ok(statuses)
 	}
 
-    /// Returns the stored authorization status for a permission request
-    /// without prompting.
-    pub async fn authorization_status(
-        &self,
-        request: &PermissionAuthorizationRequest,
-    ) -> Result<PermissionAuthorizationStatus, GenericError> {
-        let scope = self.scope();
-        let _mutation = scope.mutation.lock().await;
-        match request {
-            PermissionAuthorizationRequest::Device(permission) => {
-                self.peek_device(permission).await
-            }
-            PermissionAuthorizationRequest::Remote(request) => self.peek_remote(request).await,
-            PermissionAuthorizationRequest::IdentityDisclosure
-            | PermissionAuthorizationRequest::AccountAccess { .. } => {
-                let status = authorization_status(
-                    self.storage,
-                    authorization_key(self.product_id(), request),
-                )
-                .await?;
-                Ok(
-                    if self.trusted_product
-                        && status == PermissionAuthorizationStatus::NotDetermined
-                    {
-                        PermissionAuthorizationStatus::Authorized
-                    } else {
-                        status
-                    },
-                )
-            }
-            PermissionAuthorizationRequest::ChatAuthority => {
-                authorization_status(
-                    self.storage,
-                    CoreStorageKey::chat_authority_authorization(self.product_id()),
-                )
-                .await
-            }
-            PermissionAuthorizationRequest::StatementStoreAllowance { derivation_index } => {
-                authorization_status(
-                    self.storage,
-                    CoreStorageKey::statement_store_allowance_authorization(
-                        self.product_id(),
-                        derivation_index.clone(),
-                    ),
-                )
-                .await
-            }
-            PermissionAuthorizationRequest::Calling { network, account } => {
-                authorization_status(
-                    self.storage,
-                    CoreStorageKey::calling_authorization(self.product_id(), *network, *account),
-                )
-                .await
-            }
-            PermissionAuthorizationRequest::AutomaticPreimageSubmit { .. } => Err(GenericError {
-                reason: "Upload consent requires an active account scope".into(),
-            }),
-        }
-    }
+	/// Update the stored authorization status for a permission request.
+	///
+	/// Setting `NotDetermined` clears the stored value, restoring the default.
+	pub async fn set_authorization_status(
+		&self,
+		request: &PermissionAuthorizationRequest,
+		status: PermissionAuthorizationStatus,
+	) -> Result<(), GenericError> {
+		let key = match request {
+			PermissionAuthorizationRequest::Device(permission) => {
+				CoreStorageKey::device_permission_authorization(self.product_id(), permission)
+			},
+			PermissionAuthorizationRequest::Remote(request) => {
+				// This is the host's per-domain surface: it names the patterns it
+				// means, so it writes each one. It also writes the set-shaped
+				// slot, because a stored multi-domain denial lives there and
+				// would otherwise survive an explicit reset of the same domains.
+				if let Some(domains) = requested_domains(request) {
+					for domain in domains {
+						let key =
+							CoreStorageKey::remote_domain_authorization(self.product_id(), domain);
+						self.temporary_permissions.revoke(&key);
+						set_authorization_status(self.storage, key, status).await?;
+					}
+					if domains.len() > 1 {
+						set_authorization_status(self.storage, self.bundle_key(domains), status)
+							.await?;
+					}
+					return Ok(());
+				}
+				CoreStorageKey::remote_permission_authorization(self.product_id(), request)
+			},
+			PermissionAuthorizationRequest::IdentityDisclosure => {
+				CoreStorageKey::identity_disclosure_authorization(self.product_id())
+			},
+			PermissionAuthorizationRequest::AccountAccess { target_product_id } => {
+				CoreStorageKey::account_access_authorization(self.product_id(), target_product_id)
+			},
+			// Held in memory for the execution only, so nothing is stored. A
+			// denial is not kept either, like a refusal at the prompt.
+			PermissionAuthorizationRequest::CrossProductSignature { target_product_id, kind } => {
+				let key = cross_product_signature_key(self.product_id(), target_product_id, *kind);
+				if status == PermissionAuthorizationStatus::Authorized {
+					self.temporary_permissions.grant(key);
+				} else {
+					self.temporary_permissions.revoke(&key);
+				}
+				return Ok(());
+			},
+		};
+		self.temporary_permissions.revoke(&key);
+		set_authorization_status(self.storage, key, status).await
+	}
 
     /// Update the stored authorization status for a permission request.
     ///
@@ -1334,2845 +1249,2007 @@ fn status_into_stored(status: PermissionAuthorizationStatus) -> StoredAuthorizat
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::test_support::StubPlatform;
-    use futures::lock::Mutex;
-    use std::collections::HashMap;
-    use std::sync::LazyLock;
-    use std::sync::atomic::{AtomicUsize, Ordering};
-    use truapi::latest::RemotePermission;
-    use truapi::v01;
-    use truapi::v01::GenericError;
-
-    static PRODUCT: LazyLock<ProductContext> = LazyLock::new(|| {
-        ProductContext::new("product.dot".to_string()).expect("product id is valid")
-    });
-
-    static OTHER_PRODUCT: LazyLock<ProductContext> = LazyLock::new(|| {
-        ProductContext::new("other.dot".to_string()).expect("product id is valid")
-    });
-
-    static PEOPL_APP: LazyLock<ProductContext> = LazyLock::new(|| {
-        ProductContext::new("app.peopl.dot".to_string()).expect("product id is valid")
-    });
-
-    static PEOPL: LazyLock<ProductContext> = LazyLock::new(|| {
-        ProductContext::new("peopl.dot".to_string()).expect("product id is valid")
-    });
-
-    #[derive(Default)]
-    struct MemStorage {
-        inner: Mutex<HashMap<String, Vec<u8>>>,
-        changes: AtomicUsize,
-    }
-
-    #[crate::platform::async_trait]
-    impl CoreStorage for MemStorage {
-        async fn read_core_storage(
-            &self,
-            key: CoreStorageKey,
-        ) -> Result<Option<Vec<u8>>, v01::GenericError> {
-            Ok(self.inner.lock().await.get(&test_key(key)).cloned())
-        }
-        async fn write_core_storage(
-            &self,
-            key: CoreStorageKey,
-            value: Vec<u8>,
-        ) -> Result<(), v01::GenericError> {
-            self.inner.lock().await.insert(test_key(key), value);
-            Ok(())
-        }
-        async fn clear_core_storage(&self, key: CoreStorageKey) -> Result<(), v01::GenericError> {
-            self.inner.lock().await.remove(&test_key(key));
-            Ok(())
-        }
-        async fn compare_exchange_core_storage(
-            &self,
-            key: CoreStorageKey,
-            expected: Option<Vec<u8>>,
-            replacement: Vec<u8>,
-            notify_on_success: bool,
-        ) -> Result<bool, v01::GenericError> {
-            let mut inner = self.inner.lock().await;
-            let storage_key = test_key(key.clone());
-            if inner.get(&storage_key) != expected.as_ref() {
-                return Ok(false);
-            }
-            inner.insert(storage_key, replacement);
-            if notify_on_success {
-                self.core_storage_changed(key);
-            }
-            Ok(true)
-        }
-        fn core_storage_changed(&self, _key: CoreStorageKey) {
-            self.changes.fetch_add(1, Ordering::SeqCst);
-        }
-    }
-
-    struct PendingCas {
-        key: CoreStorageKey,
-        expected: Option<Vec<u8>>,
-        replacement: Vec<u8>,
-        notify_on_success: bool,
-        reply: futures::channel::oneshot::Sender<Result<bool, GenericError>>,
-    }
-
-    /// A foreign host owns dispatched storage work independently of the Rust
-    /// future waiting for its reply.
-    struct DeferredCasStorage<'a> {
-        inner: &'a MemStorage,
-        pending: Mutex<Option<PendingCas>>,
-    }
-
-    impl DeferredCasStorage<'_> {
-        async fn complete_host_job(&self) -> Result<bool, GenericError> {
-            let job = self.pending.lock().await.take().expect("CAS was dispatched");
-            let changed = self.inner.compare_exchange_core_storage(
-                job.key, job.expected, job.replacement, job.notify_on_success,
-            ).await?;
-            let _ = job.reply.send(Ok(changed));
-            Ok(changed)
-        }
-    }
-
-    #[crate::platform::async_trait]
-    impl CoreStorage for DeferredCasStorage<'_> {
-        async fn read_core_storage(&self, key: CoreStorageKey) -> Result<Option<Vec<u8>>, GenericError> {
-            self.inner.read_core_storage(key).await
-        }
-        async fn write_core_storage(&self, key: CoreStorageKey, value: Vec<u8>) -> Result<(), GenericError> {
-            self.inner.write_core_storage(key, value).await
-        }
-        async fn clear_core_storage(&self, key: CoreStorageKey) -> Result<(), GenericError> {
-            self.inner.clear_core_storage(key).await
-        }
-        async fn compare_exchange_core_storage(
-            &self,
-            key: CoreStorageKey,
-            expected: Option<Vec<u8>>,
-            replacement: Vec<u8>,
-            notify_on_success: bool,
-        ) -> Result<bool, GenericError> {
-            let (reply, receive) = futures::channel::oneshot::channel();
-            *self.pending.lock().await = Some(PendingCas {
-                key, expected, replacement, notify_on_success, reply,
-            });
-            receive.await.map_err(|_| GenericError { reason: "host job lost".into() })?
-        }
-        fn core_storage_changed(&self, key: CoreStorageKey) {
-            self.inner.core_storage_changed(key);
-        }
-    }
-
-    fn test_key(key: CoreStorageKey) -> String {
-        hex::encode(key.encode())
-    }
-
-    #[test]
-    fn concurrent_remote_operations_recheck_the_first_decision() {
-        futures::executor::block_on(async {
-            for request in [
-                remote_domains(&["cdn.example.com"]),
-                RemotePermissionRequest {
-                    permission: RemotePermission::WebRtc,
-                },
-            ] {
-                for (decision, first_status, second_status, calls) in [
-                    (
-                        PermissionDecision::AllowAlways,
-                        PermissionAuthorizationStatus::Authorized,
-                        PermissionAuthorizationStatus::Authorized,
-                        1,
-                    ),
-                    (
-                        PermissionDecision::Deny,
-                        PermissionAuthorizationStatus::Denied,
-                        PermissionAuthorizationStatus::Denied,
-                        1,
-                    ),
-                    (
-                        PermissionDecision::AllowOnce,
-                        PermissionAuthorizationStatus::Authorized,
-                        PermissionAuthorizationStatus::Denied,
-                        2,
-                    ),
-                ] {
-                    let storage = MemStorage::default();
-                    let prompt =
-                        ScriptedPrompt::decisions(vec![], vec![PermissionDecision::Deny, decision]);
-                    let grants = Arc::default();
-                    let sdk = PermissionsService::new(&storage, &prompt, &PRODUCT)
-                        .with_temporary_permissions(Arc::clone(&grants));
-                    let native = PermissionsService::new(&storage, &prompt, &PRODUCT)
-                        .with_temporary_permissions(grants);
-                    let pending_answer = prompt.remote_answers.lock().await;
-                    let mut first = Box::pin(sdk.authorize_remote(request.clone()));
-                    let mut second = Box::pin(native.authorize_remote(request.clone()));
-
-                    assert!(futures::poll!(&mut first).is_pending());
-                    assert!(futures::poll!(&mut second).is_pending());
-                    drop(pending_answer);
-
-                    assert_eq!(
-                        (
-                            first.await.unwrap(),
-                            second.await.unwrap(),
-                            prompt.remote_calls.load(Ordering::SeqCst),
-                        ),
-                        (first_status, second_status, calls),
-                    );
-                }
-            }
-        });
-    }
-
-    #[test]
-    fn concurrent_device_operations_reuse_a_persisted_decision() {
-        futures::executor::block_on(async {
-            for (decision, expected) in [
-                (
-                    PermissionDecision::AllowAlways,
-                    PermissionAuthorizationStatus::Authorized,
-                ),
-                (
-                    PermissionDecision::Deny,
-                    PermissionAuthorizationStatus::Denied,
-                ),
-            ] {
-                let storage = MemStorage::default();
-                let prompt =
-                    ScriptedPrompt::decisions(vec![PermissionDecision::Deny, decision], vec![]);
-                let service = PermissionsService::new(&storage, &prompt, &PRODUCT);
-                let pending_answer = prompt.device_answers.lock().await;
-                let mut first =
-                    Box::pin(service.authorize_device(HostDevicePermissionRequest::Camera));
-                let mut second =
-                    Box::pin(service.authorize_device(HostDevicePermissionRequest::Camera));
-
-                assert!(futures::poll!(&mut first).is_pending());
-                assert!(futures::poll!(&mut second).is_pending());
-                drop(pending_answer);
-
-                assert_eq!(
-                    (
-                        first.await.unwrap(),
-                        second.await.unwrap(),
-                        prompt.device_calls.load(Ordering::SeqCst),
-                    ),
-                    (expected, expected, 1),
-                );
-            }
-        });
-    }
-
-    #[test]
-    fn cancelling_a_prompt_releases_waiting_operations_without_blocking_other_products() {
-        futures::executor::block_on(async {
-            let storage = MemStorage::default();
-            let prompt = ScriptedPrompt::decisions(vec![], vec![PermissionDecision::AllowAlways]);
-            let service = PermissionsService::new(&storage, &prompt, &PRODUCT);
-            let request = remote_domains(&["cdn.example.com"]);
-            let pending_answer = prompt.remote_answers.lock().await;
-            let mut cancelled = Box::pin(service.authorize_remote(request.clone()));
-            let mut waiting = Box::pin(service.authorize_remote(request.clone()));
-            assert!(futures::poll!(&mut cancelled).is_pending());
-            assert!(futures::poll!(&mut waiting).is_pending());
-
-            let other_prompt =
-                ScriptedPrompt::decisions(vec![], vec![PermissionDecision::AllowAlways]);
-            let other = PermissionsService::new(&storage, &other_prompt, &OTHER_PRODUCT);
-            let mut independent = Box::pin(other.authorize_remote(request));
-            assert_eq!(
-                futures::poll!(&mut independent),
-                std::task::Poll::Ready(Ok(PermissionAuthorizationStatus::Authorized)),
-            );
-
-            drop(cancelled);
-            drop(pending_answer);
-            assert_eq!(
-                (
-                    waiting.await.unwrap(),
-                    prompt.remote_calls.load(Ordering::SeqCst)
-                ),
-                (PermissionAuthorizationStatus::Authorized, 2),
-            );
-        });
-    }
-
-    #[test]
-    fn an_upfront_one_use_grant_is_shared_with_one_operation_but_never_persisted() {
-        futures::executor::block_on(async {
-            let storage = MemStorage::default();
-            let prompt = ScriptedPrompt::decisions(
-                vec![],
-                vec![PermissionDecision::Deny, PermissionDecision::AllowOnce],
-            );
-            let grants = Arc::default();
-            let sdk = PermissionsService::new(&storage, &prompt, &PRODUCT)
-                .with_temporary_permissions(Arc::clone(&grants));
-            let operation = PermissionsService::new(&storage, &prompt, &PRODUCT)
-                .with_temporary_permissions(Arc::clone(&grants));
-            let other_product = PermissionsService::new(&storage, &prompt, &OTHER_PRODUCT)
-                .with_temporary_permissions(grants);
-            let other_execution = PermissionsService::new(&storage, &prompt, &PRODUCT);
-            let request = remote_domains(&["api.example.com"]);
-            let requested = sdk.check_or_prompt_remote(request.clone()).await.unwrap();
-            assert_eq!(
-                (
-                    requested,
-                    sdk.peek_remote(&request).await.unwrap(),
-                    other_product.peek_remote(&request).await.unwrap(),
-                    other_execution.peek_remote(&request).await.unwrap(),
-                    storage.inner.lock().await.len(),
-                ),
-                (
-                    PermissionAuthorizationStatus::Authorized,
-                    PermissionAuthorizationStatus::Authorized,
-                    PermissionAuthorizationStatus::NotDetermined,
-                    PermissionAuthorizationStatus::NotDetermined,
-                    0,
-                ),
-            );
-            let first = operation.authorize_remote(request.clone()).await.unwrap();
-            let second = operation.authorize_remote(request).await.unwrap();
-            assert_eq!(
-                (first, second, prompt.remote_calls.load(Ordering::SeqCst)),
-                (
-                    PermissionAuthorizationStatus::Authorized,
-                    PermissionAuthorizationStatus::Denied,
-                    2,
-                ),
-            );
-        });
-    }
-
-    #[test]
-    fn a_denied_bundle_preserves_one_use_grants_for_a_later_operation() {
-        futures::executor::block_on(async {
-            for prompt_denial in [false, true] {
-                let storage = MemStorage::default();
-                let prompt = ScriptedPrompt::decisions(
-                    vec![],
-                    vec![PermissionDecision::Deny, PermissionDecision::AllowOnce],
-                );
-                let service = PermissionsService::new(&storage, &prompt, &PRODUCT);
-                let granted = remote_domains(&["api.example.com"]);
-                service
-                    .check_or_prompt_remote(granted.clone())
-                    .await
-                    .unwrap();
-                if !prompt_denial {
-                    service
-                        .set_authorization_status(
-                            &PermissionAuthorizationRequest::Remote(remote_domains(&[
-                                "blocked.com",
-                            ])),
-                            PermissionAuthorizationStatus::Denied,
-                        )
-                        .await
-                        .unwrap();
-                }
-                let denied = service
-                    .authorize_remote(remote_domains(&["api.example.com", "blocked.com"]))
-                    .await
-                    .unwrap();
-                let next = service
-                    .authorize_remote(remote_domains(&["api.example.com", "API.EXAMPLE.COM."]))
-                    .await
-                    .unwrap();
-                assert_eq!(
-                    (denied, next, service.peek_remote(&granted).await.unwrap()),
-                    (
-                        PermissionAuthorizationStatus::Denied,
-                        PermissionAuthorizationStatus::Authorized,
-                        PermissionAuthorizationStatus::NotDetermined,
-                    ),
-                );
-            }
-        });
-    }
-
-    #[test]
-    fn concurrent_operations_cannot_share_a_one_use_wildcard_grant() {
-        futures::executor::block_on(async {
-            let storage = MemStorage::default();
-            let prompt = ScriptedPrompt::decisions(
-                vec![],
-                vec![PermissionDecision::Deny, PermissionDecision::AllowOnce],
-            );
-            let service = PermissionsService::new(&storage, &prompt, &PRODUCT);
-            service
-                .check_or_prompt_remote(remote_domains(&["*.example.com"]))
-                .await
-                .unwrap();
-            let (first, second) = futures::join!(
-                service.authorize_remote(remote_domains(&["deep.a.example.com"])),
-                service.authorize_remote(remote_domains(&["deeper.deep.b.example.com"])),
-            );
-            assert_eq!(
-                (
-                    first.unwrap(),
-                    second.unwrap(),
-                    prompt.remote_calls.load(Ordering::SeqCst)
-                ),
-                (
-                    PermissionAuthorizationStatus::Authorized,
-                    PermissionAuthorizationStatus::Denied,
-                    2,
-                ),
-            );
-        });
-    }
-
-    #[test]
-    fn a_one_use_answer_to_an_operation_is_consumed_by_that_operation() {
-        futures::executor::block_on(async {
-            let storage = MemStorage::default();
-            let prompt = ScriptedPrompt::decisions(
-                vec![PermissionDecision::AllowOnce],
-                vec![PermissionDecision::AllowOnce],
-            );
-            let service = PermissionsService::new(&storage, &prompt, &PRODUCT);
-            let remote = remote_domains(&["api.example.com"]);
-            let device = HostDevicePermissionRequest::Camera;
-            assert_eq!(
-                (
-                    service.authorize_remote(remote.clone()).await.unwrap(),
-                    service.peek_remote(&remote).await.unwrap(),
-                    service.authorize_device(device).await.unwrap(),
-                    service.peek_device(&device).await.unwrap(),
-                ),
-                (
-                    PermissionAuthorizationStatus::Authorized,
-                    PermissionAuthorizationStatus::NotDetermined,
-                    PermissionAuthorizationStatus::Authorized,
-                    PermissionAuthorizationStatus::NotDetermined,
-                ),
-            );
-        });
-    }
-
-    #[test]
-    fn blessed_domains_need_no_prompt_but_explicit_denials_still_apply() {
-        futures::executor::block_on(async {
-            let storage = MemStorage::default();
-            let prompt = ScriptedPrompt::new(vec![], vec![]);
-            let service = PermissionsService::new(&storage, &prompt, &PRODUCT);
-            for domain in BLESSED_REMOTE_DOMAINS {
-                let request = remote_domains(&[domain]);
-                let granted = service.authorize_remote(request.clone()).await.unwrap();
-                service
-                    .set_authorization_status(
-                        &PermissionAuthorizationRequest::Remote(request.clone()),
-                        PermissionAuthorizationStatus::Denied,
-                    )
-                    .await
-                    .unwrap();
-                assert_eq!(
-                    (granted, service.authorize_remote(request).await.unwrap()),
-                    (
-                        PermissionAuthorizationStatus::Authorized,
-                        PermissionAuthorizationStatus::Denied,
-                    ),
-                );
-            }
-            assert_eq!(prompt.remote_calls.load(Ordering::SeqCst), 0);
-        });
-    }
-
-    #[test]
-    fn blessed_domains_do_not_consume_a_one_use_grant_for_other_hosts() {
-        futures::executor::block_on(async {
-            let storage = MemStorage::default();
-            let prompt = ScriptedPrompt::decisions(vec![], vec![PermissionDecision::AllowOnce]);
-            let service = PermissionsService::new(&storage, &prompt, &PRODUCT);
-            let wildcard = remote_domains(&["*"]);
-            service
-                .check_or_prompt_remote(wildcard.clone())
-                .await
-                .unwrap();
-            let blessed = service
-                .authorize_remote(remote_domains(&[BLESSED_REMOTE_DOMAINS[0]]))
-                .await
-                .unwrap();
-            let still_available = service.peek_remote(&wildcard).await.unwrap();
-            let other = service
-                .authorize_remote(remote_domains(&["other.com"]))
-                .await
-                .unwrap();
-            assert_eq!(
-                (
-                    blessed,
-                    still_available,
-                    other,
-                    service.peek_remote(&wildcard).await.unwrap()
-                ),
-                (
-                    PermissionAuthorizationStatus::Authorized,
-                    PermissionAuthorizationStatus::Authorized,
-                    PermissionAuthorizationStatus::Authorized,
-                    PermissionAuthorizationStatus::NotDetermined,
-                ),
-            );
-        });
-    }
-
-    #[test]
-    fn a_one_use_exception_to_a_denial_is_consumed_even_for_a_blessed_domain() {
-        futures::executor::block_on(async {
-            let storage = MemStorage::default();
-            let prompt = ScriptedPrompt::decisions(vec![], vec![PermissionDecision::AllowOnce]);
-            let service = PermissionsService::new(&storage, &prompt, &PRODUCT);
-            service
-                .check_or_prompt_remote(remote_domains(&["*.googleapis.com"]))
-                .await
-                .unwrap();
-            service
-                .set_authorization_status(
-                    &PermissionAuthorizationRequest::Remote(remote_domains(&["*"])),
-                    PermissionAuthorizationStatus::Denied,
-                )
-                .await
-                .unwrap();
-            let request = remote_domains(&["fonts.googleapis.com"]);
-            assert_eq!(
-                (
-                    service.authorize_remote(request.clone()).await.unwrap(),
-                    service.authorize_remote(request).await.unwrap(),
-                    prompt.remote_calls.load(Ordering::SeqCst),
-                ),
-                (
-                    PermissionAuthorizationStatus::Authorized,
-                    PermissionAuthorizationStatus::Denied,
-                    1,
-                ),
-            );
-        });
-    }
-
-    #[test]
-    fn resetting_a_permission_removes_its_temporary_grant() {
-        futures::executor::block_on(async {
-            let storage = MemStorage::default();
-            let prompt = ScriptedPrompt::decisions(vec![], vec![PermissionDecision::AllowOnce]);
-            let service = PermissionsService::new(&storage, &prompt, &PRODUCT);
-            let request = remote_domains(&["api.example.com"]);
-            service
-                .check_or_prompt_remote(request.clone())
-                .await
-                .unwrap();
-            service
-                .set_authorization_status(
-                    &PermissionAuthorizationRequest::Remote(request.clone()),
-                    PermissionAuthorizationStatus::NotDetermined,
-                )
-                .await
-                .unwrap();
-            assert_eq!(
-                service.peek_remote(&request).await.unwrap(),
-                PermissionAuthorizationStatus::NotDetermined
-            );
-        });
-    }
-
-    #[test]
-    fn another_execution_reset_invalidates_an_unconsumed_device_grant() {
-        futures::executor::block_on(async {
-            let storage = MemStorage::default();
-            let prompt = ScriptedPrompt::decisions(
-                vec![PermissionDecision::Deny, PermissionDecision::AllowOnce],
-                vec![],
-            );
-            let execution = PermissionsService::new(&storage, &prompt, &PRODUCT);
-            let admin = PermissionsService::new(&storage, &prompt, &PRODUCT);
-            let device = HostDevicePermissionRequest::Camera;
-            assert_eq!(
-                execution.check_or_prompt_device(device).await.unwrap(),
-                PermissionAuthorizationStatus::Authorized,
-            );
-            admin.set_authorization_status(
-                &PermissionAuthorizationRequest::Device(device),
-                PermissionAuthorizationStatus::NotDetermined,
-            ).await.unwrap();
-            assert_eq!(
-                execution.authorize_device(device).await.unwrap(),
-                PermissionAuthorizationStatus::Denied,
-            );
-            assert_eq!(prompt.device_calls.load(Ordering::SeqCst), 2);
-        });
-    }
-
-    async fn check_device<S: CoreStorage + ?Sized, P: Permissions + ?Sized>(
-        service: &PermissionsService<'_, S, P>,
-        permission: HostDevicePermissionRequest,
-    ) -> Result<PermissionAuthorizationStatus, GenericError> {
-        service.check_or_prompt_device(permission).await
-    }
-
-    struct ScriptedPrompt {
-        device_answers: Mutex<Vec<PermissionDecision>>,
-        remote_answers: Mutex<Vec<PermissionDecision>>,
-        device_calls: AtomicUsize,
-        remote_calls: AtomicUsize,
-        /// Domain bundles the remote callback was actually asked about, in call
-        /// order, so a test can assert which subset reached the user.
-        remote_domains_asked: Mutex<Vec<Vec<String>>>,
-        calling_answers: Mutex<Vec<Result<bool, GenericError>>>,
-        calling_reviews: Mutex<Vec<CallingReview>>,
-    }
-
-    impl ScriptedPrompt {
-        fn new(device_answers: Vec<bool>, remote_answers: Vec<bool>) -> Self {
-            let decision = |granted| {
-                if granted {
-                    PermissionDecision::AllowAlways
-                } else {
-                    PermissionDecision::Deny
-                }
-            };
-            Self::decisions(
-                device_answers.into_iter().map(decision).collect(),
-                remote_answers.into_iter().map(decision).collect(),
-            )
-        }
-
-        fn decisions(
-            device_answers: Vec<PermissionDecision>,
-            remote_answers: Vec<PermissionDecision>,
-        ) -> Self {
-            Self {
-                device_answers: Mutex::new(device_answers),
-                remote_answers: Mutex::new(remote_answers),
-                device_calls: AtomicUsize::new(0),
-                remote_calls: AtomicUsize::new(0),
-                remote_domains_asked: Mutex::new(Vec::new()),
-                calling_answers: Mutex::new(Vec::new()),
-                calling_reviews: Mutex::new(Vec::new()),
-            }
-        }
-
-        fn with_calling_answers(mut self, answers: Vec<Result<bool, GenericError>>) -> Self {
-            self.calling_answers = Mutex::new(answers);
-            self
-        }
-
-        fn domains_asked(&self) -> Vec<Vec<String>> {
-            futures::executor::block_on(self.remote_domains_asked.lock()).clone()
-        }
-    }
-
-    #[crate::platform::async_trait]
-    impl Permissions for ScriptedPrompt {
-        async fn device_permission(
-            &self,
-            _product: &ProductContext,
-            _request: HostDevicePermissionRequest,
-        ) -> Result<PermissionDecision, GenericError> {
-            self.device_calls.fetch_add(1, Ordering::SeqCst);
-            let decision = self
-                .device_answers
-                .lock()
-                .await
-                .pop()
-                .expect("ScriptedPrompt ran out of device answers");
-            Ok(decision)
-        }
-
-        async fn remote_permission(
-            &self,
-            _product: &ProductContext,
-            request: RemotePermissionRequest,
-        ) -> Result<PermissionDecision, GenericError> {
-            self.remote_calls.fetch_add(1, Ordering::SeqCst);
-            if let RemotePermission::Remote { domains } = &request.permission {
-                self.remote_domains_asked.lock().await.push(domains.clone());
-            }
-            let decision = self
-                .remote_answers
-                .lock()
-                .await
-                .pop()
-                .expect("ScriptedPrompt ran out of remote answers");
-            Ok(decision)
-        }
-    }
-
-    #[crate::platform::async_trait]
-    impl UserConfirmation for ScriptedPrompt {
-        async fn confirm_user_action(
-            &self,
-            review: UserConfirmationReview,
-        ) -> Result<bool, GenericError> {
-            let UserConfirmationReview::Calling(review) = review else {
-                panic!("unexpected confirmation review");
-            };
-            self.calling_reviews.lock().await.push(review);
-            self.calling_answers
-                .lock()
-                .await
-                .pop()
-                .expect("ScriptedPrompt ran out of calling answers")
-        }
-    }
-
-    /// OS status source, scripted per capability so a test can deny one
-    /// capability while another stays granted.
-    struct ScriptedStatus {
-        answers: Vec<(HostDevicePermissionRequest, DevicePermissionStatus)>,
-        /// Answer for any capability `answers` does not name. `None` fails the
-        /// query instead, standing in for a busy host or a dropped IPC.
-        fallback: Option<DevicePermissionStatus>,
-        asked: Mutex<Vec<HostDevicePermissionRequest>>,
-    }
-
-    impl ScriptedStatus {
-        fn always(status: DevicePermissionStatus) -> Self {
-            Self {
-                answers: Vec::new(),
-                fallback: Some(status),
-                asked: Mutex::new(Vec::new()),
-            }
-        }
-
-        fn per_capability(
-            answers: Vec<(HostDevicePermissionRequest, DevicePermissionStatus)>,
-            fallback: DevicePermissionStatus,
-        ) -> Self {
-            Self {
-                answers,
-                fallback: Some(fallback),
-                asked: Mutex::new(Vec::new()),
-            }
-        }
-
-        fn failing() -> Self {
-            Self {
-                answers: Vec::new(),
-                fallback: None,
-                asked: Mutex::new(Vec::new()),
-            }
-        }
-
-        fn asked(&self) -> Vec<HostDevicePermissionRequest> {
-            futures::executor::block_on(self.asked.lock()).clone()
-        }
-    }
-
-    #[crate::platform::async_trait]
-    impl PermissionStatusHost for ScriptedStatus {
-        async fn device_permission_status(
-            &self,
-            request: HostDevicePermissionRequest,
-        ) -> Result<DevicePermissionStatus, GenericError> {
-            self.asked.lock().await.push(request);
-            if let Some((_, status)) = self
-                .answers
-                .iter()
-                .find(|(capability, _)| *capability == request)
-            {
-                return Ok(*status);
-            }
-            self.fallback.ok_or_else(|| v01::GenericError {
-                reason: "status channel unavailable".to_string(),
-            })
-        }
-    }
-
-    /// Persist a product-scoped grant for `capability` the way a first
-    /// successful request does, with no OS status source involved.
-    fn grant_stored(storage: &MemStorage, capability: HostDevicePermissionRequest) {
-        let prompt = ScriptedPrompt::new(vec![true], vec![]);
-        let service = PermissionsService::new(storage, &prompt, &PRODUCT);
-        assert_eq!(
-            futures::executor::block_on(check_device(&service, capability)).unwrap(),
-            PermissionAuthorizationStatus::Authorized,
-        );
-    }
-
-    fn remote_domains(domains: &[&str]) -> RemotePermissionRequest {
-        RemotePermissionRequest {
-            permission: RemotePermission::Remote {
-                domains: domains.iter().map(|domain| domain.to_string()).collect(),
-            },
-        }
-    }
-
-    #[test]
-    fn check_or_prompt_device_caches_grant() {
-        let storage = MemStorage::default();
-        let prompt = ScriptedPrompt::new(vec![true], vec![]);
-        let service = PermissionsService::new(&storage, &prompt, &PRODUCT);
-
-        let first = futures::executor::block_on(
-            check_device(&service, HostDevicePermissionRequest::Camera),
-        )
-        .unwrap();
-        let second = futures::executor::block_on(
-            check_device(&service, HostDevicePermissionRequest::Camera),
-        )
-        .unwrap();
-
-        assert_eq!(first, PermissionAuthorizationStatus::Authorized);
-        assert_eq!(second, PermissionAuthorizationStatus::Authorized);
-        assert_eq!(prompt.device_calls.load(Ordering::SeqCst), 1);
-    }
-
-    #[test]
-    fn check_or_prompt_remote_caches_denial() {
-        let storage = MemStorage::default();
-        let prompt = ScriptedPrompt::new(vec![], vec![false]);
-        let service = PermissionsService::new(&storage, &prompt, &PRODUCT);
-
-        let request = RemotePermissionRequest {
-            permission: RemotePermission::ChainSubmit,
-        };
-        let first =
-            futures::executor::block_on(service.check_or_prompt_remote(request.clone())).unwrap();
-        let second = futures::executor::block_on(service.check_or_prompt_remote(request)).unwrap();
-
-        assert_eq!(first, PermissionAuthorizationStatus::Denied);
-        assert_eq!(second, PermissionAuthorizationStatus::Denied);
-        assert_eq!(prompt.remote_calls.load(Ordering::SeqCst), 1);
-    }
-
-    /// The defect this storage model exists to fix: a product grants a bundle,
-    /// then enforcement asks about one host in it. Keying the bundle as a set
-    /// made that lookup miss and re-prompt, so a granted domain read as
-    /// undecided forever.
-    #[test]
-    fn a_bundle_grant_is_visible_to_a_single_domain_lookup() {
-        let storage = MemStorage::default();
-        let prompt = ScriptedPrompt::new(vec![], vec![true]);
-        let service = PermissionsService::new(&storage, &prompt, &PRODUCT);
-
-        let granted = futures::executor::block_on(
-            service.check_or_prompt_remote(remote_domains(&["a.example.com", "b.example.com"])),
-        )
-        .unwrap();
-        assert_eq!(granted, PermissionAuthorizationStatus::Authorized);
-
-        for domain in ["a.example.com", "b.example.com"] {
-            assert_eq!(
-                futures::executor::block_on(service.peek_remote(&remote_domains(&[domain])))
-                    .unwrap(),
-                PermissionAuthorizationStatus::Authorized,
-                "{domain} was granted as part of the bundle"
-            );
-            assert_eq!(
-                futures::executor::block_on(
-                    service.check_or_prompt_remote(remote_domains(&[domain]))
-                )
-                .unwrap(),
-                PermissionAuthorizationStatus::Authorized,
-            );
-        }
-        assert_eq!(
-            prompt.remote_calls.load(Ordering::SeqCst),
-            1,
-            "a domain already covered by the bundle must not re-prompt"
-        );
-    }
-
-    #[test]
-    fn a_wildcard_grant_covers_descendants_but_not_its_root() {
-        let storage = MemStorage::default();
-        let prompt = ScriptedPrompt::new(vec![], vec![true]);
-        let service = PermissionsService::new(&storage, &prompt, &PRODUCT);
-
-        futures::executor::block_on(
-            service.check_or_prompt_remote(remote_domains(&["*.example.com"])),
-        )
-        .unwrap();
-
-        for covered in [
-            "api.example.com",
-            "deep.api.example.com",
-            "deeper.deep.api.example.com",
-        ] {
-            assert_eq!(
-                futures::executor::block_on(service.peek_remote(&remote_domains(&[covered])))
-                    .unwrap(),
-                PermissionAuthorizationStatus::Authorized,
-                "{covered} is a descendant of example.com"
-            );
-        }
-        for uncovered in ["example.com", "notexample.com", "example.com.other"] {
-            assert_eq!(
-                futures::executor::block_on(service.peek_remote(&remote_domains(&[uncovered])))
-                    .unwrap(),
-                PermissionAuthorizationStatus::NotDetermined,
-                "{uncovered} is not a descendant of example.com"
-            );
-        }
-    }
-
-    #[test]
-    fn the_most_specific_stored_decision_wins() {
-        let storage = MemStorage::default();
-        let prompt = ScriptedPrompt::new(vec![], vec![]);
-        let service = PermissionsService::new(&storage, &prompt, &PRODUCT);
-
-        // Deny the whole wildcard, then allow one host under it explicitly.
-        futures::executor::block_on(service.set_authorization_status(
-            &PermissionAuthorizationRequest::Remote(remote_domains(&["*.example.com"])),
-            PermissionAuthorizationStatus::Denied,
-        ))
-        .unwrap();
-        futures::executor::block_on(service.set_authorization_status(
-            &PermissionAuthorizationRequest::Remote(remote_domains(&["api.example.com"])),
-            PermissionAuthorizationStatus::Authorized,
-        ))
-        .unwrap();
-
-        assert_eq!(
-            futures::executor::block_on(service.peek_remote(&remote_domains(&["api.example.com"])))
-                .unwrap(),
-            PermissionAuthorizationStatus::Authorized,
-            "an explicit host grant outranks a denied parent wildcard"
-        );
-        assert_eq!(
-            futures::executor::block_on(
-                service.peek_remote(&remote_domains(&["other.example.com"]))
-            )
-            .unwrap(),
-            PermissionAuthorizationStatus::Denied,
-            "a host with no decision of its own inherits the wildcard denial"
-        );
-
-        futures::executor::block_on(service.set_authorization_status(
-            &PermissionAuthorizationRequest::Remote(remote_domains(&["*.example.com"])),
-            PermissionAuthorizationStatus::Authorized,
-        ))
-        .unwrap();
-        futures::executor::block_on(service.set_authorization_status(
-            &PermissionAuthorizationRequest::Remote(remote_domains(&["*.api.example.com"])),
-            PermissionAuthorizationStatus::Denied,
-        ))
-        .unwrap();
-        for denied in ["deep.api.example.com", "deeper.deep.api.example.com"] {
-            assert_eq!(
-                futures::executor::block_on(service.peek_remote(&remote_domains(&[denied])))
-                    .unwrap(),
-                PermissionAuthorizationStatus::Denied,
-                "the narrower wildcard denial overrides the ancestor's grant"
-            );
-        }
-    }
-
-    #[test]
-    fn a_prompt_covers_only_undetermined_domains_and_never_revokes_a_grant() {
-        let storage = MemStorage::default();
-        // Answers pop from the end: grant first, then deny.
-        let prompt = ScriptedPrompt::new(vec![], vec![false, true]);
-        let service = PermissionsService::new(&storage, &prompt, &PRODUCT);
-
-        futures::executor::block_on(service.check_or_prompt_remote(remote_domains(&["a.com"])))
-            .unwrap();
-        let second = futures::executor::block_on(
-            service.check_or_prompt_remote(remote_domains(&["a.com", "b.com"])),
-        )
-        .unwrap();
-
-        assert_eq!(
-            prompt.domains_asked(),
-            vec![vec!["a.com".to_string()], vec!["b.com".to_string()]],
-            "the second prompt must ask only about the undecided domain"
-        );
-        assert_eq!(
-            second,
-            PermissionAuthorizationStatus::Denied,
-            "the bundle needs every domain, so one denial denies it"
-        );
-        assert_eq!(
-            futures::executor::block_on(service.peek_remote(&remote_domains(&["a.com"]))).unwrap(),
-            PermissionAuthorizationStatus::Authorized,
-            "denying b.com must not revoke the existing a.com grant"
-        );
-    }
-
-    #[test]
-    fn a_multi_domain_denial_leaves_the_narrower_question_askable() {
-        let storage = MemStorage::default();
-        // Answers pop from the end: deny the pair, then grant the single domain.
-        let prompt = ScriptedPrompt::new(vec![], vec![true, false]);
-        let service = PermissionsService::new(&storage, &prompt, &PRODUCT);
-
-        let pair = remote_domains(&["api.coingecko.com", "analytics.vendor.com"]);
-        assert_eq!(
-            futures::executor::block_on(service.check_or_prompt_remote(pair.clone())).unwrap(),
-            PermissionAuthorizationStatus::Denied
-        );
-        assert_eq!(
-            futures::executor::block_on(service.check_or_prompt_remote(pair.clone())).unwrap(),
-            PermissionAuthorizationStatus::Denied,
-        );
-        assert_eq!(
-            prompt.remote_calls.load(Ordering::SeqCst),
-            1,
-            "the refused set is answered and must not be re-asked"
-        );
-
-        // Refusing the pair is not refusing either domain on its own: that is a
-        // question the user was never put, so it stays open.
-        for domain in ["api.coingecko.com", "analytics.vendor.com"] {
-            assert_eq!(
-                futures::executor::block_on(service.peek_remote(&remote_domains(&[domain])))
-                    .unwrap(),
-                PermissionAuthorizationStatus::NotDetermined,
-                "{domain} was never refused by itself"
-            );
-        }
-        assert_eq!(
-            futures::executor::block_on(
-                service.check_or_prompt_remote(remote_domains(&["api.coingecko.com"]))
-            )
-            .unwrap(),
-            PermissionAuthorizationStatus::Authorized,
-        );
-        assert_eq!(
-            prompt.domains_asked(),
-            vec![
-                vec![
-                    "api.coingecko.com".to_string(),
-                    "analytics.vendor.com".to_string(),
-                ],
-                vec!["api.coingecko.com".to_string()],
-            ],
-        );
-    }
-
-    #[test]
-    fn unsupported_wildcards_are_rejected_without_prompting_or_storing() {
-        let storage = MemStorage::default();
-        let prompt = ScriptedPrompt::new(vec![], vec![]);
-        let service = PermissionsService::new(&storage, &prompt, &PRODUCT);
-
-        for domain in ["*.com", "*.dot", "*.127.0.0.1", "*.[::1]"] {
-            assert_eq!(
-                futures::executor::block_on(
-                    service.check_or_prompt_remote(remote_domains(&[domain]))
-                )
-                .unwrap(),
-                PermissionAuthorizationStatus::Denied,
-            );
-        }
-        assert_eq!(
-            (
-                prompt.remote_calls.load(Ordering::SeqCst),
-                futures::executor::block_on(storage.inner.lock()).len()
-            ),
-            (0, 0),
-        );
-    }
-
-    #[test]
-    fn a_grant_covers_every_spelling_of_the_granted_host() {
-        let storage = MemStorage::default();
-        let prompt = ScriptedPrompt::new(vec![], vec![true]);
-        let service = PermissionsService::new(&storage, &prompt, &PRODUCT);
-
-        futures::executor::block_on(
-            service.check_or_prompt_remote(remote_domains(&["Bücher.example"])),
-        )
-        .unwrap();
-
-        // Enforcement normalizes a live URL host the same way the grant was
-        // keyed, so no spelling of the same site opens a second prompt.
-        for spelling in [
-            "bücher.example",
-            "xn--bcher-kva.example",
-            "XN--BCHER-KVA.example.",
-        ] {
-            assert_eq!(
-                futures::executor::block_on(service.peek_remote(&remote_domains(&[spelling])))
-                    .unwrap(),
-                PermissionAuthorizationStatus::Authorized,
-                "{spelling} is the granted host"
-            );
-        }
-        assert_eq!(prompt.remote_calls.load(Ordering::SeqCst), 1);
-    }
-
-    #[test]
-    fn a_denied_domain_short_circuits_the_bundle_without_prompting() {
-        let storage = MemStorage::default();
-        let prompt = ScriptedPrompt::new(vec![], vec![false]);
-        let service = PermissionsService::new(&storage, &prompt, &PRODUCT);
-
-        futures::executor::block_on(service.check_or_prompt_remote(remote_domains(&["a.com"])))
-            .unwrap();
-        let second = futures::executor::block_on(
-            service.check_or_prompt_remote(remote_domains(&["a.com", "b.com"])),
-        )
-        .unwrap();
-
-        assert_eq!(second, PermissionAuthorizationStatus::Denied);
-        assert_eq!(
-            prompt.remote_calls.load(Ordering::SeqCst),
-            1,
-            "a stored denial is not re-asked"
-        );
-    }
-
-    #[test]
-    fn an_empty_domain_bundle_is_denied_without_prompting() {
-        let storage = MemStorage::default();
-        let prompt = ScriptedPrompt::new(vec![], vec![]);
-        let service = PermissionsService::new(&storage, &prompt, &PRODUCT);
-
-        assert_eq!(
-            futures::executor::block_on(service.check_or_prompt_remote(remote_domains(&[])))
-                .unwrap(),
-            PermissionAuthorizationStatus::Denied
-        );
-        assert_eq!(
-            futures::executor::block_on(service.peek_remote(&remote_domains(&[]))).unwrap(),
-            PermissionAuthorizationStatus::Denied
-        );
-        assert_eq!(prompt.remote_calls.load(Ordering::SeqCst), 0);
-    }
-
-    #[test]
-    fn clearing_a_bundle_clears_each_domain_it_names() {
-        let storage = MemStorage::default();
-        let prompt = ScriptedPrompt::new(vec![], vec![true]);
-        let service = PermissionsService::new(&storage, &prompt, &PRODUCT);
-
-        futures::executor::block_on(
-            service.check_or_prompt_remote(remote_domains(&["a.com", "b.com"])),
-        )
-        .unwrap();
-        futures::executor::block_on(service.set_authorization_status(
-            &PermissionAuthorizationRequest::Remote(remote_domains(&["a.com", "b.com"])),
-            PermissionAuthorizationStatus::NotDetermined,
-        ))
-        .unwrap();
-
-        for domain in ["a.com", "b.com"] {
-            assert_eq!(
-                futures::executor::block_on(service.peek_remote(&remote_domains(&[domain])))
-                    .unwrap(),
-                PermissionAuthorizationStatus::NotDetermined,
-                "{domain} must be revocable through the bundle it was granted in"
-            );
-        }
-    }
-
-    #[test]
-    fn resetting_a_bundle_clears_a_recorded_denial() {
-        let storage = MemStorage::default();
-        let prompt = ScriptedPrompt::new(vec![], vec![false]);
-        let service = PermissionsService::new(&storage, &prompt, &PRODUCT);
-        let pair = remote_domains(&["a.com", "b.com"]);
-
-        futures::executor::block_on(service.check_or_prompt_remote(pair.clone())).unwrap();
-        futures::executor::block_on(service.set_authorization_status(
-            &PermissionAuthorizationRequest::Remote(pair.clone()),
-            PermissionAuthorizationStatus::NotDetermined,
-        ))
-        .unwrap();
-
-        assert_eq!(
-            futures::executor::block_on(service.peek_remote(&pair)).unwrap(),
-            PermissionAuthorizationStatus::NotDetermined,
-            "the host's reset must also reach the slot a set denial lives in"
-        );
-    }
-
-    #[test]
-    fn remote_domain_grants_are_scoped_to_one_product() {
-        let storage = MemStorage::default();
-        let prompt = ScriptedPrompt::new(vec![], vec![true]);
-        let service = PermissionsService::new(&storage, &prompt, &PRODUCT);
-        futures::executor::block_on(service.check_or_prompt_remote(remote_domains(&["a.com"])))
-            .unwrap();
-
-        let other = PermissionsService::new(&storage, &prompt, &OTHER_PRODUCT);
-        assert_eq!(
-            futures::executor::block_on(other.peek_remote(&remote_domains(&["a.com"]))).unwrap(),
-            PermissionAuthorizationStatus::NotDetermined
-        );
-    }
-
-    /// A trusted product, so `ScriptedPrompt` is built with no scripted answers:
-    /// reaching either callback panics rather than silently answering.
-    fn trusted_service<'a>(
-        storage: &'a MemStorage,
-        prompt: &'a ScriptedPrompt,
-    ) -> PermissionsService<'a, MemStorage, ScriptedPrompt> {
-        PermissionsService::new(storage, prompt, &PEOPL)
-    }
-
-    fn remote(permission: RemotePermission) -> RemotePermissionRequest {
-        RemotePermissionRequest { permission }
-    }
-
-    fn ordinary_remote_permissions() -> Vec<RemotePermission> {
-        vec![
-            RemotePermission::Remote {
-                domains: vec!["example.com".to_string()],
-            },
-            RemotePermission::WebRtc,
-            RemotePermission::ChainSubmit,
-            RemotePermission::PreimageSubmit,
-            RemotePermission::StatementSubmit,
-        ]
-    }
-
-    #[test]
-    fn a_trusted_product_holds_ordinary_remote_permissions_without_prompting() {
-        let storage = MemStorage::default();
-        let prompt = ScriptedPrompt::new(vec![], vec![]);
-        let service = trusted_service(&storage, &prompt);
-
-        for permission in ordinary_remote_permissions() {
-            assert_eq!(
-                futures::executor::block_on(
-                    service.check_or_prompt_remote(remote(permission.clone()))
-                )
-                .unwrap(),
-                PermissionAuthorizationStatus::Authorized,
-                "{permission:?} must be granted to a trusted product without a prompt"
-            );
-        }
-        assert_eq!(prompt.remote_calls.load(Ordering::SeqCst), 0);
-        assert!(prompt.domains_asked().is_empty());
-    }
-
-    #[test]
-    fn a_trusted_product_is_authorized_for_any_domain() {
-        let storage = MemStorage::default();
-        let prompt = ScriptedPrompt::new(vec![], vec![]);
-        let service = trusted_service(&storage, &prompt);
-
-        for domains in [
-            vec!["a.com"],
-            vec!["deep.api.example.com"],
-            vec!["*"],
-            vec!["a.com", "b.com", "*.c.com"],
-        ] {
-            assert_eq!(
-                futures::executor::block_on(service.peek_remote(&remote_domains(&domains)))
-                    .unwrap(),
-                PermissionAuthorizationStatus::Authorized,
-                "{domains:?} must be authorized for a trusted product"
-            );
-        }
-    }
-
-    #[test]
-    fn a_trusted_product_reports_authorized_to_the_admin_surface() {
-        let storage = MemStorage::default();
-        let prompt = ScriptedPrompt::new(vec![], vec![]);
-        let service = trusted_service(&storage, &prompt);
-
-        for request in [
-            remote(RemotePermission::ChainSubmit),
-            remote_domains(&["a.com"]),
-        ] {
-            assert_eq!(
-                futures::executor::block_on(
-                    service.authorization_status(&PermissionAuthorizationRequest::Remote(request))
-                )
-                .unwrap(),
-                PermissionAuthorizationStatus::Authorized
-            );
-        }
-    }
-
-    #[test]
-    fn a_trusted_product_grant_is_not_persisted() {
-        let storage = MemStorage::default();
-        let prompt = ScriptedPrompt::new(vec![], vec![]);
-        let service = trusted_service(&storage, &prompt);
-        let request = remote(RemotePermission::ChainSubmit);
-
-        futures::executor::block_on(service.check_or_prompt_remote(request.clone())).unwrap();
-
-        assert_eq!(
-            futures::executor::block_on(storage.read_core_storage(
-                CoreStorageKey::remote_permission_authorization("peopl.dot", &request)
-            ))
-            .unwrap(),
-            None,
-            "an auto-granted permission must leave the slot free for a later user decision"
-        );
-    }
-
-    #[test]
-    fn a_trusted_product_honours_explicit_remote_revocation() {
-        let storage = MemStorage::default();
-        let prompt = ScriptedPrompt::new(vec![], vec![]);
-        let service = trusted_service(&storage, &prompt);
-
-        for request in [
-            remote(RemotePermission::ChainSubmit),
-            remote_domains(&["a.com"]),
-        ] {
-            futures::executor::block_on(service.set_authorization_status(
-                &PermissionAuthorizationRequest::Remote(request.clone()),
-                PermissionAuthorizationStatus::Denied,
-            ))
-            .unwrap();
-
-            assert_eq!(
-                futures::executor::block_on(service.peek_remote(&request)).unwrap(),
-                PermissionAuthorizationStatus::Denied
-            );
-            assert_eq!(
-                futures::executor::block_on(service.check_or_prompt_remote(request)).unwrap(),
-                PermissionAuthorizationStatus::Denied
-            );
-        }
-        assert_eq!(prompt.remote_calls.load(Ordering::SeqCst), 0);
-    }
-
-    #[test]
-    fn a_trusted_product_honours_explicit_wildcard_revocation() {
-        let storage = MemStorage::default();
-        let prompt = ScriptedPrompt::new(vec![], vec![]);
-        let service = trusted_service(&storage, &prompt);
-
-        futures::executor::block_on(service.set_authorization_status(
-            &PermissionAuthorizationRequest::Remote(remote_domains(&["*"])),
-            PermissionAuthorizationStatus::Denied,
-        ))
-        .unwrap();
-
-        for domain in ["a.com", "deep.api.example.com"] {
-            assert_eq!(
-                futures::executor::block_on(service.peek_remote(&remote_domains(&[domain])))
-                    .unwrap(),
-                PermissionAuthorizationStatus::Denied,
-                "an explicit user denial outranks the automatic trusted default"
-            );
-        }
-    }
-
-    #[test]
-    fn clearing_a_denial_restores_a_trusted_product_grant() {
-        let storage = MemStorage::default();
-        let prompt = ScriptedPrompt::new(vec![], vec![]);
-        let service = trusted_service(&storage, &prompt);
-        let request = PermissionAuthorizationRequest::Remote(remote(RemotePermission::ChainSubmit));
-
-        for status in [
-            PermissionAuthorizationStatus::Denied,
-            PermissionAuthorizationStatus::NotDetermined,
-        ] {
-            futures::executor::block_on(service.set_authorization_status(&request, status))
-                .unwrap();
-        }
-
-        assert_eq!(
-            futures::executor::block_on(service.authorization_status(&request)).unwrap(),
-            PermissionAuthorizationStatus::Authorized
-        );
-        assert_eq!(prompt.remote_calls.load(Ordering::SeqCst), 0);
-    }
-
-    #[test]
-    fn a_trusted_label_on_every_product_network_is_trusted() {
-        let storage = MemStorage::default();
-        let prompt = ScriptedPrompt::new(vec![], vec![]);
-
-        for product_id in [
-            "peopl.dot",
-            "peopl.paseo",
-            "peopl.testnet",
-            "dim2.dot",
-            "stash.dot",
-        ] {
-            let product = ProductContext::new(product_id.to_string()).expect("product id is valid");
-            let service = PermissionsService::new(&storage, &prompt, &product);
-            assert_eq!(
-                futures::executor::block_on(
-                    service.peek_remote(&remote(RemotePermission::ChainSubmit))
-                )
-                .unwrap(),
-                PermissionAuthorizationStatus::Authorized,
-                "{product_id} must be trusted on every accepted product network"
-            );
-        }
-    }
-
-    #[test]
-    fn a_subdomain_of_a_trusted_label_is_not_trusted() {
-        let storage = MemStorage::default();
-        let prompt = ScriptedPrompt::new(vec![], vec![true]);
-        let service = PermissionsService::new(&storage, &prompt, &PEOPL_APP);
-        let request = remote(RemotePermission::ChainSubmit);
-
-        assert_eq!(
-            futures::executor::block_on(service.peek_remote(&request)).unwrap(),
-            PermissionAuthorizationStatus::NotDetermined
-        );
-        assert_eq!(
-            futures::executor::block_on(service.check_or_prompt_remote(request)).unwrap(),
-            PermissionAuthorizationStatus::Authorized
-        );
-        assert_eq!(prompt.remote_calls.load(Ordering::SeqCst), 1);
-    }
-
-    #[test]
-    fn a_localhost_product_is_not_trusted() {
-        let storage = MemStorage::default();
-        let prompt = ScriptedPrompt::new(vec![], vec![true, true]);
-
-        for product_id in ["localhost", "localhost:3000"] {
-            let product = ProductContext::new(product_id.to_string()).expect("product id is valid");
-            let service = PermissionsService::new(&storage, &prompt, &product);
-            let request = remote(RemotePermission::ChainSubmit);
-            assert_eq!(
-                futures::executor::block_on(service.peek_remote(&request)).unwrap(),
-                PermissionAuthorizationStatus::NotDetermined,
-                "{product_id} carries no label to match and must prompt"
-            );
-            futures::executor::block_on(service.check_or_prompt_remote(request)).unwrap();
-        }
-        assert_eq!(prompt.remote_calls.load(Ordering::SeqCst), 2);
-    }
-
-    #[test]
-    fn an_untrusted_product_still_prompts_for_ordinary_remote_permissions() {
-        let storage = MemStorage::default();
-        let prompt = ScriptedPrompt::new(vec![], vec![true; 5]);
-        let service = PermissionsService::new(&storage, &prompt, &PRODUCT);
-
-        for permission in ordinary_remote_permissions() {
-            futures::executor::block_on(service.check_or_prompt_remote(remote(permission)))
-                .unwrap();
-        }
-        assert_eq!(prompt.remote_calls.load(Ordering::SeqCst), 5);
-    }
-
-    #[test]
-    fn a_trusted_product_still_prompts_for_device_permissions() {
-        let storage = MemStorage::default();
-        let prompt = ScriptedPrompt::new(vec![false], vec![]);
-        let service = trusted_service(&storage, &prompt);
-
-        assert_eq!(
-            futures::executor::block_on(service.peek_device(&HostDevicePermissionRequest::Camera))
-                .unwrap(),
-            PermissionAuthorizationStatus::NotDetermined
-        );
-        assert_eq!(
-            futures::executor::block_on(
-                check_device(&service, HostDevicePermissionRequest::Camera)
-            )
-            .unwrap(),
-            PermissionAuthorizationStatus::Denied,
-            "a trusted product's device answer is the user's, not the whitelist's"
-        );
-        assert_eq!(prompt.device_calls.load(Ordering::SeqCst), 1);
-    }
-
-    #[test]
-    fn a_trusted_product_cannot_ignore_unreadable_revocation_state() {
-        let storage = FailingStorage;
-        let prompt = ScriptedPrompt::new(vec![], vec![]);
-        let service = PermissionsService::new(&storage, &prompt, &PEOPL);
-        let status = |request| futures::executor::block_on(service.authorization_status(&request));
-        for request in [
-            PermissionAuthorizationRequest::Remote(remote(RemotePermission::ChainSubmit)),
-            PermissionAuthorizationRequest::IdentityDisclosure,
-            PermissionAuthorizationRequest::AccountAccess {
-                target_product_id: "other.dot".to_string(),
-            },
-            PermissionAuthorizationRequest::Device(HostDevicePermissionRequest::Camera),
-        ] {
-            assert_eq!(
-                status(request),
-                Err(GenericError {
-                    reason: "read failed".to_string()
-                })
-            );
-        }
-    }
-
-    #[test]
-    fn an_empty_domain_bundle_is_denied_for_a_trusted_product() {
-        let storage = MemStorage::default();
-        let prompt = ScriptedPrompt::new(vec![], vec![]);
-        let service = trusted_service(&storage, &prompt);
-
-        assert_eq!(
-            futures::executor::block_on(service.peek_remote(&remote_domains(&[]))).unwrap(),
-            PermissionAuthorizationStatus::Denied
-        );
-        assert_eq!(
-            futures::executor::block_on(service.check_or_prompt_remote(remote_domains(&[])))
-                .unwrap(),
-            PermissionAuthorizationStatus::Denied,
-            "an empty bundle grants nothing, so failing closed outranks the whitelist"
-        );
-        assert_eq!(prompt.remote_calls.load(Ordering::SeqCst), 0);
-    }
-
-    #[test]
-    fn device_and_remote_caches_are_independent() {
-        let storage = MemStorage::default();
-        // Device denies, remote grants. If the caches collided we'd see the
-        // same answer on the second call.
-        let prompt = ScriptedPrompt::new(vec![false], vec![true]);
-        let service = PermissionsService::new(&storage, &prompt, &PRODUCT);
-
-        let device = futures::executor::block_on(
-            check_device(&service, HostDevicePermissionRequest::Camera),
-        )
-        .unwrap();
-        let remote =
-            futures::executor::block_on(service.check_or_prompt_remote(RemotePermissionRequest {
-                permission: RemotePermission::ChainSubmit,
-            }))
-            .unwrap();
-
-        assert_eq!(device, PermissionAuthorizationStatus::Denied);
-        assert_eq!(remote, PermissionAuthorizationStatus::Authorized);
-        assert_eq!(prompt.device_calls.load(Ordering::SeqCst), 1);
-        assert_eq!(prompt.remote_calls.load(Ordering::SeqCst), 1);
-    }
-
-    #[test]
-    fn device_prompt_does_not_invoke_remote_callback() {
-        let storage = MemStorage::default();
-        let prompt = ScriptedPrompt::new(vec![true], vec![]);
-        let service = PermissionsService::new(&storage, &prompt, &PRODUCT);
-
-        let _ = futures::executor::block_on(
-            check_device(&service, HostDevicePermissionRequest::Camera),
-        )
-        .unwrap();
-        assert_eq!(prompt.device_calls.load(Ordering::SeqCst), 1);
-        assert_eq!(prompt.remote_calls.load(Ordering::SeqCst), 0);
-    }
-
-    #[test]
-    fn remote_prompt_does_not_invoke_device_callback() {
-        let storage = MemStorage::default();
-        let prompt = ScriptedPrompt::new(vec![], vec![true]);
-        let service = PermissionsService::new(&storage, &prompt, &PRODUCT);
-
-        let _ =
-            futures::executor::block_on(service.check_or_prompt_remote(RemotePermissionRequest {
-                permission: RemotePermission::WebRtc,
-            }))
-            .unwrap();
-        assert_eq!(prompt.device_calls.load(Ordering::SeqCst), 0);
-        assert_eq!(prompt.remote_calls.load(Ordering::SeqCst), 1);
-    }
-
-    #[test]
-    fn peek_returns_not_determined_until_authorized() {
-        let storage = MemStorage::default();
-        let prompt = ScriptedPrompt::new(vec![true], vec![]);
-        let service = PermissionsService::new(&storage, &prompt, &PRODUCT);
-
-        let before =
-            futures::executor::block_on(service.peek_device(&HostDevicePermissionRequest::Camera))
-                .unwrap();
-        assert_eq!(before, PermissionAuthorizationStatus::NotDetermined);
-
-        futures::executor::block_on(
-            check_device(&service, HostDevicePermissionRequest::Camera),
-        )
-        .unwrap();
-
-        let after =
-            futures::executor::block_on(service.peek_device(&HostDevicePermissionRequest::Camera))
-                .unwrap();
-        assert_eq!(after, PermissionAuthorizationStatus::Authorized);
-    }
-
-    #[test]
-    fn set_authorization_status_writes_and_clears() {
-        let storage = MemStorage::default();
-        let prompt = ScriptedPrompt::new(vec![], vec![]);
-        let service = PermissionsService::new(&storage, &prompt, &PRODUCT);
-        let request = PermissionAuthorizationRequest::Device(HostDevicePermissionRequest::Camera);
-
-        futures::executor::block_on(
-            service.set_authorization_status(&request, PermissionAuthorizationStatus::Authorized),
-        )
-        .unwrap();
-        assert_eq!(
-            futures::executor::block_on(service.authorization_status(&request)).unwrap(),
-            PermissionAuthorizationStatus::Authorized
-        );
-
-        futures::executor::block_on(
-            service
-                .set_authorization_status(&request, PermissionAuthorizationStatus::NotDetermined),
-        )
-        .unwrap();
-        assert_eq!(
-            futures::executor::block_on(service.authorization_status(&request)).unwrap(),
-            PermissionAuthorizationStatus::NotDetermined
-        );
-    }
-
-    #[test]
-    fn identity_disclosure_authorization_round_trips() {
-        let storage = MemStorage::default();
-        let prompt = ScriptedPrompt::new(vec![], vec![]);
-        let service = PermissionsService::new(&storage, &prompt, &PRODUCT);
-        let request = PermissionAuthorizationRequest::IdentityDisclosure;
-
-        assert_eq!(
-            futures::executor::block_on(service.authorization_status(&request)).unwrap(),
-            PermissionAuthorizationStatus::NotDetermined
-        );
-
-        futures::executor::block_on(
-            service.set_authorization_status(&request, PermissionAuthorizationStatus::Authorized),
-        )
-        .unwrap();
-        assert_eq!(
-            futures::executor::block_on(service.authorization_status(&request)).unwrap(),
-            PermissionAuthorizationStatus::Authorized
-        );
-
-        let other_product_service = PermissionsService::new(&storage, &prompt, &OTHER_PRODUCT);
-        assert_eq!(
-            futures::executor::block_on(other_product_service.authorization_status(&request))
-                .unwrap(),
-            PermissionAuthorizationStatus::NotDetermined
-        );
-    }
-
-    #[crate::platform::async_trait]
-    impl UserConfirmation for ScriptedPrompt {
-        async fn confirm_permission(
-            &self,
-            _review: UserConfirmationReview,
-        ) -> Result<PermissionDecision, GenericError> {
-            Ok(self.remote_answers.lock().await.remove(0))
-        }
-
-        async fn confirm_user_action(
-            &self,
-            _review: UserConfirmationReview,
-        ) -> Result<bool, GenericError> {
-            unreachable!("permission confirmation uses its decision callback")
-        }
-    }
-
-    #[test]
-    fn administration_cancels_pending_identity_and_chat_consent() {
-        futures::executor::block_on(async {
-            for request in [
-                PermissionAuthorizationRequest::IdentityDisclosure,
-                PermissionAuthorizationRequest::ChatAuthority,
-            ] {
-                let storage = MemStorage::default();
-                let prompt = ScriptedPrompt::decisions(vec![], vec![PermissionDecision::AllowAlways]);
-                let service = PermissionsService::new(&storage, &prompt, &PRODUCT);
-                let pending_answer = prompt.remote_answers.lock().await;
-                let mut consent = Box::pin(async {
-                    match request {
-                        PermissionAuthorizationRequest::IdentityDisclosure => {
-                            assert_eq!(
-                                service.check_or_prompt_identity_disclosure().await.unwrap(),
-                                PermissionAuthorizationStatus::NotDetermined
-                            );
-                        }
-                        PermissionAuthorizationRequest::ChatAuthority => {
-                            assert_eq!(
-                                service.check_or_prompt_chat_authority().await.unwrap(),
-                                ChatAuthorityConsent::Refused
-                            );
-                        }
-                        _ => unreachable!(),
-                    }
-                });
-                assert!(futures::poll!(&mut consent).is_pending());
-                service
-                    .set_authorization_status(&request, PermissionAuthorizationStatus::Denied)
-                    .await
-                    .unwrap();
-                consent.await;
-                drop(pending_answer);
-                assert_eq!(
-                    service.authorization_status(&request).await.unwrap(),
-                    PermissionAuthorizationStatus::Denied
-                );
-            }
-        });
-    }
-
-    #[test]
-    fn trusted_products_still_require_profile_disclosure() {
-        let storage = MemStorage::default();
-        let prompt = ScriptedPrompt::new(vec![], vec![]);
-        let service = trusted_service(&storage, &prompt);
-        assert_eq!(
-            futures::executor::block_on(
-                service.authorization_status(&PermissionAuthorizationRequest::ProfileDisclosure)
-            )
-            .unwrap(),
-            PermissionAuthorizationStatus::NotDetermined
-        );
-    }
-
-    #[test]
-    fn administration_cancels_pending_profile_disclosure() {
-        futures::executor::block_on(async {
-            let storage = MemStorage::default();
-            let prompt = ScriptedPrompt::decisions(vec![], vec![PermissionDecision::AllowAlways]);
-            let service = PermissionsService::new(&storage, &prompt, &PRODUCT);
-            let request = PermissionAuthorizationRequest::ProfileDisclosure;
-            let pending_answer = prompt.remote_answers.lock().await;
-            let mut consent = Box::pin(service.check_or_prompt_profile_disclosure());
-            assert!(futures::poll!(&mut consent).is_pending());
-            service
-                .set_authorization_status(&request, PermissionAuthorizationStatus::Denied)
-                .await
-                .unwrap();
-            assert_eq!(consent.await.unwrap(), PermissionAuthorizationStatus::NotDetermined);
-            drop(pending_answer);
-            assert_eq!(
-                service.authorization_status(&request).await.unwrap(),
-                PermissionAuthorizationStatus::Denied
-            );
-        });
-    }
-
-    #[test]
-    fn trusted_products_still_require_chat_authority() {
-        let storage = MemStorage::default();
-        let prompt = ScriptedPrompt::new(vec![], vec![]);
-        let service = trusted_service(&storage, &prompt);
-        assert_eq!(
-            futures::executor::block_on(
-                service.authorization_status(&PermissionAuthorizationRequest::ChatAuthority)
-            )
-            .unwrap(),
-            PermissionAuthorizationStatus::NotDetermined
-        );
-    }
-
-    #[test]
-    fn chat_authority_uses_its_own_cached_permission() {
-        let platform = StubPlatform {
-            chat_authority_confirmed: true,
-            ..Default::default()
-        };
-        let chat_product = ProductContext::new_with_execution(
-            "chat.paseo".to_owned(),
-            crate::platform::ProductExecutionKind::Worker,
-        )
-        .expect("test product id is valid");
-        let service = PermissionsService::new(&platform, &platform, &chat_product);
-
-        assert_eq!(
-            futures::executor::block_on(service.check_or_prompt_chat_authority()).unwrap(),
-            ChatAuthorityConsent::Persisted
-        );
-        assert_eq!(
-            futures::executor::block_on(service.check_or_prompt_chat_authority()).unwrap(),
-            ChatAuthorityConsent::Persisted
-        );
-        assert_eq!(
-            platform.chat_authority_reviews.lock().as_slice(),
-            &[ChatAuthorityReview {
-                product_id: "chat.paseo".to_string(),
-            }]
-        );
-        assert_eq!(platform.identity_disclosure_calls.load(Ordering::SeqCst), 0);
-        assert_eq!(
-            futures::executor::block_on(
-                service.authorization_status(&PermissionAuthorizationRequest::IdentityDisclosure)
-            )
-            .unwrap(),
-            PermissionAuthorizationStatus::NotDetermined
-        );
-    }
-
-    async fn persist_calling_decision<P: Permissions + ?Sized>(
-        service: &PermissionsService<'_, MemStorage, P>,
-        network: [u8; 32],
-        account: [u8; 32],
-        snapshot: PermissionAuthorizationSnapshot,
-        status: PermissionAuthorizationStatus,
-    ) -> Result<PermissionAuthorizationStatus, GenericError> {
-        if service
-            .set_authorization_status_if_unchanged(
-                &PermissionAuthorizationRequest::Calling { network, account },
-                &snapshot,
-                status,
-            )
-            .await?
-        {
-            Ok(status)
-        } else {
-            Ok(PermissionAuthorizationStatus::NotDetermined)
-        }
-    }
-
-    #[test]
-    fn calling_consent_is_scoped_to_product_network_and_account_even_for_trusted_products() {
-        futures::executor::block_on(async {
-            let storage = MemStorage::default();
-            let prompt = ScriptedPrompt::new(vec![], vec![])
-                .with_calling_answers(vec![Ok(false), Ok(true)]);
-            let service = trusted_service(&storage, &prompt);
-            let network = [1; 32];
-            let account = [2; 32];
-            let request = PermissionAuthorizationRequest::Calling { network, account };
-
-            assert_eq!(
-                service.check_or_prompt_calling(network, account, |snapshot, status| {
-                    persist_calling_decision(&service, network, account, snapshot, status)
-                }).await.unwrap(),
-                PermissionAuthorizationStatus::Authorized,
-            );
-            // Reconstructing the service must retain exactly this scope's answer.
-            let restored = trusted_service(&storage, &prompt);
-            assert_eq!(
-                restored.check_or_prompt_calling(network, account, |_, _| async {
-                    panic!("cached decision must not commit")
-                }).await.unwrap(),
-                PermissionAuthorizationStatus::Authorized,
-            );
-            for (product_id, network, account) in [
-                ("other.dot", network, account),
-                ("peopl.dot", [3; 32], account),
-                ("peopl.dot", network, [4; 32]),
-            ] {
-                let product = ProductContext::new(product_id.to_string()).expect("valid product id");
-                let isolated = PermissionsService::new(&storage, &prompt, &product);
-                assert_eq!(
-                    isolated
-                        .authorization_status(&PermissionAuthorizationRequest::Calling {
-                            network,
-                            account,
-                        })
-                        .await
-                        .unwrap(),
-                    PermissionAuthorizationStatus::NotDetermined,
-                );
-            }
-            assert_eq!(
-                service.check_or_prompt_calling(network, [4; 32], |snapshot, status| {
-                    persist_calling_decision(&service, network, [4; 32], snapshot, status)
-                }).await.unwrap(),
-                PermissionAuthorizationStatus::Denied,
-            );
-            assert_eq!(
-                service.check_or_prompt_calling(network, [4; 32], |_, _| async {
-                    panic!("cached decision must not commit")
-                }).await.unwrap(),
-                PermissionAuthorizationStatus::Denied,
-            );
-            assert_eq!(
-                service.authorization_status(&request).await.unwrap(),
-                PermissionAuthorizationStatus::Authorized,
-            );
-            assert_eq!(
-                *prompt.calling_reviews.lock().await,
-                vec![
-                    CallingReview {
-                        product_id: "peopl.dot".to_string(),
-                        network,
-                        account,
-                    },
-                    CallingReview {
-                        product_id: "peopl.dot".to_string(),
-                        network,
-                        account: [4; 32],
-                    },
-                ],
-            );
-            // A host reset clears only the selected account's consent.
-            service
-                .set_authorization_status(&request, PermissionAuthorizationStatus::NotDetermined)
-                .await
-                .unwrap();
-            assert_eq!(
-                service.authorization_status(&request).await.unwrap(),
-                PermissionAuthorizationStatus::NotDetermined,
-            );
-            assert_eq!(
-                service.check_or_prompt_calling(network, [4; 32], |_, _| async {
-                    panic!("cached decision must not commit")
-                }).await.unwrap(),
-                PermissionAuthorizationStatus::Denied,
-            );
-        });
-    }
-
-    #[test]
-    fn legacy_unscoped_calling_grants_and_trusted_labels_never_authorize_calling() {
-        futures::executor::block_on(async {
-            let storage = MemStorage::default();
-            let prompt = ScriptedPrompt::new(vec![], vec![]);
-            for product_id in ["product.dot", "peopl.dot"] {
-                let product = ProductContext::new(product_id.to_string()).expect("valid product id");
-                let service = PermissionsService::new(&storage, &prompt, &product);
-                let remote_request = remote(RemotePermission::Calling);
-                let request = PermissionAuthorizationRequest::Remote(remote_request.clone());
-                assert_eq!(
-                    service.check_or_prompt_remote(remote_request.clone()).await.unwrap(),
-                    PermissionAuthorizationStatus::Denied,
-                );
-                assert!(
-                    service
-                        .set_authorization_status(&request, PermissionAuthorizationStatus::Authorized)
-                        .await
-                        .is_err()
-                );
-                let legacy_key =
-                    CoreStorageKey::remote_permission_authorization(product_id, &remote_request);
-                assert!(storage.read_core_storage(legacy_key.clone()).await.unwrap().is_none());
-                // Simulate an old host that persisted a grant without authenticated scope.
-                storage
-                    .write_core_storage(legacy_key, StoredAuthorizationStatus::Authorized.encode())
-                    .await
-                    .unwrap();
-                assert_eq!(
-                    service.authorization_status(&request).await.unwrap(),
-                    PermissionAuthorizationStatus::Denied,
-                );
-                assert_eq!(
-                    service.check_or_prompt_remote(remote_request).await.unwrap(),
-                    PermissionAuthorizationStatus::Denied,
-                );
-                assert_eq!(
-                    service
-                        .authorization_status(&PermissionAuthorizationRequest::Calling {
-                            network: [1; 32],
-                            account: [2; 32],
-                        })
-                        .await
-                        .unwrap(),
-                    PermissionAuthorizationStatus::NotDetermined,
-                );
-            }
-            assert_eq!(prompt.remote_calls.load(Ordering::SeqCst), 0);
-        });
-    }
-
-    #[test]
-    fn a_transient_calling_prompt_error_does_not_persist_a_denial() {
-        futures::executor::block_on(async {
-            let storage = MemStorage::default();
-            let prompt = ScriptedPrompt::new(vec![], vec![]).with_calling_answers(vec![
-                Ok(true),
-                Err(GenericError {
-                    reason: "confirmation channel unavailable".to_string(),
-                }),
-            ]);
-            let service = trusted_service(&storage, &prompt);
-            let network = [1; 32];
-            let account = [2; 32];
-            assert_eq!(
-                service.check_or_prompt_calling(network, account, |_, _| async {
-                    panic!("a failed review must not commit")
-                }).await.unwrap(),
-                PermissionAuthorizationStatus::NotDetermined,
-            );
-            assert_eq!(
-                service
-                    .authorization_status(&PermissionAuthorizationRequest::Calling { network, account })
-                    .await
-                    .unwrap(),
-                PermissionAuthorizationStatus::NotDetermined,
-            );
-            assert_eq!(
-                service.check_or_prompt_calling(network, account, |snapshot, status| {
-                    persist_calling_decision(&service, network, account, snapshot, status)
-                }).await.unwrap(),
-                PermissionAuthorizationStatus::Authorized,
-            );
-        });
-    }
-
-    #[test]
-    fn chat_authority_allow_once_is_not_cached_in_the_execution() {
-        let platform = StubPlatform {
-            chat_authority_confirmed: false,
-            ..Default::default()
-        };
-        platform
-            .permission_confirmation_decisions
-            .lock()
-            .expect("permission confirmation mutex poisoned")
-            .push_back(PermissionDecision::AllowOnce);
-        let chat_product = ProductContext::new_with_execution(
-            "chat.paseo".to_owned(),
-            crate::platform::ProductExecutionKind::Worker,
-        )
-        .expect("test product id is valid");
-        let grants = Arc::new(TemporaryPermissions::default());
-        let service = PermissionsService::new(&platform, &platform, &chat_product)
-            .with_temporary_permissions(Arc::clone(&grants));
-
-        assert_eq!(
-            futures::executor::block_on(service.check_or_prompt_chat_authority()).unwrap(),
-            ChatAuthorityConsent::Session
-        );
-        assert_eq!(platform.chat_authority_reviews.lock().len(), 1);
-        let request = PermissionAuthorizationRequest::ChatAuthority;
-        assert_eq!(
-            futures::executor::block_on(service.authorization_status(&request)).unwrap(),
-            PermissionAuthorizationStatus::NotDetermined
-        );
-        assert!(
-            !grants.authorize(
-                &CoreStorageKey::chat_authority_authorization("chat.paseo"),
-                false,
-            ),
-            "execution grants must not extend Chat consent across wallet sessions"
-        );
-        assert_eq!(
-            futures::executor::block_on(service.check_or_prompt_chat_authority()).unwrap(),
-            ChatAuthorityConsent::Refused
-        );
-        assert_eq!(platform.chat_authority_reviews.lock().len(), 2);
-
-        futures::executor::block_on(
-            service.set_authorization_status(&request, PermissionAuthorizationStatus::Denied),
-        )
-        .unwrap();
-        assert_eq!(
-            futures::executor::block_on(service.check_or_prompt_chat_authority()).unwrap(),
-            ChatAuthorityConsent::Refused
-        );
-        assert_eq!(platform.chat_authority_reviews.lock().len(), 2);
-    }
-
-    #[test]
-    fn account_access_authorization_is_scoped_by_requester_and_target() {
-        let storage = MemStorage::default();
-        let prompt = ScriptedPrompt::new(vec![], vec![]);
-        let service = PermissionsService::new(&storage, &prompt, &PRODUCT);
-        let request = PermissionAuthorizationRequest::AccountAccess {
-            target_product_id: "target.dot".to_string(),
-        };
-
-        futures::executor::block_on(
-            service.set_authorization_status(&request, PermissionAuthorizationStatus::Authorized),
-        )
-        .unwrap();
-        assert_eq!(
-            futures::executor::block_on(service.authorization_status(&request)).unwrap(),
-            PermissionAuthorizationStatus::Authorized
-        );
-        assert_eq!(
-            futures::executor::block_on(service.authorization_status(
-                &PermissionAuthorizationRequest::AccountAccess {
-                    target_product_id: "other.dot".to_string(),
-                }
-            ))
-            .unwrap(),
-            PermissionAuthorizationStatus::NotDetermined
-        );
-
-        let other_product_service = PermissionsService::new(&storage, &prompt, &OTHER_PRODUCT);
-        assert_eq!(
-            futures::executor::block_on(other_product_service.authorization_status(&request))
-                .unwrap(),
-            PermissionAuthorizationStatus::NotDetermined
-        );
-    }
-
-    /// Prompt callback that always errors, to exercise the transient-failure
-    /// path (fail closed for the current call, but do not persist the error).
-    struct FailingPrompt;
-
-    #[crate::platform::async_trait]
-    impl Permissions for FailingPrompt {
-        async fn device_permission(
-            &self,
-            _product: &ProductContext,
-            _request: HostDevicePermissionRequest,
-        ) -> Result<PermissionDecision, GenericError> {
-            Err(GenericError {
-                reason: "boom".into(),
-            })
-        }
-
-        async fn remote_permission(
-            &self,
-            _product: &ProductContext,
-            _request: RemotePermissionRequest,
-        ) -> Result<PermissionDecision, GenericError> {
-            Err(GenericError {
-                reason: "boom".into(),
-            })
-        }
-    }
-
-    #[test]
-    fn prompt_failure_stays_not_determined_without_persisting() {
-        let storage = MemStorage::default();
-        let prompt = FailingPrompt;
-        let service = PermissionsService::new(&storage, &prompt, &PRODUCT);
-
-        let device_decision = futures::executor::block_on(
-            check_device(&service, HostDevicePermissionRequest::Camera),
-        )
-        .unwrap();
-        assert_eq!(
-            device_decision,
-            PermissionAuthorizationStatus::NotDetermined
-        );
-
-        let remote_request = RemotePermissionRequest {
-            permission: RemotePermission::ChainSubmit,
-        };
-        let remote_decision =
-            futures::executor::block_on(service.check_or_prompt_remote(remote_request.clone()))
-                .unwrap();
-        assert_eq!(
-            remote_decision,
-            PermissionAuthorizationStatus::NotDetermined
-        );
-
-        // A transient callback error is not cached, so peek still sees no
-        // authorization and the next request re-prompts rather than
-        // permanently locking out the capability.
-        let cached_device =
-            futures::executor::block_on(service.peek_device(&HostDevicePermissionRequest::Camera))
-                .unwrap();
-        assert_eq!(
-            cached_device,
-            PermissionAuthorizationStatus::NotDetermined,
-            "a transient prompt error must not be persisted"
-        );
-        let cached_remote =
-            futures::executor::block_on(service.peek_remote(&remote_request)).unwrap();
-        assert_eq!(
-            cached_remote,
-            PermissionAuthorizationStatus::NotDetermined,
-            "a transient prompt error must not be persisted"
-        );
-    }
-
-    /// A corrupt SCALE-encoded cache entry must be treated as "no cache",
-    /// not panic. The service falls back to prompting.
-    #[test]
-    fn corrupt_cache_entry_returns_none() {
-        let storage = MemStorage::default();
-        // Write garbage bytes under the canonical key.
-        futures::executor::block_on(storage.write_core_storage(
-            CoreStorageKey::device_permission_authorization(
-                "product.dot",
-                &HostDevicePermissionRequest::Camera,
-            ),
-            vec![0xff, 0xfe, 0xfd],
-        ))
-        .unwrap();
-
-        let prompt = ScriptedPrompt::new(vec![true], vec![]);
-        let service = PermissionsService::new(&storage, &prompt, &PRODUCT);
-
-        let peeked =
-            futures::executor::block_on(service.peek_device(&HostDevicePermissionRequest::Camera))
-                .unwrap();
-        assert_eq!(
-            peeked,
-            PermissionAuthorizationStatus::NotDetermined,
-            "corrupt entry must decode as absent"
-        );
-    }
-
-    /// Storage failures must propagate to the caller; the service must not
-    /// swallow them by silently returning a default authorization.
-    #[derive(Default)]
-    struct FailingStorage;
-
-    #[crate::platform::async_trait]
-    impl CoreStorage for FailingStorage {
-        async fn read_core_storage(
-            &self,
-            _key: CoreStorageKey,
-        ) -> Result<Option<Vec<u8>>, v01::GenericError> {
-            Err(v01::GenericError {
-                reason: "read failed".into(),
-            })
-        }
-        async fn write_core_storage(
-            &self,
-            _key: CoreStorageKey,
-            _value: Vec<u8>,
-        ) -> Result<(), v01::GenericError> {
-            Err(v01::GenericError {
-                reason: "write failed".into(),
-            })
-        }
-        async fn clear_core_storage(&self, _key: CoreStorageKey) -> Result<(), v01::GenericError> {
-            Err(v01::GenericError {
-                reason: "clear failed".into(),
-            })
-        }
-        async fn compare_exchange_core_storage(
-            &self,
-            _key: CoreStorageKey,
-            _expected: Option<Vec<u8>>,
-            _replacement: Vec<u8>,
-            _notify_on_success: bool,
-        ) -> Result<bool, v01::GenericError> {
-            Err(v01::GenericError { reason: "compare-exchange failed".into() })
-        }
-        fn core_storage_changed(&self, _key: CoreStorageKey) {
-            panic!("failed storage cannot notify a policy change");
-        }
-    }
-
-    #[test]
-    fn storage_read_error_propagates() {
-        let storage = FailingStorage;
-        let prompt = ScriptedPrompt::new(vec![], vec![]);
-        let service = PermissionsService::new(&storage, &prompt, &PRODUCT);
-
-        let err = futures::executor::block_on(
-            check_device(&service, HostDevicePermissionRequest::Camera),
-        )
-        .expect_err("read failure must surface");
-        assert!(matches!(err, v01::GenericError { .. }));
-    }
-
-    #[test]
-    fn an_os_denial_overrides_a_stored_grant() {
-        let storage = MemStorage::default();
-        grant_stored(&storage, HostDevicePermissionRequest::Camera);
-
-        // No device answers scripted: reaching the prompt at all would panic,
-        // which is the assertion that a settings-level refusal is not something
-        // the user can be asked about.
-        let prompt = ScriptedPrompt::new(vec![], vec![]);
-        let status = ScriptedStatus::always(DevicePermissionStatus::Denied);
-        let service =
-            PermissionsService::new(&storage, &prompt, &PRODUCT).with_status_host(Some(&status));
-
-        assert_eq!(
-            futures::executor::block_on(
-                check_device(&service, HostDevicePermissionRequest::Camera)
-            )
-            .unwrap(),
-            PermissionAuthorizationStatus::Denied,
-        );
-    }
-
-    #[test]
-    fn an_os_denial_leaves_the_stored_grant_intact() {
-        let storage = MemStorage::default();
-        grant_stored(&storage, HostDevicePermissionRequest::Camera);
-
-        let denied_prompt = ScriptedPrompt::new(vec![], vec![]);
-        let denied = ScriptedStatus::always(DevicePermissionStatus::Denied);
-        futures::executor::block_on(
-            PermissionsService::new(&storage, &denied_prompt, &PRODUCT)
-                .with_status_host(Some(&denied))
-                .check_or_prompt_device(HostDevicePermissionRequest::Camera),
-        )
-        .unwrap();
-
-        // The user restores the OS grant in settings. The product decision was
-        // never theirs to lose, so this resolves without asking them again.
-        let prompt = ScriptedPrompt::new(vec![], vec![]);
-        let restored = ScriptedStatus::always(DevicePermissionStatus::Granted);
-        let service =
-            PermissionsService::new(&storage, &prompt, &PRODUCT).with_status_host(Some(&restored));
-
-        assert_eq!(
-            futures::executor::block_on(
-                check_device(&service, HostDevicePermissionRequest::Camera)
-            )
-            .unwrap(),
-            PermissionAuthorizationStatus::Authorized,
-        );
-        assert_eq!(prompt.device_calls.load(Ordering::SeqCst), 0);
-    }
-
-    #[test]
-    fn an_os_reset_never_reprompts_a_stored_grant() {
-        let storage = MemStorage::default();
-        grant_stored(&storage, HostDevicePermissionRequest::Camera);
-
-        // Android auto-resets runtime permissions for unused apps. The core
-        // cannot ask the OS on its own — the prompt callback also puts the
-        // product's question to the user — so it does not try. No answers are
-        // scripted: reaching the prompt at all would panic.
-        let prompt = ScriptedPrompt::new(vec![], vec![]);
-        let status = ScriptedStatus::always(DevicePermissionStatus::NotDetermined);
-        let service =
-            PermissionsService::new(&storage, &prompt, &PRODUCT).with_status_host(Some(&status));
-
-        // Repeated, because a condition a prompt cannot clear re-fires forever.
-        for _ in 0..3 {
-            assert_eq!(
-                futures::executor::block_on(
-                    check_device(&service, HostDevicePermissionRequest::Camera)
-                )
-                .unwrap(),
-                PermissionAuthorizationStatus::Authorized,
-            );
-        }
-        assert_eq!(prompt.device_calls.load(Ordering::SeqCst), 0);
-    }
-
-    #[test]
-    fn an_os_reset_cannot_turn_a_stored_grant_into_a_permanent_denial() {
-        let storage = MemStorage::default();
-        grant_stored(&storage, HostDevicePermissionRequest::Camera);
-
-        // On iOS and Android the prompt callback *is* the OS dialog, so a
-        // "Don't Allow" answered there is an answer about the OS, not about the
-        // product. Persisting it would replace the product's grant, and
-        // restoring the capability in system settings could never recover it.
-        let declining = ScriptedPrompt::new(vec![false], vec![]);
-        let reset = ScriptedStatus::always(DevicePermissionStatus::NotDetermined);
-        futures::executor::block_on(
-            PermissionsService::new(&storage, &declining, &PRODUCT)
-                .with_status_host(Some(&reset))
-                .check_or_prompt_device(HostDevicePermissionRequest::Camera),
-        )
-        .unwrap();
-
-        let prompt = ScriptedPrompt::new(vec![], vec![]);
-        let restored = ScriptedStatus::always(DevicePermissionStatus::Granted);
-        let after =
-            PermissionsService::new(&storage, &prompt, &PRODUCT).with_status_host(Some(&restored));
-        assert_eq!(
-            futures::executor::block_on(
-                check_device(&after, HostDevicePermissionRequest::Camera)
-            )
-            .unwrap(),
-            PermissionAuthorizationStatus::Authorized,
-        );
-    }
-
-    #[test]
-    fn a_prompt_failure_cannot_mask_a_stored_grant() {
-        let storage = MemStorage::default();
-        grant_stored(&storage, HostDevicePermissionRequest::Camera);
-
-        // A failing prompt callback resolves to `NotDetermined`, which the
-        // runtime reports as `granted: false`. A grant the product already
-        // holds must never be reached through that path.
-        let failing = FailingPrompt;
-        let reset = ScriptedStatus::always(DevicePermissionStatus::NotDetermined);
-        let service =
-            PermissionsService::new(&storage, &failing, &PRODUCT).with_status_host(Some(&reset));
-        assert_eq!(
-            futures::executor::block_on(
-                check_device(&service, HostDevicePermissionRequest::Camera)
-            )
-            .unwrap(),
-            PermissionAuthorizationStatus::Authorized,
-        );
-    }
-
-    #[test]
-    fn a_first_request_still_prompts_while_the_os_is_undetermined() {
-        // The guard against re-prompting must not swallow the first ask, which
-        // is the only one that establishes the product decision at all.
-        let storage = MemStorage::default();
-        let prompt = ScriptedPrompt::new(vec![true], vec![]);
-        let status = ScriptedStatus::always(DevicePermissionStatus::NotDetermined);
-        let service =
-            PermissionsService::new(&storage, &prompt, &PRODUCT).with_status_host(Some(&status));
-
-        assert_eq!(
-            futures::executor::block_on(
-                check_device(&service, HostDevicePermissionRequest::Camera)
-            )
-            .unwrap(),
-            PermissionAuthorizationStatus::Authorized,
-        );
-        assert_eq!(prompt.device_calls.load(Ordering::SeqCst), 1);
-    }
-
-    #[test]
-    fn an_os_reset_does_not_reprompt_a_stored_denial() {
-        let storage = MemStorage::default();
-        let seed = ScriptedPrompt::new(vec![false], vec![]);
-        futures::executor::block_on(
-            PermissionsService::new(&storage, &seed, &PRODUCT)
-                .check_or_prompt_device(HostDevicePermissionRequest::Camera),
-        )
-        .unwrap();
-
-        // The product-level "no" is still the user's answer. An OS that forgot
-        // its own state is not a reason to put the question again.
-        let prompt = ScriptedPrompt::new(vec![], vec![]);
-        let status = ScriptedStatus::always(DevicePermissionStatus::NotDetermined);
-        let service =
-            PermissionsService::new(&storage, &prompt, &PRODUCT).with_status_host(Some(&status));
-
-        assert_eq!(
-            futures::executor::block_on(
-                check_device(&service, HostDevicePermissionRequest::Camera)
-            )
-            .unwrap(),
-            PermissionAuthorizationStatus::Denied,
-        );
-        assert_eq!(prompt.device_calls.load(Ordering::SeqCst), 0);
-    }
-
-    #[test]
-    fn a_failed_status_query_falls_back_to_the_stored_grant() {
-        let storage = MemStorage::default();
-        grant_stored(&storage, HostDevicePermissionRequest::Camera);
-
-        // A dropped IPC is not a refusal. Reading it as one would let a flaky
-        // channel revoke a capability the OS still allows.
-        let prompt = ScriptedPrompt::new(vec![], vec![]);
-        let status = ScriptedStatus::failing();
-        let service =
-            PermissionsService::new(&storage, &prompt, &PRODUCT).with_status_host(Some(&status));
-
-        assert_eq!(
-            futures::executor::block_on(
-                check_device(&service, HostDevicePermissionRequest::Camera)
-            )
-            .unwrap(),
-            PermissionAuthorizationStatus::Authorized,
-        );
-        assert_eq!(prompt.device_calls.load(Ordering::SeqCst), 0);
-    }
-
-    #[test]
-    fn an_os_denial_denies_before_any_prompt_and_persists_nothing() {
-        let storage = MemStorage::default();
-        let prompt = ScriptedPrompt::new(vec![], vec![]);
-        let denied = ScriptedStatus::always(DevicePermissionStatus::Denied);
-        let service =
-            PermissionsService::new(&storage, &prompt, &PRODUCT).with_status_host(Some(&denied));
-
-        assert_eq!(
-            futures::executor::block_on(
-                check_device(&service, HostDevicePermissionRequest::Camera)
-            )
-            .unwrap(),
-            PermissionAuthorizationStatus::Denied,
-        );
-
-        // Nothing was written, so the product question is still open: once the
-        // OS allows it, the user gets asked rather than inheriting a denial
-        // they never gave.
-        let peek = PermissionsService::new(&storage, &prompt, &PRODUCT);
-        assert_eq!(
-            futures::executor::block_on(peek.peek_device(&HostDevicePermissionRequest::Camera))
-                .unwrap(),
-            PermissionAuthorizationStatus::NotDetermined,
-        );
-    }
-
-    #[test]
-    fn os_status_is_read_for_the_capability_being_checked() {
-        let storage = MemStorage::default();
-        grant_stored(&storage, HostDevicePermissionRequest::Camera);
-        grant_stored(&storage, HostDevicePermissionRequest::Microphone);
-
-        // Only the camera is refused by the OS. A mix-up in which capability
-        // reaches the status host would move the denial to the microphone.
-        let prompt = ScriptedPrompt::new(vec![], vec![]);
-        let status = ScriptedStatus::per_capability(
-            vec![(
-                HostDevicePermissionRequest::Camera,
-                DevicePermissionStatus::Denied,
-            )],
-            DevicePermissionStatus::Granted,
-        );
-        let service =
-            PermissionsService::new(&storage, &prompt, &PRODUCT).with_status_host(Some(&status));
-
-        assert_eq!(
-            futures::executor::block_on(
-                check_device(&service, HostDevicePermissionRequest::Camera)
-            )
-            .unwrap(),
-            PermissionAuthorizationStatus::Denied,
-        );
-        assert_eq!(
-            futures::executor::block_on(
-                check_device(&service, HostDevicePermissionRequest::Microphone)
-            )
-            .unwrap(),
-            PermissionAuthorizationStatus::Authorized,
-        );
-    }
-
-    #[test]
-    fn a_host_without_the_capability_resolves_from_stored_state_alone() {
-        let storage = MemStorage::default();
-        let prompt = ScriptedPrompt::new(vec![true], vec![]);
-        let service = PermissionsService::new(&storage, &prompt, &PRODUCT).with_status_host(None);
-
-        let first = futures::executor::block_on(
-            check_device(&service, HostDevicePermissionRequest::Camera),
-        )
-        .unwrap();
-        let second = futures::executor::block_on(
-            check_device(&service, HostDevicePermissionRequest::Camera),
-        )
-        .unwrap();
-
-        assert_eq!(first, PermissionAuthorizationStatus::Authorized);
-        assert_eq!(second, PermissionAuthorizationStatus::Authorized);
-        assert_eq!(prompt.device_calls.load(Ordering::SeqCst), 1);
-    }
-
-    #[test]
-    fn os_device_status_does_not_reach_remote_permissions() {
-        let storage = MemStorage::default();
-        let prompt = ScriptedPrompt::new(vec![], vec![true]);
-        // Every device capability refused by the OS. A remote grant is a
-        // TrUAPI-level decision with no OS gate behind it, so it must resolve
-        // untouched.
-        let status = ScriptedStatus::always(DevicePermissionStatus::Denied);
-        let service =
-            PermissionsService::new(&storage, &prompt, &PRODUCT).with_status_host(Some(&status));
-
-        assert_eq!(
-            futures::executor::block_on(
-                service.check_or_prompt_remote(remote_domains(&["example.com"]))
-            )
-            .unwrap(),
-            PermissionAuthorizationStatus::Authorized,
-        );
-        assert!(status.asked().is_empty());
-    }
-
-    #[test]
-    fn a_peeked_grant_the_os_refuses_reads_as_denied() {
-        // A settings screen and a request must not disagree. Reporting the
-        // stored grant here sends the user hunting for a product toggle when
-        // the OS is what refused.
-        let storage = MemStorage::default();
-        grant_stored(&storage, HostDevicePermissionRequest::Camera);
-        let prompt = ScriptedPrompt::new(vec![], vec![]);
-        let refusing = ScriptedStatus::always(DevicePermissionStatus::Denied);
-        let service =
-            PermissionsService::new(&storage, &prompt, &PRODUCT).with_status_host(Some(&refusing));
-
-        assert_eq!(
-            futures::executor::block_on(service.peek_device(&HostDevicePermissionRequest::Camera))
-                .unwrap(),
-            PermissionAuthorizationStatus::Denied,
-        );
-    }
-
-    #[test]
-    fn a_peek_under_an_os_refusal_leaves_the_stored_grant_intact() {
-        let storage = MemStorage::default();
-        grant_stored(&storage, HostDevicePermissionRequest::Camera);
-        let prompt = ScriptedPrompt::new(vec![], vec![]);
-        let refusing = ScriptedStatus::always(DevicePermissionStatus::Denied);
-        futures::executor::block_on(
-            PermissionsService::new(&storage, &prompt, &PRODUCT)
-                .with_status_host(Some(&refusing))
-                .peek_device(&HostDevicePermissionRequest::Camera),
-        )
-        .unwrap();
-
-        // A read is not a decision, so the grant is still there once the user
-        // restores the OS grant.
-        let restored = ScriptedStatus::always(DevicePermissionStatus::Granted);
-        assert_eq!(
-            futures::executor::block_on(
-                PermissionsService::new(&storage, &prompt, &PRODUCT)
-                    .with_status_host(Some(&restored))
-                    .peek_device(&HostDevicePermissionRequest::Camera),
-            )
-            .unwrap(),
-            PermissionAuthorizationStatus::Authorized,
-        );
-    }
-
-    #[test]
-    fn a_peeked_grant_survives_an_os_reset_and_a_failed_query() {
-        let storage = MemStorage::default();
-        grant_stored(&storage, HostDevicePermissionRequest::Camera);
-        let prompt = ScriptedPrompt::new(vec![], vec![]);
-
-        for status in [
-            ScriptedStatus::always(DevicePermissionStatus::NotDetermined),
-            ScriptedStatus::failing(),
-        ] {
-            assert_eq!(
-                futures::executor::block_on(
-                    PermissionsService::new(&storage, &prompt, &PRODUCT)
-                        .with_status_host(Some(&status))
-                        .peek_device(&HostDevicePermissionRequest::Camera),
-                )
-                .unwrap(),
-                PermissionAuthorizationStatus::Authorized,
-                "only an outright refusal overrides the stored decision"
-            );
-        }
-    }
-
-    #[test]
-    fn a_status_read_of_a_remote_permission_never_reaches_the_os() {
-        let storage = MemStorage::default();
-        let prompt = ScriptedPrompt::new(vec![], vec![true]);
-        let refusing = ScriptedStatus::always(DevicePermissionStatus::Denied);
-        let service =
-            PermissionsService::new(&storage, &prompt, &PRODUCT).with_status_host(Some(&refusing));
-        futures::executor::block_on(
-            service.check_or_prompt_remote(remote_domains(&["example.com"])),
-        )
-        .unwrap();
-
-        assert_eq!(
-            futures::executor::block_on(service.authorization_status(
-                &PermissionAuthorizationRequest::Remote(remote_domains(&["example.com"]))
-            ))
-            .unwrap(),
-            PermissionAuthorizationStatus::Authorized,
-        );
-        assert!(refusing.asked().is_empty());
-    }
-
-    #[test]
-    fn a_device_request_and_a_status_read_agree_once_the_os_refuses() {
-        let storage = MemStorage::default();
-        grant_stored(&storage, HostDevicePermissionRequest::Camera);
-        let prompt = ScriptedPrompt::new(vec![], vec![]);
-        let refusing = ScriptedStatus::always(DevicePermissionStatus::Denied);
-        let service =
-            PermissionsService::new(&storage, &prompt, &PRODUCT).with_status_host(Some(&refusing));
-
-        let requested = futures::executor::block_on(
-            check_device(&service, HostDevicePermissionRequest::Camera),
-        )
-        .unwrap();
-        let read = futures::executor::block_on(service.authorization_status(
-            &PermissionAuthorizationRequest::Device(HostDevicePermissionRequest::Camera),
-        ))
-        .unwrap();
-        assert_eq!(
-            (requested, read),
-            (
-                PermissionAuthorizationStatus::Denied,
-                PermissionAuthorizationStatus::Denied,
-            )
-        );
-    }
-
-    #[test]
-    fn independent_permission_services_discard_answers_after_new_policy_generations() {
-        futures::executor::block_on(async {
-            for request in [
-                PermissionAuthorizationRequest::Calling { network: [1; 32], account: [2; 32] },
-                PermissionAuthorizationRequest::Device(HostDevicePermissionRequest::Microphone),
-            ] {
-                for replacement in [
-                    PermissionAuthorizationStatus::Denied,
-                    PermissionAuthorizationStatus::NotDetermined,
-                    PermissionAuthorizationStatus::Authorized,
-                ] {
-                    let storage = MemStorage::default();
-                    let prompt = ScriptedPrompt::new(vec![], vec![]);
-                    let pending = PermissionsService::new(&storage, &prompt, &PRODUCT);
-                    let admin = PermissionsService::new(&storage, &prompt, &PRODUCT);
-                    let snapshot = pending.authorization_snapshot(&request).await.unwrap();
-                    assert_eq!(snapshot.status, PermissionAuthorizationStatus::NotDetermined);
-                    assert_eq!(storage.changes.load(Ordering::SeqCst), 0,
-                        "initializing unanswered consent must not revoke another core's receive-only call");
-                    admin.set_authorization_status(&request, replacement).await.unwrap();
-                    assert!(!pending.set_authorization_status_if_unchanged(
-                        &request, &snapshot, PermissionAuthorizationStatus::Authorized,
-                    ).await.unwrap());
-                    assert_eq!(pending.authorization_status(&request).await.unwrap(), replacement);
-                    assert_eq!(storage.changes.load(Ordering::SeqCst), 1,
-                        "only the explicit policy change notifies other cores");
-                }
-            }
-        });
-    }
-
-    #[test]
-    fn deleting_and_recreating_a_slot_cannot_resurrect_a_pending_consent() {
-        futures::executor::block_on(async {
-            let storage = MemStorage::default();
-            let prompt = ScriptedPrompt::new(vec![], vec![]);
-            let service = PermissionsService::new(&storage, &prompt, &PRODUCT);
-            let request = PermissionAuthorizationRequest::Device(HostDevicePermissionRequest::Camera);
-            let old = service.authorization_snapshot(&request).await.unwrap();
-            let key = CoreStorageKey::device_permission_authorization("product.dot", &HostDevicePermissionRequest::Camera);
-            storage.clear_core_storage(key).await.unwrap();
-            assert!(!service.set_authorization_status_if_unchanged(
-                &request, &old, PermissionAuthorizationStatus::Authorized,
-            ).await.unwrap(), "a pre-prompt snapshot never expects a missing slot");
-            let fresh = service.authorization_snapshot(&request).await.unwrap();
-            assert!(!service.set_authorization_status_if_unchanged(
-                &request, &old, PermissionAuthorizationStatus::Authorized,
-            ).await.unwrap(), "a recreated Ask is a new generation");
-            assert!(service.set_authorization_status_if_unchanged(
-                &request, &fresh, PermissionAuthorizationStatus::Denied,
-            ).await.unwrap());
-            assert_eq!(service.authorization_status(&request).await.unwrap(), PermissionAuthorizationStatus::Denied);
-        });
-    }
-
-    #[test]
-    fn consent_snapshot_is_bound_to_product_and_request() {
-        futures::executor::block_on(async {
-            let storage = MemStorage::default();
-            let prompt = ScriptedPrompt::new(vec![], vec![]);
-            let first = PermissionsService::new(&storage, &prompt, &PRODUCT);
-            let second = PermissionsService::new(&storage, &prompt, &OTHER_PRODUCT);
-            let camera = PermissionAuthorizationRequest::Device(HostDevicePermissionRequest::Camera);
-            let microphone = PermissionAuthorizationRequest::Device(HostDevicePermissionRequest::Microphone);
-            let snapshot = first.authorization_snapshot(&camera).await.unwrap();
-            assert!(!second.set_authorization_status_if_unchanged(
-                &camera, &snapshot, PermissionAuthorizationStatus::Authorized,
-            ).await.unwrap());
-            assert!(!first.set_authorization_status_if_unchanged(
-                &microphone, &snapshot, PermissionAuthorizationStatus::Authorized,
-            ).await.unwrap());
-            assert_eq!(second.authorization_status(&camera).await.unwrap(), PermissionAuthorizationStatus::NotDetermined);
-            assert_eq!(first.authorization_status(&microphone).await.unwrap(), PermissionAuthorizationStatus::NotDetermined);
-            assert!(first.set_authorization_status_if_unchanged(
-                &camera, &snapshot, PermissionAuthorizationStatus::Authorized,
-            ).await.unwrap());
-        });
-    }
-
-    #[test]
-    fn repeating_an_explicit_grant_still_invalidates_the_previous_generation() {
-        futures::executor::block_on(async {
-            let storage = MemStorage::default();
-            let prompt = ScriptedPrompt::new(vec![], vec![]);
-            let service = PermissionsService::new(&storage, &prompt, &PRODUCT);
-            let request = PermissionAuthorizationRequest::Calling { network: [1; 32], account: [2; 32] };
-            service.set_authorization_status(&request, PermissionAuthorizationStatus::Authorized).await.unwrap();
-            let snapshot = service.authorization_snapshot(&request).await.unwrap();
-            service.set_authorization_status(&request, PermissionAuthorizationStatus::Authorized).await.unwrap();
-            assert!(!service.set_authorization_status_if_unchanged(
-                &request, &snapshot, PermissionAuthorizationStatus::Denied,
-            ).await.unwrap());
-            assert_eq!(service.authorization_status(&request).await.unwrap(), PermissionAuthorizationStatus::Authorized);
-        });
-    }
-
-    struct PolicyChangingPrompt<'a> {
-        storage: &'a MemStorage,
-        replacement: PermissionAuthorizationStatus,
-    }
-
-    #[crate::platform::async_trait]
-    impl Permissions for PolicyChangingPrompt<'_> {
-        async fn device_permission(&self, product: &ProductContext, request: HostDevicePermissionRequest) -> Result<PermissionDecision, GenericError> {
-            PermissionsService::new(self.storage, self, product)
-                .set_authorization_status(&PermissionAuthorizationRequest::Device(request), self.replacement).await?;
-            Ok(PermissionDecision::AllowAlways)
-        }
-
-        async fn remote_permission(&self, _product: &ProductContext, _request: RemotePermissionRequest) -> Result<PermissionDecision, GenericError> {
-            panic!("only scoped consent should be prompted");
-        }
-    }
-
-    #[crate::platform::async_trait]
-    impl UserConfirmation for PolicyChangingPrompt<'_> {
-        async fn confirm_user_action(&self, review: UserConfirmationReview) -> Result<bool, GenericError> {
-            let UserConfirmationReview::Calling(review) = review else {
-                panic!("only Calling consent should be confirmed");
-            };
-            PermissionsService::new(self.storage, self, &PRODUCT).set_authorization_status(
-                &PermissionAuthorizationRequest::Calling { network: review.network, account: review.account },
-                self.replacement,
-            ).await?;
-            Ok(true)
-        }
-    }
-
-    #[test]
-    fn calling_and_direct_device_prompts_capture_policy_before_showing_ui() {
-        futures::executor::block_on(async {
-            for replacement in [PermissionAuthorizationStatus::Denied, PermissionAuthorizationStatus::NotDetermined] {
-                let storage = MemStorage::default();
-                let prompt = PolicyChangingPrompt { storage: &storage, replacement };
-                let service = PermissionsService::new(&storage, &prompt, &PRODUCT);
-                let device = PermissionAuthorizationRequest::Device(HostDevicePermissionRequest::Camera);
-                assert_ne!(check_device(&service, HostDevicePermissionRequest::Camera).await.unwrap(),
-                    PermissionAuthorizationStatus::Authorized);
-                assert_eq!(service.authorization_status(&device).await.unwrap(), replacement);
-                let calling = PermissionAuthorizationRequest::Calling { network: [1; 32], account: [2; 32] };
-                assert_eq!(service.check_or_prompt_calling([1; 32], [2; 32], |snapshot, status| {
-                    persist_calling_decision(&service, [1; 32], [2; 32], snapshot, status)
-                }).await.unwrap(), PermissionAuthorizationStatus::NotDetermined);
-                assert_eq!(service.authorization_status(&calling).await.unwrap(), replacement);
-            }
-        });
-    }
-
-    #[test]
-    fn authorization_records_reject_trailing_bytes_and_unknown_formats() {
-        assert_eq!(decode_authorization(&[0]), Some(PermissionAuthorizationStatus::Authorized));
-        assert_eq!(decode_authorization(&[1]), Some(PermissionAuthorizationStatus::Denied));
-        for malformed in [vec![], vec![0, 0], vec![1, 0], vec![2], vec![2; 33], vec![2; 35], vec![3; 34]] {
-            assert_eq!(decode_authorization(&malformed), None);
-        }
-        let mut record = stamped_authorization(PermissionAuthorizationStatus::Authorized).unwrap();
-        assert_eq!(decode_authorization(&record), Some(PermissionAuthorizationStatus::Authorized));
-        record[33] = 3;
-        assert_eq!(decode_authorization(&record), None);
-    }
-
-    #[test]
-    fn host_refresh_reads_product_policy_without_os_overlay() {
-        futures::executor::block_on(async {
-            let storage = MemStorage::default();
-            let prompt = ScriptedPrompt::new(vec![], vec![]);
-            let os = ScriptedStatus::always(DevicePermissionStatus::Denied);
-            let service = PermissionsService::new(&storage, &prompt, &PRODUCT).with_status_host(Some(&os));
-            let request = PermissionAuthorizationRequest::Device(HostDevicePermissionRequest::Microphone);
-            service.set_authorization_status(&request, PermissionAuthorizationStatus::Authorized).await.unwrap();
-            assert_eq!(service.authorization_status(&request).await.unwrap(), PermissionAuthorizationStatus::Denied);
-            assert_eq!(service.stored_authorization_status(request).await.unwrap(), PermissionAuthorizationStatus::Authorized);
-        });
-    }
-
-    #[test]
-    fn accepted_foreign_cas_notifies_after_its_requester_is_dropped() {
-        futures::executor::block_on(async {
-            let storage = MemStorage::default();
-            let prompt = ScriptedPrompt::new(vec![], vec![]);
-            let reader = PermissionsService::new(&storage, &prompt, &PRODUCT);
-            let request = PermissionAuthorizationRequest::Calling { network: [1; 32], account: [2; 32] };
-            let snapshot = reader.authorization_snapshot(&request).await.unwrap();
-            let foreign = DeferredCasStorage { inner: &storage, pending: Mutex::new(None) };
-            let requester = PermissionsService::new(&foreign, &prompt, &PRODUCT);
-            let mut decision = Box::pin(requester.set_authorization_status_if_unchanged(
-                &request, &snapshot, PermissionAuthorizationStatus::Denied,
-            ));
-            assert!(futures::poll!(decision.as_mut()).is_pending());
-            drop(decision);
-            assert!(foreign.complete_host_job().await.unwrap());
-            assert_eq!(reader.authorization_status(&request).await.unwrap(), PermissionAuthorizationStatus::Denied);
-            assert_eq!(storage.changes.load(Ordering::SeqCst), 1,
-                "persisted revocation must notify even when Rust cannot resume after CAS");
-        });
-    }
-
-    #[test]
-    fn dropped_foreign_approval_cannot_overwrite_a_newer_reset() {
-        futures::executor::block_on(async {
-            let storage = MemStorage::default();
-            let prompt = ScriptedPrompt::new(vec![], vec![]);
-            let admin = PermissionsService::new(&storage, &prompt, &PRODUCT);
-            let request = PermissionAuthorizationRequest::Device(HostDevicePermissionRequest::Microphone);
-            let snapshot = admin.authorization_snapshot(&request).await.unwrap();
-            let foreign = DeferredCasStorage { inner: &storage, pending: Mutex::new(None) };
-            let requester = PermissionsService::new(&foreign, &prompt, &PRODUCT);
-            let mut decision = Box::pin(requester.set_authorization_status_if_unchanged(
-                &request, &snapshot, PermissionAuthorizationStatus::Authorized,
-            ));
-            assert!(futures::poll!(decision.as_mut()).is_pending());
-            drop(decision);
-            admin.set_authorization_status(&request, PermissionAuthorizationStatus::NotDetermined).await.unwrap();
-            assert!(!foreign.complete_host_job().await.unwrap());
-            assert_eq!(admin.authorization_status(&request).await.unwrap(), PermissionAuthorizationStatus::NotDetermined);
-            assert_eq!(storage.changes.load(Ordering::SeqCst), 1,
-                "only the newer reset notifies; rejected late approval never does");
-        });
-    }
+	use super::*;
+	use futures::lock::Mutex;
+	use std::{
+		collections::HashMap,
+		sync::{
+			LazyLock,
+			atomic::{AtomicUsize, Ordering},
+		},
+	};
+	use truapi::{latest::RemotePermission, v01, v01::GenericError};
+
+	static PRODUCT: LazyLock<ProductContext> = LazyLock::new(|| {
+		ProductContext::new("product.dot".to_string()).expect("product id is valid")
+	});
+
+	static OTHER_PRODUCT: LazyLock<ProductContext> = LazyLock::new(|| {
+		ProductContext::new("other.dot".to_string()).expect("product id is valid")
+	});
+
+	static PEOPL_APP: LazyLock<ProductContext> = LazyLock::new(|| {
+		ProductContext::new("app.peopl.dot".to_string()).expect("product id is valid")
+	});
+
+	static PEOPL: LazyLock<ProductContext> = LazyLock::new(|| {
+		ProductContext::new("peopl.dot".to_string()).expect("product id is valid")
+	});
+
+	#[derive(Default)]
+	struct MemStorage {
+		inner: Mutex<HashMap<String, Vec<u8>>>,
+	}
+
+	#[crate::platform::async_trait]
+	impl CoreStorage for MemStorage {
+		async fn read_core_storage(
+			&self,
+			key: CoreStorageKey,
+		) -> Result<Option<Vec<u8>>, v01::GenericError> {
+			Ok(self.inner.lock().await.get(&test_key(key)).cloned())
+		}
+		async fn write_core_storage(
+			&self,
+			key: CoreStorageKey,
+			value: Vec<u8>,
+		) -> Result<(), v01::GenericError> {
+			self.inner.lock().await.insert(test_key(key), value);
+			Ok(())
+		}
+		async fn clear_core_storage(&self, key: CoreStorageKey) -> Result<(), v01::GenericError> {
+			self.inner.lock().await.remove(&test_key(key));
+			Ok(())
+		}
+	}
+
+	fn test_key(key: CoreStorageKey) -> String {
+		hex::encode(key.encode())
+	}
+
+	#[test]
+	fn concurrent_remote_operations_recheck_the_first_decision() {
+		futures::executor::block_on(async {
+			for request in [
+				remote_domains(&["cdn.example.com"]),
+				RemotePermissionRequest { permission: RemotePermission::WebRtc },
+			] {
+				for (decision, first_status, second_status, calls) in [
+					(
+						PermissionDecision::AllowAlways,
+						PermissionAuthorizationStatus::Authorized,
+						PermissionAuthorizationStatus::Authorized,
+						1,
+					),
+					(
+						PermissionDecision::Deny,
+						PermissionAuthorizationStatus::Denied,
+						PermissionAuthorizationStatus::Denied,
+						1,
+					),
+					(
+						PermissionDecision::AllowOnce,
+						PermissionAuthorizationStatus::Authorized,
+						PermissionAuthorizationStatus::Denied,
+						2,
+					),
+				] {
+					let storage = MemStorage::default();
+					let prompt =
+						ScriptedPrompt::decisions(vec![], vec![PermissionDecision::Deny, decision]);
+					let grants = Arc::default();
+					let sdk = PermissionsService::new(&storage, &prompt, &PRODUCT)
+						.with_temporary_permissions(Arc::clone(&grants));
+					let native = PermissionsService::new(&storage, &prompt, &PRODUCT)
+						.with_temporary_permissions(grants);
+					let pending_answer = prompt.remote_answers.lock().await;
+					let mut first = Box::pin(sdk.authorize_remote(request.clone()));
+					let mut second = Box::pin(native.authorize_remote(request.clone()));
+
+					assert!(futures::poll!(&mut first).is_pending());
+					assert!(futures::poll!(&mut second).is_pending());
+					drop(pending_answer);
+
+					assert_eq!(
+						(
+							first.await.unwrap(),
+							second.await.unwrap(),
+							prompt.remote_calls.load(Ordering::SeqCst),
+						),
+						(first_status, second_status, calls),
+					);
+				}
+			}
+		});
+	}
+
+	#[test]
+	fn concurrent_device_operations_reuse_a_persisted_decision() {
+		futures::executor::block_on(async {
+			for (decision, expected) in [
+				(PermissionDecision::AllowAlways, PermissionAuthorizationStatus::Authorized),
+				(PermissionDecision::Deny, PermissionAuthorizationStatus::Denied),
+			] {
+				let storage = MemStorage::default();
+				let prompt =
+					ScriptedPrompt::decisions(vec![PermissionDecision::Deny, decision], vec![]);
+				let service = PermissionsService::new(&storage, &prompt, &PRODUCT);
+				let pending_answer = prompt.device_answers.lock().await;
+				let mut first =
+					Box::pin(service.authorize_device(HostDevicePermissionRequest::Camera));
+				let mut second =
+					Box::pin(service.authorize_device(HostDevicePermissionRequest::Camera));
+
+				assert!(futures::poll!(&mut first).is_pending());
+				assert!(futures::poll!(&mut second).is_pending());
+				drop(pending_answer);
+
+				assert_eq!(
+					(
+						first.await.unwrap(),
+						second.await.unwrap(),
+						prompt.device_calls.load(Ordering::SeqCst),
+					),
+					(expected, expected, 1),
+				);
+			}
+		});
+	}
+
+	#[test]
+	fn cancelling_a_prompt_releases_waiting_operations_without_blocking_other_products() {
+		futures::executor::block_on(async {
+			let storage = MemStorage::default();
+			let prompt = ScriptedPrompt::decisions(vec![], vec![PermissionDecision::AllowAlways]);
+			let service = PermissionsService::new(&storage, &prompt, &PRODUCT);
+			let request = remote_domains(&["cdn.example.com"]);
+			let pending_answer = prompt.remote_answers.lock().await;
+			let mut cancelled = Box::pin(service.authorize_remote(request.clone()));
+			let mut waiting = Box::pin(service.authorize_remote(request.clone()));
+			assert!(futures::poll!(&mut cancelled).is_pending());
+			assert!(futures::poll!(&mut waiting).is_pending());
+
+			let other_prompt =
+				ScriptedPrompt::decisions(vec![], vec![PermissionDecision::AllowAlways]);
+			let other = PermissionsService::new(&storage, &other_prompt, &OTHER_PRODUCT);
+			let mut independent = Box::pin(other.authorize_remote(request));
+			assert_eq!(
+				futures::poll!(&mut independent),
+				std::task::Poll::Ready(Ok(PermissionAuthorizationStatus::Authorized)),
+			);
+
+			drop(cancelled);
+			drop(pending_answer);
+			assert_eq!(
+				(waiting.await.unwrap(), prompt.remote_calls.load(Ordering::SeqCst)),
+				(PermissionAuthorizationStatus::Authorized, 2),
+			);
+		});
+	}
+
+	#[test]
+	fn an_upfront_one_use_grant_is_shared_with_one_operation_but_never_persisted() {
+		futures::executor::block_on(async {
+			let storage = MemStorage::default();
+			let prompt = ScriptedPrompt::decisions(
+				vec![],
+				vec![PermissionDecision::Deny, PermissionDecision::AllowOnce],
+			);
+			let grants = Arc::default();
+			let sdk = PermissionsService::new(&storage, &prompt, &PRODUCT)
+				.with_temporary_permissions(Arc::clone(&grants));
+			let operation = PermissionsService::new(&storage, &prompt, &PRODUCT)
+				.with_temporary_permissions(Arc::clone(&grants));
+			let other_product = PermissionsService::new(&storage, &prompt, &OTHER_PRODUCT)
+				.with_temporary_permissions(grants);
+			let other_execution = PermissionsService::new(&storage, &prompt, &PRODUCT);
+			let request = remote_domains(&["api.example.com"]);
+			let requested = sdk.check_or_prompt_remote(request.clone()).await.unwrap();
+			assert_eq!(
+				(
+					requested,
+					sdk.peek_remote(&request).await.unwrap(),
+					other_product.peek_remote(&request).await.unwrap(),
+					other_execution.peek_remote(&request).await.unwrap(),
+					storage.inner.lock().await.len(),
+				),
+				(
+					PermissionAuthorizationStatus::Authorized,
+					PermissionAuthorizationStatus::Authorized,
+					PermissionAuthorizationStatus::NotDetermined,
+					PermissionAuthorizationStatus::NotDetermined,
+					0,
+				),
+			);
+			let first = operation.authorize_remote(request.clone()).await.unwrap();
+			let second = operation.authorize_remote(request).await.unwrap();
+			assert_eq!(
+				(first, second, prompt.remote_calls.load(Ordering::SeqCst)),
+				(
+					PermissionAuthorizationStatus::Authorized,
+					PermissionAuthorizationStatus::Denied,
+					2,
+				),
+			);
+		});
+	}
+
+	#[test]
+	fn a_denied_bundle_preserves_one_use_grants_for_a_later_operation() {
+		futures::executor::block_on(async {
+			for prompt_denial in [false, true] {
+				let storage = MemStorage::default();
+				let prompt = ScriptedPrompt::decisions(
+					vec![],
+					vec![PermissionDecision::Deny, PermissionDecision::AllowOnce],
+				);
+				let service = PermissionsService::new(&storage, &prompt, &PRODUCT);
+				let granted = remote_domains(&["api.example.com"]);
+				service.check_or_prompt_remote(granted.clone()).await.unwrap();
+				if !prompt_denial {
+					service
+						.set_authorization_status(
+							&PermissionAuthorizationRequest::Remote(remote_domains(&[
+								"blocked.com",
+							])),
+							PermissionAuthorizationStatus::Denied,
+						)
+						.await
+						.unwrap();
+				}
+				let denied = service
+					.authorize_remote(remote_domains(&["api.example.com", "blocked.com"]))
+					.await
+					.unwrap();
+				let next = service
+					.authorize_remote(remote_domains(&["api.example.com", "API.EXAMPLE.COM."]))
+					.await
+					.unwrap();
+				assert_eq!(
+					(denied, next, service.peek_remote(&granted).await.unwrap()),
+					(
+						PermissionAuthorizationStatus::Denied,
+						PermissionAuthorizationStatus::Authorized,
+						PermissionAuthorizationStatus::NotDetermined,
+					),
+				);
+			}
+		});
+	}
+
+	#[test]
+	fn concurrent_operations_cannot_share_a_one_use_wildcard_grant() {
+		futures::executor::block_on(async {
+			let storage = MemStorage::default();
+			let prompt = ScriptedPrompt::decisions(
+				vec![],
+				vec![PermissionDecision::Deny, PermissionDecision::AllowOnce],
+			);
+			let service = PermissionsService::new(&storage, &prompt, &PRODUCT);
+			service
+				.check_or_prompt_remote(remote_domains(&["*.example.com"]))
+				.await
+				.unwrap();
+			let (first, second) = futures::join!(
+				service.authorize_remote(remote_domains(&["deep.a.example.com"])),
+				service.authorize_remote(remote_domains(&["deeper.deep.b.example.com"])),
+			);
+			assert_eq!(
+				(first.unwrap(), second.unwrap(), prompt.remote_calls.load(Ordering::SeqCst)),
+				(
+					PermissionAuthorizationStatus::Authorized,
+					PermissionAuthorizationStatus::Denied,
+					2,
+				),
+			);
+		});
+	}
+
+	#[test]
+	fn a_one_use_answer_to_an_operation_is_consumed_by_that_operation() {
+		futures::executor::block_on(async {
+			let storage = MemStorage::default();
+			let prompt = ScriptedPrompt::decisions(
+				vec![PermissionDecision::AllowOnce],
+				vec![PermissionDecision::AllowOnce],
+			);
+			let service = PermissionsService::new(&storage, &prompt, &PRODUCT);
+			let remote = remote_domains(&["api.example.com"]);
+			let device = HostDevicePermissionRequest::Camera;
+			assert_eq!(
+				(
+					service.authorize_remote(remote.clone()).await.unwrap(),
+					service.peek_remote(&remote).await.unwrap(),
+					service.authorize_device(device).await.unwrap(),
+					service.peek_device(&device).await.unwrap(),
+					storage.inner.lock().await.len(),
+				),
+				(
+					PermissionAuthorizationStatus::Authorized,
+					PermissionAuthorizationStatus::NotDetermined,
+					PermissionAuthorizationStatus::Authorized,
+					PermissionAuthorizationStatus::NotDetermined,
+					0,
+				),
+			);
+		});
+	}
+
+	#[test]
+	fn blessed_domains_need_no_prompt_but_explicit_denials_still_apply() {
+		futures::executor::block_on(async {
+			let storage = MemStorage::default();
+			let prompt = ScriptedPrompt::new(vec![], vec![]);
+			let service = PermissionsService::new(&storage, &prompt, &PRODUCT);
+			for domain in BLESSED_REMOTE_DOMAINS {
+				let request = remote_domains(&[domain]);
+				let granted = service.authorize_remote(request.clone()).await.unwrap();
+				service
+					.set_authorization_status(
+						&PermissionAuthorizationRequest::Remote(request.clone()),
+						PermissionAuthorizationStatus::Denied,
+					)
+					.await
+					.unwrap();
+				assert_eq!(
+					(granted, service.authorize_remote(request).await.unwrap()),
+					(
+						PermissionAuthorizationStatus::Authorized,
+						PermissionAuthorizationStatus::Denied,
+					),
+				);
+			}
+			assert_eq!(prompt.remote_calls.load(Ordering::SeqCst), 0);
+		});
+	}
+
+	#[test]
+	fn blessed_domains_do_not_consume_a_one_use_grant_for_other_hosts() {
+		futures::executor::block_on(async {
+			let storage = MemStorage::default();
+			let prompt = ScriptedPrompt::decisions(vec![], vec![PermissionDecision::AllowOnce]);
+			let service = PermissionsService::new(&storage, &prompt, &PRODUCT);
+			let wildcard = remote_domains(&["*"]);
+			service.check_or_prompt_remote(wildcard.clone()).await.unwrap();
+			let blessed = service
+				.authorize_remote(remote_domains(&[BLESSED_REMOTE_DOMAINS[0]]))
+				.await
+				.unwrap();
+			let still_available = service.peek_remote(&wildcard).await.unwrap();
+			let other = service.authorize_remote(remote_domains(&["other.com"])).await.unwrap();
+			assert_eq!(
+				(blessed, still_available, other, service.peek_remote(&wildcard).await.unwrap()),
+				(
+					PermissionAuthorizationStatus::Authorized,
+					PermissionAuthorizationStatus::Authorized,
+					PermissionAuthorizationStatus::Authorized,
+					PermissionAuthorizationStatus::NotDetermined,
+				),
+			);
+		});
+	}
+
+	#[test]
+	fn a_one_use_exception_to_a_denial_is_consumed_even_for_a_blessed_domain() {
+		futures::executor::block_on(async {
+			let storage = MemStorage::default();
+			let prompt = ScriptedPrompt::decisions(vec![], vec![PermissionDecision::AllowOnce]);
+			let service = PermissionsService::new(&storage, &prompt, &PRODUCT);
+			service
+				.check_or_prompt_remote(remote_domains(&["*.googleapis.com"]))
+				.await
+				.unwrap();
+			service
+				.set_authorization_status(
+					&PermissionAuthorizationRequest::Remote(remote_domains(&["*"])),
+					PermissionAuthorizationStatus::Denied,
+				)
+				.await
+				.unwrap();
+			let request = remote_domains(&["fonts.googleapis.com"]);
+			assert_eq!(
+				(
+					service.authorize_remote(request.clone()).await.unwrap(),
+					service.authorize_remote(request).await.unwrap(),
+					prompt.remote_calls.load(Ordering::SeqCst),
+				),
+				(
+					PermissionAuthorizationStatus::Authorized,
+					PermissionAuthorizationStatus::Denied,
+					1,
+				),
+			);
+		});
+	}
+
+	#[test]
+	fn resetting_a_permission_removes_its_temporary_grant() {
+		futures::executor::block_on(async {
+			let storage = MemStorage::default();
+			let prompt = ScriptedPrompt::decisions(vec![], vec![PermissionDecision::AllowOnce]);
+			let service = PermissionsService::new(&storage, &prompt, &PRODUCT);
+			let request = remote_domains(&["api.example.com"]);
+			service.check_or_prompt_remote(request.clone()).await.unwrap();
+			service
+				.set_authorization_status(
+					&PermissionAuthorizationRequest::Remote(request.clone()),
+					PermissionAuthorizationStatus::NotDetermined,
+				)
+				.await
+				.unwrap();
+			assert_eq!(
+				service.peek_remote(&request).await.unwrap(),
+				PermissionAuthorizationStatus::NotDetermined
+			);
+		});
+	}
+
+	struct ScriptedPrompt {
+		device_answers: Mutex<Vec<PermissionDecision>>,
+		remote_answers: Mutex<Vec<PermissionDecision>>,
+		device_calls: AtomicUsize,
+		remote_calls: AtomicUsize,
+		/// Domain bundles the remote callback was actually asked about, in call
+		/// order, so a test can assert which subset reached the user.
+		remote_domains_asked: Mutex<Vec<Vec<String>>>,
+	}
+
+	impl ScriptedPrompt {
+		fn new(device_answers: Vec<bool>, remote_answers: Vec<bool>) -> Self {
+			let decision = |granted| {
+				if granted { PermissionDecision::AllowAlways } else { PermissionDecision::Deny }
+			};
+			Self::decisions(
+				device_answers.into_iter().map(decision).collect(),
+				remote_answers.into_iter().map(decision).collect(),
+			)
+		}
+
+		fn decisions(
+			device_answers: Vec<PermissionDecision>,
+			remote_answers: Vec<PermissionDecision>,
+		) -> Self {
+			Self {
+				device_answers: Mutex::new(device_answers),
+				remote_answers: Mutex::new(remote_answers),
+				device_calls: AtomicUsize::new(0),
+				remote_calls: AtomicUsize::new(0),
+				remote_domains_asked: Mutex::new(Vec::new()),
+			}
+		}
+
+		fn domains_asked(&self) -> Vec<Vec<String>> {
+			futures::executor::block_on(self.remote_domains_asked.lock()).clone()
+		}
+	}
+
+	#[crate::platform::async_trait]
+	impl Permissions for ScriptedPrompt {
+		async fn device_permission(
+			&self,
+			_product: &ProductContext,
+			_request: HostDevicePermissionRequest,
+		) -> Result<PermissionDecision, GenericError> {
+			self.device_calls.fetch_add(1, Ordering::SeqCst);
+			let decision = self
+				.device_answers
+				.lock()
+				.await
+				.pop()
+				.expect("ScriptedPrompt ran out of device answers");
+			Ok(decision)
+		}
+
+		async fn remote_permission(
+			&self,
+			_product: &ProductContext,
+			request: RemotePermissionRequest,
+		) -> Result<PermissionDecision, GenericError> {
+			self.remote_calls.fetch_add(1, Ordering::SeqCst);
+			if let RemotePermission::Remote { domains } = &request.permission {
+				self.remote_domains_asked.lock().await.push(domains.clone());
+			}
+			let decision = self
+				.remote_answers
+				.lock()
+				.await
+				.pop()
+				.expect("ScriptedPrompt ran out of remote answers");
+			Ok(decision)
+		}
+	}
+
+	/// OS status source, scripted per capability so a test can deny one
+	/// capability while another stays granted.
+	struct ScriptedStatus {
+		answers: Vec<(HostDevicePermissionRequest, DevicePermissionStatus)>,
+		/// Answer for any capability `answers` does not name. `None` fails the
+		/// query instead, standing in for a busy host or a dropped IPC.
+		fallback: Option<DevicePermissionStatus>,
+		asked: Mutex<Vec<HostDevicePermissionRequest>>,
+	}
+
+	impl ScriptedStatus {
+		fn always(status: DevicePermissionStatus) -> Self {
+			Self { answers: Vec::new(), fallback: Some(status), asked: Mutex::new(Vec::new()) }
+		}
+
+		fn per_capability(
+			answers: Vec<(HostDevicePermissionRequest, DevicePermissionStatus)>,
+			fallback: DevicePermissionStatus,
+		) -> Self {
+			Self { answers, fallback: Some(fallback), asked: Mutex::new(Vec::new()) }
+		}
+
+		fn failing() -> Self {
+			Self { answers: Vec::new(), fallback: None, asked: Mutex::new(Vec::new()) }
+		}
+
+		fn asked(&self) -> Vec<HostDevicePermissionRequest> {
+			futures::executor::block_on(self.asked.lock()).clone()
+		}
+	}
+
+	#[crate::platform::async_trait]
+	impl PermissionStatusHost for ScriptedStatus {
+		async fn device_permission_status(
+			&self,
+			request: HostDevicePermissionRequest,
+		) -> Result<DevicePermissionStatus, GenericError> {
+			self.asked.lock().await.push(request);
+			if let Some((_, status)) =
+				self.answers.iter().find(|(capability, _)| *capability == request)
+			{
+				return Ok(*status);
+			}
+			self.fallback.ok_or_else(|| v01::GenericError {
+				reason: "status channel unavailable".to_string(),
+			})
+		}
+	}
+
+	/// Persist a product-scoped grant for `capability` the way a first
+	/// successful request does, with no OS status source involved.
+	fn grant_stored(storage: &MemStorage, capability: HostDevicePermissionRequest) {
+		let prompt = ScriptedPrompt::new(vec![true], vec![]);
+		let service = PermissionsService::new(storage, &prompt, &PRODUCT);
+		assert_eq!(
+			futures::executor::block_on(service.check_or_prompt_device(capability)).unwrap(),
+			PermissionAuthorizationStatus::Authorized,
+		);
+	}
+
+	fn remote_domains(domains: &[&str]) -> RemotePermissionRequest {
+		RemotePermissionRequest {
+			permission: RemotePermission::Remote {
+				domains: domains.iter().map(|domain| domain.to_string()).collect(),
+			},
+		}
+	}
+
+	#[test]
+	fn check_or_prompt_device_caches_grant() {
+		let storage = MemStorage::default();
+		let prompt = ScriptedPrompt::new(vec![true], vec![]);
+		let service = PermissionsService::new(&storage, &prompt, &PRODUCT);
+
+		let first = futures::executor::block_on(
+			service.check_or_prompt_device(HostDevicePermissionRequest::Camera),
+		)
+		.unwrap();
+		let second = futures::executor::block_on(
+			service.check_or_prompt_device(HostDevicePermissionRequest::Camera),
+		)
+		.unwrap();
+
+		assert_eq!(first, PermissionAuthorizationStatus::Authorized);
+		assert_eq!(second, PermissionAuthorizationStatus::Authorized);
+		assert_eq!(prompt.device_calls.load(Ordering::SeqCst), 1);
+	}
+
+	#[test]
+	fn check_or_prompt_remote_caches_denial() {
+		let storage = MemStorage::default();
+		let prompt = ScriptedPrompt::new(vec![], vec![false]);
+		let service = PermissionsService::new(&storage, &prompt, &PRODUCT);
+
+		let request = RemotePermissionRequest { permission: RemotePermission::ChainSubmit };
+		let first =
+			futures::executor::block_on(service.check_or_prompt_remote(request.clone())).unwrap();
+		let second = futures::executor::block_on(service.check_or_prompt_remote(request)).unwrap();
+
+		assert_eq!(first, PermissionAuthorizationStatus::Denied);
+		assert_eq!(second, PermissionAuthorizationStatus::Denied);
+		assert_eq!(prompt.remote_calls.load(Ordering::SeqCst), 1);
+	}
+
+	/// The defect this storage model exists to fix: a product grants a bundle,
+	/// then enforcement asks about one host in it. Keying the bundle as a set
+	/// made that lookup miss and re-prompt, so a granted domain read as
+	/// undecided forever.
+	#[test]
+	fn a_bundle_grant_is_visible_to_a_single_domain_lookup() {
+		let storage = MemStorage::default();
+		let prompt = ScriptedPrompt::new(vec![], vec![true]);
+		let service = PermissionsService::new(&storage, &prompt, &PRODUCT);
+
+		let granted = futures::executor::block_on(
+			service.check_or_prompt_remote(remote_domains(&["a.example.com", "b.example.com"])),
+		)
+		.unwrap();
+		assert_eq!(granted, PermissionAuthorizationStatus::Authorized);
+
+		for domain in ["a.example.com", "b.example.com"] {
+			assert_eq!(
+				futures::executor::block_on(service.peek_remote(&remote_domains(&[domain])))
+					.unwrap(),
+				PermissionAuthorizationStatus::Authorized,
+				"{domain} was granted as part of the bundle"
+			);
+			assert_eq!(
+				futures::executor::block_on(
+					service.check_or_prompt_remote(remote_domains(&[domain]))
+				)
+				.unwrap(),
+				PermissionAuthorizationStatus::Authorized,
+			);
+		}
+		assert_eq!(
+			prompt.remote_calls.load(Ordering::SeqCst),
+			1,
+			"a domain already covered by the bundle must not re-prompt"
+		);
+	}
+
+	#[test]
+	fn a_wildcard_grant_covers_descendants_but_not_its_root() {
+		let storage = MemStorage::default();
+		let prompt = ScriptedPrompt::new(vec![], vec![true]);
+		let service = PermissionsService::new(&storage, &prompt, &PRODUCT);
+
+		futures::executor::block_on(
+			service.check_or_prompt_remote(remote_domains(&["*.example.com"])),
+		)
+		.unwrap();
+
+		for covered in ["api.example.com", "deep.api.example.com", "deeper.deep.api.example.com"] {
+			assert_eq!(
+				futures::executor::block_on(service.peek_remote(&remote_domains(&[covered])))
+					.unwrap(),
+				PermissionAuthorizationStatus::Authorized,
+				"{covered} is a descendant of example.com"
+			);
+		}
+		for uncovered in ["example.com", "notexample.com", "example.com.other"] {
+			assert_eq!(
+				futures::executor::block_on(service.peek_remote(&remote_domains(&[uncovered])))
+					.unwrap(),
+				PermissionAuthorizationStatus::NotDetermined,
+				"{uncovered} is not a descendant of example.com"
+			);
+		}
+	}
+
+	#[test]
+	fn the_most_specific_stored_decision_wins() {
+		let storage = MemStorage::default();
+		let prompt = ScriptedPrompt::new(vec![], vec![]);
+		let service = PermissionsService::new(&storage, &prompt, &PRODUCT);
+
+		// Deny the whole wildcard, then allow one host under it explicitly.
+		futures::executor::block_on(service.set_authorization_status(
+			&PermissionAuthorizationRequest::Remote(remote_domains(&["*.example.com"])),
+			PermissionAuthorizationStatus::Denied,
+		))
+		.unwrap();
+		futures::executor::block_on(service.set_authorization_status(
+			&PermissionAuthorizationRequest::Remote(remote_domains(&["api.example.com"])),
+			PermissionAuthorizationStatus::Authorized,
+		))
+		.unwrap();
+
+		assert_eq!(
+			futures::executor::block_on(service.peek_remote(&remote_domains(&["api.example.com"])))
+				.unwrap(),
+			PermissionAuthorizationStatus::Authorized,
+			"an explicit host grant outranks a denied parent wildcard"
+		);
+		assert_eq!(
+			futures::executor::block_on(
+				service.peek_remote(&remote_domains(&["other.example.com"]))
+			)
+			.unwrap(),
+			PermissionAuthorizationStatus::Denied,
+			"a host with no decision of its own inherits the wildcard denial"
+		);
+
+		futures::executor::block_on(service.set_authorization_status(
+			&PermissionAuthorizationRequest::Remote(remote_domains(&["*.example.com"])),
+			PermissionAuthorizationStatus::Authorized,
+		))
+		.unwrap();
+		futures::executor::block_on(service.set_authorization_status(
+			&PermissionAuthorizationRequest::Remote(remote_domains(&["*.api.example.com"])),
+			PermissionAuthorizationStatus::Denied,
+		))
+		.unwrap();
+		for denied in ["deep.api.example.com", "deeper.deep.api.example.com"] {
+			assert_eq!(
+				futures::executor::block_on(service.peek_remote(&remote_domains(&[denied])))
+					.unwrap(),
+				PermissionAuthorizationStatus::Denied,
+				"the narrower wildcard denial overrides the ancestor's grant"
+			);
+		}
+	}
+
+	#[test]
+	fn a_prompt_covers_only_undetermined_domains_and_never_revokes_a_grant() {
+		let storage = MemStorage::default();
+		// Answers pop from the end: grant first, then deny.
+		let prompt = ScriptedPrompt::new(vec![], vec![false, true]);
+		let service = PermissionsService::new(&storage, &prompt, &PRODUCT);
+
+		futures::executor::block_on(service.check_or_prompt_remote(remote_domains(&["a.com"])))
+			.unwrap();
+		let second = futures::executor::block_on(
+			service.check_or_prompt_remote(remote_domains(&["a.com", "b.com"])),
+		)
+		.unwrap();
+
+		assert_eq!(
+			prompt.domains_asked(),
+			vec![vec!["a.com".to_string()], vec!["b.com".to_string()]],
+			"the second prompt must ask only about the undecided domain"
+		);
+		assert_eq!(
+			second,
+			PermissionAuthorizationStatus::Denied,
+			"the bundle needs every domain, so one denial denies it"
+		);
+		assert_eq!(
+			futures::executor::block_on(service.peek_remote(&remote_domains(&["a.com"]))).unwrap(),
+			PermissionAuthorizationStatus::Authorized,
+			"denying b.com must not revoke the existing a.com grant"
+		);
+	}
+
+	#[test]
+	fn a_multi_domain_denial_leaves_the_narrower_question_askable() {
+		let storage = MemStorage::default();
+		// Answers pop from the end: deny the pair, then grant the single domain.
+		let prompt = ScriptedPrompt::new(vec![], vec![true, false]);
+		let service = PermissionsService::new(&storage, &prompt, &PRODUCT);
+
+		let pair = remote_domains(&["api.coingecko.com", "analytics.vendor.com"]);
+		assert_eq!(
+			futures::executor::block_on(service.check_or_prompt_remote(pair.clone())).unwrap(),
+			PermissionAuthorizationStatus::Denied
+		);
+		assert_eq!(
+			futures::executor::block_on(service.check_or_prompt_remote(pair.clone())).unwrap(),
+			PermissionAuthorizationStatus::Denied,
+		);
+		assert_eq!(
+			prompt.remote_calls.load(Ordering::SeqCst),
+			1,
+			"the refused set is answered and must not be re-asked"
+		);
+
+		// Refusing the pair is not refusing either domain on its own: that is a
+		// question the user was never put, so it stays open.
+		for domain in ["api.coingecko.com", "analytics.vendor.com"] {
+			assert_eq!(
+				futures::executor::block_on(service.peek_remote(&remote_domains(&[domain])))
+					.unwrap(),
+				PermissionAuthorizationStatus::NotDetermined,
+				"{domain} was never refused by itself"
+			);
+		}
+		assert_eq!(
+			futures::executor::block_on(
+				service.check_or_prompt_remote(remote_domains(&["api.coingecko.com"]))
+			)
+			.unwrap(),
+			PermissionAuthorizationStatus::Authorized,
+		);
+		assert_eq!(
+			prompt.domains_asked(),
+			vec![
+				vec!["api.coingecko.com".to_string(), "analytics.vendor.com".to_string(),],
+				vec!["api.coingecko.com".to_string()],
+			],
+		);
+	}
+
+	#[test]
+	fn unsupported_wildcards_are_rejected_without_prompting_or_storing() {
+		let storage = MemStorage::default();
+		let prompt = ScriptedPrompt::new(vec![], vec![]);
+		let service = PermissionsService::new(&storage, &prompt, &PRODUCT);
+
+		for domain in ["*.com", "*.dot", "*.127.0.0.1", "*.[::1]"] {
+			assert_eq!(
+				futures::executor::block_on(
+					service.check_or_prompt_remote(remote_domains(&[domain]))
+				)
+				.unwrap(),
+				PermissionAuthorizationStatus::Denied,
+			);
+		}
+		assert_eq!(
+			(
+				prompt.remote_calls.load(Ordering::SeqCst),
+				futures::executor::block_on(storage.inner.lock()).len()
+			),
+			(0, 0),
+		);
+	}
+
+	#[test]
+	fn a_grant_covers_every_spelling_of_the_granted_host() {
+		let storage = MemStorage::default();
+		let prompt = ScriptedPrompt::new(vec![], vec![true]);
+		let service = PermissionsService::new(&storage, &prompt, &PRODUCT);
+
+		futures::executor::block_on(
+			service.check_or_prompt_remote(remote_domains(&["Bücher.example"])),
+		)
+		.unwrap();
+
+		// Enforcement normalizes a live URL host the same way the grant was
+		// keyed, so no spelling of the same site opens a second prompt.
+		for spelling in ["bücher.example", "xn--bcher-kva.example", "XN--BCHER-KVA.example."] {
+			assert_eq!(
+				futures::executor::block_on(service.peek_remote(&remote_domains(&[spelling])))
+					.unwrap(),
+				PermissionAuthorizationStatus::Authorized,
+				"{spelling} is the granted host"
+			);
+		}
+		assert_eq!(prompt.remote_calls.load(Ordering::SeqCst), 1);
+	}
+
+	#[test]
+	fn a_denied_domain_short_circuits_the_bundle_without_prompting() {
+		let storage = MemStorage::default();
+		let prompt = ScriptedPrompt::new(vec![], vec![false]);
+		let service = PermissionsService::new(&storage, &prompt, &PRODUCT);
+
+		futures::executor::block_on(service.check_or_prompt_remote(remote_domains(&["a.com"])))
+			.unwrap();
+		let second = futures::executor::block_on(
+			service.check_or_prompt_remote(remote_domains(&["a.com", "b.com"])),
+		)
+		.unwrap();
+
+		assert_eq!(second, PermissionAuthorizationStatus::Denied);
+		assert_eq!(
+			prompt.remote_calls.load(Ordering::SeqCst),
+			1,
+			"a stored denial is not re-asked"
+		);
+	}
+
+	#[test]
+	fn an_empty_domain_bundle_is_denied_without_prompting() {
+		let storage = MemStorage::default();
+		let prompt = ScriptedPrompt::new(vec![], vec![]);
+		let service = PermissionsService::new(&storage, &prompt, &PRODUCT);
+
+		assert_eq!(
+			futures::executor::block_on(service.check_or_prompt_remote(remote_domains(&[])))
+				.unwrap(),
+			PermissionAuthorizationStatus::Denied
+		);
+		assert_eq!(
+			futures::executor::block_on(service.peek_remote(&remote_domains(&[]))).unwrap(),
+			PermissionAuthorizationStatus::Denied
+		);
+		assert_eq!(prompt.remote_calls.load(Ordering::SeqCst), 0);
+	}
+
+	#[test]
+	fn clearing_a_bundle_clears_each_domain_it_names() {
+		let storage = MemStorage::default();
+		let prompt = ScriptedPrompt::new(vec![], vec![true]);
+		let service = PermissionsService::new(&storage, &prompt, &PRODUCT);
+
+		futures::executor::block_on(
+			service.check_or_prompt_remote(remote_domains(&["a.com", "b.com"])),
+		)
+		.unwrap();
+		futures::executor::block_on(service.set_authorization_status(
+			&PermissionAuthorizationRequest::Remote(remote_domains(&["a.com", "b.com"])),
+			PermissionAuthorizationStatus::NotDetermined,
+		))
+		.unwrap();
+
+		for domain in ["a.com", "b.com"] {
+			assert_eq!(
+				futures::executor::block_on(service.peek_remote(&remote_domains(&[domain])))
+					.unwrap(),
+				PermissionAuthorizationStatus::NotDetermined,
+				"{domain} must be revocable through the bundle it was granted in"
+			);
+		}
+	}
+
+	#[test]
+	fn resetting_a_bundle_clears_a_recorded_denial() {
+		let storage = MemStorage::default();
+		let prompt = ScriptedPrompt::new(vec![], vec![false]);
+		let service = PermissionsService::new(&storage, &prompt, &PRODUCT);
+		let pair = remote_domains(&["a.com", "b.com"]);
+
+		futures::executor::block_on(service.check_or_prompt_remote(pair.clone())).unwrap();
+		futures::executor::block_on(service.set_authorization_status(
+			&PermissionAuthorizationRequest::Remote(pair.clone()),
+			PermissionAuthorizationStatus::NotDetermined,
+		))
+		.unwrap();
+
+		assert_eq!(
+			futures::executor::block_on(service.peek_remote(&pair)).unwrap(),
+			PermissionAuthorizationStatus::NotDetermined,
+			"the host's reset must also reach the slot a set denial lives in"
+		);
+	}
+
+	#[test]
+	fn remote_domain_grants_are_scoped_to_one_product() {
+		let storage = MemStorage::default();
+		let prompt = ScriptedPrompt::new(vec![], vec![true]);
+		let service = PermissionsService::new(&storage, &prompt, &PRODUCT);
+		futures::executor::block_on(service.check_or_prompt_remote(remote_domains(&["a.com"])))
+			.unwrap();
+
+		let other = PermissionsService::new(&storage, &prompt, &OTHER_PRODUCT);
+		assert_eq!(
+			futures::executor::block_on(other.peek_remote(&remote_domains(&["a.com"]))).unwrap(),
+			PermissionAuthorizationStatus::NotDetermined
+		);
+	}
+
+	/// A trusted product, so `ScriptedPrompt` is built with no scripted answers:
+	/// reaching either callback panics rather than silently answering.
+	fn trusted_service<'a>(
+		storage: &'a MemStorage,
+		prompt: &'a ScriptedPrompt,
+	) -> PermissionsService<'a, MemStorage, ScriptedPrompt> {
+		PermissionsService::new(storage, prompt, &PEOPL)
+	}
+
+	fn remote(permission: RemotePermission) -> RemotePermissionRequest {
+		RemotePermissionRequest { permission }
+	}
+
+	fn every_remote_permission() -> Vec<RemotePermission> {
+		vec![
+			RemotePermission::Remote { domains: vec!["example.com".to_string()] },
+			RemotePermission::WebRtc,
+			RemotePermission::ChainSubmit,
+			RemotePermission::PreimageSubmit,
+			RemotePermission::StatementSubmit,
+		]
+	}
+
+	#[test]
+	fn a_trusted_product_holds_every_remote_permission_without_prompting() {
+		let storage = MemStorage::default();
+		let prompt = ScriptedPrompt::new(vec![], vec![]);
+		let service = trusted_service(&storage, &prompt);
+
+		for permission in every_remote_permission() {
+			assert_eq!(
+				futures::executor::block_on(
+					service.check_or_prompt_remote(remote(permission.clone()))
+				)
+				.unwrap(),
+				PermissionAuthorizationStatus::Authorized,
+				"{permission:?} must be granted to a trusted product without a prompt"
+			);
+		}
+		assert_eq!(prompt.remote_calls.load(Ordering::SeqCst), 0);
+		assert!(prompt.domains_asked().is_empty());
+	}
+
+	#[test]
+	fn a_trusted_product_is_authorized_for_any_domain() {
+		let storage = MemStorage::default();
+		let prompt = ScriptedPrompt::new(vec![], vec![]);
+		let service = trusted_service(&storage, &prompt);
+
+		for domains in [
+			vec!["a.com"],
+			vec!["deep.api.example.com"],
+			vec!["*"],
+			vec!["a.com", "b.com", "*.c.com"],
+		] {
+			assert_eq!(
+				futures::executor::block_on(service.peek_remote(&remote_domains(&domains)))
+					.unwrap(),
+				PermissionAuthorizationStatus::Authorized,
+				"{domains:?} must be authorized for a trusted product"
+			);
+		}
+	}
+
+	#[test]
+	fn a_trusted_product_reports_authorized_to_the_admin_surface() {
+		let storage = MemStorage::default();
+		let prompt = ScriptedPrompt::new(vec![], vec![]);
+		let service = trusted_service(&storage, &prompt);
+
+		for request in [remote(RemotePermission::ChainSubmit), remote_domains(&["a.com"])] {
+			assert_eq!(
+				futures::executor::block_on(
+					service.authorization_status(&PermissionAuthorizationRequest::Remote(request))
+				)
+				.unwrap(),
+				PermissionAuthorizationStatus::Authorized
+			);
+		}
+	}
+
+	#[test]
+	fn a_trusted_product_grant_is_not_persisted() {
+		let storage = MemStorage::default();
+		let prompt = ScriptedPrompt::new(vec![], vec![]);
+		let service = trusted_service(&storage, &prompt);
+		let request = remote(RemotePermission::ChainSubmit);
+
+		futures::executor::block_on(service.check_or_prompt_remote(request.clone())).unwrap();
+
+		assert_eq!(
+			futures::executor::block_on(storage.read_core_storage(
+				CoreStorageKey::remote_permission_authorization("peopl.dot", &request)
+			))
+			.unwrap(),
+			None,
+			"trusted authorization must not create a permission record"
+		);
+	}
+
+	#[test]
+	fn a_trusted_product_ignores_stored_remote_denials() {
+		let storage = MemStorage::default();
+		let prompt = ScriptedPrompt::new(vec![], vec![]);
+		let service = trusted_service(&storage, &prompt);
+
+		for request in [remote(RemotePermission::ChainSubmit), remote_domains(&["a.com"])] {
+			futures::executor::block_on(service.set_authorization_status(
+				&PermissionAuthorizationRequest::Remote(request.clone()),
+				PermissionAuthorizationStatus::Denied,
+			))
+			.unwrap();
+
+			assert_eq!(
+				futures::executor::block_on(service.peek_remote(&request)).unwrap(),
+				PermissionAuthorizationStatus::Authorized
+			);
+			assert_eq!(
+				futures::executor::block_on(service.check_or_prompt_remote(request)).unwrap(),
+				PermissionAuthorizationStatus::Authorized
+			);
+		}
+		assert_eq!(prompt.remote_calls.load(Ordering::SeqCst), 0);
+	}
+
+	#[test]
+	fn a_trusted_product_ignores_stored_wildcard_denials() {
+		let storage = MemStorage::default();
+		let prompt = ScriptedPrompt::new(vec![], vec![]);
+		let service = trusted_service(&storage, &prompt);
+
+		futures::executor::block_on(service.set_authorization_status(
+			&PermissionAuthorizationRequest::Remote(remote_domains(&["*"])),
+			PermissionAuthorizationStatus::Denied,
+		))
+		.unwrap();
+
+		for domain in ["a.com", "deep.api.example.com"] {
+			assert_eq!(
+				futures::executor::block_on(service.peek_remote(&remote_domains(&[domain])))
+					.unwrap(),
+				PermissionAuthorizationStatus::Authorized,
+				"stored wildcard decisions do not govern trusted products"
+			);
+		}
+	}
+
+	#[test]
+	fn a_trusted_label_on_every_product_network_is_trusted() {
+		let storage = MemStorage::default();
+		let prompt = ScriptedPrompt::new(vec![], vec![]);
+
+		for product_id in ["peopl.dot", "peopl.paseo", "peopl.testnet", "dim2.dot", "stash.dot"] {
+			let product = ProductContext::new(product_id.to_string()).expect("product id is valid");
+			let service = PermissionsService::new(&storage, &prompt, &product);
+			assert_eq!(
+				futures::executor::block_on(
+					service.peek_remote(&remote(RemotePermission::ChainSubmit))
+				)
+				.unwrap(),
+				PermissionAuthorizationStatus::Authorized,
+				"{product_id} must be trusted on every accepted product network"
+			);
+		}
+	}
+
+	#[test]
+	fn a_subdomain_of_a_trusted_label_is_not_trusted() {
+		let storage = MemStorage::default();
+		let prompt = ScriptedPrompt::new(vec![], vec![true]);
+		let service = PermissionsService::new(&storage, &prompt, &PEOPL_APP);
+		let request = remote(RemotePermission::ChainSubmit);
+
+		assert_eq!(
+			futures::executor::block_on(service.peek_remote(&request)).unwrap(),
+			PermissionAuthorizationStatus::NotDetermined
+		);
+		assert_eq!(
+			futures::executor::block_on(service.check_or_prompt_remote(request)).unwrap(),
+			PermissionAuthorizationStatus::Authorized
+		);
+		assert_eq!(prompt.remote_calls.load(Ordering::SeqCst), 1);
+	}
+
+	#[test]
+	fn a_localhost_product_is_not_trusted() {
+		let storage = MemStorage::default();
+		let prompt = ScriptedPrompt::new(vec![], vec![true, true]);
+
+		for product_id in ["localhost", "localhost:3000"] {
+			let product = ProductContext::new(product_id.to_string()).expect("product id is valid");
+			let service = PermissionsService::new(&storage, &prompt, &product);
+			let request = remote(RemotePermission::ChainSubmit);
+			assert_eq!(
+				futures::executor::block_on(service.peek_remote(&request)).unwrap(),
+				PermissionAuthorizationStatus::NotDetermined,
+				"{product_id} carries no label to match and must prompt"
+			);
+			futures::executor::block_on(service.check_or_prompt_remote(request)).unwrap();
+		}
+		assert_eq!(prompt.remote_calls.load(Ordering::SeqCst), 2);
+	}
+
+	#[test]
+	fn an_untrusted_product_still_prompts_for_every_remote_permission() {
+		let storage = MemStorage::default();
+		let prompt = ScriptedPrompt::new(vec![], vec![true; 5]);
+		let service = PermissionsService::new(&storage, &prompt, &PRODUCT);
+
+		for permission in every_remote_permission() {
+			futures::executor::block_on(service.check_or_prompt_remote(remote(permission)))
+				.unwrap();
+		}
+		assert_eq!(prompt.remote_calls.load(Ordering::SeqCst), 5);
+	}
+
+	#[test]
+	fn a_trusted_product_still_prompts_for_device_permissions() {
+		let storage = MemStorage::default();
+		let prompt = ScriptedPrompt::new(vec![false], vec![]);
+		let service = trusted_service(&storage, &prompt);
+
+		assert_eq!(
+			futures::executor::block_on(service.peek_device(&HostDevicePermissionRequest::Camera))
+				.unwrap(),
+			PermissionAuthorizationStatus::NotDetermined
+		);
+		assert_eq!(
+			futures::executor::block_on(
+				service.check_or_prompt_device(HostDevicePermissionRequest::Camera)
+			)
+			.unwrap(),
+			PermissionAuthorizationStatus::Denied,
+			"a trusted product's device answer is the user's, not the whitelist's"
+		);
+		assert_eq!(prompt.device_calls.load(Ordering::SeqCst), 1);
+	}
+
+	#[test]
+	fn a_trusted_product_reads_permission_storage_only_for_devices() {
+		let storage = FailingStorage;
+		let prompt = ScriptedPrompt::new(vec![], vec![]);
+		let service = PermissionsService::new(&storage, &prompt, &PEOPL);
+		let status = |request| futures::executor::block_on(service.authorization_status(&request));
+		assert_eq!(
+			[
+				status(PermissionAuthorizationRequest::Remote(remote(
+					RemotePermission::ChainSubmit
+				))),
+				status(PermissionAuthorizationRequest::IdentityDisclosure),
+				status(PermissionAuthorizationRequest::AccountAccess {
+					target_product_id: "other.dot".to_string(),
+				}),
+				status(PermissionAuthorizationRequest::Device(HostDevicePermissionRequest::Camera)),
+			],
+			[
+				Ok(PermissionAuthorizationStatus::Authorized),
+				Ok(PermissionAuthorizationStatus::Authorized),
+				Ok(PermissionAuthorizationStatus::Authorized),
+				Err(GenericError { reason: "read failed".to_string() }),
+			],
+		);
+	}
+
+	#[test]
+	fn an_empty_domain_bundle_is_denied_for_a_trusted_product() {
+		let storage = MemStorage::default();
+		let prompt = ScriptedPrompt::new(vec![], vec![]);
+		let service = trusted_service(&storage, &prompt);
+
+		assert_eq!(
+			futures::executor::block_on(service.peek_remote(&remote_domains(&[]))).unwrap(),
+			PermissionAuthorizationStatus::Denied
+		);
+		assert_eq!(
+			futures::executor::block_on(service.check_or_prompt_remote(remote_domains(&[])))
+				.unwrap(),
+			PermissionAuthorizationStatus::Denied,
+			"an empty bundle grants nothing, so failing closed outranks the whitelist"
+		);
+		assert_eq!(prompt.remote_calls.load(Ordering::SeqCst), 0);
+	}
+
+	#[test]
+	fn device_and_remote_caches_are_independent() {
+		let storage = MemStorage::default();
+		// Device denies, remote grants. If the caches collided we'd see the
+		// same answer on the second call.
+		let prompt = ScriptedPrompt::new(vec![false], vec![true]);
+		let service = PermissionsService::new(&storage, &prompt, &PRODUCT);
+
+		let device = futures::executor::block_on(
+			service.check_or_prompt_device(HostDevicePermissionRequest::Camera),
+		)
+		.unwrap();
+		let remote =
+			futures::executor::block_on(service.check_or_prompt_remote(RemotePermissionRequest {
+				permission: RemotePermission::ChainSubmit,
+			}))
+			.unwrap();
+
+		assert_eq!(device, PermissionAuthorizationStatus::Denied);
+		assert_eq!(remote, PermissionAuthorizationStatus::Authorized);
+		assert_eq!(prompt.device_calls.load(Ordering::SeqCst), 1);
+		assert_eq!(prompt.remote_calls.load(Ordering::SeqCst), 1);
+	}
+
+	#[test]
+	fn device_prompt_does_not_invoke_remote_callback() {
+		let storage = MemStorage::default();
+		let prompt = ScriptedPrompt::new(vec![true], vec![]);
+		let service = PermissionsService::new(&storage, &prompt, &PRODUCT);
+
+		let _ = futures::executor::block_on(
+			service.check_or_prompt_device(HostDevicePermissionRequest::Camera),
+		)
+		.unwrap();
+		assert_eq!(prompt.device_calls.load(Ordering::SeqCst), 1);
+		assert_eq!(prompt.remote_calls.load(Ordering::SeqCst), 0);
+	}
+
+	#[test]
+	fn remote_prompt_does_not_invoke_device_callback() {
+		let storage = MemStorage::default();
+		let prompt = ScriptedPrompt::new(vec![], vec![true]);
+		let service = PermissionsService::new(&storage, &prompt, &PRODUCT);
+
+		let _ =
+			futures::executor::block_on(service.check_or_prompt_remote(RemotePermissionRequest {
+				permission: RemotePermission::WebRtc,
+			}))
+			.unwrap();
+		assert_eq!(prompt.device_calls.load(Ordering::SeqCst), 0);
+		assert_eq!(prompt.remote_calls.load(Ordering::SeqCst), 1);
+	}
+
+	#[test]
+	fn peek_returns_not_determined_until_authorized() {
+		let storage = MemStorage::default();
+		let prompt = ScriptedPrompt::new(vec![true], vec![]);
+		let service = PermissionsService::new(&storage, &prompt, &PRODUCT);
+
+		let before =
+			futures::executor::block_on(service.peek_device(&HostDevicePermissionRequest::Camera))
+				.unwrap();
+		assert_eq!(before, PermissionAuthorizationStatus::NotDetermined);
+
+		futures::executor::block_on(
+			service.check_or_prompt_device(HostDevicePermissionRequest::Camera),
+		)
+		.unwrap();
+
+		let after =
+			futures::executor::block_on(service.peek_device(&HostDevicePermissionRequest::Camera))
+				.unwrap();
+		assert_eq!(after, PermissionAuthorizationStatus::Authorized);
+	}
+
+	#[test]
+	fn set_authorization_status_writes_and_clears() {
+		let storage = MemStorage::default();
+		let prompt = ScriptedPrompt::new(vec![], vec![]);
+		let service = PermissionsService::new(&storage, &prompt, &PRODUCT);
+		let request = PermissionAuthorizationRequest::Device(HostDevicePermissionRequest::Camera);
+
+		futures::executor::block_on(
+			service.set_authorization_status(&request, PermissionAuthorizationStatus::Authorized),
+		)
+		.unwrap();
+		assert_eq!(
+			futures::executor::block_on(service.authorization_status(&request)).unwrap(),
+			PermissionAuthorizationStatus::Authorized
+		);
+
+		futures::executor::block_on(
+			service
+				.set_authorization_status(&request, PermissionAuthorizationStatus::NotDetermined),
+		)
+		.unwrap();
+		assert_eq!(
+			futures::executor::block_on(service.authorization_status(&request)).unwrap(),
+			PermissionAuthorizationStatus::NotDetermined
+		);
+	}
+
+	#[test]
+	fn identity_disclosure_authorization_round_trips() {
+		let storage = MemStorage::default();
+		let prompt = ScriptedPrompt::new(vec![], vec![]);
+		let service = PermissionsService::new(&storage, &prompt, &PRODUCT);
+		let request = PermissionAuthorizationRequest::IdentityDisclosure;
+
+		assert_eq!(
+			futures::executor::block_on(service.authorization_status(&request)).unwrap(),
+			PermissionAuthorizationStatus::NotDetermined
+		);
+
+		futures::executor::block_on(
+			service.set_authorization_status(&request, PermissionAuthorizationStatus::Authorized),
+		)
+		.unwrap();
+		assert_eq!(
+			futures::executor::block_on(service.authorization_status(&request)).unwrap(),
+			PermissionAuthorizationStatus::Authorized
+		);
+
+		let other_product_service = PermissionsService::new(&storage, &prompt, &OTHER_PRODUCT);
+		assert_eq!(
+			futures::executor::block_on(other_product_service.authorization_status(&request))
+				.unwrap(),
+			PermissionAuthorizationStatus::NotDetermined
+		);
+	}
+
+	#[test]
+	fn account_access_authorization_is_scoped_by_requester_and_target() {
+		let storage = MemStorage::default();
+		let prompt = ScriptedPrompt::new(vec![], vec![]);
+		let service = PermissionsService::new(&storage, &prompt, &PRODUCT);
+		let request = PermissionAuthorizationRequest::AccountAccess {
+			target_product_id: "target.dot".to_string(),
+		};
+
+		futures::executor::block_on(
+			service.set_authorization_status(&request, PermissionAuthorizationStatus::Authorized),
+		)
+		.unwrap();
+		assert_eq!(
+			futures::executor::block_on(service.authorization_status(&request)).unwrap(),
+			PermissionAuthorizationStatus::Authorized
+		);
+		assert_eq!(
+			futures::executor::block_on(service.authorization_status(
+				&PermissionAuthorizationRequest::AccountAccess {
+					target_product_id: "other.dot".to_string(),
+				}
+			))
+			.unwrap(),
+			PermissionAuthorizationStatus::NotDetermined
+		);
+
+		let other_product_service = PermissionsService::new(&storage, &prompt, &OTHER_PRODUCT);
+		assert_eq!(
+			futures::executor::block_on(other_product_service.authorization_status(&request))
+				.unwrap(),
+			PermissionAuthorizationStatus::NotDetermined
+		);
+	}
+
+	/// Prompt callback that always errors, to exercise the transient-failure
+	/// path (fail closed for the current call, but do not persist the error).
+	struct FailingPrompt;
+
+	#[crate::platform::async_trait]
+	impl Permissions for FailingPrompt {
+		async fn device_permission(
+			&self,
+			_product: &ProductContext,
+			_request: HostDevicePermissionRequest,
+		) -> Result<PermissionDecision, GenericError> {
+			Err(GenericError { reason: "boom".into() })
+		}
+
+		async fn remote_permission(
+			&self,
+			_product: &ProductContext,
+			_request: RemotePermissionRequest,
+		) -> Result<PermissionDecision, GenericError> {
+			Err(GenericError { reason: "boom".into() })
+		}
+	}
+
+	#[test]
+	fn prompt_failure_stays_not_determined_without_persisting() {
+		let storage = MemStorage::default();
+		let prompt = FailingPrompt;
+		let service = PermissionsService::new(&storage, &prompt, &PRODUCT);
+
+		let device_decision = futures::executor::block_on(
+			service.check_or_prompt_device(HostDevicePermissionRequest::Camera),
+		)
+		.unwrap();
+		assert_eq!(device_decision, PermissionAuthorizationStatus::NotDetermined);
+
+		let remote_request = RemotePermissionRequest { permission: RemotePermission::ChainSubmit };
+		let remote_decision =
+			futures::executor::block_on(service.check_or_prompt_remote(remote_request.clone()))
+				.unwrap();
+		assert_eq!(remote_decision, PermissionAuthorizationStatus::NotDetermined);
+
+		// A transient callback error is not cached, so peek still sees no
+		// authorization and the next request re-prompts rather than
+		// permanently locking out the capability.
+		let cached_device =
+			futures::executor::block_on(service.peek_device(&HostDevicePermissionRequest::Camera))
+				.unwrap();
+		assert_eq!(
+			cached_device,
+			PermissionAuthorizationStatus::NotDetermined,
+			"a transient prompt error must not be persisted"
+		);
+		let cached_remote =
+			futures::executor::block_on(service.peek_remote(&remote_request)).unwrap();
+		assert_eq!(
+			cached_remote,
+			PermissionAuthorizationStatus::NotDetermined,
+			"a transient prompt error must not be persisted"
+		);
+	}
+
+	/// A corrupt SCALE-encoded cache entry must be treated as "no cache",
+	/// not panic. The service falls back to prompting.
+	#[test]
+	fn corrupt_cache_entry_returns_none() {
+		let storage = MemStorage::default();
+		// Write garbage bytes under the canonical key.
+		futures::executor::block_on(storage.write_core_storage(
+			CoreStorageKey::device_permission_authorization(
+				"product.dot",
+				&HostDevicePermissionRequest::Camera,
+			),
+			vec![0xff, 0xfe, 0xfd],
+		))
+		.unwrap();
+
+		let prompt = ScriptedPrompt::new(vec![true], vec![]);
+		let service = PermissionsService::new(&storage, &prompt, &PRODUCT);
+
+		let peeked =
+			futures::executor::block_on(service.peek_device(&HostDevicePermissionRequest::Camera))
+				.unwrap();
+		assert_eq!(
+			peeked,
+			PermissionAuthorizationStatus::NotDetermined,
+			"corrupt entry must decode as absent"
+		);
+	}
+
+	/// Storage failures must propagate to the caller; the service must not
+	/// swallow them by silently returning a default authorization.
+	#[derive(Default)]
+	struct FailingStorage;
+
+	#[crate::platform::async_trait]
+	impl CoreStorage for FailingStorage {
+		async fn read_core_storage(
+			&self,
+			_key: CoreStorageKey,
+		) -> Result<Option<Vec<u8>>, v01::GenericError> {
+			Err(v01::GenericError { reason: "read failed".into() })
+		}
+		async fn write_core_storage(
+			&self,
+			_key: CoreStorageKey,
+			_value: Vec<u8>,
+		) -> Result<(), v01::GenericError> {
+			Err(v01::GenericError { reason: "write failed".into() })
+		}
+		async fn clear_core_storage(&self, _key: CoreStorageKey) -> Result<(), v01::GenericError> {
+			Err(v01::GenericError { reason: "clear failed".into() })
+		}
+	}
+
+	#[test]
+	fn storage_read_error_propagates() {
+		let storage = FailingStorage;
+		let prompt = ScriptedPrompt::new(vec![], vec![]);
+		let service = PermissionsService::new(&storage, &prompt, &PRODUCT);
+
+		let err = futures::executor::block_on(
+			service.check_or_prompt_device(HostDevicePermissionRequest::Camera),
+		)
+		.expect_err("read failure must surface");
+		assert!(matches!(err, v01::GenericError { .. }));
+	}
+
+	#[test]
+	fn an_os_denial_overrides_a_stored_grant() {
+		let storage = MemStorage::default();
+		grant_stored(&storage, HostDevicePermissionRequest::Camera);
+
+		// No device answers scripted: reaching the prompt at all would panic,
+		// which is the assertion that a settings-level refusal is not something
+		// the user can be asked about.
+		let prompt = ScriptedPrompt::new(vec![], vec![]);
+		let status = ScriptedStatus::always(DevicePermissionStatus::Denied);
+		let service =
+			PermissionsService::new(&storage, &prompt, &PRODUCT).with_status_host(Some(&status));
+
+		assert_eq!(
+			futures::executor::block_on(
+				service.check_or_prompt_device(HostDevicePermissionRequest::Camera)
+			)
+			.unwrap(),
+			PermissionAuthorizationStatus::Denied,
+		);
+	}
+
+	#[test]
+	fn an_os_denial_leaves_the_stored_grant_intact() {
+		let storage = MemStorage::default();
+		grant_stored(&storage, HostDevicePermissionRequest::Camera);
+
+		let denied_prompt = ScriptedPrompt::new(vec![], vec![]);
+		let denied = ScriptedStatus::always(DevicePermissionStatus::Denied);
+		futures::executor::block_on(
+			PermissionsService::new(&storage, &denied_prompt, &PRODUCT)
+				.with_status_host(Some(&denied))
+				.check_or_prompt_device(HostDevicePermissionRequest::Camera),
+		)
+		.unwrap();
+
+		// The user restores the OS grant in settings. The product decision was
+		// never theirs to lose, so this resolves without asking them again.
+		let prompt = ScriptedPrompt::new(vec![], vec![]);
+		let restored = ScriptedStatus::always(DevicePermissionStatus::Granted);
+		let service =
+			PermissionsService::new(&storage, &prompt, &PRODUCT).with_status_host(Some(&restored));
+
+		assert_eq!(
+			futures::executor::block_on(
+				service.check_or_prompt_device(HostDevicePermissionRequest::Camera)
+			)
+			.unwrap(),
+			PermissionAuthorizationStatus::Authorized,
+		);
+		assert_eq!(prompt.device_calls.load(Ordering::SeqCst), 0);
+	}
+
+	#[test]
+	fn an_os_reset_never_reprompts_a_stored_grant() {
+		let storage = MemStorage::default();
+		grant_stored(&storage, HostDevicePermissionRequest::Camera);
+
+		// Android auto-resets runtime permissions for unused apps. The core
+		// cannot ask the OS on its own — the prompt callback also puts the
+		// product's question to the user — so it does not try. No answers are
+		// scripted: reaching the prompt at all would panic.
+		let prompt = ScriptedPrompt::new(vec![], vec![]);
+		let status = ScriptedStatus::always(DevicePermissionStatus::NotDetermined);
+		let service =
+			PermissionsService::new(&storage, &prompt, &PRODUCT).with_status_host(Some(&status));
+
+		// Repeated, because a condition a prompt cannot clear re-fires forever.
+		for _ in 0..3 {
+			assert_eq!(
+				futures::executor::block_on(
+					service.check_or_prompt_device(HostDevicePermissionRequest::Camera)
+				)
+				.unwrap(),
+				PermissionAuthorizationStatus::Authorized,
+			);
+		}
+		assert_eq!(prompt.device_calls.load(Ordering::SeqCst), 0);
+	}
+
+	#[test]
+	fn an_os_reset_cannot_turn_a_stored_grant_into_a_permanent_denial() {
+		let storage = MemStorage::default();
+		grant_stored(&storage, HostDevicePermissionRequest::Camera);
+
+		// On iOS and Android the prompt callback *is* the OS dialog, so a
+		// "Don't Allow" answered there is an answer about the OS, not about the
+		// product. Persisting it would replace the product's grant, and
+		// restoring the capability in system settings could never recover it.
+		let declining = ScriptedPrompt::new(vec![false], vec![]);
+		let reset = ScriptedStatus::always(DevicePermissionStatus::NotDetermined);
+		futures::executor::block_on(
+			PermissionsService::new(&storage, &declining, &PRODUCT)
+				.with_status_host(Some(&reset))
+				.check_or_prompt_device(HostDevicePermissionRequest::Camera),
+		)
+		.unwrap();
+
+		let prompt = ScriptedPrompt::new(vec![], vec![]);
+		let restored = ScriptedStatus::always(DevicePermissionStatus::Granted);
+		let after =
+			PermissionsService::new(&storage, &prompt, &PRODUCT).with_status_host(Some(&restored));
+		assert_eq!(
+			futures::executor::block_on(
+				after.check_or_prompt_device(HostDevicePermissionRequest::Camera)
+			)
+			.unwrap(),
+			PermissionAuthorizationStatus::Authorized,
+		);
+	}
+
+	#[test]
+	fn a_prompt_failure_cannot_mask_a_stored_grant() {
+		let storage = MemStorage::default();
+		grant_stored(&storage, HostDevicePermissionRequest::Camera);
+
+		// A failing prompt callback resolves to `NotDetermined`, which the
+		// runtime reports as `granted: false`. A grant the product already
+		// holds must never be reached through that path.
+		let failing = FailingPrompt;
+		let reset = ScriptedStatus::always(DevicePermissionStatus::NotDetermined);
+		let service =
+			PermissionsService::new(&storage, &failing, &PRODUCT).with_status_host(Some(&reset));
+		assert_eq!(
+			futures::executor::block_on(
+				service.check_or_prompt_device(HostDevicePermissionRequest::Camera)
+			)
+			.unwrap(),
+			PermissionAuthorizationStatus::Authorized,
+		);
+	}
+
+	#[test]
+	fn a_first_request_still_prompts_while_the_os_is_undetermined() {
+		// The guard against re-prompting must not swallow the first ask, which
+		// is the only one that establishes the product decision at all.
+		let storage = MemStorage::default();
+		let prompt = ScriptedPrompt::new(vec![true], vec![]);
+		let status = ScriptedStatus::always(DevicePermissionStatus::NotDetermined);
+		let service =
+			PermissionsService::new(&storage, &prompt, &PRODUCT).with_status_host(Some(&status));
+
+		assert_eq!(
+			futures::executor::block_on(
+				service.check_or_prompt_device(HostDevicePermissionRequest::Camera)
+			)
+			.unwrap(),
+			PermissionAuthorizationStatus::Authorized,
+		);
+		assert_eq!(prompt.device_calls.load(Ordering::SeqCst), 1);
+	}
+
+	#[test]
+	fn an_os_reset_does_not_reprompt_a_stored_denial() {
+		let storage = MemStorage::default();
+		let seed = ScriptedPrompt::new(vec![false], vec![]);
+		futures::executor::block_on(
+			PermissionsService::new(&storage, &seed, &PRODUCT)
+				.check_or_prompt_device(HostDevicePermissionRequest::Camera),
+		)
+		.unwrap();
+
+		// The product-level "no" is still the user's answer. An OS that forgot
+		// its own state is not a reason to put the question again.
+		let prompt = ScriptedPrompt::new(vec![], vec![]);
+		let status = ScriptedStatus::always(DevicePermissionStatus::NotDetermined);
+		let service =
+			PermissionsService::new(&storage, &prompt, &PRODUCT).with_status_host(Some(&status));
+
+		assert_eq!(
+			futures::executor::block_on(
+				service.check_or_prompt_device(HostDevicePermissionRequest::Camera)
+			)
+			.unwrap(),
+			PermissionAuthorizationStatus::Denied,
+		);
+		assert_eq!(prompt.device_calls.load(Ordering::SeqCst), 0);
+	}
+
+	#[test]
+	fn a_failed_status_query_falls_back_to_the_stored_grant() {
+		let storage = MemStorage::default();
+		grant_stored(&storage, HostDevicePermissionRequest::Camera);
+
+		// A dropped IPC is not a refusal. Reading it as one would let a flaky
+		// channel revoke a capability the OS still allows.
+		let prompt = ScriptedPrompt::new(vec![], vec![]);
+		let status = ScriptedStatus::failing();
+		let service =
+			PermissionsService::new(&storage, &prompt, &PRODUCT).with_status_host(Some(&status));
+
+		assert_eq!(
+			futures::executor::block_on(
+				service.check_or_prompt_device(HostDevicePermissionRequest::Camera)
+			)
+			.unwrap(),
+			PermissionAuthorizationStatus::Authorized,
+		);
+		assert_eq!(prompt.device_calls.load(Ordering::SeqCst), 0);
+	}
+
+	#[test]
+	fn an_os_denial_denies_before_any_prompt_and_persists_nothing() {
+		let storage = MemStorage::default();
+		let prompt = ScriptedPrompt::new(vec![], vec![]);
+		let denied = ScriptedStatus::always(DevicePermissionStatus::Denied);
+		let service =
+			PermissionsService::new(&storage, &prompt, &PRODUCT).with_status_host(Some(&denied));
+
+		assert_eq!(
+			futures::executor::block_on(
+				service.check_or_prompt_device(HostDevicePermissionRequest::Camera)
+			)
+			.unwrap(),
+			PermissionAuthorizationStatus::Denied,
+		);
+
+		// Nothing was written, so the product question is still open: once the
+		// OS allows it, the user gets asked rather than inheriting a denial
+		// they never gave.
+		let peek = PermissionsService::new(&storage, &prompt, &PRODUCT);
+		assert_eq!(
+			futures::executor::block_on(peek.peek_device(&HostDevicePermissionRequest::Camera))
+				.unwrap(),
+			PermissionAuthorizationStatus::NotDetermined,
+		);
+	}
+
+	#[test]
+	fn os_status_is_read_for_the_capability_being_checked() {
+		let storage = MemStorage::default();
+		grant_stored(&storage, HostDevicePermissionRequest::Camera);
+		grant_stored(&storage, HostDevicePermissionRequest::Microphone);
+
+		// Only the camera is refused by the OS. A mix-up in which capability
+		// reaches the status host would move the denial to the microphone.
+		let prompt = ScriptedPrompt::new(vec![], vec![]);
+		let status = ScriptedStatus::per_capability(
+			vec![(HostDevicePermissionRequest::Camera, DevicePermissionStatus::Denied)],
+			DevicePermissionStatus::Granted,
+		);
+		let service =
+			PermissionsService::new(&storage, &prompt, &PRODUCT).with_status_host(Some(&status));
+
+		assert_eq!(
+			futures::executor::block_on(
+				service.check_or_prompt_device(HostDevicePermissionRequest::Camera)
+			)
+			.unwrap(),
+			PermissionAuthorizationStatus::Denied,
+		);
+		assert_eq!(
+			futures::executor::block_on(
+				service.check_or_prompt_device(HostDevicePermissionRequest::Microphone)
+			)
+			.unwrap(),
+			PermissionAuthorizationStatus::Authorized,
+		);
+		assert_eq!(
+			status.asked(),
+			vec![HostDevicePermissionRequest::Camera, HostDevicePermissionRequest::Microphone,],
+		);
+	}
+
+	#[test]
+	fn a_host_without_the_capability_resolves_from_stored_state_alone() {
+		let storage = MemStorage::default();
+		let prompt = ScriptedPrompt::new(vec![true], vec![]);
+		let service = PermissionsService::new(&storage, &prompt, &PRODUCT).with_status_host(None);
+
+		let first = futures::executor::block_on(
+			service.check_or_prompt_device(HostDevicePermissionRequest::Camera),
+		)
+		.unwrap();
+		let second = futures::executor::block_on(
+			service.check_or_prompt_device(HostDevicePermissionRequest::Camera),
+		)
+		.unwrap();
+
+		assert_eq!(first, PermissionAuthorizationStatus::Authorized);
+		assert_eq!(second, PermissionAuthorizationStatus::Authorized);
+		assert_eq!(prompt.device_calls.load(Ordering::SeqCst), 1);
+	}
+
+	#[test]
+	fn os_device_status_does_not_reach_remote_permissions() {
+		let storage = MemStorage::default();
+		let prompt = ScriptedPrompt::new(vec![], vec![true]);
+		// Every device capability refused by the OS. A remote grant is a
+		// TrUAPI-level decision with no OS gate behind it, so it must resolve
+		// untouched.
+		let status = ScriptedStatus::always(DevicePermissionStatus::Denied);
+		let service =
+			PermissionsService::new(&storage, &prompt, &PRODUCT).with_status_host(Some(&status));
+
+		assert_eq!(
+			futures::executor::block_on(
+				service.check_or_prompt_remote(remote_domains(&["example.com"]))
+			)
+			.unwrap(),
+			PermissionAuthorizationStatus::Authorized,
+		);
+		assert!(status.asked().is_empty());
+	}
+
+	#[test]
+	fn a_peeked_grant_the_os_refuses_reads_as_denied() {
+		// A settings screen and a request must not disagree. Reporting the
+		// stored grant here sends the user hunting for a product toggle when
+		// the OS is what refused.
+		let storage = MemStorage::default();
+		grant_stored(&storage, HostDevicePermissionRequest::Camera);
+		let prompt = ScriptedPrompt::new(vec![], vec![]);
+		let refusing = ScriptedStatus::always(DevicePermissionStatus::Denied);
+		let service =
+			PermissionsService::new(&storage, &prompt, &PRODUCT).with_status_host(Some(&refusing));
+
+		assert_eq!(
+			futures::executor::block_on(service.peek_device(&HostDevicePermissionRequest::Camera))
+				.unwrap(),
+			PermissionAuthorizationStatus::Denied,
+		);
+	}
+
+	#[test]
+	fn a_peek_under_an_os_refusal_leaves_the_stored_grant_intact() {
+		let storage = MemStorage::default();
+		grant_stored(&storage, HostDevicePermissionRequest::Camera);
+		let prompt = ScriptedPrompt::new(vec![], vec![]);
+		let refusing = ScriptedStatus::always(DevicePermissionStatus::Denied);
+		futures::executor::block_on(
+			PermissionsService::new(&storage, &prompt, &PRODUCT)
+				.with_status_host(Some(&refusing))
+				.peek_device(&HostDevicePermissionRequest::Camera),
+		)
+		.unwrap();
+
+		// A read is not a decision, so the grant is still there once the user
+		// restores the OS grant.
+		let restored = ScriptedStatus::always(DevicePermissionStatus::Granted);
+		assert_eq!(
+			futures::executor::block_on(
+				PermissionsService::new(&storage, &prompt, &PRODUCT)
+					.with_status_host(Some(&restored))
+					.peek_device(&HostDevicePermissionRequest::Camera),
+			)
+			.unwrap(),
+			PermissionAuthorizationStatus::Authorized,
+		);
+	}
+
+	#[test]
+	fn a_peeked_grant_survives_an_os_reset_and_a_failed_query() {
+		let storage = MemStorage::default();
+		grant_stored(&storage, HostDevicePermissionRequest::Camera);
+		let prompt = ScriptedPrompt::new(vec![], vec![]);
+
+		for status in [
+			ScriptedStatus::always(DevicePermissionStatus::NotDetermined),
+			ScriptedStatus::failing(),
+		] {
+			assert_eq!(
+				futures::executor::block_on(
+					PermissionsService::new(&storage, &prompt, &PRODUCT)
+						.with_status_host(Some(&status))
+						.peek_device(&HostDevicePermissionRequest::Camera),
+				)
+				.unwrap(),
+				PermissionAuthorizationStatus::Authorized,
+				"only an outright refusal overrides the stored decision"
+			);
+		}
+	}
+
+	#[test]
+	fn a_status_read_of_a_remote_permission_never_reaches_the_os() {
+		let storage = MemStorage::default();
+		let prompt = ScriptedPrompt::new(vec![], vec![true]);
+		let refusing = ScriptedStatus::always(DevicePermissionStatus::Denied);
+		let service =
+			PermissionsService::new(&storage, &prompt, &PRODUCT).with_status_host(Some(&refusing));
+		futures::executor::block_on(
+			service.check_or_prompt_remote(remote_domains(&["example.com"])),
+		)
+		.unwrap();
+
+		assert_eq!(
+			futures::executor::block_on(service.authorization_status(
+				&PermissionAuthorizationRequest::Remote(remote_domains(&["example.com"]))
+			))
+			.unwrap(),
+			PermissionAuthorizationStatus::Authorized,
+		);
+		assert!(refusing.asked().is_empty());
+	}
+
+	#[test]
+	fn a_device_request_and_a_status_read_agree_once_the_os_refuses() {
+		let storage = MemStorage::default();
+		grant_stored(&storage, HostDevicePermissionRequest::Camera);
+		let prompt = ScriptedPrompt::new(vec![], vec![]);
+		let refusing = ScriptedStatus::always(DevicePermissionStatus::Denied);
+		let service =
+			PermissionsService::new(&storage, &prompt, &PRODUCT).with_status_host(Some(&refusing));
+
+		let requested = futures::executor::block_on(
+			service.check_or_prompt_device(HostDevicePermissionRequest::Camera),
+		)
+		.unwrap();
+		let read = futures::executor::block_on(service.authorization_status(
+			&PermissionAuthorizationRequest::Device(HostDevicePermissionRequest::Camera),
+		))
+		.unwrap();
+		assert_eq!(
+			(requested, read),
+			(PermissionAuthorizationStatus::Denied, PermissionAuthorizationStatus::Denied,)
+		);
+	}
+
+	/// A host can see and take back a signature approval through the
+	/// administration API. It reaches the key the runtime checks, and nothing
+	/// is stored, because the approval ends when the product closes.
+	#[test]
+	fn a_signature_approval_is_administered_in_memory_only() {
+		let storage = MemStorage::default();
+		let prompt = ScriptedPrompt::new(vec![], vec![]);
+		let grants = Arc::new(TemporaryPermissions::default());
+		let service = PermissionsService::new(&storage, &prompt, &PRODUCT)
+			.with_temporary_permissions(Arc::clone(&grants));
+		let request = PermissionAuthorizationRequest::CrossProductSignature {
+			target_product_id: "dim2.dot".to_string(),
+			kind: CrossProductSignatureKind::Payload,
+		};
+		let checked_by_runtime = cross_product_signature_key(
+			"product.dot",
+			"dim2.dot",
+			CrossProductSignatureKind::Payload,
+		);
+
+		futures::executor::block_on(
+			service.set_authorization_status(&request, PermissionAuthorizationStatus::Authorized),
+		)
+		.unwrap();
+		assert_eq!(
+			(
+				futures::executor::block_on(service.authorization_status(&request)).unwrap(),
+				grants.authorize(&checked_by_runtime, false),
+			),
+			(PermissionAuthorizationStatus::Authorized, true),
+		);
+
+		futures::executor::block_on(
+			service
+				.set_authorization_status(&request, PermissionAuthorizationStatus::NotDetermined),
+		)
+		.unwrap();
+		assert_eq!(
+			(
+				futures::executor::block_on(service.authorization_status(&request)).unwrap(),
+				grants.authorize(&checked_by_runtime, false),
+				futures::executor::block_on(storage.inner.lock()).is_empty(),
+			),
+			(PermissionAuthorizationStatus::NotDetermined, false, true),
+		);
+	}
 }
