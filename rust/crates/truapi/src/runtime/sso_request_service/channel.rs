@@ -113,9 +113,6 @@ impl SsoRequestService {
 			self.session_disconnects.notify(sso, SSO_LOCAL_DISCONNECT_REASON);
 		}
 		*self.newest_request.lock().expect("newest request mutex poisoned") = None;
-		if let Some(owner) = self.owner.upgrade() {
-			owner.session_ended(session);
-		}
 		self.stop_disconnect_monitor();
 	}
 
