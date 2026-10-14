@@ -151,7 +151,6 @@ public enum DSTabBarStyle {
     /// Opacity of the centre control's rim at its foot, where it has faded out.
     static let centerRimBottomOpacity: Double = 0.042
 
-    static let centerGlyphSize: CGFloat = 22
     /// Clearance the grabber needs at the top of the panel. The grabber floats over the content, so
     /// the content must inset its own top by this much to keep clear of it.
     public static let centerGrabberHeight: CGFloat = 26

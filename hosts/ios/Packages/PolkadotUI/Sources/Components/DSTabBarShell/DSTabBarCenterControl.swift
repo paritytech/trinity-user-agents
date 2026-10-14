@@ -76,6 +76,9 @@ private extension DSTabBarCenterControl {
     /// Movement below which a drag counts as a tap.
     var tapSlop: CGFloat { 4 }
 
+    /// Side of the square canvas both centre glyph SVGs are drawn on.
+    var glyphSize: CGFloat { 30 }
+
     /// Distance the finger travels to open the panel fully.
     var travel: CGFloat { max(1, expandedHeight - DSTabBarStyle.centerButtonSize) }
 
@@ -151,28 +154,33 @@ private extension DSTabBarCenterControl {
 // MARK: - Grips
 
 private extension DSTabBarCenterControl {
-    /// Sits in the lobe in both states, since the lobe is the button. Turning
-    /// it 45 degrees makes the same glyph the close control.
+    /// Sits in the lobe in both states, since the lobe is the button. Collapsed, scan corners frame
+    /// the plus; opening fades the corners and turns the plus 45 degrees into the close control.
     var glyph: some View {
-        Image(systemName: "plus")
-            .font(.system(size: DSTabBarStyle.centerGlyphSize, weight: .semibold))
-            // Set here, not inherited: the overlay sits outside the control's
-            // own foregroundStyle, so it would not pick that up.
-            .foregroundStyle(Color.fgPrimary)
-            .rotationEffect(.degrees(45 * progress))
-            .frame(width: lobeRadius * 2, height: lobeRadius * 2)
-            .contentShape(Circle())
-            .gesture(drag)
-            .accessibilityElement()
-            .accessibilityLabel(accessibilityLabel)
-            .accessibilityAddTraits(.isButton)
-            .accessibilityAction { settle(to: progress > 0.5 ? 0 : 1) }
-            .accessibilityAction(.escape) {
-                guard progress > 0.5 else {
-                    return
-                }
-                settle(to: 0)
+        ZStack {
+            Image(.iconCenterFrame)
+                .resizable()
+                .frame(width: glyphSize, height: glyphSize)
+                .opacity(1 - progress)
+            Image(.iconCenterScan)
+                .resizable()
+                .frame(width: glyphSize, height: glyphSize)
+                .rotationEffect(.degrees(45 * progress))
+        }
+        .foregroundStyle(Color.fgSecondary)
+        .frame(width: lobeRadius * 2, height: lobeRadius * 2)
+        .contentShape(Circle())
+        .gesture(drag)
+        .accessibilityElement()
+        .accessibilityLabel(accessibilityLabel)
+        .accessibilityAddTraits(.isButton)
+        .accessibilityAction { settle(to: progress > 0.5 ? 0 : 1) }
+        .accessibilityAction(.escape) {
+            guard progress > 0.5 else {
+                return
             }
+            settle(to: 0)
+        }
     }
 
     /// Second grip at the top of the panel, for closing without reaching down
