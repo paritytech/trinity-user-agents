@@ -183,6 +183,7 @@ class RealChatSearchInteractorTest {
             unreadBadge = ChatSummaryBadge.None,
             hasUnseenReaction = false,
             customPreviewRenderer = null,
+            roomPolicy = null,
         )
     }
 
