@@ -75,9 +75,10 @@ test("worker diagnosis completes after !diagnose alone, without a renderer actio
     chat: {
       createRoom(request: HostChatCreateRoomRequest) {
         createRoomCalls += 1;
-        // First call is the static Playground room; the rest are the
-        // per-run diagnostic room (New, then Exists).
-        if (createRoomCalls === 1) {
+        // First call is the static Playground room; the next two are the
+        // per-run diagnostic room (New, then Exists); the delete_room probe
+        // creates a scratch room after them.
+        if (createRoomCalls === 1 || createRoomCalls > 3) {
           return okAsync<HostChatCreateRoomResponse, never>({ status: "Exists" });
         }
         const status = createRoomCalls === 2 ? "New" : "Exists";
@@ -96,6 +97,21 @@ test("worker diagnosis completes after !diagnose alone, without a renderer actio
       },
       listSubscribe: () => chatRooms.observable,
       setRoomFooter: () => okAsync<undefined, never>(undefined),
+      setRoomConfig: () => okAsync<undefined, never>(undefined),
+      setRoomMetadata: () => okAsync<undefined, never>(undefined),
+      setRoomPreview: () => okAsync<undefined, never>(undefined),
+      deleteRoom: () => okAsync<undefined, never>(undefined),
+      updateFeed: () => okAsync<undefined, never>(undefined),
+      setRoomToolbar: () => okAsync<undefined, never>(undefined),
+      setRoomSuggestions: () => okAsync<undefined, never>(undefined),
+      setRoomCommands: () => okAsync<undefined, never>(undefined),
+      setRoomActivity: () => okAsync<undefined, never>(undefined),
+      onMessagesQuery: () => ({ unsubscribe() {} }),
+      onUserAction: () => ({ unsubscribe() {} }),
+      onReactionsQuery: () => ({ unsubscribe() {} }),
+      onParticipantsQuery: () => ({ unsubscribe() {} }),
+      onMessageActionsQuery: () => ({ unsubscribe() {} }),
+      onParticipantActionsQuery: () => ({ unsubscribe() {} }),
       postMessage(request: HostChatPostMessageRequest) {
         postMessageCalls.push(request);
         const payload: ChatMessageContent = request.payload;
@@ -155,9 +171,12 @@ test("worker diagnosis completes after !diagnose alone, without a renderer actio
   chatActions.emit({
     roomId: chatRoomId ?? "",
     peer: "diagnosis-peer",
-    payload: {
+    event: {
       tag: "MessagePosted",
-      value: { tag: "Text", value: { text: "!diagnose" } },
+      value: {
+        messageId: "diagnose-message-id",
+        body: { tag: "Text", value: { text: "!diagnose" } },
+      },
     },
   });
 

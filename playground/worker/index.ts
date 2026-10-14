@@ -2,19 +2,23 @@ import { getClientSync } from "@parity/truapi/sandbox";
 import { bytesToHex, hexToBytes } from "@parity/truapi/scale";
 import type {
   CallErrorValue,
+  ChatRoomConfig,
   HostChatActionSubscribeItem,
   HostChatListSubscribeItem,
   HostRendererActionSubscribeItem,
   ObservableLike,
   ProductRendererRenderRequest,
   RendererNode,
+  VersionedProductChatQueryError,
   VersionedProductRendererRenderError,
 } from "@parity/truapi";
+import type { Result, ResultAsync } from "neverthrow";
 import { filter, firstValueFrom, from, timeout } from "rxjs";
 import {
   CHAT_DIAGNOSIS_COPY_ACTION,
   CHAT_DIAGNOSIS_REFRESH_ACTION,
   ChatDiagnosis,
+  type WorkerDiagnosisMethod,
 } from "./diagnosis";
 import { servePocket } from "./pocket";
 
@@ -26,6 +30,15 @@ const RENDER_MESSAGE_TYPE = "truapi-chat-diagnosis";
 const BOT_ID = "truapi-diagnosis-bot";
 const runId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 const diagnosticRoomId = `${ROOM_ID}-diagnosis-${runId}`;
+/** A host-store room: the host keeps the messages and every default applies. */
+const HOST_STORE_CONFIG: ChatRoomConfig = {
+  productSource: false,
+  reactionDetails: false,
+  participants: false,
+  messageActions: false,
+  participantActions: false,
+  reportSeen: false,
+};
 const renderPayload = bytesToHex(
   new TextEncoder().encode(JSON.stringify({ version: 1, runId })),
 );
@@ -59,6 +72,7 @@ const diagnosis = new ChatDiagnosis(() => {
 });
 
 renderer.onRender(handleRenderRequest);
+registerChatQueries();
 
 servePocket(client.pocket);
 
@@ -118,8 +132,8 @@ async function runStartupDiagnosis(): Promise<void> {
   const roomAppeared = waitForRoom(chat.listSubscribe(), diagnosticRoomId);
   const first = await chat.createRoom({
     roomId: diagnosticRoomId,
-    name: `TrUAPI Diagnosis ${runId}`,
-    icon: "",
+    metadata: { name: `TrUAPI Diagnosis ${runId}` },
+    config: HOST_STORE_CONFIG,
   });
   if (first.isErr()) {
     throw new Error(`createRoom failed: ${JSON.stringify(first.error)}`);
@@ -132,8 +146,8 @@ async function runStartupDiagnosis(): Promise<void> {
 
   const second = await chat.createRoom({
     roomId: diagnosticRoomId,
-    name: `TrUAPI Diagnosis ${runId}`,
-    icon: "",
+    metadata: { name: `TrUAPI Diagnosis ${runId}` },
+    config: HOST_STORE_CONFIG,
   });
   if (second.isErr()) {
     throw new Error(
@@ -153,7 +167,7 @@ async function runStartupDiagnosis(): Promise<void> {
   // The diagnosis asks the user to type a command, so its room keeps the input.
   const footer = await chat.setRoomFooter({
     roomId: diagnosticRoomId,
-    footer: "TextInput",
+    footer: { tag: "Input", value: { photo: true, video: true, file: false } },
   });
   if (footer.isErr()) {
     throw new Error(`setRoomFooter failed: ${JSON.stringify(footer.error)}`);
@@ -179,7 +193,116 @@ async function runStartupDiagnosis(): Promise<void> {
   }
   diagnosis.pass("Chat/post_message", "posted text and custom messages");
 
+  await runRoomDeclarationProbes();
   await runBotRegistrationProbe();
+}
+
+/**
+ * Each Chat Extension v2 request once, on the per-run room. Each row fails on
+ * its own, so one refused request does not hide the others.
+ */
+async function runRoomDeclarationProbes(): Promise<void> {
+  const roomId = diagnosticRoomId;
+  await probe(
+    "Chat/set_room_config",
+    "replaced the room configuration",
+    () => chat.setRoomConfig({ roomId, config: { ...HOST_STORE_CONFIG, placeholder: "No diagnosis messages yet" } }),
+  );
+  await probe(
+    "Chat/set_room_metadata",
+    "replaced the room name and description",
+    () =>
+      chat.setRoomMetadata({
+        roomId,
+        metadata: { name: `TrUAPI Diagnosis ${runId}`, description: "Chat diagnosis of the TrUAPI Playground" },
+      }),
+  );
+  await probe("Chat/set_room_preview", "replaced the chat-list preview", () =>
+    chat.setRoomPreview({ roomId, preview: { order: "Timestamp" } }),
+  );
+  await probe("Chat/update_feed", "pushed a new product message", () =>
+    chat.updateFeed({
+      roomId,
+      update: {
+        tag: "New",
+        value: {
+          messageId: `diagnosis-${runId}`,
+          origin: { participantId: "product" },
+          timestamp: BigInt(Date.now()),
+          body: { tag: "Text", value: { text: "Posted through update_feed." } },
+          status: "Sent",
+          reactions: [],
+        },
+      },
+    }),
+  );
+  await probe("Chat/set_room_toolbar", "set an empty toolbar", () => chat.setRoomToolbar({ roomId, actions: [] }));
+  await probe("Chat/set_room_suggestions", "set no quick replies", () =>
+    chat.setRoomSuggestions({ roomId, suggestions: [] }),
+  );
+  await probe("Chat/set_room_commands", "set an empty command catalogue", () =>
+    chat.setRoomCommands({ roomId, commands: [] }),
+  );
+  await probe("Chat/set_room_activity", "cleared the activity line", () => chat.setRoomActivity({ roomId }));
+  await probe("Chat/delete_room", "deleted a scratch room, then deleted it again", async () => {
+    const scratch = `${roomId}-deleted`;
+    const created = await chat.createRoom({ roomId: scratch, metadata: { name: "Deleted" }, config: HOST_STORE_CONFIG });
+    if (created.isErr()) {
+      throw new Error(`createRoom of the scratch room failed: ${JSON.stringify(created.error)}`);
+    }
+    const deleted = await chat.deleteRoom({ roomId: scratch });
+    return deleted.isErr() ? deleted : chat.deleteRoom({ roomId: scratch });
+  });
+}
+
+/** Run one request and record its row: pass on `Ok`, fail on `Err` or a throw. */
+async function probe<T, E>(
+  id: WorkerDiagnosisMethod,
+  details: string,
+  request: () => ResultAsync<T, E> | Promise<Result<T, E>>,
+): Promise<void> {
+  try {
+    const result = await request();
+    if (result.isErr()) {
+      diagnosis.fail(id, `${id} failed: ${JSON.stringify(result.error)}`);
+      return;
+    }
+    diagnosis.pass(id, details);
+  } catch (error) {
+    diagnosis.fail(id, error);
+  }
+}
+
+/**
+ * The six queries of Chat Extension v2. The host asks a query only for a room
+ * that declares it, and no Playground room declares one, so each handler
+ * answers `UnknownRoom`. The `playground/chat-v2` sample product serves them.
+ */
+function registerChatQueries(): void {
+  const unknownRoom: CallErrorValue<VersionedProductChatQueryError> = {
+    tag: "Domain",
+    value: { tag: "V1", value: { tag: "UnknownRoom" } },
+  };
+  chat.onMessagesQuery((_request, _send, interrupt) => interrupt(unknownRoom));
+  chat.onReactionsQuery((_request, _send, interrupt) => interrupt(unknownRoom));
+  chat.onParticipantsQuery((_request, _send, interrupt) => interrupt(unknownRoom));
+  chat.onMessageActionsQuery((_request, _send, interrupt) => interrupt(unknownRoom));
+  chat.onParticipantActionsQuery((_request, _send, interrupt) => interrupt(unknownRoom));
+  chat.onUserAction((_request, _send, interrupt) =>
+    interrupt({ tag: "Domain", value: { tag: "V1", value: { tag: "UnknownRoom" } } }),
+  );
+  const details =
+    "handler registered; no Playground room declares this query, so it answers UnknownRoom (playground/chat-v2 serves it)";
+  for (const id of [
+    "Chat/messages_query",
+    "Chat/user_action",
+    "Chat/reactions_query",
+    "Chat/participants_query",
+    "Chat/message_actions_query",
+    "Chat/participant_actions_query",
+  ] as const) {
+    diagnosis.pass(id, details);
+  }
 }
 
 /**
@@ -215,7 +338,11 @@ async function runBotRegistrationProbe(): Promise<void> {
 }
 
 async function ensureRoom(roomId: string, name: string): Promise<void> {
-  const result = await chat.createRoom({ roomId, name, icon: "" });
+  const result = await chat.createRoom({
+    roomId,
+    metadata: { name },
+    config: HOST_STORE_CONFIG,
+  });
   if (result.isErr()) {
     throw new Error(
       `Unable to create the Playground room: ${JSON.stringify(result.error)}`,
@@ -298,10 +425,11 @@ function renderActiveMessages(): void {
 async function handleAction(
   action: HostChatActionSubscribeItem,
 ): Promise<void> {
-  if (action.payload.tag !== "MessagePosted") return;
-  if (action.payload.value.tag !== "Text") return;
+  const { event } = action;
+  if (event.tag !== "MessagePosted") return;
+  if (event.value.body.tag !== "Text") return;
 
-  const text = action.payload.value.value.text.trim();
+  const text = event.value.body.value.text.trim();
   if (text === DIAGNOSIS_COMMAND) {
     if (action.roomId !== ROOM_ID) {
       throw new Error(`diagnosis command was delivered for ${action.roomId}`);

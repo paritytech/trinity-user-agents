@@ -133,6 +133,7 @@ android/truapi-provider/   truapi-provider-android: chain transport AAR (binding
 ios/truapi-host/           Swift host adapter package over the truapi UniFFI core
 ios/truapi-provider/       TrUAPIProvider Swift package: chain transport over UniFFI
 playground/                Interactive Next.js playground (truapi-playground dotNS label)
+playground/chat-v2/        Chat Extension v2 sample product: an App and a chat Worker
 hosts/ios/                 iOS host app; resolves the core from this tree
 hosts/android/             Android host app
 hosts/dotli/               dotli host, vendored as a submodule

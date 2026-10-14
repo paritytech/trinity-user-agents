@@ -10,7 +10,7 @@
     "prebuild": "node ./scripts/bundle-rxjs-dts.mjs",
     "build": "next build && vite build --config vite.config.worker.ts && node ./scripts/assert-production-no-dev-bridge.mjs",
     "prelint": "node ./scripts/bundle-rxjs-dts.mjs",
-    "lint": "eslint src worker vite.config.worker.ts test/generated/examples && tsc --noEmit && tsc -p tsconfig.examples.json",
+    "lint": "eslint src worker vite.config.worker.ts test/generated/examples chat-v2/app chat-v2/worker chat-v2/tests chat-v2/vite.config.app.ts chat-v2/vite.config.worker.ts chat-v2/vite.config.shared.ts chat-v2/bulletin-deploy.config.ts && tsc --noEmit && tsc -p tsconfig.examples.json",
     "pretypecheck": "node ./scripts/bundle-rxjs-dts.mjs",
     "typecheck": "tsc --noEmit",
     "typecheck:examples": "tsc -p tsconfig.examples.json",

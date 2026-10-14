@@ -1,0 +1,23 @@
+{
+  "name": "truapi-chat-v2-sample",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --config vite.config.app.ts",
+    "build": "vite build --config vite.config.app.ts && vite build --config vite.config.worker.ts",
+    "test": "bun test tests",
+    "typecheck": "tsc --noEmit",
+    "lint": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@parity/truapi": "link:../../js/packages/truapi",
+    "neverthrow": "^8.2.0"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.3.0",
+    "typescript": "^6.0",
+    "vite": "^8.0.16"
+  },
+  "packageManager": "yarn@1.22.22+sha512.a6b2f7906b721bba3d67d4aff083df04dad64c399707841b7acf00f6b133b7ac24255f2652fa22ae3534329dc6180534e98d17432037ff6fd140556e2bb3137e"
+}

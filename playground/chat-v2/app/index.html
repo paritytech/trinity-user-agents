@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Chat Extension v2 Sample</title>
+    <style>
+      :root { color-scheme: light dark; font-family: system-ui, sans-serif; }
+      body { margin: 0 auto; max-width: 48rem; padding: 16px; }
+      #banner { display: none; padding: 8px 12px; border-radius: 8px; background: #e6007a; color: #fff; }
+      #banner.shown { display: block; }
+      .buttons { display: flex; flex-wrap: wrap; gap: 8px; margin: 16px 0; }
+      button { font: inherit; padding: 8px 16px; border-radius: 8px; border: 1px solid currentColor; background: none; cursor: pointer; }
+      #status { min-height: 1.5em; opacity: 0.8; }
+      table { border-collapse: collapse; width: 100%; font-size: 0.9rem; }
+      th, td { text-align: left; vertical-align: top; padding: 4px 8px; border-bottom: 1px solid rgba(128, 128, 128, 0.3); }
+      code { white-space: nowrap; }
+      .table-wrap { overflow-x: auto; }
+    </style>
+  </head>
+  <body>
+    <div id="banner" role="status">Opened from a deeplink</div>
+    <h1>Chat Extension v2 Sample</h1>
+    <p>Open a room, then type a command. Each command exercises one part of Chat Extension v2.</p>
+    <div class="buttons">
+      <button id="open-host" type="button">Open host room</button>
+      <button id="open-source" type="button">Open source room</button>
+    </div>
+    <p id="status"></p>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>Command</th><th>Arguments</th><th>Does</th><th>Rooms</th><th>Scenarios</th></tr>
+        </thead>
+        <tbody id="commands"></tbody>
+      </table>
+    </div>
+    <script type="module" src="./main.ts"></script>
+  </body>
+</html>

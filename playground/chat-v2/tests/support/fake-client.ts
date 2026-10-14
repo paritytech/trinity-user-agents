@@ -1,0 +1,142 @@
+/**
+ * A fake of the client parts the Worker uses. It records every call and lets
+ * a test play the host: send events, ask queries, stop them.
+ *
+ * The end-to-end tests of P2.7 replace this fake with the client of the test
+ * host (`createMockHost` of `@parity/truapi-host/testing`) and give it to the
+ * same `startSampleProduct`.
+ */
+import { errAsync, okAsync } from "neverthrow";
+import type { HostChatActionSubscribeItem, HostRendererActionSubscribeItem } from "@parity/truapi";
+import type { SampleClient } from "../../worker/context";
+
+export interface RecordedCall {
+  method: string;
+  request: unknown;
+}
+
+type Handler = (request: never, send: (item: never) => void, interrupt: (reason?: never) => void) => (() => void) | void;
+
+export interface QueryOutcome {
+  item?: unknown;
+  interrupt?: unknown;
+}
+
+function observable<Item>() {
+  const observers = new Set<{ next?: (item: Item) => void }>();
+  return {
+    observable: {
+      subscribe(observer: { next?: (item: Item) => void } = {}) {
+        observers.add(observer);
+        return { unsubscribe: () => observers.delete(observer), subscriptionId: "fake" };
+      },
+    },
+    emit(item: Item) {
+      for (const observer of observers) observer.next?.(item);
+    },
+  };
+}
+
+export interface FakeClientOptions {
+  /** Methods the fake refuses with `Unknown`. */
+  refuse?: ReadonlySet<string>;
+  /** The product local storage; share it to play a worker restart. */
+  storage?: Map<string, `0x${string}`>;
+}
+
+export function createFakeClient(options: FakeClientOptions = {}) {
+  const calls: RecordedCall[] = [];
+  const handlers = new Map<string, Handler>();
+  const actions = observable<HostChatActionSubscribeItem>();
+  const rendererActions = observable<HostRendererActionSubscribeItem>();
+  const storage = options.storage ?? new Map<string, `0x${string}`>();
+  let hostIds = 0;
+
+  const unary =
+    (method: string, answer: (request: never) => unknown = () => undefined) =>
+    (request: never) => {
+      calls.push({ method, request });
+      if (options.refuse?.has(method)) {
+        return errAsync({ tag: "Domain", value: { tag: "V1", value: { tag: "Unknown", value: { reason: "refused by the fake" } } } });
+      }
+      return okAsync(answer(request));
+    };
+
+  const register = (name: string) => (handler: Handler) => {
+    handlers.set(name, handler);
+    return { unsubscribe: () => handlers.delete(name) };
+  };
+
+  const client = {
+    chat: {
+      createRoom: unary("createRoom", () => ({ status: "New" })),
+      postMessage: unary("postMessage", () => ({ messageId: `host-assigned-${++hostIds}` })),
+      setRoomFooter: unary("setRoomFooter"),
+      setRoomConfig: unary("setRoomConfig"),
+      setRoomMetadata: unary("setRoomMetadata"),
+      setRoomPreview: unary("setRoomPreview"),
+      deleteRoom: unary("deleteRoom"),
+      updateFeed: unary("updateFeed"),
+      setRoomToolbar: unary("setRoomToolbar"),
+      setRoomSuggestions: unary("setRoomSuggestions"),
+      setRoomCommands: unary("setRoomCommands"),
+      setRoomActivity: unary("setRoomActivity"),
+      actionSubscribe: () => actions.observable,
+      onMessagesQuery: register("messages_query"),
+      onUserAction: register("user_action"),
+      onReactionsQuery: register("reactions_query"),
+      onParticipantsQuery: register("participants_query"),
+      onMessageActionsQuery: register("message_actions_query"),
+      onParticipantActionsQuery: register("participant_actions_query"),
+    },
+    renderer: {
+      onRender: register("render"),
+      actionSubscribe: () => rendererActions.observable,
+    },
+    localStorage: {
+      read: ({ key }: { key: string }) => okAsync({ value: storage.get(key) }),
+      write: ({ key, value }: { key: string; value: `0x${string}` }) => {
+        storage.set(key, value);
+        return okAsync(undefined);
+      },
+    },
+    preimage: {
+      submit: unary("preimageSubmit", () => `0x${"ab".repeat(32)}`),
+    },
+  };
+
+  return {
+    client: client as unknown as SampleClient,
+    calls,
+    handlers,
+    storage,
+    /** Calls of one method, in order. */
+    callsOf(method: string): unknown[] {
+      return calls.filter((call) => call.method === method).map((call) => call.request);
+    },
+    emitEvent(item: HostChatActionSubscribeItem) {
+      actions.emit(item);
+    },
+    emitRendererAction(item: HostRendererActionSubscribeItem) {
+      rendererActions.emit(item);
+    },
+    /**
+     * Start a query as the host does. The promise settles on the first item
+     * or interrupt; `stop` plays the host that stops the stream.
+     */
+    ask(name: string, request: unknown): { outcome: Promise<QueryOutcome>; stop: () => void } {
+      const handler = handlers.get(name);
+      if (!handler) throw new Error(`no handler for ${name}`);
+      let settle: (outcome: QueryOutcome) => void = () => {};
+      const outcome = new Promise<QueryOutcome>((resolve) => (settle = resolve));
+      const teardown = handler(
+        request as never,
+        ((item: unknown) => settle({ item })) as (item: never) => void,
+        ((reason?: unknown) => settle({ interrupt: reason })) as (reason?: never) => void,
+      );
+      return { outcome, stop: () => teardown?.() };
+    },
+  };
+}
+
+export type FakeClient = ReturnType<typeof createFakeClient>;
