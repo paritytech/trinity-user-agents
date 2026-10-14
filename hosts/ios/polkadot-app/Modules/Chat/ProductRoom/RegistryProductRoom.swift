@@ -8,6 +8,11 @@ struct RegistryProductRoom: ProductRoomInteracting, @unchecked Sendable {
     let extensionId: ChatExtension.Id
     let registry: ChatExtensionsRegistering
 
+    /// The bot of the product now, or nil while the registry has none.
+    var bot: ProductBot? {
+        registry.getChatExtensionBot(for: extensionId) as? ProductBot
+    }
+
     private var current: ProductRoomInteracting {
         (registry.getChatExtensionBot(for: extensionId) as? ProductRoomInteracting) ?? UnservedProductRoom()
     }
@@ -38,10 +43,6 @@ struct RegistryProductRoom: ProductRoomInteracting, @unchecked Sendable {
 }
 
 extension RegistryProductRoom: ProductRoomFooterRendering {
-    private var bot: ProductBot? {
-        registry.getChatExtensionBot(for: extensionId) as? ProductBot
-    }
-
     func renderFooter(roomId: String) async -> AsyncThrowingStream<ChatRendererOutput, Error> {
         guard let bot else {
             return AsyncThrowingStream { $0.finish(throwing: UnservedProductRoom.NotServed()) }
@@ -56,5 +57,26 @@ extension RegistryProductRoom: ProductRoomFooterRendering {
     /// The image loader of the bot of the product, or a loader that has no image.
     var widgetImageResolver: WidgetImageResolver {
         bot?.widgetImageResolver ?? WidgetImageResolver { _ in nil }
+    }
+}
+
+extension RegistryProductRoom: ProductChatQuerying, ChatRoomLifecycle {
+    func messagesPage(_ request: ProductChatMessagesQueryRequest) async throws -> ProductChatMessagesQueryItem {
+        guard let bot else { throw UnservedProductRoom.NotServed() }
+        return try await bot.messagesPage(request)
+    }
+
+    func userAction(_ request: ProductChatUserActionRequest) async throws -> ProductChatUserActionItem {
+        guard let bot else { throw UnservedProductRoom.NotServed() }
+        return try await bot.userAction(request)
+    }
+
+    /// A room whose product has no bot yet holds nothing.
+    func open(roomId: String) async throws {
+        try await bot?.open(roomId: roomId)
+    }
+
+    func close(roomId: String) async {
+        await bot?.close(roomId: roomId)
     }
 }
