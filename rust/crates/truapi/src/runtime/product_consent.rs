@@ -10,14 +10,17 @@ use truapi::{CallContext, latest::GenericError};
 use super::authority::{AccountCaller, AuthorityError};
 use crate::{
 	host_internal::{
-		permissions::{account_access_status, set_account_access_status},
+		permissions::{
+			TemporaryPermissions, account_access_status, cross_product_signature_key,
+			set_account_access_status,
+		},
 		product_manifest::bare_product_label,
 	},
 	platform::{
-		AccountAccessReview, CreateTransactionReview, PermissionAuthorizationStatus,
-		PermissionDecision, Platform, SignPayloadReview, SignRawReview, UserConfirmationReview,
-		has_trusted_remote_permissions, normalize_product_identifier,
-		normalizes_to_trusted_remote_permissions,
+		AccountAccessReview, CreateTransactionReview, CrossProductSignatureKind,
+		PermissionAuthorizationStatus, PermissionDecision, Platform, ProductContext,
+		SignPayloadReview, SignRawReview, UserConfirmationReview, has_trusted_remote_permissions,
+		normalize_product_identifier, normalizes_to_trusted_remote_permissions,
 	},
 };
 
@@ -97,6 +100,37 @@ impl ProductConsent {
 			.await?
 			.map_err(AuthorityError::ConfirmationFailed)?;
 		if approved { Ok(()) } else { Err(AuthorityError::Rejected) }
+	}
+
+	/// Confirm `product`'s signature with an account `owner` holds.
+	///
+	/// Another product's account is confirmed once per kind of signature and owning
+	/// product, for as long as `approvals`' execution lasts. Signature prompts open
+	/// one at a time, and a signature already approved never waits for one.
+	pub async fn review_signature(
+		&self,
+		cx: &CallContext,
+		product: &ProductContext,
+		approvals: &TemporaryPermissions,
+		kind: CrossProductSignatureKind,
+		owner: &str,
+		review: UserConfirmationReview,
+	) -> Result<(), AuthorityError> {
+		let caller = AccountCaller::Local { product };
+		if owner == product.product_id {
+			return self.review(cx, caller, review).await;
+		}
+		let approval = cross_product_signature_key(&product.product_id, owner, kind);
+		if approvals.authorize(&approval, false) {
+			return Ok(());
+		}
+		let _prompt = super::until_cancelled(cx, approvals.signature_prompt()).await?;
+		if approvals.authorize(&approval, false) {
+			return Ok(());
+		}
+		self.review(cx, caller, review).await?;
+		approvals.grant(approval);
+		Ok(())
 	}
 
 	/// Forget every Allow once answer, as on lock or a wallet change.

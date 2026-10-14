@@ -25,6 +25,7 @@ mod host_session;
 mod identity;
 pub mod login_failure;
 mod pairing_host;
+mod payment_id;
 mod product_consent;
 pub mod product_manifest;
 mod product_subtree;
@@ -929,8 +930,6 @@ fn transaction_call_error(err: AuthorityError) -> CallError<latest::HostCreateTr
 		},
 	})
 }
-
-const PAYMENTS_NOT_IMPLEMENTED: &str = "Payments are not supported in dot.li";
 
 impl<H: AccountHolder> ProductRuntimeHost<H> {
 	/// Replace declared contact handles with their accounts before review or signing.

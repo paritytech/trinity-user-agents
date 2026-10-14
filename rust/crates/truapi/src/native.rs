@@ -25,6 +25,7 @@ mod platform;
 mod renderer;
 mod runtime;
 mod sso;
+mod subscribers;
 mod ws_bridge;
 
 pub use crate::host_logic::{
@@ -32,8 +33,9 @@ pub use crate::host_logic::{
 	scanner::{ScanFilter, ScanVerdict},
 };
 pub use callbacks::{
-	HostCallbacks, NativeChatCallbacks, NativeContactsCallbacks, NativeGameCallbacks,
-	NativePocketCallbacks, NativePocketRemoval, NativeScannerCallbacks,
+	HostCallbacks, NativeBalanceCallbacks, NativeChatCallbacks, NativeContactsCallbacks,
+	NativeGameCallbacks, NativePaymentCallbacks, NativePocketCallbacks, NativePocketRemoval,
+	NativeScannerCallbacks, NativeTopUpCallbacks,
 };
 pub use config::{HostRuntimeConfig, NativeRuntimeConfigError, ProductExecutionConfig};
 pub use errors::{

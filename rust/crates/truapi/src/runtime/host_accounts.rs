@@ -12,15 +12,14 @@ use super::{
 	product_consent::ProductConsent,
 	ring_vrf_registry::{RingVrfRegistryStore, apply_ring_vrf_disclosure, validate_owner_listing},
 	services::RuntimeServices,
-	signing_host::{
-		ChainRingResolver, MemberCandidate, RingResolver, create_proof, development_context_bytes,
-	},
+	signing_host::{ChainRingResolver, MemberCandidate, RingResolver, context_bytes, create_proof},
 	sso_request_service::PairedSessionOwner,
 	vrf,
 };
 use crate::{
 	host_internal::{
 		extrinsic::{Sr25519Signer, build_signed_transaction, local_transaction_metadata},
+		permissions::TemporaryPermissions,
 		sso_messages::{OnExistingAllowancePolicy, RingVrfError},
 		transaction::sign_extrinsic_payload,
 	},
@@ -34,9 +33,9 @@ use crate::{
 		session::{SessionInfo, SessionState},
 	},
 	platform::{
-		PermissionAuthorizationStatus, ProductContext, ProductSubtreeReview,
-		ResourceAllocationReview, SignVrfReview, StatementStoreProductSignReview,
-		UserConfirmationReview, normalize_product_identifier,
+		CrossProductSignatureKind, PermissionAuthorizationStatus, ProductContext,
+		ProductSubtreeReview, ResourceAllocationReview, SignVrfReview,
+		StatementStoreProductSignReview, UserConfirmationReview, normalize_product_identifier,
 	},
 };
 use futures::StreamExt;
@@ -749,6 +748,7 @@ impl<H: AccountHolder> HostAccounts<H> {
 		authority_session: &AuthoritySession,
 		cx: &CallContext,
 		product: &ProductContext,
+		approvals: &TemporaryPermissions,
 		request: SignPayloadAuthorityRequest,
 	) -> Result<api::HostSignPayloadResponse, AuthorityError> {
 		let revision = self.grants.lifecycle().revision();
@@ -769,7 +769,21 @@ impl<H: AccountHolder> HostAccounts<H> {
 			})
 			.await;
 		}
-		self.confirm(invocation, request.review(invocation.caller)).await?;
+		let review = request.review(invocation.caller);
+		match &request {
+			SignPayloadAuthorityRequest::Product(payload) => {
+				self.confirm_signature(
+					invocation,
+					product,
+					approvals,
+					CrossProductSignatureKind::Payload,
+					&payload.account,
+					review,
+				)
+				.await?
+			},
+			_ => self.confirm(invocation, review).await?,
+		}
 		self.holder.sign_payload(invocation, request).await
 	}
 
@@ -783,12 +797,37 @@ impl<H: AccountHolder> HostAccounts<H> {
 		self.consent.review(invocation.call, invocation.caller, review).await
 	}
 
+	/// Confirm a signature with `account`, once per kind for this execution when
+	/// another product owns it.
+	async fn confirm_signature(
+		&self,
+		invocation: AccountInvocation<'_>,
+		product: &ProductContext,
+		approvals: &TemporaryPermissions,
+		kind: CrossProductSignatureKind,
+		account: &api::ProductAccountId,
+		review: UserConfirmationReview,
+	) -> Result<(), AuthorityError> {
+		self.holder.require_current_session(invocation.session)?;
+		self.consent
+			.review_signature(
+				invocation.call,
+				product,
+				approvals,
+				kind,
+				&account.dot_ns_identifier,
+				review,
+			)
+			.await
+	}
+
 	/// Preserve legacy review even when a retained product key can sign locally.
 	pub async fn sign_raw(
 		&self,
 		authority_session: &AuthoritySession,
 		cx: &CallContext,
 		product: &ProductContext,
+		approvals: &TemporaryPermissions,
 		request: SignRawAuthorityRequest,
 		watermarked: bool,
 	) -> Result<api::HostSignPayloadResponse, AuthorityError> {
@@ -809,7 +848,21 @@ impl<H: AccountHolder> HostAccounts<H> {
 			None
 		};
 		if grant.is_none() || !matches!(request, SignRawAuthorityRequest::Product(_)) {
-			self.confirm(invocation, request.review(invocation.caller, watermarked)).await?;
+			let review = request.review(invocation.caller, watermarked);
+			match &request {
+				SignRawAuthorityRequest::Product(payload) if watermarked => {
+					self.confirm_signature(
+						invocation,
+						product,
+						approvals,
+						CrossProductSignatureKind::Raw,
+						&payload.account,
+						review,
+					)
+					.await?
+				},
+				_ => self.confirm(invocation, review).await?,
+			}
 		}
 		if let (Some(grant), Some(account)) = (grant, account) {
 			let payload = match &request {
@@ -842,6 +895,7 @@ impl<H: AccountHolder> HostAccounts<H> {
 		authority_session: &AuthoritySession,
 		cx: &CallContext,
 		product: &ProductContext,
+		approvals: &TemporaryPermissions,
 		request: CreateTransactionAuthorityRequest,
 	) -> Result<api::HostCreateTransactionResponse, AuthorityError> {
 		let revision = self.grants.lifecycle().revision();
@@ -876,7 +930,21 @@ impl<H: AccountHolder> HostAccounts<H> {
 			})
 			.await;
 		}
-		self.confirm(invocation, request.review(invocation.caller)).await?;
+		let review = request.review(invocation.caller);
+		match &request {
+			CreateTransactionAuthorityRequest::Product(payload) if payload.contacts.is_empty() => {
+				self.confirm_signature(
+					invocation,
+					product,
+					approvals,
+					CrossProductSignatureKind::Transaction,
+					&payload.signer,
+					review,
+				)
+				.await?
+			},
+			_ => self.confirm(invocation, review).await?,
+		}
 		self.holder.create_transaction(invocation, request).await
 	}
 
@@ -920,6 +988,7 @@ impl<H: AccountHolder> HostAccounts<H> {
 		authority_session: &AuthoritySession,
 		cx: &CallContext,
 		product: &ProductContext,
+		approvals: &TemporaryPermissions,
 		account: api::ProductAccountId,
 		payload: Vec<u8>,
 	) -> Result<[u8; 64], AuthorityError> {
@@ -946,7 +1015,15 @@ impl<H: AccountHolder> HostAccounts<H> {
 				account: account.clone(),
 				payload: payload.clone(),
 			});
-		self.confirm(invocation, review).await?;
+		self.confirm_signature(
+			invocation,
+			product,
+			approvals,
+			CrossProductSignatureKind::StatementProof,
+			&account,
+			review,
+		)
+		.await?;
 		self.holder
 			.sign_statement_store_product_payload(invocation, account, payload)
 			.await
@@ -1094,7 +1171,7 @@ impl<H: AccountHolder + 'static> HostAccounts<H> {
 		{
 			self.ring_resolver.validate(&request.ring_location).await?;
 			let _lifecycle = self.hold_grant(authority_session, revision)?;
-			let context = development_context_bytes(&request.context);
+			let context = context_bytes(&request.context);
 			return Ok(api::ContextualAlias {
 				alias: vrf.alias(&entropy, &context)?.to_vec(),
 				context,
@@ -1140,7 +1217,7 @@ impl<H: AccountHolder + 'static> HostAccounts<H> {
 					.resolve(&request.ring_location, &[MemberCandidate { member }])
 					.await?;
 				let _lifecycle = self.hold_grant(authority_session, revision)?;
-				let context = development_context_bytes(&request.context);
+				let context = context_bytes(&request.context);
 				let (proof, alias) =
 					create_proof(&vrf, &entropy, &resolved, &context, &request.message)?;
 				return Ok(api::HostAccountCreateProofResponse {
