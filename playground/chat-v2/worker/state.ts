@@ -40,7 +40,7 @@ export interface FailFlags {
 }
 
 export interface ProductState {
-  version: 1;
+  version: 2;
   clock: ClockState;
   rooms: Record<RoomId, RoomSettings>;
   source: StoreSnapshot;
@@ -71,7 +71,7 @@ export function roomSettings(room: RoomId): RoomSettings {
 
 export function initialState(): ProductState {
   return {
-    version: 1,
+    version: 2,
     clock: emptyClockState(),
     rooms: { host: roomSettings("host"), source: roomSettings("source"), "host-empty": roomSettings("host-empty") },
     source: emptyStoreSnapshot(),
@@ -100,7 +100,7 @@ export function decodeState(text: string): ProductState {
     }
     return field;
   });
-  if (value === null || typeof value !== "object" || !("version" in value) || value.version !== 1) {
+  if (value === null || typeof value !== "object" || !("version" in value) || value.version !== 2) {
     throw new Error("unknown state version");
   }
   return value as ProductState;
