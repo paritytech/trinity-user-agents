@@ -82,13 +82,14 @@ impl JsonRpcConnection for ScriptedConnection {
 		}
 	}
 	fn responses(&self) -> BoxStream<'static, String> {
-		let rx = self
-			.receiver
-			.lock()
-			.unwrap()
-			.take()
-			.expect("ScriptedConnection::responses called twice");
-		rx.boxed()
+		match self.receiver.lock().unwrap().take() {
+			Some(rx) => rx.boxed(),
+			// A second connection from this provider, which happens once
+			// connections are scoped per product. The scripted response stream
+			// belongs to the first. Stay pending rather than ending, because an
+			// ended stream reads to the core as a socket that died.
+			None => futures::stream::pending().boxed(),
+		}
 	}
 
 	fn close(&self) {

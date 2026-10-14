@@ -238,6 +238,31 @@ pub trait RuntimeChainProvider: Send + Sync {
 	) -> Result<Arc<dyn JsonRpcConnection>, RuntimeFailure>;
 }
 
+/// Which caller a chain connection belongs to.
+///
+/// A node allows four `chainHead_v1_follow` subscriptions and sixteen concurrent
+/// operations per connection, so one connection shared across products makes
+/// those budgets collide: four products plus the core's own client is a fifth
+/// follow the node refuses. Each product runtime gets its own connection, and
+/// the core's internal traffic keeps one of its own.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum ConnectionScope {
+	/// The core's own traffic: metadata, transaction assembly, internal reads.
+	Core,
+	/// One product runtime, identified by its `core_instance`.
+	Product(u64),
+}
+
+impl ConnectionScope {
+	/// Prefix that separates this scope's connections from every other scope's.
+	fn key_prefix(self) -> String {
+		match self {
+			Self::Core => "core".to_owned(),
+			Self::Product(instance) => format!("p{instance}"),
+		}
+	}
+}
+
 /// chainHead-v1 state machine on top of a [`RuntimeChainProvider`].
 ///
 /// Each method maps a typed v01 chain request to one or more json-rpc calls,
@@ -248,6 +273,9 @@ pub trait RuntimeChainProvider: Send + Sync {
 pub struct ChainRuntime {
 	provider: Arc<dyn RuntimeChainProvider>,
 	spawner: Spawner,
+	/// Which caller this view belongs to. Cheap to re-scope: every other
+	/// field is shared, so two scopes see the same maps under different keys.
+	scope: ConnectionScope,
 	connections: Arc<Mutex<HashMap<String, Arc<ChainConnection>>>>,
 	connection_setups: Arc<Mutex<HashMap<String, ConnectionSetup>>>,
 	follow_starts: FollowStartRegistry,
@@ -289,6 +317,7 @@ impl ChainRuntime {
 		Self {
 			provider,
 			spawner,
+			scope: ConnectionScope::Core,
 			connections: Arc::new(Mutex::new(HashMap::new())),
 			connection_setups: Arc::new(Mutex::new(HashMap::new())),
 			follow_starts: Arc::new(ParkingMutex::new(HashMap::new())),
@@ -296,6 +325,18 @@ impl ChainRuntime {
 			transaction_operations: Arc::new(Mutex::new(BTreeMap::new())),
 			next_transaction_operation_id: Arc::new(AtomicU64::new(1)),
 		}
+	}
+
+	/// This runtime seen as `scope`. Shares every map with the original, so a
+	/// product's connections live beside the core's rather than replacing them.
+	pub fn for_product(&self, core_instance: u64) -> Self {
+		Self { scope: ConnectionScope::Product(core_instance), ..self.clone() }
+	}
+
+	/// Map key for this scope's connection to `genesis_hash`. Two scopes on the
+	/// same chain are two connections.
+	fn connection_key(&self, genesis_hash: &[u8]) -> String {
+		format!("{}:{}", self.scope.key_prefix(), encode_hex(genesis_hash))
 	}
 
 	/// Start (or attach to an existing) `chainHead_v1_follow` subscription.
@@ -714,7 +755,7 @@ impl ChainRuntime {
 		method: &'static str,
 		genesis_hash: &[u8],
 	) -> Result<Arc<ChainConnection>, RuntimeFailure> {
-		let key = encode_hex(genesis_hash);
+		let key = self.connection_key(genesis_hash);
 		let setup = {
 			let mut connections = self.connections.lock().unwrap();
 			match connections.get(&key) {
@@ -847,7 +888,7 @@ impl ChainRuntime {
 		genesis_hash: &[u8],
 		requested_follow_id: &str,
 	) -> Result<String, RuntimeFailure> {
-		let key = encode_hex(genesis_hash);
+		let key = self.connection_key(genesis_hash);
 		let intents = self.follow_intents.lock().unwrap();
 		let intents = intents.get(&key);
 		if intents.is_some_and(|intents| intents.contains(requested_follow_id)) {
@@ -878,13 +919,13 @@ impl ChainRuntime {
 		self.follow_intents
 			.lock()
 			.unwrap()
-			.entry(encode_hex(genesis_hash))
+			.entry(self.connection_key(genesis_hash))
 			.or_default()
 			.insert(local_follow_id.to_string());
 	}
 
 	fn remove_follow_intent(&self, genesis_hash: &[u8], local_follow_id: &str) {
-		let key = encode_hex(genesis_hash);
+		let key = self.connection_key(genesis_hash);
 		let mut intents = self.follow_intents.lock().unwrap();
 		let remove_key = intents.get_mut(&key).is_some_and(|chain_intents| {
 			chain_intents.remove(local_follow_id);
@@ -901,7 +942,7 @@ impl ChainRuntime {
 		self.follow_starts
 			.lock()
 			.remove(&(genesis_hash.to_vec(), local_follow_id.to_string()));
-		let key = encode_hex(genesis_hash);
+		let key = self.connection_key(genesis_hash);
 		let Some(connection) = self.connections.lock().unwrap().get(&key).cloned() else {
 			return;
 		};
@@ -2451,6 +2492,105 @@ mod tests {
 		assert!(
 			connection.subxt_connection_setup.lock().unwrap().is_none(),
 			"driver exit must invalidate the cached Subxt bundle",
+		);
+	}
+
+	/// Each product runtime gets its own connection to a chain, and the core's
+	/// own traffic keeps one of its own. A node budgets follows and concurrent
+	/// operations per connection, so sharing one makes those budgets collide.
+	#[test]
+	fn each_scope_gets_its_own_connection_to_the_same_chain() {
+		let provider = Arc::new(ScriptedProvider::new(|request| {
+			let id = extract_id(request).unwrap();
+			request
+				.contains("chainSpec_v1_chainName")
+				.then(|| format!(r#"{{"jsonrpc":"2.0","id":"{id}","result":"Polkadot"}}"#))
+		}));
+		let core = ChainRuntime::new(provider.clone(), spawner_for_tests());
+		let genesis = vec![0xab; 32];
+
+		let first = core.for_product(1);
+		let second = core.for_product(2);
+
+		for runtime in [&core, &first, &second] {
+			futures::executor::block_on(runtime.connection_for("scope_test", &genesis))
+				.expect("connection");
+		}
+
+		// Same chain, three scopes, three connections.
+		assert_eq!(provider.connect_calls.load(Ordering::SeqCst), 3);
+		assert_eq!(core.connections.lock().unwrap().len(), 3);
+	}
+
+	/// Re-scoping shares the maps rather than starting a fresh runtime, so a
+	/// product that asks twice reuses its own connection and does not open a
+	/// second one.
+	#[test]
+	fn the_same_product_reuses_its_connection() {
+		let provider = Arc::new(ScriptedProvider::new(|_| None));
+		let core = ChainRuntime::new(provider.clone(), spawner_for_tests());
+		let genesis = vec![0xab; 32];
+
+		futures::executor::block_on(core.for_product(7).connection_for("scope_test", &genesis))
+			.expect("first");
+		futures::executor::block_on(core.for_product(7).connection_for("scope_test", &genesis))
+			.expect("second");
+
+		assert_eq!(provider.connect_calls.load(Ordering::SeqCst), 1);
+		assert_eq!(core.connections.lock().unwrap().len(), 1);
+	}
+
+	/// A product's follow budget is its own: four follows for one product do
+	/// not consume another product's, or the core's.
+	#[test]
+	fn a_products_follows_do_not_consume_another_scopes_budget() {
+		let provider = Arc::new(ScriptedProvider::new(|request| {
+			let id = extract_id(request).unwrap();
+			request
+				.contains("chainHead_v1_follow")
+				.then(|| format!(r#"{{"jsonrpc":"2.0","id":"{id}","result":"REMOTE-{id}"}}"#))
+		}));
+		let core = ChainRuntime::new(provider.clone(), spawner_for_tests());
+		let genesis = vec![0xab; 32];
+
+		let busy = core.for_product(1);
+		let _busy_follows: Vec<_> = (0..4)
+			.map(|n| {
+				busy.remote_chain_head_follow(
+					format!("c1:follow{n}"),
+					RemoteChainHeadFollowRequest {
+						genesis_hash: genesis.clone(),
+						with_runtime: false,
+					},
+				)
+			})
+			.collect();
+		wait_for_sent(&provider, |sent| {
+			sent.iter().filter(|r| r.contains("chainHead_v1_follow")).count() >= 4
+		});
+
+		let quiet = core.for_product(2);
+		let _quiet_follow = quiet.remote_chain_head_follow(
+			"c2:follow".to_string(),
+			RemoteChainHeadFollowRequest { genesis_hash: genesis.clone(), with_runtime: false },
+		);
+		wait_for_sent(&provider, |sent| {
+			sent.iter().filter(|r| r.contains("chainHead_v1_follow")).count() >= 5
+		});
+
+		// Five follows, but spread over two connections, so neither is over the
+		// node's four-per-connection budget.
+		let connections = core.connections.lock().unwrap();
+		let per_connection: Vec<usize> =
+			connections.values().map(|c| c.follows.lock().unwrap().len()).collect();
+		let total: usize = per_connection.iter().sum();
+		drop(connections);
+		println!("FINDING: follows per connection = {per_connection:?}");
+		assert_eq!(provider.connect_calls.load(Ordering::SeqCst), 2);
+		assert_eq!(total, 5);
+		assert!(
+			per_connection.iter().all(|n| *n <= 4),
+			"a connection carries more than the node's budget: {per_connection:?}",
 		);
 	}
 
