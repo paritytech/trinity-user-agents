@@ -53,15 +53,19 @@ it("preserves one-use permission decisions across the WASM callback", async () =
   };
   for (const decision of ["AllowOnce", "AllowAlways", "Deny"] as const) {
     const reviews: UserConfirmationReview[] = [];
-    const raw = createWasmRawCallbacks(makeHostCallbacks({
-      userConfirmation: {
-        confirmPermission: async (request) => {
-          reviews.push(request);
-          return decision;
+    const raw = createWasmRawCallbacks(
+      makeHostCallbacks({
+        userConfirmation: {
+          confirmPermission: async (request) => {
+            reviews.push(request);
+            return decision;
+          },
         },
-      },
-    }));
-    const encoded = await raw.confirmPermission(UserConfirmationReview.enc(review));
+      }),
+    );
+    const encoded = await raw.confirmPermission(
+      UserConfirmationReview.enc(review),
+    );
     expect({ decision: PermissionDecision.dec(encoded), reviews }).toEqual({
       decision,
       reviews: [review],
@@ -455,12 +459,6 @@ describe("createWasmRawCallbacks", () => {
                 return (
                   review.value.resources[0]?.tag === "StatementStoreAllowance"
                 );
-              case "PreimageSubmit":
-                calls.push([
-                  "confirmUserAction:PreimageSubmit",
-                  review.value.size,
-                ]);
-                return review.value.size === 42n;
               default:
                 return false;
             }
@@ -601,14 +599,6 @@ describe("createWasmRawCallbacks", () => {
         }),
       ),
     ).toBe(true);
-    expect(
-      await raw.confirmUserAction?.(
-        UserConfirmationReview.enc({
-          tag: "PreimageSubmit",
-          value: { size: 42n },
-        }),
-      ),
-    ).toBe(true);
 
     await settle();
 
@@ -621,7 +611,6 @@ describe("createWasmRawCallbacks", () => {
       ],
       ["writeCoreStorage", { tag: "AuthSession", value: undefined }, [3, 2, 1]],
       ["clearCoreStorage", { tag: "AuthSession", value: undefined }],
-      ["confirmUserAction:PreimageSubmit", 42n],
     ]);
 
     disposePreimages?.();
@@ -944,7 +933,10 @@ describe("createWasmRawCallbacks", () => {
         async presentProfile() {
           throw new Error("Contact presentation must not use the fallback");
         },
-        async presentContactProfile(presentationProduct: ProductContext, contact: PresentedContactProfile) {
+        async presentContactProfile(
+          presentationProduct: ProductContext,
+          contact: PresentedContactProfile,
+        ) {
           expect(presentationProduct).toEqual(ProductContext.dec(product));
           this.presentations.push(contact);
         },
@@ -953,21 +945,31 @@ describe("createWasmRawCallbacks", () => {
         ...makeHostCallbacks(),
         profile: host as never,
       });
-      await raw.presentContactProfile!(product, PresentedContactProfile.enc(presented));
+      await raw.presentContactProfile!(
+        product,
+        PresentedContactProfile.enc(presented),
+      );
       await raw.presentContactProfile!(
         product,
         PresentedContactProfile.enc({ ...presented, shared: undefined }),
       );
-      await expect(raw.placeContactAvatars!(product, PlacedAvatars.enc(placed)))
-        .resolves.toBeUndefined();
-      expect(host.presentations).toEqual([presented, { ...presented, shared: undefined }]);
+      await expect(
+        raw.placeContactAvatars!(product, PlacedAvatars.enc(placed)),
+      ).resolves.toBeUndefined();
+      expect(host.presentations).toEqual([
+        presented,
+        { ...presented, shared: undefined },
+      ]);
     });
 
     it("preserves placement and its receiver when only contact presentation is missing", async () => {
       const host = {
         placements: [] as PlacedAvatars[],
         async presentProfile() {},
-        async placeContactAvatars(placementProduct: ProductContext, placement: PlacedAvatars) {
+        async placeContactAvatars(
+          placementProduct: ProductContext,
+          placement: PlacedAvatars,
+        ) {
           expect(placementProduct).toEqual(ProductContext.dec(product));
           this.placements.push(placement);
         },
@@ -986,15 +988,18 @@ describe("createWasmRawCallbacks", () => {
         failure,
         async presentProfile() {},
         async presentContactProfile() {},
-        async placeContactAvatars() { throw this.failure; },
+        async placeContactAvatars() {
+          throw this.failure;
+        },
       };
       expect(profileHostAdapter(host)).toBe(host);
       const raw = createWasmRawCallbacks({
         ...makeHostCallbacks(),
         profile: host,
       });
-      await expect(raw.placeContactAvatars!(product, PlacedAvatars.enc(placed)))
-        .rejects.toBe(failure);
+      await expect(
+        raw.placeContactAvatars!(product, PlacedAvatars.enc(placed)),
+      ).rejects.toBe(failure);
     });
 
     it("preserves shared profiles without fabricating a reference for empty feedback on older hosts", async () => {
@@ -1024,8 +1029,9 @@ describe("createWasmRawCallbacks", () => {
         ),
       ).rejects.toThrow("Contact profile feedback is unavailable");
       expect(references).toEqual([presented.shared.reference]);
-      await expect(raw.placeContactAvatars!(product, PlacedAvatars.enc(placed)))
-        .resolves.toBeUndefined();
+      await expect(
+        raw.placeContactAvatars!(product, PlacedAvatars.enc(placed)),
+      ).resolves.toBeUndefined();
     });
   });
 });

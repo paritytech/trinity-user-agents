@@ -88,14 +88,14 @@ together when updating it.
 
 ## Chat
 
-A host serving the Chat modality implements `ChatHostBridge` (`createRoom`, `registerBot`, `postMessage`, `listRooms`)
-and opens the execution with `ProductExecutionKind.CHAT`:
+A host serving the Chat modality implements `ChatHostBridge` (`createRoom`, `registerBot`, `postMessage`, `setRoomFooter`, `listRooms`) and opens the execution with `ProductExecutionKind.CHAT`:
 
 ```kotlin
 import io.parity.truapi.*
 import uniffi.truapi.ChatBotRegistrationStatus
 import uniffi.truapi.ChatMessageContent
 import uniffi.truapi.ChatRoom
+import uniffi.truapi.ChatRoomFooter
 import uniffi.truapi.ChatRoomParticipation
 import uniffi.truapi.ChatRoomRegistrationStatus
 import uniffi.truapi.HostRejection
@@ -111,13 +111,15 @@ class MyChatBridge(private val store: ChatStore) : ChatHostBridge {
         if (store.putBot(botId, name, icon)) ChatBotRegistrationStatus.NEW
         else ChatBotRegistrationStatus.EXISTS
 
-    override fun postMessage(roomId: String, content: ChatMessageContent): String {
+    override fun postMessage(roomId: String, content: ChatMessageContent, alt: String?): String {
         if (content is ChatMessageContent.File) {
             // Declining a variant is how a host opts out of rendering one.
             throw HostRejection.Rejected("this host cannot render file cards")
         }
-        return store.append(roomId, content)
+        return store.append(roomId, content, alt)
     }
+
+    override fun setRoomFooter(roomId: String, footer: ChatRoomFooter) = store.setFooter(roomId, footer)
 
     override fun listRooms(): List<ChatRoom> = store.rooms()
 }
@@ -155,9 +157,7 @@ action and media counts. Ids and names are also normalized; a message body is bo
 byte-for-byte, and `ChatFile.size_bytes` is product-asserted and unverified. Contextual output escaping is the host's
 job.
 
-`postMessage` receives any `ChatMessageContent` variant; throw from it for one this host cannot render. The id it
-returns is the correlation key `ActionTrigger.messageId` carries back, so it must name that message for as long as the
-host stores it.
+`postMessage` receives any `ChatMessageContent` variant; throw from it for one this host cannot render. The id it returns is the correlation key `ActionTrigger.messageId` carries back, so it must name that message for as long as the host stores it. `alt` is the product's one-line description of the message, already trimmed and screened, for places that list the message rather than draw it, such as a chat list preview of a custom card. Only a custom message carries one, since every other kind previews from its own content.
 
 The runtime answers other devices pairing with it: `notifyPairingAllowanceAllocation` and `notifyPairingFailed` are the
 two notices a peer gets before the answer, `establishPairing` is the answer, `resumePairing` serves the session for its
@@ -191,13 +191,9 @@ resumed pairing reports nothing, so the host keeps its own record of which devic
 the thread answering the handshake, so marshal the work off rather than announcing it inline. Defaults to a no-op for a
 host that answers no pairing.
 
-On the execution: `publishChatAction` delivers a user's action back to the product (buffered until it subscribes),
-`notifyChatRoomsChanged` republishes the room list, `render` returns a `Flow` of `RendererNode` trees for one render
-context, `publishRendererAction` delivers a renderer action back to the product, and `sessionChatIdentityKey` reads the
-session's X25519 chat identity key. An open render stream is one worker reference the core holds on the product's
-behalf; the transition it causes arrives on the runtime bridge's `workerDemandChanged`, never on the execution's. Two
-rules the core cannot check are the host's to keep: send a render context only for a surface the product's manifest
-`includes`, and publish a renderer action only from the current tree of an open render stream.
+`durableWorkChanged` on the runtime bridge reports whether the core has durable transactions still awaiting a verdict, starting with the state it finds at launch. While it is `true`, enqueue unique background work requiring a network connection that awaits `runDurableRecovery()`, which returns once nothing is live and throws `RecoveryException` when recovery stopped early, so the work is retried. Defaults to a no-op for a host that runs no durable work.
+
+On the execution: `publishChatAction` delivers a user's action back to the product (buffered until it subscribes), `notifyChatRoomsChanged` republishes the room list, `render` returns a `Flow` of `RendererNode` trees for one render context, `publishRendererAction` delivers a renderer action back to the product, and `sessionChatIdentityKey` reads the session's X25519 chat identity key. An open render stream is one worker reference the core holds on the product's behalf; the transition it causes arrives on the runtime bridge's `workerDemandChanged`, never on the execution's. Two rules the core cannot check are the host's to keep: send a render context only for a surface the product's manifest `includes`, and publish a renderer action only from the current tree of an open render stream.
 
 ## Architecture
 
@@ -477,7 +473,7 @@ class MyBridge(private val webView: WebView) : HostBridge {
     }
 
     // Switch on the action review variant (SignPayload / SignRaw / CreateTransaction /
-    // ResourceAllocation / PreimageSubmit / ...) to render the prompt with its
+    // ResourceAllocation / AccountAccess / ...) to render the prompt with its
     // typed fields.
     override suspend fun confirmUserAction(review: UserConfirmationReview): Boolean {
         return withContext(Dispatchers.Main) { /* show prompt; */ false }

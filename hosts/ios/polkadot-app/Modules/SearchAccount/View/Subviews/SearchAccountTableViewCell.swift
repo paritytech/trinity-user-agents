@@ -45,7 +45,7 @@ final class SearchAccountContentView: UIView {
     // MARK: Public methods
 
     fileprivate func bind(cellType: SearchAccountViewController.Cell) {
-        let accountType = cellType.accountType
+        guard let accountType = cellType.accountType else { return }
 
         titleLabel.text = accountType.title
         avatar.viewModel = accountType.avatarViewModel

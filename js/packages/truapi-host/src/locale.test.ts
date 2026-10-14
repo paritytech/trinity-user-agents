@@ -36,10 +36,20 @@ describe("timestamp localization", () => {
 
   it("groups by local midnight, not UTC midnight, independently of locale calendars", async () => {
     const instants = ["2024-01-01T14:59:00Z", "2024-01-01T15:00:00Z"];
-    const tokyo = await localized(instants, "Asia/Tokyo", "ar-SA-u-ca-islamic-nu-arab");
+    const tokyo = await localized(
+      instants,
+      "Asia/Tokyo",
+      "ar-SA-u-ca-islamic-nu-arab",
+    );
     const newYork = await localized(instants);
-    expect(tokyo.map((value) => value.localDate)).toEqual(["2024-01-01", "2024-01-02"]);
-    expect(newYork.map((value) => value.localDate)).toEqual(["2024-01-01", "2024-01-01"]);
+    expect(tokyo.map((value) => value.localDate)).toEqual([
+      "2024-01-01",
+      "2024-01-02",
+    ]);
+    expect(newYork.map((value) => value.localDate)).toEqual([
+      "2024-01-01",
+      "2024-01-01",
+    ]);
     expect(tokyo[0]!.time).toMatch(/[\u0660-\u0669]/);
     expect(tokyo[0]!.date).toMatch(/[\u0660-\u0669]/);
   });
@@ -81,9 +91,15 @@ describe("timestamp localization", () => {
       { ...valid, timestampsMs: [-1n] },
       { ...valid, timestampsMs: [253402300800000n] },
       { ...valid, timestampsMs: Array<bigint>(129).fill(0n) },
-      { ...valid, timestampsMs: [253402300799999n], timeZone: "Pacific/Kiritimati" },
+      {
+        ...valid,
+        timestampsMs: [253402300799999n],
+        timeZone: "Pacific/Kiritimati",
+      },
     ]) {
-      await expect(localizeTimestamps(request)).rejects.toBeInstanceOf(RangeError);
+      await expect(localizeTimestamps(request)).rejects.toBeInstanceOf(
+        RangeError,
+      );
     }
   });
 });

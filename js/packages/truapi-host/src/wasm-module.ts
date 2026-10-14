@@ -48,7 +48,7 @@ export interface WorkerProductRuntime {
 /** What the host does with a product's worker after demand on it changed. */
 export type WorkerTransition = "Start" | "Stop";
 
-/** Runtime operations shared by paired and browser-local signing hosts. */
+/** The long-lived runtime product cores are created from, in either role. */
 export interface WorkerHostRuntime extends PermissionAuthorizationRuntime {
   productRuntime(
     product: unknown,
@@ -57,13 +57,6 @@ export interface WorkerHostRuntime extends PermissionAuthorizationRuntime {
   ): WorkerProductRuntime;
   disconnectSession(): Promise<void>;
   notifyContactsChanged(): void;
-  sessionChatIdentityKey(): Uint8Array | undefined;
-  deviceStatementKey(): Uint8Array | undefined;
-  deviceEncryptionKey(): Promise<Uint8Array>;
-  productSubtreePublicKey(
-    productId: string,
-    timeoutMs?: number,
-  ): Promise<Uint8Array | undefined>;
   clearProductState(productId: string): Promise<void>;
   /** Only on a core built with `test-host`. */
   setSubmitPreimagesLocally?(local: boolean): void;
@@ -79,11 +72,18 @@ export interface WorkerHostRuntime extends PermissionAuthorizationRuntime {
   free(): void;
 }
 
-/** The long-lived pairing-host runtime product cores are created from. */
+/** The pairing-host runtime: the user's keys live in a paired wallet. */
 export interface WorkerPairingHostRuntime extends WorkerHostRuntime {
   getNativeChatContacts(): Promise<NativeChatContactsSnapshot>;
   cancelPairing(): void;
   notifySessionStoreChanged(): void;
+  sessionChatIdentityKey(): Uint8Array | undefined;
+  deviceStatementKey(): Uint8Array | undefined;
+  deviceEncryptionKey(): Promise<Uint8Array>;
+  productSubtreePublicKey(
+    productId: string,
+    timeoutMs?: number,
+  ): Promise<Uint8Array | undefined>;
   activateStoredSession(): Promise<void>;
   activateExternalSession(blob: Uint8Array): Promise<void>;
   resetSessionState(): Promise<void>;
@@ -98,12 +98,18 @@ export interface WorkerPairingHostRuntime extends WorkerHostRuntime {
  * bundle built with `--signing-host`. The constructor is otherwise absent.
  */
 export interface WorkerSigningHostRuntime extends WorkerHostRuntime {
+  /** Derived from the active session root, so it never waits. */
+  productSubtreePublicKey(productId: string): Uint8Array | undefined;
   activateLocalSession(secret: Uint8Array): Promise<void>;
+  /** Only on a core built with `wasm-signing-host`. */
+  setGrantAllowancesUnchecked?(granted: boolean): void;
+  /** Only on a core built with `wasm-signing-host`. */
+  setWithheldResources?(tags: string[]): void;
   /**
    * Activate and give the session a display name, which is what
    * `account.get_user_id` answers with.
    */
-  activateLocalSessionWithIdentity(
+  activateLocalSessionWithIdentity?(
     secret: Uint8Array,
     liteUsername?: string,
   ): Promise<void>;

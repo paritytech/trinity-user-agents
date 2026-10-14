@@ -27,7 +27,6 @@
 | Statement store, off-chain messaging           | architecture/statement-store-communication.md              |
 | Chain status rings, liveness, connection strip | architecture/chain-status.md                                |
 | Key derivation, product accounts, ring-VRF/ECDH keys | `Packages/KeyDerivation/` + architecture/sso.md (selector & wire pins) |
-| DIM2 game, game video, game P2P                | architecture/game.md                                        |
 | WebRTC, P2P transport, data channels           | architecture/data-transport.md                             |
 | Cross-cutting design questions                 | architecture/maintainability.md                            |
 | Error handling, Result types                   | code/error-handling.md                                     |
