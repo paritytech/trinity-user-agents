@@ -162,7 +162,7 @@ private extension FeedWriter {
         try mapper.populate(entity: entity, from: edit, using: context)
     }
 
-    /// Deleting is idempotent, and a product can delete any message of its room.
+    /// A delete is idempotent, and a product can delete any message of its room.
     func delete(_ messageId: String) throws {
         guard let entity = try find(messageId), let storedId = entity.messageId else {
             throw Chat.ProductFeedError.unknownMessage

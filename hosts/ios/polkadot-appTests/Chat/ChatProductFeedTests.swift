@@ -239,7 +239,7 @@ struct ChatProductFeedTests {
         #expect(try await fixture.storedChat("lobby")?.message?.content == .text("first"))
     }
 
-    /// 02-DESIGN §13 item 6: deleting any message of the room is allowed.
+    /// 02-DESIGN §13 item 6: a product can delete any message of the room.
     @Test func aProductCanDeleteAMessageOfTheUser() async throws {
         let bridge = try await openRoom()
         let user = fixture.userMessage(.text("oops"), roomId: "lobby")

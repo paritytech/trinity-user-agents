@@ -13,8 +13,8 @@ import UIKitExt
 /// Pocket cards.
 ///
 /// Chat-environment context route through that execution: what the user does
-/// in a room goes out as a Chat Extension v2 event, widget rendering streams
-/// typed renderer nodes, and the product's chat surface serves the core's chat
+/// in a room goes out as a Chat Extension v2 event, the renderer of a widget
+/// streams typed nodes, and the product's chat surface serves the core's chat
 /// callbacks.
 ///
 /// An actor so `start`/`dispose` never race on runtime state. Actors are
@@ -197,8 +197,8 @@ actor TrUAPIChatHandler: ChatRuntimeProtocol {
         do {
             try checkNotDisposed()
             guard let roomId else { throw ChatSeamError.roomlessChat }
-            let command = ChatCommand(command: command.name, payload: command.arguments)
-            try requireExecution().publishChatEvent(roomId: roomId, peer: Self.userPeer, event: .command(command))
+            let chatCommand = ChatCommand(command: command.name, payload: command.arguments)
+            try requireExecution().publishChatEvent(roomId: roomId, peer: Self.userPeer, event: .command(chatCommand))
             return true
         } catch {
             logger.error("Rust chat runtime failed to send a command: \(error)")

@@ -109,7 +109,7 @@ extension Chat {
     enum ProductActionHandler: Equatable {
         /// The host opens the link.
         case deeplink(url: String)
-        /// The host sends the matching event to the product.
+        /// The host sends the event of the action to the product.
         case callback
     }
 

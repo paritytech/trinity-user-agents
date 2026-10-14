@@ -5,7 +5,7 @@ import TrUAPIHost
 // where the core reads a value. The chat store and the notification extension do not link the bindings.
 //
 // In this module the name `ChatResource` is the resource type of the app, and the bindings module has an enum
-// with the name of the module. So this file never names the binding resource type, and reads each resource
+// with the name of the module. So this file never names the resource type of the bindings, and reads each resource
 // from the value that holds it.
 
 extension Chat.RoomConfig {
