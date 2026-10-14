@@ -30,6 +30,8 @@ final class ChatProductRoomPresenter {
     /// The messages of the window that the room screen shows, by id.
     private(set) var messages: [Chat.MessageId: Chat.LocalMessage] = [:]
     private var icons: [ChatResource: UIImage] = [:]
+    /// The product answered `NotAvailable` to `reactions_query`, so the room hides who reacted.
+    var reactionDetailsUnavailable = false
 
     init?(
         chatId: Chat.Id,

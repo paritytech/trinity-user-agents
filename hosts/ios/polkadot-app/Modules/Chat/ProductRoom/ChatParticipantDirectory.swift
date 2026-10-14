@@ -67,6 +67,18 @@ final class ChatParticipantDirectory {
         }
     }
 
+    /// Asks the product for the participants with these ids that the directory does not know, and waits for the
+    /// answer. A refused question leaves them unresolved.
+    func resolveNow(_ participantIds: [String]) async {
+        let missing = Array(Set(participantIds.filter { participant($0) == nil })).sorted()
+        guard !missing.isEmpty else { return }
+
+        asked.formUnion(missing)
+        for start in stride(from: 0, to: missing.count, by: Self.byIdsLimit) {
+            await ask(byIds: Array(missing[start ..< min(start + Self.byIdsLimit, missing.count)]))
+        }
+    }
+
     /// One page of the participant list, in the order of the product. A page also fills the directory.
     func page(after cursor: String?) async throws -> Page {
         let answer = try await room.participants(ProductChatParticipantsQueryRequest(
