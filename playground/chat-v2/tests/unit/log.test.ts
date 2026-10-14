@@ -47,6 +47,6 @@ describe("state", () => {
   });
 
   test("refuses a state of another version", () => {
-    expect(() => decodeState('{"version":2}')).toThrow();
+    expect(() => decodeState('{"version":1}')).toThrow();
   });
 });
