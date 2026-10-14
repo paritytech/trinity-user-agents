@@ -15,6 +15,8 @@ protocol ChatViewProtocol: ControllerBackedProtocol {
     func showReactionDetails(viewModel: ReactionDetailsViewModel)
     /// Scrolls to the message now, or when it arrives in the window.
     func scrollToMessage(_ messageId: String)
+    /// Shows why an action of the user did not happen.
+    func showActionFailure(_ message: String)
 }
 
 @MainActor
@@ -94,10 +96,15 @@ protocol ChatInteractorOutputProtocol: AnyObject {
 
     /// A jump ended. `found` is false when the room does not hold the message.
     func didJump(to messageId: Chat.MessageId, found: Bool)
+
+    /// The product refused an action of the user. The reason is for the user, when the product gave one.
+    func didRefuseUserAction(reason: String?)
 }
 
 extension ChatInteractorOutputProtocol {
     func didJump(to _: Chat.MessageId, found _: Bool) {}
+
+    func didRefuseUserAction(reason _: String?) {}
 }
 
 @MainActor

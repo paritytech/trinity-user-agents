@@ -147,6 +147,10 @@ extension ChatViewController: ChatViewProtocol {
         rootView.scrollToMessage(messageId)
     }
 
+    func showActionFailure(_ message: String) {
+        showToast(message: message, type: .error)
+    }
+
     func didReceive(callActions: [ChatCallType]) {
         navigationBarController.apply(callActions: callActions)
     }

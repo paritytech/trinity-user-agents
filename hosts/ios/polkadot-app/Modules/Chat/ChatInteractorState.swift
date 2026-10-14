@@ -17,7 +17,8 @@ actor ChatInteractorState {
     /// The model of a window. The paging state, the readiness and the edits of a product-source room come
     /// from the snapshot.
     func onSnapshot(_ snapshot: MessageListSnapshot) -> MessageListModel {
-        var model = onMessagesUpdate(snapshot.messages)
+        // The "New messages" marker waits for the first page of a room that pages (P5.6).
+        var model = onMessagesUpdate(snapshot.messages, fixesInitialUnread: snapshot.readiness != .loading)
         model.paging = snapshot.paging
         model.readiness = snapshot.readiness
 
@@ -34,7 +35,7 @@ actor ChatInteractorState {
         model?.paging ?? .complete
     }
 
-    func onMessagesUpdate(_ messages: [Chat.LocalMessage]) -> MessageListModel {
+    func onMessagesUpdate(_ messages: [Chat.LocalMessage], fixesInitialUnread: Bool = true) -> MessageListModel {
         let unreadMessages = findAllUnreadMessages(from: messages)
         let unreadMessageIds = unreadMessages.map(\.messageId)
         let unreadIndependentMessageIds = unreadMessages
@@ -44,8 +45,10 @@ actor ChatInteractorState {
         newIncomingMessageIds = Set(unreadMessageIds)
 
         switch initiallyUnreadMessage {
-        case .undefined:
+        case .undefined where fixesInitialUnread:
             initiallyUnreadMessage = .defined(unreadIndependentMessageIds.first)
+        case .undefined:
+            break
         case .defined:
             break
         }
