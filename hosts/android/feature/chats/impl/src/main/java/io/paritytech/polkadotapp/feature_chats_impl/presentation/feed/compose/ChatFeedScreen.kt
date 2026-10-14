@@ -14,6 +14,7 @@ import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.LifecycleResumeEffect
+import androidx.lifecycle.compose.LifecycleStartEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.paritytech.polkadotapp.common.presentation.formatters.time.LocalTimeFormatter
 import io.paritytech.polkadotapp.common.presentation.formatters.time.TimeFormatter
@@ -37,6 +38,7 @@ import io.paritytech.polkadotapp.feature_chats_api.presentation.model.*
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.ChatFeedContract
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.compose.components.ChatFeed
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.compose.components.ChatFeedToolbar
+import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.compose.components.ChatRoomUnavailableLine
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.compose.components.dialog.MessageActionMenuDropdown
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.compose.components.dialog.ReactionDetailsDialog
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.compose.components.input.ChatInputRow
@@ -80,6 +82,14 @@ fun ChatFeedScreen(contract: ChatFeedContract) {
         }
     }
 
+    LifecycleStartEffect(Unit) {
+        contract.onScreenStarted()
+
+        onStopOrDispose {
+            contract.onScreenStopped()
+        }
+    }
+
     LifecycleResumeEffect(Unit) {
         contract.setChatActive()
 
@@ -119,6 +129,7 @@ fun ChatFeedScreen(contract: ChatFeedContract) {
         onLoadOlderMessages = contract::onLoadOlderMessages,
         onLoadNewerMessages = contract::onLoadNewerMessages,
         onShowNewestMessages = contract::onShowNewestMessages,
+        onRetryRoom = contract::onRetryRoom,
         isActionMenuVisible = popupState is MessagePopUpUiState.ActionMenu,
         onMessageLongPress = { message, layoutInfo ->
             menuLayoutInfo = layoutInfo
@@ -190,6 +201,7 @@ private fun ChatFeedScreenInternal(
     onLoadOlderMessages: () -> Unit,
     onLoadNewerMessages: () -> Unit,
     onShowNewestMessages: () -> Unit,
+    onRetryRoom: () -> Unit,
     isActionMenuVisible: Boolean,
     onMessageLongPress: (ChatMessageUiModel, MessageLayoutInfo) -> Unit
 ) {
@@ -221,6 +233,10 @@ private fun ChatFeedScreenInternal(
                     onStartCallClick = onStartCallClick,
                     onMenuClick = onMenuClick,
                 )
+            }
+
+            if (chatMessagesLoadingState.dataOrNull?.readiness == ChatRoomReadinessUiState.UNAVAILABLE) {
+                ChatRoomUnavailableLine(modifier = Modifier.fillMaxWidth(), onRetry = onRetryRoom)
             }
 
             Box(
@@ -368,6 +384,7 @@ private fun ChatFeedPreview() {
                     onLoadOlderMessages = {},
                     onLoadNewerMessages = {},
                     onShowNewestMessages = {},
+                    onRetryRoom = {},
                     isActionMenuVisible = false,
                     onMessageLongPress = { _, _ -> }
                 )

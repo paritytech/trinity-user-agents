@@ -46,6 +46,7 @@ import io.paritytech.polkadotapp.feature_chats_impl.domain.error.asAttachmentErr
 import io.paritytech.polkadotapp.feature_chats_impl.domain.error.asChatRequestError
 import io.paritytech.polkadotapp.feature_chats_impl.domain.interactors.ChatFeedInteractor
 import io.paritytech.polkadotapp.feature_chats_impl.domain.models.ChatUserInputState
+import io.paritytech.polkadotapp.feature_chats_impl.domain.messageSource.ChatRoomReadiness
 import io.paritytech.polkadotapp.feature_chats_impl.domain.messageSource.ChatSourceActionOutcome
 import io.paritytech.polkadotapp.feature_chats_impl.domain.models.InitiateCallResult
 import io.paritytech.polkadotapp.feature_chats_impl.domain.roomPolicy.ChatRoomPolicy
@@ -93,7 +94,7 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.stateIn
-import kotlinx.coroutines.flow.take
+import kotlinx.coroutines.flow.transformWhile
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import timber.log.Timber
@@ -205,6 +206,8 @@ class ChatFeedViewModel @Inject constructor(
 
     private val paging = feedSnapshot.map { it.paging }.distinctUntilChanged()
 
+    private val readiness = feedSnapshot.map { it.readiness }.distinctUntilChanged()
+
     override val chatDisplay = combine(interactor.observeChatDisplay(openChatRequest), roomPolicy) { display, policy ->
         display.map { ChatDisplayUiModel(username = it.name, avatarModel = resourceResolver.roomAvatar(it.avatar, policy?.avatar)) }
     }
@@ -259,18 +262,14 @@ class ChatFeedViewModel @Inject constructor(
         chatInputStateType.toChatInputUiState(messageInput, answerProgress)
     }.stateIn(this, SharingStarted.Eagerly, ChatInputUiState.Hidden)
 
-    private val firstNewMessageInfo = messages
-        .take(1)
-        .map { messagesList ->
-            val index = messagesList.indexOfLast { it.isUnread() }.collectionIndexOrNull()
-
-            if (index != null) {
-                FirstNewMessageInfo(
-                    index = index,
-                    messageId = messagesList[index].id
-                )
-            } else null
+    // The "New messages" marker waits for the first page of a product-source room, so a cached page does not set it.
+    private val firstNewMessageInfo = combineToPair(messages, readiness)
+        .transformWhile { (messagesList, readiness) ->
+            val ready = readiness != ChatRoomReadiness.LOADING
+            emit(if (ready) messagesList.firstNewMessageInfo() else null)
+            !ready
         }
+        .distinctUntilChanged()
         .shareInBackground()
 
     private val unreadCounter = combine(
@@ -285,13 +284,15 @@ class ChatFeedViewModel @Inject constructor(
         firstNewMessageInfo,
         unreadCounter.distinctUntilChanged(),
         paging,
-    ) { messagesList, firstNewMessageInfo, unreadCounter, paging ->
+        readiness,
+    ) { messagesList, firstNewMessageInfo, unreadCounter, paging, readiness ->
         ChatMessagesState(
             messages = messagesList,
             unreadCounter = unreadCounter,
             firstNewMessageInfo = firstNewMessageInfo,
             olderPage = paging.older.toUi(),
             newerPage = paging.newer.toUi(),
+            readiness = readiness.toUi(),
         )
     }
         .withLoading()
@@ -418,6 +419,18 @@ class ChatFeedViewModel @Inject constructor(
                 }
             }
         }
+    }
+
+    override fun onScreenStarted() {
+        interactor.openRoom(chatId)
+    }
+
+    override fun onScreenStopped() {
+        interactor.closeRoom(chatId)
+    }
+
+    override fun onRetryRoom() {
+        interactor.retryRoom(chatId)
     }
 
     override fun setChatActive() {
@@ -852,6 +865,11 @@ class ChatFeedViewModel @Inject constructor(
     private fun MutableStateFlow<ChatSendMessageInputState>.updateInput(message: String) {
         update { it.copy(inputMessage = message.take(MAX_CHAT_MESSAGE_LENGTH)) }
     }
+}
+
+private fun List<ChatMessageUiModel>.firstNewMessageInfo(): FirstNewMessageInfo? {
+    val index = indexOfLast { it.isUnread() }.collectionIndexOrNull() ?: return null
+    return FirstNewMessageInfo(index = index, messageId = this[index].id)
 }
 
 private data class GatedMessages(

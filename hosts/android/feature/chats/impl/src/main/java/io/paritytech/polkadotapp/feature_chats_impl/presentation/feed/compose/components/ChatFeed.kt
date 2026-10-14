@@ -52,6 +52,7 @@ import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.compose.co
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.compose.components.separators.NewMessagesSeparator
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.ChatMessagesState
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.ChatPageEdgeUiState
+import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.ChatRoomReadinessUiState
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.EmptyRoomPlaceholder
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.utils.LocalChatFooterHeight
 import kotlinx.coroutines.flow.Flow
@@ -348,7 +349,9 @@ internal fun ChatFeed(
             showHeaderIfNeeded(headerRenderer = headerRenderer)
         }
 
-        val roomIsEmpty = chatMessagesState.messages.isEmpty() && chatMessagesState.olderPage == ChatPageEdgeUiState.END
+        val roomIsEmpty = chatMessagesState.messages.isEmpty() &&
+            chatMessagesState.olderPage == ChatPageEdgeUiState.END &&
+            chatMessagesState.readiness == ChatRoomReadinessUiState.READY
         if (emptyPlaceholder != null && roomIsEmpty) {
             EmptyRoomPlaceholderText(
                 modifier = Modifier

@@ -4,6 +4,7 @@ import androidx.compose.runtime.Immutable
 import io.paritytech.polkadotapp.feature_chats_api.presentation.model.ChatMessageUiModel
 import io.paritytech.polkadotapp.feature_chats_api.presentation.model.FirstNewMessageInfo
 import io.paritytech.polkadotapp.feature_chats_impl.domain.messageSource.ChatPagingState
+import io.paritytech.polkadotapp.feature_chats_impl.domain.messageSource.ChatRoomReadiness
 import kotlinx.collections.immutable.ImmutableList
 import kotlinx.collections.immutable.persistentListOf
 
@@ -16,7 +17,24 @@ data class ChatMessagesState(
     val olderPage: ChatPageEdgeUiState = ChatPageEdgeUiState.END,
     /** What the feed can load below the newest message. */
     val newerPage: ChatPageEdgeUiState = ChatPageEdgeUiState.END,
+    val readiness: ChatRoomReadinessUiState = ChatRoomReadinessUiState.READY,
 )
+
+/** Whether the product of a product-source room answers. A room that the host keeps is always [READY]. */
+enum class ChatRoomReadinessUiState {
+    /** The first page is on its way. */
+    LOADING,
+    READY,
+
+    /** The product does not answer. The feed keeps the cached messages and offers a retry. */
+    UNAVAILABLE,
+}
+
+fun ChatRoomReadiness.toUi(): ChatRoomReadinessUiState = when (this) {
+    ChatRoomReadiness.LOADING -> ChatRoomReadinessUiState.LOADING
+    ChatRoomReadiness.READY -> ChatRoomReadinessUiState.READY
+    ChatRoomReadiness.UNAVAILABLE -> ChatRoomReadinessUiState.UNAVAILABLE
+}
 
 /** One end of the loaded messages of a room. A room that the host keeps is complete, so both ends are [END]. */
 enum class ChatPageEdgeUiState {
