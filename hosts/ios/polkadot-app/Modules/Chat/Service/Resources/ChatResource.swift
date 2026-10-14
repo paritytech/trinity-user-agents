@@ -10,10 +10,16 @@ enum ChatResource: Hashable, Sendable {
     case preimage(key: Data)
     case address(URL)
 
-    /// Reads a v1 resource string. Only an inline image or an `https` URL is a resource.
+    /// Reads a resource string: an inline image, an `https` URL, or a preimage key that a Chat Extension v2
+    /// product body keeps (see ``preimageSource(key:)``).
     init?(source: String) {
         if let inline = InlineDataURL(source) {
             self = .inline(mimeType: inline.mimeType, data: inline.data)
+            return
+        }
+
+        if let key = Self.preimageKey(source: source) {
+            self = .preimage(key: key)
             return
         }
 
@@ -22,6 +28,40 @@ enum ChatResource: Hashable, Sendable {
         }
 
         self = .address(url)
+    }
+}
+
+extension ChatResource {
+    private static let preimageScheme = "preimage:"
+
+    /// The source string of a preimage key: `preimage:` and the key in lowercase hex.
+    static func preimageSource(key: Data) -> String {
+        preimageScheme + key.map { String(format: "%02x", $0) }.joined()
+    }
+
+    private static func preimageKey(source: String) -> Data? {
+        guard source.hasPrefix(preimageScheme) else { return nil }
+
+        let hex = Array(source.dropFirst(preimageScheme.count).utf8)
+        guard !hex.isEmpty, hex.count.isMultiple(of: 2) else { return nil }
+
+        var key = Data(capacity: hex.count / 2)
+        for index in stride(from: 0, to: hex.count, by: 2) {
+            guard let high = nibble(hex[index]), let low = nibble(hex[index + 1]) else {
+                return nil
+            }
+            key.append(high << 4 | low)
+        }
+        return key
+    }
+
+    private static func nibble(_ character: UInt8) -> UInt8? {
+        switch character {
+        case UInt8(ascii: "0") ... UInt8(ascii: "9"): character - UInt8(ascii: "0")
+        case UInt8(ascii: "a") ... UInt8(ascii: "f"): character - UInt8(ascii: "a") + 10
+        case UInt8(ascii: "A") ... UInt8(ascii: "F"): character - UInt8(ascii: "A") + 10
+        default: nil
+        }
     }
 }
 

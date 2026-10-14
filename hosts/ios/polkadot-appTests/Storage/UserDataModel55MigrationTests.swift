@@ -61,10 +61,27 @@ final class UserDataModel55MigrationTests {
             ongoing: true
         )
         try await save(Chat.RoomDescriptionUpdate(chatId: chatId, description: "Weekly game", avatar: .none), facade)
-        try await save(Chat.RoomConfigUpdate(chatId: chatId, config: Data([1])), facade)
-        try await save(Chat.RoomConfigUpdate(chatId: chatId, config: Data([2])), facade)
+        let config = Chat.RoomConfig(
+            productSource: false,
+            reactionDetails: true,
+            participants: false,
+            messageActions: false,
+            participantActions: false,
+            allowedReactions: ["👍"],
+            placeholder: "Say hi",
+            reportSeen: true
+        )
+        let rules = Chat.RoomToolbarAction(
+            actionId: "rules",
+            label: "Rules",
+            icon: .preimage(key: Data(repeating: 7, count: 32)),
+            handler: .callback
+        )
+        let toolbar = [rules]
+        try await save(Chat.RoomConfigUpdate(chatId: chatId, config: .hostDefault), facade)
+        try await save(Chat.RoomConfigUpdate(chatId: chatId, config: config), facade)
         try await save(Chat.RoomPreviewUpdate(chatId: chatId, preview: preview), facade)
-        try await save(Chat.RoomListUpdate(chatId: chatId, kind: .toolbar, value: Data([7])), facade)
+        try await save(Chat.RoomToolbarUpdate(chatId: chatId, actions: toolbar), facade)
 
         let stored = try await facade.makeRepo(mapper: ChatRoomDeclarationsMapper())
             .fetchAllOperation(with: RepositoryFetchOptions())
@@ -73,10 +90,10 @@ final class UserDataModel55MigrationTests {
         #expect(declarations == Chat.RoomDeclarations(
             description: "Weekly game",
             avatar: .none,
-            config: Data([2]),
+            config: config,
             configGeneration: 2,
             preview: preview,
-            toolbar: Data([7]),
+            toolbar: toolbar,
             suggestions: nil,
             commands: nil,
             footerConfig: nil

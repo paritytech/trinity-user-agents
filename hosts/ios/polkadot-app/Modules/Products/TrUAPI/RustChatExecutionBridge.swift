@@ -8,11 +8,19 @@ import TrUAPIHost
 /// `ChatHostBridge` callbacks against the product's chat binding.
 final class RustChatExecutionBridge: RustProductExecutionBridge, ChatHostBridge, @unchecked Sendable {
     private let chatMessaging: any ProductChatMessaging
-    // The base class keeps `dependencies` private; hold on to the logger here.
+    private let feedListeners: ProductFeedListeners
+    // The base class keeps `dependencies` private; hold on to what this bridge reads here.
+    private let productId: ProductId
     private let logger: LoggerProtocol
 
-    init(dependencies: Dependencies, chatMessaging: any ProductChatMessaging) {
+    init(
+        dependencies: Dependencies,
+        chatMessaging: any ProductChatMessaging,
+        feedListeners: ProductFeedListeners = .shared
+    ) {
         self.chatMessaging = chatMessaging
+        self.feedListeners = feedListeners
+        productId = dependencies.productId
         logger = dependencies.logger
         super.init(dependencies: dependencies)
     }
@@ -62,15 +70,11 @@ final class RustChatExecutionBridge: RustProductExecutionBridge, ChatHostBridge,
             throw HostRejection.Rejected(reason: "a chat room needs an id")
         }
 
-        // The input settings of a v2 footer and a product drawn footer wait for P6.6.
-        let roomFooter: Chat.RoomFooter =
-            switch footer {
-            case .input: .textInput
-            case .empty: .empty
-            case .custom:
-                throw HostRejection.Rejected(reason: "this host does not draw a custom chat footer")
-            }
-        try await chatMessaging.setRoomFooter(roomId: roomId, footer: roomFooter)
+        // A footer that the product draws waits for P6.6.
+        if case .custom = footer {
+            throw HostRejection.Rejected(reason: "this host does not draw a custom chat footer")
+        }
+        try await chatMessaging.setRoomFooterConfig(roomId: roomId, footer: Chat.RoomFooterConfig(footer))
     }
 
     func listRooms() async throws -> [ChatRoom] {
@@ -81,6 +85,106 @@ final class RustChatExecutionBridge: RustProductExecutionBridge, ChatHostBridge,
             return rooms.map { $0.toChatRoom() }
         }
         return []
+    }
+
+    // MARK: - Chat Extension v2
+
+    // The core checked that the product hosts each room and screened every value. A room that is gone by now
+    // answers `ChatRoomError.unknownRoom`, which the product receives as the reason of a rejection.
+
+    func roomConfig(roomId: String) async throws -> ChatRoomConfig {
+        try await chatMessaging.roomDeclarations(roomId: requireRoomId(roomId)).effectiveConfig.wireValue
+    }
+
+    func setRoomConfig(roomId: String, config: ChatRoomConfig) async throws {
+        logger.debug("[truapi:chat-bridge] setRoomConfig \(roomId)")
+        try await chatMessaging.setRoomConfig(roomId: requireRoomId(roomId), config: Chat.RoomConfig(config))
+    }
+
+    func setRoomMetadata(roomId: String, metadata: ChatRoomMetadata) async throws {
+        logger.debug("[truapi:chat-bridge] setRoomMetadata \(roomId)")
+        try await chatMessaging.setRoomMetadata(
+            roomId: requireRoomId(roomId),
+            name: metadata.name,
+            description: metadata.description,
+            avatar: metadata.avatarImage
+        )
+    }
+
+    func setRoomPreview(roomId: String, preview: ChatRoomPreview) async throws {
+        try await chatMessaging.setRoomPreview(roomId: requireRoomId(roomId), preview: Chat.RoomPreview(preview))
+    }
+
+    /// A delete of a room is idempotent: a room that is gone already is not an error.
+    func deleteRoom(roomId: String) async throws {
+        logger.debug("[truapi:chat-bridge] deleteRoom \(roomId)")
+        do {
+            try await chatMessaging.deleteRoom(roomId: requireRoomId(roomId))
+        } catch ChatRoomError.unknownRoom {
+            logger.debug("[truapi:chat-bridge] deleteRoom \(roomId): no such room")
+        }
+    }
+
+    /// The core reads the configuration of the room and sets `persist` for a room that the host stores. For a
+    /// room that the product keeps, only an open room screen takes the update.
+    func updateFeed(roomId: String, update: ChatFeedUpdate, persist: Bool) async throws {
+        guard let roomId = roomId.nilIfEmpty else {
+            throw NativeChatFeedRejection.Rejected(reason: "a chat room needs an id")
+        }
+
+        guard persist else {
+            let chatId = Chat.Id.chatExtension(productId, roomId: roomId)
+            if await !feedListeners.deliver(update, roomId: roomId, to: chatId) {
+                logger.debug("[truapi:chat-bridge] updateFeed \(roomId): no open room takes it")
+            }
+            return
+        }
+
+        do {
+            try await chatMessaging.applyFeedUpdate(roomId: roomId, update: Chat.ProductFeedUpdate(update))
+        } catch let error as Chat.ProductFeedError {
+            throw error.rejection
+        } catch let ChatRoomError.unknownRoom(roomId) {
+            throw NativeChatFeedRejection.Rejected(reason: "no chat room \(roomId)")
+        }
+    }
+
+    func setRoomToolbar(roomId: String, actions: [ChatToolbarAction]) async throws {
+        try await chatMessaging.setRoomToolbar(
+            roomId: requireRoomId(roomId),
+            actions: actions.map(Chat.RoomToolbarAction.init)
+        )
+    }
+
+    func setRoomSuggestions(roomId: String, suggestions: [ChatSuggestion]) async throws {
+        try await chatMessaging.setRoomSuggestions(
+            roomId: requireRoomId(roomId),
+            suggestions: suggestions.map(Chat.RoomSuggestion.init)
+        )
+    }
+
+    func setRoomCommands(roomId: String, commands: [ChatCommandSpec]) async throws {
+        try await chatMessaging.setRoomCommands(
+            roomId: requireRoomId(roomId),
+            commands: commands.map(Chat.RoomCommand.init)
+        )
+    }
+
+    func setRoomActivity(roomId: String, activity: ChatActivity?) async throws {
+        try await chatMessaging.setRoomActivity(
+            roomId: requireRoomId(roomId),
+            activity: activity.map(Chat.RoomActivity.init)
+        )
+    }
+}
+
+private extension RustChatExecutionBridge {
+    /// The core never sends an empty room id. The check keeps a broken call away from the chat store.
+    func requireRoomId(_ roomId: String) throws -> String {
+        guard let roomId = roomId.nilIfEmpty else {
+            throw HostRejection.Rejected(reason: "a chat room needs an id")
+        }
+        return roomId
     }
 }
 

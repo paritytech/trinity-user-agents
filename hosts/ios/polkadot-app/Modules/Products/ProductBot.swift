@@ -18,6 +18,7 @@ final class ProductBot: ChatExtensionBot {
     private let description: String?
     private let runtime: ChatRuntimeProtocol
     private let resolveImage: WidgetImageResolver
+    private let rooms: ProductRoomReading
     private let logger: LoggerProtocol
 
     private var initTask: Task<Void, Never>?
@@ -35,12 +36,14 @@ final class ProductBot: ChatExtensionBot {
         description: String?,
         runtime: ChatRuntimeProtocol,
         resolveImage: WidgetImageResolver,
+        rooms: ProductRoomReading = ProductRoomReader(storageFacade: UserDataStorageFacade.shared),
         logger: LoggerProtocol = Logger.shared
     ) {
         self.product = product
         self.description = description
         self.runtime = runtime
         self.resolveImage = resolveImage
+        self.rooms = rooms
         self.logger = logger
     }
 
@@ -53,21 +56,31 @@ final class ProductBot: ChatExtensionBot {
 
     // MARK: - ChatExtensionBot
 
+    /// Each message that the user saves in a room is an action of the user: a post, a reply, an edit or a
+    /// reaction. The product receives it as an event (02-DESIGN §5.4, P4.3).
+    override func process(
+        message: Chat.LocalMessage,
+        lastProcessingOutcome: ChatExtension.ProcessingHistoryOutcome,
+        context _: ChatExtensionProcessingContextProtocol
+    ) async -> ChatExtension.ProcessingResult {
+        guard
+            lastProcessingOutcome == .firstEncounter,
+            message.origin == .user,
+            let event = ProductChatUserEvent(userMessage: message) else {
+            return .skipped
+        }
+
+        await publish(event, in: message.chatId)
+        return .processed
+    }
+
+    /// `process(message:)` takes every user message, so the base class never asks for the text alone.
     override func onTextMessage(
         _ message: Chat.LocalMessage,
         text: String,
         context _: ChatExtensionProcessingContextProtocol
     ) async -> ChatExtension.ProcessingResult {
-        do {
-            try await runtime.onUserMessage(text: text, roomId: message.chatId.roomId)
-        } catch TrUAPIChatHandler.ChatSeamError.notStarted {
-            // Driven before `start` opened the execution — an ordering issue, not
-            // a product failure.
-            logger.debug("User message not forwarded: the runtime has not started")
-        } catch {
-            logger.error("Failed to forward user message to script: \(error)")
-        }
-
+        await publish(.messagePosted(messageId: message.messageId, text: text, replyTo: nil), in: message.chatId)
         return .processed
     }
 
@@ -83,16 +96,71 @@ final class ProductBot: ChatExtensionBot {
 // MARK: - ChatCommandHandling
 
 extension ProductBot: ChatCommandHandling {
+    /// Only a command that the room declares goes to the product. Any other `/text` is a message
+    /// (02-DESIGN §13 item 12).
     func handle(command: Chat.Command, roomId: String?) async -> Bool {
-        await runtime.dispatchCommand(command, roomId: roomId)
+        guard
+            let roomId,
+            let commands = await rooms.declarations(of: chatId(roomId))?.commands,
+            commands.contains(where: { $0.name == command.name }) else {
+            return false
+        }
+
+        return await runtime.dispatchCommand(command, roomId: roomId)
     }
 }
 
 // MARK: - ChatUserDeletionHandling
 
 extension ProductBot: ChatUserDeletionHandling {
-    func userDeleted(messageId: Chat.MessageId, roomId _: String?) async {
-        logger.debug("UserDeleted for \(messageId) waits for the V2 chat event binding (P2.10)")
+    func userDeleted(messageId: Chat.MessageId, roomId: String?) async {
+        let chatId = Chat.Id.chatExtension(identifier, roomId: roomId)
+        await publish(.deleted(messageId: Chat.ProductMessageId.product(messageId, in: chatId)), in: chatId)
+    }
+}
+
+// MARK: - ChatUserSeenHandling
+
+extension ProductBot: ChatUserSeenHandling {
+    /// The product gets the newest message that the user saw, when the room asks for it (`report_seen`).
+    func userSaw(messageIds: Set<Chat.MessageId>, roomId: String?) async {
+        guard let roomId else { return }
+
+        let chatId = chatId(roomId)
+        guard
+            await rooms.declarations(of: chatId)?.effectiveConfig.reportSeen == true,
+            let newest = await rooms.newestMessageId(among: messageIds, in: chatId) else {
+            return
+        }
+
+        await publish(.seen(messageId: Chat.ProductMessageId.product(newest, in: chatId)), in: chatId)
+    }
+}
+
+// MARK: - User events
+
+private extension ProductBot {
+    func chatId(_ roomId: String) -> Chat.Id {
+        .chatExtension(identifier, roomId: roomId)
+    }
+
+    /// In a room whose product keeps the messages, these actions go to `user_action` and not to
+    /// `action_subscribe` (02-DESIGN §13 item 11), so the bot sends no event for them.
+    func publish(_ event: ProductChatUserEvent, in chatId: Chat.Id) async {
+        if await rooms.declarations(of: chatId)?.effectiveConfig.productSource == true {
+            logger.debug("No user event for a room whose product keeps the messages")
+            return
+        }
+
+        do {
+            try await runtime.publishUserEvent(event, roomId: chatId.roomId)
+        } catch TrUAPIChatHandler.ChatSeamError.notStarted {
+            // Driven before `start` opened the execution — an ordering issue, not
+            // a product failure.
+            logger.debug("User event not forwarded: the runtime has not started")
+        } catch {
+            logger.error("Failed to forward a user event to the product: \(error)")
+        }
     }
 }
 

@@ -437,9 +437,8 @@ struct ProductMessageSourceTests {
         let source = makeSource(ScriptedProductChatQuerying())
         await open(source)
 
-        source.apply(roomId: "other", update: .new(productMessage(1)))
-        source.apply(roomId: roomId, update: .new(productMessage(2)))
-        await waitUntil { await !source.snapshot.messages.isEmpty }
+        await source.apply(roomId: "other", update: .new(productMessage(1)))
+        await source.apply(roomId: roomId, update: .new(productMessage(2)))
 
         #expect(await source.snapshot.messages.map(\.messageId) == ["m2"])
     }

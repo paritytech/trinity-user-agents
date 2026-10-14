@@ -120,15 +120,6 @@ extension ProductMessageSource {
         )
         await cache.store(entry, productId: productId, roomId: roomId)
     }
-
-    func startFeed() {
-        let updates = feedUpdates
-        feedTask = Task { [weak self] in
-            for await update in updates {
-                await self?.apply(update)
-            }
-        }
-    }
 }
 
 // MARK: - Snapshot

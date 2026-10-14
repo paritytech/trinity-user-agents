@@ -46,8 +46,8 @@ struct RustChatExecutionBridgeTests {
         let input = ChatInputConfig(placeholder: nil, photo: true, video: true, file: false, payment: nil)
         try await bridge.setRoomFooter(roomId: "r", footer: .input(input))
 
-        #expect(api.roomFooters.map(\.footer) == [.empty, .textInput])
-        #expect(api.roomFooters.map(\.roomId) == ["r", "r"])
+        #expect(api.footerConfigs.map(\.footer) == [.empty, .input(.hostDefault)])
+        #expect(api.footerConfigs.map(\.roomId) == ["r", "r"])
         await #expect(throws: HostRejection.self) {
             try await bridge.setRoomFooter(roomId: "r", footer: .custom)
         }
@@ -60,7 +60,7 @@ struct RustChatExecutionBridgeTests {
         await #expect(throws: HostRejection.self) {
             try await bridge.setRoomFooter(roomId: "", footer: .empty)
         }
-        #expect(api.roomFooters.isEmpty)
+        #expect(api.footerConfigs.isEmpty)
     }
 
     @Test func postMessageForwardsTextAndCustom() async throws {

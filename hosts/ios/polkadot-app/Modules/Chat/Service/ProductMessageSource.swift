@@ -52,9 +52,6 @@ actor ProductMessageSource: ChatMessageSourcing, ProductFeedListening {
     let logger: LoggerProtocol
 
     let subject: AsyncCurrentValueSubject<MessageListSnapshot>
-    let feedUpdates: AsyncStream<ChatFeedUpdate>
-    let feedContinuation: AsyncStream<ChatFeedUpdate>.Continuation
-    var feedTask: Task<Void, Never>?
     var firstPageTask: Task<Void, Never>?
     var olderTask: Task<ChatPageOutcome, Never>?
     var newerTask: Task<ChatPageOutcome, Never>?
@@ -103,12 +100,9 @@ actor ProductMessageSource: ChatMessageSourcing, ProductFeedListening {
             paging: ChatPagingState(older: .loading, newer: .end),
             readiness: .loading
         ))
-        (feedUpdates, feedContinuation) = AsyncStream.makeStream()
     }
 
     deinit {
-        feedContinuation.finish()
-        feedTask?.cancel()
         firstPageTask?.cancel()
         olderTask?.cancel()
         newerTask?.cancel()
@@ -116,12 +110,12 @@ actor ProductMessageSource: ChatMessageSourcing, ProductFeedListening {
 
     // MARK: - ProductFeedListening
 
-    nonisolated func apply(roomId: String, update: ChatFeedUpdate) {
+    func apply(roomId: String, update: ChatFeedUpdate) async {
         guard roomId == self.roomId else {
             return
         }
 
-        feedContinuation.yield(update)
+        apply(update)
     }
 
     // MARK: - ChatMessageSourcing
@@ -143,7 +137,6 @@ actor ProductMessageSource: ChatMessageSourcing, ProductFeedListening {
         }
 
         started = true
-        startFeed()
 
         if let entry = await cache.entry(productId: productId, roomId: roomId) {
             restore(from: entry)

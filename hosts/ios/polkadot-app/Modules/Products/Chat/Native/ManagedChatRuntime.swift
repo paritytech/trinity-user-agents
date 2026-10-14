@@ -103,6 +103,16 @@ final class ManagedChatRuntime: ChatRuntimeProtocol, @unchecked Sendable {
         false
     }
 
+    /// The native runtime has the events of the first version only. A posted message reaches the product as
+    /// its text, as before, and the runtime drops every other event.
+    func publishUserEvent(_ event: ProductChatUserEvent, roomId: String?) async throws {
+        guard case let .messagePosted(_, text, _) = event else {
+            return
+        }
+
+        try await onUserMessage(text: text, roomId: roomId)
+    }
+
     @MainActor
     func attach(presentationView view: ControllerBackedProtocol) {
         Task { [weak self] in

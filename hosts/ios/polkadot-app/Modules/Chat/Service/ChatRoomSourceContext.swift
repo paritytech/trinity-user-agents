@@ -7,20 +7,20 @@ struct ProductRoomServices: Sendable {
     /// shows "unavailable".
     let querying: ProductChatQuerying?
     let lifecycle: ChatRoomLifecycle
-    let feedRegistry: ProductFeedListenerRegistry
+    let feedListeners: ProductFeedListeners
     let cache: ProductMessageCaching
     let settings: ProductMessageSource.Settings
 
     init(
         querying: ProductChatQuerying?,
         lifecycle: ChatRoomLifecycle = NoChatRoomLifecycle(),
-        feedRegistry: ProductFeedListenerRegistry = .shared,
+        feedListeners: ProductFeedListeners = .shared,
         cache: ProductMessageCaching = ProductMessageCache.shared,
         settings: ProductMessageSource.Settings = .init()
     ) {
         self.querying = querying
         self.lifecycle = lifecycle
-        self.feedRegistry = feedRegistry
+        self.feedListeners = feedListeners
         self.cache = cache
         self.settings = settings
     }
@@ -45,7 +45,7 @@ actor ChatRoomSourceContext {
 
     private var resolution: Task<ChatMessageSourcing, Never>?
     private var productSource: ProductMessageSource?
-    private var registration: ProductFeedRegistration?
+    private var registration: ProductFeedListeners.Registration?
     private var isOpen = false
 
     init(
@@ -131,7 +131,7 @@ private extension ChatRoomSourceContext {
             settings: settings,
             logger: logger
         )
-        registration = services.feedRegistry.register(source, productId: productId, roomId: roomId)
+        registration = services.feedListeners.register(source, for: chatId)
         productSource = source
         return source
     }

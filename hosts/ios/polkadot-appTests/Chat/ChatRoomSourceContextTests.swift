@@ -30,18 +30,16 @@ struct ChatRoomSourceContextTests {
     }
 
     @Test func theProductSourceListensToTheFeedOfItsRoom() async throws {
-        let registry = ProductFeedListenerRegistry()
-        let context = makeContext(policy: policy(store: .product), feedRegistry: registry)
+        let listeners = ProductFeedListeners()
+        let context = makeContext(policy: policy(store: .product), feedListeners: listeners)
         let source = try #require(await context.source() as? ProductMessageSource)
         await source.start()
         await source.waitForFirstPage()
 
-        #expect(registry.apply(productId: "product.dot", roomId: "lobby", update: .new(message("m1"))))
-        #expect(!registry.apply(productId: "product.dot", roomId: "other", update: .new(message("m2"))))
+        let other = Chat.Id.chatExtension("product.dot", roomId: "other")
+        #expect(await listeners.deliver(.new(message("m1")), roomId: "lobby", to: chatId))
+        #expect(await !listeners.deliver(.new(message("m2")), roomId: "other", to: other))
 
-        for _ in 0 ..< 500 where await source.snapshot.messages.isEmpty {
-            try await Task.sleep(for: .milliseconds(2))
-        }
         #expect(await source.snapshot.messages.map(\.messageId) == ["m1"])
     }
 
@@ -77,7 +75,7 @@ private extension ChatRoomSourceContextTests {
         chatId: Chat.Id? = nil,
         policy: ChatRoomPolicy,
         lifecycle: ChatRoomLifecycle = NoChatRoomLifecycle(),
-        feedRegistry: ProductFeedListenerRegistry = ProductFeedListenerRegistry()
+        feedListeners: ProductFeedListeners = ProductFeedListeners()
     ) -> ChatRoomSourceContext {
         let chatId = chatId ?? self.chatId
         let messageRepository: AnyDataProviderRepository<Chat.LocalMessage> = AnyDataProviderRepository(
@@ -121,7 +119,7 @@ private extension ChatRoomSourceContextTests {
             services: ProductRoomServices(
                 querying: ScriptedProductChatQuerying(),
                 lifecycle: lifecycle,
-                feedRegistry: feedRegistry,
+                feedListeners: feedListeners,
                 cache: ProductMessageCache(),
                 settings: .init(retryDelay: .milliseconds(1))
             ),

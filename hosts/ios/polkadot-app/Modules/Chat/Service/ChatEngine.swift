@@ -242,6 +242,11 @@ extension ChatEngine: ChatEngineProtocol {
 
     func markAsSeen(messageIds: Set<Chat.MessageId>) async throws {
         _ = try await sourceContext.source().perform(.markSeen(messageIds))
+
+        // A product-source room reports `Seen` through `user_action` from its source (02-DESIGN §13 item 11).
+        if await messageStore() == .host {
+            await reportSeen(messageIds)
+        }
     }
 
     func chatMetadataStream() -> AnyAsyncSequence<ChatMetadata?> {
