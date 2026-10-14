@@ -24,6 +24,8 @@ struct FundingActivityStatusTests {
     func aReleasedWithdrawalStaysInFlightUntilItsPayoutIsReported() {
         #expect(FundingStatus.preparingPayout.isInFlight)
         #expect(FundingStatus.convertingTo(asset: "USDT").isInFlight)
+        #expect(FundingStatus.retryingPayout.isInFlight)
+        #expect(FundingStatus.retryingPayout.isDelayed)
         #expect(!FundingStatus.sent.isInFlight)
         #expect(!FundingStatus.payoutFailed(refunded: nil).isInFlight)
     }

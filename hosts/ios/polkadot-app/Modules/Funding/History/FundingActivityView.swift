@@ -250,6 +250,7 @@ private extension FundingActivityRow {
         case .waitingForDeposit: String(localized: .Funding.activityWaitingDeposit)
         case .convertingToCash: String(localized: .Funding.activityConverting(symbol: cash.symbol))
         case .retrying: String(localized: .Funding.activityRetrying)
+        case .retryingPayout: String(localized: .Funding.activityRetryingPayout)
         case .takingLonger: String(localized: .Funding.activityDelayed)
         case .transactionInitiated: String(localized: .Funding.activityInitiated)
         case .preparingPayout: String(localized: .Funding.activityPreparingPayout)

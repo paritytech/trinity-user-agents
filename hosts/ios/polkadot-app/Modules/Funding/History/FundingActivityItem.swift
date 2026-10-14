@@ -78,6 +78,7 @@ extension FundingStatus {
              .convertingTo,
              .preparingPayout,
              .retrying,
+             .retryingPayout,
              .takingLonger:
             true
         case .toppedUp,
@@ -93,6 +94,7 @@ extension FundingStatus {
     var isDelayed: Bool {
         switch self {
         case .retrying,
+             .retryingPayout,
              .takingLonger:
             true
         default:
