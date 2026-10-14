@@ -84,7 +84,8 @@ The App calls no `Chat` method: `Chat` is a Worker service.
 
 ### The Worker
 
-At start the Worker does, in order, before its first `await`:
+At start the Worker does, in order, before its first `await` (the state load starts first, so that a query the client
+kept for a handler, which the client gives during the registration, waits for the state):
 
 1. Registers a handler for each of the six queries (`messages_query`, `user_action`, `reactions_query`,
    `participants_query`, `message_actions_query`, `participant_actions_query`) and `Renderer::render`.
