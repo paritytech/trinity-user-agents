@@ -208,3 +208,7 @@ final class RecordingProductRoomView: ChatProductRoomViewProtocol {
         failures.append(message)
     }
 }
+
+extension RecordingProductRoomWireframe {
+    func showParticipants(of _: ChatProductRoomPresenter, from _: ControllerBackedProtocol?) {}
+}

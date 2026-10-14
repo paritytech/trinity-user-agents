@@ -73,7 +73,7 @@ extension ChatMessageEntityMapper: CoreDataMapperProtocol {
 
         let order = UInt64(bitPattern: entity.order)
 
-        return Chat.LocalMessage(
+        var message = Chat.LocalMessage(
             messageId: messageId,
             chatId: chatId,
             origin: origin,
@@ -86,6 +86,8 @@ extension ChatMessageEntityMapper: CoreDataMapperProtocol {
             relatedMessages: relatedMessages,
             order: order
         )
+        message.authorParticipantId = entity.originParticipantId
+        return message
     }
 
     func populate(

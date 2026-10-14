@@ -81,11 +81,12 @@ extension ChatViewModelFactory: ChatViewModelMaking {
         actions: ChatViewModelActions,
         footerConfiguration: (any HashableContentConfiguration)?
     ) -> ChatViewLayout.ViewModel {
-        MainActor.assumeIsolated {
+        let headerMetadata = MainActor.assumeIsolated {
             productRoom?.update(listModel: model, metadata: metadata)
+            return productRoomHeaderMetadata(metadata.chatMetadata)
         }
 
-        let headerConfiguration = metadata.chatMetadata.chatContactInfo(
+        let headerConfiguration = headerMetadata.chatContactInfo(
             iconViewModelFactory: flowState.iconViewModelFactory
         )
 
@@ -247,14 +248,14 @@ private extension ChatViewModelFactory {
             let layoutContext = layoutContexts[message.messageId] ?? .standard
 
             result.append(
-                contentsOf: convert(
+                contentsOf: addingAuthor(of: message, to: convert(
                     message,
                     listModel: model,
                     metadata: metadata,
                     actions: actions,
                     reactions: reactions,
                     layoutContext: layoutContext
-                )
+                ))
             )
         }
 

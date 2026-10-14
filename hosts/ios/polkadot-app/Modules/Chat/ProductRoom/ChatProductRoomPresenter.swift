@@ -24,6 +24,9 @@ final class ChatProductRoomPresenter {
     let logger: LoggerProtocol
 
     private(set) var policy: ChatRoomPolicy?
+    /// The participants that the room screen knows, shared by the header, the bubbles and the list.
+    let participants: ChatParticipantDirectory
+    private(set) var appearanceFactory: ChatParticipantAppearanceFactory
     /// The messages of the window that the room screen shows, by id.
     private(set) var messages: [Chat.MessageId: Chat.LocalMessage] = [:]
     private var icons: [ChatResource: UIImage] = [:]
@@ -35,7 +38,7 @@ final class ChatProductRoomPresenter {
         resolver: ChatResourceResolving = ChatResourceResolver.shared,
         logger: LoggerProtocol = Logger.shared
     ) {
-        guard let roomId = chatId.roomId else {
+        guard case let .chatExtension(productId, roomId?) = chatId else {
             return nil
         }
 
@@ -45,10 +48,23 @@ final class ChatProductRoomPresenter {
         self.wireframe = wireframe
         self.resolver = resolver
         self.logger = logger
+
+        participants = ChatParticipantDirectory(roomId: roomId, room: room, logger: logger)
+        appearanceFactory = ChatParticipantAppearanceFactory(
+            myUsername: "",
+            productName: productId,
+            productId: productId
+        )
+        participants.onChange = { [weak self] in self?.onChange?() }
     }
 
     /// The view model factory gives the room that it draws. The call never asks to draw again.
     func update(listModel: MessageListModel, metadata: MessageListMetadata) {
+        appearanceFactory = ChatParticipantAppearanceFactory(
+            myUsername: metadata.myUsername,
+            productName: metadata.peerName,
+            productId: appearanceFactory.productId
+        )
         update(policy: metadata.chatMetadata.roomPolicy, messages: listModel.allMessages)
     }
 
@@ -57,9 +73,14 @@ final class ChatProductRoomPresenter {
         self.policy = policy
         self.messages = Dictionary(messages.map { ($0.messageId, $0) }, uniquingKeysWith: { _, newest in newest })
 
-        if previous?.toolbarActions != policy?.toolbarActions || previous == nil {
+        let participantsChanged = previous?.productQueries.contains(.participants)
+            != policy?.productQueries.contains(.participants)
+
+        if previous?.toolbarActions != policy?.toolbarActions || previous == nil || participantsChanged {
             provideToolbar()
         }
+
+        loadParticipantsIfDeclared()
     }
 
     /// The id under which the product knows a message of the room.

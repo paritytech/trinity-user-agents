@@ -11,6 +11,9 @@ protocol ChatProductRoomWireframing: AnyObject {
     /// Opens a link of a product action: a `polkadot:` link through the link pipeline of the app, an `https` link
     /// in the in-app browser, and any other link through the system.
     func openProductLink(_ url: URL, from view: ControllerBackedProtocol?)
+
+    /// Shows the participant list of a product room (P6.3).
+    func showParticipants(of productRoom: ChatProductRoomPresenter, from view: ControllerBackedProtocol?)
 }
 
 extension ChatWireframe: ChatProductRoomWireframing {
@@ -27,6 +30,14 @@ extension ChatWireframe: ChatProductRoomWireframing {
         )
 
         present(viewModel: viewModel, style: .alert, from: view)
+    }
+
+    func showParticipants(of productRoom: ChatProductRoomPresenter, from view: ControllerBackedProtocol?) {
+        let participantsView = ChatParticipantsViewFactory.createView(
+            productRoom: productRoom,
+            iconViewModelFactory: flowState.flowState.iconViewModelFactory
+        )
+        view?.controller.navigationController?.pushViewController(participantsView.controller, animated: true)
     }
 
     func openProductLink(_ url: URL, from view: ControllerBackedProtocol?) {

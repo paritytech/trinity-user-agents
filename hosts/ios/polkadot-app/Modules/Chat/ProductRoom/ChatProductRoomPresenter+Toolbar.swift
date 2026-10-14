@@ -36,11 +36,12 @@ extension ChatProductRoomPresenter {
         perform(action.handler, event: .toolbarActionTriggered(actionId: action.actionId))
     }
 
-    /// The bar items, the trailing item first: the inline buttons, then one overflow button with a menu.
+    /// The bar items, the trailing item first: the inline buttons, then one overflow button with a menu. The
+    /// participants button of the host goes after the buttons of the product.
     func toolbarItems(_ actions: [Chat.RoomToolbarAction], icons: [String: UIImage]) -> [UIBarButtonItem] {
         let (inline, overflow) = ChatToolbarLayout.split(actions)
 
-        var items: [UIBarButtonItem] = []
+        var items: [UIBarButtonItem] = participantsButton().map { [$0] } ?? []
         if !overflow.isEmpty {
             let entries = overflow.map { action in
                 UIAction(title: action.label, image: icons[action.actionId]) { [weak self] _ in

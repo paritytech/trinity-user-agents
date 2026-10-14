@@ -17,7 +17,7 @@ extension ChatMessage {
             ? .outgoing(status.outgoingStatus)
             : .incoming(isUnread ? .new : .seen)
 
-        return Chat.LocalMessage(
+        var message = Chat.LocalMessage(
             messageId: messageId,
             chatId: chatId,
             origin: isFromUser ? .user : .chatExtension(extensionId),
@@ -29,6 +29,11 @@ extension ChatMessage {
             compactionId: nil,
             relatedMessages: []
         )
+
+        if !isFromUser, origin.participantId != Chat.ProductParticipant.product {
+            message.authorParticipantId = origin.participantId
+        }
+        return message
     }
 
     var isFromUser: Bool {
