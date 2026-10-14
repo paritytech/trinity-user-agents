@@ -34,7 +34,6 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageReact
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageReactionContent
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatVariant
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.Contact
-import io.paritytech.polkadotapp.feature_chats_api.domain.model.MessageRevision
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.OpenChatRequest
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.contactOrNull
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.isOutgoing
@@ -60,6 +59,10 @@ import io.paritytech.polkadotapp.feature_chats_impl.domain.chatDisplay.ChatDispl
 import io.paritytech.polkadotapp.feature_chats_impl.domain.chatRequest.IncomingChatRequestProcessor
 import io.paritytech.polkadotapp.feature_chats_impl.domain.error.ChatRequestError
 import io.paritytech.polkadotapp.feature_chats_impl.domain.hop.FileUpload
+import io.paritytech.polkadotapp.feature_chats_impl.domain.messageSource.ChatFeedSnapshot
+import io.paritytech.polkadotapp.feature_chats_impl.domain.messageSource.ChatPageOutcome
+import io.paritytech.polkadotapp.feature_chats_impl.domain.messageSource.ChatRoomSourceContext
+import io.paritytech.polkadotapp.feature_chats_impl.domain.messageSource.ChatRoomSourceContextFactory
 import io.paritytech.polkadotapp.feature_chats_impl.domain.models.ChatDisplay
 import io.paritytech.polkadotapp.feature_chats_impl.domain.models.ChatUserInputState
 import io.paritytech.polkadotapp.feature_chats_impl.domain.models.InitiateCallResult
@@ -70,10 +73,13 @@ import io.paritytech.polkadotapp.feature_chats_impl.domain.roomPolicy.ChatRoomPo
 import io.paritytech.polkadotapp.feature_chats_impl.domain.roomPolicy.ChatRoomPolicyProvider
 import io.paritytech.polkadotapp.feature_chats_impl.domain.roomPolicy.ProductRoomUserActions
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.emitAll
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
+import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
 import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.flow.flowOf as flowOfValue
@@ -104,7 +110,10 @@ class ChatFeedInteractor @Inject internal constructor(
     private val hopNodeUrlProvider: HopNodeUrlProvider,
     private val roomPolicyProvider: ChatRoomPolicyProvider,
     private val productRoomUserActions: ProductRoomUserActions,
+    private val roomSourceContextFactory: ChatRoomSourceContextFactory,
 ) {
+    private val roomSources = ConcurrentHashMap<ChatId, ChatRoomSourceContext>()
+
     fun initiateCall(chatId: ChatId, callerName: String, withVideo: Boolean): InitiateCallResult {
         val activeCall = callStateTracker.getActiveCall()
 
@@ -141,10 +150,6 @@ class ChatFeedInteractor @Inject internal constructor(
     suspend fun getHeaderRendererForChat(chatId: ChatId): CustomChatHeaderRenderer? =
         chatEngine.getHeaderRendererForChat(chatId)
 
-    fun subscribeChatReactions(chatId: ChatId): Flow<Map<ChatMessageId, List<ChatMessageReaction>>> {
-        return chatEngine.subscribeReactions(chatId)
-    }
-
     suspend fun getMessageOriginDisplayResolver(request: OpenChatRequest): MessageOriginDisplayResolver {
         return when (request) {
             is OpenChatRequest.ExistingChat -> chatEngine.originDisplayResolver(request.chatId)
@@ -180,7 +185,22 @@ class ChatFeedInteractor @Inject internal constructor(
         )
     }
 
-    fun subscribeMessages(chatId: ChatId) = chatEngine.subscribeMessagesFeed(chatId)
+    /** The window of messages of the room, from the host database or from the product (02-DESIGN §8.3). */
+    fun subscribeMessages(chatId: ChatId): Flow<ChatFeedSnapshot> = flow {
+        emitAll(roomSource(chatId).source().observeSnapshots())
+    }
+
+    suspend fun loadOlderMessages(chatId: ChatId): ChatPageOutcome = roomSource(chatId).source().loadOlder()
+
+    suspend fun loadNewerMessages(chatId: ChatId): ChatPageOutcome = roomSource(chatId).source().loadNewer()
+
+    /** Pages until the message is in the window. False when the room has no such message. */
+    suspend fun jumpToMessage(chatId: ChatId, messageId: ChatMessageId): Boolean = roomSource(chatId).source().jump(messageId)
+
+    /** Stops the source of the room and closes the room when it is open. Call it when the room screen goes away. */
+    fun releaseRoom(chatId: ChatId) {
+        roomSources.remove(chatId)?.release()
+    }
 
     suspend fun sendTextMessage(
         chatId: ChatId,
@@ -262,12 +282,15 @@ class ChatFeedInteractor @Inject internal constructor(
     }
 
     /**
-     * Holds the worker of a product room while the room screen shows it, and tells the product. Call
-     * [closeRoom] once for each [openRoom] that succeeds. A person chat holds nothing.
+     * Holds the worker of a product room while the room screen shows it, and tells the product. A room that
+     * cannot open shows "unavailable". A person chat holds nothing. The open and close calls keep their order.
      */
-    suspend fun openRoom(chatId: ChatId): Result<Unit> = chatEngine.roomLifecycle(chatId).open(chatId)
+    fun openRoom(chatId: ChatId) = roomSource(chatId).open()
 
-    suspend fun closeRoom(chatId: ChatId) = chatEngine.roomLifecycle(chatId).close(chatId)
+    fun closeRoom(chatId: ChatId) = roomSource(chatId).close()
+
+    /** Opens the room again when the last open failed, then asks the product for the newest page. */
+    fun retryRoom(chatId: ChatId) = roomSource(chatId).retry()
 
     /** The page and user-action queries of a room whose messages the product keeps, or null without a product. */
     suspend fun roomQuerying(chatId: ChatId): ProductChatQuerying? = chatEngine.roomQuerying(chatId)
@@ -344,10 +367,6 @@ class ChatFeedInteractor @Inject internal constructor(
         tryNotifyPeerLeftChat(chatId)
 
         return deleteContactChatLocalData(chatId)
-    }
-
-    fun subscribeRevisions(chatId: ChatId): Flow<Map<ChatMessageId, MessageRevision>> {
-        return chatEngine.subscribeRevisions(chatId)
     }
 
     suspend fun sendEdit(chatId: ChatId, messageId: ChatMessageId, newText: String) {
@@ -465,6 +484,9 @@ class ChatFeedInteractor @Inject internal constructor(
 
     suspend fun retryProductRoomMessage(chatId: ChatId, messageId: ChatMessageId): Result<Unit> =
         productRoomUserActions.retry(chatId, messageId)
+
+    private fun roomSource(chatId: ChatId): ChatRoomSourceContext =
+        roomSources.computeIfAbsent(chatId) { roomSourceContextFactory.create(it) }
 
     companion object {
         private val LEFT_CHAT_SENT_TIMEOUT = 15.seconds

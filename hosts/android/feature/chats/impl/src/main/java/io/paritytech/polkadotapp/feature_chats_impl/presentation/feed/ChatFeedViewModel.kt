@@ -53,6 +53,7 @@ import io.paritytech.polkadotapp.feature_chats_impl.presentation.error.BusyInAno
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.error.toPresentationError
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.draft.ChatDraftController
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.mappers.ChatMessageUiMapper
+import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.mappers.toUi
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.ChatDisplayUiModel
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.ChatInputUiState
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.ChatMenuState
@@ -135,9 +136,16 @@ class ChatFeedViewModel @Inject constructor(
     private val originDisplayResolver = flowOf { interactor.getMessageOriginDisplayResolver(openChatRequest) }
         .shareInBackground()
 
-    private val reactions = interactor.subscribeChatReactions(chatId).shareInBackground()
+    private val feedSnapshot = interactor.subscribeMessages(chatId).shareInBackground()
 
-    private val revisions = interactor.subscribeRevisions(chatId).shareInBackground()
+    private val reactions = feedSnapshot.map { it.reactions }.distinctUntilChanged().shareInBackground()
+
+    private val revisions = feedSnapshot.map { it.revisions }.distinctUntilChanged().shareInBackground()
+
+    private val statusOverrides = feedSnapshot
+        .map { snapshot -> snapshot.productStatuses.mapValues { (_, status) -> status.toUi() } }
+        .distinctUntilChanged()
+        .shareInBackground()
 
     private val customMessageRenderers = flowOf { interactor.getCustomMessageRenderersForChat(chatId) }
 
@@ -147,7 +155,7 @@ class ChatFeedViewModel @Inject constructor(
     private val revealedUpTo = MutableStateFlow<Timestamp?>(null)
 
     private val gatedDomainMessages = combine(
-        interactor.subscribeMessages(chatId),
+        feedSnapshot.map { it.messages },
         animatesMessageReveal,
         revealedUpTo,
     ) { domainMessages, animates, revealed ->
@@ -169,12 +177,12 @@ class ChatFeedViewModel @Inject constructor(
             gatedDomainMessages.map { it.visibleMessages },
             callStateTracker.observeActiveCall().map { state -> state?.takeIf { it.chatId == chatId } }
         ),
-        reactions,
+        combineToPair(reactions, statusOverrides),
         originDisplayResolver,
         revisions,
         customMessageRenderers
-    ) { (messages, activeCall), reactions, originDisplayResolver, revisionsMap, customMessageRenderers ->
-        messageUiMapper.map(messages, originDisplayResolver, reactions, revisionsMap, customMessageRenderers, activeCall)
+    ) { (messages, activeCall), (reactions, statusOverrides), originDisplayResolver, revisionsMap, customMessageRenderers ->
+        messageUiMapper.map(messages, originDisplayResolver, reactions, revisionsMap, customMessageRenderers, activeCall, statusOverrides)
     }.shareInBackground()
 
     override val chatDisplay = combine(interactor.observeChatDisplay(openChatRequest), roomPolicy) { display, policy ->
@@ -289,6 +297,7 @@ class ChatFeedViewModel @Inject constructor(
 
     override fun onCleared() {
         interactor.setChatInactive()
+        interactor.releaseRoom(chatId)
         draftController.flush()
         super.onCleared()
     }
@@ -306,7 +315,7 @@ class ChatFeedViewModel @Inject constructor(
         revealedUpTo.value = message.timestamp
         interactor.setLastRevealedTimestamp(chatId, message.timestamp)
 
-        val allRevealed = interactor.subscribeMessages(chatId).first().none { it.timestamp > message.timestamp && it.animatesReveal }
+        val allRevealed = feedSnapshot.first().messages.none { it.timestamp > message.timestamp && it.animatesReveal }
         if (allRevealed) scrollToPosition.emit(NEWEST_MESSAGE_POSITION)
     }
 

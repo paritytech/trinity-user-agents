@@ -46,7 +46,9 @@ class ChatMessageUiMapper @Inject constructor(
         reactions: Map<ChatMessageId, List<ChatMessageReaction>>,
         revisions: Map<ChatMessageId, MessageRevision>,
         customMessageRenderers: Map<String, CustomChatMessageRenderer<*>> = emptyMap(),
-        activeCall: ActiveCallState? = null
+        activeCall: ActiveCallState? = null,
+        /** The ticks that a product gave to the messages of the user. They replace the ticks of the host status. */
+        statusOverrides: Map<ChatMessageId, ChatMessageUiModel.Status> = emptyMap(),
     ): ImmutableList<ChatMessageUiModel> {
         val messagesById: Map<String, ChatMessage> = messages.associateBy { it.id }
         val callContext = buildCallResolutionContext(messages, activeCall)
@@ -75,7 +77,8 @@ class ChatMessageUiMapper @Inject constructor(
                 originDisplayResolver = originDisplayResolver,
                 messageReactions = messageReactions,
                 customMessageRenderers = customMessageRenderers,
-                callContext = callContext
+                callContext = callContext,
+                statusOverride = statusOverrides[message.id],
             )
         }.toImmutableList()
     }
@@ -159,10 +162,11 @@ class ChatMessageUiMapper @Inject constructor(
         originDisplayResolver: MessageOriginDisplayResolver,
         messageReactions: ImmutableList<ChatMessageUiModel.Reaction>,
         customMessageRenderers: Map<String, CustomChatMessageRenderer<*>>,
-        callContext: CallResolutionContext
+        callContext: CallResolutionContext,
+        statusOverride: ChatMessageUiModel.Status?,
     ): ChatMessageUiModel? {
         val direction = direction.toUi()
-        val status = status.toUi()
+        val status = statusOverride ?: status.toUi()
 
         return when (latestContent) {
             is ChatMessage.Content.Text -> mapText(
