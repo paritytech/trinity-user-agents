@@ -10,13 +10,37 @@
           "mode": "CARD",
           "directions": ["In", "Out"],
           "assets": ["EUR"],
-          "countries": ["AT", "BE", "CH", "DE", "ES", "FR", "GB", "IE", "IT", "NL", "PT"]
+          "countries": [
+            "AT",
+            "BE",
+            "CH",
+            "DE",
+            "ES",
+            "FR",
+            "GB",
+            "IE",
+            "IT",
+            "NL",
+            "PT"
+          ]
         },
         {
           "mode": "BANK",
           "directions": ["In", "Out"],
           "assets": ["EUR"],
-          "countries": ["AT", "BE", "CH", "DE", "ES", "FR", "GB", "IE", "IT", "NL", "PT"]
+          "countries": [
+            "AT",
+            "BE",
+            "CH",
+            "DE",
+            "ES",
+            "FR",
+            "GB",
+            "IE",
+            "IT",
+            "NL",
+            "PT"
+          ]
         },
         {
           "mode": "CRYPTO",

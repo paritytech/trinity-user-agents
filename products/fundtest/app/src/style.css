@@ -32,7 +32,11 @@ body {
   padding: 24px 16px;
   background: var(--bg);
   color: var(--text);
-  font: 16px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
+  font:
+    16px/1.45 system-ui,
+    -apple-system,
+    "Segoe UI",
+    sans-serif;
 }
 
 main {
