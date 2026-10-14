@@ -186,6 +186,9 @@ pub enum FundingStatus {
 	/// Outbound card or bank, after release: the provider prepares the
 	/// payout.
 	PreparingPayout,
+	/// Outbound, after release: a payout attempt failed and the provider
+	/// is trying again.
+	RetryingPayout,
 	/// Inbound: the provider is retrying, with another top-up after one
 	/// claimed only part of the amount.
 	Retrying,
@@ -530,6 +533,9 @@ impl FundingSession {
 		if self.progress_retrying() {
 			return FundingStatus::Retrying;
 		}
+		if self.payout_retrying() {
+			return FundingStatus::RetryingPayout;
+		}
 		if self.longer_at_ms().is_some_and(|at_ms| now_ms >= at_ms) {
 			return FundingStatus::TakingLonger;
 		}
@@ -570,6 +576,18 @@ impl FundingSession {
 		!self.is_terminal() && self.top_up_ids().len() > 1
 	}
 
+	/// Whether the provider's latest word on a released withdrawal's payout,
+	/// with none reported yet, is that it is retrying it.
+	fn payout_retrying(&self) -> bool {
+		matches!(self.stage, FundingStage::Released { .. }) &&
+			self.payout().is_none() &&
+			self.updates.iter().rev().find_map(|record| match record.update {
+				FundingUpdate::Converting => Some(false),
+				FundingUpdate::PayoutRetrying => Some(true),
+				_ => None,
+			}) == Some(true)
+	}
+
 	/// What `field` reads from the provider's most recent update it reads
 	/// anything from.
 	fn latest<T: Clone>(&self, field: impl Fn(&FundingUpdate) -> Option<&T>) -> Option<T> {
@@ -592,9 +610,13 @@ impl FundingSession {
 		if self.provider_id.as_deref() != Some(provider_id) {
 			return Err(HostFundingReportError::NotFound);
 		}
-		if matches!(update, FundingUpdate::Payout { .. } | FundingUpdate::Refunding { .. }) ||
-			(matches!(update, FundingUpdate::Converting) &&
-				self.direction == FundingDirection::Out)
+		if matches!(
+			update,
+			FundingUpdate::Payout { .. } |
+				FundingUpdate::Refunding { .. } |
+				FundingUpdate::PayoutRetrying
+		) || (matches!(update, FundingUpdate::Converting) &&
+			self.direction == FundingDirection::Out)
 		{
 			if !self.is_terminal() {
 				return Err(HostFundingReportError::OutOfOrder);
@@ -640,10 +662,10 @@ impl FundingSession {
 	}
 
 	/// Store what the provider reports about paying the user out of a
-	/// released outbound session: that it is converting, then the payout
-	/// outcome, each once, and after a failed payout the top-up refunding
-	/// it, once. The host is handed the session again, as what it recorded
-	/// no longer holds.
+	/// released outbound session: that it is converting, once, that it is
+	/// retrying the payout, any number of times, then the payout outcome,
+	/// once, and after a failed payout the top-up refunding it, once. The host is handed the
+	/// session again, as what it recorded no longer holds.
 	fn report_after_release(
 		&mut self,
 		update: FundingUpdate,
@@ -975,7 +997,8 @@ fn update_rank(update: &FundingUpdate) -> Option<u8> {
 		FundingUpdate::Deposit { .. } |
 		FundingUpdate::Details { .. } |
 		FundingUpdate::Payout { .. } |
-		FundingUpdate::Refunding { .. } => return None,
+		FundingUpdate::Refunding { .. } |
+		FundingUpdate::PayoutRetrying => return None,
 	})
 }
 
@@ -1707,6 +1730,61 @@ mod tests {
 				Err(HostFundingReportError::NotFound),
 			)
 		);
+	}
+
+	// A provider retrying a payout says so as often as it tries again, only
+	// between the release and the outcome; the session shows it is retrying
+	// until the provider converts again or reports how the payout went.
+	#[test]
+	fn a_released_withdrawal_takes_payout_retries_until_the_outcome() {
+		let mut out = chosen(FundingDirection::Out, FundingRail::Bank);
+		let retrying = || FundingUpdate::PayoutRetrying;
+		let early = out.report(PROVIDER, retrying(), |id| *id, NOW + 1);
+		report_at(
+			&mut out,
+			FundingUpdate::Collecting { payment_id: [2; 32], amount: 100 },
+			NOW + 1,
+		);
+		assert!(out.settle(100, NOW + 2));
+		let preparing = out.status(NOW + 2);
+		let first = out.report(PROVIDER, retrying(), |id| *id, NOW + 3);
+		let after_first = out.status(NOW + 3);
+		let again = out.report(PROVIDER, retrying(), |id| *id, NOW + 4);
+		let converting = out.report(PROVIDER, FundingUpdate::Converting, |id| *id, NOW + 5);
+		let after_converting = out.status(NOW + 5);
+		let after_conversion = out.report(PROVIDER, retrying(), |id| *id, NOW + 6);
+		let retrying_again = out.status(NOW + 6);
+		let paid_out = out.report(
+			PROVIDER,
+			FundingUpdate::Payout { outcome: FundingPayout::PaidOut },
+			|id| *id,
+			NOW + 7,
+		);
+		let late = out.report(PROVIDER, retrying(), |id| *id, NOW + 8);
+
+		assert_eq!(
+			(early, first, again, converting, after_conversion, paid_out, late),
+			(
+				Err(HostFundingReportError::OutOfOrder),
+				Ok(()),
+				Ok(()),
+				Ok(()),
+				Ok(()),
+				Ok(()),
+				Err(HostFundingReportError::OutOfOrder),
+			)
+		);
+		assert_eq!(
+			(preparing, after_first, after_converting, retrying_again, out.status(NOW + 8)),
+			(
+				FundingStatus::PreparingPayout,
+				FundingStatus::RetryingPayout,
+				FundingStatus::PreparingPayout,
+				FundingStatus::RetryingPayout,
+				FundingStatus::Sent,
+			)
+		);
+		assert_eq!(out.expires_at(), None);
 	}
 
 	// The provider's references can come at any point, even while funds

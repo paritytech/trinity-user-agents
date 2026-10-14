@@ -849,6 +849,13 @@ impl SigningHostRuntime {
 			.map(|session| session.progress(crate::unix_time::current_unix_millis()))
 	}
 
+	/// Whether a provider still works on any funding session. A host that
+	/// remembers it starts funding at its next launch, so the providers carry
+	/// on from their last checkpoint without waiting for a product.
+	pub fn funding_in_progress(&self) -> bool {
+		self.services.funding().in_progress()
+	}
+
 	/// Every funding session the core keeps, in flight first, then ended,
 	/// each newest first.
 	pub fn funding_sessions(&self) -> Vec<crate::host_logic::funding::FundingSession> {

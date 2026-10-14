@@ -302,6 +302,12 @@ impl NativeTrUApiHostRuntime {
 		self.runtime.funding_progress(&intent)
 	}
 
+	/// Whether a provider still works on any funding session; the host keeps
+	/// the answer to start funding at its next launch.
+	pub fn funding_in_progress(&self) -> bool {
+		self.runtime.funding_in_progress()
+	}
+
 	/// Every funding session the core keeps, in flight first, then ended,
 	/// each newest first.
 	pub fn funding_sessions(&self) -> Vec<crate::host_logic::funding::FundingSession> {

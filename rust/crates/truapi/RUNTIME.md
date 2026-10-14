@@ -400,8 +400,12 @@ AutoSigning without approval. Legacy-account signing still asks the user.
   Defined in `truapi_provider::platform` so the provider implements them
   without linking the runtime, and re-exported here.
 - `AuthPresenter`: render core-owned auth state transitions.
-- `UserConfirmation`: confirm signing, transaction, resource, alias, and
-  preimage actions before the core asks the paired wallet.
+- `UserConfirmation`: confirm signing, transaction, resource and alias
+  actions before the core asks the paired wallet. `preimage.submit` raises
+  no per-upload confirmation: the `PreimageSubmit` permission authorizes it.
+  `AllowAlways` covers every upload; `AllowOnce` covers a single upload.
+  Allocating or renewing the Bulletin allowance may still ask the paired
+  wallet.
 - `ThemeHost`: stream the host theme into the runtime.
 - `PreimageHost`: submit and look up preimages through the host-selected backend.
 - `ChatPlatform`: create product-scoped native chat rooms, register product
@@ -504,7 +508,8 @@ AutoSigning without approval. Legacy-account signing still asks the user.
   It is `retrying` once the provider names a second top-up after a partial
   claim. After an outbound session is released the provider reports
   `Converting` once as it prepares the payout and then
-  `Payout { PaidOut | Failed }` once; the outcome shows as the session's
+  `Payout { PaidOut | Failed }` once, and in between `PayoutRetrying` each
+  time a payout attempt fails and it tries again; the outcome shows as the session's
   `payout`, beside the `Released` outcome, and either before the release is
   out of order. After a failed payout the provider gives the user's CASH
   back with a `payment.topUp`, recorded on that session (the provider's one
@@ -515,7 +520,8 @@ AutoSigning without approval. Legacy-account signing still asks the user.
   The progress carries one `status` for the host to word: in flight by rail
   (`WaitingForTransfer`, `WaitingForPayment`, `WaitingForDeposit`, then
   `ConvertingToCash`; out, `TransactionInitiated`, then after release
-  `ConvertingTo { asset }` on crypto or `PreparingPayout`), `Retrying`, and
+  `ConvertingTo { asset }` on crypto or `PreparingPayout`, and `RetryingPayout`
+  while the provider's latest word is that it retries the payout), `Retrying`, and
   `TakingLonger` once the provider has been silent for longer than the
   chosen quote's `eta_secs` (`longer_at_ms` says when, so the host reads the
   progress again then); ended, `ToppedUp`, `Sent`, `Refunded`,
