@@ -41,7 +41,8 @@ fun ChatMessage.toLocal(
         content = contentData,
         chatId = chatId.toLocal(),
         replyToMessageId = replyToMessageId,
-        isInternal = content.isInternal()
+        isInternal = content.isInternal(),
+        originParticipantId = originParticipantId,
     )
 }
 
@@ -72,7 +73,8 @@ fun ChatMessageLocal.toDomain(
         origin = origin.toDomain(),
         content = content.toDomain(customContentDecoder),
         status = status.toDomain(),
-        replyToMessageId = replyToMessageId
+        replyToMessageId = replyToMessageId,
+        originParticipantId = originParticipantId,
     )
 }
 

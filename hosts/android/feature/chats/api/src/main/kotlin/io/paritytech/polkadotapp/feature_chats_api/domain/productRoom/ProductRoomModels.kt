@@ -103,6 +103,9 @@ sealed interface ProductFeedUpdateModel {
     data class StatusChanged(val messageId: String, val status: ProductMessageStatusModel) : ProductFeedUpdateModel
 }
 
+/** The room does not exist, or another extension owns it. */
+class UnknownChatRoomException : Exception("the chat room does not exist")
+
 /** Why the host refuses a feed update for a room that it stores (`NativeChatFeedRejection`). */
 sealed class ProductFeedRejection(message: String) : Exception(message) {
     class UnknownRoom : ProductFeedRejection("the room does not exist")

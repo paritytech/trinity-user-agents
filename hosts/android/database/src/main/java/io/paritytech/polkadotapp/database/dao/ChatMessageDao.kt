@@ -102,7 +102,8 @@ abstract class ChatMessageDao {
         searchableContent = searchableContent,
         content = content,
         replyToMessageId = replyToMessageId,
-        isInternal = isInternal
+        isInternal = isInternal,
+        originParticipantId = originParticipantId,
     )
 
     private suspend fun getSortOrders(messageIds: List<String>): Map<String, Long> {
