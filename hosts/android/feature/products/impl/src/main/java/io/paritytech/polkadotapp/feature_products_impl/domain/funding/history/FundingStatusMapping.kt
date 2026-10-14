@@ -4,11 +4,10 @@ import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingActi
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingActivityStep
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.toReason
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.toBalance
-import uniffi.truapi.FundingDirection
 import uniffi.truapi.FundingStatus
 
-/** The CASH card's line for the status the core gives a session in [direction]. */
-internal fun FundingStatus.toActivityStatus(direction: FundingDirection): FundingActivityStatus = when (this) {
+/** The CASH card's line for the status the core gives a session. */
+internal fun FundingStatus.toActivityStatus(): FundingActivityStatus = when (this) {
     FundingStatus.WaitingForPayment -> inProgress(FundingActivityStep.WaitingForPayment)
     FundingStatus.WaitingForTransfer -> inProgress(FundingActivityStep.WaitingForTransfer)
     FundingStatus.WaitingForDeposit -> inProgress(FundingActivityStep.WaitingForDeposit)
@@ -16,9 +15,8 @@ internal fun FundingStatus.toActivityStatus(direction: FundingDirection): Fundin
     FundingStatus.TransactionInitiated -> inProgress(FundingActivityStep.TransactionInitiated)
     is FundingStatus.ConvertingTo -> inProgress(FundingActivityStep.ConvertingOut(asset))
     FundingStatus.PreparingPayout -> inProgress(FundingActivityStep.PreparingPayout)
-    FundingStatus.Retrying -> inProgress(
-        if (direction == FundingDirection.OUT) FundingActivityStep.RetryingPayout else FundingActivityStep.Retrying,
-    )
+    FundingStatus.Retrying -> inProgress(FundingActivityStep.Retrying)
+    FundingStatus.RetryingPayout -> inProgress(FundingActivityStep.RetryingPayout)
 
     FundingStatus.TakingLonger -> inProgress(FundingActivityStep.TakingLonger)
     FundingStatus.ToppedUp -> FundingActivityStatus.ToppedUp

@@ -92,7 +92,8 @@ class FundingActivityCenterTest {
     fun `the line in flight is the core's status`() = runBlocking {
         serve(
             session("longer", FundingDirection.IN, FundingStage.Open) to progress(FundingStatus.TakingLonger),
-            session("retrying", FundingDirection.OUT, FundingStage.Open) to progress(FundingStatus.Retrying),
+            session("retrying", FundingDirection.IN, FundingStage.Open) to progress(FundingStatus.Retrying),
+            session("payout", FundingDirection.OUT, FundingStage.Open) to progress(FundingStatus.RetryingPayout),
             session("failed", FundingDirection.IN, FundingStage.Failed(FundingFailure.Declined, settledAtMs = 1uL)) to
                 progress(FundingStatus.Failed(FundingFailure.Declined)),
         )
@@ -100,7 +101,11 @@ class FundingActivityCenterTest {
         val activity = center.observe().first()
 
         assertEquals(
-            mapOf("longer" to FundingActivityStep.TakingLonger, "retrying" to FundingActivityStep.RetryingPayout),
+            mapOf(
+                "longer" to FundingActivityStep.TakingLonger,
+                "retrying" to FundingActivityStep.Retrying,
+                "payout" to FundingActivityStep.RetryingPayout,
+            ),
             activity.inFlight.associate { it.id to (it.status as FundingActivityStatus.InProgress).step },
         )
         assertEquals(listOf(FundingActivityStatus.Failed(FundingFailureReason.Declined)), activity.history.map { it.status })

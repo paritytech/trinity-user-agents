@@ -103,7 +103,7 @@ class FundingActivityCenter @Inject constructor(
 
     /** The row of a session the core still has in progress, or `null` once its status is final. */
     private fun inFlightItem(session: FundingSession, progress: FundingProgress?): FundingActivityItem? {
-        val status = progress?.status?.toActivityStatus(session.direction) as? FundingActivityStatus.InProgress ?: return null
+        val status = progress?.status?.toActivityStatus() as? FundingActivityStatus.InProgress ?: return null
         val choice = session.choice
         val inbound = session.direction == FundingDirection.IN
         val debited = (session.stage as? FundingStage.Released)?.debited
