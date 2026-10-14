@@ -59,10 +59,15 @@ private extension ChatInteractor {
 
             do {
                 let metadataStream = engine.chatMetadataStream()
+                var hasShownChat = false
                 for try await chatMetadata in metadataStream {
                     if let chatMetadata {
+                        hasShownChat = true
                         let metadata = MessageListMetadata(chatMetadata: chatMetadata, myUsername: currentUsername)
                         await self?.presenter?.didReceive(metadata: metadata)
+                    } else if hasShownChat, self?.isProductRoom == true {
+                        await self?.presenter?.didRemoveChat()
+                        hasShownChat = false
                     }
                 }
             } catch {
@@ -357,6 +362,11 @@ extension ChatInteractor: ChatInteractorInputProtocol {
 }
 
 private extension ChatInteractor {
+    /// A leave or a block of a person chat dismisses the screen on its own path.
+    var isProductRoom: Bool {
+        chatId.roomId != nil
+    }
+
     /// A product room takes `/name arguments` as a command event instead of a posted message.
     func sentAsCommand(
         text: String?,

@@ -4,6 +4,7 @@ import Foundation
 protocol ChatResourceCaching: Sendable {
     func data(for key: String) async -> Data?
     func store(_ data: Data, for key: String) async
+    func remove(for key: String) async
 }
 
 /// Keeps resource bytes in one directory and removes the least recently read files when the directory
@@ -37,6 +38,10 @@ actor ChatResourceDiskCache: ChatResourceCaching {
         } catch {
             return
         }
+    }
+
+    func remove(for key: String) {
+        try? fileManager.removeItem(at: fileURL(for: key))
     }
 }
 

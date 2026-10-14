@@ -152,6 +152,10 @@ extension ChatPresenter: ChatInteractorOutputProtocol {
     func didDeclineChatRequest() {
         wireframe.dismissChat(from: view)
     }
+
+    func didRemoveChat() {
+        wireframe.dismissChat(from: view)
+    }
 }
 
 private extension ChatPresenter {

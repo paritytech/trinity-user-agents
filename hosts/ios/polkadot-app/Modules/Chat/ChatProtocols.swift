@@ -71,6 +71,9 @@ protocol ChatInteractorOutputProtocol: AnyObject {
     func didBlockUser()
 
     func didDeclineChatRequest()
+
+    /// The chat of the screen went away, for example because its product deleted the room.
+    func didRemoveChat()
 }
 
 @MainActor
