@@ -400,8 +400,12 @@ AutoSigning without approval. Legacy-account signing still asks the user.
   Defined in `truapi_provider::platform` so the provider implements them
   without linking the runtime, and re-exported here.
 - `AuthPresenter`: render core-owned auth state transitions.
-- `UserConfirmation`: confirm signing, transaction, resource, alias, and
-  preimage actions before the core asks the paired wallet.
+- `UserConfirmation`: confirm signing, transaction, resource and alias
+  actions before the core asks the paired wallet. `preimage.submit` raises
+  no per-upload confirmation: the `PreimageSubmit` permission authorizes it.
+  `AllowAlways` covers every upload; `AllowOnce` covers a single upload.
+  Allocating or renewing the Bulletin allowance may still ask the paired
+  wallet.
 - `ThemeHost`: stream the host theme into the runtime.
 - `PreimageHost`: submit and look up preimages through the host-selected backend.
 - `ChatPlatform`: create product-scoped native chat rooms, register product
