@@ -43,6 +43,42 @@ extension ChatViewModelFactory {
         return .init(context.messageId, configuration)
     }
 
+    func productActionsConfiguration(
+        _ productActions: Chat.LocalMessage.Content.ProductActions,
+        context: ProductBodyRenderContext
+    ) -> IdentifiableAnyContentConfiguration<ChatViewLayout.ItemIdentifierType> {
+        let text = productActions.text?.nilIfEmpty
+        let messageId = context.messageId
+        let processAction = context.actions?.processAction
+
+        let view = ChatActionsMessageView(
+            text: text.map { AttributedString($0) },
+            buttons: productActions.buttons.map { .init(id: $0.actionId, title: $0.title) },
+            layout: productActions.layout == .grid ? .grid : .column,
+            onPress: { actionId in
+                processAction?(.productButton(messageId: messageId, actionId: actionId))
+            }
+        )
+
+        var configuration = ChatMessageContainerConfiguration(
+            innerContent: SwiftUIContentConfiguration(view: view),
+            side: .leading,
+            bubbleColor: .bgSurfaceContainer,
+            canReply: false,
+            contentInsets: .zero,
+            layoutType: context.layoutContext.layoutType,
+            identifier: ChatActionsMessageView.reuseIdentifier
+        )
+
+        if let text, let actions = context.actions {
+            configuration.setActions { [actions] in
+                [UIAction.chatCopy { actions.copy(text) }]
+            }
+        }
+
+        return .init(messageId, configuration)
+    }
+
     func productFileConfiguration(
         _ file: Chat.LocalMessage.Content.ProductFile,
         context: ProductBodyRenderContext

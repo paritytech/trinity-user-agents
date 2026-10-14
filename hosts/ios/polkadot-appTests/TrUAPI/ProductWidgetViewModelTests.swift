@@ -60,6 +60,9 @@ private final class ScriptedRenderRuntime: ChatRuntimeProtocol, @unchecked Senda
         actionId _: String,
         payload _: String?
     ) async {}
+
+    func dispatchActionTrigger(roomId _: String?, messageId _: String, actionId _: String) async {}
+    func dispatchCommand(_: Chat.Command, roomId _: String?) async -> Bool { false }
     @MainActor func attach(presentationView _: ControllerBackedProtocol) {}
     func dispose() async {}
 }

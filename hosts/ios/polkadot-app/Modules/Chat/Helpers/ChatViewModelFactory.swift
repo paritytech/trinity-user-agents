@@ -537,8 +537,9 @@ private extension ChatViewModelFactory {
             productMediaConfiguration(richText, context: context)
         case let .file(file):
             productFileConfiguration(file, context: context)
-        case .richText,
-             .actions:
+        case let .actions(productActions):
+            productActionsConfiguration(productActions, context: context)
+        case .richText:
             textMessageConfiguration(
                 messageId: context.messageId,
                 text: body.text ?? "",

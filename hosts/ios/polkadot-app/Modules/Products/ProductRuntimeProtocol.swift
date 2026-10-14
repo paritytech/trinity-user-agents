@@ -36,6 +36,10 @@ protocol ChatRuntimeProtocol: ProductRuntimeProtocol {
         actionId: String,
         payload: String?
     ) async
+    /// Reports a press on a button that the host drew for a product `Actions` message.
+    func dispatchActionTrigger(roomId: String?, messageId: String, actionId: String) async
+    /// Gives true when the runtime sent the command to the product, so the host must not post the text.
+    func dispatchCommand(_ command: Chat.Command, roomId: String?) async -> Bool
     @MainActor func attach(presentationView: ControllerBackedProtocol)
 }
 
