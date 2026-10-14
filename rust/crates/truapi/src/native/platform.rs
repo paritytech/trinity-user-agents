@@ -26,6 +26,7 @@ use super::{
 	},
 	errors::HostRejection,
 	events::NativeEventBus,
+	subscribers::Subscribers,
 };
 
 /// [`crate::platform::ContactsPlatform`] served by host-provided
@@ -709,58 +710,6 @@ impl crate::platform::FundingPlatform for FundingCallbackPlatform {
 	}
 }
 
-/// One subscription to a host-pushed status.
-struct Follower<S> {
-	/// Tells this subscription apart from others on the same id.
-	subscription: u64,
-	sender: mpsc::UnboundedSender<S>,
-}
-
-/// Who follows which host-pushed value, per key.
-struct Followers<K, S> {
-	next: u64,
-	by_key: std::collections::HashMap<K, Vec<Follower<S>>>,
-}
-
-impl<K, S> Default for Followers<K, S> {
-	fn default() -> Self {
-		Self { next: 0, by_key: std::collections::HashMap::new() }
-	}
-}
-
-impl<K: Eq + std::hash::Hash, S: Clone> Followers<K, S> {
-	/// Follow `key` through `sender`, forgetting dropped followers first so
-	/// re-subscribing does not grow the map. Returns the subscription number.
-	fn register(&mut self, key: K, sender: mpsc::UnboundedSender<S>) -> u64 {
-		self.prune();
-		self.next += 1;
-		let subscription = self.next;
-		self.by_key.entry(key).or_default().push(Follower { subscription, sender });
-		subscription
-	}
-
-	/// Send `value` to everyone following `key`.
-	fn send(&self, key: &K, value: &S) {
-		for follower in self.by_key.get(key).into_iter().flatten() {
-			let _ = follower.sender.unbounded_send(value.clone());
-		}
-	}
-
-	/// Forget followers whose streams were dropped.
-	fn prune(&mut self) {
-		self.by_key.retain(|_, senders| {
-			senders.retain(|follower| !follower.sender.is_closed());
-			!senders.is_empty()
-		});
-	}
-
-	/// How many followers are registered.
-	#[cfg(test)]
-	fn len(&self) -> usize {
-		self.by_key.values().map(Vec::len).sum()
-	}
-}
-
 /// Rank of a terminal status.
 const TERMINAL_RANK: u8 = 3;
 
@@ -768,14 +717,14 @@ const TERMINAL_RANK: u8 = 3;
 /// following an id: each starts at the host's current status and shows every
 /// later one once, never stepping back, and ends at a terminal one.
 struct StatusRelay<T> {
-	followers: Mutex<Followers<(String, crate::Bytes32), T>>,
+	followers: Mutex<Subscribers<(String, crate::Bytes32), T>>,
 	/// How far along a status is; [`TERMINAL_RANK`] ends a stream.
 	rank: fn(&T) -> u8,
 }
 
 impl<T: Clone + Send + 'static> StatusRelay<T> {
 	fn new(rank: fn(&T) -> u8) -> Self {
-		Self { followers: Mutex::new(Followers::default()), rank }
+		Self { followers: Mutex::new(Subscribers::default()), rank }
 	}
 
 	/// Deliver a later `status` of `product_id`'s `id` to everyone following
@@ -786,9 +735,8 @@ impl<T: Clone + Send + 'static> StatusRelay<T> {
 		let key = (product_id, id);
 		followers.send(&key, &status);
 		if terminal {
-			followers.by_key.remove(&key);
+			followers.end(&key);
 		}
-		followers.prune();
 	}
 
 	/// Follow `product_id`'s `id` from `current`, the host's answer for it
@@ -809,11 +757,7 @@ impl<T: Clone + Send + 'static> StatusRelay<T> {
 		let first = current();
 		let last_rank = first.as_ref().map_or(TERMINAL_RANK, rank);
 		if last_rank == TERMINAL_RANK {
-			let mut followers = self.lock_followers();
-			if let Some(senders) = followers.by_key.get_mut(&key) {
-				senders.retain(|registered| registered.subscription != follower);
-			}
-			followers.prune();
+			self.lock_followers().end_one(&key, follower);
 			return stream::iter([first]).boxed();
 		}
 		let later = changes.scan(last_rank, move |shown, status: T| {
@@ -830,10 +774,12 @@ impl<T: Clone + Send + 'static> StatusRelay<T> {
 	/// How many ids are followed.
 	#[cfg(test)]
 	fn followed(&self) -> usize {
-		self.lock_followers().by_key.len()
+		self.lock_followers().keys()
 	}
 
-	fn lock_followers(&self) -> std::sync::MutexGuard<'_, Followers<(String, crate::Bytes32), T>> {
+	fn lock_followers(
+		&self,
+	) -> std::sync::MutexGuard<'_, Subscribers<(String, crate::Bytes32), T>> {
 		self.followers.lock().expect("status followers mutex poisoned")
 	}
 }
@@ -979,7 +925,7 @@ impl crate::platform::PaymentPlatform for PaymentCallbackPlatform {
 /// and pushes each change through [`Self::notify_balance`].
 pub struct BalanceCallbackPlatform {
 	balance: Arc<dyn NativeBalanceCallbacks>,
-	followers: Mutex<Followers<Option<u32>, u128>>,
+	followers: Mutex<Subscribers<Option<u32>, u128>>,
 }
 
 impl BalanceCallbackPlatform {
@@ -990,12 +936,10 @@ impl BalanceCallbackPlatform {
 
 	/// Deliver the new balance of `purse` to every product following it.
 	pub fn notify_balance(&self, purse: Option<u32>, available: u128) {
-		let mut followers = self.lock_followers();
-		followers.send(&purse, &available);
-		followers.prune();
+		self.lock_followers().send(&purse, &available);
 	}
 
-	fn lock_followers(&self) -> std::sync::MutexGuard<'_, Followers<Option<u32>, u128>> {
+	fn lock_followers(&self) -> std::sync::MutexGuard<'_, Subscribers<Option<u32>, u128>> {
 		self.followers.lock().expect("balance followers mutex poisoned")
 	}
 }
