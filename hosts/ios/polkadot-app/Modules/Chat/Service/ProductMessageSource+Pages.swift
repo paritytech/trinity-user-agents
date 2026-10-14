@@ -176,7 +176,7 @@ extension ProductMessageSource {
     }
 
     func appendNewer(_ chunk: [Page], items: [ProductChatMessagesQueryItem]) -> ChatPageOutcome {
-        droppedNewer.removeLast()
+        _ = droppedNewer.popLast()
 
         for item in items {
             for message in item.messages {
