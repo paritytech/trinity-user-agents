@@ -27,6 +27,14 @@ import Foundation
                 && environment["TRUAPI_IOS_E2E_CHAT_PRODUCT_HOST"] == productId
         }
 
+        /// True when the harness drives this product, so the product must run while no room screen is open.
+        static func holdsWorker(for productId: String) -> Bool {
+            let environment = ProcessInfo.processInfo.environment
+            return environment["TRUAPI_IOS_E2E_CHAT_PRODUCT_HOST"] == productId
+                && (environment["TRUAPI_IOS_E2E_CHAT_COMMANDS"] == "1"
+                    || environment["TRUAPI_IOS_E2E_CHAT_MESSAGE"] != nil)
+        }
+
         /// Sends the queued messages with `send` until the task stops.
         static func run(
             logger: LoggerProtocol,
