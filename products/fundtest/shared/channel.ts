@@ -43,6 +43,10 @@ export const viewKey = (intent: string) => `fundtest:view:${intent}`;
 /** Storage key of the user's action on a session's screen. */
 export const actionKey = (intent: string) => `fundtest:action:${intent}`;
 
+/** Storage key marking that a session already stopped at its kill point, so
+ *  the resumed session runs on past it. */
+export const killedKey = (intent: string) => `fundtest:killed:${intent}`;
+
 /** Storage key naming the session a route's screen is for, for a host that
  *  drops the query string of a presented route. */
 export const activeKey = (route: ScreenRoute) => `fundtest:active:${route}`;

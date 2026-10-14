@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { triggerOf } from "../worker/triggers";
+import { killPointOf, triggerOf } from "../worker/triggers";
 import { readSaved, writeSaved } from "../worker/saved";
 
 const cash = (whole: bigint, cents: bigint) =>
@@ -14,6 +14,18 @@ test("the cents of the amount pick the failure case", () => {
   expect(triggerOf(cash(25n, 0n))).toBeUndefined();
   expect(triggerOf(cash(13n, 0n))).toBeUndefined();
   expect(triggerOf(undefined)).toBeUndefined();
+});
+
+// A kill point and a failure case must never both apply, or a test of one
+// would silently run the other.
+test("cents .51 to .54 pick a kill point and no failure case", () => {
+  expect(
+    [51n, 52n, 53n, 54n].map((cents) => killPointOf(cash(25n, cents))),
+  ).toEqual([1, 2, 3, 4]);
+  expect(triggerOf(cash(25n, 51n))).toBeUndefined();
+  expect(killPointOf(cash(25n, 13n))).toBeUndefined();
+  expect(killPointOf(cash(25n, 55n))).toBeUndefined();
+  expect(killPointOf(undefined)).toBeUndefined();
 });
 
 // What a session saves is all a restarted worker has, so it must read back

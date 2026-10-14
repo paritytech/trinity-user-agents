@@ -1,9 +1,12 @@
 // One funding session, from its assignment to its last report.
 //
-// Each session moves through the phases in saved.ts and saves the phase it
-// reached before acting on the next, so a restarted worker that is handed the
-// session again picks up at that phase. A report the host already took is
-// refused as `OutOfOrder` when a resumed phase repeats it, which is harmless.
+// Each session moves through the phases in saved.ts and saves what it is
+// about to do before each external action (a faucet drip, a top-up, a payment
+// request), so a restarted worker that is handed the session again picks up
+// at that checkpoint. Every action a resumed phase can repeat is safe to
+// repeat: top-up and payment ids are fixed by the session, so the host answers
+// a repeat with `AlreadyExists`; the faucet drips an address once; and a
+// report the host already took is refused as `OutOfOrder`.
 
 import type {
   FundingAssignment,
@@ -20,6 +23,7 @@ import type { EphemeralKeypairWithSecret } from "@getsome/ephemeral";
 import type { ScreenAction, SessionView } from "../shared/channel";
 import { FAUCET_PERMISSION } from "../shared/faucet";
 import {
+  paymentIdFor,
   reserveAccount,
   sessionAccount,
   topUpIdFor,
@@ -42,7 +46,6 @@ import {
   HostCallError,
   describe,
   firstOf,
-  randomId,
   sleep,
   toHex,
   truapi,
@@ -62,8 +65,19 @@ import {
 } from "./onchain";
 import { priceOf, termsOfQuoteId, type QuoteTerms } from "./quotes";
 import { readSaved, writeSaved, type Saved } from "./saved";
-import { forgetSession, presentScreen, writeView } from "./screens";
-import { triggerOf, type Trigger } from "./triggers";
+import {
+  forgetSession,
+  markKilled,
+  presentScreen,
+  wasKilled,
+  writeView,
+} from "./screens";
+import {
+  killPointOf,
+  triggerOf,
+  type KillPoint,
+  type Trigger,
+} from "./triggers";
 
 /** Wait between chain reads and pipeline ticks, as getcash's worker ticks. */
 const TICK_MS = 6_000;
@@ -79,6 +93,23 @@ class SessionFailure extends Error {
   constructor(readonly reason: FundingFailure) {
     super(describe(reason));
     this.name = "SessionFailure";
+  }
+}
+
+/** The host no longer has the session open for this provider: it ended,
+ *  expired or was cancelled, so nothing is left to do. */
+class SessionOver extends Error {
+  constructor() {
+    super("the host no longer has the session open");
+    this.name = "SessionOver";
+  }
+}
+
+/** The session stopped at its kill point, as if the worker crashed. */
+export class Killed extends Error {
+  constructor(readonly point: KillPoint) {
+    super(`stopped at kill point ${point}`);
+    this.name = "Killed";
   }
 }
 
@@ -116,8 +147,9 @@ export class Session {
   /** A demo crypto deposit under way, which the deposit watch waits out so
    *  the drip's surplus is swept before the conversion starts. */
   private demoDeposit: Promise<void> | undefined;
-  /** Why the demo deposit could not be made, which ends the session. */
-  private demoFailure: SessionFailure | undefined;
+  /** Why the demo deposit stopped the session: a failure it ends on, or its
+   *  kill point. */
+  private demoFailure: SessionFailure | Killed | undefined;
 
   constructor(assignment: FundingAssignment) {
     this.intent = assignment.intent;
@@ -159,13 +191,20 @@ export class Session {
       );
   }
 
-  /** Runs the session to its end, reporting as it goes. */
-  async run(): Promise<void> {
+  /** Runs the session to its end, reporting as it goes. Answers `killed`
+   *  when it stopped at its kill point, so the worker can be restarted. */
+  async run(): Promise<"ended" | "killed"> {
     try {
       if (this.terms.direction === "In") await this.inbound();
       else await this.outbound();
     } catch (error) {
-      if (error instanceof Aborted && this.cancelRequested) {
+      if (error instanceof Killed) {
+        console.info(`[fundtest] ${this.intent}: ${error.message}`);
+        return "killed";
+      }
+      if (error instanceof SessionOver) {
+        console.info(`[fundtest] ${this.intent}: ${error.message}`);
+      } else if (error instanceof Aborted && this.cancelRequested) {
         await this.end({ tag: "Cancelled" });
       } else if (error instanceof SessionFailure) {
         await this.end(error.reason);
@@ -185,6 +224,7 @@ export class Session {
     } finally {
       this.stopped = true;
     }
+    return "ended";
   }
 
   private async end(reason: FundingFailure): Promise<void> {
@@ -215,17 +255,41 @@ export class Session {
     }
   }
 
+  /** Saves the session's checkpoint, retrying until the host keeps it: an
+   *  action taken after a save that did not stick could be repeated by a
+   *  restarted worker. */
   private async save(): Promise<void> {
     const client = await truapi();
-    await client.fundingProvider
-      .save({ intent: this.intent, state: writeSaved(this.saved) })
-      .match(
-        () => undefined,
-        (error) =>
-          console.warn(
-            `[fundtest] ${this.intent}: save failed: ${describe(error)}`,
-          ),
-      );
+    await this.retrying("save", async () => {
+      try {
+        await unwrap(
+          client.fundingProvider.save({
+            intent: this.intent,
+            state: writeSaved(this.saved),
+          }),
+          "save",
+        );
+      } catch (error) {
+        if (error instanceof HostCallError && error.tag === "NotFound")
+          throw new SessionOver();
+        if (error instanceof HostCallError && error.tag === "TooLarge") {
+          throw new SessionFailure(
+            other("saved_too_large", "The session's state outgrew the host"),
+          );
+        }
+        throw error;
+      }
+    });
+  }
+
+  /** Stops the session at kill point `point` when its amount chose it, once:
+   *  the mark is kept in product storage, apart from the saved checkpoint,
+   *  so the resumed session runs on past it. */
+  private async killAt(point: KillPoint): Promise<void> {
+    if (killPointOf(this.amount) !== point) return;
+    if (await wasKilled(this.intent)) return;
+    await markKilled(this.intent);
+    throw new Killed(point);
   }
 
   private sessionAccount(): Promise<EphemeralKeypairWithSecret> {
@@ -242,6 +306,8 @@ export class Session {
       } catch (error) {
         if (
           error instanceof Aborted ||
+          error instanceof Killed ||
+          error instanceof SessionOver ||
           error instanceof SessionFailure ||
           error instanceof FaucetRefused ||
           error instanceof FundingShortfallError ||
@@ -384,10 +450,11 @@ export class Session {
     }
     if (state.phase === "crediting") {
       await this.credit();
+      await this.killAt(4);
       await this.report({ tag: "Delivered" });
+      await forgetSession(this.intent);
       state.phase = "done";
       await this.save();
-      await forgetSession(this.intent);
     }
   }
 
@@ -491,7 +558,8 @@ export class Session {
       )
         .then(() => this.makeDemoDeposit())
         .catch((error: unknown) => {
-          if (error instanceof SessionFailure) this.demoFailure = error;
+          if (error instanceof SessionFailure || error instanceof Killed)
+            this.demoFailure = error;
           else if (!(error instanceof Aborted)) {
             console.warn(
               `[fundtest] ${this.intent}: demo deposit: ${describe(error)}`,
@@ -622,9 +690,16 @@ export class Session {
       withChains((chains) =>
         depositBalance(chains.assetHub, TOKENS.PAS, account.address, "best"),
       );
-    if ((await this.retrying("deposit read", held)) < deposit && !state.drip) {
+    // A drip asked for without an answer is asked for again: the faucet drips
+    // an address once, so a repeat of one that went through is refused on
+    // quota, and the session waits for the first.
+    if (
+      (await this.retrying("deposit read", held)) < deposit &&
+      !state.drip?.hash
+    ) {
       await this.allowFaucet();
-      const at = Date.now();
+      state.drip = { at: Date.now() };
+      await this.save();
       try {
         const hash = await this.retrying("faucet drip", () =>
           requestDrip(
@@ -632,17 +707,15 @@ export class Session {
             PASEO_ASSET_HUB_PARA_ID,
           ),
         );
-        state.drip = { at, hash };
+        await this.killAt(1);
+        state.drip = { ...state.drip, hash };
+        await this.save();
       } catch (error) {
         if (!(error instanceof FaucetRefused)) throw error;
-        // A quota refusal means this account was dripped already, by a
-        // request whose answer was lost: wait for that drip.
         if (!error.quota) {
           throw new SessionFailure(other("faucet_refused", error.message));
         }
-        state.drip = { at };
       }
-      await this.save();
     }
     const drip = state.drip;
     await this.poll("drip arrival", async () => {
@@ -699,6 +772,7 @@ export class Session {
         ),
       );
       if (step === "done") return;
+      await this.killAt(2);
       await sleep(TICK_MS, this.signal);
     }
   }
@@ -755,6 +829,7 @@ export class Session {
           throw error;
         }
       });
+      await this.killAt(3);
       await this.report({ tag: "Crediting", value: { topUpId: id, amount } });
       const outcome = await this.retrying("top-up status", () =>
         firstOf(
@@ -809,7 +884,7 @@ export class Session {
       );
       if (!action) throw new SessionFailure({ tag: "Cancelled" });
       state.destination = action.destination;
-      state.paymentId = randomId();
+      state.paymentId = paymentIdFor(this.intent);
       state.phase = "requesting";
       await this.save();
     }
@@ -829,12 +904,14 @@ export class Session {
         if (tag === "Rejected") throw new SessionFailure({ tag: "Cancelled" });
         if (tag !== "AlreadyExists") throw error;
       }
+      await this.killAt(1);
       await this.report({
         tag: "Collecting",
         value: { paymentId: id, amount },
       });
       state.phase = "collecting";
       await this.save();
+      await this.killAt(2);
     }
     if (state.phase === "collecting") {
       const id = state.paymentId!;
@@ -873,6 +950,7 @@ export class Session {
       );
     try {
       await reportAfterRelease(this.intent, { tag: "Converting" });
+      await this.killAt(3);
       await sleep(this.arrivalMs(CONFIG.payoutMs), this.signal);
       await reportPayout(
         this.intent,

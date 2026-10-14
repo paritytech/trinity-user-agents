@@ -11,7 +11,7 @@
     "build:app": "vite build --config vite.config.app.ts",
     "build:worker": "vite build --config vite.config.worker.ts",
     "typecheck": "tsc --noEmit",
-    "test": "bun test ./test"
+    "test": "bun test --isolate ./test"
   },
   "dependencies": {
     "@noble/curves": "^2.3.0",

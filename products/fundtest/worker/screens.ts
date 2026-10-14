@@ -10,6 +10,7 @@ import {
   actionKey,
   activeKey,
   fromStored,
+  killedKey,
   screenUrl,
   toStored,
   viewKey,
@@ -108,11 +109,33 @@ export async function presentScreen<K extends ScreenAction["kind"]>(
 /** Drops what a session left in the product's storage. */
 export async function forgetSession(intent: string): Promise<void> {
   const client = await truapi();
-  for (const key of [viewKey(intent), actionKey(intent)]) {
+  for (const key of [viewKey(intent), actionKey(intent), killedKey(intent)]) {
     await client.localStorage.clear({ key }).match(
       () => undefined,
       (error) =>
         console.warn(`[fundtest] could not clear ${key}: ${String(error)}`),
     );
   }
+}
+
+/** Whether the session stopped at its kill point before. */
+export async function wasKilled(intent: string): Promise<boolean> {
+  const client = await truapi();
+  const { value } = await unwrap(
+    client.localStorage.read({ key: killedKey(intent) }),
+    "read the kill mark",
+  );
+  return fromStored<boolean>(value) === true;
+}
+
+/** Marks that the session stopped at its kill point. */
+export async function markKilled(intent: string): Promise<void> {
+  const client = await truapi();
+  await unwrap(
+    client.localStorage.write({
+      key: killedKey(intent),
+      value: toStored(true),
+    }),
+    "store the kill mark",
+  );
 }

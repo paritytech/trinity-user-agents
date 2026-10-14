@@ -133,7 +133,3 @@ export const fromHex = (hex: string): Uint8Array =>
   Uint8Array.from(hex.slice(2).match(/.{2}/g) ?? [], (pair) =>
     Number.parseInt(pair, 16),
   );
-
-/** 32 random bytes as hex, for a payment id. */
-export const randomId = (): `0x${string}` =>
-  toHex(crypto.getRandomValues(new Uint8Array(32)));

@@ -50,6 +50,16 @@ export function topUpIdFor(
   return toHex(blake2b(input, { dkLen: 32 }));
 }
 
+/** The id of an outbound session's `payment.request`, fixed by its intent so
+ *  a worker that repeats the request after a crash gets `AlreadyExists`
+ *  instead of asking the user to pay twice. */
+export const paymentIdFor = (intent: string): `0x${string}` =>
+  toHex(
+    blake2b(new TextEncoder().encode(`fundtest:payment:${intent}`), {
+      dkLen: 32,
+    }),
+  );
+
 /** The provider's own account for this user: where an outbound payment is
  *  collected and where a session sweeps the PAS a faucet drip left over. */
 export const reserveAccount = () => sessionAccount("collection");

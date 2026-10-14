@@ -26,3 +26,23 @@ export function triggerOf(amount: bigint | undefined): Trigger | undefined {
   const cents = (amount / CENT) % 100n;
   return BY_CENTS[cents.toString().padStart(2, "0")];
 }
+
+/** Where a session stops as if its worker crashed, chosen by cents `.51` to
+ *  `.54`: just after an external action and before the step after it is
+ *  saved, so the restarted worker must resume from its last checkpoint.
+ *
+ * | Cents | Inbound                                   | Outbound                              |
+ * | ----- | ----------------------------------------- | ------------------------------------- |
+ * | `.51` | after the faucet drip is asked for        | after `payment.request`               |
+ * | `.52` | after the first conversion tick           | after `Collecting` is reported        |
+ * | `.53` | after `payment.topUp`                     | after the payout's `Converting`       |
+ * | `.54` | after `Crediting` is reported             | none                                  |
+ */
+export type KillPoint = 1 | 2 | 3 | 4;
+
+/** The kill point an amount in balance units selects, if any. */
+export function killPointOf(amount: bigint | undefined): KillPoint | undefined {
+  if (amount === undefined) return undefined;
+  const cents = Number((amount / CENT) % 100n);
+  return cents >= 51 && cents <= 54 ? ((cents - 50) as KillPoint) : undefined;
+}

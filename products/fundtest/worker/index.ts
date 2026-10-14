@@ -2,7 +2,9 @@
 //
 // One stream carries everything the host asks: a price for an ask, a session
 // to run, a request to cancel one. Sessions still in flight are handed over
-// again whenever the stream opens, so a restarted worker resumes them.
+// again whenever the stream opens, so a restarted worker resumes them. A
+// session stopped at its kill point drops what it held in memory and the
+// stream is opened again, which hands it back the way a restart would.
 
 import type { HostFundingServeSubscribeItem } from "@parity/truapi";
 import { answerAsk } from "./quotes";
@@ -13,6 +15,9 @@ import { Session } from "./session";
 const RESUBSCRIBE_MS = 5_000;
 
 const sessions = new Map<string, Session>();
+
+/** Closes the open stream, so `serve` opens it again. */
+let reopenStream: (() => void) | undefined;
 
 async function answerQuote(
   askId: string,
@@ -40,7 +45,18 @@ function handle(item: HostFundingServeSubscribeItem): void {
       if (sessions.has(session.intent)) return;
       const running = new Session(session);
       sessions.set(session.intent, running);
-      void running.run().finally(() => sessions.delete(session.intent));
+      void running
+        .run()
+        .then(
+          (outcome) => {
+            if (outcome === "killed") reopenStream?.();
+          },
+          (error: unknown) =>
+            console.error(
+              `[fundtest] ${session.intent} stopped: ${describe(error)}`,
+            ),
+        )
+        .finally(() => sessions.delete(session.intent));
       return;
     }
     case "Cancel":
@@ -55,7 +71,7 @@ async function serve(): Promise<void> {
   const client = await truapi();
   for (;;) {
     await new Promise<void>((resolve) => {
-      client.fundingProvider.serveSubscribe().subscribe({
+      const subscription = client.fundingProvider.serveSubscribe().subscribe({
         next: handle,
         error: (error) => {
           console.warn(`[fundtest] serve stream failed: ${describe(error)}`);
@@ -63,7 +79,12 @@ async function serve(): Promise<void> {
         },
         complete: resolve,
       });
+      reopenStream = () => {
+        subscription.unsubscribe();
+        resolve();
+      };
     });
+    reopenStream = undefined;
     await sleep(RESUBSCRIBE_MS);
   }
 }

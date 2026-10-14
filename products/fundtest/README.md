@@ -1,10 +1,11 @@
 # fundtest: reference funding provider for Paseo Next v2
 
 `fundtest` is a TrUAPI product that serves the funding modality on the Paseo Next v2 testnet, so the CASH card and the
-funding overlay can be run end to end on a phone. It simulates only the off-chain leg (the card charge, the bank
-transfer, the payout). Everything on chain is real: the money a payment would bring is PAS from the public Paseo faucet,
-dripped to a per-session account on Asset Hub, getcash's pipeline swaps it to CASH and sends it to People, and
-`payment.topUp` claims it into the user's balance.
+funding overlay can be run end to end on a dev device. The hosts bundle it into their testnet builds (below), so it
+needs no dotNS name or deployment. It simulates only the off-chain leg (the card charge, the bank transfer, the payout).
+Everything on chain is real: the money a payment would bring is PAS from the public Paseo faucet, dripped to a
+per-session account on Asset Hub, getcash's pipeline swaps it to CASH and sends it to People, and `payment.topUp` claims
+it into the user's balance.
 
 The product has two executables:
 
@@ -12,8 +13,6 @@ The product has two executables:
   reports its progress.
 - **App** (`app/`): the provider's own screens, which the worker shows with `presentFrame`: `/card` (card form and Pay),
   `/bank` (bank details and "I've sent funds") and `/payout` (where an outbound payout goes).
-
-The dotNS label is `fundtest`, live as `fundtest.paseo`.
 
 ## What is real and what is simulated
 
@@ -47,6 +46,22 @@ The cents of the amount choose what goes wrong:
 | `.33` | The payment arrives only after the quoted ETA has passed        | The payout arrives after the ETA   |
 
 A crypto deposit made from a wallet ignores `.13`: the refund case only runs in demo mode, before any drip.
+
+### Stopping a session as if the worker crashed
+
+Cents `.51` to `.54` stop the session once at a kill point, just after an external action and before the step after it
+is saved. The worker drops what it held for the session in memory and opens its stream again, and the host hands the
+session back with what it saved, as it would after a restart. Force-quitting the app at any point exercises the same
+path.
+
+| Cents | Inbound                            | Outbound                        |
+| ----- | ---------------------------------- | ------------------------------- |
+| `.51` | After the faucet drip is asked for | After `payment.request`         |
+| `.52` | After the first conversion tick    | After `Collecting` is reported  |
+| `.53` | After `payment.topUp`              | After the payout's `Converting` |
+| `.54` | After `Crediting` is reported      | No stop                         |
+
+A session stops at its kill point only once; the mark is kept in product storage under `fundtest:killed:<intent>`.
 
 ## How each rail runs
 
@@ -82,10 +97,19 @@ as `Cancelled`, and one without the balance as `InsufficientBalance`.
 **Cancel.** A cancel is honoured while the user has not paid, and the session ends as `Failed { Cancelled }`. Once a
 payment is seen the host refuses the cancel itself.
 
-**Restarts.** Each session saves its phase, its conversion plan, the pipeline's tick state and the top-ups it made with
-`fundingProvider.save`. The host hands the session back on `serveSubscribe` after a restart, and the worker continues
-from the saved phase. An action the user took on a screen is in product storage and is taken without showing the screen
-again.
+**Restarts.** Each session saves its checkpoint with `fundingProvider.save` before every external action: the phase, the
+conversion plan, the pipeline's tick state, the faucet drip it is about to ask for and the top-ups it is about to make.
+A save is retried until the host keeps it, since an action taken after a save that did not stick could be repeated. The
+host hands the session back on `serveSubscribe` after a restart, and the worker continues from the saved checkpoint.
+Every action a resumed step can repeat is safe to repeat:
+
+- Top-up ids are fixed by the session account and the attempt, and the payment id by the session's intent, so the host
+  answers a repeated `payment.topUp` or `payment.request` with `AlreadyExists` instead of moving funds twice.
+- The faucet drips an address once, so a repeated drip whose first answer was lost is refused on quota, and the session
+  waits for the first.
+- A report the host already took is refused as `OutOfOrder`, which the worker ignores.
+
+An action the user took on a screen is in product storage and is taken without showing the screen again.
 
 ### The faucet
 
@@ -178,16 +202,23 @@ with code `no_faucet`.
 cd products/fundtest
 npm install      # also fetches getcash and generates the descriptors
 npm run typecheck
-npm test         # pricing, quote ids, triggers, saved state and the faucet request
+npm test         # pricing, quote ids, triggers, saved state, the faucet request, and resuming after a stop
 npm run build    # dist/app and dist/worker
 ```
 
 `npm install` builds against `js/packages/truapi`, so that package has to be generated and built first
 (`./scripts/codegen.sh`, then `npm run build` in `js/packages/truapi`).
 
+## Bundling it into a host
+
+Testnet builds of both apps ship fundtest as the bundled product `fundtest-provider.dot`. Before building the app, run
+`hosts/ios/Runscripts/bundle-funding-provider.sh` or `hosts/android/scripts/bundle-funding-provider.sh`. Each builds
+this directory from the branch `funding/reference-provider` (or `FUNDTEST_REF`) and copies `worker-manifest.json`,
+`dist/worker/index.js` and `dist/app` into the app. An app built without running it has no bundled provider.
+
 ## Deploy
 
-Deploys are manual; no workflow runs them.
+Deploying is optional: dev devices use the bundled copy. Deploys are manual; no workflow runs them.
 
 1. Build (above).
 2. Sign in to `bulletin-deploy` (`bulletin-deploy login`, with the account that should own the name), then from this
@@ -231,17 +262,6 @@ browse lists products registered in its Publisher contract. Publishing is done f
    account. The call needs a proof of personhood: Lite allows one publish a day, Full five.
 
 This needs the owning account and its personhood, so it is not scripted here.
-
-## Waiting on core changes
-
-These are marked `TODO(core)` in the code:
-
-- **`networks` on the crypto route.** `worker-manifest.json` already declares `"networks": ["polkadot"]`; this tree's
-  core ignores the field until the parallel change lands. The `Deposit { Crypto }` report names the network `polkadot`.
-- **`FundingFailure::Refunded`.** Until it exists here, a refund is reported as `Other { code: "refunded" }`
-  (`worker/session.ts`).
-- **The payout update.** `FundingUpdate::Payout { outcome }` after `Released` is not in this tree yet; `reportPayout` in
-  `worker/session.ts` logs the outcome instead of reporting it.
 
 ## Not verified
 
