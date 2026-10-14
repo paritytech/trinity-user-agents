@@ -3,9 +3,13 @@ package io.paritytech.polkadotapp.feature_products_impl.domain.truapi
 import io.parity.truapi.ChatHostBridge
 import io.parity.truapi.HOST_DEFAULT_CHAT_ROOM_CONFIG
 import io.paritytech.polkadotapp.feature_chats_api.domain.extension.CreateRoomStatus
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductFeedRejection
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductFeedUpdateModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductParticipant
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.UnknownChatRoomException
 import io.paritytech.polkadotapp.feature_products_api.model.ProductChatIdParameter
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
+import io.paritytech.polkadotapp.feature_products_api.model.toChatExtensionId
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.ProductChatMessaging
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.model.CreateProductRoomRequest
 import kotlinx.coroutines.flow.firstOrNull
@@ -13,7 +17,9 @@ import timber.log.Timber
 import uniffi.truapi.ChatActivity
 import uniffi.truapi.ChatBotRegistrationStatus
 import uniffi.truapi.ChatCommandSpec
+import uniffi.truapi.ChatFeedUpdate
 import uniffi.truapi.ChatMessageContent
+import uniffi.truapi.ChatReaction
 import uniffi.truapi.ChatRoom
 import uniffi.truapi.ChatRoomConfig
 import uniffi.truapi.ChatRoomFooter
@@ -23,6 +29,7 @@ import uniffi.truapi.ChatRoomRegistrationStatus
 import uniffi.truapi.ChatSuggestion
 import uniffi.truapi.ChatToolbarAction
 import uniffi.truapi.HostRejection
+import uniffi.truapi.NativeChatFeedRejection
 
 /**
  * Answers the core's chat callbacks for one product against its chat binding. The core has checked
@@ -46,9 +53,16 @@ class ProductChatHostBridge(
 
     override suspend fun postMessage(roomId: String, content: ChatMessageContent, alt: String?): String {
         if (roomId.isEmpty()) throw HostRejection.Rejected("a chat message needs a room")
+        val room = ProductChatIdParameter(roomId)
+        // A v1 reaction is a reaction of the product, applied as a feed update (02-DESIGN §13 item 10).
+        when (content) {
+            is ChatMessageContent.Reaction -> return postReaction(room, content.v1, placed = true)
+            is ChatMessageContent.ReactionRemoved -> return postReaction(room, content.v1, placed = false)
+            else -> Unit
+        }
         val message = content.toProductBotMessage(alt)
             ?: throw HostRejection.Rejected("this host cannot apply a ${content.javaClass.simpleName} message")
-        return chatMessaging.sendMessage(ProductChatIdParameter(roomId), message).orReject()
+        return chatMessaging.sendMessage(room, message).orReject()
     }
 
     override suspend fun setRoomFooter(roomId: String, footer: ChatRoomFooter) {
@@ -80,6 +94,31 @@ class ProductChatHostBridge(
         chatMessaging.deleteRoom(requireRoom(roomId)).orReject()
     }
 
+    /**
+     * The core sets [persist] for a room that the host stores. For a room that the product keeps, only the
+     * screens that show the room take the update.
+     */
+    override suspend fun updateFeed(roomId: String, update: ChatFeedUpdate, persist: Boolean) {
+        if (roomId.isEmpty()) throw NativeChatFeedRejection.Rejected("a chat room needs an id")
+        val room = ProductChatIdParameter(roomId)
+        val model = update.toModel(rendererId = productId.toChatExtensionId())
+
+        if (!persist) {
+            if (!chatMessaging.deliverLiveFeedUpdate(room, model)) Timber.d("truapi.chat.updateFeed for %s: no open room", roomId)
+            return
+        }
+
+        chatMessaging.applyFeedUpdate(room, model).getOrElse { failure ->
+            throw when (failure) {
+                is ProductFeedRejection.UnknownMessage -> NativeChatFeedRejection.UnknownMessage()
+                is ProductFeedRejection.DuplicateMessage -> NativeChatFeedRejection.DuplicateMessage()
+                is ProductFeedRejection.NotOwner -> NativeChatFeedRejection.NotOwner()
+                is ProductFeedRejection.UnknownRoom -> NativeChatFeedRejection.Rejected("no such chat room")
+                else -> NativeChatFeedRejection.Rejected(failure.message ?: failure.toString())
+            }
+        }
+    }
+
     override suspend fun setRoomToolbar(roomId: String, actions: List<ChatToolbarAction>) {
         chatMessaging.setRoomToolbar(requireRoom(roomId), actions.map { it.toModel() }).orReject()
     }
@@ -96,6 +135,17 @@ class ProductChatHostBridge(
         chatMessaging.setRoomActivity(requireRoom(roomId), activity?.toModel()).orReject()
     }
 
+    // A reaction is no message of its own: the answer names the message that it reacts to.
+    private suspend fun postReaction(room: ProductChatIdParameter, reaction: ChatReaction, placed: Boolean): String {
+        val update = if (placed) {
+            ProductFeedUpdateModel.ReactionPlaced(reaction.messageId, ProductParticipant.PRODUCT, reaction.emoji)
+        } else {
+            ProductFeedUpdateModel.ReactionRemoved(reaction.messageId, ProductParticipant.PRODUCT, reaction.emoji)
+        }
+        chatMessaging.applyFeedUpdate(room, update).orReject()
+        return reaction.messageId
+    }
+
     private fun requireRoom(roomId: String): ProductChatIdParameter {
         if (roomId.isEmpty()) throw HostRejection.Rejected("a chat room needs an id")
         return ProductChatIdParameter(roomId)
@@ -104,7 +154,10 @@ class ProductChatHostBridge(
     private fun <T> Result<T>.orReject(): T = getOrElse { failure ->
         when (failure) {
             is HostRejection -> throw failure
-            is UnknownChatRoomException -> throw HostRejection.Rejected("no such chat room")
+            is UnknownChatRoomException,
+            is ProductFeedRejection.UnknownRoom,
+            -> throw HostRejection.Rejected("no such chat room")
+            is ProductFeedRejection -> throw HostRejection.Rejected(failure.message ?: failure.toString())
         }
         Timber.w(failure, "truapi.chat refused for %s", productId.value)
         throw HostRejection.Rejected(failure.message ?: failure.toString())

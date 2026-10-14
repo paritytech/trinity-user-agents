@@ -515,18 +515,13 @@ class TrUAPIChatWorkerTest {
     }
 
     @Test
-    fun `the lease is acquired once and released once when the scope is cancelled`() = runTest {
+    fun `an installed chat holds no worker until a room opens`() = runTest {
         val runtime: TrUAPIHostRuntime = mock()
         val workerScope = CoroutineScope(StandardTestDispatcher(testScheduler))
 
         worker(runtime = runtime, scope = workerScope)
-
-        verify(runtime, times(1)).acquireWorker(productId.value)
-        verify(runtime, never()).releaseWorker(productId.value)
-
         workerScope.cancel()
-        advanceUntilIdle()
 
-        verify(runtime, times(1)).releaseWorker(productId.value)
+        verify(runtime, never()).acquireWorker(productId.value)
     }
 }

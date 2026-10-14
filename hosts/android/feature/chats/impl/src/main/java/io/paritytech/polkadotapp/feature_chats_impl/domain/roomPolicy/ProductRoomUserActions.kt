@@ -21,15 +21,15 @@ class ProductRoomUserActions @Inject constructor(
     }
 
     /**
-     * In a host-store room the host removes the message from its store and sends `UserDeleted`. In a
-     * product-source room the product deletes it through `user_action`.
+     * In a host-store room the host keeps a hidden tombstone of the message, so its id stays taken, and sends
+     * `UserDeleted` (02-DESIGN §19 item 4). In a product-source room the product deletes it through `user_action`.
      */
     suspend fun deleteMessage(chatId: ChatId, messageId: ChatMessageId, policy: ChatRoomPolicy): Result<Unit> {
         if (!policy.hostAppliesUserActions) {
             return productQuerying(chatId).flatMap { it.userAction(chatId, ChatUserActionModel.DeleteMessage(messageId)) }.map { }
         }
 
-        return runCatching { chatMessageRepository.removeMessage(messageId) }
+        return runCatching { chatMessageRepository.markMessageDeleted(messageId) }
             .flatMap { sendEvent(chatId, ChatRoomUserEvent.MessageDeleted(messageId)) }
     }
 

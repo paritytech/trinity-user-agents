@@ -47,12 +47,12 @@ class ProductRoomUserActionsTest {
     }
 
     @Test
-    fun `a delete in a host-store room removes the message and tells the product`() = runBlocking<Unit> {
+    fun `a delete in a host-store room keeps a tombstone and tells the product`() = runBlocking<Unit> {
         withExtension()
 
         assertTrue(actions.deleteMessage(roomId, "message-1", ChatRoomPolicy.Defaults).isSuccess)
 
-        coVerify { repository.removeMessage("message-1") }
+        coVerify { repository.markMessageDeleted("message-1") }
         coVerify { extension.onUserEvent(roomId, ChatRoomUserEvent.MessageDeleted("message-1")) }
     }
 
@@ -64,7 +64,7 @@ class ProductRoomUserActionsTest {
         assertTrue(actions.deleteMessage(roomId, "message-1", productSourceRoom).isSuccess)
 
         coVerify { querying.userAction(roomId, ChatUserActionModel.DeleteMessage("message-1")) }
-        coVerify(exactly = 0) { repository.removeMessage(any()) }
+        coVerify(exactly = 0) { repository.markMessageDeleted(any()) }
     }
 
     @Test

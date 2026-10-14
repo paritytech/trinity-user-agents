@@ -110,9 +110,7 @@ class WorkerBootFactorySelectionTest {
     @Test
     fun `a construction failure on the core arm surfaces instead of falling back`() = runTest {
         val runtimeProvider: TrUAPIHostRuntimeProvider = mock()
-        val runtime: TrUAPIHostRuntime = mock()
-        whenever(runtimeProvider.runtime()).thenReturn(Result.success(runtime))
-        whenever(runtime.acquireWorker(productId.value)).thenThrow(IllegalStateException("acquireWorker boom"))
+        whenever(runtimeProvider.runtime()).thenReturn(Result.failure(IllegalStateException("no core runtime")))
         val scriptExecutorFactory: HostApiProductsScriptExecutor.Factory = mock()
         val factory = factory(
             settingsWith(enabled = true),

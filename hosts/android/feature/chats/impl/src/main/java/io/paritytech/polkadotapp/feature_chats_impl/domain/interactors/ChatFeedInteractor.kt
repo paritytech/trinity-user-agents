@@ -41,6 +41,7 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.model.isOutgoing
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.onContact
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.userDeclinedIncomingRequest
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatRoomUserEvent
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductChatQuerying
 import io.paritytech.polkadotapp.feature_chats_api.presentation.model.CustomChatAppearance
 import io.paritytech.polkadotapp.feature_chats_impl.data.AttachmentMetaBuilder
 import io.paritytech.polkadotapp.feature_chats_impl.data.hop.HopNodeUrlProvider
@@ -186,6 +187,8 @@ class ChatFeedInteractor @Inject internal constructor(
         text: String,
         replyToMessageId: ChatMessageId?
     ) {
+        // Only a command that the room declares goes to the product; any other `/text` is a message.
+        if (chatEngine.handleCommand(chatId, text)) return
         val content = ChatMessage.Content.Text(text)
         chatEngine.sendUserMessage(
             chatId = chatId,
@@ -255,7 +258,23 @@ class ChatFeedInteractor @Inject internal constructor(
     suspend fun markMessagesAsReadUpToTimestamp(chatId: ChatId, timestamp: Timestamp) {
         chatMessageRepository.markMessagesAsReadUpToTimestamp(chatId, timestamp)
         chatNotificationPublisher.cancelChatNotification(chatId)
+        chatEngine.reportSeen(chatId, timestamp)
     }
+
+    /**
+     * Holds the worker of a product room while the room screen shows it, and tells the product. Call
+     * [closeRoom] once for each [openRoom] that succeeds. A person chat holds nothing.
+     */
+    suspend fun openRoom(chatId: ChatId): Result<Unit> = chatEngine.roomLifecycle(chatId).open(chatId)
+
+    suspend fun closeRoom(chatId: ChatId) = chatEngine.roomLifecycle(chatId).close(chatId)
+
+    /** The page and user-action queries of a room whose messages the product keeps, or null without a product. */
+    suspend fun roomQuerying(chatId: ChatId): ProductChatQuerying? = chatEngine.roomQuerying(chatId)
+
+    /** A product action of a menu, the toolbar or a suggestion that the user selected. */
+    suspend fun sendUserEvent(chatId: ChatId, event: ChatRoomUserEvent): Result<Unit> =
+        productRoomUserActions.sendEvent(chatId, event)
 
     // Workaround: messages like reactions and edits exist in DB but not in UI models,
     // causing the unread counter to be wrong. Mark them as read directly.
